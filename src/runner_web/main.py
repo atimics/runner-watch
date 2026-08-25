@@ -1926,33 +1926,55 @@ def ticker_chart_snapshots(tickers: list[str]) -> dict[str, TopicSnapshot]:
 
     def produce(topics: tuple[str, ...]) -> dict[str, TopicUpdate]:
         symbols = [topic_to_ticker[topic] for topic in topics]
-        result = recording_market_data(batch_size=60).intraday(symbols)
-        provenance = result.provenance
-        collected_at = provenance.collected_at if provenance else now()
-        source = provenance.provider if provenance else "unknown"
-        delayed = provenance.delayed if provenance else None
-        warnings = tuple(dict.fromkeys(result.warnings))
+        placeholders = ",".join("?" for _ in symbols)
+        cutoff = iso(now() - timedelta(days=7))
+        with connection() as db:
+            rows = db.execute(
+                f"""
+                WITH latest AS (
+                    SELECT ticker,bar_time,close,source,last_collected_at,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY ticker,bar_time
+                               ORDER BY last_collected_at DESC
+                           ) AS position
+                    FROM market_bars
+                    WHERE interval='5m' AND ticker IN ({placeholders})
+                      AND bar_time>=? AND close IS NOT NULL
+                )
+                SELECT ticker,bar_time,close,source,last_collected_at
+                FROM latest WHERE position=1
+                ORDER BY ticker,bar_time
+                """,
+                (*symbols, cutoff),
+            ).fetchall()
+
+        bars: dict[str, list[dict[str, Any]]] = {symbol: [] for symbol in symbols}
+        for row in rows:
+            bars[str(row["ticker"])].append(dict(row))
+
         updates: dict[str, TopicUpdate] = {}
         for topic in topics:
             ticker = topic_to_ticker[topic]
-            frame = result.frames.get(ticker)
-            if frame is None:
+            ticker_bars = bars.get(ticker) or []
+            if not ticker_bars:
                 continue
-            points = _chart_points(frame)
-            as_of = (
-                datetime.fromisoformat(points[-1]["time"])
-                if points
-                else provenance.as_of
-                if provenance
-                else collected_at
-            )
+            step = max(1, len(ticker_bars) // 100)
+            sampled = ticker_bars[::step]
+            if sampled[-1]["bar_time"] != ticker_bars[-1]["bar_time"]:
+                sampled.append(ticker_bars[-1])
+            points = [
+                {"time": str(row["bar_time"]), "price": round(float(row["close"]), 6)}
+                for row in sampled
+            ]
+            last = ticker_bars[-1]
+            as_of = datetime.fromisoformat(str(last["bar_time"]))
+            collected_at = datetime.fromisoformat(str(last["last_collected_at"]))
             updates[topic] = TopicUpdate(
                 data=points,
-                source=source,
+                source=str(last["source"]),
                 as_of=as_of,
                 collected_at=collected_at,
-                delayed=delayed,
-                warnings=warnings,
+                delayed=True,
             )
         return updates
 

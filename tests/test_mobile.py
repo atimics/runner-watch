@@ -29,6 +29,7 @@ from runner_web.main import (
     radar_data,
     register_options,
     templates,
+    ticker_charts_payload,
     ticker_detail_data,
 )
 
@@ -371,6 +372,50 @@ def test_trade_pressure_is_an_honest_bar_derived_estimate(
     assert pressure["delta_volume"] > 0
     assert pressure["bar_count"] == 12
     assert "not bids" in pressure["note"]
+
+
+def test_sparklines_use_ingested_bars_without_a_live_price_request(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "charts.db")
+    init_db()
+    collected_at = datetime.now(UTC).isoformat()
+    with connection() as database:
+        for index, close in enumerate((1.0, 1.1, 1.25)):
+            database.execute(
+                """
+                INSERT INTO market_bars(
+                    source,ticker,interval,bar_time,open,high,low,close,volume,
+                    first_collected_at,last_collected_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    "yahoo",
+                    "SPRK",
+                    "5m",
+                    (datetime.now(UTC) - timedelta(minutes=10 - index * 5)).isoformat(),
+                    close,
+                    close,
+                    close,
+                    close,
+                    1000,
+                    collected_at,
+                    collected_at,
+                ),
+            )
+
+    monkeypatch.setattr(
+        web_main,
+        "recording_market_data",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("sparkline reads must not call Yahoo")
+        ),
+    )
+
+    payload = ticker_charts_payload(["SPRK"])
+
+    assert [point["price"] for point in payload["charts"]["SPRK"]] == [1.0, 1.1, 1.25]
+    assert payload["freshness"]["SPRK"]["source"] == "yahoo"
 
 
 def test_evidence_gate_only_opens_after_four_independent_checks() -> None:
