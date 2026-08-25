@@ -2,8 +2,8 @@
 {% block title %}Radar · Runner Watch{% endblock %}
 {% block content %}
 <header class="screen-head">
-  <div><h1>Radar</h1><span class="head-meta"><b id="watchCount">{{ watches|length }}</b> watched <i></i><span id="radarStatus">Live</span></span></div>
-  <button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.username[:1]|upper }}</button>
+  <div><h1>Radar</h1><span class="head-meta"><b id="watchCount">{{ watches|length }}</b> for you <i></i><span id="radarStatus">Live</span></span></div>
+  {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>{% else %}<a class="avatar-button signed-out" href="/login" aria-label="Log in">↗</a>{% endif %}
 </header>
 
 <main class="list-section radar-section">
@@ -15,7 +15,7 @@
 let rows={{ watches|tojson }};const list=document.getElementById('radarList');
 function render(){
   document.getElementById('watchCount').textContent=rows.length;
-  list.innerHTML=rows.map(item=>TickerRow.render(item,{updated:item.has_update})).join('')||`<div class="empty-list radar-empty"><strong>Nothing watched</strong><a href="/">Browse Pulse</a></div>`;
+  list.innerHTML=rows.map(item=>TickerRow.render(item,{updated:item.has_update})).join('')||`<div class="empty-list radar-empty"><strong>Learning from your activity</strong></div>`;
   TickerRow.paintCharts();
 }
 render();TickerRow.loadCharts('/api/radar/charts');let pollCount=0;

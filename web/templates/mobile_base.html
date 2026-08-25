@@ -27,7 +27,7 @@
         <span>Radar</span>
       </a>
       <a class="tab-link {% if active_tab == 'alpha' %}active{% endif %}" href="/community">
-        <span class="tab-icon alpha-icon" aria-hidden="true">↗</span>
+        <span class="tab-icon alpha-icon" aria-hidden="true">🐺</span>
         <span>Alpha</span>
       </a>
     </nav>
@@ -38,8 +38,8 @@
   <dialog class="profile-sheet" id="profileSheet">
     <div class="sheet-handle"></div>
     <div class="sheet-user">
-      <span class="profile-mark">{{ user.username[:1]|upper }}</span>
-      <div><strong>{{ user.display_name }}</strong><small>@{{ user.username }}</small></div>
+      <span class="profile-mark">{{ user.display_name[:1]|upper }}</span>
+      <div><strong>{{ user.display_name }}</strong><small>Passkey account</small></div>
     </div>
     <a href="/settings/passkey">Add a backup passkey <span>›</span></a>
     <a href="/scanner">Full scanner <span>›</span></a>

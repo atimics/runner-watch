@@ -2,17 +2,49 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from pytest import MonkeyPatch
+from starlette.requests import Request
 
 from runner_web import db
 from runner_web.db import connection, init_db
 from runner_web.main import (
+    APP_ORIGIN,
     _evidence_gate,
     _market_trade_pressure,
     _pulse_label,
+    _record_activity,
+    alpha_board_data,
+    heart_state,
     pulse_data,
     radar_data,
+    register_options,
+    templates,
     ticker_detail_data,
 )
+
+
+def test_passkey_signup_needs_no_profile_fields(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "auth.db")
+    init_db()
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/auth/register/options",
+            "headers": [(b"origin", APP_ORIGIN.encode())],
+            "client": ("127.0.0.42", 4210),
+        }
+    )
+
+    response = register_options(request)
+
+    assert response.status_code == 200
+    with connection() as database:
+        user = database.execute("SELECT * FROM users").fetchone()
+    assert user is not None
+    assert user["username"].startswith("member_")
+    assert user["display_name"] == "Member"
 
 
 def insert_filing(
@@ -311,3 +343,109 @@ def test_radar_uses_filing_price_when_a_market_snapshot_is_missing(
     assert result[0]["price"] == 0.72
     assert result[0]["change_pct"] == 6.5
     assert result[0]["evidence_gate"]["checks"] == ["Positive SEC catalyst"]
+
+
+def test_alpha_ranks_unique_hearts(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "alpha.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_filing("alpha-one", "ONE", 1.25, 70, captured_at, "P")
+    insert_filing("alpha-two", "TWO", 2.50, 80, captured_at, "P")
+    with connection() as database:
+        database.executemany(
+            """
+            INSERT INTO ticker_hearts(profile_id,ticker,active,created_at,updated_at)
+            VALUES(?,?,?,?,?)
+            """,
+            [
+                ("v:first", "ONE", 1, captured_at, captured_at),
+                ("v:second", "ONE", 1, captured_at, captured_at),
+                ("v:first", "TWO", 1, captured_at, captured_at),
+            ],
+        )
+        database.execute(
+            """
+            INSERT INTO alpha_reports(
+                id,ticker,evidence_key,status,model,headline,summary,
+                catalysts_json,risks_json,watch_json,sources_json,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                "report-one",
+                "ONE",
+                "evidence",
+                "complete",
+                "test-model",
+                "ONE leads Alpha",
+                "Verified evidence summary.",
+                '["Insider purchase"]',
+                '["Low liquidity"]',
+                '["Volume"]',
+                '["https://www.sec.gov/alpha-one"]',
+                captured_at,
+                captured_at,
+            ),
+        )
+
+    board = alpha_board_data("v:first")
+
+    assert [row["ticker"] for row in board["rows"]] == ["ONE", "TWO"]
+    assert board["rows"][0]["heart_count"] == 2
+    assert board["rows"][0]["is_leader"] is True
+    assert board["rows"][0]["hearted"] is True
+    assert board["rows"][0]["ai_report"]["catalysts"] == ["Insider purchase"]
+    assert heart_state("ONE", "v:second") == {"ticker": "ONE", "count": 2, "hearted": True}
+
+    request = Request({"type": "http", "method": "GET", "path": "/community", "headers": []})
+    request.state.csp_nonce = "test"
+    template = templates.get_template("community.html")
+    free_html = template.render(
+        request=request,
+        board=board,
+        user=None,
+        is_subscriber=False,
+        active_tab="alpha",
+    )
+    subscriber_html = template.render(
+        request=request,
+        board=board,
+        user={"username": "member", "display_name": "Member"},
+        is_subscriber=True,
+        active_tab="alpha",
+    )
+    assert "Subscriber report ready" in free_html
+    assert "Verified evidence summary." not in free_html
+    assert "Verified evidence summary." in subscriber_html
+
+
+def test_radar_learns_from_activity_without_a_watch(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "automatic-radar.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_filing("activity-one", "ONE", 1.25, 90, captured_at, "P")
+    insert_filing("activity-two", "TWO", 2.50, 60, captured_at, "P")
+    _record_activity("v:device", "TWO", "share")
+
+    result = radar_data(visitor_id="device")
+
+    assert result
+    assert result[0]["ticker"] == "TWO"
+    assert result[0]["relevance_score"] == 3.0
+
+
+def test_pulse_supports_cursor_style_offsets(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "pulse-pages.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_filing("page-one", "ONE", 1.25, 90, captured_at, "P")
+    insert_filing("page-two", "TWO", 2.50, 80, captured_at, "P")
+
+    first = pulse_data(limit=1)
+    second = pulse_data(offset=1, limit=1)
+
+    assert len(first["rows"]) == 1
+    assert first["has_more"] is True
+    assert first["next_offset"] == 1
+    assert second["rows"][0]["ticker"] != first["rows"][0]["ticker"]

@@ -9,6 +9,8 @@ import os
 import re
 import secrets
 import threading
+import urllib.error
+import urllib.request
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -62,8 +64,11 @@ RP_ID = os.getenv("RP_ID", "localhost")
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0") == "1"
 ROOT = Path(os.getenv("RUNNER_ROOT", Path.cwd()))
 SESSION_COOKIE = "runner_session"
-USERNAME_RE = re.compile(r"^[a-z0-9_]{3,24}$")
+VISITOR_COOKIE = "runner_visitor"
 TICKER_RE = re.compile(r"^[A-Z0-9.-]{1,12}$")
+VISITOR_RE = re.compile(r"^[A-Za-z0-9_-]{20,80}$")
+AI_REPORT_MODEL = os.getenv("AI_REPORT_MODEL", "gpt-5.6")
+AI_REPORT_API_KEY = os.getenv("OPENAI_API_KEY", "")
 SCAN_MODES = {
     "penny": {"label": "Penny stocks", "min_price": 0.20, "max_price": 5.00},
     "low_price": {"label": "Low-priced small caps", "min_price": 0.20, "max_price": 20.00},
@@ -87,6 +92,7 @@ async def lifespan(application: FastAPI):
         asyncio.create_task(trading_halt_worker()),
         asyncio.create_task(outcome_worker()),
         asyncio.create_task(scan_collection_worker()),
+        asyncio.create_task(alpha_report_worker()),
     ]
     application.state.worker_tasks = tasks
     try:
@@ -224,6 +230,44 @@ def require_user(session_token: str | None) -> dict[str, Any]:
     return user
 
 
+def profile_id(request: Request, user: dict[str, Any] | None = None) -> str:
+    if user:
+        return f"u:{user['id']}"
+    return f"v:{request.state.visitor_id}"
+
+
+def claim_visitor_profile(request: Request, user: dict[str, Any]) -> str:
+    target = profile_id(request, user)
+    source = profile_id(request)
+    if source == target:
+        return target
+    with connection() as db:
+        db.execute(
+            """
+            INSERT INTO ticker_hearts(profile_id,ticker,active,created_at,updated_at)
+            SELECT ?,ticker,active,created_at,updated_at FROM ticker_hearts
+            WHERE profile_id=?
+            ON CONFLICT(profile_id,ticker) DO UPDATE SET
+                active=MAX(ticker_hearts.active,excluded.active),
+                updated_at=MAX(ticker_hearts.updated_at,excluded.updated_at)
+            """,
+            (target, source),
+        )
+        db.execute("DELETE FROM ticker_hearts WHERE profile_id=?", (source,))
+        db.execute("UPDATE activity_events SET profile_id=? WHERE profile_id=?", (target, source))
+        db.execute(
+            """
+            INSERT INTO radar_seen(profile_id,ticker,last_seen_at)
+            SELECT ?,ticker,last_seen_at FROM radar_seen WHERE profile_id=?
+            ON CONFLICT(profile_id,ticker) DO UPDATE SET
+                last_seen_at=MAX(radar_seen.last_seen_at,excluded.last_seen_at)
+            """,
+            (target, source),
+        )
+        db.execute("DELETE FROM radar_seen WHERE profile_id=?", (source,))
+    return target
+
+
 def create_session(user_id: str, response: JSONResponse) -> None:
     raw_token = secrets.token_urlsafe(32)
     created = now()
@@ -277,9 +321,11 @@ def take_challenge(token: str, kind: str) -> dict[str, Any]:
 
 
 def page_context(request: Request, session_token: str | None, **extra: Any) -> dict[str, Any]:
+    user = current_user(session_token)
     return {
         "request": request,
-        "user": current_user(session_token),
+        "user": user,
+        "is_subscriber": bool(user and user.get("plan") == "subscriber"),
         "app_origin": APP_ORIGIN,
         "market_clock": market_clock(),
         **extra,
@@ -334,7 +380,20 @@ async def scan_collection_worker() -> None:
 async def security_headers(request: Request, call_next: Any) -> Response:
     nonce = secrets.token_urlsafe(16)
     request.state.csp_nonce = nonce
+    raw_visitor = request.cookies.get(VISITOR_COOKIE, "")
+    visitor_id = raw_visitor if VISITOR_RE.fullmatch(raw_visitor) else secrets.token_urlsafe(24)
+    request.state.visitor_id = visitor_id
     response = await call_next(request)
+    if visitor_id != raw_visitor:
+        response.set_cookie(
+            VISITOR_COOKIE,
+            visitor_id,
+            max_age=365 * 24 * 3600,
+            httponly=True,
+            secure=COOKIE_SECURE,
+            samesite="lax",
+            path="/",
+        )
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -347,11 +406,6 @@ async def security_headers(request: Request, call_next: Any) -> Response:
         "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     )
     return response
-
-
-class RegisterStart(BaseModel):
-    username: str
-    display_name: str = Field(min_length=2, max_length=40)
 
 
 class PasskeyFinish(BaseModel):
@@ -369,6 +423,12 @@ class PublishSignal(BaseModel):
 
 class ReportSignal(BaseModel):
     reason: str = Field(min_length=3, max_length=240)
+
+
+class ActivityPayload(BaseModel):
+    ticker: str
+    event_type: str = Field(pattern="^(view|dwell|share)$")
+    seconds: int = Field(default=0, ge=0, le=3600)
 
 
 @app.get("/health")
@@ -412,44 +472,16 @@ def community(
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    with connection() as db:
-        rows = db.execute(
-            """
-            SELECT sig.public_id,sig.thesis,sig.horizon,sig.invalidation,sig.disclosure,
-                   sig.created_at,u.username,u.display_name,s.*,
-                   o.barrier_label,o.return_60m_pct,
-                   (SELECT COUNT(*) FROM signals mine
-                    WHERE mine.user_id=sig.user_id AND mine.status='public') AS author_posts,
-                   (SELECT COUNT(*) FROM signals mine
-                    JOIN scan_outcomes mine_o ON mine_o.snapshot_id=mine.snapshot_id
-                    WHERE mine.user_id=sig.user_id AND mine.status='public'
-                          AND mine_o.barrier_label IS NOT NULL) AS author_labeled,
-                   (SELECT COUNT(*) FROM signals mine
-                    JOIN scan_outcomes mine_o ON mine_o.snapshot_id=mine.snapshot_id
-                    WHERE mine.user_id=sig.user_id AND mine.status='public'
-                          AND mine_o.barrier_label='up') AS author_hits
-            FROM signals sig
-            JOIN users u ON u.id=sig.user_id
-            JOIN scan_snapshots s ON s.id=sig.snapshot_id
-            LEFT JOIN scan_outcomes o ON o.snapshot_id=s.id
-            WHERE sig.status='public'
-            ORDER BY sig.created_at DESC LIMIT 50
-            """
-        ).fetchall()
-    signals = [dict(row) for row in rows]
-    for signal in signals:
-        labeled = int(signal.get("author_labeled") or 0)
-        signal["coin_tone"] = _coin_tone(signal["ticker"])
-        signal["author_hit_rate"] = (
-            round(100 * int(signal.get("author_hits") or 0) / labeled) if labeled else None
-        )
+    user = current_user(runner_session)
+    profile = claim_visitor_profile(request, user) if user else profile_id(request)
+    board = alpha_board_data(profile)
     return templates.TemplateResponse(
         request=request,
         name="community.html",
         context=page_context(
             request,
             runner_session,
-            signals=signals,
+            board=board,
             active_tab="alpha",
         ),
     )
@@ -651,7 +683,9 @@ def _market_pulse_label(snapshot: dict[str, Any], catalyst: dict[str, Any] | Non
     return " · ".join(parts) or "Market move · no recent filing"
 
 
-def pulse_data() -> dict[str, Any]:
+def pulse_data(*, offset: int = 0, limit: int = 50) -> dict[str, Any]:
+    offset = max(0, offset)
+    limit = max(1, min(limit, 50))
     cutoff = iso(now() - timedelta(days=3))
     market_cutoff = iso(now() - timedelta(minutes=12))
     with connection() as db:
@@ -765,7 +799,8 @@ def pulse_data() -> dict[str, Any]:
         filing_row["evidence_gate"] = _evidence_gate(filing_row, [event])
         event_rows.append(filing_row)
     event_rows.sort(key=lambda row: str(row["event_at"]), reverse=True)
-    rows = (runner_rows + event_rows)[:50]
+    all_rows = runner_rows + event_rows
+    rows = all_rows[offset : offset + limit]
     state = {row["key"]: row["value"] for row in state_rows}
     market_updated_at = max(
         (str(row["captured_at"]) for row in market_rows),
@@ -785,7 +820,276 @@ def pulse_data() -> dict[str, Any]:
         },
         "updated_at": updated_at,
         "market_updated_at": market_updated_at,
+        "next_offset": offset + len(rows),
+        "has_more": offset + len(rows) < len(all_rows),
     }
+
+
+def _report_record(row: Any) -> dict[str, Any] | None:
+    if not row:
+        return None
+    report = dict(row)
+    for key in ("catalysts_json", "risks_json", "watch_json", "sources_json"):
+        report[key.removesuffix("_json")] = _json_list(report.get(key))
+    return report
+
+
+def alpha_board_data(profile: str) -> dict[str, Any]:
+    with connection() as db:
+        heart_rows = db.execute(
+            """
+            SELECT ticker,COUNT(*) AS heart_count,MAX(updated_at) AS latest_heart
+            FROM ticker_hearts WHERE active=1
+            GROUP BY ticker ORDER BY heart_count DESC,latest_heart DESC LIMIT 50
+            """
+        ).fetchall()
+        mine = {
+            row["ticker"]
+            for row in db.execute(
+                "SELECT ticker FROM ticker_hearts WHERE profile_id=? AND active=1",
+                (profile,),
+            ).fetchall()
+        }
+    rows: list[dict[str, Any]] = []
+    for rank, heart_row in enumerate(heart_rows, start=1):
+        ticker = heart_row["ticker"]
+        item = _ticker_summary(ticker)
+        if not item:
+            continue
+        with connection() as db:
+            report_row = db.execute(
+                """
+                SELECT * FROM alpha_reports
+                WHERE ticker=? AND status='complete' ORDER BY created_at DESC LIMIT 1
+                """,
+                (ticker,),
+            ).fetchone()
+        item.update(
+            rank=rank,
+            heart_count=int(heart_row["heart_count"]),
+            latest_heart=heart_row["latest_heart"],
+            hearted=ticker in mine,
+            is_leader=rank == 1,
+            ai_report=_report_record(report_row),
+        )
+        rows.append(item)
+    ranked = {row["ticker"] for row in rows}
+    contenders = [row for row in pulse_data(limit=8)["rows"] if row["ticker"] not in ranked][:5]
+    return {
+        "rows": rows,
+        "contenders": contenders,
+        "total_hearts": sum(row["heart_count"] for row in rows),
+        "provider_ready": bool(AI_REPORT_API_KEY),
+    }
+
+
+def _alpha_evidence(ticker: str, heart_count: int) -> tuple[str, dict[str, Any]]:
+    detail = ticker_detail_data(ticker)
+    if not detail:
+        raise ValueError("Ticker detail is unavailable")
+    current = detail["current"]
+    filings = [
+        {
+            "form": event.get("form"),
+            "filed_at": event.get("filed_at"),
+            "label": event.get("evidence_label"),
+            "text": event.get("evidence_text"),
+            "url": event.get("filing_url"),
+        }
+        for event in detail["events"][:5]
+    ]
+    evidence = {
+        "ticker": ticker,
+        "company": detail["company"],
+        "heart_count": heart_count,
+        "captured_at": current.get("event_at"),
+        "price": current.get("price"),
+        "change_pct": current.get("change_pct"),
+        "score": current.get("score"),
+        "stage": current.get("stage"),
+        "relative_volume": current.get("relative_volume"),
+        "recent_relative_volume": current.get("recent_relative_volume"),
+        "momentum_15m_pct": current.get("momentum_15m_pct"),
+        "signals": current.get("signals", []),
+        "risks": current.get("risks", []),
+        "evidence_checks": detail["evidence_gate"]["checks"],
+        "filings": filings,
+    }
+    fingerprint = json.dumps(
+        {
+            "ticker": ticker,
+            "event_at": current.get("event_at"),
+            "filings": [item.get("filed_at") for item in filings],
+            "checks": detail["evidence_gate"]["checks"],
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(fingerprint.encode()).hexdigest()[:24], evidence
+
+
+def _generate_alpha_report(evidence: dict[str, Any]) -> dict[str, Any]:
+    if not AI_REPORT_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY is not configured")
+    schema = {
+        "type": "object",
+        "properties": {
+            "headline": {"type": "string"},
+            "summary": {"type": "string"},
+            "catalysts": {"type": "array", "items": {"type": "string"}},
+            "risks": {"type": "array", "items": {"type": "string"}},
+            "watch": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["headline", "summary", "catalysts", "risks", "watch"],
+        "additionalProperties": False,
+    }
+    body = {
+        "model": AI_REPORT_MODEL,
+        "store": False,
+        "max_output_tokens": 1200,
+        "instructions": (
+            "Write a concise stock research report using only the supplied evidence. "
+            "Do not invent news, prices, order-book data, or social data. Do not recommend "
+            "buying or selling. Separate verified catalysts from risks and unknowns."
+        ),
+        "input": json.dumps(evidence, separators=(",", ":")),
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "alpha_report",
+                "strict": True,
+                "schema": schema,
+            }
+        },
+    }
+    api_request = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(body).encode(),
+        headers={
+            "Authorization": f"Bearer {AI_REPORT_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(api_request, timeout=45) as response:  # noqa: S310
+            result = json.load(response)
+    except urllib.error.HTTPError as exc:
+        message = exc.read(1000).decode(errors="replace")
+        raise RuntimeError(f"AI report request failed ({exc.code}): {message}") from exc
+    output_text = ""
+    for item in result.get("output", []):
+        if item.get("type") != "message":
+            continue
+        for content in item.get("content", []):
+            if content.get("type") == "refusal":
+                raise RuntimeError("AI report request was refused")
+            if content.get("type") == "output_text":
+                output_text += str(content.get("text") or "")
+    report = json.loads(output_text)
+    if not isinstance(report, dict) or not all(key in report for key in schema["required"]):
+        raise RuntimeError("AI report response was incomplete")
+    return report
+
+
+def refresh_alpha_report() -> dict[str, Any]:
+    board = alpha_board_data("system")
+    if not board["rows"]:
+        return {"status": "idle", "reason": "no_alpha_leader"}
+    leader = board["rows"][0]
+    ticker = leader["ticker"]
+    with connection() as db:
+        state_row = db.execute(
+            "SELECT value FROM worker_state WHERE key='alpha_report_leader'"
+        ).fetchone()
+    state = json.loads(state_row["value"]) if state_row else {}
+    if state.get("ticker") != ticker:
+        worker_state("alpha_report_leader", json.dumps({"ticker": ticker, "since": iso()}))
+        return {"status": "waiting", "ticker": ticker}
+    try:
+        stable_since = datetime.fromisoformat(state["since"])
+    except (KeyError, TypeError, ValueError):
+        stable_since = now()
+    if now() - stable_since < timedelta(minutes=3):
+        return {"status": "waiting", "ticker": ticker}
+    if not AI_REPORT_API_KEY:
+        worker_state("alpha_report_last_error", "OPENAI_API_KEY is not configured")
+        return {"status": "provider_missing", "ticker": ticker}
+    evidence_key, evidence = _alpha_evidence(ticker, leader["heart_count"])
+    report_id = secrets.token_urlsafe(10)
+    with connection() as db:
+        existing = db.execute(
+            "SELECT * FROM alpha_reports WHERE ticker=? AND evidence_key=?",
+            (ticker, evidence_key),
+        ).fetchone()
+        if existing and existing["status"] == "complete":
+            return {"status": "current", "ticker": ticker, "report_id": existing["id"]}
+        if existing and existing["status"] == "running":
+            return {"status": "running", "ticker": ticker, "report_id": existing["id"]}
+        if existing and existing["status"] == "failed":
+            try:
+                failed_at = datetime.fromisoformat(existing["updated_at"])
+            except (TypeError, ValueError):
+                failed_at = now() - timedelta(hours=1)
+            if now() - failed_at < timedelta(minutes=15):
+                return {"status": "cooldown", "ticker": ticker, "report_id": existing["id"]}
+        if existing:
+            report_id = existing["id"]
+            db.execute(
+                "UPDATE alpha_reports SET status='running',error=NULL,updated_at=? WHERE id=?",
+                (iso(), report_id),
+            )
+        else:
+            db.execute(
+                """
+                INSERT INTO alpha_reports(
+                    id,ticker,evidence_key,status,model,created_at,updated_at
+                ) VALUES(?,?,?,?,?,?,?)
+                """,
+                (report_id, ticker, evidence_key, "running", AI_REPORT_MODEL, iso(), iso()),
+            )
+    try:
+        report = _generate_alpha_report(evidence)
+        sources = [item["url"] for item in evidence["filings"] if item.get("url")]
+        with connection() as db:
+            db.execute(
+                """
+                UPDATE alpha_reports SET status='complete',headline=?,summary=?,
+                    catalysts_json=?,risks_json=?,watch_json=?,sources_json=?,
+                    error=NULL,updated_at=? WHERE id=?
+                """,
+                (
+                    str(report["headline"])[:180],
+                    str(report["summary"])[:1200],
+                    json.dumps(report["catalysts"][:6]),
+                    json.dumps(report["risks"][:6]),
+                    json.dumps(report["watch"][:6]),
+                    json.dumps(sources[:8]),
+                    iso(),
+                    report_id,
+                ),
+            )
+        worker_state("alpha_report_last_error", "")
+        return {"status": "complete", "ticker": ticker, "report_id": report_id}
+    except Exception as exc:
+        with connection() as db:
+            db.execute(
+                "UPDATE alpha_reports SET status='failed',error=?,updated_at=? WHERE id=?",
+                (str(exc)[:1000], iso(), report_id),
+            )
+        worker_state("alpha_report_last_error", str(exc)[:500])
+        return {"status": "failed", "ticker": ticker, "error": str(exc)}
+
+
+async def alpha_report_worker() -> None:
+    await asyncio.sleep(30)
+    while True:
+        try:
+            await run_in_threadpool(refresh_alpha_report)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            worker_state("alpha_report_last_error", str(exc)[:500])
+        await asyncio.sleep(60)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -796,14 +1100,19 @@ def home(
     return templates.TemplateResponse(
         request=request,
         name="pulse.html",
-        context=page_context(request, runner_session, pulse=pulse_data(), active_tab="pulse"),
+        context=page_context(
+            request,
+            runner_session,
+            pulse=pulse_data(limit=20),
+            active_tab="pulse",
+        ),
     )
 
 
 @app.get("/api/pulse")
-def pulse_api(request: Request) -> JSONResponse:
+def pulse_api(request: Request, offset: int = 0, limit: int = 20) -> JSONResponse:
     enforce_rate(request, "pulse", limit=180, seconds=60)
-    return JSONResponse(pulse_data())
+    return JSONResponse(pulse_data(offset=offset, limit=limit))
 
 
 @app.get("/api/pulse/charts")
@@ -984,16 +1293,8 @@ def ticker_page(
     if detail is None:
         raise HTTPException(404, "Ticker not found")
     user = current_user(runner_session)
-    watched = False
-    if user:
-        with connection() as db:
-            watched = (
-                db.execute(
-                    "SELECT 1 FROM watches WHERE user_id=? AND ticker=?",
-                    (user["id"], normalized),
-                ).fetchone()
-                is not None
-            )
+    profile = claim_visitor_profile(request, user) if user else profile_id(request)
+    _record_activity(profile, normalized, "view")
     return templates.TemplateResponse(
         request=request,
         name="ticker.html",
@@ -1001,7 +1302,7 @@ def ticker_page(
             request,
             runner_session,
             detail=detail,
-            watched=watched,
+            heart=heart_state(normalized, profile),
             active_tab="pulse",
         ),
     )
@@ -1030,78 +1331,122 @@ async def ticker_pressure_api(ticker: str, request: Request) -> JSONResponse:
     return JSONResponse({"ticker": normalized, "pressure": pressure, "evidence_gate": gate})
 
 
-def radar_data(user_id: str, *, mark_seen: bool = False) -> list[dict[str, Any]]:
+def _ticker_summary(ticker: str) -> dict[str, Any] | None:
+    detail = ticker_detail_data(ticker)
+    if not detail:
+        return None
+    current = dict(detail["current"])
+    filing = detail["events"][0] if detail["events"] else None
+    source = str(current.get("source") or "quiet")
+    if source == "market":
+        pulse_label = _market_pulse_label(current, filing)
+    elif filing:
+        pulse_label = _pulse_label(filing)
+    else:
+        pulse_label = "Quiet"
+    return {
+        **current,
+        "ticker": ticker,
+        "company": detail["company"],
+        "exchange": detail["exchange"],
+        "coin_label": detail["coin_label"],
+        "coin_tone": detail["coin_tone"],
+        "source": source,
+        "pulse_label": pulse_label,
+        "event_count": len(detail["events"]),
+        "event_at": current.get("event_at"),
+        "sentiment": filing.get("sentiment") if filing else current.get("sentiment", "gap"),
+        "evidence_gate": detail["evidence_gate"],
+        "filing_url": filing.get("filing_url") if filing else None,
+    }
+
+
+def _activity_scores(profile: str, user_id: str | None = None) -> dict[str, float]:
+    cutoff = now() - timedelta(days=30)
+    scores: dict[str, float] = {}
     with connection() as db:
         rows = db.execute(
             """
-            SELECT w.ticker,w.created_at AS watched_at,w.last_seen_at,
-                   (SELECT c.name FROM sec_companies c WHERE c.ticker=w.ticker LIMIT 1) AS name,
-                   (SELECT c.exchange FROM sec_companies c
-                    WHERE c.ticker=w.ticker LIMIT 1) AS exchange,
-                   f.accession,f.form,f.kind,f.sentiment,f.score,f.filed_at,
-                   f.filing_url,f.actor,f.actor_title,f.transaction_codes,
-                   f.transaction_shares,f.transaction_price,f.transaction_value,
-                   s.id AS snapshot_id,COALESCE(s.price,f.price) AS price,
-                   COALESCE(s.change_pct,f.change_pct) AS change_pct,
-                   COALESCE(s.relative_volume,f.relative_volume) AS relative_volume,
-                   s.recent_relative_volume,s.stage,s.session,s.momentum_15m_pct,
-                   s.breakout_pct,s.momentum_acceleration_pct,s.vwap_position_pct,
-                   s.captured_at,s.signals_json,s.risks_json
-            FROM watches w
-            LEFT JOIN sec_filings f ON f.accession=(
-                SELECT sf.accession FROM sec_filings sf
-                WHERE sf.ticker=w.ticker ORDER BY sf.filed_at DESC LIMIT 1
-            )
-            LEFT JOIN scan_snapshots s ON s.id=(
-                SELECT ss.id FROM scan_snapshots ss
-                WHERE ss.ticker=w.ticker ORDER BY ss.captured_at DESC LIMIT 1
-            )
-            WHERE w.user_id=?
-            ORDER BY MAX(COALESCE(s.captured_at,''),COALESCE(f.filed_at,''),w.created_at) DESC
+            SELECT ticker,event_type,weight,created_at FROM activity_events
+            WHERE profile_id=? AND created_at>? ORDER BY created_at DESC LIMIT 1000
             """,
-            (user_id,),
+            (profile, iso(cutoff)),
         ).fetchall()
-    output: list[dict[str, Any]] = []
-    for raw in rows:
-        item = dict(raw)
-        filing = None
-        if item.get("accession"):
-            filing = _intelligence_evidence(dict(item))
-        event_at = max(
-            [
-                stamp
-                for stamp in (item.get("captured_at"), item.get("filed_at"), item["watched_at"])
-                if stamp
-            ]
+        hearts = db.execute(
+            "SELECT ticker FROM ticker_hearts WHERE profile_id=? AND active=1",
+            (profile,),
+        ).fetchall()
+        legacy = (
+            db.execute("SELECT ticker FROM watches WHERE user_id=?", (user_id,)).fetchall()
+            if user_id
+            else []
         )
-        item["event_at"] = event_at
-        item["has_update"] = not item.get("last_seen_at") or event_at > item["last_seen_at"]
-        if item.get("snapshot_id"):
-            item["source"] = "market"
-            item["pulse_label"] = _market_pulse_label(item, filing)
-            item["evidence_label"] = "Market snapshot"
-            item["evidence_text"] = "Price and volume changed since this ticker was scanned."
-        elif filing:
-            item["source"] = "sec"
-            item.update(
-                evidence_label=filing["evidence_label"],
-                evidence_text=filing["evidence_text"],
-                pulse_label=_pulse_label(filing),
+    for row in rows:
+        try:
+            age_seconds = max(
+                0.0, (now() - datetime.fromisoformat(row["created_at"])).total_seconds()
             )
-        else:
-            item["source"] = "quiet"
-            item["evidence_label"] = "Watching for changes"
-            item["evidence_text"] = "No market snapshot or filing has matched this ticker yet."
-            item["pulse_label"] = "Quiet"
-        item["sentiment"] = filing.get("sentiment") if filing else "gap"
-        item["evidence_gate"] = _evidence_gate(item, [filing] if filing else [])
-        item["coin_label"] = item["ticker"][:2]
-        item["coin_tone"] = _coin_tone(item["ticker"])
+        except (TypeError, ValueError):
+            age_seconds = 30 * 86400
+        decay = math.exp(-age_seconds / (7 * 86400))
+        scores[row["ticker"]] = scores.get(row["ticker"], 0.0) + float(row["weight"]) * decay
+    for row in hearts:
+        scores[row["ticker"]] = scores.get(row["ticker"], 0.0) + 8.0
+    for row in legacy:
+        scores[row["ticker"]] = scores.get(row["ticker"], 0.0) + 2.0
+    return scores
+
+
+def radar_data(
+    user_id: str | None = None,
+    *,
+    visitor_id: str | None = None,
+    mark_seen: bool = False,
+) -> list[dict[str, Any]]:
+    profile = f"u:{user_id}" if user_id else f"v:{visitor_id or 'guest'}"
+    scores = _activity_scores(profile, user_id)
+    pulse_rows = pulse_data(limit=50)["rows"]
+    pulse_by_ticker = {row["ticker"]: row for row in pulse_rows}
+    ordered = sorted(scores, key=scores.get, reverse=True)
+    for row in pulse_rows:
+        if row["ticker"] not in ordered:
+            ordered.append(row["ticker"])
+        if len(ordered) >= 20:
+            break
+    with connection() as db:
+        seen = {
+            row["ticker"]: row["last_seen_at"]
+            for row in db.execute(
+                "SELECT ticker,last_seen_at FROM radar_seen WHERE profile_id=?", (profile,)
+            ).fetchall()
+        }
+    output: list[dict[str, Any]] = []
+    for ticker in ordered[:20]:
+        item = dict(pulse_by_ticker.get(ticker) or _ticker_summary(ticker) or {})
+        if not item:
+            continue
+        item["relevance_score"] = round(scores.get(ticker, 0.0), 2)
+        event_at = item.get("event_at")
+        item["has_update"] = bool(event_at and (not seen.get(ticker) or event_at > seen[ticker]))
         output.append(item)
+    output.sort(
+        key=lambda row: (
+            float(row.get("relevance_score") or 0),
+            float(row.get("attention_score") or row.get("score") or 0),
+            str(row.get("event_at") or ""),
+        ),
+        reverse=True,
+    )
     if mark_seen and output:
         seen_at = iso()
         with connection() as db:
-            db.execute("UPDATE watches SET last_seen_at=? WHERE user_id=?", (seen_at, user_id))
+            db.executemany(
+                """
+                INSERT INTO radar_seen(profile_id,ticker,last_seen_at) VALUES(?,?,?)
+                ON CONFLICT(profile_id,ticker) DO UPDATE SET last_seen_at=excluded.last_seen_at
+                """,
+                [(profile, row["ticker"], seen_at) for row in output],
+            )
     return output
 
 
@@ -1111,15 +1456,19 @@ def radar_page(
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
     user = current_user(runner_session)
-    if not user:
-        return RedirectResponse("/login", 303)
+    if user:
+        claim_visitor_profile(request, user)
     return templates.TemplateResponse(
         request=request,
         name="radar.html",
         context=page_context(
             request,
             runner_session,
-            watches=radar_data(user["id"], mark_seen=True),
+            watches=radar_data(
+                user["id"] if user else None,
+                visitor_id=request.state.visitor_id,
+                mark_seen=True,
+            ),
             active_tab="radar",
         ),
     )
@@ -1130,9 +1479,19 @@ def radar_api(
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> JSONResponse:
-    user = require_user(runner_session)
-    enforce_rate(request, "radar", limit=120, seconds=60, subject=user["id"])
-    return JSONResponse({"rows": radar_data(user["id"], mark_seen=True), "updated_at": iso()})
+    user = current_user(runner_session)
+    profile = claim_visitor_profile(request, user) if user else profile_id(request)
+    enforce_rate(request, "radar", limit=120, seconds=60, subject=profile)
+    return JSONResponse(
+        {
+            "rows": radar_data(
+                user["id"] if user else None,
+                visitor_id=request.state.visitor_id,
+                mark_seen=True,
+            ),
+            "updated_at": iso(),
+        }
+    )
 
 
 @app.get("/api/radar/charts")
@@ -1140,51 +1499,131 @@ async def radar_charts_api(
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> JSONResponse:
-    user = require_user(runner_session)
-    enforce_rate(request, "radar-charts", limit=20, seconds=60, subject=user["id"])
-    tickers = [row["ticker"] for row in radar_data(user["id"])]
+    user = current_user(runner_session)
+    profile = claim_visitor_profile(request, user) if user else profile_id(request)
+    enforce_rate(request, "radar-charts", limit=20, seconds=60, subject=profile)
+    tickers = [
+        row["ticker"]
+        for row in radar_data(
+            user["id"] if user else None,
+            visitor_id=request.state.visitor_id,
+        )
+    ]
     charts = await run_in_threadpool(ticker_charts_data, tickers)
     return JSONResponse({"charts": charts})
 
 
-@app.post("/api/watch/{ticker}")
-def toggle_watch(
+def _known_ticker(ticker: str) -> bool:
+    with connection() as db:
+        return (
+            db.execute(
+                """
+                SELECT 1 FROM sec_companies WHERE ticker=?
+                UNION SELECT 1 FROM sec_filings WHERE ticker=?
+                UNION SELECT 1 FROM scan_snapshots WHERE ticker=? LIMIT 1
+                """,
+                (ticker, ticker, ticker),
+            ).fetchone()
+            is not None
+        )
+
+
+def _record_activity(
+    profile: str,
+    ticker: str,
+    event_type: str,
+    *,
+    seconds: int = 0,
+) -> None:
+    if event_type == "dwell" and seconds < 3:
+        return
+    weights = {"view": 1.0, "dwell": min(5.0, max(1.0, seconds / 10)), "share": 3.0}
+    weight = weights.get(event_type)
+    if weight is None:
+        return
+    with connection() as db:
+        if event_type == "view":
+            recent = db.execute(
+                """
+                SELECT 1 FROM activity_events
+                WHERE profile_id=? AND ticker=? AND event_type='view' AND created_at>?
+                LIMIT 1
+                """,
+                (profile, ticker, iso(now() - timedelta(minutes=1))),
+            ).fetchone()
+            if recent:
+                return
+        db.execute(
+            """
+            INSERT INTO activity_events(profile_id,ticker,event_type,weight,created_at)
+            VALUES(?,?,?,?,?)
+            """,
+            (profile, ticker, event_type, weight, iso()),
+        )
+
+
+def heart_state(ticker: str, profile: str) -> dict[str, Any]:
+    with connection() as db:
+        count = db.execute(
+            "SELECT COUNT(*) FROM ticker_hearts WHERE ticker=? AND active=1", (ticker,)
+        ).fetchone()[0]
+        active = db.execute(
+            "SELECT active FROM ticker_hearts WHERE profile_id=? AND ticker=?",
+            (profile, ticker),
+        ).fetchone()
+    return {"ticker": ticker, "count": int(count), "hearted": bool(active and active[0])}
+
+
+@app.post("/api/activity")
+def record_activity_api(
+    payload: ActivityPayload,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = current_user(runner_session)
+    profile = claim_visitor_profile(request, user) if user else profile_id(request)
+    enforce_rate(request, "activity", limit=180, seconds=60, subject=profile)
+    ticker = _clean_ticker(payload.ticker)
+    if not _known_ticker(ticker):
+        raise HTTPException(404, "Ticker not found")
+    _record_activity(profile, ticker, payload.event_type, seconds=payload.seconds)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/heart/{ticker}")
+def toggle_heart(
     ticker: str,
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> JSONResponse:
     require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "watch", limit=40, seconds=60, subject=user["id"])
+    user = current_user(runner_session)
+    profile = claim_visitor_profile(request, user) if user else profile_id(request)
+    enforce_rate(request, "heart", limit=40, seconds=60, subject=profile)
     normalized = _clean_ticker(ticker)
+    if not _known_ticker(normalized):
+        raise HTTPException(404, "Ticker not found")
+    timestamp = iso()
     with connection() as db:
-        known = db.execute(
-            """
-            SELECT 1 FROM sec_companies WHERE ticker=?
-            UNION SELECT 1 FROM sec_filings WHERE ticker=?
-            UNION SELECT 1 FROM scan_snapshots WHERE ticker=? LIMIT 1
-            """,
-            (normalized, normalized, normalized),
-        ).fetchone()
-        if not known:
-            raise HTTPException(404, "Ticker not found")
         existing = db.execute(
-            "SELECT 1 FROM watches WHERE user_id=? AND ticker=?",
-            (user["id"], normalized),
+            "SELECT active FROM ticker_hearts WHERE profile_id=? AND ticker=?",
+            (profile, normalized),
         ).fetchone()
-        if existing:
-            db.execute(
-                "DELETE FROM watches WHERE user_id=? AND ticker=?",
-                (user["id"], normalized),
-            )
-            watched = False
-        else:
-            db.execute(
-                "INSERT INTO watches(user_id,ticker,created_at,last_seen_at) VALUES(?,?,?,NULL)",
-                (user["id"], normalized, iso()),
-            )
-            watched = True
-    return JSONResponse({"ticker": normalized, "watched": watched})
+        active = not bool(existing and existing["active"])
+        db.execute(
+            """
+            INSERT INTO ticker_hearts(profile_id,ticker,active,created_at,updated_at)
+            VALUES(?,?,?,?,?)
+            ON CONFLICT(profile_id,ticker) DO UPDATE SET
+                active=excluded.active,updated_at=excluded.updated_at
+            """,
+            (profile, normalized, int(active), timestamp, timestamp),
+        )
+    if active:
+        _record_activity(profile, normalized, "view")
+    state = heart_state(normalized, profile)
+    return JSONResponse(state)
 
 
 def intelligence_data() -> dict[str, Any]:
@@ -1239,16 +1678,8 @@ def intelligence_api() -> JSONResponse:
 
 
 @app.get("/signup", response_class=HTMLResponse)
-def signup_page(
-    request: Request, runner_session: str | None = Cookie(default=None)
-) -> HTMLResponse:
-    if current_user(runner_session):
-        return RedirectResponse("/", 303)
-    return templates.TemplateResponse(
-        request=request,
-        name="auth.html",
-        context=page_context(request, runner_session, mode="signup"),
-    )
+def signup_page() -> RedirectResponse:
+    return RedirectResponse("/login", 308)
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -1260,18 +1691,17 @@ def login_page(
     return templates.TemplateResponse(
         request=request,
         name="auth.html",
-        context=page_context(request, runner_session, mode="login"),
+        context=page_context(request, runner_session),
     )
 
 
 @app.post("/api/auth/register/options")
-def register_options(payload: RegisterStart, request: Request) -> JSONResponse:
+def register_options(request: Request) -> JSONResponse:
     require_origin(request)
     enforce_rate(request, "register-options", limit=8, seconds=600)
-    username = payload.username.strip().lower()
-    if not USERNAME_RE.fullmatch(username):
-        raise HTTPException(400, "Use 3–24 lowercase letters, numbers, or underscores.")
     user_id = str(uuid.uuid4())
+    username = f"member_{user_id.replace('-', '')[:16]}"
+    display_name = "Member"
     with connection() as db:
         db.execute("DELETE FROM auth_challenges WHERE expires_at<=?", (iso(),))
         db.execute(
@@ -1281,19 +1711,16 @@ def register_options(payload: RegisterStart, request: Request) -> JSONResponse:
             """,
             (iso(now() - timedelta(minutes=15)),),
         )
-        existing = db.execute("SELECT status FROM users WHERE username=?", (username,)).fetchone()
-        if existing:
-            raise HTTPException(409, "That username is already taken.")
         db.execute(
             "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
-            (user_id, username, payload.display_name.strip(), "pending", iso()),
+            (user_id, username, display_name, "pending", iso()),
         )
     options = generate_registration_options(
         rp_id=RP_ID,
         rp_name="Runner Watch",
         user_id=user_id.encode(),
         user_name=username,
-        user_display_name=payload.display_name.strip(),
+        user_display_name=display_name,
         timeout=60_000,
         attestation=AttestationConveyancePreference.NONE,
         authenticator_selection=AuthenticatorSelectionCriteria(

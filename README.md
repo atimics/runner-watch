@@ -5,8 +5,9 @@ It uses free Yahoo Finance data through `yfinance`. It does not need a broker lo
 
 The public beta is at [stonks.rati.foundation](https://stonks.rati.foundation). Its mobile-first
 app has three main views: **Pulse** for live penny-stock intelligence, a compact ticker page with
-the chart and primary-source evidence, and **Radar** for a personal passkey-protected watchlist.
-Public signal pages and social preview cards remain available from the profile menu.
+the chart and primary-source evidence, **Radar** for automatic activity-based alerts, and **Alpha**
+for the community heart ranking and subscriber research reports. Pulse paginates as the user
+scrolls. Radar works before login and merges into the passkey profile later.
 
 The public scanner defaults to listed US penny stocks from $0.20 to $5 with market caps below
 about $2B. It combines Yahoo's strongest movers and most active low-priced stocks before checking
@@ -53,6 +54,17 @@ The researched and prioritized plan for adding halts, quotes, fundamentals, news
 short activity, and market context is in [the data source ingestion roadmap](docs/data-source-roadmap.md).
 The end-to-end path from collectors to product evidence is in the
 [data source flow map](docs/source-flow.md).
+
+## Alpha reports
+
+Each profile can heart a ticker once. Active unique hearts determine the Alpha order, and the wolf
+marks the current leader. After the leader remains stable for three minutes, the report worker
+builds a source-bound structured report for that ticker. Full reports are only rendered for users
+whose `plan` is `subscriber`.
+
+The report worker stays queued until `OPENAI_API_KEY` is configured. It uses the Responses API with
+strict structured output, sends only stored market and filing evidence, and defaults to the model in
+`AI_REPORT_MODEL` (`gpt-5.6`). A missing key never falls back to fake generated copy.
 
 The main screen ranks stocks with a **runner score**. The score looks for:
 
@@ -172,8 +184,7 @@ more useful during pre-market than a simple comparison with a full day's average
 - The tool does not know the live bid/ask spread, current halt state, float, or all market news.
 - The saved quick list will age. Use the full list or your own symbols for better coverage.
 - The public beta uses one Fly volume. It is durable, but it is not yet a multi-region database.
-- This first beta has no account recovery or backup-passkey screen. Losing the only passkey loses
-  access to that account.
+- Subscriber entitlements are stored in the user record; billing automation is not connected yet.
 - This is a research tool, not financial advice or an automatic buy signal.
 
 Always confirm price, spread, volume, halt status, and news in a live broker before trading.

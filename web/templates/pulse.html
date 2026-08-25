@@ -4,7 +4,7 @@
 <header class="screen-head">
   <div><h1>Pulse</h1></div>
   {% if user %}
-    <button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.username[:1]|upper }}</button>
+    <button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>
   {% else %}
     <a class="avatar-button signed-out" href="/login" aria-label="Log in">↗</a>
   {% endif %}
@@ -13,26 +13,45 @@
 
 <main class="list-section pulse-feed">
   <div class="token-list" id="pulseList" aria-live="polite"></div>
+  <div class="pulse-more" id="pulseMore" aria-hidden="true"><i></i></div>
 </main>
 {% endblock %}
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
 let pulse={{ pulse|tojson }};
 const list=document.getElementById('pulseList');
+const more=document.getElementById('pulseMore');
+let loadingMore=false;
 function render(changedTickers = new Set()) {
   const rows = pulse.rows || [];
   list.innerHTML = rows.map(row => TickerRow.render(row,{updated:changedTickers.has(row.ticker)})).join('') || `<div class="empty-list"><strong>No movement</strong></div>`;
+  more.hidden=!pulse.has_more;
   TickerRow.paintCharts();
 }
+async function loadMore(){
+  if(loadingMore||!pulse.has_more)return;
+  loadingMore=true;more.classList.add('loading');
+  try{
+    const response=await fetch(`/api/pulse?offset=${pulse.next_offset||pulse.rows.length}&limit=20`);
+    if(!response.ok)return;
+    const next=await response.json();
+    const known=new Set((pulse.rows||[]).map(row=>row.ticker));
+    pulse.rows=[...(pulse.rows||[]),...(next.rows||[]).filter(row=>!known.has(row.ticker))];
+    pulse.next_offset=next.next_offset;pulse.has_more=next.has_more;render();
+  }finally{loadingMore=false;more.classList.remove('loading');}
+}
+new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting))loadMore();},{rootMargin:'240px'}).observe(more);
 render();TickerRow.loadCharts('/api/pulse/charts');let pollCount=0;
 setInterval(async () => {
   try {
-    const response = await fetch('/api/pulse');
+    const response = await fetch('/api/pulse?offset=0&limit=20');
     if (response.ok) {
       const nextPulse = await response.json();
       const previous = new Map((pulse.rows || []).map(row => [row.ticker, TickerRow.fingerprint(row)]));
       const changed = new Set((nextPulse.rows || []).filter(row => previous.get(row.ticker) !== TickerRow.fingerprint(row)).map(row => row.ticker));
-      pulse = nextPulse;
+      const freshTickers=new Set((nextPulse.rows||[]).map(row=>row.ticker));
+      const tail=(pulse.rows||[]).filter(row=>!freshTickers.has(row.ticker));
+      pulse={...nextPulse,rows:[...(nextPulse.rows||[]),...tail],next_offset:Math.max(nextPulse.next_offset||0,pulse.next_offset||0),has_more:nextPulse.has_more||pulse.has_more};
       render(changed);
       pollCount+=1;if(pollCount%6===0)TickerRow.loadCharts('/api/pulse/charts');
     }

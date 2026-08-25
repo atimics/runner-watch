@@ -164,6 +164,53 @@ def init_db() -> None:
                 PRIMARY KEY(user_id, ticker)
             );
             CREATE INDEX IF NOT EXISTS watches_ticker ON watches(ticker);
+            CREATE TABLE IF NOT EXISTS activity_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_id TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                weight REAL NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS activity_events_profile_time
+                ON activity_events(profile_id,created_at DESC);
+            CREATE INDEX IF NOT EXISTS activity_events_ticker_time
+                ON activity_events(ticker,created_at DESC);
+            CREATE TABLE IF NOT EXISTS ticker_hearts (
+                profile_id TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(profile_id,ticker)
+            );
+            CREATE INDEX IF NOT EXISTS ticker_hearts_rank
+                ON ticker_hearts(active,ticker,updated_at DESC);
+            CREATE TABLE IF NOT EXISTS radar_seen (
+                profile_id TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                PRIMARY KEY(profile_id,ticker)
+            );
+            CREATE TABLE IF NOT EXISTS alpha_reports (
+                id TEXT PRIMARY KEY,
+                ticker TEXT NOT NULL,
+                evidence_key TEXT NOT NULL,
+                status TEXT NOT NULL,
+                model TEXT,
+                headline TEXT,
+                summary TEXT,
+                catalysts_json TEXT NOT NULL DEFAULT '[]',
+                risks_json TEXT NOT NULL DEFAULT '[]',
+                watch_json TEXT NOT NULL DEFAULT '[]',
+                sources_json TEXT NOT NULL DEFAULT '[]',
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(ticker,evidence_key)
+            );
+            CREATE INDEX IF NOT EXISTS alpha_reports_ticker_time
+                ON alpha_reports(ticker,created_at DESC);
             CREATE TABLE IF NOT EXISTS sec_companies (
                 cik INTEGER NOT NULL,
                 ticker TEXT NOT NULL,
@@ -529,6 +576,7 @@ def init_db() -> None:
             _ensure_column(db, "ranker_predictions", definition)
         _ensure_column(db, "sec_filings", "parser_version TEXT NOT NULL DEFAULT 'legacy'")
         _ensure_column(db, "watches", "last_seen_at TEXT")
+        _ensure_column(db, "users", "plan TEXT NOT NULL DEFAULT 'free'")
         _ensure_column(
             db,
             "source_documents",

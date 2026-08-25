@@ -2,31 +2,78 @@
 {% block title %}Alpha · Runner Watch{% endblock %}
 {% block content %}
 <header class="screen-head">
-  <div><h1>Alpha</h1><span class="head-meta"><b>{{ signals|length }}</b> ideas</span></div>
-  {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.username[:1]|upper }}</button>{% else %}<a class="avatar-button signed-out" href="/login" aria-label="Log in">↗</a>{% endif %}
+  <div><h1>Alpha</h1><span class="head-meta"><b>{{ board.rows|length }}</b> ranked <i></i><span>{{ board.total_hearts }} {{ 'heart' if board.total_hearts == 1 else 'hearts' }}</span></span></div>
+  {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>{% else %}<a class="avatar-button signed-out" href="/login" aria-label="Log in">↗</a>{% endif %}
 </header>
 
-<main class="list-section alpha-section">
-  {% if signals %}
-  <div class="alpha-list">
-    {% for signal in signals %}
-    <a class="alpha-row" href="/s/{{ signal.public_id }}">
-      <div class="alpha-row-head">
-        <span class="coin coin-{{ signal.coin_tone }}"><b>{{ signal.ticker[:2] }}</b><i></i></span>
-        <span><strong>{{ signal.ticker }}</strong><small>@{{ signal.username }} · {{ signal.horizon }} · ${{ '%.4f'|format(signal.price) if signal.price < 1 else '%.2f'|format(signal.price) }}</small></span>
-        <em class="{{ 'up' if signal.change_pct >= 0 else 'down' }}">{{ '+' if signal.change_pct >= 0 else '' }}{{ '%.1f'|format(signal.change_pct) }}%</em>
+<main class="alpha-board">
+  {% if board.rows %}
+    {% set leader = board.rows[0] %}
+    <article class="alpha-leader">
+      <div class="wolf-mark"><span>🐺</span><b>#1 Alpha</b></div>
+      <a class="alpha-leader-asset" href="/t/{{ leader.ticker }}">
+        <span class="coin coin-{{ leader.coin_tone }}"><b>{{ leader.coin_label }}</b><i></i></span>
+        <span><strong>{{ leader.ticker }}</strong><small>{{ leader.company }}</small></span>
+        <span class="alpha-leader-quote"><b>{% if leader.price is not none %}${{ '%.4f'|format(leader.price) if leader.price < 1 else '%.2f'|format(leader.price) }}{% else %}—{% endif %}</b><small class="{{ 'up' if leader.change_pct is not none and leader.change_pct >= 0 else 'down' }}">{% if leader.change_pct is not none %}{{ '+' if leader.change_pct >= 0 else '' }}{{ '%.1f'|format(leader.change_pct) }}%{% else %}—{% endif %}</small></span>
+      </a>
+      <div class="alpha-leader-foot">
+        <span>{{ leader.pulse_label }}</span>
+        <button class="alpha-heart {% if leader.hearted %}hearted{% endif %}" type="button" data-heart="{{ leader.ticker }}" aria-pressed="{{ 'true' if leader.hearted else 'false' }}"><i>{{ '♥' if leader.hearted else '♡' }}</i><b>{{ leader.heart_count }}</b></button>
       </div>
-      <p>{{ signal.thesis }}</p>
-      <div class="alpha-proof">
-        <span>{{ signal.stage|title }} · {{ '%.0f'|format(signal.score) }} score</span>
-        {% if signal.barrier_label %}<b class="{{ 'up' if signal.barrier_label == 'up' else ('down' if signal.barrier_label == 'down' else '') }}">60m {{ signal.barrier_label }}</b>{% else %}<b>result pending</b>{% endif %}
-        {% if signal.author_hit_rate is not none %}<span>{{ signal.author_hit_rate }}% author hits · {{ signal.author_labeled }} graded</span>{% else %}<span>new author</span>{% endif %}
-      </div>
-    </a>
+    </article>
+
+    {% if leader.ai_report %}
+      {% if is_subscriber %}
+      <article class="ai-report-card">
+        <header><span>AI report</span><small>{{ leader.ai_report.updated_at[:16]|replace('T',' ') }} UTC</small></header>
+        <h2>{{ leader.ai_report.headline }}</h2>
+        <p>{{ leader.ai_report.summary }}</p>
+        {% if leader.ai_report.catalysts %}<div><b>Catalysts</b>{% for item in leader.ai_report.catalysts %}<span>{{ item }}</span>{% endfor %}</div>{% endif %}
+        {% if leader.ai_report.risks %}<div><b>Risks</b>{% for item in leader.ai_report.risks %}<span>{{ item }}</span>{% endfor %}</div>{% endif %}
+        {% if leader.ai_report.watch %}<div><b>Monitor</b>{% for item in leader.ai_report.watch %}<span>{{ item }}</span>{% endfor %}</div>{% endif %}
+        {% if leader.ai_report.sources %}<footer>{% for source in leader.ai_report.sources %}<a href="{{ source }}" target="_blank" rel="noopener">Source {{ loop.index }}</a>{% endfor %}</footer>{% endif %}
+      </article>
+      {% else %}
+      <div class="ai-report-locked"><span>AI report</span><strong>Subscriber report ready</strong><i>◆</i></div>
+      {% endif %}
+    {% else %}
+      <div class="ai-report-running"><span class="wolf-pulse">🐺</span><div><strong>Researching {{ leader.ticker }}</strong><small>AI reporting follows the #1 Alpha ticker.</small></div></div>
+    {% endif %}
+
+    {% if board.rows|length > 1 %}
+    <section class="alpha-ranking" aria-label="Alpha ranking">
+      {% for item in board.rows[1:] %}
+      <article class="alpha-rank-row">
+        <span class="rank-number">{{ item.rank }}</span>
+        <a href="/t/{{ item.ticker }}"><span class="coin coin-{{ item.coin_tone }}"><b>{{ item.coin_label }}</b><i></i></span><span><strong>{{ item.ticker }}</strong><small>{{ item.pulse_label }}</small></span></a>
+        <button class="alpha-heart {% if item.hearted %}hearted{% endif %}" type="button" data-heart="{{ item.ticker }}" aria-pressed="{{ 'true' if item.hearted else 'false' }}"><i>{{ '♥' if item.hearted else '♡' }}</i><b>{{ item.heart_count }}</b></button>
+      </article>
+      {% endfor %}
+    </section>
+    {% endif %}
+  {% endif %}
+
+  {% if not board.rows and board.contenders %}
+  <section class="alpha-contenders">
+    <div class="alpha-section-head"><h2>Contenders</h2><span>Heart one to start Alpha</span></div>
+    {% for item in board.contenders %}
+    <article class="alpha-rank-row contender-row">
+      <a href="/t/{{ item.ticker }}"><span class="coin coin-{{ item.coin_tone }}"><b>{{ item.coin_label }}</b><i></i></span><span><strong>{{ item.ticker }}</strong><small>{{ item.pulse_label }}</small></span></a>
+      <button class="alpha-heart" type="button" data-heart="{{ item.ticker }}" aria-pressed="false"><i>♡</i><b>0</b></button>
+    </article>
     {% endfor %}
-  </div>
-  {% else %}
-  <div class="empty-list"><strong>No ideas yet</strong></div>
+  </section>
+  {% elif not board.rows %}
+  <div class="empty-list"><strong>Alpha is waiting for the first heart</strong></div>
   {% endif %}
 </main>
+{% endblock %}
+{% block scripts %}
+<script nonce="{{ request.state.csp_nonce }}">
+document.querySelectorAll('[data-heart]').forEach(button=>button.addEventListener('click',async()=>{
+  button.disabled=true;
+  try{const response=await fetch('/api/heart/'+encodeURIComponent(button.dataset.heart),{method:'POST'});if(response.ok)location.reload();}
+  finally{button.disabled=false;}
+}));
+</script>
 {% endblock %}
