@@ -6,6 +6,7 @@
   <strong>Intelligence</strong>
   <button type="button" id="shareButton" aria-label="Share this ticker">↗</button>
 </header>
+{% include "_market_clock.html" %}
 
 <main class="detail-body">
   <section class="asset-head">
@@ -44,6 +45,19 @@
       {% if not detail.current.signals and not detail.current.risks %}<p>Price and volume passed the active-runner filter. More structure data is pending.</p>{% endif %}
     </div>
     {% else %}<p class="quiet-reason">No fresh market snapshot is stored for this ticker yet.</p>{% endif %}
+  </section>
+
+  <section class="evidence-gate gate-{{ detail.evidence_gate.state }}" id="evidenceGate">
+    <div><span>RESEARCH GATE</span><strong id="gateSummary">{{ detail.evidence_gate.summary }}</strong><small id="gateCount">{{ detail.evidence_gate.count }} checks · gate {{ detail.evidence_gate.threshold }}</small></div>
+    <div class="gate-meter" id="gateMeter">{% for index in range(detail.evidence_gate.threshold) %}<i class="{% if index < detail.evidence_gate.count %}hit{% endif %}"></i>{% endfor %}</div>
+    <p id="gateChecks">{{ detail.evidence_gate.checks|join(' · ') or 'Waiting for volume, momentum, structure, or catalyst evidence.' }}</p>
+  </section>
+
+  <section class="pressure-section" id="pressureSection">
+    <div class="section-heading"><div><span>BAR-DERIVED · NOT AN ORDER BOOK</span><h2>Trade pressure</h2></div><b id="pressureLabel">collecting</b></div>
+    <div class="pressure-bar"><i id="buyPressureBar"></i><i id="sellPressureBar"></i></div>
+    <div class="pressure-values"><span><b id="buyPressure">—</b><small>estimated buy</small></span><span><b id="sellPressure">—</b><small>estimated sell</small></span><span><b id="volumeBurst">—</b><small>volume burst</small></span></div>
+    <p id="pressureNote">Collecting 5-minute bars. This estimate cannot show resting bids, asks, or Level II depth.</p>
   </section>
 
   <section class="why-section catalyst-section">
@@ -100,6 +114,7 @@ const company = {{ detail.company|tojson }};
 const chart = document.getElementById('priceChart');
 const status = document.getElementById('chartStatus');
 let allPoints=[];
+const initialPressure={{ detail.trade_pressure|tojson }};
 function draw(points) {
   if (!points.length) { status.textContent = 'Chart not available'; status.classList.add('visible'); return; }
   const values = points.map(point => Number(point.price)).filter(Number.isFinite);
@@ -115,7 +130,7 @@ function draw(points) {
   document.getElementById('chartHigh').textContent = '$' + high.toFixed(high < 1 ? 4 : 2);
 }
 function selectRange(range){document.querySelectorAll('[data-range]').forEach(button=>button.classList.toggle('active',button.dataset.range===range));if(range==='5D'){draw(allPoints);return;}const latest=allPoints.length?new Date(allPoints.at(-1).time).getTime():0;const points=allPoints.filter(point=>new Date(point.time).getTime()>=latest-24*60*60*1000);draw(points.length>1?points:allPoints.slice(-30));}
-fetch(`/api/t/${encodeURIComponent(ticker)}/chart`).then(response=>response.json()).then(data=>{allPoints=data.points||[];selectRange('1D');}).catch(()=>draw([]));
+const chartRequest=fetch(`/api/t/${encodeURIComponent(ticker)}/chart`).then(response=>response.json()).then(data=>{allPoints=data.points||[];selectRange('1D');}).catch(()=>draw([]));
 document.querySelectorAll('[data-range]').forEach(button=>button.addEventListener('click',()=>selectRange(button.dataset.range)));
 document.getElementById('shareButton').addEventListener('click', async () => {
   const share = {title: `${ticker} intelligence`, text: `${ticker} · ${company} on Runner Watch`, url: location.href};
@@ -135,5 +150,45 @@ const alphaSheet=document.getElementById('alphaSheet');
 document.getElementById('alphaButton')?.addEventListener('click',()=>alphaSheet.showModal());
 document.getElementById('closeAlpha')?.addEventListener('click',()=>alphaSheet.close());
 document.getElementById('alphaForm')?.addEventListener('submit',async event=>{event.preventDefault();const form=new FormData(event.currentTarget);const payload={snapshot_id:{{ (detail.current.id or '')|tojson }},thesis:form.get('thesis'),horizon:form.get('horizon'),invalidation:form.get('invalidation'),disclosure:form.get('disclosure')};const response=await fetch('/api/signals',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const data=await response.json();if(response.ok)location.href=data.url;else document.getElementById('alphaStatus').textContent=data.detail||'Could not publish.';});
+function compactVolume(value){
+  const number=Number(value);
+  if(!Number.isFinite(number))return '—';
+  if(Math.abs(number)>=1e6)return (number/1e6).toFixed(1)+'m';
+  if(Math.abs(number)>=1e3)return (number/1e3).toFixed(0)+'k';
+  return number.toFixed(0);
+}
+function renderPressure(pressure){
+  if(!pressure?.available){
+    document.getElementById('pressureNote').textContent=pressure?.note||'Trade pressure unavailable.';
+    return;
+  }
+  document.getElementById('pressureLabel').textContent=pressure.label;
+  document.getElementById('buyPressure').textContent=Number(pressure.buy_pressure_pct).toFixed(0)+'% · '+compactVolume(pressure.estimated_buy_volume);
+  document.getElementById('sellPressure').textContent=Number(pressure.sell_pressure_pct).toFixed(0)+'% · '+compactVolume(pressure.estimated_sell_volume);
+  document.getElementById('volumeBurst').textContent=pressure.volume_burst==null?'—':Number(pressure.volume_burst).toFixed(1)+'×';
+  document.getElementById('buyPressureBar').style.width=pressure.buy_pressure_pct+'%';
+  document.getElementById('sellPressureBar').style.width=pressure.sell_pressure_pct+'%';
+  document.getElementById('pressureNote').textContent=pressure.bar_count+' five-minute bars · '+pressure.note;
+}
+function renderGate(gate){
+  if(!gate)return;
+  const root=document.getElementById('evidenceGate');
+  if(!root)return;
+  root.className='evidence-gate gate-'+gate.state;
+  document.getElementById('gateSummary').textContent=gate.summary;
+  document.getElementById('gateCount').textContent=gate.count+' checks · gate '+gate.threshold;
+  document.getElementById('gateChecks').textContent=(gate.checks||[]).join(' · ')||'Waiting for volume, momentum, structure, or catalyst evidence.';
+  document.querySelectorAll('#gateMeter i').forEach((item,index)=>item.classList.toggle('hit',index<gate.count));
+}
+renderPressure(initialPressure);
+chartRequest.finally(async()=>{
+  try{
+    const response=await fetch('/api/t/'+encodeURIComponent(ticker)+'/pressure');
+    if(!response.ok)return;
+    const data=await response.json();
+    renderPressure(data.pressure);
+    renderGate(data.evidence_gate);
+  }catch(_){}
+});
 </script>
 {% endblock %}

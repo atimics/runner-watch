@@ -5,7 +5,14 @@ from pytest import MonkeyPatch
 
 from runner_web import db
 from runner_web.db import connection, init_db
-from runner_web.main import _pulse_label, pulse_data, radar_data, ticker_detail_data
+from runner_web.main import (
+    _evidence_gate,
+    _market_trade_pressure,
+    _pulse_label,
+    pulse_data,
+    radar_data,
+    ticker_detail_data,
+)
 
 
 def insert_filing(
@@ -139,7 +146,63 @@ def test_pulse_puts_market_runners_before_filing_only_events(
 
     assert [row["ticker"] for row in result["rows"]] == ["RUN", "FILE"]
     assert result["rows"][0]["source"] == "market"
+    assert result["rows"][0]["evidence_gate"]["state"] == "ready"
     assert result["rows"][1]["source"] == "sec"
+
+
+def test_trade_pressure_is_an_honest_bar_derived_estimate(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "pressure.db")
+    init_db()
+    with connection() as database:
+        for index in range(12):
+            database.execute(
+                """
+                INSERT INTO market_bars(
+                    source,ticker,interval,bar_time,open,high,low,close,volume,
+                    first_collected_at,last_collected_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    "yahoo",
+                    "BUY",
+                    "5m",
+                    f"2026-08-24T14:{index * 5:02d}:00+00:00",
+                    10.0,
+                    11.0,
+                    9.0,
+                    10.8,
+                    1000 + index * 100,
+                    "2026-08-24T15:00:00+00:00",
+                    "2026-08-24T15:00:00+00:00",
+                ),
+            )
+
+    pressure = _market_trade_pressure("BUY")
+
+    assert pressure["available"] is True
+    assert pressure["buy_pressure_pct"] == 90.0
+    assert pressure["delta_volume"] > 0
+    assert pressure["bar_count"] == 12
+    assert "not bids" in pressure["note"]
+
+
+def test_evidence_gate_only_opens_after_four_independent_checks() -> None:
+    current = {
+        "relative_volume": 3.0,
+        "recent_relative_volume": 4.0,
+        "momentum_15m_pct": 4.0,
+        "momentum_acceleration_pct": 1.0,
+        "vwap_position_pct": 1.0,
+        "breakout_pct": 1.0,
+    }
+
+    gate = _evidence_gate(current, [])
+
+    assert gate["state"] == "ready"
+    assert gate["threshold"] == 4
+    assert gate["count"] >= gate["threshold"]
 
 
 def test_ticker_detail_prefers_market_state_and_uses_scan_outcome(

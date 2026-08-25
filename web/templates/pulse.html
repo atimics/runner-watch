@@ -13,6 +13,7 @@
     <a class="avatar-button signed-out" href="/login" aria-label="Log in">↗</a>
   {% endif %}
 </header>
+{% include "_market_clock.html" %}
 
 <section class="pulse-stats" aria-label="Pulse summary">
   <div><strong id="liveCount">{{ pulse.stats.runners }}</strong><span>runners</span></div>
@@ -61,12 +62,14 @@ function render(changedTickers = new Set()) {
     const change = Number(row.change_pct);
     const changeClass = !Number.isFinite(change) ? 'flat' : change >= 0 ? 'up' : 'down';
     const events = Number(row.event_count) > 1 ? `<span class="event-count">+${Number(row.event_count) - 1}</span>` : '';
+    const evidence = row.evidence_gate ? `<span class="evidence-count ${esc(row.evidence_gate.state)}">${Number(row.evidence_gate.count)} EV</span>` : '';
+    const session = row.source === 'market' && row.session ? `<small class="row-session">${esc(String(row.session).replace('-', '').slice(0,3).toUpperCase())}</small>` : '';
     const updated = changedTickers.has(row.ticker) ? ' is-updated' : '';
     const divider=row.section!==previousSection?`<div class="feed-divider">${row.section==='runners'?'Active runners':'Fresh filings · context only'}</div>`:'';
     previousSection=row.section;
     return `${divider}<a class="token-row${updated}" href="/t/${encodeURIComponent(row.ticker)}">
       <span class="coin coin-${Number(row.coin_tone) || 0}"><b>${esc(row.coin_label)}</b><i></i></span>
-      <span class="token-copy"><span class="ticker-line"><strong>${esc(row.ticker)}</strong><small>${esc(ago(row.event_at))}</small></span><span class="company-name">${esc(row.company || row.ticker)}</span><span class="catalyst ${row.sentiment === 'gap' ? 'gap' : row.sentiment === 'risk' ? 'risk' : ''}">${esc(row.pulse_label)}${events}</span></span>
+      <span class="token-copy"><span class="ticker-line"><strong>${esc(row.ticker)}</strong>${session}<small>${esc(ago(row.event_at))}</small></span><span class="company-name">${esc(row.company || row.ticker)}</span><span class="catalyst ${row.sentiment === 'gap' ? 'gap' : row.sentiment === 'risk' ? 'risk' : ''}">${esc(row.pulse_label)}${events}${evidence}</span></span>
       <span class="quote"><strong>${esc(money(row.price))}</strong><svg class="mini-chart" data-ticker="${esc(row.ticker)}" viewBox="0 0 64 18" preserveAspectRatio="none" aria-hidden="true"></svg><small class="${changeClass}">${esc(percent(row.change_pct))}</small></span>
     </a>`;
   }).join('') || `<div class="empty-list"><span>⌁</span><strong>Pulse is quiet</strong><p>The SEC listener is still running.</p></div>`;

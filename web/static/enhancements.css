@@ -101,6 +101,57 @@
 .signal-detail > .reason-list { margin: 0 20px; }
 .report-link-mobile { display: block; margin: 17px auto 0; border: 0; background: transparent; color: #68756f; font-size: 9px; }
 
+.session-clock { padding: 10px 20px 8px; border-bottom: 1px solid var(--line); background: #0c100e; }
+.session-clock-top { display: flex; align-items: center; justify-content: space-between; }
+.session-clock-top > span { display: flex; align-items: center; gap: 6px; }
+.session-clock-top i { width: 6px; height: 6px; border-radius: 50%; background: #718078; box-shadow: 0 0 8px currentColor; }
+.session-clock-top strong { font-size: 10px; text-transform: uppercase; letter-spacing: .09em; }
+.session-clock-top > b { color: var(--soft); font-size: 9px; font-variant-numeric: tabular-nums; }
+.session-regular .session-clock-top i { background: var(--green); color: var(--green); }
+.session-pre .session-clock-top i, .session-after .session-clock-top i { background: var(--amber); color: var(--amber); }
+.session-overnight .session-clock-top i { background: #75a7ff; color: #75a7ff; }
+.session-hours { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 8px; }
+.session-hours > span { display: flex; justify-content: space-between; align-items: baseline; gap: 2px; padding: 5px 6px; border: 1px solid #202824; border-radius: 5px; color: #56625c; }
+.session-hours > span.active { color: var(--text); border-color: #4a5b53; background: #151c18; }
+.session-hours b { font-size: 8px; }
+.session-hours small { font-size: 7px; white-space: nowrap; }
+.session-clock p { color: #525e58; font-size: 7px; line-height: 1.35; margin: 6px 0 0; }
+
+.row-session { padding: 1px 4px; border: 1px solid #33403a; border-radius: 4px; color: #9ba8a2 !important; font-size: 7px !important; font-weight: 800; }
+.evidence-count { display: inline-block; margin-left: 6px; padding: 1px 4px; border: 1px solid #35413b; border-radius: 6px; color: #8f9c96; font-size: 7px; font-weight: 800; }
+.evidence-count.ready { color: var(--green); border-color: rgba(87, 227, 137, .32); }
+.evidence-count.near { color: var(--amber); border-color: rgba(245, 198, 107, .3); }
+
+.evidence-gate { margin: 14px 20px 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.evidence-gate > div:first-child { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; }
+.evidence-gate span { color: #6f7b76; font-size: 8px; font-weight: 800; letter-spacing: .1em; }
+.evidence-gate strong { grid-column: 1; font-size: 12px; }
+.evidence-gate small { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--muted); font-size: 8px; }
+.evidence-gate.gate-ready strong { color: var(--green); }
+.evidence-gate.gate-near strong { color: var(--amber); }
+.gate-meter { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 9px 0 7px; }
+.gate-meter i { height: 3px; border-radius: 3px; background: #28312d; }
+.gate-meter i.hit { background: var(--green); box-shadow: 0 0 6px rgba(87, 227, 137, .35); }
+.evidence-gate p { color: #84908b; font-size: 8px; line-height: 1.45; margin: 0; }
+
+.pressure-section { margin-top: 14px; padding: 14px 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.pressure-section .section-heading { margin-bottom: 9px; }
+.pressure-section .section-heading > b { color: var(--soft); background: #171e1a; }
+.pressure-bar { display: flex; height: 7px; overflow: hidden; border-radius: 7px; background: #27302c; }
+.pressure-bar i:first-child { width: 50%; background: var(--green); transition: width .35s ease; }
+.pressure-bar i:last-child { width: 50%; background: var(--red); transition: width .35s ease; }
+.pressure-values { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 9px; }
+.pressure-values > span { border-right: 1px solid var(--line); padding-right: 8px; text-align: center; }
+.pressure-values > span:last-child { border: 0; padding-right: 0; }
+.pressure-values b, .pressure-values small { display: block; }
+.pressure-values b { font-size: 10px; }
+.pressure-values span:first-child b { color: var(--green); }
+.pressure-values span:nth-child(2) b { color: var(--red); }
+.pressure-values small { color: var(--muted); font-size: 7px; margin-top: 2px; }
+.pressure-section > p { color: #68746f; font-size: 8px; line-height: 1.4; margin: 9px 0 0; }
+
 @media (max-width: 360px) {
   .tab-bar { padding-left: 22px; padding-right: 22px; }
+  .session-clock { padding-left: 14px; padding-right: 14px; }
+  .session-hours small { display: none; }
 }

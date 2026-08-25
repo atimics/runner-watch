@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import secrets
@@ -46,6 +47,7 @@ from runner_web.collection import recording_market_data
 from runner_web.db import connection, init_db
 from runner_web.ingestion import ingestion_status, record_source_fetch
 from runner_web.intelligence import record_edgar_error, refresh_edgar
+from runner_web.market_clock import market_clock
 from runner_web.outcomes import record_outcome_error, refresh_outcomes, refresh_scan_outcomes
 from runner_web.ranker import (
     FEATURE_SCHEMA_VERSION,
@@ -277,6 +279,7 @@ def page_context(request: Request, session_token: str | None, **extra: Any) -> d
         "request": request,
         "user": current_user(session_token),
         "app_origin": APP_ORIGIN,
+        "market_clock": market_clock(),
         **extra,
     }
 
@@ -396,6 +399,12 @@ def api_ingestion_status() -> dict[str, Any]:
     return ingestion_status()
 
 
+@app.get("/api/market-clock")
+def api_market_clock(request: Request) -> dict[str, Any]:
+    enforce_rate(request, "market-clock", limit=120, seconds=60)
+    return market_clock()
+
+
 @app.get("/community", response_class=HTMLResponse)
 def community(
     request: Request,
@@ -502,6 +511,129 @@ def _json_list(value: Any) -> list[str]:
     return [str(item) for item in parsed] if isinstance(parsed, list) else []
 
 
+def _number(value: Any) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _market_trade_pressure(ticker: str) -> dict[str, Any]:
+    with connection() as db:
+        rows = db.execute(
+            """
+            SELECT bar_time,open,high,low,close,volume FROM market_bars
+            WHERE source='yahoo' AND ticker=? AND interval='5m'
+            ORDER BY bar_time DESC LIMIT 24
+            """,
+            (ticker,),
+        ).fetchall()
+    bars = list(reversed(rows))
+    estimated_buy = 0.0
+    estimated_sell = 0.0
+    volumes: list[float] = []
+    usable = 0
+    for row in bars:
+        opening = _number(row["open"])
+        high = _number(row["high"])
+        low = _number(row["low"])
+        close = _number(row["close"])
+        volume = _number(row["volume"])
+        if None in (opening, high, low, close, volume) or volume <= 0:
+            continue
+        spread = high - low
+        if spread > 0:
+            close_location = max(-1.0, min(1.0, (2 * close - high - low) / spread))
+        elif close > opening:
+            close_location = 1.0
+        elif close < opening:
+            close_location = -1.0
+        else:
+            close_location = 0.0
+        estimated_buy += volume * (1 + close_location) / 2
+        estimated_sell += volume * (1 - close_location) / 2
+        volumes.append(volume)
+        usable += 1
+    total = estimated_buy + estimated_sell
+    if total <= 0:
+        return {
+            "available": False,
+            "bar_count": 0,
+            "method": "close-location volume proxy",
+            "note": "Collecting enough 5-minute bars to estimate trade pressure.",
+        }
+    buy_pct = 100 * estimated_buy / total
+    recent = volumes[-6:]
+    prior = volumes[-12:-6]
+    volume_burst = None
+    if recent and prior and sum(prior) > 0:
+        volume_burst = (sum(recent) / len(recent)) / (sum(prior) / len(prior))
+    label = "Buy pressure" if buy_pct >= 60 else "Sell pressure" if buy_pct <= 40 else "Balanced"
+    return {
+        "available": True,
+        "label": label,
+        "buy_pressure_pct": round(buy_pct, 1),
+        "sell_pressure_pct": round(100 - buy_pct, 1),
+        "delta_volume": round(estimated_buy - estimated_sell),
+        "estimated_buy_volume": round(estimated_buy),
+        "estimated_sell_volume": round(estimated_sell),
+        "volume_burst": round(volume_burst, 2) if volume_burst is not None else None,
+        "bar_count": usable,
+        "as_of": str(bars[-1]["bar_time"]) if bars else None,
+        "method": "close-location volume proxy",
+        "note": "Estimate from 5-minute OHLCV bars, not bids, asks, trades, or Level II depth.",
+    }
+
+
+def _evidence_gate(
+    current: dict[str, Any],
+    events: list[dict[str, Any]],
+    pressure: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    checks: list[str] = []
+    relative_volume = _number(current.get("relative_volume"))
+    recent_relative_volume = _number(current.get("recent_relative_volume"))
+    momentum_15m = _number(current.get("momentum_15m_pct"))
+    acceleration = _number(current.get("momentum_acceleration_pct"))
+    vwap_position = _number(current.get("vwap_position_pct"))
+    breakout = _number(current.get("breakout_pct"))
+    if relative_volume is not None and relative_volume >= 2:
+        checks.append("Unusual session volume")
+    if recent_relative_volume is not None and recent_relative_volume >= 3:
+        checks.append("Fresh volume burst")
+    if momentum_15m is not None and momentum_15m >= 3:
+        checks.append("15-minute momentum")
+    if acceleration is not None and acceleration >= 0.5:
+        checks.append("Momentum accelerating")
+    if vwap_position is not None and vwap_position > 0:
+        checks.append("Holding above VWAP")
+    if breakout is not None and breakout > 0:
+        checks.append("Breaking prior high")
+    if current.get("catalyst_sentiment") == "positive" or any(
+        event.get("sentiment") == "positive" for event in events
+    ):
+        checks.append("Positive SEC catalyst")
+    if pressure and pressure.get("available") and pressure.get("buy_pressure_pct", 0) >= 60:
+        checks.append("Bar-derived buy pressure")
+    threshold = 4
+    count = len(checks)
+    state = "ready" if count >= threshold else "near" if count == threshold - 1 else "gathering"
+    return {
+        "count": count,
+        "threshold": threshold,
+        "state": state,
+        "checks": checks,
+        "summary": (
+            "Research-ready threshold reached"
+            if state == "ready"
+            else "One more check to research-ready"
+            if state == "near"
+            else "Gathering deterministic evidence"
+        ),
+    }
+
+
 def _market_pulse_label(snapshot: dict[str, Any], catalyst: dict[str, Any] | None) -> str:
     if catalyst:
         label = _pulse_label(catalyst)
@@ -578,7 +710,7 @@ def pulse_data() -> dict[str, Any]:
             unexplained += 1
         boost = 5.0 if catalyst and catalyst.get("sentiment") == "positive" else 0.0
         runner_tickers.add(ticker)
-        runner_rows.append({
+        runner = {
             **snapshot,
             "company": catalyst.get("company", ticker) if catalyst else ticker,
             "kind": catalyst.get("kind") if catalyst else "No recent SEC catalyst",
@@ -595,7 +727,11 @@ def pulse_data() -> dict[str, Any]:
             "filing_url": catalyst.get("filing_url") if catalyst else None,
             "signals": _json_list(snapshot.get("signals_json")),
             "risks": _json_list(snapshot.get("risks_json")),
-        })
+        }
+        runner["evidence_gate"] = _evidence_gate(
+            runner, [catalyst] if catalyst else []
+        )
+        runner_rows.append(runner)
 
     runner_rows.sort(
         key=lambda row: (float(row["attention_score"]), str(row["event_at"])),
@@ -760,6 +896,7 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
             "risks": [],
             "source": "quiet",
         }
+    pressure = _market_trade_pressure(ticker)
     return {
         "ticker": ticker,
         "company": company["name"] if company else current.get("company", ticker),
@@ -768,6 +905,8 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
         "coin_tone": _coin_tone(ticker),
         "current": current,
         "events": events,
+        "trade_pressure": pressure,
+        "evidence_gate": _evidence_gate(current, events, pressure),
         "can_publish": bool(
             snapshot is not None
             and str(snapshot["captured_at"]) > iso(now() - timedelta(hours=2))
@@ -864,6 +1003,19 @@ async def ticker_chart_api(ticker: str, request: Request) -> JSONResponse:
         raise HTTPException(404, "Ticker not found")
     points = await run_in_threadpool(ticker_chart_data, normalized)
     return JSONResponse({"ticker": normalized, "points": points})
+
+
+@app.get("/api/t/{ticker}/pressure")
+async def ticker_pressure_api(ticker: str, request: Request) -> JSONResponse:
+    enforce_rate(request, "ticker-pressure", limit=60, seconds=60)
+    normalized = _clean_ticker(ticker)
+    if not _ticker_exists(normalized):
+        raise HTTPException(404, "Ticker not found")
+    await run_in_threadpool(ticker_chart_data, normalized)
+    pressure = await run_in_threadpool(_market_trade_pressure, normalized)
+    detail = ticker_detail_data(normalized)
+    gate = _evidence_gate(detail["current"], detail["events"], pressure) if detail else None
+    return JSONResponse({"ticker": normalized, "pressure": pressure, "evidence_gate": gate})
 
 
 def radar_data(user_id: str, *, mark_seen: bool = False) -> list[dict[str, Any]]:

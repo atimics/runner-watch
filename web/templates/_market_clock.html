@@ -1,0 +1,10 @@
+<section class="session-clock session-{{ market_clock.session }}" data-market-clock data-next-at="{{ market_clock.next_at }}" data-next-label="{{ market_clock.next_label }}">
+  <div class="session-clock-top">
+    <span><i></i><strong data-session-label>{{ market_clock.label }}</strong></span>
+    <b data-session-countdown>{{ market_clock.next_label }} …</b>
+  </div>
+  <div class="session-hours" aria-label="US stock trading sessions">
+    {% for item in market_clock.hours %}<span data-session-key="{{ item.key }}" class="{% if item.key == market_clock.session %}active{% endif %}"><b>{{ item.short }}</b><small>{{ item.range }}</small></span>{% endfor %}
+  </div>
+  <p><span data-session-note>{{ market_clock.data_note }}</span> · {{ market_clock.schedule_note }}</p>
+</section>
