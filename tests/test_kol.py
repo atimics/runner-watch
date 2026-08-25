@@ -151,6 +151,7 @@ def test_ranker_prediction_becomes_one_immutable_flash_call(
     assert calls[0]["inference_model"] == "z-ai/glm-5.3"
     assert calls[0]["inference_model_label"] == "GLM 5.3"
     assert calls[0]["signal_model_id"] == "model-one"
+    assert calls[0]["authorship"] == "deterministic_signal_policy"
     assert calls[0]["entry_price"] == 10.0
     assert calls[0]["confidence"] == 0.7
     assert calls[0]["status"] == "active"

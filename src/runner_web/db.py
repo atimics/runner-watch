@@ -963,6 +963,7 @@ def _migration_008_flash_actor(db: sqlite3.Connection) -> None:
     )
     legacy_call_snapshot = actor_snapshot(FLASH)
     legacy_call_snapshot["attribution"] = "backfilled_at_flash_slot_launch"
+    legacy_call_snapshot["authorship"] = "deterministic_signal_policy"
     db.execute(
         """
         UPDATE kol_calls SET actor_snapshot_json=?

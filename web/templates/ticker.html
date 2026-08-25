@@ -48,7 +48,7 @@
     <div class="kol-call-list">
       {% for call in detail.kol_calls %}
       <article class="kol-call-card">
-        <div class="kol-call-head"><span class="kol-avatar">{{ call.emoji }}</span><span><strong>{{ call.display_name }}</strong><small>Position {{ call.ladder_position or 1 }} of 4 · powered by {{ call.inference_model_label or call.inference_model }}</small></span><b class="kol-status kol-status-{{ call.status }}">{{ call.status|replace('_', ' ') }}</b></div>
+        <div class="kol-call-head"><span class="kol-avatar">{{ call.emoji }}</span><span><strong>{{ call.display_name }}</strong><small>Position {{ call.ladder_position or 1 }} of 4 · fixed signal policy · {{ call.contract_version }}</small></span><b class="kol-status kol-status-{{ call.status }}">{{ call.status|replace('_', ' ') }}</b></div>
         <div class="kol-call-numbers">
           <span><small>Entry</small><b>${{ '%.4f'|format(call.entry_price) if call.entry_price < 1 else ('%.2f'|format(call.entry_price)) }}</b></span>
           <span><small>{{ 'Current' if call.is_active else 'Exit' }}</small><b>${{ '%.4f'|format(call.last_price) if call.last_price < 1 else ('%.2f'|format(call.last_price)) }}</b></span>

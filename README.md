@@ -179,6 +179,10 @@ numeric signal. A call freezes its ticker, signal-model ID, confidence, expected
 time, and entry price. Repeated scans cannot reset the entry. Pulse shows active lightning tags with
 net paper PnL, and ticker pages show the complete call receipt.
 
+These existing paper calls benchmark Flash's fixed signal policy; they do not claim that GLM 5.3
+personally authored the call. Flash's GLM 5.3 attribution applies to its commissioned research. A
+future model battle can add model-authored calls without mixing them with this older signal track.
+
 Flash uses the same `+8% before -4% within 60 minutes` contract as the shadow ranker. It can abandon
 a stock only when a later frozen prediction crosses its fixed abandon rule. An abandoned call keeps
 receiving the original 60-minute benchmark, so a model cannot hide a bad call by leaving early.

@@ -43,6 +43,7 @@ def _actor_snapshot_from_predictor(predictor: dict[str, Any]) -> dict[str, Any]:
         "model": model,
         "model_label": model_display_name(model),
         "description": str(predictor.get("description") or ""),
+        "authorship": "deterministic_signal_policy",
     }
 
 
@@ -527,6 +528,7 @@ def _display_call(raw: Any) -> dict[str, Any]:
     if not isinstance(actor, dict):
         actor = {}
     call["actor"] = actor
+    call["authorship"] = str(actor.get("authorship") or "unknown")
     for key in (
         "slot",
         "ladder_position",

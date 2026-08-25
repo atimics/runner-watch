@@ -36,8 +36,7 @@ function renderKols(){
   if(!kol){box.hidden=true;return;}
   box.hidden=false;
   const pnl=Number(kol.paper_pnl||0);const hit=kol.hit_rate==null?'learning':`${(Number(kol.hit_rate)*100).toFixed(0)}% hit`;
-  const engine=kol.inference_model_label?` · ${esc(kol.inference_model_label)}`:'';
-  box.innerHTML=`<span class="kol-avatar">${esc(kol.emoji||'⚡')}</span><span><strong>${esc(kol.display_name)} · AI KOL</strong><small>${Number(kol.active_calls||0)} active · ${Number(kol.calls||0)} calls · ${esc(hit)}${engine}</small></span><b class="${pnl>=0?'up':'down'}">${pnl>=0?'+':'−'}$${Math.abs(pnl).toFixed(2)}</b>`;
+  box.innerHTML=`<span class="kol-avatar">${esc(kol.emoji||'⚡')}</span><span><strong>${esc(kol.display_name)} · AI KOL</strong><small>${Number(kol.active_calls||0)} active · ${Number(kol.calls||0)} signal calls · ${esc(hit)}</small></span><b class="${pnl>=0?'up':'down'}">${pnl>=0?'+':'−'}$${Math.abs(pnl).toFixed(2)}</b>`;
 }
 function group(title, note, rows, tone=''){
   if(!rows.length)return '';
