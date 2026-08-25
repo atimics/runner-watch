@@ -1180,6 +1180,34 @@ def _migration_014_thesis_cases(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_019_repair_thesis_case_sources(db: DatabaseConnection) -> None:
+    """Repair thesis tables created by an earlier version of migration 14."""
+
+    _ensure_column(
+        db,
+        "thesis_cases",
+        "source_kind TEXT NOT NULL DEFAULT 'short_note' "
+        "CHECK(source_kind IN ('short_note','community_comment'))",
+    )
+    _ensure_column(
+        db,
+        "thesis_cases",
+        "source_comment_id TEXT REFERENCES ticker_comments(id) ON DELETE SET NULL",
+    )
+    _ensure_column(
+        db,
+        "thesis_case_revisions",
+        "source_comment_id TEXT REFERENCES ticker_comments(id) ON DELETE SET NULL",
+    )
+    db.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS thesis_cases_active_source_comment
+        ON thesis_cases(user_id,source_comment_id)
+        WHERE source_comment_id IS NOT NULL AND status='active'
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -1202,6 +1230,7 @@ MIGRATIONS = (
     Migration(12, "chart_structure", _migration_012_chart_structure),
     Migration(13, "comment_pseudonyms", _migration_013_comment_pseudonyms),
     Migration(14, "thesis_cases", _migration_014_thesis_cases),
+    Migration(19, "repair_thesis_case_sources", _migration_019_repair_thesis_case_sources),
 )
 
 

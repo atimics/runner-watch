@@ -125,6 +125,49 @@ def test_baseline_migration_upgrades_a_legacy_database(
     assert versions == len(MIGRATIONS)
 
 
+def test_thesis_source_columns_repair_an_already_applied_migration(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    path = tmp_path / "legacy-thesis.db"
+    legacy = sqlite3.connect(path)
+    legacy.executescript(
+        """
+        CREATE TABLE schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at TEXT NOT NULL
+        );
+        INSERT INTO schema_migrations(version,name,applied_at)
+        VALUES(14,'thesis_cases','2026-08-25T00:00:00+00:00');
+        CREATE TABLE thesis_cases (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE thesis_case_revisions (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL
+        );
+        """
+    )
+    legacy.close()
+    monkeypatch.setattr(db, "DATABASE_PATH", path)
+
+    init_db()
+
+    with connection() as database:
+        case_columns = {
+            row["name"] for row in database.execute("PRAGMA table_info(thesis_cases)").fetchall()
+        }
+        revision_columns = {
+            row["name"]
+            for row in database.execute("PRAGMA table_info(thesis_case_revisions)").fetchall()
+        }
+    assert {"source_kind", "source_comment_id"} <= case_columns
+    assert "source_comment_id" in revision_columns
+
+
 def test_flash_keeps_its_identity_when_its_model_assignment_changes(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
