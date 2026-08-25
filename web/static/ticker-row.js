@@ -70,8 +70,8 @@
       ? `<span class="event-count">+${Number(row.event_count) - 1}</span>`
       : '';
     const gate = row.evidence_gate;
-    const evidence = gate
-      ? `<span class="evidence-count ${esc(gate.state)}">${Number(gate.count)} EV</span>`
+    const evidence = gate && Number(gate.count) > 0
+      ? `<span class="evidence-count ${esc(gate.state)}">${Number(gate.count)} SIG</span>`
       : '';
     const catalystTone = row.sentiment === 'risk' ? ' risk' : row.sentiment === 'gap' ? ' gap' : '';
     const updated = options.updated ?? row.has_update;
