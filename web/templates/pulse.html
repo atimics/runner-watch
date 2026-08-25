@@ -1,5 +1,6 @@
 {% extends "mobile_base.html" %}
 {% block title %}Pulse · Runner Watch{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/pulse.css">{% endblock %}
 {% block content %}
 <header class="screen-head">
   <div>
@@ -30,30 +31,106 @@
 <script>
 let pulse = {{ pulse|tojson }};
 const list = document.getElementById('pulseList');
+const chartCache = new Map();
+const chartQueue = [];
+const queuedTickers = new Set();
+let activeCharts = 0;
 function esc(value) { const node = document.createElement('span'); node.textContent = String(value ?? ''); return node.innerHTML; }
 function money(value) { const number = Number(value); if (!Number.isFinite(number)) return '—'; if (number < 1) return '$' + number.toFixed(4); if (number < 10) return '$' + number.toFixed(3); return '$' + number.toFixed(2); }
 function percent(value) { const number = Number(value); if (!Number.isFinite(number)) return '—'; return `${number >= 0 ? '+' : ''}${number.toFixed(1)}%`; }
 function ago(value) { if (!value) return ''; const seconds = Math.max(0, (Date.now() - new Date(value).getTime()) / 1000); if (seconds < 90) return 'now'; if (seconds < 5400) return Math.round(seconds / 60) + 'm'; if (seconds < 129600) return Math.round(seconds / 3600) + 'h'; return Math.round(seconds / 86400) + 'd'; }
-function render() {
+function rowFingerprint(row) {
+  return [row.price, row.change_pct, row.score, row.event_count, row.pulse_label, row.event_at].join('|');
+}
+function drawMiniChart(svg, points) {
+  const values = points.map(point => Number(point.price)).filter(Number.isFinite).slice(-36);
+  if (values.length < 2) { svg.classList.add('unavailable'); return; }
+  const low = Math.min(...values), high = Math.max(...values), spread = Math.max(high - low, Math.abs(high) * .002, .001);
+  const path = values.map((value, index) => {
+    const x = 1 + index / (values.length - 1) * 62;
+    const y = 16 - (value - low) / spread * 14;
+    return `${index ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`;
+  }).join(' ');
+  const rising = values.at(-1) >= values[0];
+  svg.classList.toggle('rising', rising);
+  svg.classList.toggle('falling', !rising);
+  svg.innerHTML = `<path d="${path}" fill="none" stroke="currentColor" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>`;
+  svg.classList.add('loaded');
+}
+function drawTickerCharts(ticker, points) {
+  document.querySelectorAll('.mini-chart').forEach(svg => {
+    if (svg.dataset.ticker === ticker) drawMiniChart(svg, points);
+  });
+}
+async function processChartQueue() {
+  while (activeCharts < 2 && chartQueue.length) {
+    const ticker = chartQueue.shift();
+    activeCharts += 1;
+    try {
+      const response = await fetch(`/api/t/${encodeURIComponent(ticker)}/chart`);
+      const data = response.ok ? await response.json() : {points: []};
+      chartCache.set(ticker, data.points || []);
+      drawTickerCharts(ticker, data.points || []);
+    } catch (_) {
+      chartCache.set(ticker, []);
+      drawTickerCharts(ticker, []);
+    } finally {
+      activeCharts -= 1;
+      queuedTickers.delete(ticker);
+      processChartQueue();
+    }
+  }
+}
+function queueMiniChart(svg) {
+  const ticker = svg.dataset.ticker;
+  if (chartCache.has(ticker)) { drawMiniChart(svg, chartCache.get(ticker)); return; }
+  if (!queuedTickers.has(ticker)) {
+    queuedTickers.add(ticker);
+    chartQueue.push(ticker);
+    processChartQueue();
+  }
+}
+const chartObserver = 'IntersectionObserver' in window ? new IntersectionObserver(entries => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) { chartObserver.unobserve(entry.target); queueMiniChart(entry.target); }
+  });
+}, {rootMargin: '100px'}) : null;
+function observeMiniCharts() {
+  document.querySelectorAll('.mini-chart').forEach(svg => {
+    if (chartObserver) chartObserver.observe(svg); else queueMiniChart(svg);
+  });
+}
+function render(changedTickers = new Set()) {
   const rows = pulse.rows || [];
   list.innerHTML = rows.map(row => {
     const change = Number(row.change_pct);
     const changeClass = !Number.isFinite(change) ? 'flat' : change >= 0 ? 'up' : 'down';
     const events = Number(row.event_count) > 1 ? `<span class="event-count">+${Number(row.event_count) - 1}</span>` : '';
-    return `<a class="token-row" href="/t/${encodeURIComponent(row.ticker)}">
+    const updated = changedTickers.has(row.ticker) ? ' is-updated' : '';
+    return `<a class="token-row${updated}" href="/t/${encodeURIComponent(row.ticker)}">
       <span class="coin coin-${Number(row.coin_tone) || 0}"><b>${esc(row.coin_label)}</b><i></i></span>
       <span class="token-copy"><span class="ticker-line"><strong>${esc(row.ticker)}</strong><small>${esc(ago(row.event_at))}</small></span><span class="company-name">${esc(row.company || row.ticker)}</span><span class="catalyst ${row.source === 'gap' ? 'gap' : ''}">${esc(row.pulse_label)}${events}</span></span>
-      <span class="quote"><strong>${esc(money(row.price))}</strong><small class="${changeClass}">${esc(percent(row.change_pct))}</small></span>
+      <span class="quote"><strong>${esc(money(row.price))}</strong><svg class="mini-chart" data-ticker="${esc(row.ticker)}" viewBox="0 0 64 18" preserveAspectRatio="none" aria-hidden="true"></svg><small class="${changeClass}">${esc(percent(row.change_pct))}</small></span>
     </a>`;
   }).join('') || `<div class="empty-list"><span>⌁</span><strong>Pulse is quiet</strong><p>The SEC listener is still running.</p></div>`;
   document.getElementById('liveCount').textContent = pulse.stats?.live ?? rows.length;
   document.getElementById('gapCount').textContent = pulse.stats?.unexplained ?? 0;
   document.getElementById('filingCount').textContent = pulse.stats?.filings ?? 0;
   document.getElementById('updatedAt').textContent = pulse.updated_at ? `updated ${ago(pulse.updated_at)} ago` : 'listening…';
+  observeMiniCharts();
 }
 render();
 setInterval(async () => {
-  try { const response = await fetch('/api/pulse'); if (response.ok) { pulse = await response.json(); render(); } } catch (_) {}
+  try {
+    const response = await fetch('/api/pulse');
+    if (response.ok) {
+      const nextPulse = await response.json();
+      const previous = new Map((pulse.rows || []).map(row => [row.ticker, rowFingerprint(row)]));
+      const changed = new Set((nextPulse.rows || []).filter(row => previous.get(row.ticker) !== rowFingerprint(row)).map(row => row.ticker));
+      pulse = nextPulse;
+      render(changed);
+    }
+  } catch (_) {}
 }, 15000);
 </script>
 {% endblock %}
