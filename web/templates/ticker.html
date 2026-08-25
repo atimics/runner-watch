@@ -40,6 +40,28 @@
     <svg id="priceChart" role="img" aria-label="Price chart" viewBox="0 0 600 210" preserveAspectRatio="none"></svg>
     <div class="chart-range"><span class="range-buttons"><button class="active" type="button" data-range="1D">1D</button><button type="button" data-range="5D">5D</button></span><span id="chartLow"></span><span id="chartHigh"></span></div>
   </section>
+  <div class="chart-event-strip" id="chartEvents" aria-label="Detected chart events" hidden></div>
+
+  {% if detail.kol_calls %}
+  <section class="why-section kol-detail-section">
+    <div class="section-heading"><div><span>IMMUTABLE PAPER CALLS</span><h2>AI KOL</h2></div><b>{{ detail.kol_calls|length }} receipt{{ '' if detail.kol_calls|length == 1 else 's' }}</b></div>
+    <div class="kol-call-list">
+      {% for call in detail.kol_calls %}
+      <article class="kol-call-card">
+        <div class="kol-call-head"><span class="kol-avatar">{{ call.emoji }}</span><span><strong>{{ call.display_name }}</strong><small>{{ call.contract_version }} · {{ call.model_id }}</small></span><b class="kol-status kol-status-{{ call.status }}">{{ call.status|replace('_', ' ') }}</b></div>
+        <div class="kol-call-numbers">
+          <span><small>Entry</small><b>${{ '%.4f'|format(call.entry_price) if call.entry_price < 1 else ('%.2f'|format(call.entry_price)) }}</b></span>
+          <span><small>{{ 'Current' if call.is_active else 'Exit' }}</small><b>${{ '%.4f'|format(call.last_price) if call.last_price < 1 else ('%.2f'|format(call.last_price)) }}</b></span>
+          <span><small>Paper PnL</small><b class="{{ 'up' if call.display_return_pct >= 0 else 'down' }}">{{ '+' if call.display_return_pct >= 0 else '' }}{{ '%.1f'|format(call.display_return_pct) }}%</b></span>
+          <span><small>Confidence</small><b>{{ '%.0f'|format(call.confidence * 100) }}%</b></span>
+        </div>
+        <p>{{ call.close_reason or ('Tracking until +%.0f%%, −%.0f%%, the %d-minute timeout, or an honest abandon.'|format(call.upper_barrier_pct, call.lower_barrier_pct, call.horizon_minutes)) }}{% if call.benchmark_label %} Fixed result: <strong>{{ call.benchmark_label|upper }}</strong>.{% endif %}</p>
+      </article>
+      {% endfor %}
+    </div>
+    <p class="kol-paper-note">$1,000 paper calls. PnL includes a conservative round-trip cost. Not a trade recommendation.</p>
+  </section>
+  {% endif %}
 
   <section class="why-section">
     <div class="section-heading"><div><h2>Why moving</h2></div>{% if detail.current.source == 'market' and detail.current.score %}<b>{{ '%.0f'|format(detail.current.score) }} score</b>{% elif detail.current.source == 'sec' %}<b>new filing</b>{% endif %}</div>
@@ -104,26 +126,67 @@ const ticker = {{ detail.ticker|tojson }};
 const company = {{ detail.company|tojson }};
 const chart = document.getElementById('priceChart');
 const status = document.getElementById('chartStatus');
+const chartEvents = document.getElementById('chartEvents');
 const commissionButton = document.getElementById('commissionButton');
 const commissionStatus = document.getElementById('commissionStatus');
 let allPoints=[];
+let chartAnnotations=[];
 const initialPressure={{ detail.trade_pressure|tojson }};
+const annotationColors={pulse:'#f5c66b',positive:'#57e389',risk:'#ff6b7a',media:'#75a7ff',neutral:'#a3ada8'};
+function visibleAnnotations(points){
+  if(!points.length)return [];
+  const start=new Date(points[0].time).getTime();
+  const end=new Date(points.at(-1).time).getTime();
+  if(!Number.isFinite(start)||!Number.isFinite(end))return [];
+  return chartAnnotations.filter(item=>{const stamp=new Date(item.time).getTime();return Number.isFinite(stamp)&&stamp>=start&&stamp<=end+2*60*60*1000;});
+}
+function renderChartEvents(items){
+  chartEvents.replaceChildren();
+  chartEvents.hidden=!items.length;
+  items.forEach(item=>{
+    const safeTone=Object.hasOwn(annotationColors,item.tone)?item.tone:'neutral';
+    const hasLink=typeof item.url==='string'&&/^https?:\/\//i.test(item.url);
+    const chip=document.createElement(hasLink?'a':'span');
+    chip.className='chart-event-chip tone-'+safeTone;
+    if(hasLink){chip.href=item.url;chip.target='_blank';chip.rel='noopener';}
+    const dot=document.createElement('i');
+    const copy=document.createElement('span');
+    const label=document.createElement('b');
+    const time=document.createElement('small');
+    label.textContent=item.label||item.category||'Detected event';
+    const stamp=new Date(item.time);
+    time.textContent=Number.isFinite(stamp.getTime())?stamp.toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+    copy.append(label,time);chip.append(dot,copy);chartEvents.append(chip);
+  });
+}
 function draw(points) {
-  if (!points.length) { status.textContent = 'Chart not available'; status.classList.add('visible'); return; }
-  const values = points.map(point => Number(point.price)).filter(Number.isFinite);
-  if (values.length < 2) { status.textContent = 'Chart not available'; status.classList.add('visible'); return; }
+  if (!points.length) { status.textContent = 'Chart not available'; status.classList.add('visible'); renderChartEvents([]); return; }
+  const clean=points.map(point=>({time:point.time,price:Number(point.price)})).filter(point=>Number.isFinite(point.price));
+  const values = clean.map(point=>point.price);
+  if (values.length < 2) { status.textContent = 'Chart not available'; status.classList.add('visible'); renderChartEvents([]); return; }
   const low = Math.min(...values), high = Math.max(...values), spread = Math.max(high - low, high * .002, .001);
   const coords = values.map((value, index) => [index / (values.length - 1) * 600, 190 - ((value - low) / spread * 165)]);
   const line = coords.map(([x, y], index) => `${index ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
   const rising = values.at(-1) >= values[0]; const color = rising ? '#57e389' : '#ff6b7a';
   const area = `${line} L600 210 L0 210 Z`;
-  chart.innerHTML = `<defs><linearGradient id="chartFade" x1="0" y1="0" x2="0" y2="1"><stop stop-color="${color}" stop-opacity=".22"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${area}" fill="url(#chartFade)"/><path d="${line}" fill="none" stroke="${color}" stroke-width="4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>`;
+  const annotations=visibleAnnotations(clean);
+  const markers=annotations.map((item,annotationIndex)=>{
+    const eventTime=new Date(item.time).getTime();let pointIndex=0;
+    clean.forEach((point,index)=>{if(Math.abs(new Date(point.time).getTime()-eventTime)<Math.abs(new Date(clean[pointIndex].time).getTime()-eventTime))pointIndex=index;});
+    const [x,y]=coords[pointIndex];const markerColor=annotationColors[item.tone]||annotationColors.neutral;
+    if(item.type==='pulse_entry')return `<line x1="${x.toFixed(1)}" y1="8" x2="${x.toFixed(1)}" y2="190" stroke="${markerColor}" stroke-width="1.5" stroke-dasharray="4 4" opacity=".72" vector-effect="non-scaling-stroke"/><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6" fill="#090b0b" stroke="${markerColor}" stroke-width="3" vector-effect="non-scaling-stroke"/>`;
+    const markerY=Math.max(9,y-10-(annotationIndex%3)*8);const size=5;
+    return `<line x1="${x.toFixed(1)}" y1="${markerY.toFixed(1)}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="${markerColor}" stroke-width="1" opacity=".65" vector-effect="non-scaling-stroke"/><path d="M${x.toFixed(1)} ${(markerY-size).toFixed(1)} L${(x+size).toFixed(1)} ${markerY.toFixed(1)} L${x.toFixed(1)} ${(markerY+size).toFixed(1)} L${(x-size).toFixed(1)} ${markerY.toFixed(1)} Z" fill="${markerColor}" stroke="#090b0b" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+  }).join('');
+  chart.innerHTML = `<defs><linearGradient id="chartFade" x1="0" y1="0" x2="0" y2="1"><stop stop-color="${color}" stop-opacity=".22"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${area}" fill="url(#chartFade)"/><path d="${line}" fill="none" stroke="${color}" stroke-width="4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>${markers}`;
   status.hidden = true;
+  renderChartEvents(annotations);
+  chart.setAttribute('aria-label',`Price chart with ${annotations.length} detected event${annotations.length===1?'':'s'}`);
   document.getElementById('chartLow').textContent = '$' + low.toFixed(low < 1 ? 4 : 2);
   document.getElementById('chartHigh').textContent = '$' + high.toFixed(high < 1 ? 4 : 2);
 }
 function selectRange(range){document.querySelectorAll('[data-range]').forEach(button=>button.classList.toggle('active',button.dataset.range===range));if(range==='5D'){draw(allPoints);return;}const latest=allPoints.length?new Date(allPoints.at(-1).time).getTime():0;const points=allPoints.filter(point=>new Date(point.time).getTime()>=latest-24*60*60*1000);draw(points.length>1?points:allPoints.slice(-30));}
-const chartRequest=fetch(`/api/t/${encodeURIComponent(ticker)}/chart`).then(response=>response.json()).then(data=>{allPoints=data.points||[];selectRange('1D');}).catch(()=>draw([]));
+const chartRequest=fetch(`/api/t/${encodeURIComponent(ticker)}/chart`).then(response=>response.json()).then(data=>{allPoints=data.points||[];chartAnnotations=data.annotations||[];selectRange('1D');}).catch(()=>draw([]));
 document.querySelectorAll('[data-range]').forEach(button=>button.addEventListener('click',()=>selectRange(button.dataset.range)));
 document.getElementById('shareButton').addEventListener('click', async () => {
   const share = {title: `${ticker} intelligence`, text: `${ticker} · ${company} on Runner Watch`, url: location.href};

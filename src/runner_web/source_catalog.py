@@ -8,6 +8,10 @@ def _enabled(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _enabled_by_default(name: str) -> bool:
+    return os.getenv(name, "true").strip().lower() not in {"0", "false", "no", "off"}
+
+
 @dataclass(frozen=True, slots=True)
 class SourcePolicy:
     """Storage, display, and freshness rules for one outside feed."""
@@ -130,6 +134,38 @@ DEFAULT_SOURCE_POLICIES = (
         review_status="review_required",
     ),
     SourcePolicy(
+        source="gdelt",
+        feed="news_search",
+        title="GDELT company news search",
+        owner="GDELT Project",
+        terms_url="https://www.gdeltproject.org/about.html",
+        credential_env=None,
+        expected_cadence_seconds=900,
+        stale_after_seconds=2_700,
+        schedule="always",
+        storage_policy="normalized_metadata_only",
+        display_policy="source_link_with_attribution",
+        attribution="GDELT",
+        review_status="poc_only",
+        enabled=_enabled_by_default("DISCOVERY_SOURCES_ENABLED"),
+    ),
+    SourcePolicy(
+        source="bluesky",
+        feed="social_search",
+        title="Bluesky public cashtag search",
+        owner="Bluesky",
+        terms_url="https://bsky.social/about/support/tos",
+        credential_env=None,
+        expected_cadence_seconds=900,
+        stale_after_seconds=2_700,
+        schedule="always",
+        storage_policy="normalized_aggregates_only",
+        display_policy="source_link_with_attribution",
+        attribution="Bluesky",
+        review_status="poc_only",
+        enabled=_enabled_by_default("DISCOVERY_SOURCES_ENABLED"),
+    ),
+    SourcePolicy(
         source="nasdaq_trader",
         feed="trade_halts",
         title="Nasdaq Trader trading halts",
@@ -143,9 +179,9 @@ DEFAULT_SOURCE_POLICIES = (
         stale_after_seconds=180,
         schedule="us_extended_weekdays",
         storage_policy="archive_raw_and_normalized",
-        display_policy="shadow_only",
+        display_policy="source_link_with_attribution",
         attribution="Nasdaq Trader",
-        review_status="review_required",
+        review_status="poc_only",
         enabled=_enabled("NASDAQ_TRADE_HALTS_ENABLED"),
     ),
 )

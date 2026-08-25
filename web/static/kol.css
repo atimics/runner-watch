@@ -1,0 +1,111 @@
+.kol-score-strip {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  padding: 9px 20px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(90deg, rgba(245, 198, 107, .08), transparent);
+}
+
+.kol-score-strip > span:nth-child(2) { min-width: 0; }
+.kol-score-strip strong, .kol-score-strip small { display: block; }
+.kol-score-strip strong { font-size: 11px; }
+.kol-score-strip small { margin-top: 2px; color: var(--muted); font-size: 9px; }
+.kol-score-strip > b { font-size: 12px; }
+
+.kol-avatar {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(245, 198, 107, .3);
+  border-radius: 50%;
+  background: rgba(245, 198, 107, .1);
+  font-size: 17px;
+}
+
+.kol-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 4px;
+  border: 1px solid rgba(245, 198, 107, .25);
+  border-radius: 7px;
+  background: rgba(245, 198, 107, .07);
+  font-size: 8px !important;
+  font-weight: 800;
+  line-height: 15px;
+}
+
+.kol-tag b { font-size: 10px; }
+.kol-detail-section { padding-bottom: 15px; border-top: 1px solid var(--line); }
+.kol-call-list { display: grid; gap: 8px; }
+
+.kol-call-card {
+  padding: 12px;
+  border: 1px solid #30372f;
+  border-radius: 11px;
+  background: linear-gradient(145deg, rgba(245, 198, 107, .06), var(--panel));
+}
+
+.kol-call-head {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+}
+
+.kol-call-head strong, .kol-call-head small { display: block; }
+.kol-call-head strong { font-size: 12px; }
+.kol-call-head small {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kol-status {
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+.kol-status-active, .kol-status-won {
+  border-color: rgba(87, 227, 137, .25);
+  color: var(--green);
+}
+
+.kol-status-stopped {
+  border-color: rgba(255, 107, 122, .25);
+  color: var(--red);
+}
+
+.kol-call-numbers {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+  margin-top: 11px;
+}
+
+.kol-call-numbers span { min-width: 0; }
+.kol-call-numbers small, .kol-call-numbers b { display: block; }
+.kol-call-numbers small {
+  color: var(--muted);
+  font-size: 7px;
+  text-transform: uppercase;
+}
+.kol-call-numbers b { margin-top: 2px; font-size: 10px; }
+.kol-call-card p, .kol-paper-note {
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.4;
+}
+.kol-paper-note { text-align: center; }

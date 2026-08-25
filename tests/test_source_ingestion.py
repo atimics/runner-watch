@@ -217,3 +217,44 @@ def test_source_status_uses_registered_freshness_rules(
     assert source["active_now"] is True
     assert source["age_seconds"] == 61
     assert source["stale_at"] == (finished_at + timedelta(seconds=60)).isoformat()
+
+
+def test_source_status_uses_normalized_company_map_freshness(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "company-map-status.db")
+    init_db()
+    refreshed_at = datetime(2026, 8, 24, 20, tzinfo=UTC)
+    with connection() as database:
+        database.execute(
+            "INSERT INTO sec_companies(cik,ticker,name,exchange,refreshed_at) VALUES(?,?,?,?,?)",
+            (1, "MAP", "Mapped Company", "NASDAQ", refreshed_at.isoformat()),
+        )
+
+    status = ingestion_status(as_of=refreshed_at + timedelta(hours=1))
+    source = next(
+        row
+        for row in status["sources"]
+        if row["source"] == "sec" and row["feed"] == "company_map"
+    )
+
+    assert source["health"] == "healthy"
+    assert source["normalized_items"] == 1
+    assert source["last_success_at"] == refreshed_at.isoformat()
+
+
+def test_source_status_treats_unused_event_feeds_as_idle(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "event-status.db")
+    init_db()
+
+    status = ingestion_status(as_of=datetime(2026, 8, 24, 20, tzinfo=UTC))
+    source = next(
+        row
+        for row in status["sources"]
+        if row["source"] == "sec" and row["feed"] == "document"
+    )
+
+    assert source["health"] == "idle"
+    assert source["active_now"] is False

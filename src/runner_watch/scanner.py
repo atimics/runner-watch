@@ -362,7 +362,7 @@ class RunnerScanner:
             warnings.append("Sample results use fake data and are only for testing the screen.")
         else:
             warnings.append(
-                "Yahoo data can be delayed or incomplete. Check a live broker before acting."
+                "Market data can be delayed or incomplete. Check a live broker before acting."
             )
         finished = datetime.now(UTC)
         return ScanResult(

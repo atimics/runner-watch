@@ -49,6 +49,29 @@ flowchart LR
 The Nasdaq worker is enabled only when `NASDAQ_TRADE_HALTS_ENABLED=true`. It polls once per minute
 from 4:00 a.m. to 8:00 p.m. Eastern on weekdays. Halt data does not change the score yet.
 
+## Product routing during the POC
+
+- **Pulse** starts with the newest saved Yahoo scanner run. Its score shows separate market, SEC,
+  news-search, public-social, community-heart, and safety components.
+- **Radar** automatically publishes recent SEC filings, strongly matched GDELT news, meaningful
+  Bluesky cashtag spikes, and normalized market events. It groups repeated events by ticker, keeps
+  the newest state, and links back to the original source.
+- **Alpha** is the social view. Active community hearts determine the order; market and event data
+  provide context but do not change the heart ranking. GDELT coverage and Bluesky mention counts
+  are shown as outside context, separate from community hearts.
+
+The discovery worker rotates across 30 symbols: 10 current Pulse leaders, up to 10 Alpha heart
+leaders, then the next Pulse names as a flex group. One symbol is searched every 30 seconds, so the
+full set is normally refreshed about every 15 minutes. GDELT and Bluesky need no API key. Only
+article metadata and aggregate public cashtag counts are stored; article bodies and social post
+text are not stored. A weak social result is ignored unless it has at least three matching posts or
+ten weighted engagements.
+
+OpenBB is a provider integration framework rather than a data source. The POC keeps the direct
+Yahoo collector because OpenBB's free Yahoo provider uses the same underlying source. A later
+OpenBB adapter can feed its actual provider name through the existing source registry and shared
+normalization layer without changing these three product routes.
+
 ## Planned source routes
 
 | Phase | Source | Normalized destination | Derived evidence | Promotion rule |

@@ -6,7 +6,7 @@ import io
 import json
 from pathlib import Path
 
-from runner_watch.market_data import YahooMarketData
+from runner_watch.market_data import routed_market_data
 from runner_watch.models import ScanResult, ScanSettings
 from runner_watch.sample_data import SAMPLE_SYMBOLS, SampleMarketData
 from runner_watch.scanner import RunnerScanner
@@ -94,7 +94,7 @@ def main() -> int:
         provider = SampleMarketData()
         symbols = SAMPLE_SYMBOLS
     else:
-        provider = YahooMarketData()
+        provider = routed_market_data()
         if args.universe == "starter":
             symbols = [item.symbol for item in starter_universe()]
         elif args.universe == "broad":

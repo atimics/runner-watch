@@ -45,6 +45,14 @@ attribution rules. Use `/api/ingestion/status` to see healthy, stale, idle, pend
 disabled feeds. The tables do not replace the app's normal read tables; they provide one audit path
 behind them.
 
+Market providers now sit behind canonical typed contracts and an explicit provider registry. The
+scanner still receives its normal data frames, but each routed result carries provider, as-of time,
+collection time, warnings, quality notes, and fallback history. Partial responses are never silently
+mixed across providers. Live chart reads share topic refreshes, keep a bounded last-known-good
+value, and expose source and freshness metadata through the chart APIs. Database changes are
+tracked with numbered forward migrations. See
+[the provider and live-data runtime](docs/provider-runtime.md).
+
 The Nasdaq Trader halt collector is included in shadow mode. It archives the RSS response and
 stores versioned halt state once a minute during the extended US session. It is off by default while
 the feed terms are reviewed. Set `NASDAQ_TRADE_HALTS_ENABLED=true` to opt in. It does not change the
@@ -118,6 +126,23 @@ uv run stonks-ranker export-crl data/stonks-crl-60m.csv --horizon 60m
 
 The status API is available at `/api/ranker/status`. Raw source storage will grow over time, so a
 long-running deployment should eventually move archived bars and documents to object storage.
+
+## AI KOL calls
+
+The calibrated ranker can now publish selective, permanent paper calls through the **Flash ⚡**
+AI KOL. A call freezes its ticker, model ID, model confidence, expected return, contract, time, and
+entry price. Repeated scans cannot reset the entry. Pulse shows active lightning tags with net paper
+PnL, and ticker pages show the complete call receipt.
+
+Flash uses the same `+8% before -4% within 60 minutes` contract as the shadow ranker. It can abandon
+a stock only when a later frozen prediction crosses its fixed abandon rule. An abandoned call keeps
+receiving the original 60-minute benchmark, so a model cannot hide a bad call by leaving early.
+Calls use a fixed $1,000 paper amount and subtract a conservative 50 basis point round-trip cost.
+They are research results, not trade recommendations.
+
+The tables support several KOL identities and several model IDs on the same scanner opportunity.
+Human hearts remain separate from AI reactions. Scorecards are available at `/api/kols`, and ticker
+call history is available at `/api/t/{ticker}/kol-calls`.
 
 ## Start the dashboard
 

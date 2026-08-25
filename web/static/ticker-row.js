@@ -1,5 +1,6 @@
 (() => {
   const chartCache = new Map();
+  const annotationCache = new Map();
 
   function esc(value) {
     const node = document.createElement('span');
@@ -38,6 +39,9 @@
 
   function status(row) {
     if (row.has_update) return ['NEW', 'update'];
+    if (row.section === 'scored' && row.custom_rank) {
+      return [`#${Number(row.custom_rank)}`, 'score'];
+    }
     const sessions = {regular: 'REG', pre: 'PRE', after: 'AH', overnight: 'OVN'};
     if (row.session && sessions[row.session]) return [sessions[row.session], 'session'];
     if (row.source === 'sec') return ['SEC', 'source'];
@@ -46,6 +50,9 @@
   }
 
   function fingerprint(row) {
+    const calls = Array.isArray(row.kol_calls)
+      ? row.kol_calls.map(call => `${call.id}:${call.status}:${call.display_return_pct}`).join(',')
+      : '';
     return [
       row.price,
       row.change_pct,
@@ -54,6 +61,7 @@
       row.pulse_label,
       row.event_at,
       row.session,
+      calls,
     ].join('|');
   }
 
@@ -75,11 +83,19 @@
       : '';
     const catalystTone = row.sentiment === 'risk' ? ' risk' : row.sentiment === 'gap' ? ' gap' : '';
     const updated = options.updated ?? row.has_update;
-    const label = `${row.ticker}, ${company}, ${money(row.price)}, ${percent(row.change_pct)}`;
+    const kolCalls = Array.isArray(row.kol_calls) ? row.kol_calls.slice(0, 3) : [];
+    const kolTags = kolCalls.map(call => {
+      const value = number(call.display_return_pct);
+      const tone = value === null ? 'flat' : value >= 0 ? 'up' : 'down';
+      const pnl = value === null ? '' : `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
+      const title = `${call.display_name || 'AI KOL'} · ${call.status} · ${pnl || 'mark pending'}`;
+      return `<span class="kol-tag ${tone}" title="${esc(title)}"><b>${esc(call.emoji || '⚡')}</b>${esc(pnl)}</span>`;
+    }).join('');
+    const label = `${row.ticker}, ${company}, ${money(row.price)}, ${percent(row.change_pct)}${kolCalls.length ? ', AI KOL call active' : ''}`;
     return `<a class="token-row ticker-row${updated ? ' is-updated' : ''}" href="/t/${encodeURIComponent(row.ticker)}" data-ticker-row="${esc(row.ticker)}" aria-label="${esc(label)}">
       <span class="coin coin-${Number(row.coin_tone) || 0}"><b>${esc(row.coin_label || String(row.ticker).slice(0, 2))}</b><i></i></span>
       <span class="token-copy">
-        <span class="ticker-line"><strong>${esc(row.ticker)}</strong>${badge}<small class="ticker-age">${esc(age)}</small></span>
+        <span class="ticker-line"><strong>${esc(row.ticker)}</strong>${kolTags}${badge}<small class="ticker-age">${esc(age)}</small></span>
         <span class="company-name">${esc(company)}</span>
         <span class="catalyst${catalystTone}">${esc(row.pulse_label || 'Watching for changes')}${events}${evidence}</span>
       </span>
@@ -91,12 +107,16 @@
     </a>`;
   }
 
-  function drawMiniChart(svg, points) {
-    const values = points.map(point => number(point.price)).filter(value => value !== null).slice(-36);
-    if (values.length < 2) {
+  function drawMiniChart(svg, points, annotations = []) {
+    const rows = points
+      .map(point => ({time: new Date(point.time).getTime(), price: number(point.price)}))
+      .filter(point => point.price !== null)
+      .slice(-36);
+    if (rows.length < 2) {
       svg.classList.add('unavailable');
       return;
     }
+    const values = rows.map(point => point.price);
     const low = Math.min(...values);
     const high = Math.max(...values);
     const spread = Math.max(high - low, Math.abs(high) * .002, .001);
@@ -106,9 +126,21 @@
       return `${index ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`;
     }).join(' ');
     const rising = values.at(-1) >= values[0];
+    const entry = annotations.filter(item => item.type === 'pulse_entry').at(-1);
+    const entryTime = entry ? new Date(entry.time).getTime() : NaN;
+    let marker = '';
+    if (Number.isFinite(entryTime) && Number.isFinite(rows[0].time) && entryTime >= rows[0].time) {
+      let markerIndex = 0;
+      rows.forEach((point, index) => {
+        if (Math.abs(point.time - entryTime) < Math.abs(rows[markerIndex].time - entryTime)) markerIndex = index;
+      });
+      const x = 1 + markerIndex / (rows.length - 1) * 62;
+      const y = 16 - (values[markerIndex] - low) / spread * 14;
+      marker = `<line class="pulse-entry-line" x1="${x.toFixed(1)}" y1="1" x2="${x.toFixed(1)}" y2="17"/><circle class="pulse-entry-dot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.4"/>`;
+    }
     svg.classList.toggle('rising', rising);
     svg.classList.toggle('falling', !rising);
-    svg.innerHTML = `<path d="${path}" fill="none" stroke="currentColor" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>`;
+    svg.innerHTML = `<path d="${path}" fill="none" stroke="currentColor" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>${marker}`;
     svg.classList.remove('unavailable');
     svg.classList.add('loaded');
   }
@@ -116,7 +148,11 @@
   function paintCharts(root = document) {
     root.querySelectorAll('.mini-chart').forEach(svg => {
       if (chartCache.has(svg.dataset.ticker)) {
-        drawMiniChart(svg, chartCache.get(svg.dataset.ticker));
+        drawMiniChart(
+          svg,
+          chartCache.get(svg.dataset.ticker),
+          annotationCache.get(svg.dataset.ticker) || [],
+        );
       }
     });
   }
@@ -127,6 +163,7 @@
       if (!response.ok) return;
       const data = await response.json();
       Object.entries(data.charts || {}).forEach(([ticker, points]) => chartCache.set(ticker, points));
+      Object.entries(data.annotations || {}).forEach(([ticker, annotations]) => annotationCache.set(ticker, annotations));
       paintCharts();
     } catch (_) {}
   }

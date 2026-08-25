@@ -15,6 +15,27 @@
 }
 .range-buttons button.active { background: #202824; color: var(--green); }
 
+.chart-event-strip {
+  display: flex; gap: 6px; margin: -6px 20px 14px; padding: 2px 0 5px;
+  overflow-x: auto; scrollbar-width: none;
+}
+.chart-event-strip::-webkit-scrollbar { display: none; }
+.chart-event-strip[hidden] { display: none; }
+.chart-event-chip {
+  flex: 0 0 auto; max-width: 250px; display: flex; align-items: center; gap: 7px;
+  padding: 6px 8px; border: 1px solid #28312d; border-radius: 8px;
+  background: #101513; color: var(--soft);
+}
+.chart-event-chip > i { width: 7px; height: 7px; flex: 0 0 auto; transform: rotate(45deg); background: #a3ada8; }
+.chart-event-chip > span { min-width: 0; }
+.chart-event-chip b, .chart-event-chip small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chart-event-chip b { font-size: 8px; font-weight: 750; }
+.chart-event-chip small { margin-top: 2px; color: var(--muted); font-size: 7px; }
+.chart-event-chip.tone-pulse > i { border-radius: 50%; transform: none; background: var(--amber); }
+.chart-event-chip.tone-positive > i { background: var(--green); }
+.chart-event-chip.tone-risk > i { background: var(--red); }
+.chart-event-chip.tone-media > i { background: #75a7ff; }
+
 .market-metrics {
   display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line);
   border-radius: 9px; background: var(--panel); overflow: hidden;
@@ -74,4 +95,5 @@
 
 @media (max-width: 360px) {
   .tab-bar { padding-left: 22px; padding-right: 22px; }
+  .chart-event-strip { margin-left: 15px; margin-right: 15px; }
 }

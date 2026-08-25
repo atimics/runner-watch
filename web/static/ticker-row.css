@@ -32,6 +32,7 @@
   letter-spacing: .04em;
 }
 .ticker-badge-update { color: var(--green) !important; border-color: rgba(87, 227, 137, .35); }
+.ticker-badge-score { color: var(--green) !important; border-color: rgba(87, 227, 139, .28); }
 .ticker-badge-source { color: var(--amber) !important; border-color: rgba(245, 198, 107, .28); }
 .ticker-badge-quiet { color: var(--muted) !important; }
 
@@ -59,6 +60,19 @@
   transition: opacity .35s ease, filter .35s ease;
 }
 .mini-chart .chart-placeholder { fill: none; stroke: currentColor; stroke-width: 1; opacity: .5; }
+.mini-chart .pulse-entry-line {
+  stroke: var(--amber);
+  stroke-width: .7;
+  stroke-dasharray: 1.5 1.5;
+  opacity: .72;
+  vector-effect: non-scaling-stroke;
+}
+.mini-chart .pulse-entry-dot {
+  fill: var(--amber);
+  stroke: #090b0b;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
 .mini-chart.loaded { opacity: .84; }
 .mini-chart.rising { color: var(--green); }
 .mini-chart.falling { color: var(--red); }

@@ -201,7 +201,7 @@ def _market_projection(
 
     frames = fetch.payload
     if not isinstance(frames, dict):
-        raise TypeError("Yahoo market payload must be a ticker-to-frame mapping")
+        raise TypeError("Market bar payload must be a ticker-to-frame mapping")
     interval = str(fetch.metadata.get("interval") or "unknown")
     rows: list[tuple[Any, ...]] = []
     digest = hashlib.sha256()
@@ -220,7 +220,7 @@ def _market_projection(
         for index in frame.index:
             bar_time = pd.Timestamp(index).isoformat()
             values = (
-                "yahoo",
+                fetch.source,
                 symbol,
                 interval,
                 bar_time,
@@ -265,7 +265,7 @@ def _market_projection(
             INSERT INTO ingestion_items(run_id,item_key,status,payload_json,error)
             VALUES(?,?,?,?,?)
             """,
-            (run_id, symbol, "missing", "{}", "Yahoo returned no usable frame"),
+            (run_id, symbol, "missing", "{}", f"{fetch.source} returned no usable frame"),
         )
     if rows:
         database.executemany(
@@ -676,7 +676,7 @@ def record_source_batch(batch: SourceBatch) -> str:
                 if isinstance(fetch.payload, bytes):
                     content_hash = hashlib.sha256(fetch.payload).hexdigest()
                     _archive_document(database, fetch, content_hash, collected_at)
-                elif fetch.source == "yahoo" and fetch.feed == "market_bars":
+                elif fetch.feed == "market_bars":
                     content_hash = _market_projection(database, run_id, fetch, collected_at)
                 elif fetch.source == "yahoo" and fetch.feed == "universe":
                     content_hash = _universe_projection(database, run_id, fetch)
@@ -802,7 +802,12 @@ def _source_health(
     if not policy["enabled"]:
         health = "disabled"
     elif last_success is None:
-        health = "error" if last_error else "pending"
+        if last_error:
+            health = "error"
+        elif policy["schedule"] == "event":
+            health = "idle"
+        else:
+            health = "pending"
     elif last_error and last_error > last_success:
         health = "error"
     elif stale_seconds is None:
@@ -858,6 +863,9 @@ def ingestion_status(as_of: datetime | None = None) -> dict[str, Any]:
             FROM source_registry ORDER BY source,feed
             """
         ).fetchall()
+        company_map = database.execute(
+            "SELECT COUNT(*) AS items,MAX(refreshed_at) AS refreshed_at FROM sec_companies"
+        ).fetchone()
     runs = {(row["source"], row["feed"]): dict(row) for row in run_rows}
     sources: list[dict[str, Any]] = []
     for row in registry_rows:
@@ -875,7 +883,16 @@ def ingestion_status(as_of: datetime | None = None) -> dict[str, Any]:
                 "last_error_at": None,
             }
         )
-        source.update(_source_health(source, run, checked_at))
+        if (
+            source["source"] == "sec"
+            and source["feed"] == "company_map"
+            and company_map
+            and company_map["items"]
+        ):
+            source["normalized_items"] = int(company_map["items"])
+            source["normalized_at"] = company_map["refreshed_at"]
+            source["last_success_at"] = source["last_success_at"] or company_map["refreshed_at"]
+        source.update(_source_health(source, source, checked_at))
         sources.append(source)
     source_by_key = {(row["source"], row["feed"]): row for row in sources}
     feeds: list[dict[str, Any]] = []

@@ -1,17 +1,24 @@
-from datetime import UTC, datetime
+import io
+import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from pytest import MonkeyPatch
 from starlette.requests import Request
 
+from runner_watch.ingestion import MarketEvent, SourceBatch, SourceFetch
 from runner_web import db
 from runner_web import main as web_main
 from runner_web.db import connection, init_db
+from runner_web.ingestion import record_source_batch
 from runner_web.main import (
     APP_ORIGIN,
+    _chart_annotations,
     _commission_research,
     _evidence_gate,
     _market_trade_pressure,
+    _pulse_entry_markers,
     _pulse_label,
     _record_activity,
     alpha_board_data,
@@ -88,51 +95,181 @@ def insert_filing(
         )
 
 
-def test_pulse_only_lists_penny_stocks_and_groups_events(
-    tmp_path: Path, monkeypatch: MonkeyPatch
+def insert_scan_run(run_id: str, captured_at: str, candidate_rows: int) -> None:
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO scan_runs(
+                id,mode,label,feature_schema_version,requested_symbols,liquid_symbols,
+                scanned_symbols,candidate_rows,failed_symbols_json,warnings_json,
+                started_at,finished_at,captured_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                run_id,
+                "penny",
+                "Penny stocks",
+                "test",
+                candidate_rows,
+                candidate_rows,
+                candidate_rows,
+                candidate_rows,
+                "[]",
+                "[]",
+                captured_at,
+                captured_at,
+                captured_at,
+            ),
+        )
+
+
+def insert_scored_snapshot(
+    snapshot_id: str,
+    run_id: str,
+    ticker: str,
+    score: float,
+    rank: int,
+    captured_at: str,
+    *,
+    price: float = 1.25,
 ) -> None:
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "mobile.db")
-    init_db()
-    filed_at = datetime.now(UTC).isoformat()
-    insert_filing("penny-one", "PEN", 2.25, 80, filed_at, "P")
-    insert_filing("penny-two", "PEN", 2.25, 70, filed_at, "P")
-    insert_filing("big-one", "BIG", 42.0, 99, filed_at, "P")
     with connection() as database:
         database.execute(
             """
             INSERT INTO scan_snapshots(
                 id,ticker,score,stage,session,price,change_pct,momentum_5m_pct,
                 momentum_15m_pct,relative_volume,recent_relative_volume,breakout_pct,
-                dollar_volume,quote_time,signals_json,risks_json,captured_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                dollar_volume,quote_time,signals_json,risks_json,captured_at,
+                scan_run_id,baseline_rank
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
-                "big-snapshot",
-                "HUGE",
-                100,
+                snapshot_id,
+                ticker,
+                score,
                 "BUILDING",
                 "regular",
-                60.0,
-                12.0,
+                price,
+                8.0,
                 2.0,
-                5.0,
                 4.0,
-                5.0,
-                1.0,
-                2_000_000,
-                filed_at,
+                3.0,
+                4.0,
+                0.8,
+                800_000,
+                captured_at,
+                '["Volume acceleration"]',
                 "[]",
-                "[]",
-                filed_at,
+                captured_at,
+                run_id,
+                rank,
             ),
         )
 
+
+def test_pulse_only_lists_tickers_from_the_latest_scored_scan(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "mobile.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_scan_run("pulse-run", captured_at, 2)
+    insert_scored_snapshot("pulse-one", "pulse-run", "ONE", 42, 1, captured_at)
+    insert_scored_snapshot("pulse-two", "pulse-run", "TWO", 31, 2, captured_at)
+    insert_filing("one-event", "ONE", 1.25, 80, captured_at, "P")
+    insert_filing("event-only", "EVENT", 2.25, 99, captured_at, "P")
+
     result = pulse_data()
 
-    assert [row["ticker"] for row in result["rows"]] == ["PEN"]
-    assert result["rows"][0]["event_count"] == 2
-    assert result["rows"][0]["evidence_gate"]["checks"] == ["Positive SEC catalyst"]
-    assert result["stats"]["filings"] == 2
+    assert [row["ticker"] for row in result["rows"]] == ["ONE", "TWO"]
+    assert result["rows"][0]["custom_score"] == 51.6
+    assert result["rows"][0]["score_components"] == {
+        "market": 42.0,
+        "sec_event": 9.6,
+        "news": 0.0,
+        "social_search": 0.0,
+        "community": 0.0,
+        "safety": -0.0,
+    }
+    assert result["rows"][0]["event_count"] == 1
+    assert result["rows"][0]["section"] == "scored"
+    assert "EVENT" not in {row["ticker"] for row in result["rows"]}
+
+
+def test_news_and_social_flow_into_pulse_radar_and_alpha(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "external-signals.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    captured_at = timestamp.isoformat()
+    insert_scan_run("external-run", captured_at, 1)
+    insert_scored_snapshot("external-snapshot", "external-run", "FLOW", 40, 1, captured_at)
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO ticker_hearts(profile_id,ticker,active,created_at,updated_at)
+            VALUES(?,?,?,?,?)
+            """,
+            ("v:fan", "FLOW", 1, captured_at, captured_at),
+        )
+    fetch = SourceFetch.success(
+        source="test_discovery",
+        feed="mixed",
+        locator="https://example.test/discovery",
+        started_at=timestamp,
+        payload={"ticker": "FLOW"},
+        content_type="application/json",
+    )
+    record_source_batch(
+        SourceBatch(
+            fetch=fetch,
+            market_events=(
+                MarketEvent(
+                    event_id="news",
+                    ticker="FLOW",
+                    event_type="news_article",
+                    event_at=timestamp - timedelta(minutes=2),
+                    published_at=timestamp - timedelta(minutes=2),
+                    status="published",
+                    source_url="https://news.example/flow",
+                    payload={"title": "Flow Systems wins a new contract"},
+                ),
+                MarketEvent(
+                    event_id="social",
+                    ticker="FLOW",
+                    event_type="social_spike",
+                    event_at=timestamp - timedelta(minutes=1),
+                    published_at=timestamp - timedelta(minutes=1),
+                    status="active",
+                    source_url="https://bsky.app/profile/example/post/one",
+                    payload={"mention_count": 4, "engagement_count": 15},
+                ),
+            ),
+        )
+    )
+
+    pulse = pulse_data()["rows"][0]
+    radar = radar_data(visitor_id="reader")[0]
+    alpha = alpha_board_data("v:fan")["rows"][0]
+
+    assert pulse["score_components"] == {
+        "market": 40.0,
+        "sec_event": 0.0,
+        "news": 1.5,
+        "social_search": 4.32,
+        "community": 2.0,
+        "safety": -0.0,
+    }
+    assert pulse["custom_score"] == 47.82
+    assert pulse["external_social_mentions"] == 4
+    assert pulse["news_count"] == 1
+    assert radar["pulse_label"] == "Bluesky · 4 cashtag mentions"
+    assert radar["filing_url"].startswith("https://bsky.app/")
+    assert alpha["heart_count"] == 1
+    assert alpha["external_social_mentions"] == 4
+    assert alpha["news_count"] == 1
+    assert alpha["pulse_label"] == "Bluesky · 4 cashtag mentions"
 
 
 def test_ticker_detail_explains_form_four_purchase(
@@ -163,6 +300,7 @@ def test_pulse_puts_market_runners_before_filing_only_events(
     init_db()
     captured_at = datetime.now(UTC).isoformat()
     insert_filing("filing-only", "FILE", 2.0, 99, captured_at, "P")
+    insert_scan_run("runner-scan", captured_at, 1)
     with connection() as database:
         database.execute(
             "INSERT INTO sec_companies(cik,ticker,name,exchange,refreshed_at) VALUES(?,?,?,?,?)",
@@ -173,23 +311,24 @@ def test_pulse_puts_market_runners_before_filing_only_events(
             INSERT INTO scan_snapshots(
                 id,ticker,score,stage,session,price,change_pct,momentum_5m_pct,
                 momentum_15m_pct,relative_volume,recent_relative_volume,breakout_pct,
-                dollar_volume,quote_time,signals_json,risks_json,captured_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                dollar_volume,quote_time,signals_json,risks_json,captured_at,
+                scan_run_id,baseline_rank
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 "runner", "RUN", 24, "BUILDING", "regular", 1.25, 13.0, 2.0,
                 4.0, 4.2, 5.0, 1.0, 800_000, captured_at,
                 '["Volume acceleration"]', '["Wide spread risk"]', captured_at,
+                "runner-scan", 1,
             ),
         )
 
     result = pulse_data()
 
-    assert [row["ticker"] for row in result["rows"]] == ["RUN", "FILE"]
+    assert [row["ticker"] for row in result["rows"]] == ["RUN"]
     assert result["rows"][0]["source"] == "market"
     assert result["rows"][0]["company"] == "Runner Systems"
     assert result["rows"][0]["evidence_gate"]["state"] == "ready"
-    assert result["rows"][1]["source"] == "sec"
 
 
 def test_trade_pressure_is_an_honest_bar_derived_estimate(
@@ -291,6 +430,7 @@ def test_radar_marks_new_state_seen(tmp_path: Path, monkeypatch: MonkeyPatch) ->
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "radar.db")
     init_db()
     captured_at = datetime.now(UTC).isoformat()
+    insert_filing("radar-event", "RAD", 2.1, 82, captured_at, "P")
     with connection() as database:
         database.execute(
             "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
@@ -318,9 +458,9 @@ def test_radar_marks_new_state_seen(tmp_path: Path, monkeypatch: MonkeyPatch) ->
     second = radar_data("user")
 
     assert first[0]["has_update"] is True
-    assert first[0]["source"] == "market"
+    assert first[0]["source"] == "sec"
     assert first[0]["price"] == 2.1
-    assert first[0]["evidence_gate"]["count"] >= 2
+    assert first[0]["evidence_gate"]["checks"] == ["Positive SEC catalyst"]
     assert second[0]["has_update"] is False
 
 
@@ -422,29 +562,37 @@ def test_alpha_ranks_unique_hearts(tmp_path: Path, monkeypatch: MonkeyPatch) -> 
     assert "Verified evidence summary." in subscriber_html
 
 
-def test_radar_learns_from_activity_without_a_watch(
+def test_radar_orders_events_by_time_not_activity(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "automatic-radar.db")
     init_db()
-    captured_at = datetime.now(UTC).isoformat()
-    insert_filing("activity-one", "ONE", 1.25, 90, captured_at, "P")
-    insert_filing("activity-two", "TWO", 2.50, 60, captured_at, "P")
+    captured_at = datetime.now(UTC)
+    insert_filing("activity-one", "ONE", 1.25, 90, captured_at.isoformat(), "P")
+    insert_filing(
+        "activity-two",
+        "TWO",
+        2.50,
+        60,
+        (captured_at - timedelta(minutes=5)).isoformat(),
+        "P",
+    )
     _record_activity("v:device", "TWO", "share")
 
     result = radar_data(visitor_id="device")
 
     assert result
-    assert result[0]["ticker"] == "TWO"
-    assert result[0]["relevance_score"] == 3.0
+    assert result[0]["ticker"] == "ONE"
+    assert result[0]["section"] == "events"
 
 
 def test_pulse_supports_cursor_style_offsets(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "pulse-pages.db")
     init_db()
     captured_at = datetime.now(UTC).isoformat()
-    insert_filing("page-one", "ONE", 1.25, 90, captured_at, "P")
-    insert_filing("page-two", "TWO", 2.50, 80, captured_at, "P")
+    insert_scan_run("page-run", captured_at, 2)
+    insert_scored_snapshot("page-one", "page-run", "ONE", 90, 1, captured_at)
+    insert_scored_snapshot("page-two", "page-run", "TWO", 80, 2, captured_at)
 
     first = pulse_data(limit=1)
     second = pulse_data(offset=1, limit=1)
@@ -453,6 +601,65 @@ def test_pulse_supports_cursor_style_offsets(tmp_path: Path, monkeypatch: Monkey
     assert first["has_more"] is True
     assert first["next_offset"] == 1
     assert second["rows"][0]["ticker"] != first["rows"][0]["ticker"]
+
+
+def test_chart_annotations_keep_the_real_pulse_entry_and_detected_events(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "chart-annotations.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    before_entry = (timestamp - timedelta(minutes=30)).isoformat()
+    entered_at = (timestamp - timedelta(minutes=20)).isoformat()
+    refreshed_at = (timestamp - timedelta(minutes=10)).isoformat()
+    insert_scan_run("before-entry", before_entry, 1)
+    insert_scored_snapshot("before-two", "before-entry", "TWO", 25, 1, before_entry)
+    insert_scan_run("entry", entered_at, 1)
+    insert_scored_snapshot("entry-one", "entry", "ONE", 50, 1, entered_at, price=1.4)
+    insert_scan_run("refresh", refreshed_at, 1)
+    insert_scored_snapshot("refresh-one", "refresh", "ONE", 55, 1, refreshed_at, price=1.6)
+    filing_at = (timestamp - timedelta(minutes=16)).isoformat()
+    insert_filing("chart-filing", "ONE", 1.45, 80, filing_at, "P")
+    media_at = timestamp - timedelta(minutes=12)
+    fetch = SourceFetch.success(
+        source="test_media",
+        feed="social",
+        locator="https://example.test/media",
+        started_at=media_at,
+        payload={"ticker": "ONE"},
+        content_type="application/json",
+    )
+    record_source_batch(
+        SourceBatch(
+            fetch=fetch,
+            market_events=(
+                MarketEvent(
+                    event_id="one-media-spike",
+                    ticker="ONE",
+                    event_type="social_spike",
+                    event_at=media_at,
+                    published_at=media_at,
+                    status="active",
+                    source_url="https://example.test/media/one",
+                    payload={"mention_count": 6, "engagement_count": 18},
+                ),
+            ),
+        )
+    )
+
+    entry = _pulse_entry_markers(["ONE"])["ONE"]
+    annotations = _chart_annotations(["ONE"])["ONE"]
+
+    assert entry["time"] == entered_at
+    assert entry["price"] == 1.4
+    assert {item["type"] for item in annotations} == {
+        "pulse_entry",
+        "edgar_filing",
+        "media_spike",
+    }
+    assert next(item for item in annotations if item["type"] == "media_spike")[
+        "label"
+    ] == "Media spike · 6 mentions"
 
 
 def test_commissioned_report_is_public_without_storing_the_openrouter_key(
@@ -494,6 +701,47 @@ def test_commissioned_report_is_public_without_storing_the_openrouter_key(
         stored = database.execute("SELECT * FROM research_commissions").fetchone()
     assert "openrouter_key" not in columns
     assert "sk-or-device-only-test-key" not in " ".join(str(value) for value in stored)
+
+
+def test_commission_request_uses_glm_53_with_a_minimal_prompt(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+    generated = {
+        "headline": "ONE evidence report",
+        "summary": "A source-bound summary.",
+        "catalysts": ["Verified insider purchase"],
+        "risks": ["Low liquidity"],
+        "watch": ["Volume"],
+    }
+
+    def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
+        captured["body"] = json.loads(request.data)
+        return io.BytesIO(
+            json.dumps(
+                {
+                    "choices": [{"message": {"content": json.dumps(generated)}}],
+                    "model": "z-ai/glm-5.3",
+                    "usage": {"total_tokens": 123},
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
+    report, model, usage = web_main._generate_openrouter_report(
+        "sk-or-test-key-long-enough", {"ticker": "ONE"}, "member-one"
+    )
+
+    body = captured["body"]
+    assert body["model"] == "z-ai/glm-5.3"
+    assert body["response_format"] == {"type": "json_object"}
+    assert body["provider"] == {"require_parameters": True}
+    assert body["reasoning_effort"] == "low"
+    assert "temperature" not in body
+    assert len(body["messages"][0]["content"].split()) <= 30
+    assert report == generated
+    assert model == "z-ai/glm-5.3"
+    assert usage == {"total_tokens": 123}
 
 
 def test_research_report_template_has_public_share_metadata(

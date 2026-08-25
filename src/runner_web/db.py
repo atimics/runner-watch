@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -80,8 +81,8 @@ def connection() -> Iterator[sqlite3.Connection]:
         db.close()
 
 
-def init_db() -> None:
-    with connection() as db:
+def _migration_001_baseline(db: sqlite3.Connection) -> None:
+    with db:
         db.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -613,4 +614,201 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS scan_snapshots_run_rank "
             "ON scan_snapshots(scan_run_id,baseline_rank)"
         )
+
+
+def _migration_002_topic_snapshots(db: sqlite3.Connection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS topic_snapshots (
+            topic TEXT PRIMARY KEY,
+            source TEXT NOT NULL,
+            as_of TEXT NOT NULL,
+            collected_at TEXT NOT NULL,
+            delayed INTEGER,
+            payload_json TEXT NOT NULL,
+            warnings_json TEXT NOT NULL DEFAULT '[]',
+            error TEXT,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS topic_snapshots_collected
+            ON topic_snapshots(collected_at DESC);
+        """
+    )
+
+
+def _migration_003_ai_kol(db: sqlite3.Connection) -> None:
+    """Add immutable AI KOL calls without mixing them with human hearts."""
+
+    timestamp = datetime.now(UTC).isoformat()
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS kol_predictors (
+            id TEXT PRIMARY KEY,
+            slug TEXT UNIQUE NOT NULL,
+            display_name TEXT NOT NULL,
+            emoji TEXT NOT NULL,
+            description TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'shadow',
+            visible INTEGER NOT NULL DEFAULT 0,
+            contract_version TEXT NOT NULL,
+            upper_barrier_pct REAL NOT NULL,
+            lower_barrier_pct REAL NOT NULL,
+            horizon_minutes INTEGER NOT NULL,
+            min_probability_up REAL NOT NULL,
+            min_expected_return_pct REAL NOT NULL,
+            abandon_probability_up REAL NOT NULL,
+            abandon_expected_return_pct REAL NOT NULL,
+            max_calls_per_scan INTEGER NOT NULL,
+            max_active_calls INTEGER NOT NULL,
+            paper_notional REAL NOT NULL,
+            round_trip_cost_bps REAL NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS kol_calls (
+            id TEXT PRIMARY KEY,
+            predictor_id TEXT NOT NULL REFERENCES kol_predictors(id),
+            model_id TEXT NOT NULL REFERENCES ranker_models(id),
+            snapshot_id TEXT NOT NULL REFERENCES scan_snapshots(id) ON DELETE CASCADE,
+            scan_run_id TEXT NOT NULL REFERENCES scan_runs(id) ON DELETE CASCADE,
+            ticker TEXT NOT NULL,
+            contract_version TEXT NOT NULL,
+            upper_barrier_pct REAL NOT NULL,
+            lower_barrier_pct REAL NOT NULL,
+            horizon_minutes INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            expected_return_pct REAL NOT NULL,
+            entry_price REAL NOT NULL,
+            entry_at TEXT NOT NULL,
+            last_price REAL NOT NULL,
+            last_mark_at TEXT NOT NULL,
+            unrealized_return_pct REAL NOT NULL DEFAULT 0,
+            exit_price REAL,
+            exit_at TEXT,
+            realized_return_pct REAL,
+            net_return_pct REAL,
+            paper_notional REAL NOT NULL,
+            round_trip_cost_bps REAL NOT NULL,
+            paper_pnl REAL,
+            close_reason TEXT,
+            benchmark_label TEXT,
+            benchmark_return_60m_pct REAL,
+            benchmark_at TEXT,
+            max_favorable_pct REAL NOT NULL DEFAULT 0,
+            max_adverse_pct REAL NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(predictor_id,snapshot_id)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS kol_calls_one_active_ticker
+            ON kol_calls(predictor_id,ticker) WHERE status='active';
+        CREATE INDEX IF NOT EXISTS kol_calls_ticker_time
+            ON kol_calls(ticker,created_at DESC);
+        CREATE INDEX IF NOT EXISTS kol_calls_predictor_time
+            ON kol_calls(predictor_id,created_at DESC);
+        CREATE INDEX IF NOT EXISTS kol_calls_status_time
+            ON kol_calls(status,updated_at DESC);
+        CREATE TABLE IF NOT EXISTS kol_call_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            call_id TEXT NOT NULL REFERENCES kol_calls(id) ON DELETE CASCADE,
+            event_type TEXT NOT NULL,
+            event_at TEXT NOT NULL,
+            price REAL,
+            return_pct REAL,
+            payload_json TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS kol_call_events_call_time
+            ON kol_call_events(call_id,event_at);
+        """
+    )
+    db.execute(
+        """
+        INSERT OR IGNORE INTO kol_predictors(
+            id,slug,display_name,emoji,description,status,visible,contract_version,
+            upper_barrier_pct,lower_barrier_pct,horizon_minutes,min_probability_up,
+            min_expected_return_pct,abandon_probability_up,
+            abandon_expected_return_pct,max_calls_per_scan,max_active_calls,
+            paper_notional,round_trip_cost_bps,created_at,updated_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            "kol-flash",
+            "flash",
+            "Flash",
+            "⚡",
+            "The public runner champion backed by the latest calibrated ranker.",
+            "champion",
+            1,
+            "runner-8-4-60-v1",
+            8.0,
+            4.0,
+            60,
+            0.55,
+            0.0,
+            0.25,
+            -1.0,
+            1,
+            3,
+            1000.0,
+            50.0,
+            timestamp,
+            timestamp,
+        ),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Migration:
+    version: int
+    name: str
+    apply: Callable[[sqlite3.Connection], None]
+
+
+MIGRATIONS = (
+    Migration(1, "baseline", _migration_001_baseline),
+    Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
+    Migration(3, "ai_kol", _migration_003_ai_kol),
+)
+
+
+def _apply_migrations(db: sqlite3.Connection) -> None:
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at TEXT NOT NULL
+        )
+        """
+    )
+    applied = {
+        int(row["version"]): str(row["name"])
+        for row in db.execute("SELECT version,name FROM schema_migrations").fetchall()
+    }
+    known_versions = {migration.version for migration in MIGRATIONS}
+    unknown = sorted(set(applied) - known_versions)
+    if unknown:
+        raise RuntimeError(f"Database has migrations newer than this app: {unknown}")
+    for migration in MIGRATIONS:
+        applied_name = applied.get(migration.version)
+        if applied_name is not None:
+            if applied_name != migration.name:
+                raise RuntimeError(
+                    f"Migration {migration.version} is recorded as {applied_name!r}, "
+                    f"expected {migration.name!r}"
+                )
+            continue
+        migration.apply(db)
+        db.execute(
+            "INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)",
+            (migration.version, migration.name, datetime.now(UTC).isoformat()),
+        )
+
+
+def init_db() -> None:
+    """Apply each forward migration once, then refresh environment-based source policy."""
+
+    with connection() as db:
+        _apply_migrations(db)
         _seed_source_registry(db)

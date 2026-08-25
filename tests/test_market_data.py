@@ -2,7 +2,7 @@ import pandas as pd
 from pytest import MonkeyPatch
 
 from runner_watch import market_data
-from runner_watch.market_data import YahooMarketData, split_download_frame
+from runner_watch.market_data import YahooMarketData, routed_market_data, split_download_frame
 
 
 def test_split_download_frame_handles_ticker_first_columns() -> None:
@@ -39,3 +39,21 @@ def test_yahoo_download_emits_a_shared_source_fetch(monkeypatch: MonkeyPatch) ->
     assert fetches[0].feed == "market_bars"
     assert fetches[0].status == "success"
     assert fetches[0].metadata["requested_tickers"] == ["AAA"]
+
+
+def test_routed_market_data_returns_provider_provenance(monkeypatch: MonkeyPatch) -> None:
+    index = pd.date_range("2026-08-25 09:30", periods=2, freq="5min")
+    raw = pd.DataFrame(
+        {"Open": [1.0, 1.1], "High": [1.2, 1.3], "Low": [0.9, 1.0],
+         "Close": [1.1, 1.2], "Volume": [100, 120]},
+        index=index,
+    )
+    monkeypatch.setattr(market_data.yf, "download", lambda **kwargs: raw)
+
+    result = routed_market_data(batch_size=1).intraday(["aaa"])
+
+    assert list(result.frames) == ["AAA"]
+    assert result.provenance is not None
+    assert result.provenance.provider == "yahoo"
+    assert result.provenance.attempted_providers == ("yahoo",)
+    assert result.provenance.fallback_used is False

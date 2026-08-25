@@ -11,6 +11,8 @@
 </header>
 {% include "_market_clock.html" %}
 
+<section class="kol-score-strip" id="kolScoreStrip" aria-live="polite"></section>
+
 <main class="list-section pulse-feed">
   <div class="token-list" id="pulseList" aria-live="polite"></div>
   <div class="pulse-more" id="pulseMore" aria-hidden="true"><i></i></div>
@@ -22,10 +24,20 @@ let pulse={{ pulse|tojson }};
 const list=document.getElementById('pulseList');
 const more=document.getElementById('pulseMore');
 let loadingMore=false;
+function esc(value){const node=document.createElement('span');node.textContent=String(value??'');return node.innerHTML;}
+function renderKols(){
+  const box=document.getElementById('kolScoreStrip');
+  const kol=(pulse.kols||[])[0];
+  if(!kol){box.hidden=true;return;}
+  box.hidden=false;
+  const pnl=Number(kol.paper_pnl||0);const hit=kol.hit_rate==null?'learning':`${(Number(kol.hit_rate)*100).toFixed(0)}% hit`;
+  box.innerHTML=`<span class="kol-avatar">${esc(kol.emoji||'⚡')}</span><span><strong>${esc(kol.display_name)} · AI KOL</strong><small>${Number(kol.active_calls||0)} active · ${Number(kol.calls||0)} calls · ${esc(hit)}</small></span><b class="${pnl>=0?'up':'down'}">${pnl>=0?'+':'−'}$${Math.abs(pnl).toFixed(2)}</b>`;
+}
 function render(changedTickers = new Set()) {
   const rows = pulse.rows || [];
   list.innerHTML = rows.map(row => TickerRow.render(row,{updated:changedTickers.has(row.ticker)})).join('') || `<div class="empty-list"><strong>No movement</strong></div>`;
   more.hidden=!pulse.has_more;
+  renderKols();
   TickerRow.paintCharts();
 }
 async function loadMore(){

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -10,6 +11,14 @@ import pandas as pd
 import yfinance as yf
 
 from runner_watch.ingestion import SourceFetch, SourceFetchRecorder
+from runner_watch.provider_contracts import (
+    Bar,
+    DataKind,
+    FetchBatch,
+    ProviderProvenance,
+    ProviderRequest,
+)
+from runner_watch.provider_registry import ProviderRegistry, ProvidersExhaustedError
 
 ProgressCallback = Callable[[int, int, str], None]
 BarRecorder = Callable[[str, dict[str, pd.DataFrame]], None]
@@ -20,6 +29,7 @@ class DownloadResult:
     frames: dict[str, pd.DataFrame]
     failed: list[str]
     warnings: list[str]
+    provenance: ProviderProvenance | None = None
 
 
 def _chunks(values: list[str], size: int) -> Iterable[list[str]]:
@@ -195,3 +205,206 @@ class YahooMarketData:
             progress=progress,
             label="5-minute history",
         )
+
+
+def _optional_number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _canonical_timestamp(value: Any) -> datetime:
+    timestamp = pd.Timestamp(value)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("America/New_York")
+    return timestamp.tz_convert(UTC).to_pydatetime()
+
+
+def _frame_bars(symbol: str, interval: str, frame: pd.DataFrame) -> list[Bar]:
+    columns = {
+        str(column).lower().replace(" ", ""): column for column in frame.columns
+    }
+    output: list[Bar] = []
+    for index, row in frame.iterrows():
+        output.append(
+            Bar(
+                symbol=symbol,
+                interval=interval,
+                timestamp=_canonical_timestamp(index),
+                open=_optional_number(row.get(columns.get("open"))),
+                high=_optional_number(row.get(columns.get("high"))),
+                low=_optional_number(row.get(columns.get("low"))),
+                close=_optional_number(row.get(columns.get("close"))),
+                volume=_optional_number(row.get(columns.get("volume"))),
+            )
+        )
+    return output
+
+
+class YahooBarAdapter:
+    """Turns Yahoo frames into the provider-neutral bar contract."""
+
+    name = "yahoo"
+    capabilities = frozenset({DataKind.BARS})
+
+    def __init__(self, client: YahooMarketData | None = None) -> None:
+        self.client = client or YahooMarketData()
+
+    def fetch(
+        self,
+        request: ProviderRequest,
+        progress: ProgressCallback | None = None,
+    ) -> FetchBatch:
+        if request.kind != DataKind.BARS:
+            raise ValueError("YahooBarAdapter only supports bar requests")
+        started_at = datetime.now(UTC)
+        if request.interval == "1d":
+            result = self.client.daily(list(request.symbols), progress)
+        elif request.interval == "5m":
+            result = self.client.intraday(list(request.symbols), progress)
+        else:
+            raise ValueError(f"Yahoo bar interval {request.interval!r} is not configured")
+
+        try:
+            bars = tuple(
+                bar
+                for symbol, frame in sorted(result.frames.items())
+                for bar in _frame_bars(symbol, request.interval, frame)
+            )
+        except Exception as exc:
+            self.client._record_fetch(
+                SourceFetch.failure(
+                    source=self.name,
+                    feed="market_bars",
+                    locator=f"yfinance://download/{request.interval}",
+                    started_at=started_at,
+                    error=f"Canonical bar conversion failed: {exc}",
+                    metadata={
+                        "interval": request.interval,
+                        "requested_tickers": list(request.symbols),
+                        "stage": "canonical_transform",
+                    },
+                ),
+                result.warnings,
+            )
+            raise
+        collected_at = datetime.now(UTC)
+        as_of = max((bar.timestamp for bar in bars), default=collected_at)
+        status = "partial" if result.failed and bars else "success" if bars else "error"
+        return FetchBatch(
+            request=request,
+            status=status,
+            provenance=ProviderProvenance(
+                provider=self.name,
+                feed="market_bars",
+                locator=f"yfinance://download/{request.interval}",
+                observed_at=as_of if bars else None,
+                as_of=as_of,
+                collected_at=collected_at,
+                delayed=True,
+                warnings=tuple(result.warnings),
+                quality={
+                    "requested_symbols": len(request.symbols),
+                    "returned_symbols": len(result.frames),
+                    "failed_symbols": sorted(result.failed),
+                    "started_at": started_at.isoformat(),
+                },
+            ),
+            bars=bars,
+            error="Yahoo returned no usable bars" if not bars else None,
+        )
+
+
+def _bars_to_frames(batch: FetchBatch) -> dict[str, pd.DataFrame]:
+    rows: dict[str, list[dict[str, Any]]] = {}
+    for bar in batch.bars:
+        rows.setdefault(bar.symbol, []).append(
+            {
+                "timestamp": bar.timestamp,
+                "Open": bar.open,
+                "High": bar.high,
+                "Low": bar.low,
+                "Close": bar.close,
+                "Volume": bar.volume,
+            }
+        )
+    frames: dict[str, pd.DataFrame] = {}
+    for symbol, values in rows.items():
+        frame = pd.DataFrame(values).set_index("timestamp").sort_index()
+        frames[symbol] = frame
+    return frames
+
+
+class RoutedMarketData:
+    """Scanner-compatible view over the canonical provider registry."""
+
+    def __init__(self, registry: ProviderRegistry) -> None:
+        self.registry = registry
+
+    def _fetch(
+        self,
+        tickers: list[str],
+        interval: str,
+        progress: ProgressCallback | None,
+    ) -> DownloadResult:
+        request = ProviderRequest(
+            kind=DataKind.BARS,
+            symbols=tickers,
+            interval=interval,
+            period="1mo" if interval == "1d" else "5d",
+            extended_hours=interval != "1d",
+        )
+        try:
+            batch = self.registry.fetch(request, progress=progress)
+        except ProvidersExhaustedError as exc:
+            return DownloadResult(
+                frames={},
+                failed=list(request.symbols),
+                warnings=[str(exc)],
+            )
+        frames = _bars_to_frames(batch)
+        failed = [symbol for symbol in request.symbols if symbol not in frames]
+        warnings = list(batch.provenance.warnings)
+        if batch.provenance.fallback_used:
+            warnings.append(
+                f"Used {batch.provenance.provider} after "
+                f"{', '.join(batch.provenance.attempted_providers[:-1])} failed."
+            )
+        return DownloadResult(
+            frames=frames,
+            failed=failed,
+            warnings=warnings,
+            provenance=batch.provenance,
+        )
+
+    def daily(
+        self, tickers: list[str], progress: ProgressCallback | None = None
+    ) -> DownloadResult:
+        return self._fetch(tickers, "1d", progress)
+
+    def intraday(
+        self, tickers: list[str], progress: ProgressCallback | None = None
+    ) -> DownloadResult:
+        return self._fetch(tickers, "5m", progress)
+
+
+def routed_market_data(
+    *,
+    batch_size: int = 60,
+    timeout: float = 15.0,
+    fetch_recorder: SourceFetchRecorder | None = None,
+) -> RoutedMarketData:
+    registry = ProviderRegistry()
+    registry.register(
+        YahooBarAdapter(
+            YahooMarketData(
+                batch_size=batch_size,
+                timeout=timeout,
+                fetch_recorder=fetch_recorder,
+            )
+        )
+    )
+    registry.route(DataKind.BARS, "yahoo")
+    return RoutedMarketData(registry)

@@ -110,3 +110,33 @@ def test_shared_pipe_records_universe_items_errors_and_terminal_source_items(
     status = ingestion_status()
     assert {feed["source"] for feed in status["feeds"]} == {"sec", "yahoo"}
     assert status["item_states"][0]["status"] == "ignored"
+
+
+def test_market_bar_projection_keeps_the_actual_provider(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "provider-bars.db")
+    init_db()
+    frame = pd.DataFrame(
+        {"Open": [1.0], "High": [1.2], "Low": [0.9], "Close": [1.1], "Volume": [100]},
+        index=pd.date_range("2026-08-25 09:30", periods=1, freq="5min", tz="UTC"),
+    )
+    started_at = datetime(2026, 8, 25, 16, tzinfo=UTC)
+
+    record_source_fetch(
+        SourceFetch.success(
+            source="test_provider",
+            feed="market_bars",
+            locator="test://bars/5m",
+            started_at=started_at,
+            payload={"PEN": frame},
+            content_type="application/x-pandas-frames",
+            metadata={"interval": "5m", "requested_tickers": ["PEN"]},
+        )
+    )
+
+    with connection() as database:
+        source = database.execute(
+            "SELECT source FROM market_bars WHERE ticker='PEN'"
+        ).fetchone()["source"]
+    assert source == "test_provider"
