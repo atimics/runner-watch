@@ -27,8 +27,13 @@
 
   <section class="research-action">
     {% if user %}
-    <button class="commission-button" type="button" id="commissionButton">Commission Flash</button>
-    <small id="commissionStatus">{% if latest_commission %}<a href="/research/{{ latest_commission.public_id }}">View latest report</a>{% endif %}</small>
+      {% if latest_commission and latest_commission.status == 'complete' %}
+      <a class="commission-button" href="/research/{{ latest_commission.public_id }}">View Flash report</a>
+      <small>Flash finished this commission</small>
+      {% else %}
+      <button class="commission-button" type="button" id="commissionButton"{% if latest_commission and latest_commission.status == 'running' %} disabled{% endif %}>{% if latest_commission and latest_commission.status == 'running' %}Flash is researching…{% else %}Commission Flash{% endif %}</button>
+      <small id="commissionStatus">{% if latest_commission and latest_commission.status == 'running' %}Running on the server — safe to leave this page{% elif latest_commission and latest_commission.status == 'failed' %}{{ latest_commission.error or 'The last report failed. Try again.' }}{% endif %}</small>
+      {% endif %}
     {% else %}
     <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Login to commission Flash</a>
     <small>Flash is powered by {{ flash.model_label }} through your OpenRouter account</small>
@@ -147,6 +152,7 @@ const status = document.getElementById('chartStatus');
 const chartEvents = document.getElementById('chartEvents');
 const commissionButton = document.getElementById('commissionButton');
 const commissionStatus = document.getElementById('commissionStatus');
+const initialCommissionStatus = {{ (latest_commission.status if latest_commission else '')|tojson }};
 let allPoints=[];
 let chartAnnotations=[];
 const initialPressure={{ detail.trade_pressure|tojson }};
@@ -221,10 +227,37 @@ document.getElementById('heartButton').addEventListener('click', async event => 
   document.getElementById('heartCount').textContent = result.count;
 });
 if (commissionButton) {
+  let commissionPollTimer = null;
   const renderCommissionButton = () => {
     commissionButton.textContent = window.runnerOpenRouter.connected() ? 'Commission Flash' : 'Connect OpenRouter';
   };
-  renderCommissionButton();
+  const pollCommission = async () => {
+    clearTimeout(commissionPollTimer);
+    try {
+      const response = await fetch(`/api/research/${encodeURIComponent(ticker)}`);
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || 'Could not check the report');
+      if (result.status === 'complete' && result.url) {
+        location.href = result.url;
+        return;
+      }
+      if (result.status === 'failed') {
+        commissionStatus.textContent = result.error || 'The report failed. Try again.';
+        commissionButton.disabled = false;
+        renderCommissionButton();
+        return;
+      }
+      commissionButton.disabled = true;
+      commissionButton.textContent = 'Flash is researching…';
+      commissionStatus.textContent = 'Running on the server — safe to leave this page';
+      commissionPollTimer = setTimeout(pollCommission, 2500);
+    } catch (_) {
+      commissionStatus.textContent = 'Report is still running. Checking again…';
+      commissionPollTimer = setTimeout(pollCommission, 5000);
+    }
+  };
+  if (initialCommissionStatus === 'running') pollCommission();
+  else renderCommissionButton();
   commissionButton.addEventListener('click', async () => {
     if (!window.runnerOpenRouter.connected()) {
       await window.runnerOpenRouter.connect(location.href);
@@ -232,7 +265,7 @@ if (commissionButton) {
     }
     commissionButton.disabled = true;
     commissionButton.textContent = 'Flash is researching…';
-    commissionStatus.textContent = 'Flash is building a shareable report';
+    commissionStatus.textContent = 'Starting the server job…';
     try {
       const response = await fetch(`/api/research/${encodeURIComponent(ticker)}`, {
         method: 'POST',
@@ -243,7 +276,11 @@ if (commissionButton) {
         if (response.status === 401 || response.status === 403) window.runnerOpenRouter.disconnect();
         throw new Error(result.detail || 'Report failed');
       }
-      location.href = result.url;
+      if (result.status === 'complete' && result.url) {
+        location.href = result.url;
+        return;
+      }
+      await pollCommission();
     } catch (error) {
       commissionStatus.textContent = error.message || String(error);
       commissionButton.disabled = false;

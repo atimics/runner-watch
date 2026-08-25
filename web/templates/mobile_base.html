@@ -5,15 +5,15 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#090b0b">
   <title>{% block title %}Runner Watch{% endblock %}</title>
-  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/mobile.css">
-  <link rel="stylesheet" href="/static/enhancements.css">
-  <link rel="stylesheet" href="/static/ticker-row.css">
-  <link rel="stylesheet" href="/static/sleek.css">
-  <link rel="stylesheet" href="/static/pulse-attention.css">
-  <link rel="stylesheet" href="/static/kol.css">
-  <script src="/static/openrouter.js"></script>
-  <script src="/static/market-clock.js" defer></script>
+  <link rel="icon" href="/static/favicon.svg?v={{ static_version }}" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/mobile.css?v={{ static_version }}">
+  <link rel="stylesheet" href="/static/enhancements.css?v={{ static_version }}">
+  <link rel="stylesheet" href="/static/ticker-row.css?v={{ static_version }}">
+  <link rel="stylesheet" href="/static/sleek.css?v={{ static_version }}">
+  <link rel="stylesheet" href="/static/pulse-attention.css?v={{ static_version }}">
+  <link rel="stylesheet" href="/static/kol.css?v={{ static_version }}">
+  <script src="/static/openrouter.js?v={{ static_version }}"></script>
+  <script src="/static/market-clock.js?v={{ static_version }}" defer></script>
   {% block head %}{% endblock %}
 </head>
 <body>
@@ -86,7 +86,7 @@
     });
   </script>
   {% endif %}
-  <script src="/static/ticker-row.js"></script>
+  <script src="/static/ticker-row.js?v={{ static_version }}"></script>
   <script nonce="{{ request.state.csp_nonce }}">
   (() => {
     const ticker = document.getElementById('globalPulseTicker');

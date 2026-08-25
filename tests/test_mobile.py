@@ -39,6 +39,20 @@ from runner_web.main import (
 )
 
 
+def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
+    root = Path(__file__).parents[1]
+    pulse_template = (root / "web/templates/pulse.html").read_text()
+    radar_template = (root / "web/templates/radar.html").read_text()
+
+    assert "New ticker entered Pulse" in pulse_template
+    assert "new tickers entered Pulse" in pulse_template
+    assert "Pulse updated" not in pulse_template
+    assert "TickerRow.fingerprint" not in pulse_template
+    assert "New since you looked" not in pulse_template
+    assert "New Radar update" in radar_template
+    assert "pendingUpdateTickers" in radar_template
+
+
 def test_passkey_signup_needs_no_profile_fields(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "auth.db")
     init_db()
@@ -280,6 +294,40 @@ def test_radar_reuses_the_shared_base_payload(
 
     assert radar_data(visitor_id="first")[0]["ticker"] == "ONE"
     assert radar_data(visitor_id="second")[0]["ticker"] == "ONE"
+    assert calls == 1
+
+
+def test_alpha_reuses_shared_data_but_keeps_profile_hearts(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "alpha-cache.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_filing("alpha-cache-one", "ONE", 1.25, 80, captured_at, "P")
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO ticker_hearts(profile_id,ticker,active,created_at,updated_at)
+            VALUES(?,?,?,?,?)
+            """,
+            ("v:first", "ONE", 1, captured_at, captured_at),
+        )
+    web_main.ALPHA_DATA_CACHE.clear()
+    original = web_main._alpha_base_data_uncached
+    calls = 0
+
+    def counted() -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return original()
+
+    monkeypatch.setattr(web_main, "_alpha_base_data_uncached", counted)
+
+    first = alpha_board_data("v:first")
+    second = alpha_board_data("v:second")
+
+    assert first["rows"][0]["hearted"] is True
+    assert second["rows"][0]["hearted"] is False
     assert calls == 1
 
 
@@ -1110,6 +1158,48 @@ def test_commissioned_report_is_public_without_storing_the_openrouter_key(
         stored = database.execute("SELECT * FROM research_commissions").fetchone()
     assert "openrouter_key" not in columns
     assert "sk-or-device-only-test-key" not in " ".join(str(value) for value in stored)
+
+    same_report, created = web_main._create_research_commission("commissioner", "ONE")
+    assert created is False
+    assert same_report["public_id"] == report["public_id"]
+    with connection() as database:
+        assert database.execute("SELECT COUNT(*) FROM research_commissions").fetchone()[0] == 1
+
+
+def test_running_flash_commission_is_a_single_server_job(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "running-commission.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_filing("running-one", "ONE", 1.25, 90, captured_at, "P")
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("runner", "member_runner", "Member", "active", captured_at),
+        )
+
+    first, first_created = web_main._create_research_commission("runner", "ONE")
+    second, second_created = web_main._create_research_commission("runner", "ONE")
+
+    assert first_created is True
+    assert second_created is False
+    assert first["status"] == "running"
+    assert second["public_id"] == first["public_id"]
+    assert web_main.latest_commission("runner", "ONE")["status"] == "running"
+    with connection() as database:
+        rows = database.execute("SELECT * FROM research_commissions").fetchall()
+    assert len(rows) == 1
+    assert "openrouter" not in " ".join(rows[0].keys()).lower()
+
+
+def test_flash_commission_page_resumes_the_server_job() -> None:
+    template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
+
+    assert "Running on the server — safe to leave this page" in template
+    assert "fetch(`/api/research/${encodeURIComponent(ticker)}`)" in template
+    assert "if (initialCommissionStatus === 'running') pollCommission()" in template
+    assert "View Flash report" in template
 
 
 def test_commission_request_uses_glm_53_with_a_minimal_prompt(

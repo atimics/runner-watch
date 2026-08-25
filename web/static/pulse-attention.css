@@ -93,20 +93,8 @@
 }
 
 .pulse-refresh[hidden] { display: none; }
+.radar-refresh { top: 68px; }
 .pulse-feed { padding-top: 2px; }
-.pulse-group + .pulse-group { margin-top: 10px; }
-.pulse-group-title {
-  min-height: 34px;
-  padding: 0 6px;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.pulse-group-title strong { font-size: 10px; }
-.pulse-group-title span { color: #76817b; font-size: 9px; }
-.pulse-group-new .pulse-group-title strong { color: #f5c66b; }
-.pulse-group-new .pulse-group-title span { color: #a9905d; }
 
 @keyframes global-pulse-in {
   from { opacity: 0; transform: translate(-50%, 12px); }

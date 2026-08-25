@@ -128,18 +128,27 @@ BACKGROUND_SCAN_INTERVAL_SECONDS = max(
 )
 PULSE_NOTIFICATION_WINDOW = timedelta(hours=12)
 PULSE_CACHE_TTL_SECONDS = max(
-    5.0, float(os.getenv("PULSE_CACHE_TTL_SECONDS", "20"))
+    5.0, float(os.getenv("PULSE_CACHE_TTL_SECONDS", "60"))
 )
 PULSE_DATA_LOCK = threading.Lock()
 PULSE_DATA_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+PULSE_DATA_REFRESHING: set[str] = set()
 RADAR_CACHE_TTL_SECONDS = max(
-    5.0, float(os.getenv("RADAR_CACHE_TTL_SECONDS", "20"))
+    5.0, float(os.getenv("RADAR_CACHE_TTL_SECONDS", "60"))
 )
 RADAR_DATA_LOCK = threading.Lock()
 RADAR_DATA_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+RADAR_DATA_REFRESHING: set[str] = set()
+ALPHA_CACHE_TTL_SECONDS = max(
+    5.0, float(os.getenv("ALPHA_CACHE_TTL_SECONDS", "60"))
+)
+ALPHA_DATA_LOCK = threading.Lock()
+ALPHA_DATA_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+ALPHA_DATA_REFRESHING: set[str] = set()
+RESEARCH_JOB_QUEUE: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
 CHART_TOPIC_POLICY = TopicPolicy(
-    ttl_seconds=90,
-    minimum_refresh_seconds=10,
+    ttl_seconds=180,
+    minimum_refresh_seconds=30,
     maximum_stale_seconds=15 * 60,
     keep_last_good=True,
 )
@@ -148,9 +157,23 @@ CHART_TOPIC_POLICY = TopicPolicy(
 MARKET_TOPICS = TopicHub()
 
 
+def _static_version() -> str:
+    digest = hashlib.sha256()
+    static_root = ROOT / "web" / "static"
+    for asset in sorted(static_root.iterdir()):
+        if asset.is_file():
+            digest.update(asset.name.encode())
+            digest.update(asset.read_bytes())
+    return digest.hexdigest()[:12]
+
+
+STATIC_VERSION = _static_version()
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     init_db()
+    _fail_orphaned_research_jobs()
     tasks = [
         asyncio.create_task(edgar_worker()),
         asyncio.create_task(trading_halt_worker()),
@@ -160,6 +183,8 @@ async def lifespan(application: FastAPI):
         asyncio.create_task(kol_worker()),
         asyncio.create_task(scan_collection_worker()),
         asyncio.create_task(alpha_report_worker()),
+        asyncio.create_task(research_job_worker()),
+        asyncio.create_task(request_cache_warmer()),
     ]
     application.state.worker_tasks = tasks
     try:
@@ -176,6 +201,7 @@ async def lifespan(application: FastAPI):
 
 app = FastAPI(title="Runner Watch", docs_url=None, redoc_url=None, lifespan=lifespan)
 templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
+templates.env.globals["static_version"] = STATIC_VERSION
 app.mount("/static", StaticFiles(directory=str(ROOT / "web" / "static")), name="static")
 
 
@@ -524,6 +550,8 @@ async def security_headers(request: Request, call_next: Any) -> Response:
         "connect-src 'self' https://openrouter.ai; frame-ancestors 'none'; "
         "base-uri 'self'; form-action 'self'"
     )
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     elapsed_ms = (time.perf_counter() - started) * 1000
     response.headers["Server-Timing"] = f"app;dur={elapsed_ms:.1f}"
     if elapsed_ms >= 500:
@@ -1364,12 +1392,34 @@ def _pulse_data_uncached() -> dict[str, Any]:
     }
 
 
+def _refresh_pulse_base(cache_key: str) -> None:
+    try:
+        payload = _pulse_data_uncached()
+        with PULSE_DATA_LOCK:
+            PULSE_DATA_CACHE[cache_key] = (time.monotonic(), payload)
+    except Exception:
+        LOG.exception("Pulse cache refresh failed")
+    finally:
+        with PULSE_DATA_LOCK:
+            PULSE_DATA_REFRESHING.discard(cache_key)
+
+
 def _pulse_base_data() -> dict[str, Any]:
     cache_key = str(runner_db.DATABASE_PATH)
     with PULSE_DATA_LOCK:
         current = time.monotonic()
         cached = PULSE_DATA_CACHE.get(cache_key)
         if cached and current - cached[0] < PULSE_CACHE_TTL_SECONDS:
+            return cached[1]
+        if cached:
+            if cache_key not in PULSE_DATA_REFRESHING:
+                PULSE_DATA_REFRESHING.add(cache_key)
+                threading.Thread(
+                    target=_refresh_pulse_base,
+                    args=(cache_key,),
+                    daemon=True,
+                    name="pulse-cache-refresh",
+                ).start()
             return cached[1]
         payload = _pulse_data_uncached()
         if cache_key not in PULSE_DATA_CACHE and len(PULSE_DATA_CACHE) >= 8:
@@ -1408,7 +1458,10 @@ def _report_record(row: Any) -> dict[str, Any] | None:
     return report
 
 
-def _commission_record(row: Any) -> dict[str, Any] | None:
+def _commission_record(
+    row: Any,
+    summary: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     if not row:
         return None
     report = dict(row)
@@ -1429,7 +1482,7 @@ def _commission_record(row: Any) -> dict[str, Any] | None:
     report["actor"] = _json_container(report.get("actor_snapshot_json"), {})
     if not report["actor"] and report.get("actor_id") == FLASH.id:
         report["actor"] = actor_snapshot()
-    summary = _ticker_summary(report["ticker"])
+    summary = summary or _ticker_summary(report["ticker"])
     report["company"] = summary["company"] if summary else report["ticker"]
     report["coin_label"] = summary["coin_label"] if summary else report["ticker"][:2]
     report["coin_tone"] = summary["coin_tone"] if summary else _coin_tone(report["ticker"])
@@ -1449,7 +1502,39 @@ def commissioned_reports(limit: int = 12) -> list[dict[str, Any]]:
     return [report for row in rows if (report := _commission_record(row))]
 
 
-def alpha_board_data(profile: str) -> dict[str, Any]:
+def _alpha_list_summary(
+    ticker: str,
+    pulse_lookup: dict[str, dict[str, Any]],
+    fallback_lookup: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    if ticker in pulse_lookup:
+        return dict(pulse_lookup[ticker])
+    item = dict(fallback_lookup.get(ticker, {}))
+    item.setdefault("ticker", ticker)
+    item.setdefault("company", ticker)
+    item.setdefault("coin_label", ticker[:2])
+    item.setdefault("coin_tone", _coin_tone(ticker))
+    if item.get("captured_at"):
+        item["source"] = "market"
+        item["event_at"] = item["captured_at"]
+        item["sentiment"] = item.get("catalyst_sentiment") or "gap"
+        item["pulse_label"] = _market_pulse_label(item, None)
+    elif item.get("filed_at"):
+        item = _intelligence_evidence(item)
+        item["source"] = "sec"
+        item["event_at"] = item["filed_at"]
+        item["pulse_label"] = _pulse_label(item)
+    else:
+        item.update(
+            source="quiet",
+            event_at=None,
+            sentiment="neutral",
+            pulse_label="Quiet",
+        )
+    return item
+
+
+def _alpha_base_data_uncached() -> dict[str, Any]:
     with connection() as db:
         heart_rows = db.execute(
             """
@@ -1458,6 +1543,111 @@ def alpha_board_data(profile: str) -> dict[str, Any]:
             GROUP BY ticker ORDER BY heart_count DESC,latest_heart DESC LIMIT 50
             """
         ).fetchall()
+        report_rows = db.execute(
+            """
+            SELECT * FROM alpha_reports WHERE status='complete'
+            ORDER BY ticker,created_at DESC
+            """
+        ).fetchall()
+        commission_rows = db.execute(
+            """
+            SELECT c.* FROM research_commissions c
+            WHERE c.status='complete'
+            ORDER BY c.completed_at DESC LIMIT 12
+            """
+        ).fetchall()
+
+    pulse = pulse_data(limit=50)
+    pulse_lookup = {str(row["ticker"]): row for row in pulse["rows"]}
+    requested = [str(row["ticker"]) for row in heart_rows]
+    requested.extend(str(row["ticker"]) for row in commission_rows)
+    fallback_lookup = _radar_market_summaries(
+        [ticker for ticker in requested if ticker not in pulse_lookup]
+    )
+    summary_lookup = {
+        ticker: _alpha_list_summary(ticker, pulse_lookup, fallback_lookup)
+        for ticker in dict.fromkeys(requested)
+    }
+    latest_reports: dict[str, Any] = {}
+    for report_row in report_rows:
+        latest_reports.setdefault(str(report_row["ticker"]), report_row)
+
+    rows: list[dict[str, Any]] = []
+    for rank, heart_row in enumerate(heart_rows, start=1):
+        ticker = str(heart_row["ticker"])
+        item = dict(summary_lookup[ticker])
+        item.update(
+            rank=rank,
+            heart_count=int(heart_row["heart_count"]),
+            latest_heart=heart_row["latest_heart"],
+            is_leader=rank == 1,
+            ai_report=_report_record(latest_reports.get(ticker)),
+        )
+        rows.append(item)
+    ranked = {row["ticker"] for row in rows}
+    contenders = [row for row in pulse["rows"][:8] if row["ticker"] not in ranked][:5]
+    commissions = [
+        report
+        for raw in commission_rows
+        if (
+            report := _commission_record(
+                raw,
+                summary_lookup.get(str(raw["ticker"])),
+            )
+        )
+    ]
+    return {
+        "rows": rows,
+        "contenders": contenders,
+        "total_hearts": sum(row["heart_count"] for row in rows),
+        "provider_ready": bool(AI_REPORT_API_KEY),
+        "commissions": commissions,
+    }
+
+
+def _refresh_alpha_base(cache_key: str) -> None:
+    try:
+        payload = _alpha_base_data_uncached()
+        with ALPHA_DATA_LOCK:
+            ALPHA_DATA_CACHE[cache_key] = (
+                time.monotonic() + ALPHA_CACHE_TTL_SECONDS,
+                payload,
+            )
+    except Exception:
+        LOG.exception("Alpha cache refresh failed")
+    finally:
+        with ALPHA_DATA_LOCK:
+            ALPHA_DATA_REFRESHING.discard(cache_key)
+
+
+def _alpha_base_data() -> dict[str, Any]:
+    cache_key = str(runner_db.DATABASE_PATH)
+    current = time.monotonic()
+    with ALPHA_DATA_LOCK:
+        cached = ALPHA_DATA_CACHE.get(cache_key)
+        if cached and current < cached[0]:
+            return cached[1]
+        if cached:
+            if cache_key not in ALPHA_DATA_REFRESHING:
+                ALPHA_DATA_REFRESHING.add(cache_key)
+                threading.Thread(
+                    target=_refresh_alpha_base,
+                    args=(cache_key,),
+                    daemon=True,
+                    name="alpha-cache-refresh",
+                ).start()
+            return cached[1]
+        payload = _alpha_base_data_uncached()
+        if len(ALPHA_DATA_CACHE) >= 8 and cache_key not in ALPHA_DATA_CACHE:
+            oldest_key = min(ALPHA_DATA_CACHE, key=lambda key: ALPHA_DATA_CACHE[key][0])
+            ALPHA_DATA_CACHE.pop(oldest_key, None)
+        ALPHA_DATA_CACHE[cache_key] = (current + ALPHA_CACHE_TTL_SECONDS, payload)
+        return payload
+
+
+def alpha_board_data(profile: str) -> dict[str, Any]:
+    base = _alpha_base_data()
+    with connection() as db:
         mine = {
             row["ticker"]
             for row in db.execute(
@@ -1465,37 +1655,12 @@ def alpha_board_data(profile: str) -> dict[str, Any]:
                 (profile,),
             ).fetchall()
         }
-    rows: list[dict[str, Any]] = []
-    for rank, heart_row in enumerate(heart_rows, start=1):
-        ticker = heart_row["ticker"]
-        item = _ticker_summary(ticker)
-        if not item:
-            continue
-        with connection() as db:
-            report_row = db.execute(
-                """
-                SELECT * FROM alpha_reports
-                WHERE ticker=? AND status='complete' ORDER BY created_at DESC LIMIT 1
-                """,
-                (ticker,),
-            ).fetchone()
-        item.update(
-            rank=rank,
-            heart_count=int(heart_row["heart_count"]),
-            latest_heart=heart_row["latest_heart"],
-            hearted=ticker in mine,
-            is_leader=rank == 1,
-            ai_report=_report_record(report_row),
-        )
-        rows.append(item)
-    ranked = {row["ticker"] for row in rows}
-    contenders = [row for row in pulse_data(limit=8)["rows"] if row["ticker"] not in ranked][:5]
     return {
-        "rows": rows,
-        "contenders": contenders,
-        "total_hearts": sum(row["heart_count"] for row in rows),
-        "provider_ready": bool(AI_REPORT_API_KEY),
-        "commissions": commissioned_reports(),
+        **base,
+        "rows": [
+            {**row, "hearted": row["ticker"] in mine}
+            for row in base["rows"]
+        ],
     }
 
 
@@ -1811,15 +1976,43 @@ def _fallback_filings_from_evidence(evidence: dict[str, Any]) -> list[dict[str, 
     ]
 
 
-def _commission_research(
+def _create_research_commission(
     user_id: str,
     ticker: str,
-    openrouter_key: str,
     *,
     actor: AIKol = FLASH,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], bool]:
+    """Create one idempotent server job without storing the provider key."""
+
     timestamp = iso()
     with connection() as db:
+        running = db.execute(
+            """
+            SELECT * FROM research_commissions
+            WHERE user_id=? AND ticker=? AND actor_id=? AND status='running'
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (user_id, ticker, actor.id),
+        ).fetchone()
+        if running:
+            return _commission_record(running) or {}, False
+        heart_count = db.execute(
+            "SELECT COUNT(*) FROM ticker_hearts WHERE ticker=? AND active=1", (ticker,)
+        ).fetchone()[0]
+
+    evidence_key, _ = _alpha_evidence(ticker, int(heart_count))
+    with connection() as db:
+        current = db.execute(
+            """
+            SELECT * FROM research_commissions
+            WHERE user_id=? AND ticker=? AND actor_id=? AND evidence_key=?
+                AND status='complete'
+            ORDER BY completed_at DESC LIMIT 1
+            """,
+            (user_id, ticker, actor.id, evidence_key),
+        ).fetchone()
+        if current:
+            return _commission_record(current) or {}, False
         recent_count = db.execute(
             """
             SELECT COUNT(*) FROM research_commissions
@@ -1829,19 +2022,7 @@ def _commission_research(
         ).fetchone()[0]
         if recent_count >= 3:
             raise HTTPException(429, "You can commission three reports per day.")
-        running = db.execute(
-            """
-            SELECT public_id FROM research_commissions
-            WHERE user_id=? AND ticker=? AND actor_id=? AND status='running'
-            """,
-            (user_id, ticker, actor.id),
-        ).fetchone()
-        if running:
-            raise HTTPException(409, "This report is already running.")
-        heart_count = db.execute(
-            "SELECT COUNT(*) FROM ticker_hearts WHERE ticker=? AND active=1", (ticker,)
-        ).fetchone()[0]
-    evidence_key, evidence = _alpha_evidence(ticker, int(heart_count))
+
     report_id = str(uuid.uuid4())
     public_id = secrets.token_urlsafe(8).replace("-", "").replace("_", "")[:10]
     with connection() as db:
@@ -1867,7 +2048,45 @@ def _commission_research(
                 ),
             )
         except sqlite3.IntegrityError as exc:
+            running = db.execute(
+                """
+                SELECT * FROM research_commissions
+                WHERE user_id=? AND ticker=? AND actor_id=? AND status='running'
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (user_id, ticker, actor.id),
+            ).fetchone()
+            if running:
+                return _commission_record(running) or {}, False
             raise HTTPException(409, "This report is already running.") from exc
+        row = db.execute(
+            "SELECT * FROM research_commissions WHERE id=?", (report_id,)
+        ).fetchone()
+    return _commission_record(row) or {}, True
+
+
+def _run_research_commission(
+    report_id: str,
+    openrouter_key: str,
+    *,
+    actor: AIKol = FLASH,
+) -> dict[str, Any]:
+    with connection() as db:
+        row = db.execute(
+            "SELECT * FROM research_commissions WHERE id=?", (report_id,)
+        ).fetchone()
+        if not row:
+            raise RuntimeError("Research job not found")
+        commission = _commission_record(row) or {}
+        if commission.get("status") != "running":
+            return commission
+        ticker = str(row["ticker"])
+        user_id = str(row["user_id"])
+        heart_count = db.execute(
+            "SELECT COUNT(*) FROM ticker_hearts WHERE ticker=? AND active=1", (ticker,)
+        ).fetchone()[0]
+
+    _, evidence = _alpha_evidence(ticker, int(heart_count))
     try:
         research_context = build_research_context(ticker, evidence, model=actor.model)
         report, model, usage = _generate_openrouter_report(
@@ -1932,6 +2151,8 @@ def _commission_research(
             row = db.execute(
                 "SELECT * FROM research_commissions WHERE id=?", (report_id,)
             ).fetchone()
+        with ALPHA_DATA_LOCK:
+            ALPHA_DATA_CACHE.clear()
         return _commission_record(row) or {}
     except Exception as exc:
         detail = exc.detail if isinstance(exc, HTTPException) else "Report generation failed."
@@ -1943,6 +2164,52 @@ def _commission_research(
                 (str(detail)[:500], iso(), report_id),
             )
         raise
+
+
+def _commission_research(
+    user_id: str,
+    ticker: str,
+    openrouter_key: str,
+    *,
+    actor: AIKol = FLASH,
+) -> dict[str, Any]:
+    """Run a commission inline for internal callers and focused tests."""
+
+    commission, created = _create_research_commission(user_id, ticker, actor=actor)
+    if not created:
+        return commission
+    return _run_research_commission(commission["id"], openrouter_key, actor=actor)
+
+
+def _fail_orphaned_research_jobs() -> None:
+    """Release jobs whose in-memory provider key disappeared on a server restart."""
+
+    timestamp = iso()
+    with connection() as db:
+        db.execute(
+            """
+            UPDATE research_commissions
+            SET status='failed',error=?,updated_at=?
+            WHERE status='running'
+            """,
+            ("The server restarted before Flash finished. Please retry.", timestamp),
+        )
+
+
+async def research_job_worker() -> None:
+    """Finish commissioned reports independently of the browser request."""
+
+    while True:
+        report_id, openrouter_key = await RESEARCH_JOB_QUEUE.get()
+        try:
+            await run_in_threadpool(_run_research_commission, report_id, openrouter_key)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOG.exception("Flash research job failed: %s", report_id)
+        finally:
+            openrouter_key = ""
+            RESEARCH_JOB_QUEUE.task_done()
 
 
 def get_commission(public_id: str) -> dict[str, Any] | None:
@@ -1962,12 +2229,25 @@ def latest_commission(user_id: str, ticker: str) -> dict[str, Any] | None:
         row = db.execute(
             """
             SELECT * FROM research_commissions
-            WHERE user_id=? AND ticker=? AND status='complete'
-            ORDER BY completed_at DESC LIMIT 1
+            WHERE user_id=? AND ticker=? AND actor_id=?
+            ORDER BY created_at DESC LIMIT 1
             """,
-            (user_id, ticker),
+            (user_id, ticker, FLASH.id),
         ).fetchone()
     return _commission_record(row)
+
+
+def _commission_api_payload(report: dict[str, Any]) -> dict[str, Any]:
+    status = str(report.get("status") or "failed")
+    public_id = str(report.get("public_id") or "")
+    return {
+        "ok": status != "failed",
+        "ticker": str(report.get("ticker") or ""),
+        "job_id": public_id,
+        "status": status,
+        "url": f"/research/{public_id}" if status == "complete" and public_id else None,
+        "error": str(report.get("error") or "") if status == "failed" else None,
+    }
 
 
 def _generate_alpha_report(evidence: dict[str, Any]) -> dict[str, Any]:
@@ -2578,18 +2858,11 @@ def ticker_chart_snapshots(tickers: list[str]) -> dict[str, TopicSnapshot]:
         with connection() as db:
             rows = db.execute(
                 f"""
-                WITH latest AS (
-                    SELECT ticker,bar_time,close,source,last_collected_at,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY ticker,bar_time
-                               ORDER BY last_collected_at DESC
-                           ) AS position
-                    FROM market_bars
-                    WHERE interval='5m' AND ticker IN ({placeholders})
-                      AND bar_time>=? AND close IS NOT NULL
-                )
                 SELECT ticker,bar_time,close,source,last_collected_at
-                FROM latest WHERE position=1
+                FROM market_bars
+                WHERE source='yahoo' AND interval='5m'
+                  AND ticker IN ({placeholders})
+                  AND bar_time>=? AND close IS NOT NULL
                 ORDER BY ticker,bar_time
                 """,
                 (*symbols, cutoff),
@@ -2832,18 +3105,33 @@ def _radar_market_summaries(tickers: list[str]) -> dict[str, dict[str, Any]]:
             """,
             requested,
         ).fetchall()
+        filing_rows = db.execute(
+            f"""
+            WITH ranked AS (
+                SELECT f.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY ticker ORDER BY filed_at DESC,score DESC
+                       ) AS radar_position
+                FROM sec_filings f
+                WHERE ticker IN ({placeholders}) AND created_at>?
+            )
+            SELECT * FROM ranked WHERE radar_position=1
+            """,
+            (*requested, iso(now() - timedelta(days=30))),
+        ).fetchall()
 
     companies = {str(row["ticker"]): dict(row) for row in company_rows}
     snapshots = {str(row["ticker"]): dict(row) for row in snapshot_rows}
+    filings = {str(row["ticker"]): dict(row) for row in filing_rows}
     summaries: dict[str, dict[str, Any]] = {}
     for ticker in requested:
         company = companies.get(ticker, {})
-        snapshot = snapshots.get(ticker, {})
-        snapshot.pop("radar_position", None)
+        summary = snapshots.get(ticker) or filings.get(ticker, {})
+        summary.pop("radar_position", None)
         summaries[ticker] = {
-            **snapshot,
+            **summary,
             "ticker": ticker,
-            "company": company.get("name") or ticker,
+            "company": company.get("name") or summary.get("company") or ticker,
             "exchange": company.get("exchange") or "Listed US stock",
             "coin_label": ticker[:2],
             "coin_tone": _coin_tone(ticker),
@@ -3001,12 +3289,37 @@ def _radar_base_data_uncached() -> list[dict[str, Any]]:
     return output[:20]
 
 
+def _refresh_radar_base(cache_key: str) -> None:
+    try:
+        output = _radar_base_data_uncached()
+        with RADAR_DATA_LOCK:
+            RADAR_DATA_CACHE[cache_key] = (
+                time.monotonic() + RADAR_CACHE_TTL_SECONDS,
+                output,
+            )
+    except Exception:
+        LOG.exception("Radar cache refresh failed")
+    finally:
+        with RADAR_DATA_LOCK:
+            RADAR_DATA_REFRESHING.discard(cache_key)
+
+
 def _radar_base_data() -> list[dict[str, Any]]:
     cache_key = str(runner_db.DATABASE_PATH)
     current = time.monotonic()
     with RADAR_DATA_LOCK:
         cached = RADAR_DATA_CACHE.get(cache_key)
         if cached and current < cached[0]:
+            return cached[1]
+        if cached:
+            if cache_key not in RADAR_DATA_REFRESHING:
+                RADAR_DATA_REFRESHING.add(cache_key)
+                threading.Thread(
+                    target=_refresh_radar_base,
+                    args=(cache_key,),
+                    daemon=True,
+                    name="radar-cache-refresh",
+                ).start()
             return cached[1]
         output = _radar_base_data_uncached()
         if len(RADAR_DATA_CACHE) >= 8 and cache_key not in RADAR_DATA_CACHE:
@@ -3046,6 +3359,17 @@ def radar_data(
                 [(profile, row["ticker"], seen_at) for row in output],
             )
     return output
+
+
+async def request_cache_warmer() -> None:
+    """Fill request caches shortly after startup without delaying health checks."""
+
+    await asyncio.sleep(1)
+    for builder in (_pulse_base_data, _radar_base_data, _alpha_base_data):
+        try:
+            await asyncio.to_thread(builder)
+        except Exception:
+            LOG.exception("Startup request cache warm failed")
 
 
 @app.get("/radar", response_class=HTMLResponse)
@@ -3220,6 +3544,10 @@ def toggle_heart(
         )
     if active:
         _record_activity(profile, normalized, "view")
+    with PULSE_DATA_LOCK:
+        PULSE_DATA_CACHE.clear()
+    with ALPHA_DATA_LOCK:
+        ALPHA_DATA_CACHE.clear()
     state = heart_state(normalized, profile)
     return JSONResponse(state)
 
@@ -3239,18 +3567,39 @@ async def commission_research_api(
     openrouter_key = request.headers.get("x-openrouter-key", "").strip()
     if len(openrouter_key) < 20 or len(openrouter_key) > 500:
         raise HTTPException(401, "Connect OpenRouter before commissioning a report.")
-    report = await run_in_threadpool(
-        _commission_research,
+    report, created = await run_in_threadpool(
+        _create_research_commission,
         user["id"],
         normalized,
-        openrouter_key,
     )
+    if created:
+        await RESEARCH_JOB_QUEUE.put((str(report["id"]), openrouter_key))
+    payload = _commission_api_payload(report)
+    payload["created"] = created
+    return JSONResponse(payload, status_code=202 if payload["status"] == "running" else 200)
+
+
+@app.get("/api/research/{ticker}")
+def research_status_api(
+    ticker: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    user = require_user(runner_session)
+    normalized = _clean_ticker(ticker)
+    if not _known_ticker(normalized):
+        raise HTTPException(404, "Ticker not found")
+    report = latest_commission(user["id"], normalized)
+    if not report:
+        raise HTTPException(404, "No Flash report found")
+    enforce_rate(request, "research-status", limit=180, seconds=600, subject=user["id"])
+    payload = _commission_api_payload(report)
+    if payload["status"] == "complete":
+        with ALPHA_DATA_LOCK:
+            ALPHA_DATA_CACHE.clear()
     return JSONResponse(
-        {
-            "ok": True,
-            "ticker": normalized,
-            "url": f"/research/{report['public_id']}",
-        }
+        payload,
+        status_code=200,
     )
 
 
