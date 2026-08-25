@@ -48,7 +48,7 @@
   </section>
 
   <section class="evidence-gate gate-{{ detail.evidence_gate.state }}" id="evidenceGate">
-    <div><span>RESEARCH GATE</span><strong id="gateSummary">{{ detail.evidence_gate.summary }}</strong><small id="gateCount">{{ detail.evidence_gate.count }} checks · gate {{ detail.evidence_gate.threshold }}</small></div>
+    <div><span>RESEARCH GATE</span><strong id="gateSummary">{{ detail.evidence_gate.summary }}</strong><small id="gateCount">{{ detail.evidence_gate.count }} check{{ '' if detail.evidence_gate.count == 1 else 's' }} · gate {{ detail.evidence_gate.threshold }}</small></div>
     <div class="gate-meter" id="gateMeter">{% for index in range(detail.evidence_gate.threshold) %}<i class="{% if index < detail.evidence_gate.count %}hit{% endif %}"></i>{% endfor %}</div>
     <p id="gateChecks">{{ detail.evidence_gate.checks|join(' · ') or 'Waiting for volume, momentum, structure, or catalyst evidence.' }}</p>
   </section>
@@ -176,7 +176,7 @@ function renderGate(gate){
   if(!root)return;
   root.className='evidence-gate gate-'+gate.state;
   document.getElementById('gateSummary').textContent=gate.summary;
-  document.getElementById('gateCount').textContent=gate.count+' checks · gate '+gate.threshold;
+  document.getElementById('gateCount').textContent=gate.count+' check'+(gate.count===1?'':'s')+' · gate '+gate.threshold;
   document.getElementById('gateChecks').textContent=(gate.checks||[]).join(' · ')||'Waiting for volume, momentum, structure, or catalyst evidence.';
   document.querySelectorAll('#gateMeter i').forEach((item,index)=>item.classList.toggle('hit',index<gate.count));
 }
