@@ -1,0 +1,331 @@
+from __future__ import annotations
+
+import math
+import statistics
+from collections.abc import Callable
+from datetime import UTC, datetime, time, timedelta
+from typing import Protocol
+from zoneinfo import ZoneInfo
+
+import pandas as pd
+
+from runner_watch.market_data import DownloadResult
+from runner_watch.models import DailyProfile, RunnerSnapshot, ScanResult, ScanSettings
+from runner_watch.scoring import ScoreInput, score_runner
+from runner_watch.universe import normalize_symbol
+
+EASTERN = ZoneInfo("America/New_York")
+ProgressCallback = Callable[[int, int, str], None]
+
+
+class MarketDataProvider(Protocol):
+    def daily(
+        self, tickers: list[str], progress: ProgressCallback | None = None
+    ) -> DownloadResult: ...
+
+    def intraday(
+        self, tickers: list[str], progress: ProgressCallback | None = None
+    ) -> DownloadResult: ...
+
+
+def _column(frame: pd.DataFrame, name: str) -> pd.Series:
+    for column in frame.columns:
+        if str(column).lower().replace(" ", "") == name.lower().replace(" ", ""):
+            return pd.to_numeric(frame[column], errors="coerce")
+    return pd.Series(dtype="float64")
+
+
+def _to_eastern_index(frame: pd.DataFrame) -> pd.DataFrame:
+    clean = frame.copy()
+    index = pd.to_datetime(clean.index)
+    if index.tz is None:
+        index = index.tz_localize(EASTERN)
+    else:
+        index = index.tz_convert(EASTERN)
+    clean.index = index
+    return clean.sort_index()
+
+
+def build_daily_profile(
+    ticker: str, frame: pd.DataFrame, now: datetime | None = None
+) -> DailyProfile | None:
+    if frame.empty:
+        return None
+    now_et = (now or datetime.now(UTC)).astimezone(EASTERN)
+    clean = frame.copy()
+    clean.index = pd.to_datetime(clean.index)
+    completed = clean[clean.index.date < now_et.date()]
+    if completed.empty:
+        completed = clean.iloc[:-1] if len(clean) > 1 else clean
+    completed = completed.tail(20)
+    close = _column(completed, "Close").dropna()
+    high = _column(completed, "High").dropna()
+    volume = _column(completed, "Volume").dropna()
+    if close.empty or high.empty or volume.empty:
+        return None
+    previous_close = float(close.iloc[-1])
+    previous_high = float(high.iloc[-1])
+    average_volume = float(volume.median())
+    if not all(math.isfinite(item) and item > 0 for item in (previous_close, previous_high)):
+        return None
+    if not math.isfinite(average_volume) or average_volume < 0:
+        return None
+    return DailyProfile(
+        ticker=ticker,
+        previous_close=previous_close,
+        previous_high=previous_high,
+        average_volume=average_volume,
+        average_dollar_volume=average_volume * previous_close,
+    )
+
+
+def _session_name(now_et: datetime) -> str:
+    if now_et.weekday() >= 5:
+        return "CLOSED"
+    clock = now_et.time().replace(tzinfo=None)
+    if time(4) <= clock < time(9, 30):
+        return "PRE-MARKET"
+    if time(9, 30) <= clock < time(16):
+        return "REGULAR"
+    if time(16) <= clock < time(20):
+        return "AFTER-HOURS"
+    return "CLOSED"
+
+
+def _median_positive(values: list[float]) -> float | None:
+    positive = [value for value in values if math.isfinite(value) and value > 0]
+    if len(positive) < 2:
+        return None
+    return float(statistics.median(positive))
+
+
+def _time_number(value: time) -> int:
+    return value.hour * 3600 + value.minute * 60 + value.second
+
+
+def _close_before(frame: pd.DataFrame, point: datetime, tolerance_minutes: int) -> float | None:
+    close = _column(frame.loc[frame.index <= point], "Close").dropna()
+    if close.empty:
+        return None
+    stamp = close.index[-1]
+    if point - stamp > timedelta(minutes=tolerance_minutes):
+        return None
+    return float(close.iloc[-1])
+
+
+def analyze_ticker(
+    ticker: str,
+    daily: DailyProfile,
+    intraday: pd.DataFrame,
+    now: datetime | None = None,
+) -> RunnerSnapshot | None:
+    """Turn recent bars into one ranked snapshot."""
+
+    if intraday.empty:
+        return None
+    now_et = (now or datetime.now(UTC)).astimezone(EASTERN)
+    clean = _to_eastern_index(intraday)
+    required = {name: _column(clean, name) for name in ("Close", "High", "Low", "Volume")}
+    if required["Close"].dropna().empty:
+        return None
+    usable = clean.loc[required["Close"].notna()].copy()
+    if usable.empty:
+        return None
+
+    latest_time = usable.index[-1]
+    latest_date = latest_time.date()
+    latest_clock = _time_number(latest_time.time())
+    all_dates = sorted({stamp.date() for stamp in usable.index})
+    current = usable[usable.index.date == latest_date]
+    session_mask = [
+        time(4) <= stamp.time().replace(tzinfo=None) <= time(20) for stamp in current.index
+    ]
+    current = current.loc[session_mask]
+    if current.empty:
+        return None
+
+    current_close = _column(current, "Close").dropna()
+    current_high = _column(current, "High").dropna()
+    current_low = _column(current, "Low").dropna()
+    current_volume = _column(current, "Volume").fillna(0).clip(lower=0)
+    if current_close.empty or current_high.empty or current_low.empty:
+        return None
+
+    price = float(current_close.iloc[-1])
+    session_volume = int(current_volume.sum())
+
+    previous_cumulative: list[float] = []
+    previous_recent: list[float] = []
+    recent_start = latest_clock - 15 * 60
+    for previous_date in all_dates:
+        if previous_date >= latest_date:
+            continue
+        day = usable[usable.index.date == previous_date]
+        clocks = pd.Series([_time_number(stamp.time()) for stamp in day.index], index=day.index)
+        day_volume = _column(day, "Volume").fillna(0).clip(lower=0)
+        normal_hours = clocks >= _time_number(time(4))
+        cumulative_mask = normal_hours & (clocks <= latest_clock)
+        recent_mask = normal_hours & (clocks > recent_start) & (clocks <= latest_clock)
+        previous_cumulative.append(float(day_volume.loc[cumulative_mask].sum()))
+        previous_recent.append(float(day_volume.loc[recent_mask].sum()))
+
+    typical_cumulative = _median_positive(previous_cumulative)
+    typical_recent = _median_positive(previous_recent)
+    current_clocks = pd.Series(
+        [_time_number(stamp.time()) for stamp in current.index], index=current.index
+    )
+    current_recent = float(current_volume.loc[current_clocks > recent_start].sum())
+    relative_volume = session_volume / typical_cumulative if typical_cumulative else None
+    recent_relative_volume = current_recent / typical_recent if typical_recent else None
+
+    comparison_5m = _close_before(current, latest_time - timedelta(minutes=5), 8)
+    comparison_15m = _close_before(current, latest_time - timedelta(minutes=15), 10)
+    momentum_5m = (price / comparison_5m - 1) * 100 if comparison_5m else 0.0
+    momentum_15m = (price / comparison_15m - 1) * 100 if comparison_15m else 0.0
+    change_pct = (price / daily.previous_close - 1) * 100
+    breakout_pct = (price / daily.previous_high - 1) * 100
+    low = float(current_low.min())
+    high = float(current_high.max())
+    range_position = (price - low) / (high - low) if high > low else 0.5
+    range_position = max(0.0, min(1.0, range_position))
+    dollar_volume = session_volume * price
+    stale_minutes = max(0.0, (now_et - (latest_time + timedelta(minutes=5))).total_seconds() / 60)
+
+    result = score_runner(
+        ScoreInput(
+            change_pct=change_pct,
+            momentum_5m_pct=momentum_5m,
+            momentum_15m_pct=momentum_15m,
+            relative_volume=relative_volume,
+            recent_relative_volume=recent_relative_volume,
+            breakout_pct=breakout_pct,
+            range_position=range_position,
+            dollar_volume=dollar_volume,
+            stale_minutes=stale_minutes,
+        )
+    )
+    risks = list(result.risks)
+    if price < 1:
+        risks.append("sub-$1 stock")
+    if latest_date != now_et.date():
+        risks.append("last trading session only")
+
+    return RunnerSnapshot(
+        ticker=ticker,
+        score=result.score,
+        stage=result.stage,
+        session=_session_name(now_et),
+        price=price,
+        change_pct=change_pct,
+        momentum_5m_pct=momentum_5m,
+        momentum_15m_pct=momentum_15m,
+        relative_volume=relative_volume,
+        recent_relative_volume=recent_relative_volume,
+        breakout_pct=breakout_pct,
+        range_position=range_position,
+        session_volume=session_volume,
+        dollar_volume=dollar_volume,
+        average_volume=int(daily.average_volume),
+        average_dollar_volume=daily.average_dollar_volume,
+        quote_time=latest_time.to_pydatetime(),
+        stale_minutes=stale_minutes,
+        signals=result.signals,
+        risks=risks,
+    )
+
+
+class RunnerScanner:
+    def __init__(self, provider: MarketDataProvider) -> None:
+        self.provider = provider
+
+    def scan(
+        self,
+        symbols: list[str],
+        settings: ScanSettings | None = None,
+        progress: ProgressCallback | None = None,
+        now: datetime | None = None,
+    ) -> ScanResult:
+        settings = settings or ScanSettings()
+        settings.validate()
+        started = datetime.now(UTC)
+        now = now or started
+        clean_symbols = list(
+            dict.fromkeys(normalize_symbol(symbol) for symbol in symbols if symbol.strip())
+        )
+        warnings: list[str] = []
+        if not clean_symbols:
+            finished = datetime.now(UTC)
+            return ScanResult([], 0, 0, 0, [], ["No symbols were supplied."], started, finished)
+
+        daily_result = self.provider.daily(clean_symbols, progress)
+        warnings.extend(daily_result.warnings)
+        profiles: list[DailyProfile] = []
+        for ticker, frame in daily_result.frames.items():
+            profile = build_daily_profile(ticker, frame, now)
+            if profile is None:
+                continue
+            if not settings.min_price <= profile.previous_close <= settings.max_price:
+                continue
+            if profile.average_volume < settings.min_avg_volume:
+                continue
+            if profile.average_dollar_volume < settings.min_avg_dollar_volume:
+                continue
+            profiles.append(profile)
+
+        # Share volume is the main sort key here. This keeps active lower-priced
+        # stocks in a broad scan instead of filling every slot with mega-caps.
+        profiles.sort(
+            key=lambda item: (item.average_volume, item.average_dollar_volume), reverse=True
+        )
+        liquid_count = len(profiles)
+        if len(profiles) > settings.max_symbols:
+            warnings.append(
+                f"{len(profiles):,} symbols passed the daily filter; the most active "
+                f"{settings.max_symbols:,} were checked intraday. Raise the scan cap "
+                "for wider coverage."
+            )
+            profiles = profiles[: settings.max_symbols]
+
+        intraday_symbols = [profile.ticker for profile in profiles]
+        intraday_result = self.provider.intraday(intraday_symbols, progress)
+        warnings.extend(intraday_result.warnings)
+        rows: list[RunnerSnapshot] = []
+        for profile in profiles:
+            frame = intraday_result.frames.get(profile.ticker)
+            if frame is None:
+                continue
+            snapshot = analyze_ticker(profile.ticker, profile, frame, now)
+            if snapshot is None:
+                continue
+            if (
+                snapshot.session in {"PRE-MARKET", "REGULAR"}
+                and snapshot.stale_minutes > settings.max_stale_minutes
+            ):
+                continue
+            rows.append(snapshot)
+
+        rows.sort(key=lambda item: (item.score, item.dollar_volume), reverse=True)
+        rows = rows[: settings.top_n]
+        failed = sorted(set(daily_result.failed + intraday_result.failed))
+        if failed:
+            warnings.append(
+                f"No usable data came back for {len(failed):,} symbol(s). Delisted symbols, "
+                "Yahoo limits, and temporary quote errors can cause this."
+            )
+        if getattr(self.provider, "is_sample", False):
+            warnings.append("Sample results use fake data and are only for testing the screen.")
+        else:
+            warnings.append(
+                "Yahoo data can be delayed or incomplete. Check a live broker before acting."
+            )
+        finished = datetime.now(UTC)
+        return ScanResult(
+            rows=rows,
+            requested_symbols=len(clean_symbols),
+            liquid_symbols=liquid_count,
+            scanned_symbols=len(intraday_result.frames),
+            failed_symbols=failed,
+            warnings=warnings,
+            started_at=started,
+            finished_at=finished,
+        )

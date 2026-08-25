@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Discover · Runner Watch{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <span class="eyebrow">PENNY STOCK RUNNER DISCOVERY</span>
+    <h1>Find the small-cap move<br>before the crowd.</h1>
+    <p>Listed stocks from $0.20–$5, ranked by unusual volume and fresh momentum, with timestamped public alpha.</p>
+    <a class="button" href="/intelligence">Open EDGAR intelligence</a>
+    {% if not user %}<a class="button secondary" href="/signup">Join with a passkey</a>{% endif %}
+  </div>
+  <div class="hero-orb"><span>RVOL</span><strong>3.8×</strong><small>before the breakout</small></div>
+</section>
+
+<section class="section-heading">
+  <div><span class="eyebrow">LATEST SIGNALS</span><h2>Discovery feed</h2></div>
+  <div class="legend"><span class="dot early"></span> Early <span class="dot building"></span> Building</div>
+</section>
+
+{% if signals %}
+<div class="feed">
+  {% for signal in signals %}
+  <a class="signal-card" href="/s/{{ signal.public_id }}">
+    <div class="signal-top">
+      <div><strong class="ticker">${{ signal.ticker }}</strong><span class="stage {{ signal.stage|lower }}">{{ signal.stage }}</span></div>
+      <span class="score">{{ '%.1f'|format(signal.score) }}</span>
+    </div>
+    <p class="thesis">{{ signal.thesis }}</p>
+    <div class="metric-row">
+      <div><span>Move</span><strong class="positive">{{ '%+.1f'|format(signal.change_pct) }}%</strong></div>
+      <div><span>15m</span><strong>{{ '%+.1f'|format(signal.momentum_15m_pct) }}%</strong></div>
+      <div><span>RVOL</span><strong>{% if signal.relative_volume %}{{ '%.1f'|format(signal.relative_volume) }}×{% else %}—{% endif %}</strong></div>
+    </div>
+    <div class="signal-foot"><span>@{{ signal.username }}</span><span>{{ signal.horizon }}</span></div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty">
+  <span>⌁</span><h3>The feed is quiet.</h3>
+  <p>Run the scanner and publish the first timestamped signal.</p>
+  {% if user %}<a class="button" href="/scanner">Open scanner</a>{% endif %}
+</div>
+{% endif %}
+
+<div class="safety-note"><strong>Signals are observations, not advice.</strong> Confirm prices, spreads, halts, filings, and news in a live broker.</div>
+{% endblock %}

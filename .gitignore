@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.runner_watch_cache/
+*.egg-info/
+*.py[cod]
+/runner-watch-*.csv
+/runner-watch-*.json
+/runners.csv
+/data/
+/build/
+*.db
+*.db-shm
+*.db-wal
+!.streamlit/config.toml

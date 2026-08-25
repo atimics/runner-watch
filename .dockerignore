@@ -1,0 +1,11 @@
+.venv
+.git
+.pytest_cache
+.ruff_cache
+.runner_watch_cache
+__pycache__
+*.pyc
+*.db
+data
+tests
+

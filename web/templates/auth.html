@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}{% if mode == 'signup' %}Create account{% else %}Passkey login{% endif %} · Runner Watch{% endblock %}
+{% block content %}
+<section class="auth-wrap">
+  <div class="auth-card">
+    <span class="passkey-icon">◉</span>
+    {% if mode == 'signup' %}
+      <span class="eyebrow">PASSWORDLESS BETA</span>
+      <h1>Create your account</h1>
+      <p>Your device protects your passkey. Runner Watch never receives your fingerprint or face data.</p>
+      <label>Username<input id="username" autocomplete="username" maxlength="24" placeholder="market_mouse"></label>
+      <label>Display name<input id="displayName" maxlength="40" placeholder="Market Mouse"></label>
+      <button class="button full" id="authButton">Create passkey</button>
+      <p class="auth-switch">Already joined? <a href="/login">Log in</a></p>
+    {% else %}
+      <span class="eyebrow">WELCOME BACK</span>
+      <h1>Use your passkey</h1>
+      <p>Choose the passkey saved on this device or on a nearby device.</p>
+      <button class="button full" id="authButton">Log in with passkey</button>
+      <p class="auth-switch">New here? <a href="/signup">Create an account</a></p>
+    {% endif %}
+    <div id="authStatus" class="status" aria-live="polite"></div>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+const mode = {{ mode|tojson }};
+const statusBox = document.getElementById('authStatus');
+const button = document.getElementById('authButton');
+function b64bytes(value) {
+  const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4);
+  return Uint8Array.from(atob(padded), c => c.charCodeAt(0));
+}
+function bytesB64(value) {
+  const bytes = new Uint8Array(value); let text = '';
+  bytes.forEach(byte => text += String.fromCharCode(byte));
+  return btoa(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function prepareCreate(options) {
+  options.challenge = b64bytes(options.challenge);
+  options.user.id = b64bytes(options.user.id);
+  options.excludeCredentials = (options.excludeCredentials || []).map(x => ({...x, id: b64bytes(x.id)}));
+  return options;
+}
+function prepareGet(options) {
+  options.challenge = b64bytes(options.challenge);
+  options.allowCredentials = (options.allowCredentials || []).map(x => ({...x, id: b64bytes(x.id)}));
+  return options;
+}
+function serialize(credential) {
+  const response = credential.response;
+  const data = {
+    id: credential.id, rawId: bytesB64(credential.rawId), type: credential.type,
+    authenticatorAttachment: credential.authenticatorAttachment,
+    clientExtensionResults: credential.getClientExtensionResults(),
+    response: {clientDataJSON: bytesB64(response.clientDataJSON)}
+  };
+  if (response.attestationObject) {
+    data.response.attestationObject = bytesB64(response.attestationObject);
+    data.response.transports = response.getTransports ? response.getTransports() : [];
+  } else {
+    data.response.authenticatorData = bytesB64(response.authenticatorData);
+    data.response.signature = bytesB64(response.signature);
+    data.response.userHandle = response.userHandle ? bytesB64(response.userHandle) : null;
+  }
+  return data;
+}
+async function api(url, body) {
+  const response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: body ? JSON.stringify(body) : null});
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || 'Request failed');
+  return data;
+}
+button.addEventListener('click', async () => {
+  button.disabled = true; statusBox.className = 'status'; statusBox.textContent = 'Waiting for your device…';
+  try {
+    if (!window.PublicKeyCredential) throw new Error('This browser does not support passkeys.');
+    let start, credential;
+    if (mode === 'signup') {
+      const username = document.getElementById('username').value.trim();
+      const display_name = document.getElementById('displayName').value.trim();
+      start = await api('/api/auth/register/options', {username, display_name});
+      credential = await navigator.credentials.create({publicKey: prepareCreate(start.options)});
+      const done = await api('/api/auth/register/verify', {flow_token: start.flow_token, credential: serialize(credential)});
+      location.href = done.redirect;
+    } else {
+      start = await api('/api/auth/login/options');
+      credential = await navigator.credentials.get({publicKey: prepareGet(start.options)});
+      const done = await api('/api/auth/login/verify', {flow_token: start.flow_token, credential: serialize(credential)});
+      location.href = done.redirect;
+    }
+  } catch (error) {
+    statusBox.className = 'status error'; statusBox.textContent = error.message || String(error); button.disabled = false;
+  }
+});
+</script>
+{% endblock %}
+

@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}EDGAR Intelligence · Runner Watch{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/intelligence.css">{% endblock %}
+{% block content %}
+<section class="intel-head">
+  <div>
+    <span class="eyebrow">ALL LISTED COMPANIES · BACKGROUND MONITOR</span>
+    <h1>EDGAR catalyst intelligence</h1>
+    <p>Find the filing before it becomes a top-gainer list. Insider buys, ownership changes, current reports, and dilution risk are scored in the background.</p>
+  </div>
+  <div class="intel-live"><span></span><strong>LIVE</strong><small id="lastRefresh">Starting SEC listener…</small></div>
+</section>
+
+<section class="intel-controls">
+  <label>Heatmap
+    <select id="intelFilter">
+      <option value="penny">Penny stocks · under $5</option>
+      <option value="positive">Positive catalysts</option>
+      <option value="insider">Insider activity</option>
+      <option value="risk">Dilution and risk</option>
+      <option value="all">All important filings</option>
+    </select>
+  </label>
+  <div class="intel-legend"><span class="legend-positive"></span> Catalyst <span class="legend-neutral"></span> New filing <span class="legend-risk"></span> Risk</div>
+</section>
+
+<div id="intelStatus" class="scan-status">The worker is loading the latest EDGAR filings. This page does not start a scan.</div>
+<div id="heatmap" class="heatmap"></div>
+
+<section class="intel-notes">
+  <strong>How to read it</strong>
+  <p>A larger score means the event deserves faster review, not that the stock will rise. Form 4 code P means an open-market or private purchase. Grants, option exercises, and tax withholding are kept separate. Offering filings are marked as risk.</p>
+  <p>SEC data is the source of record. Yahoo price and volume are delayed confirmation data. Always open the filing and check spreads, halts, dilution history, and news before acting.</p>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+let intelligence = {{ intelligence|tojson }};
+const heatmap = document.getElementById('heatmap');
+const statusBox = document.getElementById('intelStatus');
+const filter = document.getElementById('intelFilter');
+function esc(value) { const node = document.createElement('span'); node.textContent = String(value ?? ''); return node.innerHTML; }
+function compact(value) { const number = Number(value); if (!Number.isFinite(number) || number <= 0) return ''; if (number >= 1e6) return '$' + (number / 1e6).toFixed(1) + 'M'; if (number >= 1e3) return '$' + (number / 1e3).toFixed(0) + 'K'; return '$' + number.toFixed(0); }
+function ago(value) { const seconds = Math.max(0, (Date.now() - new Date(value).getTime()) / 1000); if (seconds < 90) return Math.round(seconds) + 's ago'; if (seconds < 5400) return Math.round(seconds / 60) + 'm ago'; if (seconds < 129600) return Math.round(seconds / 3600) + 'h ago'; return Math.round(seconds / 86400) + 'd ago'; }
+function allowed(row, mode) {
+  if (mode === 'penny') return row.price != null && Number(row.price) <= 5;
+  if (mode === 'positive') return row.sentiment === 'positive';
+  if (mode === 'insider') return row.form.startsWith('4');
+  if (mode === 'risk') return row.sentiment === 'risk';
+  return true;
+}
+function render() {
+  const mode = filter.value; const rows = intelligence.rows.filter(row => allowed(row, mode));
+  heatmap.innerHTML = rows.map(row => {
+    const value = compact(row.transaction_value);
+    const market = row.price == null ? 'Price pending' : `$${Number(row.price).toFixed(2)}${row.change_pct == null ? '' : ` · ${Number(row.change_pct) >= 0 ? '+' : ''}${Number(row.change_pct).toFixed(1)}%`}`;
+    const heat = Number(row.score) >= 80 ? 'hot' : Number(row.score) >= 60 ? 'warm' : '';
+    return `<a class="heat-cell ${esc(row.sentiment)} ${heat}" href="${esc(row.filing_url)}" target="_blank" rel="noopener"><div class="heat-top"><strong>$${esc(row.ticker)}</strong><b>${Number(row.score).toFixed(0)}</b></div><span class="heat-kind">${esc(row.kind)}</span><div class="heat-meta"><span>${esc(row.form)}</span><span>${esc(ago(row.filed_at))}</span></div><p>${esc(row.actor ? `${row.actor}${row.actor_title ? ' · ' + row.actor_title : ''}` : row.company)}</p><div class="heat-market"><span>${esc(market)}</span>${value ? `<strong>${esc(value)}</strong>` : ''}</div></a>`;
+  }).join('') || '<div class="empty intel-empty"><span>⌁</span><h3>No matching catalyst yet.</h3><p>The SEC listener keeps running in the background.</p></div>';
+  const state = intelligence.state || {}; const refreshed = state.edgar_last_refresh;
+  document.getElementById('lastRefresh').textContent = refreshed ? `Updated ${ago(refreshed)}` : 'Starting SEC listener…';
+  const companies = state.edgar_company_count ? Number(state.edgar_company_count).toLocaleString() : 'thousands of';
+  statusBox.textContent = `${rows.length} events shown · monitoring ${companies} listed ticker mappings · updates arrive without clicking Scan.`;
+}
+filter.addEventListener('change', render); render();
+setInterval(async () => { try { const response = await fetch('/api/intelligence'); if (response.ok) { intelligence = await response.json(); render(); } } catch (_) {} }, 15000);
+</script>
+{% endblock %}

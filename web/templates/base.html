@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#07110d">
+  <title>{% block title %}Runner Watch{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span>⚡</span> Runner Watch</a>
+    <nav>
+      <a href="/">Discover</a>
+      <a href="/intelligence">EDGAR Intel</a>
+      {% if user %}
+        <a href="/scanner">Scanner</a>
+        <span class="handle">@{{ user.username }}</span>
+        <button class="link-button" id="logout">Log out</button>
+      {% else %}
+        <a href="/login">Log in</a>
+        <a class="button small" href="/signup">Create account</a>
+      {% endif %}
+    </nav>
+  </header>
+  <main class="shell">{% block content %}{% endblock %}</main>
+  <footer>Official SEC filings + delayed market data · Research only · Never a buy signal</footer>
+  {% if user %}
+  <script>
+    document.getElementById('logout')?.addEventListener('click', async () => {
+      const response = await fetch('/api/auth/logout', {method: 'POST'});
+      if (response.ok) location.href = '/';
+    });
+  </script>
+  {% endif %}
+  {% block scripts %}{% endblock %}
+</body>
+</html>

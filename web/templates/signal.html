@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}${{ signal.ticker }} {{ signal.stage }} signal · Runner Watch{% endblock %}
+{% block head %}
+<meta name="description" content="{{ signal.thesis }}">
+<meta property="og:title" content="${{ signal.ticker }} {{ signal.stage }} · {{ '%+.1f'|format(signal.change_pct) }}%">
+<meta property="og:description" content="{{ signal.thesis }}">
+<meta property="og:type" content="article">
+<meta property="og:url" content="{{ app_origin }}/s/{{ signal.public_id }}">
+<meta property="og:image" content="{{ app_origin }}/s/{{ signal.public_id }}/card.png">
+<meta name="twitter:card" content="summary_large_image">
+{% endblock %}
+{% block content %}
+<article class="alpha-card">
+  <div class="alpha-header">
+    <div><span class="eyebrow">TIMESTAMPED ALPHA</span><h1>${{ signal.ticker }}</h1></div>
+    <div class="alpha-score"><span>RUNNER SCORE</span><strong>{{ '%.1f'|format(signal.score) }}</strong><em class="stage {{ signal.stage|lower }}">{{ signal.stage }}</em></div>
+  </div>
+  <div class="alpha-metrics">
+    <div><span>Captured price</span><strong>${{ '%.2f'|format(signal.price) }}</strong></div>
+    <div><span>Move</span><strong class="positive">{{ '%+.1f'|format(signal.change_pct) }}%</strong></div>
+    <div><span>15m</span><strong>{{ '%+.1f'|format(signal.momentum_15m_pct) }}%</strong></div>
+    <div><span>Same-time RVOL</span><strong>{% if signal.relative_volume %}{{ '%.1f'|format(signal.relative_volume) }}×{% else %}—{% endif %}</strong></div>
+  </div>
+  <blockquote>{{ signal.thesis }}</blockquote>
+  <div class="alpha-details"><div><span>Horizon</span><p>{{ signal.horizon }}</p></div><div><span>Invalidation</span><p>{{ signal.invalidation }}</p></div><div><span>Disclosure</span><p>{{ signal.disclosure }}</p></div></div>
+  <div class="tags">{% for tag in signal.signals %}<span>{{ tag }}</span>{% endfor %}{% for risk in signal.risks %}<span class="risk">{{ risk }}</span>{% endfor %}</div>
+  <div class="alpha-foot"><div><strong>@{{ signal.username }}</strong><span>{{ signal.quote_time }} quote</span></div><span>Published {{ signal.created_at }}</span></div>
+</article>
+<div class="share-row"><button class="button" id="share">Share signal</button><a class="button secondary" target="_blank" rel="noopener" href="https://twitter.com/intent/tweet?text={{ ('$' ~ signal.ticker ~ ' ' ~ signal.stage ~ ' signal on Runner Watch')|urlencode }}&url={{ (app_origin ~ '/s/' ~ signal.public_id)|urlencode }}">Share to X</a><button class="button secondary" id="copy">Copy link</button></div>
+<div class="safety-note"><strong>Research, not a recommendation.</strong> This card uses delayed data and may no longer describe the market. Public posts can be wrong or misleading.</div>
+{% if user %}<button class="report-link" id="report">Report misleading or abusive content</button>{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+const shareData={title:document.title,text:{{ ('$' ~ signal.ticker ~ ' ' ~ signal.stage ~ ': ' ~ signal.thesis)|tojson }},url:location.href};
+document.getElementById('share').addEventListener('click',async()=>{if(navigator.share)await navigator.share(shareData);else{await navigator.clipboard.writeText(location.href);alert('Link copied');}});
+document.getElementById('copy').addEventListener('click',async()=>{await navigator.clipboard.writeText(location.href);document.getElementById('copy').textContent='Copied';});
+document.getElementById('report')?.addEventListener('click',async()=>{const reason=prompt('Why are you reporting this signal?');if(!reason)return;const response=await fetch('/api/signals/{{ signal.public_id }}/report',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})});alert(response.ok?'Report received.':'Could not submit report.');});
+</script>
+{% endblock %}
+
