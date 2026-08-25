@@ -81,6 +81,19 @@ def test_ui_copy_drops_ai_and_corporate_filler() -> None:
         assert phrase not in ui_copy
 
 
+def test_ticker_rows_use_color_without_new_or_seen_tags() -> None:
+    root = Path(__file__).parents[1]
+    row_script = (root / "web/static/ticker-row.js").read_text()
+    row_styles = (root / "web/static/ticker-row.css").read_text()
+
+    assert "attention-unseen" in row_styles
+    assert "attention-seen" in row_styles
+    assert "attention-badge" not in row_script
+    assert "new to you" not in row_script
+    assert "seen but not opened" not in row_script
+    assert "return ['NEW', 'update']" not in row_script
+
+
 def test_passkey_signup_needs_no_profile_fields(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "auth.db")
     init_db()

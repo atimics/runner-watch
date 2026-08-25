@@ -65,8 +65,6 @@ function paintSeen(row){
   row.dataset.novelty='seen';
   row.classList.remove('attention-unseen');
   row.classList.add('attention-seen');
-  const badge=row.querySelector('.attention-badge');
-  if(badge){badge.className='attention-badge attention-badge-seen';badge.innerHTML='<i>○</i> SEEN';}
 }
 function observeExposure(){
   exposureObserver?.disconnect();
