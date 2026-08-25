@@ -1,5 +1,8 @@
+import io
+import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from pytest import MonkeyPatch
 from starlette.requests import Request
@@ -494,6 +497,47 @@ def test_commissioned_report_is_public_without_storing_the_openrouter_key(
         stored = database.execute("SELECT * FROM research_commissions").fetchone()
     assert "openrouter_key" not in columns
     assert "sk-or-device-only-test-key" not in " ".join(str(value) for value in stored)
+
+
+def test_commission_request_uses_glm_53_with_a_minimal_prompt(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+    generated = {
+        "headline": "ONE evidence report",
+        "summary": "A source-bound summary.",
+        "catalysts": ["Verified insider purchase"],
+        "risks": ["Low liquidity"],
+        "watch": ["Volume"],
+    }
+
+    def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
+        captured["body"] = json.loads(request.data)
+        return io.BytesIO(
+            json.dumps(
+                {
+                    "choices": [{"message": {"content": json.dumps(generated)}}],
+                    "model": "z-ai/glm-5.3",
+                    "usage": {"total_tokens": 123},
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
+    report, model, usage = web_main._generate_openrouter_report(
+        "sk-or-test-key-long-enough", {"ticker": "ONE"}, "member-one"
+    )
+
+    body = captured["body"]
+    assert body["model"] == "z-ai/glm-5.3"
+    assert body["response_format"] == {"type": "json_object"}
+    assert body["provider"] == {"require_parameters": True}
+    assert body["reasoning_effort"] == "low"
+    assert "temperature" not in body
+    assert len(body["messages"][0]["content"].split()) <= 30
+    assert report == generated
+    assert model == "z-ai/glm-5.3"
+    assert usage == {"total_tokens": 123}
 
 
 def test_research_report_template_has_public_share_metadata(
