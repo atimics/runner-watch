@@ -48,6 +48,11 @@
 }
 .evidence-count.ready { color: var(--green); border-color: rgba(87, 227, 137, .32); }
 .evidence-count.near { color: var(--amber); border-color: rgba(245, 198, 107, .3); }
+.evidence-count.blocked { color: var(--red); border-color: rgba(255, 107, 122, .35); }
+.rug-count,.state-count { display:inline-block; margin-left:5px; padding:1px 4px; border:1px solid #35413b; border-radius:6px; font-size:7px; font-weight:850; }
+.rug-count.rug-low,.state-triggered,.state-manage { color:var(--green); border-color:rgba(87,227,137,.3); }
+.rug-count.rug-guarded,.state-armed,.state-watch { color:var(--amber); border-color:rgba(245,198,107,.3); }
+.rug-count.rug-high,.rug-count.rug-critical,.state-avoid,.state-exit { color:var(--red); border-color:rgba(255,107,122,.35); }
 
 .ticker-row .quote { min-width: 74px; }
 .mini-chart {

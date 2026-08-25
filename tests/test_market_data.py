@@ -57,3 +57,38 @@ def test_routed_market_data_returns_provider_provenance(monkeypatch: MonkeyPatch
     assert result.provenance.provider == "yahoo"
     assert result.provenance.attempted_providers == ("yahoo",)
     assert result.provenance.fallback_used is False
+
+
+def test_daily_history_cache_fetches_only_missing_symbols(monkeypatch: MonkeyPatch) -> None:
+    index = pd.date_range("2026-01-02", periods=2, freq="1D")
+    raw = pd.DataFrame(
+        {
+            "Open": [1.0, 1.1],
+            "High": [1.2, 1.3],
+            "Low": [0.9, 1.0],
+            "Close": [1.1, 1.2],
+            "Volume": [100, 120],
+        },
+        index=index,
+    )
+    requested: list[list[str]] = []
+
+    def download(**kwargs):
+        requested.append(list(kwargs["tickers"]))
+        return raw
+
+    monkeypatch.setattr(market_data.yf, "download", download)
+    monkeypatch.setattr(market_data, "_DAILY_CACHE_DAY", None)
+    monkeypatch.setattr(market_data, "_DAILY_FRAME_CACHE", {})
+    monkeypatch.setattr(market_data, "_DAILY_CACHE_PROVENANCE", None)
+
+    first = routed_market_data(batch_size=1).daily(["aaa"])
+    second = routed_market_data(batch_size=1).daily(["AAA", "bbb"])
+    third = routed_market_data(batch_size=1).daily(["BBB", "AAA"])
+
+    assert requested == [["AAA"], ["BBB"]]
+    assert set(first.frames) == {"AAA"}
+    assert set(second.frames) == {"AAA", "BBB"}
+    assert set(third.frames) == {"AAA", "BBB"}
+    assert third.provenance is not None
+    assert third.provenance.quality["cache_hit_symbols"] == 2

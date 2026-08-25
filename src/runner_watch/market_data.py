@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
@@ -22,6 +24,12 @@ from runner_watch.provider_registry import ProviderRegistry, ProvidersExhaustedE
 
 ProgressCallback = Callable[[int, int, str], None]
 BarRecorder = Callable[[str, dict[str, pd.DataFrame]], None]
+EASTERN = ZoneInfo("America/New_York")
+
+_DAILY_CACHE_LOCK = threading.Lock()
+_DAILY_CACHE_DAY: date | None = None
+_DAILY_FRAME_CACHE: dict[str, pd.DataFrame] = {}
+_DAILY_CACHE_PROVENANCE: ProviderProvenance | None = None
 
 
 @dataclass(slots=True)
@@ -187,7 +195,7 @@ class YahooMarketData:
     ) -> DownloadResult:
         return self._download(
             tickers,
-            period="1mo",
+            period="1y",
             interval="1d",
             prepost=False,
             progress=progress,
@@ -353,7 +361,7 @@ class RoutedMarketData:
             kind=DataKind.BARS,
             symbols=tickers,
             interval=interval,
-            period="1mo" if interval == "1d" else "5d",
+            period="1y" if interval == "1d" else "5d",
             extended_hours=interval != "1d",
         )
         try:
@@ -382,7 +390,54 @@ class RoutedMarketData:
     def daily(
         self, tickers: list[str], progress: ProgressCallback | None = None
     ) -> DownloadResult:
-        return self._fetch(tickers, "1d", progress)
+        global _DAILY_CACHE_DAY, _DAILY_CACHE_PROVENANCE
+
+        # Completed daily bars stay fixed during one Eastern trading day. This
+        # cache is module-wide because web scans create a new routed client.
+        symbols = list(
+            dict.fromkeys(ticker.strip().upper() for ticker in tickers if ticker.strip())
+        )
+        if not symbols:
+            return DownloadResult(frames={}, failed=[], warnings=[])
+
+        cache_day = datetime.now(UTC).astimezone(EASTERN).date()
+        with _DAILY_CACHE_LOCK:
+            if _DAILY_CACHE_DAY != cache_day:
+                _DAILY_FRAME_CACHE.clear()
+                _DAILY_CACHE_PROVENANCE = None
+                _DAILY_CACHE_DAY = cache_day
+
+            missing = [symbol for symbol in symbols if symbol not in _DAILY_FRAME_CACHE]
+            fresh = self._fetch(missing, "1d", progress) if missing else None
+            if fresh is not None:
+                _DAILY_FRAME_CACHE.update(fresh.frames)
+                if fresh.provenance is not None:
+                    _DAILY_CACHE_PROVENANCE = fresh.provenance
+            elif progress:
+                progress(1, 1, "Daily history cache")
+
+            frames = {
+                symbol: _DAILY_FRAME_CACHE[symbol]
+                for symbol in symbols
+                if symbol in _DAILY_FRAME_CACHE
+            }
+            provenance = fresh.provenance if fresh is not None else _DAILY_CACHE_PROVENANCE
+            if provenance is not None:
+                provenance = provenance.model_copy(
+                    update={
+                        "quality": {
+                            **provenance.quality,
+                            "requested_symbols": len(symbols),
+                            "cache_hit_symbols": len(symbols) - len(missing),
+                        }
+                    }
+                )
+            return DownloadResult(
+                frames=frames,
+                failed=[symbol for symbol in symbols if symbol not in frames],
+                warnings=list(fresh.warnings) if fresh is not None else [],
+                provenance=provenance,
+            )
 
     def intraday(
         self, tickers: list[str], progress: ProgressCallback | None = None

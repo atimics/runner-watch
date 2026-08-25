@@ -132,7 +132,8 @@ def publish_calls_for_scan(
             dict(row)
             for row in db.execute(
                 """
-                SELECT p.*,s.ticker,s.price,s.captured_at,s.scan_run_id
+                SELECT p.*,s.ticker,s.price,s.captured_at,s.scan_run_id,
+                       s.rug_score,s.rug_level,s.trade_state,s.hard_veto
                 FROM ranker_predictions p
                 JOIN scan_snapshots s ON s.id=p.snapshot_id
                 WHERE s.scan_run_id=? AND p.model_id=?
@@ -158,9 +159,15 @@ def publish_calls_for_scan(
                     continue
                 probability = float(prediction.get("probability_up") or 0.0)
                 expected = float(prediction.get("expected_return_pct") or 0.0)
+                risk_blocks = (
+                    bool(prediction.get("hard_veto"))
+                    or float(prediction.get("rug_score") or 0.0) >= 65
+                    or str(prediction.get("trade_state") or "").upper() in {"AVOID", "EXIT"}
+                )
                 should_abandon = (
                     probability <= float(predictor["abandon_probability_up"])
                     or expected <= float(predictor["abandon_expected_return_pct"])
+                    or risk_blocks
                 )
                 if not should_abandon:
                     continue
@@ -195,10 +202,15 @@ def publish_calls_for_scan(
                 probability = float(prediction.get("probability_up") or 0.0)
                 expected = float(prediction.get("expected_return_pct") or 0.0)
                 price = _valid_price(prediction.get("price"))
+                raw_trade_state = prediction.get("trade_state")
+                trade_state = str(raw_trade_state).upper() if raw_trade_state else ""
                 if (
                     probability < float(predictor["min_probability_up"])
                     or expected < float(predictor["min_expected_return_pct"])
                     or price is None
+                    or bool(prediction.get("hard_veto"))
+                    or float(prediction.get("rug_score") or 0.0) >= 50
+                    or (trade_state and trade_state not in {"TRIGGERED", "MANAGE"})
                 ):
                     continue
                 if db.execute(

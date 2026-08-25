@@ -57,6 +57,8 @@
       row.price,
       row.change_pct,
       row.score,
+      row.rug_score,
+      row.trade_state,
       row.event_count,
       row.pulse_label,
       row.event_at,
@@ -81,6 +83,11 @@
     const evidence = gate && Number(gate.count) > 0
       ? `<span class="evidence-count ${esc(gate.state)}">${Number(gate.count)} SIG</span>`
       : '';
+    const rugValue = number(row.rug_score);
+    const rugLevel = String(row.rug_level || 'unknown').toLowerCase();
+    const rug = rugValue === null ? '' : `<span class="rug-count rug-${esc(rugLevel)}">RUG ${rugValue.toFixed(0)}</span>`;
+    const tradeState = String(row.trade_state || '').toUpperCase();
+    const state = tradeState ? `<span class="state-count state-${esc(tradeState.toLowerCase())}">${esc(tradeState)}</span>` : '';
     const catalystTone = row.sentiment === 'risk' ? ' risk' : row.sentiment === 'gap' ? ' gap' : '';
     const updated = options.updated ?? row.has_update;
     const kolCalls = Array.isArray(row.kol_calls) ? row.kol_calls.slice(0, 3) : [];
@@ -97,7 +104,7 @@
       <span class="token-copy">
         <span class="ticker-line"><strong>${esc(row.ticker)}</strong>${kolTags}${badge}<small class="ticker-age">${esc(age)}</small></span>
         <span class="company-name">${esc(company)}</span>
-        <span class="catalyst${catalystTone}">${esc(row.pulse_label || 'Watching for changes')}${events}${evidence}</span>
+        <span class="catalyst${catalystTone}">${esc(row.pulse_label || 'Watching for changes')}${events}${state}${rug}${evidence}</span>
       </span>
       <span class="quote">
         <strong>${esc(money(row.price))}</strong>

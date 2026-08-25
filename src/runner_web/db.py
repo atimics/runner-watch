@@ -722,6 +722,47 @@ def _migration_003_ai_kol(db: sqlite3.Connection) -> None:
             ON kol_call_events(call_id,event_at);
         """
     )
+
+
+def _migration_004_rug_risk(db: sqlite3.Connection) -> None:
+    """Store separate setup, rug, crash, and state evidence."""
+
+    timestamp = datetime.now(UTC).isoformat()
+    for definition in (
+        "setup_score REAL",
+        "rug_score REAL",
+        "rug_level TEXT",
+        "trade_state TEXT",
+        "state_reason TEXT",
+        "hard_veto INTEGER NOT NULL DEFAULT 0",
+        "crash_candidate INTEGER NOT NULL DEFAULT 0",
+        "drawdown_20d_pct REAL",
+        "drawdown_90d_pct REAL",
+        "drawdown_52w_pct REAL",
+        "rebound_from_20d_low_pct REAL",
+        "risk_factors_json TEXT NOT NULL DEFAULT '[]'",
+        "issuer_risk_json TEXT NOT NULL DEFAULT '{}'",
+    ):
+        _ensure_column(db, "scan_snapshots", definition)
+    for definition in (
+        "post_transaction_shares REAL",
+        "stake_change_pct REAL",
+        "is_10b5_1 INTEGER NOT NULL DEFAULT 0",
+        "direct_ownership INTEGER",
+        "footnotes TEXT NOT NULL DEFAULT ''",
+        "beneficial_ownership_pct REAL",
+        "beneficial_shares REAL",
+        "reporting_person_types TEXT NOT NULL DEFAULT ''",
+    ):
+        _ensure_column(db, "sec_filings", definition)
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS scan_snapshots_trade_state "
+        "ON scan_snapshots(trade_state,rug_score,captured_at DESC)"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS scan_snapshots_crash "
+        "ON scan_snapshots(crash_candidate,drawdown_52w_pct,captured_at DESC)"
+    )
     db.execute(
         """
         INSERT OR IGNORE INTO kol_predictors(
@@ -758,6 +799,44 @@ def _migration_003_ai_kol(db: sqlite3.Connection) -> None:
     )
 
 
+def _migration_005_performance_indexes(db: sqlite3.Connection) -> None:
+    """Keep risk lookups bounded as collected history grows."""
+
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS scan_snapshots_ticker_state_captured "
+        "ON scan_snapshots(ticker,captured_at DESC,trade_state) "
+        "WHERE trade_state IS NOT NULL"
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS market_events_risk_ticker_time
+        ON market_events(ticker,event_at DESC)
+        WHERE event_type IN (
+            'trading_halt','reverse_split','corporate_action','security_action'
+        )
+        """
+    )
+
+
+def _migration_006_identity_research(db: sqlite3.Connection) -> None:
+    """Store thesis-first company, person, and filing research."""
+
+    _ensure_column(
+        db,
+        "sec_filings",
+        "beneficial_owner_names TEXT NOT NULL DEFAULT ''",
+    )
+    for definition in (
+        "thesis TEXT",
+        "company_profile_json TEXT NOT NULL DEFAULT '{}'",
+        "people_json TEXT NOT NULL DEFAULT '[]'",
+        "filing_context_json TEXT NOT NULL DEFAULT '[]'",
+        "unknowns_json TEXT NOT NULL DEFAULT '[]'",
+        "research_mode TEXT NOT NULL DEFAULT 'evidence_only'",
+    ):
+        _ensure_column(db, "research_commissions", definition)
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -769,6 +848,9 @@ MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
     Migration(3, "ai_kol", _migration_003_ai_kol),
+    Migration(4, "rug_risk", _migration_004_rug_risk),
+    Migration(5, "performance_indexes", _migration_005_performance_indexes),
+    Migration(6, "identity_research", _migration_006_identity_research),
 )
 
 

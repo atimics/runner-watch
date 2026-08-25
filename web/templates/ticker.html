@@ -79,10 +79,28 @@
     {% else %}<p class="quiet-reason">No fresh market snapshot is stored for this ticker yet.</p>{% endif %}
   </section>
 
+  {% if detail.current.source == 'market' %}
+  <section class="risk-decision risk-{{ (detail.current.rug_level or 'unknown')|lower }} state-{{ (detail.current.trade_state or 'watch')|lower }}">
+    <div class="risk-decision-head"><span>RUG CHECK</span><strong>{{ detail.current.trade_state or 'WATCH' }}</strong></div>
+    <div class="risk-grid">
+      <div><span>Setup</span><b>{{ '%.0f'|format(detail.current.setup_score or detail.current.score or 0) }}</b><small>could send</small></div>
+      <div><span>Rug risk</span><b>{{ '%.0f'|format(detail.current.rug_score or 0) }}</b><small>{{ detail.current.rug_level or 'unknown' }}</small></div>
+      <div><span>52w fall</span><b>{{ '%.0f'|format(detail.current.drawdown_52w_pct or 0) }}%</b><small>{{ 'crash candidate' if detail.current.crash_candidate else 'from high' }}</small></div>
+    </div>
+    <p>{{ detail.current.state_reason or 'No entry state is confirmed.' }}</p>
+    {% set issuer = detail.current.issuer_risk or {} %}
+    <div class="risk-facts">
+      <span>Treasury: {% if issuer.get('cash_runway_months') is not none %}{{ '%.1f'|format(issuer.get('cash_runway_months')) }} months{% else %}unknown{% endif %}</span>
+      <span>Share growth: {% if issuer.get('shares_growth_pct') is not none %}{{ '%+.0f'|format(issuer.get('shares_growth_pct')) }}%{% else %}unknown{% endif %}</span>
+      <span>Current ratio: {% if issuer.get('current_ratio') is not none %}{{ '%.2f'|format(issuer.get('current_ratio')) }}{% else %}unknown{% endif %}</span>
+    </div>
+  </section>
+  {% endif %}
+
   <section class="evidence-gate gate-{{ detail.evidence_gate.state }}" id="evidenceGate">
-    <div><span>Signals</span><strong id="gateSummary">{{ 'Ready' if detail.evidence_gate.state == 'ready' else ('1 signal away' if detail.evidence_gate.state == 'near' else 'Building') }}</strong><small id="gateCount">{{ detail.evidence_gate.count }}/{{ detail.evidence_gate.threshold }}</small></div>
+    <div><span>Decision gate</span><strong id="gateSummary">{{ detail.evidence_gate.summary }}</strong><small id="gateCount">{{ detail.evidence_gate.count }}/{{ detail.evidence_gate.threshold }}</small></div>
     <div class="gate-meter" id="gateMeter">{% for index in range(detail.evidence_gate.threshold) %}<i class="{% if index < detail.evidence_gate.count %}hit{% endif %}"></i>{% endfor %}</div>
-    <p id="gateChecks">{{ detail.evidence_gate.checks|join(' · ') or 'Waiting for volume, momentum, structure, or catalyst evidence.' }}</p>
+    <p id="gateChecks">{{ (detail.evidence_gate.blockers if detail.evidence_gate.blockers else detail.evidence_gate.checks)|join(' · ') or 'Waiting for volume, momentum, structure, or catalyst evidence.' }}</p>
   </section>
 
   <section class="pressure-section" id="pressureSection">
@@ -260,9 +278,10 @@ function renderGate(gate){
   const root=document.getElementById('evidenceGate');
   if(!root)return;
   root.className='evidence-gate gate-'+gate.state;
-  document.getElementById('gateSummary').textContent=gate.state==='ready'?'Ready':gate.state==='near'?'1 signal away':'Building';
+  document.getElementById('gateSummary').textContent=gate.summary||'Watching';
   document.getElementById('gateCount').textContent=gate.count+'/'+gate.threshold;
-  document.getElementById('gateChecks').textContent=(gate.checks||[]).join(' · ')||'Waiting for volume, momentum, structure, or catalyst evidence.';
+  const gateNotes=(gate.blockers&&gate.blockers.length?gate.blockers:gate.checks)||[];
+  document.getElementById('gateChecks').textContent=gateNotes.join(' · ')||'Waiting for volume, momentum, structure, or catalyst evidence.';
   document.querySelectorAll('#gateMeter i').forEach((item,index)=>item.classList.toggle('hit',index<gate.count));
 }
 renderPressure(initialPressure);

@@ -173,26 +173,34 @@ def penny_runner_universe(
         )
         entries: dict[str, UniverseEntry] = {}
         size = max(25, min(per_screen, 250))
-        for sort_field in ("percentchange", "dayvolume"):
+        for sort_field, sort_ascending in (
+            ("percentchange", False),
+            ("dayvolume", False),
+            ("percentchange", True),
+        ):
             started_at = datetime.now(UTC)
             try:
                 response = yf.screen(
                     query,
                     size=size,
                     sortField=sort_field,
-                    sortAsc=False,
+                    sortAsc=sort_ascending,
                 )
                 quotes = response.get("quotes", [])
                 record(
                     SourceFetch.success(
                         source="yahoo",
                         feed="universe",
-                        locator=f"yfinance://screen/{sort_field}",
+                        locator=(
+                            f"yfinance://screen/{sort_field}/"
+                            f"{'asc' if sort_ascending else 'desc'}"
+                        ),
                         started_at=started_at,
                         payload=quotes,
                         content_type="application/json",
                         metadata={
                             "sort_field": sort_field,
+                            "sort_ascending": sort_ascending,
                             "size": size,
                             "min_price": min_price,
                             "max_price": max_price,
@@ -203,15 +211,23 @@ def penny_runner_universe(
                 for entry in _screen_entries(quotes):
                     entries.setdefault(entry.symbol, entry)
             except Exception as exc:  # Yahoo can reject one screen while the other works
-                warnings.append(f"Yahoo {sort_field} candidate screen failed: {exc}")
+                direction = "ascending" if sort_ascending else "descending"
+                warnings.append(f"Yahoo {sort_field} {direction} candidate screen failed: {exc}")
                 record(
                     SourceFetch.failure(
                         source="yahoo",
                         feed="universe",
-                        locator=f"yfinance://screen/{sort_field}",
+                        locator=(
+                            f"yfinance://screen/{sort_field}/"
+                            f"{'asc' if sort_ascending else 'desc'}"
+                        ),
                         started_at=started_at,
                         error=exc,
-                        metadata={"sort_field": sort_field, "size": size},
+                        metadata={
+                            "sort_field": sort_field,
+                            "sort_ascending": sort_ascending,
+                            "size": size,
+                        },
                     )
                 )
         if entries:

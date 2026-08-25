@@ -18,6 +18,8 @@ class ScanSettings:
     top_n: int = 50
     include_funds: bool = False
     max_stale_minutes: int = 45
+    crash_only: bool = False
+    crash_drawdown_pct: float = 60.0
 
     def validate(self) -> None:
         if self.min_price < 0 or self.max_price <= self.min_price:
@@ -26,6 +28,8 @@ class ScanSettings:
             raise ValueError("Volume filters cannot be negative.")
         if self.max_symbols < 1 or self.batch_size < 1 or self.top_n < 1:
             raise ValueError("Scan limits must be at least 1.")
+        if not 0 < self.crash_drawdown_pct < 100:
+            raise ValueError("Crash drawdown must be between 0 and 100 percent.")
 
 
 @dataclass(slots=True)
@@ -35,6 +39,10 @@ class DailyProfile:
     previous_high: float
     average_volume: float
     average_dollar_volume: float
+    high_20d: float
+    high_90d: float
+    high_52w: float
+    low_20d: float
 
 
 @dataclass(slots=True)
@@ -64,7 +72,17 @@ class RunnerSnapshot:
     pullback_from_high_pct: float = 0.0
     close_location: float = 0.5
     recent_dollar_volume: float = 0.0
-    scoring_version: str = "market_v2"
+    drawdown_20d_pct: float = 0.0
+    drawdown_90d_pct: float = 0.0
+    drawdown_52w_pct: float = 0.0
+    rebound_from_20d_low_pct: float = 0.0
+    rug_score: float = 0.0
+    rug_level: str = "LOW"
+    trade_state: str = "WATCH"
+    state_reason: str = "No entry state is confirmed."
+    hard_veto: bool = False
+    crash_candidate: bool = False
+    scoring_version: str = "market_risk_v3"
     signals: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
 

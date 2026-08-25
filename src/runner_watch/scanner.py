@@ -11,6 +11,7 @@ import pandas as pd
 
 from runner_watch.market_data import DownloadResult
 from runner_watch.models import DailyProfile, RunnerSnapshot, ScanResult, ScanSettings
+from runner_watch.risk import RiskInput, assess_risk
 from runner_watch.scoring import ScoreInput, score_runner
 from runner_watch.universe import normalize_symbol
 
@@ -57,15 +58,27 @@ def build_daily_profile(
     completed = clean[clean.index.date < now_et.date()]
     if completed.empty:
         completed = clean.iloc[:-1] if len(clean) > 1 else clean
-    completed = completed.tail(20)
+    completed = completed.tail(260)
     close = _column(completed, "Close").dropna()
     high = _column(completed, "High").dropna()
+    low = _column(completed, "Low").dropna()
     volume = _column(completed, "Volume").dropna()
-    if close.empty or high.empty or volume.empty:
+    if close.empty or high.empty or low.empty or volume.empty:
         return None
+    adjusted_close = _column(completed, "Adj Close").reindex(close.index)
+    ratios = (adjusted_close / close).replace([float("inf"), float("-inf")], pd.NA)
+    ratios = ratios.dropna()
+    latest_ratio = float(ratios.iloc[-1]) if not ratios.empty and ratios.iloc[-1] > 0 else 1.0
+    normalized_high = high.copy()
+    normalized_low = low.copy()
+    if latest_ratio > 0 and not ratios.empty:
+        high_ratios = ratios.reindex(high.index).ffill().bfill().fillna(latest_ratio)
+        low_ratios = ratios.reindex(low.index).ffill().bfill().fillna(latest_ratio)
+        normalized_high = high * high_ratios / latest_ratio
+        normalized_low = low * low_ratios / latest_ratio
     previous_close = float(close.iloc[-1])
     previous_high = float(high.iloc[-1])
-    average_volume = float(volume.median())
+    average_volume = float(volume.tail(20).median())
     if not all(math.isfinite(item) and item > 0 for item in (previous_close, previous_high)):
         return None
     if not math.isfinite(average_volume) or average_volume < 0:
@@ -76,6 +89,10 @@ def build_daily_profile(
         previous_high=previous_high,
         average_volume=average_volume,
         average_dollar_volume=average_volume * previous_close,
+        high_20d=float(normalized_high.tail(20).max()),
+        high_90d=float(normalized_high.tail(90).max()),
+        high_52w=float(normalized_high.tail(252).max()),
+        low_20d=float(normalized_low.tail(20).min()),
     )
 
 
@@ -221,6 +238,12 @@ def analyze_ticker(
     )
     close_location = max(0.0, min(1.0, close_location))
     stale_minutes = max(0.0, (now_et - (latest_time + timedelta(minutes=5))).total_seconds() / 60)
+    drawdown_20d = max(0.0, (1 - price / daily.high_20d) * 100) if daily.high_20d > 0 else 0.0
+    drawdown_90d = max(0.0, (1 - price / daily.high_90d) * 100) if daily.high_90d > 0 else 0.0
+    drawdown_52w = max(0.0, (1 - price / daily.high_52w) * 100) if daily.high_52w > 0 else 0.0
+    rebound_from_20d_low = (
+        max(0.0, (price / daily.low_20d - 1) * 100) if daily.low_20d > 0 else 0.0
+    )
 
     result = score_runner(
         ScoreInput(
@@ -247,6 +270,26 @@ def analyze_ticker(
         risks.append("sub-$1 stock")
     if latest_date != now_et.date():
         risks.append("last trading session only")
+    risk = assess_risk(
+        RiskInput(
+            setup_score=result.score,
+            price=price,
+            change_pct=change_pct,
+            momentum_5m_pct=momentum_5m,
+            momentum_15m_pct=momentum_15m,
+            vwap_position_pct=vwap_position_pct,
+            pullback_from_high_pct=pullback_from_high_pct,
+            close_location=close_location,
+            dollar_volume=dollar_volume,
+            recent_dollar_volume=recent_dollar_volume,
+            stale_minutes=stale_minutes,
+            drawdown_20d_pct=drawdown_20d,
+            drawdown_90d_pct=drawdown_90d,
+            drawdown_52w_pct=drawdown_52w,
+            rebound_from_20d_low_pct=rebound_from_20d_low,
+        )
+    )
+    risks.extend(risk.risk_reasons)
 
     return RunnerSnapshot(
         ticker=ticker,
@@ -274,8 +317,18 @@ def analyze_ticker(
         pullback_from_high_pct=pullback_from_high_pct,
         close_location=close_location,
         recent_dollar_volume=recent_dollar_volume,
+        drawdown_20d_pct=drawdown_20d,
+        drawdown_90d_pct=drawdown_90d,
+        drawdown_52w_pct=drawdown_52w,
+        rebound_from_20d_low_pct=rebound_from_20d_low,
+        rug_score=risk.rug_score,
+        rug_level=risk.rug_level,
+        trade_state=risk.trade_state,
+        state_reason=risk.state_reason,
+        hard_veto=risk.hard_veto,
+        crash_candidate=risk.crash_candidate,
         signals=result.signals,
-        risks=risks,
+        risks=list(dict.fromkeys(risks)),
     )
 
 
@@ -315,6 +368,12 @@ class RunnerScanner:
                 continue
             if profile.average_dollar_volume < settings.min_avg_dollar_volume:
                 continue
+            previous_drawdown = max(
+                (1 - profile.previous_close / profile.high_90d) * 100,
+                (1 - profile.previous_close / profile.high_52w) * 100,
+            )
+            if settings.crash_only and previous_drawdown < settings.crash_drawdown_pct:
+                continue
             profiles.append(profile)
 
         # Share volume is the main sort key here. This keeps active lower-priced
@@ -329,7 +388,27 @@ class RunnerScanner:
                 f"{settings.max_symbols:,} were checked intraday. Raise the scan cap "
                 "for wider coverage."
             )
-            profiles = profiles[: settings.max_symbols]
+            if settings.crash_only:
+                profiles = profiles[: settings.max_symbols]
+            else:
+                crash_profiles = [
+                    profile
+                    for profile in profiles
+                    if max(
+                        (1 - profile.previous_close / profile.high_90d) * 100,
+                        (1 - profile.previous_close / profile.high_52w) * 100,
+                    )
+                    >= settings.crash_drawdown_pct
+                ]
+                reserve = min(len(crash_profiles), max(1, settings.max_symbols // 3))
+                selected = crash_profiles[:reserve]
+                selected_tickers = {profile.ticker for profile in selected}
+                selected.extend(
+                    profile
+                    for profile in profiles
+                    if profile.ticker not in selected_tickers
+                )
+                profiles = selected[: settings.max_symbols]
 
         intraday_symbols = [profile.ticker for profile in profiles]
         intraday_result = self.provider.intraday(intraday_symbols, progress)

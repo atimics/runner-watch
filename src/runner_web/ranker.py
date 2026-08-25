@@ -16,8 +16,8 @@ import numpy as np
 
 from runner_web.db import connection, init_db
 
-FEATURE_SCHEMA_VERSION = "stonks.ranker_features.v2"
-MODEL_KIND = "multiclass_logistic_barrier_v2"
+FEATURE_SCHEMA_VERSION = "stonks.ranker_features.v3"
+MODEL_KIND = "multiclass_logistic_barrier_v3"
 HORIZONS = {"60m"}
 _configured_horizon = os.getenv("RANKER_HORIZON", "60m")
 DEFAULT_HORIZON = "60m" if _configured_horizon == "1h" else _configured_horizon
@@ -49,10 +49,26 @@ FEATURE_NAMES = (
     "session_regular",
     "session_after_hours",
     "mode_low_price",
+    "mode_crash",
     "catalyst_score",
     "catalyst_missing",
     "catalyst_positive",
     "catalyst_risk",
+    "drawdown_20d_pct",
+    "drawdown_90d_pct",
+    "drawdown_52w_pct",
+    "rebound_from_20d_low_pct",
+    "rug_score",
+    "hard_veto",
+    "crash_candidate",
+    "trade_state_armed",
+    "trade_state_triggered",
+    "trade_state_avoid_or_exit",
+    "shares_growth_pct",
+    "cash_runway_months",
+    "current_ratio",
+    "debt_to_cash",
+    "issuer_data_missing",
 )
 
 
@@ -92,6 +108,11 @@ def feature_vector(row: dict[str, Any]) -> np.ndarray:
     session = str(row.get("session") or "").upper()
     sentiment = str(row.get("catalyst_sentiment") or "").lower()
     scan_mode = str(row.get("scan_mode") or "penny").lower()
+    trade_state = str(row.get("trade_state") or "watch").lower()
+    try:
+        issuer = json.loads(str(row.get("issuer_risk_json") or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        issuer = {}
     return np.asarray(
         [
             _float(row.get("score")),
@@ -119,10 +140,26 @@ def feature_vector(row: dict[str, Any]) -> np.ndarray:
             float(session == "REGULAR"),
             float(session == "AFTER-HOURS"),
             float(scan_mode == "low_price"),
+            float(scan_mode == "crash"),
             _float(catalyst_score),
             float(catalyst_score is None),
             float(sentiment == "positive"),
             float(sentiment == "risk"),
+            _float(row.get("drawdown_20d_pct")),
+            _float(row.get("drawdown_90d_pct")),
+            _float(row.get("drawdown_52w_pct")),
+            _float(row.get("rebound_from_20d_low_pct")),
+            _float(row.get("rug_score")),
+            float(bool(row.get("hard_veto"))),
+            float(bool(row.get("crash_candidate"))),
+            float(trade_state == "armed"),
+            float(trade_state in {"triggered", "manage"}),
+            float(trade_state in {"avoid", "exit"}),
+            _float(issuer.get("shares_growth_pct")),
+            min(36.0, max(0.0, _float(issuer.get("cash_runway_months")))),
+            min(10.0, max(0.0, _float(issuer.get("current_ratio")))),
+            min(20.0, max(0.0, _float(issuer.get("debt_to_cash")))),
+            float(not bool(issuer.get("issuer_data_available"))),
         ],
         dtype=np.float64,
     )
@@ -147,10 +184,12 @@ def _load_groups(horizon: str) -> list[list[dict[str, Any]]]:
             JOIN scan_runs r ON r.id=s.scan_run_id
             JOIN scan_outcomes o ON o.snapshot_id=s.id
             WHERE o.barrier_label IN ('down','timeout','up')
+                  AND r.feature_schema_version=?
                   AND s.range_position IS NOT NULL
                   AND s.stale_minutes IS NOT NULL
             ORDER BY r.captured_at,s.baseline_rank,s.ticker
-            """
+            """,
+            (FEATURE_SCHEMA_VERSION,),
         ).fetchall()
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     order: list[str] = []

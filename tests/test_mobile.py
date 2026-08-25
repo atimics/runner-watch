@@ -18,9 +18,11 @@ from runner_web.main import (
     _commission_research,
     _evidence_gate,
     _market_trade_pressure,
+    _previous_trade_states,
     _pulse_entry_markers,
     _pulse_label,
     _record_activity,
+    _stored_market_risk_contexts,
     alpha_board_data,
     commissioned_reports,
     get_commission,
@@ -288,7 +290,9 @@ def test_ticker_detail_explains_form_four_purchase(
     detail = ticker_detail_data("PEN")
 
     assert detail is not None
-    assert detail["events"][0]["evidence_label"] == "Verified insider purchase"
+    assert detail["events"][0]["evidence_label"] == (
+        "Reported insider purchase · context required"
+    )
     assert detail["events"][0]["pulse_label"] == "Form 4 · insider buy"
 
 
@@ -435,6 +439,175 @@ def test_evidence_gate_only_opens_after_four_independent_checks() -> None:
     assert gate["count"] >= gate["threshold"]
 
 
+def test_stored_halt_must_be_recently_confirmed(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "halt-risk.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    fetch = SourceFetch.success(
+        source="test_halts",
+        feed="trade_halts",
+        locator="https://example.test/halts",
+        started_at=timestamp,
+        payload={"tickers": ["FRESH", "STALE"]},
+        content_type="application/json",
+    )
+    record_source_batch(
+        SourceBatch(
+            fetch=fetch,
+            market_events=tuple(
+                MarketEvent(
+                    event_id=ticker.lower(),
+                    ticker=ticker,
+                    event_type="trading_halt",
+                    event_at=timestamp - timedelta(days=3),
+                    published_at=timestamp - timedelta(days=3),
+                    status="active",
+                    source_url=f"https://example.test/halts/{ticker.lower()}",
+                )
+                for ticker in ("FRESH", "STALE")
+            ),
+        )
+    )
+    with connection() as database:
+        database.execute(
+            "UPDATE market_events SET last_collected_at=? WHERE ticker='STALE'",
+            ((timestamp - timedelta(days=2)).isoformat(),),
+        )
+        contexts = _stored_market_risk_contexts(database, ["FRESH", "STALE"])
+
+    assert contexts["FRESH"]["active_halt"] is True
+    assert contexts["STALE"]["active_halt"] is False
+
+
+def test_market_risk_context_ignores_news_payloads(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "risk-events.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    fetch = SourceFetch.success(
+        source="test_risk_events",
+        feed="events",
+        locator="https://example.test/risk-events",
+        started_at=timestamp,
+        payload={"ticker": "RISK"},
+        content_type="application/json",
+    )
+    record_source_batch(
+        SourceBatch(
+            fetch=fetch,
+            market_events=(
+                MarketEvent(
+                    event_id="irrelevant-news",
+                    ticker="RISK",
+                    event_type="news_article",
+                    event_at=timestamp,
+                    status="published",
+                    source_url="https://example.test/news",
+                    payload={"description": "Reverse split mentioned in an article"},
+                ),
+                MarketEvent(
+                    event_id="real-split",
+                    ticker="RISK",
+                    event_type="corporate_action",
+                    event_at=timestamp,
+                    status="complete",
+                    source_url="https://example.test/action",
+                    payload={"description": "1-for-20 reverse split"},
+                ),
+            ),
+        )
+    )
+
+    with connection() as database:
+        context = _stored_market_risk_contexts(database, ["RISK"])["RISK"]
+
+    assert context == {"active_halt": False, "reverse_split_count_1y": 1}
+
+
+def test_critical_rug_risk_blocks_ready_and_lowers_pulse_rank(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "rug-rank.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_scan_run("rug-run", captured_at, 2)
+    insert_scored_snapshot("rugged", "rug-run", "RUG", 90, 1, captured_at)
+    insert_scored_snapshot("clean", "rug-run", "CLEAN", 60, 2, captured_at)
+    with connection() as database:
+        database.execute(
+            """
+            UPDATE scan_snapshots SET setup_score=90,rug_score=90,rug_level='CRITICAL',
+                trade_state='AVOID',hard_veto=1 WHERE id='rugged'
+            """
+        )
+        database.execute(
+            """
+            UPDATE scan_snapshots SET setup_score=60,rug_score=10,rug_level='LOW',
+                trade_state='TRIGGERED' WHERE id='clean'
+            """
+        )
+
+    rows = pulse_data()["rows"]
+
+    assert [row["ticker"] for row in rows] == ["CLEAN", "RUG"]
+    assert rows[1]["evidence_gate"]["state"] == "blocked"
+    assert rows[1]["score"] < rows[1]["setup_score"]
+
+
+def test_previous_trade_states_returns_latest_state_with_index(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "previous-state.db")
+    init_db()
+    older = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    newer = datetime.now(UTC).isoformat()
+    insert_scan_run("older-state-run", older, 1)
+    insert_scored_snapshot("older-state", "older-state-run", "STATE", 20, 1, older)
+    insert_scan_run("newer-state-run", newer, 1)
+    insert_scored_snapshot("newer-state", "newer-state-run", "STATE", 30, 1, newer)
+    with connection() as database:
+        database.execute(
+            "UPDATE scan_snapshots SET trade_state='WATCH' WHERE id='older-state'"
+        )
+        database.execute(
+            "UPDATE scan_snapshots SET trade_state='TRIGGERED' WHERE id='newer-state'"
+        )
+        states = _previous_trade_states(database, ["STATE", "MISSING"])
+        index_sql = database.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='index' AND name='scan_snapshots_ticker_state_captured'"
+        ).fetchone()["sql"]
+
+    assert states == {"STATE": "TRIGGERED"}
+    assert "ticker,captured_at DESC,trade_state" in index_sql
+
+
+def test_risk_filing_subtracts_attention_instead_of_boosting_it(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "risk-event.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_scan_run("risk-run", captured_at, 1)
+    insert_scored_snapshot("risk-row", "risk-run", "DILU", 50, 1, captured_at)
+    insert_filing("risk-filing", "DILU", 1.0, 80, captured_at, "")
+    with connection() as database:
+        database.execute(
+            """
+            UPDATE sec_filings SET form='S-3',kind='Offering or dilution filing',
+                sentiment='risk' WHERE accession='risk-filing'
+            """
+        )
+
+    row = pulse_data()["rows"][0]
+
+    assert row["event_boost"] == -20.0
+    assert row["score"] == 30.0
+
+
 def test_ticker_detail_prefers_market_state_and_uses_scan_outcome(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
@@ -472,7 +645,9 @@ def test_ticker_detail_prefers_market_state_and_uses_scan_outcome(
     assert detail["current"]["source"] == "market"
     assert detail["current"]["signals"] == ["Fresh volume"]
     assert detail["current"]["return_1h_pct"] == 6.2
-    assert detail["events"][0]["evidence_label"] == "Verified insider purchase"
+    assert detail["events"][0]["evidence_label"] == (
+        "Reported insider purchase · context required"
+    )
 
 
 def test_radar_marks_new_state_seen(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

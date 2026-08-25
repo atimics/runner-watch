@@ -62,6 +62,19 @@ class OwnershipSummary:
     sale_shares: float
     sale_value: float
     average_sale_price: float | None
+    post_transaction_shares: float | None = None
+    stake_change_pct: float | None = None
+    is_10b5_1: bool = False
+    direct_ownership: bool | None = None
+    footnotes: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class BeneficialOwnershipSummary:
+    owner_names: tuple[str, ...]
+    ownership_pct: float | None
+    beneficial_shares: float | None
+    reporting_person_types: tuple[str, ...]
 
 
 class EdgarClient:
@@ -191,6 +204,28 @@ class EdgarClient:
                 continue
         return None
 
+    def beneficial_ownership_summary(
+        self, filing: EdgarFiling
+    ) -> BeneficialOwnershipSummary | None:
+        directory_url = filing_directory_url(filing.filing_url)
+        index = self.get_json(f"{directory_url}/index.json")
+        items = index.get("directory", {}).get("item", [])
+        xml_names = [
+            str(item.get("name", ""))
+            for item in items
+            if str(item.get("name", "")).lower().endswith(".xml")
+        ]
+        for name in xml_names:
+            try:
+                summary = parse_beneficial_ownership_xml(
+                    self.get_text(f"{directory_url}/{name}")
+                )
+                if summary is not None:
+                    return summary
+            except (OSError, ValueError, ET.ParseError):
+                continue
+        return None
+
 
 def parse_company_map(payload: dict[str, Any]) -> list[EdgarCompany]:
     fields = [str(field) for field in payload.get("fields", [])]
@@ -289,6 +324,8 @@ def parse_ownership_xml(text: str) -> OwnershipSummary:
     purchase_value = 0.0
     sale_shares = 0.0
     sale_value = 0.0
+    post_transaction_shares: float | None = None
+    direct_ownership: bool | None = None
     for transaction in root.findall("./nonDerivativeTable/nonDerivativeTransaction"):
         code = transaction.findtext("./transactionCoding/transactionCode", default="").strip()
         direction = transaction.findtext(
@@ -304,9 +341,33 @@ def parse_ownership_xml(text: str) -> OwnershipSummary:
         elif code == "S" and direction == "D":
             sale_shares += shares
             sale_value += shares * price
+        post_shares = _number(
+            transaction, "./postTransactionAmounts/sharesOwnedFollowingTransaction/value"
+        )
+        if post_shares > 0:
+            post_transaction_shares = post_shares
+        ownership_nature = transaction.findtext(
+            "./ownershipNature/directOrIndirectOwnership/value", default=""
+        ).strip()
+        if ownership_nature in {"D", "I"}:
+            direct_ownership = ownership_nature == "D"
 
     average_purchase_price = purchase_value / purchase_shares if purchase_shares else None
     average_sale_price = sale_value / sale_shares if sale_shares else None
+    pre_transaction_shares = (
+        post_transaction_shares - purchase_shares
+        if post_transaction_shares is not None and purchase_shares > 0
+        else None
+    )
+    stake_change_pct = (
+        purchase_shares / pre_transaction_shares * 100
+        if pre_transaction_shares is not None and pre_transaction_shares > 0
+        else None
+    )
+    is_10b5_1 = root.findtext("./aff10b5One", default="0").strip() == "1"
+    footnotes = " ".join(
+        " ".join("".join(node.itertext()).split()) for node in root.findall("./footnotes/footnote")
+    )[:2000]
     return OwnershipSummary(
         issuer_cik=issuer_cik,
         ticker=ticker.replace(".", "-"),
@@ -319,6 +380,95 @@ def parse_ownership_xml(text: str) -> OwnershipSummary:
         sale_shares=sale_shares,
         sale_value=sale_value,
         average_sale_price=average_sale_price,
+        post_transaction_shares=post_transaction_shares,
+        stake_change_pct=stake_change_pct,
+        is_10b5_1=is_10b5_1,
+        direct_ownership=direct_ownership,
+        footnotes=footnotes,
+    )
+
+
+def _local_tag(node: ET.Element) -> str:
+    return node.tag.rsplit("}", 1)[-1].lower()
+
+
+def _first_number(values: list[str]) -> float | None:
+    for value in values:
+        match = re.search(r"-?[0-9][0-9,]*(?:\.[0-9]+)?", value)
+        if not match:
+            continue
+        try:
+            number = float(match.group(0).replace(",", ""))
+        except ValueError:
+            continue
+        if math.isfinite(number):
+            return number
+    return None
+
+
+def parse_beneficial_ownership_xml(text: str) -> BeneficialOwnershipSummary | None:
+    """Read common structured Schedule 13D/G ownership fields.
+
+    SEC schedule schemas have changed over time, so matching uses local tag
+    names and accepts the common variants instead of assuming one namespace.
+    """
+
+    root = ET.fromstring(text)
+    values: dict[str, list[str]] = {}
+    for node in root.iter():
+        clean = " ".join("".join(node.itertext()).split()) if len(node) == 0 else ""
+        if clean:
+            values.setdefault(_local_tag(node), []).append(clean)
+
+    owner_tags = {
+        "nameofreportingperson",
+        "reportingpersonname",
+        "nameofreportingpersonfiling",
+    }
+    percent_tags = {
+        "percentofclassrepresentedbyamount",
+        "percentofclass",
+        "percentofclassrepresented",
+    }
+    share_tags = {
+        "aggregateamountbeneficiallyownedbyeachreportingperson",
+        "amountbeneficiallyownedbyeachreportingperson",
+        "aggregateamountowned",
+    }
+    type_tags = {"typeofreportingperson", "reportingpersontype"}
+    owners = tuple(
+        dict.fromkeys(
+            value[:200]
+            for tag in owner_tags
+            for value in values.get(tag, [])
+            if value
+        )
+    )
+    percentages = [
+        number
+        for tag in percent_tags
+        if (number := _first_number(values.get(tag, []))) is not None
+    ]
+    shares = [
+        number
+        for tag in share_tags
+        if (number := _first_number(values.get(tag, []))) is not None
+    ]
+    person_types = tuple(
+        dict.fromkeys(
+            value[:40]
+            for tag in type_tags
+            for value in values.get(tag, [])
+            if value
+        )
+    )
+    if not owners and not percentages and not shares:
+        return None
+    return BeneficialOwnershipSummary(
+        owner_names=owners,
+        ownership_pct=max(percentages) if percentages else None,
+        beneficial_shares=max(shares) if shares else None,
+        reporting_person_types=person_types,
     )
 
 
@@ -327,16 +477,20 @@ def classify_filing(form: str, ownership: OwnershipSummary | None = None) -> dic
     if normalized.startswith("4") and ownership:
         if ownership.purchase_value > 0:
             value = ownership.purchase_value
-            score = 60
+            score = 42
             if value >= 25_000:
-                score = 70
+                score = 50
             if value >= 100_000:
-                score = 80
+                score = 58
             if value >= 250_000:
-                score = 88
+                score = 64
             if value >= 1_000_000:
-                score = 95
-            return {"kind": "Insider open-market buy", "sentiment": "positive", "score": score}
+                score = 70
+            return {
+                "kind": "Insider purchase · check stake and financing context",
+                "sentiment": "neutral",
+                "score": score,
+            }
         if ownership.sale_value > 0:
             return {"kind": "Insider sale · check context", "sentiment": "risk", "score": 42}
         return {"kind": "Insider ownership update", "sentiment": "neutral", "score": 28}
@@ -346,7 +500,7 @@ def classify_filing(form: str, ownership: OwnershipSummary | None = None) -> dic
         (("EFFECT",), "Registration became effective", "risk", 72),
         (("NT 10-Q", "NT 10-K"), "Late periodic report", "risk", 76),
         (("144",), "Proposed security sale", "risk", 62),
-        (("SC 13D",), "Active beneficial ownership", "positive", 82),
+        (("SC 13D",), "Active beneficial ownership · intent needs review", "neutral", 64),
         (("SC 13G",), "Beneficial ownership update", "neutral", 58),
         (("8-K", "6-K"), "New current report", "neutral", 68),
         (("10-Q", "10-K", "20-F", "40-F"), "Financial report", "neutral", 48),

@@ -28,6 +28,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-dollar-volume", type=float, default=500_000)
     parser.add_argument("--scan-cap", type=int, default=300)
     parser.add_argument("--top", type=int, default=20)
+    parser.add_argument(
+        "--crash-only",
+        action="store_true",
+        help="Only keep stocks down at least 60%% from a 90-day or 52-week high.",
+    )
     parser.add_argument("--format", choices=["table", "csv", "json"], default="table")
     parser.add_argument("--output", type=Path, help="Save output instead of printing it.")
     return parser
@@ -43,17 +48,29 @@ def _plain_rows(result: ScanResult) -> list[dict[str, object]]:
 
 
 def _render_table(result: ScanResult) -> str:
-    headings = ["TICKER", "SCORE", "STAGE", "PRICE", "CHANGE", "5M", "15M", "RVOL", "$ VOL"]
+    headings = [
+        "TICKER",
+        "SETUP",
+        "RUG",
+        "STATE",
+        "PRICE",
+        "CHANGE",
+        "52W FALL",
+        "15M",
+        "RVOL",
+        "$ VOL",
+    ]
     rows = []
     for item in result.rows:
         rows.append(
             [
                 item.ticker,
                 f"{item.score:.1f}",
-                item.stage,
+                f"{item.rug_score:.1f}",
+                item.trade_state,
                 f"${item.price:.2f}",
                 f"{item.change_pct:+.1f}%",
-                f"{item.momentum_5m_pct:+.1f}%",
+                f"{item.drawdown_52w_pct:.1f}%",
                 f"{item.momentum_15m_pct:+.1f}%",
                 f"{item.relative_volume:.1f}x" if item.relative_volume is not None else "—",
                 f"${item.dollar_volume / 1_000_000:.1f}M",
@@ -110,6 +127,7 @@ def main() -> int:
         min_avg_dollar_volume=args.min_dollar_volume,
         max_symbols=args.scan_cap,
         top_n=args.top,
+        crash_only=args.crash_only,
     )
     result = RunnerScanner(provider).scan(symbols, settings, progress=_progress)
     result.warnings[:0] = warnings

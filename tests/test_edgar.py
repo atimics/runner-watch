@@ -7,6 +7,7 @@ from runner_watch.edgar import (
     LATEST_FILINGS_URL,
     EdgarClient,
     classify_filing,
+    parse_beneficial_ownership_xml,
     parse_company_map,
     parse_latest_filings,
     parse_ownership_xml,
@@ -73,6 +74,8 @@ def test_form4_parser_only_treats_code_p_as_purchase() -> None:
           <transactionAmounts><transactionShares><value>5000</value></transactionShares>
           <transactionPricePerShare><value>2.50</value></transactionPricePerShare>
           <transactionAcquiredDisposedCode><value>A</value></transactionAcquiredDisposedCode></transactionAmounts>
+          <postTransactionAmounts><sharesOwnedFollowingTransaction><value>15000</value></sharesOwnedFollowingTransaction></postTransactionAmounts>
+          <ownershipNature><directOrIndirectOwnership><value>D</value></directOrIndirectOwnership></ownershipNature>
         </nonDerivativeTransaction>
         <nonDerivativeTransaction><transactionCoding><transactionCode>S</transactionCode></transactionCoding>
           <transactionAmounts><transactionShares><value>200</value></transactionShares>
@@ -90,12 +93,33 @@ def test_form4_parser_only_treats_code_p_as_purchase() -> None:
     assert summary.sale_shares == 200
     assert summary.sale_value == 650
     assert summary.average_sale_price == 3.25
-    assert classify_filing("4", summary)["kind"] == "Insider open-market buy"
+    assert summary.post_transaction_shares == 15000
+    assert summary.stake_change_pct == 50.0
+    classification = classify_filing("4", summary)
+    assert classification["sentiment"] == "neutral"
+    assert classification["kind"] == "Insider purchase · check stake and financing context"
 
 
 def test_offering_filings_are_risk_events() -> None:
     result = classify_filing("S-3")
     assert result == {"kind": "Offering or dilution filing", "sentiment": "risk", "score": 82}
+
+
+def test_schedule_13_parser_keeps_concentration_neutral() -> None:
+    text = """<edgarSubmission>
+      <reportingPersonInfo>
+        <nameOfReportingPerson>Patient Capital LP</nameOfReportingPerson>
+        <aggregateAmountBeneficiallyOwnedByEachReportingPerson>6,500,000</aggregateAmountBeneficiallyOwnedByEachReportingPerson>
+        <percentOfClassRepresentedByAmount>65.0%</percentOfClassRepresentedByAmount>
+        <typeOfReportingPerson>IA</typeOfReportingPerson>
+      </reportingPersonInfo>
+    </edgarSubmission>"""
+    summary = parse_beneficial_ownership_xml(text)
+    assert summary is not None
+    assert summary.owner_names == ("Patient Capital LP",)
+    assert summary.ownership_pct == 65.0
+    assert summary.beneficial_shares == 6_500_000
+    assert classify_filing("SC 13D")["sentiment"] == "neutral"
 
 
 def test_sec_download_emits_the_same_source_fetch_contract(monkeypatch: MonkeyPatch) -> None:

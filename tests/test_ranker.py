@@ -13,6 +13,7 @@ from runner_web import main as web_main
 from runner_web.db import connection, init_db
 from runner_web.ranker import (
     FEATURE_NAMES,
+    FEATURE_SCHEMA_VERSION,
     export_crl_dataset,
     load_latest_model,
     predict_and_store,
@@ -38,7 +39,7 @@ def _seed_ranker_data(group_count: int = 8, candidates: int = 4) -> None:
                     run_id,
                     "penny",
                     "Penny stocks",
-                    "stonks.ranker_features.v2",
+                    FEATURE_SCHEMA_VERSION,
                     candidates,
                     candidates,
                     candidates,

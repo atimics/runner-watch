@@ -1,22 +1,28 @@
 {% extends "base.html" %}
 {% block title %}Scanner · Runner Watch{% endblock %}
+{% block head %}<style>
+.rug-low{color:var(--green2)}.rug-guarded{color:var(--yellow)}.rug-high,.rug-critical{color:var(--red)}
+.stage.triggered,.stage.manage{background:rgba(74,222,128,.18);color:var(--green2)}
+.stage.armed{background:rgba(250,204,21,.15);color:#fde047}.stage.avoid,.stage.exit{background:rgba(251,113,133,.14);color:#fda4af}
+</style>{% endblock %}
 {% block content %}
 <section class="scanner-head">
-  <div><span class="eyebrow">LISTED US STOCKS · LIVE YAHOO DATA</span><h1>Penny runner scanner</h1><p>Search low-priced small caps for unusual volume and fresh acceleration.</p></div>
+  <div><span class="eyebrow">LISTED US STOCKS · RISK-FIRST</span><h1>Setup and rug scanner</h1><p>Find momentum or a 60% crash, then block weak treasury, dilution, halt, and dead-cat risk.</p></div>
   <div style="min-width:260px">
     <label class="muted" for="scanMode">Universe</label>
     <select id="scanMode">
       <option value="penny">Penny stocks · $0.20–$5</option>
       <option value="low_price">Low-priced small caps · $0.20–$20</option>
+      <option value="crash">60% crash recovery · $0.20–$20</option>
     </select>
     <button class="button full" style="margin-top:10px" id="runScan">Scan low-priced market</button>
   </div>
 </section>
 <div id="scanStatus" class="scan-status">Ready. Yahoo first finds active low-priced stocks across the market, then Runner Watch checks their 5-minute bars.</div>
 <div class="table-wrap">
-  <table><thead><tr><th>Ticker</th><th>Market score</th><th>Learned chance</th><th>Stage</th><th>Price</th><th>Move</th><th>5m</th><th>15m</th><th>RVOL</th><th>$ Volume</th><th>Known catalyst</th><th>Action</th></tr></thead><tbody id="results"><tr><td colspan="12" class="muted center">Run a scan to load current signals.</td></tr></tbody></table>
+  <table><thead><tr><th>Ticker</th><th>Setup</th><th>Rug risk</th><th>State</th><th>Price</th><th>Move</th><th>52w fall</th><th>15m</th><th>RVOL</th><th>$ Volume</th><th>Known catalyst</th><th>Action</th></tr></thead><tbody id="results"><tr><td colspan="12" class="muted center">Run a scan to load current signals.</td></tr></tbody></table>
 </div>
-<p class="fine-print">The learned chance is a shadow estimate of hitting +8% before −4% in the next 60 minutes. It appears only after enough complete outcomes exist and does not control the public order. Listed stocks only; OTC is excluded. Free data does not provide reliable real-time spreads, float, dilution, or halt status.</p>
+<p class="fine-print">Setup means “could move.” Rug risk means “could trap you.” A 60% fall is only a candidate, never a buy signal. SEC facts can be delayed or missing. Confirm live spread and broker data before acting.</p>
 
 <dialog id="publishDialog">
   <form id="publishForm">
@@ -40,15 +46,15 @@ function esc(value) { const node = document.createElement('span'); node.textCont
 function num(value, suffix='') { return value == null ? '—' : Number(value).toFixed(1) + suffix; }
 function money(value) { const amount = Number(value); if (!Number.isFinite(amount)) return '—'; if (amount >= 1e6) return '$' + (amount / 1e6).toFixed(1) + 'M'; if (amount >= 1e3) return '$' + (amount / 1e3).toFixed(0) + 'K'; return '$' + amount.toFixed(0); }
 function catalyst(row) { return row.catalyst_url ? `<a href="${esc(row.catalyst_url)}" target="_blank" rel="noopener">SEC ${esc(row.catalyst_form)} · ${esc(row.catalyst_kind)}</a>` : '<span class="muted">No recent SEC filing</span>'; }
-function learned(row) { return row.runner_probability == null ? '<span class="muted">Collecting data</span>' : `<strong>${(Number(row.runner_probability) * 100).toFixed(1)}%</strong><br><small class="muted">shadow · gross EV ${num(row.expected_return_pct, '%')}</small>`; }
+function rug(row) { const level=String(row.rug_level||'UNKNOWN').toLowerCase(); return `<strong class="rug-${esc(level)}">${num(row.rug_score)}</strong><br><small class="muted">${esc(row.rug_level||'unknown')}</small>`; }
 function kolMark(row) { const calls=Array.isArray(row.kol_calls)?row.kol_calls:[]; return calls.map(call=>`<span title="${esc(call.display_name)} paper call">${esc(call.emoji)}</span>`).join(' '); }
 runButton.addEventListener('click', async () => {
-  runButton.disabled = true; statusBox.textContent = 'Finding active penny stocks, then scanning daily liquidity and 5-minute bars…';
+  runButton.disabled = true; statusBox.textContent = 'Finding movers and crashed stocks, then checking rug risk and price structure…';
   try {
     const mode = document.getElementById('scanMode').value;
     const response = await fetch(`/api/scan?mode=${encodeURIComponent(mode)}`, {method:'POST'}); const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Scan failed');
-    body.innerHTML = data.rows.map(row => `<tr><td>${kolMark(row)} <strong>$${esc(row.ticker)}</strong></td><td>${num(row.score)}</td><td>${learned(row)}</td><td><span class="stage ${esc(row.stage.toLowerCase())}">${esc(row.stage)}</span></td><td>$${Number(row.price).toFixed(2)}</td><td class="${row.change_pct >= 0 ? 'positive':''}">${num(row.change_pct,'%')}</td><td>${num(row.momentum_5m_pct,'%')}</td><td>${num(row.momentum_15m_pct,'%')}</td><td>${num(row.relative_volume,'×')}</td><td>${money(row.dollar_volume)}</td><td>${catalyst(row)}</td><td><button class="mini-button publish" data-id="${esc(row.id)}" data-ticker="${esc(row.ticker)}">Publish</button></td></tr>`).join('') || '<tr><td colspan="12" class="center">No usable rows returned.</td></tr>';
+    body.innerHTML = data.rows.map(row => `<tr><td>${kolMark(row)} <strong>$${esc(row.ticker)}</strong></td><td>${num(row.setup_score??row.score)}</td><td>${rug(row)}</td><td><span class="stage ${esc(String(row.trade_state||'watch').toLowerCase())}">${esc(row.trade_state||'WATCH')}</span></td><td>$${Number(row.price).toFixed(2)}</td><td class="${row.change_pct >= 0 ? 'positive':''}">${num(row.change_pct,'%')}</td><td>${num(row.drawdown_52w_pct,'%')}</td><td>${num(row.momentum_15m_pct,'%')}</td><td>${num(row.relative_volume,'×')}</td><td>${money(row.dollar_volume)}</td><td>${catalyst(row)}</td><td><button class="mini-button publish" data-id="${esc(row.id)}" data-ticker="${esc(row.ticker)}">Publish</button></td></tr>`).join('') || '<tr><td colspan="12" class="center">No usable rows returned.</td></tr>';
     const coverage = data.cached ? 'Recent scan reused.' : `${data.candidates} candidates found; ${data.scanned} checked intraday in ${data.elapsed_seconds}s.`;
     statusBox.textContent = `${data.rows.length} ${data.label.toLowerCase()} ranked. ${coverage} Quotes may be delayed.`;
   } catch (error) { statusBox.textContent = error.message; }

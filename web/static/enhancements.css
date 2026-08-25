@@ -72,10 +72,30 @@
 .evidence-gate small { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--muted); font-size: 8px; }
 .evidence-gate.gate-ready strong { color: var(--green); }
 .evidence-gate.gate-near strong { color: var(--amber); }
+.evidence-gate.gate-blocked { border-color: rgba(255, 107, 122, .38); }
+.evidence-gate.gate-blocked strong { color: var(--red); }
 .gate-meter { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 9px 0 7px; }
 .gate-meter i { height: 3px; border-radius: 3px; background: #28312d; }
 .gate-meter i.hit { background: var(--green); box-shadow: 0 0 6px rgba(87, 227, 137, .35); }
 .evidence-gate p { color: #84908b; font-size: 8px; line-height: 1.45; margin: 0; }
+
+.risk-decision { margin: 14px 20px 0; padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: #0f1311; }
+.risk-decision-head { display: flex; align-items: center; justify-content: space-between; }
+.risk-decision-head span { color: var(--muted); font-size: 8px; font-weight: 850; letter-spacing: .09em; }
+.risk-decision-head strong { color: var(--amber); font-size: 11px; }
+.risk-decision.state-triggered .risk-decision-head strong, .risk-decision.state-manage .risk-decision-head strong { color: var(--green); }
+.risk-decision.state-avoid .risk-decision-head strong, .risk-decision.state-exit .risk-decision-head strong { color: var(--red); }
+.risk-grid { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 10px; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.risk-grid > div { padding: 9px; border-right: 1px solid var(--line); }
+.risk-grid > div:last-child { border: 0; }
+.risk-grid span, .risk-grid b, .risk-grid small { display: block; }
+.risk-grid span, .risk-grid small { color: var(--muted); font-size: 8px; }
+.risk-grid b { font-size: 15px; margin: 2px 0; }
+.risk-decision.risk-high .risk-grid > div:nth-child(2) b, .risk-decision.risk-critical .risk-grid > div:nth-child(2) b { color: var(--red); }
+.risk-decision.risk-guarded .risk-grid > div:nth-child(2) b { color: var(--amber); }
+.risk-decision > p { color: #a5b0ab; font-size: 9px; line-height: 1.45; margin: 10px 0; }
+.risk-facts { display: flex; flex-wrap: wrap; gap: 5px; }
+.risk-facts span { padding: 4px 6px; border-radius: 7px; background: #171c1a; color: var(--muted); font-size: 8px; }
 
 .pressure-section { margin-top: 14px; padding: 14px 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .pressure-section .section-heading { margin-bottom: 9px; }

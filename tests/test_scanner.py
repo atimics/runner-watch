@@ -24,7 +24,9 @@ def test_sample_scan_runs_end_to_end() -> None:
     assert result.rows[0].relative_volume is not None
     assert result.rows[0].recent_dollar_volume > 0
     assert 0 <= result.rows[0].close_location <= 1
-    assert result.rows[0].scoring_version == "market_v2"
+    assert result.rows[0].scoring_version == "market_risk_v3"
+    assert 0 <= result.rows[0].rug_score <= 100
+    assert result.rows[0].trade_state in {"WATCH", "ARMED", "TRIGGERED", "AVOID"}
     assert any(row.stage == "EARLY" for row in result.rows)
 
 

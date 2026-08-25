@@ -4,12 +4,19 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from runner_watch.edgar import EdgarClient, EdgarFiling, OwnershipSummary, classify_filing
+from runner_watch.edgar import (
+    BeneficialOwnershipSummary,
+    EdgarClient,
+    EdgarFiling,
+    OwnershipSummary,
+    classify_filing,
+)
 from runner_watch.models import ScanSettings
 from runner_watch.scanner import RunnerScanner
 from runner_web.collection import recording_market_data
 from runner_web.db import connection
 from runner_web.ingestion import mark_source_item, record_source_fetch, source_item_is_terminal
+from runner_web.sec_facts import refresh_company_facts
 
 LOG = logging.getLogger(__name__)
 INTERESTING_FORMS = (
@@ -30,7 +37,7 @@ INTERESTING_FORMS = (
     "20-F",
     "40-F",
 )
-PARSER_VERSION = "2"
+PARSER_VERSION = "4"
 
 
 def iso(value: datetime | None = None) -> str:
@@ -152,6 +159,7 @@ def _prepare_event(
     filing: EdgarFiling,
     company: dict[str, Any],
     ownership: OwnershipSummary | None,
+    beneficial: BeneficialOwnershipSummary | None = None,
 ) -> dict[str, Any]:
     classification = classify_filing(filing.form, ownership)
     ticker = ownership.ticker if ownership and ownership.ticker else company["ticker"]
@@ -186,7 +194,51 @@ def _prepare_event(
         )
         if ownership
         else None,
+        "post_transaction_shares": ownership.post_transaction_shares if ownership else None,
+        "stake_change_pct": ownership.stake_change_pct if ownership else None,
+        "is_10b5_1": int(ownership.is_10b5_1) if ownership else 0,
+        "direct_ownership": (
+            int(ownership.direct_ownership)
+            if ownership and ownership.direct_ownership is not None
+            else None
+        ),
+        "footnotes": ownership.footnotes if ownership else "",
+        "beneficial_ownership_pct": beneficial.ownership_pct if beneficial else None,
+        "beneficial_shares": beneficial.beneficial_shares if beneficial else None,
+        "beneficial_owner_names": ",".join(beneficial.owner_names) if beneficial else "",
+        "reporting_person_types": (
+            ",".join(beneficial.reporting_person_types) if beneficial else ""
+        ),
     }
+
+
+def _companyfacts_candidate(new_events: list[dict[str, Any]]) -> int | None:
+    if new_events:
+        return int(new_events[0]["cik"])
+    with connection() as db:
+        row = db.execute(
+            """
+            SELECT c.cik,MAX(f.last_collected_at) AS facts_at
+            FROM scan_runs r
+            JOIN scan_snapshots s ON s.scan_run_id=r.id
+            JOIN sec_companies c ON c.ticker=s.ticker
+            LEFT JOIN issuer_facts f ON f.cik=c.cik
+            WHERE r.id=(SELECT id FROM scan_runs ORDER BY captured_at DESC LIMIT 1)
+            GROUP BY c.cik
+            ORDER BY facts_at IS NOT NULL,facts_at,c.cik
+            LIMIT 1
+            """
+        ).fetchone()
+    if not row:
+        return None
+    facts_at = row["facts_at"]
+    if facts_at:
+        try:
+            if datetime.fromisoformat(str(facts_at)) > datetime.now(UTC) - timedelta(hours=20):
+                return None
+        except ValueError:
+            pass
+    return int(row["cik"])
 
 
 def refresh_edgar() -> dict[str, Any]:
@@ -219,6 +271,7 @@ def refresh_edgar() -> dict[str, Any]:
             )
             continue
         ownership: OwnershipSummary | None = None
+        beneficial: BeneficialOwnershipSummary | None = None
         issuer_cik = filing.cik
         if filing.form.startswith("4"):
             try:
@@ -228,6 +281,12 @@ def refresh_edgar() -> dict[str, Any]:
             except Exception as exc:
                 LOG.warning("Could not parse ownership filing %s: %s", filing.accession, exc)
                 item_errors[filing.accession] = f"Ownership parsing failed: {exc}"
+        elif filing.form.startswith(("SC 13D", "SC 13G")):
+            try:
+                beneficial = client.beneficial_ownership_summary(filing)
+            except Exception as exc:
+                LOG.warning("Could not parse beneficial ownership %s: %s", filing.accession, exc)
+                item_errors[filing.accession] = f"Beneficial ownership parsing failed: {exc}"
         company = _company_for_cik(issuer_cik)
         if company is None:
             mark_source_item(
@@ -240,7 +299,7 @@ def refresh_edgar() -> dict[str, Any]:
                 parser_version=PARSER_VERSION,
             )
             continue
-        new_events.append(_prepare_event(filing, company, ownership))
+        new_events.append(_prepare_event(filing, company, ownership, beneficial))
 
     market = _market_context([event["ticker"] for event in new_events])
     timestamp = iso()
@@ -268,13 +327,20 @@ def refresh_edgar() -> dict[str, Any]:
                     accession,cik,ticker,company,form,kind,sentiment,score,title,filed_at,
                     filing_url,actor,actor_title,transaction_codes,transaction_shares,
                     transaction_price,transaction_value,price,change_pct,relative_volume,
-                    market_score,created_at,updated_at,parser_version
+                    market_score,created_at,updated_at,parser_version,
+                    post_transaction_shares,stake_change_pct,is_10b5_1,
+                    direct_ownership,footnotes
+                    ,beneficial_ownership_pct,beneficial_shares,beneficial_owner_names,
+                    reporting_person_types
                 ) VALUES(
                     :accession,:cik,:ticker,:company,:form,:kind,:sentiment,:score,:title,
                     :filed_at,:filing_url,:actor,:actor_title,:transaction_codes,
                     :transaction_shares,:transaction_price,:transaction_value,:price,
                     :change_pct,:relative_volume,:market_score,:created_at,:updated_at,
-                    :parser_version
+                    :parser_version,:post_transaction_shares,:stake_change_pct,
+                    :is_10b5_1,:direct_ownership,:footnotes
+                    ,:beneficial_ownership_pct,:beneficial_shares,:beneficial_owner_names,
+                    :reporting_person_types
                 )
                 """,
                 {
@@ -313,6 +379,16 @@ def refresh_edgar() -> dict[str, Any]:
             parser_version=PARSER_VERSION,
         )
 
+    fact_result: dict[str, Any] = {"facts": 0}
+    fact_cik = _companyfacts_candidate(new_events)
+    if fact_cik is not None:
+        try:
+            fact_result = refresh_company_facts(fact_cik)
+            _state("edgar_companyfacts_last_error", "")
+        except Exception as exc:
+            LOG.warning("Could not refresh SEC company facts for CIK %s: %s", fact_cik, exc)
+            _state("edgar_companyfacts_last_error", str(exc)[:500])
+
     _state("edgar_last_refresh", timestamp)
     _state("edgar_last_error", "")
     _state("edgar_last_new_events", str(len(new_events)))
@@ -320,6 +396,7 @@ def refresh_edgar() -> dict[str, Any]:
         "companies": company_count,
         "feed_filings": len(filings),
         "new_events": len(new_events),
+        "issuer_facts": int(fact_result.get("facts") or 0),
         "refreshed_at": timestamp,
     }
 

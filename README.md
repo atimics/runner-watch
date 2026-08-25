@@ -10,8 +10,30 @@ for the community heart ranking and subscriber research reports. Pulse paginates
 scrolls. Radar works before login and merges into the passkey profile later.
 
 The public scanner defaults to listed US penny stocks from $0.20 to $5 with market caps below
-about $2B. It combines Yahoo's strongest movers and most active low-priced stocks before checking
-daily liquidity and 5-minute bars. A second mode widens the price ceiling to $20. OTC is excluded.
+about $2B. It combines Yahoo's strongest movers, most active names, and largest losers before
+checking daily liquidity and 5-minute bars. A second mode widens the price ceiling to $20. A third
+mode only keeps stocks down at least 60% from a 90-day or 52-week high. OTC is excluded.
+
+## Setup, rug risk, and trade state
+
+Runner Watch no longer treats every signal as bullish. Every saved scan has three separate outputs:
+
+- **Setup score:** could price move soon?
+- **Rug risk:** could dilution, treasury, ownership, a halt, or bad liquidity trap the trade?
+- **Trade state:** `WATCH`, `ARMED`, `TRIGGERED`, `MANAGE`, `AVOID`, or `EXIT`
+
+A strong setup can still be `AVOID`. Risk filings subtract from Pulse instead of adding attention.
+Critical rug risk and hard vetoes block the decision gate. A prior trigger becomes `EXIT` when price
+structure breaks or new risk crosses the block level.
+
+Daily history covers one year. Drawdowns are measured over 20 days, 90 days, and 52 weeks. A 60%
+drawdown only creates a crash candidate. It must reclaim VWAP with improving momentum before it can
+become `TRIGGERED`.
+
+The SEC Company Facts worker rotates through watched issuers. It stores point-in-time cash, operating
+cash flow, current assets and liabilities, debt, public float, and shares outstanding. The risk engine
+uses those facts for approximate cash runway, share growth, current ratio, and debt-to-cash. Missing
+facts stay unknown and add an uncertainty warning; they never become a bullish assumption.
 
 ## EDGAR intelligence
 
@@ -21,7 +43,9 @@ market-wide scan. The worker:
 - refreshes the SEC's official exchange-listed CIK-to-ticker map
 - polls the SEC's current-filings Atom feed every 45 seconds
 - deduplicates issuer and reporting-person entries by accession number
-- parses structured Form 4 ownership XML and reserves “insider buy” for transaction code `P`
+- parses structured Form 4 ownership XML, including post-trade holdings and footnote context
+- treats transaction code `P` as a reported purchase that still needs stake and financing context
+- keeps Schedule 13D and 13G neutral while recording structured ownership concentration when present
 - flags offering, registration, late-report, Form 144, 8-K, 6-K, and ownership filings
 - adds delayed Yahoo price, relative volume, and runner score as confirmation
 - saves scored events for the compact penny-stock feed and ticker evidence timeline
@@ -53,10 +77,9 @@ value, and expose source and freshness metadata through the chart APIs. Database
 tracked with numbered forward migrations. See
 [the provider and live-data runtime](docs/provider-runtime.md).
 
-The Nasdaq Trader halt collector is included in shadow mode. It archives the RSS response and
-stores versioned halt state once a minute during the extended US session. It is off by default while
-the feed terms are reviewed. Set `NASDAQ_TRADE_HALTS_ENABLED=true` to opt in. It does not change the
-runner score or public ticker evidence yet.
+The Nasdaq Trader halt collector archives the RSS response and stores versioned halt state once a
+minute during the extended US session. It is off by default while the feed terms are reviewed. Set
+`NASDAQ_TRADE_HALTS_ENABLED=true` to opt in. An active halt is a hard risk veto.
 
 The researched and prioritized plan for adding halts, quotes, fundamentals, news, biotech events,
 short activity, and market context is in [the data source ingestion roadmap](docs/data-source-roadmap.md).
