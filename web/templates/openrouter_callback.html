@@ -1,0 +1,35 @@
+{% extends "mobile_base.html" %}
+{% block title %}Connect OpenRouter · Runner Watch{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/auth-mobile.css">{% endblock %}
+{% block content %}
+<header class="detail-nav auth-nav">
+  <a href="/" aria-label="Back to Pulse">‹</a>
+  <strong>Runner Watch</strong>
+  <span></span>
+</header>
+<main class="mobile-auth-wrap">
+  <section class="mobile-auth-card">
+    <h1>Connecting OpenRouter</h1>
+    <div id="openRouterStatus" class="status" aria-live="polite">Finishing secure connection…</div>
+    <a class="auth-submit callback-home" id="callbackHome" href="/" hidden>Back to Pulse</a>
+  </section>
+</main>
+{% endblock %}
+{% block bottom_nav %}{% endblock %}
+{% block scripts %}
+<script nonce="{{ request.state.csp_nonce }}">
+(async()=>{
+  const status = document.getElementById('openRouterStatus');
+  const home = document.getElementById('callbackHome');
+  try {
+    const returnTo = await window.runnerOpenRouter.finish();
+    status.textContent = 'Connected';
+    location.replace(returnTo);
+  } catch (error) {
+    status.className = 'status error';
+    status.textContent = error.message || String(error);
+    home.hidden = false;
+  }
+})();
+</script>
+{% endblock %}

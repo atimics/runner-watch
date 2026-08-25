@@ -211,6 +211,33 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS alpha_reports_ticker_time
                 ON alpha_reports(ticker,created_at DESC);
+            CREATE TABLE IF NOT EXISTS research_commissions (
+                id TEXT PRIMARY KEY,
+                public_id TEXT UNIQUE NOT NULL,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                ticker TEXT NOT NULL,
+                evidence_key TEXT NOT NULL,
+                status TEXT NOT NULL,
+                requested_model TEXT NOT NULL,
+                model TEXT,
+                headline TEXT,
+                summary TEXT,
+                catalysts_json TEXT NOT NULL DEFAULT '[]',
+                risks_json TEXT NOT NULL DEFAULT '[]',
+                watch_json TEXT NOT NULL DEFAULT '[]',
+                sources_json TEXT NOT NULL DEFAULT '[]',
+                usage_json TEXT NOT NULL DEFAULT '{}',
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS research_commissions_created
+                ON research_commissions(created_at DESC);
+            CREATE INDEX IF NOT EXISTS research_commissions_ticker
+                ON research_commissions(ticker,completed_at DESC);
+            CREATE UNIQUE INDEX IF NOT EXISTS research_commissions_running
+                ON research_commissions(user_id,ticker) WHERE status='running';
             CREATE TABLE IF NOT EXISTS sec_companies (
                 cik INTEGER NOT NULL,
                 ticker TEXT NOT NULL,

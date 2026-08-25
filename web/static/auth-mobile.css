@@ -52,6 +52,7 @@
 }
 
 .auth-submit:disabled { opacity: .5; cursor: wait; }
+.callback-home { display: grid; place-items: center; text-decoration: none; }
 .auth-switch { text-align: center !important; font-size: 10px !important; margin-top: 16px; }
 .auth-switch a { color: var(--green); }
 .mobile-auth-card .status { min-height: 18px; margin-top: 12px; color: var(--muted); font-size: 10px; }

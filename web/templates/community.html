@@ -7,6 +7,19 @@
 </header>
 
 <main class="alpha-board">
+  {% if board.commissions %}
+  <section class="commission-feed">
+    <div class="alpha-section-head"><h2>Commissioned</h2><span>Open research</span></div>
+    {% for report in board.commissions[:5] %}
+    <a class="commission-row" href="/research/{{ report.public_id }}">
+      <span class="coin coin-{{ report.coin_tone }}"><b>{{ report.coin_label }}</b><i></i></span>
+      <span><strong>{{ report.ticker }} · {{ report.headline }}</strong><small>{{ report.model or report.requested_model }}</small></span>
+      <i>›</i>
+    </a>
+    {% endfor %}
+  </section>
+  {% endif %}
+
   {% if board.rows %}
     {% set leader = board.rows[0] %}
     <article class="alpha-leader">

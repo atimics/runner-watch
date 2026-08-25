@@ -1,0 +1,49 @@
+{% extends "mobile_base.html" %}
+{% block title %}{{ report.ticker }} research · Runner Watch{% endblock %}
+{% block head %}
+<meta name="description" content="{{ report.summary }}">
+<meta property="og:title" content="{{ report.ticker }} · {{ report.headline }}">
+<meta property="og:description" content="{{ report.summary }}">
+<meta property="og:type" content="article">
+<meta property="og:url" content="{{ app_origin }}/research/{{ report.public_id }}">
+<meta property="og:image" content="{{ app_origin }}/research/{{ report.public_id }}/card.png">
+<meta name="twitter:card" content="summary_large_image">
+{% endblock %}
+{% block content %}
+<header class="detail-nav">
+  <a href="/community" aria-label="Back to Alpha">‹</a>
+  <strong>Commissioned research</strong>
+  <button type="button" id="shareReport" aria-label="Share this report">↗</button>
+</header>
+
+<main class="research-report">
+  <a class="research-report-head" href="/t/{{ report.ticker }}">
+    <span class="coin coin-{{ report.coin_tone }}"><b>{{ report.coin_label }}</b><i></i></span>
+    <span><strong>{{ report.ticker }}</strong><small>{{ report.company }}</small></span>
+  </a>
+  <h1>{{ report.headline }}</h1>
+  <p class="research-summary">{{ report.summary }}</p>
+
+  {% if report.catalysts %}
+  <section class="research-section"><h2>Catalysts</h2>{% for item in report.catalysts %}<p>{{ item }}</p>{% endfor %}</section>
+  {% endif %}
+  {% if report.risks %}
+  <section class="research-section"><h2>Risks</h2>{% for item in report.risks %}<p>{{ item }}</p>{% endfor %}</section>
+  {% endif %}
+  {% if report.watch %}
+  <section class="research-section"><h2>Monitor</h2>{% for item in report.watch %}<p>{{ item }}</p>{% endfor %}</section>
+  {% endif %}
+  {% if report.sources %}
+  <section class="research-section"><h2>Sources</h2><div class="research-sources">{% for source in report.sources %}<a href="{{ source }}" target="_blank" rel="noopener">Source {{ loop.index }}</a>{% endfor %}</div></section>
+  {% endif %}
+  <div class="research-meta">{{ report.model or report.requested_model }} · {{ report.completed_at[:16]|replace('T', ' ') }} UTC</div>
+</main>
+{% endblock %}
+{% block scripts %}
+<script nonce="{{ request.state.csp_nonce }}">
+document.getElementById('shareReport').addEventListener('click',async event=>{
+  const share={title:{{ (report.ticker ~ ' · ' ~ report.headline)|tojson }},text:{{ report.summary|tojson }},url:location.href};
+  try{if(navigator.share)await navigator.share(share);else{await navigator.clipboard.writeText(location.href);event.currentTarget.textContent='✓';}}catch(_){}
+});
+</script>
+{% endblock %}

@@ -21,6 +21,8 @@
 const statusBox = document.getElementById('authStatus');
 const button = document.getElementById('authButton');
 let action = 'login';
+const requestedNext = new URLSearchParams(location.search).get('next') || '/';
+const nextPath = requestedNext.startsWith('/') && !requestedNext.startsWith('//') ? requestedNext : '/';
 function b64bytes(value) {
   const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4);
   return Uint8Array.from(atob(padded), c => c.charCodeAt(0));
@@ -74,12 +76,12 @@ button.addEventListener('click', async () => {
       start = await api('/api/auth/register/options');
       credential = await navigator.credentials.create({publicKey: prepareCreate(start.options)});
       const done = await api('/api/auth/register/verify', {flow_token: start.flow_token, credential: serialize(credential)});
-      location.href = done.redirect;
+      location.href = nextPath || done.redirect;
     } else {
       start = await api('/api/auth/login/options');
       credential = await navigator.credentials.get({publicKey: prepareGet(start.options)});
       const done = await api('/api/auth/login/verify', {flow_token: start.flow_token, credential: serialize(credential)});
-      location.href = done.redirect;
+      location.href = nextPath || done.redirect;
     }
   } catch (error) {
     if (action === 'login' && (error.name === 'NotAllowedError' || String(error.message).includes('not registered'))) {

@@ -25,6 +25,16 @@
     <small>{% if detail.current.event_at %}captured {{ detail.current.event_at[:16]|replace('T', ' ') }} UTC{% else %}price pending{% endif %}</small>
   </section>
 
+  <section class="research-action">
+    {% if user %}
+    <button class="commission-button" type="button" id="commissionButton">Commission report</button>
+    <small id="commissionStatus">{% if latest_commission %}<a href="/research/{{ latest_commission.public_id }}">View latest report</a>{% endif %}</small>
+    {% else %}
+    <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Login with passkey to commission</a>
+    <small>Powered by your OpenRouter account</small>
+    {% endif %}
+  </section>
+
   <section class="chart-card" aria-label="Price chart">
     <div class="chart-loading" id="chartStatus">Loading chart…</div>
     <svg id="priceChart" role="img" aria-label="Price chart" viewBox="0 0 600 210" preserveAspectRatio="none"></svg>
@@ -94,6 +104,8 @@ const ticker = {{ detail.ticker|tojson }};
 const company = {{ detail.company|tojson }};
 const chart = document.getElementById('priceChart');
 const status = document.getElementById('chartStatus');
+const commissionButton = document.getElementById('commissionButton');
+const commissionStatus = document.getElementById('commissionStatus');
 let allPoints=[];
 const initialPressure={{ detail.trade_pressure|tojson }};
 function draw(points) {
@@ -127,6 +139,37 @@ document.getElementById('heartButton').addEventListener('click', async event => 
   button.querySelector('span').textContent = result.hearted ? '♥' : '♡';
   document.getElementById('heartCount').textContent = result.count;
 });
+if (commissionButton) {
+  const renderCommissionButton = () => {
+    commissionButton.textContent = window.runnerOpenRouter.connected() ? 'Commission report' : 'Connect OpenRouter';
+  };
+  renderCommissionButton();
+  commissionButton.addEventListener('click', async () => {
+    if (!window.runnerOpenRouter.connected()) {
+      await window.runnerOpenRouter.connect(location.href);
+      return;
+    }
+    commissionButton.disabled = true;
+    commissionButton.textContent = 'Researching…';
+    commissionStatus.textContent = 'Building a shareable report';
+    try {
+      const response = await fetch(`/api/research/${encodeURIComponent(ticker)}`, {
+        method: 'POST',
+        headers: {'X-OpenRouter-Key': window.runnerOpenRouter.key()}
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) window.runnerOpenRouter.disconnect();
+        throw new Error(result.detail || 'Report failed');
+      }
+      location.href = result.url;
+    } catch (error) {
+      commissionStatus.textContent = error.message || String(error);
+      commissionButton.disabled = false;
+      renderCommissionButton();
+    }
+  });
+}
 const openedAt=Date.now();
 addEventListener('pagehide',()=>{const seconds=Math.round((Date.now()-openedAt)/1000);if(seconds<3)return;navigator.sendBeacon('/api/activity',new Blob([JSON.stringify({ticker,event_type:'dwell',seconds})],{type:'application/json'}));});
 function compactVolume(value){

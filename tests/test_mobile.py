@@ -5,14 +5,18 @@ from pytest import MonkeyPatch
 from starlette.requests import Request
 
 from runner_web import db
+from runner_web import main as web_main
 from runner_web.db import connection, init_db
 from runner_web.main import (
     APP_ORIGIN,
+    _commission_research,
     _evidence_gate,
     _market_trade_pressure,
     _pulse_label,
     _record_activity,
     alpha_board_data,
+    commissioned_reports,
+    get_commission,
     heart_state,
     pulse_data,
     radar_data,
@@ -449,3 +453,88 @@ def test_pulse_supports_cursor_style_offsets(tmp_path: Path, monkeypatch: Monkey
     assert first["has_more"] is True
     assert first["next_offset"] == 1
     assert second["rows"][0]["ticker"] != first["rows"][0]["ticker"]
+
+
+def test_commissioned_report_is_public_without_storing_the_openrouter_key(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "commission.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_filing("commission-one", "ONE", 1.25, 90, captured_at, "P")
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("commissioner", "member_commission", "Member", "active", captured_at),
+        )
+    monkeypatch.setattr(
+        web_main,
+        "_generate_openrouter_report",
+        lambda key, evidence, user_id: (
+            {
+                "headline": "ONE evidence report",
+                "summary": "A source-bound summary.",
+                "catalysts": ["Verified insider purchase"],
+                "risks": ["Low liquidity"],
+                "watch": ["Volume"],
+            },
+            "test/research-model",
+            {"total_tokens": 321},
+        ),
+    )
+
+    report = _commission_research("commissioner", "ONE", "sk-or-device-only-test-key")
+
+    assert report["headline"] == "ONE evidence report"
+    assert get_commission(report["public_id"])["summary"] == "A source-bound summary."
+    assert commissioned_reports()[0]["ticker"] == "ONE"
+    assert alpha_board_data("v:reader")["commissions"][0]["public_id"] == report["public_id"]
+    with connection() as database:
+        columns = {row[1] for row in database.execute("PRAGMA table_info(research_commissions)")}
+        stored = database.execute("SELECT * FROM research_commissions").fetchone()
+    assert "openrouter_key" not in columns
+    assert "sk-or-device-only-test-key" not in " ".join(str(value) for value in stored)
+
+
+def test_research_report_template_has_public_share_metadata(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "share-report.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_filing("share-one", "ONE", 1.25, 90, captured_at, "P")
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("sharer", "member_sharer", "Member", "active", captured_at),
+        )
+    monkeypatch.setattr(
+        web_main,
+        "_generate_openrouter_report",
+        lambda key, evidence, user_id: (
+            {
+                "headline": "Shareable ONE report",
+                "summary": "Built from stored evidence.",
+                "catalysts": [],
+                "risks": [],
+                "watch": [],
+            },
+            "test/model",
+            {},
+        ),
+    )
+    report = _commission_research("sharer", "ONE", "sk-or-share-test-key")
+    request = Request({"type": "http", "method": "GET", "path": "/research", "headers": []})
+    request.state.csp_nonce = "test"
+
+    html = templates.get_template("research_report.html").render(
+        request=request,
+        report=report,
+        app_origin="https://stonks.example",
+        user=None,
+        active_tab="alpha",
+    )
+
+    assert "Shareable ONE report" in html
+    assert f"/research/{report['public_id']}/card.png" in html
+    assert "sk-or-share-test-key" not in html
