@@ -391,6 +391,8 @@ def pulse_data() -> dict[str, Any]:
     unexplained = 0
     for raw in gap_rows:
         snapshot = dict(raw)
+        if float(snapshot["price"]) > 5:
+            continue
         ticker = snapshot["ticker"]
         if ticker in grouped:
             continue

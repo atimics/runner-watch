@@ -54,6 +54,35 @@ def test_pulse_only_lists_penny_stocks_and_groups_events(
     insert_filing("penny-one", "PEN", 2.25, 80, filed_at, "P")
     insert_filing("penny-two", "PEN", 2.25, 70, filed_at, "P")
     insert_filing("big-one", "BIG", 42.0, 99, filed_at, "P")
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO scan_snapshots(
+                id,ticker,score,stage,session,price,change_pct,momentum_5m_pct,
+                momentum_15m_pct,relative_volume,recent_relative_volume,breakout_pct,
+                dollar_volume,quote_time,signals_json,risks_json,captured_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                "big-snapshot",
+                "HUGE",
+                100,
+                "BUILDING",
+                "regular",
+                60.0,
+                12.0,
+                2.0,
+                5.0,
+                4.0,
+                5.0,
+                1.0,
+                2_000_000,
+                filed_at,
+                "[]",
+                "[]",
+                filed_at,
+            ),
+        )
 
     result = pulse_data()
 
