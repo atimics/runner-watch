@@ -55,6 +55,7 @@ from runner_web.ranker import (
     ranker_status,
     train_shadow_ranker,
 )
+from runner_web.source_workers import trading_halt_worker
 
 APP_ORIGIN = os.getenv("APP_ORIGIN", "http://localhost:8080").rstrip("/")
 RP_ID = os.getenv("RP_ID", "localhost")
@@ -83,6 +84,7 @@ async def lifespan(application: FastAPI):
     init_db()
     tasks = [
         asyncio.create_task(edgar_worker()),
+        asyncio.create_task(trading_halt_worker()),
         asyncio.create_task(outcome_worker()),
         asyncio.create_task(scan_collection_worker()),
     ]

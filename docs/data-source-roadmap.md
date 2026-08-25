@@ -41,7 +41,14 @@ request limits followed.
 The time estimates assume one engineer. Each phase should ship in shadow mode first. A source can
 move to the public score only after its quality gate passes.
 
+Current build status: the shared layer and normalized tables are complete. The Nasdaq halt parser,
+raw archive, deduplication, worker, and stale-feed health are also complete in shadow mode. The feed
+is opt-in until its terms review is complete. Public halt evidence and ranking behavior are not yet
+connected. See the [data source flow map](source-flow.md) for the shared path and table routing.
+
 ### Phase 0 — Source rules and shared data model (2–3 days)
+
+Status: built and tested on 2026-08-24.
 
 - Add a source registry with owner, terms URL, credentials, expected cadence, storage rule, and
   public-display rule.
@@ -57,6 +64,8 @@ Done when every source has a visible last-success time, a clear dedupe key, and 
 rule. No ranking change is part of this phase.
 
 ### Phase 1 — Trading halts (3–4 days)
+
+Status: ingestion is built; ticker evidence and the public halt banner remain.
 
 - Poll `https://www.nasdaqtrader.com/rss.aspx?feed=tradehalts` once per minute during the extended
   US session.

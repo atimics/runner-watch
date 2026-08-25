@@ -33,17 +33,26 @@ clean examples without rewriting history after a move is already known.
 
 ## Source ingestion
 
-SEC and Yahoo use one ingestion pipe. Every source fetch writes a durable run record with its
-source, feed, status, timing, counts, content hash, and error. SEC response bodies remain compressed
-in `source_documents`. Yahoo universe members are kept in `ingestion_items`, while Yahoo price bars
-are deduplicated into `market_bars`. Parsed SEC filing state is kept separately so ignored or failed
-items stay visible, and known ignored filings do not get downloaded forever.
+All collectors use one ingestion pipe. Every source fetch writes a durable run record with its
+source, feed, status, timing, counts, content hash, and error. Raw responses can remain compressed
+in `source_documents`. Normalized quotes, events, issuer facts, entity links, and macro observations
+keep their source and collection times. A failed projection is rolled back while its failed run stays
+visible for diagnosis.
 
-Use `/api/ingestion/status` to check the latest success and error time for each feed. The ingestion
-tables do not replace the app's normal read tables; they provide one audit path behind them.
+The source registry records owner, terms, credentials, cadence, stale limits, storage, display, and
+attribution rules. Use `/api/ingestion/status` to see healthy, stale, idle, pending, failed, and
+disabled feeds. The tables do not replace the app's normal read tables; they provide one audit path
+behind them.
+
+The Nasdaq Trader halt collector is included in shadow mode. It archives the RSS response and
+stores versioned halt state once a minute during the extended US session. It is off by default while
+the feed terms are reviewed. Set `NASDAQ_TRADE_HALTS_ENABLED=true` to opt in. It does not change the
+runner score or public ticker evidence yet.
 
 The researched and prioritized plan for adding halts, quotes, fundamentals, news, biotech events,
 short activity, and market context is in [the data source ingestion roadmap](docs/data-source-roadmap.md).
+The end-to-end path from collectors to product evidence is in the
+[data source flow map](docs/source-flow.md).
 
 The main screen ranks stocks with a **runner score**. The score looks for:
 

@@ -4,7 +4,10 @@ import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
+
+from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "data/runner-watch.db"))
 
@@ -17,6 +20,50 @@ def _ensure_column(db: sqlite3.Connection, table: str, definition: str) -> None:
     name = definition.split()[0]
     if name not in _columns(db, table):
         db.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+
+
+def _seed_source_registry(db: sqlite3.Connection) -> None:
+    timestamp = datetime.now(UTC).isoformat()
+    db.executemany(
+        """
+        INSERT INTO source_registry(
+            source,feed,title,owner,terms_url,credential_env,
+            expected_cadence_seconds,stale_after_seconds,schedule,
+            storage_policy,display_policy,attribution,review_status,enabled,
+            created_at,updated_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(source,feed) DO UPDATE SET
+            title=excluded.title,owner=excluded.owner,terms_url=excluded.terms_url,
+            credential_env=excluded.credential_env,
+            expected_cadence_seconds=excluded.expected_cadence_seconds,
+            stale_after_seconds=excluded.stale_after_seconds,schedule=excluded.schedule,
+            storage_policy=excluded.storage_policy,display_policy=excluded.display_policy,
+            attribution=excluded.attribution,review_status=excluded.review_status,
+            enabled=excluded.enabled,
+            updated_at=excluded.updated_at
+        """,
+        [
+            (
+                policy.source,
+                policy.feed,
+                policy.title,
+                policy.owner,
+                policy.terms_url,
+                policy.credential_env,
+                policy.expected_cadence_seconds,
+                policy.stale_after_seconds,
+                policy.schedule,
+                policy.storage_policy,
+                policy.display_policy,
+                policy.attribution,
+                policy.review_status,
+                int(policy.enabled),
+                timestamp,
+                timestamp,
+            )
+            for policy in DEFAULT_SOURCE_POLICIES
+        ],
+    )
 
 
 @contextmanager
@@ -220,6 +267,128 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS source_item_state_status
                 ON source_item_state(source,feed,status,last_seen_at DESC);
+            CREATE TABLE IF NOT EXISTS source_registry (
+                source TEXT NOT NULL,
+                feed TEXT NOT NULL,
+                title TEXT NOT NULL,
+                owner TEXT NOT NULL,
+                terms_url TEXT,
+                credential_env TEXT,
+                expected_cadence_seconds INTEGER,
+                stale_after_seconds INTEGER,
+                schedule TEXT NOT NULL DEFAULT 'event',
+                storage_policy TEXT NOT NULL,
+                display_policy TEXT NOT NULL,
+                attribution TEXT,
+                review_status TEXT NOT NULL DEFAULT 'review_required',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(source,feed)
+            );
+            CREATE TABLE IF NOT EXISTS security_quotes (
+                source TEXT NOT NULL,
+                feed TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                bid REAL,
+                ask REAL,
+                bid_size REAL,
+                ask_size REAL,
+                last_trade REAL,
+                exchange TEXT,
+                conditions_json TEXT NOT NULL DEFAULT '[]',
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                first_run_id TEXT NOT NULL REFERENCES ingestion_runs(id),
+                last_run_id TEXT NOT NULL REFERENCES ingestion_runs(id),
+                first_collected_at TEXT NOT NULL,
+                last_collected_at TEXT NOT NULL,
+                PRIMARY KEY(source,feed,ticker,observed_at)
+            );
+            CREATE INDEX IF NOT EXISTS security_quotes_ticker_time
+                ON security_quotes(ticker,observed_at DESC);
+            CREATE TABLE IF NOT EXISTS market_events (
+                source TEXT NOT NULL,
+                feed TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                version TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                event_at TEXT NOT NULL,
+                published_at TEXT,
+                effective_at TEXT,
+                status TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                first_run_id TEXT NOT NULL REFERENCES ingestion_runs(id),
+                last_run_id TEXT NOT NULL REFERENCES ingestion_runs(id),
+                first_collected_at TEXT NOT NULL,
+                last_collected_at TEXT NOT NULL,
+                PRIMARY KEY(source,feed,event_id,version)
+            );
+            CREATE INDEX IF NOT EXISTS market_events_ticker_time
+                ON market_events(ticker,event_at DESC);
+            CREATE INDEX IF NOT EXISTS market_events_type_time
+                ON market_events(event_type,event_at DESC);
+            CREATE TABLE IF NOT EXISTS issuer_facts (
+                id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                feed TEXT NOT NULL,
+                cik INTEGER NOT NULL,
+                concept TEXT NOT NULL,
+                value REAL NOT NULL,
+                unit TEXT NOT NULL,
+                period_start TEXT,
+                period_end TEXT NOT NULL,
+                filed_at TEXT NOT NULL,
+                accession TEXT NOT NULL,
+                form TEXT,
+                source_tag TEXT,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                first_run_id TEXT NOT NULL REFERENCES ingestion_runs(id),
+                last_run_id TEXT NOT NULL REFERENCES ingestion_runs(id),
+                first_collected_at TEXT NOT NULL,
+                last_collected_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS issuer_facts_cik_concept_filed
+                ON issuer_facts(cik,concept,filed_at DESC);
+            CREATE TABLE IF NOT EXISTS entity_links (
+                id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                feed TEXT NOT NULL,
+                external_id TEXT NOT NULL,
+                cik INTEGER,
+                ticker TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                method TEXT NOT NULL,
+                valid_from TEXT,
+                valid_to TEXT,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                first_run_id TEXT NOT NULL REFERENCES ingestion_runs(id),
+                last_run_id TEXT NOT NULL REFERENCES ingestion_runs(id),
+                first_collected_at TEXT NOT NULL,
+                last_collected_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS entity_links_ticker
+                ON entity_links(ticker,confidence DESC);
+            CREATE INDEX IF NOT EXISTS entity_links_external
+                ON entity_links(source,external_id);
+            CREATE TABLE IF NOT EXISTS macro_observations (
+                source TEXT NOT NULL,
+                feed TEXT NOT NULL,
+                series_id TEXT NOT NULL,
+                observation_date TEXT NOT NULL,
+                vintage_date TEXT NOT NULL,
+                value REAL NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                first_run_id TEXT NOT NULL REFERENCES ingestion_runs(id),
+                last_run_id TEXT NOT NULL REFERENCES ingestion_runs(id),
+                first_collected_at TEXT NOT NULL,
+                last_collected_at TEXT NOT NULL,
+                PRIMARY KEY(source,series_id,observation_date,vintage_date)
+            );
+            CREATE INDEX IF NOT EXISTS macro_observations_series_date
+                ON macro_observations(series_id,observation_date DESC,vintage_date DESC);
             CREATE TABLE IF NOT EXISTS scan_runs (
                 id TEXT PRIMARY KEY,
                 mode TEXT NOT NULL,
@@ -369,3 +538,4 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS scan_snapshots_run_rank "
             "ON scan_snapshots(scan_run_id,baseline_rank)"
         )
+        _seed_source_registry(db)
