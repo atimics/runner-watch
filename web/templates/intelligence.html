@@ -1,18 +1,18 @@
 {% extends "base.html" %}
-{% block title %}EDGAR Intelligence · Runner Watch{% endblock %}
+{% block title %}SEC filings · Runner Watch{% endblock %}
 {% block head %}<link rel="stylesheet" href="/static/intelligence.css?v={{ static_version }}">{% endblock %}
 {% block content %}
 <section class="intel-head">
   <div>
-    <span class="eyebrow">ALL LISTED COMPANIES · BACKGROUND MONITOR</span>
-    <h1>EDGAR catalyst intelligence</h1>
-    <p>Find the filing before it becomes a top-gainer list. Insider buys, ownership changes, current reports, and dilution risk are scored in the background.</p>
+    <span class="eyebrow">SEC FILINGS</span>
+    <h1>Filing monitor</h1>
+    <p>Tracks insider trades, ownership changes, 8-Ks, and offering risk.</p>
   </div>
-  <div class="intel-live"><span></span><strong>LIVE</strong><small id="lastRefresh">Starting SEC listener…</small></div>
+  <div class="intel-live"><span></span><strong>LIVE</strong><small id="lastRefresh">Loading…</small></div>
 </section>
 
 <section class="intel-controls">
-  <label>Heatmap
+  <label>Show
     <select id="intelFilter">
       <option value="penny">Penny stocks · under $5</option>
       <option value="positive">Positive catalysts</option>
@@ -25,14 +25,13 @@
   <div class="intel-legend"><span class="legend-positive"></span> Catalyst <span class="legend-neutral"></span> New filing <span class="legend-risk"></span> Risk</div>
 </section>
 
-<div id="intelStatus" class="scan-status">The worker is loading the latest EDGAR filings. This page does not start a scan.</div>
+<div id="intelStatus" class="scan-status">Loading SEC filings…</div>
 <div id="heatmap" class="heatmap"></div>
 
 <section class="intel-notes">
-  <strong>How to read it</strong>
-  <p>A larger score means the event deserves faster review, not that the stock will rise. Form 4 code P means an open-market or private purchase. Grants, option exercises, and tax withholding are kept separate. Offering filings are marked as risk.</p>
-  <p>SEC data is the source of record. Yahoo price and volume are delayed confirmation data. Always open the filing and check spreads, halts, dilution history, and news before acting.</p>
-  <p>The learning loop saves the price seen when a filing arrives, then samples it after 1 hour, 1 day, and 5 days. These are delayed observations for future model evaluation, not proof that a filing caused the move.</p>
+  <strong>Notes</strong>
+  <p>A high score means review sooner. It does not predict price.</p>
+  <p>Prices may be delayed. Open the filing and check live market data.</p>
 </section>
 {% endblock %}
 {% block scripts %}
@@ -60,13 +59,13 @@ function render() {
     const market = row.price == null ? 'Price pending' : `$${Number(row.price).toFixed(2)}${row.change_pct == null ? '' : ` · ${Number(row.change_pct) >= 0 ? '+' : ''}${Number(row.change_pct).toFixed(1)}%`}`;
     const heat = Number(row.score) >= 80 ? 'hot' : Number(row.score) >= 60 ? 'warm' : '';
     const measured = outcome(row.return_1h_pct, '1h') + outcome(row.return_1d_pct, '1d') + outcome(row.return_5d_pct, '5d');
-    return `<a class="heat-cell ${esc(row.sentiment)} ${heat}" href="${esc(row.filing_url)}" target="_blank" rel="noopener"><div class="heat-top"><strong>$${esc(row.ticker)}</strong><b>${Number(row.score).toFixed(0)}</b></div><span class="heat-kind">${esc(row.kind)}</span><div class="heat-meta"><span>${esc(row.form)}</span><span>${esc(ago(row.filed_at))}</span></div><div class="heat-evidence"><strong>${esc(row.evidence_label)}</strong><p>${esc(row.evidence_text)}</p></div>${measured ? `<div class="heat-outcomes">${measured}</div>` : '<div class="heat-learning">Outcome clock running</div>'}<div class="heat-market"><span>${esc(market)}</span>${value ? `<strong>${esc(value)}</strong>` : ''}</div></a>`;
-  }).join('') || '<div class="empty intel-empty"><span>⌁</span><h3>No matching catalyst yet.</h3><p>The SEC listener keeps running in the background.</p></div>';
+    return `<a class="heat-cell ${esc(row.sentiment)} ${heat}" href="${esc(row.filing_url)}" target="_blank" rel="noopener"><div class="heat-top"><strong>$${esc(row.ticker)}</strong><b>${Number(row.score).toFixed(0)}</b></div><span class="heat-kind">${esc(row.kind)}</span><div class="heat-meta"><span>${esc(row.form)}</span><span>${esc(ago(row.filed_at))}</span></div><div class="heat-evidence"><strong>${esc(row.evidence_label)}</strong><p>${esc(row.evidence_text)}</p></div>${measured ? `<div class="heat-outcomes">${measured}</div>` : '<div class="heat-learning">Results pending</div>'}<div class="heat-market"><span>${esc(market)}</span>${value ? `<strong>${esc(value)}</strong>` : ''}</div></a>`;
+  }).join('') || '<div class="empty intel-empty"><span>⌁</span><h3>No matches.</h3></div>';
   const state = intelligence.state || {}; const refreshed = state.edgar_last_refresh;
-  document.getElementById('lastRefresh').textContent = refreshed ? `Updated ${ago(refreshed)}` : 'Starting SEC listener…';
+  document.getElementById('lastRefresh').textContent = refreshed ? `Updated ${ago(refreshed)}` : 'Loading…';
   const companies = state.edgar_company_count ? Number(state.edgar_company_count).toLocaleString() : 'thousands of';
   const labeled = intelligence.stats?.labeled_events || 0;
-  statusBox.textContent = `${rows.length} events shown · ${labeled} measured outcomes · monitoring ${companies} listed ticker mappings · updates arrive without clicking Scan.`;
+  statusBox.textContent = `${rows.length} events · ${labeled} results · ${companies} tickers`;
 }
 filter.addEventListener('change', render); render();
 setInterval(async () => { try { const response = await fetch('/api/intelligence'); if (response.ok) { intelligence = await response.json(); render(); } } catch (_) {} }, 15000);

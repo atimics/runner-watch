@@ -48,7 +48,7 @@
       body: JSON.stringify({code, code_verifier: verifier, code_challenge_method: 'S256'})
     });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result.key) throw new Error('OpenRouter could not be connected.');
+    if (!response.ok || !result.key) throw new Error('Could not connect OpenRouter.');
     localStorage.setItem(keyName(), result.key);
     const returnTo = safeReturn(sessionStorage.getItem(RETURN_TO));
     sessionStorage.removeItem(VERIFIER);

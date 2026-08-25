@@ -236,42 +236,40 @@ def assess_risk(item: RiskInput) -> RiskAssessment:
     if previous in {"TRIGGERED", "MANAGE"}:
         if invalidated:
             trade_state = "EXIT"
-            state_reason = "The prior setup is invalidated by risk or broken price structure."
+            state_reason = "Risk or broken structure killed the setup."
         else:
             trade_state = "MANAGE"
-            state_reason = (
-                "The prior trigger remains valid; watch the reclaimed level and new filings."
-            )
+            state_reason = "Trigger still holds. Watch the reclaimed level and new filings."
     elif hard_veto or rug_score >= 75:
         trade_state = "AVOID"
-        state_reason = "Hard risk blocks this setup even if it can still pump."
+        state_reason = "Hard risk blocks it, even if it can still pump."
     elif crash_candidate:
         if structure_confirmed and rug_score < 50:
             trade_state = "TRIGGERED"
-            state_reason = "The crash setup reclaimed VWAP with momentum and acceptable rug risk."
+            state_reason = "Reclaimed VWAP with momentum and lower rug risk."
         elif (
             rug_score < 65
             and item.vwap_position_pct >= -0.5
             and item.momentum_15m_pct > 0
         ):
             trade_state = "ARMED"
-            state_reason = "The bounce is improving, but the reclaim still needs confirmation."
+            state_reason = "Bounce is improving. Reclaim still needs proof."
         else:
             trade_state = "WATCH"
-            state_reason = "Crash candidate only; do not confuse a bounce with a repaired trend."
+            state_reason = "Bounce only. The trend is still broken."
     elif structure_confirmed and item.setup_score >= 58 and rug_score < 50:
         trade_state = "TRIGGERED"
-        state_reason = "Setup conditions are confirmed and rug risk is below the block level."
+        state_reason = "Setup confirmed. Rug risk is below the block level."
     elif (
         item.setup_score >= 45
         and rug_score < 65
         and (item.vwap_position_pct >= 0 or item.momentum_5m_pct > 0)
     ):
         trade_state = "ARMED"
-        state_reason = "The setup is close, but one or more confirmation checks are missing."
+        state_reason = "Close, but one or more checks are missing."
     else:
         trade_state = "WATCH"
-        state_reason = "No entry state is confirmed."
+        state_reason = "No entry yet."
 
     return RiskAssessment(
         rug_score=rug_score,

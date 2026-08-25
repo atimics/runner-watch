@@ -9,11 +9,11 @@
 <main class="alpha-board">
   {% if board.commissions %}
   <section class="commission-feed">
-    <div class="alpha-section-head"><h2>Commissioned</h2><span>Open research</span></div>
+    <div class="alpha-section-head"><h2>Reports</h2><span>Latest</span></div>
     {% for report in board.commissions[:5] %}
     <a class="commission-row" href="/research/{{ report.public_id }}">
       <span class="coin coin-{{ report.coin_tone }}"><b>{{ report.coin_label }}</b><i></i></span>
-      <span><strong>{{ report.ticker }} · {{ report.headline }}</strong><small>{% if report.actor %}{{ report.actor.emoji }} {{ report.actor.display_name }} · AI KOL · {{ report.actor.model_label }}{% else %}{{ report.model or report.requested_model }}{% endif %}</small></span>
+      <span><strong>{{ report.ticker }} · {{ report.headline }}</strong><small>{% if report.actor %}{{ report.actor.emoji }} {{ report.actor.display_name }} · {{ report.actor.model_label }}{% else %}{{ report.model or report.requested_model }}{% endif %}</small></span>
       <i>›</i>
     </a>
     {% endfor %}
@@ -38,19 +38,19 @@
     {% if leader.ai_report %}
       {% if is_subscriber %}
       <article class="ai-report-card">
-        <header><span>AI report</span><small>{{ leader.ai_report.updated_at[:16]|replace('T',' ') }} UTC</small></header>
+        <header><span>Report</span><small>{{ leader.ai_report.updated_at[:16]|replace('T',' ') }} UTC</small></header>
         <h2>{{ leader.ai_report.headline }}</h2>
         <p>{{ leader.ai_report.summary }}</p>
         {% if leader.ai_report.catalysts %}<div><b>Catalysts</b>{% for item in leader.ai_report.catalysts %}<span>{{ item }}</span>{% endfor %}</div>{% endif %}
         {% if leader.ai_report.risks %}<div><b>Risks</b>{% for item in leader.ai_report.risks %}<span>{{ item }}</span>{% endfor %}</div>{% endif %}
-        {% if leader.ai_report.watch %}<div><b>Monitor</b>{% for item in leader.ai_report.watch %}<span>{{ item }}</span>{% endfor %}</div>{% endif %}
+        {% if leader.ai_report.watch %}<div><b>Watch</b>{% for item in leader.ai_report.watch %}<span>{{ item }}</span>{% endfor %}</div>{% endif %}
         {% if leader.ai_report.sources %}<footer>{% for source in leader.ai_report.sources %}<a href="{{ source }}" target="_blank" rel="noopener">Source {{ loop.index }}</a>{% endfor %}</footer>{% endif %}
       </article>
       {% else %}
-      <div class="ai-report-locked"><span>AI report</span><strong>Subscriber report ready</strong><i>◆</i></div>
+      <div class="ai-report-locked"><span>Report</span><strong>Subscribers only</strong><i>◆</i></div>
       {% endif %}
     {% else %}
-      <div class="ai-report-running"><span class="wolf-pulse">🐺</span><div><strong>Researching {{ leader.ticker }}</strong><small>AI reporting follows the #1 Alpha ticker.</small></div></div>
+      <div class="ai-report-running"><span class="wolf-pulse">🐺</span><div><strong>Digging into {{ leader.ticker }}</strong><small>Report for the #1 Alpha ticker.</small></div></div>
     {% endif %}
 
     {% if board.rows|length > 1 %}
@@ -77,7 +77,7 @@
     {% endfor %}
   </section>
   {% elif not board.rows %}
-  <div class="empty-list"><strong>Alpha is waiting for the first heart</strong></div>
+  <div class="empty-list"><strong>No ranked tickers</strong></div>
   {% endif %}
 </main>
 {% endblock %}

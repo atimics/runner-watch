@@ -198,7 +198,7 @@ def publish_calls_for_scan(
                     status="abandoned",
                     price=price,
                     closed_at=str(prediction["captured_at"]),
-                    reason="The KOL score fell below its fixed abandon rule.",
+                    reason="Score fell below the exit rule.",
                 )
                 abandoned.append(str(call["id"]))
 
@@ -447,19 +447,19 @@ def refresh_kol_calls(
                     1.0 + float(call["upper_barrier_pct"]) / 100.0
                 )
                 status = "won"
-                reason = "Price touched the upper barrier before the lower barrier."
+                reason = "Hit the profit target first."
             elif label == "down":
                 exit_price = float(call["entry_price"]) * (
                     1.0 - float(call["lower_barrier_pct"]) / 100.0
                 )
                 status = "stopped"
-                reason = "Price touched the lower barrier before the upper barrier."
+                reason = "Hit the stop first."
             else:
                 exit_price = _valid_price(outcome.get("price_60m")) or float(
                     call["last_price"]
                 )
                 status = "timed_out"
-                reason = "The 60-minute contract ended without touching either barrier."
+                reason = "Ended after 60 minutes."
             closed_at = str(
                 outcome.get("barrier_hit_at")
                 or outcome.get("observed_60m_at")
@@ -670,5 +670,5 @@ def kol_status() -> dict[str, Any]:
         "predictors": scorecards,
         "calls": sum(int(row["calls"]) for row in scorecards),
         "active_calls": sum(int(row["active_calls"]) for row in scorecards),
-        "paper_pnl_note": "Fixed $1,000 paper calls with a conservative round-trip cost.",
+        "paper_pnl_note": "$1,000 paper calls with estimated trading costs.",
     }

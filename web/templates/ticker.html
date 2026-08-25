@@ -1,9 +1,9 @@
 {% extends "mobile_base.html" %}
-{% block title %}{{ detail.ticker }} Intelligence · Runner Watch{% endblock %}
+{% block title %}{{ detail.ticker }} intel · Runner Watch{% endblock %}
 {% block content %}
 <header class="detail-nav">
   <a href="/" aria-label="Back to Pulse">‹</a>
-  <strong>Intelligence</strong>
+  <strong>Intel</strong>
   <button type="button" id="shareButton" aria-label="Share this ticker">↗</button>
 </header>
 {% include "_market_clock.html" %}
@@ -19,24 +19,24 @@
 
   <section class="price-block">
     <div>
-      <strong>{% if detail.current.price is not none %}${{ '%.4f'|format(detail.current.price) if detail.current.price < 1 else ('%.2f'|format(detail.current.price)) }}{% else %}Price pending{% endif %}</strong>
+      <strong>{% if detail.current.price is not none %}${{ '%.4f'|format(detail.current.price) if detail.current.price < 1 else ('%.2f'|format(detail.current.price)) }}{% else %}No price{% endif %}</strong>
       {% if detail.current.change_pct is not none %}<span class="{{ 'up' if detail.current.change_pct >= 0 else 'down' }}">{{ '+' if detail.current.change_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.change_pct) }}%</span>{% endif %}
     </div>
-    <small>{% if detail.current.event_at %}captured {{ detail.current.event_at[:16]|replace('T', ' ') }} UTC{% else %}price pending{% endif %}</small>
+    <small>{% if detail.current.event_at %}{{ detail.current.event_at[:16]|replace('T', ' ') }} UTC{% else %}No recent quote{% endif %}</small>
   </section>
 
   <section class="research-action">
     {% if user %}
       {% if latest_commission and latest_commission.status == 'complete' %}
-      <a class="commission-button" href="/research/{{ latest_commission.public_id }}">View Flash report</a>
-      <small>Flash finished this commission</small>
+      <a class="commission-button" href="/research/{{ latest_commission.public_id }}">View report</a>
+      <small>Report ready</small>
       {% else %}
-      <button class="commission-button" type="button" id="commissionButton"{% if latest_commission and latest_commission.status == 'running' %} disabled{% endif %}>{% if latest_commission and latest_commission.status == 'running' %}Flash is researching…{% else %}Commission Flash{% endif %}</button>
-      <small id="commissionStatus">{% if latest_commission and latest_commission.status == 'running' %}Running on the server — safe to leave this page{% elif latest_commission and latest_commission.status == 'failed' %}{{ latest_commission.error or 'The last report failed. Try again.' }}{% endif %}</small>
+      <button class="commission-button" type="button" id="commissionButton"{% if latest_commission and latest_commission.status == 'running' %} disabled{% endif %}>{% if latest_commission and latest_commission.status == 'running' %}Flash is digging…{% else %}Ask Flash{% endif %}</button>
+      <small id="commissionStatus">{% if latest_commission and latest_commission.status == 'running' %}You can leave this page{% elif latest_commission and latest_commission.status == 'failed' %}{{ latest_commission.error or 'Report failed. Try again.' }}{% endif %}</small>
       {% endif %}
     {% else %}
-    <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Login to commission Flash</a>
-    <small>Flash is powered by {{ flash.model_label }} through your OpenRouter account</small>
+    <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Log in to ask Flash</a>
+    <small>Uses {{ flash.model_label }} through OpenRouter</small>
     {% endif %}
   </section>
 
@@ -49,27 +49,27 @@
 
   {% if detail.kol_calls %}
   <section class="why-section kol-detail-section">
-    <div class="section-heading"><div><span>IMMUTABLE PAPER CALLS</span><h2>AI KOL</h2></div><b>{{ detail.kol_calls|length }} receipt{{ '' if detail.kol_calls|length == 1 else 's' }}</b></div>
+    <div class="section-heading"><div><span>PAPER CALLS</span><h2>Flash</h2></div><b>{{ detail.kol_calls|length }} call{{ '' if detail.kol_calls|length == 1 else 's' }}</b></div>
     <div class="kol-call-list">
       {% for call in detail.kol_calls %}
       <article class="kol-call-card">
-        <div class="kol-call-head"><span class="kol-avatar">{{ call.emoji }}</span><span><strong>{{ call.display_name }}</strong><small>Position {{ call.ladder_position or 1 }} of 4 · fixed signal policy · {{ call.contract_version }}</small></span><b class="kol-status kol-status-{{ call.status }}">{{ call.status|replace('_', ' ') }}</b></div>
+        <div class="kol-call-head"><span class="kol-avatar">{{ call.emoji }}</span><span><strong>{{ call.display_name }}</strong><small>Rule set · {{ call.contract_version }}</small></span><b class="kol-status kol-status-{{ call.status }}">{{ call.status|replace('_', ' ') }}</b></div>
         <div class="kol-call-numbers">
           <span><small>Entry</small><b>${{ '%.4f'|format(call.entry_price) if call.entry_price < 1 else ('%.2f'|format(call.entry_price)) }}</b></span>
           <span><small>{{ 'Current' if call.is_active else 'Exit' }}</small><b>${{ '%.4f'|format(call.last_price) if call.last_price < 1 else ('%.2f'|format(call.last_price)) }}</b></span>
           <span><small>Paper PnL</small><b class="{{ 'up' if call.display_return_pct >= 0 else 'down' }}">{{ '+' if call.display_return_pct >= 0 else '' }}{{ '%.1f'|format(call.display_return_pct) }}%</b></span>
           <span><small>Confidence</small><b>{{ '%.0f'|format(call.confidence * 100) }}%</b></span>
         </div>
-        <p>{{ call.close_reason or ('Tracking until +%.0f%%, −%.0f%%, the %d-minute timeout, or an honest abandon.'|format(call.upper_barrier_pct, call.lower_barrier_pct, call.horizon_minutes)) }}{% if call.benchmark_label %} Fixed result: <strong>{{ call.benchmark_label|upper }}</strong>.{% endif %}</p>
+        <p>{{ call.close_reason or ('Ends at +%.0f%%, −%.0f%%, or %d minutes.'|format(call.upper_barrier_pct, call.lower_barrier_pct, call.horizon_minutes)) }}{% if call.benchmark_label %} Result: <strong>{{ call.benchmark_label|upper }}</strong>.{% endif %}</p>
       </article>
       {% endfor %}
     </div>
-    <p class="kol-paper-note">$1,000 paper calls. PnL includes a conservative round-trip cost. Not a trade recommendation.</p>
+    <p class="kol-paper-note">$1,000 paper calls with estimated costs. Not advice.</p>
   </section>
   {% endif %}
 
   <section class="why-section">
-    <div class="section-heading"><div><h2>Why moving</h2></div>{% if detail.current.source == 'market' and detail.current.score %}<b>{{ '%.0f'|format(detail.current.score) }} score</b>{% elif detail.current.source == 'sec' %}<b>new filing</b>{% endif %}</div>
+    <div class="section-heading"><div><h2>Why it moved</h2></div>{% if detail.current.source == 'market' and detail.current.score %}<b>{{ '%.0f'|format(detail.current.score) }} score</b>{% elif detail.current.source == 'sec' %}<b>new filing</b>{% endif %}</div>
     {% if detail.current.source == 'market' %}
     <div class="market-metrics">
       <div><span>RVOL</span><strong>{% if detail.current.relative_volume is not none %}{{ '%.1f'|format(detail.current.relative_volume) }}×{% else %}—{% endif %}</strong></div>
@@ -79,9 +79,9 @@
     <div class="reason-list">
       {% for reason in detail.current.signals %}<span class="reason-chip">{{ reason }}</span>{% endfor %}
       {% for risk in detail.current.risks %}<span class="reason-chip risk">{{ risk }}</span>{% endfor %}
-      {% if not detail.current.signals and not detail.current.risks %}<p>Price and volume passed the active-runner filter. More structure data is pending.</p>{% endif %}
+      {% if not detail.current.signals and not detail.current.risks %}<p>No extra signals yet.</p>{% endif %}
     </div>
-    {% else %}<p class="quiet-reason">No fresh market snapshot is stored for this ticker yet.</p>{% endif %}
+    {% else %}<p class="quiet-reason">No recent market data.</p>{% endif %}
   </section>
 
   {% if detail.current.source == 'market' %}
@@ -103,16 +103,16 @@
   {% endif %}
 
   <section class="evidence-gate gate-{{ detail.evidence_gate.state }}" id="evidenceGate">
-    <div><span>Decision gate</span><strong id="gateSummary">{{ detail.evidence_gate.summary }}</strong><small id="gateCount">{{ detail.evidence_gate.count }}/{{ detail.evidence_gate.threshold }}</small></div>
+    <div><span>Signal check</span><strong id="gateSummary">{{ detail.evidence_gate.summary }}</strong><small id="gateCount">{{ detail.evidence_gate.count }}/{{ detail.evidence_gate.threshold }}</small></div>
     <div class="gate-meter" id="gateMeter">{% for index in range(detail.evidence_gate.threshold) %}<i class="{% if index < detail.evidence_gate.count %}hit{% endif %}"></i>{% endfor %}</div>
-    <p id="gateChecks">{{ (detail.evidence_gate.blockers if detail.evidence_gate.blockers else detail.evidence_gate.checks)|join(' · ') or 'Waiting for volume, momentum, structure, or catalyst evidence.' }}</p>
+    <p id="gateChecks">{{ (detail.evidence_gate.blockers if detail.evidence_gate.blockers else detail.evidence_gate.checks)|join(' · ') or 'Waiting for more evidence.' }}</p>
   </section>
 
   <section class="pressure-section" id="pressureSection">
-    <div class="section-heading"><div><span>5m OHLCV estimate</span><h2>Trade pressure</h2></div><b id="pressureLabel">collecting</b></div>
+    <div class="section-heading"><div><span>From 5-minute bars</span><h2>Buy/sell pressure</h2></div><b id="pressureLabel">waiting</b></div>
     <div class="pressure-bar"><i id="buyPressureBar"></i><i id="sellPressureBar"></i></div>
-    <div class="pressure-values"><span><b id="buyPressure">—</b><small>estimated buy</small></span><span><b id="sellPressure">—</b><small>estimated sell</small></span><span><b id="volumeBurst">—</b><small>volume burst</small></span></div>
-    <p id="pressureNote">Waiting for bars.</p>
+    <div class="pressure-values"><span><b id="buyPressure">—</b><small>buy</small></span><span><b id="sellPressure">—</b><small>sell</small></span><span><b id="volumeBurst">—</b><small>volume</small></span></div>
+    <p id="pressureNote">No bars yet.</p>
   </section>
 
   <section class="why-section catalyst-section">
@@ -129,14 +129,14 @@
       {% else %}
         <div class="evidence-row evidence-gap">
           <span class="timeline-dot gap"></span>
-          <span><strong>No recent SEC catalyst</strong><small>Market move only</small><p>No matching filing found.</p></span>
+          <span><strong>No recent SEC filing</strong><small>No filing linked to this move</small></span>
         </div>
       {% endif %}
     </div>
   </section>
 
   <section class="outcome-card">
-    <div><span>60M</span><strong class="{% if detail.current.return_1h_pct is not none %}{{ 'up' if detail.current.return_1h_pct >= 0 else 'down' }}{% endif %}">{% if detail.current.return_1h_pct is not none %}{{ '+' if detail.current.return_1h_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.return_1h_pct) }}%{% else %}pending{% endif %}</strong></div>
+    <div><span>1H</span><strong class="{% if detail.current.return_1h_pct is not none %}{{ 'up' if detail.current.return_1h_pct >= 0 else 'down' }}{% endif %}">{% if detail.current.return_1h_pct is not none %}{{ '+' if detail.current.return_1h_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.return_1h_pct) }}%{% else %}pending{% endif %}</strong></div>
     <div><span>1D</span><strong class="{% if detail.current.return_1d_pct is not none %}{{ 'up' if detail.current.return_1d_pct >= 0 else 'down' }}{% endif %}">{% if detail.current.return_1d_pct is not none %}{{ '+' if detail.current.return_1d_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.return_1d_pct) }}%{% else %}pending{% endif %}</strong></div>
     <div><span>5D</span><strong class="{% if detail.current.return_5d_pct is not none %}{{ 'up' if detail.current.return_5d_pct >= 0 else 'down' }}{% endif %}">{% if detail.current.return_5d_pct is not none %}{{ '+' if detail.current.return_5d_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.return_5d_pct) }}%{% else %}pending{% endif %}</strong></div>
   </section>
@@ -213,7 +213,7 @@ function selectRange(range){document.querySelectorAll('[data-range]').forEach(bu
 const chartRequest=fetch(`/api/t/${encodeURIComponent(ticker)}/chart`).then(response=>response.json()).then(data=>{allPoints=data.points||[];chartAnnotations=data.annotations||[];selectRange('1D');}).catch(()=>draw([]));
 document.querySelectorAll('[data-range]').forEach(button=>button.addEventListener('click',()=>selectRange(button.dataset.range)));
 document.getElementById('shareButton').addEventListener('click', async () => {
-  const share = {title: `${ticker} intelligence`, text: `${ticker} · ${company} on Runner Watch`, url: location.href};
+  const share = {title: ticker, text: `${ticker} · ${company}`, url: location.href};
   try { fetch('/api/activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker,event_type:'share'})}); if (navigator.share) await navigator.share(share); else { await navigator.clipboard.writeText(location.href); document.getElementById('shareButton').textContent = '✓'; } } catch (_) {}
 });
 document.getElementById('heartButton').addEventListener('click', async event => {
@@ -229,7 +229,7 @@ document.getElementById('heartButton').addEventListener('click', async event => 
 if (commissionButton) {
   let commissionPollTimer = null;
   const renderCommissionButton = () => {
-    commissionButton.textContent = window.runnerOpenRouter.connected() ? 'Commission Flash' : 'Connect OpenRouter';
+    commissionButton.textContent = window.runnerOpenRouter.connected() ? 'Ask Flash' : 'Connect OpenRouter';
   };
   const pollCommission = async () => {
     clearTimeout(commissionPollTimer);
@@ -242,17 +242,17 @@ if (commissionButton) {
         return;
       }
       if (result.status === 'failed') {
-        commissionStatus.textContent = result.error || 'The report failed. Try again.';
+        commissionStatus.textContent = result.error || 'Report failed. Try again.';
         commissionButton.disabled = false;
         renderCommissionButton();
         return;
       }
       commissionButton.disabled = true;
-      commissionButton.textContent = 'Flash is researching…';
-      commissionStatus.textContent = 'Running on the server — safe to leave this page';
+      commissionButton.textContent = 'Flash is digging…';
+      commissionStatus.textContent = 'You can leave this page';
       commissionPollTimer = setTimeout(pollCommission, 2500);
     } catch (_) {
-      commissionStatus.textContent = 'Report is still running. Checking again…';
+      commissionStatus.textContent = 'Still running…';
       commissionPollTimer = setTimeout(pollCommission, 5000);
     }
   };
@@ -264,8 +264,8 @@ if (commissionButton) {
       return;
     }
     commissionButton.disabled = true;
-    commissionButton.textContent = 'Flash is researching…';
-    commissionStatus.textContent = 'Starting the server job…';
+    commissionButton.textContent = 'Flash is digging…';
+    commissionStatus.textContent = 'Starting…';
     try {
       const response = await fetch(`/api/research/${encodeURIComponent(ticker)}`, {
         method: 'POST',
@@ -299,7 +299,7 @@ function compactVolume(value){
 }
 function renderPressure(pressure){
   if(!pressure?.available){
-    document.getElementById('pressureNote').textContent='Waiting for bars.';
+    document.getElementById('pressureNote').textContent='No bars yet.';
     return;
   }
   document.getElementById('pressureLabel').textContent=pressure.label;
@@ -318,7 +318,7 @@ function renderGate(gate){
   document.getElementById('gateSummary').textContent=gate.summary||'Watching';
   document.getElementById('gateCount').textContent=gate.count+'/'+gate.threshold;
   const gateNotes=(gate.blockers&&gate.blockers.length?gate.blockers:gate.checks)||[];
-  document.getElementById('gateChecks').textContent=gateNotes.join(' · ')||'Waiting for volume, momentum, structure, or catalyst evidence.';
+  document.getElementById('gateChecks').textContent=gateNotes.join(' · ')||'Waiting for more evidence.';
   document.querySelectorAll('#gateMeter i').forEach((item,index)=>item.classList.toggle('hit',index<gate.count));
 }
 renderPressure(initialPressure);

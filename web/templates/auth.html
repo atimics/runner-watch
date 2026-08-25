@@ -10,9 +10,9 @@
 <main class="mobile-auth-wrap">
   <section class="mobile-auth-card">
     <h1>Create your passkey</h1>
-    <p>Use Face ID, Touch ID, or this device’s screen lock. No username or password.</p>
+    <p>Use Face ID, Touch ID, or your screen lock. No password.</p>
     <button class="auth-submit" id="createButton">Create passkey</button>
-    <button class="auth-secondary" id="loginButton">Use a passkey to log in</button>
+    <button class="auth-secondary" id="loginButton">Log in with passkey</button>
     <div id="authStatus" class="status" aria-live="polite"></div>
   </section>
 </main>
@@ -73,7 +73,7 @@ async function runPasskey(action) {
   createButton.disabled = true;
   loginButton.disabled = true;
   statusBox.className = 'status';
-  statusBox.textContent = action === 'register' ? 'Creating a passkey on this device…' : 'Choose your passkey…';
+  statusBox.textContent = action === 'register' ? 'Creating passkey…' : 'Choose a passkey…';
   try {
     if (!window.PublicKeyCredential) throw new Error('This browser does not support passkeys.');
     let start, credential;

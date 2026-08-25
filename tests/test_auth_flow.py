@@ -28,10 +28,10 @@ def test_new_user_flow_leads_with_passkey_creation() -> None:
     html = response.body.decode()
 
     create_position = html.index("Create passkey")
-    login_position = html.index("Use a passkey to log in")
+    login_position = html.index("Log in with passkey")
     assert "Create your passkey" in html
     assert create_position < login_position
-    assert "No username or password" in html
+    assert "No password" in html
 
 
 def test_new_passkey_is_created_on_the_current_device(

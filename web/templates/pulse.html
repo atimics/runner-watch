@@ -12,7 +12,7 @@
 {% include "_market_clock.html" %}
 
 <section class="kol-score-strip" id="kolScoreStrip" aria-live="polite"></section>
-<button class="pulse-refresh" id="pulseRefresh" type="button" aria-live="polite" hidden>New ticker entered Pulse</button>
+<button class="pulse-refresh" id="pulseRefresh" type="button" aria-live="polite" hidden>1 new ticker</button>
 
 <main class="list-section pulse-feed">
   <div id="pulseList"></div>
@@ -29,6 +29,8 @@ let loadingMore=false;
 let pendingPulse=null;
 let exposureObserver=null;
 const exposedRows=new Map();
+const exposureQueue=new Map();
+let exposureFlushTimer=null;
 function esc(value){const node=document.createElement('span');node.textContent=String(value??'');return node.innerHTML;}
 function entryKey(row){return row?.entered_at?`${row.ticker}|${row.entered_at}`:'';}
 function renderKols(){
@@ -36,18 +38,28 @@ function renderKols(){
   const kol=(pulse.kols||[])[0];
   if(!kol){box.hidden=true;return;}
   box.hidden=false;
-  const pnl=Number(kol.paper_pnl||0);const hit=kol.hit_rate==null?'learning':`${(Number(kol.hit_rate)*100).toFixed(0)}% hit`;
-  box.innerHTML=`<span class="kol-avatar">${esc(kol.emoji||'⚡')}</span><span><strong>${esc(kol.display_name)} · AI KOL</strong><small>${Number(kol.active_calls||0)} active · ${Number(kol.calls||0)} signal calls · ${esc(hit)}</small></span><b class="${pnl>=0?'up':'down'}">${pnl>=0?'+':'−'}$${Math.abs(pnl).toFixed(2)}</b>`;
+  const pnl=Number(kol.paper_pnl||0);const hit=kol.hit_rate==null?'no results':`${(Number(kol.hit_rate)*100).toFixed(0)}% hit`;
+  box.innerHTML=`<span class="kol-avatar">${esc(kol.emoji||'⚡')}</span><span><strong>${esc(kol.display_name)}</strong><small>${Number(kol.active_calls||0)} open · ${Number(kol.calls||0)} calls · ${esc(hit)}</small></span><b class="${pnl>=0?'up':'down'}">${pnl>=0?'+':'−'}$${Math.abs(pnl).toFixed(2)}</b>`;
+}
+function flushExposures(){
+  clearTimeout(exposureFlushTimer);exposureFlushTimer=null;
+  const entries=[...exposureQueue.values()];
+  exposureQueue.clear();
+  if(!entries.length)return;
+  fetch('/api/pulse/seen',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({entries}),
+    keepalive:true,
+  }).catch(()=>{});
 }
 function markExposed(row){
   if(!row?.dataset.enteredAt||row.dataset.exposureSent==='true')return;
   row.dataset.exposureSent='true';
-  fetch('/api/pulse/seen',{
-    method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({entries:[{ticker:row.dataset.tickerRow,entered_at:row.dataset.enteredAt}]}),
-    keepalive:true,
-  }).catch(()=>{});
+  const entry={ticker:row.dataset.tickerRow,entered_at:row.dataset.enteredAt};
+  exposureQueue.set(`${entry.ticker}|${entry.entered_at}`,entry);
+  exposureFlushTimer??=setTimeout(flushExposures,250);
 }
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')flushExposures();});
 function paintSeen(row){
   if(!row||row.dataset.novelty!=='unseen')return;
   row.dataset.novelty='seen';
@@ -114,7 +126,7 @@ setInterval(async () => {
       const newCount=(nextPulse.rows||[]).filter(row=>row.novelty_state==='unseen'&&!currentEntries.has(entryKey(row))).length;
       if(newCount){
         pendingPulse=nextPulse;
-        refreshButton.textContent=newCount===1?'New ticker entered Pulse':`${newCount} new tickers entered Pulse`;
+        refreshButton.textContent=newCount===1?'1 new ticker':`${newCount} new tickers`;
         refreshButton.hidden=false;
       }
       pollCount+=1;if(pollCount%6===0)TickerRow.loadCharts('/api/pulse/charts');

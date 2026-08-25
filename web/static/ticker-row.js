@@ -99,7 +99,7 @@
     } else if (rugValue !== null && rugLevel === 'guarded') {
       safety = `<span class="rug-count rug-guarded">RUG ${rugValue.toFixed(0)}</span>`;
     } else if (row.section === 'scored' && rugValue === null) {
-      safety = '<span class="rug-count rug-unknown">RISK PENDING</span>';
+      safety = '<span class="rug-count rug-unknown">RUG —</span>';
     }
     const catalystTone = row.sentiment === 'risk' ? ' risk' : row.sentiment === 'gap' ? ' gap' : '';
     const updated = options.updated ?? row.has_update;
@@ -110,19 +110,19 @@
       const value = number(call.display_return_pct);
       const tone = value === null ? 'flat' : value >= 0 ? 'up' : 'down';
       const pnl = value === null ? '' : `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
-      const title = `${call.display_name || 'AI KOL'} · ${call.status} · ${pnl || 'mark pending'}`;
+      const title = `${call.display_name || 'Flash'} · ${call.status} · ${pnl || 'no price yet'}`;
       return `<span class="kol-tag ${tone}" title="${esc(title)}"><b>${esc(call.emoji || '⚡')}</b>${esc(pnl)}</span>`;
     }).join('');
     const attentionLabel = novelty === 'unseen' ? ', new to you' : novelty === 'seen' ? ', seen but not opened' : '';
     const marketLabel = `${statusLabel ? `, ${statusLabel}` : ''}${tradeState && tradeState !== 'UNKNOWN' ? `, ${tradeState}` : ''}${rugValue !== null ? `, rug risk ${rugValue.toFixed(0)}` : ''}`;
-    const label = `${row.ticker}, ${company}, ${money(row.price)}, ${percent(row.change_pct)}${marketLabel}${attentionLabel}${kolCalls.length ? ', AI KOL call active' : ''}`;
+    const label = `${row.ticker}, ${company}, ${money(row.price)}, ${percent(row.change_pct)}${marketLabel}${attentionLabel}${kolCalls.length ? ', paper call open' : ''}`;
     const enteredAt = row.entered_at ? ` data-entered-at="${esc(row.entered_at)}"` : '';
     return `<a class="token-row ticker-row${attentionClass}${updateClass}" href="/t/${encodeURIComponent(row.ticker)}" data-ticker-row="${esc(row.ticker)}" data-novelty="${esc(novelty)}"${enteredAt} aria-label="${esc(label)}">
       <span class="coin coin-${Number(row.coin_tone) || 0}"><b>${esc(row.coin_label || String(row.ticker).slice(0, 2))}</b><i></i></span>
       <span class="token-copy">
         <span class="ticker-line"><strong>${esc(row.ticker)}</strong>${kolTags}${badge}${attentionBadge}<small class="ticker-age">${esc(age)}</small></span>
         <span class="company-name">${esc(company)}</span>
-        <span class="catalyst${catalystTone}">${esc(row.pulse_label || 'Watching for changes')}${events}${safety}</span>
+        <span class="catalyst${catalystTone}">${esc(row.pulse_label || 'No recent event')}${events}${safety}</span>
       </span>
       <span class="quote">
         <strong>${esc(money(row.price))}</strong>

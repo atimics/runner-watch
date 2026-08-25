@@ -43,7 +43,7 @@
       <span class="global-pulse-copy"><strong><span>Entered Pulse</span> · <b id="globalPulseSymbol"></b></strong><small id="globalPulseMeta"></small></span>
       <span class="global-pulse-quote"><b id="globalPulsePrice"></b><small id="globalPulseChange"></small></span>
     </a>
-    <button class="global-pulse-close" id="globalPulseClose" type="button" aria-label="Dismiss Pulse entry notifications">×</button>
+    <button class="global-pulse-close" id="globalPulseClose" type="button" aria-label="Dismiss alert">×</button>
   </aside>
 
   {% if user %}
@@ -54,8 +54,8 @@
       <div><strong>{{ user.display_name }}</strong><small>Passkey account</small></div>
     </div>
     <button type="button" class="openrouter-link" id="openRouterButton"><span>Connect OpenRouter</span><i>›</i></button>
-    <a href="/settings/passkey">Add a backup passkey <span>›</span></a>
-    <a href="/scanner">Full scanner <span>›</span></a>
+    <a href="/settings/passkey">Add passkey <span>›</span></a>
+    <a href="/scanner">Scanner <span>›</span></a>
     <button type="button" id="logoutButton">Log out</button>
     <button type="button" class="sheet-close" id="closeProfile">Close</button>
   </dialog>

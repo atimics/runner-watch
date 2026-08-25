@@ -53,10 +53,7 @@ FLASH = AIKol(
     emoji="⚡",
     provider="openrouter",
     model=_FLASH_MODEL,
-    description=(
-        "Runner Watch's lead AI KOL, currently powered by "
-        f"{model_display_name(_FLASH_MODEL)}."
-    ),
+    description=f"Runner Watch research model: {model_display_name(_FLASH_MODEL)}.",
 )
 
 

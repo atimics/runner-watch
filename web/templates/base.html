@@ -13,20 +13,20 @@
   <header class="topbar">
     <a class="brand" href="/"><span>⚡</span> Runner Watch</a>
     <nav>
-      <a href="/">Discover</a>
-      <a href="/intelligence">EDGAR Intel</a>
+      <a href="/">Pulse</a>
+      <a href="/intelligence">SEC filings</a>
       {% if user %}
         <a href="/scanner">Scanner</a>
         <span class="handle">@{{ user.username }}</span>
         <button class="link-button" id="logout">Log out</button>
       {% else %}
         <a href="/login">Log in</a>
-        <a class="button small" href="/login">Login with passkey</a>
+        <a class="button small" href="/login">Log in with passkey</a>
       {% endif %}
     </nav>
   </header>
   <main class="shell">{% block content %}{% endblock %}</main>
-  <footer>Official SEC filings + delayed market data · Research only · Never a buy signal</footer>
+  <footer>SEC filings + delayed market data · Research only · Don’t ape blind</footer>
   {% if user %}
   <script nonce="{{ request.state.csp_nonce }}">
     document.getElementById('logout')?.addEventListener('click', async () => {

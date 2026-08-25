@@ -3,17 +3,17 @@
 {% block content %}
 <section class="hero">
   <div>
-    <span class="eyebrow">PENNY STOCK RUNNER DISCOVERY</span>
-    <h1>Find the small-cap move<br>before the crowd.</h1>
-    <p>Listed stocks from $0.20–$5, ranked by unusual volume and fresh momentum, with timestamped public alpha.</p>
-    <a class="button" href="/intelligence">Open EDGAR intelligence</a>
-    {% if not user %}<a class="button secondary" href="/login">Login with passkey</a>{% endif %}
+    <span class="eyebrow">SMALL-CAP RUNNERS</span>
+    <h1>Volume first.<br>Risk always.</h1>
+    <p>Stocks from $0.20–$5, ranked by momentum and RVOL.</p>
+    <a class="button" href="/intelligence">View SEC filings</a>
+    {% if not user %}<a class="button secondary" href="/login">Log in with passkey</a>{% endif %}
   </div>
-  <div class="hero-orb"><span>RVOL</span><strong>3.8×</strong><small>before the breakout</small></div>
+  <div class="hero-orb"><span>RVOL</span><strong>3.8×</strong><small>volume before price</small></div>
 </section>
 
 <section class="section-heading">
-  <div><span class="eyebrow">LATEST SIGNALS</span><h2>Discovery feed</h2></div>
+  <div><span class="eyebrow">SIGNALS</span><h2>Latest</h2></div>
   <div class="legend"><span class="dot early"></span> Early <span class="dot building"></span> Building</div>
 </section>
 
@@ -37,11 +37,11 @@
 </div>
 {% else %}
 <div class="empty">
-  <span>⌁</span><h3>The feed is quiet.</h3>
-  <p>Run the scanner and publish the first timestamped signal.</p>
+  <span>⌁</span><h3>No signals yet.</h3>
+  <p>Run the scanner to share one.</p>
   {% if user %}<a class="button" href="/scanner">Open scanner</a>{% endif %}
 </div>
 {% endif %}
 
-<div class="safety-note"><strong>Signals are observations, not advice.</strong> Confirm prices, spreads, halts, filings, and news in a live broker.</div>
+<div class="safety-note"><strong>Don’t ape blind.</strong> Check live prices, spreads, halts, filings, and news.</div>
 {% endblock %}

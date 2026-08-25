@@ -5,7 +5,7 @@
   <div><h1>Radar</h1><span class="head-meta"><b id="watchCount">{{ watches|length }}</b> events <i></i><span id="radarStatus">Live</span></span></div>
   {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>{% else %}<a class="avatar-button signed-out" href="/login" aria-label="Log in">↗</a>{% endif %}
 </header>
-<button class="pulse-refresh radar-refresh" id="radarRefresh" type="button" aria-live="polite" hidden>New Radar update</button>
+<button class="pulse-refresh radar-refresh" id="radarRefresh" type="button" aria-live="polite" hidden>1 new event</button>
 
 <main class="list-section radar-section">
   <div class="token-list" id="radarList"></div>
@@ -19,7 +19,7 @@ let pendingRows=null;
 const pendingUpdateTickers=new Set();
 function render(){
   document.getElementById('watchCount').textContent=rows.length;
-  list.innerHTML=rows.map(item=>TickerRow.render(item,{updated:item.has_update})).join('')||`<div class="empty-list radar-empty"><strong>Watching for new events</strong></div>`;
+  list.innerHTML=rows.map(item=>TickerRow.render(item,{updated:item.has_update})).join('')||`<div class="empty-list radar-empty"><strong>No recent events</strong></div>`;
   TickerRow.paintCharts();
 }
 refreshButton.addEventListener('click',()=>{
@@ -38,7 +38,7 @@ setInterval(async()=>{
       pendingRows=data.rows||[];
       updates.forEach(item=>pendingUpdateTickers.add(item.ticker));
       const count=pendingUpdateTickers.size;
-      refreshButton.textContent=count===1?'New Radar update':`${count} new Radar updates`;
+      refreshButton.textContent=count===1?'1 new event':`${count} new events`;
       refreshButton.hidden=false;
       if('Notification'in window&&Notification.permission==='granted')new Notification(`${updates[0].ticker} event`,{body:updates[0].pulse_label});
     }

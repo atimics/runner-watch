@@ -7,7 +7,7 @@
 </style>{% endblock %}
 {% block content %}
 <section class="scanner-head">
-  <div><span class="eyebrow">LISTED US STOCKS · RISK-FIRST</span><h1>Setup and rug scanner</h1><p>Find momentum or a 60% crash, then block weak treasury, dilution, halt, and dead-cat risk.</p></div>
+  <div><span class="eyebrow">U.S. STOCKS</span><h1>Setup and rug scanner</h1><p>Finds momentum and crash bounces. Flags dilution, low cash, halts, and dead cats.</p></div>
   <div style="min-width:260px">
     <label class="muted" for="scanMode">Universe</label>
     <select id="scanMode">
@@ -15,25 +15,25 @@
       <option value="low_price">Low-priced small caps · $0.20–$20</option>
       <option value="crash">60% crash recovery · $0.20–$20</option>
     </select>
-    <button class="button full" style="margin-top:10px" id="runScan">Scan low-priced market</button>
+    <button class="button full" style="margin-top:10px" id="runScan">Run scan</button>
   </div>
 </section>
-<div id="scanStatus" class="scan-status">Ready. Yahoo first finds active low-priced stocks across the market, then Runner Watch checks their 5-minute bars.</div>
+<div id="scanStatus" class="scan-status">Choose a market and run a scan.</div>
 <div class="table-wrap">
-  <table><thead><tr><th>Ticker</th><th>Setup</th><th>Rug risk</th><th>State</th><th>Price</th><th>Move</th><th>52w fall</th><th>15m</th><th>RVOL</th><th>$ Volume</th><th>Known catalyst</th><th>Action</th></tr></thead><tbody id="results"><tr><td colspan="12" class="muted center">Run a scan to load current signals.</td></tr></tbody></table>
+  <table><thead><tr><th>Ticker</th><th>Setup</th><th>Rug risk</th><th>State</th><th>Price</th><th>Move</th><th>52w fall</th><th>15m</th><th>RVOL</th><th>$ Volume</th><th>SEC filing</th><th>Action</th></tr></thead><tbody id="results"><tr><td colspan="12" class="muted center">No scan yet.</td></tr></tbody></table>
 </div>
-<p class="fine-print">Setup means “could move.” Rug risk means “could trap you.” A 60% fall is only a candidate, never a buy signal. SEC facts can be delayed or missing. Confirm live spread and broker data before acting.</p>
+<p class="fine-print">Setup means “could move.” Rug risk means “could trap you.” Data may be delayed. Check your broker.</p>
 
 <dialog id="publishDialog">
   <form id="publishForm">
     <button type="button" class="dialog-close" id="closeDialog">×</button>
-    <span class="eyebrow">PUBLISH ALPHA</span><h2 id="publishTitle">Share signal</h2>
+    <span class="eyebrow">POST ALPHA</span><h2 id="publishTitle">Share signal</h2>
     <input type="hidden" id="snapshotId">
-    <label>Thesis<textarea id="thesis" maxlength="500" required placeholder="What is the scanner seeing, and why does it matter?"></textarea></label>
+    <label>Thesis<textarea id="thesis" maxlength="500" required placeholder="Why could it send?"></textarea></label>
     <label>Time horizon<select id="horizon"><option value="intraday">Intraday</option><option value="swing">Swing</option><option value="watch">Watch only</option></select></label>
-    <label>Invalidation<textarea id="invalidation" maxlength="240" required placeholder="What would prove this setup wrong?"></textarea></label>
+    <label>Invalidation<textarea id="invalidation" maxlength="240" required placeholder="What kills the setup?"></textarea></label>
     <label>Disclosure<textarea id="disclosure" maxlength="240" required placeholder="Example: I own shares. Not paid to promote."></textarea></label>
-    <button class="button full" type="submit">Publish permanent card</button>
+    <button class="button full" type="submit">Publish signal</button>
     <div id="publishStatus" class="status"></div>
   </form>
 </dialog>
@@ -49,14 +49,14 @@ function catalyst(row) { return row.catalyst_url ? `<a href="${esc(row.catalyst_
 function rug(row) { const level=String(row.rug_level||'UNKNOWN').toLowerCase(); return `<strong class="rug-${esc(level)}">${num(row.rug_score)}</strong><br><small class="muted">${esc(row.rug_level||'unknown')}</small>`; }
 function kolMark(row) { const calls=Array.isArray(row.kol_calls)?row.kol_calls:[]; return calls.map(call=>`<span title="${esc(call.display_name)} paper call">${esc(call.emoji)}</span>`).join(' '); }
 runButton.addEventListener('click', async () => {
-  runButton.disabled = true; statusBox.textContent = 'Finding movers and crashed stocks, then checking rug risk and price structure…';
+  runButton.disabled = true; statusBox.textContent = 'Scanning price, volume, and risk…';
   try {
     const mode = document.getElementById('scanMode').value;
     const response = await fetch(`/api/scan?mode=${encodeURIComponent(mode)}`, {method:'POST'}); const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Scan failed');
-    body.innerHTML = data.rows.map(row => `<tr><td>${kolMark(row)} <strong>$${esc(row.ticker)}</strong></td><td>${num(row.setup_score??row.score)}</td><td>${rug(row)}</td><td><span class="stage ${esc(String(row.trade_state||'watch').toLowerCase())}">${esc(row.trade_state||'WATCH')}</span></td><td>$${Number(row.price).toFixed(2)}</td><td class="${row.change_pct >= 0 ? 'positive':''}">${num(row.change_pct,'%')}</td><td>${num(row.drawdown_52w_pct,'%')}</td><td>${num(row.momentum_15m_pct,'%')}</td><td>${num(row.relative_volume,'×')}</td><td>${money(row.dollar_volume)}</td><td>${catalyst(row)}</td><td><button class="mini-button publish" data-id="${esc(row.id)}" data-ticker="${esc(row.ticker)}">Publish</button></td></tr>`).join('') || '<tr><td colspan="12" class="center">No usable rows returned.</td></tr>';
-    const coverage = data.cached ? 'Recent scan reused.' : `${data.candidates} candidates found; ${data.scanned} checked intraday in ${data.elapsed_seconds}s.`;
-    statusBox.textContent = `${data.rows.length} ${data.label.toLowerCase()} ranked. ${coverage} Quotes may be delayed.`;
+    body.innerHTML = data.rows.map(row => `<tr><td>${kolMark(row)} <strong>$${esc(row.ticker)}</strong></td><td>${num(row.setup_score??row.score)}</td><td>${rug(row)}</td><td><span class="stage ${esc(String(row.trade_state||'watch').toLowerCase())}">${esc(row.trade_state||'WATCH')}</span></td><td>$${Number(row.price).toFixed(2)}</td><td class="${row.change_pct >= 0 ? 'positive':''}">${num(row.change_pct,'%')}</td><td>${num(row.drawdown_52w_pct,'%')}</td><td>${num(row.momentum_15m_pct,'%')}</td><td>${num(row.relative_volume,'×')}</td><td>${money(row.dollar_volume)}</td><td>${catalyst(row)}</td><td><button class="mini-button publish" data-id="${esc(row.id)}" data-ticker="${esc(row.ticker)}">Publish</button></td></tr>`).join('') || '<tr><td colspan="12" class="center">No results.</td></tr>';
+    const coverage = data.cached ? 'Used recent scan.' : `${data.candidates} found · ${data.scanned} checked · ${data.elapsed_seconds}s`;
+    statusBox.textContent = `${data.rows.length} ranked · ${coverage} · Prices may be delayed.`;
   } catch (error) { statusBox.textContent = error.message; }
   runButton.disabled = false;
 });

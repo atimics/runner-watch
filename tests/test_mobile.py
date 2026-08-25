@@ -44,13 +44,41 @@ def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
     pulse_template = (root / "web/templates/pulse.html").read_text()
     radar_template = (root / "web/templates/radar.html").read_text()
 
-    assert "New ticker entered Pulse" in pulse_template
-    assert "new tickers entered Pulse" in pulse_template
+    assert "1 new ticker" in pulse_template
+    assert "new tickers" in pulse_template
     assert "Pulse updated" not in pulse_template
     assert "TickerRow.fingerprint" not in pulse_template
     assert "New since you looked" not in pulse_template
-    assert "New Radar update" in radar_template
+    assert "exposureQueue" in pulse_template
+    assert "body:JSON.stringify({entries})" in pulse_template
+    assert "1 new event" in radar_template
     assert "pendingUpdateTickers" in radar_template
+
+
+def test_ui_copy_drops_ai_and_corporate_filler() -> None:
+    root = Path(__file__).parents[1]
+    ui_copy = "\n".join(
+        path.read_text()
+        for folder in (root / "web/templates", root / "web/static")
+        for path in folder.glob("*")
+        if path.suffix in {".html", ".js"}
+    )
+
+    banned = (
+        "AI KOL",
+        "IMMUTABLE PAPER CALLS",
+        "honest abandon",
+        "Filings decoded",
+        "one shot from",
+        "Subscriber report ready",
+        "safe to leave this page",
+        "Outcome clock running",
+        "Starting SEC listener",
+        "before the crowd",
+        "Publish permanent card",
+    )
+    for phrase in banned:
+        assert phrase not in ui_copy
 
 
 def test_passkey_signup_needs_no_profile_fields(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -218,7 +246,7 @@ def test_ticker_page_renders_guest_flash_attribution(
     response = web_main.ticker_page("ONE", request, None)
 
     assert response.status_code == 200
-    assert "Flash is powered by GLM 5.3" in response.body.decode()
+    assert "Uses GLM 5.3 through OpenRouter" in response.body.decode()
 
 
 def test_pulse_only_lists_tickers_from_the_latest_scored_scan(
@@ -483,7 +511,7 @@ def test_ticker_detail_explains_form_four_purchase(
     detail = ticker_detail_data("PEN")
 
     assert detail is not None
-    assert detail["events"][0]["evidence_label"] == ("Reported insider purchase · context required")
+    assert detail["events"][0]["evidence_label"] == "Insider purchase"
     assert detail["events"][0]["pulse_label"] == "Form 4 · insider buy"
 
 
@@ -581,7 +609,7 @@ def test_trade_pressure_is_an_honest_bar_derived_estimate(
     assert pressure["buy_pressure_pct"] == 90.0
     assert pressure["delta_volume"] > 0
     assert pressure["bar_count"] == 12
-    assert "not bids" in pressure["note"]
+    assert "not live order flow" in pressure["note"]
 
 
 def test_sparklines_use_ingested_bars_without_a_live_price_request(
@@ -859,7 +887,7 @@ def test_ticker_detail_prefers_market_state_and_uses_scan_outcome(
     assert detail["current"]["source"] == "market"
     assert detail["current"]["signals"] == ["Fresh volume"]
     assert detail["current"]["return_1h_pct"] == 6.2
-    assert detail["events"][0]["evidence_label"] == ("Reported insider purchase · context required")
+    assert detail["events"][0]["evidence_label"] == "Insider purchase"
 
 
 def test_radar_marks_new_state_seen(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -911,7 +939,7 @@ def test_radar_marks_new_state_seen(tmp_path: Path, monkeypatch: MonkeyPatch) ->
     assert first[0]["has_update"] is True
     assert first[0]["source"] == "sec"
     assert first[0]["price"] == 2.1
-    assert first[0]["evidence_gate"]["checks"] == ["Positive SEC catalyst"]
+    assert first[0]["evidence_gate"]["checks"] == ["Positive SEC filing"]
     assert second[0]["has_update"] is False
 
 
@@ -937,7 +965,7 @@ def test_radar_uses_filing_price_when_a_market_snapshot_is_missing(
     assert result[0]["source"] == "sec"
     assert result[0]["price"] == 0.72
     assert result[0]["change_pct"] == 6.5
-    assert result[0]["evidence_gate"]["checks"] == ["Positive SEC catalyst"]
+    assert result[0]["evidence_gate"]["checks"] == ["Positive SEC filing"]
 
 
 def test_alpha_ranks_unique_hearts(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -1008,7 +1036,7 @@ def test_alpha_ranks_unique_hearts(tmp_path: Path, monkeypatch: MonkeyPatch) -> 
         is_subscriber=True,
         active_tab="alpha",
     )
-    assert "Subscriber report ready" in free_html
+    assert "Subscribers only" in free_html
     assert "Verified evidence summary." not in free_html
     assert "Verified evidence summary." in subscriber_html
 
@@ -1108,7 +1136,7 @@ def test_chart_annotations_keep_the_real_pulse_entry_and_detected_events(
     }
     assert (
         next(item for item in annotations if item["type"] == "media_spike")["label"]
-        == "Media spike · 6 mentions"
+        == "Social spike · 6 mentions"
     )
 
 
@@ -1196,10 +1224,10 @@ def test_running_flash_commission_is_a_single_server_job(
 def test_flash_commission_page_resumes_the_server_job() -> None:
     template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
 
-    assert "Running on the server — safe to leave this page" in template
+    assert "You can leave this page" in template
     assert "fetch(`/api/research/${encodeURIComponent(ticker)}`)" in template
     assert "if (initialCommissionStatus === 'running') pollCommission()" in template
-    assert "View Flash report" in template
+    assert "View report" in template
 
 
 def test_commission_request_uses_glm_53_with_a_minimal_prompt(
@@ -1301,7 +1329,7 @@ def test_research_report_template_has_public_share_metadata(
     )
 
     assert "Shareable ONE report" in html
-    assert "Flash · AI KOL" in html
-    assert "Position 1 of 4 · powered by GLM 5.3" in html
+    assert "<strong>Flash</strong>" in html
+    assert "#1 of 4 · GLM 5.3" in html
     assert f"/research/{report['public_id']}/card.png" in html
     assert "sk-or-share-test-key" not in html
