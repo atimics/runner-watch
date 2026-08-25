@@ -31,7 +31,7 @@
       <a class="commission-button" href="/research/{{ latest_commission.public_id }}">View report</a>
       <small>Report ready</small>
       {% else %}
-      <button class="commission-button" type="button" id="commissionButton"{% if latest_commission and latest_commission.status == 'running' %} disabled{% endif %}>{% if latest_commission and latest_commission.status == 'running' %}Flash is digging…{% else %}Ask Flash{% endif %}</button>
+      <button class="commission-button" type="button" id="commissionButton"{% if latest_commission and latest_commission.status == 'running' %} disabled{% endif %}>{% if latest_commission and latest_commission.status == 'running' %}Flash is digging…{% elif latest_commission and latest_commission.status == 'failed' %}Retry Flash{% else %}Ask Flash{% endif %}</button>
       <small id="commissionStatus">{% if latest_commission and latest_commission.status == 'running' %}You can leave this page{% elif latest_commission and latest_commission.status == 'failed' %}{{ latest_commission.error or 'Report failed. Try again.' }}{% endif %}</small>
       {% endif %}
     {% else %}
@@ -153,6 +153,7 @@ const chartEvents = document.getElementById('chartEvents');
 const commissionButton = document.getElementById('commissionButton');
 const commissionStatus = document.getElementById('commissionStatus');
 const initialCommissionStatus = {{ (latest_commission.status if latest_commission else '')|tojson }};
+let commissionNeedsRetry = initialCommissionStatus === 'failed';
 let allPoints=[];
 let chartAnnotations=[];
 const initialPressure={{ detail.trade_pressure|tojson }};
@@ -229,7 +230,7 @@ document.getElementById('heartButton').addEventListener('click', async event => 
 if (commissionButton) {
   let commissionPollTimer = null;
   const renderCommissionButton = () => {
-    commissionButton.textContent = window.runnerOpenRouter.connected() ? 'Ask Flash' : 'Connect OpenRouter';
+    commissionButton.textContent = window.runnerOpenRouter.connected() ? (commissionNeedsRetry ? 'Retry Flash' : 'Ask Flash') : 'Connect OpenRouter';
   };
   const pollCommission = async () => {
     clearTimeout(commissionPollTimer);
@@ -242,6 +243,7 @@ if (commissionButton) {
         return;
       }
       if (result.status === 'failed') {
+        commissionNeedsRetry = result.retryable !== false;
         commissionStatus.textContent = result.error || 'Report failed. Try again.';
         commissionButton.disabled = false;
         renderCommissionButton();
@@ -266,6 +268,7 @@ if (commissionButton) {
     commissionButton.disabled = true;
     commissionButton.textContent = 'Flash is digging…';
     commissionStatus.textContent = 'Starting…';
+    commissionNeedsRetry = false;
     try {
       const response = await fetch(`/api/research/${encodeURIComponent(ticker)}`, {
         method: 'POST',
@@ -282,6 +285,7 @@ if (commissionButton) {
       }
       await pollCommission();
     } catch (error) {
+      commissionNeedsRetry = true;
       commissionStatus.textContent = error.message || String(error);
       commissionButton.disabled = false;
       renderCommissionButton();

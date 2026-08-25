@@ -1758,6 +1758,181 @@ def _alpha_evidence(ticker: str, heart_count: int) -> tuple[str, dict[str, Any]]
     return hashlib.sha256(fingerprint.encode()).hexdigest()[:24], evidence
 
 
+class ReportGenerationFailure(HTTPException):
+    """A user-safe report failure with provider metadata but no report content."""
+
+    def __init__(
+        self,
+        status_code: int,
+        detail: str,
+        diagnostics: dict[str, Any],
+    ) -> None:
+        super().__init__(status_code=status_code, detail=detail)
+        self.diagnostics = diagnostics
+
+
+def _openrouter_diagnostics(
+    result: Any,
+    *,
+    choice: Any = None,
+    message: Any = None,
+    content: Any = None,
+) -> dict[str, Any]:
+    """Keep enough response metadata to debug failures without storing model output."""
+
+    payload = result if isinstance(result, dict) else {}
+    selected = choice if isinstance(choice, dict) else {}
+    reply = message if isinstance(message, dict) else {}
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    if isinstance(content, str):
+        content_chars = len(content)
+        content_type = "text"
+    elif isinstance(content, list):
+        content_chars = sum(
+            len(str(item.get("text") or "")) for item in content if isinstance(item, dict)
+        )
+        content_type = "parts"
+    elif content is None:
+        content_chars = 0
+        content_type = "missing"
+    else:
+        content_chars = 0
+        content_type = type(content).__name__
+    diagnostics: dict[str, Any] = {
+        "phase": "provider_response",
+        "provider_request_id": str(payload.get("id") or "")[:120] or None,
+        "model": str(payload.get("model") or "")[:160] or None,
+        "finish_reason": str(selected.get("finish_reason") or "")[:80] or None,
+        "native_finish_reason": (str(selected.get("native_finish_reason") or "")[:80] or None),
+        "content_type": content_type,
+        "content_chars": content_chars,
+        "refused": bool(reply.get("refusal")),
+    }
+    for key in (
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "reasoning_tokens",
+    ):
+        value = usage.get(key)
+        if isinstance(value, (int, float)):
+            diagnostics[key] = value
+    return diagnostics
+
+
+def _openrouter_report_json(content: Any) -> dict[str, Any]:
+    if isinstance(content, dict):
+        return content
+    if isinstance(content, list):
+        content = "".join(str(item.get("text") or "") for item in content if isinstance(item, dict))
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("missing content")
+    text = content.strip()
+    if text.startswith("```"):
+        first_break = text.find("\n")
+        if first_break >= 0:
+            text = text[first_break + 1 :]
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3]
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        parsed = json.loads(text[start : end + 1])
+    if isinstance(parsed, dict) and isinstance(parsed.get("report"), dict):
+        parsed = parsed["report"]
+    if not isinstance(parsed, dict):
+        raise ValueError("report is not an object")
+    return parsed
+
+
+def _report_text(value: Any) -> str:
+    return str(value).strip() if isinstance(value, str) else ""
+
+
+def _report_text_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    output: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item.strip():
+            output.append(item.strip())
+        elif isinstance(item, dict):
+            text = _report_text(item.get("text") or item.get("description") or item.get("label"))
+            if text:
+                output.append(text)
+    return output
+
+
+def _normalize_openrouter_report(
+    raw_report: dict[str, Any],
+    evidence: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """Fill optional report fields while preserving the model's usable thesis."""
+
+    normalized_fields: list[str] = []
+    headline = _report_text(raw_report.get("headline"))
+    thesis = _report_text(raw_report.get("thesis"))
+    summary = _report_text(raw_report.get("summary"))
+    if not thesis and summary:
+        thesis = summary
+        normalized_fields.append("thesis")
+    if not summary and thesis:
+        summary = thesis
+        normalized_fields.append("summary")
+    if not thesis or not summary:
+        raise ValueError("missing usable thesis")
+    if not headline:
+        headline = thesis.split(".", 1)[0].strip() or f"{evidence.get('ticker', 'Stock')} report"
+        normalized_fields.append("headline")
+
+    company_profile = raw_report.get("company_profile")
+    if not isinstance(company_profile, dict):
+        company_profile = {}
+        normalized_fields.append("company_profile")
+
+    aliases = {
+        "people": ("people", "relevant_people", "persons"),
+        "filings": ("filings", "filing_context"),
+    }
+    structured: dict[str, list[dict[str, Any]]] = {}
+    for field, candidates in aliases.items():
+        value = next((raw_report.get(key) for key in candidates if key in raw_report), None)
+        if not isinstance(value, list):
+            normalized_fields.append(field)
+            value = []
+        structured[field] = [item for item in value if isinstance(item, dict)]
+
+    text_lists: dict[str, list[str]] = {}
+    for field in ("catalysts", "risks", "watch", "unknowns"):
+        value = raw_report.get(field)
+        if not isinstance(value, list):
+            normalized_fields.append(field)
+        text_lists[field] = _report_text_list(value)
+
+    source_values = raw_report.get("sources")
+    if not isinstance(source_values, list):
+        normalized_fields.append("sources")
+        source_values = []
+    sources = [item for item in source_values if isinstance(item, str)]
+    return (
+        {
+            **raw_report,
+            "headline": headline[:180],
+            "thesis": thesis,
+            "summary": summary,
+            "company_profile": company_profile,
+            **structured,
+            **text_lists,
+            "sources": sources,
+        },
+        list(dict.fromkeys(normalized_fields)),
+    )
+
+
 def _generate_openrouter_report(
     openrouter_key: str,
     evidence: dict[str, Any],
@@ -1765,19 +1940,6 @@ def _generate_openrouter_report(
     *,
     actor: AIKol = FLASH,
 ) -> tuple[dict[str, Any], str, dict[str, Any]]:
-    required = (
-        "headline",
-        "thesis",
-        "summary",
-        "company_profile",
-        "people",
-        "filings",
-        "catalysts",
-        "risks",
-        "watch",
-        "unknowns",
-        "sources",
-    )
     request_payload = {
         "actor": actor_snapshot(actor),
         "task": (
@@ -1868,25 +2030,63 @@ def _generate_openrouter_report(
             message = "OpenRouter is busy. Try again in a moment."
         else:
             message = "OpenRouter could not complete this report."
-        raise HTTPException(exc.code if exc.code < 500 else 502, message) from exc
+        raise ReportGenerationFailure(
+            exc.code if exc.code < 500 else 502,
+            message,
+            {"phase": "provider_http", "http_status": exc.code},
+        ) from exc
     except (TimeoutError, urllib.error.URLError) as exc:
-        raise HTTPException(504, "The one-shot research report took too long to answer.") from exc
+        raise ReportGenerationFailure(
+            504,
+            "Flash took too long to answer. Retry Flash.",
+            {"phase": "provider_timeout"},
+        ) from exc
+    except (TypeError, ValueError) as exc:
+        raise ReportGenerationFailure(
+            502,
+            "OpenRouter returned an unreadable response. Retry Flash.",
+            {"phase": "provider_envelope", "failure_kind": "invalid_json"},
+        ) from exc
+    choice: Any = None
+    message: Any = None
+    content: Any = None
     try:
-        message = result["choices"][0]["message"]
-        content = message["content"]
-        if isinstance(content, list):
-            content = "".join(str(item.get("text") or "") for item in content)
-        report = json.loads(content)
+        choice = result["choices"][0]
+        message = choice["message"]
+        content = message.get("content")
+        raw_report = _openrouter_report_json(content)
     except (KeyError, IndexError, TypeError, ValueError) as exc:
-        raise HTTPException(502, "OpenRouter returned an incomplete report.") from exc
-    if (
-        not isinstance(report, dict)
-        or not all(key in report for key in required)
-        or not all(isinstance(report[key], str) for key in ("headline", "thesis", "summary"))
-        or not isinstance(report["company_profile"], dict)
-        or not all(
-            isinstance(report[key], list)
-            for key in (
+        diagnostics = _openrouter_diagnostics(
+            result,
+            choice=choice,
+            message=message,
+            content=content,
+        )
+        diagnostics["failure_kind"] = "invalid_json"
+        detail = (
+            "Flash ran out of room before finishing the report. Retry Flash."
+            if diagnostics.get("finish_reason") == "length"
+            else "Flash returned a malformed report. Retry Flash."
+        )
+        raise ReportGenerationFailure(502, detail, diagnostics) from exc
+    try:
+        report, normalized_fields = _normalize_openrouter_report(raw_report, evidence)
+    except ValueError as exc:
+        diagnostics = _openrouter_diagnostics(
+            result,
+            choice=choice,
+            message=message,
+            content=content,
+        )
+        diagnostics["failure_kind"] = "missing_core_narrative"
+        diagnostics["present_fields"] = sorted(str(key)[:80] for key in raw_report)[:30]
+        diagnostics["missing_fields"] = sorted(
+            field
+            for field in (
+                "headline",
+                "thesis",
+                "summary",
+                "company_profile",
                 "people",
                 "filings",
                 "catalysts",
@@ -1895,9 +2095,13 @@ def _generate_openrouter_report(
                 "unknowns",
                 "sources",
             )
+            if field not in raw_report
         )
-    ):
-        raise HTTPException(502, "OpenRouter returned an incomplete report.")
+        raise ReportGenerationFailure(
+            502,
+            "Flash returned a report without a usable thesis. Retry Flash.",
+            diagnostics,
+        ) from exc
     approved_sources = [
         source for value in evidence.get("sources", []) if (source := _safe_source_url(value))
     ][:100]
@@ -1928,7 +2132,17 @@ def _generate_openrouter_report(
         clean_filings.append(filing)
     report["filings"] = clean_filings
     report["sources"] = approved_sources
-    return report, str(result.get("model") or actor.model), dict(result.get("usage") or {})
+    usage = dict(result.get("usage") or {})
+    usage["generation"] = {
+        **_openrouter_diagnostics(
+            result,
+            choice=choice,
+            message=message,
+            content=content,
+        ),
+        "normalized_fields": normalized_fields,
+    }
+    return report, str(result.get("model") or actor.model), usage
 
 
 def _fallback_people_from_evidence(evidence: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2154,12 +2368,19 @@ def _run_research_commission(
         return _commission_record(row) or {}
     except Exception as exc:
         detail = exc.detail if isinstance(exc, HTTPException) else "Report generation failed."
+        diagnostics = getattr(exc, "diagnostics", None)
+        failure_usage = (
+            json.dumps({"failure": diagnostics}, separators=(",", ":"))
+            if isinstance(diagnostics, dict)
+            else "{}"
+        )
         with connection() as db:
             db.execute(
                 """
-                UPDATE research_commissions SET status='failed',error=?,updated_at=? WHERE id=?
+                UPDATE research_commissions
+                SET status='failed',error=?,usage_json=?,updated_at=? WHERE id=?
                 """,
-                (str(detail)[:500], iso(), report_id),
+                (str(detail)[:500], failure_usage, iso(), report_id),
             )
         raise
 
@@ -2243,6 +2464,7 @@ def _commission_api_payload(report: dict[str, Any]) -> dict[str, Any]:
         "ticker": str(report.get("ticker") or ""),
         "job_id": public_id,
         "status": status,
+        "retryable": status == "failed",
         "url": f"/research/{public_id}" if status == "complete" and public_id else None,
         "error": str(report.get("error") or "") if status == "failed" else None,
     }

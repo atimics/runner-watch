@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
 from pytest import MonkeyPatch
 from starlette.requests import Request
 
@@ -1238,6 +1239,8 @@ def test_flash_commission_page_resumes_the_server_job() -> None:
     template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
 
     assert "You can leave this page" in template
+    assert "Retry Flash" in template
+    assert "commissionNeedsRetry = result.retryable !== false" in template
     assert "fetch(`/api/research/${encodeURIComponent(ticker)}`)" in template
     assert "if (initialCommissionStatus === 'running') pollCommission()" in template
     assert "View report" in template
@@ -1293,7 +1296,123 @@ def test_commission_request_uses_glm_53_with_a_minimal_prompt(
     assert len(body["messages"][0]["content"].split()) <= 30
     assert report == generated
     assert model == "z-ai/glm-5.3"
-    assert usage == {"total_tokens": 123}
+    assert usage["total_tokens"] == 123
+    assert usage["generation"]["normalized_fields"] == []
+    assert usage["generation"]["content_chars"] > 0
+
+
+def test_commission_normalizes_recoverable_glm_output(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
+        return io.BytesIO(
+            json.dumps(
+                {
+                    "id": "generation-safe-id",
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "summary": "EU has attention, but the setup needs proof.",
+                                        "risks": [{"text": "Financing terms are unclear."}],
+                                    }
+                                )
+                            },
+                        }
+                    ],
+                    "model": "z-ai/glm-5.3",
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
+    report, _, usage = web_main._generate_openrouter_report(
+        "sk-or-test-key-long-enough", {"ticker": "EU"}, "member-eu"
+    )
+
+    assert report["headline"] == "EU has attention, but the setup needs proof"
+    assert report["thesis"] == report["summary"]
+    assert report["company_profile"] == {"source_urls": []}
+    assert report["people"] == []
+    assert report["filings"] == []
+    assert report["risks"] == ["Financing terms are unclear."]
+    assert "thesis" in usage["generation"]["normalized_fields"]
+    assert usage["generation"]["finish_reason"] == "stop"
+
+
+def test_commission_reports_cut_off_glm_output_without_storing_content(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
+        return io.BytesIO(
+            json.dumps(
+                {
+                    "id": "cut-off-safe-id",
+                    "choices": [
+                        {
+                            "finish_reason": "length",
+                            "message": {"content": '{"summary":"EU started but'},
+                        }
+                    ],
+                    "model": "z-ai/glm-5.3",
+                    "usage": {"completion_tokens": 12000},
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(web_main.ReportGenerationFailure) as failure:
+        web_main._generate_openrouter_report(
+            "sk-or-test-key-long-enough", {"ticker": "EU"}, "member-eu"
+        )
+
+    assert failure.value.detail == "Flash ran out of room before finishing the report. Retry Flash."
+    assert failure.value.diagnostics["finish_reason"] == "length"
+    assert failure.value.diagnostics["completion_tokens"] == 12000
+    assert failure.value.diagnostics["content_chars"] > 0
+    assert "EU started" not in json.dumps(failure.value.diagnostics)
+
+
+def test_failed_commission_stores_safe_diagnostics_and_is_retryable(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "failed-commission.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_filing("failed-eu", "EU", 1.25, 90, captured_at, "P")
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("failed-user", "member_failed", "Member", "active", captured_at),
+        )
+
+    def fail_report(*args: Any, **kwargs: Any) -> Any:
+        raise web_main.ReportGenerationFailure(
+            502,
+            "Flash returned a malformed report. Retry Flash.",
+            {
+                "phase": "provider_response",
+                "finish_reason": "length",
+                "content_chars": 812,
+                "failure_kind": "invalid_json",
+            },
+        )
+
+    monkeypatch.setattr(web_main, "_generate_openrouter_report", fail_report)
+    with pytest.raises(web_main.ReportGenerationFailure):
+        _commission_research("failed-user", "EU", "sk-or-device-only-test-key")
+
+    failed = web_main.latest_commission("failed-user", "EU")
+    assert failed is not None
+    assert failed["status"] == "failed"
+    assert failed["usage"]["failure"]["failure_kind"] == "invalid_json"
+    assert web_main._commission_api_payload(failed)["retryable"] is True
+    assert "sk-or-device-only-test-key" not in json.dumps(failed)
+    retry, created = web_main._create_research_commission("failed-user", "EU")
+    assert created is True
+    assert retry["status"] == "running"
 
 
 def test_research_report_template_has_public_share_metadata(
