@@ -33,7 +33,7 @@
 </dialog>
 {% endblock %}
 {% block scripts %}
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 const runButton = document.getElementById('runScan'); const statusBox = document.getElementById('scanStatus'); const body = document.getElementById('results');
 const dialog = document.getElementById('publishDialog');
 function esc(value) { const node = document.createElement('span'); node.textContent = String(value ?? ''); return node.innerHTML; }

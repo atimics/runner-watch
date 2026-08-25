@@ -7,8 +7,11 @@ import re
 import time
 import urllib.request
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from runner_watch.ingestion import SourceFetch, SourceFetchRecorder
 
 NASDAQ_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
 OTHER_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
@@ -132,6 +135,7 @@ def penny_runner_universe(
     max_price: float = 5.00,
     max_market_cap: float = 2_000_000_000,
     per_screen: int = 175,
+    fetch_recorder: SourceFetchRecorder | None = None,
 ) -> tuple[list[UniverseEntry], list[str]]:
     """Find active low-priced US-listed stocks using Yahoo's live screener.
 
@@ -140,6 +144,16 @@ def penny_runner_universe(
     """
 
     warnings: list[str] = []
+    overall_started_at = datetime.now(UTC)
+
+    def record(fetch: SourceFetch) -> None:
+        if fetch_recorder is None:
+            return
+        try:
+            fetch_recorder(fetch)
+        except Exception as exc:
+            warnings.append(f"Could not record Yahoo universe fetch: {exc}")
+
     try:
         import yfinance as yf
 
@@ -160,6 +174,7 @@ def penny_runner_universe(
         entries: dict[str, UniverseEntry] = {}
         size = max(25, min(per_screen, 250))
         for sort_field in ("percentchange", "dayvolume"):
+            started_at = datetime.now(UTC)
             try:
                 response = yf.screen(
                     query,
@@ -167,15 +182,57 @@ def penny_runner_universe(
                     sortField=sort_field,
                     sortAsc=False,
                 )
-                for entry in _screen_entries(response.get("quotes", [])):
+                quotes = response.get("quotes", [])
+                record(
+                    SourceFetch.success(
+                        source="yahoo",
+                        feed="universe",
+                        locator=f"yfinance://screen/{sort_field}",
+                        started_at=started_at,
+                        payload=quotes,
+                        content_type="application/json",
+                        metadata={
+                            "sort_field": sort_field,
+                            "size": size,
+                            "min_price": min_price,
+                            "max_price": max_price,
+                            "max_market_cap": max_market_cap,
+                        },
+                    )
+                )
+                for entry in _screen_entries(quotes):
                     entries.setdefault(entry.symbol, entry)
             except Exception as exc:  # Yahoo can reject one screen while the other works
                 warnings.append(f"Yahoo {sort_field} candidate screen failed: {exc}")
+                record(
+                    SourceFetch.failure(
+                        source="yahoo",
+                        feed="universe",
+                        locator=f"yfinance://screen/{sort_field}",
+                        started_at=started_at,
+                        error=exc,
+                        metadata={"sort_field": sort_field, "size": size},
+                    )
+                )
         if entries:
             return list(entries.values()), warnings
         warnings.append("Yahoo returned no low-priced candidates.")
     except Exception as exc:
         warnings.append(f"Could not build the low-priced candidate list: {exc}")
+        record(
+            SourceFetch.failure(
+                source="yahoo",
+                feed="universe",
+                locator="yfinance://screen",
+                started_at=overall_started_at,
+                error=exc,
+                metadata={
+                    "min_price": min_price,
+                    "max_price": max_price,
+                    "max_market_cap": max_market_cap,
+                },
+            )
+        )
 
     warnings.append("Using the saved momentum list as a fallback.")
     return starter_universe(), warnings

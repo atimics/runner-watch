@@ -10,8 +10,11 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
+
+from runner_watch.ingestion import SourceFetch, SourceFetchRecorder
 
 SEC_BASE = "https://www.sec.gov"
 COMPANY_MAP_URL = f"{SEC_BASE}/files/company_tickers_exchange.json"
@@ -69,11 +72,34 @@ class EdgarClient:
         user_agent: str = SEC_USER_AGENT,
         max_requests_per_second: float = 6,
         recorder: Callable[[str, bytes], None] | None = None,
+        fetch_recorder: SourceFetchRecorder | None = None,
     ) -> None:
         self.user_agent = user_agent
         self.minimum_interval = 1 / max_requests_per_second
         self._last_request = 0.0
         self.recorder = recorder
+        self.fetch_recorder = fetch_recorder
+
+    @staticmethod
+    def _feed_for_url(url: str) -> str:
+        if url == COMPANY_MAP_URL:
+            return "company_map"
+        if url == LATEST_FILINGS_URL:
+            return "current_filings"
+        if url.endswith("/index.json"):
+            return "filing_index"
+        if url.lower().endswith(".xml"):
+            return "filing_document"
+        return "document"
+
+    def _record_fetch(self, fetch: SourceFetch) -> None:
+        if self.fetch_recorder is None:
+            return
+        try:
+            self.fetch_recorder(fetch)
+        except Exception:
+            # Collection is best effort and must not block the SEC listener.
+            pass
 
     def _get(self, url: str) -> bytes:
         parsed = urlparse(url)
@@ -83,6 +109,7 @@ class EdgarClient:
             url,
             headers={"User-Agent": self.user_agent, "Accept": "application/json, application/xml"},
         )
+        started_at = datetime.now(UTC)
         for attempt in range(3):
             wait = self.minimum_interval - (time.monotonic() - self._last_request)
             if wait > 0:
@@ -91,6 +118,25 @@ class EdgarClient:
                 with urllib.request.urlopen(request, timeout=35) as response:  # noqa: S310
                     body = response.read()
                 self._last_request = time.monotonic()
+                stripped = body.lstrip()
+                content_type = (
+                    "application/json"
+                    if stripped.startswith((b"{", b"["))
+                    else "application/xml"
+                    if stripped.startswith(b"<")
+                    else "application/octet-stream"
+                )
+                self._record_fetch(
+                    SourceFetch.success(
+                        source="sec",
+                        feed=self._feed_for_url(url),
+                        locator=url,
+                        started_at=started_at,
+                        payload=body,
+                        content_type=content_type,
+                        metadata={"attempts": attempt + 1},
+                    )
+                )
                 if self.recorder:
                     try:
                         self.recorder(url, body)
@@ -98,9 +144,19 @@ class EdgarClient:
                         # Archival is best effort and must not block the SEC listener.
                         pass
                 return body
-            except (TimeoutError, urllib.error.URLError):
+            except (TimeoutError, urllib.error.URLError) as exc:
                 self._last_request = time.monotonic()
                 if attempt == 2:
+                    self._record_fetch(
+                        SourceFetch.failure(
+                            source="sec",
+                            feed=self._feed_for_url(url),
+                            locator=url,
+                            started_at=started_at,
+                            error=exc,
+                            metadata={"attempts": 3},
+                        )
+                    )
                     raise
                 time.sleep(1.5 * (attempt + 1))
         raise RuntimeError("SEC request failed")

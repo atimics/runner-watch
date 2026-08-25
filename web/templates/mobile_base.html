@@ -5,7 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#090b0b">
   <title>{% block title %}Runner Watch{% endblock %}</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/mobile.css">
+  <link rel="stylesheet" href="/static/enhancements.css">
   {% block head %}{% endblock %}
 </head>
 <body>
@@ -21,6 +23,10 @@
         <span class="tab-icon radar-icon" aria-hidden="true"></span>
         <span>Radar</span>
       </a>
+      <a class="tab-link {% if active_tab == 'alpha' %}active{% endif %}" href="/community">
+        <span class="tab-icon alpha-icon" aria-hidden="true">↗</span>
+        <span>Alpha</span>
+      </a>
     </nav>
     {% endblock %}
   </div>
@@ -32,12 +38,12 @@
       <span class="profile-mark">{{ user.username[:1]|upper }}</span>
       <div><strong>{{ user.display_name }}</strong><small>@{{ user.username }}</small></div>
     </div>
-    <a href="/community">Community signals <span>›</span></a>
+    <a href="/settings/passkey">Add a backup passkey <span>›</span></a>
     <a href="/scanner">Full scanner <span>›</span></a>
     <button type="button" id="logoutButton">Log out</button>
     <button type="button" class="sheet-close" id="closeProfile">Close</button>
   </dialog>
-  <script>
+  <script nonce="{{ request.state.csp_nonce }}">
     const profileSheet = document.getElementById('profileSheet');
     document.querySelectorAll('[data-profile]').forEach(button => button.addEventListener('click', () => profileSheet.showModal()));
     document.getElementById('closeProfile')?.addEventListener('click', () => profileSheet.close());

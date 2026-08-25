@@ -1,0 +1,28 @@
+{% extends "mobile_base.html" %}
+{% block title %}Backup passkey · Runner Watch{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/auth-mobile.css">{% endblock %}
+{% block content %}
+<header class="detail-nav auth-nav"><a href="/" aria-label="Back">‹</a><strong>Account safety</strong><span></span></header>
+<main class="mobile-auth-wrap">
+  <section class="mobile-auth-card">
+    <span class="passkey-icon"><i></i></span>
+    <span class="eyebrow">BACKUP ACCESS</span>
+    <h1>Add another passkey</h1>
+    <p>Save one on another device or password manager so one lost device does not lock you out.</p>
+    <button class="auth-submit" id="authButton">Add backup passkey</button>
+    <div id="authStatus" class="status" aria-live="polite"></div>
+  </section>
+</main>
+{% endblock %}
+{% block bottom_nav %}{% endblock %}
+{% block scripts %}
+<script nonce="{{ request.state.csp_nonce }}">
+const statusBox=document.getElementById('authStatus');const button=document.getElementById('authButton');
+function b64bytes(value){const padded=value.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-value.length%4)%4);return Uint8Array.from(atob(padded),c=>c.charCodeAt(0));}
+function bytesB64(value){const bytes=new Uint8Array(value);let text='';bytes.forEach(byte=>text+=String.fromCharCode(byte));return btoa(text).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+function prepare(options){options.challenge=b64bytes(options.challenge);options.user.id=b64bytes(options.user.id);options.excludeCredentials=(options.excludeCredentials||[]).map(item=>({...item,id:b64bytes(item.id)}));return options;}
+function serialize(credential){const response=credential.response;return {id:credential.id,rawId:bytesB64(credential.rawId),type:credential.type,authenticatorAttachment:credential.authenticatorAttachment,clientExtensionResults:credential.getClientExtensionResults(),response:{clientDataJSON:bytesB64(response.clientDataJSON),attestationObject:bytesB64(response.attestationObject),transports:response.getTransports?response.getTransports():[]}};}
+async function api(url,body){const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):null});const data=await response.json();if(!response.ok)throw new Error(data.detail||'Request failed');return data;}
+button.addEventListener('click',async()=>{button.disabled=true;statusBox.textContent='Waiting for your device…';try{if(!window.PublicKeyCredential)throw new Error('This browser does not support passkeys.');const start=await api('/api/auth/passkey/options');const credential=await navigator.credentials.create({publicKey:prepare(start.options)});await api('/api/auth/passkey/verify',{flow_token:start.flow_token,credential:serialize(credential)});statusBox.className='status success';statusBox.textContent='Backup passkey added.';button.textContent='Done';button.onclick=()=>location.href='/';}catch(error){statusBox.className='status error';statusBox.textContent=error.message||String(error);button.disabled=false;}});
+</script>
+{% endblock %}

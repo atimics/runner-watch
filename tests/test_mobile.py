@@ -5,7 +5,7 @@ from pytest import MonkeyPatch
 
 from runner_web import db
 from runner_web.db import connection, init_db
-from runner_web.main import _pulse_label, pulse_data, ticker_detail_data
+from runner_web.main import _pulse_label, pulse_data, radar_data, ticker_detail_data
 
 
 def insert_filing(
@@ -110,3 +110,107 @@ def test_pulse_label_does_not_call_a_sale_a_buy() -> None:
     assert _pulse_label({"transaction_codes": "S", "actor_title": "CEO"}) == (
         "Form 4 · insider sale"
     )
+
+
+def test_pulse_puts_market_runners_before_filing_only_events(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "ordered.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_filing("filing-only", "FILE", 2.0, 99, captured_at, "P")
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO scan_snapshots(
+                id,ticker,score,stage,session,price,change_pct,momentum_5m_pct,
+                momentum_15m_pct,relative_volume,recent_relative_volume,breakout_pct,
+                dollar_volume,quote_time,signals_json,risks_json,captured_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                "runner", "RUN", 24, "BUILDING", "regular", 1.25, 13.0, 2.0,
+                4.0, 4.2, 5.0, 1.0, 800_000, captured_at,
+                '["Volume acceleration"]', '["Wide spread risk"]', captured_at,
+            ),
+        )
+
+    result = pulse_data()
+
+    assert [row["ticker"] for row in result["rows"]] == ["RUN", "FILE"]
+    assert result["rows"][0]["source"] == "market"
+    assert result["rows"][1]["source"] == "sec"
+
+
+def test_ticker_detail_prefers_market_state_and_uses_scan_outcome(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "detail-market.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_filing("detail-filing", "PEN", 1.7, 88, captured_at, "P")
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO scan_snapshots(
+                id,ticker,score,stage,session,price,change_pct,momentum_5m_pct,
+                momentum_15m_pct,relative_volume,recent_relative_volume,breakout_pct,
+                dollar_volume,quote_time,signals_json,risks_json,captured_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                "detail-snapshot", "PEN", 31, "EARLY", "regular", 1.9, 9.0, 1.1,
+                3.3, 3.0, 4.0, 0.8, 900_000, captured_at,
+                '["Fresh volume"]', '["Low float risk"]', captured_at,
+            ),
+        )
+        database.execute(
+            """
+            INSERT INTO scan_outcomes(
+                snapshot_id,ticker,base_price,base_at,return_1h_pct,updated_at
+            ) VALUES(?,?,?,?,?,?)
+            """,
+            ("detail-snapshot", "PEN", 1.9, captured_at, 6.2, captured_at),
+        )
+
+    detail = ticker_detail_data("PEN")
+
+    assert detail is not None
+    assert detail["current"]["source"] == "market"
+    assert detail["current"]["signals"] == ["Fresh volume"]
+    assert detail["current"]["return_1h_pct"] == 6.2
+    assert detail["events"][0]["evidence_label"] == "Verified insider purchase"
+
+
+def test_radar_marks_new_state_seen(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "radar.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("user", "watcher", "Watcher", "active", captured_at),
+        )
+        database.execute(
+            "INSERT INTO watches(user_id,ticker,created_at,last_seen_at) VALUES(?,?,?,NULL)",
+            ("user", "RAD", captured_at),
+        )
+        database.execute(
+            """
+            INSERT INTO scan_snapshots(
+                id,ticker,score,stage,session,price,change_pct,momentum_5m_pct,
+                momentum_15m_pct,relative_volume,recent_relative_volume,breakout_pct,
+                dollar_volume,quote_time,signals_json,risks_json,captured_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                "radar-snapshot", "RAD", 22, "EARLY", "regular", 2.1, 7.0, 1.0,
+                2.0, 2.5, 3.0, 0.5, 500_000, captured_at, "[]", "[]", captured_at,
+            ),
+        )
+
+    first = radar_data("user", mark_seen=True)
+    second = radar_data("user")
+
+    assert first[0]["has_update"] is True
+    assert second[0]["has_update"] is False

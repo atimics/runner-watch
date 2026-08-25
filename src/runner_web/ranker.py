@@ -306,8 +306,8 @@ def _calibrate_temperature(
 def train_shadow_ranker(
     horizon: str = DEFAULT_HORIZON,
     *,
-    min_groups: int = 40,
-    min_rows: int = 1_000,
+    min_groups: int = 160,
+    min_rows: int = 5_000,
     epochs: int = 500,
 ) -> dict[str, Any]:
     """Train a calibrated barrier-probability model in shadow status."""

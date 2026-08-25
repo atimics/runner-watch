@@ -1,6 +1,8 @@
 import pandas as pd
+from pytest import MonkeyPatch
 
-from runner_watch.market_data import split_download_frame
+from runner_watch import market_data
+from runner_watch.market_data import YahooMarketData, split_download_frame
 
 
 def test_split_download_frame_handles_ticker_first_columns() -> None:
@@ -25,3 +27,15 @@ def test_split_download_frame_handles_one_flat_ticker() -> None:
     result = split_download_frame(raw, ["AAA"])
     assert list(result) == ["AAA"]
 
+
+def test_yahoo_download_emits_a_shared_source_fetch(monkeypatch: MonkeyPatch) -> None:
+    raw = pd.DataFrame({"Close": [1.0], "Volume": [100]})
+    monkeypatch.setattr(market_data.yf, "download", lambda **kwargs: raw)
+    fetches = []
+    result = YahooMarketData(batch_size=1, fetch_recorder=fetches.append).intraday(["AAA"])
+    assert list(result.frames) == ["AAA"]
+    assert len(fetches) == 1
+    assert fetches[0].source == "yahoo"
+    assert fetches[0].feed == "market_bars"
+    assert fetches[0].status == "success"
+    assert fetches[0].metadata["requested_tickers"] == ["AAA"]

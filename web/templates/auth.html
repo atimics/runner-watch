@@ -31,7 +31,7 @@
 {% endblock %}
 {% block bottom_nav %}{% endblock %}
 {% block scripts %}
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 const mode = {{ mode|tojson }};
 const statusBox = document.getElementById('authStatus');
 const button = document.getElementById('authButton');

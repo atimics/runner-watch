@@ -1,0 +1,35 @@
+{% extends "mobile_base.html" %}
+{% block title %}Alpha · Runner Watch{% endblock %}
+{% block content %}
+<header class="screen-head">
+  <div><span class="eyebrow">TIMESTAMPED IDEAS</span><h1>Alpha</h1></div>
+  {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.username[:1]|upper }}</button>{% else %}<a class="avatar-button signed-out" href="/login" aria-label="Log in">↗</a>{% endif %}
+</header>
+
+<main class="list-section alpha-section">
+  <div class="radar-message"><span></span><div><strong>Receipts stay attached</strong><p>Every idea keeps its captured price, time, risks, and result.</p></div></div>
+  <div class="list-title"><strong>Latest ideas</strong><span>{{ signals|length }} public</span></div>
+  {% if signals %}
+  <div class="alpha-list">
+    {% for signal in signals %}
+    <a class="alpha-row" href="/s/{{ signal.public_id }}">
+      <div class="alpha-row-head">
+        <span class="coin coin-{{ loop.index0 % 5 }}"><b>{{ signal.ticker[:2] }}</b><i></i></span>
+        <span><strong>{{ signal.ticker }}</strong><small>@{{ signal.username }} · {{ signal.horizon }}</small></span>
+        <em class="{{ 'up' if signal.change_pct >= 0 else 'down' }}">{{ '+' if signal.change_pct >= 0 else '' }}{{ '%.1f'|format(signal.change_pct) }}%</em>
+      </div>
+      <p>{{ signal.thesis }}</p>
+      <div class="alpha-proof">
+        <span>{{ signal.stage|title }} · {{ '%.0f'|format(signal.score) }} score</span>
+        {% if signal.barrier_label %}<b class="{{ 'up' if signal.barrier_label == 'up' else ('down' if signal.barrier_label == 'down' else '') }}">60m {{ signal.barrier_label }}</b>{% else %}<b>result pending</b>{% endif %}
+        {% if signal.author_hit_rate is not none %}<span>{{ signal.author_hit_rate }}% author hits · {{ signal.author_labeled }} graded</span>{% else %}<span>new author</span>{% endif %}
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-list"><span>↗</span><strong>No public ideas yet</strong><p>Open a live ticker and share the first one.</p></div>
+  {% endif %}
+</main>
+<p class="source-note">Public observations · never trade from a post alone</p>
+{% endblock %}

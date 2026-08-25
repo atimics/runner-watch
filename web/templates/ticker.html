@@ -21,17 +21,33 @@
       <strong>{% if detail.current.price is not none %}${{ '%.4f'|format(detail.current.price) if detail.current.price < 1 else ('%.2f'|format(detail.current.price)) }}{% else %}Price pending{% endif %}</strong>
       {% if detail.current.change_pct is not none %}<span class="{{ 'up' if detail.current.change_pct >= 0 else 'down' }}">{{ '+' if detail.current.change_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.change_pct) }}%</span>{% endif %}
     </div>
-    <small>5-minute delayed view</small>
+    <small>{% if detail.current.event_at %}captured {{ detail.current.event_at[:16]|replace('T', ' ') }} UTC{% else %}price pending{% endif %}</small>
   </section>
 
-  <section class="chart-card" aria-label="Five-day price chart">
+  <section class="chart-card" aria-label="Price chart">
     <div class="chart-loading" id="chartStatus">Loading chart…</div>
     <svg id="priceChart" role="img" aria-label="Price chart" viewBox="0 0 600 210" preserveAspectRatio="none"></svg>
-    <div class="chart-range"><span>5D</span><span id="chartLow"></span><span id="chartHigh"></span></div>
+    <div class="chart-range"><span class="range-buttons"><button class="active" type="button" data-range="1D">1D</button><button type="button" data-range="5D">5D</button></span><span id="chartLow"></span><span id="chartHigh"></span></div>
   </section>
 
   <section class="why-section">
-    <div class="section-heading"><div><span>PRIMARY SOURCES</span><h2>Why now</h2></div>{% if detail.current.score %}<b>{{ '%.0f'|format(detail.current.score) }} signal</b>{% endif %}</div>
+    <div class="section-heading"><div><span>MARKET STATE</span><h2>Why moving</h2></div>{% if detail.current.score %}<b>{{ '%.0f'|format(detail.current.score) }} runner score</b>{% endif %}</div>
+    {% if detail.current.source == 'market' %}
+    <div class="market-metrics">
+      <div><span>RVOL</span><strong>{% if detail.current.relative_volume is not none %}{{ '%.1f'|format(detail.current.relative_volume) }}×{% else %}—{% endif %}</strong></div>
+      <div><span>15m</span><strong class="{% if detail.current.momentum_15m_pct is not none %}{{ 'up' if detail.current.momentum_15m_pct >= 0 else 'down' }}{% endif %}">{% if detail.current.momentum_15m_pct is not none %}{{ '+' if detail.current.momentum_15m_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.momentum_15m_pct) }}%{% else %}—{% endif %}</strong></div>
+      <div><span>Recent $ vol</span><strong>{% if detail.current.recent_dollar_volume %}${{ '%.1f'|format(detail.current.recent_dollar_volume / 1000000) }}m{% else %}—{% endif %}</strong></div>
+    </div>
+    <div class="reason-list">
+      {% for reason in detail.current.signals %}<span class="reason-chip">{{ reason }}</span>{% endfor %}
+      {% for risk in detail.current.risks %}<span class="reason-chip risk">{{ risk }}</span>{% endfor %}
+      {% if not detail.current.signals and not detail.current.risks %}<p>Price and volume passed the active-runner filter. More structure data is pending.</p>{% endif %}
+    </div>
+    {% else %}<p class="quiet-reason">No fresh market snapshot is stored for this ticker yet.</p>{% endif %}
+  </section>
+
+  <section class="why-section catalyst-section">
+    <div class="section-heading"><div><span>PRIMARY SOURCES</span><h2>Catalysts & risks</h2></div></div>
     <div class="evidence-list">
       {% if detail.events %}
         {% for event in detail.events[:5] %}
@@ -44,27 +60,46 @@
       {% else %}
         <div class="evidence-row evidence-gap">
           <span class="timeline-dot gap"></span>
-          <span><strong>No recent SEC catalyst</strong><small>Market move only</small><p>Price or volume moved, but the filing listener did not find a recent SEC event.</p></span>
+          <span><strong>No recent SEC catalyst</strong><small>Market move only</small><p>The filing listener did not find a recent SEC event. Check news and the company directly.</p></span>
         </div>
       {% endif %}
     </div>
   </section>
 
   <section class="outcome-card">
-    <div><span>1H</span><strong class="{% if detail.current.return_1h_pct is not none %}{{ 'up' if detail.current.return_1h_pct >= 0 else 'down' }}{% endif %}">{% if detail.current.return_1h_pct is not none %}{{ '+' if detail.current.return_1h_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.return_1h_pct) }}%{% else %}pending{% endif %}</strong></div>
+    <div><span>60M</span><strong class="{% if detail.current.return_1h_pct is not none %}{{ 'up' if detail.current.return_1h_pct >= 0 else 'down' }}{% endif %}">{% if detail.current.return_1h_pct is not none %}{{ '+' if detail.current.return_1h_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.return_1h_pct) }}%{% else %}pending{% endif %}</strong></div>
     <div><span>1D</span><strong class="{% if detail.current.return_1d_pct is not none %}{{ 'up' if detail.current.return_1d_pct >= 0 else 'down' }}{% endif %}">{% if detail.current.return_1d_pct is not none %}{{ '+' if detail.current.return_1d_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.return_1d_pct) }}%{% else %}pending{% endif %}</strong></div>
     <div><span>5D</span><strong class="{% if detail.current.return_5d_pct is not none %}{{ 'up' if detail.current.return_5d_pct >= 0 else 'down' }}{% endif %}">{% if detail.current.return_5d_pct is not none %}{{ '+' if detail.current.return_5d_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.return_5d_pct) }}%{% else %}pending{% endif %}</strong></div>
   </section>
+  <section class="alpha-action">
+    {% if user and detail.can_publish %}<button type="button" id="alphaButton">Share timestamped alpha</button>
+    {% elif user %}<button type="button" disabled>Fresh scan needed to share</button>
+    {% else %}<a href="/login">Log in to share alpha</a>{% endif %}
+  </section>
   <p class="source-note detail-note">Evidence, not advice. Check the filing, spread, dilution, and halt risk.</p>
 </main>
+{% if user and detail.can_publish %}
+<dialog class="alpha-sheet" id="alphaSheet">
+  <div class="sheet-handle"></div><h2>Share {{ detail.ticker }} alpha</h2><p>The captured price and time will be locked to this post.</p>
+  <form id="alphaForm">
+    <label>Thesis<textarea name="thesis" minlength="8" maxlength="500" required placeholder="What is the market missing?"></textarea></label>
+    <label>Horizon<select name="horizon"><option value="intraday">Intraday</option><option value="swing">Swing</option><option value="watch">Watch</option></select></label>
+    <label>Invalidation<input name="invalidation" minlength="3" maxlength="240" required placeholder="What proves this wrong?"></label>
+    <label>Disclosure<input name="disclosure" minlength="3" maxlength="240" required placeholder="Position or conflict disclosure"></label>
+    <div class="alpha-sheet-actions"><button type="button" id="closeAlpha">Cancel</button><button type="submit">Publish</button></div>
+    <small id="alphaStatus"></small>
+  </form>
+</dialog>
+{% endif %}
 {% endblock %}
 {% block bottom_nav %}{% endblock %}
 {% block scripts %}
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 const ticker = {{ detail.ticker|tojson }};
 const company = {{ detail.company|tojson }};
 const chart = document.getElementById('priceChart');
 const status = document.getElementById('chartStatus');
+let allPoints=[];
 function draw(points) {
   if (!points.length) { status.textContent = 'Chart not available'; status.classList.add('visible'); return; }
   const values = points.map(point => Number(point.price)).filter(Number.isFinite);
@@ -79,7 +114,9 @@ function draw(points) {
   document.getElementById('chartLow').textContent = '$' + low.toFixed(low < 1 ? 4 : 2);
   document.getElementById('chartHigh').textContent = '$' + high.toFixed(high < 1 ? 4 : 2);
 }
-fetch(`/api/t/${encodeURIComponent(ticker)}/chart`).then(response => response.json()).then(data => draw(data.points || [])).catch(() => draw([]));
+function selectRange(range){document.querySelectorAll('[data-range]').forEach(button=>button.classList.toggle('active',button.dataset.range===range));if(range==='5D'){draw(allPoints);return;}const latest=allPoints.length?new Date(allPoints.at(-1).time).getTime():0;const points=allPoints.filter(point=>new Date(point.time).getTime()>=latest-24*60*60*1000);draw(points.length>1?points:allPoints.slice(-30));}
+fetch(`/api/t/${encodeURIComponent(ticker)}/chart`).then(response=>response.json()).then(data=>{allPoints=data.points||[];selectRange('1D');}).catch(()=>draw([]));
+document.querySelectorAll('[data-range]').forEach(button=>button.addEventListener('click',()=>selectRange(button.dataset.range)));
 document.getElementById('shareButton').addEventListener('click', async () => {
   const share = {title: `${ticker} intelligence`, text: `${ticker} · ${company} on Runner Watch`, url: location.href};
   try { if (navigator.share) await navigator.share(share); else { await navigator.clipboard.writeText(location.href); document.getElementById('shareButton').textContent = '✓'; } } catch (_) {}
@@ -94,5 +131,9 @@ document.getElementById('watchButton').addEventListener('click', async event => 
   button.querySelector('span').textContent = result.watched ? '✓' : '+';
   button.querySelector('small').textContent = result.watched ? 'Watching' : 'Watch';
 });
+const alphaSheet=document.getElementById('alphaSheet');
+document.getElementById('alphaButton')?.addEventListener('click',()=>alphaSheet.showModal());
+document.getElementById('closeAlpha')?.addEventListener('click',()=>alphaSheet.close());
+document.getElementById('alphaForm')?.addEventListener('submit',async event=>{event.preventDefault();const form=new FormData(event.currentTarget);const payload={snapshot_id:{{ (detail.current.id or '')|tojson }},thesis:form.get('thesis'),horizon:form.get('horizon'),invalidation:form.get('invalidation'),disclosure:form.get('disclosure')};const response=await fetch('/api/signals',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const data=await response.json();if(response.ok)location.href=data.url;else document.getElementById('alphaStatus').textContent=data.detail||'Could not publish.';});
 </script>
 {% endblock %}

@@ -7,8 +7,9 @@ from typing import Any
 from runner_watch.edgar import EdgarClient, EdgarFiling, OwnershipSummary, classify_filing
 from runner_watch.models import ScanSettings
 from runner_watch.scanner import RunnerScanner
-from runner_web.collection import record_source_document, recording_market_data
+from runner_web.collection import recording_market_data
 from runner_web.db import connection
+from runner_web.ingestion import mark_source_item, record_source_fetch, source_item_is_terminal
 
 LOG = logging.getLogger(__name__)
 INTERESTING_FORMS = (
@@ -94,9 +95,10 @@ def _company_for_cik(cik: int) -> dict[str, Any] | None:
 
 def _already_seen(accession: str) -> bool:
     with connection() as db:
-        return db.execute(
+        stored = db.execute(
             "SELECT 1 FROM sec_filings WHERE accession=?", (accession,)
         ).fetchone() is not None
+    return stored or source_item_is_terminal("sec", "filing", accession)
 
 
 def _interesting(form: str) -> bool:
@@ -190,13 +192,31 @@ def _prepare_event(
 def refresh_edgar() -> dict[str, Any]:
     """Fetch the newest filings and persist pre-scored catalyst events."""
 
-    client = EdgarClient(recorder=record_source_document)
+    client = EdgarClient(fetch_recorder=record_source_fetch)
     _ensure_parser_version()
     company_count = refresh_company_map(client)
     filings = client.latest_filings()
     new_events: list[dict[str, Any]] = []
+    item_errors: dict[str, str] = {}
     for filing in filings:
-        if not _interesting(filing.form) or _already_seen(filing.accession):
+        if _already_seen(filing.accession):
+            continue
+        item_payload = {
+            "cik": filing.cik,
+            "form": filing.form,
+            "filed_at": filing.filed_at,
+            "filing_url": filing.filing_url,
+        }
+        if not _interesting(filing.form):
+            mark_source_item(
+                source="sec",
+                feed="filing",
+                item_key=filing.accession,
+                status="ignored",
+                payload=item_payload,
+                error="Form is outside the configured filing set",
+                parser_version=PARSER_VERSION,
+            )
             continue
         ownership: OwnershipSummary | None = None
         issuer_cik = filing.cik
@@ -207,8 +227,18 @@ def refresh_edgar() -> dict[str, Any]:
                     issuer_cik = ownership.issuer_cik
             except Exception as exc:
                 LOG.warning("Could not parse ownership filing %s: %s", filing.accession, exc)
+                item_errors[filing.accession] = f"Ownership parsing failed: {exc}"
         company = _company_for_cik(issuer_cik)
         if company is None:
+            mark_source_item(
+                source="sec",
+                feed="filing",
+                item_key=filing.accession,
+                status="ignored",
+                payload={**item_payload, "issuer_cik": issuer_cik},
+                error="Issuer is not in the listed-company map",
+                parser_version=PARSER_VERSION,
+            )
             continue
         new_events.append(_prepare_event(filing, company, ownership))
 
@@ -261,6 +291,27 @@ def refresh_edgar() -> dict[str, Any]:
                     "parser_version": PARSER_VERSION,
                 },
             )
+
+    for event in new_events:
+        context = market.get(event["ticker"], {})
+        errors = [item_errors[event["accession"]]] if event["accession"] in item_errors else []
+        if not context:
+            errors.append("Yahoo market context was unavailable")
+        mark_source_item(
+            source="sec",
+            feed="filing",
+            item_key=event["accession"],
+            status="processed",
+            payload={
+                "cik": event["cik"],
+                "ticker": event["ticker"],
+                "form": event["form"],
+                "filed_at": event["filed_at"],
+                "filing_url": event["filing_url"],
+            },
+            error="; ".join(errors) or None,
+            parser_version=PARSER_VERSION,
+        )
 
     _state("edgar_last_refresh", timestamp)
     _state("edgar_last_error", "")

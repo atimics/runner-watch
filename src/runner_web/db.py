@@ -175,6 +175,51 @@ def init_db() -> None:
                 value TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS ingestion_runs (
+                id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                feed TEXT NOT NULL,
+                locator TEXT NOT NULL,
+                status TEXT NOT NULL,
+                requested_count INTEGER NOT NULL DEFAULT 0,
+                received_count INTEGER NOT NULL DEFAULT 0,
+                content_hash TEXT,
+                content_type TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                error TEXT,
+                started_at TEXT NOT NULL,
+                finished_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ingestion_runs_source_time
+                ON ingestion_runs(source,feed,finished_at DESC);
+            CREATE INDEX IF NOT EXISTS ingestion_runs_status_time
+                ON ingestion_runs(status,finished_at DESC);
+            CREATE TABLE IF NOT EXISTS ingestion_items (
+                run_id TEXT NOT NULL REFERENCES ingestion_runs(id) ON DELETE CASCADE,
+                item_key TEXT NOT NULL,
+                status TEXT NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                error TEXT,
+                PRIMARY KEY(run_id,item_key)
+            );
+            CREATE INDEX IF NOT EXISTS ingestion_items_key
+                ON ingestion_items(item_key,run_id);
+            CREATE TABLE IF NOT EXISTS source_item_state (
+                source TEXT NOT NULL,
+                feed TEXT NOT NULL,
+                item_key TEXT NOT NULL,
+                status TEXT NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                error TEXT,
+                parser_version TEXT,
+                attempt_count INTEGER NOT NULL DEFAULT 1,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                processed_at TEXT,
+                PRIMARY KEY(source,feed,item_key)
+            );
+            CREATE INDEX IF NOT EXISTS source_item_state_status
+                ON source_item_state(source,feed,status,last_seen_at DESC);
             CREATE TABLE IF NOT EXISTS scan_runs (
                 id TEXT PRIMARY KEY,
                 mode TEXT NOT NULL,
@@ -314,6 +359,7 @@ def init_db() -> None:
         ):
             _ensure_column(db, "ranker_predictions", definition)
         _ensure_column(db, "sec_filings", "parser_version TEXT NOT NULL DEFAULT 'legacy'")
+        _ensure_column(db, "watches", "last_seen_at TEXT")
         _ensure_column(
             db,
             "source_documents",

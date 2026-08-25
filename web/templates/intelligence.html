@@ -36,7 +36,7 @@
 </section>
 {% endblock %}
 {% block scripts %}
-<script>
+<script nonce="{{ request.state.csp_nonce }}">
 let intelligence = {{ intelligence|tojson }};
 const heatmap = document.getElementById('heatmap');
 const statusBox = document.getElementById('intelStatus');

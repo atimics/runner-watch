@@ -1,9 +1,30 @@
+from __future__ import annotations
+
+from pytest import MonkeyPatch
+
+from runner_watch import edgar
 from runner_watch.edgar import (
+    LATEST_FILINGS_URL,
+    EdgarClient,
     classify_filing,
     parse_company_map,
     parse_latest_filings,
     parse_ownership_xml,
 )
+
+
+class FakeResponse:
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+    def __enter__(self) -> FakeResponse:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self.body
 
 
 def test_company_map_keeps_listed_exchanges() -> None:
@@ -75,3 +96,20 @@ def test_form4_parser_only_treats_code_p_as_purchase() -> None:
 def test_offering_filings_are_risk_events() -> None:
     result = classify_filing("S-3")
     assert result == {"kind": "Offering or dilution filing", "sentiment": "risk", "score": 82}
+
+
+def test_sec_download_emits_the_same_source_fetch_contract(monkeypatch: MonkeyPatch) -> None:
+    body = b'<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom" />'
+    monkeypatch.setattr(
+        edgar.urllib.request, "urlopen", lambda request, timeout: FakeResponse(body)
+    )
+    fetches = []
+    result = EdgarClient(
+        max_requests_per_second=1_000_000,
+        fetch_recorder=fetches.append,
+    ).get_text(LATEST_FILINGS_URL)
+    assert result.startswith("<?xml")
+    assert len(fetches) == 1
+    assert fetches[0].source == "sec"
+    assert fetches[0].feed == "current_filings"
+    assert fetches[0].status == "success"

@@ -31,6 +31,17 @@ The SEC listener declares its user agent and stays below the SEC's published req
 The delayed outcome labels preserve what was known at filing time, giving future ranking models
 clean examples without rewriting history after a move is already known.
 
+## Source ingestion
+
+SEC and Yahoo use one ingestion pipe. Every source fetch writes a durable run record with its
+source, feed, status, timing, counts, content hash, and error. SEC response bodies remain compressed
+in `source_documents`. Yahoo universe members are kept in `ingestion_items`, while Yahoo price bars
+are deduplicated into `market_bars`. Parsed SEC filing state is kept separately so ignored or failed
+items stay visible, and known ignored filings do not get downloaded forever.
+
+Use `/api/ingestion/status` to check the latest success and error time for each feed. The ingestion
+tables do not replace the app's normal read tables; they provide one audit path behind them.
+
 The main screen ranks stocks with a **runner score**. The score looks for:
 
 - volume that is unusual for the same time of day

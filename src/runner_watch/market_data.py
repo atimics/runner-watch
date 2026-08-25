@@ -3,10 +3,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
 import yfinance as yf
+
+from runner_watch.ingestion import SourceFetch, SourceFetchRecorder
 
 ProgressCallback = Callable[[int, int, str], None]
 BarRecorder = Callable[[str, dict[str, pd.DataFrame]], None]
@@ -63,10 +66,20 @@ class YahooMarketData:
         batch_size: int = 60,
         timeout: float = 15.0,
         recorder: BarRecorder | None = None,
+        fetch_recorder: SourceFetchRecorder | None = None,
     ) -> None:
         self.batch_size = batch_size
         self.timeout = timeout
         self.recorder = recorder
+        self.fetch_recorder = fetch_recorder
+
+    def _record_fetch(self, fetch: SourceFetch, warnings: list[str]) -> None:
+        if self.fetch_recorder is None:
+            return
+        try:
+            self.fetch_recorder(fetch)
+        except Exception as exc:  # ingestion must not break live quotes
+            warnings.append(f"Could not record {fetch.source} {fetch.feed} fetch: {exc}")
 
     def _download(
         self,
@@ -85,6 +98,7 @@ class YahooMarketData:
         logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
         for number, batch in enumerate(groups, start=1):
+            started_at = datetime.now(UTC)
             if progress:
                 progress(number - 1, len(groups), f"{label} batch {number}/{len(groups)}")
             try:
@@ -103,15 +117,56 @@ class YahooMarketData:
                 )
                 found = split_download_frame(raw, batch)
                 frames.update(found)
+                missing = [ticker for ticker in batch if ticker not in found]
+                self._record_fetch(
+                    SourceFetch.success(
+                        source="yahoo",
+                        feed="market_bars",
+                        locator=f"yfinance://download/{interval}",
+                        started_at=started_at,
+                        payload=found,
+                        content_type="application/x-pandas-frames",
+                        metadata={
+                            "period": period,
+                            "interval": interval,
+                            "prepost": prepost,
+                            "requested_tickers": batch,
+                            "returned_tickers": sorted(found),
+                            "missing_tickers": missing,
+                            "batch_number": number,
+                            "batch_count": len(groups),
+                        },
+                        partial=bool(missing),
+                    ),
+                    warnings,
+                )
                 if self.recorder and found:
                     try:
                         self.recorder(interval, found)
                     except Exception as exc:  # collection must not break live quotes
                         warnings.append(f"Could not store {label.lower()} bars: {exc}")
-                failed.extend(ticker for ticker in batch if ticker not in found)
+                failed.extend(missing)
             except Exception as exc:  # yfinance has changed exception types across releases
                 failed.extend(batch)
                 warnings.append(f"{label} batch {number} failed: {exc}")
+                self._record_fetch(
+                    SourceFetch.failure(
+                        source="yahoo",
+                        feed="market_bars",
+                        locator=f"yfinance://download/{interval}",
+                        started_at=started_at,
+                        error=exc,
+                        metadata={
+                            "period": period,
+                            "interval": interval,
+                            "prepost": prepost,
+                            "requested_tickers": batch,
+                            "batch_number": number,
+                            "batch_count": len(groups),
+                        },
+                    ),
+                    warnings,
+                )
 
         if progress:
             progress(len(groups), len(groups), f"{label} complete")

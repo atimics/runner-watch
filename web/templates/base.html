@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#07110d">
   <title>{% block title %}Runner Watch{% endblock %}</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/app.css">
   {% block head %}{% endblock %}
 </head>
@@ -27,7 +28,7 @@
   <main class="shell">{% block content %}{% endblock %}</main>
   <footer>Official SEC filings + delayed market data · Research only · Never a buy signal</footer>
   {% if user %}
-  <script>
+  <script nonce="{{ request.state.csp_nonce }}">
     document.getElementById('logout')?.addEventListener('click', async () => {
       const response = await fetch('/api/auth/logout', {method: 'POST'});
       if (response.ok) location.href = '/';

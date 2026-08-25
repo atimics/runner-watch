@@ -9,6 +9,7 @@ import re
 import secrets
 import threading
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from datetime import time as clock_time
 from pathlib import Path
@@ -43,6 +44,7 @@ from runner_watch.scanner import RunnerScanner
 from runner_watch.universe import penny_runner_universe
 from runner_web.collection import recording_market_data
 from runner_web.db import connection, init_db
+from runner_web.ingestion import ingestion_status, record_source_fetch
 from runner_web.intelligence import record_edgar_error, refresh_edgar
 from runner_web.outcomes import record_outcome_error, refresh_outcomes, refresh_scan_outcomes
 from runner_web.ranker import (
@@ -66,12 +68,36 @@ SCAN_MODES = {
 SCAN_CACHE: dict[str, tuple[datetime, list[dict[str, Any]]]] = {}
 CHART_CACHE: dict[str, tuple[datetime, list[dict[str, Any]]]] = {}
 SCAN_LOCK = threading.Lock()
+RATE_LIMIT_LOCK = threading.Lock()
+RATE_LIMITS: dict[str, list[datetime]] = {}
 EASTERN = ZoneInfo("America/New_York")
 BACKGROUND_SCAN_INTERVAL_SECONDS = max(
-    300, int(os.getenv("BACKGROUND_SCAN_INTERVAL_SECONDS", "1800"))
+    120, int(os.getenv("BACKGROUND_SCAN_INTERVAL_SECONDS", "180"))
 )
 
-app = FastAPI(title="Runner Watch", docs_url=None, redoc_url=None)
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    init_db()
+    tasks = [
+        asyncio.create_task(edgar_worker()),
+        asyncio.create_task(outcome_worker()),
+        asyncio.create_task(scan_collection_worker()),
+    ]
+    application.state.worker_tasks = tasks
+    try:
+        yield
+    finally:
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+
+app = FastAPI(title="Runner Watch", docs_url=None, redoc_url=None, lifespan=lifespan)
 templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
 app.mount("/static", StaticFiles(directory=str(ROOT / "web" / "static")), name="static")
 
@@ -96,6 +122,38 @@ def worker_state(key: str, value: str) -> None:
         )
 
 
+def prune_storage() -> None:
+    """Keep the beta database bounded without removing scored snapshots or receipts."""
+
+    with connection() as db:
+        previous = db.execute(
+            "SELECT updated_at FROM worker_state WHERE key='storage_last_prune'"
+        ).fetchone()
+        if previous and str(previous["updated_at"]) > iso(now() - timedelta(hours=23)):
+            return
+        bars_deleted = db.execute(
+            "DELETE FROM market_bars WHERE last_collected_at<?",
+            (iso(now() - timedelta(days=60)),),
+        ).rowcount
+        documents_deleted = db.execute(
+            "DELETE FROM source_documents WHERE last_collected_at<?",
+            (iso(now() - timedelta(days=365)),),
+        ).rowcount
+        db.execute("DELETE FROM sessions WHERE expires_at<=?", (iso(),))
+        db.execute("DELETE FROM auth_challenges WHERE expires_at<=?", (iso(),))
+        db.execute(
+            """
+            INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at
+            """,
+            (
+                "storage_last_prune",
+                json.dumps({"market_bars": bars_deleted, "source_documents": documents_deleted}),
+                iso(),
+            ),
+        )
+
+
 def row_dict(row: Any) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
@@ -110,8 +168,35 @@ def token_hash(token: str) -> str:
 
 def require_origin(request: Request) -> None:
     origin = request.headers.get("origin")
-    if origin and origin.rstrip("/") != APP_ORIGIN:
+    if not origin or origin.rstrip("/") != APP_ORIGIN:
         raise HTTPException(403, "Origin check failed")
+
+
+def enforce_rate(
+    request: Request,
+    scope: str,
+    *,
+    limit: int,
+    seconds: int,
+    subject: str | None = None,
+) -> None:
+    client = request.client.host if request.client else "unknown"
+    key = f"{scope}:{subject or client}"
+    cutoff = now() - timedelta(seconds=seconds)
+    with RATE_LIMIT_LOCK:
+        recent = [stamp for stamp in RATE_LIMITS.get(key, []) if stamp > cutoff]
+        if len(recent) >= limit:
+            raise HTTPException(429, "Too many requests. Please wait and try again.")
+        recent.append(now())
+        RATE_LIMITS[key] = recent
+        if len(RATE_LIMITS) > 5_000:
+            stale = [
+                name
+                for name, stamps in RATE_LIMITS.items()
+                if not stamps or stamps[-1] <= cutoff
+            ]
+            for name in stale[:1_000]:
+                RATE_LIMITS.pop(name, None)
 
 
 def current_user(session_token: str | None) -> dict[str, Any] | None:
@@ -215,6 +300,7 @@ async def outcome_worker() -> None:
             scan_result = await run_in_threadpool(refresh_scan_outcomes)
             if scan_result["barrier_labels_added"]:
                 await run_in_threadpool(train_shadow_ranker)
+            await run_in_threadpool(prune_storage)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -239,43 +325,19 @@ async def scan_collection_worker() -> None:
         await asyncio.sleep(BACKGROUND_SCAN_INTERVAL_SECONDS)
 
 
-@app.on_event("startup")
-async def startup() -> None:
-    init_db()
-    app.state.edgar_task = asyncio.create_task(edgar_worker())
-    app.state.outcome_task = asyncio.create_task(outcome_worker())
-    app.state.scan_collection_task = asyncio.create_task(scan_collection_worker())
-
-
-@app.on_event("shutdown")
-async def shutdown() -> None:
-    tasks = [
-        task
-        for task in (
-            getattr(app.state, "edgar_task", None),
-            getattr(app.state, "outcome_task", None),
-            getattr(app.state, "scan_collection_task", None),
-        )
-        if task
-    ]
-    for task in tasks:
-        task.cancel()
-    for task in tasks:
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-
-
 @app.middleware("http")
 async def security_headers(request: Request, call_next: Any) -> Response:
+    nonce = secrets.token_urlsafe(16)
+    request.state.csp_nonce = nonce
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if COOKIE_SECURE:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        f"default-src 'self'; script-src 'self' 'nonce-{nonce}'; "
         "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
         "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     )
@@ -305,15 +367,33 @@ class ReportSignal(BaseModel):
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
+def health() -> dict[str, Any]:
     with connection() as db:
         db.execute("SELECT 1").fetchone()
-    return {"status": "ok"}
+        states = {
+            row["key"]: {"value": row["value"], "updated_at": row["updated_at"]}
+            for row in db.execute("SELECT key,value,updated_at FROM worker_state").fetchall()
+        }
+        latest_scan = db.execute("SELECT MAX(captured_at) FROM scan_runs").fetchone()[0]
+    tasks = getattr(app.state, "worker_tasks", [])
+    return {
+        "status": "ok" if not tasks or all(not task.done() for task in tasks) else "degraded",
+        "database": "ok",
+        "workers_running": sum(not task.done() for task in tasks),
+        "latest_scan_at": latest_scan,
+        "edgar_updated_at": states.get("edgar_last_refresh", {}).get("updated_at"),
+        "scan_error": states.get("background_scan_last_error", {}).get("value") or None,
+    }
 
 
 @app.get("/api/ranker/status")
 def api_ranker_status() -> dict[str, Any]:
     return ranker_status()
+
+
+@app.get("/api/ingestion/status")
+def api_ingestion_status() -> dict[str, Any]:
+    return ingestion_status()
 
 
 @app.get("/community", response_class=HTMLResponse)
@@ -325,18 +405,41 @@ def community(
         rows = db.execute(
             """
             SELECT sig.public_id,sig.thesis,sig.horizon,sig.invalidation,sig.disclosure,
-                   sig.created_at,u.username,u.display_name,s.*
+                   sig.created_at,u.username,u.display_name,s.*,
+                   o.barrier_label,o.return_60m_pct,
+                   (SELECT COUNT(*) FROM signals mine
+                    WHERE mine.user_id=sig.user_id AND mine.status='public') AS author_posts,
+                   (SELECT COUNT(*) FROM signals mine
+                    JOIN scan_outcomes mine_o ON mine_o.snapshot_id=mine.snapshot_id
+                    WHERE mine.user_id=sig.user_id AND mine.status='public'
+                          AND mine_o.barrier_label IS NOT NULL) AS author_labeled,
+                   (SELECT COUNT(*) FROM signals mine
+                    JOIN scan_outcomes mine_o ON mine_o.snapshot_id=mine.snapshot_id
+                    WHERE mine.user_id=sig.user_id AND mine.status='public'
+                          AND mine_o.barrier_label='up') AS author_hits
             FROM signals sig
             JOIN users u ON u.id=sig.user_id
             JOIN scan_snapshots s ON s.id=sig.snapshot_id
+            LEFT JOIN scan_outcomes o ON o.snapshot_id=s.id
             WHERE sig.status='public'
             ORDER BY sig.created_at DESC LIMIT 50
             """
         ).fetchall()
+    signals = [dict(row) for row in rows]
+    for signal in signals:
+        labeled = int(signal.get("author_labeled") or 0)
+        signal["author_hit_rate"] = (
+            round(100 * int(signal.get("author_hits") or 0) / labeled) if labeled else None
+        )
     return templates.TemplateResponse(
         request=request,
-        name="home.html",
-        context=page_context(request, runner_session, signals=[dict(row) for row in rows]),
+        name="community.html",
+        context=page_context(
+            request,
+            runner_session,
+            signals=signals,
+            active_tab="alpha",
+        ),
     )
 
 
@@ -389,9 +492,33 @@ def _pulse_label(row: dict[str, Any]) -> str:
     return f"{row.get('form', 'SEC')} · new filing"
 
 
+def _json_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    return [str(item) for item in parsed] if isinstance(parsed, list) else []
+
+
+def _market_pulse_label(snapshot: dict[str, Any], catalyst: dict[str, Any] | None) -> str:
+    if catalyst:
+        label = _pulse_label(catalyst)
+        return f"Risk · {label}" if catalyst.get("sentiment") == "risk" else label
+    parts: list[str] = []
+    recent_rvol = snapshot.get("recent_relative_volume") or snapshot.get("relative_volume")
+    if recent_rvol is not None:
+        parts.append(f"{float(recent_rvol):.1f}× volume")
+    stage = str(snapshot.get("stage") or "").strip().title()
+    if stage:
+        parts.append(stage)
+    return " · ".join(parts) or "Market move · no recent filing"
+
+
 def pulse_data() -> dict[str, Any]:
     cutoff = iso(now() - timedelta(days=3))
-    gap_cutoff = iso(now() - timedelta(hours=3))
+    market_cutoff = iso(now() - timedelta(minutes=12))
     with connection() as db:
         filing_rows = db.execute(
             """
@@ -403,7 +530,7 @@ def pulse_data() -> dict[str, Any]:
             """,
             (cutoff,),
         ).fetchall()
-        gap_rows = db.execute(
+        market_rows = db.execute(
             """
             SELECT s.* FROM scan_snapshots s
             JOIN (
@@ -412,80 +539,104 @@ def pulse_data() -> dict[str, Any]:
             ) latest ON latest.ticker=s.ticker AND latest.captured_at=s.captured_at
             ORDER BY s.score DESC LIMIT 40
             """,
-            (gap_cutoff,),
+            (market_cutoff,),
         ).fetchall()
         state_rows = db.execute(
-            "SELECT key,value FROM worker_state WHERE key LIKE 'edgar_%'"
+            """
+            SELECT key,value,updated_at FROM worker_state
+            WHERE key LIKE 'edgar_%' OR key LIKE 'background_scan_%'
+            """
         ).fetchall()
 
-    grouped: dict[str, dict[str, Any]] = {}
+    filings_by_ticker: dict[str, dict[str, Any]] = {}
+    filing_counts: dict[str, int] = {}
     penny_filings = 0
     for raw in filing_rows:
         event = _intelligence_evidence(dict(raw))
-        if event.get("price") is None or float(event["price"]) > 5:
+        if event.get("price") is None or not 0.20 <= float(event["price"]) <= 5:
             continue
         penny_filings += 1
         ticker = event["ticker"]
-        if ticker in grouped:
-            grouped[ticker]["event_count"] += 1
-            continue
-        event.update(
-            {
-                "coin_label": ticker[:2],
-                "coin_tone": _coin_tone(ticker),
-                "pulse_label": _pulse_label(event),
-                "event_count": 1,
-                "source": "sec",
-                "event_at": event["filed_at"],
-            }
-        )
-        grouped[ticker] = event
+        filing_counts[ticker] = filing_counts.get(ticker, 0) + 1
+        filings_by_ticker.setdefault(ticker, event)
 
+    runner_rows: list[dict[str, Any]] = []
+    runner_tickers: set[str] = set()
     unexplained = 0
-    for raw in gap_rows:
+    for raw in market_rows:
         snapshot = dict(raw)
-        if float(snapshot["price"]) > 5:
+        if not 0.20 <= float(snapshot["price"]) <= 5:
             continue
         ticker = snapshot["ticker"]
-        if ticker in grouped:
-            continue
         relative_volume = snapshot.get("relative_volume")
         if abs(float(snapshot["change_pct"])) < 5 and (
             relative_volume is None or float(relative_volume) < 2
         ):
             continue
-        unexplained += 1
-        grouped[ticker] = {
+        catalyst = filings_by_ticker.get(ticker)
+        if not catalyst:
+            unexplained += 1
+        boost = 5.0 if catalyst and catalyst.get("sentiment") == "positive" else 0.0
+        runner_tickers.add(ticker)
+        runner_rows.append({
             **snapshot,
-            "company": ticker,
-            "kind": "No recent SEC catalyst",
-            "sentiment": "gap",
-            "form": "",
+            "company": catalyst.get("company", ticker) if catalyst else ticker,
+            "kind": catalyst.get("kind") if catalyst else "No recent SEC catalyst",
+            "sentiment": catalyst.get("sentiment") if catalyst else "gap",
+            "form": catalyst.get("form", "") if catalyst else "",
             "coin_label": ticker[:2],
             "coin_tone": _coin_tone(ticker),
-            "pulse_label": "No recent SEC filing",
-            "event_count": 1,
-            "source": "gap",
+            "pulse_label": _market_pulse_label(snapshot, catalyst),
+            "event_count": filing_counts.get(ticker, 0),
+            "source": "market",
+            "section": "runners",
             "event_at": snapshot["captured_at"],
-            "return_1h_pct": None,
-            "return_1d_pct": None,
-            "return_5d_pct": None,
-        }
+            "attention_score": float(snapshot.get("score") or 0) + boost,
+            "filing_url": catalyst.get("filing_url") if catalyst else None,
+            "signals": _json_list(snapshot.get("signals_json")),
+            "risks": _json_list(snapshot.get("risks_json")),
+        })
 
-    rows = sorted(
-        grouped.values(),
-        key=lambda row: (float(row.get("score") or 0), str(row.get("event_at") or "")),
+    runner_rows.sort(
+        key=lambda row: (float(row["attention_score"]), str(row["event_at"])),
         reverse=True,
-    )[:50]
+    )
+    event_rows: list[dict[str, Any]] = []
+    for ticker, event in filings_by_ticker.items():
+        if ticker in runner_tickers:
+            continue
+        event_rows.append({
+            **event,
+            "coin_label": ticker[:2],
+            "coin_tone": _coin_tone(ticker),
+            "pulse_label": _pulse_label(event),
+            "event_count": filing_counts[ticker],
+            "source": "sec",
+            "section": "filings",
+            "event_at": event["filed_at"],
+            "attention_score": float(event.get("score") or 0),
+        })
+    event_rows.sort(key=lambda row: str(row["event_at"]), reverse=True)
+    rows = (runner_rows + event_rows)[:50]
     state = {row["key"]: row["value"] for row in state_rows}
+    market_updated_at = max(
+        (str(row["captured_at"]) for row in market_rows),
+        default=None,
+    )
+    updated_at = max(
+        [stamp for stamp in (market_updated_at, state.get("edgar_last_refresh")) if stamp],
+        default=None,
+    )
     return {
         "rows": rows,
         "stats": {
             "live": len(rows),
+            "runners": len(runner_rows),
             "unexplained": unexplained,
             "filings": penny_filings,
         },
-        "updated_at": state.get("edgar_last_refresh"),
+        "updated_at": updated_at,
+        "market_updated_at": market_updated_at,
     }
 
 
@@ -502,8 +653,17 @@ def home(
 
 
 @app.get("/api/pulse")
-def pulse_api() -> JSONResponse:
+def pulse_api(request: Request) -> JSONResponse:
+    enforce_rate(request, "pulse", limit=180, seconds=60)
     return JSONResponse(pulse_data())
+
+
+@app.get("/api/pulse/charts")
+async def pulse_charts_api(request: Request) -> JSONResponse:
+    enforce_rate(request, "pulse-charts", limit=20, seconds=60)
+    tickers = [row["ticker"] for row in pulse_data()["rows"]]
+    charts = await run_in_threadpool(ticker_charts_data, tickers)
+    return JSONResponse({"charts": charts})
 
 
 def _clean_ticker(ticker: str) -> str:
@@ -511,6 +671,21 @@ def _clean_ticker(ticker: str) -> str:
     if not TICKER_RE.fullmatch(normalized):
         raise HTTPException(404, "Ticker not found")
     return normalized
+
+
+def _ticker_exists(ticker: str) -> bool:
+    with connection() as db:
+        return (
+            db.execute(
+                """
+                SELECT 1 FROM sec_companies WHERE ticker=?
+                UNION SELECT 1 FROM sec_filings WHERE ticker=?
+                UNION SELECT 1 FROM scan_snapshots WHERE ticker=? LIMIT 1
+                """,
+                (ticker, ticker, ticker),
+            ).fetchone()
+            is not None
+        )
 
 
 def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
@@ -522,7 +697,7 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
             FROM sec_filings f
             LEFT JOIN sec_outcomes o ON o.accession=f.accession
             WHERE f.ticker=? AND f.created_at>?
-            ORDER BY f.score DESC,f.filed_at DESC LIMIT 12
+            ORDER BY f.filed_at DESC LIMIT 12
             """,
             (ticker, iso(now() - timedelta(days=30))),
         ).fetchall()
@@ -531,7 +706,13 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
         ).fetchone()
         snapshot = db.execute(
             """
-            SELECT * FROM scan_snapshots WHERE ticker=?
+            SELECT s.*,COALESCE(o.return_60m_pct,o.return_1h_pct) AS scan_return_1h_pct,
+                   o.return_1d_pct AS scan_return_1d_pct,
+                   o.return_5d_pct AS scan_return_5d_pct,
+                   o.barrier_label,o.max_favorable_pct,o.max_adverse_pct
+            FROM scan_snapshots s
+            LEFT JOIN scan_outcomes o ON o.snapshot_id=s.id
+            WHERE s.ticker=?
             ORDER BY captured_at DESC LIMIT 1
             """,
             (ticker,),
@@ -545,19 +726,24 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
         events.append(event)
     if not events and snapshot is None and company is None:
         return None
-    if events:
-        current = events[0]
-    elif snapshot is not None:
-        current = {
-            **dict(snapshot),
-            "ticker": ticker,
-            "kind": "No recent SEC catalyst",
-            "sentiment": "gap",
-            "event_at": snapshot["captured_at"],
-            "return_1h_pct": None,
-            "return_1d_pct": None,
-            "return_5d_pct": None,
-        }
+    if snapshot is not None:
+        current = dict(snapshot)
+        current.update(
+            {
+                "ticker": ticker,
+                "kind": current.get("catalyst_kind") or "No recent SEC catalyst",
+                "sentiment": current.get("catalyst_sentiment") or "gap",
+                "event_at": current["captured_at"],
+                "return_1h_pct": current.get("scan_return_1h_pct"),
+                "return_1d_pct": current.get("scan_return_1d_pct"),
+                "return_5d_pct": current.get("scan_return_5d_pct"),
+                "signals": _json_list(current.get("signals_json")),
+                "risks": _json_list(current.get("risks_json")),
+                "source": "market",
+            }
+        )
+    elif events:
+        current = {**events[0], "signals": [], "risks": [], "source": "sec"}
     else:
         current = {
             "ticker": ticker,
@@ -570,6 +756,9 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
             "return_1h_pct": None,
             "return_1d_pct": None,
             "return_5d_pct": None,
+            "signals": [],
+            "risks": [],
+            "source": "quiet",
         }
     return {
         "ticker": ticker,
@@ -579,15 +768,14 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
         "coin_tone": _coin_tone(ticker),
         "current": current,
         "events": events,
+        "can_publish": bool(
+            snapshot is not None
+            and str(snapshot["captured_at"]) > iso(now() - timedelta(hours=2))
+        ),
     }
 
 
-def ticker_chart_data(ticker: str) -> list[dict[str, Any]]:
-    cached = CHART_CACHE.get(ticker)
-    if cached and cached[0] > now() - timedelta(seconds=90):
-        return cached[1]
-    result = recording_market_data(batch_size=1).intraday([ticker])
-    frame = result.frames.get(ticker)
+def _chart_points(frame: pd.DataFrame | None) -> list[dict[str, Any]]:
     if frame is None or frame.empty:
         return []
     close = pd.Series(dtype="float64")
@@ -605,8 +793,33 @@ def ticker_chart_data(ticker: str) -> list[dict[str, Any]]:
         {"time": pd.Timestamp(stamp).isoformat(), "price": round(float(price), 6)}
         for stamp, price in sampled.items()
     ]
-    CHART_CACHE[ticker] = (now(), points)
     return points
+
+
+def ticker_charts_data(tickers: list[str]) -> dict[str, list[dict[str, Any]]]:
+    requested = list(dict.fromkeys(tickers))[:50]
+    cutoff = now() - timedelta(seconds=90)
+    output = {
+        ticker: cached[1]
+        for ticker in requested
+        if (cached := CHART_CACHE.get(ticker)) and cached[0] > cutoff
+    }
+    missing = [ticker for ticker in requested if ticker not in output]
+    if missing:
+        result = recording_market_data(batch_size=60).intraday(missing)
+        for ticker in missing:
+            points = _chart_points(result.frames.get(ticker))
+            CHART_CACHE[ticker] = (now(), points)
+            output[ticker] = points
+    if len(CHART_CACHE) > 500:
+        oldest = sorted(CHART_CACHE, key=lambda ticker: CHART_CACHE[ticker][0])
+        for ticker in oldest[: len(CHART_CACHE) - 500]:
+            CHART_CACHE.pop(ticker, None)
+    return output
+
+
+def ticker_chart_data(ticker: str) -> list[dict[str, Any]]:
+    return ticker_charts_data([ticker]).get(ticker, [])
 
 
 @app.get("/t/{ticker}", response_class=HTMLResponse)
@@ -644,46 +857,78 @@ def ticker_page(
 
 
 @app.get("/api/t/{ticker}/chart")
-async def ticker_chart_api(ticker: str) -> JSONResponse:
+async def ticker_chart_api(ticker: str, request: Request) -> JSONResponse:
+    enforce_rate(request, "ticker-chart", limit=90, seconds=60)
     normalized = _clean_ticker(ticker)
+    if not _ticker_exists(normalized):
+        raise HTTPException(404, "Ticker not found")
     points = await run_in_threadpool(ticker_chart_data, normalized)
     return JSONResponse({"ticker": normalized, "points": points})
 
 
-def radar_data(user_id: str) -> list[dict[str, Any]]:
+def radar_data(user_id: str, *, mark_seen: bool = False) -> list[dict[str, Any]]:
     with connection() as db:
         rows = db.execute(
             """
-            SELECT w.ticker,w.created_at AS watched_at,
+            SELECT w.ticker,w.created_at AS watched_at,w.last_seen_at,
                    (SELECT c.name FROM sec_companies c WHERE c.ticker=w.ticker LIMIT 1) AS name,
                    (SELECT c.exchange FROM sec_companies c
                     WHERE c.ticker=w.ticker LIMIT 1) AS exchange,
                    f.accession,f.form,f.kind,f.sentiment,f.score,f.filed_at,
                    f.filing_url,f.actor,f.actor_title,f.transaction_codes,
                    f.transaction_shares,f.transaction_price,f.transaction_value,
-                   f.price,f.change_pct
+                   s.id AS snapshot_id,s.price,s.change_pct,s.relative_volume,
+                   s.recent_relative_volume,s.stage,s.captured_at,s.signals_json,s.risks_json
             FROM watches w
             LEFT JOIN sec_filings f ON f.accession=(
                 SELECT sf.accession FROM sec_filings sf
                 WHERE sf.ticker=w.ticker ORDER BY sf.filed_at DESC LIMIT 1
             )
-            WHERE w.user_id=? ORDER BY COALESCE(f.filed_at,w.created_at) DESC
+            LEFT JOIN scan_snapshots s ON s.id=(
+                SELECT ss.id FROM scan_snapshots ss
+                WHERE ss.ticker=w.ticker ORDER BY ss.captured_at DESC LIMIT 1
+            )
+            WHERE w.user_id=?
+            ORDER BY MAX(COALESCE(s.captured_at,''),COALESCE(f.filed_at,''),w.created_at) DESC
             """,
             (user_id,),
         ).fetchall()
     output: list[dict[str, Any]] = []
     for raw in rows:
         item = dict(raw)
+        filing = None
         if item.get("accession"):
-            item = _intelligence_evidence(item)
-            item["pulse_label"] = _pulse_label(item)
+            filing = _intelligence_evidence(dict(item))
+        event_at = max(
+            [
+                stamp
+                for stamp in (item.get("captured_at"), item.get("filed_at"), item["watched_at"])
+                if stamp
+            ]
+        )
+        item["event_at"] = event_at
+        item["has_update"] = not item.get("last_seen_at") or event_at > item["last_seen_at"]
+        if item.get("snapshot_id"):
+            item["pulse_label"] = _market_pulse_label(item, filing)
+            item["evidence_label"] = "Market snapshot"
+            item["evidence_text"] = "Price and volume changed since this ticker was scanned."
+        elif filing:
+            item.update(
+                evidence_label=filing["evidence_label"],
+                evidence_text=filing["evidence_text"],
+                pulse_label=_pulse_label(filing),
+            )
         else:
             item["evidence_label"] = "Watching for changes"
-            item["evidence_text"] = "No recent filing has matched this ticker yet."
+            item["evidence_text"] = "No market snapshot or filing has matched this ticker yet."
             item["pulse_label"] = "Quiet"
         item["coin_label"] = item["ticker"][:2]
         item["coin_tone"] = _coin_tone(item["ticker"])
         output.append(item)
+    if mark_seen and output:
+        seen_at = iso()
+        with connection() as db:
+            db.execute("UPDATE watches SET last_seen_at=? WHERE user_id=?", (seen_at, user_id))
     return output
 
 
@@ -701,10 +946,20 @@ def radar_page(
         context=page_context(
             request,
             runner_session,
-            watches=radar_data(user["id"]),
+            watches=radar_data(user["id"], mark_seen=True),
             active_tab="radar",
         ),
     )
+
+
+@app.get("/api/radar")
+def radar_api(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    user = require_user(runner_session)
+    enforce_rate(request, "radar", limit=120, seconds=60, subject=user["id"])
+    return JSONResponse({"rows": radar_data(user["id"], mark_seen=True), "updated_at": iso()})
 
 
 @app.post("/api/watch/{ticker}")
@@ -715,14 +970,16 @@ def toggle_watch(
 ) -> JSONResponse:
     require_origin(request)
     user = require_user(runner_session)
+    enforce_rate(request, "watch", limit=40, seconds=60, subject=user["id"])
     normalized = _clean_ticker(ticker)
     with connection() as db:
         known = db.execute(
             """
             SELECT 1 FROM sec_companies WHERE ticker=?
-            UNION SELECT 1 FROM sec_filings WHERE ticker=? LIMIT 1
+            UNION SELECT 1 FROM sec_filings WHERE ticker=?
+            UNION SELECT 1 FROM scan_snapshots WHERE ticker=? LIMIT 1
             """,
-            (normalized, normalized),
+            (normalized, normalized, normalized),
         ).fetchone()
         if not known:
             raise HTTPException(404, "Ticker not found")
@@ -738,7 +995,7 @@ def toggle_watch(
             watched = False
         else:
             db.execute(
-                "INSERT INTO watches(user_id,ticker,created_at) VALUES(?,?,?)",
+                "INSERT INTO watches(user_id,ticker,created_at,last_seen_at) VALUES(?,?,?,NULL)",
                 (user["id"], normalized, iso()),
             )
             watched = True
@@ -825,11 +1082,20 @@ def login_page(
 @app.post("/api/auth/register/options")
 def register_options(payload: RegisterStart, request: Request) -> JSONResponse:
     require_origin(request)
+    enforce_rate(request, "register-options", limit=8, seconds=600)
     username = payload.username.strip().lower()
     if not USERNAME_RE.fullmatch(username):
         raise HTTPException(400, "Use 3–24 lowercase letters, numbers, or underscores.")
     user_id = str(uuid.uuid4())
     with connection() as db:
+        db.execute("DELETE FROM auth_challenges WHERE expires_at<=?", (iso(),))
+        db.execute(
+            """
+            DELETE FROM users WHERE status='pending' AND created_at<?
+            AND NOT EXISTS(SELECT 1 FROM passkeys p WHERE p.user_id=users.id)
+            """,
+            (iso(now() - timedelta(minutes=15)),),
+        )
         existing = db.execute("SELECT status FROM users WHERE username=?", (username,)).fetchone()
         if existing:
             raise HTTPException(409, "That username is already taken.")
@@ -857,6 +1123,7 @@ def register_options(payload: RegisterStart, request: Request) -> JSONResponse:
 @app.post("/api/auth/register/verify")
 def register_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
     require_origin(request)
+    enforce_rate(request, "register-verify", limit=12, seconds=600)
     flow = take_challenge(payload.flow_token, "register")
     try:
         verification = verify_registration_response(
@@ -897,6 +1164,7 @@ def register_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
 @app.post("/api/auth/login/options")
 def login_options(request: Request) -> JSONResponse:
     require_origin(request)
+    enforce_rate(request, "login-options", limit=15, seconds=600)
     options = generate_authentication_options(
         rp_id=RP_ID,
         timeout=60_000,
@@ -909,6 +1177,7 @@ def login_options(request: Request) -> JSONResponse:
 @app.post("/api/auth/login/verify")
 def login_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
     require_origin(request)
+    enforce_rate(request, "login-verify", limit=20, seconds=600)
     flow = take_challenge(payload.flow_token, "login")
     credential_id = base64url_to_bytes(payload.credential.get("id", ""))
     with connection() as db:
@@ -939,12 +1208,98 @@ def login_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
     return response
 
 
+@app.get("/settings/passkey", response_class=HTMLResponse)
+def add_passkey_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    user = current_user(runner_session)
+    if not user:
+        return RedirectResponse("/login", 303)
+    return templates.TemplateResponse(
+        request=request,
+        name="passkey_add.html",
+        context=page_context(request, runner_session),
+    )
+
+
+@app.post("/api/auth/passkey/options")
+def add_passkey_options(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "add-passkey", limit=6, seconds=600, subject=user["id"])
+    options = generate_registration_options(
+        rp_id=RP_ID,
+        rp_name="Runner Watch",
+        user_id=user["id"].encode(),
+        user_name=user["username"],
+        user_display_name=user["display_name"],
+        timeout=60_000,
+        attestation=AttestationConveyancePreference.NONE,
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            resident_key=ResidentKeyRequirement.REQUIRED,
+            user_verification=UserVerificationRequirement.REQUIRED,
+        ),
+    )
+    flow_token = save_challenge("add_passkey", options.challenge, user["id"])
+    return JSONResponse({"flow_token": flow_token, "options": json.loads(options_to_json(options))})
+
+
+@app.post("/api/auth/passkey/verify")
+def add_passkey_verify(
+    payload: PasskeyFinish,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "add-passkey-verify", limit=8, seconds=600, subject=user["id"])
+    flow = take_challenge(payload.flow_token, "add_passkey")
+    if flow["user_id"] != user["id"]:
+        raise HTTPException(403, "Passkey request does not match this account.")
+    try:
+        verification = verify_registration_response(
+            credential=payload.credential,
+            expected_challenge=flow["challenge"],
+            expected_rp_id=RP_ID,
+            expected_origin=APP_ORIGIN,
+            require_user_verification=True,
+        )
+    except Exception as exc:
+        raise HTTPException(400, f"Passkey verification failed: {exc}") from exc
+    transports = payload.credential.get("response", {}).get("transports", [])
+    with connection() as db:
+        db.execute(
+            """
+            INSERT INTO passkeys(
+                credential_id,user_id,public_key,sign_count,device_type,backed_up,
+                transports,created_at
+            ) VALUES(?,?,?,?,?,?,?,?)
+            """,
+            (
+                verification.credential_id,
+                user["id"],
+                verification.credential_public_key,
+                verification.sign_count,
+                enum_value(verification.credential_device_type),
+                int(verification.credential_backed_up),
+                json.dumps(transports),
+                iso(),
+            ),
+        )
+    return JSONResponse({"ok": True, "redirect": "/"})
+
+
 @app.post("/api/auth/logout")
 def logout(
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> JSONResponse:
     require_origin(request)
+    enforce_rate(request, "logout", limit=20, seconds=60)
     if runner_session:
         with connection() as db:
             db.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash(runner_session),))
@@ -1014,6 +1369,7 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
     entries, universe_warnings = penny_runner_universe(
         min_price=config["min_price"],
         max_price=config["max_price"],
+        fetch_recorder=record_source_fetch,
     )
     symbols = [entry.symbol for entry in entries]
     result = RunnerScanner(recording_market_data(batch_size=60)).scan(
@@ -1180,7 +1536,8 @@ async def api_scan(
     runner_session: str | None = Cookie(default=None),
 ) -> JSONResponse:
     require_origin(request)
-    require_user(runner_session)
+    user = require_user(runner_session)
+    enforce_rate(request, "scan", limit=6, seconds=600, subject=user["id"])
     if mode not in SCAN_MODES:
         raise HTTPException(400, "Unknown scan mode")
     result = await run_in_threadpool(run_scan, mode)
@@ -1195,6 +1552,7 @@ def publish_signal(
 ) -> JSONResponse:
     require_origin(request)
     user = require_user(runner_session)
+    enforce_rate(request, "publish", limit=8, seconds=3600, subject=user["id"])
     with connection() as db:
         recent_count = db.execute(
             "SELECT COUNT(*) FROM signals WHERE user_id=? AND created_at>?",
@@ -1239,9 +1597,11 @@ def get_signal(public_id: str) -> dict[str, Any] | None:
             """
             SELECT sig.id AS signal_id,sig.public_id,sig.thesis,sig.horizon,
                    sig.invalidation,sig.disclosure,sig.created_at,u.username,
-                   u.display_name,s.*
+                   u.display_name,s.*,o.barrier_label,o.return_60m_pct,
+                   o.max_favorable_pct,o.max_adverse_pct
             FROM signals sig JOIN users u ON u.id=sig.user_id
             JOIN scan_snapshots s ON s.id=sig.snapshot_id
+            LEFT JOIN scan_outcomes o ON o.snapshot_id=s.id
             WHERE sig.public_id=? AND sig.status='public'
             """,
             (public_id,),
@@ -1323,6 +1683,7 @@ def report_signal(
 ) -> JSONResponse:
     require_origin(request)
     user = require_user(runner_session)
+    enforce_rate(request, "report", limit=20, seconds=3600, subject=user["id"])
     signal = get_signal(public_id)
     if not signal:
         raise HTTPException(404, "Signal not found")
@@ -1334,4 +1695,10 @@ def report_signal(
             """,
             (str(uuid.uuid4()), signal["signal_id"], user["id"], payload.reason.strip(), iso()),
         )
-    return JSONResponse({"ok": True})
+        reports = db.execute(
+            "SELECT COUNT(*) FROM reports WHERE signal_id=?", (signal["signal_id"],)
+        ).fetchone()[0]
+        under_review = reports >= 3
+        if under_review:
+            db.execute("UPDATE signals SET status='review' WHERE id=?", (signal["signal_id"],))
+    return JSONResponse({"ok": True, "under_review": under_review})

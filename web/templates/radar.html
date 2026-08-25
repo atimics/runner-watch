@@ -7,21 +7,20 @@
 </header>
 
 <main class="list-section radar-section">
-  {% if watches %}
   <div class="radar-message"><span></span><div><strong>Only changes matter</strong><p>New primary-source events rise to the top.</p></div></div>
-  <div class="list-title"><strong>{{ watches|length }} watched</strong><span>latest evidence</span></div>
-  <div class="token-list">
-    {% for item in watches %}
-    <a class="token-row radar-row" href="/t/{{ item.ticker }}">
-      <span class="coin coin-{{ item.coin_tone }}"><b>{{ item.coin_label }}</b><i></i></span>
-      <span class="token-copy"><span class="ticker-line"><strong>{{ item.ticker }}</strong>{% if item.filed_at %}<small>{{ item.filed_at[:10] }}</small>{% endif %}</span><span class="company-name">{{ item.name or item.ticker }}</span><span class="catalyst">{{ item.pulse_label }}</span></span>
-      <span class="radar-arrow">›</span>
-    </a>
-    {% endfor %}
-  </div>
-  {% else %}
-  <div class="empty-list radar-empty"><span class="empty-radar"></span><strong>Your radar is empty</strong><p>Open a ticker from Pulse and tap Watch.</p><a href="/">Browse Pulse</a></div>
-  {% endif %}
+  <div class="list-title"><strong id="watchCount">{{ watches|length }} watched</strong><span id="radarStatus">checking for changes</span></div>
+  <div class="token-list" id="radarList"></div>
 </main>
-<p class="source-note">Alerts use SEC filings first · research only</p>
+<p class="source-note">Market snapshots + SEC filings · research only</p>
+{% endblock %}
+{% block scripts %}
+<script nonce="{{ request.state.csp_nonce }}">
+let rows={{ watches|tojson }};const list=document.getElementById('radarList');
+function esc(value){const node=document.createElement('span');node.textContent=String(value??'');return node.innerHTML;}
+function money(value){const number=Number(value);if(!Number.isFinite(number))return '—';return '$'+number.toFixed(number<1?4:2);}
+function percent(value){const number=Number(value);if(!Number.isFinite(number))return '';return `${number>=0?'+':''}${number.toFixed(1)}%`;}
+function render(){document.getElementById('watchCount').textContent=`${rows.length} watched`;list.innerHTML=rows.map(item=>{const change=Number(item.change_pct);return `<a class="token-row radar-row${item.has_update?' has-update':''}" href="/t/${encodeURIComponent(item.ticker)}"><span class="coin coin-${Number(item.coin_tone)||0}"><b>${esc(item.coin_label)}</b><i></i></span><span class="token-copy"><span class="ticker-line"><strong>${esc(item.ticker)}</strong>${item.has_update?'<small>new</small>':''}</span><span class="company-name">${esc(item.name||item.ticker)}</span><span class="catalyst">${esc(item.pulse_label)}</span></span><span class="radar-quote"><strong>${esc(money(item.price))}</strong><small class="${Number.isFinite(change)?change>=0?'up':'down':'flat'}">${esc(percent(item.change_pct))}</small></span></a>`;}).join('')||`<div class="empty-list radar-empty"><span class="empty-radar"></span><strong>Your radar is empty</strong><p>Open a ticker from Pulse and tap Watch.</p><a href="/">Browse Pulse</a></div>`;}
+render();
+setInterval(async()=>{try{const response=await fetch('/api/radar');if(!response.ok)return;const data=await response.json();const updates=(data.rows||[]).filter(item=>item.has_update);rows=data.rows||[];render();document.getElementById('radarStatus').textContent=updates.length?`${updates.length} new`:'up to date';if(updates.length&&'Notification'in window&&Notification.permission==='granted')new Notification(`${updates[0].ticker} changed`,{body:updates[0].pulse_label});}catch(_){document.getElementById('radarStatus').textContent='reconnecting';}},30000);
+</script>
 {% endblock %}
