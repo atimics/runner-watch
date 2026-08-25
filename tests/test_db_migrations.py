@@ -52,8 +52,11 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert "actor_snapshot_json" in call_columns
     assert {
         "market_events_event_time",
+        "market_events_ticker_event_time",
         "sec_filings_created",
+        "sec_filings_ticker_filed_score",
         "scan_runs_candidate_captured",
+        "scan_snapshots_ticker_captured",
     } <= indexes
 
 

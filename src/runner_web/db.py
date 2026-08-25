@@ -998,6 +998,21 @@ def _migration_009_request_path_indexes(db: sqlite3.Connection) -> None:
     )
 
 
+def _migration_010_radar_indexes(db: sqlite3.Connection) -> None:
+    """Support Radar's latest-event and latest-snapshot batch reads."""
+
+    db.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS scan_snapshots_ticker_captured
+            ON scan_snapshots(ticker,captured_at DESC);
+        CREATE INDEX IF NOT EXISTS market_events_ticker_event_time
+            ON market_events(ticker,event_at DESC,last_collected_at DESC);
+        CREATE INDEX IF NOT EXISTS sec_filings_ticker_filed_score
+            ON sec_filings(ticker,filed_at DESC,score DESC);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -1015,6 +1030,7 @@ MIGRATIONS = (
     Migration(7, "pulse_attention", _migration_007_pulse_attention),
     Migration(8, "flash_actor", _migration_008_flash_actor),
     Migration(9, "request_path_indexes", _migration_009_request_path_indexes),
+    Migration(10, "radar_indexes", _migration_010_radar_indexes),
 )
 
 

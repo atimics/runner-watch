@@ -132,6 +132,11 @@ PULSE_CACHE_TTL_SECONDS = max(
 )
 PULSE_DATA_LOCK = threading.Lock()
 PULSE_DATA_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+RADAR_CACHE_TTL_SECONDS = max(
+    5.0, float(os.getenv("RADAR_CACHE_TTL_SECONDS", "20"))
+)
+RADAR_DATA_LOCK = threading.Lock()
+RADAR_DATA_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 CHART_TOPIC_POLICY = TopicPolicy(
     ttl_seconds=90,
     minimum_refresh_seconds=10,
@@ -2799,45 +2804,103 @@ def _activity_scores(profile: str, user_id: str | None = None) -> dict[str, floa
     return scores
 
 
-def radar_data(
-    user_id: str | None = None,
-    *,
-    visitor_id: str | None = None,
-    mark_seen: bool = False,
-) -> list[dict[str, Any]]:
-    profile = f"u:{user_id}" if user_id else f"v:{visitor_id or 'guest'}"
+def _radar_market_summaries(tickers: list[str]) -> dict[str, dict[str, Any]]:
+    """Load the small amount of ticker context Radar actually renders."""
+
+    requested = list(dict.fromkeys(str(ticker).upper() for ticker in tickers))[:40]
+    if not requested:
+        return {}
+    placeholders = ",".join("?" for _ in requested)
+    with connection() as db:
+        company_rows = db.execute(
+            f"""
+            SELECT ticker,name,exchange FROM sec_companies
+            WHERE ticker IN ({placeholders})
+            """,
+            requested,
+        ).fetchall()
+        snapshot_rows = db.execute(
+            f"""
+            WITH ranked AS (
+                SELECT s.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY ticker ORDER BY captured_at DESC
+                       ) AS radar_position
+                FROM scan_snapshots s WHERE ticker IN ({placeholders})
+            )
+            SELECT * FROM ranked WHERE radar_position=1
+            """,
+            requested,
+        ).fetchall()
+
+    companies = {str(row["ticker"]): dict(row) for row in company_rows}
+    snapshots = {str(row["ticker"]): dict(row) for row in snapshot_rows}
+    summaries: dict[str, dict[str, Any]] = {}
+    for ticker in requested:
+        company = companies.get(ticker, {})
+        snapshot = snapshots.get(ticker, {})
+        snapshot.pop("radar_position", None)
+        summaries[ticker] = {
+            **snapshot,
+            "ticker": ticker,
+            "company": company.get("name") or ticker,
+            "exchange": company.get("exchange") or "Listed US stock",
+            "coin_label": ticker[:2],
+            "coin_tone": _coin_tone(ticker),
+        }
+    return summaries
+
+
+def _radar_base_data_uncached() -> list[dict[str, Any]]:
     cutoff = iso(now() - timedelta(days=3))
     with connection() as db:
         filing_rows = db.execute(
             """
-            SELECT f.*,o.return_1h_pct,o.return_1d_pct,o.return_5d_pct
-            FROM sec_filings f
-            LEFT JOIN sec_outcomes o ON o.accession=f.accession
-            WHERE f.created_at>? ORDER BY f.filed_at DESC,f.score DESC
+            WITH ranked AS (
+                SELECT f.*,o.return_1h_pct,o.return_1d_pct,o.return_5d_pct,
+                       COUNT(*) OVER (PARTITION BY f.ticker) AS radar_event_count,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY f.ticker
+                           ORDER BY f.filed_at DESC,f.score DESC
+                       ) AS radar_position
+                FROM sec_filings f
+                LEFT JOIN sec_outcomes o ON o.accession=f.accession
+                WHERE f.created_at>?
+                  AND NOT (
+                      COALESCE(f.sentiment,'')='neutral' AND COALESCE(f.score,0)<40
+                  )
+            )
+            SELECT * FROM ranked WHERE radar_position=1
+            ORDER BY filed_at DESC,score DESC LIMIT 40
             """,
             (cutoff,),
         ).fetchall()
         market_event_rows = db.execute(
             """
-            SELECT * FROM market_events WHERE event_at>?
-            ORDER BY event_at DESC,last_collected_at DESC
+            WITH ranked AS (
+                SELECT m.*,
+                       COUNT(*) OVER (PARTITION BY m.ticker) AS radar_event_count,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY m.ticker
+                           ORDER BY m.event_at DESC,m.last_collected_at DESC
+                       ) AS radar_position
+                FROM market_events m
+                WHERE m.event_at>? AND COALESCE(m.ticker,'')!=''
+            )
+            SELECT * FROM ranked WHERE radar_position=1
+            ORDER BY event_at DESC,last_collected_at DESC LIMIT 40
             """,
             (cutoff,),
         ).fetchall()
-        seen = {
-            row["ticker"]: row["last_seen_at"]
-            for row in db.execute(
-                "SELECT ticker,last_seen_at FROM radar_seen WHERE profile_id=?", (profile,)
-            ).fetchall()
-        }
     events: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
     for raw in filing_rows:
-        event = _intelligence_evidence(dict(raw))
-        if event.get("sentiment") == "neutral" and float(event.get("score") or 0) < 40:
-            continue
+        event = dict(raw)
+        event_count = int(event.pop("radar_event_count", 1))
+        event.pop("radar_position", None)
+        event = _intelligence_evidence(event)
         ticker = event["ticker"]
-        counts[ticker] = counts.get(ticker, 0) + 1
+        counts[ticker] = counts.get(ticker, 0) + event_count
         events.append(
             {
                 **event,
@@ -2851,13 +2914,18 @@ def radar_data(
                 "filing_url": event.get("filing_url"),
             }
         )
+    market_summaries = _radar_market_summaries(
+        [str(row["ticker"]) for row in market_event_rows]
+    )
     for raw in market_event_rows:
         event = dict(raw)
+        event_count = int(event.pop("radar_event_count", 1))
+        event.pop("radar_position", None)
         ticker = str(event.get("ticker") or "").upper()
         if not ticker:
             continue
-        counts[ticker] = counts.get(ticker, 0) + 1
-        summary = _ticker_summary(ticker) or {}
+        counts[ticker] = counts.get(ticker, 0) + event_count
+        summary = market_summaries.get(ticker, {})
         payload = _event_payload(event)
         event_type_key = str(event.get("event_type") or "market_event")
         event_type = event_type_key.replace("_", " ")
@@ -2923,8 +2991,6 @@ def radar_data(
         ticker = item["ticker"]
         item["event_count"] = counts[ticker]
         item["evidence_gate"] = _evidence_gate(item, [item])
-        event_at = item.get("event_at")
-        item["has_update"] = bool(event_at and (not seen.get(ticker) or event_at > seen[ticker]))
     output.sort(
         key=lambda row: (
             str(row.get("event_at") or ""),
@@ -2932,7 +2998,43 @@ def radar_data(
         ),
         reverse=True,
     )
-    output = output[:20]
+    return output[:20]
+
+
+def _radar_base_data() -> list[dict[str, Any]]:
+    cache_key = str(runner_db.DATABASE_PATH)
+    current = time.monotonic()
+    with RADAR_DATA_LOCK:
+        cached = RADAR_DATA_CACHE.get(cache_key)
+        if cached and current < cached[0]:
+            return cached[1]
+        output = _radar_base_data_uncached()
+        if len(RADAR_DATA_CACHE) >= 8 and cache_key not in RADAR_DATA_CACHE:
+            oldest_key = min(RADAR_DATA_CACHE, key=lambda key: RADAR_DATA_CACHE[key][0])
+            RADAR_DATA_CACHE.pop(oldest_key, None)
+        RADAR_DATA_CACHE[cache_key] = (current + RADAR_CACHE_TTL_SECONDS, output)
+        return output
+
+
+def radar_data(
+    user_id: str | None = None,
+    *,
+    visitor_id: str | None = None,
+    mark_seen: bool = False,
+) -> list[dict[str, Any]]:
+    profile = f"u:{user_id}" if user_id else f"v:{visitor_id or 'guest'}"
+    output = [dict(row) for row in _radar_base_data()]
+    with connection() as db:
+        seen = {
+            row["ticker"]: row["last_seen_at"]
+            for row in db.execute(
+                "SELECT ticker,last_seen_at FROM radar_seen WHERE profile_id=?", (profile,)
+            ).fetchall()
+        }
+    for item in output:
+        ticker = item["ticker"]
+        event_at = item.get("event_at")
+        item["has_update"] = bool(event_at and (not seen.get(ticker) or event_at > seen[ticker]))
     if mark_seen and output:
         seen_at = iso()
         with connection() as db:

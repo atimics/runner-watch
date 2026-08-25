@@ -260,6 +260,29 @@ def test_pulse_reuses_the_shared_base_payload(
     assert calls == 1
 
 
+def test_radar_reuses_the_shared_base_payload(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "radar-cache.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_filing("radar-cache-one", "ONE", 1.25, 80, captured_at, "P")
+    web_main.RADAR_DATA_CACHE.clear()
+    original = web_main._radar_base_data_uncached
+    calls = 0
+
+    def counted() -> list[dict[str, Any]]:
+        nonlocal calls
+        calls += 1
+        return original()
+
+    monkeypatch.setattr(web_main, "_radar_base_data_uncached", counted)
+
+    assert radar_data(visitor_id="first")[0]["ticker"] == "ONE"
+    assert radar_data(visitor_id="second")[0]["ticker"] == "ONE"
+    assert calls == 1
+
+
 def test_pulse_entry_moves_from_unseen_to_seen_to_inspected(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
