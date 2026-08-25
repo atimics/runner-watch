@@ -31,7 +31,7 @@
   </section>
 
   <section class="why-section">
-    <div class="section-heading"><div><span>MARKET STATE</span><h2>Why moving</h2></div>{% if detail.current.score %}<b>{{ '%.0f'|format(detail.current.score) }} runner score</b>{% endif %}</div>
+    <div class="section-heading"><div><span>MARKET STATE</span><h2>Why moving</h2></div>{% if detail.current.source == 'market' and detail.current.score %}<b>{{ '%.0f'|format(detail.current.score) }} runner score</b>{% elif detail.current.source == 'sec' %}<b>fresh filing</b>{% endif %}</div>
     {% if detail.current.source == 'market' %}
     <div class="market-metrics">
       <div><span>RVOL</span><strong>{% if detail.current.relative_volume is not none %}{{ '%.1f'|format(detail.current.relative_volume) }}×{% else %}—{% endif %}</strong></div>
