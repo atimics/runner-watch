@@ -52,6 +52,20 @@
 }
 
 .auth-submit:disabled { opacity: .5; cursor: wait; }
+.auth-secondary {
+  width: 100%;
+  height: 44px;
+  margin-top: 9px;
+  border: 1px solid #2b3531;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.auth-secondary:hover { border-color: #4d5d56; background: rgba(255, 255, 255, .025); }
+.auth-secondary:disabled { opacity: .5; cursor: wait; }
 .callback-home { display: grid; place-items: center; text-decoration: none; }
 .auth-switch { text-align: center !important; font-size: 10px !important; margin-top: 16px; }
 .auth-switch a { color: var(--green); }

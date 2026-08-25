@@ -39,6 +39,7 @@ from webauthn import (
 )
 from webauthn.helpers.structs import (
     AttestationConveyancePreference,
+    AuthenticatorAttachment,
     AuthenticatorSelectionCriteria,
     ResidentKeyRequirement,
     UserVerificationRequirement,
@@ -2066,6 +2067,7 @@ def register_options(request: Request) -> JSONResponse:
         timeout=60_000,
         attestation=AttestationConveyancePreference.NONE,
         authenticator_selection=AuthenticatorSelectionCriteria(
+            authenticator_attachment=AuthenticatorAttachment.PLATFORM,
             resident_key=ResidentKeyRequirement.REQUIRED,
             user_verification=UserVerificationRequirement.REQUIRED,
         ),

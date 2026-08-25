@@ -1,5 +1,5 @@
 {% extends "mobile_base.html" %}
-{% block title %}Passkey login · Runner Watch{% endblock %}
+{% block title %}Create a passkey · Runner Watch{% endblock %}
 {% block head %}<link rel="stylesheet" href="/static/auth-mobile.css">{% endblock %}
 {% block content %}
 <header class="detail-nav auth-nav">
@@ -9,8 +9,10 @@
 </header>
 <main class="mobile-auth-wrap">
   <section class="mobile-auth-card">
-    <h1>Login with passkey</h1>
-    <button class="auth-submit" id="authButton">Login with passkey</button>
+    <h1>Create your passkey</h1>
+    <p>Use Face ID, Touch ID, or this device’s screen lock. No username or password.</p>
+    <button class="auth-submit" id="createButton">Create passkey</button>
+    <button class="auth-secondary" id="loginButton">Use a passkey to log in</button>
     <div id="authStatus" class="status" aria-live="polite"></div>
   </section>
 </main>
@@ -19,8 +21,8 @@
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
 const statusBox = document.getElementById('authStatus');
-const button = document.getElementById('authButton');
-let action = 'login';
+const createButton = document.getElementById('createButton');
+const loginButton = document.getElementById('loginButton');
 const requestedNext = new URLSearchParams(location.search).get('next') || '/';
 const nextPath = requestedNext.startsWith('/') && !requestedNext.startsWith('//') ? requestedNext : '/';
 function b64bytes(value) {
@@ -67,8 +69,11 @@ async function api(url, body) {
   if (!response.ok) throw new Error(data.detail || 'Request failed');
   return data;
 }
-button.addEventListener('click', async () => {
-  button.disabled = true; statusBox.className = 'status'; statusBox.textContent = 'Waiting for your device…';
+async function runPasskey(action) {
+  createButton.disabled = true;
+  loginButton.disabled = true;
+  statusBox.className = 'status';
+  statusBox.textContent = action === 'register' ? 'Creating a passkey on this device…' : 'Choose your passkey…';
   try {
     if (!window.PublicKeyCredential) throw new Error('This browser does not support passkeys.');
     let start, credential;
@@ -84,17 +89,15 @@ button.addEventListener('click', async () => {
       location.href = nextPath || done.redirect;
     }
   } catch (error) {
-    if (action === 'login' && (error.name === 'NotAllowedError' || String(error.message).includes('not registered'))) {
-      action = 'register';
-      button.textContent = 'Create passkey';
-      statusBox.className = 'status';
-      statusBox.textContent = 'No passkey found. Tap once more to create one.';
-    } else {
-      statusBox.className = 'status error';
-      statusBox.textContent = error.message || String(error);
-    }
-    button.disabled = false;
+    statusBox.className = 'status error';
+    statusBox.textContent = error.name === 'NotAllowedError'
+      ? (action === 'register' ? 'Passkey creation was cancelled.' : 'Passkey login was cancelled.')
+      : (error.message || String(error));
+    createButton.disabled = false;
+    loginButton.disabled = false;
   }
-});
+}
+createButton.addEventListener('click', () => runPasskey('register'));
+loginButton.addEventListener('click', () => runPasskey('login'));
 </script>
 {% endblock %}
