@@ -282,8 +282,37 @@ def init_db() -> None:
             "catalyst_sentiment TEXT",
             "catalyst_score REAL",
             "catalyst_filed_at TEXT",
+            "momentum_previous_5m_pct REAL",
+            "momentum_acceleration_pct REAL",
+            "intraday_volatility_pct REAL",
+            "vwap_position_pct REAL",
+            "pullback_from_high_pct REAL",
+            "close_location REAL",
+            "recent_dollar_volume REAL",
+            "scoring_version TEXT",
         ):
             _ensure_column(db, "scan_snapshots", definition)
+        for definition in (
+            "barrier_label TEXT",
+            "barrier_hit_at TEXT",
+            "barrier_ambiguous INTEGER",
+            "upper_barrier_pct REAL",
+            "lower_barrier_pct REAL",
+            "horizon_minutes INTEGER",
+            "max_favorable_pct REAL",
+            "max_adverse_pct REAL",
+            "price_60m REAL",
+            "return_60m_pct REAL",
+            "observed_60m_at TEXT",
+        ):
+            _ensure_column(db, "scan_outcomes", definition)
+        for definition in (
+            "probability_up REAL",
+            "probability_down REAL",
+            "probability_timeout REAL",
+            "expected_return_pct REAL",
+        ):
+            _ensure_column(db, "ranker_predictions", definition)
         _ensure_column(db, "sec_filings", "parser_version TEXT NOT NULL DEFAULT 'legacy'")
         _ensure_column(
             db,

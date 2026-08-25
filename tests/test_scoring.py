@@ -44,3 +44,29 @@ def test_stale_quote_lowers_score() -> None:
 def test_missing_volume_history_is_visible() -> None:
     result = score_runner(make_input(relative_volume=None, recent_relative_volume=None))
     assert "not enough volume history" in result.risks
+
+
+def test_fading_move_scores_below_healthy_structure() -> None:
+    healthy = score_runner(
+        make_input(
+            momentum_acceleration_pct=1.5,
+            vwap_position_pct=2.0,
+            pullback_from_high_pct=0.5,
+            close_location=0.9,
+            recent_dollar_volume=600_000,
+        )
+    )
+    fading = score_runner(
+        make_input(
+            momentum_5m_pct=-2.0,
+            momentum_15m_pct=-1.0,
+            momentum_acceleration_pct=-2.0,
+            vwap_position_pct=-3.0,
+            pullback_from_high_pct=6.0,
+            close_location=0.1,
+            recent_dollar_volume=600_000,
+        )
+    )
+    assert fading.score < healthy.score - 20
+    assert "short-term momentum is falling" in fading.risks
+    assert "below VWAP" in fading.risks

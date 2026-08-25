@@ -36,10 +36,15 @@ The main screen ranks stocks with a **runner score**. The score looks for:
 - volume that is unusual for the same time of day
 - a fresh increase in the last 15 minutes
 - positive 5-minute and 15-minute price movement
+- momentum acceleration instead of momentum alone
 - a move above the prior day's high
-- price holding near the current session high
-- enough dollar volume to enter and exit more easily
+- price holding near the current session high and above intraday VWAP
+- recent traded value, not only full-session dollar volume
 - fresh data and a move that is not already too extended
+
+It also cuts the score for falling short-term momentum, a pullback from the session high, weak
+bar closes, and price below VWAP. The market score remains a readable screening rule. It is not
+presented as a probability.
 
 ## Shadow ranker
 
@@ -49,25 +54,31 @@ Stonks now keeps a complete, versioned training record without changing the publ
 - all feature inputs, missing values, baseline rank, catalyst context, and quote times are saved
 - Yahoo daily and 5-minute bars fetched by the web app are deduplicated into `market_bars`
 - every distinct SEC response body fetched by the listener is saved in `source_documents`
-- scan outcomes use archived bars after 1 hour, the next session, and the fifth later session
-- a small listwise linear model trains only after at least 20 complete scan groups and 200 labels
-- learned scores are stored in `ranker_predictions` with the exact model ID
+- each candidate is labeled by whether price touches +8% or −4% first in the next 60 minutes
+- a row is called a timeout only when archived bars cover the full hour
+- a bar touching both levels is conservatively labeled down and marked as ambiguous
+- a three-way logistic model predicts up, down, and timeout after 40 complete groups, 1,000 labels,
+  and at least 20 examples of each outcome
+- training uses older groups and validation uses the newest 20%; validation also calibrates the probabilities
+- learned probabilities and expected return are stored with the exact model ID
 - the web worker collects a penny-stock scan every 30 minutes on weekdays from 4 a.m. to 8 p.m. ET
 
-The learned model remains in **shadow** status. The hand-written runner score continues to control
-the public order and acts as the fallback when there is no trained model.
+The learned model remains in **shadow** status. Its displayed chance means “estimated chance of
+hitting +8% before −4% within 60 minutes.” Gross expected return is calculated from all three outcomes.
+The hand-written market score still controls the public order and is the fallback when there is no
+trained model.
 
 Inspect or train it locally:
 
 ```bash
 uv run stonks-ranker status
-uv run stonks-ranker train --horizon 1h
+uv run stonks-ranker train --horizon 60m
 ```
 
 Export the same complete candidate groups to the generic `crlplrimes` dataset contract:
 
 ```bash
-uv run stonks-ranker export-crl data/stonks-crl-1h.csv --horizon 1h
+uv run stonks-ranker export-crl data/stonks-crl-60m.csv --horizon 60m
 ```
 
 The status API is available at `/api/ranker/status`. Raw source storage will grow over time, so a

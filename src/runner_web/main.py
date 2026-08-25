@@ -213,7 +213,7 @@ async def outcome_worker() -> None:
         try:
             await run_in_threadpool(refresh_outcomes)
             scan_result = await run_in_threadpool(refresh_scan_outcomes)
-            if scan_result["samples_added"]:
+            if scan_result["barrier_labels_added"]:
                 await run_in_threadpool(train_shadow_ranker)
         except asyncio.CancelledError:
             raise
@@ -1081,6 +1081,14 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
                 "dollar_volume": item.dollar_volume,
                 "average_volume": item.average_volume,
                 "average_dollar_volume": item.average_dollar_volume,
+                "momentum_previous_5m_pct": item.momentum_previous_5m_pct,
+                "momentum_acceleration_pct": item.momentum_acceleration_pct,
+                "intraday_volatility_pct": item.intraday_volatility_pct,
+                "vwap_position_pct": item.vwap_position_pct,
+                "pullback_from_high_pct": item.pullback_from_high_pct,
+                "close_location": item.close_location,
+                "recent_dollar_volume": item.recent_dollar_volume,
+                "scoring_version": item.scoring_version,
                 "quote_time": item.quote_time.isoformat(),
                 "signals_json": json.dumps(item.signals),
                 "risks_json": json.dumps(item.risks),
@@ -1102,7 +1110,11 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
                     signals_json,risks_json,captured_at,scan_run_id,baseline_rank,
                     range_position,stale_minutes,session_volume,average_volume,
                     average_dollar_volume,catalyst_kind,catalyst_form,
-                    catalyst_sentiment,catalyst_score,catalyst_filed_at
+                    catalyst_sentiment,catalyst_score,catalyst_filed_at,
+                    momentum_previous_5m_pct,momentum_acceleration_pct,
+                    intraday_volatility_pct,vwap_position_pct,
+                    pullback_from_high_pct,close_location,recent_dollar_volume,
+                    scoring_version
                 ) VALUES(
                     :id,:ticker,:score,:stage,:session,:price,:change_pct,
                     :momentum_5m_pct,:momentum_15m_pct,:relative_volume,
@@ -1110,7 +1122,11 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
                     :signals_json,:risks_json,:captured_at,:scan_run_id,:baseline_rank,
                     :range_position,:stale_minutes,:session_volume,:average_volume,
                     :average_dollar_volume,:catalyst_kind,:catalyst_form,
-                    :catalyst_sentiment,:catalyst_score,:catalyst_filed_at
+                    :catalyst_sentiment,:catalyst_score,:catalyst_filed_at,
+                    :momentum_previous_5m_pct,:momentum_acceleration_pct,
+                    :intraday_volatility_pct,:vwap_position_pct,
+                    :pullback_from_high_pct,:close_location,:recent_dollar_volume,
+                    :scoring_version
                 )
                 """,
                 values,
@@ -1123,7 +1139,9 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
         with connection() as db:
             predicted_rows = db.execute(
                 """
-                SELECT snapshot_id,score,rank FROM ranker_predictions
+                SELECT snapshot_id,score,rank,probability_up,probability_down,
+                       probability_timeout,expected_return_pct
+                FROM ranker_predictions
                 WHERE model_id=? AND snapshot_id IN (
                     SELECT id FROM scan_snapshots WHERE scan_run_id=?
                 )
@@ -1134,8 +1152,10 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
         for values in output:
             row = predicted.get(values["id"])
             if row:
+                values["runner_probability"] = row["probability_up"]
                 values["custom_score"] = row["score"]
                 values["custom_rank"] = row["rank"]
+                values["expected_return_pct"] = row["expected_return_pct"]
                 values["ranker_model_id"] = prediction["model_id"]
     SCAN_CACHE[mode] = (now(), output)
     return {

@@ -22,6 +22,9 @@ def test_sample_scan_runs_end_to_end() -> None:
     assert result.all_rows == result.rows
     assert result.rows == sorted(result.rows, key=lambda row: row.score, reverse=True)
     assert result.rows[0].relative_volume is not None
+    assert result.rows[0].recent_dollar_volume > 0
+    assert 0 <= result.rows[0].close_location <= 1
+    assert result.rows[0].scoring_version == "market_v2"
     assert any(row.stage == "EARLY" for row in result.rows)
 
 

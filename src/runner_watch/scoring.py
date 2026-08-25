@@ -19,6 +19,13 @@ class ScoreInput:
     range_position: float
     dollar_volume: float
     stale_minutes: float
+    momentum_previous_5m_pct: float = 0.0
+    momentum_acceleration_pct: float = 0.0
+    intraday_volatility_pct: float = 0.0
+    vwap_position_pct: float = 0.0
+    pullback_from_high_pct: float = 0.0
+    close_location: float = 0.5
+    recent_dollar_volume: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,29 +52,58 @@ def score_runner(item: ScoreInput) -> ScoreOutput:
 
     volume = _volume_score(item.relative_volume, 24.0)
     recent_volume = _volume_score(item.recent_relative_volume, 12.0)
-    momentum = clamp(max(item.momentum_5m_pct, 0) * 2.2, 0, 12)
-    momentum += clamp(max(item.momentum_15m_pct, 0) * 1.1, 0, 13)
+    momentum = clamp(max(item.momentum_5m_pct, 0) * 2.0, 0, 10)
+    momentum += clamp(max(item.momentum_15m_pct, 0) * 1.0, 0, 10)
+    momentum += clamp(max(item.momentum_acceleration_pct, 0) * 1.5, 0, 5)
 
     if item.change_pct <= 0:
         move = 0.0
     elif item.change_pct <= 12:
-        move = clamp(item.change_pct * 1.15, 0, 14)
+        move = clamp(item.change_pct * 1.15, 0, 12)
     else:
-        move = clamp(14 - (item.change_pct - 12) * 0.25, 5, 14)
+        move = clamp(12 - (item.change_pct - 12) * 0.25, 4, 12)
 
     breakout = 0.0
     if item.breakout_pct >= 0:
-        breakout = clamp(5 + item.breakout_pct * 1.25, 0, 13)
+        breakout = clamp(5 + item.breakout_pct * 1.25, 0, 10)
     elif item.breakout_pct > -2:
         breakout = clamp(4 + item.breakout_pct * 2, 0, 4)
 
-    strength = clamp((item.range_position - 0.45) * 12, 0, 6)
-    liquidity = clamp((math.log10(max(item.dollar_volume, 1)) - 4.5) * 4, 0, 8)
+    strength = clamp((item.range_position - 0.45) * 12, 0, 5)
+    vwap_strength = clamp(item.vwap_position_pct * 0.8, 0, 3)
+    close_strength = clamp((item.close_location - 0.5) * 4, 0, 2)
+    if item.recent_dollar_volume > 0:
+        recent_liquidity = clamp(
+            (math.log10(max(item.recent_dollar_volume, 1)) - 4.0) * 3, 0, 6
+        )
+        session_liquidity = clamp(
+            (math.log10(max(item.dollar_volume, 1)) - 5.0) * 1.5, 0, 3
+        )
+        liquidity = recent_liquidity + session_liquidity
+    else:
+        # Keep old callers useful while new snapshots collect the better
+        # time-local liquidity measure.
+        liquidity = clamp((math.log10(max(item.dollar_volume, 1)) - 4.5) * 4, 0, 9)
 
-    raw = volume + recent_volume + momentum + move + breakout + strength + liquidity
+    raw = (
+        volume
+        + recent_volume
+        + momentum
+        + move
+        + breakout
+        + strength
+        + vwap_strength
+        + close_strength
+        + liquidity
+    )
 
-    extended_penalty = clamp((item.change_pct - 15) * 0.55, 0, 16)
-    extended_penalty += clamp((item.momentum_15m_pct - 12) * 0.5, 0, 7)
+    penalty = clamp((item.change_pct - 15) * 0.55, 0, 16)
+    penalty += clamp((item.momentum_15m_pct - 12) * 0.5, 0, 7)
+    penalty += clamp(-item.momentum_5m_pct * 2.0, 0, 10)
+    penalty += clamp(-item.momentum_15m_pct * 0.7, 0, 7)
+    penalty += clamp((item.pullback_from_high_pct - 2.0) * 1.5, 0, 8)
+    penalty += clamp(-item.vwap_position_pct * 0.8, 0, 4)
+    penalty += clamp((0.25 - item.close_location) * 8, 0, 2)
 
     if item.stale_minutes <= 5:
         freshness = 1.0
@@ -80,7 +116,7 @@ def score_runner(item: ScoreInput) -> ScoreOutput:
     else:
         freshness = 0.35
 
-    score = round(clamp((raw - extended_penalty) * freshness, 0, 100), 1)
+    score = round(clamp((raw - penalty) * freshness, 0, 100), 1)
 
     signals: list[str] = []
     risks: list[str] = []
@@ -92,10 +128,14 @@ def score_runner(item: ScoreInput) -> ScoreOutput:
         signals.append(f"+{item.momentum_5m_pct:.1f}% in 5m")
     if item.momentum_15m_pct >= 2:
         signals.append(f"+{item.momentum_15m_pct:.1f}% in 15m")
+    if item.momentum_acceleration_pct >= 0.75:
+        signals.append("momentum is accelerating")
     if item.breakout_pct >= 0:
         signals.append("above prior high")
     if item.range_position >= 0.8:
         signals.append("near session high")
+    if item.vwap_position_pct >= 1:
+        signals.append("holding above VWAP")
 
     if item.dollar_volume < 250_000:
         risks.append("thin dollar volume")
@@ -103,6 +143,12 @@ def score_runner(item: ScoreInput) -> ScoreOutput:
         risks.append("already extended")
     if item.momentum_15m_pct >= 12:
         risks.append("parabolic 15m move")
+    if item.momentum_5m_pct <= -1:
+        risks.append("short-term momentum is falling")
+    if item.pullback_from_high_pct >= 3:
+        risks.append("pulling back from session high")
+    if item.vwap_position_pct <= -1:
+        risks.append("below VWAP")
     if item.stale_minutes > 15:
         risks.append(f"quote is about {item.stale_minutes:.0f}m old")
     if item.relative_volume is None:

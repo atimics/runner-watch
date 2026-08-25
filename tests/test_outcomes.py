@@ -5,7 +5,7 @@ from pytest import MonkeyPatch
 
 from runner_web import db, outcomes
 from runner_web.db import connection, init_db
-from runner_web.outcomes import due_horizons, return_pct
+from runner_web.outcomes import barrier_outcome, due_horizons, return_pct
 
 
 def outcome_row(base_at: datetime) -> dict[str, object]:
@@ -37,6 +37,42 @@ def test_five_day_outcome_waits_for_five_days() -> None:
         "1d",
         "5d",
     ]
+
+
+def test_barrier_outcome_uses_highs_lows_and_first_touch() -> None:
+    base = datetime(2026, 8, 24, 14, tzinfo=UTC)
+    bars = [
+        (base + timedelta(minutes=5), 103.0, 99.0, 102.0),
+        (base + timedelta(minutes=10), 108.5, 101.0, 107.0),
+        (base + timedelta(minutes=15), 109.0, 95.0, 96.0),
+    ]
+    result = barrier_outcome(bars, base, 100.0)
+    assert result is not None
+    assert result["barrier_label"] == "up"
+    assert result["barrier_hit_at"] == bars[1][0].isoformat()
+    assert result["max_favorable_pct"] == 9.0
+
+
+def test_barrier_outcome_marks_same_bar_ambiguity_as_down() -> None:
+    base = datetime(2026, 8, 24, 14, tzinfo=UTC)
+    result = barrier_outcome(
+        [(base + timedelta(minutes=5), 109.0, 95.0, 101.0)], base, 100.0
+    )
+    assert result is not None
+    assert result["barrier_label"] == "down"
+    assert result["barrier_ambiguous"] == 1
+
+
+def test_timeout_requires_bars_covering_the_full_hour() -> None:
+    base = datetime(2026, 8, 24, 14, tzinfo=UTC)
+    complete = [
+        (base + timedelta(minutes=minute), 102.0, 98.0, 100.0)
+        for minute in range(5, 61, 5)
+    ]
+    result = barrier_outcome(complete, base, 100.0)
+    assert result is not None
+    assert result["barrier_label"] == "timeout"
+    assert barrier_outcome(complete[:4], base, 100.0) is None
 
 
 def test_refresh_outcomes_labels_only_due_horizons(

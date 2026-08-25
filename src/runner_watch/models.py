@@ -57,6 +57,14 @@ class RunnerSnapshot:
     average_dollar_volume: float
     quote_time: datetime
     stale_minutes: float
+    momentum_previous_5m_pct: float = 0.0
+    momentum_acceleration_pct: float = 0.0
+    intraday_volatility_pct: float = 0.0
+    vwap_position_pct: float = 0.0
+    pullback_from_high_pct: float = 0.0
+    close_location: float = 0.5
+    recent_dollar_volume: float = 0.0
+    scoring_version: str = "market_v2"
     signals: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
 

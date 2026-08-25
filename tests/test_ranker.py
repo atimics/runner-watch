@@ -38,7 +38,7 @@ def _seed_ranker_data(group_count: int = 8, candidates: int = 4) -> None:
                     run_id,
                     "penny",
                     "Penny stocks",
-                    "stonks.ranker_features.v1",
+                    "stonks.ranker_features.v2",
                     candidates,
                     candidates,
                     candidates,
@@ -93,15 +93,17 @@ def _seed_ranker_data(group_count: int = 8, candidates: int = 4) -> None:
                 database.execute(
                     """
                     INSERT INTO scan_outcomes(
-                        snapshot_id,ticker,base_price,base_at,return_1h_pct,updated_at
-                    ) VALUES(?,?,?,?,?,?)
+                        snapshot_id,ticker,base_price,base_at,barrier_label,
+                        return_60m_pct,updated_at
+                    ) VALUES(?,?,?,?,?,?,?)
                     """,
                     (
                         snapshot_id,
                         f"T{candidate}",
                         1.0 + candidate,
                         captured.isoformat(),
-                        momentum * 3.0,
+                        ("down", "timeout", "up", "up")[candidate],
+                        (-4.0, 0.5, 8.0, 9.0)[candidate],
                         (captured + timedelta(hours=1)).isoformat(),
                     ),
                 )
@@ -127,7 +129,25 @@ def test_shadow_ranker_trains_predicts_and_exports_crl(
             "SELECT COUNT(*) FROM ranker_predictions WHERE model_id=?",
             (model.id,),
         ).fetchone()[0]
+        probabilities = database.execute(
+            """
+            SELECT probability_up,probability_down,probability_timeout,score
+            FROM ranker_predictions WHERE model_id=?
+            """,
+            (model.id,),
+        ).fetchall()
     assert prediction_count == 4
+    assert all(0 <= row["score"] <= 100 for row in probabilities)
+    assert all(
+        abs(
+            row["probability_up"]
+            + row["probability_down"]
+            + row["probability_timeout"]
+            - 1
+        )
+        < 1e-9
+        for row in probabilities
+    )
 
     destination = tmp_path / "stonks-crl.csv"
     exported = export_crl_dataset(destination)

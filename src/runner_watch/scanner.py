@@ -179,9 +179,16 @@ def analyze_ticker(
     recent_relative_volume = current_recent / typical_recent if typical_recent else None
 
     comparison_5m = _close_before(current, latest_time - timedelta(minutes=5), 8)
+    comparison_10m = _close_before(current, latest_time - timedelta(minutes=10), 8)
     comparison_15m = _close_before(current, latest_time - timedelta(minutes=15), 10)
     momentum_5m = (price / comparison_5m - 1) * 100 if comparison_5m else 0.0
     momentum_15m = (price / comparison_15m - 1) * 100 if comparison_15m else 0.0
+    momentum_previous_5m = (
+        (comparison_5m / comparison_10m - 1) * 100
+        if comparison_5m and comparison_10m
+        else 0.0
+    )
+    momentum_acceleration = momentum_5m - momentum_previous_5m
     change_pct = (price / daily.previous_close - 1) * 100
     breakout_pct = (price / daily.previous_high - 1) * 100
     low = float(current_low.min())
@@ -189,6 +196,30 @@ def analyze_ticker(
     range_position = (price - low) / (high - low) if high > low else 0.5
     range_position = max(0.0, min(1.0, range_position))
     dollar_volume = session_volume * price
+    recent_dollar_volume = current_recent * price
+    recent_returns = current_close.pct_change().dropna().tail(6) * 100
+    intraday_volatility = (
+        float(recent_returns.std(ddof=0)) if len(recent_returns) >= 2 else 0.0
+    )
+    typical_price = (
+        _column(current, "High") + _column(current, "Low") + _column(current, "Close")
+    ) / 3
+    vwap_weights = current_volume.reindex(typical_price.index).fillna(0)
+    vwap = (
+        float((typical_price.fillna(0) * vwap_weights).sum() / vwap_weights.sum())
+        if float(vwap_weights.sum()) > 0
+        else price
+    )
+    vwap_position_pct = (price / vwap - 1) * 100 if vwap > 0 else 0.0
+    pullback_from_high_pct = (high - price) / high * 100 if high > 0 else 0.0
+    latest_high = float(current_high.iloc[-1])
+    latest_low = float(current_low.iloc[-1])
+    close_location = (
+        (price - latest_low) / (latest_high - latest_low)
+        if latest_high > latest_low
+        else 0.5
+    )
+    close_location = max(0.0, min(1.0, close_location))
     stale_minutes = max(0.0, (now_et - (latest_time + timedelta(minutes=5))).total_seconds() / 60)
 
     result = score_runner(
@@ -202,6 +233,13 @@ def analyze_ticker(
             range_position=range_position,
             dollar_volume=dollar_volume,
             stale_minutes=stale_minutes,
+            momentum_previous_5m_pct=momentum_previous_5m,
+            momentum_acceleration_pct=momentum_acceleration,
+            intraday_volatility_pct=intraday_volatility,
+            vwap_position_pct=vwap_position_pct,
+            pullback_from_high_pct=pullback_from_high_pct,
+            close_location=close_location,
+            recent_dollar_volume=recent_dollar_volume,
         )
     )
     risks = list(result.risks)
@@ -229,6 +267,13 @@ def analyze_ticker(
         average_dollar_volume=daily.average_dollar_volume,
         quote_time=latest_time.to_pydatetime(),
         stale_minutes=stale_minutes,
+        momentum_previous_5m_pct=momentum_previous_5m,
+        momentum_acceleration_pct=momentum_acceleration,
+        intraday_volatility_pct=intraday_volatility,
+        vwap_position_pct=vwap_position_pct,
+        pullback_from_high_pct=pullback_from_high_pct,
+        close_location=close_location,
+        recent_dollar_volume=recent_dollar_volume,
         signals=result.signals,
         risks=risks,
     )
