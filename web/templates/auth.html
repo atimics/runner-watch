@@ -1,28 +1,35 @@
-{% extends "base.html" %}
+{% extends "mobile_base.html" %}
 {% block title %}{% if mode == 'signup' %}Create account{% else %}Passkey login{% endif %} · Runner Watch{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/auth-mobile.css">{% endblock %}
 {% block content %}
-<section class="auth-wrap">
-  <div class="auth-card">
-    <span class="passkey-icon">◉</span>
+<header class="detail-nav auth-nav">
+  <a href="/" aria-label="Back to Pulse">‹</a>
+  <strong>Runner Watch</strong>
+  <span></span>
+</header>
+<main class="mobile-auth-wrap">
+  <section class="mobile-auth-card">
+    <span class="passkey-icon"><i></i></span>
     {% if mode == 'signup' %}
       <span class="eyebrow">PASSWORDLESS BETA</span>
       <h1>Create your account</h1>
       <p>Your device protects your passkey. Runner Watch never receives your fingerprint or face data.</p>
       <label>Username<input id="username" autocomplete="username" maxlength="24" placeholder="market_mouse"></label>
       <label>Display name<input id="displayName" maxlength="40" placeholder="Market Mouse"></label>
-      <button class="button full" id="authButton">Create passkey</button>
+      <button class="auth-submit" id="authButton">Create passkey</button>
       <p class="auth-switch">Already joined? <a href="/login">Log in</a></p>
     {% else %}
       <span class="eyebrow">WELCOME BACK</span>
       <h1>Use your passkey</h1>
       <p>Choose the passkey saved on this device or on a nearby device.</p>
-      <button class="button full" id="authButton">Log in with passkey</button>
+      <button class="auth-submit" id="authButton">Log in with passkey</button>
       <p class="auth-switch">New here? <a href="/signup">Create an account</a></p>
     {% endif %}
     <div id="authStatus" class="status" aria-live="polite"></div>
-  </div>
-</section>
+  </section>
+</main>
 {% endblock %}
+{% block bottom_nav %}{% endblock %}
 {% block scripts %}
 <script>
 const mode = {{ mode|tojson }};
@@ -96,4 +103,3 @@ button.addEventListener('click', async () => {
 });
 </script>
 {% endblock %}
-

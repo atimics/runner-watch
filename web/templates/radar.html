@@ -1,0 +1,27 @@
+{% extends "mobile_base.html" %}
+{% block title %}Radar · Runner Watch{% endblock %}
+{% block content %}
+<header class="screen-head">
+  <div><span class="eyebrow">YOUR WATCHLIST</span><h1>Radar</h1></div>
+  <button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.username[:1]|upper }}</button>
+</header>
+
+<main class="list-section radar-section">
+  {% if watches %}
+  <div class="radar-message"><span></span><div><strong>Only changes matter</strong><p>New primary-source events rise to the top.</p></div></div>
+  <div class="list-title"><strong>{{ watches|length }} watched</strong><span>latest evidence</span></div>
+  <div class="token-list">
+    {% for item in watches %}
+    <a class="token-row radar-row" href="/t/{{ item.ticker }}">
+      <span class="coin coin-{{ item.coin_tone }}"><b>{{ item.coin_label }}</b><i></i></span>
+      <span class="token-copy"><span class="ticker-line"><strong>{{ item.ticker }}</strong>{% if item.filed_at %}<small>{{ item.filed_at[:10] }}</small>{% endif %}</span><span class="company-name">{{ item.name or item.ticker }}</span><span class="catalyst">{{ item.pulse_label }}</span></span>
+      <span class="radar-arrow">›</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-list radar-empty"><span class="empty-radar"></span><strong>Your radar is empty</strong><p>Open a ticker from Pulse and tap Watch.</p><a href="/">Browse Pulse</a></div>
+  {% endif %}
+</main>
+<p class="source-note">Alerts use SEC filings first · research only</p>
+{% endblock %}

@@ -3,9 +3,10 @@
 Runner Watch is a low-priced stock scanner for finding unusual price and volume movement early.
 It uses free Yahoo Finance data through `yfinance`. It does not need a broker login or a paid API.
 
-The public beta is at [stonks.rati.foundation](https://stonks.rati.foundation). It adds passkey
-login, public signal pages, social preview cards, and a discovery feed. Published signals keep an
-unchangeable copy of the scan values so readers can see what was known at posting time.
+The public beta is at [stonks.rati.foundation](https://stonks.rati.foundation). Its mobile-first
+app has three main views: **Pulse** for live penny-stock intelligence, a compact ticker page with
+the chart and primary-source evidence, and **Radar** for a personal passkey-protected watchlist.
+Public signal pages and social preview cards remain available from the profile menu.
 
 The public scanner defaults to listed US penny stocks from $0.20 to $5 with market caps below
 about $2B. It combines Yahoo's strongest movers and most active low-priced stocks before checking
@@ -13,8 +14,8 @@ daily liquidity and 5-minute bars. A second mode widens the price ceiling to $20
 
 ## EDGAR intelligence
 
-The public **EDGAR Intel** page is prepared by a background worker, so opening the page does not
-start a market-wide scan. The worker:
+The public **Pulse** is prepared by a background worker, so opening the page does not start a
+market-wide scan. The worker:
 
 - refreshes the SEC's official exchange-listed CIK-to-ticker map
 - polls the SEC's current-filings Atom feed every 45 seconds
@@ -22,7 +23,7 @@ start a market-wide scan. The worker:
 - parses structured Form 4 ownership XML and reserves “insider buy” for transaction code `P`
 - flags offering, registration, late-report, Form 144, 8-K, 6-K, and ownership filings
 - adds delayed Yahoo price, relative volume, and runner score as confirmation
-- saves scored events for the instant penny-stock heatmap
+- saves scored events for the compact penny-stock feed and ticker evidence timeline
 - samples the observed price again after 1 hour, 1 day, and 5 days
 - marks scanner runners that have no recent matching SEC filing
 
@@ -102,7 +103,7 @@ more useful during pre-market than a simple comparison with a full day's average
 
 - Yahoo Finance is unofficial, can be delayed, and sometimes returns missing or wrong bars.
 - A broad free scan can be slow or hit rate limits. Raise the scan cap in steps.
-- The tool does not know the bid/ask spread, current halt state, float, dilution, filings, or news.
+- The tool does not know the live bid/ask spread, current halt state, float, or all market news.
 - The saved quick list will age. Use the full list or your own symbols for better coverage.
 - The public beta uses one Fly volume. It is durable, but it is not yet a multi-region database.
 - This first beta has no account recovery or backup-passkey screen. Losing the only passkey loses

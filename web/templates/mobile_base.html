@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#090b0b">
+  <title>{% block title %}Runner Watch{% endblock %}</title>
+  <link rel="stylesheet" href="/static/mobile.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <div class="mobile-app">
+    {% block content %}{% endblock %}
+    {% block bottom_nav %}
+    <nav class="tab-bar" aria-label="Main navigation">
+      <a class="tab-link {% if active_tab == 'pulse' %}active{% endif %}" href="/">
+        <span class="tab-icon pulse-icon" aria-hidden="true"></span>
+        <span>Pulse</span>
+      </a>
+      <a class="tab-link {% if active_tab == 'radar' %}active{% endif %}" href="/radar">
+        <span class="tab-icon radar-icon" aria-hidden="true"></span>
+        <span>Radar</span>
+      </a>
+    </nav>
+    {% endblock %}
+  </div>
+
+  {% if user %}
+  <dialog class="profile-sheet" id="profileSheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-user">
+      <span class="profile-mark">{{ user.username[:1]|upper }}</span>
+      <div><strong>{{ user.display_name }}</strong><small>@{{ user.username }}</small></div>
+    </div>
+    <a href="/community">Community signals <span>›</span></a>
+    <a href="/scanner">Full scanner <span>›</span></a>
+    <button type="button" id="logoutButton">Log out</button>
+    <button type="button" class="sheet-close" id="closeProfile">Close</button>
+  </dialog>
+  <script>
+    const profileSheet = document.getElementById('profileSheet');
+    document.querySelectorAll('[data-profile]').forEach(button => button.addEventListener('click', () => profileSheet.showModal()));
+    document.getElementById('closeProfile')?.addEventListener('click', () => profileSheet.close());
+    profileSheet?.addEventListener('click', event => { if (event.target === profileSheet) profileSheet.close(); });
+    document.getElementById('logoutButton')?.addEventListener('click', async () => {
+      const response = await fetch('/api/auth/logout', {method: 'POST'});
+      if (response.ok) location.href = '/';
+    });
+  </script>
+  {% endif %}
+  {% block scripts %}{% endblock %}
+</body>
+</html>

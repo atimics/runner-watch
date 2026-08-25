@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 from fastapi import Cookie, FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -48,11 +49,13 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0") == "1"
 ROOT = Path(os.getenv("RUNNER_ROOT", Path.cwd()))
 SESSION_COOKIE = "runner_session"
 USERNAME_RE = re.compile(r"^[a-z0-9_]{3,24}$")
+TICKER_RE = re.compile(r"^[A-Z0-9.-]{1,12}$")
 SCAN_MODES = {
     "penny": {"label": "Penny stocks", "min_price": 0.20, "max_price": 5.00},
     "low_price": {"label": "Low-priced small caps", "min_price": 0.20, "max_price": 20.00},
 }
 SCAN_CACHE: dict[str, tuple[datetime, list[dict[str, Any]]]] = {}
+CHART_CACHE: dict[str, tuple[datetime, list[dict[str, Any]]]] = {}
 
 app = FastAPI(title="Runner Watch", docs_url=None, redoc_url=None)
 templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
@@ -260,8 +263,8 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/", response_class=HTMLResponse)
-def home(
+@app.get("/community", response_class=HTMLResponse)
+def community(
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
@@ -315,6 +318,378 @@ def _intelligence_evidence(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+def _coin_tone(ticker: str) -> int:
+    return sum(ord(character) for character in ticker) % 5
+
+
+def _pulse_label(row: dict[str, Any]) -> str:
+    codes = {code for code in str(row.get("transaction_codes", "")).split(",") if code}
+    title = str(row.get("actor_title") or "").lower()
+    if "P" in codes:
+        return "Form 4 · CEO buy" if "ceo" in title else "Form 4 · insider buy"
+    if "S" in codes:
+        return "Form 4 · insider sale"
+    if row.get("sentiment") == "risk":
+        return str(row.get("kind") or "SEC risk filing")
+    if str(row.get("form", "")).startswith("4"):
+        return "Ownership update"
+    return f"{row.get('form', 'SEC')} · new filing"
+
+
+def pulse_data() -> dict[str, Any]:
+    cutoff = iso(now() - timedelta(days=3))
+    gap_cutoff = iso(now() - timedelta(hours=3))
+    with connection() as db:
+        filing_rows = db.execute(
+            """
+            SELECT f.*,o.return_1h_pct,o.return_1d_pct,o.return_5d_pct
+            FROM sec_filings f
+            LEFT JOIN sec_outcomes o ON o.accession=f.accession
+            WHERE f.created_at>?
+            ORDER BY f.score DESC,f.filed_at DESC
+            """,
+            (cutoff,),
+        ).fetchall()
+        gap_rows = db.execute(
+            """
+            SELECT s.* FROM scan_snapshots s
+            JOIN (
+                SELECT ticker,MAX(captured_at) AS captured_at
+                FROM scan_snapshots WHERE captured_at>? GROUP BY ticker
+            ) latest ON latest.ticker=s.ticker AND latest.captured_at=s.captured_at
+            ORDER BY s.score DESC LIMIT 40
+            """,
+            (gap_cutoff,),
+        ).fetchall()
+        state_rows = db.execute(
+            "SELECT key,value FROM worker_state WHERE key LIKE 'edgar_%'"
+        ).fetchall()
+
+    grouped: dict[str, dict[str, Any]] = {}
+    penny_filings = 0
+    for raw in filing_rows:
+        event = _intelligence_evidence(dict(raw))
+        if event.get("price") is None or float(event["price"]) > 5:
+            continue
+        penny_filings += 1
+        ticker = event["ticker"]
+        if ticker in grouped:
+            grouped[ticker]["event_count"] += 1
+            continue
+        event.update(
+            {
+                "coin_label": ticker[:2],
+                "coin_tone": _coin_tone(ticker),
+                "pulse_label": _pulse_label(event),
+                "event_count": 1,
+                "source": "sec",
+                "event_at": event["filed_at"],
+            }
+        )
+        grouped[ticker] = event
+
+    unexplained = 0
+    for raw in gap_rows:
+        snapshot = dict(raw)
+        ticker = snapshot["ticker"]
+        if ticker in grouped:
+            continue
+        relative_volume = snapshot.get("relative_volume")
+        if abs(float(snapshot["change_pct"])) < 5 and (
+            relative_volume is None or float(relative_volume) < 2
+        ):
+            continue
+        unexplained += 1
+        grouped[ticker] = {
+            **snapshot,
+            "company": ticker,
+            "kind": "No recent SEC catalyst",
+            "sentiment": "gap",
+            "form": "",
+            "coin_label": ticker[:2],
+            "coin_tone": _coin_tone(ticker),
+            "pulse_label": "No recent SEC filing",
+            "event_count": 1,
+            "source": "gap",
+            "event_at": snapshot["captured_at"],
+            "return_1h_pct": None,
+            "return_1d_pct": None,
+            "return_5d_pct": None,
+        }
+
+    rows = sorted(
+        grouped.values(),
+        key=lambda row: (float(row.get("score") or 0), str(row.get("event_at") or "")),
+        reverse=True,
+    )[:50]
+    state = {row["key"]: row["value"] for row in state_rows}
+    return {
+        "rows": rows,
+        "stats": {
+            "live": len(rows),
+            "unexplained": unexplained,
+            "filings": penny_filings,
+        },
+        "updated_at": state.get("edgar_last_refresh"),
+    }
+
+
+@app.get("/", response_class=HTMLResponse)
+def home(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name="pulse.html",
+        context=page_context(request, runner_session, pulse=pulse_data(), active_tab="pulse"),
+    )
+
+
+@app.get("/api/pulse")
+def pulse_api() -> JSONResponse:
+    return JSONResponse(pulse_data())
+
+
+def _clean_ticker(ticker: str) -> str:
+    normalized = ticker.strip().upper().replace(".", "-")
+    if not TICKER_RE.fullmatch(normalized):
+        raise HTTPException(404, "Ticker not found")
+    return normalized
+
+
+def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
+    with connection() as db:
+        filings = db.execute(
+            """
+            SELECT f.*,o.return_1h_pct,o.return_1d_pct,o.return_5d_pct,
+                   o.observed_1h_at,o.observed_1d_at,o.observed_5d_at
+            FROM sec_filings f
+            LEFT JOIN sec_outcomes o ON o.accession=f.accession
+            WHERE f.ticker=? AND f.created_at>?
+            ORDER BY f.score DESC,f.filed_at DESC LIMIT 12
+            """,
+            (ticker, iso(now() - timedelta(days=30))),
+        ).fetchall()
+        company = db.execute(
+            "SELECT name,exchange FROM sec_companies WHERE ticker=? LIMIT 1", (ticker,)
+        ).fetchone()
+        snapshot = db.execute(
+            """
+            SELECT * FROM scan_snapshots WHERE ticker=?
+            ORDER BY captured_at DESC LIMIT 1
+            """,
+            (ticker,),
+        ).fetchone()
+
+    events = []
+    for row in filings:
+        event = _intelligence_evidence(dict(row))
+        event["pulse_label"] = _pulse_label(event)
+        event["event_at"] = event["filed_at"]
+        events.append(event)
+    if not events and snapshot is None and company is None:
+        return None
+    if events:
+        current = events[0]
+    elif snapshot is not None:
+        current = {
+            **dict(snapshot),
+            "ticker": ticker,
+            "kind": "No recent SEC catalyst",
+            "sentiment": "gap",
+            "event_at": snapshot["captured_at"],
+            "return_1h_pct": None,
+            "return_1d_pct": None,
+            "return_5d_pct": None,
+        }
+    else:
+        current = {
+            "ticker": ticker,
+            "price": None,
+            "change_pct": None,
+            "score": 0,
+            "kind": "Watching for intelligence",
+            "sentiment": "neutral",
+            "event_at": None,
+            "return_1h_pct": None,
+            "return_1d_pct": None,
+            "return_5d_pct": None,
+        }
+    return {
+        "ticker": ticker,
+        "company": company["name"] if company else current.get("company", ticker),
+        "exchange": company["exchange"] if company else "Listed US stock",
+        "coin_label": ticker[:2],
+        "coin_tone": _coin_tone(ticker),
+        "current": current,
+        "events": events,
+    }
+
+
+def ticker_chart_data(ticker: str) -> list[dict[str, Any]]:
+    cached = CHART_CACHE.get(ticker)
+    if cached and cached[0] > now() - timedelta(seconds=90):
+        return cached[1]
+    result = YahooMarketData(batch_size=1).intraday([ticker])
+    frame = result.frames.get(ticker)
+    if frame is None or frame.empty:
+        return []
+    close = pd.Series(dtype="float64")
+    for column in frame.columns:
+        if str(column).lower().replace(" ", "") == "close":
+            close = pd.to_numeric(frame[column], errors="coerce").dropna()
+            break
+    if close.empty:
+        return []
+    step = max(1, len(close) // 100)
+    sampled = close.iloc[::step]
+    if sampled.index[-1] != close.index[-1]:
+        sampled = pd.concat([sampled, close.iloc[[-1]]])
+    points = [
+        {"time": pd.Timestamp(stamp).isoformat(), "price": round(float(price), 6)}
+        for stamp, price in sampled.items()
+    ]
+    CHART_CACHE[ticker] = (now(), points)
+    return points
+
+
+@app.get("/t/{ticker}", response_class=HTMLResponse)
+def ticker_page(
+    ticker: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    normalized = _clean_ticker(ticker)
+    detail = ticker_detail_data(normalized)
+    if detail is None:
+        raise HTTPException(404, "Ticker not found")
+    user = current_user(runner_session)
+    watched = False
+    if user:
+        with connection() as db:
+            watched = (
+                db.execute(
+                    "SELECT 1 FROM watches WHERE user_id=? AND ticker=?",
+                    (user["id"], normalized),
+                ).fetchone()
+                is not None
+            )
+    return templates.TemplateResponse(
+        request=request,
+        name="ticker.html",
+        context=page_context(
+            request,
+            runner_session,
+            detail=detail,
+            watched=watched,
+            active_tab="pulse",
+        ),
+    )
+
+
+@app.get("/api/t/{ticker}/chart")
+async def ticker_chart_api(ticker: str) -> JSONResponse:
+    normalized = _clean_ticker(ticker)
+    points = await run_in_threadpool(ticker_chart_data, normalized)
+    return JSONResponse({"ticker": normalized, "points": points})
+
+
+def radar_data(user_id: str) -> list[dict[str, Any]]:
+    with connection() as db:
+        rows = db.execute(
+            """
+            SELECT w.ticker,w.created_at AS watched_at,
+                   (SELECT c.name FROM sec_companies c WHERE c.ticker=w.ticker LIMIT 1) AS name,
+                   (SELECT c.exchange FROM sec_companies c
+                    WHERE c.ticker=w.ticker LIMIT 1) AS exchange,
+                   f.accession,f.form,f.kind,f.sentiment,f.score,f.filed_at,
+                   f.filing_url,f.actor,f.actor_title,f.transaction_codes,
+                   f.transaction_shares,f.transaction_price,f.transaction_value,
+                   f.price,f.change_pct
+            FROM watches w
+            LEFT JOIN sec_filings f ON f.accession=(
+                SELECT sf.accession FROM sec_filings sf
+                WHERE sf.ticker=w.ticker ORDER BY sf.filed_at DESC LIMIT 1
+            )
+            WHERE w.user_id=? ORDER BY COALESCE(f.filed_at,w.created_at) DESC
+            """,
+            (user_id,),
+        ).fetchall()
+    output: list[dict[str, Any]] = []
+    for raw in rows:
+        item = dict(raw)
+        if item.get("accession"):
+            item = _intelligence_evidence(item)
+            item["pulse_label"] = _pulse_label(item)
+        else:
+            item["evidence_label"] = "Watching for changes"
+            item["evidence_text"] = "No recent filing has matched this ticker yet."
+            item["pulse_label"] = "Quiet"
+        item["coin_label"] = item["ticker"][:2]
+        item["coin_tone"] = _coin_tone(item["ticker"])
+        output.append(item)
+    return output
+
+
+@app.get("/radar", response_class=HTMLResponse)
+def radar_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    user = current_user(runner_session)
+    if not user:
+        return RedirectResponse("/login", 303)
+    return templates.TemplateResponse(
+        request=request,
+        name="radar.html",
+        context=page_context(
+            request,
+            runner_session,
+            watches=radar_data(user["id"]),
+            active_tab="radar",
+        ),
+    )
+
+
+@app.post("/api/watch/{ticker}")
+def toggle_watch(
+    ticker: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    normalized = _clean_ticker(ticker)
+    with connection() as db:
+        known = db.execute(
+            """
+            SELECT 1 FROM sec_companies WHERE ticker=?
+            UNION SELECT 1 FROM sec_filings WHERE ticker=? LIMIT 1
+            """,
+            (normalized, normalized),
+        ).fetchone()
+        if not known:
+            raise HTTPException(404, "Ticker not found")
+        existing = db.execute(
+            "SELECT 1 FROM watches WHERE user_id=? AND ticker=?",
+            (user["id"], normalized),
+        ).fetchone()
+        if existing:
+            db.execute(
+                "DELETE FROM watches WHERE user_id=? AND ticker=?",
+                (user["id"], normalized),
+            )
+            watched = False
+        else:
+            db.execute(
+                "INSERT INTO watches(user_id,ticker,created_at) VALUES(?,?,?)",
+                (user["id"], normalized, iso()),
+            )
+            watched = True
+    return JSONResponse({"ticker": normalized, "watched": watched})
+
+
 def intelligence_data() -> dict[str, Any]:
     cutoff = iso(now() - timedelta(days=3))
     with connection() as db:
@@ -357,16 +732,8 @@ def intelligence_data() -> dict[str, Any]:
 
 
 @app.get("/intelligence", response_class=HTMLResponse)
-def intelligence_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> HTMLResponse:
-    data = intelligence_data()
-    return templates.TemplateResponse(
-        request=request,
-        name="intelligence.html",
-        context=page_context(request, runner_session, intelligence=data),
-    )
+def intelligence_page() -> RedirectResponse:
+    return RedirectResponse(url="/", status_code=308)
 
 
 @app.get("/api/intelligence")
@@ -379,7 +746,7 @@ def signup_page(
     request: Request, runner_session: str | None = Cookie(default=None)
 ) -> HTMLResponse:
     if current_user(runner_session):
-        return RedirectResponse("/scanner", 303)
+        return RedirectResponse("/", 303)
     return templates.TemplateResponse(
         request=request,
         name="auth.html",
@@ -392,7 +759,7 @@ def login_page(
     request: Request, runner_session: str | None = Cookie(default=None)
 ) -> HTMLResponse:
     if current_user(runner_session):
-        return RedirectResponse("/scanner", 303)
+        return RedirectResponse("/", 303)
     return templates.TemplateResponse(
         request=request,
         name="auth.html",
@@ -446,7 +813,7 @@ def register_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
         )
     except Exception as exc:
         raise HTTPException(400, f"Passkey verification failed: {exc}") from exc
-    response = JSONResponse({"ok": True, "redirect": "/scanner"})
+    response = JSONResponse({"ok": True, "redirect": "/"})
     transports = payload.credential.get("response", {}).get("transports", [])
     with connection() as db:
         db.execute(
@@ -512,7 +879,7 @@ def login_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
             "UPDATE passkeys SET sign_count=?,last_used_at=? WHERE credential_id=?",
             (verification.new_sign_count, iso(), credential_id),
         )
-    response = JSONResponse({"ok": True, "redirect": "/scanner"})
+    response = JSONResponse({"ok": True, "redirect": "/"})
     create_session(passkey["user_id"], response)
     return response
 

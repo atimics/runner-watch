@@ -100,6 +100,13 @@ def init_db() -> None:
                 created_at TEXT NOT NULL,
                 UNIQUE(signal_id, user_id)
             );
+            CREATE TABLE IF NOT EXISTS watches (
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                ticker TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(user_id, ticker)
+            );
+            CREATE INDEX IF NOT EXISTS watches_ticker ON watches(ticker);
             CREATE TABLE IF NOT EXISTS sec_companies (
                 cik INTEGER NOT NULL,
                 ticker TEXT NOT NULL,

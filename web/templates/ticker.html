@@ -1,0 +1,98 @@
+{% extends "mobile_base.html" %}
+{% block title %}{{ detail.ticker }} Intelligence · Runner Watch{% endblock %}
+{% block content %}
+<header class="detail-nav">
+  <a href="/" aria-label="Back to Pulse">‹</a>
+  <strong>Intelligence</strong>
+  <button type="button" id="shareButton" aria-label="Share this ticker">↗</button>
+</header>
+
+<main class="detail-body">
+  <section class="asset-head">
+    <span class="coin coin-large coin-{{ detail.coin_tone }}"><b>{{ detail.coin_label }}</b><i></i></span>
+    <div><div class="asset-ticker"><h1>{{ detail.ticker }}</h1><span>{{ detail.exchange }}</span></div><p>{{ detail.company }}</p></div>
+    <button class="watch-button {% if watched %}watching{% endif %}" type="button" id="watchButton" data-logged-in="{{ 'true' if user else 'false' }}">
+      <span>{% if watched %}✓{% else %}+{% endif %}</span><small>{% if watched %}Watching{% else %}Watch{% endif %}</small>
+    </button>
+  </section>
+
+  <section class="price-block">
+    <div>
+      <strong>{% if detail.current.price is not none %}${{ '%.4f'|format(detail.current.price) if detail.current.price < 1 else ('%.2f'|format(detail.current.price)) }}{% else %}Price pending{% endif %}</strong>
+      {% if detail.current.change_pct is not none %}<span class="{{ 'up' if detail.current.change_pct >= 0 else 'down' }}">{{ '+' if detail.current.change_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.change_pct) }}%</span>{% endif %}
+    </div>
+    <small>5-minute delayed view</small>
+  </section>
+
+  <section class="chart-card" aria-label="Five-day price chart">
+    <div class="chart-loading" id="chartStatus">Loading chart…</div>
+    <svg id="priceChart" role="img" aria-label="Price chart" viewBox="0 0 600 210" preserveAspectRatio="none"></svg>
+    <div class="chart-range"><span>5D</span><span id="chartLow"></span><span id="chartHigh"></span></div>
+  </section>
+
+  <section class="why-section">
+    <div class="section-heading"><div><span>PRIMARY SOURCES</span><h2>Why now</h2></div>{% if detail.current.score %}<b>{{ '%.0f'|format(detail.current.score) }} signal</b>{% endif %}</div>
+    <div class="evidence-list">
+      {% if detail.events %}
+        {% for event in detail.events[:5] %}
+        <a class="evidence-row" href="{{ event.filing_url }}" target="_blank" rel="noopener">
+          <span class="timeline-dot {{ event.sentiment }}"></span>
+          <span><strong>{{ event.evidence_label }}</strong><small>{{ event.pulse_label }} · {{ event.filed_at[:10] }}</small><p>{{ event.evidence_text }}</p></span>
+          <i>›</i>
+        </a>
+        {% endfor %}
+      {% else %}
+        <div class="evidence-row evidence-gap">
+          <span class="timeline-dot gap"></span>
+          <span><strong>No recent SEC catalyst</strong><small>Market move only</small><p>Price or volume moved, but the filing listener did not find a recent SEC event.</p></span>
+        </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="outcome-card">
+    <div><span>1H</span><strong class="{% if detail.current.return_1h_pct is not none %}{{ 'up' if detail.current.return_1h_pct >= 0 else 'down' }}{% endif %}">{% if detail.current.return_1h_pct is not none %}{{ '+' if detail.current.return_1h_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.return_1h_pct) }}%{% else %}pending{% endif %}</strong></div>
+    <div><span>1D</span><strong class="{% if detail.current.return_1d_pct is not none %}{{ 'up' if detail.current.return_1d_pct >= 0 else 'down' }}{% endif %}">{% if detail.current.return_1d_pct is not none %}{{ '+' if detail.current.return_1d_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.return_1d_pct) }}%{% else %}pending{% endif %}</strong></div>
+    <div><span>5D</span><strong class="{% if detail.current.return_5d_pct is not none %}{{ 'up' if detail.current.return_5d_pct >= 0 else 'down' }}{% endif %}">{% if detail.current.return_5d_pct is not none %}{{ '+' if detail.current.return_5d_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.return_5d_pct) }}%{% else %}pending{% endif %}</strong></div>
+  </section>
+  <p class="source-note detail-note">Evidence, not advice. Check the filing, spread, dilution, and halt risk.</p>
+</main>
+{% endblock %}
+{% block bottom_nav %}{% endblock %}
+{% block scripts %}
+<script>
+const ticker = {{ detail.ticker|tojson }};
+const company = {{ detail.company|tojson }};
+const chart = document.getElementById('priceChart');
+const status = document.getElementById('chartStatus');
+function draw(points) {
+  if (!points.length) { status.textContent = 'Chart not available'; status.classList.add('visible'); return; }
+  const values = points.map(point => Number(point.price)).filter(Number.isFinite);
+  if (values.length < 2) { status.textContent = 'Chart not available'; status.classList.add('visible'); return; }
+  const low = Math.min(...values), high = Math.max(...values), spread = Math.max(high - low, high * .002, .001);
+  const coords = values.map((value, index) => [index / (values.length - 1) * 600, 190 - ((value - low) / spread * 165)]);
+  const line = coords.map(([x, y], index) => `${index ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
+  const rising = values.at(-1) >= values[0]; const color = rising ? '#57e389' : '#ff6b7a';
+  const area = `${line} L600 210 L0 210 Z`;
+  chart.innerHTML = `<defs><linearGradient id="chartFade" x1="0" y1="0" x2="0" y2="1"><stop stop-color="${color}" stop-opacity=".22"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${area}" fill="url(#chartFade)"/><path d="${line}" fill="none" stroke="${color}" stroke-width="4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>`;
+  status.hidden = true;
+  document.getElementById('chartLow').textContent = '$' + low.toFixed(low < 1 ? 4 : 2);
+  document.getElementById('chartHigh').textContent = '$' + high.toFixed(high < 1 ? 4 : 2);
+}
+fetch(`/api/t/${encodeURIComponent(ticker)}/chart`).then(response => response.json()).then(data => draw(data.points || [])).catch(() => draw([]));
+document.getElementById('shareButton').addEventListener('click', async () => {
+  const share = {title: `${ticker} intelligence`, text: `${ticker} · ${company} on Runner Watch`, url: location.href};
+  try { if (navigator.share) await navigator.share(share); else { await navigator.clipboard.writeText(location.href); document.getElementById('shareButton').textContent = '✓'; } } catch (_) {}
+});
+document.getElementById('watchButton').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  if (button.dataset.loggedIn !== 'true') { location.href = '/login'; return; }
+  const response = await fetch(`/api/watch/${encodeURIComponent(ticker)}`, {method: 'POST'});
+  if (!response.ok) return;
+  const result = await response.json();
+  button.classList.toggle('watching', result.watched);
+  button.querySelector('span').textContent = result.watched ? '✓' : '+';
+  button.querySelector('small').textContent = result.watched ? 'Watching' : 'Watch';
+});
+</script>
+{% endblock %}
