@@ -39,6 +39,7 @@ from runner_web.main import (
     reaction_state,
     register_options,
     templates,
+    ticker_chart_detail_payload,
     ticker_charts_payload,
     ticker_detail_data,
     toggle_reaction,
@@ -671,9 +672,16 @@ def test_sparklines_use_ingested_bars_without_a_live_price_request(
     )
 
     payload = ticker_charts_payload(["SPRK"])
+    detail = ticker_chart_detail_payload("SPRK")
 
     assert [point["price"] for point in payload["charts"]["SPRK"]] == [1.0, 1.1, 1.25]
+    assert all(
+        {"open", "high", "low", "close", "volume", "vwap"} <= point.keys()
+        for point in payload["charts"]["SPRK"]
+    )
     assert payload["freshness"]["SPRK"]["source"] == "yahoo"
+    assert detail["modes"]["astrology"].startswith("Fixed-anchor Fibonacci")
+    assert detail["points"][-1]["close"] == 1.25
 
 
 def test_evidence_gate_counts_market_calculations_as_one_family() -> None:

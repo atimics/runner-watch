@@ -1047,6 +1047,24 @@ def _migration_011_ticker_feedback(db: sqlite3.Connection) -> None:
     )
 
 
+def _migration_012_chart_structure(db: sqlite3.Connection) -> None:
+    """Persist point-in-time chart structure for model training."""
+
+    for definition in (
+        "opening_range_position REAL",
+        "opening_range_breakout_pct REAL",
+        "support_distance_pct REAL",
+        "support_strength REAL",
+        "resistance_distance_pct REAL",
+        "resistance_strength REAL",
+        "fib_retracement_pct REAL",
+        "fib_level_distance_pct REAL",
+        "structure_available INTEGER NOT NULL DEFAULT 0",
+        "fibonacci_available INTEGER NOT NULL DEFAULT 0",
+    ):
+        _ensure_column(db, "scan_snapshots", definition)
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -1066,6 +1084,7 @@ MIGRATIONS = (
     Migration(9, "request_path_indexes", _migration_009_request_path_indexes),
     Migration(10, "radar_indexes", _migration_010_radar_indexes),
     Migration(11, "ticker_feedback", _migration_011_ticker_feedback),
+    Migration(12, "chart_structure", _migration_012_chart_structure),
 )
 
 

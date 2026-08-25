@@ -15,10 +15,35 @@ from runner_web.ranker import (
     FEATURE_NAMES,
     FEATURE_SCHEMA_VERSION,
     export_crl_dataset,
+    feature_vector,
     load_latest_model,
     predict_and_store,
     train_shadow_ranker,
 )
+
+
+def test_chart_structure_fields_are_ranker_features() -> None:
+    row = {
+        "opening_range_position": 1.25,
+        "opening_range_breakout_pct": 2.5,
+        "support_distance_pct": 1.1,
+        "support_strength": 0.75,
+        "resistance_distance_pct": 3.2,
+        "resistance_strength": 0.5,
+        "fib_retracement_pct": 61.8,
+        "fib_level_distance_pct": 0.2,
+        "structure_available": 1,
+        "fibonacci_available": 1,
+    }
+
+    vector = feature_vector(row)
+    values = dict(zip(FEATURE_NAMES, vector, strict=True))
+
+    assert values["opening_range_position"] == 1.25
+    assert values["support_strength"] == 0.75
+    assert values["fib_retracement_pct"] == 61.8
+    assert values["structure_missing"] == 0
+    assert values["fibonacci_missing"] == 0
 
 
 def _seed_ranker_data(group_count: int = 8, candidates: int = 4) -> None:
@@ -186,4 +211,6 @@ def test_web_scan_saves_one_complete_candidate_group(
     assert len(snapshots) == result["ranked_candidates"]
     assert len(snapshots) > 0
     assert snapshots[0]["range_position"] is not None
+    assert snapshots[0]["opening_range_position"] is not None
+    assert snapshots[0]["structure_available"] == 1
     assert snapshots[0]["scan_run_id"] == run["id"]

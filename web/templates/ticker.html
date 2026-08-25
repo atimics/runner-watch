@@ -47,10 +47,17 @@
   </section>
 
   <section class="chart-card" aria-label="Price chart">
+    <div class="chart-modes" role="group" aria-label="Chart lens">
+      <button class="active" type="button" data-chart-mode="tape">Tape</button>
+      <button type="button" data-chart-mode="gravity">Gravity</button>
+      <button type="button" data-chart-mode="astrology">Astrology ✦</button>
+    </div>
     <div class="chart-loading" id="chartStatus">Loading chart…</div>
-    <svg id="priceChart" role="img" aria-label="Price chart" viewBox="0 0 600 210" preserveAspectRatio="none"></svg>
+    <svg id="priceChart" role="img" aria-label="Price and volume chart" viewBox="0 0 600 250" preserveAspectRatio="none"></svg>
     <div class="chart-range"><span class="range-buttons"><button class="active" type="button" data-range="1D">1D</button><button type="button" data-range="5D">5D</button></span><span id="chartLow"></span><span id="chartHigh"></span></div>
+    <p class="chart-mode-note" id="chartModeNote">OHLCV bars, volume, and session VWAP</p>
   </section>
+  <div class="chart-structure-strip" id="chartStructure" aria-live="polite"></div>
   <div class="chart-event-strip" id="chartEvents" aria-label="Detected chart events" hidden></div>
 
   {% if detail.kol_calls %}
@@ -184,8 +191,15 @@ const initialCommissionStatus = {{ (latest_commission.status if latest_commissio
 let commissionNeedsRetry = initialCommissionStatus === 'failed';
 let allPoints=[];
 let chartAnnotations=[];
+let chartLevels=[];
+let chartFibonacci=null;
+let chartStructure={};
+let chartMode='tape';
+let activeRange='1D';
 const initialPressure={{ detail.trade_pressure|tojson }};
 const annotationColors={pulse:'#f5c66b',positive:'#57e389',risk:'#ff6b7a',media:'#75a7ff',neutral:'#a3ada8'};
+const chartModeNotes={tape:'OHLCV bars, volume, and session VWAP',gravity:'Repeated prices, heavy volume, and session reference zones',astrology:'Fixed-anchor Fibonacci crowd references · not a prediction'};
+function chartMoney(value){const number=Number(value);if(!Number.isFinite(number))return '—';return '$'+number.toFixed(number<1?4:number<10?3:2);}
 function visibleAnnotations(points){
   if(!points.length)return [];
   const start=new Date(points[0].time).getTime();
@@ -212,35 +226,72 @@ function renderChartEvents(items){
     copy.append(label,time);chip.append(dot,copy);chartEvents.append(chip);
   });
 }
+function structureChip(label,value,note){
+  const chip=document.createElement('span');const name=document.createElement('small');const price=document.createElement('b');const copy=document.createElement('i');
+  name.textContent=label;price.textContent=value;copy.textContent=note||'';chip.append(name,price,copy);return chip;
+}
+function renderStructureSummary(){
+  const strip=document.getElementById('chartStructure');strip.replaceChildren();
+  const support=chartStructure?.support;const resistance=chartStructure?.resistance;
+  if(chartMode==='tape'){
+    if(chartStructure?.vwap)strip.append(structureChip('VWAP',chartMoney(chartStructure.vwap),'session average'));
+    if(chartStructure?.previous_close)strip.append(structureChip('Previous',chartMoney(chartStructure.previous_close),'last close'));
+    const opening=chartStructure?.opening_range;if(opening)strip.append(structureChip('Opening range',`${chartMoney(opening.low)}–${chartMoney(opening.high)}`,'first 30m'));
+  }else if(chartMode==='gravity'){
+    if(support)strip.append(structureChip('Support zone',`${chartMoney(support.low)}–${chartMoney(support.high)}`,`${support.touches||0} touches · ${Math.round((support.strength||0)*100)} strength`));
+    if(resistance)strip.append(structureChip('Resistance zone',`${chartMoney(resistance.low)}–${chartMoney(resistance.high)}`,`${resistance.touches||0} touches · ${Math.round((resistance.strength||0)*100)} strength`));
+  }else if(chartFibonacci){
+    const nearest=(chartFibonacci.levels||[]).find(item=>Number(item.ratio)===Number(chartFibonacci.nearest_ratio));
+    if(nearest)strip.append(structureChip(`${nearest.label} crowd line`,chartMoney(nearest.price),`${Number(chartFibonacci.nearest_distance_pct).toFixed(2)}% away`));
+    strip.append(structureChip('Current retrace',`${Number(chartFibonacci.retracement_pct).toFixed(1)}%`,`${chartFibonacci.direction} impulse`));
+  }
+  strip.hidden=!strip.children.length;
+}
 function draw(points) {
   if (!points.length) { status.textContent = 'Chart not available'; status.classList.add('visible'); renderChartEvents([]); return; }
-  const clean=points.map(point=>({time:point.time,price:Number(point.price)})).filter(point=>Number.isFinite(point.price));
-  const values = clean.map(point=>point.price);
+  const clean=points.map(point=>({time:point.time,price:Number(point.price),open:Number(point.open??point.price),high:Number(point.high??point.price),low:Number(point.low??point.price),close:Number(point.close??point.price),volume:Number(point.volume||0),vwap:Number(point.vwap),session:String(point.session||'regular')})).filter(point=>Number.isFinite(point.price));
+  const values = clean.flatMap(point=>[point.low,point.high]).filter(Number.isFinite);
   if (values.length < 2) { status.textContent = 'Chart not available'; status.classList.add('visible'); renderChartEvents([]); return; }
   const low = Math.min(...values), high = Math.max(...values), spread = Math.max(high - low, high * .002, .001);
-  const coords = values.map((value, index) => [index / (values.length - 1) * 600, 190 - ((value - low) / spread * 165)]);
+  const top=13,bottom=178,volumeTop=195,volumeBottom=242;
+  const xAt=index=>clean.length===1?300:index/(clean.length-1)*600;
+  const yAt=value=>bottom-((value-low)/spread*(bottom-top));
+  const coords=clean.map((point,index)=>[xAt(index),yAt(point.close)]);
   const line = coords.map(([x, y], index) => `${index ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
-  const rising = values.at(-1) >= values[0]; const color = rising ? '#57e389' : '#ff6b7a';
-  const area = `${line} L600 210 L0 210 Z`;
+  const rising = clean.at(-1).close >= clean[0].open; const color = rising ? '#57e389' : '#ff6b7a';
+  const grid=[.25,.5,.75].map(ratio=>{const y=top+(bottom-top)*ratio;return `<line x1="0" y1="${y}" x2="600" y2="${y}" stroke="#26302c" stroke-width="1" opacity=".55" vector-effect="non-scaling-stroke"/>`;}).join('');
+  let sessionBands='';let sessionStart=0;for(let index=1;index<=clean.length;index++){if(index<clean.length&&clean[index].session===clean[sessionStart].session)continue;if(clean[sessionStart].session!=='regular'){const startX=Math.max(0,xAt(sessionStart)-(clean.length>1?300/(clean.length-1):0));const endX=Math.min(600,xAt(index-1)+(clean.length>1?300/(clean.length-1):0));sessionBands+=`<rect x="${startX.toFixed(1)}" y="${top}" width="${Math.max(1,endX-startX).toFixed(1)}" height="${bottom-top}" fill="#75a7ff" opacity=".035"/>`;}sessionStart=index;}
+  const maxVolume=Math.max(1,...clean.map(point=>point.volume));const volumeWidth=Math.max(1,Math.min(7,520/clean.length));
+  const volumes=clean.map((point,index)=>{const height=Math.max(1,point.volume/maxVolume*(volumeBottom-volumeTop));const fill=point.close>=point.open?'#57e389':'#ff6b7a';return `<rect x="${(xAt(index)-volumeWidth/2).toFixed(1)}" y="${(volumeBottom-height).toFixed(1)}" width="${volumeWidth.toFixed(1)}" height="${height.toFixed(1)}" fill="${fill}" opacity=".34"/>`;}).join('');
+  const candleWidth=Math.max(1.3,Math.min(8,420/clean.length));
+  const candles=clean.length<=150?clean.map((point,index)=>{const x=xAt(index);const openY=yAt(point.open),closeY=yAt(point.close),highY=yAt(point.high),lowY=yAt(point.low);const fill=point.close>=point.open?'#57e389':'#ff6b7a';const bodyY=Math.min(openY,closeY),bodyHeight=Math.max(1.5,Math.abs(openY-closeY));return `<line x1="${x.toFixed(1)}" y1="${highY.toFixed(1)}" x2="${x.toFixed(1)}" y2="${lowY.toFixed(1)}" stroke="${fill}" stroke-width="1" opacity=".9" vector-effect="non-scaling-stroke"/><rect x="${(x-candleWidth/2).toFixed(1)}" y="${bodyY.toFixed(1)}" width="${candleWidth.toFixed(1)}" height="${bodyHeight.toFixed(1)}" rx=".6" fill="${fill}"/>`;}).join(''):`<path d="${line}" fill="none" stroke="${color}" stroke-width="3" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>`;
+  let vwapPath='';let lastVwapKey='';clean.forEach((point,index)=>{if(!Number.isFinite(point.vwap))return;const stamp=new Date(point.time);const key=`${stamp.getFullYear()}-${stamp.getMonth()}-${stamp.getDate()}-${point.session}`;const command=key===lastVwapKey?'L':'M';vwapPath+=`${command}${xAt(index).toFixed(1)} ${yAt(point.vwap).toFixed(1)} `;lastVwapKey=key;});
+  const references=[];
+  if(chartMode==='tape'&&Number.isFinite(Number(chartStructure?.previous_close))){const y=yAt(Number(chartStructure.previous_close));if(y>=top&&y<=bottom)references.push(`<line x1="0" y1="${y.toFixed(1)}" x2="600" y2="${y.toFixed(1)}" stroke="#78857f" stroke-width="1" stroke-dasharray="5 5" opacity=".7" vector-effect="non-scaling-stroke"/>`);}
+  if(chartMode==='gravity')chartLevels.forEach(level=>{const zoneLow=Math.max(top,Math.min(bottom,yAt(Number(level.high))));const zoneHigh=Math.max(top,Math.min(bottom,yAt(Number(level.low))));if(zoneHigh<top||zoneLow>bottom)return;const fill=level.side==='resistance'?'#ff6b7a':level.side==='support'?'#57e389':'#f5c66b';references.push(`<rect x="0" y="${zoneLow.toFixed(1)}" width="600" height="${Math.max(2,zoneHigh-zoneLow).toFixed(1)}" fill="${fill}" opacity="${(.04+(level.strength||0)*.1).toFixed(2)}"/><line x1="0" y1="${yAt(Number(level.price)).toFixed(1)}" x2="600" y2="${yAt(Number(level.price)).toFixed(1)}" stroke="${fill}" stroke-width="1" opacity=".55" vector-effect="non-scaling-stroke"/>`);});
+  if(chartMode==='astrology'&&chartFibonacci)(chartFibonacci.levels||[]).forEach(level=>{const y=yAt(Number(level.price));if(y<top||y>bottom)return;references.push(`<line x1="0" y1="${y.toFixed(1)}" x2="600" y2="${y.toFixed(1)}" stroke="#b99aff" stroke-width="1.3" stroke-dasharray="3 5" opacity=".72" vector-effect="non-scaling-stroke"/>`);});
   const annotations=visibleAnnotations(clean);
   const markers=annotations.map((item,annotationIndex)=>{
     const eventTime=new Date(item.time).getTime();let pointIndex=0;
     clean.forEach((point,index)=>{if(Math.abs(new Date(point.time).getTime()-eventTime)<Math.abs(new Date(clean[pointIndex].time).getTime()-eventTime))pointIndex=index;});
     const [x,y]=coords[pointIndex];const markerColor=annotationColors[item.tone]||annotationColors.neutral;
-    if(item.type==='pulse_entry')return `<line x1="${x.toFixed(1)}" y1="8" x2="${x.toFixed(1)}" y2="190" stroke="${markerColor}" stroke-width="1.5" stroke-dasharray="4 4" opacity=".72" vector-effect="non-scaling-stroke"/><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6" fill="#090b0b" stroke="${markerColor}" stroke-width="3" vector-effect="non-scaling-stroke"/>`;
+    if(item.type==='pulse_entry')return `<line x1="${x.toFixed(1)}" y1="8" x2="${x.toFixed(1)}" y2="${bottom}" stroke="${markerColor}" stroke-width="1.5" stroke-dasharray="4 4" opacity=".72" vector-effect="non-scaling-stroke"/><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6" fill="#090b0b" stroke="${markerColor}" stroke-width="3" vector-effect="non-scaling-stroke"/>`;
     const markerY=Math.max(9,y-10-(annotationIndex%3)*8);const size=5;
     return `<line x1="${x.toFixed(1)}" y1="${markerY.toFixed(1)}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="${markerColor}" stroke-width="1" opacity=".65" vector-effect="non-scaling-stroke"/><path d="M${x.toFixed(1)} ${(markerY-size).toFixed(1)} L${(x+size).toFixed(1)} ${markerY.toFixed(1)} L${x.toFixed(1)} ${(markerY+size).toFixed(1)} L${(x-size).toFixed(1)} ${markerY.toFixed(1)} Z" fill="${markerColor}" stroke="#090b0b" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
   }).join('');
-  chart.innerHTML = `<defs><linearGradient id="chartFade" x1="0" y1="0" x2="0" y2="1"><stop stop-color="${color}" stop-opacity=".22"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${area}" fill="url(#chartFade)"/><path d="${line}" fill="none" stroke="${color}" stroke-width="4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>${markers}`;
+  chart.innerHTML = `${sessionBands}${grid}${references.join('')}${volumes}${candles}${vwapPath&&chartMode!=='astrology'?`<path d="${vwapPath}" fill="none" stroke="#f5c66b" stroke-width="1.5" stroke-dasharray="2 3" opacity=".9" vector-effect="non-scaling-stroke"/>`:''}${markers}`;
   status.hidden = true;
   renderChartEvents(annotations);
-  chart.setAttribute('aria-label',`Price chart with ${annotations.length} detected event${annotations.length===1?'':'s'}`);
+  renderStructureSummary();
+  chart.setAttribute('aria-label',`${chartMode} price and volume chart with ${annotations.length} detected event${annotations.length===1?'':'s'}`);
   document.getElementById('chartLow').textContent = '$' + low.toFixed(low < 1 ? 4 : 2);
   document.getElementById('chartHigh').textContent = '$' + high.toFixed(high < 1 ? 4 : 2);
 }
-function selectRange(range){document.querySelectorAll('[data-range]').forEach(button=>button.classList.toggle('active',button.dataset.range===range));if(range==='5D'){draw(allPoints);return;}const latest=allPoints.length?new Date(allPoints.at(-1).time).getTime():0;const points=allPoints.filter(point=>new Date(point.time).getTime()>=latest-24*60*60*1000);draw(points.length>1?points:allPoints.slice(-30));}
-const chartRequest=fetch(`/api/t/${encodeURIComponent(ticker)}/chart`).then(response=>response.json()).then(data=>{allPoints=data.points||[];chartAnnotations=data.annotations||[];selectRange('1D');}).catch(()=>draw([]));
+function visibleChartPoints(){if(activeRange==='5D')return allPoints;const latest=allPoints.length?new Date(allPoints.at(-1).time).getTime():0;const points=allPoints.filter(point=>new Date(point.time).getTime()>=latest-24*60*60*1000);return points.length>1?points:allPoints.slice(-30);}
+function selectRange(range){activeRange=range;document.querySelectorAll('[data-range]').forEach(button=>button.classList.toggle('active',button.dataset.range===range));draw(visibleChartPoints());}
+const chartRequest=fetch(`/api/t/${encodeURIComponent(ticker)}/chart`).then(response=>response.json()).then(data=>{allPoints=data.points||[];chartAnnotations=data.annotations||[];chartLevels=data.levels||[];chartFibonacci=data.fibonacci||null;chartStructure=data.structure||{};selectRange('1D');}).catch(()=>draw([]));
 document.querySelectorAll('[data-range]').forEach(button=>button.addEventListener('click',()=>selectRange(button.dataset.range)));
+document.querySelectorAll('[data-chart-mode]').forEach(button=>button.addEventListener('click',()=>{chartMode=button.dataset.chartMode;document.querySelectorAll('[data-chart-mode]').forEach(item=>item.classList.toggle('active',item===button));document.getElementById('chartModeNote').textContent=chartModeNotes[chartMode];draw(visibleChartPoints());}));
 document.getElementById('shareButton').addEventListener('click', async () => {
   const share = {title: ticker, text: `${ticker} · ${company}`, url: location.href};
   try { fetch('/api/activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker,event_type:'share'})}); if (navigator.share) await navigator.share(share); else { await navigator.clipboard.writeText(location.href); document.getElementById('shareButton').textContent = '✓'; } } catch (_) {}

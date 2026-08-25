@@ -49,6 +49,10 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             row["name"]
             for row in database.execute("PRAGMA table_info(kol_calls)").fetchall()
         }
+        snapshot_columns = {
+            row["name"]
+            for row in database.execute("PRAGMA table_info(scan_snapshots)").fetchall()
+        }
     assert [tuple(row) for row in migrations] == [
         (migration.version, migration.name) for migration in MIGRATIONS
     ]
@@ -62,6 +66,14 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert flash["inference_model"] == "z-ai/glm-5.3"
     assert {"actor_id", "actor_snapshot_json"} <= commission_columns
     assert "actor_snapshot_json" in call_columns
+    assert {
+        "opening_range_position",
+        "support_distance_pct",
+        "resistance_distance_pct",
+        "fib_retracement_pct",
+        "structure_available",
+        "fibonacci_available",
+    } <= snapshot_columns
     assert {
         "market_events_event_time",
         "market_events_ticker_event_time",

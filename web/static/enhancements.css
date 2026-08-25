@@ -15,6 +15,46 @@
 }
 .range-buttons button.active { background: #202824; color: var(--green); }
 
+.chart-card { height: 325px; }
+#priceChart { height: 250px; }
+.chart-loading { inset: 34px 0 41px; }
+.chart-modes {
+  height: 31px; display: flex; align-items: center; gap: 4px;
+}
+.chart-modes button {
+  border: 1px solid transparent; border-radius: 7px; padding: 4px 8px;
+  background: transparent; color: #68746f; font-size: 8px; font-weight: 850;
+  cursor: pointer;
+}
+.chart-modes button.active {
+  border-color: #303b36; background: #151b18; color: var(--green);
+}
+.chart-modes button[data-chart-mode="astrology"].active {
+  color: #c9b3ff; border-color: rgba(185, 154, 255, .3);
+  background: rgba(185, 154, 255, .07);
+}
+.chart-mode-note {
+  margin: 0; color: #58645f; font-size: 7px; line-height: 15px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chart-structure-strip {
+  display: flex; gap: 6px; margin: -7px 20px 14px; overflow-x: auto;
+  scrollbar-width: none;
+}
+.chart-structure-strip::-webkit-scrollbar { display: none; }
+.chart-structure-strip[hidden] { display: none; }
+.chart-structure-strip > span {
+  flex: 0 0 auto; min-width: 112px; max-width: 210px; padding: 7px 8px;
+  border: 1px solid #28312d; border-radius: 8px; background: #101513;
+}
+.chart-structure-strip small, .chart-structure-strip b, .chart-structure-strip i { display: block; }
+.chart-structure-strip small { color: #6d7974; font-size: 7px; font-weight: 800; text-transform: uppercase; }
+.chart-structure-strip b { margin-top: 2px; color: var(--soft); font-size: 9px; }
+.chart-structure-strip i {
+  margin-top: 2px; color: #626e69; font-size: 7px; font-style: normal;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
 .chart-event-strip {
   display: flex; gap: 6px; margin: -6px 20px 14px; padding: 2px 0 5px;
   overflow-x: auto; scrollbar-width: none;
@@ -116,5 +156,5 @@
 
 @media (max-width: 360px) {
   .tab-bar { padding-left: 22px; padding-right: 22px; }
-  .chart-event-strip { margin-left: 15px; margin-right: 15px; }
+  .chart-event-strip, .chart-structure-strip { margin-left: 15px; margin-right: 15px; }
 }

@@ -16,8 +16,8 @@ import numpy as np
 
 from runner_web.db import connection, init_db
 
-FEATURE_SCHEMA_VERSION = "stonks.ranker_features.v3"
-MODEL_KIND = "multiclass_logistic_barrier_v3"
+FEATURE_SCHEMA_VERSION = "stonks.ranker_features.v4"
+MODEL_KIND = "multiclass_logistic_barrier_v4"
 HORIZONS = {"60m"}
 _configured_horizon = os.getenv("RANKER_HORIZON", "60m")
 DEFAULT_HORIZON = "60m" if _configured_horizon == "1h" else _configured_horizon
@@ -41,6 +41,16 @@ FEATURE_NAMES = (
     "vwap_position_pct",
     "pullback_from_high_pct",
     "close_location",
+    "opening_range_position",
+    "opening_range_breakout_pct",
+    "support_distance_pct",
+    "support_strength",
+    "resistance_distance_pct",
+    "resistance_strength",
+    "fib_retracement_pct",
+    "fib_level_distance_pct",
+    "structure_missing",
+    "fibonacci_missing",
     "log_dollar_volume",
     "log_recent_dollar_volume",
     "log_average_dollar_volume",
@@ -132,6 +142,16 @@ def feature_vector(row: dict[str, Any]) -> np.ndarray:
             _float(row.get("vwap_position_pct")),
             _float(row.get("pullback_from_high_pct")),
             _float(row.get("close_location"), 0.5),
+            _float(row.get("opening_range_position"), 0.5),
+            _float(row.get("opening_range_breakout_pct")),
+            _float(row.get("support_distance_pct")),
+            _float(row.get("support_strength")),
+            _float(row.get("resistance_distance_pct")),
+            _float(row.get("resistance_strength")),
+            _float(row.get("fib_retracement_pct")),
+            _float(row.get("fib_level_distance_pct")),
+            float(not bool(row.get("structure_available"))),
+            float(not bool(row.get("fibonacci_available"))),
             _log(row.get("dollar_volume")),
             _log(row.get("recent_dollar_volume")),
             _log(row.get("average_dollar_volume")),
@@ -561,10 +581,18 @@ def predict_and_store(scan_run_id: str, model: RankerModel | None = None) -> dic
     with connection() as db:
         db.executemany(
             """
-            INSERT OR REPLACE INTO ranker_predictions(
+            INSERT INTO ranker_predictions(
                 snapshot_id,model_id,score,rank,created_at,probability_up,
                 probability_down,probability_timeout,expected_return_pct
             ) VALUES(?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(snapshot_id,model_id) DO UPDATE SET
+                score=excluded.score,
+                rank=excluded.rank,
+                created_at=excluded.created_at,
+                probability_up=excluded.probability_up,
+                probability_down=excluded.probability_down,
+                probability_timeout=excluded.probability_timeout,
+                expected_return_pct=excluded.expected_return_pct
             """,
             [
                 (

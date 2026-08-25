@@ -72,6 +72,16 @@ class RunnerSnapshot:
     pullback_from_high_pct: float = 0.0
     close_location: float = 0.5
     recent_dollar_volume: float = 0.0
+    opening_range_position: float = 0.5
+    opening_range_breakout_pct: float = 0.0
+    support_distance_pct: float = 0.0
+    support_strength: float = 0.0
+    resistance_distance_pct: float = 0.0
+    resistance_strength: float = 0.0
+    fib_retracement_pct: float = 0.0
+    fib_level_distance_pct: float = 0.0
+    structure_available: bool = False
+    fibonacci_available: bool = False
     drawdown_20d_pct: float = 0.0
     drawdown_90d_pct: float = 0.0
     drawdown_52w_pct: float = 0.0

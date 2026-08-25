@@ -48,6 +48,7 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
+from runner_watch.chart_features import analyze_market_structure, clean_ohlcv
 from runner_watch.models import ScanSettings
 from runner_watch.risk import RiskInput, assess_risk
 from runner_watch.scanner import RunnerScanner
@@ -3095,24 +3096,124 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
 
 
 def _chart_points(frame: pd.DataFrame | None) -> list[dict[str, Any]]:
-    if frame is None or frame.empty:
+    return _serialize_chart_frame(frame, max_points=100)
+
+
+def _serialize_chart_frame(
+    frame: pd.DataFrame | None, *, max_points: int
+) -> list[dict[str, Any]]:
+    clean = clean_ohlcv(frame) if frame is not None else pd.DataFrame()
+    if clean.empty:
         return []
-    close = pd.Series(dtype="float64")
-    for column in frame.columns:
-        if str(column).lower().replace(" ", "") == "close":
-            close = pd.to_numeric(frame[column], errors="coerce").dropna()
-            break
-    if close.empty:
-        return []
-    step = max(1, len(close) // 100)
-    sampled = close.iloc[::step]
-    if sampled.index[-1] != close.index[-1]:
-        sampled = pd.concat([sampled, close.iloc[[-1]]])
-    points = [
-        {"time": pd.Timestamp(stamp).isoformat(), "price": round(float(price), 6)}
-        for stamp, price in sampled.items()
-    ]
+    max_points = max(2, max_points)
+    if len(clean) > max_points:
+        bucket_size = math.ceil(len(clean) / max_points)
+        buckets: list[dict[str, Any]] = []
+        segment_keys = [
+            (
+                stamp.date(),
+                "pre_market"
+                if stamp.time().replace(tzinfo=None) < clock_time(9, 30)
+                else "regular"
+                if stamp.time().replace(tzinfo=None) < clock_time(16)
+                else "after_hours",
+            )
+            for stamp in clean.index
+        ]
+        segment_start = 0
+        while segment_start < len(clean):
+            segment_key = segment_keys[segment_start]
+            segment_end = segment_start + 1
+            while segment_end < len(clean) and segment_keys[segment_end] == segment_key:
+                segment_end += 1
+            segment = clean.iloc[segment_start:segment_end]
+            for start in range(0, len(segment), bucket_size):
+                bucket = segment.iloc[start : start + bucket_size]
+                buckets.append(
+                    {
+                        "time": bucket.index[-1],
+                        "open": float(bucket["open"].iloc[0]),
+                        "high": float(bucket["high"].max()),
+                        "low": float(bucket["low"].min()),
+                        "close": float(bucket["close"].iloc[-1]),
+                        "volume": float(bucket["volume"].sum()),
+                    }
+                )
+            segment_start = segment_end
+        sampled = pd.DataFrame(buckets).set_index("time")
+    else:
+        sampled = clean
+
+    points: list[dict[str, Any]] = []
+    session_value = 0.0
+    session_volume = 0.0
+    session_key = None
+    for stamp, row in sampled.iterrows():
+        clock = stamp.time().replace(tzinfo=None)
+        session = (
+            "pre_market"
+            if clock < clock_time(9, 30)
+            else "regular"
+            if clock < clock_time(16)
+            else "after_hours"
+        )
+        next_session_key = (stamp.date(), session)
+        if next_session_key != session_key:
+            session_key = next_session_key
+            session_value = 0.0
+            session_volume = 0.0
+        volume = max(0.0, float(row["volume"]))
+        typical = (float(row["high"]) + float(row["low"]) + float(row["close"])) / 3
+        session_value += typical * volume
+        session_volume += volume
+        vwap = session_value / session_volume if session_volume > 0 else float(row["close"])
+        points.append(
+            {
+                "time": stamp.isoformat(),
+                "price": round(float(row["close"]), 6),
+                "open": round(float(row["open"]), 6),
+                "high": round(float(row["high"]), 6),
+                "low": round(float(row["low"]), 6),
+                "close": round(float(row["close"]), 6),
+                "volume": round(volume),
+                "vwap": round(vwap, 6),
+                "session": session,
+            }
+        )
     return points
+
+
+def _stored_chart_frame(
+    ticker: str,
+    *,
+    days: int = 7,
+) -> tuple[pd.DataFrame, dict[str, Any] | None]:
+    cutoff = iso(now() - timedelta(days=days))
+    with connection() as db:
+        rows = db.execute(
+            """
+            SELECT bar_time,open,high,low,close,volume,source,last_collected_at
+            FROM market_bars
+            WHERE source='yahoo' AND interval='5m' AND ticker=?
+              AND bar_time>=? AND close IS NOT NULL
+            ORDER BY bar_time
+            """,
+            (ticker, cutoff),
+        ).fetchall()
+    if not rows:
+        return pd.DataFrame(), None
+    raw = [dict(row) for row in rows]
+    frame = pd.DataFrame(raw).set_index("bar_time")
+    freshness = {
+        "source": str(raw[-1]["source"]),
+        "as_of": str(raw[-1]["bar_time"]),
+        "collected_at": str(raw[-1]["last_collected_at"]),
+        "delayed": True,
+        "stale": False,
+        "warnings": [],
+        "error": None,
+    }
+    return frame, freshness
 
 
 def _chart_topic(ticker: str) -> str:
@@ -3301,7 +3402,7 @@ def ticker_chart_snapshots(tickers: list[str]) -> dict[str, TopicSnapshot]:
         with connection() as db:
             rows = db.execute(
                 f"""
-                SELECT ticker,bar_time,close,source,last_collected_at
+                SELECT ticker,bar_time,open,high,low,close,volume,source,last_collected_at
                 FROM market_bars
                 WHERE source='yahoo' AND interval='5m'
                   AND ticker IN ({placeholders})
@@ -3321,14 +3422,8 @@ def ticker_chart_snapshots(tickers: list[str]) -> dict[str, TopicSnapshot]:
             ticker_bars = bars.get(ticker) or []
             if not ticker_bars:
                 continue
-            step = max(1, len(ticker_bars) // 100)
-            sampled = ticker_bars[::step]
-            if sampled[-1]["bar_time"] != ticker_bars[-1]["bar_time"]:
-                sampled.append(ticker_bars[-1])
-            points = [
-                {"time": str(row["bar_time"]), "price": round(float(row["close"]), 6)}
-                for row in sampled
-            ]
+            frame = pd.DataFrame(ticker_bars).set_index("bar_time")
+            points = _serialize_chart_frame(frame, max_points=100)
             last = ticker_bars[-1]
             as_of = datetime.fromisoformat(str(last["bar_time"]))
             collected_at = datetime.fromisoformat(str(last["last_collected_at"]))
@@ -3359,6 +3454,27 @@ def ticker_charts_payload(tickers: list[str]) -> dict[str, Any]:
         },
         "freshness": {ticker: snapshot.metadata() for ticker, snapshot in snapshots.items()},
         "annotations": _chart_annotations(requested),
+    }
+
+
+def ticker_chart_detail_payload(ticker: str) -> dict[str, Any]:
+    frame, freshness = _stored_chart_frame(ticker)
+    structure = analyze_market_structure(frame)
+    return {
+        "ticker": ticker,
+        "points": _serialize_chart_frame(frame, max_points=360),
+        "freshness": freshness,
+        "annotations": _chart_annotations([ticker]).get(ticker, []),
+        "levels": list(structure.levels),
+        "fibonacci": structure.fibonacci,
+        "structure": structure.summary,
+        "modes": {
+            "tape": "OHLCV bars, volume, and session VWAP",
+            "gravity": "Repeated prices, volume, VWAP, gaps, and session reference zones",
+            "astrology": (
+                "Fixed-anchor Fibonacci crowd references; not part of the hand-written score"
+            ),
+        },
     }
 
 
@@ -3419,15 +3535,8 @@ async def ticker_chart_api(ticker: str, request: Request) -> JSONResponse:
     normalized = _clean_ticker(ticker)
     if not _ticker_exists(normalized):
         raise HTTPException(404, "Ticker not found")
-    payload = await run_in_threadpool(ticker_charts_payload, [normalized])
-    return JSONResponse(
-        {
-            "ticker": normalized,
-            "points": payload["charts"].get(normalized, []),
-            "freshness": payload["freshness"].get(normalized),
-            "annotations": payload["annotations"].get(normalized, []),
-        }
-    )
+    payload = await run_in_threadpool(ticker_chart_detail_payload, normalized)
+    return JSONResponse(payload)
 
 
 @app.get("/api/t/{ticker}/pressure")
@@ -4889,6 +4998,16 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
                 "pullback_from_high_pct": item.pullback_from_high_pct,
                 "close_location": item.close_location,
                 "recent_dollar_volume": item.recent_dollar_volume,
+                "opening_range_position": item.opening_range_position,
+                "opening_range_breakout_pct": item.opening_range_breakout_pct,
+                "support_distance_pct": item.support_distance_pct,
+                "support_strength": item.support_strength,
+                "resistance_distance_pct": item.resistance_distance_pct,
+                "resistance_strength": item.resistance_strength,
+                "fib_retracement_pct": item.fib_retracement_pct,
+                "fib_level_distance_pct": item.fib_level_distance_pct,
+                "structure_available": int(item.structure_available),
+                "fibonacci_available": int(item.fibonacci_available),
                 "scoring_version": item.scoring_version,
                 "quote_time": item.quote_time.isoformat(),
                 "signals_json": json.dumps(item.signals),
@@ -4915,6 +5034,10 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
                     momentum_previous_5m_pct,momentum_acceleration_pct,
                     intraday_volatility_pct,vwap_position_pct,
                     pullback_from_high_pct,close_location,recent_dollar_volume,
+                    opening_range_position,opening_range_breakout_pct,
+                    support_distance_pct,support_strength,resistance_distance_pct,
+                    resistance_strength,fib_retracement_pct,fib_level_distance_pct,
+                    structure_available,fibonacci_available,
                     scoring_version,setup_score,rug_score,rug_level,trade_state,
                     state_reason,hard_veto,crash_candidate,drawdown_20d_pct,
                     drawdown_90d_pct,drawdown_52w_pct,rebound_from_20d_low_pct,
@@ -4930,6 +5053,10 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
                     :momentum_previous_5m_pct,:momentum_acceleration_pct,
                     :intraday_volatility_pct,:vwap_position_pct,
                     :pullback_from_high_pct,:close_location,:recent_dollar_volume,
+                    :opening_range_position,:opening_range_breakout_pct,
+                    :support_distance_pct,:support_strength,:resistance_distance_pct,
+                    :resistance_strength,:fib_retracement_pct,:fib_level_distance_pct,
+                    :structure_available,:fibonacci_available,
                     :scoring_version,:setup_score,:rug_score,:rug_level,:trade_state,
                     :state_reason,:hard_veto,:crash_candidate,:drawdown_20d_pct,
                     :drawdown_90d_pct,:drawdown_52w_pct,:rebound_from_20d_low_pct,

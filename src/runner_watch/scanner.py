@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from runner_watch.chart_features import analyze_market_structure
 from runner_watch.market_data import DownloadResult
 from runner_watch.models import DailyProfile, RunnerSnapshot, ScanResult, ScanSettings
 from runner_watch.risk import RiskInput, assess_risk
@@ -146,6 +147,7 @@ def analyze_ticker(
     if required["Close"].dropna().empty:
         return None
     usable = clean.loc[required["Close"].notna()].copy()
+    usable = usable.loc[usable.index <= now_et]
     if usable.empty:
         return None
 
@@ -244,6 +246,7 @@ def analyze_ticker(
     rebound_from_20d_low = (
         max(0.0, (price / daily.low_20d - 1) * 100) if daily.low_20d > 0 else 0.0
     )
+    structure = analyze_market_structure(usable)
 
     result = score_runner(
         ScoreInput(
@@ -317,6 +320,16 @@ def analyze_ticker(
         pullback_from_high_pct=pullback_from_high_pct,
         close_location=close_location,
         recent_dollar_volume=recent_dollar_volume,
+        opening_range_position=structure.features.opening_range_position,
+        opening_range_breakout_pct=structure.features.opening_range_breakout_pct,
+        support_distance_pct=structure.features.support_distance_pct,
+        support_strength=structure.features.support_strength,
+        resistance_distance_pct=structure.features.resistance_distance_pct,
+        resistance_strength=structure.features.resistance_strength,
+        fib_retracement_pct=structure.features.fib_retracement_pct,
+        fib_level_distance_pct=structure.features.fib_level_distance_pct,
+        structure_available=structure.features.structure_available,
+        fibonacci_available=structure.features.fibonacci_available,
         drawdown_20d_pct=drawdown_20d,
         drawdown_90d_pct=drawdown_90d,
         drawdown_52w_pct=drawdown_52w,
