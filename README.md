@@ -42,6 +42,9 @@ items stay visible, and known ignored filings do not get downloaded forever.
 Use `/api/ingestion/status` to check the latest success and error time for each feed. The ingestion
 tables do not replace the app's normal read tables; they provide one audit path behind them.
 
+The researched and prioritized plan for adding halts, quotes, fundamentals, news, biotech events,
+short activity, and market context is in [the data source ingestion roadmap](docs/data-source-roadmap.md).
+
 The main screen ranks stocks with a **runner score**. The score looks for:
 
 - volume that is unusual for the same time of day
