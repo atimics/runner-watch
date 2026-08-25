@@ -10,9 +10,12 @@ from typing import Any
 
 from runner_web.db import connection
 
-DEFAULT_MODEL_CONTEXT_TOKENS = 1_048_576
 DEFAULT_CONTEXT_FILL_RATIO = 0.80
 DEFAULT_OUTPUT_RESERVE_TOKENS = 16_384
+KNOWN_MODEL_CONTEXT_TOKENS = {
+    "z-ai/glm-5.3": 1_048_576,
+    "z-ai/glm-5.2": 1_048_576,
+}
 
 
 def _iso(value: datetime) -> str:
@@ -34,13 +37,15 @@ def _estimated_tokens(value: Any) -> int:
     return max(1, math.ceil(len(text) / 3))
 
 
-def research_context_budget() -> dict[str, int | float]:
+def research_context_budget() -> dict[str, Any]:
+    model = os.getenv("OPENROUTER_RESEARCH_MODEL", "z-ai/glm-5.3")
+    default_context = KNOWN_MODEL_CONTEXT_TOKENS.get(model, 131_072)
     context_tokens = max(
         32_768,
         int(
             os.getenv(
                 "OPENROUTER_RESEARCH_CONTEXT_TOKENS",
-                str(DEFAULT_MODEL_CONTEXT_TOKENS),
+                str(default_context),
             )
         ),
     )
@@ -59,6 +64,7 @@ def research_context_budget() -> dict[str, int | float]:
     )
     target = min(int(context_tokens * ratio), context_tokens - output_reserve)
     return {
+        "model": model,
         "model_context_tokens": context_tokens,
         "fill_ratio": ratio,
         "output_reserve_tokens": output_reserve,
@@ -135,6 +141,17 @@ def build_research_context(
             """,
             (symbol, cutoff),
         ).fetchall()
+        related_document_rows = database.execute(
+            """
+            SELECT d.* FROM market_events e
+            JOIN ingestion_runs r ON r.id=e.last_run_id
+            JOIN source_documents d
+              ON d.source_url=r.locator AND d.content_hash=r.content_hash
+            WHERE e.ticker=? AND e.event_at>=?
+            ORDER BY d.last_collected_at DESC LIMIT 300
+            """,
+            (symbol, cutoff),
+        ).fetchall()
         fact_rows = (
             database.execute(
                 """
@@ -183,15 +200,17 @@ def build_research_context(
         if prefixes:
             clauses.append("(" + " OR ".join("source_url LIKE ?" for _ in prefixes) + ")")
             parameters.extend(prefixes)
-        document_rows = []
+        document_rows = list(related_document_rows)
         if clauses:
-            document_rows = database.execute(
-                f"""
-                SELECT * FROM source_documents WHERE {' OR '.join(clauses)}
-                ORDER BY last_collected_at DESC LIMIT 300
-                """,  # noqa: S608
-                parameters,
-            ).fetchall()
+            document_rows.extend(
+                database.execute(
+                    f"""
+                    SELECT * FROM source_documents WHERE {' OR '.join(clauses)}
+                    ORDER BY last_collected_at DESC LIMIT 300
+                    """,  # noqa: S608
+                    parameters,
+                ).fetchall()
+            )
 
     if company:
         candidates.append(
@@ -222,7 +241,11 @@ def build_research_context(
                 priority=95,
                 kind="sec_company_fact",
                 observed_at=fact.get("filed_at"),
-                source_url="https://data.sec.gov/submissions/",
+                source_url=(
+                    f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json"
+                    if cik is not None
+                    else None
+                ),
                 data=fact,
             )
         )

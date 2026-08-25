@@ -287,6 +287,12 @@ def refresh_edgar() -> dict[str, Any]:
             except Exception as exc:
                 LOG.warning("Could not parse beneficial ownership %s: %s", filing.accession, exc)
                 item_errors[filing.accession] = f"Beneficial ownership parsing failed: {exc}"
+        else:
+            try:
+                client.archive_primary_filing(filing)
+            except Exception as exc:
+                LOG.warning("Could not archive filing text %s: %s", filing.accession, exc)
+                item_errors[filing.accession] = f"Filing text archive failed: {exc}"
         company = _company_for_cik(issuer_cik)
         if company is None:
             mark_source_item(

@@ -11,6 +11,7 @@ from runner_watch.edgar import (
     parse_company_map,
     parse_latest_filings,
     parse_ownership_xml,
+    primary_filing_document_names,
 )
 
 
@@ -137,3 +138,35 @@ def test_sec_download_emits_the_same_source_fetch_contract(monkeypatch: MonkeyPa
     assert fetches[0].source == "sec"
     assert fetches[0].feed == "current_filings"
     assert fetches[0].status == "success"
+
+
+def test_primary_filing_document_prefers_full_submission_text() -> None:
+    index = {
+        "directory": {
+            "item": [
+                {"name": "report.htm"},
+                {"name": "company-8k.htm"},
+                {"name": "000000000126000001.txt"},
+            ]
+        }
+    }
+
+    names = primary_filing_document_names(index, "0000000001-26-000001")
+
+    assert names == ["000000000126000001.txt"]
+
+
+def test_primary_filing_document_prefers_main_html_over_exhibit_text() -> None:
+    index = {
+        "directory": {
+            "item": [
+                {"name": "report.htm"},
+                {"name": "exhibit.txt"},
+                {"name": "company-8k.htm"},
+            ]
+        }
+    }
+
+    names = primary_filing_document_names(index, "0000000001-26-000001")
+
+    assert names == ["company-8k.htm"]

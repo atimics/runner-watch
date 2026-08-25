@@ -97,6 +97,21 @@ The report worker stays queued until `OPENAI_API_KEY` is configured. It uses the
 strict structured output, sends only stored market and filing evidence, and defaults to the model in
 `AI_REPORT_MODEL` (`gpt-5.6`). A missing key never falls back to fake generated copy.
 
+Commissioned reports use one OpenRouter call and default to `z-ai/glm-5.3`. They do not run a web
+search or an agent loop. Before the call, Runner Watch ranks and deduplicates its stored SEC filing
+text, named reporting people, issuer facts, news, social reports, corporate events, prior risk
+states, and market history. It fills up to 80% of the configured model context with relevant data,
+without padding the prompt when less evidence exists, and reserves the rest for reasoning and the
+report. The default GLM 5.3 context setting is 1,048,576 tokens. Override it with
+`OPENROUTER_RESEARCH_CONTEXT_TOKENS`, change the fill ratio with
+`OPENROUTER_RESEARCH_CONTEXT_FILL_RATIO`, or change the output cap with
+`OPENROUTER_RESEARCH_OUTPUT_TOKENS`.
+
+The report starts with an opinionated thesis, then explains who the company is, who the named people
+or entities are, why each one appears in a filing, what the filings mean, what supports the thesis,
+what could rug it, and what remains unknown. Source text is explicitly treated as evidence rather
+than instructions.
+
 The main screen ranks stocks with a **runner score**. The score looks for:
 
 - volume that is unusual for the same time of day

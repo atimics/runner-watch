@@ -226,6 +226,18 @@ class EdgarClient:
                 continue
         return None
 
+    def archive_primary_filing(self, filing: EdgarFiling) -> str | None:
+        """Fetch one primary filing document so later reports can use its full text."""
+
+        directory_url = filing_directory_url(filing.filing_url)
+        index = self.get_json(f"{directory_url}/index.json")
+        names = primary_filing_document_names(index, filing.accession)
+        if not names:
+            return None
+        url = f"{directory_url}/{names[0]}"
+        self.get_text(url)
+        return url
+
 
 def parse_company_map(payload: dict[str, Any]) -> list[EdgarCompany]:
     fields = [str(field) for field in payload.get("fields", [])]
@@ -292,6 +304,31 @@ def filing_directory_url(filing_url: str) -> str:
         raise ValueError("Unexpected filing path")
     directory = parsed.path.rsplit("/", 1)[0]
     return f"{SEC_BASE}{directory}"
+
+
+def primary_filing_document_names(
+    index: dict[str, Any], accession: str
+) -> list[str]:
+    """Prefer the SEC full-submission text, then likely primary HTML documents."""
+
+    items = index.get("directory", {}).get("item", [])
+    names = [str(item.get("name") or "") for item in items]
+    compact_accession = accession.replace("-", "")
+    exact_text = [name for name in names if name.lower() == f"{compact_accession}.txt"]
+    if exact_text:
+        return exact_text
+    rejected = ("filingsummary", "report", "cal", "def", "lab", "pre", "xsd")
+    html_files = [
+        name
+        for name in names
+        if name.lower().endswith((".htm", ".html"))
+        and not name.lower().endswith("-index.html")
+        and not name.lower().startswith(rejected)
+    ]
+    if html_files:
+        return html_files[:1]
+    text_files = [name for name in names if name.lower().endswith(".txt")]
+    return text_files[:1]
 
 
 def _number(node: ET.Element, path: str) -> float:
