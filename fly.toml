@@ -11,6 +11,9 @@ primary_region = "sjc"
   COOKIE_SECURE = "1"
   PYTHONUNBUFFERED = "1"
   BACKGROUND_SCAN_INTERVAL_SECONDS = "180"
+  DISCOVERY_SOURCES_ENABLED = "true"
+  DISCOVERY_INTERVAL_SECONDS = "30"
+  NASDAQ_TRADE_HALTS_ENABLED = "true"
   SEC_USER_AGENT = "RunnerWatch/0.2 https://stonks.rati.foundation"
 
 [[mounts]]
