@@ -2,26 +2,23 @@
 {% block title %}Radar · Runner Watch{% endblock %}
 {% block content %}
 <header class="screen-head">
-  <div><span class="eyebrow">YOUR WATCHLIST</span><h1>Radar</h1></div>
+  <div><h1>Radar</h1><span class="head-meta"><b id="watchCount">{{ watches|length }}</b> watched <i></i><span id="radarStatus">Live</span></span></div>
   <button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.username[:1]|upper }}</button>
 </header>
 
 <main class="list-section radar-section">
-  <div class="radar-message"><span></span><div><strong>Changes first</strong><p>Fresh market moves and primary-source events rise to the top.</p></div></div>
-  <div class="list-title"><strong id="watchCount">{{ watches|length }} watched</strong><span id="radarStatus">checking for changes</span></div>
   <div class="token-list" id="radarList"></div>
 </main>
-<p class="source-note">Market snapshots + SEC filings · research only</p>
 {% endblock %}
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
 let rows={{ watches|tojson }};const list=document.getElementById('radarList');
 function render(){
-  document.getElementById('watchCount').textContent=`${rows.length} watched`;
-  list.innerHTML=rows.map(item=>TickerRow.render(item,{updated:item.has_update})).join('')||`<div class="empty-list radar-empty"><span class="empty-radar"></span><strong>Your radar is empty</strong><p>Open a ticker from Pulse and tap Watch.</p><a href="/">Browse Pulse</a></div>`;
+  document.getElementById('watchCount').textContent=rows.length;
+  list.innerHTML=rows.map(item=>TickerRow.render(item,{updated:item.has_update})).join('')||`<div class="empty-list radar-empty"><strong>Nothing watched</strong><a href="/">Browse Pulse</a></div>`;
   TickerRow.paintCharts();
 }
 render();TickerRow.loadCharts('/api/radar/charts');let pollCount=0;
-setInterval(async()=>{try{const response=await fetch('/api/radar');if(!response.ok)return;const data=await response.json();const updates=(data.rows||[]).filter(item=>item.has_update);rows=data.rows||[];render();document.getElementById('radarStatus').textContent=updates.length?`${updates.length} new`:'up to date';pollCount+=1;if(pollCount%4===0)TickerRow.loadCharts('/api/radar/charts');if(updates.length&&'Notification'in window&&Notification.permission==='granted')new Notification(`${updates[0].ticker} changed`,{body:updates[0].pulse_label});}catch(_){document.getElementById('radarStatus').textContent='reconnecting';}},30000);
+setInterval(async()=>{try{const response=await fetch('/api/radar');if(!response.ok)return;const data=await response.json();const updates=(data.rows||[]).filter(item=>item.has_update);rows=data.rows||[];render();document.getElementById('radarStatus').textContent=updates.length?`${updates.length} new`:'Live';pollCount+=1;if(pollCount%4===0)TickerRow.loadCharts('/api/radar/charts');if(updates.length&&'Notification'in window&&Notification.permission==='granted')new Notification(`${updates[0].ticker} changed`,{body:updates[0].pulse_label});}catch(_){document.getElementById('radarStatus').textContent='Offline';}},30000);
 </script>
 {% endblock %}

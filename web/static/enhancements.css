@@ -8,11 +8,6 @@
 }
 .alpha-icon { font-size: 22px; line-height: 18px; font-weight: 400; text-align: center; }
 
-.feed-divider {
-  height: 30px; display: flex; align-items: end; padding: 0 6px 7px;
-  color: #69756f; font-size: 8px; font-weight: 850; text-transform: uppercase;
-  letter-spacing: .11em; border-bottom: 1px solid var(--line);
-}
 .range-buttons { display: flex; gap: 3px; }
 .range-buttons button {
   border: 0; border-radius: 5px; padding: 3px 7px; background: transparent;
@@ -92,22 +87,6 @@
 .signal-detail > .reason-list { margin: 0 20px; }
 .report-link-mobile { display: block; margin: 17px auto 0; border: 0; background: transparent; color: #68756f; font-size: 9px; }
 
-.session-clock { padding: 10px 20px 8px; border-bottom: 1px solid var(--line); background: #0c100e; }
-.session-clock-top { display: flex; align-items: center; justify-content: space-between; }
-.session-clock-top > span { display: flex; align-items: center; gap: 6px; }
-.session-clock-top i { width: 6px; height: 6px; border-radius: 50%; background: #718078; box-shadow: 0 0 8px currentColor; }
-.session-clock-top strong { font-size: 10px; text-transform: uppercase; letter-spacing: .09em; }
-.session-clock-top > b { color: var(--soft); font-size: 9px; font-variant-numeric: tabular-nums; }
-.session-regular .session-clock-top i { background: var(--green); color: var(--green); }
-.session-pre .session-clock-top i, .session-after .session-clock-top i { background: var(--amber); color: var(--amber); }
-.session-overnight .session-clock-top i { background: #75a7ff; color: #75a7ff; }
-.session-hours { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 8px; }
-.session-hours > span { display: flex; justify-content: space-between; align-items: baseline; gap: 2px; padding: 5px 6px; border: 1px solid #202824; border-radius: 5px; color: #56625c; }
-.session-hours > span.active { color: var(--text); border-color: #4a5b53; background: #151c18; }
-.session-hours b { font-size: 8px; }
-.session-hours small { font-size: 7px; white-space: nowrap; }
-.session-clock p { color: #525e58; font-size: 7px; line-height: 1.35; margin: 6px 0 0; }
-
 .evidence-gate { margin: 14px 20px 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .evidence-gate > div:first-child { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; }
 .evidence-gate span { color: #6f7b76; font-size: 8px; font-weight: 800; letter-spacing: .1em; }
@@ -138,6 +117,4 @@
 
 @media (max-width: 360px) {
   .tab-bar { padding-left: 22px; padding-right: 22px; }
-  .session-clock { padding-left: 14px; padding-right: 14px; }
-  .session-hours small { display: none; }
 }

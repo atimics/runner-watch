@@ -2,10 +2,7 @@
 {% block title %}Pulse · Runner Watch{% endblock %}
 {% block content %}
 <header class="screen-head">
-  <div>
-    <span class="live-label"><i></i> MARKET INTELLIGENCE</span>
-    <h1>Pulse</h1>
-  </div>
+  <div><h1>Pulse</h1></div>
   {% if user %}
     <button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.username[:1]|upper }}</button>
   {% else %}
@@ -14,18 +11,9 @@
 </header>
 {% include "_market_clock.html" %}
 
-<section class="pulse-stats" aria-label="Pulse summary">
-  <div><strong id="liveCount">{{ pulse.stats.runners }}</strong><span>runners</span></div>
-  <div><strong id="gapCount">{{ pulse.stats.unexplained }}</strong><span>unexplained</span></div>
-  <div><strong id="filingCount">{{ pulse.stats.filings }}</strong><span>filings</span></div>
-</section>
-
-<main class="list-section">
-  <div class="list-title"><strong>Moving now</strong><span id="updatedAt">Listening…</span></div>
+<main class="list-section pulse-feed">
   <div class="token-list" id="pulseList" aria-live="polite"></div>
 </main>
-
-<p class="source-note">Active listed penny-stock candidates + SEC filings · delayed data</p>
 {% endblock %}
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
@@ -33,17 +21,7 @@ let pulse={{ pulse|tojson }};
 const list=document.getElementById('pulseList');
 function render(changedTickers = new Set()) {
   const rows = pulse.rows || [];
-  let previousSection='';
-  list.innerHTML = rows.map(row => {
-    const divider=row.section!==previousSection?`<div class="feed-divider">${row.section==='runners'?'Active runners':'Fresh filings · context only'}</div>`:'';
-    previousSection=row.section;
-    return divider+TickerRow.render(row,{updated:changedTickers.has(row.ticker)});
-  }).join('') || `<div class="empty-list"><span>⌁</span><strong>Pulse is quiet</strong><p>The SEC listener is still running.</p></div>`;
-  document.getElementById('liveCount').textContent = pulse.stats?.runners ?? 0;
-  document.getElementById('gapCount').textContent = pulse.stats?.unexplained ?? 0;
-  document.getElementById('filingCount').textContent = pulse.stats?.filings ?? 0;
-  const age=pulse.updated_at?TickerRow.ago(pulse.updated_at):'';
-  document.getElementById('updatedAt').textContent = age ? (age==='now'?'updated now':`updated ${age} ago`) : 'listening…';
+  list.innerHTML = rows.map(row => TickerRow.render(row,{updated:changedTickers.has(row.ticker)})).join('') || `<div class="empty-list"><strong>No movement</strong></div>`;
   TickerRow.paintCharts();
 }
 render();TickerRow.loadCharts('/api/pulse/charts');let pollCount=0;

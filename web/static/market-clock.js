@@ -9,13 +9,14 @@
     const minutes = Math.floor(value % 3600 / 60);
     const secs = value % 60;
     if (days) return `${days}d ${hours}h`;
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    if (hours) return `${hours}h ${minutes}m`;
+    return `${minutes}m ${secs}s`;
   }
 
   function tick() {
     clocks.forEach(clock => {
       const remaining = (new Date(clock.dataset.nextAt).getTime() - Date.now()) / 1000;
-      clock.querySelector('[data-session-countdown]').textContent = `${clock.dataset.nextLabel} in ${duration(remaining)}`;
+      clock.querySelector('[data-session-countdown]').textContent = `${clock.dataset.nextLabel} · ${duration(remaining)}`;
     });
   }
 
@@ -24,8 +25,6 @@
     clock.dataset.nextLabel = data.next_label;
     clock.className = `session-clock session-${data.session}`;
     clock.querySelector('[data-session-label]').textContent = data.label;
-    clock.querySelector('[data-session-note]').textContent = data.data_note;
-    clock.querySelectorAll('[data-session-key]').forEach(item => item.classList.toggle('active', item.dataset.sessionKey === data.session));
   }
 
   tick();

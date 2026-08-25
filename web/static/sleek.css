@@ -1,0 +1,145 @@
+:root {
+  --bg: #080a09;
+  --panel: #0f1211;
+  --panel-2: #141817;
+  --line: #202522;
+  --muted: #737d78;
+  --soft: #b9c1bd;
+}
+
+body {
+  background: #050706;
+  font-feature-settings: "tnum" 1, "ss01" 1;
+}
+
+.mobile-app {
+  background: var(--bg);
+  border-color: #111512;
+  padding-bottom: calc(82px + env(safe-area-inset-bottom));
+}
+
+.screen-head {
+  position: sticky;
+  z-index: 18;
+  top: 0;
+  height: 70px;
+  padding: 12px 18px;
+  align-items: center;
+  background: rgba(8, 10, 9, .88);
+  border-color: rgba(255, 255, 255, .07);
+  backdrop-filter: blur(20px) saturate(140%);
+}
+
+.screen-head > div { display: flex; flex-direction: column; gap: 4px; }
+.screen-head h1 { margin: 0; font-size: 25px; line-height: 1; letter-spacing: -.045em; }
+.live-label, .eyebrow { display: none; }
+
+.head-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1;
+}
+.head-meta b { color: var(--soft); font-weight: 760; }
+.head-meta i { width: 2px; height: 2px; border-radius: 50%; background: #4e5752; }
+
+.avatar-button {
+  width: 34px;
+  height: 34px;
+  border-color: #2b332f;
+  background: #151a17;
+  box-shadow: inset 0 1px rgba(255, 255, 255, .04);
+}
+
+.session-clock {
+  height: 35px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #0b0e0c;
+  border-color: rgba(255, 255, 255, .06);
+}
+.session-state { display: flex; align-items: center; gap: 7px; }
+.session-state i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #718078;
+  box-shadow: 0 0 7px currentColor;
+}
+.session-state strong { color: #aeb7b2; font-size: 9px; font-weight: 720; }
+.session-clock > b { color: #6f7974; font-size: 9px; font-weight: 560; font-variant-numeric: tabular-nums; }
+.session-regular .session-state i { color: var(--green); background: var(--green); }
+.session-pre .session-state i, .session-after .session-state i { color: var(--amber); background: var(--amber); }
+.session-overnight .session-state i { color: #75a7ff; background: #75a7ff; }
+
+.pulse-stats, .list-title, .feed-divider, .radar-message { display: none; }
+.list-section, .radar-section, .alpha-section { padding: 7px 14px 0; }
+.token-list { border-top: 0; }
+.ticker-row { min-height: 72px; padding-top: 8px; padding-bottom: 8px; }
+.ticker-row:first-child { border-top: 0; }
+.ticker-row .company-name { color: #727c77; }
+.ticker-row .catalyst { color: #9aa39f; }
+
+.alpha-list { display: flex; flex-direction: column; gap: 8px; }
+.alpha-row {
+  padding: 12px;
+  border: 1px solid #202522;
+  border-radius: 13px;
+  background: linear-gradient(145deg, #0f1311, #0b0e0d);
+}
+.alpha-row > p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 9px 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.empty-list { min-height: 52vh; }
+.empty-list strong { margin: 0; font-size: 14px; }
+.radar-empty > a { margin-top: 12px; }
+
+.tab-bar {
+  bottom: max(8px, env(safe-area-inset-bottom));
+  width: min(492px, calc(100% - 20px));
+  height: 58px;
+  padding: 5px 32px;
+  border: 1px solid #262d29;
+  border-radius: 18px;
+  background: rgba(15, 18, 16, .92);
+  box-shadow: 0 14px 42px rgba(0, 0, 0, .45), inset 0 1px rgba(255, 255, 255, .035);
+  backdrop-filter: blur(24px) saturate(150%);
+}
+.tab-link { gap: 3px; font-size: 8px; }
+.tab-icon { transform: scale(.9); }
+
+.source-note { display: none; }
+
+.detail-nav {
+  position: sticky;
+  z-index: 18;
+  top: 0;
+  height: 54px;
+  background: rgba(8, 10, 9, .88);
+  border-color: rgba(255, 255, 255, .07);
+  backdrop-filter: blur(20px) saturate(140%);
+}
+.detail-nav strong { font-size: 11px; font-weight: 650; }
+.detail-nav > a, .detail-nav > button { opacity: .9; }
+.section-heading { align-items: center; }
+.section-heading h2 { margin: 0; font-size: 17px; letter-spacing: -.025em; }
+.section-heading span, .evidence-gate span { letter-spacing: 0; text-transform: none; }
+.section-heading > b { font-weight: 650; }
+.evidence-gate { border-radius: 13px; background: #0f1311; }
+.evidence-gate strong { font-size: 11px; }
+
+@media (max-width: 360px) {
+  .screen-head { padding-left: 15px; padding-right: 15px; }
+  .session-clock { padding-left: 15px; padding-right: 15px; }
+  .list-section, .radar-section, .alpha-section { padding-left: 10px; padding-right: 10px; }
+  .tab-bar { width: calc(100% - 16px); padding-left: 22px; padding-right: 22px; }
+}

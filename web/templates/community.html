@@ -2,13 +2,11 @@
 {% block title %}Alpha · Runner Watch{% endblock %}
 {% block content %}
 <header class="screen-head">
-  <div><span class="eyebrow">TIMESTAMPED IDEAS</span><h1>Alpha</h1></div>
+  <div><h1>Alpha</h1><span class="head-meta"><b>{{ signals|length }}</b> ideas</span></div>
   {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.username[:1]|upper }}</button>{% else %}<a class="avatar-button signed-out" href="/login" aria-label="Log in">↗</a>{% endif %}
 </header>
 
 <main class="list-section alpha-section">
-  <div class="radar-message"><span></span><div><strong>Receipts stay attached</strong><p>Every idea keeps its captured price, time, risks, and result.</p></div></div>
-  <div class="list-title"><strong>Latest ideas</strong><span>{{ signals|length }} public</span></div>
   {% if signals %}
   <div class="alpha-list">
     {% for signal in signals %}
@@ -28,8 +26,7 @@
     {% endfor %}
   </div>
   {% else %}
-  <div class="empty-list"><span>↗</span><strong>No public ideas yet</strong><p>Open a live ticker and share the first one.</p></div>
+  <div class="empty-list"><strong>No ideas yet</strong></div>
   {% endif %}
 </main>
-<p class="source-note">Public observations · never trade from a post alone</p>
 {% endblock %}

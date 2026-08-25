@@ -32,7 +32,7 @@
   </section>
 
   <section class="why-section">
-    <div class="section-heading"><div><span>MARKET STATE</span><h2>Why moving</h2></div>{% if detail.current.source == 'market' and detail.current.score %}<b>{{ '%.0f'|format(detail.current.score) }} runner score</b>{% elif detail.current.source == 'sec' %}<b>fresh filing</b>{% endif %}</div>
+    <div class="section-heading"><div><h2>Why moving</h2></div>{% if detail.current.source == 'market' and detail.current.score %}<b>{{ '%.0f'|format(detail.current.score) }} score</b>{% elif detail.current.source == 'sec' %}<b>new filing</b>{% endif %}</div>
     {% if detail.current.source == 'market' %}
     <div class="market-metrics">
       <div><span>RVOL</span><strong>{% if detail.current.relative_volume is not none %}{{ '%.1f'|format(detail.current.relative_volume) }}×{% else %}—{% endif %}</strong></div>
@@ -48,20 +48,20 @@
   </section>
 
   <section class="evidence-gate gate-{{ detail.evidence_gate.state }}" id="evidenceGate">
-    <div><span>RESEARCH GATE</span><strong id="gateSummary">{{ detail.evidence_gate.summary }}</strong><small id="gateCount">{{ detail.evidence_gate.count }} check{{ '' if detail.evidence_gate.count == 1 else 's' }} · gate {{ detail.evidence_gate.threshold }}</small></div>
+    <div><span>Signals</span><strong id="gateSummary">{{ 'Ready' if detail.evidence_gate.state == 'ready' else ('1 signal away' if detail.evidence_gate.state == 'near' else 'Building') }}</strong><small id="gateCount">{{ detail.evidence_gate.count }}/{{ detail.evidence_gate.threshold }}</small></div>
     <div class="gate-meter" id="gateMeter">{% for index in range(detail.evidence_gate.threshold) %}<i class="{% if index < detail.evidence_gate.count %}hit{% endif %}"></i>{% endfor %}</div>
     <p id="gateChecks">{{ detail.evidence_gate.checks|join(' · ') or 'Waiting for volume, momentum, structure, or catalyst evidence.' }}</p>
   </section>
 
   <section class="pressure-section" id="pressureSection">
-    <div class="section-heading"><div><span>BAR-DERIVED · NOT AN ORDER BOOK</span><h2>Trade pressure</h2></div><b id="pressureLabel">collecting</b></div>
+    <div class="section-heading"><div><span>5m OHLCV estimate</span><h2>Trade pressure</h2></div><b id="pressureLabel">collecting</b></div>
     <div class="pressure-bar"><i id="buyPressureBar"></i><i id="sellPressureBar"></i></div>
     <div class="pressure-values"><span><b id="buyPressure">—</b><small>estimated buy</small></span><span><b id="sellPressure">—</b><small>estimated sell</small></span><span><b id="volumeBurst">—</b><small>volume burst</small></span></div>
-    <p id="pressureNote">Collecting 5-minute bars. This estimate cannot show resting bids, asks, or Level II depth.</p>
+    <p id="pressureNote">Waiting for bars.</p>
   </section>
 
   <section class="why-section catalyst-section">
-    <div class="section-heading"><div><span>PRIMARY SOURCES</span><h2>Catalysts & risks</h2></div></div>
+    <div class="section-heading"><div><h2>Filings</h2></div></div>
     <div class="evidence-list">
       {% if detail.events %}
         {% for event in detail.events[:5] %}
@@ -74,7 +74,7 @@
       {% else %}
         <div class="evidence-row evidence-gap">
           <span class="timeline-dot gap"></span>
-          <span><strong>No recent SEC catalyst</strong><small>Market move only</small><p>The filing listener did not find a recent SEC event. Check news and the company directly.</p></span>
+          <span><strong>No recent SEC catalyst</strong><small>Market move only</small><p>No matching filing found.</p></span>
         </div>
       {% endif %}
     </div>
@@ -90,7 +90,6 @@
     {% elif user %}<button type="button" disabled>Fresh scan needed to share</button>
     {% else %}<a href="/login">Log in to share alpha</a>{% endif %}
   </section>
-  <p class="source-note detail-note">Evidence, not advice. Check the filing, spread, dilution, and halt risk.</p>
 </main>
 {% if user and detail.can_publish %}
 <dialog class="alpha-sheet" id="alphaSheet">
@@ -159,7 +158,7 @@ function compactVolume(value){
 }
 function renderPressure(pressure){
   if(!pressure?.available){
-    document.getElementById('pressureNote').textContent=pressure?.note||'Trade pressure unavailable.';
+    document.getElementById('pressureNote').textContent='Waiting for bars.';
     return;
   }
   document.getElementById('pressureLabel').textContent=pressure.label;
@@ -168,15 +167,15 @@ function renderPressure(pressure){
   document.getElementById('volumeBurst').textContent=pressure.volume_burst==null?'—':Number(pressure.volume_burst).toFixed(1)+'×';
   document.getElementById('buyPressureBar').style.width=pressure.buy_pressure_pct+'%';
   document.getElementById('sellPressureBar').style.width=pressure.sell_pressure_pct+'%';
-  document.getElementById('pressureNote').textContent=pressure.bar_count+' five-minute bars · '+pressure.note;
+  document.getElementById('pressureNote').textContent=pressure.bar_count+' bars';
 }
 function renderGate(gate){
   if(!gate)return;
   const root=document.getElementById('evidenceGate');
   if(!root)return;
   root.className='evidence-gate gate-'+gate.state;
-  document.getElementById('gateSummary').textContent=gate.summary;
-  document.getElementById('gateCount').textContent=gate.count+' check'+(gate.count===1?'':'s')+' · gate '+gate.threshold;
+  document.getElementById('gateSummary').textContent=gate.state==='ready'?'Ready':gate.state==='near'?'1 signal away':'Building';
+  document.getElementById('gateCount').textContent=gate.count+'/'+gate.threshold;
   document.getElementById('gateChecks').textContent=(gate.checks||[]).join(' · ')||'Waiting for volume, momentum, structure, or catalyst evidence.';
   document.querySelectorAll('#gateMeter i').forEach((item,index)=>item.classList.toggle('hit',index<gate.count));
 }

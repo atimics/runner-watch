@@ -22,7 +22,6 @@
   <section class="market-metrics signal-metrics"><div><span>15m</span><strong>{{ '+' if signal.momentum_15m_pct >= 0 else '' }}{{ '%.1f'|format(signal.momentum_15m_pct) }}%</strong></div><div><span>RVOL</span><strong>{% if signal.relative_volume %}{{ '%.1f'|format(signal.relative_volume) }}×{% else %}—{% endif %}</strong></div><div><span>60m result</span><strong class="{{ 'up' if signal.barrier_label == 'up' else ('down' if signal.barrier_label == 'down' else '') }}">{{ signal.barrier_label or 'pending' }}</strong></div></section>
   <section class="signal-terms"><div><span>Invalidation</span><p>{{ signal.invalidation }}</p></div><div><span>Disclosure</span><p>{{ signal.disclosure }}</p></div></section>
   <div class="reason-list">{% for tag in signal.signals %}<span class="reason-chip">{{ tag }}</span>{% endfor %}{% for risk in signal.risks %}<span class="reason-chip risk">{{ risk }}</span>{% endfor %}</div>
-  <p class="source-note">Research, not a recommendation. Delayed data can be stale or wrong.</p>
   {% if user %}<button class="report-link-mobile" id="report">Report this post</button>{% endif %}
 </main>
 {% endblock %}
