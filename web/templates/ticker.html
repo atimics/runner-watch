@@ -106,6 +106,7 @@
     <div><span>Signal check</span><strong id="gateSummary">{{ detail.evidence_gate.summary }}</strong><small id="gateCount">{{ detail.evidence_gate.count }}/{{ detail.evidence_gate.threshold }}</small></div>
     <div class="gate-meter" id="gateMeter">{% for index in range(detail.evidence_gate.threshold) %}<i class="{% if index < detail.evidence_gate.count %}hit{% endif %}"></i>{% endfor %}</div>
     <p id="gateChecks">{{ (detail.evidence_gate.blockers if detail.evidence_gate.blockers else detail.evidence_gate.checks)|join(' · ') or 'Waiting for more evidence.' }}</p>
+    <p id="gateBaseline">{{ detail.evidence_gate.baseline_summary or 'Building a same-time historical baseline.' }}</p>
   </section>
 
   <section class="pressure-section" id="pressureSection">
@@ -323,6 +324,7 @@ function renderGate(gate){
   document.getElementById('gateCount').textContent=gate.count+'/'+gate.threshold;
   const gateNotes=(gate.blockers&&gate.blockers.length?gate.blockers:gate.checks)||[];
   document.getElementById('gateChecks').textContent=gateNotes.join(' · ')||'Waiting for more evidence.';
+  document.getElementById('gateBaseline').textContent=gate.baseline_summary||'Building a same-time historical baseline.';
   document.querySelectorAll('#gateMeter i').forEach((item,index)=>item.classList.toggle('hit',index<gate.count));
 }
 renderPressure(initialPressure);

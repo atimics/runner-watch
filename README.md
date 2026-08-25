@@ -26,6 +26,17 @@ A strong setup can still be `AVOID`. Risk filings subtract from Pulse instead of
 Critical rug risk and hard vetoes block the decision gate. A prior trigger becomes `EXIT` when price
 structure breaks or new risk crosses the block level.
 
+The ticker evidence gate counts independent evidence families instead of individual calculations.
+Volume, momentum, VWAP, breakout, and the bar-derived pressure estimate are one **market** family;
+SEC filings, news coverage, and public/community activity are separate families. Three families are
+needed for confirmation, market evidence is always required, and risk vetoes still win. The full
+receipt keeps both the family result and the supporting market checks.
+
+The ticker detail view also receives an empirical base-rate receipt. After at least 20 prior
+observations, the app compares the current value with one same-ticker, same-session, same-clock
+observation per past trading session over a 120-day lookback. Until enough matched history exists,
+it says that the baseline is still learning instead of showing a confident percentile.
+
 Daily history covers one year. Drawdowns are measured over 20 days, 90 days, and 52 weeks. A 60%
 drawdown only creates a crash candidate. It must reclaim VWAP with improving momentum before it can
 become `TRIGGERED`.
@@ -170,6 +181,10 @@ uv run stonks-ranker export-crl data/stonks-crl-60m.csv --horizon 60m
 
 The status API is available at `/api/ranker/status`. Raw source storage will grow over time, so a
 long-running deployment should eventually move archived bars and documents to object storage.
+
+`/api/capabilities` combines live source, worker, model, evidence-gate, and base-rate modes without
+exposing credential names or values. Clients can use it instead of hardcoding which features are
+available in a deployment.
 
 ## AI KOL calls
 

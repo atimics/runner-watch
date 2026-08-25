@@ -78,6 +78,7 @@
 .gate-meter i { height: 3px; border-radius: 3px; background: #28312d; }
 .gate-meter i.hit { background: var(--green); box-shadow: 0 0 6px rgba(87, 227, 137, .35); }
 .evidence-gate p { color: #84908b; font-size: 8px; line-height: 1.45; margin: 0; }
+.evidence-gate #gateBaseline { color: #64706b; margin-top: 5px; }
 
 .risk-decision { margin: 14px 20px 0; padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: #0f1311; }
 .risk-decision-head { display: flex; align-items: center; justify-content: space-between; }

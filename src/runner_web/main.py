@@ -54,6 +54,12 @@ from runner_watch.scanner import RunnerScanner
 from runner_watch.universe import penny_runner_universe
 from runner_web import db as runner_db
 from runner_web.ai_kol import FLASH, AIKol, actor_snapshot
+from runner_web.base_rates import (
+    BASE_RATE_LOOKBACK_DAYS,
+    MATCH_TOLERANCE_MINUTES,
+    MIN_BASE_RATE_SAMPLES,
+    matched_market_base_rates,
+)
 from runner_web.collection import recording_market_data
 from runner_web.db import connection, init_db
 from runner_web.ingestion import ingestion_status, record_source_fetch
@@ -640,6 +646,98 @@ def api_ingestion_status() -> dict[str, Any]:
     return ingestion_status()
 
 
+def runtime_capabilities() -> dict[str, Any]:
+    """Describe what this deployment can do without exposing credentials."""
+
+    ingestion = ingestion_status()
+    source_rows = ingestion["sources"]
+    sources = {
+        f"{row['source']}:{row['feed']}": {
+            "title": row["title"],
+            "enabled": bool(row["enabled"]),
+            "state": row["health"],
+            "last_success_at": row.get("last_success_at"),
+            "age_seconds": row.get("age_seconds"),
+            "review_status": row["review_status"],
+        }
+        for row in source_rows
+    }
+
+    def feature(*keys: str) -> dict[str, Any]:
+        matched = [sources[key] for key in keys if key in sources]
+        live = [row for row in matched if row["enabled"] and row["state"] == "healthy"]
+        enabled = [row for row in matched if row["enabled"]]
+        state = (
+            "healthy"
+            if live
+            else "degraded"
+            if enabled
+            else "disabled"
+            if matched
+            else "unavailable"
+        )
+        return {"state": state, "sources": list(keys)}
+
+    ranker = ranker_status()
+    model = ranker.get("model")
+    tasks = getattr(app.state, "worker_tasks", [])
+    failed_workers = sum(task.done() for task in tasks)
+    source_problems = sum(
+        row["enabled"] and row["health"] in {"failed", "stale"} for row in source_rows
+    )
+    return {
+        "checked_at": ingestion["checked_at"],
+        "status": "degraded" if failed_workers or source_problems else "ok",
+        "features": {
+            "sec_filings": feature("sec:current_filings"),
+            "issuer_facts": feature("sec:company_facts"),
+            "market_bars": feature("yahoo:market_bars"),
+            "news": feature("yahoo:news_search", "gdelt:news_search"),
+            "public_social": feature(
+                "apewisdom:reddit_trends", "bluesky:social_search"
+            ),
+            "trading_halts": feature("nasdaq_trader:trade_halts"),
+        },
+        "analysis": {
+            "evidence_gate": {
+                "mode": "independent_families",
+                "version": 2,
+                "required_family": "market",
+                "threshold": 3,
+                "families": ["market", "primary", "news", "crowd"],
+            },
+            "market_base_rates": {
+                "mode": "empirical_matched_sessions",
+                "minimum_samples": MIN_BASE_RATE_SAMPLES,
+                "lookback_days": BASE_RATE_LOOKBACK_DAYS,
+                "clock_tolerance_minutes": MATCH_TOLERANCE_MINUTES,
+            },
+            "ranker": {
+                "state": "shadow" if model else "learning",
+                "model_id": model.get("id") if model else None,
+                "feature_schema_version": ranker["feature_schema_version"],
+                "barrier_labeled": ranker["barrier_labeled"],
+            },
+            "research": {
+                "openai_available": bool(AI_REPORT_API_KEY),
+                "openrouter_available": bool(os.getenv("OPENROUTER_API_KEY")),
+                "flash_model": FLASH.model,
+            },
+        },
+        "workers": {
+            "running": sum(not task.done() for task in tasks),
+            "failed": failed_workers,
+        },
+        "source_summary": ingestion["summary"],
+        "sources": sources,
+    }
+
+
+@app.get("/api/capabilities")
+def api_capabilities() -> dict[str, Any]:
+    return runtime_capabilities()
+
+
 @app.get("/api/market-clock")
 def api_market_clock(request: Request) -> dict[str, Any]:
     enforce_rate(request, "market-clock", limit=120, seconds=60)
@@ -841,8 +939,10 @@ def _evidence_gate(
     current: dict[str, Any],
     events: list[dict[str, Any]],
     pressure: dict[str, Any] | None = None,
+    external_context: dict[str, Any] | None = None,
+    base_rates: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    checks: list[str] = []
+    market_checks: list[str] = []
     blockers: list[str] = []
     relative_volume = _number(current.get("relative_volume"))
     recent_relative_volume = _number(current.get("recent_relative_volume"))
@@ -851,23 +951,88 @@ def _evidence_gate(
     vwap_position = _number(current.get("vwap_position_pct"))
     breakout = _number(current.get("breakout_pct"))
     if relative_volume is not None and relative_volume >= 2:
-        checks.append("Unusual volume")
+        market_checks.append("Unusual volume")
     if recent_relative_volume is not None and recent_relative_volume >= 3:
-        checks.append("Volume burst")
+        market_checks.append("Volume burst")
     if momentum_15m is not None and momentum_15m >= 3:
-        checks.append("15m momentum")
+        market_checks.append("15m momentum")
     if acceleration is not None and acceleration >= 0.5:
-        checks.append("Momentum rising")
+        market_checks.append("Momentum rising")
     if vwap_position is not None and vwap_position > 0:
-        checks.append("Above VWAP")
+        market_checks.append("Above VWAP")
     if breakout is not None and breakout > 0:
-        checks.append("Above prior high")
-    if current.get("catalyst_sentiment") == "positive" or any(
-        event.get("sentiment") == "positive" for event in events
-    ):
-        checks.append("Positive SEC filing")
+        market_checks.append("Above prior high")
     if pressure and pressure.get("available") and pressure.get("buy_pressure_pct", 0) >= 60:
-        checks.append("Buy pressure")
+        market_checks.append("Buy pressure")
+
+    positive_primary = current.get("catalyst_sentiment") == "positive" or any(
+        event.get("sentiment") == "positive" for event in events
+    )
+    context = external_context or {}
+    news_count = int(context.get("news_count") or current.get("news_count") or 0)
+    social_mentions = int(
+        context.get("social_mentions") or current.get("external_social_mentions") or 0
+    )
+    heart_count = int(current.get("heart_count") or 0)
+
+    baseline_mode = str((base_rates or {}).get("mode") or "unavailable")
+    notable_metrics = list((base_rates or {}).get("notable_metrics") or [])
+    market_confirmed = bool(market_checks) and (
+        baseline_mode != "empirical" or bool(notable_metrics)
+    )
+    crowd_confirmed = social_mentions > 0 or heart_count >= 2
+    family_receipts = [
+        {
+            "family": "market",
+            "label": "Market structure",
+            "status": "confirmed" if market_confirmed else "not_confirmed",
+            "mode": "derived",
+            "source": "market bars",
+            "evidence": market_checks,
+            "base_rate": base_rates,
+        },
+        {
+            "family": "primary",
+            "label": "Primary filing",
+            "status": "confirmed" if positive_primary else "not_confirmed",
+            "mode": "observed",
+            "source": "SEC",
+            "evidence": ["Positive SEC filing"] if positive_primary else [],
+        },
+        {
+            "family": "news",
+            "label": "News coverage",
+            "status": "confirmed" if news_count > 0 else "not_confirmed",
+            "mode": "observed",
+            "source": "news metadata",
+            "evidence": [f"{news_count} fresh article{'s' if news_count != 1 else ''}"]
+            if news_count > 0
+            else [],
+        },
+        {
+            "family": "crowd",
+            "label": "Crowd activity",
+            "status": "confirmed" if crowd_confirmed else "not_confirmed",
+            "mode": "observed",
+            "source": "public social and community",
+            "evidence": [
+                *(
+                    [f"{social_mentions} public mention{'s' if social_mentions != 1 else ''}"]
+                    if social_mentions > 0
+                    else []
+                ),
+                *(
+                    [f"{heart_count} community hearts"]
+                    if heart_count >= 2
+                    else []
+                ),
+            ],
+        },
+    ]
+    confirmed_families = [
+        receipt for receipt in family_receipts if receipt["status"] == "confirmed"
+    ]
+    checks = [str(receipt["label"]) for receipt in confirmed_families]
     rug_score = _number(current.get("rug_score"))
     rug_level = str(current.get("rug_level") or "UNKNOWN").upper()
     raw_trade_state = current.get("trade_state")
@@ -878,17 +1043,17 @@ def _evidence_gate(
         blockers.append("Critical risk")
     if trade_state in {"AVOID", "EXIT"}:
         blockers.append(f"State: {trade_state.title()}")
-    threshold = 4
-    evidence_count = len(checks)
+    threshold = 3
+    evidence_count = len(confirmed_families)
     if blockers:
         state = "blocked"
-    elif evidence_count >= threshold and trade_state in {
+    elif market_confirmed and evidence_count >= threshold and trade_state in {
         "TRIGGERED",
         "MANAGE",
         "UNKNOWN",
     }:
         state = "ready"
-    elif evidence_count >= threshold - 1 and trade_state in {
+    elif market_confirmed and evidence_count >= threshold - 1 and trade_state in {
         "ARMED",
         "TRIGGERED",
         "MANAGE",
@@ -906,6 +1071,11 @@ def _evidence_gate(
         "rug_score": rug_score,
         "rug_level": rug_level,
         "trade_state": trade_state,
+        "families": family_receipts,
+        "raw_market_checks": market_checks,
+        "required_family": "market",
+        "base_rates": base_rates,
+        "baseline_summary": _baseline_summary(base_rates),
         "summary": (
             "Blocked by risk"
             if state == "blocked"
@@ -916,6 +1086,30 @@ def _evidence_gate(
             else "Waiting for evidence"
         ),
     }
+
+
+def _baseline_summary(base_rates: dict[str, Any] | None) -> str | None:
+    if not base_rates:
+        return None
+    metrics = base_rates.get("metrics") or {}
+    empirical = [
+        receipt
+        for receipt in metrics.values()
+        if isinstance(receipt, dict) and receipt.get("mode") == "empirical"
+    ]
+    if not empirical:
+        matched = int(base_rates.get("matched_sessions") or 0)
+        minimum = int(base_rates.get("minimum_samples") or 0)
+        return f"Baseline learning: {matched}/{minimum} matched sessions"
+    notable = [receipt for receipt in empirical if receipt.get("notable")]
+    if not notable:
+        return "Market readings are normal for matched sessions"
+    strongest = max(notable, key=lambda receipt: float(receipt.get("percentile") or 0))
+    percentile = round(float(strongest["percentile"]) * 100)
+    return (
+        f"{strongest['label']} is above {percentile}% of "
+        f"{strongest['sample_count']} matched sessions"
+    )
 
 
 def _market_pulse_label(snapshot: dict[str, Any], catalyst: dict[str, Any] | None) -> str:
@@ -1361,7 +1555,11 @@ def _pulse_data_uncached() -> dict[str, Any]:
             "risks": _json_list(snapshot.get("risks_json")),
             "kol_calls": active_kol_calls.get(str(ticker), []),
         }
-        runner["evidence_gate"] = _evidence_gate(runner, [catalyst] if catalyst else [])
+        runner["evidence_gate"] = _evidence_gate(
+            runner,
+            [catalyst] if catalyst else [],
+            external_context=external,
+        )
         runner_rows.append(runner)
 
     runner_rows.sort(
@@ -2852,6 +3050,7 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
         }
     pressure = _market_trade_pressure(ticker)
     external = _external_event_context([dict(row) for row in external_rows])
+    base_rates = matched_market_base_rates(current)
     return {
         "ticker": ticker,
         "company": company["name"] if company else current.get("company", ticker),
@@ -2864,9 +3063,16 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
             {**dict(row), "payload": _event_payload(dict(row))} for row in external_rows
         ],
         "external_context": external,
+        "base_rates": base_rates,
         "trade_pressure": pressure,
         "kol_calls": calls_for_ticker(ticker),
-        "evidence_gate": _evidence_gate(current, events, pressure),
+        "evidence_gate": _evidence_gate(
+            current,
+            events,
+            pressure,
+            external_context=external,
+            base_rates=base_rates,
+        ),
         "can_publish": bool(
             snapshot is not None and str(snapshot["captured_at"]) > iso(now() - timedelta(hours=2))
         ),
@@ -3214,7 +3420,17 @@ async def ticker_pressure_api(ticker: str, request: Request) -> JSONResponse:
     await run_in_threadpool(ticker_chart_data, normalized)
     pressure = await run_in_threadpool(_market_trade_pressure, normalized)
     detail = ticker_detail_data(normalized)
-    gate = _evidence_gate(detail["current"], detail["events"], pressure) if detail else None
+    gate = (
+        _evidence_gate(
+            detail["current"],
+            detail["events"],
+            pressure,
+            external_context=detail["external_context"],
+            base_rates=detail["base_rates"],
+        )
+        if detail
+        else None
+    )
     return JSONResponse({"ticker": normalized, "pressure": pressure, "evidence_gate": gate})
 
 

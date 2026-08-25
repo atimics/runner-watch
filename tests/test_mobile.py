@@ -585,7 +585,8 @@ def test_pulse_puts_market_runners_before_filing_only_events(
     assert [row["ticker"] for row in result["rows"]] == ["RUN"]
     assert result["rows"][0]["source"] == "market"
     assert result["rows"][0]["company"] == "Runner Systems"
-    assert result["rows"][0]["evidence_gate"]["state"] == "ready"
+    assert result["rows"][0]["evidence_gate"]["state"] == "gathering"
+    assert result["rows"][0]["evidence_gate"]["checks"] == ["Market structure"]
 
 
 def test_trade_pressure_is_an_honest_bar_derived_estimate(
@@ -670,7 +671,7 @@ def test_sparklines_use_ingested_bars_without_a_live_price_request(
     assert payload["freshness"]["SPRK"]["source"] == "yahoo"
 
 
-def test_evidence_gate_only_opens_after_four_independent_checks() -> None:
+def test_evidence_gate_counts_market_calculations_as_one_family() -> None:
     current = {
         "relative_volume": 3.0,
         "recent_relative_volume": 4.0,
@@ -682,9 +683,32 @@ def test_evidence_gate_only_opens_after_four_independent_checks() -> None:
 
     gate = _evidence_gate(current, [])
 
+    assert gate["state"] == "gathering"
+    assert gate["threshold"] == 3
+    assert gate["count"] == 1
+    assert gate["checks"] == ["Market structure"]
+    assert len(gate["raw_market_checks"]) == 6
+
+
+def test_evidence_gate_opens_with_three_independent_families() -> None:
+    current = {
+        "relative_volume": 3.0,
+        "momentum_15m_pct": 4.0,
+        "trade_state": "TRIGGERED",
+    }
+    events = [{"sentiment": "positive"}]
+    external = {"news_count": 2, "social_mentions": 8}
+
+    gate = _evidence_gate(current, events, external_context=external)
+
     assert gate["state"] == "ready"
-    assert gate["threshold"] == 4
-    assert gate["count"] >= gate["threshold"]
+    assert gate["count"] == 3
+    assert gate["checks"] == [
+        "Market structure",
+        "Primary filing",
+        "News coverage",
+        "Crowd activity",
+    ]
 
 
 def test_stored_halt_must_be_recently_confirmed(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -953,7 +977,7 @@ def test_radar_marks_new_state_seen(tmp_path: Path, monkeypatch: MonkeyPatch) ->
     assert first[0]["has_update"] is True
     assert first[0]["source"] == "sec"
     assert first[0]["price"] == 2.1
-    assert first[0]["evidence_gate"]["checks"] == ["Positive SEC filing"]
+    assert first[0]["evidence_gate"]["checks"] == ["Primary filing"]
     assert second[0]["has_update"] is False
 
 
@@ -979,7 +1003,7 @@ def test_radar_uses_filing_price_when_a_market_snapshot_is_missing(
     assert result[0]["source"] == "sec"
     assert result[0]["price"] == 0.72
     assert result[0]["change_pct"] == 6.5
-    assert result[0]["evidence_gate"]["checks"] == ["Positive SEC filing"]
+    assert result[0]["evidence_gate"]["checks"] == ["Primary filing"]
 
 
 def test_alpha_ranks_unique_hearts(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
