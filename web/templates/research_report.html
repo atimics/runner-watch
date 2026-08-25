@@ -12,7 +12,7 @@
 {% block content %}
 <header class="detail-nav">
   <a href="/community" aria-label="Back to Alpha">‹</a>
-  <strong>Commissioned research</strong>
+  <strong>{% if report.actor %}{{ report.actor.emoji }} {{ report.actor.display_name }} research{% else %}Commissioned research{% endif %}</strong>
   <button type="button" id="shareReport" aria-label="Share this report">↗</button>
 </header>
 
@@ -21,6 +21,12 @@
     <span class="coin coin-{{ report.coin_tone }}"><b>{{ report.coin_label }}</b><i></i></span>
     <span><strong>{{ report.ticker }}</strong><small>{{ report.company }}</small></span>
   </a>
+  {% if report.actor %}
+  <section class="research-author">
+    <span class="kol-avatar">{{ report.actor.emoji }}</span>
+    <span><strong>{{ report.actor.display_name }} · AI KOL</strong><small>Position {{ report.actor.ladder_position }} of {{ report.actor.ladder_size }} · powered by {{ report.actor.model_label }}</small></span>
+  </section>
+  {% endif %}
   <h1>{{ report.headline }}</h1>
   <section class="research-thesis">
     <span>THESIS</span>
@@ -85,7 +91,7 @@
   {% if report.sources %}
   <section class="research-section"><h2>Sources used</h2><div class="research-sources">{% for source in report.sources %}<a href="{{ source.url }}" target="_blank" rel="noopener">{{ source.label }}</a>{% endfor %}</div></section>
   {% endif %}
-  <div class="research-meta">{{ report.model or report.requested_model }} · {{ report.completed_at[:16]|replace('T', ' ') }} UTC{% if report.usage.context %} · one shot from {{ report.usage.context.included_sections }} stored evidence sections{% endif %}</div>
+  <div class="research-meta">{% if report.actor %}{{ report.actor.display_name }} · {{ report.actor.model_label }}{% else %}{{ report.model or report.requested_model }}{% endif %} · {{ report.completed_at[:16]|replace('T', ' ') }} UTC{% if report.usage.context %} · one shot from {{ report.usage.context.included_sections }} stored evidence sections{% endif %}</div>
 </main>
 {% endblock %}
 {% block scripts %}

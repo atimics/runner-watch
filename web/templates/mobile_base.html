@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/static/enhancements.css">
   <link rel="stylesheet" href="/static/ticker-row.css">
   <link rel="stylesheet" href="/static/sleek.css">
+  <link rel="stylesheet" href="/static/pulse-attention.css">
   <link rel="stylesheet" href="/static/kol.css">
   <script src="/static/openrouter.js"></script>
   <script src="/static/market-clock.js" defer></script>
@@ -35,6 +36,15 @@
     </nav>
     {% endblock %}
   </div>
+
+  <aside class="global-pulse-ticker" id="globalPulseTicker" role="status" aria-live="polite" hidden>
+    <a class="global-pulse-link" id="globalPulseLink" href="/">
+      <span class="global-pulse-mark" aria-hidden="true">✦</span>
+      <span class="global-pulse-copy"><strong><span>Entered Pulse</span> · <b id="globalPulseSymbol"></b></strong><small id="globalPulseMeta"></small></span>
+      <span class="global-pulse-quote"><b id="globalPulsePrice"></b><small id="globalPulseChange"></small></span>
+    </a>
+    <button class="global-pulse-close" id="globalPulseClose" type="button" aria-label="Dismiss Pulse entry notifications">×</button>
+  </aside>
 
   {% if user %}
   <dialog class="profile-sheet" id="profileSheet">
@@ -77,6 +87,87 @@
   </script>
   {% endif %}
   <script src="/static/ticker-row.js"></script>
+  <script nonce="{{ request.state.csp_nonce }}">
+  (() => {
+    const ticker = document.getElementById('globalPulseTicker');
+    const link = document.getElementById('globalPulseLink');
+    const symbol = document.getElementById('globalPulseSymbol');
+    const meta = document.getElementById('globalPulseMeta');
+    const price = document.getElementById('globalPulsePrice');
+    const change = document.getElementById('globalPulseChange');
+    const close = document.getElementById('globalPulseClose');
+    const queued = new Set();
+    let entries = [];
+    let active = null;
+    let cycleTimer = null;
+
+    const money = value => {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return '—';
+      if (number < 1) return `$${number.toFixed(4)}`;
+      if (number < 10) return `$${number.toFixed(3)}`;
+      return `$${number.toFixed(2)}`;
+    };
+    const percent = value => {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return '—';
+      return `${number >= 0 ? '+' : ''}${number.toFixed(1)}%`;
+    };
+    const key = item => `${item.ticker}|${item.entered_at}`;
+    const acknowledge = items => {
+      if (!items.length) return;
+      fetch('/api/pulse/notified', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({entries: items.map(item => ({ticker: item.ticker, entered_at: item.entered_at}))}),
+        keepalive: true,
+      }).catch(() => {});
+    };
+    const showNext = () => {
+      clearTimeout(cycleTimer);
+      active = entries.shift() || null;
+      if (!active) {
+        ticker.hidden = true;
+        return;
+      }
+      queued.delete(key(active));
+      link.href = `/t/${encodeURIComponent(active.ticker)}`;
+      symbol.textContent = active.ticker;
+      meta.textContent = `${String(active.stage || 'Watch').toUpperCase()} · ${active.company || active.ticker}`;
+      price.textContent = money(active.price);
+      const changeValue = Number(active.change_pct);
+      change.textContent = percent(active.change_pct);
+      change.className = Number.isFinite(changeValue) && changeValue < 0 ? 'down' : 'up';
+      ticker.hidden = false;
+      acknowledge([active]);
+      cycleTimer = setTimeout(showNext, 6000);
+    };
+    const refresh = async () => {
+      try {
+        const response = await fetch('/api/pulse/notifications');
+        if (!response.ok) return;
+        const data = await response.json();
+        (data.entries || []).forEach(item => {
+          const itemKey = key(item);
+          if (queued.has(itemKey) || (active && key(active) === itemKey)) return;
+          queued.add(itemKey);
+          entries.push(item);
+        });
+        if (!active && entries.length) showNext();
+      } catch (_) {}
+    };
+    close.addEventListener('click', () => {
+      clearTimeout(cycleTimer);
+      acknowledge(entries);
+      entries = [];
+      queued.clear();
+      active = null;
+      ticker.hidden = true;
+    });
+    setTimeout(refresh, 2500);
+    setInterval(refresh, 30000);
+  })();
+  </script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

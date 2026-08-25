@@ -8,6 +8,7 @@ import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from runner_web.ai_kol import FLASH
 from runner_web.db import connection
 
 DEFAULT_CONTEXT_FILL_RATIO = 0.80
@@ -37,8 +38,8 @@ def _estimated_tokens(value: Any) -> int:
     return max(1, math.ceil(len(text) / 3))
 
 
-def research_context_budget() -> dict[str, Any]:
-    model = os.getenv("OPENROUTER_RESEARCH_MODEL", "z-ai/glm-5.3")
+def research_context_budget(model: str | None = None) -> dict[str, Any]:
+    model = model or FLASH.model
     default_context = KNOWN_MODEL_CONTEXT_TOKENS.get(model, 131_072)
     context_tokens = max(
         32_768,
@@ -111,11 +112,13 @@ def build_research_context(
     ticker: str,
     primary_evidence: dict[str, Any],
     token_budget: int | None = None,
+    *,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """Fill one bounded prompt with ranked evidence already collected by Runner Watch."""
 
     symbol = ticker.upper()
-    budget = research_context_budget()
+    budget = research_context_budget(model)
     target_tokens = int(token_budget or budget["target_input_tokens"])
     cutoff = _iso(datetime.now(UTC) - timedelta(days=730))
     candidates: list[dict[str, Any]] = []

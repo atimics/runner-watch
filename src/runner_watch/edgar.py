@@ -314,7 +314,8 @@ def primary_filing_document_names(
     items = index.get("directory", {}).get("item", [])
     names = [str(item.get("name") or "") for item in items]
     compact_accession = accession.replace("-", "")
-    exact_text = [name for name in names if name.lower() == f"{compact_accession}.txt"]
+    expected_text_names = {f"{accession.lower()}.txt", f"{compact_accession}.txt"}
+    exact_text = [name for name in names if name.lower() in expected_text_names]
     if exact_text:
         return exact_text
     rejected = ("filingsummary", "report", "cal", "def", "lab", "pre", "xsd")

@@ -18,6 +18,16 @@
 }
 
 .ticker-row.is-updated::before { animation: row-update 1.9s ease-out; }
+.ticker-row.attention-unseen::before {
+  background: linear-gradient(90deg, rgba(245, 198, 107, .12), rgba(245, 198, 107, .025) 72%, transparent);
+  box-shadow: inset 2px 0 #d8a943, 0 0 18px rgba(245, 198, 107, .06);
+  opacity: 1;
+}
+.ticker-row.attention-seen::before {
+  background: linear-gradient(90deg, rgba(185, 193, 189, .06), transparent 65%);
+  box-shadow: inset 2px 0 #8c9791;
+  opacity: 1;
+}
 .ticker-row:focus-visible { outline: 1px solid rgba(87, 227, 137, .65); outline-offset: -2px; border-radius: 8px; }
 .ticker-row .ticker-line { align-items: center; }
 .ticker-row .ticker-age { margin-left: auto; }
@@ -27,7 +37,7 @@
   border: 1px solid #33403a;
   border-radius: 4px;
   color: #9ba8a2 !important;
-  font-size: 7px !important;
+  font-size: 8px !important;
   font-weight: 850;
   letter-spacing: .04em;
 }
@@ -35,6 +45,23 @@
 .ticker-badge-score { color: var(--green) !important; border-color: rgba(87, 227, 139, .28); }
 .ticker-badge-source { color: var(--amber) !important; border-color: rgba(245, 198, 107, .28); }
 .ticker-badge-quiet { color: var(--muted) !important; }
+.ticker-badge-stage-early { color: #73ceff !important; border-color: #2b7fa9; }
+.ticker-badge-stage-building { color: #c2adff !important; border-color: #7058b5; }
+.ticker-badge-stage-running { color: var(--green) !important; border-color: #2f8c51; }
+.ticker-badge-stage-extended { color: #ffad70 !important; border-color: #a85826; }
+.ticker-badge-stage-watch { color: #aeb8b3 !important; border-color: #59645f; }
+
+.attention-badge {
+  padding: 1px 5px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 8px !important;
+  font-weight: 850;
+  letter-spacing: .035em;
+}
+.attention-badge i { font-size: 7px; font-style: normal; }
+.attention-badge-unseen { color: #f5c66b !important; border-color: #9c7426; background: rgba(245,198,107,.07); }
+.attention-badge-seen { color: #aeb8b3 !important; border-color: #59645f; }
 
 .evidence-count {
   display: inline-block;
@@ -49,10 +76,14 @@
 .evidence-count.ready { color: var(--green); border-color: rgba(87, 227, 137, .32); }
 .evidence-count.near { color: var(--amber); border-color: rgba(245, 198, 107, .3); }
 .evidence-count.blocked { color: var(--red); border-color: rgba(255, 107, 122, .35); }
-.rug-count,.state-count { display:inline-block; margin-left:5px; padding:1px 4px; border:1px solid #35413b; border-radius:6px; font-size:7px; font-weight:850; }
+.rug-count,.state-count { display:inline-block; margin-left:5px; padding:2px 5px; border:1px solid #35413b; border-radius:6px; font-size:8px; font-weight:850; }
 .rug-count.rug-low,.state-triggered,.state-manage { color:var(--green); border-color:rgba(87,227,137,.3); }
-.rug-count.rug-guarded,.state-armed,.state-watch { color:var(--amber); border-color:rgba(245,198,107,.3); }
+.rug-count.rug-guarded { color:#ffad70; border-color:#a85826; }
+.state-armed { color:#73ceff; border-color:#2b7fa9; }
+.state-watch { color:#aeb8b3; border-color:#59645f; }
 .rug-count.rug-high,.rug-count.rug-critical,.state-avoid,.state-exit { color:var(--red); border-color:rgba(255,107,122,.35); }
+.rug-count.rug-critical,.state-avoid,.state-exit { background:rgba(255,107,122,.12); border-color:#a53f4a; }
+.rug-count.rug-unknown { color:#a0aaa5; border-color:#59645f; }
 
 .ticker-row .quote { min-width: 74px; }
 .mini-chart {

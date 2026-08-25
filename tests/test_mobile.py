@@ -14,6 +14,7 @@ from runner_web.db import connection, init_db
 from runner_web.ingestion import record_source_batch
 from runner_web.main import (
     APP_ORIGIN,
+    PulseAttentionItem,
     _chart_annotations,
     _commission_research,
     _evidence_gate,
@@ -23,11 +24,13 @@ from runner_web.main import (
     _pulse_label,
     _record_activity,
     _stored_market_risk_contexts,
+    _write_pulse_attention,
     alpha_board_data,
     commissioned_reports,
     get_commission,
     heart_state,
     pulse_data,
+    pulse_notification_data,
     radar_data,
     register_options,
     templates,
@@ -36,9 +39,7 @@ from runner_web.main import (
 )
 
 
-def test_passkey_signup_needs_no_profile_fields(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_passkey_signup_needs_no_profile_fields(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "auth.db")
     init_db()
     request = Request(
@@ -170,6 +171,42 @@ def insert_scored_snapshot(
         )
 
 
+def test_ticker_page_renders_guest_flash_attribution(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "ticker-page.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_scan_run("ticker-page-run", captured_at, 1)
+    insert_scored_snapshot(
+        "ticker-page-snapshot",
+        "ticker-page-run",
+        "ONE",
+        42,
+        1,
+        captured_at,
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/t/ONE",
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 4210),
+            "scheme": "http",
+            "server": ("testserver", 80),
+            "root_path": "",
+        }
+    )
+    request.state.visitor_id = "visitor-abcdefghijklmnopqrstuv"
+
+    response = web_main.ticker_page("ONE", request, None)
+
+    assert response.status_code == 200
+    assert "Flash is powered by GLM 5.3" in response.body.decode()
+
+
 def test_pulse_only_lists_tickers_from_the_latest_scored_scan(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
@@ -197,6 +234,91 @@ def test_pulse_only_lists_tickers_from_the_latest_scored_scan(
     assert result["rows"][0]["event_count"] == 1
     assert result["rows"][0]["section"] == "scored"
     assert "EVENT" not in {row["ticker"] for row in result["rows"]}
+
+
+def test_pulse_reuses_the_shared_base_payload(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "pulse-cache.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_scan_run("cached-run", captured_at, 1)
+    insert_scored_snapshot("cached-one", "cached-run", "ONE", 42, 1, captured_at)
+    web_main.PULSE_DATA_CACHE.clear()
+    original = web_main._pulse_data_uncached
+    calls = 0
+
+    def counted() -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return original()
+
+    monkeypatch.setattr(web_main, "_pulse_data_uncached", counted)
+
+    assert pulse_data(profile="v:first")["rows"][0]["ticker"] == "ONE"
+    assert pulse_data(profile="v:second")["rows"][0]["ticker"] == "ONE"
+    assert calls == 1
+
+
+def test_pulse_entry_moves_from_unseen_to_seen_to_inspected(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "pulse-attention.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    before = (timestamp - timedelta(minutes=20)).isoformat()
+    entered_at = (timestamp - timedelta(minutes=10)).isoformat()
+    refreshed_at = (timestamp - timedelta(minutes=5)).isoformat()
+    insert_scan_run("attention-before", before, 1)
+    insert_scored_snapshot("attention-two", "attention-before", "TWO", 40, 1, before)
+    insert_scan_run("attention-entry", entered_at, 1)
+    insert_scored_snapshot("attention-one", "attention-entry", "ONE", 60, 1, entered_at)
+    insert_scan_run("attention-refresh", refreshed_at, 1)
+    insert_scored_snapshot("attention-one-refresh", "attention-refresh", "ONE", 62, 1, refreshed_at)
+    item = PulseAttentionItem(ticker="ONE", entered_at=entered_at)
+
+    row = pulse_data(profile="v:reader")["rows"][0]
+    assert row["entered_at"] == entered_at
+    assert row["novelty_state"] == "unseen"
+    assert row["rug_score"] is None
+    assert [entry["ticker"] for entry in pulse_notification_data("v:reader")["entries"]] == ["ONE"]
+
+    assert _write_pulse_attention("v:reader", [item], "notified") == 1
+    assert pulse_notification_data("v:reader")["entries"] == []
+    assert pulse_data(profile="v:reader")["rows"][0]["novelty_state"] == "unseen"
+
+    assert _write_pulse_attention("v:reader", [item], "seen") == 1
+    assert pulse_data(profile="v:reader")["rows"][0]["novelty_state"] == "seen"
+
+    assert _write_pulse_attention("v:reader", [item], "inspected") == 1
+    assert pulse_data(profile="v:reader")["rows"][0]["novelty_state"] == "inspected"
+
+
+def test_a_reentry_creates_a_new_unseen_pulse_episode(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "pulse-reentry.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    first_entry = (timestamp - timedelta(minutes=30)).isoformat()
+    absent = (timestamp - timedelta(minutes=20)).isoformat()
+    reentry = (timestamp - timedelta(minutes=10)).isoformat()
+    insert_scan_run("first-entry", first_entry, 1)
+    insert_scored_snapshot("first-one", "first-entry", "ONE", 55, 1, first_entry)
+    insert_scan_run("absent", absent, 1)
+    insert_scored_snapshot("absent-two", "absent", "TWO", 50, 1, absent)
+    _write_pulse_attention(
+        "v:reader",
+        [PulseAttentionItem(ticker="ONE", entered_at=first_entry)],
+        "inspected",
+    )
+    insert_scan_run("reentry", reentry, 1)
+    insert_scored_snapshot("reentry-one", "reentry", "ONE", 65, 1, reentry)
+
+    row = pulse_data(profile="v:reader")["rows"][0]
+
+    assert row["entered_at"] == reentry
+    assert row["novelty_state"] == "unseen"
 
 
 def test_news_and_social_flow_into_pulse_radar_and_alpha(
@@ -290,9 +412,7 @@ def test_ticker_detail_explains_form_four_purchase(
     detail = ticker_detail_data("PEN")
 
     assert detail is not None
-    assert detail["events"][0]["evidence_label"] == (
-        "Reported insider purchase · context required"
-    )
+    assert detail["events"][0]["evidence_label"] == ("Reported insider purchase · context required")
     assert detail["events"][0]["pulse_label"] == "Form 4 · insider buy"
 
 
@@ -325,10 +445,25 @@ def test_pulse_puts_market_runners_before_filing_only_events(
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
-                "runner", "RUN", 24, "BUILDING", "regular", 1.25, 13.0, 2.0,
-                4.0, 4.2, 5.0, 1.0, 800_000, captured_at,
-                '["Volume acceleration"]', '["Wide spread risk"]', captured_at,
-                "runner-scan", 1,
+                "runner",
+                "RUN",
+                24,
+                "BUILDING",
+                "regular",
+                1.25,
+                13.0,
+                2.0,
+                4.0,
+                4.2,
+                5.0,
+                1.0,
+                800_000,
+                captured_at,
+                '["Volume acceleration"]',
+                '["Wide spread risk"]',
+                captured_at,
+                "runner-scan",
+                1,
             ),
         )
 
@@ -439,9 +574,7 @@ def test_evidence_gate_only_opens_after_four_independent_checks() -> None:
     assert gate["count"] >= gate["threshold"]
 
 
-def test_stored_halt_must_be_recently_confirmed(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_stored_halt_must_be_recently_confirmed(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "halt-risk.db")
     init_db()
     timestamp = datetime.now(UTC)
@@ -569,12 +702,8 @@ def test_previous_trade_states_returns_latest_state_with_index(
     insert_scan_run("newer-state-run", newer, 1)
     insert_scored_snapshot("newer-state", "newer-state-run", "STATE", 30, 1, newer)
     with connection() as database:
-        database.execute(
-            "UPDATE scan_snapshots SET trade_state='WATCH' WHERE id='older-state'"
-        )
-        database.execute(
-            "UPDATE scan_snapshots SET trade_state='TRIGGERED' WHERE id='newer-state'"
-        )
+        database.execute("UPDATE scan_snapshots SET trade_state='WATCH' WHERE id='older-state'")
+        database.execute("UPDATE scan_snapshots SET trade_state='TRIGGERED' WHERE id='newer-state'")
         states = _previous_trade_states(database, ["STATE", "MISSING"])
         index_sql = database.execute(
             "SELECT sql FROM sqlite_master "
@@ -625,9 +754,23 @@ def test_ticker_detail_prefers_market_state_and_uses_scan_outcome(
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
-                "detail-snapshot", "PEN", 31, "EARLY", "regular", 1.9, 9.0, 1.1,
-                3.3, 3.0, 4.0, 0.8, 900_000, captured_at,
-                '["Fresh volume"]', '["Low float risk"]', captured_at,
+                "detail-snapshot",
+                "PEN",
+                31,
+                "EARLY",
+                "regular",
+                1.9,
+                9.0,
+                1.1,
+                3.3,
+                3.0,
+                4.0,
+                0.8,
+                900_000,
+                captured_at,
+                '["Fresh volume"]',
+                '["Low float risk"]',
+                captured_at,
             ),
         )
         database.execute(
@@ -645,9 +788,7 @@ def test_ticker_detail_prefers_market_state_and_uses_scan_outcome(
     assert detail["current"]["source"] == "market"
     assert detail["current"]["signals"] == ["Fresh volume"]
     assert detail["current"]["return_1h_pct"] == 6.2
-    assert detail["events"][0]["evidence_label"] == (
-        "Reported insider purchase · context required"
-    )
+    assert detail["events"][0]["evidence_label"] == ("Reported insider purchase · context required")
 
 
 def test_radar_marks_new_state_seen(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -673,8 +814,23 @@ def test_radar_marks_new_state_seen(tmp_path: Path, monkeypatch: MonkeyPatch) ->
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
-                "radar-snapshot", "RAD", 22, "EARLY", "regular", 2.1, 7.0, 1.0,
-                2.0, 2.5, 3.0, 0.5, 500_000, captured_at, "[]", "[]", captured_at,
+                "radar-snapshot",
+                "RAD",
+                22,
+                "EARLY",
+                "regular",
+                2.1,
+                7.0,
+                1.0,
+                2.0,
+                2.5,
+                3.0,
+                0.5,
+                500_000,
+                captured_at,
+                "[]",
+                "[]",
+                captured_at,
             ),
         )
 
@@ -786,9 +942,7 @@ def test_alpha_ranks_unique_hearts(tmp_path: Path, monkeypatch: MonkeyPatch) -> 
     assert "Verified evidence summary." in subscriber_html
 
 
-def test_radar_orders_events_by_time_not_activity(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_radar_orders_events_by_time_not_activity(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "automatic-radar.db")
     init_db()
     captured_at = datetime.now(UTC)
@@ -881,9 +1035,10 @@ def test_chart_annotations_keep_the_real_pulse_entry_and_detected_events(
         "edgar_filing",
         "media_spike",
     }
-    assert next(item for item in annotations if item["type"] == "media_spike")[
-        "label"
-    ] == "Media spike · 6 mentions"
+    assert (
+        next(item for item in annotations if item["type"] == "media_spike")["label"]
+        == "Media spike · 6 mentions"
+    )
 
 
 def test_commissioned_report_is_public_without_storing_the_openrouter_key(
@@ -901,7 +1056,7 @@ def test_commissioned_report_is_public_without_storing_the_openrouter_key(
     monkeypatch.setattr(
         web_main,
         "_generate_openrouter_report",
-        lambda key, evidence, user_id: (
+        lambda key, evidence, user_id, **kwargs: (
             {
                 "headline": "ONE evidence report",
                 "summary": "A source-bound summary.",
@@ -919,6 +1074,11 @@ def test_commissioned_report_is_public_without_storing_the_openrouter_key(
     assert report["headline"] == "ONE evidence report"
     assert report["thesis"] == "A source-bound summary."
     assert report["research_mode"] == "one_shot_system_context"
+    assert report["actor"]["id"] == "kol-flash"
+    assert report["actor"]["display_name"] == "Flash"
+    assert report["actor"]["model"] == "z-ai/glm-5.3"
+    assert report["actor"]["ladder_position"] == 1
+    assert report["actor"]["ladder_size"] == 4
     assert get_commission(report["public_id"])["summary"] == "A source-bound summary."
     assert commissioned_reports()[0]["ticker"] == "ONE"
     assert alpha_board_data("v:reader")["commissions"][0]["public_id"] == report["public_id"]
@@ -966,6 +1126,10 @@ def test_commission_request_uses_glm_53_with_a_minimal_prompt(
 
     body = captured["body"]
     assert body["model"] == "z-ai/glm-5.3"
+    assert body["messages"][0]["content"].startswith("You are Flash")
+    request_payload = json.loads(body["messages"][1]["content"])
+    assert request_payload["actor"]["id"] == "kol-flash"
+    assert request_payload["actor"]["model"] == "z-ai/glm-5.3"
     assert body["response_format"] == {"type": "json_object"}
     assert body["provider"] == {"require_parameters": True}
     assert body["reasoning_effort"] == "high"
@@ -993,7 +1157,7 @@ def test_research_report_template_has_public_share_metadata(
     monkeypatch.setattr(
         web_main,
         "_generate_openrouter_report",
-        lambda key, evidence, user_id: (
+        lambda key, evidence, user_id, **kwargs: (
             {
                 "headline": "Shareable ONE report",
                 "thesis": "ONE has a source-bound watch thesis.",
@@ -1024,5 +1188,7 @@ def test_research_report_template_has_public_share_metadata(
     )
 
     assert "Shareable ONE report" in html
+    assert "Flash · AI KOL" in html
+    assert "Position 1 of 4 · powered by GLM 5.3" in html
     assert f"/research/{report['public_id']}/card.png" in html
     assert "sk-or-share-test-key" not in html

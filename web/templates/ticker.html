@@ -27,11 +27,11 @@
 
   <section class="research-action">
     {% if user %}
-    <button class="commission-button" type="button" id="commissionButton">Commission report</button>
+    <button class="commission-button" type="button" id="commissionButton">Commission Flash</button>
     <small id="commissionStatus">{% if latest_commission %}<a href="/research/{{ latest_commission.public_id }}">View latest report</a>{% endif %}</small>
     {% else %}
-    <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Login with passkey to commission</a>
-    <small>Powered by your OpenRouter account</small>
+    <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Login to commission Flash</a>
+    <small>Flash is powered by {{ flash.model_label }} through your OpenRouter account</small>
     {% endif %}
   </section>
 
@@ -48,7 +48,7 @@
     <div class="kol-call-list">
       {% for call in detail.kol_calls %}
       <article class="kol-call-card">
-        <div class="kol-call-head"><span class="kol-avatar">{{ call.emoji }}</span><span><strong>{{ call.display_name }}</strong><small>{{ call.contract_version }} · {{ call.model_id }}</small></span><b class="kol-status kol-status-{{ call.status }}">{{ call.status|replace('_', ' ') }}</b></div>
+        <div class="kol-call-head"><span class="kol-avatar">{{ call.emoji }}</span><span><strong>{{ call.display_name }}</strong><small>Position {{ call.ladder_position or 1 }} of 4 · powered by {{ call.inference_model_label or call.inference_model }}</small></span><b class="kol-status kol-status-{{ call.status }}">{{ call.status|replace('_', ' ') }}</b></div>
         <div class="kol-call-numbers">
           <span><small>Entry</small><b>${{ '%.4f'|format(call.entry_price) if call.entry_price < 1 else ('%.2f'|format(call.entry_price)) }}</b></span>
           <span><small>{{ 'Current' if call.is_active else 'Exit' }}</small><b>${{ '%.4f'|format(call.last_price) if call.last_price < 1 else ('%.2f'|format(call.last_price)) }}</b></span>
@@ -222,7 +222,7 @@ document.getElementById('heartButton').addEventListener('click', async event => 
 });
 if (commissionButton) {
   const renderCommissionButton = () => {
-    commissionButton.textContent = window.runnerOpenRouter.connected() ? 'Commission report' : 'Connect OpenRouter';
+    commissionButton.textContent = window.runnerOpenRouter.connected() ? 'Commission Flash' : 'Connect OpenRouter';
   };
   renderCommissionButton();
   commissionButton.addEventListener('click', async () => {
@@ -231,8 +231,8 @@ if (commissionButton) {
       return;
     }
     commissionButton.disabled = true;
-    commissionButton.textContent = 'Researching…';
-    commissionStatus.textContent = 'Building a shareable report';
+    commissionButton.textContent = 'Flash is researching…';
+    commissionStatus.textContent = 'Flash is building a shareable report';
     try {
       const response = await fetch(`/api/research/${encodeURIComponent(ticker)}`, {
         method: 'POST',

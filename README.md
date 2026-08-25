@@ -97,8 +97,14 @@ The report worker stays queued until `OPENAI_API_KEY` is configured. It uses the
 strict structured output, sends only stored market and filing evidence, and defaults to the model in
 `AI_REPORT_MODEL` (`gpt-5.6`). A missing key never falls back to fake generated copy.
 
-Commissioned reports use one OpenRouter call and default to `z-ai/glm-5.3`. They do not run a web
-search or an agent loop. Before the call, Runner Watch ranks and deduplicates its stored SEC filing
+Commissioned reports are authored by **Flash ⚡**, Runner Watch's first AI KOL. Flash is a durable
+public identity in position 1 of a planned four-position model ladder. Its current engine is
+`z-ai/glm-5.3`; changing the engine later does not rename Flash or rewrite old reports. The other
+ladder positions are not active yet. Set Flash's engine with `FLASH_MODEL` when a model is promoted.
+The older `OPENROUTER_RESEARCH_MODEL` setting remains a compatibility fallback.
+
+Flash uses one OpenRouter call. It does not run a web search or an agent loop. Before the call,
+Runner Watch ranks and deduplicates its stored SEC filing
 text, named reporting people, issuer facts, news, social reports, corporate events, prior risk
 states, and market history. It fills up to 80% of the configured model context with relevant data,
 without padding the prompt when less evidence exists, and reserves the rest for reasoning and the
@@ -167,10 +173,11 @@ long-running deployment should eventually move archived bars and documents to ob
 
 ## AI KOL calls
 
-The calibrated ranker can now publish selective, permanent paper calls through the **Flash ⚡**
-AI KOL. A call freezes its ticker, model ID, model confidence, expected return, contract, time, and
-entry price. Repeated scans cannot reset the entry. Pulse shows active lightning tags with net paper
-PnL, and ticker pages show the complete call receipt.
+The calibrated ranker can now publish selective, permanent paper calls through **Flash ⚡**. Flash's
+public identity and current inference model are separate from the internal ranker that supplies the
+numeric signal. A call freezes its ticker, signal-model ID, confidence, expected return, contract,
+time, and entry price. Repeated scans cannot reset the entry. Pulse shows active lightning tags with
+net paper PnL, and ticker pages show the complete call receipt.
 
 Flash uses the same `+8% before -4% within 60 minutes` contract as the shadow ranker. It can abandon
 a stock only when a later frozen prediction crosses its fixed abandon rule. An abandoned call keeps
@@ -178,9 +185,11 @@ receiving the original 60-minute benchmark, so a model cannot hide a bad call by
 Calls use a fixed $1,000 paper amount and subtract a conservative 50 basis point round-trip cost.
 They are research results, not trade recommendations.
 
-The tables support several KOL identities and several model IDs on the same scanner opportunity.
-Human hearts remain separate from AI reactions. Scorecards are available at `/api/kols`, and ticker
-call history is available at `/api/t/{ticker}/kol-calls`.
+Flash is the only seeded KOL slot today. Its records include ladder position, inference provider,
+and inference model, and each commissioned report snapshots those fields. This keeps future model
+promotions honest: an old GLM 5.3 report remains an old GLM 5.3 report. Human hearts remain separate
+from AI reactions. Scorecards are available at `/api/kols`, and ticker call history is available at
+`/api/t/{ticker}/kol-calls`.
 
 ## Start the dashboard
 

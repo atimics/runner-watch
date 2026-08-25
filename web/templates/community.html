@@ -13,7 +13,7 @@
     {% for report in board.commissions[:5] %}
     <a class="commission-row" href="/research/{{ report.public_id }}">
       <span class="coin coin-{{ report.coin_tone }}"><b>{{ report.coin_label }}</b><i></i></span>
-      <span><strong>{{ report.ticker }} · {{ report.headline }}</strong><small>{{ report.model or report.requested_model }}</small></span>
+      <span><strong>{{ report.ticker }} · {{ report.headline }}</strong><small>{% if report.actor %}{{ report.actor.emoji }} {{ report.actor.display_name }} · AI KOL · {{ report.actor.model_label }}{% else %}{{ report.model or report.requested_model }}{% endif %}</small></span>
       <i>›</i>
     </a>
     {% endfor %}

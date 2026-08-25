@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from runner_web.ai_kol import KOL_LADDER_SIZE, model_display_name
 from runner_web.collection import recording_market_data
 from runner_web.db import connection
 from runner_web.outcomes import _bar_prices, barrier_outcome
@@ -27,6 +28,22 @@ def _valid_price(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return price if math.isfinite(price) and price > 0 else None
+
+
+def _actor_snapshot_from_predictor(predictor: dict[str, Any]) -> dict[str, Any]:
+    model = str(predictor.get("inference_model") or "")
+    return {
+        "id": str(predictor["id"]),
+        "slot": str(predictor.get("slot") or predictor.get("slug") or ""),
+        "ladder_position": predictor.get("ladder_position"),
+        "ladder_size": KOL_LADDER_SIZE,
+        "display_name": str(predictor["display_name"]),
+        "emoji": str(predictor["emoji"]),
+        "provider": str(predictor.get("inference_provider") or ""),
+        "model": model,
+        "model_label": model_display_name(model),
+        "description": str(predictor.get("description") or ""),
+    }
 
 
 def _event(
@@ -223,21 +240,24 @@ def publish_calls_for_scan(
                     continue
                 call_id = f"call-{secrets.token_urlsafe(12)}"
                 call_at = str(prediction["captured_at"])
+                call_actor = _actor_snapshot_from_predictor(predictor)
                 inserted = db.execute(
                     """
                     INSERT OR IGNORE INTO kol_calls(
-                        id,predictor_id,model_id,snapshot_id,scan_run_id,ticker,
+                        id,predictor_id,model_id,actor_snapshot_json,
+                        snapshot_id,scan_run_id,ticker,
                         contract_version,upper_barrier_pct,lower_barrier_pct,
                         horizon_minutes,status,confidence,expected_return_pct,
                         entry_price,entry_at,last_price,last_mark_at,
                         unrealized_return_pct,paper_notional,round_trip_cost_bps,
                         paper_pnl,created_at,updated_at
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         call_id,
                         predictor["id"],
                         model_id,
+                        json.dumps(call_actor, separators=(",", ":")),
                         prediction["snapshot_id"],
                         scan_run_id,
                         prediction["ticker"],
@@ -278,6 +298,7 @@ def publish_calls_for_scan(
                         "expected_return_pct": expected,
                         "model_rank": prediction["rank"],
                         "model_id": model_id,
+                        "actor": call_actor,
                         "contract_version": predictor["contract_version"],
                     },
                 )
@@ -498,6 +519,27 @@ def refresh_kol_calls(
 
 def _display_call(raw: Any) -> dict[str, Any]:
     call = dict(raw)
+    call["signal_model_id"] = call.get("model_id")
+    try:
+        actor = json.loads(call.get("actor_snapshot_json") or "{}")
+    except (TypeError, ValueError):
+        actor = {}
+    if not isinstance(actor, dict):
+        actor = {}
+    call["actor"] = actor
+    for key in (
+        "slot",
+        "ladder_position",
+        "inference_provider",
+        "inference_model",
+    ):
+        actor_key = key.removeprefix("inference_")
+        if actor.get(actor_key) is not None:
+            call[key] = actor[actor_key]
+    call["inference_model_label"] = str(
+        actor.get("model_label")
+        or model_display_name(str(call.get("inference_model") or ""))
+    )
     gross = (
         call.get("realized_return_pct")
         if call.get("realized_return_pct") is not None
@@ -525,6 +567,7 @@ def calls_for_tickers(
         rows = db.execute(
             f"""
             SELECT c.*,p.slug AS predictor_slug,p.display_name,p.emoji,p.visible,
+                   p.slot,p.ladder_position,p.inference_provider,p.inference_model,
                    p.upper_barrier_pct,p.lower_barrier_pct,p.horizon_minutes
             FROM kol_calls c
             JOIN kol_predictors p ON p.id=c.predictor_id
@@ -565,6 +608,9 @@ def predictor_scorecards(*, include_hidden: bool = False) -> list[dict[str, Any]
     scorecards: list[dict[str, Any]] = []
     for raw in predictors:
         predictor = dict(raw)
+        predictor["inference_model_label"] = model_display_name(
+            str(predictor.get("inference_model") or "")
+        )
         rows = by_predictor.get(str(predictor["id"]), [])
         resolved = [row for row in rows if row.get("net_return_pct") is not None]
         benchmarked = [row for row in rows if row.get("benchmark_label") is not None]

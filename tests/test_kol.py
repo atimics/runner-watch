@@ -146,6 +146,11 @@ def test_ranker_prediction_becomes_one_immutable_flash_call(
     assert second["calls_created"] == 0
     assert len(calls) == 1
     assert calls[0]["emoji"] == "⚡"
+    assert calls[0]["slot"] == "flash"
+    assert calls[0]["ladder_position"] == 1
+    assert calls[0]["inference_model"] == "z-ai/glm-5.3"
+    assert calls[0]["inference_model_label"] == "GLM 5.3"
+    assert calls[0]["signal_model_id"] == "model-one"
     assert calls[0]["entry_price"] == 10.0
     assert calls[0]["confidence"] == 0.7
     assert calls[0]["status"] == "active"
@@ -156,7 +161,13 @@ def test_ranker_prediction_becomes_one_immutable_flash_call(
             "SELECT event_type FROM kol_call_events WHERE call_id=?",
             (calls[0]["id"],),
         ).fetchall()
+        database.execute(
+            "UPDATE kol_predictors SET inference_model='future/model' WHERE id='kol-flash'"
+        )
     assert [row["event_type"] for row in events] == ["called"]
+    frozen_call = calls_for_ticker("RUNR")[0]
+    assert frozen_call["inference_model"] == "z-ai/glm-5.3"
+    assert frozen_call["inference_model_label"] == "GLM 5.3"
 
 
 def test_fixed_outcome_closes_call_and_updates_scorecard(

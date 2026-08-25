@@ -12,9 +12,10 @@
 {% include "_market_clock.html" %}
 
 <section class="kol-score-strip" id="kolScoreStrip" aria-live="polite"></section>
+<button class="pulse-refresh" id="pulseRefresh" type="button" aria-live="polite" hidden>Pulse updated</button>
 
 <main class="list-section pulse-feed">
-  <div class="token-list" id="pulseList" aria-live="polite"></div>
+  <div id="pulseList"></div>
   <div class="pulse-more" id="pulseMore" aria-hidden="true"><i></i></div>
 </main>
 {% endblock %}
@@ -23,7 +24,11 @@
 let pulse={{ pulse|tojson }};
 const list=document.getElementById('pulseList');
 const more=document.getElementById('pulseMore');
+const refreshButton=document.getElementById('pulseRefresh');
 let loadingMore=false;
+let pendingPulse=null;
+let exposureObserver=null;
+const exposedRows=new Map();
 function esc(value){const node=document.createElement('span');node.textContent=String(value??'');return node.innerHTML;}
 function renderKols(){
   const box=document.getElementById('kolScoreStrip');
@@ -31,14 +36,59 @@ function renderKols(){
   if(!kol){box.hidden=true;return;}
   box.hidden=false;
   const pnl=Number(kol.paper_pnl||0);const hit=kol.hit_rate==null?'learning':`${(Number(kol.hit_rate)*100).toFixed(0)}% hit`;
-  box.innerHTML=`<span class="kol-avatar">${esc(kol.emoji||'⚡')}</span><span><strong>${esc(kol.display_name)} · AI KOL</strong><small>${Number(kol.active_calls||0)} active · ${Number(kol.calls||0)} calls · ${esc(hit)}</small></span><b class="${pnl>=0?'up':'down'}">${pnl>=0?'+':'−'}$${Math.abs(pnl).toFixed(2)}</b>`;
+  const engine=kol.inference_model_label?` · ${esc(kol.inference_model_label)}`:'';
+  box.innerHTML=`<span class="kol-avatar">${esc(kol.emoji||'⚡')}</span><span><strong>${esc(kol.display_name)} · AI KOL</strong><small>${Number(kol.active_calls||0)} active · ${Number(kol.calls||0)} calls · ${esc(hit)}${engine}</small></span><b class="${pnl>=0?'up':'down'}">${pnl>=0?'+':'−'}$${Math.abs(pnl).toFixed(2)}</b>`;
 }
-function render(changedTickers = new Set()) {
+function group(title, note, rows, tone=''){
+  if(!rows.length)return '';
+  return `<section class="pulse-group ${tone}"><header class="pulse-group-title"><strong>${esc(title)}</strong><span>${esc(note)}</span></header><div class="token-list">${rows.map(row=>TickerRow.render(row)).join('')}</div></section>`;
+}
+function markExposed(row){
+  if(!row?.dataset.enteredAt||row.dataset.exposureSent==='true')return;
+  row.dataset.exposureSent='true';
+  fetch('/api/pulse/seen',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({entries:[{ticker:row.dataset.tickerRow,entered_at:row.dataset.enteredAt}]}),
+    keepalive:true,
+  }).catch(()=>{});
+}
+function paintSeen(row){
+  if(!row||row.dataset.novelty!=='unseen')return;
+  row.dataset.novelty='seen';
+  row.classList.remove('attention-unseen');
+  row.classList.add('attention-seen');
+  const badge=row.querySelector('.attention-badge');
+  if(badge){badge.className='attention-badge attention-badge-seen';badge.innerHTML='<i>○</i> SEEN';}
+}
+function observeExposure(){
+  exposureObserver?.disconnect();
+  exposedRows.forEach(state=>clearTimeout(state.timer));
+  exposedRows.clear();
+  exposureObserver=new IntersectionObserver(entries=>entries.forEach(entry=>{
+    const row=entry.target;
+    if(entry.intersectionRatio>=.6){
+      if(exposedRows.has(row))return;
+      const state={qualified:false,timer:setTimeout(()=>{state.qualified=true;markExposed(row);},1000)};
+      exposedRows.set(row,state);
+      return;
+    }
+    const state=exposedRows.get(row);
+    if(!state)return;
+    clearTimeout(state.timer);
+    if(state.qualified)paintSeen(row);
+    exposedRows.delete(row);
+  }),{threshold:[0,.6]});
+  list.querySelectorAll('[data-novelty="unseen"][data-entered-at]').forEach(row=>exposureObserver.observe(row));
+}
+function render() {
   const rows = pulse.rows || [];
-  list.innerHTML = rows.map(row => TickerRow.render(row,{updated:changedTickers.has(row.ticker)})).join('') || `<div class="empty-list"><strong>No movement</strong></div>`;
+  const unseen=rows.filter(row=>row.novelty_state==='unseen').sort((a,b)=>String(b.entered_at||'').localeCompare(String(a.entered_at||'')));
+  const market=rows.filter(row=>row.novelty_state!=='unseen');
+  list.innerHTML = group('New since you looked',`${unseen.length} ${unseen.length===1?'runner':'runners'}`,unseen,'pulse-group-new')+group('Market now','Ranked by Pulse',market)||`<div class="empty-list"><strong>No movement</strong></div>`;
   more.hidden=!pulse.has_more;
   renderKols();
   TickerRow.paintCharts();
+  observeExposure();
 }
 async function loadMore(){
   if(loadingMore||!pulse.has_more)return;
@@ -54,20 +104,28 @@ async function loadMore(){
 }
 new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting))loadMore();},{rootMargin:'240px'}).observe(more);
 render();TickerRow.loadCharts('/api/pulse/charts');let pollCount=0;
+refreshButton.addEventListener('click',()=>{
+  if(!pendingPulse)return;
+  const freshTickers=new Set((pendingPulse.rows||[]).map(row=>row.ticker));
+  const tail=(pulse.rows||[]).filter(row=>!freshTickers.has(row.ticker));
+  pulse={...pendingPulse,rows:[...(pendingPulse.rows||[]),...tail],next_offset:Math.max(pendingPulse.next_offset||0,pulse.next_offset||0),has_more:pendingPulse.has_more||pulse.has_more};
+  pendingPulse=null;refreshButton.hidden=true;render();TickerRow.loadCharts('/api/pulse/charts');
+});
 setInterval(async () => {
   try {
     const response = await fetch('/api/pulse?offset=0&limit=20');
     if (response.ok) {
       const nextPulse = await response.json();
-      const previous = new Map((pulse.rows || []).map(row => [row.ticker, TickerRow.fingerprint(row)]));
-      const changed = new Set((nextPulse.rows || []).filter(row => previous.get(row.ticker) !== TickerRow.fingerprint(row)).map(row => row.ticker));
-      const freshTickers=new Set((nextPulse.rows||[]).map(row=>row.ticker));
-      const tail=(pulse.rows||[]).filter(row=>!freshTickers.has(row.ticker));
-      pulse={...nextPulse,rows:[...(nextPulse.rows||[]),...tail],next_offset:Math.max(nextPulse.next_offset||0,pulse.next_offset||0),has_more:nextPulse.has_more||pulse.has_more};
-      render(changed);
+      const currentTickers=new Set((pulse.rows||[]).map(row=>row.ticker));
+      const newCount=(nextPulse.rows||[]).filter(row=>!currentTickers.has(row.ticker)&&row.novelty_state==='unseen').length;
+      const changed=(nextPulse.rows||[]).some(row=>{
+        const current=(pulse.rows||[]).find(item=>item.ticker===row.ticker);
+        return !current||TickerRow.fingerprint(current)!==TickerRow.fingerprint(row)||current.novelty_state!==row.novelty_state;
+      });
+      if(changed){pendingPulse=nextPulse;refreshButton.textContent=newCount?`${newCount} new ${newCount===1?'runner':'runners'}`:'Pulse updated';refreshButton.hidden=false;}
       pollCount+=1;if(pollCount%6===0)TickerRow.loadCharts('/api/pulse/charts');
     }
   } catch (_) {}
-}, 15000);
+}, 30000);
 </script>
 {% endblock %}

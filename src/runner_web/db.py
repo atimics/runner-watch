@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from collections.abc import Callable, Iterator
@@ -8,6 +9,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from runner_web.ai_kol import (
+    DEFAULT_FLASH_MODEL,
+    FLASH,
+    actor_snapshot,
+    model_display_name,
+)
 from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "data/runner-watch.db"))
@@ -73,6 +80,8 @@ def connection() -> Iterator[sqlite3.Connection]:
     db = sqlite3.connect(DATABASE_PATH, timeout=20)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA synchronous=NORMAL")
+    db.execute("PRAGMA temp_store=MEMORY")
     db.execute("PRAGMA foreign_keys=ON")
     try:
         yield db
@@ -836,6 +845,158 @@ def _migration_006_identity_research(db: sqlite3.Connection) -> None:
         _ensure_column(db, "research_commissions", definition)
 
 
+def _migration_007_pulse_attention(db: sqlite3.Connection) -> None:
+    """Track each profile's attention state for a real Pulse entry."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS pulse_profile_state (
+            profile_id TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            entered_at TEXT NOT NULL,
+            first_seen_at TEXT,
+            last_seen_at TEXT,
+            inspected_at TEXT,
+            notified_at TEXT,
+            PRIMARY KEY(profile_id,ticker,entered_at)
+        );
+        CREATE INDEX IF NOT EXISTS pulse_profile_state_profile_entry
+            ON pulse_profile_state(profile_id,entered_at DESC);
+        CREATE INDEX IF NOT EXISTS pulse_profile_state_ticker_entry
+            ON pulse_profile_state(ticker,entered_at DESC);
+        """
+    )
+
+
+def _sync_flash_actor(db: sqlite3.Connection) -> None:
+    """Keep Flash's live model assignment in sync without changing its identity."""
+
+    row = db.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
+    if not row:
+        raise RuntimeError("The Flash KOL seed is missing")
+    current = dict(row)
+    expected = {
+        "slot": FLASH.slot,
+        "ladder_position": FLASH.ladder_position,
+        "inference_provider": FLASH.provider,
+        "inference_model": FLASH.model,
+        "display_name": FLASH.display_name,
+        "emoji": FLASH.emoji,
+        "description": FLASH.description,
+    }
+    if all(current.get(key) == value for key, value in expected.items()):
+        return
+    timestamp = datetime.now(UTC).isoformat()
+    assigned_at = (
+        current.get("model_assigned_at")
+        if current.get("inference_model") == FLASH.model
+        else timestamp
+    ) or timestamp
+    db.execute(
+        """
+        UPDATE kol_predictors SET
+            slot=?,ladder_position=?,inference_provider=?,inference_model=?,
+            model_assigned_at=?,display_name=?,emoji=?,description=?,updated_at=?
+        WHERE id=?
+        """,
+        (
+            FLASH.slot,
+            FLASH.ladder_position,
+            FLASH.provider,
+            FLASH.model,
+            assigned_at,
+            FLASH.display_name,
+            FLASH.emoji,
+            FLASH.description,
+            timestamp,
+            FLASH.id,
+        ),
+    )
+
+
+def _migration_008_flash_actor(db: sqlite3.Connection) -> None:
+    """Make Flash a durable KOL slot with a replaceable model assignment."""
+
+    for definition in (
+        "slot TEXT",
+        "ladder_position INTEGER",
+        "inference_provider TEXT",
+        "inference_model TEXT",
+        "model_assigned_at TEXT",
+    ):
+        _ensure_column(db, "kol_predictors", definition)
+    _sync_flash_actor(db)
+    for definition in (
+        "actor_id TEXT",
+        "actor_snapshot_json TEXT NOT NULL DEFAULT '{}'",
+    ):
+        _ensure_column(db, "research_commissions", definition)
+    known_flash_models = {DEFAULT_FLASH_MODEL, FLASH.model}
+    historical = db.execute(
+        """
+        SELECT id,requested_model,model FROM research_commissions
+        WHERE actor_id IS NULL
+        """
+    ).fetchall()
+    for row in historical:
+        requested_model = str(row["requested_model"])
+        returned_model = str(row["model"] or "")
+        if requested_model not in known_flash_models and returned_model not in known_flash_models:
+            continue
+        snapshot = actor_snapshot(FLASH)
+        snapshot["model"] = requested_model
+        snapshot["model_label"] = model_display_name(requested_model)
+        db.execute(
+            """
+            UPDATE research_commissions SET actor_id=?,actor_snapshot_json=? WHERE id=?
+            """,
+            (
+                FLASH.id,
+                json.dumps(snapshot, separators=(",", ":")),
+                row["id"],
+            ),
+        )
+    _ensure_column(
+        db,
+        "kol_calls",
+        "actor_snapshot_json TEXT NOT NULL DEFAULT '{}'",
+    )
+    legacy_call_snapshot = actor_snapshot(FLASH)
+    legacy_call_snapshot["attribution"] = "backfilled_at_flash_slot_launch"
+    db.execute(
+        """
+        UPDATE kol_calls SET actor_snapshot_json=?
+        WHERE predictor_id=? AND actor_snapshot_json='{}'
+        """,
+        (
+            json.dumps(legacy_call_snapshot, separators=(",", ":")),
+            FLASH.id,
+        ),
+    )
+    db.execute("DROP INDEX IF EXISTS research_commissions_running")
+    db.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS research_commissions_running_actor
+        ON research_commissions(user_id,ticker,actor_id) WHERE status='running'
+        """
+    )
+
+
+def _migration_009_request_path_indexes(db: sqlite3.Connection) -> None:
+    """Avoid table scans on the live Pulse request path."""
+
+    db.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS market_events_event_time
+            ON market_events(event_at DESC,last_collected_at DESC);
+        CREATE INDEX IF NOT EXISTS sec_filings_created
+            ON sec_filings(created_at DESC);
+        CREATE INDEX IF NOT EXISTS scan_runs_candidate_captured
+            ON scan_runs(captured_at DESC) WHERE candidate_rows>0;
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -850,6 +1011,9 @@ MIGRATIONS = (
     Migration(4, "rug_risk", _migration_004_rug_risk),
     Migration(5, "performance_indexes", _migration_005_performance_indexes),
     Migration(6, "identity_research", _migration_006_identity_research),
+    Migration(7, "pulse_attention", _migration_007_pulse_attention),
+    Migration(8, "flash_actor", _migration_008_flash_actor),
+    Migration(9, "request_path_indexes", _migration_009_request_path_indexes),
 )
 
 
@@ -888,8 +1052,9 @@ def _apply_migrations(db: sqlite3.Connection) -> None:
 
 
 def init_db() -> None:
-    """Apply each forward migration once, then refresh environment-based source policy."""
+    """Apply migrations, then refresh environment-based assignments and source policy."""
 
     with connection() as db:
         _apply_migrations(db)
+        _sync_flash_actor(db)
         _seed_source_registry(db)

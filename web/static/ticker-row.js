@@ -38,10 +38,9 @@
   }
 
   function status(row) {
+    const stage = String(row.stage || '').toUpperCase();
+    if (row.section === 'scored' && stage) return [stage, `stage-${stage.toLowerCase()}`];
     if (row.has_update) return ['NEW', 'update'];
-    if (row.section === 'scored' && row.custom_rank) {
-      return [`#${Number(row.custom_rank)}`, 'score'];
-    }
     const sessions = {regular: 'REG', pre: 'PRE', after: 'AH', overnight: 'OVN'};
     if (row.session && sessions[row.session]) return [sessions[row.session], 'session'];
     if (row.source === 'sec') return ['SEC', 'source'];
@@ -75,21 +74,37 @@
     const badge = statusLabel
       ? `<small class="ticker-badge ticker-badge-${statusTone}">${esc(statusLabel)}</small>`
       : '';
-    const age = ago(row.event_at);
+    const novelty = ['unseen', 'seen', 'inspected'].includes(row.novelty_state)
+      ? row.novelty_state
+      : 'normal';
+    const attentionBadge = novelty === 'unseen'
+      ? '<small class="attention-badge attention-badge-unseen"><i>✦</i> NEW</small>'
+      : novelty === 'seen'
+      ? '<small class="attention-badge attention-badge-seen"><i>○</i> SEEN</small>'
+      : '';
+    const age = ago(row.entered_at || row.event_at);
     const events = Number(row.event_count) > 1
       ? `<span class="event-count">+${Number(row.event_count) - 1}</span>`
       : '';
-    const gate = row.evidence_gate;
-    const evidence = gate && Number(gate.count) > 0
-      ? `<span class="evidence-count ${esc(gate.state)}">${Number(gate.count)} SIG</span>`
-      : '';
     const rugValue = number(row.rug_score);
     const rugLevel = String(row.rug_level || 'unknown').toLowerCase();
-    const rug = rugValue === null ? '' : `<span class="rug-count rug-${esc(rugLevel)}">RUG ${rugValue.toFixed(0)}</span>`;
     const tradeState = String(row.trade_state || '').toUpperCase();
-    const state = tradeState ? `<span class="state-count state-${esc(tradeState.toLowerCase())}">${esc(tradeState)}</span>` : '';
+    let safety = '';
+    if (['AVOID', 'EXIT'].includes(tradeState)) {
+      safety = `<span class="state-count state-${esc(tradeState.toLowerCase())}">${esc(tradeState)}</span>`;
+    } else if (rugValue !== null && ['high', 'critical'].includes(rugLevel)) {
+      safety = `<span class="rug-count rug-${esc(rugLevel)}">RUG ${rugValue.toFixed(0)}</span>`;
+    } else if (tradeState && tradeState !== 'UNKNOWN') {
+      safety = `<span class="state-count state-${esc(tradeState.toLowerCase())}">${esc(tradeState)}</span>`;
+    } else if (rugValue !== null && rugLevel === 'guarded') {
+      safety = `<span class="rug-count rug-guarded">RUG ${rugValue.toFixed(0)}</span>`;
+    } else if (row.section === 'scored' && rugValue === null) {
+      safety = '<span class="rug-count rug-unknown">RISK PENDING</span>';
+    }
     const catalystTone = row.sentiment === 'risk' ? ' risk' : row.sentiment === 'gap' ? ' gap' : '';
     const updated = options.updated ?? row.has_update;
+    const attentionClass = novelty === 'unseen' || novelty === 'seen' ? ` attention-${novelty}` : '';
+    const updateClass = updated && novelty === 'normal' ? ' is-updated' : '';
     const kolCalls = Array.isArray(row.kol_calls) ? row.kol_calls.slice(0, 3) : [];
     const kolTags = kolCalls.map(call => {
       const value = number(call.display_return_pct);
@@ -98,13 +113,16 @@
       const title = `${call.display_name || 'AI KOL'} · ${call.status} · ${pnl || 'mark pending'}`;
       return `<span class="kol-tag ${tone}" title="${esc(title)}"><b>${esc(call.emoji || '⚡')}</b>${esc(pnl)}</span>`;
     }).join('');
-    const label = `${row.ticker}, ${company}, ${money(row.price)}, ${percent(row.change_pct)}${kolCalls.length ? ', AI KOL call active' : ''}`;
-    return `<a class="token-row ticker-row${updated ? ' is-updated' : ''}" href="/t/${encodeURIComponent(row.ticker)}" data-ticker-row="${esc(row.ticker)}" aria-label="${esc(label)}">
+    const attentionLabel = novelty === 'unseen' ? ', new to you' : novelty === 'seen' ? ', seen but not opened' : '';
+    const marketLabel = `${statusLabel ? `, ${statusLabel}` : ''}${tradeState && tradeState !== 'UNKNOWN' ? `, ${tradeState}` : ''}${rugValue !== null ? `, rug risk ${rugValue.toFixed(0)}` : ''}`;
+    const label = `${row.ticker}, ${company}, ${money(row.price)}, ${percent(row.change_pct)}${marketLabel}${attentionLabel}${kolCalls.length ? ', AI KOL call active' : ''}`;
+    const enteredAt = row.entered_at ? ` data-entered-at="${esc(row.entered_at)}"` : '';
+    return `<a class="token-row ticker-row${attentionClass}${updateClass}" href="/t/${encodeURIComponent(row.ticker)}" data-ticker-row="${esc(row.ticker)}" data-novelty="${esc(novelty)}"${enteredAt} aria-label="${esc(label)}">
       <span class="coin coin-${Number(row.coin_tone) || 0}"><b>${esc(row.coin_label || String(row.ticker).slice(0, 2))}</b><i></i></span>
       <span class="token-copy">
-        <span class="ticker-line"><strong>${esc(row.ticker)}</strong>${kolTags}${badge}<small class="ticker-age">${esc(age)}</small></span>
+        <span class="ticker-line"><strong>${esc(row.ticker)}</strong>${kolTags}${badge}${attentionBadge}<small class="ticker-age">${esc(age)}</small></span>
         <span class="company-name">${esc(company)}</span>
-        <span class="catalyst${catalystTone}">${esc(row.pulse_label || 'Watching for changes')}${events}${state}${rug}${evidence}</span>
+        <span class="catalyst${catalystTone}">${esc(row.pulse_label || 'Watching for changes')}${events}${safety}</span>
       </span>
       <span class="quote">
         <strong>${esc(money(row.price))}</strong>
