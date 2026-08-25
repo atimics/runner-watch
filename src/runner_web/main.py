@@ -9,7 +9,6 @@ import math
 import os
 import re
 import secrets
-import sqlite3
 import textwrap
 import threading
 import time
@@ -25,7 +24,7 @@ from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-from fastapi import Cookie, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Cookie, FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -61,6 +60,13 @@ from runner_web.base_rates import (
     MIN_BASE_RATE_SAMPLES,
     matched_market_base_rates,
 )
+from runner_web.cases import (
+    case_revisions,
+    create_case,
+    get_case,
+    list_cases,
+    update_case,
+)
 from runner_web.collection import recording_market_data
 from runner_web.db import connection, init_db
 from runner_web.ingestion import ingestion_status, record_source_fetch
@@ -84,6 +90,23 @@ from runner_web.ranker import (
     train_shadow_ranker,
 )
 from runner_web.research_context import build_research_context
+from runner_web.shared_state import (
+    acknowledge_research_job,
+    dequeue_research_job,
+    enqueue_research_job,
+    rate_limit_allowed,
+    recover_research_jobs,
+    redis_configured,
+)
+from runner_web.shared_state import (
+    cache_delete as shared_cache_delete,
+)
+from runner_web.shared_state import (
+    cache_get as shared_cache_get,
+)
+from runner_web.shared_state import (
+    cache_set as shared_cache_set,
+)
 from runner_web.source_workers import (
     apewisdom_source_worker,
     discovery_source_worker,
@@ -96,6 +119,7 @@ LOG = logging.getLogger(__name__)
 APP_ORIGIN = os.getenv("APP_ORIGIN", "http://localhost:8080").rstrip("/")
 RP_ID = os.getenv("RP_ID", "localhost")
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0") == "1"
+PROCESS_ROLE = os.getenv("PROCESS_ROLE", "all").strip().lower()
 ROOT = Path(os.getenv("RUNNER_ROOT", Path.cwd()))
 SESSION_COOKIE = "runner_session"
 VISITOR_COOKIE = "runner_visitor"
@@ -144,6 +168,10 @@ PULSE_DATA_REFRESHING: set[str] = set()
 RADAR_CACHE_TTL_SECONDS = max(
     5.0, float(os.getenv("RADAR_CACHE_TTL_SECONDS", "60"))
 )
+RADAR_SHARED_CACHE_TTL_SECONDS = max(
+    int(RADAR_CACHE_TTL_SECONDS),
+    int(os.getenv("RADAR_SHARED_CACHE_TTL_SECONDS", "900")),
+)
 RADAR_DATA_LOCK = threading.Lock()
 RADAR_DATA_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 RADAR_DATA_REFRESHING: set[str] = set()
@@ -178,11 +206,12 @@ def _static_version() -> str:
 STATIC_VERSION = _static_version()
 
 
-@asynccontextmanager
-async def lifespan(application: FastAPI):
-    init_db()
-    _fail_orphaned_research_jobs()
-    tasks = [
+def _shared_request_cache_name(scope: str) -> str:
+    return f"{runner_db.database_identity()}:{scope}:v1"
+
+
+def _start_worker_tasks() -> list[asyncio.Task[Any]]:
+    return [
         asyncio.create_task(edgar_worker()),
         asyncio.create_task(trading_halt_worker()),
         asyncio.create_task(discovery_source_worker()),
@@ -192,19 +221,59 @@ async def lifespan(application: FastAPI):
         asyncio.create_task(scan_collection_worker()),
         asyncio.create_task(alpha_report_worker()),
         asyncio.create_task(research_job_worker()),
-        asyncio.create_task(request_cache_warmer()),
     ]
-    application.state.worker_tasks = tasks
+
+
+async def _stop_tasks(tasks: list[asyncio.Task[Any]]) -> None:
+    for task in tasks:
+        task.cancel()
+    for task in tasks:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    init_db()
+    if PROCESS_ROLE not in {"all", "web", "worker"}:
+        raise RuntimeError("PROCESS_ROLE must be all, web, or worker")
+    if PROCESS_ROLE != "all" and not redis_configured():
+        raise RuntimeError("REDIS_URL is required for split web and worker processes")
+    tasks: list[asyncio.Task[Any]] = []
+    worker_tasks: list[asyncio.Task[Any]] = []
+    if PROCESS_ROLE in {"all", "worker"}:
+        if not redis_configured():
+            _fail_orphaned_research_jobs()
+        worker_tasks = _start_worker_tasks()
+        tasks.extend(worker_tasks)
+    if PROCESS_ROLE in {"all", "web"}:
+        tasks.append(asyncio.create_task(request_cache_warmer()))
+    application.state.worker_tasks = worker_tasks
     try:
         yield
     finally:
-        for task in tasks:
-            task.cancel()
-        for task in tasks:
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        await _stop_tasks(tasks)
+
+
+async def run_worker() -> None:
+    """Run background jobs without starting an HTTP server."""
+
+    init_db()
+    if PROCESS_ROLE != "all" and not redis_configured():
+        raise RuntimeError("REDIS_URL is required for split web and worker processes")
+    if not redis_configured():
+        _fail_orphaned_research_jobs()
+    tasks = _start_worker_tasks()
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        await _stop_tasks(tasks)
+
+
+def worker_main() -> None:
+    asyncio.run(run_worker())
 
 
 app = FastAPI(title="Runner Watch", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -293,6 +362,11 @@ def enforce_rate(
 ) -> None:
     client = request.client.host if request.client else "unknown"
     key = f"{scope}:{subject or client}"
+    shared_allowed = rate_limit_allowed(key, limit, seconds)
+    if shared_allowed is False:
+        raise HTTPException(429, "Too many requests. Please wait and try again.")
+    if shared_allowed is True:
+        return
     cutoff = now() - timedelta(seconds=seconds)
     with RATE_LIMIT_LOCK:
         recent = [stamp for stamp in RATE_LIMITS.get(key, []) if stamp > cutoff]
@@ -341,6 +415,19 @@ def claim_visitor_profile(request: Request, user: dict[str, Any]) -> str:
     if source == target:
         return target
     with connection() as db:
+        has_source_data = db.execute(
+            """
+            SELECT 1
+            WHERE EXISTS(SELECT 1 FROM ticker_hearts WHERE profile_id=?)
+               OR EXISTS(SELECT 1 FROM ticker_reactions WHERE profile_id=?)
+               OR EXISTS(SELECT 1 FROM activity_events WHERE profile_id=?)
+               OR EXISTS(SELECT 1 FROM radar_seen WHERE profile_id=?)
+               OR EXISTS(SELECT 1 FROM pulse_profile_state WHERE profile_id=?)
+            """,
+            (source, source, source, source, source),
+        ).fetchone()
+        if not has_source_data:
+            return target
         db.execute(
             """
             INSERT INTO ticker_hearts(profile_id,ticker,active,created_at,updated_at)
@@ -1610,6 +1697,11 @@ def _refresh_pulse_base(cache_key: str) -> None:
         payload = _pulse_data_uncached()
         with PULSE_DATA_LOCK:
             PULSE_DATA_CACHE[cache_key] = (time.monotonic(), payload)
+        shared_cache_set(
+            _shared_request_cache_name("pulse"),
+            payload,
+            int(PULSE_CACHE_TTL_SECONDS),
+        )
     except Exception:
         LOG.exception("Pulse cache refresh failed")
     finally:
@@ -1618,9 +1710,9 @@ def _refresh_pulse_base(cache_key: str) -> None:
 
 
 def _pulse_base_data() -> dict[str, Any]:
-    cache_key = str(runner_db.DATABASE_PATH)
+    cache_key = runner_db.database_identity()
+    current = time.monotonic()
     with PULSE_DATA_LOCK:
-        current = time.monotonic()
         cached = PULSE_DATA_CACHE.get(cache_key)
         if cached and current - cached[0] < PULSE_CACHE_TTL_SECONDS:
             return cached[1]
@@ -1634,11 +1726,22 @@ def _pulse_base_data() -> dict[str, Any]:
                     name="pulse-cache-refresh",
                 ).start()
             return cached[1]
-        payload = _pulse_data_uncached()
+    shared = shared_cache_get(_shared_request_cache_name("pulse"))
+    if isinstance(shared, dict):
+        with PULSE_DATA_LOCK:
+            PULSE_DATA_CACHE[cache_key] = (time.monotonic(), shared)
+        return shared
+    payload = _pulse_data_uncached()
+    with PULSE_DATA_LOCK:
         if cache_key not in PULSE_DATA_CACHE and len(PULSE_DATA_CACHE) >= 8:
             PULSE_DATA_CACHE.clear()
         PULSE_DATA_CACHE[cache_key] = (time.monotonic(), payload)
-        return payload
+    shared_cache_set(
+        _shared_request_cache_name("pulse"),
+        payload,
+        int(PULSE_CACHE_TTL_SECONDS),
+    )
+    return payload
 
 
 def pulse_data(
@@ -1826,6 +1929,11 @@ def _refresh_alpha_base(cache_key: str) -> None:
                 time.monotonic() + ALPHA_CACHE_TTL_SECONDS,
                 payload,
             )
+        shared_cache_set(
+            _shared_request_cache_name("alpha"),
+            payload,
+            int(ALPHA_CACHE_TTL_SECONDS),
+        )
     except Exception:
         LOG.exception("Alpha cache refresh failed")
     finally:
@@ -1834,7 +1942,7 @@ def _refresh_alpha_base(cache_key: str) -> None:
 
 
 def _alpha_base_data() -> dict[str, Any]:
-    cache_key = str(runner_db.DATABASE_PATH)
+    cache_key = runner_db.database_identity()
     current = time.monotonic()
     with ALPHA_DATA_LOCK:
         cached = ALPHA_DATA_CACHE.get(cache_key)
@@ -1850,12 +1958,26 @@ def _alpha_base_data() -> dict[str, Any]:
                     name="alpha-cache-refresh",
                 ).start()
             return cached[1]
-        payload = _alpha_base_data_uncached()
+    shared = shared_cache_get(_shared_request_cache_name("alpha"))
+    if isinstance(shared, dict):
+        with ALPHA_DATA_LOCK:
+            ALPHA_DATA_CACHE[cache_key] = (
+                time.monotonic() + ALPHA_CACHE_TTL_SECONDS,
+                shared,
+            )
+        return shared
+    payload = _alpha_base_data_uncached()
+    with ALPHA_DATA_LOCK:
         if len(ALPHA_DATA_CACHE) >= 8 and cache_key not in ALPHA_DATA_CACHE:
             oldest_key = min(ALPHA_DATA_CACHE, key=lambda key: ALPHA_DATA_CACHE[key][0])
             ALPHA_DATA_CACHE.pop(oldest_key, None)
         ALPHA_DATA_CACHE[cache_key] = (current + ALPHA_CACHE_TTL_SECONDS, payload)
-        return payload
+    shared_cache_set(
+        _shared_request_cache_name("alpha"),
+        payload,
+        int(ALPHA_CACHE_TTL_SECONDS),
+    )
+    return payload
 
 
 def alpha_board_data(profile: str) -> dict[str, Any]:
@@ -2452,28 +2574,28 @@ def _create_research_commission(
     report_id = str(uuid.uuid4())
     public_id = secrets.token_urlsafe(8).replace("-", "").replace("_", "")[:10]
     with connection() as db:
-        try:
-            db.execute(
-                """
-                INSERT INTO research_commissions(
-                    id,public_id,user_id,ticker,evidence_key,status,requested_model,
-                    actor_id,actor_snapshot_json,created_at,updated_at
-                ) VALUES(?,?,?,?,?,'running',?,?,?,?,?)
-                """,
-                (
-                    report_id,
-                    public_id,
-                    user_id,
-                    ticker,
-                    evidence_key,
-                    actor.model,
-                    actor.id,
-                    json.dumps(actor_snapshot(actor), separators=(",", ":")),
-                    timestamp,
-                    timestamp,
-                ),
-            )
-        except sqlite3.IntegrityError as exc:
+        inserted = db.execute(
+            """
+            INSERT INTO research_commissions(
+                id,public_id,user_id,ticker,evidence_key,status,requested_model,
+                actor_id,actor_snapshot_json,created_at,updated_at
+            ) VALUES(?,?,?,?,?,'running',?,?,?,?,?)
+            ON CONFLICT DO NOTHING
+            """,
+            (
+                report_id,
+                public_id,
+                user_id,
+                ticker,
+                evidence_key,
+                actor.model,
+                actor.id,
+                json.dumps(actor_snapshot(actor), separators=(",", ":")),
+                timestamp,
+                timestamp,
+            ),
+        )
+        if inserted.rowcount == 0:
             running = db.execute(
                 """
                 SELECT * FROM research_commissions
@@ -2484,7 +2606,7 @@ def _create_research_commission(
             ).fetchone()
             if running:
                 return _commission_record(running) or {}, False
-            raise HTTPException(409, "This report is already running.") from exc
+            raise HTTPException(409, "This report is already running.")
         row = db.execute(
             "SELECT * FROM research_commissions WHERE id=?", (report_id,)
         ).fetchone()
@@ -2579,6 +2701,7 @@ def _run_research_commission(
             ).fetchone()
         with ALPHA_DATA_LOCK:
             ALPHA_DATA_CACHE.clear()
+        shared_cache_delete(_shared_request_cache_name("alpha"))
         return _commission_record(row) or {}
     except Exception as exc:
         detail = exc.detail if isinstance(exc, HTTPException) else "Report generation failed."
@@ -2632,8 +2755,34 @@ def _fail_orphaned_research_jobs() -> None:
 async def research_job_worker() -> None:
     """Finish commissioned reports independently of the browser request."""
 
+    if redis_configured():
+        while True:
+            try:
+                recovered = await asyncio.to_thread(recover_research_jobs)
+                if recovered:
+                    LOG.info("Recovered %s interrupted research jobs", recovered)
+                break
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                LOG.exception("Research queue recovery failed; retrying")
+                await asyncio.sleep(5)
     while True:
-        report_id, openrouter_key = await RESEARCH_JOB_QUEUE.get()
+        durable = redis_configured()
+        if durable:
+            try:
+                job = await asyncio.to_thread(dequeue_research_job, 5)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                LOG.exception("Research queue read failed; retrying")
+                await asyncio.sleep(5)
+                continue
+            if job is None:
+                continue
+            report_id, openrouter_key = job
+        else:
+            report_id, openrouter_key = await RESEARCH_JOB_QUEUE.get()
         try:
             await run_in_threadpool(_run_research_commission, report_id, openrouter_key)
         except asyncio.CancelledError:
@@ -2642,7 +2791,17 @@ async def research_job_worker() -> None:
             LOG.exception("Flash research job failed: %s", report_id)
         finally:
             openrouter_key = ""
-            RESEARCH_JOB_QUEUE.task_done()
+            if durable:
+                if not asyncio.current_task() or not asyncio.current_task().cancelling():
+                    try:
+                        await asyncio.to_thread(acknowledge_research_job, report_id)
+                    except Exception:
+                        LOG.exception(
+                            "Research job acknowledgement failed; it remains recoverable: %s",
+                            report_id,
+                        )
+            else:
+                RESEARCH_JOB_QUEUE.task_done()
 
 
 def get_commission(public_id: str) -> dict[str, Any] | None:
@@ -3863,6 +4022,11 @@ def _refresh_radar_base(cache_key: str) -> None:
                 time.monotonic() + RADAR_CACHE_TTL_SECONDS,
                 output,
             )
+        shared_cache_set(
+            _shared_request_cache_name("radar"),
+            output,
+            RADAR_SHARED_CACHE_TTL_SECONDS,
+        )
     except Exception:
         LOG.exception("Radar cache refresh failed")
     finally:
@@ -3871,7 +4035,7 @@ def _refresh_radar_base(cache_key: str) -> None:
 
 
 def _radar_base_data() -> list[dict[str, Any]]:
-    cache_key = str(runner_db.DATABASE_PATH)
+    cache_key = runner_db.database_identity()
     current = time.monotonic()
     with RADAR_DATA_LOCK:
         cached = RADAR_DATA_CACHE.get(cache_key)
@@ -3887,12 +4051,51 @@ def _radar_base_data() -> list[dict[str, Any]]:
                     name="radar-cache-refresh",
                 ).start()
             return cached[1]
-        output = _radar_base_data_uncached()
+    shared = shared_cache_get(_shared_request_cache_name("radar"))
+    if isinstance(shared, list):
+        with RADAR_DATA_LOCK:
+            RADAR_DATA_CACHE[cache_key] = (
+                time.monotonic() + RADAR_CACHE_TTL_SECONDS,
+                shared,
+            )
+        return shared
+    output = _radar_base_data_uncached()
+    with RADAR_DATA_LOCK:
         if len(RADAR_DATA_CACHE) >= 8 and cache_key not in RADAR_DATA_CACHE:
             oldest_key = min(RADAR_DATA_CACHE, key=lambda key: RADAR_DATA_CACHE[key][0])
             RADAR_DATA_CACHE.pop(oldest_key, None)
         RADAR_DATA_CACHE[cache_key] = (current + RADAR_CACHE_TTL_SECONDS, output)
-        return output
+    shared_cache_set(
+        _shared_request_cache_name("radar"),
+        output,
+        RADAR_SHARED_CACHE_TTL_SECONDS,
+    )
+    return output
+
+
+def _mark_radar_seen(profile: str, output: list[dict[str, Any]]) -> None:
+    if not output:
+        return
+    seen_at = iso()
+    with connection() as db:
+        db.executemany(
+            """
+            INSERT INTO radar_seen(profile_id,ticker,last_seen_at) VALUES(?,?,?)
+            ON CONFLICT(profile_id,ticker) DO UPDATE SET last_seen_at=excluded.last_seen_at
+            """,
+            [(profile, row["ticker"], seen_at) for row in output],
+        )
+        if profile.startswith("u:"):
+            user_id = profile.removeprefix("u:")
+            case_rows = [row for row in output if row.get("case_id")]
+            if case_rows:
+                db.executemany(
+                    """
+                    INSERT INTO thesis_case_seen(user_id,case_id,last_seen_at) VALUES(?,?,?)
+                    ON CONFLICT(user_id,case_id) DO UPDATE SET last_seen_at=excluded.last_seen_at
+                    """,
+                    [(user_id, row["case_id"], seen_at) for row in case_rows],
+                )
 
 
 def radar_data(
@@ -3902,7 +4105,79 @@ def radar_data(
     mark_seen: bool = False,
 ) -> list[dict[str, Any]]:
     profile = f"u:{user_id}" if user_id else f"v:{visitor_id or 'guest'}"
-    output = [dict(row) for row in _radar_base_data()]
+    base = [dict(row) for row in _radar_base_data()]
+    cases = list_cases(user_id) if user_id else []
+    if cases:
+        base_by_ticker = {str(row["ticker"]): row for row in base}
+        missing = [case["ticker"] for case in cases if case["ticker"] not in base_by_ticker]
+        fallback = _radar_market_summaries(missing)
+        output = []
+        for case in cases:
+            ticker = str(case["ticker"])
+            row = dict(base_by_ticker.get(ticker) or fallback.get(ticker) or {})
+            latest_update_at = max(
+                str(case.get("latest_update_at") or ""),
+                str(case["updated_at"]),
+            )
+            evidence_at = str(row.get("event_at") or "")
+            event_at = max(latest_update_at, evidence_at)
+            direction = str(case.get("latest_direction") or "unknown")
+            row.update(
+                {
+                    "ticker": ticker,
+                    "company": row.get("company") or ticker,
+                    "coin_label": row.get("coin_label") or ticker[:2],
+                    "coin_tone": row.get("coin_tone", _coin_tone(ticker)),
+                    "section": "cases",
+                    "case_id": case["id"],
+                    "case_public_id": case["public_id"],
+                    "case_thesis": case["thesis"],
+                    "case_invalidation": case["invalidation"],
+                    "case_horizon_minutes": case["horizon_minutes"],
+                    "case_confidence": case["confidence"],
+                    "case_status": case["status"],
+                    "case_updated_at": case["updated_at"],
+                    "case_source_kind": case.get("source_kind"),
+                    "case_source_name": case.get("source_pseudonym"),
+                    "latest_direction": direction,
+                    "latest_action": case.get("latest_action"),
+                    "latest_citations": case.get("latest_citations", []),
+                    "pulse_label": case.get("latest_summary") or "No material change yet.",
+                    "event_at": event_at,
+                    "attention_score": (
+                        float(case["confidence"]) * 100
+                        if case.get("confidence") is not None
+                        else 0.0
+                    ),
+                    "sentiment": (
+                        "positive"
+                        if direction == "strengthened"
+                        else "risk"
+                        if direction == "weakened"
+                        else "neutral"
+                    ),
+                    "needs_thesis": False,
+                }
+            )
+            output.append(row)
+    elif user_id:
+        with connection() as db:
+            personal_tickers = {
+                str(row["ticker"])
+                for row in db.execute(
+                    """
+                    SELECT ticker FROM watches WHERE user_id=?
+                    UNION SELECT ticker FROM ticker_hearts
+                    WHERE profile_id=? AND active=1
+                    """,
+                    (user_id, profile),
+                ).fetchall()
+            }
+        output = [row for row in base if str(row["ticker"]) in personal_tickers]
+        for row in output:
+            row["needs_thesis"] = True
+    else:
+        output = base
     with connection() as db:
         seen = {
             row["ticker"]: row["last_seen_at"]
@@ -3910,20 +4185,24 @@ def radar_data(
                 "SELECT ticker,last_seen_at FROM radar_seen WHERE profile_id=?", (profile,)
             ).fetchall()
         }
+        case_seen = (
+            {
+                row["case_id"]: row["last_seen_at"]
+                for row in db.execute(
+                    "SELECT case_id,last_seen_at FROM thesis_case_seen WHERE user_id=?",
+                    (user_id,),
+                ).fetchall()
+            }
+            if user_id and cases
+            else {}
+        )
     for item in output:
         ticker = item["ticker"]
         event_at = item.get("event_at")
-        item["has_update"] = bool(event_at and (not seen.get(ticker) or event_at > seen[ticker]))
-    if mark_seen and output:
-        seen_at = iso()
-        with connection() as db:
-            db.executemany(
-                """
-                INSERT INTO radar_seen(profile_id,ticker,last_seen_at) VALUES(?,?,?)
-                ON CONFLICT(profile_id,ticker) DO UPDATE SET last_seen_at=excluded.last_seen_at
-                """,
-                [(profile, row["ticker"], seen_at) for row in output],
-            )
+        last_seen_at = case_seen.get(item.get("case_id")) or seen.get(ticker)
+        item["has_update"] = bool(event_at and (not last_seen_at or event_at > last_seen_at))
+    if mark_seen:
+        _mark_radar_seen(profile, output)
     return output
 
 
@@ -3931,7 +4210,7 @@ async def request_cache_warmer() -> None:
     """Fill request caches shortly after startup without delaying health checks."""
 
     await asyncio.sleep(1)
-    for builder in (_pulse_base_data, _radar_base_data, _alpha_base_data):
+    for builder in (_radar_base_data, _pulse_base_data, _alpha_base_data):
         try:
             await asyncio.to_thread(builder)
         except Exception:
@@ -3941,44 +4220,46 @@ async def request_cache_warmer() -> None:
 @app.get("/radar", response_class=HTMLResponse)
 def radar_page(
     request: Request,
+    background_tasks: BackgroundTasks,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
     user = current_user(runner_session)
-    if user:
-        claim_visitor_profile(request, user)
+    profile = claim_visitor_profile(request, user) if user else profile_id(request)
+    watches = radar_data(
+        user["id"] if user else None,
+        visitor_id=request.state.visitor_id,
+    )
+    background_tasks.add_task(_mark_radar_seen, profile, watches)
     return templates.TemplateResponse(
         request=request,
         name="radar.html",
         context=page_context(
             request,
             runner_session,
-            watches=radar_data(
-                user["id"] if user else None,
-                visitor_id=request.state.visitor_id,
-                mark_seen=True,
-            ),
+            watches=watches,
             active_tab="radar",
         ),
+        background=background_tasks,
     )
 
 
 @app.get("/api/radar")
 def radar_api(
     request: Request,
+    background_tasks: BackgroundTasks,
     runner_session: str | None = Cookie(default=None),
 ) -> JSONResponse:
     user = current_user(runner_session)
     profile = claim_visitor_profile(request, user) if user else profile_id(request)
     enforce_rate(request, "radar", limit=120, seconds=60, subject=profile)
+    rows = radar_data(
+        user["id"] if user else None,
+        visitor_id=request.state.visitor_id,
+    )
+    background_tasks.add_task(_mark_radar_seen, profile, rows)
     return JSONResponse(
-        {
-            "rows": radar_data(
-                user["id"] if user else None,
-                visitor_id=request.state.visitor_id,
-                mark_seen=True,
-            ),
-            "updated_at": iso(),
-        }
+        {"rows": rows, "updated_at": iso()},
+        background=background_tasks,
     )
 
 
@@ -4093,7 +4374,7 @@ def comment_pseudonym(user_id: str) -> str:
     return pseudonym_candidate(user_id)
 
 
-def _ensure_comment_pseudonym(database: sqlite3.Connection, user_id: str) -> str:
+def _ensure_comment_pseudonym(database: Any, user_id: str) -> str:
     existing = database.execute(
         "SELECT pseudonym FROM comment_pseudonyms WHERE user_id=?",
         (user_id,),
@@ -4118,7 +4399,7 @@ def _ensure_comment_pseudonym(database: sqlite3.Connection, user_id: str) -> str
     raise RuntimeError("Could not assign a unique comment pseudonym")
 
 
-def _public_comment(row: sqlite3.Row) -> dict[str, Any]:
+def _public_comment(row: Any) -> dict[str, Any]:
     return {
         "id": str(row["id"]),
         "body": str(row["body"]),
@@ -4130,6 +4411,18 @@ def _public_comment(row: sqlite3.Row) -> dict[str, Any]:
 def comments_for_ticker(ticker: str, *, limit: int = 50) -> list[dict[str, Any]]:
     bounded_limit = min(50, max(1, limit))
     with connection() as db:
+        missing_aliases = db.execute(
+            """
+            SELECT DISTINCT c.user_id
+            FROM ticker_comments c
+            LEFT JOIN comment_pseudonyms p ON p.user_id=c.user_id
+            WHERE c.ticker=? AND c.status='public' AND p.user_id IS NULL
+            LIMIT 50
+            """,
+            (ticker,),
+        ).fetchall()
+        for row in missing_aliases:
+            _ensure_comment_pseudonym(db, str(row["user_id"]))
         rows = db.execute(
             """
             SELECT c.id,c.body,c.created_at,p.pseudonym
@@ -4151,6 +4444,47 @@ def comment_count_for_ticker(ticker: str) -> int:
             (ticker,),
         ).fetchone()[0]
     return int(count)
+
+
+@app.get("/api/cases")
+def thesis_cases_api(
+    request: Request,
+    include_inactive: bool = False,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    user = require_user(runner_session)
+    enforce_rate(request, "thesis-cases", limit=120, seconds=60, subject=user["id"])
+    return JSONResponse(
+        {"cases": list_cases(user["id"], include_inactive=include_inactive), "updated_at": iso()}
+    )
+
+
+@app.get("/api/cases/{public_id}")
+def thesis_case_api(
+    public_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    user = require_user(runner_session)
+    enforce_rate(request, "thesis-case", limit=120, seconds=60, subject=user["id"])
+    item = get_case(user["id"], public_id)
+    if not item:
+        raise HTTPException(404, "Thesis case not found")
+    return JSONResponse({"case": item})
+
+
+@app.get("/api/cases/{public_id}/revisions")
+def thesis_case_revisions_api(
+    public_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    user = require_user(runner_session)
+    enforce_rate(request, "thesis-case-revisions", limit=60, seconds=60, subject=user["id"])
+    revisions = case_revisions(user["id"], public_id)
+    if revisions is None:
+        raise HTTPException(404, "Thesis case not found")
+    return JSONResponse({"revisions": revisions})
 
 
 @app.post("/api/activity")
@@ -4205,6 +4539,10 @@ def toggle_heart(
         PULSE_DATA_CACHE.clear()
     with ALPHA_DATA_LOCK:
         ALPHA_DATA_CACHE.clear()
+    shared_cache_delete(
+        _shared_request_cache_name("pulse"),
+        _shared_request_cache_name("alpha"),
+    )
     state = heart_state(normalized, profile)
     return JSONResponse(state)
 
@@ -4289,8 +4627,50 @@ def create_ticker_comment(
             "SELECT COUNT(*) FROM ticker_comments WHERE ticker=? AND status='public'",
             (normalized,),
         ).fetchone()[0]
+        active_case = db.execute(
+            """
+            SELECT public_id FROM thesis_cases
+            WHERE user_id=? AND ticker=? AND status='active'
+            ORDER BY updated_at DESC LIMIT 1
+            """,
+            (user["id"], normalized),
+        ).fetchone()
+    if active_case:
+        radar_case = update_case(
+            user["id"],
+            str(active_case["public_id"]),
+            {
+                "thesis": body,
+                "source_kind": "community_comment",
+                "source_comment_id": comment_id,
+            },
+            change_note="Updated from the user's latest public comment",
+        )
+    else:
+        detail = ticker_detail_data(normalized)
+        current_price = detail.get("current", {}).get("price") if detail else None
+        radar_case = create_case(
+            user["id"],
+            normalized,
+            thesis=body,
+            horizon_minutes=7200,
+            reference_price=float(current_price) if current_price is not None else None,
+            invalidation="Unknown — not supplied by the user.",
+            risks=[],
+            open_questions=[],
+            confidence=None,
+            source_comment_id=comment_id,
+            source_kind="community_comment",
+        )
     return JSONResponse(
-        {"comment": _public_comment(row), "count": int(count)},
+        {
+            "comment": _public_comment(row),
+            "count": int(count),
+            "radar_case": {
+                "public_id": radar_case["public_id"],
+                "ticker": radar_case["ticker"],
+            },
+        },
         status_code=201,
     )
 
@@ -4316,7 +4696,28 @@ async def commission_research_api(
         normalized,
     )
     if created:
-        await RESEARCH_JOB_QUEUE.put((str(report["id"]), openrouter_key))
+        if redis_configured():
+            try:
+                await asyncio.to_thread(
+                    enqueue_research_job,
+                    str(report["id"]),
+                    openrouter_key,
+                )
+            except Exception as exc:
+                with connection() as db:
+                    db.execute(
+                        """
+                        UPDATE research_commissions
+                        SET status='failed',error=?,updated_at=? WHERE id=?
+                        """,
+                        ("The research queue is temporarily unavailable.", iso(), report["id"]),
+                    )
+                raise HTTPException(
+                    503,
+                    "The research queue is temporarily unavailable. Please retry.",
+                ) from exc
+        else:
+            await RESEARCH_JOB_QUEUE.put((str(report["id"]), openrouter_key))
     payload = _commission_api_payload(report)
     payload["created"] = created
     return JSONResponse(payload, status_code=202 if payload["status"] == "running" else 200)
@@ -4340,6 +4741,7 @@ def research_status_api(
     if payload["status"] == "complete":
         with ALPHA_DATA_LOCK:
             ALPHA_DATA_CACHE.clear()
+        shared_cache_delete(_shared_request_cache_name("alpha"))
     return JSONResponse(
         payload,
         status_code=200,

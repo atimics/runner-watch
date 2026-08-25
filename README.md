@@ -279,11 +279,32 @@ more useful during pre-market than a simple comparison with a full day's average
 - A broad free scan can be slow or hit rate limits. Raise the scan cap in steps.
 - The tool does not know the live bid/ask spread, current halt state, float, or all market news.
 - The saved quick list will age. Use the full list or your own symbols for better coverage.
-- The public beta uses one Fly volume. It is durable, but it is not yet a multi-region database.
+- The public beta uses one PostgreSQL node with daily volume snapshots. It is not highly available
+  yet; a managed or replicated PostgreSQL service is the next database reliability step.
 - Subscriber entitlements are stored in the user record; billing automation is not connected yet.
 - This is a research tool, not financial advice or an automatic buy signal.
 
 Always confirm price, spread, volume, halt status, and news in a live broker before trading.
+
+## Production layout and budget
+
+Fly runs two stateless 512 MB web machines and one 1 GB background worker. PostgreSQL owns durable
+application data. Redis shares the short-lived Pulse, Radar, and Alpha caches, applies rate limits
+across both web machines, and carries encrypted research jobs between web and worker processes.
+The old SQLite volume is kept only for rollback during the migration window.
+
+The low-cost layout is about $19–$21 per month at light traffic: about $6.40 for PostgreSQL, $6.64
+for both web machines, $5.92 for the worker, and usage-based Redis at $0.20 per 100,000 commands.
+Network, snapshot, and Redis use can add a small amount. A Fly-managed PostgreSQL node would raise
+the starting total to roughly $53–$58 per month.
+
+SQLite remains supported for local development. To copy it to an empty PostgreSQL database:
+
+```bash
+uv run stonks-migrate-sqlite \
+  --source data/runner-watch.db \
+  --database-url "$DATABASE_URL"
+```
 
 ## Checks
 

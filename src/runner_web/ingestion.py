@@ -294,9 +294,13 @@ def _universe_projection(database: Any, run_id: str, fetch: SourceFetch) -> str:
         symbol = str(payload.get("symbol") or f"row-{index}").strip().upper()
         database.execute(
             """
-            INSERT OR REPLACE INTO ingestion_items(
+            INSERT INTO ingestion_items(
                 run_id,item_key,status,payload_json,error
             ) VALUES(?,?,?,?,?)
+            ON CONFLICT(run_id,item_key) DO UPDATE SET
+                status=excluded.status,
+                payload_json=excluded.payload_json,
+                error=excluded.error
             """,
             (
                 run_id,
@@ -321,8 +325,12 @@ def _record_batch_item(
 ) -> None:
     database.execute(
         """
-        INSERT OR REPLACE INTO ingestion_items(run_id,item_key,status,payload_json,error)
+        INSERT INTO ingestion_items(run_id,item_key,status,payload_json,error)
         VALUES(?,?,?,?,NULL)
+        ON CONFLICT(run_id,item_key) DO UPDATE SET
+            status=excluded.status,
+            payload_json=excluded.payload_json,
+            error=excluded.error
         """,
         (run_id, item_key, "accepted", _json(payload)),
     )

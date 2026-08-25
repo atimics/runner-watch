@@ -34,6 +34,15 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         pseudonym_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='comment_pseudonyms'"
         ).fetchone()
+        case_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='thesis_cases'"
+        ).fetchone()
+        revision_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='thesis_case_revisions'"
+        ).fetchone()
+        update_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='thesis_case_updates'"
+        ).fetchone()
         flash = database.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
         commission_columns = {
             row["name"]
@@ -61,6 +70,9 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert reaction_table is not None
     assert comment_table is not None
     assert pseudonym_table is not None
+    assert case_table is not None
+    assert revision_table is not None
+    assert update_table is not None
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_model"] == "z-ai/glm-5.3"
@@ -83,6 +95,9 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "scan_snapshots_ticker_captured",
         "ticker_reactions_ticker_reaction",
         "ticker_comments_ticker_time",
+        "thesis_cases_user_status_time",
+        "thesis_case_revisions_case_time",
+        "thesis_case_updates_case_time",
     } <= indexes
 
 

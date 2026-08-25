@@ -225,7 +225,8 @@ def _companyfacts_candidate(new_events: list[dict[str, Any]]) -> int | None:
             LEFT JOIN issuer_facts f ON f.cik=c.cik
             WHERE r.id=(SELECT id FROM scan_runs ORDER BY captured_at DESC LIMIT 1)
             GROUP BY c.cik
-            ORDER BY facts_at IS NOT NULL,facts_at,c.cik
+            ORDER BY MAX(f.last_collected_at) IS NOT NULL,
+                     MAX(f.last_collected_at),c.cik
             LIMIT 1
             """
         ).fetchone()

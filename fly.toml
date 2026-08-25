@@ -4,11 +4,16 @@ primary_region = "sjc"
 [build]
   dockerfile = "Dockerfile"
 
+[processes]
+  web = "uvicorn runner_web.main:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips '*'"
+  worker = "env PROCESS_ROLE=worker stonks-worker"
+
 [env]
   APP_ORIGIN = "https://stonks.rati.foundation"
   RP_ID = "stonks.rati.foundation"
-  DATABASE_PATH = "/data/runner-watch.db"
   COOKIE_SECURE = "1"
+  PROCESS_ROLE = "web"
+  REQUIRE_DATABASE_URL = "1"
   PYTHONUNBUFFERED = "1"
   BACKGROUND_SCAN_INTERVAL_SECONDS = "180"
   DISCOVERY_SOURCES_ENABLED = "true"
@@ -20,17 +25,13 @@ primary_region = "sjc"
   NASDAQ_TRADE_HALTS_ENABLED = "true"
   SEC_USER_AGENT = "RunnerWatch/0.2 https://stonks.rati.foundation"
 
-[[mounts]]
-  source = "runner_data"
-  destination = "/data"
-
 [http_service]
   internal_port = 8080
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 1
-  processes = ["app"]
+  min_machines_running = 2
+  processes = ["web"]
 
   [http_service.concurrency]
     type = "requests"
@@ -45,5 +46,11 @@ primary_region = "sjc"
     path = "/health"
 
 [[vm]]
+  processes = ["web"]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[[vm]]
+  processes = ["worker"]
   size = "shared-cpu-1x"
   memory = "1gb"

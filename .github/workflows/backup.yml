@@ -14,6 +14,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: superfly/flyctl-actions/setup-flyctl@master
-      - run: flyctl volumes snapshots create vol_458gx3x6w3ek27x4 --app runner-watch-ratimics
+      - run: flyctl volumes snapshots create vol_rnz3gwm5m9em2q1r --app runner-watch-db
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

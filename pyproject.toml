@@ -5,12 +5,15 @@ description = "A free-data stock momentum scanner for finding possible market ru
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
+  "cryptography>=44",
   "fastapi>=0.116",
   "jinja2>=3.1",
   "numpy>=2.0",
   "pandas>=2.2",
   "pillow>=11.0",
   "pydantic>=2.10",
+  "psycopg[binary,pool]>=3.2",
+  "redis>=5.2",
   "streamlit>=1.62",
   "uvicorn[standard]>=0.35",
   "webauthn>=2.2",
@@ -26,6 +29,8 @@ dev = [
 [project.scripts]
 runner-watch = "runner_watch.cli:main"
 stonks-ranker = "runner_web.ranker:main"
+stonks-migrate-sqlite = "runner_web.migrate_sqlite:main"
+stonks-worker = "runner_web.main:worker_main"
 
 [build-system]
 requires = ["setuptools>=69"]

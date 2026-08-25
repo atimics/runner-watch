@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 
 from runner_web.ai_kol import (
@@ -15,22 +15,44 @@ from runner_web.ai_kol import (
     actor_snapshot,
     model_display_name,
 )
+from runner_web.database import DatabaseConnection, initialize_sqlite, open_database
 from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "data/runner-watch.db"))
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+REQUIRE_DATABASE_URL = os.getenv("REQUIRE_DATABASE_URL", "0") == "1"
 
 
-def _columns(db: sqlite3.Connection, table: str) -> set[str]:
+def database_identity() -> str:
+    """Return a safe cache namespace without exposing database credentials."""
+
+    if DATABASE_URL:
+        digest = sha256(DATABASE_URL.encode()).hexdigest()[:12]
+        return f"postgres:{digest}"
+    return f"sqlite:{DATABASE_PATH}"
+
+
+def _columns(db: DatabaseConnection, table: str) -> set[str]:
+    if db.backend == "postgres":
+        rows = db.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema=current_schema() AND table_name=?
+            """,
+            (table,),
+        ).fetchall()
+        return {str(row["column_name"]) for row in rows}
     return {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
-def _ensure_column(db: sqlite3.Connection, table: str, definition: str) -> None:
+def _ensure_column(db: DatabaseConnection, table: str, definition: str) -> None:
     name = definition.split()[0]
     if name not in _columns(db, table):
         db.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
 
 
-def _seed_source_registry(db: sqlite3.Connection) -> None:
+def _seed_source_registry(db: DatabaseConnection) -> None:
     timestamp = datetime.now(UTC).isoformat()
     db.executemany(
         """
@@ -75,22 +97,14 @@ def _seed_source_registry(db: sqlite3.Connection) -> None:
 
 
 @contextmanager
-def connection() -> Iterator[sqlite3.Connection]:
-    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(DATABASE_PATH, timeout=20)
-    db.row_factory = sqlite3.Row
-    db.execute("PRAGMA journal_mode=WAL")
-    db.execute("PRAGMA synchronous=NORMAL")
-    db.execute("PRAGMA temp_store=MEMORY")
-    db.execute("PRAGMA foreign_keys=ON")
-    try:
+def connection() -> Iterator[DatabaseConnection]:
+    if REQUIRE_DATABASE_URL and not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is required in this deployment")
+    with open_database(DATABASE_URL, DATABASE_PATH) as db:
         yield db
-        db.commit()
-    finally:
-        db.close()
 
 
-def _migration_001_baseline(db: sqlite3.Connection) -> None:
+def _migration_001_baseline(db: DatabaseConnection) -> None:
     with db:
         db.executescript(
             """
@@ -625,7 +639,7 @@ def _migration_001_baseline(db: sqlite3.Connection) -> None:
         )
 
 
-def _migration_002_topic_snapshots(db: sqlite3.Connection) -> None:
+def _migration_002_topic_snapshots(db: DatabaseConnection) -> None:
     db.executescript(
         """
         CREATE TABLE IF NOT EXISTS topic_snapshots (
@@ -645,7 +659,7 @@ def _migration_002_topic_snapshots(db: sqlite3.Connection) -> None:
     )
 
 
-def _migration_003_ai_kol(db: sqlite3.Connection) -> None:
+def _migration_003_ai_kol(db: DatabaseConnection) -> None:
     """Add immutable AI KOL calls without mixing them with human hearts."""
 
     db.executescript(
@@ -732,7 +746,7 @@ def _migration_003_ai_kol(db: sqlite3.Connection) -> None:
     )
 
 
-def _migration_004_rug_risk(db: sqlite3.Connection) -> None:
+def _migration_004_rug_risk(db: DatabaseConnection) -> None:
     """Store separate setup, rug, crash, and state evidence."""
 
     timestamp = datetime.now(UTC).isoformat()
@@ -807,7 +821,7 @@ def _migration_004_rug_risk(db: sqlite3.Connection) -> None:
     )
 
 
-def _migration_005_performance_indexes(db: sqlite3.Connection) -> None:
+def _migration_005_performance_indexes(db: DatabaseConnection) -> None:
     """Keep risk lookups bounded as collected history grows."""
 
     db.execute(
@@ -826,7 +840,7 @@ def _migration_005_performance_indexes(db: sqlite3.Connection) -> None:
     )
 
 
-def _migration_006_identity_research(db: sqlite3.Connection) -> None:
+def _migration_006_identity_research(db: DatabaseConnection) -> None:
     """Store thesis-first company, person, and filing research."""
 
     _ensure_column(
@@ -845,7 +859,7 @@ def _migration_006_identity_research(db: sqlite3.Connection) -> None:
         _ensure_column(db, "research_commissions", definition)
 
 
-def _migration_007_pulse_attention(db: sqlite3.Connection) -> None:
+def _migration_007_pulse_attention(db: DatabaseConnection) -> None:
     """Track each profile's attention state for a real Pulse entry."""
 
     db.executescript(
@@ -868,7 +882,7 @@ def _migration_007_pulse_attention(db: sqlite3.Connection) -> None:
     )
 
 
-def _sync_flash_actor(db: sqlite3.Connection) -> None:
+def _sync_flash_actor(db: DatabaseConnection) -> None:
     """Keep Flash's live model assignment in sync without changing its identity."""
 
     row = db.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
@@ -914,7 +928,7 @@ def _sync_flash_actor(db: sqlite3.Connection) -> None:
     )
 
 
-def _migration_008_flash_actor(db: sqlite3.Connection) -> None:
+def _migration_008_flash_actor(db: DatabaseConnection) -> None:
     """Make Flash a durable KOL slot with a replaceable model assignment."""
 
     for definition in (
@@ -983,7 +997,7 @@ def _migration_008_flash_actor(db: sqlite3.Connection) -> None:
     )
 
 
-def _migration_009_request_path_indexes(db: sqlite3.Connection) -> None:
+def _migration_009_request_path_indexes(db: DatabaseConnection) -> None:
     """Avoid table scans on the live Pulse request path."""
 
     db.executescript(
@@ -998,7 +1012,7 @@ def _migration_009_request_path_indexes(db: sqlite3.Connection) -> None:
     )
 
 
-def _migration_010_radar_indexes(db: sqlite3.Connection) -> None:
+def _migration_010_radar_indexes(db: DatabaseConnection) -> None:
     """Support Radar's latest-event and latest-snapshot batch reads."""
 
     db.executescript(
@@ -1013,7 +1027,7 @@ def _migration_010_radar_indexes(db: sqlite3.Connection) -> None:
     )
 
 
-def _migration_011_ticker_feedback(db: sqlite3.Connection) -> None:
+def _migration_011_ticker_feedback(db: DatabaseConnection) -> None:
     """Store one bull/bear reaction per profile and signed-in comments."""
 
     db.executescript(
@@ -1047,7 +1061,7 @@ def _migration_011_ticker_feedback(db: sqlite3.Connection) -> None:
     )
 
 
-def _migration_012_chart_structure(db: sqlite3.Connection) -> None:
+def _migration_012_chart_structure(db: DatabaseConnection) -> None:
     """Persist point-in-time chart structure for model training."""
 
     for definition in (
@@ -1065,11 +1079,112 @@ def _migration_012_chart_structure(db: sqlite3.Connection) -> None:
         _ensure_column(db, "scan_snapshots", definition)
 
 
+def _migration_013_comment_pseudonyms(db: DatabaseConnection) -> None:
+    """Add stable public aliases for databases that already applied feedback."""
+
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS comment_pseudonyms (
+            user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            pseudonym TEXT UNIQUE NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def _migration_014_thesis_cases(db: DatabaseConnection) -> None:
+    """Store living user theses and every revision made to them."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS thesis_cases (
+            id TEXT PRIMARY KEY,
+            public_id TEXT UNIQUE NOT NULL,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            ticker TEXT NOT NULL,
+            source_kind TEXT NOT NULL DEFAULT 'short_note'
+                CHECK(source_kind IN ('short_note','community_comment')),
+            source_comment_id TEXT REFERENCES ticker_comments(id) ON DELETE SET NULL,
+            thesis TEXT NOT NULL,
+            horizon_minutes INTEGER NOT NULL,
+            reference_price REAL,
+            reference_at TEXT NOT NULL,
+            invalidation TEXT NOT NULL,
+            risks_json TEXT NOT NULL DEFAULT '[]',
+            questions_json TEXT NOT NULL DEFAULT '[]',
+            confidence REAL,
+            status TEXT NOT NULL DEFAULT 'active'
+                CHECK(status IN ('active','closed','archived')),
+            final_outcome TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            closed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS thesis_cases_user_status_time
+            ON thesis_cases(user_id,status,updated_at DESC);
+        CREATE INDEX IF NOT EXISTS thesis_cases_ticker_status_time
+            ON thesis_cases(ticker,status,updated_at DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS thesis_cases_active_source_comment
+            ON thesis_cases(user_id,source_comment_id)
+            WHERE source_comment_id IS NOT NULL AND status='active';
+        CREATE TABLE IF NOT EXISTS thesis_case_revisions (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL REFERENCES thesis_cases(id) ON DELETE CASCADE,
+            revision_no INTEGER NOT NULL,
+            source_comment_id TEXT REFERENCES ticker_comments(id) ON DELETE SET NULL,
+            thesis TEXT NOT NULL,
+            horizon_minutes INTEGER NOT NULL,
+            reference_price REAL,
+            reference_at TEXT NOT NULL,
+            invalidation TEXT NOT NULL,
+            risks_json TEXT NOT NULL,
+            questions_json TEXT NOT NULL,
+            confidence REAL,
+            status TEXT NOT NULL,
+            final_outcome TEXT,
+            change_note TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(case_id,revision_no)
+        );
+        CREATE INDEX IF NOT EXISTS thesis_case_revisions_case_time
+            ON thesis_case_revisions(case_id,created_at DESC);
+        CREATE TABLE IF NOT EXISTS thesis_case_updates (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL REFERENCES thesis_cases(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL,
+            direction TEXT NOT NULL
+                CHECK(direction IN ('strengthened','weakened','unchanged','unknown')),
+            summary TEXT NOT NULL,
+            recommended_action TEXT NOT NULL,
+            confidence_before REAL,
+            confidence_after REAL,
+            citations_json TEXT NOT NULL DEFAULT '[]',
+            evidence_fingerprint TEXT NOT NULL,
+            deterministic_veto_json TEXT NOT NULL DEFAULT '{}',
+            model_provider TEXT,
+            model_name TEXT,
+            model_version TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(case_id,evidence_fingerprint)
+        );
+        CREATE INDEX IF NOT EXISTS thesis_case_updates_case_time
+            ON thesis_case_updates(case_id,created_at DESC);
+        CREATE TABLE IF NOT EXISTS thesis_case_seen (
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            case_id TEXT NOT NULL REFERENCES thesis_cases(id) ON DELETE CASCADE,
+            last_seen_at TEXT NOT NULL,
+            PRIMARY KEY(user_id,case_id)
+        );
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
     name: str
-    apply: Callable[[sqlite3.Connection], None]
+    apply: Callable[[DatabaseConnection], None]
 
 
 MIGRATIONS = (
@@ -1085,10 +1200,12 @@ MIGRATIONS = (
     Migration(10, "radar_indexes", _migration_010_radar_indexes),
     Migration(11, "ticker_feedback", _migration_011_ticker_feedback),
     Migration(12, "chart_structure", _migration_012_chart_structure),
+    Migration(13, "comment_pseudonyms", _migration_013_comment_pseudonyms),
+    Migration(14, "thesis_cases", _migration_014_thesis_cases),
 )
 
 
-def _apply_migrations(db: sqlite3.Connection) -> None:
+def _apply_migrations(db: DatabaseConnection) -> None:
     db.execute(
         """
         CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -1125,6 +1242,8 @@ def _apply_migrations(db: sqlite3.Connection) -> None:
 def init_db() -> None:
     """Apply migrations, then refresh environment-based assignments and source policy."""
 
+    if not DATABASE_URL:
+        initialize_sqlite(DATABASE_PATH)
     with connection() as db:
         _apply_migrations(db)
         _sync_flash_actor(db)

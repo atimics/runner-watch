@@ -101,14 +101,14 @@ def discovery_watchlist(limit: int = 30) -> list[dict[str, str]]:
             FROM ticker_hearts h
             LEFT JOIN sec_companies c ON c.ticker=h.ticker
             WHERE h.active=1
-            GROUP BY h.ticker
+            GROUP BY h.ticker,c.name
             ORDER BY hearts DESC,latest_heart DESC,h.ticker
             LIMIT 20
             """
         ).fetchall()
         filing_rows = database.execute(
             """
-            SELECT f.ticker,COALESCE(c.name,f.company,f.ticker) AS company
+            SELECT f.ticker,COALESCE(MAX(c.name),MAX(f.company),f.ticker) AS company
             FROM sec_filings f
             LEFT JOIN sec_companies c ON c.ticker=f.ticker
             GROUP BY f.ticker

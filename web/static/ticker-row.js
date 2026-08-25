@@ -38,6 +38,10 @@
   }
 
   function status(row) {
+    if (row.section === 'cases') {
+      const confidence = number(row.case_confidence);
+      return [confidence === null ? 'VIEW' : `${Math.round(confidence * 100)}%`, 'thesis'];
+    }
     const stage = String(row.stage || '').toUpperCase();
     if (row.section === 'scored' && stage) return [stage, `stage-${stage.toLowerCase()}`];
     const sessions = {regular: 'REG', pre: 'PRE', after: 'AH', overnight: 'OVN'};
@@ -110,11 +114,21 @@
     const marketLabel = `${statusLabel ? `, ${statusLabel}` : ''}${tradeState && tradeState !== 'UNKNOWN' ? `, ${tradeState}` : ''}${rugValue !== null ? `, rug risk ${rugValue.toFixed(0)}` : ''}`;
     const label = `${row.ticker}, ${company}, ${money(row.price)}, ${percent(row.change_pct)}${marketLabel}${kolCalls.length ? ', paper call open' : ''}`;
     const enteredAt = row.entered_at ? ` data-entered-at="${esc(row.entered_at)}"` : '';
+    const thesis = row.section === 'cases' && row.case_thesis
+      ? `<span class="case-thesis">${esc(row.case_thesis)}</span>`
+      : '';
+    const caseSource = row.section === 'cases' && row.case_source_name
+      ? `<span class="case-source">Shared by ${esc(row.case_source_name)}</span>`
+      : '';
+    const trackPrompt = row.needs_thesis
+      ? '<span class="case-track-prompt">Comment once to make this view personal</span>'
+      : '';
     return `<a class="token-row ticker-row${attentionClass}${updateClass}" href="/t/${encodeURIComponent(row.ticker)}" data-ticker-row="${esc(row.ticker)}" data-novelty="${esc(novelty)}"${enteredAt} aria-label="${esc(label)}">
       <span class="coin coin-${Number(row.coin_tone) || 0}"><b>${esc(row.coin_label || String(row.ticker).slice(0, 2))}</b><i></i></span>
       <span class="token-copy">
         <span class="ticker-line"><strong>${esc(row.ticker)}</strong>${kolTags}${badge}<small class="ticker-age">${esc(age)}</small></span>
         <span class="company-name">${esc(company)}</span>
+        ${caseSource}${thesis}${trackPrompt}
         <span class="catalyst${catalystTone}">${esc(row.pulse_label || 'No recent event')}${events}${safety}</span>
       </span>
       <span class="quote">

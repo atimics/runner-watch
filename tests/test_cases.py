@@ -1,0 +1,115 @@
+from datetime import UTC, datetime
+from pathlib import Path
+
+from pytest import MonkeyPatch
+
+from runner_web import db
+from runner_web.cases import case_revisions, create_case, get_case, list_cases, update_case
+from runner_web.db import connection, init_db
+
+
+def seed_user(user_id: str = "case-user") -> None:
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            (user_id, user_id, "Case User", "active", datetime.now(UTC).isoformat()),
+        )
+
+
+def test_case_keeps_an_append_only_revision_history(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "cases.db")
+    init_db()
+    seed_user()
+
+    created = create_case(
+        "case-user",
+        "ONE",
+        thesis="A clean catalyst can support a move above the prior high.",
+        horizon_minutes=1440,
+        reference_price=1.25,
+        invalidation="A close below VWAP invalidates the setup.",
+        risks=["Dilution", "Dilution", "Low cash runway"],
+        open_questions=["Is the new contract material?"],
+        confidence=0.62,
+    )
+    updated = update_case(
+        "case-user",
+        created["public_id"],
+        {
+            "thesis": "The catalyst is confirmed, but price still needs to hold above VWAP.",
+            "confidence": 0.71,
+        },
+        change_note="Primary filing confirmed the customer.",
+    )
+
+    assert updated is not None
+    assert updated["confidence"] == 0.71
+    assert updated["risks"] == ["Dilution", "Low cash runway"]
+    revisions = case_revisions("case-user", created["public_id"])
+    assert revisions is not None
+    assert [row["revision_no"] for row in revisions] == [2, 1]
+    assert revisions[0]["change_note"] == "Primary filing confirmed the customer."
+    assert revisions[1]["thesis"] == created["thesis"]
+
+
+def test_cases_are_private_to_their_owner(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "case-privacy.db")
+    init_db()
+    seed_user("owner")
+    seed_user("other")
+    created = create_case(
+        "owner",
+        "ONE",
+        thesis="This thesis belongs only to its owner.",
+        horizon_minutes=390,
+        reference_price=None,
+        invalidation="The named catalyst does not happen.",
+        risks=[],
+        open_questions=[],
+        confidence=0.5,
+    )
+
+    assert len(list_cases("owner")) == 1
+    assert list_cases("other") == []
+    assert get_case("other", created["public_id"]) is None
+    assert update_case(
+        "other",
+        created["public_id"],
+        {"confidence": 0.9},
+        change_note="Should not work",
+    ) is None
+
+
+def test_closing_a_case_preserves_the_final_outcome(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "case-outcome.db")
+    init_db()
+    seed_user()
+    created = create_case(
+        "case-user",
+        "ONE",
+        thesis="A one-day setup with a recorded final outcome.",
+        horizon_minutes=1440,
+        reference_price=2.0,
+        invalidation="Price closes below the reference level.",
+        risks=[],
+        open_questions=[],
+        confidence=0.55,
+    )
+
+    closed = update_case(
+        "case-user",
+        created["public_id"],
+        {"status": "closed", "final_outcome": "Target reached before invalidation."},
+        change_note="Case closed after the selected horizon.",
+    )
+
+    assert closed is not None
+    assert closed["status"] == "closed"
+    assert closed["closed_at"] is not None
+    assert closed["final_outcome"] == "Target reached before invalidation."
+    assert list_cases("case-user") == []
+    assert len(list_cases("case-user", include_inactive=True)) == 1
