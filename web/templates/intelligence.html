@@ -18,6 +18,7 @@
       <option value="positive">Positive catalysts</option>
       <option value="insider">Insider activity</option>
       <option value="risk">Dilution and risk</option>
+      <option value="movers">Measured movers</option>
       <option value="all">All important filings</option>
     </select>
   </label>
@@ -31,6 +32,7 @@
   <strong>How to read it</strong>
   <p>A larger score means the event deserves faster review, not that the stock will rise. Form 4 code P means an open-market or private purchase. Grants, option exercises, and tax withholding are kept separate. Offering filings are marked as risk.</p>
   <p>SEC data is the source of record. Yahoo price and volume are delayed confirmation data. Always open the filing and check spreads, halts, dilution history, and news before acting.</p>
+  <p>The learning loop saves the price seen when a filing arrives, then samples it after 1 hour, 1 day, and 5 days. These are delayed observations for future model evaluation, not proof that a filing caused the move.</p>
 </section>
 {% endblock %}
 {% block scripts %}
@@ -47,20 +49,24 @@ function allowed(row, mode) {
   if (mode === 'positive') return row.sentiment === 'positive';
   if (mode === 'insider') return row.form.startsWith('4');
   if (mode === 'risk') return row.sentiment === 'risk';
+  if (mode === 'movers') return [row.return_1h_pct, row.return_1d_pct, row.return_5d_pct].some(value => value != null && Math.abs(Number(value)) >= 5);
   return true;
 }
+function outcome(value, label) { if (value == null) return ''; const number = Number(value); return `<span class="outcome ${number >= 0 ? 'up' : 'down'}">${esc(label)} ${number >= 0 ? '+' : ''}${number.toFixed(1)}%</span>`; }
 function render() {
   const mode = filter.value; const rows = intelligence.rows.filter(row => allowed(row, mode));
   heatmap.innerHTML = rows.map(row => {
     const value = compact(row.transaction_value);
     const market = row.price == null ? 'Price pending' : `$${Number(row.price).toFixed(2)}${row.change_pct == null ? '' : ` · ${Number(row.change_pct) >= 0 ? '+' : ''}${Number(row.change_pct).toFixed(1)}%`}`;
     const heat = Number(row.score) >= 80 ? 'hot' : Number(row.score) >= 60 ? 'warm' : '';
-    return `<a class="heat-cell ${esc(row.sentiment)} ${heat}" href="${esc(row.filing_url)}" target="_blank" rel="noopener"><div class="heat-top"><strong>$${esc(row.ticker)}</strong><b>${Number(row.score).toFixed(0)}</b></div><span class="heat-kind">${esc(row.kind)}</span><div class="heat-meta"><span>${esc(row.form)}</span><span>${esc(ago(row.filed_at))}</span></div><p>${esc(row.actor ? `${row.actor}${row.actor_title ? ' · ' + row.actor_title : ''}` : row.company)}</p><div class="heat-market"><span>${esc(market)}</span>${value ? `<strong>${esc(value)}</strong>` : ''}</div></a>`;
+    const measured = outcome(row.return_1h_pct, '1h') + outcome(row.return_1d_pct, '1d') + outcome(row.return_5d_pct, '5d');
+    return `<a class="heat-cell ${esc(row.sentiment)} ${heat}" href="${esc(row.filing_url)}" target="_blank" rel="noopener"><div class="heat-top"><strong>$${esc(row.ticker)}</strong><b>${Number(row.score).toFixed(0)}</b></div><span class="heat-kind">${esc(row.kind)}</span><div class="heat-meta"><span>${esc(row.form)}</span><span>${esc(ago(row.filed_at))}</span></div><div class="heat-evidence"><strong>${esc(row.evidence_label)}</strong><p>${esc(row.evidence_text)}</p></div>${measured ? `<div class="heat-outcomes">${measured}</div>` : '<div class="heat-learning">Outcome clock running</div>'}<div class="heat-market"><span>${esc(market)}</span>${value ? `<strong>${esc(value)}</strong>` : ''}</div></a>`;
   }).join('') || '<div class="empty intel-empty"><span>⌁</span><h3>No matching catalyst yet.</h3><p>The SEC listener keeps running in the background.</p></div>';
   const state = intelligence.state || {}; const refreshed = state.edgar_last_refresh;
   document.getElementById('lastRefresh').textContent = refreshed ? `Updated ${ago(refreshed)}` : 'Starting SEC listener…';
   const companies = state.edgar_company_count ? Number(state.edgar_company_count).toLocaleString() : 'thousands of';
-  statusBox.textContent = `${rows.length} events shown · monitoring ${companies} listed ticker mappings · updates arrive without clicking Scan.`;
+  const labeled = intelligence.stats?.labeled_events || 0;
+  statusBox.textContent = `${rows.length} events shown · ${labeled} measured outcomes · monitoring ${companies} listed ticker mappings · updates arrive without clicking Scan.`;
 }
 filter.addEventListener('change', render); render();
 setInterval(async () => { try { const response = await fetch('/api/intelligence'); if (response.ok) { intelligence = await response.json(); render(); } } catch (_) {} }, 15000);

@@ -40,6 +40,7 @@ from runner_watch.scanner import RunnerScanner
 from runner_watch.universe import penny_runner_universe
 from runner_web.db import connection, init_db
 from runner_web.intelligence import record_edgar_error, refresh_edgar
+from runner_web.outcomes import record_outcome_error, refresh_outcomes
 
 APP_ORIGIN = os.getenv("APP_ORIGIN", "http://localhost:8080").rstrip("/")
 RP_ID = os.getenv("RP_ID", "localhost")
@@ -177,17 +178,38 @@ async def edgar_worker() -> None:
         await asyncio.sleep(45)
 
 
+async def outcome_worker() -> None:
+    await asyncio.sleep(75)
+    while True:
+        try:
+            await run_in_threadpool(refresh_outcomes)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            record_outcome_error(exc)
+        await asyncio.sleep(600)
+
+
 @app.on_event("startup")
 async def startup() -> None:
     init_db()
     app.state.edgar_task = asyncio.create_task(edgar_worker())
+    app.state.outcome_task = asyncio.create_task(outcome_worker())
 
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
-    task = getattr(app.state, "edgar_task", None)
-    if task:
+    tasks = [
+        task
+        for task in (
+            getattr(app.state, "edgar_task", None),
+            getattr(app.state, "outcome_task", None),
+        )
+        if task
+    ]
+    for task in tasks:
         task.cancel()
+    for task in tasks:
         try:
             await task
         except asyncio.CancelledError:
@@ -262,22 +284,75 @@ def home(
     )
 
 
+def _intelligence_evidence(row: dict[str, Any]) -> dict[str, Any]:
+    codes = {code for code in str(row.get("transaction_codes", "")).split(",") if code}
+    actor = row.get("actor") or "An insider"
+    shares = row.get("transaction_shares")
+    price = row.get("transaction_price")
+    if "P" in codes:
+        row["evidence_label"] = "Verified insider purchase"
+        if shares and price:
+            row["evidence_text"] = (
+                f"{actor} reported buying {float(shares):,.0f} shares at "
+                f"${float(price):,.2f}."
+            )
+        else:
+            row["evidence_text"] = "The structured Form 4 contains transaction code P."
+    elif "S" in codes:
+        row["evidence_label"] = "Verified insider sale"
+        row["evidence_text"] = (
+            f"{actor} reported a sale. Check the filing for plan and ownership context."
+        )
+    elif row.get("sentiment") == "risk":
+        row["evidence_label"] = "Direct SEC risk filing"
+        row["evidence_text"] = "The form type can signal supply, dilution, or reporting risk."
+    elif str(row.get("form", "")).startswith("4"):
+        row["evidence_label"] = "Structured ownership filing"
+        row["evidence_text"] = "This is an ownership change, but not a code P purchase."
+    else:
+        row["evidence_label"] = "New primary-source filing"
+        row["evidence_text"] = "The event is new and still needs human review of the filing."
+    return row
+
+
 def intelligence_data() -> dict[str, Any]:
     cutoff = iso(now() - timedelta(days=3))
     with connection() as db:
         rows = db.execute(
             """
-            SELECT * FROM sec_filings WHERE created_at>?
-            ORDER BY score DESC, filed_at DESC LIMIT 120
+            SELECT f.*,o.return_1h_pct,o.return_1d_pct,o.return_5d_pct,
+                   o.observed_1h_at,o.observed_1d_at,o.observed_5d_at
+            FROM sec_filings f
+            LEFT JOIN sec_outcomes o ON o.accession=f.accession
+            WHERE f.created_at>?
+            ORDER BY f.score DESC, f.filed_at DESC LIMIT 120
             """,
             (cutoff,),
         ).fetchall()
         state_rows = db.execute(
-            "SELECT key,value,updated_at FROM worker_state WHERE key LIKE 'edgar_%'"
+            """
+            SELECT key,value,updated_at FROM worker_state
+            WHERE key LIKE 'edgar_%' OR key LIKE 'outcomes_%'
+            """
         ).fetchall()
+    events = [_intelligence_evidence(dict(row)) for row in rows]
+    outcome_keys = ("return_1h_pct", "return_1d_pct", "return_5d_pct")
     return {
-        "rows": [dict(row) for row in rows],
+        "rows": events,
         "state": {row["key"]: row["value"] for row in state_rows},
+        "stats": {
+            "events": len(events),
+            "penny_events": sum(
+                1
+                for row in events
+                if row.get("price") is not None and row["price"] <= 5
+            ),
+            "labeled_events": sum(
+                1
+                for row in events
+                if any(row.get(key) is not None for key in outcome_keys)
+            ),
+        },
     }
 
 
@@ -471,6 +546,26 @@ def scanner_page(
     )
 
 
+def recent_sec_catalysts(tickers: list[str]) -> dict[str, dict[str, Any]]:
+    if not tickers:
+        return {}
+    unique = list(dict.fromkeys(tickers))
+    placeholders = ",".join("?" for _ in unique)
+    with connection() as db:
+        rows = db.execute(
+            f"""
+            SELECT ticker,kind,form,filing_url,filed_at,sentiment FROM sec_filings
+            WHERE ticker IN ({placeholders}) AND created_at>?
+            ORDER BY filed_at DESC
+            """,  # noqa: S608
+            (*unique, iso(now() - timedelta(days=3))),
+        ).fetchall()
+    output: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        output.setdefault(row["ticker"], dict(row))
+    return output
+
+
 def run_scan(mode: str = "penny") -> dict[str, Any]:
     config = SCAN_MODES.get(mode)
     if not config:
@@ -506,9 +601,11 @@ def run_scan(mode: str = "penny") -> dict[str, Any]:
     )
     captured_at = iso()
     output: list[dict[str, Any]] = []
+    catalysts = recent_sec_catalysts([item.ticker for item in result.rows])
     with connection() as db:
         for item in result.rows:
             snapshot_id = secrets.token_urlsafe(10)
+            catalyst = catalysts.get(item.ticker)
             values = {
                 "id": snapshot_id,
                 "ticker": item.ticker,
@@ -527,6 +624,11 @@ def run_scan(mode: str = "penny") -> dict[str, Any]:
                 "signals_json": json.dumps(item.signals),
                 "risks_json": json.dumps(item.risks),
                 "captured_at": captured_at,
+                "catalyst_kind": catalyst["kind"] if catalyst else None,
+                "catalyst_form": catalyst["form"] if catalyst else None,
+                "catalyst_url": catalyst["filing_url"] if catalyst else None,
+                "catalyst_filed_at": catalyst["filed_at"] if catalyst else None,
+                "catalyst_status": "matched_sec" if catalyst else "no_recent_sec",
             }
             db.execute(
                 """

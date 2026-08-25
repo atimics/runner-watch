@@ -14,7 +14,7 @@
 </section>
 <div id="scanStatus" class="scan-status">Ready. Yahoo first finds active low-priced stocks across the market, then Runner Watch checks their 5-minute bars.</div>
 <div class="table-wrap">
-  <table><thead><tr><th>Ticker</th><th>Score</th><th>Stage</th><th>Price</th><th>Move</th><th>5m</th><th>15m</th><th>RVOL</th><th>$ Volume</th><th>Action</th></tr></thead><tbody id="results"><tr><td colspan="10" class="muted center">Run a scan to load current signals.</td></tr></tbody></table>
+  <table><thead><tr><th>Ticker</th><th>Score</th><th>Stage</th><th>Price</th><th>Move</th><th>5m</th><th>15m</th><th>RVOL</th><th>$ Volume</th><th>Known catalyst</th><th>Action</th></tr></thead><tbody id="results"><tr><td colspan="11" class="muted center">Run a scan to load current signals.</td></tr></tbody></table>
 </div>
 <p class="fine-print">Listed stocks only; OTC is excluded. Market cap is capped near $2B, but free data does not provide reliable real-time float, spreads, dilution, or halt status. Public cards keep their captured market numbers.</p>
 
@@ -39,13 +39,14 @@ const dialog = document.getElementById('publishDialog');
 function esc(value) { const node = document.createElement('span'); node.textContent = String(value ?? ''); return node.innerHTML; }
 function num(value, suffix='') { return value == null ? '—' : Number(value).toFixed(1) + suffix; }
 function money(value) { const amount = Number(value); if (!Number.isFinite(amount)) return '—'; if (amount >= 1e6) return '$' + (amount / 1e6).toFixed(1) + 'M'; if (amount >= 1e3) return '$' + (amount / 1e3).toFixed(0) + 'K'; return '$' + amount.toFixed(0); }
+function catalyst(row) { return row.catalyst_url ? `<a href="${esc(row.catalyst_url)}" target="_blank" rel="noopener">SEC ${esc(row.catalyst_form)} · ${esc(row.catalyst_kind)}</a>` : '<span class="muted">No recent SEC filing</span>'; }
 runButton.addEventListener('click', async () => {
   runButton.disabled = true; statusBox.textContent = 'Finding active penny stocks, then scanning daily liquidity and 5-minute bars…';
   try {
     const mode = document.getElementById('scanMode').value;
     const response = await fetch(`/api/scan?mode=${encodeURIComponent(mode)}`, {method:'POST'}); const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Scan failed');
-    body.innerHTML = data.rows.map(row => `<tr><td><strong>$${esc(row.ticker)}</strong></td><td>${num(row.score)}</td><td><span class="stage ${esc(row.stage.toLowerCase())}">${esc(row.stage)}</span></td><td>$${Number(row.price).toFixed(2)}</td><td class="${row.change_pct >= 0 ? 'positive':''}">${num(row.change_pct,'%')}</td><td>${num(row.momentum_5m_pct,'%')}</td><td>${num(row.momentum_15m_pct,'%')}</td><td>${num(row.relative_volume,'×')}</td><td>${money(row.dollar_volume)}</td><td><button class="mini-button publish" data-id="${esc(row.id)}" data-ticker="${esc(row.ticker)}">Publish</button></td></tr>`).join('') || '<tr><td colspan="10" class="center">No usable rows returned.</td></tr>';
+    body.innerHTML = data.rows.map(row => `<tr><td><strong>$${esc(row.ticker)}</strong></td><td>${num(row.score)}</td><td><span class="stage ${esc(row.stage.toLowerCase())}">${esc(row.stage)}</span></td><td>$${Number(row.price).toFixed(2)}</td><td class="${row.change_pct >= 0 ? 'positive':''}">${num(row.change_pct,'%')}</td><td>${num(row.momentum_5m_pct,'%')}</td><td>${num(row.momentum_15m_pct,'%')}</td><td>${num(row.relative_volume,'×')}</td><td>${money(row.dollar_volume)}</td><td>${catalyst(row)}</td><td><button class="mini-button publish" data-id="${esc(row.id)}" data-ticker="${esc(row.ticker)}">Publish</button></td></tr>`).join('') || '<tr><td colspan="11" class="center">No usable rows returned.</td></tr>';
     const coverage = data.cached ? 'Recent scan reused.' : `${data.candidates} candidates found; ${data.scanned} checked intraday in ${data.elapsed_seconds}s.`;
     statusBox.textContent = `${data.rows.length} ${data.label.toLowerCase()} ranked. ${coverage} Quotes may be delayed.`;
   } catch (error) { statusBox.textContent = error.message; }

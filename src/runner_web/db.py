@@ -137,6 +137,22 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS sec_filings_filed ON sec_filings(filed_at DESC);
             CREATE INDEX IF NOT EXISTS sec_filings_score ON sec_filings(score DESC);
             CREATE INDEX IF NOT EXISTS sec_filings_ticker ON sec_filings(ticker, filed_at DESC);
+            CREATE TABLE IF NOT EXISTS sec_outcomes (
+                accession TEXT PRIMARY KEY REFERENCES sec_filings(accession) ON DELETE CASCADE,
+                base_price REAL NOT NULL,
+                base_at TEXT NOT NULL,
+                price_1h REAL,
+                return_1h_pct REAL,
+                observed_1h_at TEXT,
+                price_1d REAL,
+                return_1d_pct REAL,
+                observed_1d_at TEXT,
+                price_5d REAL,
+                return_5d_pct REAL,
+                observed_5d_at TEXT,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS sec_outcomes_base_at ON sec_outcomes(base_at DESC);
             CREATE TABLE IF NOT EXISTS worker_state (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL,

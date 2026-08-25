@@ -23,8 +23,12 @@ start a market-wide scan. The worker:
 - flags offering, registration, late-report, Form 144, 8-K, 6-K, and ownership filings
 - adds delayed Yahoo price, relative volume, and runner score as confirmation
 - saves scored events for the instant penny-stock heatmap
+- samples the observed price again after 1 hour, 1 day, and 5 days
+- marks scanner runners that have no recent matching SEC filing
 
 The SEC listener declares its user agent and stays below the SEC's published request-rate limit.
+The delayed outcome labels preserve what was known at filing time, giving future ranking models
+clean examples without rewriting history after a move is already known.
 
 The main screen ranks stocks with a **runner score**. The score looks for:
 
