@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
-from typing import Any, Iterable
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from runner_web.db import connection
