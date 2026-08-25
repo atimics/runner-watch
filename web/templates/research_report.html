@@ -22,21 +22,70 @@
     <span><strong>{{ report.ticker }}</strong><small>{{ report.company }}</small></span>
   </a>
   <h1>{{ report.headline }}</h1>
+  <section class="research-thesis">
+    <span>THESIS</span>
+    <p>{{ report.thesis or report.summary }}</p>
+  </section>
   <p class="research-summary">{{ report.summary }}</p>
 
+  {% if report.company_profile %}
+  <section class="research-section company-profile">
+    <h2>Who the company is</h2>
+    {% if report.company_profile.what_it_does %}<p>{{ report.company_profile.what_it_does }}</p>{% endif %}
+    {% if report.company_profile.stage %}<p><strong>Stage:</strong> {{ report.company_profile.stage }}</p>{% endif %}
+    {% if report.company_profile.why_it_matters %}<p><strong>Why it matters:</strong> {{ report.company_profile.why_it_matters }}</p>{% endif %}
+  </section>
+  {% endif %}
+
+  {% if report.people %}
+  <section class="research-section">
+    <h2>People and entities in the filings</h2>
+    <div class="research-people">
+      {% for person in report.people %}
+      <article class="research-person">
+        <div><strong>{{ person.name }}</strong><span>{{ person.role or 'Role not verified' }}</span><i>{{ person.confidence or 'unknown' }}</i></div>
+        {% if person.filing_role %}<p>{{ person.filing_role }}</p>{% endif %}
+        {% if person.action %}<p><strong>Reported action:</strong> {{ person.action }}</p>{% endif %}
+        {% if person.relevance %}<p><strong>Why they matter:</strong> {{ person.relevance }}</p>{% endif %}
+        {% if person.source_urls %}<div class="person-sources">{% for source in person.source_urls %}<a href="{{ source }}" target="_blank" rel="noopener">source</a>{% endfor %}</div>{% endif %}
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if report.filing_context %}
+  <section class="research-section">
+    <h2>Filings decoded</h2>
+    <div class="research-filings">
+      {% for filing in report.filing_context %}
+      <article>
+        <div><strong>{{ filing.form or 'SEC filing' }}</strong><span>{{ (filing.filed_at or '')[:10] }}</span></div>
+        {% if filing.plain_english %}<p>{{ filing.plain_english }}</p>{% endif %}
+        {% if filing.why_it_matters %}<p><strong>Thesis impact:</strong> {{ filing.why_it_matters }}</p>{% endif %}
+        {% if filing.source_url %}<a href="{{ filing.source_url }}" target="_blank" rel="noopener">Read filing</a>{% endif %}
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
   {% if report.catalysts %}
-  <section class="research-section"><h2>Catalysts</h2>{% for item in report.catalysts %}<p>{{ item }}</p>{% endfor %}</section>
+  <section class="research-section"><h2>What supports the thesis</h2>{% for item in report.catalysts %}<p>{{ item }}</p>{% endfor %}</section>
   {% endif %}
   {% if report.risks %}
-  <section class="research-section"><h2>Risks</h2>{% for item in report.risks %}<p>{{ item }}</p>{% endfor %}</section>
+  <section class="research-section"><h2>What could rug it</h2>{% for item in report.risks %}<p>{{ item }}</p>{% endfor %}</section>
   {% endif %}
   {% if report.watch %}
-  <section class="research-section"><h2>Monitor</h2>{% for item in report.watch %}<p>{{ item }}</p>{% endfor %}</section>
+  <section class="research-section"><h2>What changes the thesis</h2>{% for item in report.watch %}<p>{{ item }}</p>{% endfor %}</section>
+  {% endif %}
+  {% if report.unknowns %}
+  <section class="research-section research-unknowns"><h2>Still unknown</h2>{% for item in report.unknowns %}<p>{{ item }}</p>{% endfor %}</section>
   {% endif %}
   {% if report.sources %}
-  <section class="research-section"><h2>Sources</h2><div class="research-sources">{% for source in report.sources %}<a href="{{ source }}" target="_blank" rel="noopener">Source {{ loop.index }}</a>{% endfor %}</div></section>
+  <section class="research-section"><h2>Sources used</h2><div class="research-sources">{% for source in report.sources %}<a href="{{ source.url }}" target="_blank" rel="noopener">{{ source.label }}</a>{% endfor %}</div></section>
   {% endif %}
-  <div class="research-meta">{{ report.model or report.requested_model }} · {{ report.completed_at[:16]|replace('T', ' ') }} UTC</div>
+  <div class="research-meta">{{ report.model or report.requested_model }} · {{ report.completed_at[:16]|replace('T', ' ') }} UTC{% if report.usage.context %} · one shot from {{ report.usage.context.included_sections }} stored evidence sections{% endif %}</div>
 </main>
 {% endblock %}
 {% block scripts %}

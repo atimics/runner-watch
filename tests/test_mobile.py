@@ -917,6 +917,8 @@ def test_commissioned_report_is_public_without_storing_the_openrouter_key(
     report = _commission_research("commissioner", "ONE", "sk-or-device-only-test-key")
 
     assert report["headline"] == "ONE evidence report"
+    assert report["thesis"] == "A source-bound summary."
+    assert report["research_mode"] == "one_shot_system_context"
     assert get_commission(report["public_id"])["summary"] == "A source-bound summary."
     assert commissioned_reports()[0]["ticker"] == "ONE"
     assert alpha_board_data("v:reader")["commissions"][0]["public_id"] == report["public_id"]
@@ -933,10 +935,16 @@ def test_commission_request_uses_glm_53_with_a_minimal_prompt(
     captured: dict[str, Any] = {}
     generated = {
         "headline": "ONE evidence report",
+        "thesis": "ONE has a mixed evidence setup that still needs confirmation.",
         "summary": "A source-bound summary.",
+        "company_profile": {"what_it_does": "Test company", "source_urls": []},
+        "people": [],
+        "filings": [],
         "catalysts": ["Verified insider purchase"],
         "risks": ["Low liquidity"],
         "watch": ["Volume"],
+        "unknowns": ["Financing terms"],
+        "sources": [],
     }
 
     def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
@@ -960,8 +968,10 @@ def test_commission_request_uses_glm_53_with_a_minimal_prompt(
     assert body["model"] == "z-ai/glm-5.3"
     assert body["response_format"] == {"type": "json_object"}
     assert body["provider"] == {"require_parameters": True}
-    assert body["reasoning_effort"] == "low"
+    assert body["reasoning_effort"] == "high"
     assert "temperature" not in body
+    assert "tools" not in body
+    assert "plugins" not in body
     assert len(body["messages"][0]["content"].split()) <= 30
     assert report == generated
     assert model == "z-ai/glm-5.3"
@@ -986,10 +996,16 @@ def test_research_report_template_has_public_share_metadata(
         lambda key, evidence, user_id: (
             {
                 "headline": "Shareable ONE report",
+                "thesis": "ONE has a source-bound watch thesis.",
                 "summary": "Built from stored evidence.",
+                "company_profile": {},
+                "people": [],
+                "filings": [],
                 "catalysts": [],
                 "risks": [],
                 "watch": [],
+                "unknowns": [],
+                "sources": [],
             },
             "test/model",
             {},

@@ -639,7 +639,6 @@ def _migration_002_topic_snapshots(db: sqlite3.Connection) -> None:
 def _migration_003_ai_kol(db: sqlite3.Connection) -> None:
     """Add immutable AI KOL calls without mixing them with human hearts."""
 
-    timestamp = datetime.now(UTC).isoformat()
     db.executescript(
         """
         CREATE TABLE IF NOT EXISTS kol_predictors (

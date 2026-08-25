@@ -12,7 +12,6 @@ from runner_watch.provider_contracts import (
 )
 from runner_watch.provider_registry import ProviderRegistry, ProvidersExhaustedError
 
-
 NOW = datetime(2026, 8, 25, 16, tzinfo=UTC)
 
 
