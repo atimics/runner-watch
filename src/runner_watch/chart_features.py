@@ -312,7 +312,11 @@ def analyze_market_structure(frame: pd.DataFrame) -> StructureAnalysis:
     add_level("previous high", float(prior["high"].max()) if not prior.empty else None, 1.5)
     add_level("previous low", float(prior["low"].min()) if not prior.empty else None, 1.5)
     add_level("session VWAP", float(context["vwap"]), 2)
-    add_level("opening range high", float(opening["high"].max()) if not opening.empty else None, 1.5)
+    add_level(
+        "opening range high",
+        float(opening["high"].max()) if not opening.empty else None,
+        1.5,
+    )
     add_level("opening range low", float(opening["low"].min()) if not opening.empty else None, 1.5)
     add_level("day high", float(current["high"].max()), 1)
     add_level("day low", float(current["low"].min()), 1)
