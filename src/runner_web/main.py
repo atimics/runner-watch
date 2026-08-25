@@ -68,7 +68,11 @@ from runner_web.ranker import (
     ranker_status,
     train_shadow_ranker,
 )
-from runner_web.source_workers import discovery_source_worker, trading_halt_worker
+from runner_web.source_workers import (
+    apewisdom_source_worker,
+    discovery_source_worker,
+    trading_halt_worker,
+)
 from runner_web.topics import SQLiteTopicStore, TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
 
 APP_ORIGIN = os.getenv("APP_ORIGIN", "http://localhost:8080").rstrip("/")
@@ -110,6 +114,7 @@ async def lifespan(application: FastAPI):
         asyncio.create_task(edgar_worker()),
         asyncio.create_task(trading_halt_worker()),
         asyncio.create_task(discovery_source_worker()),
+        asyncio.create_task(apewisdom_source_worker()),
         asyncio.create_task(outcome_worker()),
         asyncio.create_task(kol_worker()),
         asyncio.create_task(scan_collection_worker()),
@@ -761,7 +766,7 @@ def _event_timestamp(row: dict[str, Any]) -> datetime | None:
 def _external_event_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
     checked_at = now()
     news: list[dict[str, Any]] = []
-    social: list[dict[str, Any]] = []
+    social_by_source: dict[str, dict[str, Any]] = {}
     active_halt: dict[str, Any] | None = None
     for row in rows:
         event = {**row, "payload": _event_payload(row)}
@@ -771,7 +776,12 @@ def _external_event_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 news.append(event)
         elif event.get("event_type") == "social_spike":
             if timestamp and timestamp >= checked_at - timedelta(hours=6):
-                social.append(event)
+                source = str(event.get("source") or "unknown")
+                current = social_by_source.get(source)
+                if current is None or str(event.get("event_at") or "") > str(
+                    current.get("event_at") or ""
+                ):
+                    social_by_source[source] = event
         elif event.get("event_type") == "trading_halt":
             status = str(event.get("status") or "").lower()
             resume_at = _event_timestamp({"event_at": event["payload"].get("trade_resume_at")})
@@ -781,6 +791,7 @@ def _external_event_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 active_halt = active_halt or event
 
     news.sort(key=lambda event: str(event.get("event_at") or ""), reverse=True)
+    social = list(social_by_source.values())
     social.sort(key=lambda event: str(event.get("event_at") or ""), reverse=True)
     mention_count = sum(int(event["payload"].get("mention_count") or 0) for event in social)
     engagement_count = sum(
@@ -821,11 +832,17 @@ def _external_event_label(context: dict[str, Any]) -> tuple[str, str, str | None
     latest = max(candidates, key=lambda event: str(event.get("event_at") or ""))
     if latest.get("event_type") == "news_article":
         title = str(latest.get("payload", {}).get("title") or "New company coverage")
-        return f"News · {title[:96]}", "gdelt", latest.get("source_url")
+        return (
+            f"News · {title[:96]}",
+            str(latest.get("source") or "news"),
+            latest.get("source_url"),
+        )
     mentions = int(context.get("social_mentions") or 0)
+    network = str(latest.get("payload", {}).get("network_label") or "Social")
+    noun = "cashtag mention" if network == "Bluesky" else "mention"
     return (
-        f"Bluesky · {mentions} cashtag mention{'s' if mentions != 1 else ''}",
-        "bluesky",
+        f"{network} · {mentions} {noun}{'s' if mentions != 1 else ''}",
+        str(latest.get("source") or "social"),
         latest.get("source_url"),
     )
 
@@ -2197,7 +2214,9 @@ def radar_data(
                 min(80.0, 45.0 + mentions * 2.0 + math.log2(engagement + 1) * 2.0),
                 2,
             )
-            label = f"Bluesky · {mentions} cashtag mention{'s' if mentions != 1 else ''}"
+            network = str(payload.get("network_label") or "Social")
+            noun = "cashtag mention" if network == "Bluesky" else "mention"
+            label = f"{network} · {mentions} {noun}{'s' if mentions != 1 else ''}"
         else:
             active = status.lower() not in {"resolved", "closed", "published"}
             score = 75.0 if active else 55.0

@@ -18,6 +18,8 @@ USER_AGENT = "RunnerWatch/0.2 https://stonks.rati.foundation"
 GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 BLUESKY_BASE = os.getenv("BLUESKY_APPVIEW_BASE", "https://public.api.bsky.app").rstrip("/")
 BLUESKY_SEARCH_URL = f"{BLUESKY_BASE}/xrpc/app.bsky.feed.searchPosts"
+YAHOO_NEWS_URL = "https://query2.finance.yahoo.com/v1/finance/search"
+APEWISDOM_URL = "https://apewisdom.io/api/v1.0/filter/all-stocks/page/1"
 Download = Callable[[str, float], tuple[bytes, str | None]]
 
 _COMPANY_SUFFIXES = {
@@ -43,6 +45,27 @@ def discovery_sources_enabled() -> bool:
         "no",
         "off",
     }
+
+
+def _source_enabled(name: str, default: bool) -> bool:
+    fallback = "true" if default else "false"
+    return os.getenv(name, fallback).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def yahoo_news_enabled() -> bool:
+    return discovery_sources_enabled() and _source_enabled("YAHOO_NEWS_ENABLED", True)
+
+
+def apewisdom_social_enabled() -> bool:
+    return discovery_sources_enabled() and _source_enabled("APEWISDOM_SOCIAL_ENABLED", True)
+
+
+def gdelt_news_enabled() -> bool:
+    return discovery_sources_enabled() and _source_enabled("GDELT_NEWS_ENABLED", False)
+
+
+def bluesky_search_enabled() -> bool:
+    return discovery_sources_enabled() and _source_enabled("BLUESKY_SEARCH_ENABLED", False)
 
 
 def discovery_watchlist(limit: int = 30) -> list[dict[str, str]]:
@@ -275,6 +298,106 @@ def refresh_gdelt_news(
     return {"run_id": run_id, "events": len(events), "status": fetch.status}
 
 
+def parse_yahoo_news(
+    payload: dict[str, Any],
+    *,
+    ticker: str,
+    collected_at: datetime | None = None,
+) -> tuple[MarketEvent, ...]:
+    fallback_time = collected_at or datetime.now(UTC)
+    articles = payload.get("news")
+    if not isinstance(articles, list):
+        return ()
+    events: list[MarketEvent] = []
+    seen_ids: set[str] = set()
+    for raw in articles:
+        if not isinstance(raw, dict):
+            continue
+        related = [str(value).upper() for value in raw.get("relatedTickers") or []]
+        if ticker not in related:
+            continue
+        source_url = str(raw.get("link") or "").strip()
+        title = " ".join(str(raw.get("title") or "").split())
+        article_id = str(raw.get("uuid") or "").strip()
+        if not article_id:
+            article_id = hashlib.sha256(source_url.encode()).hexdigest()[:32]
+        if not source_url or not title or article_id in seen_ids:
+            continue
+        seen_ids.add(article_id)
+        try:
+            published_at = datetime.fromtimestamp(int(raw["providerPublishTime"]), tz=UTC)
+        except (KeyError, TypeError, ValueError, OSError):
+            published_at = fallback_time
+        events.append(
+            MarketEvent(
+                event_id=article_id,
+                version=article_id,
+                ticker=ticker,
+                event_type="news_article",
+                event_at=published_at,
+                published_at=published_at,
+                status="published",
+                source_url=source_url,
+                payload={
+                    "title": title[:300],
+                    "publisher": str(raw.get("publisher") or "")[:120],
+                    "article_type": str(raw.get("type") or "")[:40],
+                    "related_tickers": related[:20],
+                    "network_label": "Yahoo Finance",
+                },
+            )
+        )
+    return tuple(events)
+
+
+def refresh_yahoo_news(
+    ticker: str,
+    company: str,
+    *,
+    timeout: float = 12,
+    download: Download = _download,
+) -> dict[str, Any]:
+    started_at = datetime.now(UTC)
+    query = urllib.parse.urlencode({"q": ticker, "quotesCount": 1, "newsCount": 10})
+    locator = f"{YAHOO_NEWS_URL}?{query}"
+    try:
+        body, content_type = download(locator, timeout)
+        parsed = _json_body(body)
+        events = parse_yahoo_news(parsed, ticker=ticker, collected_at=datetime.now(UTC))
+    except Exception as exc:
+        run_id = record_source_batch(
+            SourceBatch(
+                fetch=SourceFetch.failure(
+                    source="yahoo",
+                    feed="news_search",
+                    locator=locator,
+                    started_at=started_at,
+                    error=exc,
+                    metadata={"ticker": ticker, "company": company, "requested_count": 1},
+                )
+            )
+        )
+        raise RuntimeError(f"Yahoo news search failed in run {run_id}: {exc}") from exc
+    article_count = len(parsed.get("news") or [])
+    fetch = SourceFetch.success(
+        source="yahoo",
+        feed="news_search",
+        locator=locator,
+        started_at=started_at,
+        payload={"ticker": ticker, "articles_received": article_count, "matched": len(events)},
+        content_type=content_type or "application/json",
+        metadata={
+            "ticker": ticker,
+            "company": company,
+            "requested_count": 1,
+            "received_count": len(events),
+            "articles_received": article_count,
+        },
+    )
+    run_id = record_source_batch(SourceBatch(fetch=fetch, market_events=events))
+    return {"run_id": run_id, "events": len(events), "status": fetch.status}
+
+
 def _post_url(post: dict[str, Any]) -> str | None:
     uri = str(post.get("uri") or "")
     handle = str((post.get("author") or {}).get("handle") or "")
@@ -350,6 +473,7 @@ def parse_bluesky_posts(
                 "reply_count": reply_count,
                 "engagement_count": engagement_count,
                 "sample_urls": sample_urls,
+                "network_label": "Bluesky",
             },
         ),
     )
@@ -395,6 +519,106 @@ def refresh_bluesky_social(
             "requested_count": 1,
             "received_count": len(events),
             "posts_received": post_count,
+        },
+    )
+    run_id = record_source_batch(SourceBatch(fetch=fetch, market_events=events))
+    return {"run_id": run_id, "events": len(events), "status": fetch.status}
+
+
+def parse_apewisdom_social(
+    payload: dict[str, Any],
+    *,
+    watched_tickers: set[str],
+    collected_at: datetime | None = None,
+) -> tuple[MarketEvent, ...]:
+    observed_at = collected_at or datetime.now(UTC)
+    results = payload.get("results")
+    if not isinstance(results, list):
+        return ()
+    events: list[MarketEvent] = []
+    for raw in results:
+        if not isinstance(raw, dict):
+            continue
+        ticker = str(raw.get("ticker") or "").strip().upper()
+        if ticker not in watched_tickers:
+            continue
+        mentions = int(raw.get("mentions") or 0)
+        prior_mentions = int(raw.get("mentions_24h_ago") or 0)
+        mention_change = mentions - prior_mentions
+        upvotes = int(raw.get("upvotes") or 0)
+        if mentions < 5 or (mentions < 20 and mention_change < 3):
+            continue
+        event_day = observed_at.date().isoformat()
+        events.append(
+            MarketEvent(
+                event_id=f"{ticker}:{event_day}",
+                version=event_day,
+                ticker=ticker,
+                event_type="social_spike",
+                event_at=observed_at,
+                published_at=observed_at,
+                status="active",
+                source_url=f"https://apewisdom.io/stocks/{urllib.parse.quote(ticker)}/",
+                payload={
+                    "mention_count": mentions,
+                    "engagement_count": upvotes,
+                    "previous_mentions": prior_mentions,
+                    "mention_change_24h": mention_change,
+                    "rank": int(raw.get("rank") or 0),
+                    "rank_24h_ago": int(raw.get("rank_24h_ago") or 0),
+                    "network_label": "Reddit",
+                },
+            )
+        )
+    return tuple(events)
+
+
+def refresh_apewisdom_social(
+    watchlist: list[dict[str, str]],
+    *,
+    timeout: float = 12,
+    download: Download = _download,
+) -> dict[str, Any]:
+    started_at = datetime.now(UTC)
+    watched_tickers = {str(row.get("ticker") or "").upper() for row in watchlist}
+    try:
+        body, content_type = download(APEWISDOM_URL, timeout)
+        parsed = _json_body(body)
+        events = parse_apewisdom_social(
+            parsed,
+            watched_tickers=watched_tickers,
+            collected_at=datetime.now(UTC),
+        )
+    except Exception as exc:
+        run_id = record_source_batch(
+            SourceBatch(
+                fetch=SourceFetch.failure(
+                    source="apewisdom",
+                    feed="reddit_trends",
+                    locator=APEWISDOM_URL,
+                    started_at=started_at,
+                    error=exc,
+                    metadata={"requested_count": len(watched_tickers)},
+                )
+            )
+        )
+        raise RuntimeError(f"ApeWisdom social refresh failed in run {run_id}: {exc}") from exc
+    result_count = len(parsed.get("results") or [])
+    fetch = SourceFetch.success(
+        source="apewisdom",
+        feed="reddit_trends",
+        locator=APEWISDOM_URL,
+        started_at=started_at,
+        payload={
+            "watched_tickers": len(watched_tickers),
+            "results_received": result_count,
+            "matched_spikes": len(events),
+        },
+        content_type=content_type or "application/json",
+        metadata={
+            "requested_count": len(watched_tickers),
+            "received_count": len(events),
+            "results_received": result_count,
         },
     )
     run_id = record_source_batch(SourceBatch(fetch=fetch, market_events=events))

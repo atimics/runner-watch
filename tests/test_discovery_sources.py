@@ -8,10 +8,14 @@ from runner_web import db
 from runner_web.db import connection, init_db
 from runner_web.discovery_sources import (
     discovery_watchlist,
+    parse_apewisdom_social,
     parse_bluesky_posts,
     parse_gdelt_articles,
+    parse_yahoo_news,
+    refresh_apewisdom_social,
     refresh_bluesky_social,
     refresh_gdelt_news,
+    refresh_yahoo_news,
 )
 
 
@@ -77,6 +81,7 @@ def test_bluesky_parser_aggregates_cashtags_without_storing_post_text() -> None:
     assert event.payload["mention_count"] == 3
     assert event.payload["unique_authors"] == 3
     assert event.payload["engagement_count"] == 12
+    assert event.payload["network_label"] == "Bluesky"
     assert "text" not in event.payload
     assert event.source_url.endswith("/post/post0")
 
@@ -95,6 +100,69 @@ def test_weak_bluesky_result_is_not_published() -> None:
     }
 
     assert parse_bluesky_posts(payload, ticker="PEN") == ()
+
+
+def test_yahoo_news_requires_the_ticker_in_related_tickers() -> None:
+    payload = {
+        "news": [
+            {
+                "uuid": "matched",
+                "title": "Penny Labs wins a contract",
+                "publisher": "Example News",
+                "link": "https://finance.yahoo.com/m/matched",
+                "providerPublishTime": 1787672760,
+                "relatedTickers": ["PEN"],
+                "type": "STORY",
+            },
+            {
+                "uuid": "noise",
+                "title": "Another company wins",
+                "link": "https://finance.yahoo.com/m/noise",
+                "providerPublishTime": 1787672760,
+                "relatedTickers": ["OTHER"],
+            },
+        ]
+    }
+
+    events = parse_yahoo_news(payload, ticker="PEN")
+
+    assert len(events) == 1
+    assert events[0].event_id == "matched"
+    assert events[0].payload["publisher"] == "Example News"
+
+
+def test_apewisdom_parser_keeps_meaningful_reddit_growth_for_watched_tickers() -> None:
+    payload = {
+        "results": [
+            {
+                "rank": 5,
+                "ticker": "PEN",
+                "mentions": 12,
+                "upvotes": 44,
+                "rank_24h_ago": 20,
+                "mentions_24h_ago": 5,
+            },
+            {
+                "rank": 8,
+                "ticker": "QUIET",
+                "mentions": 6,
+                "upvotes": 2,
+                "rank_24h_ago": 7,
+                "mentions_24h_ago": 6,
+            },
+        ]
+    }
+
+    events = parse_apewisdom_social(
+        payload,
+        watched_tickers={"PEN", "QUIET"},
+        collected_at=datetime(2026, 8, 25, 17, tzinfo=UTC),
+    )
+
+    assert len(events) == 1
+    assert events[0].ticker == "PEN"
+    assert events[0].payload["mention_change_24h"] == 7
+    assert events[0].payload["network_label"] == "Reddit"
 
 
 def test_refreshes_record_source_runs_and_normalized_events(
@@ -130,6 +198,35 @@ def test_refreshes_record_source_runs_and_normalized_events(
             ]
         }
     ).encode()
+    yahoo_body = json.dumps(
+        {
+            "news": [
+                {
+                    "uuid": "yahoo-pen",
+                    "title": "Penny Labs releases an update",
+                    "publisher": "Example News",
+                    "link": "https://finance.yahoo.com/m/yahoo-pen",
+                    "providerPublishTime": 1787672760,
+                    "relatedTickers": ["PEN"],
+                    "type": "STORY",
+                }
+            ]
+        }
+    ).encode()
+    apewisdom_body = json.dumps(
+        {
+            "results": [
+                {
+                    "rank": 4,
+                    "ticker": "PEN",
+                    "mentions": 14,
+                    "upvotes": 55,
+                    "rank_24h_ago": 20,
+                    "mentions_24h_ago": 4,
+                }
+            ]
+        }
+    ).encode()
 
     news = refresh_gdelt_news(
         "PEN",
@@ -139,6 +236,15 @@ def test_refreshes_record_source_runs_and_normalized_events(
     social = refresh_bluesky_social(
         "PEN",
         download=lambda _url, _timeout: (bluesky_body, "application/json"),
+    )
+    yahoo = refresh_yahoo_news(
+        "PEN",
+        "Penny Labs Inc",
+        download=lambda _url, _timeout: (yahoo_body, "application/json"),
+    )
+    reddit = refresh_apewisdom_social(
+        [{"ticker": "PEN", "company": "Penny Labs Inc"}],
+        download=lambda _url, _timeout: (apewisdom_body, "application/json"),
     )
 
     with connection() as database:
@@ -151,13 +257,19 @@ def test_refreshes_record_source_runs_and_normalized_events(
         documents = database.execute("SELECT COUNT(*) FROM source_documents").fetchone()[0]
     assert news["events"] == 1
     assert social["events"] == 1
+    assert yahoo["events"] == 1
+    assert reddit["events"] == 1
     assert [tuple(row) for row in runs] == [
+        ("apewisdom", "reddit_trends", "success", 1),
         ("bluesky", "social_search", "success", 1),
         ("gdelt", "news_search", "success", 1),
+        ("yahoo", "news_search", "success", 1),
     ]
     assert [tuple(row) for row in events] == [
+        ("apewisdom", "social_spike", "PEN"),
         ("bluesky", "social_spike", "PEN"),
         ("gdelt", "news_article", "PEN"),
+        ("yahoo", "news_article", "PEN"),
     ]
     assert documents == 0
 

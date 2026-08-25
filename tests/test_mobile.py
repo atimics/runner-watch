@@ -243,7 +243,11 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
                     published_at=timestamp - timedelta(minutes=1),
                     status="active",
                     source_url="https://bsky.app/profile/example/post/one",
-                    payload={"mention_count": 4, "engagement_count": 15},
+                    payload={
+                        "mention_count": 4,
+                        "engagement_count": 15,
+                        "network_label": "Bluesky",
+                    },
                 ),
             ),
         )

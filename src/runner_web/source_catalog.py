@@ -134,6 +134,44 @@ DEFAULT_SOURCE_POLICIES = (
         review_status="review_required",
     ),
     SourcePolicy(
+        source="yahoo",
+        feed="news_search",
+        title="Yahoo Finance ticker news search",
+        owner="Yahoo",
+        terms_url="https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html",
+        credential_env=None,
+        expected_cadence_seconds=900,
+        stale_after_seconds=2_700,
+        schedule="always",
+        storage_policy="normalized_metadata_only",
+        display_policy="review_required",
+        attribution="Yahoo Finance",
+        review_status="poc_only",
+        enabled=(
+            _enabled_by_default("DISCOVERY_SOURCES_ENABLED")
+            and _enabled_by_default("YAHOO_NEWS_ENABLED")
+        ),
+    ),
+    SourcePolicy(
+        source="apewisdom",
+        feed="reddit_trends",
+        title="ApeWisdom Reddit stock trends",
+        owner="ApeWisdom",
+        terms_url="https://apewisdom.io/api/",
+        credential_env=None,
+        expected_cadence_seconds=900,
+        stale_after_seconds=2_700,
+        schedule="always",
+        storage_policy="normalized_aggregates_only",
+        display_policy="source_link_with_attribution",
+        attribution="ApeWisdom / Reddit",
+        review_status="poc_only",
+        enabled=(
+            _enabled_by_default("DISCOVERY_SOURCES_ENABLED")
+            and _enabled_by_default("APEWISDOM_SOCIAL_ENABLED")
+        ),
+    ),
+    SourcePolicy(
         source="gdelt",
         feed="news_search",
         title="GDELT company news search",
@@ -147,7 +185,10 @@ DEFAULT_SOURCE_POLICIES = (
         display_policy="source_link_with_attribution",
         attribution="GDELT",
         review_status="poc_only",
-        enabled=_enabled_by_default("DISCOVERY_SOURCES_ENABLED"),
+        enabled=(
+            _enabled_by_default("DISCOVERY_SOURCES_ENABLED")
+            and _enabled("GDELT_NEWS_ENABLED")
+        ),
     ),
     SourcePolicy(
         source="bluesky",
@@ -163,7 +204,10 @@ DEFAULT_SOURCE_POLICIES = (
         display_policy="source_link_with_attribution",
         attribution="Bluesky",
         review_status="poc_only",
-        enabled=_enabled_by_default("DISCOVERY_SOURCES_ENABLED"),
+        enabled=(
+            _enabled_by_default("DISCOVERY_SOURCES_ENABLED")
+            and _enabled("BLUESKY_SEARCH_ENABLED")
+        ),
     ),
     SourcePolicy(
         source="nasdaq_trader",

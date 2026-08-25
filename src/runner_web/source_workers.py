@@ -7,10 +7,16 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from runner_web.discovery_sources import (
+    apewisdom_social_enabled,
+    bluesky_search_enabled,
     discovery_sources_enabled,
     discovery_watchlist,
+    gdelt_news_enabled,
+    refresh_apewisdom_social,
     refresh_bluesky_social,
     refresh_gdelt_news,
+    refresh_yahoo_news,
+    yahoo_news_enabled,
 )
 from runner_web.nasdaq_halts import refresh_trade_halts
 
@@ -67,17 +73,52 @@ async def discovery_source_worker() -> None:
             if watchlist:
                 target = watchlist[cursor % len(watchlist)]
                 cursor += 1
+                calls = []
+                labels = []
+                if yahoo_news_enabled():
+                    calls.append(
+                        asyncio.to_thread(
+                            refresh_yahoo_news,
+                            target["ticker"],
+                            target["company"],
+                        )
+                    )
+                    labels.append("Yahoo news")
+                if gdelt_news_enabled():
+                    calls.append(
+                        asyncio.to_thread(
+                            refresh_gdelt_news,
+                            target["ticker"],
+                            target["company"],
+                        )
+                    )
+                    labels.append("GDELT")
+                if bluesky_search_enabled():
+                    calls.append(asyncio.to_thread(refresh_bluesky_social, target["ticker"]))
+                    labels.append("Bluesky")
                 results = await asyncio.gather(
-                    asyncio.to_thread(
-                        refresh_gdelt_news,
-                        target["ticker"],
-                        target["company"],
-                    ),
-                    asyncio.to_thread(refresh_bluesky_social, target["ticker"]),
+                    *calls,
                     return_exceptions=True,
                 )
-                for source, result in zip(("GDELT", "Bluesky"), results, strict=True):
+                for source, result in zip(labels, results, strict=True):
                     if isinstance(result, Exception):
                         LOG.warning("%s discovery refresh failed: %s", source, result)
         elapsed = asyncio.get_running_loop().time() - started
         await asyncio.sleep(max(5, DISCOVERY_INTERVAL_SECONDS - elapsed))
+
+
+async def apewisdom_source_worker() -> None:
+    """Refresh one aggregate Reddit trend response for the current 30-symbol watchlist."""
+
+    await asyncio.sleep(15)
+    while True:
+        if apewisdom_social_enabled():
+            try:
+                watchlist = await asyncio.to_thread(discovery_watchlist, 30)
+                if watchlist:
+                    await asyncio.to_thread(refresh_apewisdom_social, watchlist)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                LOG.warning("ApeWisdom social refresh failed: %s", exc)
+        await asyncio.sleep(900)
