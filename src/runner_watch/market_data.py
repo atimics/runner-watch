@@ -9,6 +9,7 @@ import pandas as pd
 import yfinance as yf
 
 ProgressCallback = Callable[[int, int, str], None]
+BarRecorder = Callable[[str, dict[str, pd.DataFrame]], None]
 
 
 @dataclass(slots=True)
@@ -57,9 +58,15 @@ def split_download_frame(raw: pd.DataFrame, tickers: list[str]) -> dict[str, pd.
 class YahooMarketData:
     """Small batching wrapper around yfinance."""
 
-    def __init__(self, batch_size: int = 60, timeout: float = 15.0) -> None:
+    def __init__(
+        self,
+        batch_size: int = 60,
+        timeout: float = 15.0,
+        recorder: BarRecorder | None = None,
+    ) -> None:
         self.batch_size = batch_size
         self.timeout = timeout
+        self.recorder = recorder
 
     def _download(
         self,
@@ -96,6 +103,11 @@ class YahooMarketData:
                 )
                 found = split_download_frame(raw, batch)
                 frames.update(found)
+                if self.recorder and found:
+                    try:
+                        self.recorder(interval, found)
+                    except Exception as exc:  # collection must not break live quotes
+                        warnings.append(f"Could not store {label.lower()} bars: {exc}")
                 failed.extend(ticker for ticker in batch if ticker not in found)
             except Exception as exc:  # yfinance has changed exception types across releases
                 failed.extend(batch)

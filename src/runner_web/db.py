@@ -9,6 +9,16 @@ from pathlib import Path
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "data/runner-watch.db"))
 
 
+def _columns(db: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _ensure_column(db: sqlite3.Connection, table: str, definition: str) -> None:
+    name = definition.split()[0]
+    if name not in _columns(db, table):
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+
+
 @contextmanager
 def connection() -> Iterator[sqlite3.Connection]:
     DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -165,5 +175,122 @@ def init_db() -> None:
                 value TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS scan_runs (
+                id TEXT PRIMARY KEY,
+                mode TEXT NOT NULL,
+                label TEXT NOT NULL,
+                feature_schema_version TEXT NOT NULL,
+                requested_symbols INTEGER NOT NULL,
+                liquid_symbols INTEGER NOT NULL,
+                scanned_symbols INTEGER NOT NULL,
+                candidate_rows INTEGER NOT NULL,
+                failed_symbols_json TEXT NOT NULL,
+                warnings_json TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                finished_at TEXT NOT NULL,
+                captured_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS scan_runs_captured
+                ON scan_runs(captured_at DESC);
+            CREATE TABLE IF NOT EXISTS scan_outcomes (
+                snapshot_id TEXT PRIMARY KEY REFERENCES scan_snapshots(id) ON DELETE CASCADE,
+                ticker TEXT NOT NULL,
+                base_price REAL NOT NULL,
+                base_at TEXT NOT NULL,
+                price_1h REAL,
+                return_1h_pct REAL,
+                observed_1h_at TEXT,
+                price_1d REAL,
+                return_1d_pct REAL,
+                observed_1d_at TEXT,
+                price_5d REAL,
+                return_5d_pct REAL,
+                observed_5d_at TEXT,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS scan_outcomes_base_at
+                ON scan_outcomes(base_at DESC);
+            CREATE TABLE IF NOT EXISTS market_bars (
+                source TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                interval TEXT NOT NULL,
+                bar_time TEXT NOT NULL,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                volume REAL,
+                first_collected_at TEXT NOT NULL,
+                last_collected_at TEXT NOT NULL,
+                PRIMARY KEY(source,ticker,interval,bar_time)
+            );
+            CREATE INDEX IF NOT EXISTS market_bars_ticker_time
+                ON market_bars(ticker,interval,bar_time DESC);
+            CREATE TABLE IF NOT EXISTS source_documents (
+                source TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                content_type TEXT,
+                content_encoding TEXT NOT NULL DEFAULT 'identity',
+                content BLOB NOT NULL,
+                first_collected_at TEXT NOT NULL,
+                last_collected_at TEXT NOT NULL,
+                PRIMARY KEY(source_url,content_hash)
+            );
+            CREATE INDEX IF NOT EXISTS source_documents_fetched
+                ON source_documents(last_collected_at DESC);
+            CREATE TABLE IF NOT EXISTS ranker_models (
+                id TEXT PRIMARY KEY,
+                feature_schema_version TEXT NOT NULL,
+                horizon TEXT NOT NULL,
+                model_kind TEXT NOT NULL,
+                weights_json TEXT NOT NULL,
+                metrics_json TEXT NOT NULL,
+                training_start TEXT NOT NULL,
+                training_end TEXT NOT NULL,
+                training_groups INTEGER NOT NULL,
+                training_rows INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ranker_models_created
+                ON ranker_models(created_at DESC);
+            CREATE TABLE IF NOT EXISTS ranker_predictions (
+                snapshot_id TEXT NOT NULL REFERENCES scan_snapshots(id) ON DELETE CASCADE,
+                model_id TEXT NOT NULL REFERENCES ranker_models(id),
+                score REAL NOT NULL,
+                rank INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(snapshot_id,model_id)
+            );
+            CREATE INDEX IF NOT EXISTS ranker_predictions_model_rank
+                ON ranker_predictions(model_id,rank);
             """
+        )
+        # These migrations keep existing beta databases usable. New fields are
+        # nullable because older snapshots cannot be reconstructed exactly.
+        for definition in (
+            "scan_run_id TEXT REFERENCES scan_runs(id)",
+            "baseline_rank INTEGER",
+            "range_position REAL",
+            "stale_minutes REAL",
+            "session_volume INTEGER",
+            "average_volume INTEGER",
+            "average_dollar_volume REAL",
+            "catalyst_kind TEXT",
+            "catalyst_form TEXT",
+            "catalyst_sentiment TEXT",
+            "catalyst_score REAL",
+            "catalyst_filed_at TEXT",
+        ):
+            _ensure_column(db, "scan_snapshots", definition)
+        _ensure_column(db, "sec_filings", "parser_version TEXT NOT NULL DEFAULT 'legacy'")
+        _ensure_column(
+            db,
+            "source_documents",
+            "content_encoding TEXT NOT NULL DEFAULT 'identity'",
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS scan_snapshots_run_rank "
+            "ON scan_snapshots(scan_run_id,baseline_rank)"
         )

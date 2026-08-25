@@ -76,8 +76,8 @@ class ScanResult:
     warnings: list[str]
     started_at: datetime
     finished_at: datetime
+    all_rows: list[RunnerSnapshot] = field(default_factory=list)
 
     @property
     def elapsed_seconds(self) -> float:
         return (self.finished_at - self.started_at).total_seconds()
-

@@ -305,6 +305,7 @@ class RunnerScanner:
             rows.append(snapshot)
 
         rows.sort(key=lambda item: (item.score, item.dollar_volume), reverse=True)
+        all_rows = list(rows)
         rows = rows[: settings.top_n]
         failed = sorted(set(daily_result.failed + intraday_result.failed))
         if failed:
@@ -328,4 +329,5 @@ class RunnerScanner:
             warnings=warnings,
             started_at=started,
             finished_at=finished,
+            all_rows=all_rows,
         )

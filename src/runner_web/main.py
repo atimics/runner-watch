@@ -7,10 +7,13 @@ import json
 import os
 import re
 import secrets
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
+from datetime import time as clock_time
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from fastapi import Cookie, FastAPI, HTTPException, Request
@@ -35,13 +38,19 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
-from runner_watch.market_data import YahooMarketData
 from runner_watch.models import ScanSettings
 from runner_watch.scanner import RunnerScanner
 from runner_watch.universe import penny_runner_universe
+from runner_web.collection import recording_market_data
 from runner_web.db import connection, init_db
 from runner_web.intelligence import record_edgar_error, refresh_edgar
-from runner_web.outcomes import record_outcome_error, refresh_outcomes
+from runner_web.outcomes import record_outcome_error, refresh_outcomes, refresh_scan_outcomes
+from runner_web.ranker import (
+    FEATURE_SCHEMA_VERSION,
+    predict_and_store,
+    ranker_status,
+    train_shadow_ranker,
+)
 
 APP_ORIGIN = os.getenv("APP_ORIGIN", "http://localhost:8080").rstrip("/")
 RP_ID = os.getenv("RP_ID", "localhost")
@@ -56,6 +65,11 @@ SCAN_MODES = {
 }
 SCAN_CACHE: dict[str, tuple[datetime, list[dict[str, Any]]]] = {}
 CHART_CACHE: dict[str, tuple[datetime, list[dict[str, Any]]]] = {}
+SCAN_LOCK = threading.Lock()
+EASTERN = ZoneInfo("America/New_York")
+BACKGROUND_SCAN_INTERVAL_SECONDS = max(
+    300, int(os.getenv("BACKGROUND_SCAN_INTERVAL_SECONDS", "1800"))
+)
 
 app = FastAPI(title="Runner Watch", docs_url=None, redoc_url=None)
 templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
@@ -68,6 +82,18 @@ def now() -> datetime:
 
 def iso(value: datetime | None = None) -> str:
     return (value or now()).isoformat()
+
+
+def worker_state(key: str, value: str) -> None:
+    timestamp = iso()
+    with connection() as db:
+        db.execute(
+            """
+            INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at
+            """,
+            (key, value, timestamp),
+        )
 
 
 def row_dict(row: Any) -> dict[str, Any] | None:
@@ -186,6 +212,9 @@ async def outcome_worker() -> None:
     while True:
         try:
             await run_in_threadpool(refresh_outcomes)
+            scan_result = await run_in_threadpool(refresh_scan_outcomes)
+            if scan_result["samples_added"]:
+                await run_in_threadpool(train_shadow_ranker)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -193,11 +222,29 @@ async def outcome_worker() -> None:
         await asyncio.sleep(600)
 
 
+async def scan_collection_worker() -> None:
+    await asyncio.sleep(90)
+    while True:
+        eastern_now = now().astimezone(EASTERN)
+        market_window = clock_time(4) <= eastern_now.time().replace(tzinfo=None) < clock_time(20)
+        if eastern_now.weekday() < 5 and market_window:
+            try:
+                result = await run_in_threadpool(run_scan, "penny")
+                worker_state("background_scan_last_run", str(result.get("scan_run_id") or "cached"))
+                worker_state("background_scan_last_error", "")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                worker_state("background_scan_last_error", str(exc)[:500])
+        await asyncio.sleep(BACKGROUND_SCAN_INTERVAL_SECONDS)
+
+
 @app.on_event("startup")
 async def startup() -> None:
     init_db()
     app.state.edgar_task = asyncio.create_task(edgar_worker())
     app.state.outcome_task = asyncio.create_task(outcome_worker())
+    app.state.scan_collection_task = asyncio.create_task(scan_collection_worker())
 
 
 @app.on_event("shutdown")
@@ -207,6 +254,7 @@ async def shutdown() -> None:
         for task in (
             getattr(app.state, "edgar_task", None),
             getattr(app.state, "outcome_task", None),
+            getattr(app.state, "scan_collection_task", None),
         )
         if task
     ]
@@ -261,6 +309,11 @@ def health() -> dict[str, str]:
     with connection() as db:
         db.execute("SELECT 1").fetchone()
     return {"status": "ok"}
+
+
+@app.get("/api/ranker/status")
+def api_ranker_status() -> dict[str, Any]:
+    return ranker_status()
 
 
 @app.get("/community", response_class=HTMLResponse)
@@ -533,7 +586,7 @@ def ticker_chart_data(ticker: str) -> list[dict[str, Any]]:
     cached = CHART_CACHE.get(ticker)
     if cached and cached[0] > now() - timedelta(seconds=90):
         return cached[1]
-    result = YahooMarketData(batch_size=1).intraday([ticker])
+    result = recording_market_data(batch_size=1).intraday([ticker])
     frame = result.frames.get(ticker)
     if frame is None or frame.empty:
         return []
@@ -923,7 +976,7 @@ def recent_sec_catalysts(tickers: list[str]) -> dict[str, dict[str, Any]]:
     with connection() as db:
         rows = db.execute(
             f"""
-            SELECT ticker,kind,form,filing_url,filed_at,sentiment FROM sec_filings
+            SELECT ticker,kind,form,filing_url,filed_at,sentiment,score FROM sec_filings
             WHERE ticker IN ({placeholders}) AND created_at>?
             ORDER BY filed_at DESC
             """,  # noqa: S608
@@ -936,6 +989,11 @@ def recent_sec_catalysts(tickers: list[str]) -> dict[str, dict[str, Any]]:
 
 
 def run_scan(mode: str = "penny") -> dict[str, Any]:
+    with SCAN_LOCK:
+        return _run_scan(mode)
+
+
+def _run_scan(mode: str = "penny") -> dict[str, Any]:
     config = SCAN_MODES.get(mode)
     if not config:
         raise ValueError("Unknown scan mode")
@@ -943,6 +1001,7 @@ def run_scan(mode: str = "penny") -> dict[str, Any]:
     if cached and cached[0] > now() - timedelta(seconds=90):
         return {
             "rows": cached[1],
+            "scan_run_id": cached[1][0].get("scan_run_id") if cached[1] else None,
             "mode": mode,
             "label": config["label"],
             "cached": True,
@@ -957,7 +1016,7 @@ def run_scan(mode: str = "penny") -> dict[str, Any]:
         max_price=config["max_price"],
     )
     symbols = [entry.symbol for entry in entries]
-    result = RunnerScanner(YahooMarketData(batch_size=60)).scan(
+    result = RunnerScanner(recording_market_data(batch_size=60)).scan(
         symbols,
         ScanSettings(
             min_price=config["min_price"],
@@ -969,14 +1028,42 @@ def run_scan(mode: str = "penny") -> dict[str, Any]:
         ),
     )
     captured_at = iso()
+    scan_run_id = secrets.token_urlsafe(12)
     output: list[dict[str, Any]] = []
-    catalysts = recent_sec_catalysts([item.ticker for item in result.rows])
+    all_rows = result.all_rows or result.rows
+    catalysts = recent_sec_catalysts([item.ticker for item in all_rows])
     with connection() as db:
-        for item in result.rows:
+        db.execute(
+            """
+            INSERT INTO scan_runs(
+                id,mode,label,feature_schema_version,requested_symbols,liquid_symbols,
+                scanned_symbols,candidate_rows,failed_symbols_json,warnings_json,
+                started_at,finished_at,captured_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                scan_run_id,
+                mode,
+                config["label"],
+                FEATURE_SCHEMA_VERSION,
+                result.requested_symbols,
+                result.liquid_symbols,
+                result.scanned_symbols,
+                len(all_rows),
+                json.dumps(result.failed_symbols),
+                json.dumps(universe_warnings + result.warnings),
+                iso(result.started_at),
+                iso(result.finished_at),
+                captured_at,
+            ),
+        )
+        for baseline_rank, item in enumerate(all_rows, start=1):
             snapshot_id = secrets.token_urlsafe(10)
             catalyst = catalysts.get(item.ticker)
             values = {
                 "id": snapshot_id,
+                "scan_run_id": scan_run_id,
+                "baseline_rank": baseline_rank,
                 "ticker": item.ticker,
                 "score": item.score,
                 "stage": item.stage,
@@ -988,38 +1075,79 @@ def run_scan(mode: str = "penny") -> dict[str, Any]:
                 "relative_volume": item.relative_volume,
                 "recent_relative_volume": item.recent_relative_volume,
                 "breakout_pct": item.breakout_pct,
+                "range_position": item.range_position,
+                "stale_minutes": item.stale_minutes,
+                "session_volume": item.session_volume,
                 "dollar_volume": item.dollar_volume,
+                "average_volume": item.average_volume,
+                "average_dollar_volume": item.average_dollar_volume,
                 "quote_time": item.quote_time.isoformat(),
                 "signals_json": json.dumps(item.signals),
                 "risks_json": json.dumps(item.risks),
                 "captured_at": captured_at,
                 "catalyst_kind": catalyst["kind"] if catalyst else None,
                 "catalyst_form": catalyst["form"] if catalyst else None,
+                "catalyst_sentiment": catalyst["sentiment"] if catalyst else None,
+                "catalyst_score": catalyst["score"] if catalyst else None,
                 "catalyst_url": catalyst["filing_url"] if catalyst else None,
                 "catalyst_filed_at": catalyst["filed_at"] if catalyst else None,
                 "catalyst_status": "matched_sec" if catalyst else "no_recent_sec",
             }
             db.execute(
                 """
-                INSERT INTO scan_snapshots VALUES(
+                INSERT INTO scan_snapshots(
+                    id,ticker,score,stage,session,price,change_pct,
+                    momentum_5m_pct,momentum_15m_pct,relative_volume,
+                    recent_relative_volume,breakout_pct,dollar_volume,quote_time,
+                    signals_json,risks_json,captured_at,scan_run_id,baseline_rank,
+                    range_position,stale_minutes,session_volume,average_volume,
+                    average_dollar_volume,catalyst_kind,catalyst_form,
+                    catalyst_sentiment,catalyst_score,catalyst_filed_at
+                ) VALUES(
                     :id,:ticker,:score,:stage,:session,:price,:change_pct,
                     :momentum_5m_pct,:momentum_15m_pct,:relative_volume,
                     :recent_relative_volume,:breakout_pct,:dollar_volume,:quote_time,
-                    :signals_json,:risks_json,:captured_at
+                    :signals_json,:risks_json,:captured_at,:scan_run_id,:baseline_rank,
+                    :range_position,:stale_minutes,:session_volume,:average_volume,
+                    :average_dollar_volume,:catalyst_kind,:catalyst_form,
+                    :catalyst_sentiment,:catalyst_score,:catalyst_filed_at
                 )
                 """,
                 values,
             )
-            output.append(values)
+            if baseline_rank <= len(result.rows):
+                output.append(values)
+
+    prediction = predict_and_store(scan_run_id)
+    if prediction.get("predicted"):
+        with connection() as db:
+            predicted_rows = db.execute(
+                """
+                SELECT snapshot_id,score,rank FROM ranker_predictions
+                WHERE model_id=? AND snapshot_id IN (
+                    SELECT id FROM scan_snapshots WHERE scan_run_id=?
+                )
+                """,
+                (prediction["model_id"], scan_run_id),
+            ).fetchall()
+        predicted = {row["snapshot_id"]: dict(row) for row in predicted_rows}
+        for values in output:
+            row = predicted.get(values["id"])
+            if row:
+                values["custom_score"] = row["score"]
+                values["custom_rank"] = row["rank"]
+                values["ranker_model_id"] = prediction["model_id"]
     SCAN_CACHE[mode] = (now(), output)
     return {
         "rows": output,
+        "scan_run_id": scan_run_id,
         "mode": mode,
         "label": config["label"],
         "cached": False,
         "candidates": len(symbols),
         "eligible": result.liquid_symbols,
         "scanned": result.scanned_symbols,
+        "ranked_candidates": len(all_rows),
         "elapsed_seconds": round(result.elapsed_seconds, 1),
         "warnings": (universe_warnings + result.warnings)[:4],
     }

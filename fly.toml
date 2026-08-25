@@ -10,6 +10,7 @@ primary_region = "sjc"
   DATABASE_PATH = "/data/runner-watch.db"
   COOKIE_SECURE = "1"
   PYTHONUNBUFFERED = "1"
+  BACKGROUND_SCAN_INTERVAL_SECONDS = "1800"
   SEC_USER_AGENT = "RunnerWatch/0.2 https://stonks.rati.foundation"
 
 [[mounts]]

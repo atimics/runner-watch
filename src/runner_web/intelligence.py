@@ -5,9 +5,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from runner_watch.edgar import EdgarClient, EdgarFiling, OwnershipSummary, classify_filing
-from runner_watch.market_data import YahooMarketData
 from runner_watch.models import ScanSettings
 from runner_watch.scanner import RunnerScanner
+from runner_web.collection import record_source_document, recording_market_data
 from runner_web.db import connection
 
 LOG = logging.getLogger(__name__)
@@ -105,7 +105,7 @@ def _interesting(form: str) -> bool:
 
 
 def _ensure_parser_version() -> None:
-    """Rebuild the derived filing cache when parsing rules change."""
+    """Record the parser version without deleting historical training data."""
 
     with connection() as db:
         row = db.execute(
@@ -113,7 +113,6 @@ def _ensure_parser_version() -> None:
         ).fetchone()
         if row and row["value"] == PARSER_VERSION:
             return
-        db.execute("DELETE FROM sec_filings")
     _state("edgar_parser_version", PARSER_VERSION)
 
 
@@ -122,7 +121,7 @@ def _market_context(tickers: list[str]) -> dict[str, dict[str, float | None]]:
         return {}
     unique = list(dict.fromkeys(tickers))
     try:
-        result = RunnerScanner(YahooMarketData(batch_size=60)).scan(
+        result = RunnerScanner(recording_market_data(batch_size=60)).scan(
             unique,
             ScanSettings(
                 min_price=0.01,
@@ -191,7 +190,7 @@ def _prepare_event(
 def refresh_edgar() -> dict[str, Any]:
     """Fetch the newest filings and persist pre-scored catalyst events."""
 
-    client = EdgarClient()
+    client = EdgarClient(recorder=record_source_document)
     _ensure_parser_version()
     company_count = refresh_company_map(client)
     filings = client.latest_filings()
@@ -239,12 +238,13 @@ def refresh_edgar() -> dict[str, Any]:
                     accession,cik,ticker,company,form,kind,sentiment,score,title,filed_at,
                     filing_url,actor,actor_title,transaction_codes,transaction_shares,
                     transaction_price,transaction_value,price,change_pct,relative_volume,
-                    market_score,created_at,updated_at
+                    market_score,created_at,updated_at,parser_version
                 ) VALUES(
                     :accession,:cik,:ticker,:company,:form,:kind,:sentiment,:score,:title,
                     :filed_at,:filing_url,:actor,:actor_title,:transaction_codes,
                     :transaction_shares,:transaction_price,:transaction_value,:price,
-                    :change_pct,:relative_volume,:market_score,:created_at,:updated_at
+                    :change_pct,:relative_volume,:market_score,:created_at,:updated_at,
+                    :parser_version
                 )
                 """,
                 {
@@ -258,6 +258,7 @@ def refresh_edgar() -> dict[str, Any]:
                     "market_score": market_score,
                     "created_at": timestamp,
                     "updated_at": timestamp,
+                    "parser_version": PARSER_VERSION,
                 },
             )
 

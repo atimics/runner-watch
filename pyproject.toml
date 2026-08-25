@@ -24,6 +24,7 @@ dev = [
 
 [project.scripts]
 runner-watch = "runner_watch.cli:main"
+stonks-ranker = "runner_web.ranker:main"
 
 [build-system]
 requires = ["setuptools>=69"]

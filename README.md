@@ -41,6 +41,38 @@ The main screen ranks stocks with a **runner score**. The score looks for:
 - enough dollar volume to enter and exit more easily
 - fresh data and a move that is not already too extended
 
+## Shadow ranker
+
+Stonks now keeps a complete, versioned training record without changing the public order:
+
+- each scan has one `scan_run` and saves every intraday candidate, not only the displayed top 40
+- all feature inputs, missing values, baseline rank, catalyst context, and quote times are saved
+- Yahoo daily and 5-minute bars fetched by the web app are deduplicated into `market_bars`
+- every distinct SEC response body fetched by the listener is saved in `source_documents`
+- scan outcomes use archived bars after 1 hour, the next session, and the fifth later session
+- a small listwise linear model trains only after at least 20 complete scan groups and 200 labels
+- learned scores are stored in `ranker_predictions` with the exact model ID
+- the web worker collects a penny-stock scan every 30 minutes on weekdays from 4 a.m. to 8 p.m. ET
+
+The learned model remains in **shadow** status. The hand-written runner score continues to control
+the public order and acts as the fallback when there is no trained model.
+
+Inspect or train it locally:
+
+```bash
+uv run stonks-ranker status
+uv run stonks-ranker train --horizon 1h
+```
+
+Export the same complete candidate groups to the generic `crlplrimes` dataset contract:
+
+```bash
+uv run stonks-ranker export-crl data/stonks-crl-1h.csv --horizon 1h
+```
+
+The status API is available at `/api/ranker/status`. Raw source storage will grow over time, so a
+long-running deployment should eventually move archived bars and documents to object storage.
+
 ## Start the dashboard
 
 This project uses Python 3.11–3.13. With [uv](https://docs.astral.sh/uv/) installed:

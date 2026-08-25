@@ -8,6 +8,7 @@ import time
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
@@ -64,11 +65,15 @@ class EdgarClient:
     """Small, rate-limited client for public SEC EDGAR data."""
 
     def __init__(
-        self, user_agent: str = SEC_USER_AGENT, max_requests_per_second: float = 6
+        self,
+        user_agent: str = SEC_USER_AGENT,
+        max_requests_per_second: float = 6,
+        recorder: Callable[[str, bytes], None] | None = None,
     ) -> None:
         self.user_agent = user_agent
         self.minimum_interval = 1 / max_requests_per_second
         self._last_request = 0.0
+        self.recorder = recorder
 
     def _get(self, url: str) -> bytes:
         parsed = urlparse(url)
@@ -86,6 +91,12 @@ class EdgarClient:
                 with urllib.request.urlopen(request, timeout=35) as response:  # noqa: S310
                     body = response.read()
                 self._last_request = time.monotonic()
+                if self.recorder:
+                    try:
+                        self.recorder(url, body)
+                    except Exception:
+                        # Archival is best effort and must not block the SEC listener.
+                        pass
                 return body
             except (TimeoutError, urllib.error.URLError):
                 self._last_request = time.monotonic()
