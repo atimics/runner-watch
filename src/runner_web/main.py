@@ -437,6 +437,7 @@ def community(
     signals = [dict(row) for row in rows]
     for signal in signals:
         labeled = int(signal.get("author_labeled") or 0)
+        signal["coin_tone"] = _coin_tone(signal["ticker"])
         signal["author_hit_rate"] = (
             round(100 * int(signal.get("author_hits") or 0) / labeled) if labeled else None
         )
@@ -664,7 +665,10 @@ def pulse_data() -> dict[str, Any]:
         ).fetchall()
         market_rows = db.execute(
             """
-            SELECT s.* FROM scan_snapshots s
+            SELECT s.*,
+                   (SELECT c.name FROM sec_companies c
+                    WHERE c.ticker=s.ticker LIMIT 1) AS listed_company
+            FROM scan_snapshots s
             JOIN (
                 SELECT ticker,MAX(captured_at) AS captured_at
                 FROM scan_snapshots WHERE captured_at>? GROUP BY ticker
@@ -712,7 +716,11 @@ def pulse_data() -> dict[str, Any]:
         runner_tickers.add(ticker)
         runner = {
             **snapshot,
-            "company": catalyst.get("company", ticker) if catalyst else ticker,
+            "company": (
+                catalyst.get("company", ticker)
+                if catalyst
+                else snapshot.get("listed_company") or ticker
+            ),
             "kind": catalyst.get("kind") if catalyst else "No recent SEC catalyst",
             "sentiment": catalyst.get("sentiment") if catalyst else "gap",
             "form": catalyst.get("form", "") if catalyst else "",
@@ -741,7 +749,7 @@ def pulse_data() -> dict[str, Any]:
     for ticker, event in filings_by_ticker.items():
         if ticker in runner_tickers:
             continue
-        event_rows.append({
+        filing_row = {
             **event,
             "coin_label": ticker[:2],
             "coin_tone": _coin_tone(ticker),
@@ -751,7 +759,9 @@ def pulse_data() -> dict[str, Any]:
             "section": "filings",
             "event_at": event["filed_at"],
             "attention_score": float(event.get("score") or 0),
-        })
+        }
+        filing_row["evidence_gate"] = _evidence_gate(filing_row, [event])
+        event_rows.append(filing_row)
     event_rows.sort(key=lambda row: str(row["event_at"]), reverse=True)
     rows = (runner_rows + event_rows)[:50]
     state = {row["key"]: row["value"] for row in state_rows}
@@ -1029,8 +1039,12 @@ def radar_data(user_id: str, *, mark_seen: bool = False) -> list[dict[str, Any]]
                    f.accession,f.form,f.kind,f.sentiment,f.score,f.filed_at,
                    f.filing_url,f.actor,f.actor_title,f.transaction_codes,
                    f.transaction_shares,f.transaction_price,f.transaction_value,
-                   s.id AS snapshot_id,s.price,s.change_pct,s.relative_volume,
-                   s.recent_relative_volume,s.stage,s.captured_at,s.signals_json,s.risks_json
+                   s.id AS snapshot_id,COALESCE(s.price,f.price) AS price,
+                   COALESCE(s.change_pct,f.change_pct) AS change_pct,
+                   COALESCE(s.relative_volume,f.relative_volume) AS relative_volume,
+                   s.recent_relative_volume,s.stage,s.session,s.momentum_15m_pct,
+                   s.breakout_pct,s.momentum_acceleration_pct,s.vwap_position_pct,
+                   s.captured_at,s.signals_json,s.risks_json
             FROM watches w
             LEFT JOIN sec_filings f ON f.accession=(
                 SELECT sf.accession FROM sec_filings sf
@@ -1061,19 +1075,24 @@ def radar_data(user_id: str, *, mark_seen: bool = False) -> list[dict[str, Any]]
         item["event_at"] = event_at
         item["has_update"] = not item.get("last_seen_at") or event_at > item["last_seen_at"]
         if item.get("snapshot_id"):
+            item["source"] = "market"
             item["pulse_label"] = _market_pulse_label(item, filing)
             item["evidence_label"] = "Market snapshot"
             item["evidence_text"] = "Price and volume changed since this ticker was scanned."
         elif filing:
+            item["source"] = "sec"
             item.update(
                 evidence_label=filing["evidence_label"],
                 evidence_text=filing["evidence_text"],
                 pulse_label=_pulse_label(filing),
             )
         else:
+            item["source"] = "quiet"
             item["evidence_label"] = "Watching for changes"
             item["evidence_text"] = "No market snapshot or filing has matched this ticker yet."
             item["pulse_label"] = "Quiet"
+        item["sentiment"] = filing.get("sentiment") if filing else "gap"
+        item["evidence_gate"] = _evidence_gate(item, [filing] if filing else [])
         item["coin_label"] = item["ticker"][:2]
         item["coin_tone"] = _coin_tone(item["ticker"])
         output.append(item)
@@ -1112,6 +1131,18 @@ def radar_api(
     user = require_user(runner_session)
     enforce_rate(request, "radar", limit=120, seconds=60, subject=user["id"])
     return JSONResponse({"rows": radar_data(user["id"], mark_seen=True), "updated_at": iso()})
+
+
+@app.get("/api/radar/charts")
+async def radar_charts_api(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    user = require_user(runner_session)
+    enforce_rate(request, "radar-charts", limit=20, seconds=60, subject=user["id"])
+    tickers = [row["ticker"] for row in radar_data(user["id"])]
+    charts = await run_in_threadpool(ticker_charts_data, tickers)
+    return JSONResponse({"charts": charts})
 
 
 @app.post("/api/watch/{ticker}")
@@ -1758,7 +1789,10 @@ def get_signal(public_id: str) -> dict[str, Any] | None:
             """,
             (public_id,),
         ).fetchone()
-    return row_dict(row)
+    signal = row_dict(row)
+    if signal:
+        signal["coin_tone"] = _coin_tone(signal["ticker"])
+    return signal
 
 
 @app.get("/s/{public_id}", response_class=HTMLResponse)

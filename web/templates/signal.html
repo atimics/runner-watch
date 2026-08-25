@@ -13,7 +13,7 @@
 <header class="detail-nav"><a href="/community" aria-label="Back to Alpha">‹</a><strong>Timestamped alpha</strong><button type="button" id="share" aria-label="Share">↗</button></header>
 <main class="signal-detail">
   <section class="asset-head">
-    <span class="coin coin-large coin-3"><b>{{ signal.ticker[:2] }}</b><i></i></span>
+    <span class="coin coin-large coin-{{ signal.coin_tone }}"><b>{{ signal.ticker[:2] }}</b><i></i></span>
     <div><div class="asset-ticker"><h1>{{ signal.ticker }}</h1><span>{{ signal.stage|title }}</span></div><p>@{{ signal.username }} · {{ signal.horizon }}</p></div>
     <strong class="signal-score">{{ '%.0f'|format(signal.score) }}</strong>
   </section>

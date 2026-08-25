@@ -95,6 +95,7 @@ def test_pulse_only_lists_penny_stocks_and_groups_events(
 
     assert [row["ticker"] for row in result["rows"]] == ["PEN"]
     assert result["rows"][0]["event_count"] == 2
+    assert result["rows"][0]["evidence_gate"]["checks"] == ["Positive SEC catalyst"]
     assert result["stats"]["filings"] == 2
 
 
@@ -128,6 +129,10 @@ def test_pulse_puts_market_runners_before_filing_only_events(
     insert_filing("filing-only", "FILE", 2.0, 99, captured_at, "P")
     with connection() as database:
         database.execute(
+            "INSERT INTO sec_companies(cik,ticker,name,exchange,refreshed_at) VALUES(?,?,?,?,?)",
+            (1, "RUN", "Runner Systems", "NASDAQ", captured_at),
+        )
+        database.execute(
             """
             INSERT INTO scan_snapshots(
                 id,ticker,score,stage,session,price,change_pct,momentum_5m_pct,
@@ -146,6 +151,7 @@ def test_pulse_puts_market_runners_before_filing_only_events(
 
     assert [row["ticker"] for row in result["rows"]] == ["RUN", "FILE"]
     assert result["rows"][0]["source"] == "market"
+    assert result["rows"][0]["company"] == "Runner Systems"
     assert result["rows"][0]["evidence_gate"]["state"] == "ready"
     assert result["rows"][1]["source"] == "sec"
 
@@ -276,4 +282,32 @@ def test_radar_marks_new_state_seen(tmp_path: Path, monkeypatch: MonkeyPatch) ->
     second = radar_data("user")
 
     assert first[0]["has_update"] is True
+    assert first[0]["source"] == "market"
+    assert first[0]["price"] == 2.1
+    assert first[0]["evidence_gate"]["count"] >= 2
     assert second[0]["has_update"] is False
+
+
+def test_radar_uses_filing_price_when_a_market_snapshot_is_missing(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "radar-filing.db")
+    init_db()
+    filed_at = datetime.now(UTC).isoformat()
+    insert_filing("radar-filing", "FILE", 0.72, 73, filed_at, "P")
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("user", "watcher", "Watcher", "active", filed_at),
+        )
+        database.execute(
+            "INSERT INTO watches(user_id,ticker,created_at,last_seen_at) VALUES(?,?,?,NULL)",
+            ("user", "FILE", filed_at),
+        )
+
+    result = radar_data("user")
+
+    assert result[0]["source"] == "sec"
+    assert result[0]["price"] == 0.72
+    assert result[0]["change_pct"] == 6.5
+    assert result[0]["evidence_gate"]["checks"] == ["Positive SEC catalyst"]

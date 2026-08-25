@@ -14,8 +14,8 @@
     {% for signal in signals %}
     <a class="alpha-row" href="/s/{{ signal.public_id }}">
       <div class="alpha-row-head">
-        <span class="coin coin-{{ loop.index0 % 5 }}"><b>{{ signal.ticker[:2] }}</b><i></i></span>
-        <span><strong>{{ signal.ticker }}</strong><small>@{{ signal.username }} · {{ signal.horizon }}</small></span>
+        <span class="coin coin-{{ signal.coin_tone }}"><b>{{ signal.ticker[:2] }}</b><i></i></span>
+        <span><strong>{{ signal.ticker }}</strong><small>@{{ signal.username }} · {{ signal.horizon }} · ${{ '%.4f'|format(signal.price) if signal.price < 1 else '%.2f'|format(signal.price) }}</small></span>
         <em class="{{ 'up' if signal.change_pct >= 0 else 'down' }}">{{ '+' if signal.change_pct >= 0 else '' }}{{ '%.1f'|format(signal.change_pct) }}%</em>
       </div>
       <p>{{ signal.thesis }}</p>
