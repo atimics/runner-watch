@@ -16,6 +16,7 @@ from runner_web.ingestion import record_source_batch
 from runner_web.main import (
     APP_ORIGIN,
     PulseAttentionItem,
+    TickerCommentPayload,
     _chart_annotations,
     _commission_research,
     _evidence_gate,
@@ -27,16 +28,20 @@ from runner_web.main import (
     _stored_market_risk_contexts,
     _write_pulse_attention,
     alpha_board_data,
+    comments_for_ticker,
     commissioned_reports,
+    create_ticker_comment,
     get_commission,
     heart_state,
     pulse_data,
     pulse_notification_data,
     radar_data,
+    reaction_state,
     register_options,
     templates,
     ticker_charts_payload,
     ticker_detail_data,
+    toggle_reaction,
 )
 
 
@@ -1077,6 +1082,75 @@ def test_alpha_ranks_unique_hearts(tmp_path: Path, monkeypatch: MonkeyPatch) -> 
     assert "Subscribers only" in free_html
     assert "Verified evidence summary." not in free_html
     assert "Verified evidence summary." in subscriber_html
+
+
+def test_ticker_feedback_tracks_reactions_and_signed_in_comments(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "feedback.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    insert_filing("feedback-one", "ONE", 1.25, 70, timestamp.isoformat(), "P")
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/reaction/ONE/bull",
+            "headers": [(b"origin", APP_ORIGIN.encode())],
+            "client": ("127.0.0.77", 4770),
+        }
+    )
+    request.state.visitor_id = "feedback-visitor-abcdefghijklmnop"
+
+    bull = json.loads(toggle_reaction("ONE", "bull", request, None).body)
+    bear = json.loads(toggle_reaction("ONE", "bear", request, None).body)
+
+    assert bull == {"ticker": "ONE", "bull": 1, "bear": 0, "selected": "bull"}
+    assert bear == {"ticker": "ONE", "bull": 0, "bear": 1, "selected": "bear"}
+    assert reaction_state("ONE", "v:feedback-visitor-abcdefghijklmnop") == bear
+
+    raw_session = "feedback-session"
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("feedback-user", "chartreader", "Chart Reader", "active", timestamp.isoformat()),
+        )
+        database.execute(
+            "INSERT INTO sessions(token_hash,user_id,created_at,expires_at) VALUES(?,?,?,?)",
+            (
+                web_main.token_hash(raw_session),
+                "feedback-user",
+                timestamp.isoformat(),
+                (timestamp + timedelta(days=1)).isoformat(),
+            ),
+        )
+    comment_request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/comments/ONE",
+            "headers": [(b"origin", APP_ORIGIN.encode())],
+            "client": ("127.0.0.78", 4780),
+        }
+    )
+    result = create_ticker_comment(
+        "ONE",
+        TickerCommentPayload(body="  Watching   the close above VWAP.  "),
+        comment_request,
+        raw_session,
+    )
+    payload = json.loads(result.body)
+
+    assert result.status_code == 201
+    assert payload["count"] == 1
+    assert payload["comment"]["body"] == "Watching the close above VWAP."
+    assert payload["comment"]["pseudonym"] == web_main.comment_pseudonym("feedback-user")
+    assert payload["comment"]["pseudonym"].count("-") == 1
+    assert payload["comment"]["pseudonym"].islower()
+    assert payload["comment"]["pseudonym"] not in {"chartreader", "Chart Reader"}
+    assert "username" not in payload["comment"]
+    assert "display_name" not in payload["comment"]
+    assert comments_for_ticker("ONE") == [payload["comment"]]
 
 
 def test_radar_orders_events_by_time_not_activity(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

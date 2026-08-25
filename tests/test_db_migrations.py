@@ -25,6 +25,15 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         pulse_state_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='pulse_profile_state'"
         ).fetchone()
+        reaction_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='ticker_reactions'"
+        ).fetchone()
+        comment_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='ticker_comments'"
+        ).fetchone()
+        pseudonym_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='comment_pseudonyms'"
+        ).fetchone()
         flash = database.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
         commission_columns = {
             row["name"]
@@ -45,6 +54,9 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     ]
     assert topic_table is not None
     assert pulse_state_table is not None
+    assert reaction_table is not None
+    assert comment_table is not None
+    assert pseudonym_table is not None
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_model"] == "z-ai/glm-5.3"
@@ -57,6 +69,8 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "sec_filings_ticker_filed_score",
         "scan_runs_candidate_captured",
         "scan_snapshots_ticker_captured",
+        "ticker_reactions_ticker_reaction",
+        "ticker_comments_ticker_time",
     } <= indexes
 
 

@@ -75,6 +75,7 @@ from runner_web.kol import (
 )
 from runner_web.market_clock import market_clock
 from runner_web.outcomes import record_outcome_error, refresh_outcomes, refresh_scan_outcomes
+from runner_web.pseudonyms import pseudonym_candidate
 from runner_web.ranker import (
     FEATURE_SCHEMA_VERSION,
     predict_and_store,
@@ -351,6 +352,16 @@ def claim_visitor_profile(request: Request, user: dict[str, Any]) -> str:
             (target, source),
         )
         db.execute("DELETE FROM ticker_hearts WHERE profile_id=?", (source,))
+        db.execute(
+            """
+            INSERT INTO ticker_reactions(profile_id,ticker,reaction,created_at,updated_at)
+            SELECT ?,ticker,reaction,created_at,updated_at FROM ticker_reactions
+            WHERE profile_id=?
+            ON CONFLICT(profile_id,ticker) DO NOTHING
+            """,
+            (target, source),
+        )
+        db.execute("DELETE FROM ticker_reactions WHERE profile_id=?", (source,))
         db.execute("UPDATE activity_events SET profile_id=? WHERE profile_id=?", (target, source))
         db.execute(
             """
@@ -592,6 +603,10 @@ class ActivityPayload(BaseModel):
     ticker: str
     event_type: str = Field(pattern="^(view|dwell|share)$")
     seconds: int = Field(default=0, ge=0, le=3600)
+
+
+class TickerCommentPayload(BaseModel):
+    body: str = Field(min_length=1, max_length=280)
 
 
 class PulseAttentionItem(BaseModel):
@@ -3380,6 +3395,7 @@ def ticker_page(
             ],
             "inspected",
         )
+    comments = comments_for_ticker(normalized)
     return templates.TemplateResponse(
         request=request,
         name="ticker.html",
@@ -3388,6 +3404,9 @@ def ticker_page(
             runner_session,
             detail=detail,
             heart=heart_state(normalized, profile),
+            reaction=reaction_state(normalized, profile),
+            comments=comments,
+            comment_count=comment_count_for_ticker(normalized),
             latest_commission=(latest_commission(user["id"], normalized) if user else None),
             active_tab="pulse",
         ),
@@ -3934,6 +3953,97 @@ def heart_state(ticker: str, profile: str) -> dict[str, Any]:
     return {"ticker": ticker, "count": int(count), "hearted": bool(active and active[0])}
 
 
+def reaction_state(ticker: str, profile: str) -> dict[str, Any]:
+    counts = {"bull": 0, "bear": 0}
+    with connection() as db:
+        rows = db.execute(
+            """
+            SELECT reaction,COUNT(*) AS reaction_count
+            FROM ticker_reactions WHERE ticker=?
+            GROUP BY reaction
+            """,
+            (ticker,),
+        ).fetchall()
+        selected = db.execute(
+            "SELECT reaction FROM ticker_reactions WHERE profile_id=? AND ticker=?",
+            (profile, ticker),
+        ).fetchone()
+    for row in rows:
+        reaction = str(row["reaction"])
+        if reaction in counts:
+            counts[reaction] = int(row["reaction_count"])
+    return {
+        "ticker": ticker,
+        "bull": counts["bull"],
+        "bear": counts["bear"],
+        "selected": str(selected["reaction"]) if selected else None,
+    }
+
+
+def comment_pseudonym(user_id: str) -> str:
+    return pseudonym_candidate(user_id)
+
+
+def _ensure_comment_pseudonym(database: sqlite3.Connection, user_id: str) -> str:
+    existing = database.execute(
+        "SELECT pseudonym FROM comment_pseudonyms WHERE user_id=?",
+        (user_id,),
+    ).fetchone()
+    if existing:
+        return str(existing["pseudonym"])
+    for attempt in range(1_000):
+        candidate = pseudonym_candidate(user_id, attempt)
+        database.execute(
+            """
+            INSERT INTO comment_pseudonyms(user_id,pseudonym,created_at)
+            VALUES(?,?,?) ON CONFLICT DO NOTHING
+            """,
+            (user_id, candidate, iso()),
+        )
+        assigned = database.execute(
+            "SELECT pseudonym FROM comment_pseudonyms WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+        if assigned:
+            return str(assigned["pseudonym"])
+    raise RuntimeError("Could not assign a unique comment pseudonym")
+
+
+def _public_comment(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": str(row["id"]),
+        "body": str(row["body"]),
+        "created_at": str(row["created_at"]),
+        "pseudonym": str(row["pseudonym"]),
+    }
+
+
+def comments_for_ticker(ticker: str, *, limit: int = 50) -> list[dict[str, Any]]:
+    bounded_limit = min(50, max(1, limit))
+    with connection() as db:
+        rows = db.execute(
+            """
+            SELECT c.id,c.body,c.created_at,p.pseudonym
+            FROM ticker_comments c
+            JOIN comment_pseudonyms p ON p.user_id=c.user_id
+            WHERE c.ticker=? AND c.status='public'
+            ORDER BY c.created_at DESC,c.id DESC
+            LIMIT ?
+            """,
+            (ticker, bounded_limit),
+        ).fetchall()
+    return [_public_comment(row) for row in rows]
+
+
+def comment_count_for_ticker(ticker: str) -> int:
+    with connection() as db:
+        count = db.execute(
+            "SELECT COUNT(*) FROM ticker_comments WHERE ticker=? AND status='public'",
+            (ticker,),
+        ).fetchone()[0]
+    return int(count)
+
+
 @app.post("/api/activity")
 def record_activity_api(
     payload: ActivityPayload,
@@ -3988,6 +4098,92 @@ def toggle_heart(
         ALPHA_DATA_CACHE.clear()
     state = heart_state(normalized, profile)
     return JSONResponse(state)
+
+
+@app.post("/api/reaction/{ticker}/{reaction}")
+def toggle_reaction(
+    ticker: str,
+    reaction: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    normalized_reaction = reaction.strip().lower()
+    if normalized_reaction not in {"bull", "bear"}:
+        raise HTTPException(400, "Reaction must be bull or bear")
+    user = current_user(runner_session)
+    profile = claim_visitor_profile(request, user) if user else profile_id(request)
+    enforce_rate(request, "reaction", limit=40, seconds=60, subject=profile)
+    normalized = _clean_ticker(ticker)
+    if not _known_ticker(normalized):
+        raise HTTPException(404, "Ticker not found")
+    timestamp = iso()
+    with connection() as db:
+        existing = db.execute(
+            "SELECT reaction FROM ticker_reactions WHERE profile_id=? AND ticker=?",
+            (profile, normalized),
+        ).fetchone()
+        if existing and existing["reaction"] == normalized_reaction:
+            db.execute(
+                "DELETE FROM ticker_reactions WHERE profile_id=? AND ticker=?",
+                (profile, normalized),
+            )
+        else:
+            db.execute(
+                """
+                INSERT INTO ticker_reactions(
+                    profile_id,ticker,reaction,created_at,updated_at
+                ) VALUES(?,?,?,?,?)
+                ON CONFLICT(profile_id,ticker) DO UPDATE SET
+                    reaction=excluded.reaction,updated_at=excluded.updated_at
+                """,
+                (profile, normalized, normalized_reaction, timestamp, timestamp),
+            )
+    return JSONResponse(reaction_state(normalized, profile))
+
+
+@app.post("/api/comments/{ticker}")
+def create_ticker_comment(
+    ticker: str,
+    payload: TickerCommentPayload,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "ticker-comment", limit=20, seconds=3600, subject=user["id"])
+    normalized = _clean_ticker(ticker)
+    if not _known_ticker(normalized):
+        raise HTTPException(404, "Ticker not found")
+    body = " ".join(payload.body.split())
+    if not body:
+        raise HTTPException(400, "Comment cannot be empty")
+    comment_id = str(uuid.uuid4())
+    created_at = iso()
+    with connection() as db:
+        pseudonym = _ensure_comment_pseudonym(db, str(user["id"]))
+        db.execute(
+            """
+            INSERT INTO ticker_comments(id,ticker,user_id,body,status,created_at)
+            VALUES(?,?,?,?,?,?)
+            """,
+            (comment_id, normalized, user["id"], body, "public", created_at),
+        )
+        row = db.execute(
+            """
+            SELECT id,body,created_at,? AS pseudonym
+            FROM ticker_comments WHERE id=?
+            """,
+            (pseudonym, comment_id),
+        ).fetchone()
+        count = db.execute(
+            "SELECT COUNT(*) FROM ticker_comments WHERE ticker=? AND status='public'",
+            (normalized,),
+        ).fetchone()[0]
+    return JSONResponse(
+        {"comment": _public_comment(row), "count": int(count)},
+        status_code=201,
+    )
 
 
 @app.post("/api/research/{ticker}")

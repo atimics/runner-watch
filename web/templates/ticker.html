@@ -12,7 +12,7 @@
   <section class="asset-head">
     <span class="coin coin-large coin-{{ detail.coin_tone }}"><b>{{ detail.coin_label }}</b><i></i></span>
     <div><div class="asset-ticker"><h1>{{ detail.ticker }}</h1><span>{{ detail.exchange }}</span></div><p>{{ detail.company }}</p></div>
-    <button class="heart-button {% if heart.hearted %}hearted{% endif %}" type="button" id="heartButton" aria-label="Like {{ detail.ticker }}" aria-pressed="{{ 'true' if heart.hearted else 'false' }}">
+    <button class="heart-button {% if heart.hearted %}hearted{% endif %}" type="button" id="heartButton" aria-label="Heart {{ detail.ticker }}" aria-pressed="{{ 'true' if heart.hearted else 'false' }}">
       <span>{% if heart.hearted %}♥{% else %}♡{% endif %}</span><small id="heartCount">{{ heart.count }}</small>
     </button>
   </section>
@@ -23,6 +23,12 @@
       {% if detail.current.change_pct is not none %}<span class="{{ 'up' if detail.current.change_pct >= 0 else 'down' }}">{{ '+' if detail.current.change_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.change_pct) }}%</span>{% endif %}
     </div>
     <small>{% if detail.current.event_at %}{{ detail.current.event_at[:16]|replace('T', ' ') }} UTC{% else %}No recent quote{% endif %}</small>
+  </section>
+
+  <section class="feedback-strip" aria-label="Community feedback">
+    <button class="reaction-button bull {% if reaction.selected == 'bull' %}selected{% endif %}" type="button" data-reaction="bull" aria-pressed="{{ 'true' if reaction.selected == 'bull' else 'false' }}"><span>🐂 Bull</span><b id="bullCount">{{ reaction.bull }}</b></button>
+    <button class="reaction-button bear {% if reaction.selected == 'bear' %}selected{% endif %}" type="button" data-reaction="bear" aria-pressed="{{ 'true' if reaction.selected == 'bear' else 'false' }}"><span>🐻 Bear</span><b id="bearCount">{{ reaction.bear }}</b></button>
+    <button class="reaction-button comment-jump" type="button" id="commentJump"><span>Comment</span><b id="commentCount">{{ comment_count }}</b></button>
   </section>
 
   <section class="research-action">
@@ -141,6 +147,27 @@
     <div><span>1D</span><strong class="{% if detail.current.return_1d_pct is not none %}{{ 'up' if detail.current.return_1d_pct >= 0 else 'down' }}{% endif %}">{% if detail.current.return_1d_pct is not none %}{{ '+' if detail.current.return_1d_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.return_1d_pct) }}%{% else %}pending{% endif %}</strong></div>
     <div><span>5D</span><strong class="{% if detail.current.return_5d_pct is not none %}{{ 'up' if detail.current.return_5d_pct >= 0 else 'down' }}{% endif %}">{% if detail.current.return_5d_pct is not none %}{{ '+' if detail.current.return_5d_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.return_5d_pct) }}%{% else %}pending{% endif %}</strong></div>
   </section>
+
+  <section class="discussion-section" id="discussion">
+    <div class="section-heading"><div><h2>Comments</h2></div><b id="discussionCount">{{ comment_count }}</b></div>
+    {% if user %}
+    <form class="comment-form" id="commentForm">
+      <textarea id="commentBody" maxlength="280" rows="3" aria-label="Add a comment about {{ detail.ticker }}" placeholder="What is your read on {{ detail.ticker }}?"></textarea>
+      <div><small id="commentStatus">280 left</small><button type="submit">Post</button></div>
+    </form>
+    {% else %}
+    <a class="comment-login" href="/login?next=/t/{{ detail.ticker }}#discussion">Log in to comment</a>
+    {% endif %}
+    <ol class="comment-list" id="commentList">
+      {% for comment in comments %}
+      <li>
+        <span class="comment-avatar">{{ comment.pseudonym[-2:] }}</span>
+        <div><header><strong>{{ comment.pseudonym }}</strong><small><time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time></small></header><p>{{ comment.body }}</p></div>
+      </li>
+      {% endfor %}
+    </ol>
+    <p class="comment-empty" id="commentEmpty" {% if comments %}hidden{% endif %}>No comments yet. Start the read.</p>
+  </section>
 </main>
 {% endblock %}
 {% block bottom_nav %}{% endblock %}
@@ -227,6 +254,62 @@ document.getElementById('heartButton').addEventListener('click', async event => 
   button.setAttribute('aria-pressed',String(result.hearted));
   button.querySelector('span').textContent = result.hearted ? '♥' : '♡';
   document.getElementById('heartCount').textContent = result.count;
+});
+function renderReaction(result){
+  document.getElementById('bullCount').textContent=result.bull;
+  document.getElementById('bearCount').textContent=result.bear;
+  document.querySelectorAll('[data-reaction]').forEach(button=>{
+    const selected=button.dataset.reaction===result.selected;
+    button.classList.toggle('selected',selected);
+    button.setAttribute('aria-pressed',String(selected));
+  });
+}
+document.querySelectorAll('[data-reaction]').forEach(button=>button.addEventListener('click',async()=>{
+  button.disabled=true;
+  try{
+    const response=await fetch(`/api/reaction/${encodeURIComponent(ticker)}/${button.dataset.reaction}`,{method:'POST'});
+    if(response.ok)renderReaction(await response.json());
+  }finally{button.disabled=false;}
+}));
+const commentForm=document.getElementById('commentForm');
+const commentBody=document.getElementById('commentBody');
+const commentStatus=document.getElementById('commentStatus');
+const commentList=document.getElementById('commentList');
+function relativeCommentTime(value){
+  const seconds=Math.max(0,(Date.now()-new Date(value).getTime())/1000);
+  if(!Number.isFinite(seconds))return '';
+  if(seconds<60)return 'now';
+  if(seconds<3600)return Math.floor(seconds/60)+'m ago';
+  if(seconds<86400)return Math.floor(seconds/3600)+'h ago';
+  if(seconds<604800)return Math.floor(seconds/86400)+'d ago';
+  return new Date(value).toLocaleDateString([],{month:'short',day:'numeric'});
+}
+function refreshCommentTimes(){document.querySelectorAll('[data-comment-time]').forEach(item=>{item.textContent=relativeCommentTime(item.dateTime);});}
+function renderComment(comment){
+  const item=document.createElement('li');
+  const avatar=document.createElement('span');avatar.className='comment-avatar';avatar.textContent=(comment.pseudonym||'??').slice(-2);
+  const copy=document.createElement('div');const head=document.createElement('header');
+  const name=document.createElement('strong');name.textContent=comment.pseudonym;
+  const meta=document.createElement('small');
+  const stamp=document.createElement('time');stamp.dateTime=comment.created_at;stamp.dataset.commentTime='';stamp.textContent=relativeCommentTime(comment.created_at);meta.append(stamp);
+  const body=document.createElement('p');body.textContent=comment.body;
+  head.append(name,meta);copy.append(head,body);item.append(avatar,copy);return item;
+}
+refreshCommentTimes();
+document.getElementById('commentJump').addEventListener('click',()=>{
+  document.getElementById('discussion').scrollIntoView({behavior:'smooth',block:'start'});
+  setTimeout(()=>commentBody?.focus(),350);
+});
+commentBody?.addEventListener('input',()=>{commentStatus.textContent=(280-commentBody.value.length)+' left';});
+commentForm?.addEventListener('submit',async event=>{
+  event.preventDefault();const body=commentBody.value.trim();if(!body){commentStatus.textContent='Write a comment first';return;}
+  const submit=commentForm.querySelector('button');submit.disabled=true;commentStatus.textContent='Posting…';
+  try{
+    const response=await fetch(`/api/comments/${encodeURIComponent(ticker)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body})});
+    const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not post');
+    commentList.prepend(renderComment(result.comment));commentBody.value='';commentStatus.textContent='280 left';
+    document.getElementById('commentCount').textContent=result.count;document.getElementById('discussionCount').textContent=result.count;document.getElementById('commentEmpty').hidden=true;
+  }catch(error){commentStatus.textContent=error.message||'Could not post';}finally{submit.disabled=false;}
 });
 if (commissionButton) {
   let commissionPollTimer = null;

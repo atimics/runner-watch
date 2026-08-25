@@ -1013,6 +1013,40 @@ def _migration_010_radar_indexes(db: sqlite3.Connection) -> None:
     )
 
 
+def _migration_011_ticker_feedback(db: sqlite3.Connection) -> None:
+    """Store one bull/bear reaction per profile and signed-in comments."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS ticker_reactions (
+            profile_id TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            reaction TEXT NOT NULL CHECK(reaction IN ('bull','bear')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(profile_id,ticker)
+        );
+        CREATE INDEX IF NOT EXISTS ticker_reactions_ticker_reaction
+            ON ticker_reactions(ticker,reaction,updated_at DESC);
+        CREATE TABLE IF NOT EXISTS comment_pseudonyms (
+            user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            pseudonym TEXT UNIQUE NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS ticker_comments (
+            id TEXT PRIMARY KEY,
+            ticker TEXT NOT NULL,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            body TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'public' CHECK(status IN ('public','hidden')),
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ticker_comments_ticker_time
+            ON ticker_comments(ticker,status,created_at DESC);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -1031,6 +1065,7 @@ MIGRATIONS = (
     Migration(8, "flash_actor", _migration_008_flash_actor),
     Migration(9, "request_path_indexes", _migration_009_request_path_indexes),
     Migration(10, "radar_indexes", _migration_010_radar_indexes),
+    Migration(11, "ticker_feedback", _migration_011_ticker_feedback),
 )
 
 

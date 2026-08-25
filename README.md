@@ -104,6 +104,11 @@ marks the current leader. After the leader remains stable for three minutes, the
 builds a source-bound structured report for that ticker. Full reports are only rendered for users
 whose `plan` is `subscriber`.
 
+Bull and bear votes are separate from hearts and do not change the Alpha order. Signed-in users can
+also leave short comments. Public comment names are stable adjective-animal aliases chosen from a
+salted hash, while account names stay private. Set `COMMENT_PSEUDONYM_SALT` to a stable private value
+in each deployed environment before comments are opened to users.
+
 The report worker stays queued until `OPENAI_API_KEY` is configured. It uses the Responses API with
 strict structured output, sends only stored market and filing evidence, and defaults to the model in
 `AI_REPORT_MODEL` (`gpt-5.6`). A missing key never falls back to fake generated copy.
