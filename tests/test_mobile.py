@@ -74,6 +74,50 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert 'id="generateComment"' in template
 
 
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        (
+            {"comment": "My view is cautious; low volume is the risk."},
+            "My view is cautious; low volume is the risk.",
+        ),
+        (
+            json.dumps({"answer": "My read is mixed; financing is the risk."}),
+            "My read is mixed; financing is the risk.",
+        ),
+        (
+            [{"type": "text", "text": "My setup is early; dilution is the risk."}],
+            "My setup is early; dilution is the risk.",
+        ),
+        (
+            "```json\n{\"comment\":\"My signal is improving; liquidity is the risk.\"}\n```",
+            "My signal is improving; liquidity is the risk.",
+        ),
+        (
+            "Comment: My evidence is limited; volatility is the risk.",
+            "My evidence is limited; volatility is the risk.",
+        ),
+    ],
+)
+def test_openrouter_comment_accepts_supported_response_shapes(
+    content: Any, expected: str
+) -> None:
+    assert web_main._openrouter_comment_text(content) == expected
+
+
+def test_openrouter_comment_stays_short_and_rejects_missing_text() -> None:
+    long_comment = "My evidence remains mixed, and I am watching the next filing. " * 8
+
+    comment = web_main._openrouter_comment_text(long_comment)
+
+    assert len(comment) <= web_main.COMMENT_MAX_CHARS
+    assert long_comment.startswith(comment)
+    with pytest.raises(ValueError):
+        web_main._openrouter_comment_text({"unexpected": "not a comment"})
+    with pytest.raises(ValueError):
+        web_main._openrouter_comment_text("   ")
+
+
 def test_ui_copy_drops_ai_and_corporate_filler() -> None:
     root = Path(__file__).parents[1]
     ui_copy = "\n".join(
@@ -1189,6 +1233,57 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
     assert comments_for_ticker("ONE") == [payload["comment"]]
     assert alpha_comments_data() == [{**payload["comment"], "ticker": "ONE"}]
     assert "radar_case" not in payload
+
+
+def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
+        captured["body"] = json.loads(request.data)
+        return io.BytesIO(
+            json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    "My read is constructive, but thin volume is the risk."
+                                )
+                            }
+                        }
+                    ],
+                    "model": "z-ai/glm-5.3",
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "sk-or-comment-test")
+    monkeypatch.setattr(
+        web_main,
+        "ticker_detail_data",
+        lambda ticker: {
+            "ticker": ticker,
+            "company": "One Corp",
+            "current": {
+                "price": 1.25,
+                "change_pct": 4.0,
+                "signals": ["Price is above VWAP"],
+                "risks": ["Volume is thin"],
+            },
+            "evidence_gate": {},
+            "events": [],
+        },
+    )
+    monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
+
+    comment, model = web_main._generate_ticker_comment_text("ONE", "member-one")
+
+    assert comment == "My read is constructive, but thin volume is the risk."
+    assert model == "z-ai/glm-5.3"
+    assert captured["body"]["response_format"] == {"type": "json_object"}
+    assert captured["body"]["user"] != "member-one"
 
 
 def test_radar_orders_events_by_time_not_activity(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
