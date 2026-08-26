@@ -10,7 +10,7 @@ from runner_web.db import (
     MIGRATION_LOCK_ID,
     MIGRATIONS,
     _acquire_migration_lock,
-    _migration_027_caller_identities,
+    _migration_028_caller_identities,
     _release_migration_lock,
     connection,
     init_db,
@@ -195,7 +195,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "evidence_as_of",
         "citations_json",
     } <= commission_columns
-    assert {"visibility", "published_at"} <= commission_columns
+    assert {"visibility", "published_at", "report_day", "exclusive_until"} <= commission_columns
     assert {"source", "generation_model"} <= comment_columns
     assert "actor_snapshot_json" in call_columns
     assert {
@@ -270,6 +270,8 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "caller_identity_claims_owner",
         "community_calls_caller_time",
         "signals_caller_identity",
+        "research_commissions_daily_actor",
+        "research_commissions_daily_visibility",
     } <= indexes
 
 
@@ -318,7 +320,7 @@ def test_existing_public_calls_get_a_random_animal_identity(
                 timestamp, timestamp, timestamp,
             ),
         )
-        _migration_027_caller_identities(database)
+        _migration_028_caller_identities(database)
         upgraded = database.execute(
             "SELECT c.caller_identity_id,i.handle,i.user_id,i.status "
             "FROM community_calls c JOIN caller_identities i "

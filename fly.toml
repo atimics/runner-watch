@@ -1,14 +1,19 @@
 app = "runner-watch-ratimics"
 primary_region = "sjc"
+kill_signal = "SIGTERM"
+kill_timeout = 30
 
 [build]
   dockerfile = "Dockerfile"
 
 [deploy]
   release_command = "stonks-migrate"
+  strategy = "rolling"
+  max_unavailable = 1
+  wait_timeout = "10m"
 
 [processes]
-  web = "uvicorn runner_web.main:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips '*' --no-access-log"
+  web = "uvicorn runner_web.main:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips '*' --timeout-graceful-shutdown 25 --no-access-log"
   worker = "env PROCESS_ROLE=worker stonks-worker"
 
 [env]
@@ -49,6 +54,13 @@ primary_region = "sjc"
     grace_period = "20s"
     method = "GET"
     path = "/health"
+
+  [[http_service.machine_checks]]
+    image = "curlimages/curl"
+    entrypoint = ["/bin/sh", "-c"]
+    command = ["curl --fail --silent --show-error --max-time 5 http://[$FLY_TEST_MACHINE_IP]:8080/health"]
+    kill_signal = "SIGKILL"
+    kill_timeout = "5s"
 
 [[vm]]
   processes = ["web"]

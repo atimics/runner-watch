@@ -7,9 +7,10 @@ from typing import Any
 from runner_web.db import connection
 
 DAILY_CLAIM_AMOUNT = 100
-REPORT_COST = 10
-COMMENT_COST = 5
+REPORT_COST = 100
+COMMENT_COST = 10
 PUBLISH_REPORT_REWARD = 50
+REPORT_EXCLUSIVE_HOURS = 1
 
 
 class InsufficientFlashError(ValueError):

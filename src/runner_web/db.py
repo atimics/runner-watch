@@ -1560,7 +1560,26 @@ def _migration_025_flash_wallet(db: DatabaseConnection) -> None:
     )
 
 
-def _migration_026_gdpr_privacy(db: DatabaseConnection) -> None:
+def _migration_026_daily_report_alpha(db: DatabaseConnection) -> None:
+    """Make each ticker's daily Flash report exclusive for its first hour."""
+
+    for definition in (
+        "report_day TEXT",
+        "exclusive_until TEXT",
+    ):
+        _ensure_column(db, "research_commissions", definition)
+    db.executescript(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS research_commissions_daily_actor
+            ON research_commissions(ticker,actor_id,report_day)
+            WHERE report_day IS NOT NULL AND status IN ('running','complete');
+        CREATE INDEX IF NOT EXISTS research_commissions_daily_visibility
+            ON research_commissions(report_day,visibility,exclusive_until);
+        """
+    )
+
+
+def _migration_027_gdpr_privacy(db: DatabaseConnection) -> None:
     """Remove passive profiles and replace global public names with thread aliases."""
 
     db.executescript(
@@ -1593,7 +1612,7 @@ def _migration_026_gdpr_privacy(db: DatabaseConnection) -> None:
         db.execute(f"DELETE FROM {table}")
 
 
-def _migration_027_caller_identities(db: DatabaseConnection) -> None:
+def _migration_028_caller_identities(db: DatabaseConnection) -> None:
     """Give accounts unlinkable public caller IDs with permanent name tombstones."""
 
     db.executescript(
@@ -1655,7 +1674,7 @@ def _migration_027_caller_identities(db: DatabaseConnection) -> None:
     )
 
 
-def _migration_028_signal_caller_identities(db: DatabaseConnection) -> None:
+def _migration_029_signal_caller_identities(db: DatabaseConnection) -> None:
     """Stop exposing account names on human calls and require a separate caller ID."""
 
     _ensure_column(
@@ -1723,7 +1742,7 @@ def _migrated_caller_identity(
     raise RuntimeError("The caller-ID name space is full")
 
 
-def _migration_029_drop_passive_tracking(db: DatabaseConnection) -> None:
+def _migration_030_drop_passive_tracking(db: DatabaseConnection) -> None:
     """Permanently remove the legacy behavioural tracking schema."""
 
     db.executescript(
@@ -1771,10 +1790,11 @@ MIGRATIONS = (
     Migration(23, "private_flash_commissions", _migration_023_private_flash_commissions),
     Migration(24, "stripe_billing", _migration_024_stripe_billing),
     Migration(25, "flash_wallet", _migration_025_flash_wallet),
-    Migration(26, "gdpr_privacy", _migration_026_gdpr_privacy),
-    Migration(27, "caller_identities", _migration_027_caller_identities),
-    Migration(28, "signal_caller_identities", _migration_028_signal_caller_identities),
-    Migration(29, "drop_passive_tracking", _migration_029_drop_passive_tracking),
+    Migration(26, "daily_report_alpha", _migration_026_daily_report_alpha),
+    Migration(27, "gdpr_privacy", _migration_027_gdpr_privacy),
+    Migration(28, "caller_identities", _migration_028_caller_identities),
+    Migration(29, "signal_caller_identities", _migration_029_signal_caller_identities),
+    Migration(30, "drop_passive_tracking", _migration_030_drop_passive_tracking),
 )
 
 

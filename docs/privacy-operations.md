@@ -25,7 +25,7 @@ The app must not write visitor IDs, page views, dwell time, share events, seen s
 - Authentication challenges: expire after 5 minutes and prune daily.
 - Unfinished accounts with no passkey: prune after 15 minutes.
 - Login sessions: expire after 30 days and prune daily.
-- Passive tracking tables: permanently dropped by database migration 29. The retention job checks that they remain absent and never writes them.
+- Passive tracking tables: permanently dropped by database migration 30. The retention job checks that they remain absent and never writes them.
 - Stripe webhook event IDs: prune after 400 days.
 - Member content: keep until the member deletes the item or account, unless a documented legal hold applies.
 - Deleted caller identities: keep only the random animal handle, tombstone state, and deletion time. Remove owner, payment reference, claim time, cost, and calls.

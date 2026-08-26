@@ -49,7 +49,7 @@ ROADMAP_ITEMS = (
     RoadmapItem(
         "flash-wallet",
         "Flash credit wallet",
-        "Claim 100 Flash each day, spend it on AI actions, and earn it by publishing reports.",
+        "Claim 100 Flash each day, lock one ticker's daily alpha for an hour, or publish it early.",
         "own",
         "live",
     ),
