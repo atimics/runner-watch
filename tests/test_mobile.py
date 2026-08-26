@@ -19,9 +19,7 @@ from runner_web.flash_wallet import claim_daily_flash, wallet_for_user
 from runner_web.ingestion import record_source_batch
 from runner_web.main import (
     APP_ORIGIN,
-    PulseAttentionItem,
     PublishSignal,
-    TickerCommentPayload,
     _chart_annotations,
     _commission_research,
     _evidence_gate,
@@ -29,9 +27,7 @@ from runner_web.main import (
     _previous_trade_states,
     _pulse_entry_markers,
     _pulse_label,
-    _record_activity,
     _stored_market_risk_contexts,
-    _write_pulse_attention,
     alpha_board_data,
     alpha_comments_data,
     comments_for_ticker,
@@ -40,7 +36,6 @@ from runner_web.main import (
     get_signal,
     publish_signal,
     pulse_data,
-    pulse_notification_data,
     radar_data,
     register_options,
     templates,
@@ -60,8 +55,8 @@ def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
     assert "Pulse updated" not in pulse_template
     assert "TickerRow.fingerprint" not in pulse_template
     assert "New since you looked" not in pulse_template
-    assert "exposureQueue" in pulse_template
-    assert "body:JSON.stringify({entries})" in pulse_template
+    assert "exposureQueue" not in pulse_template
+    assert "body:JSON.stringify({entries})" not in pulse_template
     assert "1 new event" in radar_template
     assert "pendingUpdateTickers" in radar_template
 
@@ -421,8 +416,6 @@ def test_ticker_page_does_not_add_a_guest_research_action(
             "root_path": "",
         }
     )
-    request.state.visitor_id = "visitor-abcdefghijklmnopqrstuv"
-
     response = web_main.ticker_page("ONE", request, None)
 
     assert response.status_code == 200
@@ -479,8 +472,8 @@ def test_pulse_reuses_the_shared_base_payload(
 
     monkeypatch.setattr(web_main, "_pulse_data_uncached", counted)
 
-    assert pulse_data(profile="v:first")["rows"][0]["ticker"] == "ONE"
-    assert pulse_data(profile="v:second")["rows"][0]["ticker"] == "ONE"
+    assert pulse_data()["rows"][0]["ticker"] == "ONE"
+    assert pulse_data()["rows"][0]["ticker"] == "ONE"
     assert calls == 1
 
 
@@ -506,8 +499,8 @@ def test_radar_reuses_the_shared_base_payload(
 
     monkeypatch.setattr(web_main, "_radar_base_data_uncached", counted)
 
-    assert radar_data(visitor_id="first")[0]["ticker"] == "ONE"
-    assert radar_data(visitor_id="second")[0]["ticker"] == "ONE"
+    assert radar_data()[0]["ticker"] == "ONE"
+    assert radar_data()[0]["ticker"] == "ONE"
     assert calls == 1
 
 
@@ -524,14 +517,20 @@ def test_alpha_reuses_shared_public_call_data(
             ("caller", "caller", "Caller", "active", captured_at),
         )
         database.execute(
-            "INSERT INTO comment_pseudonyms(user_id,pseudonym,created_at) VALUES(?,?,?)",
-            ("caller", "GreenWolf11", captured_at),
+            "INSERT INTO caller_identities("
+            "id,handle,user_id,status,claim_cost_cents,claimed_at) "
+            "VALUES(?,?,?,'active',0,?)",
+            ("caller-id", "green-wolf", "caller", captured_at),
         )
         database.execute(
             """INSERT INTO community_calls(
-                id,public_id,user_id,ticker,entry_price,entry_at,status,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,'active',?,?)""",
-            ("call", "public-call", "caller", "ONE", 1.25, captured_at, captured_at, captured_at),
+                id,public_id,user_id,caller_identity_id,ticker,entry_price,entry_at,
+                status,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,'active',?,?)""",
+            (
+                "call", "public-call", "caller", "caller-id", "ONE", 1.25,
+                captured_at, captured_at, captured_at,
+            ),
         )
     web_main.ALPHA_DATA_CACHE.clear()
     original = web_main._alpha_base_data_uncached
@@ -544,8 +543,8 @@ def test_alpha_reuses_shared_public_call_data(
 
     monkeypatch.setattr(web_main, "_alpha_base_data_uncached", counted)
 
-    first = alpha_board_data("v:first")
-    second = alpha_board_data("v:second")
+    first = alpha_board_data()
+    second = alpha_board_data()
 
     assert first["rows"][0]["active_calls"] == 1
     assert second["rows"] == first["rows"]
@@ -592,14 +591,20 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
             ("fan", "fan", "Fan", "active", captured_at),
         )
         database.execute(
-            "INSERT INTO comment_pseudonyms(user_id,pseudonym,created_at) VALUES(?,?,?)",
-            ("fan", "GreenWolf44", captured_at),
+            "INSERT INTO caller_identities("
+            "id,handle,user_id,status,claim_cost_cents,claimed_at) "
+            "VALUES(?,?,?,'active',0,?)",
+            ("fan-caller-id", "green-wolf", "fan", captured_at),
         )
         database.execute(
             """INSERT INTO community_calls(
-                id,public_id,user_id,ticker,entry_price,entry_at,status,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,'active',?,?)""",
-            ("flow-call", "flow-public", "fan", "FLOW", 1.0, captured_at, captured_at, captured_at),
+                id,public_id,user_id,caller_identity_id,ticker,entry_price,entry_at,
+                status,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,'active',?,?)""",
+            (
+                "flow-call", "flow-public", "fan", "fan-caller-id", "FLOW", 1.0,
+                captured_at, captured_at, captured_at,
+            ),
         )
     fetch = SourceFetch.success(
         source="test_discovery",
@@ -642,8 +647,8 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
     )
 
     pulse = pulse_data()["rows"][0]
-    radar = radar_data(visitor_id="reader")[0]
-    alpha = alpha_board_data("v:fan")["rows"][0]
+    radar = radar_data()[0]
+    alpha = alpha_board_data()["rows"][0]
 
     assert pulse["score_components"] == {
         "market": 40.0,
@@ -1134,7 +1139,7 @@ def test_radar_excludes_events_for_tickers_not_in_pulse(
             ("user", "FILE", filed_at),
         )
 
-    result = radar_data("user")
+    result = radar_data()
 
     assert result == []
 
@@ -1158,28 +1163,31 @@ def test_alpha_ranks_public_calls_and_shows_pnl(
             ],
         )
         database.executemany(
-            "INSERT INTO comment_pseudonyms(user_id,pseudonym,created_at) VALUES(?,?,?)",
+            "INSERT INTO caller_identities("
+            "id,handle,user_id,status,claim_cost_cents,claimed_at) "
+            "VALUES(?,?,?,'active',0,?)",
             [
-                ("caller-one", "GreenWolf11", captured_at),
-                ("caller-two", "GreenWolf22", captured_at),
-                ("caller-three", "GreenWolf33", captured_at),
+                ("identity-one", "green-wolf", "caller-one", captured_at),
+                ("identity-two", "quiet-wolf", "caller-two", captured_at),
+                ("identity-three", "bright-wolf", "caller-three", captured_at),
             ],
         )
         database.executemany(
             """INSERT INTO community_calls(
-                id,public_id,user_id,ticker,entry_price,entry_at,status,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,'active',?,?)""",
+                id,public_id,user_id,caller_identity_id,ticker,entry_price,entry_at,
+                status,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,'active',?,?)""",
             [
                 (
-                    "call-one", "public-one", "caller-one", "ONE", 1.0,
+                    "call-one", "public-one", "caller-one", "identity-one", "ONE", 1.0,
                     captured_at, captured_at, captured_at,
                 ),
                 (
-                    "call-two", "public-two", "caller-two", "ONE", 1.2,
+                    "call-two", "public-two", "caller-two", "identity-two", "ONE", 1.2,
                     captured_at, captured_at, captured_at,
                 ),
                 (
-                    "call-three", "public-three", "caller-three", "TWO", 2.0,
+                    "call-three", "public-three", "caller-three", "identity-three", "TWO", 2.0,
                     captured_at, captured_at, captured_at,
                 ),
             ],
@@ -1192,7 +1200,7 @@ def test_alpha_ranks_public_calls_and_shows_pnl(
             ("alpha-comment", "ONE", "commenter", "Watching ONE", "public", captured_at),
         )
 
-    board = alpha_board_data("v:first")
+    board = alpha_board_data()
 
     assert [row["ticker"] for row in board["rows"]] == ["ONE", "TWO"]
     assert board["rows"][0]["active_calls"] == 2
@@ -1200,7 +1208,7 @@ def test_alpha_ranks_public_calls_and_shows_pnl(
     assert board["rows"][0]["comment_count"] == 1
     assert board["rows"][0]["engagement_count"] == 4
     assert board["rows"][0]["is_leader"] is True
-    assert board["calls"][0]["pseudonym"].startswith("GreenWolf")
+    assert board["calls"][0]["caller_handle"].endswith("wolf")
     assert board["total_calls"] == 3
     assert board["total_comments"] == 1
 
@@ -1231,7 +1239,7 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
     monkeypatch.setattr(
         web_main,
         "_generate_ticker_comment_text",
-        lambda ticker, user_id: (
+        lambda ticker: (
             "My read is above VWAP, but low volume is the risk.",
             "test/model",
         ),
@@ -1255,14 +1263,13 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
     assert payload["comment"]["ai_generated"] is True
     assert payload["comment"]["generation_model"] == "test/model"
     assert payload["balance"] == 95
-    assert payload["comment"]["pseudonym"] == web_main.comment_pseudonym("feedback-user")
-    assert payload["comment"]["pseudonym"].count("-") == 1
-    assert payload["comment"]["pseudonym"].islower()
-    assert payload["comment"]["pseudonym"] not in {"chartreader", "Chart Reader"}
+    assert any(ord(character) > 10_000 for character in payload["comment"]["alias"])
+    assert payload["comment"]["alias"] not in {"chartreader", "Chart Reader"}
     assert "username" not in payload["comment"]
     assert "display_name" not in payload["comment"]
-    assert comments_for_ticker("ONE") == [payload["comment"]]
-    assert alpha_comments_data() == [{**payload["comment"], "ticker": "ONE"}]
+    public_comment = {**payload["comment"], "is_owner": False}
+    assert comments_for_ticker("ONE") == [public_comment]
+    assert alpha_comments_data() == [{**public_comment, "ticker": "ONE"}]
     assert "radar_case" not in payload
 
 
@@ -1286,9 +1293,7 @@ def test_radar_orders_events_by_time_not_activity(tmp_path: Path, monkeypatch: M
     insert_scored_snapshot(
         "activity-two-snapshot", "activity-run", "TWO", 60, 2, captured_at.isoformat()
     )
-    _record_activity("v:device", "TWO", "share")
-
-    result = radar_data(visitor_id="device")
+    result = radar_data()
 
     assert result
     assert result[0]["ticker"] == "ONE"
@@ -1414,7 +1419,7 @@ def test_commissioned_report_stays_private_without_storing_the_openrouter_key(
     assert report["actor"]["ladder_size"] == 4
     assert get_commission(report["public_id"])["summary"] == "A source-bound summary."
     assert wallet_for_user("commissioner")["balance"] == 90
-    assert "commissions" not in alpha_board_data("v:reader")
+    assert "commissions" not in alpha_board_data()
     with connection() as database:
         columns = {row[1] for row in database.execute("PRAGMA table_info(research_commissions)")}
         stored = database.execute("SELECT * FROM research_commissions").fetchone()
@@ -1673,7 +1678,7 @@ def test_legacy_commission_request_uses_flash_model_with_a_minimal_prompt(
     assert request_payload["actor"]["id"] == "kol-flash"
     assert request_payload["actor"]["model"] == "z-ai/glm-5.3"
     assert body["response_format"] == {"type": "json_object"}
-    assert body["provider"] == {"require_parameters": True}
+    assert body["provider"] == {"require_parameters": True, "zdr": True}
     assert body["reasoning_effort"] == "high"
     assert "temperature" not in body
     assert "tools" not in body

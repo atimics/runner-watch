@@ -62,7 +62,6 @@ def _public_passkeys(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def export_user_data(user_id: str) -> dict[str, Any]:
     """Return a portable copy without authentication secrets or session hashes."""
 
-    profile = f"u:{user_id}"
     with connection() as database:
         tables = _tables(database)
         account_rows = _rows(database, tables, "users", "id=?", (user_id,))
@@ -96,8 +95,6 @@ def export_user_data(user_id: str) -> dict[str, Any]:
             (user_id,),
             order_by="claimed_at",
         )
-        caller_identity_ids = [str(row["id"]) for row in caller_identities]
-
         def related(table: str, column: str, values: list[str]) -> list[dict[str, Any]]:
             if not values or table not in tables:
                 return []
@@ -146,8 +143,13 @@ def export_user_data(user_id: str) -> dict[str, Any]:
                 (user_id,),
                 order_by="claimed_at",
             ),
-            "community_calls": related(
-                "community_calls", "caller_identity_id", caller_identity_ids
+            "community_calls": _rows(
+                database,
+                tables,
+                "community_calls",
+                "user_id=?",
+                (user_id,),
+                order_by="created_at",
             ),
             "signals": _rows(
                 database,
@@ -189,20 +191,25 @@ def export_user_data(user_id: str) -> dict[str, Any]:
             "research_stages": related(
                 "research_stage_runs", "commission_id", commission_ids
             ),
-            "legacy_tracking": {
-                "activity": _rows(
-                    database, tables, "activity_events", "profile_id=?", (profile,)
-                ),
-                "radar_seen": _rows(
-                    database, tables, "radar_seen", "profile_id=?", (profile,)
-                ),
-                "pulse_attention": _rows(
-                    database, tables, "pulse_profile_state", "profile_id=?", (profile,)
-                ),
-                "reactions": _rows(
-                    database, tables, "ticker_reactions", "profile_id=?", (profile,)
-                ),
-            },
+            "flash_wallet": _rows(
+                database, tables, "flash_wallets", "user_id=?", (user_id,)
+            ),
+            "flash_transactions": _rows(
+                database,
+                tables,
+                "flash_transactions",
+                "user_id=?",
+                (user_id,),
+                order_by="created_at",
+            ),
+            "flash_report_requests": _rows(
+                database,
+                tables,
+                "flash_report_requests",
+                "user_id=?",
+                (user_id,),
+                order_by="created_at",
+            ),
         }
 
 
@@ -251,7 +258,6 @@ def prune_personal_data(at: datetime | None = None) -> dict[str, int]:
 def delete_user_data(user_id: str) -> dict[str, Any]:
     """Delete one account and all local data that can identify or describe it."""
 
-    profile = f"u:{user_id}"
     with connection() as database:
         tables = _tables(database)
         if "users" not in tables:
@@ -265,6 +271,7 @@ def delete_user_data(user_id: str) -> dict[str, Any]:
                 database.execute(f"DELETE FROM {table} WHERE {where}", parameters)
 
         # Remove dependent records before older foreign keys that do not cascade.
+        delete("flash_report_requests", "user_id=?", (user_id,))
         delete(
             "research_stage_runs",
             "commission_id IN (SELECT id FROM research_commissions WHERE user_id=?)",
@@ -297,6 +304,7 @@ def delete_user_data(user_id: str) -> dict[str, Any]:
         delete("ticker_comments", "user_id=?", (user_id,))
         delete("public_aliases", "user_id=?", (user_id,))
         delete("comment_pseudonyms", "user_id=?", (user_id,))
+        delete("community_calls", "user_id=?", (user_id,))
         if "caller_identities" in tables:
             caller_ids = [
                 str(row["id"])
@@ -316,10 +324,10 @@ def delete_user_data(user_id: str) -> dict[str, Any]:
                     (_iso(), caller_id),
                 )
         delete("caller_identity_claims", "user_id=?", (user_id,))
+        delete("flash_transactions", "user_id=?", (user_id,))
+        delete("flash_wallets", "user_id=?", (user_id,))
         delete("user_positions", "user_id=?", (user_id,))
         delete("watches", "user_id=?", (user_id,))
-        for table in PASSIVE_TRACKING_TABLES:
-            delete(table, "profile_id=?", (profile,))
         delete("sessions", "user_id=?", (user_id,))
         delete("auth_challenges", "user_id=?", (user_id,))
         delete("passkeys", "user_id=?", (user_id,))

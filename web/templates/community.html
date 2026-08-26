@@ -56,7 +56,7 @@
     <div class="alpha-section-head"><h2>Calls</h2><span>Entry, mark and PnL</span></div>
     {% for call in board.calls %}
     <article class="public-call-row">
-      <a class="call-owner" href="/u/{{ call.pseudonym }}"><strong>{{ call.pseudonym }}</strong><small>{{ call.status }}</small></a>
+      <a class="call-owner" href="/u/{{ call.caller_handle }}"><strong>{{ call.caller_handle }}</strong><small>{{ call.status }}</small></a>
       <a class="call-ticker" href="/t/{{ call.ticker }}"><strong>{{ call.ticker }}</strong><small>Entry ${{ '%.4f'|format(call.entry_price) if call.entry_price < 1 else ('%.2f'|format(call.entry_price)) }}</small></a>
       <span class="call-pnl">{% if call.return_pct is not none %}<b class="{{ 'up' if call.return_pct >= 0 else 'down' }}">{{ '+' if call.return_pct >= 0 else '' }}{{ '%.1f'|format(call.return_pct) }}%</b><small>{% if call.mark_price is not none %}${{ '%.4f'|format(call.mark_price) if call.mark_price < 1 else ('%.2f'|format(call.mark_price)) }}{% endif %}</small>{% else %}<b>—</b><small>no mark</small>{% endif %}</span>
     </article>

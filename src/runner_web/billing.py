@@ -397,11 +397,10 @@ def process_webhook_event(event: Any) -> dict[str, Any]:
         handled = False
         if event_type == "checkout.session.completed":
             metadata = _get(data_object, "metadata", {}) or {}
-            handled = (
-                _apply_caller_id_checkout(database, data_object)
-                if _get(metadata, "purpose") == "caller_identity"
-                else _apply_checkout(database, data_object)
-            )
+            if _get(metadata, "purpose") == "caller_identity":
+                handled = _apply_caller_id_checkout(database, data_object)
+            elif STRIPE_BILLING_ENABLED:
+                handled = _apply_checkout(database, data_object)
         elif STRIPE_BILLING_ENABLED and event_type in {
             "customer.subscription.created",
             "customer.subscription.updated",

@@ -51,6 +51,7 @@ def test_public_app_has_a_complete_privacy_surface() -> None:
 
     assert 'VISITOR_COOKIE = "runner_visitor"' not in main_source
     assert "claim_visitor_profile" not in main_source
+    assert "TickerCommentPayload" not in main_source
     assert 'max_age=365 * 24 * 3600' not in main_source
     assert '@app.get("/privacy"' in main_source
     assert '@app.get("/api/account/export"' in main_source
@@ -78,9 +79,13 @@ def test_export_and_delete_cover_account_content_and_leave_anonymous_tombstone(
     timestamp = datetime.now(UTC).isoformat()
     with connection() as database:
         database.execute(
-            "INSERT INTO community_calls(id,caller_identity_id,ticker,body,status,created_at) "
-            "VALUES(?,?,?,?,?,?)",
-            ("gdpr-call", caller["id"], "ONE", "Public call", "public", timestamp),
+            "INSERT INTO community_calls("
+            "id,public_id,user_id,caller_identity_id,ticker,entry_price,entry_at,"
+            "status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'active',?,?)",
+            (
+                "gdpr-call", "gdpr-public", "gdpr-user", caller["id"], "ONE", 1.0,
+                timestamp, timestamp, timestamp,
+            ),
         )
 
     exported = export_user_data("gdpr-user")
@@ -89,7 +94,7 @@ def test_export_and_delete_cover_account_content_and_leave_anonymous_tombstone(
     assert exported["comments"][0]["body"] == "Public comment"
     assert exported["positions"][0]["ticker"] == "ONE"
     assert exported["caller_identities"][0]["handle"] == caller["handle"]
-    assert exported["community_calls"][0]["body"] == "Public call"
+    assert exported["community_calls"][0]["public_id"] == "gdpr-public"
     assert exported["passkeys"] == []
     assert "token_hash" not in str(exported)
 
@@ -201,9 +206,13 @@ def test_one_account_can_own_paid_animal_caller_ids_and_delete_them(
 
     with connection() as database:
         database.execute(
-            "INSERT INTO community_calls(id,caller_identity_id,ticker,body,status,created_at) "
-            "VALUES(?,?,?,?,?,?)",
-            ("call-one", second["id"], "ONE", "A public call", "public", timestamp),
+            "INSERT INTO community_calls("
+            "id,public_id,user_id,caller_identity_id,ticker,entry_price,entry_at,"
+            "status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'active',?,?)",
+            (
+                "call-one", "call-public", "caller-owner", second["id"], "ONE", 1.0,
+                timestamp, timestamp, timestamp,
+            ),
         )
 
     deleted = delete_caller_id("caller-owner", second["id"])

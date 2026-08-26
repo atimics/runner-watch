@@ -18,7 +18,23 @@ def _public_id() -> str:
 
 
 def _call(row: Any, current_price: float | None = None) -> dict[str, Any]:
-    item = dict(row)
+    stored = dict(row)
+    item = {
+        key: stored.get(key)
+        for key in (
+            "public_id",
+            "ticker",
+            "side",
+            "entry_price",
+            "entry_at",
+            "exit_price",
+            "exit_at",
+            "status",
+            "created_at",
+            "updated_at",
+            "caller_handle",
+        )
+    }
     mark_price = item["exit_price"] if item["status"] == "closed" else current_price
     item["mark_price"] = float(mark_price) if mark_price is not None else None
     item["return_pct"] = (
@@ -31,6 +47,7 @@ def _call(row: Any, current_price: float | None = None) -> dict[str, Any]:
 
 def create_call(
     user_id: str,
+    caller_identity_id: str,
     ticker: str,
     *,
     entry_price: float,
@@ -41,10 +58,19 @@ def create_call(
     call_id = str(uuid.uuid4())
     timestamp = _iso()
     with connection() as db:
+        identity = db.execute(
+            """
+            SELECT id,handle FROM caller_identities
+            WHERE id=? AND user_id=? AND status='active'
+            """,
+            (caller_identity_id, user_id),
+        ).fetchone()
+        if not identity:
+            raise PermissionError("Caller ID does not belong to this account")
         existing = db.execute(
             """
-            SELECT c.*,p.pseudonym FROM community_calls c
-            JOIN comment_pseudonyms p ON p.user_id=c.user_id
+            SELECT c.*,ci.handle AS caller_handle FROM community_calls c
+            JOIN caller_identities ci ON ci.id=c.caller_identity_id
             WHERE c.user_id=? AND c.ticker=? AND c.status='active'
             ORDER BY c.created_at DESC LIMIT 1
             """,
@@ -55,14 +81,15 @@ def create_call(
         inserted = db.execute(
             """
             INSERT INTO community_calls(
-                id,public_id,user_id,ticker,side,entry_price,entry_at,status,
+                id,public_id,user_id,caller_identity_id,ticker,side,entry_price,entry_at,status,
                 created_at,updated_at
-            ) VALUES(?,?,?,?, 'long',?,?,'active',?,?) ON CONFLICT DO NOTHING
+            ) VALUES(?,?,?,?,?, 'long',?,?,'active',?,?) ON CONFLICT DO NOTHING
             """,
             (
                 call_id,
                 _public_id(),
                 user_id,
+                caller_identity_id,
                 ticker,
                 entry_price,
                 entry_at,
@@ -73,16 +100,16 @@ def create_call(
         if inserted.rowcount == 1:
             row = db.execute(
                 """
-                SELECT c.*,p.pseudonym FROM community_calls c
-                JOIN comment_pseudonyms p ON p.user_id=c.user_id WHERE c.id=?
+                SELECT c.*,ci.handle AS caller_handle FROM community_calls c
+                JOIN caller_identities ci ON ci.id=c.caller_identity_id WHERE c.id=?
                 """,
                 (call_id,),
             ).fetchone()
         else:
             row = db.execute(
                 """
-                SELECT c.*,p.pseudonym FROM community_calls c
-                JOIN comment_pseudonyms p ON p.user_id=c.user_id
+                SELECT c.*,ci.handle AS caller_handle FROM community_calls c
+                JOIN caller_identities ci ON ci.id=c.caller_identity_id
                 WHERE c.user_id=? AND c.ticker=? AND c.status='active'
                 ORDER BY c.created_at DESC LIMIT 1
                 """,
@@ -100,8 +127,8 @@ def active_call_for_user(
     with connection() as db:
         row = db.execute(
             """
-            SELECT c.*,p.pseudonym FROM community_calls c
-            JOIN comment_pseudonyms p ON p.user_id=c.user_id
+            SELECT c.*,ci.handle AS caller_handle FROM community_calls c
+            JOIN caller_identities ci ON ci.id=c.caller_identity_id
             WHERE c.user_id=? AND c.ticker=? AND c.status='active'
             ORDER BY c.created_at DESC LIMIT 1
             """,
@@ -114,8 +141,8 @@ def call_for_user(user_id: str, public_id: str) -> dict[str, Any] | None:
     with connection() as db:
         row = db.execute(
             """
-            SELECT c.*,p.pseudonym FROM community_calls c
-            JOIN comment_pseudonyms p ON p.user_id=c.user_id
+            SELECT c.*,ci.handle AS caller_handle FROM community_calls c
+            JOIN caller_identities ci ON ci.id=c.caller_identity_id
             WHERE c.user_id=? AND c.public_id=?
             """,
             (user_id, public_id),
@@ -157,8 +184,8 @@ def close_call(
             return None
         row = db.execute(
             """
-            SELECT c.*,p.pseudonym FROM community_calls c
-            JOIN comment_pseudonyms p ON p.user_id=c.user_id
+            SELECT c.*,ci.handle AS caller_handle FROM community_calls c
+            JOIN caller_identities ci ON ci.id=c.caller_identity_id
             WHERE c.user_id=? AND c.public_id=?
             """,
             (user_id, public_id),
@@ -175,8 +202,8 @@ def calls_for_ticker(
     with connection() as db:
         rows = db.execute(
             """
-            SELECT c.*,p.pseudonym FROM community_calls c
-            JOIN comment_pseudonyms p ON p.user_id=c.user_id
+            SELECT c.*,ci.handle AS caller_handle FROM community_calls c
+            JOIN caller_identities ci ON ci.id=c.caller_identity_id
             WHERE c.ticker=?
             ORDER BY CASE WHEN c.status='active' THEN 0 ELSE 1 END,
                      c.updated_at DESC,c.id DESC LIMIT ?
@@ -194,8 +221,8 @@ def recent_calls(
     with connection() as db:
         rows = db.execute(
             """
-            SELECT c.*,p.pseudonym FROM community_calls c
-            JOIN comment_pseudonyms p ON p.user_id=c.user_id
+            SELECT c.*,ci.handle AS caller_handle FROM community_calls c
+            JOIN caller_identities ci ON ci.id=c.caller_identity_id
             ORDER BY c.updated_at DESC,c.id DESC LIMIT ?
             """,
             (max(1, min(limit, 200)),),
@@ -205,24 +232,28 @@ def recent_calls(
 
 
 def caller_calls(
-    pseudonym: str,
+    caller_handle: str,
     *,
     current_prices: dict[str, float | None] | None = None,
     limit: int = 200,
 ) -> list[dict[str, Any]] | None:
     with connection() as db:
-        owner = db.execute(
-            "SELECT user_id,pseudonym FROM comment_pseudonyms WHERE pseudonym=?",
-            (pseudonym,),
+        identity = db.execute(
+            """
+            SELECT id,handle FROM caller_identities
+            WHERE handle=? AND status='active'
+            """,
+            (caller_handle,),
         ).fetchone()
-        if not owner:
+        if not identity:
             return None
         rows = db.execute(
             """
-            SELECT c.*,? AS pseudonym FROM community_calls c
-            WHERE c.user_id=? ORDER BY c.updated_at DESC,c.id DESC LIMIT ?
+            SELECT c.*,? AS caller_handle FROM community_calls c
+            WHERE c.caller_identity_id=?
+            ORDER BY c.updated_at DESC,c.id DESC LIMIT ?
             """,
-            (pseudonym, owner["user_id"], max(1, min(limit, 500))),
+            (caller_handle, identity["id"], max(1, min(limit, 500))),
         ).fetchall()
     marks = current_prices or {}
     return [_call(row, marks.get(str(row["ticker"]))) for row in rows]

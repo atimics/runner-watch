@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
+import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -17,7 +19,7 @@ from runner_web.ai_kol import (
     model_display_name,
 )
 from runner_web.database import DatabaseConnection, initialize_sqlite, open_database
-from runner_web.pseudonyms import ensure_scoped_alias
+from runner_web.pseudonyms import ADJECTIVES, ANIMALS, ensure_scoped_alias
 from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "data/runner-watch.db"))
@@ -1633,6 +1635,20 @@ def _migration_027_caller_identities(db: DatabaseConnection) -> None:
         "community_calls",
         "caller_identity_id TEXT REFERENCES caller_identities(id)",
     )
+    migrated_at = datetime.now(UTC).isoformat()
+    owners = db.execute(
+        "SELECT DISTINCT user_id FROM community_calls "
+        "WHERE caller_identity_id IS NULL"
+    ).fetchall()
+    for owner in owners:
+        caller_identity_id = _migrated_caller_identity(
+            db, str(owner["user_id"]), migrated_at
+        )
+        db.execute(
+            "UPDATE community_calls SET caller_identity_id=? "
+            "WHERE user_id=? AND caller_identity_id IS NULL",
+            (caller_identity_id, owner["user_id"]),
+        )
     db.execute(
         "CREATE INDEX IF NOT EXISTS community_calls_caller_time "
         "ON community_calls(caller_identity_id,updated_at DESC)"
@@ -1647,10 +1663,64 @@ def _migration_028_signal_caller_identities(db: DatabaseConnection) -> None:
         "signals",
         "caller_identity_id TEXT REFERENCES caller_identities(id)",
     )
+    migrated_at = datetime.now(UTC).isoformat()
+    owners = db.execute(
+        "SELECT DISTINCT user_id FROM signals "
+        "WHERE user_id IS NOT NULL AND caller_identity_id IS NULL"
+    ).fetchall()
+    for owner in owners:
+        caller_identity_id = _migrated_caller_identity(
+            db, str(owner["user_id"]), migrated_at
+        )
+        db.execute(
+            "UPDATE signals SET caller_identity_id=? "
+            "WHERE user_id=? AND caller_identity_id IS NULL",
+            (caller_identity_id, owner["user_id"]),
+        )
     db.execute(
         "CREATE INDEX IF NOT EXISTS signals_caller_identity "
         "ON signals(caller_identity_id,created_at DESC)"
     )
+
+
+def _migrated_caller_identity(
+    db: DatabaseConnection,
+    user_id: str,
+    claimed_at: str,
+) -> str:
+    """Give existing Calls one random animal ID without reviving account names."""
+
+    existing = db.execute(
+        "SELECT id FROM caller_identities "
+        "WHERE user_id=? AND status='active' ORDER BY claimed_at,id LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    if existing:
+        return str(existing["id"])
+    handles = [f"{adjective}-{animal}" for adjective in ADJECTIVES for animal in ANIMALS]
+    secrets.SystemRandom().shuffle(handles)
+    for handle in handles:
+        identity_id = str(uuid.uuid4())
+        inserted = db.execute(
+            """
+            INSERT INTO caller_identities(
+                id,handle,user_id,status,claim_cost_cents,claimed_at
+            ) VALUES(?,?,?,'active',0,?) ON CONFLICT DO NOTHING
+            """,
+            (identity_id, handle, user_id, claimed_at),
+        )
+        if inserted.rowcount == 0:
+            continue
+        db.execute(
+            """
+            INSERT INTO caller_identity_claims(
+                id,user_id,caller_identity_id,claim_cost_cents,free_claim,claimed_at
+            ) VALUES(?,?,?,0,1,?)
+            """,
+            (str(uuid.uuid4()), user_id, identity_id, claimed_at),
+        )
+        return identity_id
+    raise RuntimeError("The caller-ID name space is full")
 
 
 def _migration_029_drop_passive_tracking(db: DatabaseConnection) -> None:

@@ -10,6 +10,7 @@ from runner_web.db import (
     MIGRATION_LOCK_ID,
     MIGRATIONS,
     _acquire_migration_lock,
+    _migration_027_caller_identities,
     _release_migration_lock,
     connection,
     init_db,
@@ -294,6 +295,46 @@ def test_baseline_migration_upgrades_a_legacy_database(
         versions = database.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
     assert "plan" in user_columns
     assert versions == len(MIGRATIONS)
+
+
+def test_existing_public_calls_get_a_random_animal_identity(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "call-upgrade.db")
+    init_db()
+    timestamp = "2026-08-26T00:00:00+00:00"
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) "
+            "VALUES(?,?,?,?,?)",
+            ("legacy-caller", "old_account", "Old Account", "active", timestamp),
+        )
+        database.execute(
+            "INSERT INTO community_calls("
+            "id,public_id,user_id,ticker,entry_price,entry_at,status,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,'active',?,?)",
+            (
+                "old-call", "old-public", "legacy-caller", "ONE", 1.0,
+                timestamp, timestamp, timestamp,
+            ),
+        )
+        _migration_027_caller_identities(database)
+        upgraded = database.execute(
+            "SELECT c.caller_identity_id,i.handle,i.user_id,i.status "
+            "FROM community_calls c JOIN caller_identities i "
+            "ON i.id=c.caller_identity_id WHERE c.id='old-call'"
+        ).fetchone()
+        claim = database.execute(
+            "SELECT free_claim,claim_cost_cents FROM caller_identity_claims "
+            "WHERE user_id='legacy-caller'"
+        ).fetchone()
+
+    assert upgraded["caller_identity_id"]
+    assert "-" in upgraded["handle"]
+    assert upgraded["handle"] != "old_account"
+    assert upgraded["user_id"] == "legacy-caller"
+    assert upgraded["status"] == "active"
+    assert dict(claim) == {"free_claim": 1, "claim_cost_cents": 0}
 
 
 def test_thesis_source_columns_repair_an_already_applied_migration(

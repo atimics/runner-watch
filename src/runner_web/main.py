@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-from fastapi import BackgroundTasks, Cookie, FastAPI, HTTPException, Request
+from fastapi import Cookie, FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -55,15 +55,6 @@ from runner_watch.universe import penny_runner_universe
 from runner_web import db as runner_db
 from runner_web.ai_kol import FLASH, AIKol, actor_snapshot
 from runner_web.base_rates import matched_market_base_rates
-from runner_web.calls import (
-    active_call_for_user,
-    call_for_user,
-    call_stats,
-    caller_calls,
-    close_call,
-    create_call,
-    recent_calls,
-)
 from runner_web.billing import (
     caller_id_price_label,
     construct_webhook_event,
@@ -76,6 +67,15 @@ from runner_web.caller_ids import (
     caller_ids_for_user,
     claim_caller_id,
     delete_caller_id,
+)
+from runner_web.calls import (
+    active_call_for_user,
+    call_for_user,
+    call_stats,
+    caller_calls,
+    close_call,
+    create_call,
+    recent_calls,
 )
 from runner_web.calls import (
     calls_for_ticker as community_calls_for_ticker,
@@ -116,7 +116,7 @@ from runner_web.outcomes import (
     refresh_outcomes,
     refresh_scan_outcomes,
 )
-from runner_web.privacy import delete_user_data, export_user_data, prune_personal_data
+from runner_web.privacy import delete_user_data, export_user_data
 from runner_web.product_catalog import roadmap_snapshot
 from runner_web.product_policy import EVIDENCE_GATE, OPERATIONS
 from runner_web.pseudonyms import ensure_scoped_alias
@@ -160,9 +160,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0") == "1"
 PROCESS_ROLE = os.getenv("PROCESS_ROLE", "all").strip().lower()
 ROOT = Path(os.getenv("RUNNER_ROOT", Path.cwd()))
 SESSION_COOKIE = "runner_session"
-VISITOR_COOKIE = "runner_visitor"
 TICKER_RE = re.compile(r"^[A-Z0-9.-]{1,12}$")
-VISITOR_RE = re.compile(r"^[A-Za-z0-9_-]{20,80}$")
 AI_REPORT_MODEL = os.getenv("AI_REPORT_MODEL", "gpt-5.6-terra")
 AI_REPORT_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
@@ -204,7 +202,6 @@ EASTERN = ZoneInfo("America/New_York")
 BACKGROUND_SCAN_INTERVAL_SECONDS = max(
     120, int(os.getenv("BACKGROUND_SCAN_INTERVAL_SECONDS", "180"))
 )
-PULSE_NOTIFICATION_WINDOW = timedelta(hours=12)
 PULSE_CACHE_TTL_SECONDS = max(
     5.0, float(os.getenv("PULSE_CACHE_TTL_SECONDS", "60"))
 )
@@ -477,73 +474,6 @@ def require_user(session_token: str | None) -> dict[str, Any]:
     return user
 
 
-def profile_id(request: Request, user: dict[str, Any] | None = None) -> str:
-    if user:
-        return f"u:{user['id']}"
-    return f"v:{request.state.visitor_id}"
-
-
-def claim_visitor_profile(request: Request, user: dict[str, Any]) -> str:
-    target = profile_id(request, user)
-    source = profile_id(request)
-    if source == target:
-        return target
-    with connection() as db:
-        has_source_data = db.execute(
-            """
-            SELECT 1
-            WHERE EXISTS(SELECT 1 FROM activity_events WHERE profile_id=?)
-               OR EXISTS(SELECT 1 FROM radar_seen WHERE profile_id=?)
-               OR EXISTS(SELECT 1 FROM pulse_profile_state WHERE profile_id=?)
-            """,
-            (source, source, source),
-        ).fetchone()
-        if not has_source_data:
-            return target
-        db.execute("UPDATE activity_events SET profile_id=? WHERE profile_id=?", (target, source))
-        db.execute(
-            """
-            INSERT INTO radar_seen(profile_id,ticker,last_seen_at)
-            SELECT ?,ticker,last_seen_at FROM radar_seen WHERE profile_id=?
-            ON CONFLICT(profile_id,ticker) DO UPDATE SET
-                last_seen_at=MAX(radar_seen.last_seen_at,excluded.last_seen_at)
-            """,
-            (target, source),
-        )
-        db.execute("DELETE FROM radar_seen WHERE profile_id=?", (source,))
-        db.execute(
-            """
-            INSERT INTO pulse_profile_state(
-                profile_id,ticker,entered_at,first_seen_at,last_seen_at,
-                inspected_at,notified_at
-            )
-            SELECT ?,ticker,entered_at,first_seen_at,last_seen_at,
-                   inspected_at,notified_at
-            FROM pulse_profile_state WHERE profile_id=?
-            ON CONFLICT(profile_id,ticker,entered_at) DO UPDATE SET
-                first_seen_at=COALESCE(
-                    pulse_profile_state.first_seen_at,excluded.first_seen_at
-                ),
-                last_seen_at=CASE
-                    WHEN pulse_profile_state.last_seen_at IS NULL
-                        THEN excluded.last_seen_at
-                    WHEN excluded.last_seen_at IS NULL
-                        THEN pulse_profile_state.last_seen_at
-                    ELSE MAX(pulse_profile_state.last_seen_at,excluded.last_seen_at)
-                END,
-                inspected_at=COALESCE(
-                    pulse_profile_state.inspected_at,excluded.inspected_at
-                ),
-                notified_at=COALESCE(
-                    pulse_profile_state.notified_at,excluded.notified_at
-                )
-            """,
-            (target, source),
-        )
-        db.execute("DELETE FROM pulse_profile_state WHERE profile_id=?", (source,))
-    return target
-
-
 def create_session(user_id: str, response: JSONResponse) -> None:
     raw_token = secrets.token_urlsafe(32)
     created = now()
@@ -697,20 +627,9 @@ async def security_headers(request: Request, call_next: Any) -> Response:
     started = time.perf_counter()
     nonce = secrets.token_urlsafe(16)
     request.state.csp_nonce = nonce
-    raw_visitor = request.cookies.get(VISITOR_COOKIE, "")
-    visitor_id = raw_visitor if VISITOR_RE.fullmatch(raw_visitor) else secrets.token_urlsafe(24)
-    request.state.visitor_id = visitor_id
     response = await call_next(request)
-    if visitor_id != raw_visitor:
-        response.set_cookie(
-            VISITOR_COOKIE,
-            visitor_id,
-            max_age=365 * 24 * 3600,
-            httponly=True,
-            secure=COOKIE_SECURE,
-            samesite="lax",
-            path="/",
-        )
+    if "runner_visitor" in request.cookies:
+        response.delete_cookie("runner_visitor", path="/")
     response.headers["X-Content-Type-Options"] = "nosniff"
     panel_path = request.url.path.startswith(("/t/", "/research/", "/s/"))
     frame_ancestors = "'self'" if panel_path else "'none'"
@@ -759,23 +678,12 @@ class ReportSignal(BaseModel):
     reason: str = Field(min_length=3, max_length=240)
 
 
-class ActivityPayload(BaseModel):
-    ticker: str
-    event_type: str = Field(pattern="^(view|dwell|share)$")
-    seconds: int = Field(default=0, ge=0, le=3600)
-
-
-class PulseAttentionItem(BaseModel):
-    ticker: str = Field(min_length=1, max_length=12)
-    entered_at: str = Field(min_length=10, max_length=64)
-
-
-class PulseAttentionPayload(BaseModel):
-    entries: list[PulseAttentionItem] = Field(min_length=1, max_length=50)
-
-
 class AccountDeletePayload(BaseModel):
     confirmation: Literal["DELETE MY ACCOUNT"]
+
+
+class CommunityCallPayload(BaseModel):
+    caller_identity_id: str = Field(min_length=1, max_length=64)
 
 
 @app.get("/api/kols")
@@ -948,11 +856,15 @@ async def stripe_webhook_api(request: Request) -> JSONResponse:
         raise HTTPException(400, "Missing Stripe signature")
     try:
         event = construct_webhook_event(await request.body(), signature)
-        result = process_webhook_event(event)
     except RuntimeError as exc:
         raise HTTPException(503, "Stripe webhook is not configured") from exc
     except Exception as exc:
         raise HTTPException(400, "Invalid Stripe webhook") from exc
+    try:
+        result = process_webhook_event(event)
+    except Exception as exc:
+        LOG.exception("Stripe webhook processing failed")
+        raise HTTPException(500, "Stripe webhook processing failed") from exc
     return JSONResponse(result)
 
 
@@ -1011,18 +923,19 @@ def my_calls_page(
     runner_session: str | None = Cookie(default=None),
 ) -> RedirectResponse:
     user = require_user(runner_session)
-    with connection() as db:
-        pseudonym = _ensure_comment_pseudonym(db, str(user["id"]))
-    return RedirectResponse(f"/u/{pseudonym}", status_code=303)
+    identities = caller_ids_for_user(str(user["id"]))
+    if not identities:
+        return RedirectResponse("/privacy", status_code=303)
+    return RedirectResponse(f"/u/{identities[0]['handle']}", status_code=303)
 
 
-@app.get("/u/{pseudonym}", response_class=HTMLResponse)
+@app.get("/u/{caller_handle}", response_class=HTMLResponse)
 def caller_page(
-    pseudonym: str,
+    caller_handle: str,
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    calls = caller_calls(pseudonym)
+    calls = caller_calls(caller_handle)
     if calls is None:
         raise HTTPException(404, "Caller not found")
     tickers = list(dict.fromkeys(str(item["ticker"]) for item in calls))
@@ -1031,14 +944,14 @@ def caller_page(
         ticker: float(summary["price"]) if summary.get("price") is not None else None
         for ticker, summary in summaries.items()
     }
-    marked_calls = caller_calls(pseudonym, current_prices=marks) or []
+    marked_calls = caller_calls(caller_handle, current_prices=marks) or []
     return templates.TemplateResponse(
         request=request,
         name="user_calls.html",
         context=page_context(
             request,
             runner_session,
-            caller=pseudonym,
+            caller=caller_handle,
             calls=marked_calls,
             stats=call_stats(marked_calls),
             active_tab="alpha",
@@ -1514,127 +1427,11 @@ def _external_event_label(context: dict[str, Any]) -> tuple[str, str, str | None
     )
 
 
-def _pulse_profile_states(
-    profile: str | None,
-    entries: dict[str, dict[str, Any]],
-) -> dict[tuple[str, str], dict[str, Any]]:
-    if not profile or not entries:
-        return {}
-    tickers = list(entries)
-    placeholders = ",".join("?" for _ in tickers)
-    with connection() as db:
-        rows = db.execute(
-            f"""
-            SELECT * FROM pulse_profile_state
-            WHERE profile_id=? AND ticker IN ({placeholders})
-            """,
-            (profile, *tickers),
-        ).fetchall()
-    return {(str(row["ticker"]), str(row["entered_at"])): dict(row) for row in rows}
-
-
-def _decorate_pulse_attention(
-    rows: list[dict[str, Any]],
-    profile: str | None,
-) -> None:
-    entries = {
-        str(row["ticker"]): {"time": row["entered_at"]}
-        for row in rows
-        if row.get("entered_at")
-    }
-    states = _pulse_profile_states(profile, entries)
-    for row in rows:
-        ticker = str(row["ticker"])
-        entered_at = str(row["entered_at"]) if row.get("entered_at") else None
-        state = states.get((ticker, entered_at), {}) if entered_at else {}
-        row["first_seen_at"] = state.get("first_seen_at")
-        row["inspected_at"] = state.get("inspected_at")
-        row["notified_at"] = state.get("notified_at")
-        row["novelty_state"] = (
-            "normal"
-            if not profile or not entered_at
-            else "inspected"
-            if state.get("inspected_at")
-            else "seen"
-            if state.get("first_seen_at")
-            else "unseen"
-        )
-
-
 def _attach_pulse_entries(rows: list[dict[str, Any]]) -> None:
     entries = _pulse_entry_markers([str(row["ticker"]) for row in rows])
     for row in rows:
         marker = entries.get(str(row["ticker"]))
         row["entered_at"] = str(marker["time"]) if marker else None
-
-
-def _write_pulse_attention(
-    profile: str,
-    entries: list[PulseAttentionItem],
-    action: str,
-) -> int:
-    requested = [(item.ticker.strip().upper(), item.entered_at) for item in entries]
-    current = _pulse_entry_markers([ticker for ticker, _ in requested])
-    valid = [
-        (ticker, entered_at)
-        for ticker, entered_at in requested
-        if TICKER_RE.fullmatch(ticker)
-        and current.get(ticker)
-        and str(current[ticker]["time"]) == entered_at
-    ]
-    if not valid:
-        return 0
-    timestamp = iso()
-    with connection() as db:
-        if action == "seen":
-            db.executemany(
-                """
-                INSERT INTO pulse_profile_state(
-                    profile_id,ticker,entered_at,first_seen_at,last_seen_at
-                ) VALUES(?,?,?,?,?)
-                ON CONFLICT(profile_id,ticker,entered_at) DO UPDATE SET
-                    first_seen_at=COALESCE(
-                        pulse_profile_state.first_seen_at,excluded.first_seen_at
-                    ),
-                    last_seen_at=excluded.last_seen_at
-                """,
-                [
-                    (profile, ticker, entered_at, timestamp, timestamp)
-                    for ticker, entered_at in valid
-                ],
-            )
-        elif action == "inspected":
-            db.executemany(
-                """
-                INSERT INTO pulse_profile_state(
-                    profile_id,ticker,entered_at,first_seen_at,last_seen_at,inspected_at
-                ) VALUES(?,?,?,?,?,?)
-                ON CONFLICT(profile_id,ticker,entered_at) DO UPDATE SET
-                    first_seen_at=COALESCE(
-                        pulse_profile_state.first_seen_at,excluded.first_seen_at
-                    ),
-                    last_seen_at=excluded.last_seen_at,
-                    inspected_at=excluded.inspected_at
-                """,
-                [
-                    (profile, ticker, entered_at, timestamp, timestamp, timestamp)
-                    for ticker, entered_at in valid
-                ],
-            )
-        elif action == "notified":
-            db.executemany(
-                """
-                INSERT INTO pulse_profile_state(
-                    profile_id,ticker,entered_at,notified_at
-                ) VALUES(?,?,?,?)
-                ON CONFLICT(profile_id,ticker,entered_at) DO UPDATE SET
-                    notified_at=excluded.notified_at
-                """,
-                [(profile, ticker, entered_at, timestamp) for ticker, entered_at in valid],
-            )
-        else:
-            raise ValueError(f"Unknown Pulse attention action: {action}")
-    return len(valid)
 
 
 def _pulse_data_uncached() -> dict[str, Any]:
@@ -1959,14 +1756,12 @@ def pulse_data(
     *,
     offset: int = 0,
     limit: int = 50,
-    profile: str | None = None,
 ) -> dict[str, Any]:
     offset = max(0, offset)
     limit = max(1, min(limit, 50))
     base = _pulse_base_data()
     total = len(base["rows"])
     rows = [dict(row) for row in base["rows"][offset : offset + limit]]
-    _decorate_pulse_attention(rows, profile)
     return {
         **base,
         "rows": rows,
@@ -2206,7 +2001,7 @@ def _alpha_base_data() -> dict[str, Any]:
     return payload
 
 
-def alpha_board_data(profile: str | None = None) -> dict[str, Any]:
+def alpha_board_data() -> dict[str, Any]:
     return _alpha_base_data()
 
 
@@ -2595,10 +2390,9 @@ def _generate_openrouter_report(
             },
         ],
         "response_format": {"type": "json_object"},
-        "provider": {"require_parameters": True},
+        "provider": {"require_parameters": True, "zdr": True},
         "reasoning_effort": "high",
         "max_tokens": OPENROUTER_RESEARCH_OUTPUT_TOKENS,
-        "user": hashlib.sha256(user_id.encode()).hexdigest()[:32],
     }
     api_request = urllib.request.Request(
         "https://openrouter.ai/api/v1/chat/completions",
@@ -3468,7 +3262,7 @@ def _generate_alpha_report(evidence: dict[str, Any]) -> dict[str, Any]:
 
 
 def refresh_alpha_report() -> dict[str, Any]:
-    board = alpha_board_data("system")
+    board = alpha_board_data()
     if not board["rows"]:
         return {"status": "idle", "reason": "no_alpha_leader"}
     leader = board["rows"][0]
@@ -3568,52 +3362,18 @@ async def alpha_report_worker() -> None:
         await asyncio.sleep(60)
 
 
-def pulse_notification_data(profile: str) -> dict[str, Any]:
-    payload = pulse_data(limit=50, profile=profile)
-    cutoff = now() - PULSE_NOTIFICATION_WINDOW
-    entries: list[dict[str, Any]] = []
-    for row in payload["rows"]:
-        entered_at = row.get("entered_at")
-        if row.get("novelty_state") != "unseen" or row.get("notified_at") or not entered_at:
-            continue
-        try:
-            entered = datetime.fromisoformat(str(entered_at))
-        except ValueError:
-            continue
-        if entered.tzinfo is None:
-            entered = entered.replace(tzinfo=UTC)
-        if entered < cutoff:
-            continue
-        entries.append(
-            {
-                "ticker": row["ticker"],
-                "company": row.get("company") or row["ticker"],
-                "stage": row.get("stage") or "WATCH",
-                "price": row.get("price"),
-                "change_pct": row.get("change_pct"),
-                "entered_at": entered_at,
-                "coin_label": row.get("coin_label") or str(row["ticker"])[:2],
-                "coin_tone": row.get("coin_tone", 0),
-            }
-        )
-    entries.sort(key=lambda item: str(item["entered_at"]), reverse=True)
-    return {"entries": entries[:5], "checked_at": iso()}
-
-
 @app.get("/", response_class=HTMLResponse)
 def home(
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    user = current_user(runner_session)
-    profile = claim_visitor_profile(request, user) if user else profile_id(request)
     return templates.TemplateResponse(
         request=request,
         name="pulse.html",
         context=page_context(
             request,
             runner_session,
-            pulse=pulse_data(limit=20, profile=profile),
+            pulse=pulse_data(limit=20),
             active_tab="pulse",
         ),
     )
@@ -3624,49 +3384,9 @@ def pulse_api(
     request: Request,
     offset: int = 0,
     limit: int = 20,
-    runner_session: str | None = Cookie(default=None),
 ) -> JSONResponse:
     enforce_rate(request, "pulse", limit=180, seconds=60)
-    user = current_user(runner_session)
-    profile = claim_visitor_profile(request, user) if user else profile_id(request)
-    return JSONResponse(pulse_data(offset=offset, limit=limit, profile=profile))
-
-
-@app.get("/api/pulse/notifications")
-def pulse_notifications_api(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    enforce_rate(request, "pulse-notifications", limit=120, seconds=60)
-    user = current_user(runner_session)
-    profile = claim_visitor_profile(request, user) if user else profile_id(request)
-    return JSONResponse(pulse_notification_data(profile))
-
-
-@app.post("/api/pulse/seen")
-def pulse_seen_api(
-    payload: PulseAttentionPayload,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> dict[str, Any]:
-    require_origin(request)
-    enforce_rate(request, "pulse-seen", limit=120, seconds=60)
-    user = current_user(runner_session)
-    profile = claim_visitor_profile(request, user) if user else profile_id(request)
-    return {"updated": _write_pulse_attention(profile, payload.entries, "seen")}
-
-
-@app.post("/api/pulse/notified")
-def pulse_notified_api(
-    payload: PulseAttentionPayload,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> dict[str, Any]:
-    require_origin(request)
-    enforce_rate(request, "pulse-notified", limit=120, seconds=60)
-    user = current_user(runner_session)
-    profile = claim_visitor_profile(request, user) if user else profile_id(request)
-    return {"updated": _write_pulse_attention(profile, payload.entries, "notified")}
+    return JSONResponse(pulse_data(offset=offset, limit=limit))
 
 
 @app.get("/api/pulse/charts")
@@ -4214,21 +3934,10 @@ def ticker_page(
     if detail is None:
         raise HTTPException(404, "Ticker not found")
     user = current_user(runner_session)
-    profile = claim_visitor_profile(request, user) if user else profile_id(request)
-    _record_activity(profile, normalized, "view")
-    pulse_entry = _pulse_entry_markers([normalized]).get(normalized)
-    if pulse_entry:
-        _write_pulse_attention(
-            profile,
-            [
-                PulseAttentionItem(
-                    ticker=normalized,
-                    entered_at=str(pulse_entry["time"]),
-                )
-            ],
-            "inspected",
-        )
-    comments = comments_for_ticker(normalized)
+    comments = comments_for_ticker(
+        normalized,
+        current_user_id=str(user["id"]) if user else None,
+    )
     current_price = detail.get("current", {}).get("price")
     mark = float(current_price) if current_price is not None else None
     active_call = (
@@ -4250,6 +3959,7 @@ def ticker_page(
             comments=comments,
             comment_count=comment_count_for_ticker(normalized),
             active_call=active_call,
+            caller_ids=caller_ids_for_user(str(user["id"])) if user else [],
             calls=community_calls_for_ticker(normalized, current_price=mark, limit=20),
             latest_commission=(
                 latest_commission(str(user["id"]), normalized)
@@ -4337,46 +4047,6 @@ def _ticker_summary(ticker: str) -> dict[str, Any] | None:
         "external_social_engagement": external["social_engagement"],
         "active_market_event": external.get("active_halt"),
     }
-
-
-def _activity_scores(profile: str, user_id: str | None = None) -> dict[str, float]:
-    cutoff = now() - timedelta(days=30)
-    scores: dict[str, float] = {}
-    with connection() as db:
-        rows = db.execute(
-            """
-            SELECT ticker,event_type,weight,created_at FROM activity_events
-            WHERE profile_id=? AND created_at>? ORDER BY created_at DESC LIMIT 1000
-            """,
-            (profile, iso(cutoff)),
-        ).fetchall()
-        public_calls = (
-            db.execute(
-                "SELECT ticker FROM community_calls WHERE user_id=?",
-                (user_id,),
-            ).fetchall()
-            if user_id
-            else []
-        )
-        legacy = (
-            db.execute("SELECT ticker FROM watches WHERE user_id=?", (user_id,)).fetchall()
-            if user_id
-            else []
-        )
-    for row in rows:
-        try:
-            age_seconds = max(
-                0.0, (now() - datetime.fromisoformat(row["created_at"])).total_seconds()
-            )
-        except (TypeError, ValueError):
-            age_seconds = 30 * 86400
-        decay = math.exp(-age_seconds / (7 * 86400))
-        scores[row["ticker"]] = scores.get(row["ticker"], 0.0) + float(row["weight"]) * decay
-    for row in public_calls:
-        scores[row["ticker"]] = scores.get(row["ticker"], 0.0) + 4.0
-    for row in legacy:
-        scores[row["ticker"]] = scores.get(row["ticker"], 0.0) + 2.0
-    return scores
 
 
 def _radar_market_summaries(tickers: list[str]) -> dict[str, dict[str, Any]]:
@@ -4708,38 +4378,7 @@ def _radar_base_data() -> list[dict[str, Any]]:
     return output
 
 
-def _mark_radar_seen(profile: str, output: list[dict[str, Any]]) -> None:
-    if not output:
-        return
-    seen_at = iso()
-    with connection() as db:
-        db.executemany(
-            """
-            INSERT INTO radar_seen(profile_id,ticker,last_seen_at) VALUES(?,?,?)
-            ON CONFLICT(profile_id,ticker) DO UPDATE SET last_seen_at=excluded.last_seen_at
-            """,
-            [(profile, row["ticker"], seen_at) for row in output],
-        )
-        if profile.startswith("u:"):
-            user_id = profile.removeprefix("u:")
-            case_rows = [row for row in output if row.get("case_id")]
-            if case_rows:
-                db.executemany(
-                    """
-                    INSERT INTO thesis_case_seen(user_id,case_id,last_seen_at) VALUES(?,?,?)
-                    ON CONFLICT(user_id,case_id) DO UPDATE SET last_seen_at=excluded.last_seen_at
-                    """,
-                    [(user_id, row["case_id"], seen_at) for row in case_rows],
-                )
-
-
-def radar_data(
-    user_id: str | None = None,
-    *,
-    visitor_id: str | None = None,
-    mark_seen: bool = False,
-) -> list[dict[str, Any]]:
-    profile = f"u:{user_id}" if user_id else f"v:{visitor_id or 'guest'}"
+def radar_data() -> list[dict[str, Any]]:
     pulse_tickers = {
         str(row["ticker"]).upper() for row in _pulse_base_data().get("rows", [])
     }
@@ -4748,20 +4387,8 @@ def radar_data(
         for row in _radar_base_data()
         if str(row.get("ticker") or "").upper() in pulse_tickers
     ]
-    with connection() as db:
-        seen = {
-            row["ticker"]: row["last_seen_at"]
-            for row in db.execute(
-                "SELECT ticker,last_seen_at FROM radar_seen WHERE profile_id=?", (profile,)
-            ).fetchall()
-        }
     for item in output:
-        ticker = item["ticker"]
-        event_at = item.get("event_at")
-        last_seen_at = seen.get(ticker)
-        item["has_update"] = bool(event_at and (not last_seen_at or event_at > last_seen_at))
-    if mark_seen:
-        _mark_radar_seen(profile, output)
+        item["has_update"] = bool(item.get("event_at"))
     return output
 
 
@@ -4779,16 +4406,9 @@ async def request_cache_warmer() -> None:
 @app.get("/radar", response_class=HTMLResponse)
 def radar_page(
     request: Request,
-    background_tasks: BackgroundTasks,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    user = current_user(runner_session)
-    profile = claim_visitor_profile(request, user) if user else profile_id(request)
-    watches = radar_data(
-        user["id"] if user else None,
-        visitor_id=request.state.visitor_id,
-    )
-    background_tasks.add_task(_mark_radar_seen, profile, watches)
+    watches = radar_data()
     return templates.TemplateResponse(
         request=request,
         name="radar.html",
@@ -4798,45 +4418,23 @@ def radar_page(
             watches=watches,
             active_tab="radar",
         ),
-        background=background_tasks,
     )
 
 
 @app.get("/api/radar")
 def radar_api(
     request: Request,
-    background_tasks: BackgroundTasks,
-    runner_session: str | None = Cookie(default=None),
 ) -> JSONResponse:
-    user = current_user(runner_session)
-    profile = claim_visitor_profile(request, user) if user else profile_id(request)
-    enforce_rate(request, "radar", limit=120, seconds=60, subject=profile)
-    rows = radar_data(
-        user["id"] if user else None,
-        visitor_id=request.state.visitor_id,
-    )
-    background_tasks.add_task(_mark_radar_seen, profile, rows)
-    return JSONResponse(
-        {"rows": rows, "updated_at": iso()},
-        background=background_tasks,
-    )
+    enforce_rate(request, "radar", limit=120, seconds=60)
+    return JSONResponse({"rows": radar_data(), "updated_at": iso()})
 
 
 @app.get("/api/radar/charts")
 async def radar_charts_api(
     request: Request,
-    runner_session: str | None = Cookie(default=None),
 ) -> JSONResponse:
-    user = current_user(runner_session)
-    profile = claim_visitor_profile(request, user) if user else profile_id(request)
-    enforce_rate(request, "radar-charts", limit=20, seconds=60, subject=profile)
-    tickers = [
-        row["ticker"]
-        for row in radar_data(
-            user["id"] if user else None,
-            visitor_id=request.state.visitor_id,
-        )
-    ]
+    enforce_rate(request, "radar-charts", limit=20, seconds=60)
+    tickers = [row["ticker"] for row in radar_data()]
     payload = await run_in_threadpool(ticker_charts_payload, tickers)
     return JSONResponse(payload)
 
@@ -4856,104 +4454,15 @@ def _known_ticker(ticker: str) -> bool:
         )
 
 
-def _record_activity(
-    profile: str,
-    ticker: str,
-    event_type: str,
-    *,
-    seconds: int = 0,
-) -> None:
-    if event_type == "dwell" and seconds < 3:
-        return
-    weights = {"view": 1.0, "dwell": min(5.0, max(1.0, seconds / 10)), "share": 3.0}
-    weight = weights.get(event_type)
-    if weight is None:
-        return
-    with connection() as db:
-        if event_type == "view":
-            recent = db.execute(
-                """
-                SELECT 1 FROM activity_events
-                WHERE profile_id=? AND ticker=? AND event_type='view' AND created_at>?
-                LIMIT 1
-                """,
-                (profile, ticker, iso(now() - timedelta(minutes=1))),
-            ).fetchone()
-            if recent:
-                return
-        db.execute(
-            """
-            INSERT INTO activity_events(profile_id,ticker,event_type,weight,created_at)
-            VALUES(?,?,?,?,?)
-            """,
-            (profile, ticker, event_type, weight, iso()),
-        )
-
-
-def reaction_state(ticker: str, profile: str) -> dict[str, Any]:
-    counts = {"bull": 0, "bear": 0}
-    with connection() as db:
-        rows = db.execute(
-            """
-            SELECT reaction,COUNT(*) AS reaction_count
-            FROM ticker_reactions WHERE ticker=?
-            GROUP BY reaction
-            """,
-            (ticker,),
-        ).fetchall()
-        selected = db.execute(
-            "SELECT reaction FROM ticker_reactions WHERE profile_id=? AND ticker=?",
-            (profile, ticker),
-        ).fetchone()
-    for row in rows:
-        reaction = str(row["reaction"])
-        if reaction in counts:
-            counts[reaction] = int(row["reaction_count"])
-    return {
-        "ticker": ticker,
-        "bull": counts["bull"],
-        "bear": counts["bear"],
-        "selected": str(selected["reaction"]) if selected else None,
-    }
-
-
-def comment_pseudonym(user_id: str) -> str:
-    return pseudonym_candidate(user_id)
-
-
-def _ensure_comment_pseudonym(database: Any, user_id: str) -> str:
-    existing = database.execute(
-        "SELECT pseudonym FROM comment_pseudonyms WHERE user_id=?",
-        (user_id,),
-    ).fetchone()
-    if existing:
-        return str(existing["pseudonym"])
-    for attempt in range(1_000):
-        candidate = pseudonym_candidate(user_id, attempt)
-        database.execute(
-            """
-            INSERT INTO comment_pseudonyms(user_id,pseudonym,created_at)
-            VALUES(?,?,?) ON CONFLICT DO NOTHING
-            """,
-            (user_id, candidate, iso()),
-        )
-        assigned = database.execute(
-            "SELECT pseudonym FROM comment_pseudonyms WHERE user_id=?",
-            (user_id,),
-        ).fetchone()
-        if assigned:
-            return str(assigned["pseudonym"])
-    raise RuntimeError("Could not assign a unique comment pseudonym")
-
-
-def _public_comment(row: Any) -> dict[str, Any]:
+def _public_comment(row: Any, current_user_id: str | None = None) -> dict[str, Any]:
     keys = set(row.keys())
     source = str(row["source"] or "user") if "source" in keys else "user"
     return {
         "id": str(row["id"]),
         "body": str(row["body"]),
         "created_at": str(row["created_at"]),
-        "pseudonym": str(row["pseudonym"]),
+        "alias": str(row["alias"]),
+        "is_owner": bool(current_user_id and str(row["user_id"]) == current_user_id),
         "ai_generated": source == "ai_generated",
         "generation_model": (
             str(row["generation_model"] or "")
@@ -4970,20 +4479,23 @@ def alpha_comments_data(*, limit: int = 50) -> list[dict[str, Any]]:
     with connection() as db:
         missing_aliases = db.execute(
             """
-            SELECT DISTINCT c.user_id
+            SELECT DISTINCT c.user_id,c.ticker
             FROM ticker_comments c
-            LEFT JOIN comment_pseudonyms p ON p.user_id=c.user_id
+            LEFT JOIN public_aliases p
+              ON p.user_id=c.user_id AND p.scope=('comment:' || c.ticker)
             WHERE c.status='public' AND p.user_id IS NULL
             LIMIT 50
             """
         ).fetchall()
         for row in missing_aliases:
-            _ensure_comment_pseudonym(db, str(row["user_id"]))
+            ensure_scoped_alias(db, str(row["user_id"]), f"comment:{row['ticker']}")
         rows = db.execute(
             """
-            SELECT c.id,c.ticker,c.body,c.created_at,c.source,c.generation_model,p.pseudonym
+            SELECT c.id,c.ticker,c.user_id,c.body,c.created_at,
+                   c.source,c.generation_model,p.alias
             FROM ticker_comments c
-            JOIN comment_pseudonyms p ON p.user_id=c.user_id
+            JOIN public_aliases p
+              ON p.user_id=c.user_id AND p.scope=('comment:' || c.ticker)
             WHERE c.status='public'
             ORDER BY c.created_at DESC,c.id DESC
             LIMIT ?
@@ -4993,33 +4505,40 @@ def alpha_comments_data(*, limit: int = 50) -> list[dict[str, Any]]:
     return [{**_public_comment(row), "ticker": str(row["ticker"])} for row in rows]
 
 
-def comments_for_ticker(ticker: str, *, limit: int = 50) -> list[dict[str, Any]]:
+def comments_for_ticker(
+    ticker: str,
+    *,
+    limit: int = 50,
+    current_user_id: str | None = None,
+) -> list[dict[str, Any]]:
     bounded_limit = min(50, max(1, limit))
     with connection() as db:
         missing_aliases = db.execute(
             """
             SELECT DISTINCT c.user_id
             FROM ticker_comments c
-            LEFT JOIN comment_pseudonyms p ON p.user_id=c.user_id
+            LEFT JOIN public_aliases p
+              ON p.user_id=c.user_id AND p.scope=('comment:' || c.ticker)
             WHERE c.ticker=? AND c.status='public' AND p.user_id IS NULL
             LIMIT 50
             """,
             (ticker,),
         ).fetchall()
         for row in missing_aliases:
-            _ensure_comment_pseudonym(db, str(row["user_id"]))
+            ensure_scoped_alias(db, str(row["user_id"]), f"comment:{ticker}")
         rows = db.execute(
             """
-            SELECT c.id,c.body,c.created_at,c.source,c.generation_model,p.pseudonym
+            SELECT c.id,c.user_id,c.body,c.created_at,c.source,c.generation_model,p.alias
             FROM ticker_comments c
-            JOIN comment_pseudonyms p ON p.user_id=c.user_id
+            JOIN public_aliases p
+              ON p.user_id=c.user_id AND p.scope=('comment:' || c.ticker)
             WHERE c.ticker=? AND c.status='public'
             ORDER BY c.created_at DESC,c.id DESC
             LIMIT ?
             """,
             (ticker, bounded_limit),
         ).fetchall()
-    return [_public_comment(row) for row in rows]
+    return [_public_comment(row, current_user_id) for row in rows]
 
 
 def comment_count_for_ticker(ticker: str) -> int:
@@ -5064,35 +4583,7 @@ def thesis_case_revisions_api(
     raise HTTPException(410, "Private cases were replaced by public Calls.")
 
 
-@app.post("/api/activity")
-def record_activity_api(
-    payload: ActivityPayload,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = current_user(runner_session)
-    profile = claim_visitor_profile(request, user) if user else profile_id(request)
-    enforce_rate(request, "activity", limit=180, seconds=60, subject=profile)
-    ticker = _clean_ticker(payload.ticker)
-    if not _known_ticker(ticker):
-        raise HTTPException(404, "Ticker not found")
-    _record_activity(profile, ticker, payload.event_type, seconds=payload.seconds)
-    return JSONResponse({"ok": True})
-
-
-@app.post("/api/reaction/{ticker}/{reaction}")
-def toggle_reaction(
-    ticker: str,
-    reaction: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    raise HTTPException(410, "Bull and Bear reactions were replaced by public Calls.")
-
-
-def _generate_ticker_comment_text(ticker: str, user_id: str) -> tuple[str, str]:
+def _generate_ticker_comment_text(ticker: str) -> tuple[str, str]:
     if not OPENROUTER_API_KEY:
         raise HTTPException(503, "AI comments are temporarily unavailable.")
     detail = ticker_detail_data(ticker)
@@ -5138,9 +4629,8 @@ def _generate_ticker_comment_text(ticker: str, user_id: str) -> tuple[str, str]:
             {"role": "user", "content": json.dumps(evidence, separators=(",", ":"))},
         ],
         "response_format": {"type": "json_object"},
-        "provider": {"require_parameters": True},
+        "provider": {"require_parameters": True, "zdr": True},
         "max_tokens": 180,
-        "user": hashlib.sha256(user_id.encode()).hexdigest()[:32],
     }
     api_request = urllib.request.Request(
         "https://openrouter.ai/api/v1/chat/completions",
@@ -5205,10 +4695,9 @@ async def create_ticker_comment(
         body, model = await run_in_threadpool(
             _generate_ticker_comment_text,
             normalized,
-            str(user["id"]),
         )
         with connection() as db:
-            pseudonym = _ensure_comment_pseudonym(db, str(user["id"]))
+            alias = ensure_scoped_alias(db, str(user["id"]), f"comment:{normalized}")
             db.execute(
                 """
                 INSERT INTO ticker_comments(
@@ -5228,10 +4717,10 @@ async def create_ticker_comment(
             )
             row = db.execute(
                 """
-                SELECT id,body,created_at,source,generation_model,? AS pseudonym
+                SELECT id,user_id,body,created_at,source,generation_model,? AS alias
                 FROM ticker_comments WHERE id=?
                 """,
-                (pseudonym, comment_id),
+                (alias, comment_id),
             ).fetchone()
             count = db.execute(
                 "SELECT COUNT(*) FROM ticker_comments WHERE ticker=? AND status='public'",
@@ -5257,12 +4746,75 @@ async def create_ticker_comment(
     )
     return JSONResponse(
         {
-            "comment": _public_comment(row),
+            "comment": _public_comment(row, str(user["id"])),
             "count": int(count),
             "balance": wallet_for_user(str(user["id"]))["balance"],
         },
         status_code=201,
     )
+
+
+@app.delete("/api/comments/{comment_id}")
+def delete_ticker_comment(
+    comment_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "delete-comment", limit=30, seconds=3600, subject=user["id"])
+    with connection() as db:
+        row = db.execute(
+            "SELECT ticker FROM ticker_comments WHERE id=? AND user_id=?",
+            (comment_id, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Comment not found")
+        ticker = str(row["ticker"])
+        db.execute("DELETE FROM ticker_comments WHERE id=?", (comment_id,))
+        remaining = db.execute(
+            "SELECT 1 FROM ticker_comments WHERE ticker=? AND user_id=? LIMIT 1",
+            (ticker, user["id"]),
+        ).fetchone()
+        if not remaining:
+            db.execute(
+                "DELETE FROM public_aliases WHERE scope=? AND user_id=?",
+                (f"comment:{ticker}", user["id"]),
+            )
+    with PULSE_DATA_LOCK:
+        PULSE_DATA_CACHE.clear()
+    with ALPHA_DATA_LOCK:
+        ALPHA_DATA_CACHE.clear()
+    shared_cache_delete(
+        _shared_request_cache_name("pulse"),
+        _shared_request_cache_name("alpha"),
+    )
+    return JSONResponse({"deleted": True, "id": comment_id})
+
+
+@app.post("/api/comments/{ticker}/alias/swap")
+def swap_comment_alias(
+    ticker: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    normalized = _clean_ticker(ticker)
+    enforce_rate(request, "swap-comment-alias", limit=5, seconds=3600, subject=user["id"])
+    with connection() as db:
+        has_comment = db.execute(
+            "SELECT 1 FROM ticker_comments WHERE ticker=? AND user_id=? LIMIT 1",
+            (normalized, user["id"]),
+        ).fetchone()
+        if not has_comment:
+            raise HTTPException(404, "No comment identity exists in this thread")
+        db.execute(
+            "DELETE FROM public_aliases WHERE scope=? AND user_id=?",
+            (f"comment:{normalized}", user["id"]),
+        )
+        alias = ensure_scoped_alias(db, str(user["id"]), f"comment:{normalized}")
+    return JSONResponse({"alias": alias})
 
 
 def _current_call_mark(ticker: str) -> tuple[float, str]:
@@ -5279,6 +4831,7 @@ def _current_call_mark(ticker: str) -> tuple[float, str]:
 @app.post("/api/calls/{ticker}")
 async def create_community_call(
     ticker: str,
+    payload: CommunityCallPayload,
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> JSONResponse:
@@ -5288,16 +4841,18 @@ async def create_community_call(
     normalized = _clean_ticker(ticker)
     if not _known_ticker(normalized):
         raise HTTPException(404, "Ticker not found")
-    with connection() as db:
-        _ensure_comment_pseudonym(db, str(user["id"]))
     entry_price, entry_at = await run_in_threadpool(_current_call_mark, normalized)
-    call = await run_in_threadpool(
-        create_call,
-        str(user["id"]),
-        normalized,
-        entry_price=entry_price,
-        entry_at=entry_at,
-    )
+    try:
+        call = await run_in_threadpool(
+            create_call,
+            str(user["id"]),
+            payload.caller_identity_id,
+            normalized,
+            entry_price=entry_price,
+            entry_at=entry_at,
+        )
+    except PermissionError as exc:
+        raise HTTPException(403, "Choose one of your active caller IDs") from exc
     with PULSE_DATA_LOCK:
         PULSE_DATA_CACHE.clear()
     with ALPHA_DATA_LOCK:

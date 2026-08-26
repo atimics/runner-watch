@@ -47,13 +47,23 @@
         <button class="call-close" id="closeCallButton" type="button" data-call-id="{{ active_call.public_id }}">Close Call at the server's current price</button>
       </article>
     {% else %}
+      {% if caller_ids %}
+      <label class="caller-id-picker" for="callerIdentity">Post as
+        <select id="callerIdentity">
+          {% for identity in caller_ids %}<option value="{{ identity.id }}">{{ identity.handle }}</option>{% endfor %}
+        </select>
+      </label>
       <button class="commission-button" id="makeCallButton" type="button">Make Call on {{ detail.ticker }}</button>
       <small class="trade-status" id="callStatus">Your entry price and time come from the server and cannot be edited.</small>
+      {% else %}
+      <a class="commission-button" href="/privacy">Claim a free animal caller ID</a>
+      <small class="trade-status">Calls never show your account or comment identity.</small>
+      {% endif %}
     {% endif %}
     {% else %}
     <a class="trade-login" href="/login?next=/t/{{ detail.ticker }}">Log in to make a public Call</a>
     {% endif %}
-    {% if calls %}<div class="call-ledger-mini">{% for call in calls[:5] %}<a href="/u/{{ call.pseudonym }}"><strong>{{ call.pseudonym }}</strong><span>{{ call.status }}</span>{% if call.return_pct is not none %}<b class="{{ 'up' if call.return_pct >= 0 else 'down' }}">{{ '+' if call.return_pct >= 0 else '' }}{{ '%.1f'|format(call.return_pct) }}%</b>{% endif %}</a>{% endfor %}</div>{% endif %}
+    {% if calls %}<div class="call-ledger-mini">{% for call in calls[:5] %}<a href="/u/{{ call.caller_handle }}"><strong>{{ call.caller_handle }}</strong><span>{{ call.status }}</span>{% if call.return_pct is not none %}<b class="{{ 'up' if call.return_pct >= 0 else 'down' }}">{{ '+' if call.return_pct >= 0 else '' }}{{ '%.1f'|format(call.return_pct) }}%</b>{% endif %}</a>{% endfor %}</div>{% endif %}
   </section>
 
   <section class="chart-card" aria-label="Price chart">
@@ -150,15 +160,16 @@
     <div class="comment-form ai-comment-action">
       <p>Flash writes a short comment from your perspective using this ticker's current evidence.</p>
       <div><small id="commentStatus">5 Flash · balance <span data-flash-balance>{{ flash_wallet.balance }}</span></small><button id="generateComment" type="button">Generate and post</button></div>
+      <small>Each ticker gives you a separate random emoji identity. <button id="swapCommentAlias" type="button">Swap this thread's emoji</button></small>
     </div>
     {% else %}
     <a class="comment-login" href="/login?next=/t/{{ detail.ticker }}#discussion">Log in to comment</a>
     {% endif %}
     <ol class="comment-list" id="commentList">
       {% for comment in comments %}
-      <li>
-        <span class="comment-avatar">{{ comment.pseudonym[-2:] }}</span>
-        <div><header><a href="/u/{{ comment.pseudonym }}"><strong>{{ comment.pseudonym }}</strong></a><small>{% if comment.ai_generated %}Flash drafted · {% endif %}<time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time></small></header><p>{{ comment.body }}</p></div>
+      <li data-comment-id="{{ comment.id }}">
+        <span class="comment-avatar" {% if comment.is_owner %}data-own-comment-alias{% endif %}>{{ comment.alias }}</span>
+        <div><header><strong {% if comment.is_owner %}data-own-comment-alias{% endif %}>{{ comment.alias }}</strong><small>{% if comment.ai_generated %}Flash drafted · {% endif %}<time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time>{% if comment.is_owner %} · <button type="button" data-delete-comment="{{ comment.id }}">delete</button>{% endif %}</small></header><p>{{ comment.body }}</p></div>
       </li>
       {% endfor %}
     </ol>
@@ -291,7 +302,8 @@ document.querySelectorAll('[data-call-time]').forEach(item=>{const stamp=new Dat
 const callStatus=document.getElementById('callStatus');
 document.getElementById('makeCallButton')?.addEventListener('click',async event=>{
   const button=event.currentTarget;button.disabled=true;if(callStatus)callStatus.textContent='Stamping the server quote…';
-  try{const response=await fetch(`/api/calls/${encodeURIComponent(ticker)}`,{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not make Call');location.reload();}
+  const callerIdentity=document.getElementById('callerIdentity')?.value;
+  try{const response=await fetch(`/api/calls/${encodeURIComponent(ticker)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caller_identity_id:callerIdentity})});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not make Call');location.reload();}
   catch(error){if(callStatus)callStatus.textContent=error.message||'Could not make Call';button.disabled=false;}
 });
 document.getElementById('closeCallButton')?.addEventListener('click',async event=>{
@@ -328,12 +340,14 @@ function relativeCommentTime(value){
 function refreshCommentTimes(){document.querySelectorAll('[data-comment-time]').forEach(item=>{item.textContent=relativeCommentTime(item.dateTime);});}
 function renderComment(comment){
   const item=document.createElement('li');
-  const avatar=document.createElement('span');avatar.className='comment-avatar';avatar.textContent=(comment.pseudonym||'??').slice(-2);
+  item.dataset.commentId=comment.id;
+  const avatar=document.createElement('span');avatar.className='comment-avatar';avatar.textContent=comment.alias||'❔';
   const copy=document.createElement('div');const head=document.createElement('header');
-  const name=document.createElement('a');name.href=`/u/${encodeURIComponent(comment.pseudonym)}`;name.textContent=comment.pseudonym;
+  const name=document.createElement('strong');name.textContent=comment.alias||'❔';
   const meta=document.createElement('small');
   const stamp=document.createElement('time');stamp.dateTime=comment.created_at;stamp.dataset.commentTime='';stamp.textContent=relativeCommentTime(comment.created_at);meta.append(stamp);
   if(comment.ai_generated)meta.prepend(document.createTextNode('Flash drafted · '));
+  if(comment.is_owner){avatar.dataset.ownCommentAlias='';name.dataset.ownCommentAlias='';const remove=document.createElement('button');remove.type='button';remove.dataset.deleteComment=comment.id;remove.textContent='delete';meta.append(document.createTextNode(' · '),remove);}
   const body=document.createElement('p');body.textContent=comment.body;
   head.append(name,meta);copy.append(head,body);item.append(avatar,copy);return item;
 }
@@ -347,6 +361,16 @@ generateComment?.addEventListener('click',async()=>{
     document.querySelectorAll('[data-flash-balance]').forEach(item=>{item.textContent=result.balance;});
     document.getElementById('discussionCount').textContent=result.count;document.getElementById('commentEmpty').hidden=true;
   }catch(error){commentStatus.textContent=error.message||'Could not post';}finally{generateComment.disabled=false;}
+});
+commentList?.addEventListener('click',async event=>{
+  const button=event.target.closest('[data-delete-comment]');if(!button)return;button.disabled=true;
+  try{const response=await fetch(`/api/comments/${encodeURIComponent(button.dataset.deleteComment)}`,{method:'DELETE'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not delete');button.closest('li')?.remove();const count=document.getElementById('discussionCount');count.textContent=Math.max(0,Number(count.textContent||0)-1);document.getElementById('commentEmpty').hidden=Boolean(commentList.children.length);}
+  catch(error){commentStatus.textContent=error.message||'Could not delete';button.disabled=false;}
+});
+document.getElementById('swapCommentAlias')?.addEventListener('click',async event=>{
+  const button=event.currentTarget;button.disabled=true;
+  try{const response=await fetch(`/api/comments/${encodeURIComponent(ticker)}/alias/swap`,{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not swap emoji');document.querySelectorAll('[data-own-comment-alias]').forEach(item=>{item.textContent=result.alias;});commentStatus.textContent='This thread now uses '+result.alias;}
+  catch(error){commentStatus.textContent=error.message||'Could not swap emoji';}finally{button.disabled=false;}
 });
 function compactVolume(value){
   const number=Number(value);

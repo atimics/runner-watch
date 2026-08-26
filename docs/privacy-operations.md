@@ -10,13 +10,13 @@ Keep this record current whenever a feature, table, provider, region, or retenti
 | --- | --- | --- | --- | --- | --- |
 | Passkey account | Account name, credential ID, public key, device flags | Members | Provide login and account service; contract | Hosting and database provider | Account life; deleted on account deletion |
 | Essential session | Hashed random session token, account ID, dates | Members | Keep a signed-in session; contract and security | Hosting, database, cache | 30 days maximum |
-| Public comment | Body, ticker, internal account link, thread emoji alias | Comment authors | Publish the comment the member requested; contract | Hosting and public readers | Until author deletes it or deletes the account |
-| Community call | Body, ticker, caller-ID link | Call authors | Publish the call under the selected caller ID; contract | Hosting and public readers | Until caller ID or account deletion |
+| Public comment | AI-generated body from public ticker evidence, ticker, internal account link, thread emoji alias | Comment authors | Generate and publish the comment the member requested; contract | Hosting and public readers | Until author deletes it or deletes the account |
+| Community call | Ticker, server-set price and time, status, caller-ID link | Call authors | Publish the call under the selected caller ID; contract | Hosting and public readers | Until caller ID or account deletion |
 | Caller-ID claim | Random animal name, internal owner, payment receipt | Members who claim IDs | Provide the requested identity; contract | Hosting, Stripe for paid claims | Ownership until deletion; payment records as legally required; name tombstone indefinitely with no owner or calls |
 | Private journal and cases | Ticker, prices, times, thesis, evidence, outcomes | Members | Provide saved private tools; contract | Hosting and database provider | Until member or account deletion |
 | AI research | Requested ticker, market evidence, report, model metadata | Members | Produce requested research; contract | OpenRouter and routed model provider | Local report until deletion; provider must use zero-data-retention routing |
 | Billing | Stripe IDs, plan and subscription state, webhook ID | Paying members | Perform contract and meet accounting duties | Stripe and hosting | Webhook ID up to 400 days; Stripe records under its legal schedule |
-| Abuse protection | IP-derived short-lived rate key, request and error logs | Visitors and members | Security and availability; legitimate interests | Hosting and cache provider | Rate windows minutes; logs 30 days maximum |
+| Abuse protection | IP-derived short-lived rate key and limited error logs | Visitors and members | Security and availability; legitimate interests | Hosting and cache provider | Rate windows minutes; hosted logs 7 days maximum |
 
 The app must not write visitor IDs, page views, dwell time, share events, seen state, notification state, reactions, advertising IDs, or cross-thread identity graphs.
 
@@ -25,11 +25,11 @@ The app must not write visitor IDs, page views, dwell time, share events, seen s
 - Authentication challenges: expire after 5 minutes and prune daily.
 - Unfinished accounts with no passkey: prune after 15 minutes.
 - Login sessions: expire after 30 days and prune daily.
-- Passive tracking tables: permanently dropped by database migration 26. The retention job checks that they remain absent and never writes them.
+- Passive tracking tables: permanently dropped by database migration 29. The retention job checks that they remain absent and never writes them.
 - Stripe webhook event IDs: prune after 400 days.
 - Member content: keep until the member deletes the item or account, unless a documented legal hold applies.
 - Deleted caller identities: keep only the random animal handle, tombstone state, and deletion time. Remove owner, payment reference, claim time, cost, and calls.
-- Application and security logs: configure providers for 30 days maximum. Do not log request bodies, cookies, passkey data, research evidence, exports, or deletion payloads.
+- Application and security logs: keep hosted logs at 7 days maximum. Web access logs are disabled. Do not log request bodies, cookies, passkey data, research evidence, exports, or deletion payloads.
 - Backups: configure a 30-day maximum. Fly Volume snapshots currently default to 5 days. A deletion reaches live data immediately and backup copies through expiry. Keep the restricted request log outside the restored database, and replay every deletion recorded after a snapshot before the service reopens.
 - Review this schedule every six months and test pruning against a restored non-production backup.
 
