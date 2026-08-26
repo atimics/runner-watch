@@ -179,6 +179,8 @@ def test_desktop_feeds_share_full_info_and_article_panel() -> None:
     assert "data-desktop-frame" in panel
     assert "/t/" in workspace
     assert "/research/" in workspace
+    assert "openPanel(current ? panelUrl(current) : defaultUrl())" in workspace
+    assert "sessionStorage" not in workspace
     assert "html.embedded-pane .mobile-app" in desktop_css
     assert '"SAMEORIGIN" if panel_path else "DENY"' in (
         root / "src/runner_web/main.py"
