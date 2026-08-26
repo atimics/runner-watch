@@ -31,5 +31,9 @@ def test_runtime_capabilities_reports_live_modes_without_secrets(
     assert result["analysis"]["research"]["flash_model"] == "z-ai/glm-5.3"
     assert result["analysis"]["research"]["openrouter_available"] is True
     assert result["analysis"]["research"]["mode"] == "one_shot_system_context"
+    assert result["analysis"]["research"]["credential_location"] == "server"
+    assert result["analysis"]["research"]["browser_key_accepted"] is False
+    assert result["analysis"]["research"]["queue_payload"] == "report_id"
+    assert result["analysis"]["research"]["visibility"] == "public_shared"
     assert "sec:current_filings" in result["sources"]
     assert "credential_env" not in result["sources"]["sec:current_filings"]

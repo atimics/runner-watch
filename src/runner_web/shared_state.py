@@ -9,7 +9,6 @@ from typing import Any
 LOG = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL", "").strip()
-JOB_ENCRYPTION_KEY = os.getenv("JOB_ENCRYPTION_KEY", "").strip()
 KEY_PREFIX = os.getenv("REDIS_KEY_PREFIX", "stonks").strip() or "stonks"
 
 _CLIENT_LOCK = threading.Lock()
@@ -105,14 +104,6 @@ def rate_limit_allowed(name: str, limit: int, seconds: int) -> bool | None:
         return None
 
 
-def _fernet() -> Any:
-    if not JOB_ENCRYPTION_KEY:
-        raise RuntimeError("JOB_ENCRYPTION_KEY is required when Redis jobs are enabled")
-    from cryptography.fernet import Fernet
-
-    return Fernet(JOB_ENCRYPTION_KEY.encode())
-
-
 def _queue_key() -> str:
     return _key("research:queue")
 
@@ -121,23 +112,10 @@ def _processing_key() -> str:
     return _key("research:processing")
 
 
-def _payload_key(report_id: str) -> str:
-    return _key(f"research:payload:{report_id}")
+def enqueue_research_job(report_id: str) -> None:
+    """Queue only the public report ID. Provider credentials stay on the server."""
 
-
-def enqueue_research_job(report_id: str, provider_key: str) -> None:
-    """Store an encrypted provider key before making the job visible to workers."""
-
-    payload = json.dumps(
-        {"report_id": report_id, "provider_key": provider_key},
-        separators=(",", ":"),
-    ).encode()
-    encrypted = _fernet().encrypt(payload).decode()
-    client = _client()
-    with client.pipeline(transaction=True) as pipeline:
-        pipeline.setex(_payload_key(report_id), 6 * 60 * 60, encrypted)
-        pipeline.lpush(_queue_key(), report_id)
-        pipeline.execute()
+    _client().lpush(_queue_key(), report_id)
 
 
 def recover_research_jobs() -> int:
@@ -151,14 +129,13 @@ def recover_research_jobs() -> int:
     for report_id in report_ids:
         with client.pipeline(transaction=True) as pipeline:
             pipeline.lrem(_processing_key(), 0, report_id)
-            if client.exists(_payload_key(report_id)):
-                pipeline.rpush(_queue_key(), report_id)
-                recovered += 1
+            pipeline.rpush(_queue_key(), report_id)
+            recovered += 1
             pipeline.execute()
     return recovered
 
 
-def dequeue_research_job(timeout_seconds: int = 5) -> tuple[str, str] | None:
+def dequeue_research_job(timeout_seconds: int = 5) -> str | None:
     """Atomically claim one job while leaving it recoverable until it is acknowledged."""
 
     client = _client()
@@ -167,19 +144,9 @@ def dequeue_research_job(timeout_seconds: int = 5) -> tuple[str, str] | None:
         _processing_key(),
         timeout=max(1, timeout_seconds),
     )
-    if not report_id:
-        return None
-    encrypted = client.get(_payload_key(report_id))
-    if not encrypted:
-        acknowledge_research_job(report_id)
-        return None
-    payload = json.loads(_fernet().decrypt(encrypted.encode()))
-    return str(payload["report_id"]), str(payload["provider_key"])
+    return str(report_id) if report_id else None
 
 
 def acknowledge_research_job(report_id: str) -> None:
     client = _client()
-    with client.pipeline(transaction=True) as pipeline:
-        pipeline.lrem(_processing_key(), 0, report_id)
-        pipeline.delete(_payload_key(report_id))
-        pipeline.execute()
+    client.lrem(_processing_key(), 0, report_id)

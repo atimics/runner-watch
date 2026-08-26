@@ -178,6 +178,10 @@ def runtime_capabilities(
                 "openrouter_available": bool(os.getenv("OPENROUTER_API_KEY", "")),
                 "provider": FLASH.provider,
                 "flash_model": FLASH.model,
+                "credential_location": "server",
+                "browser_key_accepted": False,
+                "queue_payload": "report_id",
+                "visibility": "public_shared",
                 "mode": (
                     "one_shot_system_context"
                     if FLASH.provider == "openrouter"

@@ -52,15 +52,15 @@ from 4:00 a.m. to 8:00 p.m. Eastern on weekdays. Halt data does not change the s
 ## Product routing during the POC
 
 - **Pulse** starts with the newest saved Yahoo scanner run. Its score shows separate market, SEC,
-  news-search, public-social, community-heart, and safety components.
+  news-search, public-social, public-Call, and safety components.
 - **Radar** automatically publishes recent SEC filings, strongly matched Yahoo news, meaningful
   Reddit mention growth from ApeWisdom, and normalized market events. It groups repeated events by
   ticker, keeps the newest state, and links back to the original source.
-- **Alpha** is the social view. Active community hearts determine the order; market and event data
-  provide context but do not change the heart ranking. Yahoo coverage and Reddit mention counts are
-  shown as outside context, separate from community hearts.
+- **Alpha** is the social view. Active public Calls determine the order; market and event data
+  provide context but do not change the Call ranking. Yahoo coverage and Reddit mention counts are
+  shown as outside context, separate from public Calls.
 
-The discovery worker rotates across 30 symbols: 10 current Pulse leaders, up to 10 Alpha heart
+The discovery worker rotates across 30 symbols: 10 current Pulse leaders, up to 10 Alpha Call
 leaders, then the next Pulse names as a flex group. One symbol is searched every 30 seconds, so the
 full set is normally refreshed about every 15 minutes. Yahoo news search and ApeWisdom's public
 Reddit trend API need no API key. Only article metadata and aggregate mention/upvote counts are

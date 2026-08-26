@@ -99,6 +99,12 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         short_data_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='short_data_cache'"
         ).fetchone()
+        community_call_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='community_calls'"
+        ).fetchone()
+        flash_request_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='flash_report_requests'"
+        ).fetchone()
         flash = database.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
         commission_columns = {
             row["name"]
@@ -144,6 +150,8 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert case_outcome_table is not None
     assert position_table is not None
     assert short_data_table is not None
+    assert community_call_table is not None
+    assert flash_request_table is not None
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_provider"] == "openrouter"
@@ -155,6 +163,12 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "market_view",
         "model_confidence",
         "policy_version",
+    } <= commission_columns
+    assert {
+        "trigger",
+        "evidence_snapshot_json",
+        "evidence_as_of",
+        "citations_json",
     } <= commission_columns
     assert "actor_snapshot_json" in call_columns
     assert {
@@ -203,6 +217,12 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "user_positions_user_ticker_time",
         "user_positions_user_status_time",
         "short_data_cache_collected",
+        "community_calls_one_active",
+        "community_calls_user_status_time",
+        "community_calls_ticker_status_time",
+        "research_commissions_running_shared",
+        "flash_report_requests_report_time",
+        "flash_report_requests_user_time",
     } <= indexes
 
 

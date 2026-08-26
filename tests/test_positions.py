@@ -4,16 +4,18 @@ from pathlib import Path
 from pytest import MonkeyPatch
 
 from runner_web import db
-from runner_web.db import connection, init_db
-from runner_web.positions import (
-    close_position,
-    create_position,
-    position_for_user,
-    positions_for_ticker,
+from runner_web.calls import (
+    active_call_for_user,
+    call_for_user,
+    call_stats,
+    calls_for_ticker,
+    close_call,
+    create_call,
 )
+from runner_web.db import connection, init_db
 
 
-def test_private_position_keeps_historical_entry_and_exit_times(
+def test_public_call_freezes_entry_and_exit_marks(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "positions.db")
@@ -29,8 +31,15 @@ def test_private_position_keeps_historical_entry_and_exit_times(
                 ("other", "other", "Other", "active", current.isoformat()),
             ],
         )
+        database.executemany(
+            "INSERT INTO comment_pseudonyms(user_id,pseudonym,created_at) VALUES(?,?,?)",
+            [
+                ("owner", "GreenWolf11", current.isoformat()),
+                ("other", "QuietWolf22", current.isoformat()),
+            ],
+        )
 
-    created = create_position(
+    created = create_call(
         "owner",
         "ONE",
         entry_price=2.0,
@@ -38,13 +47,14 @@ def test_private_position_keeps_historical_entry_and_exit_times(
     )
 
     assert created["entry_at"] == entered_at
-    assert positions_for_ticker("owner", "ONE", current_price=2.5)[0]["return_pct"] == 25.0
-    assert positions_for_ticker("other", "ONE", current_price=2.5) == []
-    assert position_for_user("other", created["id"]) is None
+    assert active_call_for_user("owner", "ONE", current_price=2.5)["return_pct"] == 25.0
+    assert calls_for_ticker("ONE", current_price=2.5)[0]["pseudonym"] == "GreenWolf11"
+    assert active_call_for_user("other", "ONE", current_price=2.5) is None
+    assert call_for_user("other", created["public_id"]) is None
 
-    closed = close_position(
+    closed = close_call(
         "owner",
-        created["id"],
+        created["public_id"],
         exit_price=3.0,
         exit_at=exited_at,
     )
@@ -53,8 +63,9 @@ def test_private_position_keeps_historical_entry_and_exit_times(
     assert closed["status"] == "closed"
     assert closed["exit_at"] == exited_at
     assert closed["return_pct"] == 50.0
-    assert close_position(
-        "owner", created["id"], exit_price=3.1, exit_at=current.isoformat()
+    assert call_stats([closed])["wins"] == 1
+    assert close_call(
+        "owner", created["public_id"], exit_price=3.1, exit_at=current.isoformat()
     ) is None
 
 
@@ -66,18 +77,22 @@ def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
     app_source = (root / "src/runner_web/main.py").read_text()
     radar = (root / "web/templates/radar.html").read_text()
 
-    assert "My trades" in ticker
-    assert "Entry price" in ticker
-    assert "Entry time" in ticker
-    assert "Add exit" in ticker
+    assert "Make Call" in ticker
+    assert "server stamped" in ticker
+    assert "Entry time" not in ticker
+    assert "Add exit" not in ticker
+    assert "Ask Flash" in ticker
+    assert "flash.model" in ticker
     assert "🐺" in alpha
-    assert "ranked" in alpha
-    assert "data-alpha-reaction=\"bull\"" in alpha
-    assert "data-alpha-reaction=\"bear\"" in alpha
-    assert "comment_count" in alpha
-    assert "alpha-heart" not in alpha
+    assert "open Calls" in alpha
+    assert "data-alpha-reaction" not in alpha
+    assert "call.return_pct" in alpha
+    assert "heart" not in alpha.lower()
     assert "heartButton" not in ticker
     assert '<span class="tab-icon alpha-icon" aria-hidden="true">🐺</span>' in navigation
+    assert "My Calls" in navigation
+    assert '@app.post("/api/calls/{ticker}")' in app_source
+    assert '@app.post("/api/positions/' not in app_source
     assert '@app.post("/api/heart/{ticker}")' not in app_source
     assert "My Radar" not in radar
     assert "events from Pulse" in radar

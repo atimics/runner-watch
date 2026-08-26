@@ -22,43 +22,38 @@
     <small>{% if detail.current.event_at %}{{ detail.current.event_at[:16]|replace('T', ' ') }} UTC{% else %}No recent quote{% endif %}</small>
   </section>
 
-  <section class="trade-journal" aria-labelledby="tradeJournalTitle">
-    <div class="section-heading"><div><h2 id="tradeJournalTitle">My trades</h2></div>{% if user %}<b>{{ positions|length }}</b>{% endif %}</div>
-    {% if user %}
-    <form class="trade-form trade-entry-form" id="positionEntryForm">
-      <label><span>Entry price</span><input id="positionEntryPrice" name="price" type="number" min="0.000001" step="any" inputmode="decimal" value="{% if detail.current.price is not none %}{{ detail.current.price }}{% endif %}" required></label>
-      <label><span>Entry time</span><input id="positionEntryTime" name="at" type="datetime-local" required></label>
-      <button type="submit">Add entry</button>
-      <small class="trade-status" id="positionEntryStatus">Defaults to the current market price and now. You can change both.</small>
-    </form>
-    {% if positions %}
-    <div class="trade-list">
-      {% for position in positions %}
-      <article class="trade-position trade-position-{{ position.status }}">
-        <header><strong>{{ 'Open' if position.status == 'active' else 'Closed' }}</strong>{% if position.return_pct is not none %}<b class="{{ 'up' if position.return_pct >= 0 else 'down' }}">{{ '+' if position.return_pct >= 0 else '' }}{{ '%.1f'|format(position.return_pct) }}%</b>{% endif %}</header>
-        <div class="trade-leg"><span>Entry</span><b>${{ '%.4f'|format(position.entry_price) if position.entry_price < 1 else ('%.2f'|format(position.entry_price)) }}</b><time datetime="{{ position.entry_at }}" data-trade-time>{{ position.entry_at[:16]|replace('T', ' ') }}</time></div>
-        {% if position.status == 'closed' %}
-        <div class="trade-leg"><span>Exit</span><b>${{ '%.4f'|format(position.exit_price) if position.exit_price < 1 else ('%.2f'|format(position.exit_price)) }}</b><time datetime="{{ position.exit_at }}" data-trade-time>{{ position.exit_at[:16]|replace('T', ' ') }}</time></div>
-        {% else %}
-        <form class="trade-form trade-exit-form" data-position-id="{{ position.id }}">
-          <label><span>Exit price</span><input name="price" type="number" min="0.000001" step="any" inputmode="decimal" value="{% if detail.current.price is not none %}{{ detail.current.price }}{% endif %}" required></label>
-          <label><span>Exit time</span><input name="at" type="datetime-local" required></label>
-          <button type="submit">Add exit</button><small class="trade-status">Close this entry at the price and time above.</small>
-        </form>
-        {% endif %}
-      </article>
-      {% endfor %}
-    </div>
-    {% endif %}
+  <section class="research-action" aria-labelledby="flashActionTitle">
+    <div class="section-heading"><div><h2 id="flashActionTitle">Flash <small class="flash-model-label">{{ flash.model }}</small></h2></div><b>public report</b></div>
+    {% if latest_commission and latest_commission.status == 'complete' %}
+    <a class="commission-button" href="/research/{{ latest_commission.public_id }}">Read Flash report <span class="flash-model-label">{{ flash.model }}</span></a>
+    {% if user %}<button class="commission-refresh" id="commissionButton" type="button">Check for new evidence</button>{% endif %}
+    {% elif latest_commission and latest_commission.status == 'running' %}
+    <button class="commission-button" id="commissionButton" type="button" data-job-id="{{ latest_commission.public_id }}" disabled>Flash is researching · {{ flash.model }}</button>
+    {% elif user %}
+    <button class="commission-button" id="commissionButton" type="button">{{ 'Retry Flash' if latest_commission and latest_commission.status == 'failed' else 'Ask Flash' }} · {{ flash.model }}</button>
     {% else %}
-    <a class="trade-login" href="/login?next=/t/{{ detail.ticker }}">Log in to record entries and exits</a>
+    <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Log in to ask Flash · {{ flash.model }}</a>
     {% endif %}
+    <small id="commissionStatus">One shared report per evidence snapshot. The server pays OpenRouter.</small>
   </section>
 
-  <section class="feedback-strip" aria-label="Community feedback">
-    <button class="reaction-button bull {% if reaction.selected == 'bull' %}selected{% endif %}" type="button" data-reaction="bull" aria-pressed="{{ 'true' if reaction.selected == 'bull' else 'false' }}"><span>🐂 Bull</span><b id="bullCount">{{ reaction.bull }}</b></button>
-    <button class="reaction-button bear {% if reaction.selected == 'bear' %}selected{% endif %}" type="button" data-reaction="bear" aria-pressed="{{ 'true' if reaction.selected == 'bear' else 'false' }}"><span>🐻 Bear</span><b id="bearCount">{{ reaction.bear }}</b></button>
-    <button class="reaction-button comment-jump" type="button" id="commentJump"><span>Comment</span><b id="commentCount">{{ comment_count }}</b></button>
+  <section class="trade-journal call-card" aria-labelledby="callTitle">
+    <div class="section-heading"><div><h2 id="callTitle">Call</h2><span>Public · server stamped</span></div><b>{{ calls|length }}</b></div>
+    {% if user %}
+    {% if active_call %}
+      <article class="trade-position trade-position-active">
+        <header><strong>Open Call</strong>{% if active_call.return_pct is not none %}<b class="{{ 'up' if active_call.return_pct >= 0 else 'down' }}">{{ '+' if active_call.return_pct >= 0 else '' }}{{ '%.1f'|format(active_call.return_pct) }}%</b>{% endif %}</header>
+        <div class="trade-leg"><span>Entry</span><b>${{ '%.4f'|format(active_call.entry_price) if active_call.entry_price < 1 else ('%.2f'|format(active_call.entry_price)) }}</b><time datetime="{{ active_call.entry_at }}" data-call-time>{{ active_call.entry_at[:16]|replace('T', ' ') }}</time></div>
+        <button class="call-close" id="closeCallButton" type="button" data-call-id="{{ active_call.public_id }}">Close Call at the server's current price</button>
+      </article>
+    {% else %}
+      <button class="commission-button" id="makeCallButton" type="button">Make Call on {{ detail.ticker }}</button>
+      <small class="trade-status" id="callStatus">Your entry price and time come from the server and cannot be edited.</small>
+    {% endif %}
+    {% else %}
+    <a class="trade-login" href="/login?next=/t/{{ detail.ticker }}">Log in to make a public Call</a>
+    {% endif %}
+    {% if calls %}<div class="call-ledger-mini">{% for call in calls[:5] %}<a href="/u/{{ call.pseudonym }}"><strong>{{ call.pseudonym }}</strong><span>{{ call.status }}</span>{% if call.return_pct is not none %}<b class="{{ 'up' if call.return_pct >= 0 else 'down' }}">{{ '+' if call.return_pct >= 0 else '' }}{{ '%.1f'|format(call.return_pct) }}%</b>{% endif %}</a>{% endfor %}</div>{% endif %}
   </section>
 
   <section class="chart-card" aria-label="Price chart">
@@ -74,27 +69,6 @@
   </section>
   <div class="chart-structure-strip" id="chartStructure" aria-live="polite"></div>
   <div class="chart-event-strip" id="chartEvents" aria-label="Detected chart events" hidden></div>
-
-  {% if detail.kol_calls %}
-  <section class="why-section kol-detail-section">
-    <div class="section-heading"><div><span>PAPER CALLS</span><h2>Flash <small class="flash-model-label">{{ flash.model_label }}</small></h2></div><b>{{ detail.kol_calls|length }} call{{ '' if detail.kol_calls|length == 1 else 's' }}</b></div>
-    <div class="kol-call-list">
-      {% for call in detail.kol_calls %}
-      <article class="kol-call-card">
-        <div class="kol-call-head"><span class="kol-avatar">{{ call.emoji }}</span><span><strong>{{ call.display_name }} <i class="flash-model-label">{{ call.inference_model_label }}</i></strong><small>Rule set · {{ call.contract_version }}</small></span><b class="kol-status kol-status-{{ call.status }}">{{ call.status|replace('_', ' ') }}</b></div>
-        <div class="kol-call-numbers">
-          <span><small>Entry</small><b>${{ '%.4f'|format(call.entry_price) if call.entry_price < 1 else ('%.2f'|format(call.entry_price)) }}</b></span>
-          <span><small>{{ 'Current' if call.is_active else 'Exit' }}</small><b>${{ '%.4f'|format(call.last_price) if call.last_price < 1 else ('%.2f'|format(call.last_price)) }}</b></span>
-          <span><small>Paper PnL</small><b class="{{ 'up' if call.display_return_pct >= 0 else 'down' }}">{{ '+' if call.display_return_pct >= 0 else '' }}{{ '%.1f'|format(call.display_return_pct) }}%</b></span>
-          <span><small>Confidence</small><b>{{ '%.0f'|format(call.confidence * 100) }}%</b></span>
-        </div>
-        <p>{{ call.close_reason or ('Ends at +%.0f%%, −%.0f%%, or %d minutes.'|format(call.upper_barrier_pct, call.lower_barrier_pct, call.horizon_minutes)) }}{% if call.benchmark_label %} Result: <strong>{{ call.benchmark_label|upper }}</strong>.{% endif %}</p>
-      </article>
-      {% endfor %}
-    </div>
-    <p class="kol-paper-note">$1,000 paper calls with estimated costs. Not advice.</p>
-  </section>
-  {% endif %}
 
   <section class="why-section">
     <div class="section-heading"><div><h2>Why it moved</h2></div>{% if detail.current.source == 'market' and detail.current.score %}<b>{{ '%.0f'|format(detail.current.score) }} score</b>{% elif detail.current.source == 'sec' %}<b>new filing</b>{% endif %}</div>
@@ -184,7 +158,7 @@
       {% for comment in comments %}
       <li>
         <span class="comment-avatar">{{ comment.pseudonym[-2:] }}</span>
-        <div><header><strong>{{ comment.pseudonym }}</strong><small><time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time></small></header><p>{{ comment.body }}</p></div>
+        <div><header><a href="/u/{{ comment.pseudonym }}"><strong>{{ comment.pseudonym }}</strong></a><small><time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time></small></header><p>{{ comment.body }}</p></div>
       </li>
       {% endfor %}
     </ol>
@@ -208,7 +182,7 @@ let chartStructure={};
 let chartMode='tape';
 let activeRange='1D';
 const initialPressure={{ detail.trade_pressure|tojson }};
-const positionData={{ positions|tojson }};
+const callData={{ calls|tojson }};
 const annotationColors={pulse:'#f5c66b',positive:'#57e389',risk:'#ff6b7a',media:'#75a7ff',neutral:'#a3ada8'};
 const chartModeNotes={tape:'OHLCV bars, volume, and session VWAP',gravity:'Repeated prices, heavy volume, and session reference zones',astrology:'Fixed-anchor Fibonacci crowd references · not a prediction'};
 function chartMoney(value){const number=Number(value);if(!Number.isFinite(number))return '—';return '$'+number.toFixed(number<1?4:number<10?3:2);}
@@ -301,53 +275,44 @@ function draw(points) {
 }
 function visibleChartPoints(){if(activeRange==='5D')return allPoints;const latest=allPoints.length?new Date(allPoints.at(-1).time).getTime():0;const points=allPoints.filter(point=>new Date(point.time).getTime()>=latest-24*60*60*1000);return points.length>1?points:allPoints.slice(-30);}
 function selectRange(range){activeRange=range;document.querySelectorAll('[data-range]').forEach(button=>button.classList.toggle('active',button.dataset.range===range));draw(visibleChartPoints());}
-function tradeChartAnnotations(){return positionData.flatMap(position=>{
-  const items=[{type:'trade_entry',tone:'positive',time:position.entry_at,label:`Entry · ${chartMoney(position.entry_price)}`}];
-  if(position.exit_at)items.push({type:'trade_exit',tone:'media',time:position.exit_at,label:`Exit · ${chartMoney(position.exit_price)}`});
+function callChartAnnotations(){return callData.flatMap(call=>{
+  const items=[{type:'call_entry',tone:'positive',time:call.entry_at,label:`Call · ${chartMoney(call.entry_price)}`}];
+  if(call.exit_at)items.push({type:'call_exit',tone:'media',time:call.exit_at,label:`Call closed · ${chartMoney(call.exit_price)}`});
   return items;
 });}
-const chartRequest=fetch(`/api/t/${encodeURIComponent(ticker)}/chart`).then(response=>response.json()).then(data=>{allPoints=data.points||[];chartAnnotations=[...(data.annotations||[]),...tradeChartAnnotations()];chartLevels=data.levels||[];chartFibonacci=data.fibonacci||null;chartStructure=data.structure||{};selectRange('1D');}).catch(()=>draw([]));
+const chartRequest=fetch(`/api/t/${encodeURIComponent(ticker)}/chart`).then(response=>response.json()).then(data=>{allPoints=data.points||[];chartAnnotations=[...(data.annotations||[]),...callChartAnnotations()];chartLevels=data.levels||[];chartFibonacci=data.fibonacci||null;chartStructure=data.structure||{};selectRange('1D');}).catch(()=>draw([]));
 document.querySelectorAll('[data-range]').forEach(button=>button.addEventListener('click',()=>selectRange(button.dataset.range)));
 document.querySelectorAll('[data-chart-mode]').forEach(button=>button.addEventListener('click',()=>{chartMode=button.dataset.chartMode;document.querySelectorAll('[data-chart-mode]').forEach(item=>item.classList.toggle('active',item===button));document.getElementById('chartModeNote').textContent=chartModeNotes[chartMode];draw(visibleChartPoints());}));
 document.getElementById('shareButton').addEventListener('click', async () => {
   const share = {title: ticker, text: `${ticker} · ${company}`, url: location.href};
   try { fetch('/api/activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker,event_type:'share'})}); if (navigator.share) await navigator.share(share); else { await navigator.clipboard.writeText(location.href); document.getElementById('shareButton').textContent = '✓'; } } catch (_) {}
 });
-function renderReaction(result){
-  document.getElementById('bullCount').textContent=result.bull;
-  document.getElementById('bearCount').textContent=result.bear;
-  document.querySelectorAll('[data-reaction]').forEach(button=>{
-    const selected=button.dataset.reaction===result.selected;
-    button.classList.toggle('selected',selected);
-    button.setAttribute('aria-pressed',String(selected));
-  });
-}
-document.querySelectorAll('[data-reaction]').forEach(button=>button.addEventListener('click',async()=>{
-  button.disabled=true;
-  try{
-    const response=await fetch(`/api/reaction/${encodeURIComponent(ticker)}/${button.dataset.reaction}`,{method:'POST'});
-    if(response.ok)renderReaction(await response.json());
-  }finally{button.disabled=false;}
-}));
-function localDateTimeNow(){const current=new Date();return new Date(current.getTime()-current.getTimezoneOffset()*60000).toISOString().slice(0,16);}
-document.querySelectorAll('.trade-form input[type="datetime-local"]').forEach(input=>{if(!input.value)input.value=localDateTimeNow();});
-document.querySelectorAll('[data-trade-time]').forEach(item=>{const stamp=new Date(item.dateTime);if(Number.isFinite(stamp.getTime()))item.textContent=stamp.toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});});
-document.getElementById('positionEntryForm')?.addEventListener('submit',async event=>{
-  event.preventDefault();const form=event.currentTarget;const button=form.querySelector('button');const status=form.querySelector('.trade-status');button.disabled=true;status.textContent='Saving…';
-  try{
-    const price=Number(form.elements.price.value);const at=new Date(form.elements.at.value).toISOString();
-    const response=await fetch(`/api/positions/${encodeURIComponent(ticker)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price,at})});
-    const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not save entry');location.reload();
-  }catch(error){status.textContent=error.message||'Could not save entry';button.disabled=false;}
+document.querySelectorAll('[data-call-time]').forEach(item=>{const stamp=new Date(item.dateTime);if(Number.isFinite(stamp.getTime()))item.textContent=stamp.toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});});
+const callStatus=document.getElementById('callStatus');
+document.getElementById('makeCallButton')?.addEventListener('click',async event=>{
+  const button=event.currentTarget;button.disabled=true;if(callStatus)callStatus.textContent='Stamping the server quote…';
+  try{const response=await fetch(`/api/calls/${encodeURIComponent(ticker)}`,{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not make Call');location.reload();}
+  catch(error){if(callStatus)callStatus.textContent=error.message||'Could not make Call';button.disabled=false;}
 });
-document.querySelectorAll('.trade-exit-form').forEach(form=>form.addEventListener('submit',async event=>{
-  event.preventDefault();const button=form.querySelector('button');const status=form.querySelector('.trade-status');button.disabled=true;status.textContent='Saving…';
-  try{
-    const price=Number(form.elements.price.value);const at=new Date(form.elements.at.value).toISOString();
-    const response=await fetch(`/api/positions/${encodeURIComponent(form.dataset.positionId)}/exit`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price,at})});
-    const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not save exit');location.reload();
-  }catch(error){status.textContent=error.message||'Could not save exit';button.disabled=false;}
-}));
+document.getElementById('closeCallButton')?.addEventListener('click',async event=>{
+  const button=event.currentTarget;button.disabled=true;button.textContent='Closing at the server quote…';
+  try{const response=await fetch(`/api/calls/${encodeURIComponent(button.dataset.callId)}/close`,{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not close Call');location.reload();}
+  catch(error){button.textContent=error.message||'Could not close Call';button.disabled=false;}
+});
+const commissionButton=document.getElementById('commissionButton');
+const commissionStatus=document.getElementById('commissionStatus');
+async function pollFlash(jobId){
+  const response=await fetch(`/api/research/jobs/${encodeURIComponent(jobId)}`);const result=await response.json().catch(()=>({}));
+  if(result.status==='complete'&&result.url){location.href=result.url;return;}
+  if(result.status==='failed'){commissionButton.disabled=false;commissionButton.textContent='Retry Flash · {{ flash.model }}';commissionStatus.textContent=result.error||'Flash failed. You can retry.';return;}
+  commissionStatus.textContent='Flash is filling its context and writing one shared report…';setTimeout(()=>pollFlash(jobId),2500);
+}
+if(commissionButton?.dataset.jobId)pollFlash(commissionButton.dataset.jobId);
+commissionButton?.addEventListener('click',async()=>{
+  commissionButton.disabled=true;commissionButton.textContent='Starting Flash · {{ flash.model }}';commissionStatus.textContent='Sending the report ID to the server queue…';
+  try{const response=await fetch(`/api/research/${encodeURIComponent(ticker)}`,{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||result.error||'Could not start Flash');if(result.status==='complete'&&result.url){location.href=result.url;return;}commissionButton.textContent='Flash is researching · {{ flash.model }}';pollFlash(result.job_id);}
+  catch(error){commissionButton.disabled=false;commissionButton.textContent='Retry Flash · {{ flash.model }}';commissionStatus.textContent=error.message||'Could not start Flash';}
+});
 const commentForm=document.getElementById('commentForm');
 const commentBody=document.getElementById('commentBody');
 const commentStatus=document.getElementById('commentStatus');
@@ -366,17 +331,13 @@ function renderComment(comment){
   const item=document.createElement('li');
   const avatar=document.createElement('span');avatar.className='comment-avatar';avatar.textContent=(comment.pseudonym||'??').slice(-2);
   const copy=document.createElement('div');const head=document.createElement('header');
-  const name=document.createElement('strong');name.textContent=comment.pseudonym;
+  const name=document.createElement('a');name.href=`/u/${encodeURIComponent(comment.pseudonym)}`;name.textContent=comment.pseudonym;
   const meta=document.createElement('small');
   const stamp=document.createElement('time');stamp.dateTime=comment.created_at;stamp.dataset.commentTime='';stamp.textContent=relativeCommentTime(comment.created_at);meta.append(stamp);
   const body=document.createElement('p');body.textContent=comment.body;
   head.append(name,meta);copy.append(head,body);item.append(avatar,copy);return item;
 }
 refreshCommentTimes();
-document.getElementById('commentJump').addEventListener('click',()=>{
-  document.getElementById('discussion').scrollIntoView({behavior:'smooth',block:'start'});
-  setTimeout(()=>commentBody?.focus(),350);
-});
 commentBody?.addEventListener('input',()=>{commentStatus.textContent=(280-commentBody.value.length)+' left';});
 commentForm?.addEventListener('submit',async event=>{
   event.preventDefault();const body=commentBody.value.trim();if(!body){commentStatus.textContent='Write a comment first';return;}
@@ -385,7 +346,7 @@ commentForm?.addEventListener('submit',async event=>{
     const response=await fetch(`/api/comments/${encodeURIComponent(ticker)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body})});
     const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not post');
     commentList.prepend(renderComment(result.comment));commentBody.value='';commentStatus.textContent='280 left';
-    document.getElementById('commentCount').textContent=result.count;document.getElementById('discussionCount').textContent=result.count;document.getElementById('commentEmpty').hidden=true;
+    document.getElementById('discussionCount').textContent=result.count;document.getElementById('commentEmpty').hidden=true;
   }catch(error){commentStatus.textContent=error.message||'Could not post';}finally{submit.disabled=false;}
 });
 const openedAt=Date.now();

@@ -36,13 +36,11 @@ from runner_web.main import (
     pulse_data,
     pulse_notification_data,
     radar_data,
-    reaction_state,
     register_options,
     templates,
     ticker_chart_detail_payload,
     ticker_charts_payload,
     ticker_detail_data,
-    toggle_reaction,
 )
 
 
@@ -62,14 +60,15 @@ def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
     assert "pendingUpdateTickers" in radar_template
 
 
-def test_ticker_uses_only_the_existing_comment_for_a_personal_view() -> None:
+def test_ticker_has_public_call_and_flash_actions() -> None:
     template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
 
     assert "Track a thesis" not in template
     assert "thesisDialog" not in template
     assert "thesisForm" not in template
-    assert "Ask Flash" not in template
-    assert "commissionButton" not in template
+    assert "Ask Flash" in template
+    assert "commissionButton" in template
+    assert "Make Call" in template
     assert template.count("<textarea") == 1
     assert 'id="commentBody"' in template
 
@@ -279,6 +278,7 @@ def test_ticker_page_does_not_add_a_guest_research_action(
 
     assert response.status_code == 200
     assert "Ask Flash" not in response.body.decode()
+    assert "Log in to ask Flash" in response.body.decode()
     assert "Connect OpenRouter" not in response.body.decode()
 
 
@@ -362,7 +362,7 @@ def test_radar_reuses_the_shared_base_payload(
     assert calls == 1
 
 
-def test_alpha_reuses_shared_data_but_keeps_profile_reactions(
+def test_alpha_reuses_shared_public_call_data(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "alpha-cache.db")
@@ -371,11 +371,18 @@ def test_alpha_reuses_shared_data_but_keeps_profile_reactions(
     insert_filing("alpha-cache-one", "ONE", 1.25, 80, captured_at, "P")
     with connection() as database:
         database.execute(
-            """
-            INSERT INTO ticker_reactions(profile_id,ticker,reaction,created_at,updated_at)
-            VALUES(?,?,?,?,?)
-            """,
-            ("v:first", "ONE", "bull", captured_at, captured_at),
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("caller", "caller", "Caller", "active", captured_at),
+        )
+        database.execute(
+            "INSERT INTO comment_pseudonyms(user_id,pseudonym,created_at) VALUES(?,?,?)",
+            ("caller", "GreenWolf11", captured_at),
+        )
+        database.execute(
+            """INSERT INTO community_calls(
+                id,public_id,user_id,ticker,entry_price,entry_at,status,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,'active',?,?)""",
+            ("call", "public-call", "caller", "ONE", 1.25, captured_at, captured_at, captured_at),
         )
     web_main.ALPHA_DATA_CACHE.clear()
     original = web_main._alpha_base_data_uncached
@@ -391,8 +398,8 @@ def test_alpha_reuses_shared_data_but_keeps_profile_reactions(
     first = alpha_board_data("v:first")
     second = alpha_board_data("v:second")
 
-    assert first["rows"][0]["selected_reaction"] == "bull"
-    assert second["rows"][0]["selected_reaction"] is None
+    assert first["rows"][0]["active_calls"] == 1
+    assert second["rows"] == first["rows"]
     assert calls == 1
 
 
@@ -468,11 +475,18 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
     insert_scored_snapshot("external-snapshot", "external-run", "FLOW", 40, 1, captured_at)
     with connection() as database:
         database.execute(
-            """
-            INSERT INTO ticker_reactions(profile_id,ticker,reaction,created_at,updated_at)
-            VALUES(?,?,?,?,?)
-            """,
-            ("v:fan", "FLOW", "bull", captured_at, captured_at),
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("fan", "fan", "Fan", "active", captured_at),
+        )
+        database.execute(
+            "INSERT INTO comment_pseudonyms(user_id,pseudonym,created_at) VALUES(?,?,?)",
+            ("fan", "GreenWolf44", captured_at),
+        )
+        database.execute(
+            """INSERT INTO community_calls(
+                id,public_id,user_id,ticker,entry_price,entry_at,status,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,'active',?,?)""",
+            ("flow-call", "flow-public", "fan", "FLOW", 1.0, captured_at, captured_at, captured_at),
         )
     fetch = SourceFetch.success(
         source="test_discovery",
@@ -531,8 +545,7 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
     assert pulse["news_count"] == 1
     assert radar["pulse_label"] == "Bluesky · 4 cashtag mentions"
     assert radar["filing_url"].startswith("https://bsky.app/")
-    assert alpha["bull_count"] == 1
-    assert alpha["bear_count"] == 0
+    assert alpha["active_calls"] == 1
     assert alpha["comment_count"] == 0
     assert alpha["external_social_mentions"] == 4
     assert alpha["news_count"] == 1
@@ -1009,7 +1022,7 @@ def test_radar_excludes_events_for_tickers_not_in_pulse(
     assert result == []
 
 
-def test_alpha_ranks_bull_bear_and_comment_activity(
+def test_alpha_ranks_public_calls_and_shows_pnl(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "alpha.db")
@@ -1019,19 +1032,40 @@ def test_alpha_ranks_bull_bear_and_comment_activity(
     insert_filing("alpha-two", "TWO", 2.50, 80, captured_at, "P")
     with connection() as database:
         database.executemany(
-            """
-            INSERT INTO ticker_reactions(profile_id,ticker,reaction,created_at,updated_at)
-            VALUES(?,?,?,?,?)
-            """,
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
             [
-                ("v:first", "ONE", "bull", captured_at, captured_at),
-                ("v:second", "ONE", "bear", captured_at, captured_at),
-                ("v:first", "TWO", "bull", captured_at, captured_at),
+                ("caller-one", "caller_one", "Caller One", "active", captured_at),
+                ("caller-two", "caller_two", "Caller Two", "active", captured_at),
+                ("caller-three", "caller_three", "Caller Three", "active", captured_at),
+                ("commenter", "commenter", "Commenter", "active", captured_at),
             ],
         )
-        database.execute(
-            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
-            ("commenter", "commenter", "Commenter", "active", captured_at),
+        database.executemany(
+            "INSERT INTO comment_pseudonyms(user_id,pseudonym,created_at) VALUES(?,?,?)",
+            [
+                ("caller-one", "GreenWolf11", captured_at),
+                ("caller-two", "GreenWolf22", captured_at),
+                ("caller-three", "GreenWolf33", captured_at),
+            ],
+        )
+        database.executemany(
+            """INSERT INTO community_calls(
+                id,public_id,user_id,ticker,entry_price,entry_at,status,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,'active',?,?)""",
+            [
+                (
+                    "call-one", "public-one", "caller-one", "ONE", 1.0,
+                    captured_at, captured_at, captured_at,
+                ),
+                (
+                    "call-two", "public-two", "caller-two", "ONE", 1.2,
+                    captured_at, captured_at, captured_at,
+                ),
+                (
+                    "call-three", "public-three", "caller-three", "TWO", 2.0,
+                    captured_at, captured_at, captured_at,
+                ),
+            ],
         )
         database.execute(
             """
@@ -1040,73 +1074,26 @@ def test_alpha_ranks_bull_bear_and_comment_activity(
             """,
             ("alpha-comment", "ONE", "commenter", "Watching ONE", "public", captured_at),
         )
-        database.execute(
-            """
-            INSERT INTO alpha_reports(
-                id,ticker,evidence_key,status,model,headline,summary,
-                catalysts_json,risks_json,watch_json,sources_json,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                "report-one",
-                "ONE",
-                "evidence",
-                "complete",
-                "test-model",
-                "ONE leads Alpha",
-                "Verified evidence summary.",
-                '["Insider purchase"]',
-                '["Low liquidity"]',
-                '["Volume"]',
-                '["https://www.sec.gov/alpha-one"]',
-                captured_at,
-                captured_at,
-            ),
-        )
 
     board = alpha_board_data("v:first")
 
     assert [row["ticker"] for row in board["rows"]] == ["ONE", "TWO"]
-    assert board["rows"][0]["bull_count"] == 1
-    assert board["rows"][0]["bear_count"] == 1
+    assert board["rows"][0]["active_calls"] == 2
+    assert board["rows"][0]["total_calls"] == 2
     assert board["rows"][0]["comment_count"] == 1
     assert board["rows"][0]["engagement_count"] == 4
     assert board["rows"][0]["is_leader"] is True
-    assert board["rows"][0]["selected_reaction"] == "bull"
-    assert board["rows"][0]["ai_report"]["catalysts"] == ["Insider purchase"]
-    assert board["total_votes"] == 3
+    assert board["calls"][0]["pseudonym"].startswith("GreenWolf")
+    assert board["total_calls"] == 3
     assert board["total_comments"] == 1
 
-def test_ticker_feedback_tracks_reactions_and_signed_in_comments(
+def test_ticker_feedback_tracks_signed_in_public_comments(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "feedback.db")
-    scheduled: list[tuple[str, str, str]] = []
-    monkeypatch.setattr(
-        web_main,
-        "_schedule_case_research",
-        lambda user_id, ticker, case_id: scheduled.append((user_id, ticker, case_id)),
-    )
     init_db()
     timestamp = datetime.now(UTC)
     insert_filing("feedback-one", "ONE", 1.25, 70, timestamp.isoformat(), "P")
-    request = Request(
-        {
-            "type": "http",
-            "method": "POST",
-            "path": "/api/reaction/ONE/bull",
-            "headers": [(b"origin", APP_ORIGIN.encode())],
-            "client": ("127.0.0.77", 4770),
-        }
-    )
-    request.state.visitor_id = "feedback-visitor-abcdefghijklmnop"
-
-    bull = json.loads(toggle_reaction("ONE", "bull", request, None).body)
-    bear = json.loads(toggle_reaction("ONE", "bear", request, None).body)
-
-    assert bull == {"ticker": "ONE", "bull": 1, "bear": 0, "selected": "bull"}
-    assert bear == {"ticker": "ONE", "bull": 0, "bear": 1, "selected": "bear"}
-    assert reaction_state("ONE", "v:feedback-visitor-abcdefghijklmnop") == bear
 
     raw_session = "feedback-session"
     with connection() as database:
@@ -1152,7 +1139,6 @@ def test_ticker_feedback_tracks_reactions_and_signed_in_comments(
     assert comments_for_ticker("ONE") == [payload["comment"]]
     assert alpha_comments_data() == [{**payload["comment"], "ticker": "ONE"}]
     assert "radar_case" not in payload
-    assert scheduled == []
 
 
 def test_radar_orders_events_by_time_not_activity(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -1289,7 +1275,8 @@ def test_commissioned_report_is_public_without_storing_the_openrouter_key(
         ),
     )
 
-    report = _commission_research("commissioner", "ONE", "sk-or-device-only-test-key")
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "sk-or-server-test-key")
+    report = _commission_research("commissioner", "ONE")
 
     assert report["headline"] == "ONE evidence report"
     assert report["thesis"] == "A source-bound summary."
@@ -1306,7 +1293,7 @@ def test_commissioned_report_is_public_without_storing_the_openrouter_key(
         columns = {row[1] for row in database.execute("PRAGMA table_info(research_commissions)")}
         stored = database.execute("SELECT * FROM research_commissions").fetchone()
     assert "openrouter_key" not in columns
-    assert "sk-or-device-only-test-key" not in " ".join(str(value) for value in stored)
+    assert "sk-or-server-test-key" not in " ".join(str(value) for value in stored)
 
     same_report, created = web_main._create_research_commission("commissioner", "ONE")
     assert created is False
@@ -1349,7 +1336,7 @@ def test_browser_commission_uses_the_server_openrouter_key(
     monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "sk-or-server-side-test-key")
     monkeypatch.setattr(web_main, "_generate_openrouter_report", fake_report)
 
-    report = _commission_research("verified-user", "ONE", "")
+    report = _commission_research("verified-user", "ONE")
 
     assert report["status"] == "complete"
     assert report["research_mode"] == "one_shot_system_context"
@@ -1461,32 +1448,41 @@ def test_running_flash_commission_is_a_single_server_job(
             "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
             ("runner", "member_runner", "Member", "active", captured_at),
         )
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("other", "member_other", "Other member", "active", captured_at),
+        )
 
     first, first_created = web_main._create_research_commission("runner", "ONE")
-    second, second_created = web_main._create_research_commission("runner", "ONE")
+    second, second_created = web_main._create_research_commission("other", "ONE")
 
     assert first_created is True
     assert second_created is False
     assert first["status"] == "running"
     assert second["public_id"] == first["public_id"]
-    assert web_main.latest_commission("runner", "ONE")["status"] == "running"
+    assert web_main.latest_commission("ONE")["status"] == "running"
     with connection() as database:
         rows = database.execute("SELECT * FROM research_commissions").fetchall()
+        requests = database.execute(
+            "SELECT user_id,created_new FROM flash_report_requests ORDER BY created_at,id"
+        ).fetchall()
     assert len(rows) == 1
+    assert {row["user_id"] for row in requests} == {"runner", "other"}
+    assert sorted(row["created_new"] for row in requests) == [0, 1]
     assert "openrouter" not in " ".join(rows[0].keys()).lower()
 
 
-def test_ticker_has_no_manual_research_job_controls() -> None:
+def test_ticker_commissions_flash_with_no_browser_key() -> None:
     template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
 
-    assert "Ask Flash" not in template
-    assert "Retry Flash" not in template
-    assert "commissionButton" not in template
-    assert "fetch(`/api/research/${encodeURIComponent(ticker)}`)" not in template
+    assert "Ask Flash" in template
+    assert "Retry Flash" in template
+    assert "commissionButton" in template
+    assert "fetch(`/api/research/${encodeURIComponent(ticker)}`,{method:'POST'})" in template
     assert "runnerOpenRouter" not in template
     assert "X-OpenRouter-Key" not in template
-    assert 'Flash <small class="flash-model-label">{{ flash.model_label }}</small>' in template
-    assert "{{ call.inference_model_label }}" in template
+    assert 'Flash <small class="flash-model-label">{{ flash.model }}</small>' in template
+    assert "{{ flash.model }}" in template
 
 
 def test_flash_model_label_is_shown_on_public_flash_surfaces() -> None:
@@ -1497,10 +1493,12 @@ def test_flash_model_label_is_shown_on_public_flash_surfaces() -> None:
     ticker_row = (root / "web/static/ticker-row.js").read_text()
 
     assert "{{ report.actor.display_name }}" in report
-    assert "{{ report.actor.model_label }}" in report
-    assert "kol.inference_model_label" in pulse
-    assert "call.inference_model_label" in scanner
-    assert "call.inference_model_label" in ticker_row
+    assert "{{ report.actor.model }}" in report
+    assert "kol.inference_model_label" not in pulse
+    assert "call.inference_model_label" not in scanner
+    assert "call.inference_model_label" not in ticker_row
+    assert "paper call" not in scanner.lower()
+    assert "paper call" not in ticker_row.lower()
 
 
 def test_legacy_commission_request_uses_flash_model_with_a_minimal_prompt(
@@ -1519,6 +1517,7 @@ def test_legacy_commission_request_uses_flash_model_with_a_minimal_prompt(
         "watch": ["Volume"],
         "unknowns": ["Financing terms"],
         "sources": [],
+        "citations": [],
     }
 
     def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
@@ -1550,7 +1549,8 @@ def test_legacy_commission_request_uses_flash_model_with_a_minimal_prompt(
     assert "temperature" not in body
     assert "tools" not in body
     assert "plugins" not in body
-    assert len(body["messages"][0]["content"].split()) <= 30
+    assert "untrusted evidence" in body["messages"][0]["content"]
+    assert len(body["messages"][0]["content"].split()) <= 55
     assert report == generated
     assert model == "z-ai/glm-5.3"
     assert usage["total_tokens"] == 123
@@ -1599,6 +1599,54 @@ def test_commission_normalizes_recoverable_glm_output(
     assert usage["generation"]["finish_reason"] == "stop"
 
 
+def test_flash_keeps_only_citations_from_the_frozen_context(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    allowed = "https://www.sec.gov/Archives/edgar/data/1/report.htm"
+    invented = "https://invented.example/report"
+    generated = {
+        "headline": "ONE evidence report",
+        "thesis": "The filing is the only verified source.",
+        "summary": "The filing is the only verified source.",
+        "company_profile": {"source_urls": [invented]},
+        "people": [],
+        "filings": [],
+        "catalysts": [],
+        "risks": [],
+        "watch": [],
+        "unknowns": [],
+        "sources": [allowed, invented],
+        "citations": [
+            {"claim": "Verified claim", "source_urls": [allowed, invented]},
+            {"claim": "Invented claim", "source_urls": [invented]},
+        ],
+    }
+
+    def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
+        return io.BytesIO(
+            json.dumps(
+                {
+                    "choices": [{"message": {"content": json.dumps(generated)}}],
+                    "model": "z-ai/glm-5.3",
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
+    report, _, _ = web_main._generate_openrouter_report(
+        "server-key",
+        {"ticker": "ONE", "sources": [allowed]},
+        "member-one",
+    )
+
+    assert report["sources"] == [allowed]
+    assert report["company_profile"]["source_urls"] == []
+    assert report["citations"] == [
+        {"claim": "Verified claim", "source_urls": [allowed]}
+    ]
+    assert invented not in json.dumps(report)
+
+
 @pytest.mark.parametrize("as_text", [False, True])
 def test_commission_unwraps_glm_answer_envelope(
     monkeypatch: MonkeyPatch,
@@ -1616,6 +1664,7 @@ def test_commission_unwraps_glm_answer_envelope(
         "watch": [],
         "unknowns": [],
         "sources": [],
+        "citations": [],
     }
     answer: Any = json.dumps(generated) if as_text else generated
 
@@ -1702,16 +1751,17 @@ def test_failed_commission_stores_safe_diagnostics_and_is_retryable(
             },
         )
 
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "sk-or-server-test-key")
     monkeypatch.setattr(web_main, "_generate_openrouter_report", fail_report)
     with pytest.raises(web_main.ReportGenerationFailure):
-        _commission_research("failed-user", "EU", "sk-or-device-only-test-key")
+        _commission_research("failed-user", "EU")
 
-    failed = web_main.latest_commission("failed-user", "EU")
+    failed = web_main.latest_commission("EU")
     assert failed is not None
     assert failed["status"] == "failed"
     assert failed["usage"]["failure"]["failure_kind"] == "invalid_json"
     assert web_main._commission_api_payload(failed)["retryable"] is True
-    assert "sk-or-device-only-test-key" not in json.dumps(failed)
+    assert "OPENROUTER_API_KEY" not in json.dumps(failed)
     retry, created = web_main._create_research_commission("failed-user", "EU")
     assert created is True
     assert retry["status"] == "running"
@@ -1750,7 +1800,8 @@ def test_research_report_template_has_public_share_metadata(
             {},
         ),
     )
-    report = _commission_research("sharer", "ONE", "sk-or-share-test-key")
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "sk-or-share-test-key")
+    report = _commission_research("sharer", "ONE")
     request = Request({"type": "http", "method": "GET", "path": "/research", "headers": []})
     request.state.csp_nonce = "test"
 
@@ -1763,7 +1814,7 @@ def test_research_report_template_has_public_share_metadata(
     )
 
     assert "Shareable ONE report" in html
-    assert "<strong>Flash <span class=\"flash-model-label\">GLM 5.3</span>" in html
+    assert "<strong>Flash <span class=\"flash-model-label\">z-ai/glm-5.3</span>" in html
     assert "#1 of 4" in html
     assert f"/research/{report['public_id']}/card.png" in html
     assert "sk-or-share-test-key" not in html
