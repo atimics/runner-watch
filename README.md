@@ -7,8 +7,8 @@ Optional Fintel short and borrow data needs a Fintel API key and the matching ac
 The public beta is at [stonks.rati.foundation](https://stonks.rati.foundation). Its mobile-first
 app has three main views: **Pulse** for live penny-stock intelligence, a compact ticker page with
 the chart and primary-source evidence, **Radar** for fresh market and evidence changes, and **Alpha**
-for the community reaction ranking and subscriber research reports. Pulse paginates as the user
-scrolls. Radar works before login and merges into the passkey profile later.
+for the community comment ranking and subscriber research reports. Pulse paginates as the user
+scrolls. Radar is shared and does not build a reading profile.
 
 The public scanner defaults to listed US penny stocks from $0.20 to $5 with market caps below
 about $2B. It combines Yahoo's strongest movers, most active names, and largest losers before
@@ -116,11 +116,9 @@ The end-to-end path from collectors to product evidence is in the
 
 ## Alpha reports
 
-Bull and bear reactions plus signed-in comments determine the Alpha order. Comments count more than
-one-click reactions, and the wolf marks the current leader. Public comment names are stable
-adjective-animal aliases chosen from a salted hash, while account names stay private. Set
-`COMMENT_PSEUDONYM_SALT` to a stable private value in each deployed environment before comments are
-opened to users.
+Signed-in comments determine the Alpha order, and the wolf marks the current leader. A comment uses
+a random emoji identity that is stable only inside that ticker thread. The same account receives a
+different random identity in other threads, and account names stay private.
 
 After the leader remains stable for three minutes, the report worker builds a source-bound Alpha
 report. The complete report is rendered only for users whose `plan` is `subscriber`. Radar remains
@@ -256,7 +254,7 @@ They are research results, not trade recommendations.
 
 Flash is the only seeded KOL slot today. Its records include ladder position, inference provider,
 and inference model, and each commissioned report snapshots those fields. This keeps future model
-promotions honest: an old report keeps its original model snapshot. Human reactions remain separate
+promotions honest: an old report keeps its original model snapshot. Human comments remain separate
 from AI calls. Scorecards are available at `/api/kols`, and ticker call history is available at
 `/api/t/{ticker}/kol-calls`.
 

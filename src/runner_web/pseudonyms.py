@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import os
 import secrets
 from datetime import UTC, datetime
 from typing import Any
@@ -42,27 +40,12 @@ ANIMALS = tuple(
     """.split()
 )
 
-PSEUDONYM_SALT = os.getenv(
-    "COMMENT_PSEUDONYM_SALT",
-    "runner-watch-comment-pseudonym-v1",
-)
-
 EMOJIS = tuple(
     "🐺 🦊 🦝 🐻 🐼 🐨 🐯 🦁 🐮 🐷 🐸 🐵 🦄 🐲 🐙 🦑 🦀 🐡 "
     "🐬 🦈 🐊 🐢 🦎 🐍 🐝 🪲 🦋 🐌 🐞 🐧 🦅 🦉 🦆 🦢 🦜 🦚 🐿️ "
     "🦔 🦦 🦥 🦘 🦬 🦙 🐐 🦌 🐕 🐈 🌵 🍄 🌙 ⭐ ⚡ 🔥 🌊 🍀 🌈 "
     "💎 🧭 🎲 🎯 🛸 🚀 🛰️ 🗿 🎈 🪁 🧩 🎨 🎸 🥁 🛹 🚲 ⛵ 🏔️".split()
 )
-
-
-def pseudonym_candidate(identity: str, attempt: int = 0) -> str:
-    """Choose a stable adjective-animal name without exposing the identity."""
-
-    digest = hashlib.sha256(f"{PSEUDONYM_SALT}:{identity}:{attempt}".encode()).digest()
-    adjective_index = int.from_bytes(digest[:8], "big") % len(ADJECTIVES)
-    animal_index = int.from_bytes(digest[8:16], "big") % len(ANIMALS)
-    return f"{ADJECTIVES[adjective_index]}-{ANIMALS[animal_index]}"
-
 
 def ensure_scoped_alias(database: Any, user_id: str, scope: str) -> str:
     """Assign an unlinkable public emoji identity inside one discussion or Call thread."""

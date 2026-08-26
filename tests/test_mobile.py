@@ -134,13 +134,15 @@ def test_desktop_feeds_share_full_info_and_article_panel() -> None:
     ).read_text()
 
 
-def test_ticker_rows_use_color_without_new_or_seen_tags() -> None:
+def test_ticker_rows_have_no_reader_attention_state() -> None:
     root = Path(__file__).parents[1]
     row_script = (root / "web/static/ticker-row.js").read_text()
     row_styles = (root / "web/static/ticker-row.css").read_text()
 
-    assert "attention-unseen" in row_styles
-    assert "attention-seen" in row_styles
+    assert "attention-unseen" not in row_styles
+    assert "attention-seen" not in row_styles
+    assert "novelty_state" not in row_script
+    assert "data-novelty" not in row_script
     assert "attention-badge" not in row_script
     assert "new to you" not in row_script
     assert "seen but not opened" not in row_script

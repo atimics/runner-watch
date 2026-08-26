@@ -59,9 +59,9 @@ but the source still raises a policy warning until its public-use review is appr
 - **Radar** automatically publishes recent SEC filings, strongly matched Yahoo news, meaningful
   Reddit mention growth from ApeWisdom, and normalized market events. It groups repeated events by
   ticker, keeps the newest state, and links back to the original source.
-- **Alpha** is the social view. Bull and bear reactions plus comments determine the order; market
-  and event data provide context but do not change the community ranking. Yahoo coverage and Reddit
-  mention counts are shown as outside context, separate from Runner Watch reactions.
+- **Alpha** is the social view. Comments determine the order; market and event data provide context
+  but do not change the community ranking. Yahoo coverage and Reddit mention counts are shown as
+  outside context, separate from Runner Watch comments.
 
 The discovery worker rotates across 30 symbols: 10 current Pulse leaders, up to 10 Alpha activity
 leaders, then the next Pulse names as a flex group. One symbol is searched every 30 seconds, so the
