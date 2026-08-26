@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 from runner_web.ai_kol import (
     DEFAULT_FLASH_MODEL,
@@ -43,6 +43,23 @@ def database_tls_enabled(database_url: str) -> bool:
         return False
     values = parse_qs(urlparse(database_url).query).get("sslmode", [])
     return bool(values and values[-1].lower() in {"require", "verify-ca", "verify-full"})
+
+
+def database_url_with_required_tls(database_url: str) -> str:
+    """Add TLS when it is required, while rejecting an explicit unsafe mode."""
+
+    if not database_url:
+        raise RuntimeError("DATABASE_URL must require TLS in this deployment")
+    if database_tls_enabled(database_url):
+        return database_url
+
+    parsed = urlparse(database_url)
+    parameters = parse_qsl(parsed.query, keep_blank_values=True)
+    if any(key.lower() == "sslmode" for key, _value in parameters):
+        raise RuntimeError("DATABASE_URL must require TLS in this deployment")
+
+    parameters.append(("sslmode", "require"))
+    return urlunparse(parsed._replace(query=urlencode(parameters)))
 
 
 def _columns(db: DatabaseConnection, table: str) -> set[str]:
@@ -113,9 +130,12 @@ def _seed_source_registry(db: DatabaseConnection) -> None:
 def connection() -> Iterator[DatabaseConnection]:
     if REQUIRE_DATABASE_URL and not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is required in this deployment")
-    if REQUIRE_DATABASE_TLS and not database_tls_enabled(DATABASE_URL):
-        raise RuntimeError("DATABASE_URL must require TLS in this deployment")
-    with open_database(DATABASE_URL, DATABASE_PATH) as db:
+    database_url = (
+        database_url_with_required_tls(DATABASE_URL)
+        if REQUIRE_DATABASE_TLS
+        else DATABASE_URL
+    )
+    with open_database(database_url, DATABASE_PATH) as db:
         yield db
 
 

@@ -93,6 +93,16 @@ def test_production_database_requires_an_encrypted_connection(
     assert db.database_tls_enabled("postgresql://db/app") is False
     assert db.database_tls_enabled("postgresql://db/app?sslmode=disable") is False
 
+    assert db.database_url_with_required_tls("postgresql://db/app") == (
+        "postgresql://db/app?sslmode=require"
+    )
+    assert db.database_url_with_required_tls(
+        "postgresql://db/app?application_name=runner"
+    ) == "postgresql://db/app?application_name=runner&sslmode=require"
+    assert db.database_url_with_required_tls(
+        "postgresql://db/app?sslmode=verify-full"
+    ) == "postgresql://db/app?sslmode=verify-full"
+
     monkeypatch.setattr(db, "DATABASE_URL", "postgresql://db/app?sslmode=disable")
     monkeypatch.setattr(db, "REQUIRE_DATABASE_TLS", True)
     with pytest.raises(RuntimeError, match="must require TLS"):
