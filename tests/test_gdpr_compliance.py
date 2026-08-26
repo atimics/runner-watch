@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pytest import MonkeyPatch
 import pytest
+from pytest import MonkeyPatch
 
 from runner_web import db
 from runner_web.caller_ids import (
@@ -15,7 +15,6 @@ from runner_web.caller_ids import (
 from runner_web.db import connection, init_db
 from runner_web.privacy import delete_user_data, export_user_data, purge_passive_tracking
 from runner_web.pseudonyms import ensure_scoped_alias
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -38,7 +37,8 @@ def _seed_user() -> None:
             ("comment-one", "ONE", "gdpr-user", "Public comment", "public", timestamp),
         )
         database.execute(
-            "INSERT INTO user_positions(id,user_id,ticker,entry_price,entry_at,status,created_at,updated_at) "
+            "INSERT INTO user_positions("
+            "id,user_id,ticker,entry_price,entry_at,status,created_at,updated_at) "
             "VALUES(?,?,?,?,?,'active',?,?)",
             ("position-one", "gdpr-user", "ONE", 1.25, timestamp, timestamp, timestamp),
         )
