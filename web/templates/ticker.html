@@ -12,9 +12,6 @@
   <section class="asset-head">
     <span class="coin coin-large coin-{{ detail.coin_tone }}"><b>{{ detail.coin_label }}</b><i></i></span>
     <div><div class="asset-ticker"><h1>{{ detail.ticker }}</h1><span>{{ detail.exchange }}</span></div><p>{{ detail.company }}</p></div>
-    <button class="heart-button {% if heart.hearted %}hearted{% endif %}" type="button" id="heartButton" aria-label="Heart {{ detail.ticker }}" aria-pressed="{{ 'true' if heart.hearted else 'false' }}">
-      <span>{% if heart.hearted %}♥{% else %}♡{% endif %}</span><small id="heartCount">{{ heart.count }}</small>
-    </button>
   </section>
 
   <section class="price-block">
@@ -334,16 +331,6 @@ document.querySelectorAll('[data-chart-mode]').forEach(button=>button.addEventLi
 document.getElementById('shareButton').addEventListener('click', async () => {
   const share = {title: ticker, text: `${ticker} · ${company}`, url: location.href};
   try { fetch('/api/activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker,event_type:'share'})}); if (navigator.share) await navigator.share(share); else { await navigator.clipboard.writeText(location.href); document.getElementById('shareButton').textContent = '✓'; } } catch (_) {}
-});
-document.getElementById('heartButton').addEventListener('click', async event => {
-  const button = event.currentTarget;
-  const response = await fetch(`/api/heart/${encodeURIComponent(ticker)}`, {method: 'POST'});
-  if (!response.ok) return;
-  const result = await response.json();
-  button.classList.toggle('hearted', result.hearted);
-  button.setAttribute('aria-pressed',String(result.hearted));
-  button.querySelector('span').textContent = result.hearted ? '♥' : '♡';
-  document.getElementById('heartCount').textContent = result.count;
 });
 function renderReaction(result){
   document.getElementById('bullCount').textContent=result.bull;

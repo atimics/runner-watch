@@ -47,6 +47,74 @@
   margin-top: 28px;
 }
 
+.alpha-signals {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.alpha-signal {
+  box-sizing: border-box;
+  min-width: 38px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid #2b342f;
+  border-radius: 14px;
+  background: #0c100e;
+  color: #89958f;
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.alpha-signal span {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.alpha-signal b {
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.alpha-signal.bull.selected {
+  border-color: rgba(87, 227, 137, .42);
+  background: rgba(87, 227, 137, .09);
+  color: #57e389;
+}
+
+.alpha-signal.bear.selected {
+  border-color: rgba(255, 107, 122, .42);
+  background: rgba(255, 107, 122, .09);
+  color: #ff6b7a;
+}
+
+.alpha-signal:disabled {
+  opacity: .55;
+}
+
+.alpha-open {
+  color: #57e389;
+  font-size: 10px;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+@media (max-width: 370px) {
+  .alpha-rank-row {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .alpha-rank-row .alpha-signals {
+    grid-column: 2;
+    padding-bottom: 8px;
+  }
+}
+
 .trade-journal {
   margin: 14px 0;
   padding: 16px;

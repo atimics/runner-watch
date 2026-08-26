@@ -211,7 +211,8 @@ STATIC_VERSION = _static_version()
 
 
 def _shared_request_cache_name(scope: str) -> str:
-    return f"{runner_db.database_identity()}:{scope}:v1"
+    version = "v2" if scope in {"alpha", "pulse"} else "v1"
+    return f"{runner_db.database_identity()}:{scope}:{version}"
 
 
 def _start_worker_tasks() -> list[asyncio.Task[Any]]:
@@ -422,28 +423,15 @@ def claim_visitor_profile(request: Request, user: dict[str, Any]) -> str:
         has_source_data = db.execute(
             """
             SELECT 1
-            WHERE EXISTS(SELECT 1 FROM ticker_hearts WHERE profile_id=?)
-               OR EXISTS(SELECT 1 FROM ticker_reactions WHERE profile_id=?)
+            WHERE EXISTS(SELECT 1 FROM ticker_reactions WHERE profile_id=?)
                OR EXISTS(SELECT 1 FROM activity_events WHERE profile_id=?)
                OR EXISTS(SELECT 1 FROM radar_seen WHERE profile_id=?)
                OR EXISTS(SELECT 1 FROM pulse_profile_state WHERE profile_id=?)
             """,
-            (source, source, source, source, source),
+            (source, source, source, source),
         ).fetchone()
         if not has_source_data:
             return target
-        db.execute(
-            """
-            INSERT INTO ticker_hearts(profile_id,ticker,active,created_at,updated_at)
-            SELECT ?,ticker,active,created_at,updated_at FROM ticker_hearts
-            WHERE profile_id=?
-            ON CONFLICT(profile_id,ticker) DO UPDATE SET
-                active=MAX(ticker_hearts.active,excluded.active),
-                updated_at=MAX(ticker_hearts.updated_at,excluded.updated_at)
-            """,
-            (target, source),
-        )
-        db.execute("DELETE FROM ticker_hearts WHERE profile_id=?", (source,))
         db.execute(
             """
             INSERT INTO ticker_reactions(profile_id,ticker,reaction,created_at,updated_at)
@@ -866,14 +854,16 @@ def community(
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    comments = alpha_comments_data()
+    user = current_user(runner_session)
+    profile = claim_visitor_profile(request, user) if user else profile_id(request)
+    board = alpha_board_data(profile)
     return templates.TemplateResponse(
         request=request,
         name="community.html",
         context=page_context(
             request,
             runner_session,
-            comments=comments,
+            board=board,
             active_tab="alpha",
         ),
     )
@@ -1094,14 +1084,17 @@ def _evidence_gate(
     social_mentions = int(
         context.get("social_mentions") or current.get("external_social_mentions") or 0
     )
-    heart_count = int(current.get("heart_count") or 0)
+    bull_count = int(current.get("bull_count") or 0)
+    bear_count = int(current.get("bear_count") or 0)
+    comment_count = int(current.get("comment_count") or 0)
+    community_count = bull_count + bear_count + comment_count
 
     baseline_mode = str((base_rates or {}).get("mode") or "unavailable")
     notable_metrics = list((base_rates or {}).get("notable_metrics") or [])
     market_confirmed = bool(market_checks) and (
         baseline_mode != "empirical" or bool(notable_metrics)
     )
-    crowd_confirmed = social_mentions > 0 or heart_count >= 2
+    crowd_confirmed = social_mentions > 0 or community_count >= 2
     family_receipts = [
         {
             "family": "market",
@@ -1143,8 +1136,11 @@ def _evidence_gate(
                     else []
                 ),
                 *(
-                    [f"{heart_count} community hearts"]
-                    if heart_count >= 2
+                    [
+                        f"{bull_count + bear_count} community votes and "
+                        f"{comment_count} comments"
+                    ]
+                    if community_count >= 2
                     else []
                 ),
             ],
@@ -1510,10 +1506,18 @@ def _pulse_data_uncached() -> dict[str, Any]:
             if latest_run
             else []
         )
-        heart_rows = db.execute(
+        reaction_rows = db.execute(
             """
-            SELECT ticker,COUNT(*) AS heart_count FROM ticker_hearts
-            WHERE active=1 GROUP BY ticker
+            SELECT ticker,
+                   SUM(CASE WHEN reaction='bull' THEN 1 ELSE 0 END) AS bull_count,
+                   SUM(CASE WHEN reaction='bear' THEN 1 ELSE 0 END) AS bear_count
+            FROM ticker_reactions GROUP BY ticker
+            """
+        ).fetchall()
+        comment_rows = db.execute(
+            """
+            SELECT ticker,COUNT(*) AS comment_count
+            FROM ticker_comments WHERE status='public' GROUP BY ticker
             """
         ).fetchall()
         market_event_rows = db.execute(
@@ -1546,7 +1550,19 @@ def _pulse_data_uncached() -> dict[str, Any]:
     predictions: dict[str, dict[str, Any]] = {}
     for raw in prediction_rows:
         predictions.setdefault(str(raw["snapshot_id"]), dict(raw))
-    hearts = {str(row["ticker"]): int(row["heart_count"]) for row in heart_rows}
+    community: dict[str, dict[str, int]] = {}
+    for row in reaction_rows:
+        community[str(row["ticker"])] = {
+            "bull_count": int(row["bull_count"] or 0),
+            "bear_count": int(row["bear_count"] or 0),
+            "comment_count": 0,
+        }
+    for row in comment_rows:
+        counts = community.setdefault(
+            str(row["ticker"]),
+            {"bull_count": 0, "bear_count": 0, "comment_count": 0},
+        )
+        counts["comment_count"] = int(row["comment_count"] or 0)
     market_events_by_ticker: dict[str, list[dict[str, Any]]] = {}
     for raw in market_event_rows:
         market_events_by_ticker.setdefault(str(raw["ticker"]), []).append(dict(raw))
@@ -1575,8 +1591,15 @@ def _pulse_data_uncached() -> dict[str, Any]:
             if catalyst_sentiment == "risk"
             else 0.0
         )
-        heart_count = hearts.get(ticker, 0)
-        community_boost = min(8.0, math.log2(heart_count + 1) * 2.0)
+        community_counts = community.get(
+            ticker,
+            {"bull_count": 0, "bear_count": 0, "comment_count": 0},
+        )
+        bull_count = community_counts["bull_count"]
+        bear_count = community_counts["bear_count"]
+        comment_count = community_counts["comment_count"]
+        engagement_count = bull_count + bear_count + (comment_count * 2)
+        community_boost = min(8.0, math.log2(engagement_count + 1) * 2.0)
         external = _external_event_context(market_events_by_ticker.get(ticker, []))
         news_boost = float(external["news_boost"])
         social_search_boost = float(external["social_search_boost"])
@@ -1629,7 +1652,10 @@ def _pulse_data_uncached() -> dict[str, Any]:
             "custom_score": pulse_score,
             "runner_probability": prediction.get("probability_up") if prediction else None,
             "expected_return_pct": (prediction.get("expected_return_pct") if prediction else None),
-            "heart_count": heart_count,
+            "bull_count": bull_count,
+            "bear_count": bear_count,
+            "comment_count": comment_count,
+            "engagement_count": engagement_count,
             "event_boost": round(event_boost, 2),
             "news_boost": news_boost,
             "social_search_boost": social_search_boost,
@@ -1870,11 +1896,19 @@ def _alpha_list_summary(
 
 def _alpha_base_data_uncached() -> dict[str, Any]:
     with connection() as db:
-        heart_rows = db.execute(
+        reaction_rows = db.execute(
             """
-            SELECT ticker,COUNT(*) AS heart_count,MAX(updated_at) AS latest_heart
-            FROM ticker_hearts WHERE active=1
-            GROUP BY ticker ORDER BY heart_count DESC,latest_heart DESC LIMIT 50
+            SELECT ticker,
+                   SUM(CASE WHEN reaction='bull' THEN 1 ELSE 0 END) AS bull_count,
+                   SUM(CASE WHEN reaction='bear' THEN 1 ELSE 0 END) AS bear_count,
+                   MAX(updated_at) AS latest_activity
+            FROM ticker_reactions GROUP BY ticker
+            """
+        ).fetchall()
+        comment_rows = db.execute(
+            """
+            SELECT ticker,COUNT(*) AS comment_count,MAX(created_at) AS latest_activity
+            FROM ticker_comments WHERE status='public' GROUP BY ticker
             """
         ).fetchall()
         report_rows = db.execute(
@@ -1893,7 +1927,30 @@ def _alpha_base_data_uncached() -> dict[str, Any]:
 
     pulse = pulse_data(limit=50)
     pulse_lookup = {str(row["ticker"]): row for row in pulse["rows"]}
-    requested = [str(row["ticker"]) for row in heart_rows]
+    community: dict[str, dict[str, Any]] = {}
+    for row in reaction_rows:
+        community[str(row["ticker"])] = {
+            "bull_count": int(row["bull_count"] or 0),
+            "bear_count": int(row["bear_count"] or 0),
+            "comment_count": 0,
+            "latest_activity": str(row["latest_activity"] or ""),
+        }
+    for row in comment_rows:
+        counts = community.setdefault(
+            str(row["ticker"]),
+            {
+                "bull_count": 0,
+                "bear_count": 0,
+                "comment_count": 0,
+                "latest_activity": "",
+            },
+        )
+        counts["comment_count"] = int(row["comment_count"] or 0)
+        counts["latest_activity"] = max(
+            str(counts["latest_activity"]),
+            str(row["latest_activity"] or ""),
+        )
+    requested = list(community)
     requested.extend(str(row["ticker"]) for row in commission_rows)
     fallback_lookup = _radar_market_summaries(
         [ticker for ticker in requested if ticker not in pulse_lookup]
@@ -1906,14 +1963,33 @@ def _alpha_base_data_uncached() -> dict[str, Any]:
     for report_row in report_rows:
         latest_reports.setdefault(str(report_row["ticker"]), report_row)
 
+    ranked_community = sorted(
+        community.items(),
+        key=lambda entry: (
+            entry[1]["bull_count"]
+            + entry[1]["bear_count"]
+            + (entry[1]["comment_count"] * 2),
+            entry[1]["comment_count"],
+            entry[1]["bull_count"] + entry[1]["bear_count"],
+            entry[1]["latest_activity"],
+            entry[0],
+        ),
+        reverse=True,
+    )[:50]
     rows: list[dict[str, Any]] = []
-    for rank, heart_row in enumerate(heart_rows, start=1):
-        ticker = str(heart_row["ticker"])
+    for rank, (ticker, counts) in enumerate(ranked_community, start=1):
         item = dict(summary_lookup[ticker])
         item.update(
             rank=rank,
-            heart_count=int(heart_row["heart_count"]),
-            latest_heart=heart_row["latest_heart"],
+            bull_count=counts["bull_count"],
+            bear_count=counts["bear_count"],
+            comment_count=counts["comment_count"],
+            engagement_count=(
+                counts["bull_count"]
+                + counts["bear_count"]
+                + (counts["comment_count"] * 2)
+            ),
+            latest_activity=counts["latest_activity"],
             is_leader=rank == 1,
             ai_report=_report_record(latest_reports.get(ticker)),
         )
@@ -1933,7 +2009,8 @@ def _alpha_base_data_uncached() -> dict[str, Any]:
     return {
         "rows": rows,
         "contenders": contenders,
-        "total_hearts": sum(row["heart_count"] for row in rows),
+        "total_votes": sum(row["bull_count"] + row["bear_count"] for row in rows),
+        "total_comments": sum(row["comment_count"] for row in rows),
         "provider_ready": bool(AI_REPORT_API_KEY),
         "commissions": commissions,
     }
@@ -2002,22 +2079,35 @@ def alpha_board_data(profile: str) -> dict[str, Any]:
     base = _alpha_base_data()
     with connection() as db:
         mine = {
-            row["ticker"]
+            str(row["ticker"]): str(row["reaction"])
             for row in db.execute(
-                "SELECT ticker FROM ticker_hearts WHERE profile_id=? AND active=1",
+                "SELECT ticker,reaction FROM ticker_reactions WHERE profile_id=?",
                 (profile,),
             ).fetchall()
         }
     return {
         **base,
         "rows": [
-            {**row, "hearted": row["ticker"] in mine}
+            {**row, "selected_reaction": mine.get(str(row["ticker"]))}
             for row in base["rows"]
         ],
     }
 
 
-def _alpha_evidence(ticker: str, heart_count: int) -> tuple[str, dict[str, Any]]:
+def _community_engagement_count(ticker: str) -> int:
+    with connection() as db:
+        reaction_count = db.execute(
+            "SELECT COUNT(*) FROM ticker_reactions WHERE ticker=?",
+            (ticker,),
+        ).fetchone()[0]
+        comment_count = db.execute(
+            "SELECT COUNT(*) FROM ticker_comments WHERE ticker=? AND status='public'",
+            (ticker,),
+        ).fetchone()[0]
+    return int(reaction_count) + (int(comment_count) * 2)
+
+
+def _alpha_evidence(ticker: str, engagement_count: int) -> tuple[str, dict[str, Any]]:
     detail = ticker_detail_data(ticker)
     if not detail:
         raise ValueError("Ticker detail is unavailable")
@@ -2062,7 +2152,7 @@ def _alpha_evidence(ticker: str, heart_count: int) -> tuple[str, dict[str, Any]]
         "ticker": ticker,
         "company": detail["company"],
         "exchange": detail["exchange"],
-        "heart_count": heart_count,
+        "community_engagement_count": engagement_count,
         "captured_at": current.get("event_at"),
         "price": current.get("price"),
         "change_pct": current.get("change_pct"),
@@ -2562,11 +2652,9 @@ def _create_research_commission(
         ).fetchone()
         if running:
             return _commission_record(running) or {}, False
-        heart_count = db.execute(
-            "SELECT COUNT(*) FROM ticker_hearts WHERE ticker=? AND active=1", (ticker,)
-        ).fetchone()[0]
+    engagement_count = _community_engagement_count(ticker)
 
-    evidence_key, _ = _alpha_evidence(ticker, int(heart_count))
+    evidence_key, _ = _alpha_evidence(ticker, engagement_count)
     with connection() as db:
         current = db.execute(
             """
@@ -2648,11 +2736,9 @@ def _run_research_commission(
             return commission
         ticker = str(row["ticker"])
         user_id = str(row["user_id"])
-        heart_count = db.execute(
-            "SELECT COUNT(*) FROM ticker_hearts WHERE ticker=? AND active=1", (ticker,)
-        ).fetchone()[0]
+    engagement_count = _community_engagement_count(ticker)
 
-    _, evidence = _alpha_evidence(ticker, int(heart_count))
+    _, evidence = _alpha_evidence(ticker, engagement_count)
     try:
         research_context = build_research_context(ticker, evidence, model=actor.model)
         report, model, usage = _generate_openrouter_report(
@@ -2950,7 +3036,7 @@ def refresh_alpha_report() -> dict[str, Any]:
     if not AI_REPORT_API_KEY:
         worker_state("alpha_report_last_error", "OPENAI_API_KEY is not configured")
         return {"status": "provider_missing", "ticker": ticker}
-    evidence_key, evidence = _alpha_evidence(ticker, leader["heart_count"])
+    evidence_key, evidence = _alpha_evidence(ticker, leader["engagement_count"])
     report_id = secrets.token_urlsafe(10)
     with connection() as db:
         existing = db.execute(
@@ -3706,7 +3792,6 @@ def ticker_page(
             request,
             runner_session,
             detail=detail,
-            heart=heart_state(normalized, profile),
             reaction=reaction_state(normalized, profile),
             comments=comments,
             comment_count=comment_count_for_ticker(normalized),
@@ -3806,8 +3891,8 @@ def _activity_scores(profile: str, user_id: str | None = None) -> dict[str, floa
             """,
             (profile, iso(cutoff)),
         ).fetchall()
-        hearts = db.execute(
-            "SELECT ticker FROM ticker_hearts WHERE profile_id=? AND active=1",
+        reactions = db.execute(
+            "SELECT ticker FROM ticker_reactions WHERE profile_id=?",
             (profile,),
         ).fetchall()
         legacy = (
@@ -3824,8 +3909,8 @@ def _activity_scores(profile: str, user_id: str | None = None) -> dict[str, floa
             age_seconds = 30 * 86400
         decay = math.exp(-age_seconds / (7 * 86400))
         scores[row["ticker"]] = scores.get(row["ticker"], 0.0) + float(row["weight"]) * decay
-    for row in hearts:
-        scores[row["ticker"]] = scores.get(row["ticker"], 0.0) + 8.0
+    for row in reactions:
+        scores[row["ticker"]] = scores.get(row["ticker"], 0.0) + 4.0
     for row in legacy:
         scores[row["ticker"]] = scores.get(row["ticker"], 0.0) + 2.0
     return scores
@@ -4284,18 +4369,6 @@ def _record_activity(
         )
 
 
-def heart_state(ticker: str, profile: str) -> dict[str, Any]:
-    with connection() as db:
-        count = db.execute(
-            "SELECT COUNT(*) FROM ticker_hearts WHERE ticker=? AND active=1", (ticker,)
-        ).fetchone()[0]
-        active = db.execute(
-            "SELECT active FROM ticker_hearts WHERE profile_id=? AND ticker=?",
-            (profile, ticker),
-        ).fetchone()
-    return {"ticker": ticker, "count": int(count), "hearted": bool(active and active[0])}
-
-
 def reaction_state(ticker: str, profile: str) -> dict[str, Any]:
     counts = {"bull": 0, "bear": 0}
     with connection() as db:
@@ -4487,49 +4560,6 @@ def record_activity_api(
     return JSONResponse({"ok": True})
 
 
-@app.post("/api/heart/{ticker}")
-def toggle_heart(
-    ticker: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = current_user(runner_session)
-    profile = claim_visitor_profile(request, user) if user else profile_id(request)
-    enforce_rate(request, "heart", limit=40, seconds=60, subject=profile)
-    normalized = _clean_ticker(ticker)
-    if not _known_ticker(normalized):
-        raise HTTPException(404, "Ticker not found")
-    timestamp = iso()
-    with connection() as db:
-        existing = db.execute(
-            "SELECT active FROM ticker_hearts WHERE profile_id=? AND ticker=?",
-            (profile, normalized),
-        ).fetchone()
-        active = not bool(existing and existing["active"])
-        db.execute(
-            """
-            INSERT INTO ticker_hearts(profile_id,ticker,active,created_at,updated_at)
-            VALUES(?,?,?,?,?)
-            ON CONFLICT(profile_id,ticker) DO UPDATE SET
-                active=excluded.active,updated_at=excluded.updated_at
-            """,
-            (profile, normalized, int(active), timestamp, timestamp),
-        )
-    if active:
-        _record_activity(profile, normalized, "view")
-    with PULSE_DATA_LOCK:
-        PULSE_DATA_CACHE.clear()
-    with ALPHA_DATA_LOCK:
-        ALPHA_DATA_CACHE.clear()
-    shared_cache_delete(
-        _shared_request_cache_name("pulse"),
-        _shared_request_cache_name("alpha"),
-    )
-    state = heart_state(normalized, profile)
-    return JSONResponse(state)
-
-
 @app.post("/api/reaction/{ticker}/{reaction}")
 def toggle_reaction(
     ticker: str,
@@ -4569,6 +4599,14 @@ def toggle_reaction(
                 """,
                 (profile, normalized, normalized_reaction, timestamp, timestamp),
             )
+    with PULSE_DATA_LOCK:
+        PULSE_DATA_CACHE.clear()
+    with ALPHA_DATA_LOCK:
+        ALPHA_DATA_CACHE.clear()
+    shared_cache_delete(
+        _shared_request_cache_name("pulse"),
+        _shared_request_cache_name("alpha"),
+    )
     return JSONResponse(reaction_state(normalized, profile))
 
 
@@ -4610,6 +4648,14 @@ def create_ticker_comment(
             "SELECT COUNT(*) FROM ticker_comments WHERE ticker=? AND status='public'",
             (normalized,),
         ).fetchone()[0]
+    with PULSE_DATA_LOCK:
+        PULSE_DATA_CACHE.clear()
+    with ALPHA_DATA_LOCK:
+        ALPHA_DATA_CACHE.clear()
+    shared_cache_delete(
+        _shared_request_cache_name("pulse"),
+        _shared_request_cache_name("alpha"),
+    )
     return JSONResponse(
         {
             "comment": _public_comment(row),

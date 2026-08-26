@@ -312,14 +312,14 @@ def test_watchlist_prioritizes_pulse_then_alpha_then_flex(
             )
         database.execute(
             """
-            INSERT INTO ticker_hearts(profile_id,ticker,active,created_at,updated_at)
+            INSERT INTO ticker_reactions(profile_id,ticker,reaction,created_at,updated_at)
             VALUES(?,?,?,?,?)
             """,
-            ("v:fan", "HEART", 1, captured_at, captured_at),
+            ("v:fan", "ALPHA", "bull", captured_at, captured_at),
         )
 
     watchlist = discovery_watchlist(13)
 
     assert [row["ticker"] for row in watchlist[:10]] == [f"P{rank:02d}" for rank in range(1, 11)]
-    assert watchlist[10]["ticker"] == "HEART"
+    assert watchlist[10]["ticker"] == "ALPHA"
     assert [row["ticker"] for row in watchlist[11:]] == ["P11", "P12"]

@@ -58,17 +58,26 @@ def test_private_position_keeps_historical_entry_and_exit_times(
     ) is None
 
 
-def test_trade_pages_use_comments_alpha_and_pulse_radar() -> None:
+def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
     root = Path(__file__).parents[1]
     ticker = (root / "web/templates/ticker.html").read_text()
     alpha = (root / "web/templates/community.html").read_text()
+    navigation = (root / "web/templates/mobile_base.html").read_text()
+    app_source = (root / "src/runner_web/main.py").read_text()
     radar = (root / "web/templates/radar.html").read_text()
 
     assert "My trades" in ticker
     assert "Entry price" in ticker
     assert "Entry time" in ticker
     assert "Add exit" in ticker
-    assert "alpha-comment-ticker" in alpha
-    assert "ranked" not in alpha
+    assert "🐺" in alpha
+    assert "ranked" in alpha
+    assert "data-alpha-reaction=\"bull\"" in alpha
+    assert "data-alpha-reaction=\"bear\"" in alpha
+    assert "comment_count" in alpha
+    assert "alpha-heart" not in alpha
+    assert "heartButton" not in ticker
+    assert '<span class="tab-icon alpha-icon" aria-hidden="true">🐺</span>' in navigation
+    assert '@app.post("/api/heart/{ticker}")' not in app_source
     assert "My Radar" not in radar
     assert "events from Pulse" in radar

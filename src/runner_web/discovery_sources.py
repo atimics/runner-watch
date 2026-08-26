@@ -94,15 +94,26 @@ def discovery_watchlist(limit: int = 30) -> list[dict[str, str]]:
             if latest_run
             else []
         )
-        heart_rows = database.execute(
+        reaction_rows = database.execute(
             """
-            SELECT h.ticker,COALESCE(c.name,h.ticker) AS company,COUNT(*) AS hearts,
-                   MAX(h.updated_at) AS latest_heart
-            FROM ticker_hearts h
-            LEFT JOIN sec_companies c ON c.ticker=h.ticker
-            WHERE h.active=1
-            GROUP BY h.ticker,c.name
-            ORDER BY hearts DESC,latest_heart DESC,h.ticker
+            SELECT r.ticker,COALESCE(c.name,r.ticker) AS company,COUNT(*) AS activity,
+                   MAX(r.updated_at) AS latest_activity
+            FROM ticker_reactions r
+            LEFT JOIN sec_companies c ON c.ticker=r.ticker
+            GROUP BY r.ticker,c.name
+            ORDER BY activity DESC,latest_activity DESC,r.ticker
+            LIMIT 20
+            """
+        ).fetchall()
+        comment_rows = database.execute(
+            """
+            SELECT t.ticker,COALESCE(c.name,t.ticker) AS company,COUNT(*) AS activity,
+                   MAX(t.created_at) AS latest_activity
+            FROM ticker_comments t
+            LEFT JOIN sec_companies c ON c.ticker=t.ticker
+            WHERE t.status='public'
+            GROUP BY t.ticker,c.name
+            ORDER BY activity DESC,latest_activity DESC,t.ticker
             LIMIT 20
             """
         ).fetchall()
@@ -116,10 +127,38 @@ def discovery_watchlist(limit: int = 30) -> list[dict[str, str]]:
             """
         ).fetchall()
 
+    community: dict[str, dict[str, object]] = {}
+    for row in reaction_rows:
+        community[str(row["ticker"])] = {
+            "ticker": row["ticker"],
+            "company": row["company"],
+            "activity": int(row["activity"]),
+            "latest_activity": str(row["latest_activity"] or ""),
+        }
+    for row in comment_rows:
+        ticker = str(row["ticker"])
+        item = community.setdefault(
+            ticker,
+            {
+                "ticker": row["ticker"],
+                "company": row["company"],
+                "activity": 0,
+                "latest_activity": "",
+            },
+        )
+        item["activity"] = int(item["activity"]) + (int(row["activity"]) * 2)
+        item["latest_activity"] = max(
+            str(item["latest_activity"]),
+            str(row["latest_activity"] or ""),
+        )
     leaders = list(scan_rows[:10])
-    social = list(heart_rows[:10])
+    alpha = sorted(
+        community.values(),
+        key=lambda row: (int(row["activity"]), str(row["latest_activity"]), str(row["ticker"])),
+        reverse=True,
+    )[:10]
     flex = list(scan_rows[10:30])
-    ordered = leaders + social + flex + list(filing_rows)
+    ordered = leaders + alpha + flex + list(filing_rows)
     output: list[dict[str, str]] = []
     seen: set[str] = set()
     for row in ordered:

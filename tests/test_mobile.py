@@ -33,7 +33,6 @@ from runner_web.main import (
     commissioned_reports,
     create_ticker_comment,
     get_commission,
-    heart_state,
     pulse_data,
     pulse_notification_data,
     radar_data,
@@ -350,7 +349,7 @@ def test_radar_reuses_the_shared_base_payload(
     assert calls == 1
 
 
-def test_alpha_reuses_shared_data_but_keeps_profile_hearts(
+def test_alpha_reuses_shared_data_but_keeps_profile_reactions(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "alpha-cache.db")
@@ -360,10 +359,10 @@ def test_alpha_reuses_shared_data_but_keeps_profile_hearts(
     with connection() as database:
         database.execute(
             """
-            INSERT INTO ticker_hearts(profile_id,ticker,active,created_at,updated_at)
+            INSERT INTO ticker_reactions(profile_id,ticker,reaction,created_at,updated_at)
             VALUES(?,?,?,?,?)
             """,
-            ("v:first", "ONE", 1, captured_at, captured_at),
+            ("v:first", "ONE", "bull", captured_at, captured_at),
         )
     web_main.ALPHA_DATA_CACHE.clear()
     original = web_main._alpha_base_data_uncached
@@ -379,8 +378,8 @@ def test_alpha_reuses_shared_data_but_keeps_profile_hearts(
     first = alpha_board_data("v:first")
     second = alpha_board_data("v:second")
 
-    assert first["rows"][0]["hearted"] is True
-    assert second["rows"][0]["hearted"] is False
+    assert first["rows"][0]["selected_reaction"] == "bull"
+    assert second["rows"][0]["selected_reaction"] is None
     assert calls == 1
 
 
@@ -457,10 +456,10 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
     with connection() as database:
         database.execute(
             """
-            INSERT INTO ticker_hearts(profile_id,ticker,active,created_at,updated_at)
+            INSERT INTO ticker_reactions(profile_id,ticker,reaction,created_at,updated_at)
             VALUES(?,?,?,?,?)
             """,
-            ("v:fan", "FLOW", 1, captured_at, captured_at),
+            ("v:fan", "FLOW", "bull", captured_at, captured_at),
         )
     fetch = SourceFetch.success(
         source="test_discovery",
@@ -519,7 +518,9 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
     assert pulse["news_count"] == 1
     assert radar["pulse_label"] == "Bluesky · 4 cashtag mentions"
     assert radar["filing_url"].startswith("https://bsky.app/")
-    assert alpha["heart_count"] == 1
+    assert alpha["bull_count"] == 1
+    assert alpha["bear_count"] == 0
+    assert alpha["comment_count"] == 0
     assert alpha["external_social_mentions"] == 4
     assert alpha["news_count"] == 1
     assert alpha["pulse_label"] == "Bluesky · 4 cashtag mentions"
@@ -995,7 +996,9 @@ def test_radar_excludes_events_for_tickers_not_in_pulse(
     assert result == []
 
 
-def test_alpha_ranks_unique_hearts(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+def test_alpha_ranks_bull_bear_and_comment_activity(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "alpha.db")
     init_db()
     captured_at = datetime.now(UTC).isoformat()
@@ -1004,14 +1007,25 @@ def test_alpha_ranks_unique_hearts(tmp_path: Path, monkeypatch: MonkeyPatch) -> 
     with connection() as database:
         database.executemany(
             """
-            INSERT INTO ticker_hearts(profile_id,ticker,active,created_at,updated_at)
+            INSERT INTO ticker_reactions(profile_id,ticker,reaction,created_at,updated_at)
             VALUES(?,?,?,?,?)
             """,
             [
-                ("v:first", "ONE", 1, captured_at, captured_at),
-                ("v:second", "ONE", 1, captured_at, captured_at),
-                ("v:first", "TWO", 1, captured_at, captured_at),
+                ("v:first", "ONE", "bull", captured_at, captured_at),
+                ("v:second", "ONE", "bear", captured_at, captured_at),
+                ("v:first", "TWO", "bull", captured_at, captured_at),
             ],
+        )
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("commenter", "commenter", "Commenter", "active", captured_at),
+        )
+        database.execute(
+            """
+            INSERT INTO ticker_comments(id,ticker,user_id,body,status,created_at)
+            VALUES(?,?,?,?,?,?)
+            """,
+            ("alpha-comment", "ONE", "commenter", "Watching ONE", "public", captured_at),
         )
         database.execute(
             """
@@ -1040,11 +1054,15 @@ def test_alpha_ranks_unique_hearts(tmp_path: Path, monkeypatch: MonkeyPatch) -> 
     board = alpha_board_data("v:first")
 
     assert [row["ticker"] for row in board["rows"]] == ["ONE", "TWO"]
-    assert board["rows"][0]["heart_count"] == 2
+    assert board["rows"][0]["bull_count"] == 1
+    assert board["rows"][0]["bear_count"] == 1
+    assert board["rows"][0]["comment_count"] == 1
+    assert board["rows"][0]["engagement_count"] == 4
     assert board["rows"][0]["is_leader"] is True
-    assert board["rows"][0]["hearted"] is True
+    assert board["rows"][0]["selected_reaction"] == "bull"
     assert board["rows"][0]["ai_report"]["catalysts"] == ["Insider purchase"]
-    assert heart_state("ONE", "v:second") == {"ticker": "ONE", "count": 2, "hearted": True}
+    assert board["total_votes"] == 3
+    assert board["total_comments"] == 1
 
 def test_ticker_feedback_tracks_reactions_and_signed_in_comments(
     tmp_path: Path, monkeypatch: MonkeyPatch

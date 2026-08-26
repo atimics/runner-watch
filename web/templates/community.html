@@ -2,57 +2,101 @@
 {% block title %}Alpha · Runner Watch{% endblock %}
 {% block content %}
 <header class="screen-head">
-  <div><h1>Alpha</h1><span class="head-meta"><b id="alphaCount">{{ comments|length }}</b> comments <i></i><span id="alphaStatus">Live</span></span></div>
+  <div><h1>Alpha</h1><span class="head-meta"><b>{{ board.rows|length }}</b> ranked <i></i><span>{{ board.total_votes }} votes · {{ board.total_comments }} comments</span></span></div>
   {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>{% else %}<a class="avatar-button signed-out" href="/login" aria-label="Log in">↗</a>{% endif %}
 </header>
 
-<main class="alpha-stream" id="alphaStream">
-  {% for comment in comments %}
-  <article class="alpha-comment" data-comment-id="{{ comment.id }}">
-    <a class="alpha-comment-ticker" href="/t/{{ comment.ticker }}#discussion">{{ comment.ticker }}</a>
-    <a class="alpha-comment-body" href="/t/{{ comment.ticker }}#discussion">{{ comment.body }}</a>
-    <footer><span>{{ comment.pseudonym }}</span><time datetime="{{ comment.created_at }}" data-alpha-time>{{ comment.created_at[:16]|replace('T', ' ') }}</time></footer>
-  </article>
-  {% else %}
-  <div class="empty-list alpha-empty"><strong>No comments yet</strong><p>Comments posted on ticker pages will appear here.</p></div>
-  {% endfor %}
+<main class="alpha-board">
+  {% if board.commissions %}
+  <section class="commission-feed">
+    <div class="alpha-section-head"><h2>Reports</h2><span>Latest</span></div>
+    {% for report in board.commissions[:5] %}
+    <a class="commission-row" href="/research/{{ report.public_id }}">
+      <span class="coin coin-{{ report.coin_tone }}"><b>{{ report.coin_label }}</b><i></i></span>
+      <span><strong>{{ report.ticker }} · {{ report.headline }}</strong><small>{% if report.actor %}{{ report.actor.emoji }} {{ report.actor.display_name }} · {{ report.actor.model_label }}{% else %}{{ report.model or report.requested_model }}{% endif %}</small></span>
+      <i>›</i>
+    </a>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if board.rows %}
+    {% set leader = board.rows[0] %}
+    <article class="alpha-leader">
+      <div class="wolf-mark"><span>🐺</span><b>#1 Alpha</b></div>
+      <a class="alpha-leader-asset" href="/t/{{ leader.ticker }}">
+        <span class="coin coin-{{ leader.coin_tone }}"><b>{{ leader.coin_label }}</b><i></i></span>
+        <span><strong>{{ leader.ticker }}</strong><small>{{ leader.company }}</small></span>
+        <span class="alpha-leader-quote"><b>{% if leader.price is not none %}${{ '%.4f'|format(leader.price) if leader.price < 1 else '%.2f'|format(leader.price) }}{% else %}—{% endif %}</b><small class="{{ 'up' if leader.change_pct is not none and leader.change_pct >= 0 else 'down' }}">{% if leader.change_pct is not none %}{{ '+' if leader.change_pct >= 0 else '' }}{{ '%.1f'|format(leader.change_pct) }}%{% else %}—{% endif %}</small></span>
+      </a>
+      <div class="alpha-leader-foot">
+        <span>{{ leader.pulse_label }}</span>
+        <div class="alpha-signals" aria-label="Community activity for {{ leader.ticker }}">
+          <button class="alpha-signal bull {% if leader.selected_reaction == 'bull' %}selected{% endif %}" type="button" data-alpha-reaction="bull" data-ticker="{{ leader.ticker }}" aria-label="Bull {{ leader.ticker }}" aria-pressed="{{ 'true' if leader.selected_reaction == 'bull' else 'false' }}"><span>🐂</span><b>{{ leader.bull_count }}</b></button>
+          <button class="alpha-signal bear {% if leader.selected_reaction == 'bear' %}selected{% endif %}" type="button" data-alpha-reaction="bear" data-ticker="{{ leader.ticker }}" aria-label="Bear {{ leader.ticker }}" aria-pressed="{{ 'true' if leader.selected_reaction == 'bear' else 'false' }}"><span>🐻</span><b>{{ leader.bear_count }}</b></button>
+          <a class="alpha-signal comments" href="/t/{{ leader.ticker }}#discussion" aria-label="Comments for {{ leader.ticker }}"><span>💬</span><b>{{ leader.comment_count }}</b></a>
+        </div>
+      </div>
+    </article>
+
+    {% if leader.ai_report %}
+      {% if is_subscriber %}
+      <article class="ai-report-card">
+        <header><span>Report</span><small>{{ leader.ai_report.updated_at[:16]|replace('T',' ') }} UTC</small></header>
+        <h2>{{ leader.ai_report.headline }}</h2>
+        <p>{{ leader.ai_report.summary }}</p>
+        {% if leader.ai_report.catalysts %}<div><b>Catalysts</b>{% for item in leader.ai_report.catalysts %}<span>{{ item }}</span>{% endfor %}</div>{% endif %}
+        {% if leader.ai_report.risks %}<div><b>Risks</b>{% for item in leader.ai_report.risks %}<span>{{ item }}</span>{% endfor %}</div>{% endif %}
+        {% if leader.ai_report.watch %}<div><b>Watch</b>{% for item in leader.ai_report.watch %}<span>{{ item }}</span>{% endfor %}</div>{% endif %}
+        {% if leader.ai_report.sources %}<footer>{% for source in leader.ai_report.sources %}<a href="{{ source }}" target="_blank" rel="noopener">Source {{ loop.index }}</a>{% endfor %}</footer>{% endif %}
+      </article>
+      {% else %}
+      <div class="ai-report-locked"><span>Report</span><strong>Subscribers only</strong><i>◆</i></div>
+      {% endif %}
+    {% else %}
+      <div class="ai-report-running"><span class="wolf-pulse">🐺</span><div><strong>Digging into {{ leader.ticker }}</strong><small>Report for the #1 Alpha ticker.</small></div></div>
+    {% endif %}
+
+    {% if board.rows|length > 1 %}
+    <section class="alpha-ranking" aria-label="Alpha ranking">
+      {% for item in board.rows[1:] %}
+      <article class="alpha-rank-row">
+        <span class="rank-number">{{ item.rank }}</span>
+        <a href="/t/{{ item.ticker }}"><span class="coin coin-{{ item.coin_tone }}"><b>{{ item.coin_label }}</b><i></i></span><span><strong>{{ item.ticker }}</strong><small>{{ item.pulse_label }}</small></span></a>
+        <div class="alpha-signals" aria-label="Community activity for {{ item.ticker }}">
+          <button class="alpha-signal bull {% if item.selected_reaction == 'bull' %}selected{% endif %}" type="button" data-alpha-reaction="bull" data-ticker="{{ item.ticker }}" aria-label="Bull {{ item.ticker }}" aria-pressed="{{ 'true' if item.selected_reaction == 'bull' else 'false' }}"><span>🐂</span><b>{{ item.bull_count }}</b></button>
+          <button class="alpha-signal bear {% if item.selected_reaction == 'bear' %}selected{% endif %}" type="button" data-alpha-reaction="bear" data-ticker="{{ item.ticker }}" aria-label="Bear {{ item.ticker }}" aria-pressed="{{ 'true' if item.selected_reaction == 'bear' else 'false' }}"><span>🐻</span><b>{{ item.bear_count }}</b></button>
+          <a class="alpha-signal comments" href="/t/{{ item.ticker }}#discussion" aria-label="Comments for {{ item.ticker }}"><span>💬</span><b>{{ item.comment_count }}</b></a>
+        </div>
+      </article>
+      {% endfor %}
+    </section>
+    {% endif %}
+  {% endif %}
+
+  {% if not board.rows and board.contenders %}
+  <section class="alpha-contenders">
+    <div class="alpha-section-head"><h2>Contenders</h2><span>Vote Bull or Bear to start Alpha</span></div>
+    {% for item in board.contenders %}
+    <article class="alpha-rank-row contender-row">
+      <a href="/t/{{ item.ticker }}"><span class="coin coin-{{ item.coin_tone }}"><b>{{ item.coin_label }}</b><i></i></span><span><strong>{{ item.ticker }}</strong><small>{{ item.pulse_label }}</small></span></a>
+      <a class="alpha-open" href="/t/{{ item.ticker }}#discussion">Open</a>
+    </article>
+    {% endfor %}
+  </section>
+  {% elif not board.rows %}
+  <div class="empty-list"><strong>No ranked tickers</strong></div>
+  {% endif %}
 </main>
 {% endblock %}
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
-let comments={{ comments|tojson }};
-const stream=document.getElementById('alphaStream');
-const relativeTime=value=>{
-  const seconds=Math.max(0,(Date.now()-new Date(value).getTime())/1000);
-  if(!Number.isFinite(seconds))return '';
-  if(seconds<60)return 'now';
-  if(seconds<3600)return Math.floor(seconds/60)+'m ago';
-  if(seconds<86400)return Math.floor(seconds/3600)+'h ago';
-  if(seconds<604800)return Math.floor(seconds/86400)+'d ago';
-  return new Date(value).toLocaleDateString([],{month:'short',day:'numeric'});
-};
-function commentCard(comment){
-  const card=document.createElement('article');card.className='alpha-comment';card.dataset.commentId=comment.id;
-  const tickerLink=document.createElement('a');tickerLink.className='alpha-comment-ticker';tickerLink.href=`/t/${encodeURIComponent(comment.ticker)}#discussion`;tickerLink.textContent=comment.ticker;
-  const bodyLink=document.createElement('a');bodyLink.className='alpha-comment-body';bodyLink.href=tickerLink.href;bodyLink.textContent=comment.body;
-  const footer=document.createElement('footer');const name=document.createElement('span');name.textContent=comment.pseudonym;
-  const stamp=document.createElement('time');stamp.dateTime=comment.created_at;stamp.dataset.alphaTime='';stamp.textContent=relativeTime(comment.created_at);
-  footer.append(name,stamp);card.append(tickerLink,bodyLink,footer);return card;
-}
-function render(){
-  stream.replaceChildren();comments.forEach(comment=>stream.append(commentCard(comment)));
-  if(!comments.length){const empty=document.createElement('div');empty.className='empty-list alpha-empty';empty.innerHTML='<strong>No comments yet</strong><p>Comments posted on ticker pages will appear here.</p>';stream.append(empty);}
-  document.getElementById('alphaCount').textContent=comments.length;
-}
-function refreshTimes(){document.querySelectorAll('[data-alpha-time]').forEach(item=>{item.textContent=relativeTime(item.dateTime);});}
-refreshTimes();setInterval(refreshTimes,60000);
-setInterval(async()=>{
+document.querySelectorAll('[data-alpha-reaction]').forEach(button=>button.addEventListener('click',async()=>{
+  button.disabled=true;
   try{
-    const response=await fetch('/api/alpha/comments');if(!response.ok)return;
-    const data=await response.json();const next=data.comments||[];
-    if((next[0]?.id||'')!==(comments[0]?.id||'')||next.length!==comments.length){comments=next;render();}
-    document.getElementById('alphaStatus').textContent='Live';
-  }catch(_){document.getElementById('alphaStatus').textContent='Offline';}
-},30000);
+    const response=await fetch(`/api/reaction/${encodeURIComponent(button.dataset.ticker)}/${button.dataset.alphaReaction}`,{method:'POST'});
+    if(response.ok)location.reload();
+  }finally{button.disabled=false;}
+}));
 </script>
 {% endblock %}
