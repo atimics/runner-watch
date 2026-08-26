@@ -156,6 +156,9 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_RESEARCH_OUTPUT_TOKENS = max(
     4_000, int(os.getenv("OPENROUTER_RESEARCH_OUTPUT_TOKENS", "12000"))
 )
+OPENROUTER_COMMENT_OUTPUT_TOKENS = max(
+    1_200, int(os.getenv("OPENROUTER_COMMENT_OUTPUT_TOKENS", "1200"))
+)
 OPENROUTER_RESEARCH_TIMEOUT_SECONDS = max(
     30, int(os.getenv("OPENROUTER_RESEARCH_TIMEOUT_SECONDS", "300"))
 )
@@ -5125,7 +5128,7 @@ def _generate_ticker_comment_text(ticker: str, user_id: str) -> tuple[str, str]:
         ],
         "response_format": {"type": "json_object"},
         "provider": {"require_parameters": True},
-        "max_tokens": 180,
+        "max_tokens": OPENROUTER_COMMENT_OUTPUT_TOKENS,
         "user": hashlib.sha256(user_id.encode()).hexdigest()[:32],
     }
     api_request = urllib.request.Request(
