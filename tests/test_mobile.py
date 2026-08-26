@@ -1365,6 +1365,8 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
     assert comment == "My read is constructive, but thin volume is the risk."
     assert model == "z-ai/glm-5.3"
     assert captured["body"]["response_format"] == {"type": "json_object"}
+    assert captured["body"]["max_tokens"] == web_main.OPENROUTER_COMMENT_OUTPUT_TOKENS
+    assert captured["body"]["max_tokens"] >= 1_200
     assert "user" not in captured["body"]
 
 
