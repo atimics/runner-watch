@@ -6,8 +6,8 @@ Optional Fintel short and borrow data needs a Fintel API key and the matching ac
 
 The public beta is at [stonks.rati.foundation](https://stonks.rati.foundation). Its mobile-first
 app has three main views: **Pulse** for live penny-stock intelligence, a compact ticker page with
-the chart and primary-source evidence, **Radar** for personal and social changes, and **Alpha**
-for the community heart ranking and subscriber research reports. Pulse paginates as the user
+the chart and primary-source evidence, **Radar** for fresh market and evidence changes, and **Alpha**
+for the community reaction ranking and subscriber research reports. Pulse paginates as the user
 scrolls. Radar works before login and merges into the passkey profile later.
 
 The public scanner defaults to listed US penny stocks from $0.20 to $5 with market caps below
@@ -116,30 +116,16 @@ The end-to-end path from collectors to product evidence is in the
 
 ## Alpha reports
 
-Each profile can heart a ticker once. Active unique hearts determine the Alpha order, and the wolf
-marks the current leader. After the leader remains stable for three minutes, the report worker
-builds a source-bound structured report for that ticker. Full reports are only rendered for users
-whose `plan` is `subscriber`.
+Bull and bear reactions plus signed-in comments determine the Alpha order. Comments count more than
+one-click reactions, and the wolf marks the current leader. Public comment names are stable
+adjective-animal aliases chosen from a salted hash, while account names stay private. Set
+`COMMENT_PSEUDONYM_SALT` to a stable private value in each deployed environment before comments are
+opened to users.
 
-Bull and bear votes are separate from hearts and do not change the Alpha order. Signed-in users can
-also leave short comments. Public comment names are stable adjective-animal aliases chosen from a
-salted hash, while account names stay private. Set `COMMENT_PSEUDONYM_SALT` to a stable private value
-in each deployed environment before comments are opened to users.
-
-A comment is also the only text needed for My Radar. The first comment on a ticker starts a private
-case from that public view; a later comment revises it and preserves the old version. Likes, votes,
-and recent discussion add social context, but they do not override primary evidence or deterministic
-risk vetoes. There is no separate thesis form, research button, or tracking button.
-
-The same comment can contain a natural horizon such as `today`, `48h`, `this week`, or `next month`.
-No picker is shown. If no horizon is written, the view lasts five days. Once archived market bars
-cover that time, My Radar records the ending return and best and worst move, closes the view, and
-keeps the result visible for 30 days.
-
-The same comment quietly starts a report job when the server has `OPENROUTER_API_KEY` configured.
-The worker sends only stored evidence to OpenRouter and never asks a user to connect a model
-provider. The key stays on the server and is never placed in a browser or job payload. A missing key
-never blocks the comment or falls back to fake generated copy.
+After the leader remains stable for three minutes, the report worker builds a source-bound Alpha
+report. The complete report is rendered only for users whose `plan` is `subscriber`. Radar remains
+the automatic feed of fresh filings, news, social changes, and market events attached to Pulse
+tickers; comments do not create a separate watchlist or hidden case.
 
 Reports are authored by **Flash ⚡**, Runner Watch's first AI KOL. Flash is a durable
 public identity in position 1 of a planned four-position model ladder. Its current engine is
@@ -158,23 +144,32 @@ evidence exists. Override the context with `RESEARCH_CONTEXT_TOKENS`, change the
 `RESEARCH_OUTPUT_RESERVE_TOKENS`. The older `OPENROUTER_RESEARCH_*` context names remain accepted so
 existing deployments can migrate without losing their settings.
 
-Each verified report stores its market view, confidence, model, and policy version against the
-private case that caused it. When the case reaches its horizon, `/api/kols` reports accuracy, Brier
-score, Brier skill against a 50% baseline, and a 95% accuracy lower bound for each real model-policy
-pair. Repeated reports on the same case count once. Twenty independent cases move a policy from
-learning to evaluation. Promotion needs at least 50 independent cases across 10 tickers, a
-better-than-chance accuracy lower bound, and Brier score below 0.25.
-
-Commissioned Flash reports use BYOK. OpenRouter's browser OAuth flow gives the user a key, and the
-browser sends that key to Runner Watch over HTTPS only when starting a report. Runner Watch stores
-it only in the encrypted, short-lived Redis job payload, performs the OpenRouter inference in the
-worker, and deletes the payload when the job is acknowledged. The key is never stored in the SQL
-report record, and the browser never sends the evidence or inference request directly to OpenRouter.
+New private Flash research runs require Pro and are limited to three per user per day. The server
+uses its own provider key. Completed private reports stay owner-only and never appear in the public
+Alpha feed. The user does not provide or store a model-provider key.
 
 The report starts with an opinionated thesis, then explains who the company is, who the named people
 or entities are, why each one appears in a filing, what the filings mean, what supports the thesis,
 what could rug it, and what remains unknown. Source text is explicitly treated as evidence rather
 than instructions.
+
+## Billing
+
+`/billing` exposes one Free plan and one Pro plan. Stripe owns the recurring price, Checkout, card
+details, invoices, and the customer portal. Runner Watch mirrors only customer IDs, subscription
+IDs, status, price ID, renewal time, and the local `free` or `subscriber` entitlement. Access changes
+only after a signed Stripe webhook; the Checkout success redirect does not grant Pro by itself.
+
+Set `STRIPE_SECRET_KEY`, `STRIPE_PRO_PRICE_ID`, and `STRIPE_WEBHOOK_SECRET`. For local testing, run:
+
+```bash
+stripe listen \
+  --events checkout.session.completed,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted \
+  --forward-to http://127.0.0.1:8080/api/stripe/webhook
+```
+
+Copy the `whsec_...` value printed by the CLI into `STRIPE_WEBHOOK_SECRET`. The public product plan,
+including features that are explicitly not being built, lives at `/roadmap` and `/api/roadmap`.
 
 The main screen ranks stocks with a **runner score**. The score looks for:
 
@@ -261,8 +256,8 @@ They are research results, not trade recommendations.
 
 Flash is the only seeded KOL slot today. Its records include ladder position, inference provider,
 and inference model, and each commissioned report snapshots those fields. This keeps future model
-promotions honest: an old report keeps its original model snapshot. Human hearts remain separate
-from AI reactions. Scorecards are available at `/api/kols`, and ticker call history is available at
+promotions honest: an old report keeps its original model snapshot. Human reactions remain separate
+from AI calls. Scorecards are available at `/api/kols`, and ticker call history is available at
 `/api/t/{ticker}/kol-calls`.
 
 ## Start the dashboard
@@ -328,11 +323,12 @@ more useful during pre-market than a simple comparison with a full day's average
 - Yahoo Finance is unofficial, can be delayed, and sometimes returns missing or wrong bars.
 - Fintel short and borrow data needs an API subscription and may require separate feed access.
 - A broad free scan can be slow or hit rate limits. Raise the scan cap in steps.
-- The tool does not know the live bid/ask spread, current halt state, float, or all market news.
+- The tool does not know the live bid/ask spread or all market news. Halt evidence is available only
+  while the Nasdaq feed is enabled and fresh; its public-use terms still need approval.
 - The saved quick list will age. Use the full list or your own symbols for better coverage.
 - The public beta uses one PostgreSQL node with daily volume snapshots. It is not highly available
   yet; a managed or replicated PostgreSQL service is the next database reliability step.
-- Subscriber entitlements are stored in the user record; billing automation is not connected yet.
+- Billing needs a Stripe recurring Price, secret key, webhook secret, and configured customer portal.
 - This is a research tool, not financial advice or an automatic buy signal.
 
 Always confirm price, spread, volume, halt status, and news in a live broker before trading.

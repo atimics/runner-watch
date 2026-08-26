@@ -42,25 +42,28 @@ flowchart LR
 | --- | --- | --- | --- | --- |
 | SEC company map | Raw JSON plus fetch run | `sec_companies` | Map CIKs to listed tickers | Live |
 | SEC current filings and documents | Raw Atom, JSON, XML, and fetch runs | `sec_filings` and `source_item_state` | Filing catalyst evidence | Live |
+| SEC Company Facts | Raw JSON plus point-in-time facts | `issuer_facts` | Share growth, cash runway, current ratio, and debt-to-cash risk | Live |
 | Yahoo universe | Screener rows plus fetch run | `ingestion_items` | Choose the scan universe | Live, display review required |
 | Yahoo price bars | Ticker data frames plus fetch run | `market_bars` | Momentum, volume, and price features | Live, display review required |
-| Nasdaq trading halts | Raw RSS plus versioned halt events | `market_events` | Internal halt state first; later a safety banner | Built, disabled pending terms review |
+| Nasdaq trading halts | Raw RSS plus versioned halt events | `market_events` | Halt evidence, safety penalty, and hard veto | Built and connected; approval blocked by terms review |
+| Fintel short and borrow | Normalized API responses | `short_data_cache` and frozen scan facts | Dated crowding evidence | Optional licensed integration |
 
 The Nasdaq worker is enabled only when `NASDAQ_TRADE_HALTS_ENABLED=true`. It polls once per minute
-from 4:00 a.m. to 8:00 p.m. Eastern on weekdays. Halt data does not change the score yet.
+from 4:00 a.m. to 8:00 p.m. Eastern on weekdays. An active halt blocks the normal trade decision,
+but the source still raises a policy warning until its public-use review is approved.
 
 ## Product routing during the POC
 
 - **Pulse** starts with the newest saved Yahoo scanner run. Its score shows separate market, SEC,
-  news-search, public-social, community-heart, and safety components.
+  news-search, public-social, community-activity, and safety components.
 - **Radar** automatically publishes recent SEC filings, strongly matched Yahoo news, meaningful
   Reddit mention growth from ApeWisdom, and normalized market events. It groups repeated events by
   ticker, keeps the newest state, and links back to the original source.
-- **Alpha** is the social view. Active community hearts determine the order; market and event data
-  provide context but do not change the heart ranking. Yahoo coverage and Reddit mention counts are
-  shown as outside context, separate from community hearts.
+- **Alpha** is the social view. Bull and bear reactions plus comments determine the order; market
+  and event data provide context but do not change the community ranking. Yahoo coverage and Reddit
+  mention counts are shown as outside context, separate from Runner Watch reactions.
 
-The discovery worker rotates across 30 symbols: 10 current Pulse leaders, up to 10 Alpha heart
+The discovery worker rotates across 30 symbols: 10 current Pulse leaders, up to 10 Alpha activity
 leaders, then the next Pulse names as a flex group. One symbol is searched every 30 seconds, so the
 full set is normally refreshed about every 15 minutes. Yahoo news search and ApeWisdom's public
 Reddit trend API need no API key. Only article metadata and aggregate mention/upvote counts are
@@ -78,7 +81,6 @@ normalization layer without changing these three product routes.
 
 | Phase | Source | Normalized destination | Derived evidence | Promotion rule |
 | --- | --- | --- | --- | --- |
-| 2 | SEC Company Facts | `issuer_facts` | Share growth, cash, debt, runway, current ratio | Pass point-in-time and issuer review |
 | 3 | Alpaca or another licensed vendor | `security_quotes`, `market_bars`, `market_events` | Spread, quote age, trade count, cleaner bars | Meet coverage and licensing gates |
 | 3 | Licensed news and corporate actions | `market_events` | Non-SEC catalyst and split state | Metadata first; no full text without rights |
 | 4 | ClinicalTrials.gov and FDA | `entity_links`, `market_events` | Trial changes and confirmed FDA actions | High-confidence issuer matches only |
@@ -105,8 +107,7 @@ normalization layer without changing these three product routes.
 
 ## Next build order
 
-1. Read the latest halt version per ticker and expose it as internal ticker evidence.
-2. Add the public halt banner after the Nasdaq terms review is complete.
-3. Connect SEC Company Facts to `issuer_facts` and build point-in-time dilution evidence.
-4. Run a small licensed quote pilot into `security_quotes` and measure coverage for ten sessions.
-5. Add entity-link review tools before ingesting biotech, FDA, or contract data at scale.
+1. Complete the Nasdaq terms review and decide whether the connected halt path can be public.
+2. Run a small licensed quote pilot into `security_quotes` and measure coverage for ten sessions.
+3. Add entity-link review tools before ingesting biotech, FDA, or contract data at scale.
+4. Build the source-backed biotech calendar only after the issuer-link precision gate passes.

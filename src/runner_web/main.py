@@ -55,6 +55,15 @@ from runner_watch.universe import penny_runner_universe
 from runner_web import db as runner_db
 from runner_web.ai_kol import FLASH, AIKol, actor_snapshot
 from runner_web.base_rates import matched_market_base_rates
+from runner_web.billing import (
+    billing_account,
+    billing_config,
+    construct_webhook_event,
+    create_checkout_session,
+    create_portal_session,
+    price_summary,
+    process_webhook_event,
+)
 from runner_web.case_monitor import refresh_case_monitor
 from runner_web.cases import (
     case_revisions,
@@ -91,6 +100,7 @@ from runner_web.positions import (
     position_for_user,
     positions_for_ticker,
 )
+from runner_web.product_catalog import roadmap_snapshot
 from runner_web.product_policy import EVIDENCE_GATE, OPERATIONS
 from runner_web.pseudonyms import pseudonym_candidate
 from runner_web.ranker import (
@@ -689,7 +699,9 @@ async def security_headers(request: Request, call_next: Any) -> Response:
             path="/",
         )
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
+    panel_path = request.url.path.startswith(("/t/", "/research/", "/s/"))
+    frame_ancestors = "'self'" if panel_path else "'none'"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN" if panel_path else "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     if COOKIE_SECURE:
@@ -697,7 +709,8 @@ async def security_headers(request: Request, call_next: Any) -> Response:
     response.headers["Content-Security-Policy"] = (
         f"default-src 'self'; script-src 'self' 'nonce-{nonce}'; "
         "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
-        "connect-src 'self'; frame-ancestors 'none'; "
+        "connect-src 'self'; frame-src 'self'; "
+        f"frame-ancestors {frame_ancestors}; "
         "base-uri 'self'; form-action 'self'"
     )
     if request.url.path.startswith("/static/"):
@@ -772,6 +785,104 @@ def api_ticker_kol_calls(request: Request, ticker: str) -> dict[str, Any]:
     enforce_rate(request, "ticker-kol-calls", limit=120, seconds=60)
     normalized = _clean_ticker(ticker)
     return {"ticker": normalized, "calls": calls_for_ticker(normalized)}
+
+
+@app.get("/billing", response_class=HTMLResponse)
+def billing_page(
+    request: Request,
+    checkout: str | None = None,
+    runner_session: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    user = current_user(runner_session)
+    config = billing_config()
+    return templates.TemplateResponse(
+        request=request,
+        name="billing.html",
+        context=page_context(
+            request,
+            runner_session,
+            account=billing_account(user),
+            price=price_summary(config),
+            checkout=checkout if checkout in {"success", "canceled"} else None,
+            billing_ready=config.checkout_ready,
+        ),
+    )
+
+
+@app.post("/api/billing/checkout")
+def billing_checkout_api(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> RedirectResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "billing-checkout", limit=8, seconds=600, subject=user["id"])
+    account = billing_account(user)
+    try:
+        url = (
+            create_portal_session(user, APP_ORIGIN)
+            if account["has_access"] or account["needs_action"]
+            else create_checkout_session(user, APP_ORIGIN)
+        )
+    except Exception as exc:
+        LOG.warning("Could not start Stripe billing for user %s: %s", user["id"], exc)
+        raise HTTPException(502, "Billing is temporarily unavailable.") from exc
+    return RedirectResponse(url, status_code=303)
+
+
+@app.post("/api/billing/portal")
+def billing_portal_api(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> RedirectResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "billing-portal", limit=12, seconds=600, subject=user["id"])
+    try:
+        url = create_portal_session(user, APP_ORIGIN)
+    except Exception as exc:
+        LOG.warning("Could not open Stripe portal for user %s: %s", user["id"], exc)
+        raise HTTPException(502, "Billing management is temporarily unavailable.") from exc
+    return RedirectResponse(url, status_code=303)
+
+
+@app.post("/api/stripe/webhook")
+async def stripe_webhook_api(request: Request) -> JSONResponse:
+    signature = request.headers.get("stripe-signature", "")
+    if not signature:
+        raise HTTPException(400, "Missing Stripe signature")
+    payload = await request.body()
+    try:
+        event = construct_webhook_event(payload, signature)
+    except RuntimeError as exc:
+        LOG.error("Stripe webhook is not configured: %s", exc)
+        raise HTTPException(503, "Stripe webhook is not configured") from exc
+    except Exception as exc:
+        raise HTTPException(400, "Invalid Stripe webhook") from exc
+    try:
+        result = process_webhook_event(event)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return JSONResponse({"received": True, **result})
+
+
+@app.get("/roadmap", response_class=HTMLResponse)
+def roadmap_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    roadmap = roadmap_snapshot(billing_ready=billing_config().checkout_ready)
+    return templates.TemplateResponse(
+        request=request,
+        name="roadmap.html",
+        context=page_context(request, runner_session, roadmap=roadmap),
+    )
+
+
+@app.get("/api/roadmap")
+def roadmap_api(request: Request) -> dict[str, Any]:
+    enforce_rate(request, "roadmap", limit=120, seconds=60)
+    return roadmap_snapshot(billing_ready=billing_config().checkout_ready)
 
 
 @app.get("/api/market-clock")
@@ -1780,19 +1891,6 @@ def _commission_record(
     return report
 
 
-def commissioned_reports(limit: int = 12) -> list[dict[str, Any]]:
-    with connection() as db:
-        rows = db.execute(
-            """
-            SELECT c.* FROM research_commissions c
-            WHERE c.status='complete'
-            ORDER BY c.completed_at DESC LIMIT ?
-            """,
-            (max(1, min(limit, 50)),),
-        ).fetchall()
-    return [report for row in rows if (report := _commission_record(row))]
-
-
 def _alpha_list_summary(
     ticker: str,
     pulse_lookup: dict[str, dict[str, Any]],
@@ -1848,14 +1946,6 @@ def _alpha_base_data_uncached() -> dict[str, Any]:
             ORDER BY ticker,created_at DESC
             """
         ).fetchall()
-        commission_rows = db.execute(
-            """
-            SELECT c.* FROM research_commissions c
-            WHERE c.status='complete'
-            ORDER BY c.completed_at DESC LIMIT 12
-            """
-        ).fetchall()
-
     pulse = pulse_data(limit=50)
     pulse_lookup = {str(row["ticker"]): row for row in pulse["rows"]}
     community: dict[str, dict[str, Any]] = {}
@@ -1882,7 +1972,6 @@ def _alpha_base_data_uncached() -> dict[str, Any]:
             str(row["latest_activity"] or ""),
         )
     requested = list(community)
-    requested.extend(str(row["ticker"]) for row in commission_rows)
     fallback_lookup = _radar_market_summaries(
         [ticker for ticker in requested if ticker not in pulse_lookup]
     )
@@ -1927,23 +2016,12 @@ def _alpha_base_data_uncached() -> dict[str, Any]:
         rows.append(item)
     ranked = {row["ticker"] for row in rows}
     contenders = [row for row in pulse["rows"][:8] if row["ticker"] not in ranked][:5]
-    commissions = [
-        report
-        for raw in commission_rows
-        if (
-            report := _commission_record(
-                raw,
-                summary_lookup.get(str(raw["ticker"])),
-            )
-        )
-    ]
     return {
         "rows": rows,
         "contenders": contenders,
         "total_votes": sum(row["bull_count"] + row["bear_count"] for row in rows),
         "total_comments": sum(row["comment_count"] for row in rows),
         "provider_ready": _flash_provider_ready(),
-        "commissions": commissions,
     }
 
 
@@ -5101,6 +5179,8 @@ async def commission_research_api(
 ) -> JSONResponse:
     require_origin(request)
     user = require_user(runner_session)
+    if user.get("plan") != "subscriber":
+        raise HTTPException(403, "Runner Watch Pro is required for private research.")
     enforce_rate(request, "commission-research", limit=6, seconds=3600, subject=user["id"])
     normalized = _clean_ticker(ticker)
     if not _known_ticker(normalized):
@@ -5172,7 +5252,8 @@ def research_report_page(
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
     report = get_commission(public_id)
-    if not report:
+    user = current_user(runner_session)
+    if not report or not user or str(report["user_id"]) != str(user["id"]):
         raise HTTPException(404, "Research report not found")
     return templates.TemplateResponse(
         request=request,
@@ -5182,9 +5263,13 @@ def research_report_page(
 
 
 @app.get("/research/{public_id}/card.png")
-def research_report_card(public_id: str) -> Response:
+def research_report_card(
+    public_id: str,
+    runner_session: str | None = Cookie(default=None),
+) -> Response:
     report = get_commission(public_id)
-    if not report:
+    user = current_user(runner_session)
+    if not report or not user or str(report["user_id"]) != str(user["id"]):
         raise HTTPException(404, "Research report not found")
     actor = report.get("actor") or {}
     model_label = str(actor.get("model_label") or report.get("model") or report["requested_model"])
@@ -5512,21 +5597,6 @@ def logout(
     response = JSONResponse({"ok": True, "redirect": "/"})
     response.delete_cookie(SESSION_COOKIE, path="/")
     return response
-
-
-@app.get("/scanner", response_class=HTMLResponse)
-def scanner_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> HTMLResponse:
-    user = current_user(runner_session)
-    if not user:
-        return RedirectResponse("/login", 303)
-    return templates.TemplateResponse(
-        request=request,
-        name="scanner.html",
-        context={"request": request, "user": user, "app_origin": APP_ORIGIN},
-    )
 
 
 def recent_sec_catalysts(tickers: list[str]) -> dict[str, dict[str, Any]]:
@@ -5984,21 +6054,6 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
         },
         "warnings": scan_warnings[:4],
     }
-
-
-@app.post("/api/scan")
-async def api_scan(
-    request: Request,
-    mode: str = "penny",
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "scan", limit=6, seconds=600, subject=user["id"])
-    if mode not in SCAN_MODES:
-        raise HTTPException(400, "Unknown scan mode")
-    result = await run_in_threadpool(run_scan, mode)
-    return JSONResponse(result)
 
 
 @app.post("/api/signals")

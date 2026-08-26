@@ -99,6 +99,13 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         short_data_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='short_data_cache'"
         ).fetchone()
+        stripe_event_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='stripe_webhook_events'"
+        ).fetchone()
+        user_columns = {
+            row["name"] for row in database.execute("PRAGMA table_info(users)").fetchall()
+        }
         flash = database.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
         commission_columns = {
             row["name"]
@@ -144,6 +151,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert case_outcome_table is not None
     assert position_table is not None
     assert short_data_table is not None
+    assert stripe_event_table is not None
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_provider"] == "openrouter"
@@ -178,6 +186,15 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert {"source_kind", "source_comment_id", "horizon_minutes"} <= case_columns
     assert "source_comment_id" in case_revision_columns
     assert {
+        "stripe_customer_id",
+        "stripe_subscription_id",
+        "stripe_subscription_status",
+        "stripe_subscription_price_id",
+        "stripe_current_period_end",
+        "stripe_cancel_at_period_end",
+        "billing_updated_at",
+    } <= user_columns
+    assert {
         "market_events_event_time",
         "market_events_ticker_event_time",
         "sec_filings_created",
@@ -203,6 +220,9 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "user_positions_user_ticker_time",
         "user_positions_user_status_time",
         "short_data_cache_collected",
+        "users_stripe_customer",
+        "users_stripe_subscription",
+        "stripe_webhook_events_type_time",
     } <= indexes
 
 

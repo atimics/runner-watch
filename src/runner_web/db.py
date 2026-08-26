@@ -1408,6 +1408,38 @@ def _migration_021_short_data(db: DatabaseConnection) -> None:
         "short_data_collected_at TEXT",
     ):
         _ensure_column(db, "scan_snapshots", definition)
+
+
+def _migration_022_stripe_billing(db: DatabaseConnection) -> None:
+    """Mirror Stripe subscription state without storing payment details."""
+
+    for definition in (
+        "stripe_customer_id TEXT",
+        "stripe_subscription_id TEXT",
+        "stripe_subscription_status TEXT NOT NULL DEFAULT 'none'",
+        "stripe_subscription_price_id TEXT",
+        "stripe_current_period_end TEXT",
+        "stripe_cancel_at_period_end INTEGER NOT NULL DEFAULT 0",
+        "billing_updated_at TEXT",
+    ):
+        _ensure_column(db, "users", definition)
+    db.executescript(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS users_stripe_customer
+            ON users(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS users_stripe_subscription
+            ON users(stripe_subscription_id) WHERE stripe_subscription_id IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+            event_id TEXT PRIMARY KEY,
+            event_type TEXT NOT NULL,
+            received_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS stripe_webhook_events_type_time
+            ON stripe_webhook_events(event_type,received_at DESC);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -1437,6 +1469,7 @@ MIGRATIONS = (
     Migration(19, "repair_thesis_case_sources", _migration_019_repair_thesis_case_sources),
     Migration(20, "user_positions", _migration_020_user_positions),
     Migration(21, "short_data", _migration_021_short_data),
+    Migration(22, "stripe_billing", _migration_022_stripe_billing),
 )
 
 

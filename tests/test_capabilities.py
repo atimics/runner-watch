@@ -12,6 +12,9 @@ def test_runtime_capabilities_reports_live_modes_without_secrets(
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "capabilities.db")
     monkeypatch.setenv("OPENROUTER_API_KEY", "server-test-key")
+    monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
+    monkeypatch.delenv("STRIPE_PRO_PRICE_ID", raising=False)
+    monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
     init_db()
 
     result = runtime_capabilities()
@@ -31,5 +34,9 @@ def test_runtime_capabilities_reports_live_modes_without_secrets(
     assert result["analysis"]["research"]["flash_model"] == "z-ai/glm-5.3"
     assert result["analysis"]["research"]["openrouter_available"] is True
     assert result["analysis"]["research"]["mode"] == "one_shot_system_context"
+    assert result["features"]["billing"] == {
+        "state": "unavailable",
+        "provider": "stripe",
+    }
     assert "sec:current_filings" in result["sources"]
     assert "credential_env" not in result["sources"]["sec:current_filings"]
