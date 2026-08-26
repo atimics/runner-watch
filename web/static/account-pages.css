@@ -341,6 +341,71 @@
   opacity: .72;
 }
 
+.daily-claim {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.daily-claim > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.daily-claim small {
+  color: #89958f;
+}
+
+.flash-price-list li {
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+}
+
+.flash-price-list li > b {
+  color: #f4f8f6;
+  font-size: 18px;
+}
+
+.flash-pack-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.flash-pack-grid button {
+  display: grid;
+  gap: 3px;
+  padding: 14px 8px;
+  border: 1px solid #28322d;
+  border-radius: 12px;
+  background: #111614;
+  color: #89958f;
+}
+
+.flash-pack-grid button strong {
+  color: #c8d2cd;
+  font-size: 18px;
+}
+
+.wallet-history ol {
+  display: grid;
+  gap: 0;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wallet-history li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid #222b27;
+  color: #aab5af;
+  font-size: 12px;
+}
+
 @media (max-width: 580px) {
   .account-wrap {
     padding: 26px 16px 44px;

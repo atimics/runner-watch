@@ -1,80 +1,81 @@
 {% extends "mobile_base.html" %}
 {% block app_class %}account-page billing-page{% endblock %}
-{% block title %}Billing · Runner Watch{% endblock %}
+{% block title %}Flash wallet · Runner Watch{% endblock %}
 {% block head %}<link rel="stylesheet" href="/static/account-pages.css?v={{ static_version }}">{% endblock %}
 {% block content %}
 <header class="detail-nav account-nav">
   <a href="/" aria-label="Back to Pulse">‹</a>
-  <strong>Billing</strong>
+  <strong>Flash wallet</strong>
   <a class="account-nav-link" href="/roadmap" aria-label="View roadmap">↗</a>
 </header>
 
 <main class="account-wrap">
-  {% if checkout == 'success' %}
-  <div class="account-notice success" role="status">
-    <strong>Stripe received your checkout.</strong>
-    <span>Pro turns on as soon as the signed subscription event arrives.</span>
-  </div>
-  {% elif checkout == 'canceled' %}
-  <div class="account-notice" role="status">
-    <strong>Checkout canceled.</strong>
-    <span>Your current plan did not change.</span>
-  </div>
-  {% endif %}
-
   <section class="account-intro">
-    <span class="eyebrow">ONE PAID PLAN</span>
-    <h1>Research that shows its work.</h1>
-    <p>Pulse stays open. Pro pays for deeper, source-bound research without turning Runner Watch into a market-data supermarket.</p>
+    <span class="eyebrow">USE IT · EARN IT · KEEP IT</span>
+    <h1>Flash pays for AI actions.</h1>
+    <p>There is no Pro subscription. Claim a daily drop, spend Flash when you use AI, and earn more when you publish useful research.</p>
   </section>
 
-  <section class="plan-card pro-plan">
-    <header>
-      <div><span class="decision-badge buy">PRO</span><h2>{{ price.name }}</h2></div>
-      <div class="plan-price">
-        <strong>{{ price.amount or 'Price set in Stripe' }}</strong>
-        {% if price.interval %}<span>{{ price.interval }}</span>{% endif %}
-      </div>
-    </header>
-    <ul class="feature-list">
-      <li><i>✓</i><span><strong>Everything in Free</strong><small>Pulse, Radar, Alpha ranking, ticker evidence, and the private trade journal.</small></span></li>
-      <li><i>✓</i><span><strong>Full Alpha research</strong><small>Read the complete source-bound report for the leading Alpha ticker.</small></span></li>
-      <li><i>✓</i><span><strong>Private Flash research</strong><small>Run up to three private evidence reviews per day. Private reports stay owner-only.</small></span></li>
-      <li><i>✓</i><span><strong>Self-serve billing</strong><small>Update payment details or cancel in Stripe's customer portal.</small></span></li>
-    </ul>
-
+  <section class="plan-card pro-plan flash-wallet-card">
     {% if user %}
-      <div class="plan-state"><span>Current plan</span><strong>{{ account.plan_label }} · {{ account.status_label }}</strong></div>
-      {% if account.customer_id and (account.has_access or account.needs_action or account.status == 'canceled') %}
-      <form method="post" action="/api/billing/portal">
-        <button class="account-action" type="submit">Manage billing in Stripe</button>
-      </form>
-      {% elif account.has_access %}
-      <button class="account-action" type="button" disabled>Pro is active</button>
-      {% elif billing_ready %}
-      <form method="post" action="/api/billing/checkout">
-        <button class="account-action" type="submit">Continue to Stripe</button>
-      </form>
-      {% else %}
-      <button class="account-action" type="button" disabled>Checkout is not open yet</button>
-      <p class="plan-help">The page is ready. Checkout opens when the Stripe recurring price and webhook secrets are connected.</p>
-      {% endif %}
+    <header>
+      <div><span class="decision-badge buy">WALLET</span><h2>Your Flash</h2></div>
+      <div class="plan-price"><strong id="flashBalance">{{ flash_wallet.balance }}</strong><span>Flash</span></div>
+    </header>
+    <div class="daily-claim">
+      <div><strong>Daily claim</strong><small>100 Flash. Missed days do not stack.</small></div>
+      <button class="account-action" id="claimFlash" type="button" {% if not flash_wallet.can_claim %}disabled{% endif %}>{{ 'Claim 100 Flash' if flash_wallet.can_claim else 'Claimed today' }}</button>
+      <p class="plan-help" id="claimStatus">{{ 'Ready now' if flash_wallet.can_claim else 'Come back after 00:00 UTC' }}</p>
+    </div>
     {% else %}
-      <a class="account-action" href="/login">Log in with passkey</a>
-      <p class="plan-help">Log in first so Stripe can attach the subscription to the right account.</p>
+    <header><div><span class="decision-badge buy">WALLET</span><h2>Start with a daily claim</h2></div><div class="plan-price"><strong>100</strong><span>Flash</span></div></header>
+    <a class="account-action" href="/login?next=/billing">Log in to claim</a>
+    <p class="plan-help">A passkey account keeps your balance and prevents duplicate claims.</p>
     {% endif %}
   </section>
 
-  <section class="plan-card free-plan">
-    <header><div><span class="decision-badge own">FREE</span><h2>Core intelligence</h2></div><div class="plan-price"><strong>$0</strong></div></header>
-    <ul class="feature-list compact">
-      <li><i>✓</i><span><strong>Pulse and rug risk</strong><small>See unusual movement and the evidence that could block it.</small></span></li>
-      <li><i>✓</i><span><strong>Radar and Alpha</strong><small>Follow fresh events and community activity.</small></span></li>
-      <li><i>✓</i><span><strong>Primary sources</strong><small>Open the filings and evidence behind each claim.</small></span></li>
+  <section class="plan-card">
+    <header><div><span class="decision-badge own">SPEND</span><h2>Clear prices</h2></div></header>
+    <ul class="feature-list compact flash-price-list">
+      <li><i>−</i><span><strong>Generate a Flash report</strong><small>Private until you choose to publish it.</small></span><b>10</b></li>
+      <li><i>−</i><span><strong>AI-generated ticker comment</strong><small>Written from your perspective using current evidence.</small></span><b>5</b></li>
+      <li><i>+</i><span><strong>Publish a Flash report</strong><small>Make your completed report public once.</small></span><b>50</b></li>
     </ul>
   </section>
 
-  <footer class="account-foot">Payments are handled by Stripe. Runner Watch stores subscription status, not card details. Research only; not financial advice.</footer>
+  <section class="plan-card free-plan">
+    <header><div><span class="decision-badge copy">STORE</span><h2>Buy more Flash</h2></div><div class="plan-price"><strong>Paused</strong></div></header>
+    <p>Credit packs will replace subscriptions. Stripe checkout is disabled while the wallet economy is tested.</p>
+    <div class="flash-pack-grid" aria-label="Planned Flash packs">
+      <button type="button" disabled><strong>500</strong><span>Flash</span></button>
+      <button type="button" disabled><strong>1,200</strong><span>Flash</span></button>
+      <button type="button" disabled><strong>3,000</strong><span>Flash</span></button>
+    </div>
+  </section>
+
+  {% if user and transactions %}
+  <section class="plan-card wallet-history">
+    <header><div><span class="decision-badge own">LEDGER</span><h2>Recent activity</h2></div></header>
+    <ol>
+      {% for item in transactions[:10] %}
+      <li><span>{{ item.kind|replace('_', ' ')|title }}</span><b class="{{ 'up' if item.amount > 0 else 'down' }}">{{ '+' if item.amount > 0 else '' }}{{ item.amount }}</b></li>
+      {% endfor %}
+    </ol>
+  </section>
+  {% endif %}
+
+  <footer class="account-foot">Flash is an in-app research credit. It has no cash value. Research only; not financial advice.</footer>
 </main>
 {% endblock %}
 {% block bottom_nav %}{% endblock %}
+{% block scripts %}
+{% if user %}
+<script nonce="{{ request.state.csp_nonce }}">
+document.getElementById('claimFlash')?.addEventListener('click',async event=>{
+  const button=event.currentTarget;const status=document.getElementById('claimStatus');button.disabled=true;status.textContent='Claiming…';
+  try{const response=await fetch('/api/flash/claim',{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not claim Flash');document.getElementById('flashBalance').textContent=result.wallet.balance;button.textContent='Claimed today';status.textContent=result.claimed?'100 Flash added':'Already claimed today';}
+  catch(error){button.disabled=false;status.textContent=error.message||'Could not claim Flash';}
+});
+</script>
+{% endif %}
+{% endblock %}

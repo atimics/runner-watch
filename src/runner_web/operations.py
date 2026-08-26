@@ -8,8 +8,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from runner_web.ai_kol import FLASH
-from runner_web.billing import billing_config
 from runner_web.db import connection
+from runner_web.flash_wallet import COMMENT_COST, DAILY_CLAIM_AMOUNT, REPORT_COST
 from runner_web.ingestion import ingestion_status
 from runner_web.product_policy import OPERATIONS, policy_manifest
 from runner_web.ranker import ranker_status
@@ -125,7 +125,6 @@ def runtime_capabilities(
     )
     deployment_health = health_status()
     manifest = policy_manifest(DEFAULT_SOURCE_POLICIES)
-    stripe_billing = billing_config()
     policy_warnings = manifest["source_policy_warnings"]
     policy_blockers = [
         warning for warning in policy_warnings if warning["severity"] == "blocking"
@@ -159,8 +158,14 @@ def runtime_capabilities(
                 "fintel:short_interest", "fintel:borrow_rate"
             ),
             "billing": {
-                "state": "configured" if stripe_billing.checkout_ready else "unavailable",
-                "provider": "stripe",
+                "state": "disabled",
+                "provider": "none",
+            },
+            "flash_wallet": {
+                "state": "live",
+                "daily_claim": DAILY_CLAIM_AMOUNT,
+                "report_cost": REPORT_COST,
+                "comment_cost": COMMENT_COST,
             },
         },
         "analysis": {
@@ -187,7 +192,7 @@ def runtime_capabilities(
                 "credential_location": "server",
                 "browser_key_accepted": False,
                 "queue_payload": "report_id",
-                "visibility": "private_owner_only",
+                "visibility": "private_until_owner_publishes",
                 "mode": (
                     "one_shot_system_context"
                     if FLASH.provider == "openrouter"

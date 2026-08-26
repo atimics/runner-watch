@@ -23,20 +23,18 @@
   </section>
 
   <section class="research-action" aria-labelledby="flashActionTitle">
-    <div class="section-heading"><div><h2 id="flashActionTitle">Flash <small class="flash-model-label">{{ flash.model }}</small></h2></div><b>Pro · private</b></div>
+    <div class="section-heading"><div><h2 id="flashActionTitle">Flash <small class="flash-model-label">{{ flash.model }}</small></h2></div><b>10 Flash · private</b></div>
     {% if latest_commission and latest_commission.status == 'complete' %}
     <a class="commission-button" href="/research/{{ latest_commission.public_id }}">Read Flash report <span class="flash-model-label">{{ flash.model }}</span></a>
-    {% if user %}<button class="commission-refresh" id="commissionButton" type="button">Check for new evidence</button>{% endif %}
+    {% if user %}<button class="commission-refresh" id="commissionButton" type="button">Check for new evidence · 10 Flash</button>{% endif %}
     {% elif latest_commission and latest_commission.status == 'running' %}
     <button class="commission-button" id="commissionButton" type="button" data-job-id="{{ latest_commission.public_id }}" disabled>Flash is researching · {{ flash.model }}</button>
-    {% elif user and is_subscriber %}
-    <button class="commission-button" id="commissionButton" type="button">{{ 'Retry Flash' if latest_commission and latest_commission.status == 'failed' else 'Ask Flash' }} · {{ flash.model }}</button>
     {% elif user %}
-    <a class="commission-button" href="/billing">Unlock private Flash with Pro</a>
+    <button class="commission-button" id="commissionButton" type="button">{{ 'Retry Flash' if latest_commission and latest_commission.status == 'failed' else 'Generate Flash report' }} · 10 Flash</button>
     {% else %}
-    <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Log in to ask Flash · {{ flash.model }}</a>
+    <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Log in to generate a Flash report</a>
     {% endif %}
-    <small id="commissionStatus">Your report stays private. The server pays OpenRouter.</small>
+    <small id="commissionStatus">Your report stays private until you publish it.{% if user %} Balance: <span data-flash-balance>{{ flash_wallet.balance }}</span> Flash.{% endif %}</small>
   </section>
 
   <section class="trade-journal call-card" aria-labelledby="callTitle">
@@ -149,10 +147,10 @@
   <section class="discussion-section" id="discussion">
     <div class="section-heading"><div><h2>Comments</h2></div><b id="discussionCount">{{ comment_count }}</b></div>
     {% if user %}
-    <form class="comment-form" id="commentForm">
-      <textarea id="commentBody" maxlength="280" rows="3" aria-label="Add a comment about {{ detail.ticker }}" placeholder="What is your read on {{ detail.ticker }}?"></textarea>
-      <div><small id="commentStatus">280 left</small><button type="submit">Post</button></div>
-    </form>
+    <div class="comment-form ai-comment-action">
+      <p>Flash writes a short comment from your perspective using this ticker's current evidence.</p>
+      <div><small id="commentStatus">5 Flash · balance <span data-flash-balance>{{ flash_wallet.balance }}</span></small><button id="generateComment" type="button">Generate and post</button></div>
+    </div>
     {% else %}
     <a class="comment-login" href="/login?next=/t/{{ detail.ticker }}#discussion">Log in to comment</a>
     {% endif %}
@@ -160,7 +158,7 @@
       {% for comment in comments %}
       <li>
         <span class="comment-avatar">{{ comment.pseudonym[-2:] }}</span>
-        <div><header><a href="/u/{{ comment.pseudonym }}"><strong>{{ comment.pseudonym }}</strong></a><small><time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time></small></header><p>{{ comment.body }}</p></div>
+        <div><header><a href="/u/{{ comment.pseudonym }}"><strong>{{ comment.pseudonym }}</strong></a><small>{% if comment.ai_generated %}Flash drafted · {% endif %}<time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time></small></header><p>{{ comment.body }}</p></div>
       </li>
       {% endfor %}
     </ol>
@@ -307,16 +305,15 @@ async function pollFlash(jobId){
   const response=await fetch(`/api/research/jobs/${encodeURIComponent(jobId)}`);const result=await response.json().catch(()=>({}));
   if(result.status==='complete'&&result.url){location.href=result.url;return;}
   if(result.status==='failed'){commissionButton.disabled=false;commissionButton.textContent='Retry Flash · {{ flash.model }}';commissionStatus.textContent=result.error||'Flash failed. You can retry.';return;}
-  commissionStatus.textContent='Flash is filling its context and writing one shared report…';setTimeout(()=>pollFlash(jobId),2500);
+  commissionStatus.textContent='Flash is filling its context and writing your private report…';setTimeout(()=>pollFlash(jobId),2500);
 }
 if(commissionButton?.dataset.jobId)pollFlash(commissionButton.dataset.jobId);
 commissionButton?.addEventListener('click',async()=>{
   commissionButton.disabled=true;commissionButton.textContent='Starting Flash · {{ flash.model }}';commissionStatus.textContent='Sending the report ID to the server queue…';
-  try{const response=await fetch(`/api/research/${encodeURIComponent(ticker)}`,{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||result.error||'Could not start Flash');if(result.status==='complete'&&result.url){location.href=result.url;return;}commissionButton.textContent='Flash is researching · {{ flash.model }}';pollFlash(result.job_id);}
+  try{const response=await fetch(`/api/research/${encodeURIComponent(ticker)}`,{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||result.error||'Could not start Flash');if(Number.isFinite(Number(result.balance)))document.querySelectorAll('[data-flash-balance]').forEach(item=>{item.textContent=result.balance;});if(result.status==='complete'&&result.url){location.href=result.url;return;}commissionButton.textContent='Flash is researching · {{ flash.model }}';pollFlash(result.job_id);}
   catch(error){commissionButton.disabled=false;commissionButton.textContent='Retry Flash · {{ flash.model }}';commissionStatus.textContent=error.message||'Could not start Flash';}
 });
-const commentForm=document.getElementById('commentForm');
-const commentBody=document.getElementById('commentBody');
+const generateComment=document.getElementById('generateComment');
 const commentStatus=document.getElementById('commentStatus');
 const commentList=document.getElementById('commentList');
 function relativeCommentTime(value){
@@ -336,20 +333,20 @@ function renderComment(comment){
   const name=document.createElement('a');name.href=`/u/${encodeURIComponent(comment.pseudonym)}`;name.textContent=comment.pseudonym;
   const meta=document.createElement('small');
   const stamp=document.createElement('time');stamp.dateTime=comment.created_at;stamp.dataset.commentTime='';stamp.textContent=relativeCommentTime(comment.created_at);meta.append(stamp);
+  if(comment.ai_generated)meta.prepend(document.createTextNode('Flash drafted · '));
   const body=document.createElement('p');body.textContent=comment.body;
   head.append(name,meta);copy.append(head,body);item.append(avatar,copy);return item;
 }
 refreshCommentTimes();
-commentBody?.addEventListener('input',()=>{commentStatus.textContent=(280-commentBody.value.length)+' left';});
-commentForm?.addEventListener('submit',async event=>{
-  event.preventDefault();const body=commentBody.value.trim();if(!body){commentStatus.textContent='Write a comment first';return;}
-  const submit=commentForm.querySelector('button');submit.disabled=true;commentStatus.textContent='Posting…';
+generateComment?.addEventListener('click',async()=>{
+  generateComment.disabled=true;commentStatus.textContent='Flash is drafting your comment…';
   try{
-    const response=await fetch(`/api/comments/${encodeURIComponent(ticker)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body})});
+    const response=await fetch(`/api/comments/${encodeURIComponent(ticker)}`,{method:'POST'});
     const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not post');
-    commentList.prepend(renderComment(result.comment));commentBody.value='';commentStatus.textContent='280 left';
+    commentList.prepend(renderComment(result.comment));commentStatus.textContent=`Posted · ${result.balance} Flash left`;
+    document.querySelectorAll('[data-flash-balance]').forEach(item=>{item.textContent=result.balance;});
     document.getElementById('discussionCount').textContent=result.count;document.getElementById('commentEmpty').hidden=true;
-  }catch(error){commentStatus.textContent=error.message||'Could not post';}finally{submit.disabled=false;}
+  }catch(error){commentStatus.textContent=error.message||'Could not post';}finally{generateComment.disabled=false;}
 });
 const openedAt=Date.now();
 addEventListener('pagehide',()=>{const seconds=Math.round((Date.now()-openedAt)/1000);if(seconds<3)return;navigator.sendBeacon('/api/activity',new Blob([JSON.stringify({ticker,event_type:'dwell',seconds})],{type:'application/json'}));});

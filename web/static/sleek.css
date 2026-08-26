@@ -136,6 +136,7 @@ body {
 .comment-form small { color: var(--muted); font-size: 8px; }
 .comment-form button, .comment-login { min-height: 30px; padding: 0 12px; border: 1px solid rgba(87, 227, 137, .3); border-radius: 9px; background: rgba(87, 227, 137, .08); color: var(--green); font-size: 9px; font-weight: 760; cursor: pointer; }
 .comment-form button:disabled { opacity: .55; }
+.ai-comment-action p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
 .comment-login { min-height: 38px; margin-bottom: 7px; display: grid; place-items: center; }
 .comment-list { margin: 0; padding: 0; list-style: none; }
 .comment-list li { padding: 13px 0; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; border-bottom: 1px solid var(--line); }
@@ -267,6 +268,9 @@ body {
 .research-section h2 { margin: 0 0 9px; color: var(--green); font-size: 10px; letter-spacing: .02em; }
 .research-section p { margin: 0; padding: 6px 0 6px 11px; border-left: 1px solid #303a35; color: #9da9a3; font-size: 12px; line-height: 1.5; }
 .research-section p strong { color: #cbd7d1; }
+.report-publish button { width: 100%; min-height: 42px; margin-top: 12px; border: 1px solid rgba(87,227,137,.35); border-radius: 11px; background: rgba(87,227,137,.1); color: var(--green); font-weight: 800; cursor: pointer; }
+.report-publish button:disabled { opacity: .6; }
+.report-publish small { display: block; margin-top: 8px; color: var(--muted); font-size: 9px; text-align: center; }
 .research-people,.research-filings { display: grid; gap: 9px; }
 .research-person,.research-filings article { padding: 12px; border: 1px solid #27332e; border-radius: 12px; background: #0d1210; }
 .research-person > div:first-child,.research-filings article > div:first-child { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }

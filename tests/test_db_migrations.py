@@ -112,10 +112,20 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         flash_request_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='flash_report_requests'"
         ).fetchone()
+        flash_wallet_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='flash_wallets'"
+        ).fetchone()
+        flash_transaction_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='flash_transactions'"
+        ).fetchone()
         flash = database.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
         commission_columns = {
             row["name"]
             for row in database.execute("PRAGMA table_info(research_commissions)").fetchall()
+        }
+        comment_columns = {
+            row["name"]
+            for row in database.execute("PRAGMA table_info(ticker_comments)").fetchall()
         }
         indexes = {
             row["name"]
@@ -160,6 +170,8 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert stripe_event_table is not None
     assert community_call_table is not None
     assert flash_request_table is not None
+    assert flash_wallet_table is not None
+    assert flash_transaction_table is not None
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_provider"] == "openrouter"
@@ -178,6 +190,8 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "evidence_as_of",
         "citations_json",
     } <= commission_columns
+    assert {"visibility", "published_at"} <= commission_columns
+    assert {"source", "generation_model"} <= comment_columns
     assert "actor_snapshot_json" in call_columns
     assert {
         "opening_range_position",
@@ -243,6 +257,8 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "research_commissions_running_actor",
         "flash_report_requests_report_time",
         "flash_report_requests_user_time",
+        "flash_transactions_user_time",
+        "research_commissions_public_time",
     } <= indexes
 
 
