@@ -55,13 +55,6 @@ kill_timeout = 30
     method = "GET"
     path = "/health"
 
-  [[http_service.machine_checks]]
-    image = "curlimages/curl"
-    entrypoint = ["/bin/sh", "-c"]
-    command = ["curl --fail --silent --show-error --max-time 5 http://[$FLY_TEST_MACHINE_IP]:8080/health"]
-    kill_signal = "SIGKILL"
-    kill_timeout = "5s"
-
 [[vm]]
   processes = ["web"]
   size = "shared-cpu-1x"
