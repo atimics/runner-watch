@@ -10,6 +10,8 @@ __pycache__/
 /runners.csv
 /data/
 /build/
+/target/
+**/target/
 *.db
 *.db-shm
 *.db-wal

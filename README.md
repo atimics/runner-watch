@@ -149,9 +149,9 @@ It also cuts the score for falling short-term momentum, a pullback from the sess
 bar closes, and price below VWAP. The market score remains a readable screening rule. It is not
 presented as a probability.
 
-## Shadow ranker
+## Integer Rust ranker
 
-Stonks now keeps a complete, versioned training record without changing the public order:
+Stonks keeps a complete, versioned training record for its learned ranker:
 
 - each scan has one `scan_run` and saves every intraday candidate, not only the displayed top 40
 - all feature inputs, missing values, baseline rank, catalyst context, and quote times are saved
@@ -160,16 +160,22 @@ Stonks now keeps a complete, versioned training record without changing the publ
 - each candidate is labeled by whether price touches +8% or −4% first in the next 60 minutes
 - a row is called a timeout only when archived bars cover the full hour
 - a bar touching both levels is conservatively labeled down and marked as ambiguous
-- a three-way logistic model predicts up, down, and timeout after 40 complete groups, 1,000 labels,
-  and at least 20 examples of each outcome
-- training uses older groups and validation uses the newest 20%; validation also calibrates the probabilities
+- a three-way fixed-point logistic model predicts up, down, and timeout; the normal worker waits for
+  160 complete groups and 5,000 labels; manual experiments must override both limits explicitly
+- the oldest 80% of complete groups train the model, the next 10% calibrates its probabilities, and
+  the newest 10% is an untouched test set
 - learned probabilities and expected return are stored with the exact model ID
 - the web worker collects a penny-stock scan every 30 minutes on weekdays from 4 a.m. to 8 p.m. ET
 
-The learned model remains in **shadow** status. Its displayed chance means “estimated chance of
-hitting +8% before −4% within 60 minutes.” Gross expected return is calculated from all three outcomes.
-The hand-written market score still controls the public order and is the fallback when there is no
-trained model.
+The model core is written in Rust and uses integers during normalization, training, softmax,
+calibration, evaluation, and inference. Input features use thousandths, probabilities use parts per
+million, and returns use basis points. This makes the same model artifact replay identically across
+machines. The Python layer only prepares database rows, calls the Rust binary, and stores results.
+
+The learned model remains in **shadow** promotion status. Its displayed chance means “estimated
+chance of hitting +8% before −4% within 60 minutes.” Gross expected return is calculated from all
+three outcomes. When a trained prediction exists, Pulse can use its score inside the composite
+order; the hand-written score is the fallback, and deterministic risk vetoes still win.
 
 Inspect or train it locally:
 

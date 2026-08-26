@@ -39,9 +39,9 @@ def test_chart_structure_fields_are_ranker_features() -> None:
     vector = feature_vector(row)
     values = dict(zip(FEATURE_NAMES, vector, strict=True))
 
-    assert values["opening_range_position"] == 1.25
-    assert values["support_strength"] == 0.75
-    assert values["fib_retracement_pct"] == 61.8
+    assert values["opening_range_position"] == 1_250
+    assert values["support_strength"] == 750
+    assert values["fib_retracement_pct"] == 61_800
     assert values["structure_missing"] == 0
     assert values["fibonacci_missing"] == 0
 
@@ -144,9 +144,18 @@ def test_shadow_ranker_trains_predicts_and_exports_crl(
 
     trained = train_shadow_ranker(min_groups=6, min_rows=24, epochs=120)
     assert trained["trained"] is True
+    assert trained["integer_only"] is True
+    assert trained["metrics"]["validation"]["groups"] == 1.0
+    assert trained["metrics"]["test"]["groups"] == 1.0
     model = load_latest_model()
     assert model is not None
     assert len(model.weights) == len(FEATURE_NAMES)
+    assert model.artifact["schema"] == "stonks.integer_ranker.v1"
+    assert model.artifact["feature_scale"] == 1_000
+    assert all(isinstance(value, int) for row in model.weights for value in row)
+
+    replayed = train_shadow_ranker(min_groups=6, min_rows=24, epochs=120)
+    assert replayed["model_id"] == trained["model_id"]
 
     prediction = predict_and_store("run-7", model)
     assert prediction["predicted"] is True
