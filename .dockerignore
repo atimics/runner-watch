@@ -1,10 +1,15 @@
 .venv
+.venv.nosync
 .git
 .pytest_cache
+.test-cache.nosync
 .ruff_cache
+.uv-cache.nosync
 **/target
 .runner_watch_cache
 __pycache__
 *.pyc
 *.db
 data
+output
+tmp
