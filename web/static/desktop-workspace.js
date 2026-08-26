@@ -1,6 +1,5 @@
 (() => {
   const desktop = window.matchMedia('(min-width: 900px)');
-  const storageKey = 'runner-watch-desktop-panel';
 
   function panelUrl(href) {
     const url = new URL(href, window.location.href);
@@ -18,10 +17,6 @@
     if (!list || !frame || !empty) return;
 
     let current = '';
-
-    function savedUrl() {
-      try { return panelUrl(sessionStorage.getItem(storageKey) || ''); } catch (_) { return null; }
-    }
 
     function defaultUrl() {
       const preferred = list.querySelector('a[data-desktop-default], a[href^="/t/"], a[href^="/research/"], a[href^="/s/"]');
@@ -46,7 +41,6 @@
       frame.hidden = false;
       empty.hidden = true;
       markSelected(url);
-      try { sessionStorage.setItem(storageKey, value); } catch (_) {}
     }
 
     list.addEventListener('click', event => {
@@ -61,7 +55,7 @@
 
     function initialize() {
       if (!desktop.matches) return;
-      openPanel(savedUrl() || defaultUrl());
+      openPanel(current ? panelUrl(current) : defaultUrl());
     }
 
     desktop.addEventListener('change', initialize);
