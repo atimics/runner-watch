@@ -41,12 +41,16 @@ def test_runtime_capabilities_reports_live_modes_without_secrets(
     assert result["features"]["flash_wallet"] == {
         "state": "live",
         "daily_claim": 100,
-        "report_cost": 10,
-        "comment_cost": 5,
+        "report_cost": 100,
+        "comment_cost": 10,
+        "private_alpha_hours": 1,
     }
     assert result["analysis"]["research"]["credential_location"] == "server"
     assert result["analysis"]["research"]["browser_key_accepted"] is False
     assert result["analysis"]["research"]["queue_payload"] == "report_id"
-    assert result["analysis"]["research"]["visibility"] == "private_until_owner_publishes"
+    assert (
+        result["analysis"]["research"]["visibility"]
+        == "private_for_one_hour_or_until_owner_publishes"
+    )
     assert "sec:current_filings" in result["sources"]
     assert "credential_env" not in result["sources"]["sec:current_filings"]

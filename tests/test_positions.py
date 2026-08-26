@@ -81,8 +81,8 @@ def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
     assert "server stamped" in ticker
     assert "Entry time" not in ticker
     assert "Add exit" not in ticker
-    assert "Generate Flash report" in ticker
-    assert "10 Flash · private" in ticker
+    assert "Generate today's report" in ticker
+    assert "100 Flash" in ticker
     assert "flash.model" in ticker
     assert "🐺" in alpha
     assert "open Calls" in alpha

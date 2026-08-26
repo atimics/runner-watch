@@ -124,9 +124,10 @@ Call also uses the current server quote and time. Calls show percentage PnL only
 position size. Each caller has a public alias page with open, closed, win/loss, and PnL stats.
 
 Bull, bear, heart, private position, and private case controls are not part of the product flow.
-Signed-in users can still leave short public comments. Public names are stable adjective-animal
-aliases chosen from a salted hash, while account names stay private. Set `COMMENT_PSEUDONYM_SALT` to
-a stable private value in each deployed environment before comments are opened to users.
+Signed-in users can ask Flash to draft a short public ticker comment from their perspective. There
+is no free-text comment input. Public names are stable adjective-animal aliases chosen from a salted
+hash, while account names stay private. Set `COMMENT_PSEUDONYM_SALT` to a stable private value in
+each deployed environment before comments are opened to users.
 
 Reports are authored by **Flash ⚡**. Flash's current engine is `z-ai/glm-5.3`, routed through
 OpenRouter. The model label is shown beside Flash in the interface. Changing the engine later does
@@ -144,11 +145,13 @@ evidence exists. Override the context with `RESEARCH_CONTEXT_TOKENS`, change the
 `RESEARCH_OUTPUT_RESERVE_TOKENS`. The older `OPENROUTER_RESEARCH_*` context names remain accepted so
 existing deployments can migrate without losing their settings.
 
-New private Flash research runs cost 10 Flash. Each user can explicitly claim 100 Flash once per UTC
-day; missed claims do not accrue. The server uses its own provider key. Completed reports stay
-owner-only unless the owner publishes one. Publishing makes the report public and awards 50 Flash
-once. The worker queue contains only a report ID, and the user does not provide or store a
-model-provider key. Failed reports refund their 10 Flash charge.
+The first daily Flash report for a ticker costs 100 Flash and gives its generator a one-hour private
+alpha window. Other users cannot generate a duplicate during that lock. The owner can publish the
+report early to make it public immediately and earn 50 Flash. Otherwise, the completed report opens
+automatically when the hour ends. Failed reports refund the 100 Flash charge and release the daily
+lock. Each user can explicitly claim 100 Flash once per UTC day; missed claims do not accrue. The
+server uses its own provider key. The worker queue contains only a report ID, and the user does not
+provide or store a model-provider key.
 
 The report starts with an opinionated thesis, then explains who the company is, who the named people
 or entities are, why each one appears in a filing, what the filings mean, what supports the thesis,
@@ -160,9 +163,9 @@ deterministic `AVOID` or `EXIT` state overrides the generated wording.
 
 `/billing` is now the Flash wallet. It has no subscription or Pro gate. A user starts at zero and
 must press the daily claim button to receive 100 Flash. The claim is available once per UTC day and
-missed days are not backfilled. A Flash report costs 10, an AI-written ticker comment costs 5, and
-publishing a completed report earns 50 once. Ledger references make claims, charges, refunds, and
-publishing rewards safe to retry without paying twice.
+missed days are not backfilled. A daily Flash report costs 100, an AI-written ticker comment costs
+10, and publishing during the private alpha hour earns 50 once. Ledger references make claims,
+charges, refunds, and publishing rewards safe to retry without paying twice.
 
 Buying credit packs is intentionally paused. Stripe checkout, portal, and webhook endpoints return
 an unavailable response even if old Stripe environment variables are still present. Historical

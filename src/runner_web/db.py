@@ -1546,6 +1546,25 @@ def _migration_025_flash_wallet(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_026_daily_report_alpha(db: DatabaseConnection) -> None:
+    """Make each ticker's daily Flash report exclusive for its first hour."""
+
+    for definition in (
+        "report_day TEXT",
+        "exclusive_until TEXT",
+    ):
+        _ensure_column(db, "research_commissions", definition)
+    db.executescript(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS research_commissions_daily_actor
+            ON research_commissions(ticker,actor_id,report_day)
+            WHERE report_day IS NOT NULL AND status IN ('running','complete');
+        CREATE INDEX IF NOT EXISTS research_commissions_daily_visibility
+            ON research_commissions(report_day,visibility,exclusive_until);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -1579,6 +1598,7 @@ MIGRATIONS = (
     Migration(23, "private_flash_commissions", _migration_023_private_flash_commissions),
     Migration(24, "stripe_billing", _migration_024_stripe_billing),
     Migration(25, "flash_wallet", _migration_025_flash_wallet),
+    Migration(26, "daily_report_alpha", _migration_026_daily_report_alpha),
 )
 
 

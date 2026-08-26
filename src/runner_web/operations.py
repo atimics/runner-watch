@@ -9,7 +9,12 @@ from fastapi.responses import JSONResponse
 
 from runner_web.ai_kol import FLASH
 from runner_web.db import connection
-from runner_web.flash_wallet import COMMENT_COST, DAILY_CLAIM_AMOUNT, REPORT_COST
+from runner_web.flash_wallet import (
+    COMMENT_COST,
+    DAILY_CLAIM_AMOUNT,
+    REPORT_COST,
+    REPORT_EXCLUSIVE_HOURS,
+)
 from runner_web.ingestion import ingestion_status
 from runner_web.product_policy import OPERATIONS, policy_manifest
 from runner_web.ranker import ranker_status
@@ -166,6 +171,7 @@ def runtime_capabilities(
                 "daily_claim": DAILY_CLAIM_AMOUNT,
                 "report_cost": REPORT_COST,
                 "comment_cost": COMMENT_COST,
+                "private_alpha_hours": REPORT_EXCLUSIVE_HOURS,
             },
         },
         "analysis": {
@@ -192,7 +198,7 @@ def runtime_capabilities(
                 "credential_location": "server",
                 "browser_key_accepted": False,
                 "queue_payload": "report_id",
-                "visibility": "private_until_owner_publishes",
+                "visibility": "private_for_one_hour_or_until_owner_publishes",
                 "mode": (
                     "one_shot_system_context"
                     if FLASH.provider == "openrouter"

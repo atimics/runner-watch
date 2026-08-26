@@ -23,18 +23,23 @@
   </section>
 
   <section class="research-action" aria-labelledby="flashActionTitle">
-    <div class="section-heading"><div><h2 id="flashActionTitle">Flash <small class="flash-model-label">{{ flash.model }}</small></h2></div><b>10 Flash · private</b></div>
-    {% if latest_commission and latest_commission.status == 'complete' %}
+    <div class="section-heading"><div><h2 id="flashActionTitle">Daily Flash <small class="flash-model-label">{{ flash.model }}</small></h2></div><b>100 Flash</b></div>
+    {% if latest_commission and latest_commission.locked %}
+    <button class="commission-button" type="button" disabled>Today's alpha is locked</button>
+    <small id="commissionStatus">The first generator gets one private hour, unless they publish sooner.</small>
+    {% elif latest_commission and latest_commission.status == 'complete' %}
     <a class="commission-button" href="/research/{{ latest_commission.public_id }}">Read Flash report <span class="flash-model-label">{{ flash.model }}</span></a>
-    {% if user %}<button class="commission-refresh" id="commissionButton" type="button">Check for new evidence · 10 Flash</button>{% endif %}
+    <small id="commissionStatus">{% if latest_commission.visibility == 'public' %}Today's report is public.{% else %}Your alpha stays private for one hour, or until you publish it.{% endif %}{% if user %} Balance: <span data-flash-balance>{{ flash_wallet.balance }}</span> Flash.{% endif %}</small>
     {% elif latest_commission and latest_commission.status == 'running' %}
     <button class="commission-button" id="commissionButton" type="button" data-job-id="{{ latest_commission.public_id }}" disabled>Flash is researching · {{ flash.model }}</button>
+    <small id="commissionStatus">Your one-hour private alpha window has started.{% if user %} Balance: <span data-flash-balance>{{ flash_wallet.balance }}</span> Flash.{% endif %}</small>
     {% elif user %}
-    <button class="commission-button" id="commissionButton" type="button">{{ 'Retry Flash' if latest_commission and latest_commission.status == 'failed' else 'Generate Flash report' }} · 10 Flash</button>
+    <button class="commission-button" id="commissionButton" type="button">Generate today's report · 100 Flash</button>
+    <small id="commissionStatus">First generator gets the report privately for one hour. Publish early to earn 50 Flash. Balance: <span data-flash-balance>{{ flash_wallet.balance }}</span> Flash.</small>
     {% else %}
-    <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Log in to generate a Flash report</a>
+    <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Log in to generate today's report</a>
+    <small id="commissionStatus">First generator gets one private alpha hour.</small>
     {% endif %}
-    <small id="commissionStatus">Your report stays private until you publish it.{% if user %} Balance: <span data-flash-balance>{{ flash_wallet.balance }}</span> Flash.{% endif %}</small>
   </section>
 
   <section class="trade-journal call-card" aria-labelledby="callTitle">
@@ -149,7 +154,7 @@
     {% if user %}
     <div class="comment-form ai-comment-action">
       <p>Flash writes a short comment from your perspective using this ticker's current evidence.</p>
-      <div><small id="commentStatus">5 Flash · balance <span data-flash-balance>{{ flash_wallet.balance }}</span></small><button id="generateComment" type="button">Generate and post</button></div>
+      <div><small id="commentStatus">10 Flash · balance <span data-flash-balance>{{ flash_wallet.balance }}</span></small><button id="generateComment" type="button">Generate and post</button></div>
     </div>
     {% else %}
     <a class="comment-login" href="/login?next=/t/{{ detail.ticker }}#discussion">Log in to comment</a>
