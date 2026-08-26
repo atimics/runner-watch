@@ -1208,6 +1208,38 @@ def _migration_019_repair_thesis_case_sources(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_020_user_positions(db: DatabaseConnection) -> None:
+    """Store private entry and exit marks separately from public comments."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS user_positions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            ticker TEXT NOT NULL,
+            entry_price REAL NOT NULL CHECK(entry_price>0),
+            entry_at TEXT NOT NULL,
+            exit_price REAL CHECK(exit_price IS NULL OR exit_price>0),
+            exit_at TEXT,
+            status TEXT NOT NULL DEFAULT 'active'
+                CHECK(status IN ('active','closed')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(
+                (status='active' AND exit_price IS NULL AND exit_at IS NULL)
+                OR (status='closed' AND exit_price IS NOT NULL AND exit_at IS NOT NULL)
+            )
+        );
+        CREATE INDEX IF NOT EXISTS user_positions_user_ticker_time
+            ON user_positions(user_id,ticker,entry_at DESC);
+        CREATE INDEX IF NOT EXISTS user_positions_user_status_time
+            ON user_positions(user_id,status,updated_at DESC);
+        CREATE INDEX IF NOT EXISTS ticker_comments_public_time
+            ON ticker_comments(status,created_at DESC);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -1231,6 +1263,7 @@ MIGRATIONS = (
     Migration(13, "comment_pseudonyms", _migration_013_comment_pseudonyms),
     Migration(14, "thesis_cases", _migration_014_thesis_cases),
     Migration(19, "repair_thesis_case_sources", _migration_019_repair_thesis_case_sources),
+    Migration(20, "user_positions", _migration_020_user_positions),
 )
 
 

@@ -40,6 +40,9 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         revision_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='thesis_case_revisions'"
         ).fetchone()
+        position_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='user_positions'"
+        ).fetchone()
         update_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='thesis_case_updates'"
         ).fetchone()
@@ -72,6 +75,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert pseudonym_table is not None
     assert case_table is not None
     assert revision_table is not None
+    assert position_table is not None
     assert update_table is not None
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
@@ -95,9 +99,12 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "scan_snapshots_ticker_captured",
         "ticker_reactions_ticker_reaction",
         "ticker_comments_ticker_time",
+        "ticker_comments_public_time",
         "thesis_cases_user_status_time",
         "thesis_case_revisions_case_time",
         "thesis_case_updates_case_time",
+        "user_positions_user_ticker_time",
+        "user_positions_user_status_time",
     } <= indexes
 
 

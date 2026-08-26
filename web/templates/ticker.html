@@ -25,6 +25,39 @@
     <small>{% if detail.current.event_at %}{{ detail.current.event_at[:16]|replace('T', ' ') }} UTC{% else %}No recent quote{% endif %}</small>
   </section>
 
+  <section class="trade-journal" aria-labelledby="tradeJournalTitle">
+    <div class="section-heading"><div><h2 id="tradeJournalTitle">My trades</h2></div>{% if user %}<b>{{ positions|length }}</b>{% endif %}</div>
+    {% if user %}
+    <form class="trade-form trade-entry-form" id="positionEntryForm">
+      <label><span>Entry price</span><input id="positionEntryPrice" name="price" type="number" min="0.000001" step="any" inputmode="decimal" value="{% if detail.current.price is not none %}{{ detail.current.price }}{% endif %}" required></label>
+      <label><span>Entry time</span><input id="positionEntryTime" name="at" type="datetime-local" required></label>
+      <button type="submit">Add entry</button>
+      <small class="trade-status" id="positionEntryStatus">Defaults to the current market price and now. You can change both.</small>
+    </form>
+    {% if positions %}
+    <div class="trade-list">
+      {% for position in positions %}
+      <article class="trade-position trade-position-{{ position.status }}">
+        <header><strong>{{ 'Open' if position.status == 'active' else 'Closed' }}</strong>{% if position.return_pct is not none %}<b class="{{ 'up' if position.return_pct >= 0 else 'down' }}">{{ '+' if position.return_pct >= 0 else '' }}{{ '%.1f'|format(position.return_pct) }}%</b>{% endif %}</header>
+        <div class="trade-leg"><span>Entry</span><b>${{ '%.4f'|format(position.entry_price) if position.entry_price < 1 else ('%.2f'|format(position.entry_price)) }}</b><time datetime="{{ position.entry_at }}" data-trade-time>{{ position.entry_at[:16]|replace('T', ' ') }}</time></div>
+        {% if position.status == 'closed' %}
+        <div class="trade-leg"><span>Exit</span><b>${{ '%.4f'|format(position.exit_price) if position.exit_price < 1 else ('%.2f'|format(position.exit_price)) }}</b><time datetime="{{ position.exit_at }}" data-trade-time>{{ position.exit_at[:16]|replace('T', ' ') }}</time></div>
+        {% else %}
+        <form class="trade-form trade-exit-form" data-position-id="{{ position.id }}">
+          <label><span>Exit price</span><input name="price" type="number" min="0.000001" step="any" inputmode="decimal" value="{% if detail.current.price is not none %}{{ detail.current.price }}{% endif %}" required></label>
+          <label><span>Exit time</span><input name="at" type="datetime-local" required></label>
+          <button type="submit">Add exit</button><small class="trade-status">Close this entry at the price and time above.</small>
+        </form>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% else %}
+    <a class="trade-login" href="/login?next=/t/{{ detail.ticker }}">Log in to record entries and exits</a>
+    {% endif %}
+  </section>
+
   <section class="feedback-strip" aria-label="Community feedback">
     <button class="reaction-button bull {% if reaction.selected == 'bull' %}selected{% endif %}" type="button" data-reaction="bull" aria-pressed="{{ 'true' if reaction.selected == 'bull' else 'false' }}"><span>🐂 Bull</span><b id="bullCount">{{ reaction.bull }}</b></button>
     <button class="reaction-button bear {% if reaction.selected == 'bear' %}selected{% endif %}" type="button" data-reaction="bear" aria-pressed="{{ 'true' if reaction.selected == 'bear' else 'false' }}"><span>🐻 Bear</span><b id="bearCount">{{ reaction.bear }}</b></button>
@@ -188,6 +221,7 @@ const chartEvents = document.getElementById('chartEvents');
 const commissionButton = document.getElementById('commissionButton');
 const commissionStatus = document.getElementById('commissionStatus');
 const initialCommissionStatus = {{ (latest_commission.status if latest_commission else '')|tojson }};
+const positionData = {{ positions|tojson }};
 let commissionNeedsRetry = initialCommissionStatus === 'failed';
 let allPoints=[];
 let chartAnnotations=[];
@@ -289,7 +323,12 @@ function draw(points) {
 }
 function visibleChartPoints(){if(activeRange==='5D')return allPoints;const latest=allPoints.length?new Date(allPoints.at(-1).time).getTime():0;const points=allPoints.filter(point=>new Date(point.time).getTime()>=latest-24*60*60*1000);return points.length>1?points:allPoints.slice(-30);}
 function selectRange(range){activeRange=range;document.querySelectorAll('[data-range]').forEach(button=>button.classList.toggle('active',button.dataset.range===range));draw(visibleChartPoints());}
-const chartRequest=fetch(`/api/t/${encodeURIComponent(ticker)}/chart`).then(response=>response.json()).then(data=>{allPoints=data.points||[];chartAnnotations=data.annotations||[];chartLevels=data.levels||[];chartFibonacci=data.fibonacci||null;chartStructure=data.structure||{};selectRange('1D');}).catch(()=>draw([]));
+function tradeChartAnnotations(){return positionData.flatMap(position=>{
+  const items=[{type:'trade_entry',tone:'positive',time:position.entry_at,label:`Entry · ${chartMoney(position.entry_price)}`}];
+  if(position.exit_at)items.push({type:'trade_exit',tone:'media',time:position.exit_at,label:`Exit · ${chartMoney(position.exit_price)}`});
+  return items;
+});}
+const chartRequest=fetch(`/api/t/${encodeURIComponent(ticker)}/chart`).then(response=>response.json()).then(data=>{allPoints=data.points||[];chartAnnotations=[...(data.annotations||[]),...tradeChartAnnotations()];chartLevels=data.levels||[];chartFibonacci=data.fibonacci||null;chartStructure=data.structure||{};selectRange('1D');}).catch(()=>draw([]));
 document.querySelectorAll('[data-range]').forEach(button=>button.addEventListener('click',()=>selectRange(button.dataset.range)));
 document.querySelectorAll('[data-chart-mode]').forEach(button=>button.addEventListener('click',()=>{chartMode=button.dataset.chartMode;document.querySelectorAll('[data-chart-mode]').forEach(item=>item.classList.toggle('active',item===button));document.getElementById('chartModeNote').textContent=chartModeNotes[chartMode];draw(visibleChartPoints());}));
 document.getElementById('shareButton').addEventListener('click', async () => {
@@ -321,6 +360,25 @@ document.querySelectorAll('[data-reaction]').forEach(button=>button.addEventList
     const response=await fetch(`/api/reaction/${encodeURIComponent(ticker)}/${button.dataset.reaction}`,{method:'POST'});
     if(response.ok)renderReaction(await response.json());
   }finally{button.disabled=false;}
+}));
+function localDateTimeNow(){const current=new Date();return new Date(current.getTime()-current.getTimezoneOffset()*60000).toISOString().slice(0,16);}
+document.querySelectorAll('.trade-form input[type="datetime-local"]').forEach(input=>{if(!input.value)input.value=localDateTimeNow();});
+document.querySelectorAll('[data-trade-time]').forEach(item=>{const stamp=new Date(item.dateTime);if(Number.isFinite(stamp.getTime()))item.textContent=stamp.toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});});
+document.getElementById('positionEntryForm')?.addEventListener('submit',async event=>{
+  event.preventDefault();const form=event.currentTarget;const button=form.querySelector('button');const status=form.querySelector('.trade-status');button.disabled=true;status.textContent='Saving…';
+  try{
+    const price=Number(form.elements.price.value);const at=new Date(form.elements.at.value).toISOString();
+    const response=await fetch(`/api/positions/${encodeURIComponent(ticker)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price,at})});
+    const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not save entry');location.reload();
+  }catch(error){status.textContent=error.message||'Could not save entry';button.disabled=false;}
+});
+document.querySelectorAll('.trade-exit-form').forEach(form=>form.addEventListener('submit',async event=>{
+  event.preventDefault();const button=form.querySelector('button');const status=form.querySelector('.trade-status');button.disabled=true;status.textContent='Saving…';
+  try{
+    const price=Number(form.elements.price.value);const at=new Date(form.elements.at.value).toISOString();
+    const response=await fetch(`/api/positions/${encodeURIComponent(form.dataset.positionId)}/exit`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price,at})});
+    const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not save exit');location.reload();
+  }catch(error){status.textContent=error.message||'Could not save exit';button.disabled=false;}
 }));
 const commentForm=document.getElementById('commentForm');
 const commentBody=document.getElementById('commentBody');

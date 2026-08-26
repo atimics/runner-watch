@@ -28,6 +28,7 @@ from runner_web.main import (
     _stored_market_risk_contexts,
     _write_pulse_attention,
     alpha_board_data,
+    alpha_comments_data,
     comments_for_ticker,
     commissioned_reports,
     create_ticker_comment,
@@ -329,6 +330,10 @@ def test_radar_reuses_the_shared_base_payload(
     init_db()
     captured_at = datetime.now(UTC).isoformat()
     insert_filing("radar-cache-one", "ONE", 1.25, 80, captured_at, "P")
+    insert_scan_run("radar-cache-run", captured_at, 1)
+    insert_scored_snapshot(
+        "radar-cache-snapshot", "radar-cache-run", "ONE", 60, 1, captured_at
+    )
     web_main.RADAR_DATA_CACHE.clear()
     original = web_main._radar_base_data_uncached
     calls = 0
@@ -946,6 +951,8 @@ def test_radar_marks_new_state_seen(tmp_path: Path, monkeypatch: MonkeyPatch) ->
     init_db()
     captured_at = datetime.now(UTC).isoformat()
     insert_filing("radar-event", "RAD", 2.1, 82, captured_at, "P")
+    insert_scan_run("radar-run", captured_at, 1)
+    insert_scored_snapshot("radar-snapshot", "radar-run", "RAD", 22, 1, captured_at, price=2.1)
     with connection() as database:
         database.execute(
             "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
@@ -954,34 +961,6 @@ def test_radar_marks_new_state_seen(tmp_path: Path, monkeypatch: MonkeyPatch) ->
         database.execute(
             "INSERT INTO watches(user_id,ticker,created_at,last_seen_at) VALUES(?,?,?,NULL)",
             ("user", "RAD", captured_at),
-        )
-        database.execute(
-            """
-            INSERT INTO scan_snapshots(
-                id,ticker,score,stage,session,price,change_pct,momentum_5m_pct,
-                momentum_15m_pct,relative_volume,recent_relative_volume,breakout_pct,
-                dollar_volume,quote_time,signals_json,risks_json,captured_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                "radar-snapshot",
-                "RAD",
-                22,
-                "EARLY",
-                "regular",
-                2.1,
-                7.0,
-                1.0,
-                2.0,
-                2.5,
-                3.0,
-                0.5,
-                500_000,
-                captured_at,
-                "[]",
-                "[]",
-                captured_at,
-            ),
         )
 
     first = radar_data("user", mark_seen=True)
@@ -994,7 +973,7 @@ def test_radar_marks_new_state_seen(tmp_path: Path, monkeypatch: MonkeyPatch) ->
     assert second[0]["has_update"] is False
 
 
-def test_radar_uses_filing_price_when_a_market_snapshot_is_missing(
+def test_radar_excludes_events_for_tickers_not_in_pulse(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "radar-filing.db")
@@ -1013,10 +992,7 @@ def test_radar_uses_filing_price_when_a_market_snapshot_is_missing(
 
     result = radar_data("user")
 
-    assert result[0]["source"] == "sec"
-    assert result[0]["price"] == 0.72
-    assert result[0]["change_pct"] == 6.5
-    assert result[0]["evidence_gate"]["checks"] == ["Primary filing"]
+    assert result == []
 
 
 def test_alpha_ranks_unique_hearts(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -1069,28 +1045,6 @@ def test_alpha_ranks_unique_hearts(tmp_path: Path, monkeypatch: MonkeyPatch) -> 
     assert board["rows"][0]["hearted"] is True
     assert board["rows"][0]["ai_report"]["catalysts"] == ["Insider purchase"]
     assert heart_state("ONE", "v:second") == {"ticker": "ONE", "count": 2, "hearted": True}
-
-    request = Request({"type": "http", "method": "GET", "path": "/community", "headers": []})
-    request.state.csp_nonce = "test"
-    template = templates.get_template("community.html")
-    free_html = template.render(
-        request=request,
-        board=board,
-        user=None,
-        is_subscriber=False,
-        active_tab="alpha",
-    )
-    subscriber_html = template.render(
-        request=request,
-        board=board,
-        user={"username": "member", "display_name": "Member"},
-        is_subscriber=True,
-        active_tab="alpha",
-    )
-    assert "Subscribers only" in free_html
-    assert "Verified evidence summary." not in free_html
-    assert "Verified evidence summary." in subscriber_html
-
 
 def test_ticker_feedback_tracks_reactions_and_signed_in_comments(
     tmp_path: Path, monkeypatch: MonkeyPatch
@@ -1159,6 +1113,8 @@ def test_ticker_feedback_tracks_reactions_and_signed_in_comments(
     assert "username" not in payload["comment"]
     assert "display_name" not in payload["comment"]
     assert comments_for_ticker("ONE") == [payload["comment"]]
+    assert alpha_comments_data() == [{**payload["comment"], "ticker": "ONE"}]
+    assert "radar_case" not in payload
 
 
 def test_radar_orders_events_by_time_not_activity(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -1173,6 +1129,13 @@ def test_radar_orders_events_by_time_not_activity(tmp_path: Path, monkeypatch: M
         60,
         (captured_at - timedelta(minutes=5)).isoformat(),
         "P",
+    )
+    insert_scan_run("activity-run", captured_at.isoformat(), 2)
+    insert_scored_snapshot(
+        "activity-one-snapshot", "activity-run", "ONE", 70, 1, captured_at.isoformat()
+    )
+    insert_scored_snapshot(
+        "activity-two-snapshot", "activity-run", "TWO", 60, 2, captured_at.isoformat()
     )
     _record_activity("v:device", "TWO", "share")
 

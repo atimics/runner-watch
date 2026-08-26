@@ -62,10 +62,8 @@ from runner_web.base_rates import (
 )
 from runner_web.cases import (
     case_revisions,
-    create_case,
     get_case,
     list_cases,
-    update_case,
 )
 from runner_web.collection import recording_market_data
 from runner_web.db import connection, init_db
@@ -82,6 +80,12 @@ from runner_web.kol import (
 )
 from runner_web.market_clock import market_clock
 from runner_web.outcomes import record_outcome_error, refresh_outcomes, refresh_scan_outcomes
+from runner_web.positions import (
+    close_position,
+    create_position,
+    position_for_user,
+    positions_for_ticker,
+)
 from runner_web.pseudonyms import pseudonym_candidate
 from runner_web.ranker import (
     FEATURE_SCHEMA_VERSION,
@@ -697,6 +701,16 @@ class TickerCommentPayload(BaseModel):
     body: str = Field(min_length=1, max_length=280)
 
 
+class PositionEntryPayload(BaseModel):
+    price: float | None = Field(default=None, gt=0, le=1_000_000_000)
+    at: str | None = Field(default=None, max_length=64)
+
+
+class PositionExitPayload(BaseModel):
+    price: float | None = Field(default=None, gt=0, le=1_000_000_000)
+    at: str | None = Field(default=None, max_length=64)
+
+
 class PulseAttentionItem(BaseModel):
     ticker: str = Field(min_length=1, max_length=12)
     entered_at: str = Field(min_length=10, max_length=64)
@@ -852,19 +866,23 @@ def community(
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    user = current_user(runner_session)
-    profile = claim_visitor_profile(request, user) if user else profile_id(request)
-    board = alpha_board_data(profile)
+    comments = alpha_comments_data()
     return templates.TemplateResponse(
         request=request,
         name="community.html",
         context=page_context(
             request,
             runner_session,
-            board=board,
+            comments=comments,
             active_tab="alpha",
         ),
     )
+
+
+@app.get("/api/alpha/comments")
+def alpha_comments_api(request: Request) -> JSONResponse:
+    enforce_rate(request, "alpha-comments", limit=120, seconds=60)
+    return JSONResponse({"comments": alpha_comments_data(), "updated_at": iso()})
 
 
 def _intelligence_evidence(row: dict[str, Any]) -> dict[str, Any]:
@@ -3671,6 +3689,16 @@ def ticker_page(
             "inspected",
         )
     comments = comments_for_ticker(normalized)
+    current_price = detail.get("current", {}).get("price")
+    positions = (
+        positions_for_ticker(
+            str(user["id"]),
+            normalized,
+            current_price=float(current_price) if current_price is not None else None,
+        )
+        if user
+        else []
+    )
     return templates.TemplateResponse(
         request=request,
         name="ticker.html",
@@ -3682,6 +3710,7 @@ def ticker_page(
             reaction=reaction_state(normalized, profile),
             comments=comments,
             comment_count=comment_count_for_ticker(normalized),
+            positions=positions,
             latest_commission=(latest_commission(user["id"], normalized) if user else None),
             active_tab="pulse",
         ),
@@ -4105,79 +4134,14 @@ def radar_data(
     mark_seen: bool = False,
 ) -> list[dict[str, Any]]:
     profile = f"u:{user_id}" if user_id else f"v:{visitor_id or 'guest'}"
-    base = [dict(row) for row in _radar_base_data()]
-    cases = list_cases(user_id) if user_id else []
-    if cases:
-        base_by_ticker = {str(row["ticker"]): row for row in base}
-        missing = [case["ticker"] for case in cases if case["ticker"] not in base_by_ticker]
-        fallback = _radar_market_summaries(missing)
-        output = []
-        for case in cases:
-            ticker = str(case["ticker"])
-            row = dict(base_by_ticker.get(ticker) or fallback.get(ticker) or {})
-            latest_update_at = max(
-                str(case.get("latest_update_at") or ""),
-                str(case["updated_at"]),
-            )
-            evidence_at = str(row.get("event_at") or "")
-            event_at = max(latest_update_at, evidence_at)
-            direction = str(case.get("latest_direction") or "unknown")
-            row.update(
-                {
-                    "ticker": ticker,
-                    "company": row.get("company") or ticker,
-                    "coin_label": row.get("coin_label") or ticker[:2],
-                    "coin_tone": row.get("coin_tone", _coin_tone(ticker)),
-                    "section": "cases",
-                    "case_id": case["id"],
-                    "case_public_id": case["public_id"],
-                    "case_thesis": case["thesis"],
-                    "case_invalidation": case["invalidation"],
-                    "case_horizon_minutes": case["horizon_minutes"],
-                    "case_confidence": case["confidence"],
-                    "case_status": case["status"],
-                    "case_updated_at": case["updated_at"],
-                    "case_source_kind": case.get("source_kind"),
-                    "case_source_name": case.get("source_pseudonym"),
-                    "latest_direction": direction,
-                    "latest_action": case.get("latest_action"),
-                    "latest_citations": case.get("latest_citations", []),
-                    "pulse_label": case.get("latest_summary") or "No material change yet.",
-                    "event_at": event_at,
-                    "attention_score": (
-                        float(case["confidence"]) * 100
-                        if case.get("confidence") is not None
-                        else 0.0
-                    ),
-                    "sentiment": (
-                        "positive"
-                        if direction == "strengthened"
-                        else "risk"
-                        if direction == "weakened"
-                        else "neutral"
-                    ),
-                    "needs_thesis": False,
-                }
-            )
-            output.append(row)
-    elif user_id:
-        with connection() as db:
-            personal_tickers = {
-                str(row["ticker"])
-                for row in db.execute(
-                    """
-                    SELECT ticker FROM watches WHERE user_id=?
-                    UNION SELECT ticker FROM ticker_hearts
-                    WHERE profile_id=? AND active=1
-                    """,
-                    (user_id, profile),
-                ).fetchall()
-            }
-        output = [row for row in base if str(row["ticker"]) in personal_tickers]
-        for row in output:
-            row["needs_thesis"] = True
-    else:
-        output = base
+    pulse_tickers = {
+        str(row["ticker"]).upper() for row in _pulse_base_data().get("rows", [])
+    }
+    output = [
+        dict(row)
+        for row in _radar_base_data()
+        if str(row.get("ticker") or "").upper() in pulse_tickers
+    ]
     with connection() as db:
         seen = {
             row["ticker"]: row["last_seen_at"]
@@ -4185,21 +4149,10 @@ def radar_data(
                 "SELECT ticker,last_seen_at FROM radar_seen WHERE profile_id=?", (profile,)
             ).fetchall()
         }
-        case_seen = (
-            {
-                row["case_id"]: row["last_seen_at"]
-                for row in db.execute(
-                    "SELECT case_id,last_seen_at FROM thesis_case_seen WHERE user_id=?",
-                    (user_id,),
-                ).fetchall()
-            }
-            if user_id and cases
-            else {}
-        )
     for item in output:
         ticker = item["ticker"]
         event_at = item.get("event_at")
-        last_seen_at = case_seen.get(item.get("case_id")) or seen.get(ticker)
+        last_seen_at = seen.get(ticker)
         item["has_update"] = bool(event_at and (not last_seen_at or event_at > last_seen_at))
     if mark_seen:
         _mark_radar_seen(profile, output)
@@ -4210,7 +4163,7 @@ async def request_cache_warmer() -> None:
     """Fill request caches shortly after startup without delaying health checks."""
 
     await asyncio.sleep(1)
-    for builder in (_radar_base_data, _pulse_base_data, _alpha_base_data):
+    for builder in (_radar_base_data, _pulse_base_data):
         try:
             await asyncio.to_thread(builder)
         except Exception:
@@ -4406,6 +4359,36 @@ def _public_comment(row: Any) -> dict[str, Any]:
         "created_at": str(row["created_at"]),
         "pseudonym": str(row["pseudonym"]),
     }
+
+
+def alpha_comments_data(*, limit: int = 50) -> list[dict[str, Any]]:
+    """Return the newest public ticker comments as one simple stream."""
+
+    bounded_limit = min(100, max(1, limit))
+    with connection() as db:
+        missing_aliases = db.execute(
+            """
+            SELECT DISTINCT c.user_id
+            FROM ticker_comments c
+            LEFT JOIN comment_pseudonyms p ON p.user_id=c.user_id
+            WHERE c.status='public' AND p.user_id IS NULL
+            LIMIT 50
+            """
+        ).fetchall()
+        for row in missing_aliases:
+            _ensure_comment_pseudonym(db, str(row["user_id"]))
+        rows = db.execute(
+            """
+            SELECT c.id,c.ticker,c.body,c.created_at,p.pseudonym
+            FROM ticker_comments c
+            JOIN comment_pseudonyms p ON p.user_id=c.user_id
+            WHERE c.status='public'
+            ORDER BY c.created_at DESC,c.id DESC
+            LIMIT ?
+            """,
+            (bounded_limit,),
+        ).fetchall()
+    return [{**_public_comment(row), "ticker": str(row["ticker"])} for row in rows]
 
 
 def comments_for_ticker(ticker: str, *, limit: int = 50) -> list[dict[str, Any]]:
@@ -4627,52 +4610,87 @@ def create_ticker_comment(
             "SELECT COUNT(*) FROM ticker_comments WHERE ticker=? AND status='public'",
             (normalized,),
         ).fetchone()[0]
-        active_case = db.execute(
-            """
-            SELECT public_id FROM thesis_cases
-            WHERE user_id=? AND ticker=? AND status='active'
-            ORDER BY updated_at DESC LIMIT 1
-            """,
-            (user["id"], normalized),
-        ).fetchone()
-    if active_case:
-        radar_case = update_case(
-            user["id"],
-            str(active_case["public_id"]),
-            {
-                "thesis": body,
-                "source_kind": "community_comment",
-                "source_comment_id": comment_id,
-            },
-            change_note="Updated from the user's latest public comment",
-        )
-    else:
-        detail = ticker_detail_data(normalized)
-        current_price = detail.get("current", {}).get("price") if detail else None
-        radar_case = create_case(
-            user["id"],
-            normalized,
-            thesis=body,
-            horizon_minutes=7200,
-            reference_price=float(current_price) if current_price is not None else None,
-            invalidation="Unknown — not supplied by the user.",
-            risks=[],
-            open_questions=[],
-            confidence=None,
-            source_comment_id=comment_id,
-            source_kind="community_comment",
-        )
     return JSONResponse(
         {
             "comment": _public_comment(row),
             "count": int(count),
-            "radar_case": {
-                "public_id": radar_case["public_id"],
-                "ticker": radar_case["ticker"],
-            },
         },
         status_code=201,
     )
+
+
+def _position_timestamp(value: str | None) -> str:
+    if not value:
+        return iso()
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(400, "Use a valid entry or exit time") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    parsed = parsed.astimezone(UTC)
+    if parsed > now() + timedelta(minutes=5):
+        raise HTTPException(400, "Entry or exit time cannot be in the future")
+    return iso(parsed)
+
+
+def _position_price(ticker: str, value: float | None) -> float:
+    if value is not None:
+        return float(value)
+    detail = ticker_detail_data(ticker)
+    current = detail.get("current", {}).get("price") if detail else None
+    if current is None or float(current) <= 0:
+        raise HTTPException(400, "Enter a price because no market price is available")
+    return float(current)
+
+
+@app.post("/api/positions/{ticker}")
+def create_user_position(
+    ticker: str,
+    payload: PositionEntryPayload,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "position-entry", limit=30, seconds=3600, subject=user["id"])
+    normalized = _clean_ticker(ticker)
+    if not _known_ticker(normalized):
+        raise HTTPException(404, "Ticker not found")
+    position = create_position(
+        str(user["id"]),
+        normalized,
+        entry_price=_position_price(normalized, payload.price),
+        entry_at=_position_timestamp(payload.at),
+    )
+    return JSONResponse({"position": position}, status_code=201)
+
+
+@app.post("/api/positions/{position_id}/exit")
+def close_user_position(
+    position_id: str,
+    payload: PositionExitPayload,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "position-exit", limit=30, seconds=3600, subject=user["id"])
+    existing = position_for_user(str(user["id"]), position_id)
+    if not existing or existing["status"] != "active":
+        raise HTTPException(404, "Open position not found")
+    try:
+        position = close_position(
+            str(user["id"]),
+            position_id,
+            exit_price=_position_price(str(existing["ticker"]), payload.price),
+            exit_at=_position_timestamp(payload.at),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not position:
+        raise HTTPException(409, "Position was already closed")
+    return JSONResponse({"position": position})
 
 
 @app.post("/api/research/{ticker}")

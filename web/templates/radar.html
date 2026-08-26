@@ -2,7 +2,7 @@
 {% block title %}Radar · Runner Watch{% endblock %}
 {% block content %}
 <header class="screen-head">
-  <div><h1>{% if user %}My Radar{% else %}Radar{% endif %}</h1><span class="head-meta"><b id="watchCount">{{ watches|length }}</b> {% if user %}views{% else %}events{% endif %} <i></i><span id="radarStatus">Live</span></span></div>
+  <div><h1>Radar</h1><span class="head-meta"><b id="watchCount">{{ watches|length }}</b> events from Pulse <i></i><span id="radarStatus">Live</span></span></div>
   {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>{% else %}<a class="avatar-button signed-out" href="/login" aria-label="Log in">↗</a>{% endif %}
 </header>
 <button class="pulse-refresh radar-refresh" id="radarRefresh" type="button" aria-live="polite" hidden>1 new event</button>
@@ -19,7 +19,7 @@ let pendingRows=null;
 const pendingUpdateTickers=new Set();
 function render(){
   document.getElementById('watchCount').textContent=rows.length;
-  list.innerHTML=rows.map(item=>TickerRow.render(item,{updated:item.has_update})).join('')||`<div class="empty-list radar-empty"><span class="empty-radar"></span><strong>{% if user %}No personal views yet{% else %}No recent events{% endif %}</strong>{% if user %}<p>Your first ticker comment will appear here.</p><a href="/">Browse Pulse</a>{% endif %}</div>`;
+  list.innerHTML=rows.map(item=>TickerRow.render(item,{updated:item.has_update})).join('')||`<div class="empty-list radar-empty"><span class="empty-radar"></span><strong>No recent Pulse events</strong><p>Events will appear when a ticker in Pulse gets fresh news, filings, or market alerts.</p><a href="/">View Pulse</a></div>`;
   TickerRow.paintCharts();
 }
 refreshButton.addEventListener('click',()=>{
