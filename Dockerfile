@@ -36,9 +36,11 @@ EXPOSE 8080
 FROM base AS test
 COPY scripts ./scripts
 COPY tests ./tests
+COPY docs/privacy-operations.md ./docs/privacy-operations.md
+COPY fly.toml Dockerfile ./
 RUN uv sync --locked --extra dev --no-editable
 RUN uv run --no-sync pytest -q && uv run --no-sync ruff check src tests
 CMD ["uv", "run", "--no-sync", "pytest", "-q"]
 
 FROM base AS runtime
-CMD ["uvicorn", "runner_web.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--forwarded-allow-ips", "*"]
+CMD ["uvicorn", "runner_web.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--forwarded-allow-ips", "*", "--no-access-log"]

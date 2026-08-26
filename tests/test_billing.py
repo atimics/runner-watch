@@ -3,13 +3,18 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
+import stripe
 from fastapi import HTTPException
 from pytest import MonkeyPatch
 from starlette.requests import Request
 
 from runner_web import billing, db
+from runner_web import main as web_main
+from runner_web.billing import create_caller_id_checkout_session, delete_customer
+from runner_web.caller_ids import CALLER_ID_CLAIM_PRICE_CENTS
 from runner_web.db import connection, init_db
 from runner_web.flash_wallet import (
     COMMENT_COST,
@@ -220,3 +225,175 @@ def test_stripe_checkout_stays_disabled_even_when_secrets_exist(
     with pytest.raises(HTTPException) as error:
         billing_checkout_api(page_request("/api/billing/checkout", method="POST"), "missing")
     assert error.value.status_code == 401
+
+
+def test_extra_caller_id_uses_one_time_stripe_checkout(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_runner")
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_runner")
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        billing.stripe.checkout.Session,
+        "create",
+        lambda **kwargs: captured.update(kwargs)
+        or {"url": "https://checkout.stripe.test/caller"},
+    )
+
+    url = create_caller_id_checkout_session({"id": "caller-user"}, "https://stonks.test")
+
+    assert url == "https://checkout.stripe.test/caller"
+    assert captured["mode"] == "payment"
+    assert captured["metadata"] == {
+        "runner_user_id": "caller-user",
+        "purpose": "caller_identity",
+    }
+    assert captured["line_items"][0]["price_data"]["unit_amount"] == (
+        CALLER_ID_CLAIM_PRICE_CENTS
+    )
+
+
+def test_paid_caller_id_webhook_claims_once(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "caller-webhook.db")
+    init_db()
+    create_user("caller-user")
+    event = {
+        "id": "evt_caller_paid",
+        "type": "checkout.session.completed",
+        "data": {
+            "object": {
+                "id": "cs_caller_paid",
+                "client_reference_id": "caller-user",
+                "customer": "cus_caller",
+                "payment_status": "paid",
+                "metadata": {
+                    "runner_user_id": "caller-user",
+                    "purpose": "caller_identity",
+                },
+            }
+        },
+    }
+
+    first = billing.process_webhook_event(event)
+    duplicate = billing.process_webhook_event(event)
+
+    assert first == {
+        "handled": True,
+        "duplicate": False,
+        "type": "checkout.session.completed",
+    }
+    assert duplicate["duplicate"] is True
+    with connection() as database:
+        identity = database.execute(
+            "SELECT user_id,status,payment_reference FROM caller_identities"
+        ).fetchone()
+        user = database.execute(
+            "SELECT stripe_customer_id FROM users WHERE id='caller-user'"
+        ).fetchone()
+    assert dict(identity) == {
+        "user_id": "caller-user",
+        "status": "active",
+        "payment_reference": "stripe:cs_caller_paid",
+    }
+    assert user["stripe_customer_id"] == "cus_caller"
+
+
+def test_account_erasure_deletes_the_linked_stripe_customer(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_runner")
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        billing.stripe.Customer,
+        "delete",
+        lambda customer_id: deleted.append(customer_id)
+        or {"id": customer_id, "deleted": True},
+    )
+
+    assert delete_customer({"stripe_customer_id": None}) is False
+    assert delete_customer({"stripe_customer_id": "cus_delete_me"}) is True
+    assert deleted == ["cus_delete_me"]
+
+
+def test_account_erasure_does_not_hide_a_stripe_failure(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_runner")
+
+    def failed_delete(customer_id: str) -> dict[str, Any]:
+        raise stripe.APIConnectionError("Stripe is unavailable")
+
+    monkeypatch.setattr(billing.stripe.Customer, "delete", failed_delete)
+
+    with pytest.raises(stripe.APIConnectionError):
+        delete_customer({"stripe_customer_id": "cus_keep_local_until_retry"})
+
+
+def test_account_deletion_runs_stripe_before_local_erasure(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(web_main, "require_origin", lambda request: None)
+    monkeypatch.setattr(web_main, "enforce_rate", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_main,
+        "require_user",
+        lambda session: {"id": "delete-user", "stripe_customer_id": "cus_delete"},
+    )
+    monkeypatch.setattr(
+        web_main,
+        "delete_customer",
+        lambda user: calls.append("stripe") or True,
+    )
+    monkeypatch.setattr(
+        web_main,
+        "delete_user_data",
+        lambda user_id: calls.append("local") or {"deleted": True},
+    )
+
+    response = web_main.account_delete_api(
+        web_main.AccountDeletePayload(confirmation="DELETE MY ACCOUNT"),
+        page_request("/api/account/delete", method="POST"),
+        "delete-session",
+    )
+
+    assert calls == ["stripe", "local"]
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_account_deletion_keeps_local_data_when_stripe_fails(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    local_called = False
+    monkeypatch.setattr(web_main, "require_origin", lambda request: None)
+    monkeypatch.setattr(web_main, "enforce_rate", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_main,
+        "require_user",
+        lambda session: {"id": "retry-user", "stripe_customer_id": "cus_retry"},
+    )
+
+    def failed_stripe(user: dict[str, Any]) -> bool:
+        raise stripe.APIConnectionError("Stripe is unavailable")
+
+    def local_delete(user_id: str) -> dict[str, bool]:
+        nonlocal local_called
+        local_called = True
+        return {"deleted": True}
+
+    monkeypatch.setattr(web_main, "delete_customer", failed_stripe)
+    monkeypatch.setattr(web_main, "delete_user_data", local_delete)
+
+    with pytest.raises(HTTPException) as error:
+        web_main.account_delete_api(
+            web_main.AccountDeletePayload(confirmation="DELETE MY ACCOUNT"),
+            page_request("/api/account/delete", method="POST"),
+            "retry-session",
+        )
+
+    assert error.value.status_code == 502
+    assert local_called is False

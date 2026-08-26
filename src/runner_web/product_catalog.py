@@ -35,7 +35,7 @@ ROADMAP_ITEMS = (
     RoadmapItem(
         "social-loop",
         "Radar and Alpha",
-        "Follow fresh Pulse events, community reactions, comments, and the ranked Alpha view.",
+        "Follow fresh Pulse events, comments, and the ranked Alpha view.",
         "own",
         "live",
     ),
@@ -84,9 +84,9 @@ ROADMAP_ITEMS = (
     RoadmapItem(
         "radar-personal",
         "Personal Radar",
-        "Remember the names a user acts on without adding a separate dashboard builder.",
-        "copy",
-        "now",
+        "Do not profile what a person reads or acts on. Keep Radar shared and unpersonalized.",
+        "cut",
+        "cut",
     ),
     RoadmapItem(
         "biotech",

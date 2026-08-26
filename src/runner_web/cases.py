@@ -123,14 +123,15 @@ def get_case(user_id: str, public_id: str) -> dict[str, Any] | None:
                    o.return_pct AS outcome_return_pct,o.return_direction AS outcome_direction,
                    o.max_favorable_pct AS outcome_max_favorable_pct,
                    o.max_adverse_pct AS outcome_max_adverse_pct,
-                   sp.pseudonym AS source_pseudonym,
+                   sp.alias AS source_pseudonym,
                    (SELECT COUNT(*) FROM thesis_case_revisions r WHERE r.case_id=c.id)
                        AS revision_count
             FROM thesis_cases c
             LEFT JOIN latest_update u ON u.case_id=c.id AND u.position=1
             LEFT JOIN thesis_case_outcomes o ON o.case_id=c.id
             LEFT JOIN ticker_comments sc ON sc.id=c.source_comment_id
-            LEFT JOIN comment_pseudonyms sp ON sp.user_id=sc.user_id
+            LEFT JOIN public_aliases sp
+              ON sp.user_id=sc.user_id AND sp.scope=('comment:' || sc.ticker)
             WHERE c.user_id=? AND c.public_id=?
             """,
             (user_id, public_id),
@@ -183,14 +184,15 @@ def list_cases(
                    o.return_pct AS outcome_return_pct,o.return_direction AS outcome_direction,
                    o.max_favorable_pct AS outcome_max_favorable_pct,
                    o.max_adverse_pct AS outcome_max_adverse_pct,
-                   sp.pseudonym AS source_pseudonym,
+                   sp.alias AS source_pseudonym,
                    (SELECT COUNT(*) FROM thesis_case_revisions r WHERE r.case_id=c.id)
                        AS revision_count
             FROM thesis_cases c
             LEFT JOIN latest_update u ON u.case_id=c.id AND u.position=1
             LEFT JOIN thesis_case_outcomes o ON o.case_id=c.id
             LEFT JOIN ticker_comments sc ON sc.id=c.source_comment_id
-            LEFT JOIN comment_pseudonyms sp ON sp.user_id=sc.user_id
+            LEFT JOIN public_aliases sp
+              ON sp.user_id=sc.user_id AND sp.scope=('comment:' || sc.ticker)
             WHERE c.user_id=? {status_clause}
             ORDER BY COALESCE(u.created_at,c.updated_at) DESC,c.updated_at DESC
             """,

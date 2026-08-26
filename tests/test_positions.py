@@ -4,6 +4,7 @@ from pathlib import Path
 from pytest import MonkeyPatch
 
 from runner_web import db
+from runner_web.caller_ids import claim_caller_id
 from runner_web.calls import (
     active_call_for_user,
     call_for_user,
@@ -31,16 +32,11 @@ def test_public_call_freezes_entry_and_exit_marks(
                 ("other", "other", "Other", "active", current.isoformat()),
             ],
         )
-        database.executemany(
-            "INSERT INTO comment_pseudonyms(user_id,pseudonym,created_at) VALUES(?,?,?)",
-            [
-                ("owner", "GreenWolf11", current.isoformat()),
-                ("other", "QuietWolf22", current.isoformat()),
-            ],
-        )
+    identity = claim_caller_id("owner")
 
     created = create_call(
         "owner",
+        identity["id"],
         "ONE",
         entry_price=2.0,
         entry_at=entered_at,
@@ -48,7 +44,8 @@ def test_public_call_freezes_entry_and_exit_marks(
 
     assert created["entry_at"] == entered_at
     assert active_call_for_user("owner", "ONE", current_price=2.5)["return_pct"] == 25.0
-    assert calls_for_ticker("ONE", current_price=2.5)[0]["pseudonym"] == "GreenWolf11"
+    assert calls_for_ticker("ONE", current_price=2.5)[0]["caller_handle"] == identity["handle"]
+    assert "user_id" not in calls_for_ticker("ONE", current_price=2.5)[0]
     assert active_call_for_user("other", "ONE", current_price=2.5) is None
     assert call_for_user("other", created["public_id"]) is None
 

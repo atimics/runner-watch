@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -139,6 +140,13 @@ def _flag(value: bool) -> int:
 def feature_vector(row: dict[str, Any]) -> tuple[int, ...]:
     """Quantize one database row before it crosses into the integer Rust model."""
 
+    compact = row.get("feature_vector")
+    if compact is not None:
+        vector = tuple(int(value) for value in compact)
+        if len(vector) != len(FEATURE_NAMES):
+            raise ValueError("Stored ranker feature vector has the wrong size")
+        return vector
+
     relative_volume = row.get("relative_volume")
     recent_relative_volume = row.get("recent_relative_volume")
     catalyst_score = row.get("catalyst_score")
@@ -209,37 +217,204 @@ def feature_vector(row: dict[str, Any]) -> tuple[int, ...]:
     )
 
 
-def _load_groups(horizon: str) -> list[list[dict[str, Any]]]:
-    if horizon not in HORIZONS:
-        raise ValueError(f"Unknown ranker horizon: {horizon}")
+def store_training_examples(
+    database: Any,
+    rows: list[dict[str, Any]],
+    *,
+    scan_mode: str,
+    expected_candidates: int,
+) -> int:
+    """Save small, versioned model inputs without keeping full rows in memory later."""
+
+    if not rows:
+        return 0
+    database.executemany(
+        """
+        INSERT INTO ranker_training_examples(
+            snapshot_id,scan_run_id,ticker,feature_schema_version,
+            expected_candidates,captured_at,feature_vector_json,
+            baseline_score_milli
+        ) VALUES(?,?,?,?,?,?,?,?)
+        ON CONFLICT(snapshot_id) DO NOTHING
+        """,
+        [
+            (
+                str(row["id"]),
+                str(row["scan_run_id"]),
+                str(row["ticker"]),
+                FEATURE_SCHEMA_VERSION,
+                expected_candidates,
+                str(row["captured_at"]),
+                json.dumps(
+                    feature_vector({**row, "scan_mode": scan_mode}),
+                    separators=(",", ":"),
+                ),
+                _scaled(row.get("score")),
+            )
+            for row in rows
+        ],
+    )
+    return len(rows)
+
+
+def sync_training_outcome(
+    database: Any,
+    snapshot_id: str,
+    barrier_label: str,
+    outcome_return_pct: Any,
+    labeled_at: str,
+) -> None:
+    """Attach a later outcome to its compact feature vector."""
+
+    database.execute(
+        """
+        UPDATE ranker_training_examples
+        SET barrier_label=?,outcome_return_bp=?,labeled_at=?
+        WHERE snapshot_id=?
+        """,
+        (
+            barrier_label,
+            int(round(_float(outcome_return_pct) * RETURN_SCALE)),
+            labeled_at,
+            snapshot_id,
+        ),
+    )
+
+
+def _backfill_recent_training_examples(maximum_groups: int) -> int:
+    """Compact a bounded legacy window after the new table is introduced."""
+
     with connection() as database:
-        rows = database.execute(
+        run_rows = database.execute(
             """
-            SELECT s.*,r.captured_at AS run_captured_at,r.mode AS scan_mode,
-                   r.candidate_rows AS expected_candidates,
-                   o.barrier_label AS outcome,o.return_60m_pct AS outcome_return
+            SELECT r.id FROM scan_runs r
+            WHERE r.feature_schema_version=?
+              AND EXISTS(
+                  SELECT 1 FROM scan_outcomes o
+                  JOIN scan_snapshots s ON s.id=o.snapshot_id
+                  WHERE s.scan_run_id=r.id
+                    AND o.barrier_label IN ('down','timeout','up')
+              )
+            ORDER BY r.captured_at DESC,r.id DESC LIMIT ?
+            """,
+            (FEATURE_SCHEMA_VERSION, maximum_groups),
+        ).fetchall()
+        run_ids = [str(row["id"]) for row in run_rows]
+        if not run_ids:
+            return 0
+        placeholders = ",".join("?" for _ in run_ids)
+        rows = database.execute(
+            f"""
+            SELECT s.*,r.mode AS scan_mode,r.candidate_rows AS expected_candidates,
+                   o.barrier_label,o.return_60m_pct,o.updated_at AS labeled_at
             FROM scan_snapshots s
             JOIN scan_runs r ON r.id=s.scan_run_id
             JOIN scan_outcomes o ON o.snapshot_id=s.id
-            WHERE o.barrier_label IN ('down','timeout','up')
-                  AND r.feature_schema_version=?
-                  AND s.range_position IS NOT NULL
-                  AND s.stale_minutes IS NOT NULL
+            LEFT JOIN ranker_training_examples compact ON compact.snapshot_id=s.id
+            WHERE s.scan_run_id IN ({placeholders})
+              AND o.barrier_label IN ('down','timeout','up')
+              AND s.range_position IS NOT NULL
+              AND s.stale_minutes IS NOT NULL
+              AND compact.snapshot_id IS NULL
             ORDER BY r.captured_at,s.baseline_rank,s.ticker
+            """,  # noqa: S608 - placeholders are generated above
+            run_ids,
+        ).fetchall()
+        compact_rows = []
+        for raw in rows:
+            row = dict(raw)
+            compact_rows.append(
+                (
+                    str(row["id"]),
+                    str(row["scan_run_id"]),
+                    str(row["ticker"]),
+                    FEATURE_SCHEMA_VERSION,
+                    int(row["expected_candidates"]),
+                    str(row["captured_at"]),
+                    json.dumps(feature_vector(row), separators=(",", ":")),
+                    _scaled(row.get("score")),
+                    str(row["barrier_label"]),
+                    int(round(_float(row.get("return_60m_pct")) * RETURN_SCALE)),
+                    str(row["labeled_at"]),
+                )
+            )
+        if compact_rows:
+            database.executemany(
+                """
+                INSERT INTO ranker_training_examples(
+                    snapshot_id,scan_run_id,ticker,feature_schema_version,
+                    expected_candidates,captured_at,feature_vector_json,
+                    baseline_score_milli,barrier_label,outcome_return_bp,labeled_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(snapshot_id) DO NOTHING
+                """,
+                compact_rows,
+            )
+    return len(compact_rows)
+
+
+def _load_groups(
+    horizon: str,
+    maximum_groups: int = RANKER_TRAINING.maximum_groups,
+) -> list[list[dict[str, Any]]]:
+    if horizon not in HORIZONS:
+        raise ValueError(f"Unknown ranker horizon: {horizon}")
+    maximum_groups = max(2, maximum_groups)
+    _backfill_recent_training_examples(maximum_groups)
+    with connection() as database:
+        complete_runs = database.execute(
+            """
+            SELECT scan_run_id,MIN(captured_at) AS run_captured_at
+            FROM ranker_training_examples
+            WHERE feature_schema_version=?
+              AND barrier_label IN ('down','timeout','up')
+            GROUP BY scan_run_id
+            HAVING COUNT(*)=MAX(expected_candidates) AND COUNT(*)>=2
+            ORDER BY run_captured_at DESC,scan_run_id DESC LIMIT ?
             """,
-            (FEATURE_SCHEMA_VERSION,),
+            (FEATURE_SCHEMA_VERSION, maximum_groups),
+        ).fetchall()
+        run_ids = [str(row["scan_run_id"]) for row in reversed(complete_runs)]
+        if not run_ids:
+            return []
+        placeholders = ",".join("?" for _ in run_ids)
+        rows = database.execute(
+            f"""
+            SELECT * FROM ranker_training_examples
+            WHERE scan_run_id IN ({placeholders})
+              AND feature_schema_version=?
+              AND barrier_label IN ('down','timeout','up')
+            ORDER BY captured_at,scan_run_id,ticker
+            """,  # noqa: S608 - placeholders are generated above
+            (*run_ids, FEATURE_SCHEMA_VERSION),
         ).fetchall()
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    order: list[str] = []
     for raw in rows:
         row = dict(raw)
-        group_id = str(row["scan_run_id"])
-        if group_id not in grouped:
-            order.append(group_id)
-        grouped[group_id].append(row)
+        try:
+            vector = tuple(int(value) for value in json.loads(row["feature_vector_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if len(vector) != len(FEATURE_NAMES):
+            continue
+        grouped[str(row["scan_run_id"])].append(
+            {
+                "snapshot_id": str(row["snapshot_id"]),
+                "scan_run_id": str(row["scan_run_id"]),
+                "ticker": str(row["ticker"]),
+                "run_captured_at": str(row["captured_at"]),
+                "expected_candidates": int(row["expected_candidates"]),
+                "feature_vector": vector,
+                "score": int(row["baseline_score_milli"]) / FEATURE_SCALE,
+                "outcome": str(row["barrier_label"]),
+                "outcome_return": int(row["outcome_return_bp"] or 0) / RETURN_SCALE,
+            }
+        )
     complete: list[list[dict[str, Any]]] = []
-    for group_id in order:
-        group = grouped[group_id]
+    for run_id in run_ids:
+        group = grouped.get(run_id, [])
+        if not group:
+            continue
         expected = int(group[0]["expected_candidates"])
         if len(group) == expected and len(group) >= 2:
             complete.append(group)
@@ -322,11 +497,12 @@ def train_shadow_ranker(
     *,
     min_groups: int = RANKER_TRAINING.minimum_groups,
     min_rows: int = RANKER_TRAINING.minimum_rows,
+    maximum_groups: int = RANKER_TRAINING.maximum_groups,
     epochs: int = 500,
 ) -> dict[str, Any]:
     """Train the deterministic integer Rust ranker in shadow status."""
 
-    groups = _load_groups(horizon)
+    groups = _load_groups(horizon, maximum_groups)
     row_count = sum(len(group) for group in groups)
     if len(groups) < min_groups or row_count < min_rows:
         return {
@@ -411,8 +587,88 @@ def train_shadow_ranker(
         "model_id": model_id,
         "model_kind": MODEL_KIND,
         "integer_only": True,
+        "groups": len(groups),
+        "rows": row_count,
+        "maximum_groups": maximum_groups,
         "metrics": metrics,
     }
+
+
+def train_shadow_ranker_if_due(
+    horizon: str = DEFAULT_HORIZON,
+    *,
+    minimum_new_groups: int = RANKER_TRAINING.minimum_new_groups,
+    maximum_groups: int = RANKER_TRAINING.maximum_groups,
+) -> dict[str, Any]:
+    """Train only after enough new complete groups have arrived."""
+
+    _backfill_recent_training_examples(maximum_groups)
+    with connection() as database:
+        latest = database.execute(
+            """
+            SELECT training_end FROM ranker_models
+            WHERE horizon=? AND feature_schema_version=? AND model_kind=?
+                  AND status IN ('shadow','active')
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (horizon, FEATURE_SCHEMA_VERSION, MODEL_KIND),
+        ).fetchone()
+        complete = database.execute(
+            """
+            SELECT MIN(captured_at) AS captured_at
+            FROM ranker_training_examples
+            WHERE feature_schema_version=?
+              AND barrier_label IN ('down','timeout','up')
+            GROUP BY scan_run_id
+            HAVING COUNT(*)=MAX(expected_candidates) AND COUNT(*)>=2
+            ORDER BY captured_at DESC LIMIT ?
+            """,
+            (FEATURE_SCHEMA_VERSION, maximum_groups),
+        ).fetchall()
+    latest_end = str(latest["training_end"]) if latest else None
+    new_groups = sum(
+        latest_end is None or str(row["captured_at"]) > latest_end for row in complete
+    )
+    if latest_end is not None and new_groups < max(1, minimum_new_groups):
+        return {
+            "trained": False,
+            "reason": "waiting_for_new_groups",
+            "groups": len(complete),
+            "new_groups": new_groups,
+            "minimum_new_groups": minimum_new_groups,
+        }
+    return train_shadow_ranker(horizon, maximum_groups=maximum_groups)
+
+
+def _trainer_state(key: str, value: Any) -> None:
+    timestamp = _iso()
+    encoded = value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at
+            """,
+            (key, encoded, timestamp),
+        )
+
+
+def trainer_main() -> None:
+    """Run bounded ranker training away from the web and collection workers."""
+
+    init_db()
+    interval = max(
+        300,
+        int(os.getenv("RANKER_TRAIN_INTERVAL_SECONDS", RANKER_TRAINING.interval_seconds)),
+    )
+    while True:
+        try:
+            result = train_shadow_ranker_if_due()
+            _trainer_state("ranker_trainer_last_result", result)
+            _trainer_state("ranker_trainer_last_error", "")
+        except Exception as exc:
+            _trainer_state("ranker_trainer_last_error", str(exc)[:1000])
+        time.sleep(interval)
 
 
 def _valid_artifact(artifact: Any) -> bool:
@@ -627,10 +883,14 @@ def _normalize_vector(
     )
 
 
-def export_crl_dataset(path: Path, horizon: str = DEFAULT_HORIZON) -> dict[str, Any]:
+def export_crl_dataset(
+    path: Path,
+    horizon: str = DEFAULT_HORIZON,
+    maximum_groups: int = RANKER_TRAINING.maximum_groups,
+) -> dict[str, Any]:
     """Write integer grouped rows for crlplrimes' generic scorer contract."""
 
-    groups = _load_groups(horizon)
+    groups = _load_groups(horizon, maximum_groups)
     if not groups:
         raise ValueError("No complete labeled scan groups are available")
     holdout_count = min(max(2, (len(groups) + 2) // 5), len(groups) - 1)
@@ -699,10 +959,20 @@ def main() -> None:
         type=int,
         default=RANKER_TRAINING.minimum_rows,
     )
+    train.add_argument(
+        "--max-groups",
+        type=int,
+        default=RANKER_TRAINING.maximum_groups,
+    )
     train.add_argument("--epochs", type=int, default=500)
     export = subparsers.add_parser("export-crl")
     export.add_argument("path", type=Path)
     export.add_argument("--horizon", choices=sorted(HORIZONS), default=DEFAULT_HORIZON)
+    export.add_argument(
+        "--max-groups",
+        type=int,
+        default=RANKER_TRAINING.maximum_groups,
+    )
     arguments = parser.parse_args()
     init_db()
     if arguments.command == "status":
@@ -712,10 +982,15 @@ def main() -> None:
             arguments.horizon,
             min_groups=arguments.min_groups,
             min_rows=arguments.min_rows,
+            maximum_groups=arguments.max_groups,
             epochs=arguments.epochs,
         )
     else:
-        result = export_crl_dataset(arguments.path, arguments.horizon)
+        result = export_crl_dataset(
+            arguments.path,
+            arguments.horizon,
+            arguments.max_groups,
+        )
     print(json.dumps(result, indent=2, sort_keys=True))
 
 

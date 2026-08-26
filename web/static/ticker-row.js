@@ -51,20 +51,6 @@
     return ['', ''];
   }
 
-  function fingerprint(row) {
-    return [
-      row.price,
-      row.change_pct,
-      row.score,
-      row.rug_score,
-      row.trade_state,
-      row.event_count,
-      row.pulse_label,
-      row.event_at,
-      row.session,
-    ].join('|');
-  }
-
   function render(row, options = {}) {
     const change = number(row.change_pct);
     const changeClass = change === null ? 'flat' : change >= 0 ? 'up' : 'down';
@@ -73,9 +59,6 @@
     const badge = statusLabel
       ? `<small class="ticker-badge ticker-badge-${statusTone}">${esc(statusLabel)}</small>`
       : '';
-    const novelty = ['unseen', 'seen', 'inspected'].includes(row.novelty_state)
-      ? row.novelty_state
-      : 'normal';
     const age = ago(row.entered_at || row.event_at);
     const events = Number(row.event_count) > 1
       ? `<span class="event-count">+${Number(row.event_count) - 1}</span>`
@@ -97,11 +80,9 @@
     }
     const catalystTone = row.sentiment === 'risk' ? ' risk' : row.sentiment === 'gap' ? ' gap' : '';
     const updated = options.updated ?? row.has_update;
-    const attentionClass = novelty === 'unseen' || novelty === 'seen' ? ` attention-${novelty}` : '';
-    const updateClass = updated && novelty === 'normal' ? ' is-updated' : '';
+    const updateClass = updated ? ' is-updated' : '';
     const marketLabel = `${statusLabel ? `, ${statusLabel}` : ''}${tradeState && tradeState !== 'UNKNOWN' ? `, ${tradeState}` : ''}${rugValue !== null ? `, rug risk ${rugValue.toFixed(0)}` : ''}`;
     const label = `${row.ticker}, ${company}, ${money(row.price)}, ${percent(row.change_pct)}${marketLabel}`;
-    const enteredAt = row.entered_at ? ` data-entered-at="${esc(row.entered_at)}"` : '';
     const thesis = row.section === 'cases' && row.case_thesis
       ? `<span class="case-thesis">${esc(row.case_thesis)}</span>`
       : '';
@@ -114,7 +95,7 @@
     const trackPrompt = row.needs_thesis
       ? '<span class="case-track-prompt">Comment once to make this view personal</span>'
       : '';
-    return `<a class="token-row ticker-row${attentionClass}${updateClass}" href="/t/${encodeURIComponent(row.ticker)}" data-ticker-row="${esc(row.ticker)}" data-novelty="${esc(novelty)}"${enteredAt} aria-label="${esc(label)}">
+    return `<a class="token-row ticker-row${updateClass}" href="/t/${encodeURIComponent(row.ticker)}" data-ticker-row="${esc(row.ticker)}" aria-label="${esc(label)}">
       <span class="coin coin-${Number(row.coin_tone) || 0}"><b>${esc(row.coin_label || String(row.ticker).slice(0, 2))}</b><i></i></span>
       <span class="token-copy">
         <span class="ticker-line"><strong>${esc(row.ticker)}</strong>${badge}<small class="ticker-age">${esc(age)}</small></span>
@@ -191,5 +172,5 @@
     } catch (_) {}
   }
 
-  window.TickerRow = Object.freeze({ago, fingerprint, loadCharts, paintCharts, render});
+  window.TickerRow = Object.freeze({ago, loadCharts, paintCharts, render});
 })();

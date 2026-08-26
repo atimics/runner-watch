@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import hashlib
-import os
+import secrets
+from datetime import UTC, datetime
+from typing import Any
 
 ADJECTIVES = tuple(
     """
@@ -39,16 +40,38 @@ ANIMALS = tuple(
     """.split()
 )
 
-PSEUDONYM_SALT = os.getenv(
-    "COMMENT_PSEUDONYM_SALT",
-    "runner-watch-comment-pseudonym-v1",
+EMOJIS = tuple(
+    "🐺 🦊 🦝 🐻 🐼 🐨 🐯 🦁 🐮 🐷 🐸 🐵 🦄 🐲 🐙 🦑 🦀 🐡 "
+    "🐬 🦈 🐊 🐢 🦎 🐍 🐝 🪲 🦋 🐌 🐞 🐧 🦅 🦉 🦆 🦢 🦜 🦚 🐿️ "
+    "🦔 🦦 🦥 🦘 🦬 🦙 🐐 🦌 🐕 🐈 🌵 🍄 🌙 ⭐ ⚡ 🔥 🌊 🍀 🌈 "
+    "💎 🧭 🎲 🎯 🛸 🚀 🛰️ 🗿 🎈 🪁 🧩 🎨 🎸 🥁 🛹 🚲 ⛵ 🏔️".split()
 )
 
+def ensure_scoped_alias(database: Any, user_id: str, scope: str) -> str:
+    """Assign an unlinkable public emoji identity inside one discussion or Call thread."""
 
-def pseudonym_candidate(identity: str, attempt: int = 0) -> str:
-    """Choose a stable adjective-animal name without exposing the identity."""
-
-    digest = hashlib.sha256(f"{PSEUDONYM_SALT}:{identity}:{attempt}".encode()).digest()
-    adjective_index = int.from_bytes(digest[:8], "big") % len(ADJECTIVES)
-    animal_index = int.from_bytes(digest[8:16], "big") % len(ANIMALS)
-    return f"{ADJECTIVES[adjective_index]}-{ANIMALS[animal_index]}"
+    if not scope.startswith(("comment:", "call:")):
+        raise ValueError("Public alias scope must be a comment or Call thread")
+    existing = database.execute(
+        "SELECT alias FROM public_aliases WHERE scope=? AND user_id=?",
+        (scope, user_id),
+    ).fetchone()
+    if existing:
+        return str(existing["alias"])
+    timestamp = datetime.now(UTC).isoformat()
+    for _ in range(1_000):
+        alias = f"{secrets.choice(EMOJIS)}{secrets.choice(EMOJIS)}"
+        database.execute(
+            """
+            INSERT INTO public_aliases(scope,user_id,alias,created_at)
+            VALUES(?,?,?,?) ON CONFLICT DO NOTHING
+            """,
+            (scope, user_id, alias, timestamp),
+        )
+        assigned = database.execute(
+            "SELECT alias FROM public_aliases WHERE scope=? AND user_id=?",
+            (scope, user_id),
+        ).fetchone()
+        if assigned:
+            return str(assigned["alias"])
+    raise RuntimeError("Could not assign a unique thread identity")

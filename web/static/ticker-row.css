@@ -18,16 +18,6 @@
 }
 
 .ticker-row.is-updated::before { animation: row-update 1.9s ease-out; }
-.ticker-row.attention-unseen::before {
-  background: linear-gradient(90deg, rgba(245, 198, 107, .045), rgba(245, 198, 107, .012) 58%, transparent);
-  box-shadow: inset 1px 0 rgba(245, 198, 107, .52);
-  opacity: 1;
-}
-.ticker-row.attention-seen::before {
-  background: linear-gradient(90deg, rgba(185, 193, 189, .018), transparent 52%);
-  box-shadow: inset 1px 0 rgba(185, 193, 189, .22);
-  opacity: 1;
-}
 .ticker-row:focus-visible { outline: 1px solid rgba(87, 227, 137, .65); outline-offset: -2px; border-radius: 0; }
 .ticker-row .ticker-line { align-items: center; }
 .ticker-row .ticker-age { margin-left: auto; }

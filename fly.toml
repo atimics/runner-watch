@@ -13,8 +13,9 @@ kill_timeout = 30
   wait_timeout = "10m"
 
 [processes]
-  web = "uvicorn runner_web.main:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips '*' --timeout-graceful-shutdown 25"
+  web = "uvicorn runner_web.main:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips '*' --timeout-graceful-shutdown 25 --no-access-log"
   worker = "env PROCESS_ROLE=worker stonks-worker"
+  trainer = "env PROCESS_ROLE=trainer stonks-trainer"
 
 [env]
   APP_ORIGIN = "https://stonks.rati.foundation"
@@ -22,8 +23,13 @@ kill_timeout = 30
   COOKIE_SECURE = "1"
   PROCESS_ROLE = "web"
   REQUIRE_DATABASE_URL = "1"
+  # Fly Postgres uses the encrypted private 6PN and does not accept direct TLS.
+  REQUIRE_DATABASE_TLS = "0"
+  # The Upstash endpoint resolves to the encrypted private 6PN and rejects TLS.
+  REQUIRE_REDIS_TLS = "0"
   PYTHONUNBUFFERED = "1"
-  BACKGROUND_SCAN_INTERVAL_SECONDS = "180"
+  BACKGROUND_SCAN_INTERVAL_SECONDS = "1800"
+  RANKER_TRAIN_INTERVAL_SECONDS = "21600"
   DISCOVERY_SOURCES_ENABLED = "true"
   DISCOVERY_INTERVAL_SECONDS = "30"
   YAHOO_NEWS_ENABLED = "true"
@@ -59,6 +65,6 @@ kill_timeout = 30
   memory = "512mb"
 
 [[vm]]
-  processes = ["worker"]
+  processes = ["worker", "trainer"]
   size = "shared-cpu-1x"
   memory = "1gb"

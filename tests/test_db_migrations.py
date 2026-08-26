@@ -9,7 +9,10 @@ from runner_web.ai_kol import FLASH
 from runner_web.db import (
     MIGRATION_LOCK_ID,
     MIGRATIONS,
+    Migration,
     _acquire_migration_lock,
+    _apply_migrations,
+    _migration_028_caller_identities,
     _release_migration_lock,
     connection,
     init_db,
@@ -42,6 +45,47 @@ def test_postgres_migrations_take_one_session_lock() -> None:
         ("SELECT pg_advisory_lock(?)", (MIGRATION_LOCK_ID,)),
         ("SELECT pg_advisory_unlock(?)", (MIGRATION_LOCK_ID,)),
     ]
+
+
+def test_postgres_commits_each_migration_before_releasing_lock(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class Result:
+        def fetchone(self) -> tuple[int]:
+            return (1,)
+
+        def fetchall(self) -> list[tuple[int, str]]:
+            return []
+
+    class Database:
+        backend = "postgres"
+
+        def execute(
+            self, statement: str, _parameters: tuple[object, ...] = ()
+        ) -> Result:
+            if "pg_advisory_unlock" in statement:
+                events.append("unlock")
+            elif statement.startswith("INSERT INTO schema_migrations"):
+                events.append("record")
+            return Result()
+
+        def commit(self) -> None:
+            events.append("commit")
+
+        def rollback(self) -> None:
+            events.append("rollback")
+
+    monkeypatch.setattr(
+        db,
+        "MIGRATIONS",
+        (Migration(1, "sample", lambda _database: events.append("apply")),),
+    )
+
+    _apply_migrations(Database())  # type: ignore[arg-type]
+
+    assert events == ["apply", "record", "commit", "unlock"]
 
 
 def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -118,6 +162,13 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         flash_transaction_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='flash_transactions'"
         ).fetchone()
+        pulse_entries_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='pulse_entries'"
+        ).fetchone()
+        training_examples_table = database.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='ranker_training_examples'"
+        ).fetchone()
         flash = database.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
         commission_columns = {
             row["name"]
@@ -149,14 +200,18 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             row["name"]
             for row in database.execute("PRAGMA table_info(thesis_case_revisions)").fetchall()
         }
+        signal_columns = {
+            row["name"]
+            for row in database.execute("PRAGMA table_info(signals)").fetchall()
+        }
     assert [tuple(row) for row in migrations] == [
         (migration.version, migration.name) for migration in MIGRATIONS
     ]
     assert topic_table is not None
-    assert pulse_state_table is not None
-    assert reaction_table is not None
+    assert pulse_state_table is None
+    assert reaction_table is None
     assert comment_table is not None
-    assert pseudonym_table is not None
+    assert pseudonym_table is None
     assert case_table is not None
     assert revision_table is not None
     assert position_table is not None
@@ -172,6 +227,8 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert flash_request_table is not None
     assert flash_wallet_table is not None
     assert flash_transaction_table is not None
+    assert pulse_entries_table is not None
+    assert training_examples_table is not None
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_provider"] == "openrouter"
@@ -213,6 +270,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     } <= snapshot_columns
     assert {"source_kind", "source_comment_id", "horizon_minutes"} <= case_columns
     assert "source_comment_id" in case_revision_columns
+    assert "caller_identity_id" in signal_columns
     assert {
         "stripe_customer_id",
         "stripe_subscription_id",
@@ -229,7 +287,6 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "sec_filings_ticker_filed_score",
         "scan_runs_candidate_captured",
         "scan_snapshots_ticker_captured",
-        "ticker_reactions_ticker_reaction",
         "ticker_comments_ticker_time",
         "ticker_comments_public_time",
         "thesis_cases_user_status_time",
@@ -259,8 +316,19 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "flash_report_requests_user_time",
         "flash_transactions_user_time",
         "research_commissions_public_time",
+        "public_aliases_user",
+        "caller_identities_owner",
+        "caller_identity_one_free_claim",
+        "caller_identity_claims_owner",
+        "community_calls_caller_time",
+        "signals_caller_identity",
         "research_commissions_daily_actor",
         "research_commissions_daily_visibility",
+        "pulse_entries_ticker_time",
+        "pulse_entries_time",
+        "ranker_training_examples_schema_time",
+        "ranker_training_examples_labeled_time",
+        "market_bars_collected",
     } <= indexes
 
 
@@ -286,6 +354,46 @@ def test_baseline_migration_upgrades_a_legacy_database(
         versions = database.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
     assert "plan" in user_columns
     assert versions == len(MIGRATIONS)
+
+
+def test_existing_public_calls_get_a_random_animal_identity(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "call-upgrade.db")
+    init_db()
+    timestamp = "2026-08-26T00:00:00+00:00"
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) "
+            "VALUES(?,?,?,?,?)",
+            ("legacy-caller", "old_account", "Old Account", "active", timestamp),
+        )
+        database.execute(
+            "INSERT INTO community_calls("
+            "id,public_id,user_id,ticker,entry_price,entry_at,status,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,'active',?,?)",
+            (
+                "old-call", "old-public", "legacy-caller", "ONE", 1.0,
+                timestamp, timestamp, timestamp,
+            ),
+        )
+        _migration_028_caller_identities(database)
+        upgraded = database.execute(
+            "SELECT c.caller_identity_id,i.handle,i.user_id,i.status "
+            "FROM community_calls c JOIN caller_identities i "
+            "ON i.id=c.caller_identity_id WHERE c.id='old-call'"
+        ).fetchone()
+        claim = database.execute(
+            "SELECT free_claim,claim_cost_cents FROM caller_identity_claims "
+            "WHERE user_id='legacy-caller'"
+        ).fetchone()
+
+    assert upgraded["caller_identity_id"]
+    assert "-" in upgraded["handle"]
+    assert upgraded["handle"] != "old_account"
+    assert upgraded["user_id"] == "legacy-caller"
+    assert upgraded["status"] == "active"
+    assert dict(claim) == {"free_claim": 1, "claim_cost_cents": 0}
 
 
 def test_thesis_source_columns_repair_an_already_applied_migration(

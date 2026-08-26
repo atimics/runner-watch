@@ -1,0 +1,151 @@
+{% extends "mobile_base.html" %}
+{% block app_class %}account-page privacy-page{% endblock %}
+{% block title %}Privacy · Runner Watch{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/account-pages.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+<header class="detail-nav account-nav">
+  <a href="/" aria-label="Back to Pulse">‹</a>
+  <strong>Privacy</strong>
+  <span></span>
+</header>
+
+<main class="account-wrap privacy-wrap">
+  <section class="account-intro">
+    <span class="eyebrow">PRIVACY BY LESS DATA</span>
+    <h1>We do not track what you read.</h1>
+    <p>Runner Watch does not use analytics, advertising pixels, visitor IDs, reaction profiles, view logs, dwell logs, or cross-thread public identities.</p>
+    <p>Last updated: 26 August 2026.</p>
+  </section>
+
+  <section class="plan-card">
+    <h2>Who controls your data</h2>
+    <p>Runner Watch, available at stonks.rati.foundation, controls the account data described here. Contact <a href="mailto:privacy@rati.foundation">privacy@rati.foundation</a> for privacy requests or questions.</p>
+  </section>
+
+  <section class="plan-card">
+    <h2>Data we keep</h2>
+    <ul class="feature-list compact">
+      <li><i>•</i><span><strong>Account and security</strong><small>Your chosen account name, passkey public-key records, essential session records, and short-lived security challenges. We never receive your fingerprint, face scan, device PIN, or private passkey key.</small></span></li>
+      <li><i>•</i><span><strong>Things you save or publish</strong><small>AI-generated ticker comments you choose to request and publish, public calls, private trade-journal entries, cases, research requests, and reports you choose to create. Comments have no human text input and use only public ticker evidence.</small></span></li>
+      <li><i>•</i><span><strong>Separated public identities</strong><small>Comments use a random emoji alias for each ticker thread. Calls use separately claimed random animal IDs. Public pages do not expose the account behind either identity.</small></span></li>
+      <li><i>•</i><span><strong>Billing</strong><small>Stripe customer and subscription references, plan status, and signed webhook event IDs. Stripe handles card details; Runner Watch does not store them.</small></span></li>
+      <li><i>•</i><span><strong>Service security</strong><small>Short-lived rate-limit keys and infrastructure logs may contain an IP address and request details. They are used only to keep the service working and safe.</small></span></li>
+    </ul>
+  </section>
+
+  <section class="plan-card">
+    <h2>Why we use it</h2>
+    <p>We use account and saved-content data to provide the service you request. We use limited security data for our legitimate interest in preventing abuse and outages. We keep billing records where needed to perform a purchase and meet legal duties. We do not build behavioural profiles or use personal data for advertising.</p>
+  </section>
+
+  <section class="plan-card">
+    <h2>Service providers and transfers</h2>
+    <p>Fly.io hosts the app and production data in San Jose, United States. Stripe processes payments. OpenRouter and the selected model provider process the evidence included in a research request. OpenRouter requests require zero-data-retention routing and do not contain a Runner Watch user fingerprint.</p>
+    <p>These providers may process data outside the EEA, UK, or Switzerland. Runner Watch must keep processor terms and an approved transfer safeguard, such as Standard Contractual Clauses, on file before serving people in those regions.</p>
+  </section>
+
+  <section class="plan-card">
+    <h2>How long we keep data</h2>
+    <ul class="feature-list compact">
+      <li><i>•</i><span><strong>No passive history</strong><small>Visitor, view, dwell, seen, notification, and reaction records are not collected. The old tracking tables have been permanently removed.</small></span></li>
+      <li><i>•</i><span><strong>Security records</strong><small>Passkey challenges expire after 5 minutes, unfinished accounts after 15 minutes, and login sessions after 30 days.</small></span></li>
+      <li><i>•</i><span><strong>Your content</strong><small>Account content stays until you delete it or the account. A deleted caller ID leaves only its animal name and a tombstone so nobody else can claim it.</small></span></li>
+      <li><i>•</i><span><strong>Payments and backups</strong><small>Webhook event IDs are kept for up to 400 days. Providers may retain transaction records when law requires it. Deleted data may remain in encrypted backups for up to 30 days before expiry.</small></span></li>
+    </ul>
+  </section>
+
+  <section class="plan-card">
+    <h2>Your rights</h2>
+    <p>Depending on where you live, you may ask to access, correct, erase, restrict, or receive your data, or object to processing. You may complain to your local data-protection authority. We answer verified requests without undue delay and normally within one month.</p>
+    {% if user %}
+    <a class="account-action" href="/api/account/export">Download my data</a>
+    <p class="plan-help">The export contains your account and content, but not passkey secrets or session hashes.</p>
+    {% else %}
+    <a class="account-action" href="/login?next=/privacy">Log in to export your data</a>
+    {% endif %}
+    <p>You can also email <a href="mailto:privacy@rati.foundation">privacy@rati.foundation</a>. We may ask for enough information to verify that the account is yours.</p>
+  </section>
+
+  {% if user %}
+  <section class="plan-card danger-card">
+    <h2>Delete my account</h2>
+    <p>This permanently deletes your local account, passkeys, sessions, comments, calls, saved work, and other content. It also deletes your linked Stripe customer, which immediately cancels active subscriptions. Caller-ID names remain only as anonymous, unusable tombstones.</p>
+    <button class="account-action danger-action" id="openAccountDelete" type="button">Delete my account</button>
+    <p class="plan-help">This cannot be undone. Download your data first if you want a copy.</p>
+  </section>
+
+  <section class="plan-card">
+    <h2>My caller IDs</h2>
+    <p>Caller IDs are random animal names. They are separate from comment emojis and are not publicly linked to your account or to each other.</p>
+    {% if caller == 'claimed' %}<p class="account-notice success">Your caller ID is ready.</p>{% elif caller == 'deleted' %}<p class="account-notice">The caller ID and all of its calls were deleted. Its name is now permanently retired.</p>{% elif caller == 'canceled' %}<p class="account-notice">The caller-ID checkout was canceled.</p>{% endif %}
+    {% if caller_ids %}
+    <ul class="feature-list compact caller-id-list">
+      {% for identity in caller_ids %}
+      <li>
+        <i>🐾</i><span><strong>{{ identity.handle }}</strong><small>{% if identity.claim_cost_cents == 0 %}Free claim{% else %}Paid claim{% endif %}</small></span>
+        <form method="post" action="/api/caller-identities/{{ identity.id }}/delete"><button type="submit">Delete and retire</button></form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <form method="post" action="/api/caller-identities/claim">
+      <button class="account-action" type="submit">Claim another random animal ID</button>
+    </form>
+    <p class="plan-help">Your first caller ID is free. Each later claim costs {{ caller_id_price or 'the price shown in Stripe' }}. Names are random and cannot be chosen, sold, transferred, or reused after deletion.</p>
+  </section>
+
+  <dialog class="account-delete-dialog" id="accountDeleteDialog" aria-labelledby="accountDeleteTitle">
+    <button class="dialog-close" id="closeAccountDelete" type="button" aria-label="Close">×</button>
+    <h2 id="accountDeleteTitle">Permanently delete your account?</h2>
+    <p>This removes your local account and content and deletes the linked Stripe customer. Active subscriptions stop immediately.</p>
+    <form id="accountDeleteForm">
+      <label for="accountDeleteConfirmation">Type <strong>DELETE MY ACCOUNT</strong> to confirm
+        <input id="accountDeleteConfirmation" name="confirmation" autocomplete="off" required>
+      </label>
+      <button class="account-action danger-action" type="submit">Delete everything</button>
+      <p class="account-delete-status" id="accountDeleteStatus" role="status"></p>
+    </form>
+  </dialog>
+  {% endif %}
+
+  <section class="plan-card">
+    <h2>Cookies</h2>
+    <p>Runner Watch sets one essential login cookie after you sign in. It lasts up to 30 days, is HTTP-only, SameSite=Lax, and secure in production. There are no analytics or advertising cookies, so there is no tracking-consent banner.</p>
+  </section>
+</main>
+{% endblock %}
+{% block bottom_nav %}{% endblock %}
+{% block scripts %}
+{% if user %}
+<script nonce="{{ request.state.csp_nonce }}">
+const accountDeleteDialog = document.getElementById('accountDeleteDialog');
+const accountDeleteForm = document.getElementById('accountDeleteForm');
+const accountDeleteStatus = document.getElementById('accountDeleteStatus');
+document.getElementById('openAccountDelete')?.addEventListener('click', () => accountDeleteDialog.showModal());
+document.getElementById('closeAccountDelete')?.addEventListener('click', () => accountDeleteDialog.close());
+accountDeleteDialog?.addEventListener('click', event => { if (event.target === accountDeleteDialog) accountDeleteDialog.close(); });
+accountDeleteForm?.addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = accountDeleteForm.querySelector('button[type="submit"]');
+  const confirmation = document.getElementById('accountDeleteConfirmation').value;
+  accountDeleteStatus.textContent = '';
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/account/delete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({confirmation}),
+    });
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      throw new Error(result.detail || 'Account deletion failed.');
+    }
+    location.href = '/';
+  } catch (error) {
+    accountDeleteStatus.textContent = error.message || String(error);
+    button.disabled = false;
+  }
+});
+</script>
+{% endif %}
+{% endblock %}

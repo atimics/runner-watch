@@ -8,9 +8,7 @@ The public beta is at [stonks.rati.foundation](https://stonks.rati.foundation). 
 app has three main views: **Pulse** for live penny-stock intelligence, a compact ticker page with
 the chart and primary-source evidence, **Radar** for fresh market and evidence changes, and **Alpha**
 for public Calls. Signed-in users can spend Flash credits on private research and AI-written ticker
-comments. Pulse
-paginates as the user
-scrolls. Radar works before login and merges into the passkey profile later.
+comments. Pulse paginates as the user scrolls. Radar is shared and does not build a reading profile.
 
 The public scanner defaults to listed US penny stocks from $0.20 to $5 with market caps below
 about $2B. It combines Yahoo's strongest movers, most active names, and largest losers before
@@ -121,13 +119,14 @@ The end-to-end path from collectors to product evidence is in the
 Alpha is a public Call ledger. A signed-in user can make one open Call per ticker. Runner Watch
 freezes the current server quote and time; the browser cannot submit or edit either value. Closing a
 Call also uses the current server quote and time. Calls show percentage PnL only, with no implied
-position size. Each caller has a public alias page with open, closed, win/loss, and PnL stats.
+position size. Each Call uses a separately claimed random animal caller ID; account names stay
+private. Comments use a random emoji identity that is stable only inside that ticker thread, and the
+same account receives a different random identity in other threads.
 
 Bull, bear, heart, private position, and private case controls are not part of the product flow.
 Signed-in users can ask Flash to draft a short public ticker comment from their perspective. There
-is no free-text comment input. Public names are stable adjective-animal aliases chosen from a salted
-hash, while account names stay private. Set `COMMENT_PSEUDONYM_SALT` to a stable private value in
-each deployed environment before comments are opened to users.
+is no free-text comment input. Each ticker thread gives the account a separate random two-emoji
+alias. Account names stay private, and comment aliases are not linked to animal caller IDs.
 
 Reports are authored by **Flash ⚡**. Flash's current engine is `z-ai/glm-5.3`, routed through
 OpenRouter. The model label is shown beside Flash in the interface. Changing the engine later does
@@ -167,9 +166,11 @@ missed days are not backfilled. A daily Flash report costs 100, an AI-written ti
 10, and publishing during the private alpha hour earns 50 once. Ledger references make claims,
 charges, refunds, and publishing rewards safe to retry without paying twice.
 
-Buying credit packs is intentionally paused. Stripe checkout, portal, and webhook endpoints return
-an unavailable response even if old Stripe environment variables are still present. Historical
-Stripe columns remain only so existing databases migrate safely. The public product plan, including
+Buying Flash credit packs is intentionally paused. Extra random caller IDs use a one-time Stripe
+payment. Set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`, then use
+`STRIPE_CALLER_ID_PRICE_ID` to manage the price in Stripe or set
+`CALLER_ID_CLAIM_PRICE_CENTS` and `CALLER_ID_CURRENCY` for inline pricing. Historical subscription
+columns remain only so existing databases migrate safely. The public product plan, including
 features that are explicitly not being built, lives at `/roadmap` and `/api/roadmap`.
 
 The main screen ranks stocks with a **runner score**. The score looks for:
@@ -189,17 +190,21 @@ presented as a probability.
 
 ## Integer Rust ranker
 
-Stonks keeps a complete, versioned training record for its learned ranker:
+Stonks keeps a compact, versioned training record for its learned ranker:
 
-- each scan has one `scan_run` and saves every intraday candidate, not only the displayed top 40
-- all feature inputs, missing values, baseline rank, catalyst context, and quote times are saved
+- each scan has one `scan_run` and records every intraday candidate, not only the displayed top 40
+- each candidate is quantized once into `ranker_training_examples`; training does not reload full
+  snapshot rows
+- full snapshots remain available for 150 days for receipts, signals, and 120-day base rates
 - Yahoo daily and 5-minute bars fetched by the web app are deduplicated into `market_bars`
 - every distinct SEC response body fetched by the listener is saved in `source_documents`
 - each candidate is labeled by whether price touches +8% or −4% first in the next 60 minutes
 - a row is called a timeout only when archived bars cover the full hour
 - a bar touching both levels is conservatively labeled down and marked as ambiguous
-- a three-way fixed-point logistic model predicts up, down, and timeout; the normal worker waits for
-  160 complete groups and 5,000 labels; manual experiments must override both limits explicitly
+- a three-way fixed-point logistic model predicts up, down, and timeout; the trainer waits for 160
+  complete groups and 5,000 labels, then uses at most the latest 320 complete groups
+- the trainer is a separate process, runs at most every six hours, and waits for 16 new groups before
+  rebuilding an existing model
 - the oldest 80% of complete groups train the model, the next 10% calibrates its probabilities, and
   the newest 10% is an untouched test set
 - learned probabilities and expected return are stored with the exact model ID
@@ -228,8 +233,9 @@ Export the same complete candidate groups to the generic `crlplrimes` dataset co
 uv run stonks-ranker export-crl data/stonks-crl-60m.csv --horizon 60m
 ```
 
-The status API is available at `/api/ranker/status`. Raw source storage will grow over time, so a
-long-running deployment should eventually move archived bars and documents to object storage.
+The status API is available at `/api/ranker/status`. Bars are retained for 60 days, full scan
+snapshots for 150 days, compact training examples for one year, and raw source documents for one
+year. Long-term raw archives should live in object storage.
 
 `/api/capabilities` combines live source, worker, model, evidence-gate, base-rate, training, and
 promotion policy without exposing credential names or values. It also reports enabled sources that
@@ -260,7 +266,7 @@ They are research results, not trade recommendations.
 
 Flash is the only seeded KOL slot today. Its records include ladder position, inference provider,
 and inference model, and each commissioned report snapshots those fields. This keeps future model
-promotions honest: an old report keeps its original model snapshot. Human reactions remain separate
+promotions honest: an old report keeps its original model snapshot. Human comments remain separate
 from AI calls. Scorecards are available at `/api/kols`, and ticker call history is available at
 `/api/t/{ticker}/kol-calls`.
 
@@ -342,15 +348,21 @@ Always confirm price, spread, volume, halt status, and news in a live broker bef
 
 ## Production layout and budget
 
-Fly runs two stateless 512 MB web machines and one 1 GB background worker. PostgreSQL owns durable
-application data. Redis shares the short-lived Pulse, Radar, and Alpha caches, applies rate limits
-across both web machines, and carries encrypted research jobs between web and worker processes.
-The old SQLite volume is kept only for rollback during the migration window.
+Fly runs two stateless 512 MB web machines, one 1 GB collection worker, and one 1 GB bounded ranker
+trainer. PostgreSQL owns durable application data. Redis shares the short-lived Pulse, Radar,
+Alpha, and chart caches, applies rate limits across both web machines, and carries encrypted
+research jobs between web and worker processes.
 
-The low-cost layout is about $19–$21 per month at light traffic: about $6.40 for PostgreSQL, $6.64
-for both web machines, $5.92 for the worker, and usage-based Redis at $0.20 per 100,000 commands.
-Network, snapshot, and Redis use can add a small amount. A Fly-managed PostgreSQL node would raise
-the starting total to roughly $53–$58 per month.
+List charts send only time and price, use response compression, and cache their complete response
+for one minute.
+
+Set one shared `RATE_LIMIT_HASH_KEY` so rate-limit keys contain neither raw IP addresses nor account
+IDs. The old SQLite volume must be retired after the migration check; it is not a standing backup.
+
+The low-cost layout is about $25–$27 per month at light traffic: about $6.40 for PostgreSQL, $6.64
+for both web machines, $11.84 for the worker and trainer, and usage-based Redis at $0.20 per 100,000
+commands. Network, snapshot, and Redis use can add a small amount. A Fly-managed PostgreSQL node
+would raise the starting total further.
 
 SQLite remains supported for local development. To copy it to an empty PostgreSQL database:
 
@@ -366,3 +378,12 @@ uv run stonks-migrate-sqlite \
 uv run pytest
 uv run ruff check .
 ```
+
+Run bounded staging bursts at 20, 40, and 80 concurrent requests:
+
+```bash
+uv run python scripts/probe_scalability.py https://staging.example.com
+```
+
+The probe refuses a host that does not look like staging or localhost unless
+`--allow-production` is supplied explicitly.

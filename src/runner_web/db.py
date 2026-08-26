@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
+import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 from runner_web.ai_kol import (
     DEFAULT_FLASH_MODEL,
@@ -15,12 +18,19 @@ from runner_web.ai_kol import (
     actor_snapshot,
     model_display_name,
 )
-from runner_web.database import DatabaseConnection, initialize_sqlite, open_database
+from runner_web.database import (
+    DatabaseConnection,
+    close_database_pool,
+    initialize_sqlite,
+    open_database,
+)
+from runner_web.pseudonyms import ADJECTIVES, ANIMALS, ensure_scoped_alias
 from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "data/runner-watch.db"))
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 REQUIRE_DATABASE_URL = os.getenv("REQUIRE_DATABASE_URL", "0") == "1"
+REQUIRE_DATABASE_TLS = os.getenv("REQUIRE_DATABASE_TLS", "0") == "1"
 MIGRATION_LOCK_ID = 7_348_195_620_341_977_301
 
 
@@ -31,6 +41,30 @@ def database_identity() -> str:
         digest = sha256(DATABASE_URL.encode()).hexdigest()[:12]
         return f"postgres:{digest}"
     return f"sqlite:{DATABASE_PATH}"
+
+
+def database_tls_enabled(database_url: str) -> bool:
+    if not database_url:
+        return False
+    values = parse_qs(urlparse(database_url).query).get("sslmode", [])
+    return bool(values and values[-1].lower() in {"require", "verify-ca", "verify-full"})
+
+
+def database_url_with_required_tls(database_url: str) -> str:
+    """Add TLS when it is required, while rejecting an explicit unsafe mode."""
+
+    if not database_url:
+        raise RuntimeError("DATABASE_URL must require TLS in this deployment")
+    if database_tls_enabled(database_url):
+        return database_url
+
+    parsed = urlparse(database_url)
+    parameters = parse_qsl(parsed.query, keep_blank_values=True)
+    if any(key.lower() == "sslmode" for key, _value in parameters):
+        raise RuntimeError("DATABASE_URL must require TLS in this deployment")
+
+    parameters.append(("sslmode", "require"))
+    return urlunparse(parsed._replace(query=urlencode(parameters)))
 
 
 def _columns(db: DatabaseConnection, table: str) -> set[str]:
@@ -101,7 +135,12 @@ def _seed_source_registry(db: DatabaseConnection) -> None:
 def connection() -> Iterator[DatabaseConnection]:
     if REQUIRE_DATABASE_URL and not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is required in this deployment")
-    with open_database(DATABASE_URL, DATABASE_PATH) as db:
+    database_url = (
+        database_url_with_required_tls(DATABASE_URL)
+        if REQUIRE_DATABASE_TLS
+        else DATABASE_URL
+    )
+    with open_database(database_url, DATABASE_PATH) as db:
         yield db
 
 
@@ -1565,6 +1604,266 @@ def _migration_026_daily_report_alpha(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_031_scalable_scan_storage(db: DatabaseConnection) -> None:
+    """Store small read and training records separately from full scan snapshots."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS pulse_entries (
+            ticker TEXT NOT NULL,
+            entered_at TEXT NOT NULL,
+            scan_run_id TEXT NOT NULL,
+            snapshot_id TEXT NOT NULL,
+            price REAL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(ticker,entered_at)
+        );
+        CREATE INDEX IF NOT EXISTS pulse_entries_ticker_time
+            ON pulse_entries(ticker,entered_at DESC);
+        CREATE INDEX IF NOT EXISTS pulse_entries_time
+            ON pulse_entries(entered_at DESC);
+
+        CREATE TABLE IF NOT EXISTS ranker_training_examples (
+            snapshot_id TEXT PRIMARY KEY,
+            scan_run_id TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            feature_schema_version TEXT NOT NULL,
+            expected_candidates INTEGER NOT NULL,
+            captured_at TEXT NOT NULL,
+            feature_vector_json TEXT NOT NULL,
+            baseline_score_milli INTEGER NOT NULL,
+            barrier_label TEXT,
+            outcome_return_bp INTEGER,
+            labeled_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS ranker_training_examples_schema_time
+            ON ranker_training_examples(feature_schema_version,captured_at DESC,scan_run_id);
+        CREATE INDEX IF NOT EXISTS ranker_training_examples_labeled_time
+            ON ranker_training_examples(feature_schema_version,captured_at DESC)
+            WHERE barrier_label IS NOT NULL;
+
+        CREATE INDEX IF NOT EXISTS market_bars_collected
+            ON market_bars(last_collected_at);
+        """
+    )
+
+    cutoff = (datetime.now(UTC) - timedelta(days=6)).isoformat()
+    db.execute(
+        """
+        WITH recent_runs AS (
+            SELECT id,captured_at FROM scan_runs
+            WHERE candidate_rows>0 AND captured_at>=?
+        ),
+        prior_run AS (
+            SELECT id,captured_at FROM scan_runs
+            WHERE candidate_rows>0 AND captured_at<?
+            ORDER BY captured_at DESC,id DESC LIMIT 1
+        ),
+        ordered_source AS (
+            SELECT id,captured_at FROM recent_runs
+            UNION ALL
+            SELECT id,captured_at FROM prior_run
+        ),
+        ordered_runs AS (
+            SELECT id,captured_at,
+                   LAG(id) OVER (ORDER BY captured_at,id) AS previous_run_id
+            FROM ordered_source
+        )
+        INSERT INTO pulse_entries(
+            ticker,entered_at,scan_run_id,snapshot_id,price,created_at
+        )
+        SELECT current.ticker,current.captured_at,current.scan_run_id,
+               current.id,current.price,current.captured_at
+        FROM ordered_runs run
+        JOIN scan_snapshots current ON current.scan_run_id=run.id
+        LEFT JOIN scan_snapshots previous
+          ON previous.scan_run_id=run.previous_run_id
+         AND previous.ticker=current.ticker
+        WHERE run.captured_at>=? AND previous.id IS NULL
+        ON CONFLICT(ticker,entered_at) DO NOTHING
+        """,
+        (cutoff, cutoff, cutoff),
+    )
+
+
+def _migration_027_gdpr_privacy(db: DatabaseConnection) -> None:
+    """Remove passive profiles and replace global public names with thread aliases."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS public_aliases (
+            scope TEXT NOT NULL,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            alias TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(scope,user_id),
+            UNIQUE(scope,alias)
+        );
+        CREATE INDEX IF NOT EXISTS public_aliases_user
+            ON public_aliases(user_id,scope);
+        """
+    )
+    comment_threads = db.execute(
+        "SELECT DISTINCT user_id,ticker FROM ticker_comments"
+    ).fetchall()
+    for row in comment_threads:
+        ensure_scoped_alias(db, str(row["user_id"]), f"comment:{row['ticker']}")
+    for table in (
+        "activity_events",
+        "ticker_hearts",
+        "radar_seen",
+        "pulse_profile_state",
+        "ticker_reactions",
+        "comment_pseudonyms",
+    ):
+        db.execute(f"DELETE FROM {table}")
+
+
+def _migration_028_caller_identities(db: DatabaseConnection) -> None:
+    """Give accounts unlinkable public caller IDs with permanent name tombstones."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS caller_identities (
+            id TEXT PRIMARY KEY,
+            handle TEXT NOT NULL UNIQUE,
+            user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+            status TEXT NOT NULL CHECK(status IN ('active','tombstoned')),
+            claim_cost_cents INTEGER,
+            payment_reference TEXT UNIQUE,
+            claimed_at TEXT,
+            deleted_at TEXT,
+            CHECK(
+                (status='active' AND user_id IS NOT NULL AND claimed_at IS NOT NULL)
+                OR
+                (status='tombstoned' AND user_id IS NULL AND claimed_at IS NULL)
+            )
+        );
+        CREATE INDEX IF NOT EXISTS caller_identities_owner
+            ON caller_identities(user_id,claimed_at) WHERE user_id IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS caller_identity_claims (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            caller_identity_id TEXT REFERENCES caller_identities(id),
+            payment_reference TEXT UNIQUE,
+            claim_cost_cents INTEGER NOT NULL,
+            free_claim INTEGER NOT NULL DEFAULT 0 CHECK(free_claim IN (0,1)),
+            claimed_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS caller_identity_one_free_claim
+            ON caller_identity_claims(user_id) WHERE free_claim=1;
+        CREATE INDEX IF NOT EXISTS caller_identity_claims_owner
+            ON caller_identity_claims(user_id,claimed_at);
+        """
+    )
+    _ensure_column(
+        db,
+        "community_calls",
+        "caller_identity_id TEXT REFERENCES caller_identities(id)",
+    )
+    migrated_at = datetime.now(UTC).isoformat()
+    owners = db.execute(
+        "SELECT DISTINCT user_id FROM community_calls "
+        "WHERE caller_identity_id IS NULL"
+    ).fetchall()
+    for owner in owners:
+        caller_identity_id = _migrated_caller_identity(
+            db, str(owner["user_id"]), migrated_at
+        )
+        db.execute(
+            "UPDATE community_calls SET caller_identity_id=? "
+            "WHERE user_id=? AND caller_identity_id IS NULL",
+            (caller_identity_id, owner["user_id"]),
+        )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS community_calls_caller_time "
+        "ON community_calls(caller_identity_id,updated_at DESC)"
+    )
+
+
+def _migration_029_signal_caller_identities(db: DatabaseConnection) -> None:
+    """Stop exposing account names on human calls and require a separate caller ID."""
+
+    _ensure_column(
+        db,
+        "signals",
+        "caller_identity_id TEXT REFERENCES caller_identities(id)",
+    )
+    migrated_at = datetime.now(UTC).isoformat()
+    owners = db.execute(
+        "SELECT DISTINCT user_id FROM signals "
+        "WHERE user_id IS NOT NULL AND caller_identity_id IS NULL"
+    ).fetchall()
+    for owner in owners:
+        caller_identity_id = _migrated_caller_identity(
+            db, str(owner["user_id"]), migrated_at
+        )
+        db.execute(
+            "UPDATE signals SET caller_identity_id=? "
+            "WHERE user_id=? AND caller_identity_id IS NULL",
+            (caller_identity_id, owner["user_id"]),
+        )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS signals_caller_identity "
+        "ON signals(caller_identity_id,created_at DESC)"
+    )
+
+
+def _migrated_caller_identity(
+    db: DatabaseConnection,
+    user_id: str,
+    claimed_at: str,
+) -> str:
+    """Give existing Calls one random animal ID without reviving account names."""
+
+    existing = db.execute(
+        "SELECT id FROM caller_identities "
+        "WHERE user_id=? AND status='active' ORDER BY claimed_at,id LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    if existing:
+        return str(existing["id"])
+    handles = [f"{adjective}-{animal}" for adjective in ADJECTIVES for animal in ANIMALS]
+    secrets.SystemRandom().shuffle(handles)
+    for handle in handles:
+        identity_id = str(uuid.uuid4())
+        inserted = db.execute(
+            """
+            INSERT INTO caller_identities(
+                id,handle,user_id,status,claim_cost_cents,claimed_at
+            ) VALUES(?,?,?,'active',0,?) ON CONFLICT DO NOTHING
+            """,
+            (identity_id, handle, user_id, claimed_at),
+        )
+        if inserted.rowcount == 0:
+            continue
+        db.execute(
+            """
+            INSERT INTO caller_identity_claims(
+                id,user_id,caller_identity_id,claim_cost_cents,free_claim,claimed_at
+            ) VALUES(?,?,?,0,1,?)
+            """,
+            (str(uuid.uuid4()), user_id, identity_id, claimed_at),
+        )
+        return identity_id
+    raise RuntimeError("The caller-ID name space is full")
+
+
+def _migration_030_drop_passive_tracking(db: DatabaseConnection) -> None:
+    """Permanently remove the legacy behavioural tracking schema."""
+
+    db.executescript(
+        """
+        DROP TABLE IF EXISTS activity_events;
+        DROP TABLE IF EXISTS ticker_hearts;
+        DROP TABLE IF EXISTS radar_seen;
+        DROP TABLE IF EXISTS pulse_profile_state;
+        DROP TABLE IF EXISTS ticker_reactions;
+        DROP TABLE IF EXISTS comment_pseudonyms;
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -1599,6 +1898,11 @@ MIGRATIONS = (
     Migration(24, "stripe_billing", _migration_024_stripe_billing),
     Migration(25, "flash_wallet", _migration_025_flash_wallet),
     Migration(26, "daily_report_alpha", _migration_026_daily_report_alpha),
+    Migration(27, "gdpr_privacy", _migration_027_gdpr_privacy),
+    Migration(28, "caller_identities", _migration_028_caller_identities),
+    Migration(29, "signal_caller_identities", _migration_029_signal_caller_identities),
+    Migration(30, "drop_passive_tracking", _migration_030_drop_passive_tracking),
+    Migration(31, "scalable_scan_storage", _migration_031_scalable_scan_storage),
 )
 
 
@@ -1655,6 +1959,11 @@ def _apply_migrations(db: DatabaseConnection) -> None:
                 "INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)",
                 (migration.version, migration.name, datetime.now(UTC).isoformat()),
             )
+            # Keep each PostgreSQL migration in its own transaction. A long
+            # transaction can deadlock with live requests when a later
+            # migration needs an exclusive table lock.
+            if db.backend == "postgres":
+                db.commit()
     except BaseException:
         if locked:
             db.rollback()
@@ -1678,4 +1987,7 @@ def init_db() -> None:
 def main() -> None:
     """Apply the current database schema as a deployment release command."""
 
-    init_db()
+    try:
+        init_db()
+    finally:
+        close_database_pool()
