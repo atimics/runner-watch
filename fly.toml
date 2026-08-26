@@ -23,7 +23,8 @@ kill_timeout = 30
   COOKIE_SECURE = "1"
   PROCESS_ROLE = "web"
   REQUIRE_DATABASE_URL = "1"
-  REQUIRE_DATABASE_TLS = "1"
+  # Fly Postgres uses the encrypted private 6PN and does not accept direct TLS.
+  REQUIRE_DATABASE_TLS = "0"
   REQUIRE_REDIS_TLS = "1"
   PYTHONUNBUFFERED = "1"
   BACKGROUND_SCAN_INTERVAL_SECONDS = "1800"
