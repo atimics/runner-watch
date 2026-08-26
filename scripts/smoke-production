@@ -26,4 +26,4 @@ check_endpoint /live
 check_endpoint /ready
 check_endpoint /health/details
 check_endpoint /
-check_endpoint /api/pulse
+check_endpoint '/api/pulse?limit=1'
