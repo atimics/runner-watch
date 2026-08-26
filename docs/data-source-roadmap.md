@@ -1,20 +1,21 @@
 # Data source ingestion roadmap
 
-Last reviewed: 2026-08-24
+Last reviewed: 2026-08-26
 
 ## Goal
 
-Runner Watch already collects Yahoo price bars, the Nasdaq Trader symbol directory, and SEC
-filings. The next sources should help answer five questions that the app cannot answer well today:
+Runner Watch already collects Yahoo price bars, the Nasdaq Trader symbol directory, SEC filings,
+SEC Company Facts, and optional Fintel short and borrow facts. The Nasdaq halt path is built and
+connected, but its public-use review still blocks approval. The next sources should answer three
+questions that the app cannot answer well today:
 
-1. Is the stock halted or close to resuming?
-2. Is the current quote tradable, or is the spread too wide?
-3. Is the company likely to dilute shareholders or run out of cash?
-4. Is there a real catalyst outside an SEC filing?
-5. Is the move crowded, and what market regime is it happening in?
+1. Is the current quote tradable, or is the spread too wide?
+2. Is there a real catalyst outside an SEC filing?
+3. Is the move crowded, and what market regime is it happening in?
 
-The best next three additions are the Nasdaq halt feed, SEC XBRL company facts, and an Alpaca
-market-data pilot. They cover the largest gaps and fit the ingestion system that already exists.
+The best next additions are a licensed quote pilot, reviewed biotech catalyst links, and licensed
+news and corporate actions. They cover the largest remaining gaps and fit the ingestion system that
+already exists.
 
 ## Ranked source backlog
 
@@ -42,9 +43,10 @@ The time estimates assume one engineer. Each phase should ship in shadow mode fi
 move to the public score only after its quality gate passes.
 
 Current build status: the shared layer and normalized tables are complete. The Nasdaq halt parser,
-raw archive, deduplication, worker, and stale-feed health are also complete in shadow mode. The feed
-is opt-in until its terms review is complete. Public halt evidence and ranking behavior are not yet
-connected. See the [data source flow map](source-flow.md) for the shared path and table routing.
+raw archive, deduplication, worker, stale-feed health, evidence label, safety penalty, and hard veto
+are connected. The feed remains unapproved until its terms review is complete. SEC Company Facts,
+issuer facts, dilution evidence, and point-in-time ranker features are also built. `/roadmap` is the
+source of truth for product decisions; this document keeps the detailed data-source work.
 
 ### Phase 0 — Source rules and shared data model (2–3 days)
 
@@ -65,7 +67,7 @@ rule. No ranking change is part of this phase.
 
 ### Phase 1 — Trading halts (3–4 days)
 
-Status: ingestion is built; ticker evidence and the public halt banner remain.
+Status: built and connected; public approval remains blocked by the feed terms review.
 
 - Poll `https://www.nasdaqtrader.com/rss.aspx?feed=tradehalts` once per minute during the extended
   US session.
@@ -78,6 +80,8 @@ Quality gate: parser fixtures cover active halt, updated resume time, and resume
 RSS rows do not create duplicate events; a stale feed is visible within two missed polling windows.
 
 ### Phase 2 — SEC fundamentals and dilution risk (5–7 days)
+
+Status: built and connected; broader issuer review remains a quality task.
 
 - Fetch Company Facts only for the active penny-stock universe, watched tickers, and new SEC
   catalyst tickers. Use nightly bulk data later if this becomes less efficient.
@@ -143,7 +147,7 @@ show each dataset's age; backtests use only values that were public at the scan 
 
 - Pilot USAspending for a small reviewed list of defense, energy, and health issuers.
 - Consider paid exchange corporate-action data only if Alpaca coverage is not good enough.
-- Consider social sentiment only after price, halt, filing, and news provenance is reliable.
+- Expand social sentiment only after price, halt, filing, and news provenance is reliable.
 
 Do not prioritize scraped social posts, broad web scraping, or options flow yet. They add large
 licensing and identity-mapping work, and many penny stocks have little or no useful options data.
@@ -177,11 +181,11 @@ rate, false-positive rate, calibration, and performance on the newest untouched 
 
 ## Recommended first release
 
-The first release should contain only:
+The next release should contain only:
 
-1. Nasdaq halt state and a halt banner.
-2. SEC share-growth, cash, and cash-runway evidence in shadow mode.
-3. An Alpaca IEX comparison collector for a limited watchlist, with no public score change.
+1. An Alpaca IEX comparison collector for a limited watchlist, with no public score change.
+2. Completion of the Nasdaq halt terms review and public approval decision.
+3. A reviewed biotech issuer-link prototype before any catalyst calendar is published.
 
-This gives Runner Watch a safety improvement, a strong dilution-risk improvement, and a measured
-path away from unofficial Yahoo data without committing to a paid feed too early.
+This gives Runner Watch a measured path away from unofficial Yahoo data, closes the current halt
+policy blocker, and tests the highest-value new catalyst area without broadening into options tools.

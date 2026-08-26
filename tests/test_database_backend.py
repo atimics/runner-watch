@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from runner_web.database import open_database, postgres_statement
+from pytest import MonkeyPatch
+
+from runner_web import database as database_module
+from runner_web.database import initialize_sqlite, open_database, postgres_statement
 
 
 def test_postgres_statement_converts_placeholders_and_sqlite_types() -> None:
@@ -42,3 +45,39 @@ def test_sqlite_backend_rows_support_names_and_positions(tmp_path: Path) -> None
     assert row[:] == (7, "Radar")
     assert row["name"] == "Radar"
     assert dict(row) == {"id": 7, "name": "Radar"}
+
+
+def test_sqlite_initialization_always_closes_its_connection(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    class RecordingConnection:
+        def __init__(self) -> None:
+            self.closed = False
+            self.statements: list[str] = []
+
+        def __enter__(self) -> RecordingConnection:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(self, statement: str) -> None:
+            self.statements.append(statement)
+
+        def close(self) -> None:
+            self.closed = True
+
+    connection = RecordingConnection()
+    monkeypatch.setattr(
+        database_module.sqlite3,
+        "connect",
+        lambda *_args, **_kwargs: connection,
+    )
+
+    initialize_sqlite(tmp_path / "initialized.db")
+
+    assert connection.closed is True
+    assert connection.statements == [
+        "PRAGMA busy_timeout=20000",
+        "PRAGMA journal_mode=WAL",
+    ]

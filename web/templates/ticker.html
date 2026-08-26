@@ -23,18 +23,20 @@
   </section>
 
   <section class="research-action" aria-labelledby="flashActionTitle">
-    <div class="section-heading"><div><h2 id="flashActionTitle">Flash <small class="flash-model-label">{{ flash.model }}</small></h2></div><b>public report</b></div>
+    <div class="section-heading"><div><h2 id="flashActionTitle">Flash <small class="flash-model-label">{{ flash.model }}</small></h2></div><b>Pro · private</b></div>
     {% if latest_commission and latest_commission.status == 'complete' %}
     <a class="commission-button" href="/research/{{ latest_commission.public_id }}">Read Flash report <span class="flash-model-label">{{ flash.model }}</span></a>
     {% if user %}<button class="commission-refresh" id="commissionButton" type="button">Check for new evidence</button>{% endif %}
     {% elif latest_commission and latest_commission.status == 'running' %}
     <button class="commission-button" id="commissionButton" type="button" data-job-id="{{ latest_commission.public_id }}" disabled>Flash is researching · {{ flash.model }}</button>
-    {% elif user %}
+    {% elif user and is_subscriber %}
     <button class="commission-button" id="commissionButton" type="button">{{ 'Retry Flash' if latest_commission and latest_commission.status == 'failed' else 'Ask Flash' }} · {{ flash.model }}</button>
+    {% elif user %}
+    <a class="commission-button" href="/billing">Unlock private Flash with Pro</a>
     {% else %}
     <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Log in to ask Flash · {{ flash.model }}</a>
     {% endif %}
-    <small id="commissionStatus">One shared report per evidence snapshot. The server pays OpenRouter.</small>
+    <small id="commissionStatus">Your report stays private. The server pays OpenRouter.</small>
   </section>
 
   <section class="trade-journal call-card" aria-labelledby="callTitle">

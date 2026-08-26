@@ -6,8 +6,9 @@ Optional Fintel short and borrow data needs a Fintel API key and the matching ac
 
 The public beta is at [stonks.rati.foundation](https://stonks.rati.foundation). Its mobile-first
 app has three main views: **Pulse** for live penny-stock intelligence, a compact ticker page with
-the chart and primary-source evidence, **Radar** for personal and social changes, and **Alpha**
-for public Calls and shared Flash research reports. Pulse paginates as the user
+the chart and primary-source evidence, **Radar** for fresh market and evidence changes, and **Alpha**
+for public Calls. Private Flash research is available to Pro users from ticker pages. Pulse
+paginates as the user
 scrolls. Radar works before login and merges into the passkey profile later.
 
 The public scanner defaults to listed US penny stocks from $0.20 to $5 with market caps below
@@ -142,18 +143,34 @@ evidence exists. Override the context with `RESEARCH_CONTEXT_TOKENS`, change the
 `RESEARCH_OUTPUT_RESERVE_TOKENS`. The older `OPENROUTER_RESEARCH_*` context names remain accepted so
 existing deployments can migrate without losing their settings.
 
-Flash reports are public and shared per ticker and evidence snapshot. A user can commission one, and
-active community Calls also cause the worker to create one automatically when the stored evidence
-changes. The queue contains only a report ID. The worker reads `OPENROUTER_API_KEY` on the server and
-sends the frozen, ranked evidence context to OpenRouter. No provider key or inference payload is
-accepted from the browser. Request rows record whether a commission reused or created a report so a
-future billing policy can be added without changing report identity.
+New private Flash research runs require Pro and are limited to three per user per day. The server
+uses its own provider key. Completed private reports stay owner-only and never appear in the public
+Alpha feed. The worker queue contains only a report ID, and the user does not provide or store a
+model-provider key.
 
 The report starts with an opinionated thesis, then explains who the company is, who the named people
 or entities are, why each one appears in a filing, what the filings mean, what supports the thesis,
 what could rug it, and what remains unknown. Source text is explicitly treated as evidence rather
 than instructions. Model-selected citations are checked against the supplied source URLs. A hard
 deterministic `AVOID` or `EXIT` state overrides the generated wording.
+
+## Billing
+
+`/billing` exposes one Free plan and one Pro plan. Stripe owns the recurring price, Checkout, card
+details, invoices, and the customer portal. Runner Watch mirrors only customer IDs, subscription
+IDs, status, price ID, renewal time, and the local `free` or `subscriber` entitlement. Access changes
+only after a signed Stripe webhook; the Checkout success redirect does not grant Pro by itself.
+
+Set `STRIPE_SECRET_KEY`, `STRIPE_PRO_PRICE_ID`, and `STRIPE_WEBHOOK_SECRET`. For local testing, run:
+
+```bash
+stripe listen \
+  --events checkout.session.completed,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted \
+  --forward-to http://127.0.0.1:8080/api/stripe/webhook
+```
+
+Copy the `whsec_...` value printed by the CLI into `STRIPE_WEBHOOK_SECRET`. The public product plan,
+including features that are explicitly not being built, lives at `/roadmap` and `/api/roadmap`.
 
 The main screen ranks stocks with a **runner score**. The score looks for:
 
@@ -222,10 +239,30 @@ longer hides a dead worker.
 
 ## Legacy model evaluations
 
-Older databases may still contain `kol_calls`, `user_positions`, `ticker_reactions`, and thesis-case
-tables so migrations remain safe and reversible. They are not used by the public Call or Flash
-report flow. New user Calls live in `community_calls`; new Flash work lives in shared
-`research_commissions` and `flash_report_requests`.
+The calibrated ranker can now publish selective, permanent paper calls through **Flash ⚡**. Flash's
+public identity and current inference model are separate from the internal ranker that supplies the
+numeric signal. A call freezes its ticker, signal-model ID, confidence, expected return, contract,
+time, and entry price. Repeated scans cannot reset the entry. Pulse shows active lightning tags with
+net paper PnL, and ticker pages show the complete call receipt.
+
+These existing paper calls benchmark Flash's fixed signal policy; they do not claim that Flash's
+current model personally authored the call. Model attribution applies to commissioned research. A
+future model battle can add model-authored calls without mixing them with this older signal track.
+
+Flash uses the same `+8% before -4% within 60 minutes` contract as the shadow ranker. It can abandon
+a stock only when a later frozen prediction crosses its fixed abandon rule. An abandoned call keeps
+receiving the original 60-minute benchmark, so a model cannot hide a bad call by leaving early.
+Calls use a fixed $1,000 paper amount and subtract a conservative 50 basis point round-trip cost.
+They are research results, not trade recommendations.
+
+Flash is the only seeded KOL slot today. Its records include ladder position, inference provider,
+and inference model, and each commissioned report snapshots those fields. This keeps future model
+promotions honest: an old report keeps its original model snapshot. Human reactions remain separate
+from AI calls. Scorecards are available at `/api/kols`, and ticker call history is available at
+`/api/t/{ticker}/kol-calls`.
+
+These model evaluations are separate from user-created public Calls. User Calls live in
+`community_calls`; private Flash research lives in `research_commissions`.
 
 ## Start the dashboard
 
@@ -290,11 +327,12 @@ more useful during pre-market than a simple comparison with a full day's average
 - Yahoo Finance is unofficial, can be delayed, and sometimes returns missing or wrong bars.
 - Fintel short and borrow data needs an API subscription and may require separate feed access.
 - A broad free scan can be slow or hit rate limits. Raise the scan cap in steps.
-- The tool does not know the live bid/ask spread, current halt state, float, or all market news.
+- The tool does not know the live bid/ask spread or all market news. Halt evidence is available only
+  while the Nasdaq feed is enabled and fresh; its public-use terms still need approval.
 - The saved quick list will age. Use the full list or your own symbols for better coverage.
 - The public beta uses one PostgreSQL node with daily volume snapshots. It is not highly available
   yet; a managed or replicated PostgreSQL service is the next database reliability step.
-- Subscriber entitlements are stored in the user record; billing automation is not connected yet.
+- Billing needs a Stripe recurring Price, secret key, webhook secret, and configured customer portal.
 - This is a research tool, not financial advice or an automatic buy signal.
 
 Always confirm price, spread, volume, halt status, and news in a live broker before trading.

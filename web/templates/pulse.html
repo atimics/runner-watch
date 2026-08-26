@@ -1,19 +1,19 @@
 {% extends "mobile_base.html" %}
-{% block app_class %}pulse-app{% endblock %}
+{% block app_class %}workspace-app pulse-app{% endblock %}
 {% block title %}Pulse · Runner Watch{% endblock %}
 {% block content %}
-<header class="screen-head">
-  <div><h1>Pulse</h1></div>
-  {% if user %}
-    <button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>
-  {% else %}
-    <a class="avatar-button signed-out" href="/login" aria-label="Log in">↗</a>
-  {% endif %}
-</header>
-{% include "_market_clock.html" %}
-
-<div class="pulse-desktop-shell">
-  <section class="pulse-list-column">
+<div class="desktop-workspace" data-desktop-workspace>
+  <section class="desktop-list-pane pulse-list-column" data-desktop-list>
+    <header class="screen-head">
+      <div><h1>Pulse</h1></div>
+      {% if user %}
+        <button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>
+      {% else %}
+        <a class="avatar-button signed-out" href="/login" aria-label="Log in">↗</a>
+      {% endif %}
+    </header>
+    {% include "_market_clock.html" %}
+    <div class="kol-score-strip" id="kolScoreStrip" aria-live="polite"></div>
     <button class="pulse-refresh" id="pulseRefresh" type="button" aria-live="polite" hidden>1 new ticker</button>
 
     <main class="list-section pulse-feed">
@@ -22,33 +22,7 @@
     </main>
   </section>
 
-  <aside class="desktop-coin-panel" id="desktopCoinPanel" aria-label="Selected coin info" aria-live="polite">
-    <div class="desktop-coin-empty" id="desktopCoinEmpty">Choose a coin to see its info.</div>
-    <div class="desktop-coin-content" id="desktopCoinContent" hidden>
-      <header class="desktop-coin-head">
-        <span class="coin coin-large" id="desktopCoinMark"><b></b><i></i></span>
-        <div><div class="desktop-coin-title"><h2 id="desktopCoinTicker"></h2><span id="desktopCoinState"></span></div><p id="desktopCoinCompany"></p></div>
-        <div class="desktop-coin-price"><strong id="desktopCoinPrice"></strong><small id="desktopCoinChange"></small></div>
-      </header>
-      <div class="desktop-coin-chart" aria-label="Recent price chart"><svg id="desktopCoinChart" viewBox="0 0 600 210" preserveAspectRatio="none"></svg></div>
-      <section class="desktop-coin-metrics" aria-label="Market metrics">
-        <div><span>15m</span><strong id="desktopCoinMomentum"></strong></div>
-        <div><span>RVOL</span><strong id="desktopCoinRvol"></strong></div>
-        <div><span>Volume</span><strong id="desktopCoinVolume"></strong></div>
-        <div><span>Setup</span><strong id="desktopCoinScore"></strong></div>
-      </section>
-      <section class="desktop-coin-reason">
-        <span>Why it moved</span>
-        <h3 id="desktopCoinReason"></h3>
-        <div id="desktopCoinReasons"></div>
-      </section>
-      <footer class="desktop-coin-social">
-        <span id="desktopCoinVotes"></span>
-        <a id="desktopCoinComments" href="#">Open comments</a>
-        <a id="desktopCoinLink" href="#">Full coin info</a>
-      </footer>
-    </div>
-  </aside>
+  {% include "_desktop_panel.html" %}
 </div>
 {% endblock %}
 {% block scripts %}
@@ -57,11 +31,6 @@ let pulse={{ pulse|tojson }};
 const list=document.getElementById('pulseList');
 const more=document.getElementById('pulseMore');
 const refreshButton=document.getElementById('pulseRefresh');
-const desktopContent=document.getElementById('desktopCoinContent');
-const desktopEmpty=document.getElementById('desktopCoinEmpty');
-const desktopChart=document.getElementById('desktopCoinChart');
-let selectedTicker='';
-let desktopCharts={};
 let loadingMore=false;
 let pendingPulse=null;
 let exposureObserver=null;
@@ -70,42 +39,13 @@ const exposureQueue=new Map();
 let exposureFlushTimer=null;
 function esc(value){const node=document.createElement('span');node.textContent=String(value??'');return node.innerHTML;}
 function entryKey(row){return row?.entered_at?`${row.ticker}|${row.entered_at}`:'';}
-function panelMoney(value){const number=Number(value);if(!Number.isFinite(number))return '—';return number<1?`$${number.toFixed(4)}`:number<10?`$${number.toFixed(3)}`:`$${number.toFixed(2)}`;}
-function panelPercent(value){const number=Number(value);if(!Number.isFinite(number))return '—';return `${number>=0?'+':''}${number.toFixed(1)}%`;}
-function panelCompact(value){const number=Number(value);if(!Number.isFinite(number))return '—';if(number>=1e9)return `$${(number/1e9).toFixed(1)}b`;if(number>=1e6)return `$${(number/1e6).toFixed(1)}m`;if(number>=1e3)return `$${(number/1e3).toFixed(0)}k`;return `$${number.toFixed(0)}`;}
-function renderDesktopChart(ticker){
-  const points=(desktopCharts[ticker]||[]).map(point=>Number(point.price)).filter(Number.isFinite);
-  if(points.length<2){desktopChart.innerHTML='<path class="desktop-chart-placeholder" d="M12 152 L92 136 L172 145 L252 112 L332 123 L412 84 L492 94 L588 54"/>';return;}
-  const low=Math.min(...points);const high=Math.max(...points);const spread=Math.max(high-low,Math.abs(high)*.002,.001);
-  const path=points.map((value,index)=>{const x=8+index/(points.length-1)*584;const y=188-(value-low)/spread*158;return `${index?'L':'M'}${x.toFixed(1)} ${y.toFixed(1)}`;}).join(' ');
-  const rising=points.at(-1)>=points[0];
-  desktopChart.classList.toggle('falling',!rising);
-  desktopChart.innerHTML=`<path class="desktop-chart-area" d="${path} L592 198 L8 198 Z"></path><path class="desktop-chart-line" d="${path}"></path>`;
-}
-function renderDesktopPanel(row){
-  if(!row){desktopContent.hidden=true;desktopEmpty.hidden=false;return;}
-  selectedTicker=row.ticker;desktopContent.hidden=false;desktopEmpty.hidden=true;
-  document.querySelectorAll('[data-ticker-row]').forEach(item=>item.classList.toggle('desktop-selected',item.dataset.tickerRow===row.ticker));
-  const mark=document.getElementById('desktopCoinMark');mark.className=`coin coin-large coin-${Number(row.coin_tone)||0}`;mark.querySelector('b').textContent=row.coin_label||row.ticker.slice(0,2);
-  document.getElementById('desktopCoinTicker').textContent=row.ticker;
-  document.getElementById('desktopCoinState').textContent=String(row.trade_state||row.stage||'Watch').toUpperCase();
-  document.getElementById('desktopCoinCompany').textContent=row.company||row.ticker;
-  document.getElementById('desktopCoinPrice').textContent=panelMoney(row.price);
-  const change=document.getElementById('desktopCoinChange');change.textContent=panelPercent(row.change_pct);change.className=Number(row.change_pct)>=0?'up':'down';
-  document.getElementById('desktopCoinMomentum').textContent=panelPercent(row.momentum_15m_pct);
-  document.getElementById('desktopCoinRvol').textContent=row.relative_volume==null?'—':`${Number(row.relative_volume).toFixed(1)}×`;
-  document.getElementById('desktopCoinVolume').textContent=panelCompact(row.dollar_volume);
-  document.getElementById('desktopCoinScore').textContent=Number(row.setup_score??row.score??0).toFixed(0);
-  document.getElementById('desktopCoinReason').textContent=row.pulse_label||'Fresh market movement';
-  const reasons=[...(row.signals||[]).slice(0,3).map(value=>({value,risk:false})),...(row.risks||[]).slice(0,2).map(value=>({value,risk:true}))];
-  document.getElementById('desktopCoinReasons').innerHTML=reasons.map(item=>`<span class="${item.risk?'risk':''}">${esc(item.value)}</span>`).join('')||'<span>Watching for more evidence</span>';
-  document.getElementById('desktopCoinVotes').textContent=`${Number(row.call_count||0)} open Calls`;
-  const comments=document.getElementById('desktopCoinComments');comments.textContent=`${Number(row.comment_count||0)} comments`;comments.href=`/t/${encodeURIComponent(row.ticker)}#discussion`;
-  document.getElementById('desktopCoinLink').href=`/t/${encodeURIComponent(row.ticker)}`;
-  renderDesktopChart(row.ticker);
-}
-async function loadDesktopCharts(){
-  try{const response=await fetch('/api/pulse/charts');if(!response.ok)return;const data=await response.json();desktopCharts=data.charts||{};renderDesktopChart(selectedTicker);}catch(_){}
+function renderKols(){
+  const box=document.getElementById('kolScoreStrip');
+  const kol=(pulse.kols||[])[0];
+  if(!kol){box.hidden=true;return;}
+  box.hidden=false;
+  const pnl=Number(kol.paper_pnl||0);const hit=kol.hit_rate==null?'no results':`${(Number(kol.hit_rate)*100).toFixed(0)}% hit`;
+  box.innerHTML=`<span class="kol-avatar">${esc(kol.emoji||'⚡')}</span><span><strong>${esc(kol.display_name)} <i class="flash-model-label">${esc(kol.inference_model_label||'')}</i></strong><small>${Number(kol.active_calls||0)} open · ${Number(kol.calls||0)} calls · ${esc(hit)}</small></span><b class="${pnl>=0?'up':'down'}">${pnl>=0?'+':'−'}$${Math.abs(pnl).toFixed(2)}</b>`;
 }
 function flushExposures(){
   clearTimeout(exposureFlushTimer);exposureFlushTimer=null;
@@ -157,7 +97,6 @@ function render() {
   list.innerHTML = rows.length?`<div class="token-list">${rows.map(row=>TickerRow.render(row)).join('')}</div>`:`<div class="empty-list"><strong>No movement</strong></div>`;
   more.hidden=!pulse.has_more;
   TickerRow.paintCharts();
-  renderDesktopPanel(rows.find(row=>row.ticker===selectedTicker)||rows[0]);
   observeExposure();
 }
 async function loadMore(){
@@ -173,13 +112,7 @@ async function loadMore(){
   }finally{loadingMore=false;more.classList.remove('loading');}
 }
 new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting))loadMore();},{rootMargin:'240px'}).observe(more);
-list.addEventListener('click',event=>{
-  if(!window.matchMedia('(min-width: 900px)').matches)return;
-  const link=event.target.closest('[data-ticker-row]');if(!link)return;
-  const row=(pulse.rows||[]).find(item=>item.ticker===link.dataset.tickerRow);if(!row)return;
-  event.preventDefault();renderDesktopPanel(row);
-});
-render();TickerRow.loadCharts('/api/pulse/charts');loadDesktopCharts();let pollCount=0;
+render();TickerRow.loadCharts('/api/pulse/charts');let pollCount=0;
 refreshButton.addEventListener('click',()=>{
   if(!pendingPulse)return;
   const freshTickers=new Set((pendingPulse.rows||[]).map(row=>row.ticker));

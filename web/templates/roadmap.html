@@ -1,0 +1,46 @@
+{% extends "mobile_base.html" %}
+{% block app_class %}account-page roadmap-page{% endblock %}
+{% block title %}Roadmap · Runner Watch{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/account-pages.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+<header class="detail-nav account-nav">
+  <a href="/" aria-label="Back to Pulse">‹</a>
+  <strong>Roadmap</strong>
+  <a class="account-nav-link" href="/billing" aria-label="View billing">$</a>
+</header>
+
+<main class="account-wrap">
+  <section class="account-intro roadmap-intro">
+    <span class="eyebrow">{{ roadmap.reviewed_at }} · {{ roadmap.version }}</span>
+    <h1>Focused on the decision loop.</h1>
+    <p>{{ roadmap.promise }}</p>
+    <div class="decision-key" aria-label="Roadmap decisions">
+      <span class="decision-badge own">Own</span>
+      <span class="decision-badge copy">Copy</span>
+      <span class="decision-badge buy">Buy</span>
+      <span class="decision-badge cut">Cut</span>
+    </div>
+  </section>
+
+  {% for group in roadmap.groups %}
+  <section class="roadmap-group status-{{ group.status }}">
+    <header>
+      <h2>{% if group.status == 'live' %}Live{% elif group.status == 'ready' %}Ready to connect{% elif group.status == 'learning' %}Learning{% elif group.status == 'now' %}Now{% elif group.status == 'next' %}Next{% elif group.status == 'later' %}Later{% else %}Not building{% endif %}</h2>
+      <span>{{ group['items']|length }} item{{ '' if group['items']|length == 1 else 's' }}</span>
+    </header>
+    <div class="roadmap-grid">
+      {% for item in group['items'] %}
+      <article class="roadmap-card">
+        <div><span class="decision-badge {{ item.decision }}">{{ item.decision }}</span><i>{{ item.status }}</i></div>
+        <h3>{{ item.title }}</h3>
+        <p>{{ item.summary }}</p>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+
+  <footer class="account-foot">Product status lives here and at <a href="/api/roadmap">/api/roadmap</a>. Live source health stays separate at <a href="/api/capabilities">/api/capabilities</a>.</footer>
+</main>
+{% endblock %}
+{% block bottom_nav %}{% endblock %}

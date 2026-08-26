@@ -4,7 +4,7 @@ import re
 import sqlite3
 import threading
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -324,6 +324,9 @@ def open_database(database_url: str, database_path: Path) -> Iterator[DatabaseCo
 
 def initialize_sqlite(database_path: Path) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(database_path, timeout=20) as database:
+    # A sqlite connection commits or rolls back on context exit, but it does
+    # not close itself. Use both contexts so repeated startup never leaks a
+    # file descriptor.
+    with closing(sqlite3.connect(database_path, timeout=20)) as raw, raw as database:
         database.execute("PRAGMA busy_timeout=20000")
         database.execute("PRAGMA journal_mode=WAL")
