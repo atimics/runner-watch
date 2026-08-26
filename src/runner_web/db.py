@@ -7,10 +7,10 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 from runner_web.ai_kol import (
     DEFAULT_FLASH_MODEL,
@@ -18,7 +18,12 @@ from runner_web.ai_kol import (
     actor_snapshot,
     model_display_name,
 )
-from runner_web.database import DatabaseConnection, initialize_sqlite, open_database
+from runner_web.database import (
+    DatabaseConnection,
+    close_database_pool,
+    initialize_sqlite,
+    open_database,
+)
 from runner_web.pseudonyms import ADJECTIVES, ANIMALS, ensure_scoped_alias
 from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 
@@ -43,6 +48,23 @@ def database_tls_enabled(database_url: str) -> bool:
         return False
     values = parse_qs(urlparse(database_url).query).get("sslmode", [])
     return bool(values and values[-1].lower() in {"require", "verify-ca", "verify-full"})
+
+
+def database_url_with_required_tls(database_url: str) -> str:
+    """Add TLS when it is required, while rejecting an explicit unsafe mode."""
+
+    if not database_url:
+        raise RuntimeError("DATABASE_URL must require TLS in this deployment")
+    if database_tls_enabled(database_url):
+        return database_url
+
+    parsed = urlparse(database_url)
+    parameters = parse_qsl(parsed.query, keep_blank_values=True)
+    if any(key.lower() == "sslmode" for key, _value in parameters):
+        raise RuntimeError("DATABASE_URL must require TLS in this deployment")
+
+    parameters.append(("sslmode", "require"))
+    return urlunparse(parsed._replace(query=urlencode(parameters)))
 
 
 def _columns(db: DatabaseConnection, table: str) -> set[str]:
@@ -113,9 +135,12 @@ def _seed_source_registry(db: DatabaseConnection) -> None:
 def connection() -> Iterator[DatabaseConnection]:
     if REQUIRE_DATABASE_URL and not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is required in this deployment")
-    if REQUIRE_DATABASE_TLS and not database_tls_enabled(DATABASE_URL):
-        raise RuntimeError("DATABASE_URL must require TLS in this deployment")
-    with open_database(DATABASE_URL, DATABASE_PATH) as db:
+    database_url = (
+        database_url_with_required_tls(DATABASE_URL)
+        if REQUIRE_DATABASE_TLS
+        else DATABASE_URL
+    )
+    with open_database(database_url, DATABASE_PATH) as db:
         yield db
 
 
@@ -1579,6 +1604,88 @@ def _migration_026_daily_report_alpha(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_031_scalable_scan_storage(db: DatabaseConnection) -> None:
+    """Store small read and training records separately from full scan snapshots."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS pulse_entries (
+            ticker TEXT NOT NULL,
+            entered_at TEXT NOT NULL,
+            scan_run_id TEXT NOT NULL,
+            snapshot_id TEXT NOT NULL,
+            price REAL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(ticker,entered_at)
+        );
+        CREATE INDEX IF NOT EXISTS pulse_entries_ticker_time
+            ON pulse_entries(ticker,entered_at DESC);
+        CREATE INDEX IF NOT EXISTS pulse_entries_time
+            ON pulse_entries(entered_at DESC);
+
+        CREATE TABLE IF NOT EXISTS ranker_training_examples (
+            snapshot_id TEXT PRIMARY KEY,
+            scan_run_id TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            feature_schema_version TEXT NOT NULL,
+            expected_candidates INTEGER NOT NULL,
+            captured_at TEXT NOT NULL,
+            feature_vector_json TEXT NOT NULL,
+            baseline_score_milli INTEGER NOT NULL,
+            barrier_label TEXT,
+            outcome_return_bp INTEGER,
+            labeled_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS ranker_training_examples_schema_time
+            ON ranker_training_examples(feature_schema_version,captured_at DESC,scan_run_id);
+        CREATE INDEX IF NOT EXISTS ranker_training_examples_labeled_time
+            ON ranker_training_examples(feature_schema_version,captured_at DESC)
+            WHERE barrier_label IS NOT NULL;
+
+        CREATE INDEX IF NOT EXISTS market_bars_collected
+            ON market_bars(last_collected_at);
+        """
+    )
+
+    cutoff = (datetime.now(UTC) - timedelta(days=6)).isoformat()
+    db.execute(
+        """
+        WITH recent_runs AS (
+            SELECT id,captured_at FROM scan_runs
+            WHERE candidate_rows>0 AND captured_at>=?
+        ),
+        prior_run AS (
+            SELECT id,captured_at FROM scan_runs
+            WHERE candidate_rows>0 AND captured_at<?
+            ORDER BY captured_at DESC,id DESC LIMIT 1
+        ),
+        ordered_source AS (
+            SELECT id,captured_at FROM recent_runs
+            UNION ALL
+            SELECT id,captured_at FROM prior_run
+        ),
+        ordered_runs AS (
+            SELECT id,captured_at,
+                   LAG(id) OVER (ORDER BY captured_at,id) AS previous_run_id
+            FROM ordered_source
+        )
+        INSERT INTO pulse_entries(
+            ticker,entered_at,scan_run_id,snapshot_id,price,created_at
+        )
+        SELECT current.ticker,current.captured_at,current.scan_run_id,
+               current.id,current.price,current.captured_at
+        FROM ordered_runs run
+        JOIN scan_snapshots current ON current.scan_run_id=run.id
+        LEFT JOIN scan_snapshots previous
+          ON previous.scan_run_id=run.previous_run_id
+         AND previous.ticker=current.ticker
+        WHERE run.captured_at>=? AND previous.id IS NULL
+        ON CONFLICT(ticker,entered_at) DO NOTHING
+        """,
+        (cutoff, cutoff, cutoff),
+    )
+
+
 def _migration_027_gdpr_privacy(db: DatabaseConnection) -> None:
     """Remove passive profiles and replace global public names with thread aliases."""
 
@@ -1795,6 +1902,7 @@ MIGRATIONS = (
     Migration(28, "caller_identities", _migration_028_caller_identities),
     Migration(29, "signal_caller_identities", _migration_029_signal_caller_identities),
     Migration(30, "drop_passive_tracking", _migration_030_drop_passive_tracking),
+    Migration(31, "scalable_scan_storage", _migration_031_scalable_scan_storage),
 )
 
 
@@ -1851,6 +1959,11 @@ def _apply_migrations(db: DatabaseConnection) -> None:
                 "INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)",
                 (migration.version, migration.name, datetime.now(UTC).isoformat()),
             )
+            # Keep each PostgreSQL migration in its own transaction. A long
+            # transaction can deadlock with live requests when a later
+            # migration needs an exclusive table lock.
+            if db.backend == "postgres":
+                db.commit()
     except BaseException:
         if locked:
             db.rollback()
@@ -1874,4 +1987,7 @@ def init_db() -> None:
 def main() -> None:
     """Apply the current database schema as a deployment release command."""
 
-    init_db()
+    try:
+        init_db()
+    finally:
+        close_database_pool()

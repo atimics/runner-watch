@@ -22,6 +22,7 @@
       </div>
       <small>{% if detail.current.event_at %}{{ detail.current.event_at[:16]|replace('T', ' ') }} UTC{% else %}No recent quote{% endif %}</small>
     </section>
+    <p class="detail-principle">Movement first. Evidence before conviction.</p>
   </header>
 
   <div class="detail-dashboard">
@@ -42,60 +43,58 @@
     </div>
 
     <aside class="detail-actions" aria-label="Ticker actions">
+      <section class="research-action action-card" aria-labelledby="flashActionTitle">
+        <div class="section-heading"><div><h2 id="flashActionTitle">Daily Flash <small class="flash-model-label">{{ flash.model }}</small></h2></div><b>100 Flash</b></div>
+        {% if latest_commission and latest_commission.locked %}
+        <button class="commission-button" type="button" disabled>Today's alpha is locked</button>
+        <small id="commissionStatus">The first generator gets one private hour, unless they publish sooner.</small>
+        {% elif latest_commission and latest_commission.status == 'complete' %}
+        <a class="commission-button" href="/research/{{ latest_commission.public_id }}">Read Flash report <span class="flash-model-label">{{ flash.model }}</span></a>
+        <small id="commissionStatus">{% if latest_commission.visibility == 'public' %}Today's report is public.{% else %}Your alpha stays private for one hour, or until you publish it.{% endif %}{% if user %} Balance: <span data-flash-balance>{{ flash_wallet.balance }}</span> Flash.{% endif %}</small>
+        {% elif latest_commission and latest_commission.status == 'running' %}
+        <button class="commission-button" id="commissionButton" type="button" data-job-id="{{ latest_commission.public_id }}" disabled>Flash is researching · {{ flash.model }}</button>
+        <small id="commissionStatus">Your one-hour private alpha window has started.{% if user %} Balance: <span data-flash-balance>{{ flash_wallet.balance }}</span> Flash.{% endif %}</small>
+        {% elif user %}
+        <button class="commission-button" id="commissionButton" type="button">Generate today's report · 100 Flash</button>
+        <small id="commissionStatus">First generator gets the report privately for one hour. Publish early to earn 50 Flash. Balance: <span data-flash-balance>{{ flash_wallet.balance }}</span> Flash.</small>
+        {% else %}
+        <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Log in to generate today's report</a>
+        <small id="commissionStatus">First generator gets one private alpha hour.</small>
+        {% endif %}
+      </section>
 
-  <section class="research-action action-card" aria-labelledby="flashActionTitle">
-    <div class="section-heading"><div><h2 id="flashActionTitle">Daily Flash <small class="flash-model-label">{{ flash.model }}</small></h2></div><b>100 Flash</b></div>
-    {% if latest_commission and latest_commission.locked %}
-    <button class="commission-button" type="button" disabled>Today's alpha is locked</button>
-    <small id="commissionStatus">The first generator gets one private hour, unless they publish sooner.</small>
-    {% elif latest_commission and latest_commission.status == 'complete' %}
-    <a class="commission-button" href="/research/{{ latest_commission.public_id }}">Read Flash report <span class="flash-model-label">{{ flash.model }}</span></a>
-    <small id="commissionStatus">{% if latest_commission.visibility == 'public' %}Today's report is public.{% else %}Your alpha stays private for one hour, or until you publish it.{% endif %}{% if user %} Balance: <span data-flash-balance>{{ flash_wallet.balance }}</span> Flash.{% endif %}</small>
-    {% elif latest_commission and latest_commission.status == 'running' %}
-    <button class="commission-button" id="commissionButton" type="button" data-job-id="{{ latest_commission.public_id }}" disabled>Flash is researching · {{ flash.model }}</button>
-    <small id="commissionStatus">Your one-hour private alpha window has started.{% if user %} Balance: <span data-flash-balance>{{ flash_wallet.balance }}</span> Flash.{% endif %}</small>
-    {% elif user %}
-    <button class="commission-button" id="commissionButton" type="button">Generate today's report · 100 Flash</button>
-    <small id="commissionStatus">First generator gets the report privately for one hour. Publish early to earn 50 Flash. Balance: <span data-flash-balance>{{ flash_wallet.balance }}</span> Flash.</small>
-    {% else %}
-    <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Log in to generate today's report</a>
-    <small id="commissionStatus">First generator gets one private alpha hour.</small>
-    {% endif %}
-  </section>
-
-  <section class="trade-journal call-card action-card" aria-labelledby="callTitle">
-    <div class="section-heading"><div><h2 id="callTitle">Call</h2><span>Public · server stamped</span></div><b>{{ calls|length }}</b></div>
-    {% if user %}
-    {% if active_call %}
-      <article class="trade-position trade-position-active">
-        <header><strong>Open Call</strong>{% if active_call.return_pct is not none %}<b class="{{ 'up' if active_call.return_pct >= 0 else 'down' }}">{{ '+' if active_call.return_pct >= 0 else '' }}{{ '%.1f'|format(active_call.return_pct) }}%</b>{% endif %}</header>
-        <div class="trade-leg"><span>Entry</span><b>${{ '%.4f'|format(active_call.entry_price) if active_call.entry_price < 1 else ('%.2f'|format(active_call.entry_price)) }}</b><time datetime="{{ active_call.entry_at }}" data-call-time>{{ active_call.entry_at[:16]|replace('T', ' ') }}</time></div>
-        <button class="call-close" id="closeCallButton" type="button" data-call-id="{{ active_call.public_id }}">Close Call at the server's current price</button>
-      </article>
-    {% else %}
-      {% if caller_ids %}
-      <label class="caller-id-picker" for="callerIdentity">Post as
-        <select id="callerIdentity">
-          {% for identity in caller_ids %}<option value="{{ identity.id }}">{{ identity.handle }}</option>{% endfor %}
-        </select>
-      </label>
-      <button class="commission-button" id="makeCallButton" type="button">Make Call on {{ detail.ticker }}</button>
-      <small class="trade-status" id="callStatus">Your entry price and time come from the server and cannot be edited.</small>
-      {% else %}
-      <a class="commission-button" href="/privacy">Claim a free animal caller ID</a>
-      <small class="trade-status">Calls never show your account or comment identity.</small>
-      {% endif %}
-    {% endif %}
-    {% else %}
-    <a class="trade-login" href="/login?next=/t/{{ detail.ticker }}">Log in to make a public Call</a>
-    {% endif %}
-    {% if calls %}<div class="call-ledger-mini">{% for call in calls[:5] %}<a href="/u/{{ call.caller_handle }}"><strong>{{ call.caller_handle }}</strong><span>{{ call.status }}</span>{% if call.return_pct is not none %}<b class="{{ 'up' if call.return_pct >= 0 else 'down' }}">{{ '+' if call.return_pct >= 0 else '' }}{{ '%.1f'|format(call.return_pct) }}%</b>{% endif %}</a>{% endfor %}</div>{% endif %}
-  </section>
+      <section class="trade-journal call-card action-card" aria-labelledby="callTitle">
+        <div class="section-heading"><div><h2 id="callTitle">Call</h2><span>Public · server stamped</span></div><b>{{ calls|length }}</b></div>
+        {% if user %}
+        {% if active_call %}
+          <article class="trade-position trade-position-active">
+            <header><strong>Open Call</strong>{% if active_call.return_pct is not none %}<b class="{{ 'up' if active_call.return_pct >= 0 else 'down' }}">{{ '+' if active_call.return_pct >= 0 else '' }}{{ '%.1f'|format(active_call.return_pct) }}%</b>{% endif %}</header>
+            <div class="trade-leg"><span>Entry</span><b>${{ '%.4f'|format(active_call.entry_price) if active_call.entry_price < 1 else ('%.2f'|format(active_call.entry_price)) }}</b><time datetime="{{ active_call.entry_at }}" data-call-time>{{ active_call.entry_at[:16]|replace('T', ' ') }}</time></div>
+            <button class="call-close" id="closeCallButton" type="button" data-call-id="{{ active_call.public_id }}">Close Call at the server's current price</button>
+          </article>
+        {% else %}
+          {% if caller_ids %}
+          <label class="caller-id-picker" for="callerIdentity">Post as
+            <select id="callerIdentity">
+              {% for identity in caller_ids %}<option value="{{ identity.id }}">{{ identity.handle }}</option>{% endfor %}
+            </select>
+          </label>
+          <button class="commission-button" id="makeCallButton" type="button">Make Call on {{ detail.ticker }}</button>
+          <small class="trade-status" id="callStatus">Your entry price and time come from the server and cannot be edited.</small>
+          {% else %}
+          <a class="commission-button" href="/privacy">Claim a free animal caller ID</a>
+          <small class="trade-status">Calls never show your account or comment identity.</small>
+          {% endif %}
+        {% endif %}
+        {% else %}
+        <a class="trade-login" href="/login?next=/t/{{ detail.ticker }}">Log in to make a public Call</a>
+        {% endif %}
+        {% if calls %}<div class="call-ledger-mini">{% for call in calls[:5] %}<a href="/u/{{ call.caller_handle }}"><strong>{{ call.caller_handle }}</strong><span>{{ call.status }}</span>{% if call.return_pct is not none %}<b class="{{ 'up' if call.return_pct >= 0 else 'down' }}">{{ '+' if call.return_pct >= 0 else '' }}{{ '%.1f'|format(call.return_pct) }}%</b>{% endif %}</a>{% endfor %}</div>{% endif %}
+      </section>
     </aside>
 
     <div class="detail-analysis">
-
-  <section class="why-section">
+      <section class="why-section">
     <div class="section-heading"><div><h2>Why it moved</h2></div>{% if detail.current.source == 'market' and detail.current.score %}<b>{{ '%.0f'|format(detail.current.score) }} score</b>{% elif detail.current.source == 'sec' %}<b>new filing</b>{% endif %}</div>
     {% if detail.current.source == 'market' %}
     <div class="market-metrics">
@@ -109,10 +108,10 @@
       {% if not detail.current.signals and not detail.current.risks %}<p>No extra signals yet.</p>{% endif %}
     </div>
     {% else %}<p class="quiet-reason">No recent market data.</p>{% endif %}
-  </section>
+      </section>
 
   {% if detail.current.source == 'market' %}
-  <section class="risk-decision risk-{{ (detail.current.rug_level or 'unknown')|lower }} state-{{ (detail.current.trade_state or 'watch')|lower }}">
+      <section class="risk-decision risk-{{ (detail.current.rug_level or 'unknown')|lower }} state-{{ (detail.current.trade_state or 'watch')|lower }}">
     <div class="risk-decision-head"><span>RUG CHECK</span><strong>{{ detail.current.trade_state or 'WATCH' }}</strong></div>
     <div class="risk-grid">
       <div><span>Setup</span><b>{{ '%.0f'|format(detail.current.setup_score or detail.current.score or 0) }}</b><small>could send</small></div>
@@ -126,22 +125,22 @@
       <span>Share growth: {% if issuer.get('shares_growth_pct') is not none %}{{ '%+.0f'|format(issuer.get('shares_growth_pct')) }}%{% else %}unknown{% endif %}</span>
       <span>Current ratio: {% if issuer.get('current_ratio') is not none %}{{ '%.2f'|format(issuer.get('current_ratio')) }}{% else %}unknown{% endif %}</span>
     </div>
-  </section>
+      </section>
   {% endif %}
 
-  <section class="evidence-gate gate-{{ detail.evidence_gate.state }}" id="evidenceGate">
+      <section class="evidence-gate gate-{{ detail.evidence_gate.state }}" id="evidenceGate">
     <div><span>Signal check</span><strong id="gateSummary">{{ detail.evidence_gate.summary }}</strong><small id="gateCount">{{ detail.evidence_gate.count }}/{{ detail.evidence_gate.threshold }}</small></div>
     <div class="gate-meter" id="gateMeter">{% for index in range(detail.evidence_gate.threshold) %}<i class="{% if index < detail.evidence_gate.count %}hit{% endif %}"></i>{% endfor %}</div>
     <p id="gateChecks">{{ (detail.evidence_gate.blockers if detail.evidence_gate.blockers else detail.evidence_gate.checks)|join(' · ') or 'Waiting for more evidence.' }}</p>
     <p id="gateBaseline">{{ detail.evidence_gate.baseline_summary or 'Building a same-time historical baseline.' }}</p>
-  </section>
+      </section>
 
-  <section class="pressure-section" id="pressureSection">
+      <section class="pressure-section" id="pressureSection">
     <div class="section-heading"><div><span>From 5-minute bars</span><h2>Buy/sell pressure</h2></div><b id="pressureLabel">waiting</b></div>
     <div class="pressure-bar"><i id="buyPressureBar"></i><i id="sellPressureBar"></i></div>
     <div class="pressure-values"><span><b id="buyPressure">—</b><small>buy</small></span><span><b id="sellPressure">—</b><small>sell</small></span><span><b id="volumeBurst">—</b><small>volume</small></span></div>
     <p id="pressureNote">No bars yet.</p>
-  </section>
+      </section>
 
   <section class="why-section catalyst-section">
     <div class="section-heading"><div><h2>Filings</h2></div></div>
@@ -212,7 +211,7 @@ let activeRange='1D';
 const initialPressure={{ detail.trade_pressure|tojson }};
 const callData={{ calls|tojson }};
 const annotationColors={pulse:'#f5c66b',positive:'#57e389',risk:'#ff6b7a',media:'#75a7ff',neutral:'#a3ada8'};
-const chartModeNotes={tape:'OHLCV bars, volume, and session VWAP',gravity:'Repeated prices, heavy volume, and session reference zones',astrology:'Fixed-anchor Fibonacci crowd references · not a prediction'};
+const chartModeNotes={tape:'OHLCV bars, volume, and session VWAP',gravity:'Repeated prices, heavy volume, and session reference zones',astrology:'Fixed-anchor Fibonacci crowd lore · astrology for the tape'};
 function chartMoney(value){const number=Number(value);if(!Number.isFinite(number))return '—';return '$'+number.toFixed(number<1?4:number<10?3:2);}
 function visibleAnnotations(points){
   if(!points.length)return [];

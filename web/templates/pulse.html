@@ -5,11 +5,11 @@
 <div class="desktop-workspace" data-desktop-workspace>
   <section class="desktop-list-pane pulse-list-column" data-desktop-list>
     <header class="screen-head">
-      <div><h1>Pulse</h1></div>
+      <div><h1>Pulse</h1><span class="head-meta">Movement is only the first clue.</span></div>
       {% if user %}
         <button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>
       {% else %}
-        <a class="avatar-button signed-out" href="/login" aria-label="Log in">↗</a>
+        <a class="avatar-button signed-out" href="/login">Log in</a>
       {% endif %}
     </header>
     {% include "_market_clock.html" %}
@@ -45,7 +45,7 @@ function renderKols(){
 }
 function render() {
   const rows = pulse.rows || [];
-  list.innerHTML = rows.length?`<div class="token-list">${rows.map(row=>TickerRow.render(row)).join('')}</div>`:`<div class="empty-list"><strong>No movement</strong></div>`;
+  list.innerHTML = rows.length?`<div class="token-list">${rows.map(row=>TickerRow.render(row)).join('')}</div>`:`<div class="empty-list pulse-empty"><span class="empty-seal" aria-hidden="true"></span><strong>No verified movement</strong><p>The tape is quiet. New evidence will appear here.</p></div>`;
   more.hidden=!pulse.has_more;
   TickerRow.paintCharts();
 }

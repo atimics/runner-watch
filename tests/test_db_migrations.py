@@ -9,7 +9,9 @@ from runner_web.ai_kol import FLASH
 from runner_web.db import (
     MIGRATION_LOCK_ID,
     MIGRATIONS,
+    Migration,
     _acquire_migration_lock,
+    _apply_migrations,
     _migration_028_caller_identities,
     _release_migration_lock,
     connection,
@@ -43,6 +45,47 @@ def test_postgres_migrations_take_one_session_lock() -> None:
         ("SELECT pg_advisory_lock(?)", (MIGRATION_LOCK_ID,)),
         ("SELECT pg_advisory_unlock(?)", (MIGRATION_LOCK_ID,)),
     ]
+
+
+def test_postgres_commits_each_migration_before_releasing_lock(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class Result:
+        def fetchone(self) -> tuple[int]:
+            return (1,)
+
+        def fetchall(self) -> list[tuple[int, str]]:
+            return []
+
+    class Database:
+        backend = "postgres"
+
+        def execute(
+            self, statement: str, _parameters: tuple[object, ...] = ()
+        ) -> Result:
+            if "pg_advisory_unlock" in statement:
+                events.append("unlock")
+            elif statement.startswith("INSERT INTO schema_migrations"):
+                events.append("record")
+            return Result()
+
+        def commit(self) -> None:
+            events.append("commit")
+
+        def rollback(self) -> None:
+            events.append("rollback")
+
+    monkeypatch.setattr(
+        db,
+        "MIGRATIONS",
+        (Migration(1, "sample", lambda _database: events.append("apply")),),
+    )
+
+    _apply_migrations(Database())  # type: ignore[arg-type]
+
+    assert events == ["apply", "record", "commit", "unlock"]
 
 
 def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -119,6 +162,13 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         flash_transaction_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='flash_transactions'"
         ).fetchone()
+        pulse_entries_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='pulse_entries'"
+        ).fetchone()
+        training_examples_table = database.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='ranker_training_examples'"
+        ).fetchone()
         flash = database.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
         commission_columns = {
             row["name"]
@@ -177,6 +227,8 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert flash_request_table is not None
     assert flash_wallet_table is not None
     assert flash_transaction_table is not None
+    assert pulse_entries_table is not None
+    assert training_examples_table is not None
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_provider"] == "openrouter"
@@ -272,6 +324,11 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "signals_caller_identity",
         "research_commissions_daily_actor",
         "research_commissions_daily_visibility",
+        "pulse_entries_ticker_time",
+        "pulse_entries_time",
+        "ranker_training_examples_schema_time",
+        "ranker_training_examples_labeled_time",
+        "market_bars_collected",
     } <= indexes
 
 

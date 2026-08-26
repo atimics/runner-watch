@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, Field
+from starlette.middleware.gzip import GZipMiddleware
 from webauthn import (
     base64url_to_bytes,
     generate_authentication_options,
@@ -119,12 +120,12 @@ from runner_web.outcomes import (
 )
 from runner_web.privacy import delete_user_data, export_user_data
 from runner_web.product_catalog import roadmap_snapshot
-from runner_web.product_policy import EVIDENCE_GATE, OPERATIONS
+from runner_web.product_policy import BASE_RATES, EVIDENCE_GATE, OPERATIONS
 from runner_web.pseudonyms import ensure_scoped_alias
 from runner_web.ranker import (
     FEATURE_SCHEMA_VERSION,
     predict_and_store,
-    train_shadow_ranker,
+    store_training_examples,
 )
 from runner_web.research_context import build_research_context
 from runner_web.research_pipeline import PIPELINE_VERSION, run_verified_pipeline
@@ -211,6 +212,7 @@ PULSE_CACHE_TTL_SECONDS = max(
     5.0, float(os.getenv("PULSE_CACHE_TTL_SECONDS", "60"))
 )
 PULSE_DATA_LOCK = threading.Lock()
+PULSE_DATA_CONDITION = threading.Condition(PULSE_DATA_LOCK)
 PULSE_DATA_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 PULSE_DATA_REFRESHING: set[str] = set()
 RADAR_CACHE_TTL_SECONDS = max(
@@ -221,14 +223,38 @@ RADAR_SHARED_CACHE_TTL_SECONDS = max(
     int(os.getenv("RADAR_SHARED_CACHE_TTL_SECONDS", "900")),
 )
 RADAR_DATA_LOCK = threading.Lock()
+RADAR_DATA_CONDITION = threading.Condition(RADAR_DATA_LOCK)
 RADAR_DATA_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 RADAR_DATA_REFRESHING: set[str] = set()
 ALPHA_CACHE_TTL_SECONDS = max(
     5.0, float(os.getenv("ALPHA_CACHE_TTL_SECONDS", "60"))
 )
 ALPHA_DATA_LOCK = threading.Lock()
+ALPHA_DATA_CONDITION = threading.Condition(ALPHA_DATA_LOCK)
 ALPHA_DATA_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 ALPHA_DATA_REFRESHING: set[str] = set()
+CHART_PAYLOAD_CACHE_TTL_SECONDS = max(
+    15.0, float(os.getenv("CHART_PAYLOAD_CACHE_TTL_SECONDS", "60"))
+)
+CHART_PAYLOAD_LOCK = threading.Lock()
+CHART_PAYLOAD_CONDITION = threading.Condition(CHART_PAYLOAD_LOCK)
+CHART_PAYLOAD_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+CHART_PAYLOAD_REFRESHING: set[str] = set()
+CACHE_BUILD_WAIT_SECONDS = max(
+    1.0, float(os.getenv("CACHE_BUILD_WAIT_SECONDS", "30"))
+)
+SCAN_SNAPSHOT_RETENTION_DAYS = max(
+    BASE_RATES.lookback_days + 7,
+    int(os.getenv("SCAN_SNAPSHOT_RETENTION_DAYS", "150")),
+)
+RANKER_EXAMPLE_RETENTION_DAYS = max(
+    SCAN_SNAPSHOT_RETENTION_DAYS,
+    int(os.getenv("RANKER_EXAMPLE_RETENTION_DAYS", "365")),
+)
+PULSE_ENTRY_RETENTION_DAYS = max(
+    7,
+    int(os.getenv("PULSE_ENTRY_RETENTION_DAYS", "30")),
+)
 RESEARCH_JOB_QUEUE: asyncio.Queue[str] = asyncio.Queue()
 CHART_TOPIC_POLICY = TopicPolicy(
     ttl_seconds=180,
@@ -347,6 +373,7 @@ def worker_main() -> None:
 
 
 app = FastAPI(title="Runner Watch", docs_url=None, redoc_url=None, lifespan=lifespan)
+app.add_middleware(GZipMiddleware, minimum_size=1_000, compresslevel=5)
 app.include_router(operations_router)
 templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
 templates.env.globals["static_version"] = STATIC_VERSION
@@ -373,8 +400,40 @@ def worker_state(key: str, value: str) -> None:
         )
 
 
+def _delete_batched(
+    database: Any,
+    table: str,
+    key_columns: tuple[str, ...],
+    where_sql: str,
+    parameters: tuple[Any, ...],
+    *,
+    batch_size: int = 5_000,
+    maximum_batches: int = 20,
+) -> int:
+    """Delete a bounded number of old rows and commit between small batches."""
+
+    keys = ",".join(key_columns)
+    target = key_columns[0] if len(key_columns) == 1 else f"({keys})"
+    deleted = 0
+    for _ in range(maximum_batches):
+        result = database.execute(
+            f"""
+            DELETE FROM {table} WHERE {target} IN (
+                SELECT {keys} FROM {table} WHERE {where_sql} LIMIT ?
+            )
+            """,  # noqa: S608 - all identifiers and predicates are internal constants
+            (*parameters, batch_size),
+        )
+        count = max(0, result.rowcount)
+        deleted += count
+        database.commit()
+        if count < batch_size:
+            break
+    return deleted
+
+
 def prune_storage() -> None:
-    """Keep the beta database bounded without removing scored snapshots or receipts."""
+    """Keep raw rows bounded while preserving compact model and entry records."""
 
     with connection() as db:
         previous = db.execute(
@@ -382,14 +441,62 @@ def prune_storage() -> None:
         ).fetchone()
         if previous and str(previous["updated_at"]) > iso(now() - timedelta(hours=23)):
             return
-        bars_deleted = db.execute(
-            "DELETE FROM market_bars WHERE last_collected_at<?",
+        bars_deleted = _delete_batched(
+            db,
+            "market_bars",
+            ("source", "ticker", "interval", "bar_time"),
+            "last_collected_at<?",
             (iso(now() - timedelta(days=60)),),
-        ).rowcount
-        documents_deleted = db.execute(
-            "DELETE FROM source_documents WHERE last_collected_at<?",
+        )
+        documents_deleted = _delete_batched(
+            db,
+            "source_documents",
+            ("source_url", "content_hash"),
+            "last_collected_at<?",
             (iso(now() - timedelta(days=365)),),
-        ).rowcount
+        )
+        snapshots_deleted = _delete_batched(
+            db,
+            "scan_snapshots",
+            ("id",),
+            """
+            captured_at<? AND NOT EXISTS(
+                SELECT 1 FROM signals
+                WHERE signals.snapshot_id=scan_snapshots.id
+            )
+            AND NOT EXISTS(
+                SELECT 1 FROM kol_calls
+                WHERE kol_calls.snapshot_id=scan_snapshots.id
+            )
+            """,
+            (iso(now() - timedelta(days=SCAN_SNAPSHOT_RETENTION_DAYS)),),
+        )
+        runs_deleted = _delete_batched(
+            db,
+            "scan_runs",
+            ("id",),
+            """
+            captured_at<? AND NOT EXISTS(
+                SELECT 1 FROM scan_snapshots
+                WHERE scan_snapshots.scan_run_id=scan_runs.id
+            )
+            """,
+            (iso(now() - timedelta(days=SCAN_SNAPSHOT_RETENTION_DAYS)),),
+        )
+        training_examples_deleted = _delete_batched(
+            db,
+            "ranker_training_examples",
+            ("snapshot_id",),
+            "captured_at<?",
+            (iso(now() - timedelta(days=RANKER_EXAMPLE_RETENTION_DAYS)),),
+        )
+        pulse_entries_deleted = _delete_batched(
+            db,
+            "pulse_entries",
+            ("ticker", "entered_at"),
+            "entered_at<?",
+            (iso(now() - timedelta(days=PULSE_ENTRY_RETENTION_DAYS)),),
+        )
         db.execute("DELETE FROM sessions WHERE expires_at<=?", (iso(),))
         db.execute("DELETE FROM auth_challenges WHERE expires_at<=?", (iso(),))
         db.execute(
@@ -399,7 +506,17 @@ def prune_storage() -> None:
             """,
             (
                 "storage_last_prune",
-                json.dumps({"market_bars": bars_deleted, "source_documents": documents_deleted}),
+                json.dumps(
+                    {
+                        "market_bars": bars_deleted,
+                        "source_documents": documents_deleted,
+                        "scan_snapshots": snapshots_deleted,
+                        "scan_runs": runs_deleted,
+                        "ranker_training_examples": training_examples_deleted,
+                        "pulse_entries": pulse_entries_deleted,
+                    },
+                    separators=(",", ":"),
+                ),
                 iso(),
             ),
         )
@@ -568,9 +685,7 @@ async def outcome_worker() -> None:
     while True:
         try:
             await run_in_threadpool(refresh_outcomes)
-            scan_result = await run_in_threadpool(refresh_scan_outcomes)
-            if scan_result["barrier_labels_added"]:
-                await run_in_threadpool(train_shadow_ranker)
+            await run_in_threadpool(refresh_scan_outcomes)
             await run_in_threadpool(prune_storage)
         except asyncio.CancelledError:
             raise
@@ -1718,8 +1833,9 @@ def _refresh_pulse_base(cache_key: str) -> None:
     except Exception:
         LOG.exception("Pulse cache refresh failed")
     finally:
-        with PULSE_DATA_LOCK:
+        with PULSE_DATA_CONDITION:
             PULSE_DATA_REFRESHING.discard(cache_key)
+            PULSE_DATA_CONDITION.notify_all()
 
 
 def _pulse_base_data() -> dict[str, Any]:
@@ -1744,17 +1860,36 @@ def _pulse_base_data() -> dict[str, Any]:
         with PULSE_DATA_LOCK:
             PULSE_DATA_CACHE[cache_key] = (time.monotonic(), shared)
         return shared
-    payload = _pulse_data_uncached()
-    with PULSE_DATA_LOCK:
-        if cache_key not in PULSE_DATA_CACHE and len(PULSE_DATA_CACHE) >= 8:
-            PULSE_DATA_CACHE.clear()
-        PULSE_DATA_CACHE[cache_key] = (time.monotonic(), payload)
-    shared_cache_set(
-        _shared_request_cache_name("pulse"),
-        payload,
-        int(PULSE_CACHE_TTL_SECONDS),
-    )
-    return payload
+    with PULSE_DATA_CONDITION:
+        cached = PULSE_DATA_CACHE.get(cache_key)
+        if cached:
+            return cached[1]
+        if cache_key in PULSE_DATA_REFRESHING:
+            PULSE_DATA_CONDITION.wait_for(
+                lambda: cache_key in PULSE_DATA_CACHE
+                or cache_key not in PULSE_DATA_REFRESHING,
+                timeout=CACHE_BUILD_WAIT_SECONDS,
+            )
+            cached = PULSE_DATA_CACHE.get(cache_key)
+            if cached:
+                return cached[1]
+        PULSE_DATA_REFRESHING.add(cache_key)
+    try:
+        payload = _pulse_data_uncached()
+        with PULSE_DATA_CONDITION:
+            if cache_key not in PULSE_DATA_CACHE and len(PULSE_DATA_CACHE) >= 8:
+                PULSE_DATA_CACHE.clear()
+            PULSE_DATA_CACHE[cache_key] = (time.monotonic(), payload)
+        shared_cache_set(
+            _shared_request_cache_name("pulse"),
+            payload,
+            int(PULSE_CACHE_TTL_SECONDS),
+        )
+        return payload
+    finally:
+        with PULSE_DATA_CONDITION:
+            PULSE_DATA_REFRESHING.discard(cache_key)
+            PULSE_DATA_CONDITION.notify_all()
 
 
 def pulse_data(
@@ -2008,8 +2143,9 @@ def _refresh_alpha_base(cache_key: str) -> None:
     except Exception:
         LOG.exception("Alpha cache refresh failed")
     finally:
-        with ALPHA_DATA_LOCK:
+        with ALPHA_DATA_CONDITION:
             ALPHA_DATA_REFRESHING.discard(cache_key)
+            ALPHA_DATA_CONDITION.notify_all()
 
 
 def _alpha_base_data() -> dict[str, Any]:
@@ -2037,18 +2173,40 @@ def _alpha_base_data() -> dict[str, Any]:
                 shared,
             )
         return shared
-    payload = _alpha_base_data_uncached()
-    with ALPHA_DATA_LOCK:
-        if len(ALPHA_DATA_CACHE) >= 8 and cache_key not in ALPHA_DATA_CACHE:
-            oldest_key = min(ALPHA_DATA_CACHE, key=lambda key: ALPHA_DATA_CACHE[key][0])
-            ALPHA_DATA_CACHE.pop(oldest_key, None)
-        ALPHA_DATA_CACHE[cache_key] = (current + ALPHA_CACHE_TTL_SECONDS, payload)
-    shared_cache_set(
-        _shared_request_cache_name("alpha"),
-        payload,
-        int(ALPHA_CACHE_TTL_SECONDS),
-    )
-    return payload
+    with ALPHA_DATA_CONDITION:
+        cached = ALPHA_DATA_CACHE.get(cache_key)
+        if cached:
+            return cached[1]
+        if cache_key in ALPHA_DATA_REFRESHING:
+            ALPHA_DATA_CONDITION.wait_for(
+                lambda: cache_key in ALPHA_DATA_CACHE
+                or cache_key not in ALPHA_DATA_REFRESHING,
+                timeout=CACHE_BUILD_WAIT_SECONDS,
+            )
+            cached = ALPHA_DATA_CACHE.get(cache_key)
+            if cached:
+                return cached[1]
+        ALPHA_DATA_REFRESHING.add(cache_key)
+    try:
+        payload = _alpha_base_data_uncached()
+        with ALPHA_DATA_CONDITION:
+            if len(ALPHA_DATA_CACHE) >= 8 and cache_key not in ALPHA_DATA_CACHE:
+                oldest_key = min(ALPHA_DATA_CACHE, key=lambda key: ALPHA_DATA_CACHE[key][0])
+                ALPHA_DATA_CACHE.pop(oldest_key, None)
+            ALPHA_DATA_CACHE[cache_key] = (
+                time.monotonic() + ALPHA_CACHE_TTL_SECONDS,
+                payload,
+            )
+        shared_cache_set(
+            _shared_request_cache_name("alpha"),
+            payload,
+            int(ALPHA_CACHE_TTL_SECONDS),
+        )
+        return payload
+    finally:
+        with ALPHA_DATA_CONDITION:
+            ALPHA_DATA_REFRESHING.discard(cache_key)
+            ALPHA_DATA_CONDITION.notify_all()
 
 
 def alpha_board_data() -> dict[str, Any]:
@@ -3522,7 +3680,7 @@ async def pulse_charts_api(request: Request) -> JSONResponse:
     enforce_rate(request, "pulse-charts", limit=20, seconds=60)
     tickers = [row["ticker"] for row in pulse_data(limit=20)["rows"]]
     payload = await run_in_threadpool(ticker_charts_payload, tickers)
-    return JSONResponse(payload)
+    return JSONResponse(_compact_list_chart_payload(payload))
 
 
 def _clean_ticker(ticker: str) -> str:
@@ -3786,11 +3944,7 @@ def _chart_topic(ticker: str) -> str:
 
 
 def _pulse_entry_markers(tickers: list[str]) -> dict[str, dict[str, Any]]:
-    """Return the latest real Pulse entry inside the chart window.
-
-    A ticker can remain in several scans. Only a change from absent to present is
-    an entry, so normal scan refreshes do not move the marker forward.
-    """
+    """Return materialized Pulse entry events inside the chart window."""
 
     requested = list(dict.fromkeys(str(ticker).upper() for ticker in tickers))[:50]
     if not requested:
@@ -3798,66 +3952,26 @@ def _pulse_entry_markers(tickers: list[str]) -> dict[str, dict[str, Any]]:
     cutoff = iso(now() - timedelta(days=6))
     placeholders = ",".join("?" for _ in requested)
     with connection() as db:
-        runs = db.execute(
-            """
-            SELECT id,captured_at FROM scan_runs
-            WHERE candidate_rows>0 AND captured_at>=?
-            ORDER BY captured_at,id
-            """,
-            (cutoff,),
-        ).fetchall()
-        prior_run = db.execute(
-            """
-            SELECT id,captured_at FROM scan_runs
-            WHERE candidate_rows>0 AND captured_at<?
-            ORDER BY captured_at DESC,id DESC LIMIT 1
-            """,
-            (cutoff,),
-        ).fetchone()
-        snapshot_rows = db.execute(
+        rows = db.execute(
             f"""
-            SELECT s.scan_run_id,s.ticker,s.captured_at,s.price
-            FROM scan_snapshots s
-            JOIN scan_runs r ON r.id=s.scan_run_id
-            WHERE r.candidate_rows>0 AND r.captured_at>=?
-              AND s.ticker IN ({placeholders})
-            """,
-            (cutoff, *requested),
+            SELECT ticker,entered_at,price FROM pulse_entries
+            WHERE ticker IN ({placeholders}) AND entered_at>=?
+            ORDER BY entered_at
+            """,  # noqa: S608 - placeholders are generated above
+            (*requested, cutoff),
         ).fetchall()
-        prior_rows = (
-            db.execute(
-                f"""
-                SELECT scan_run_id,ticker,captured_at,price FROM scan_snapshots
-                WHERE scan_run_id=? AND ticker IN ({placeholders})
-                """,
-                (prior_run["id"], *requested),
-            ).fetchall()
-            if prior_run
-            else []
-        )
-
-    snapshots_by_run: dict[str, dict[str, dict[str, Any]]] = {}
-    for raw in snapshot_rows:
-        snapshot = dict(raw)
-        snapshots_by_run.setdefault(str(snapshot["scan_run_id"]), {})[str(snapshot["ticker"])] = (
-            snapshot
-        )
-    previous = {str(row["ticker"]) for row in prior_rows}
     entries: dict[str, dict[str, Any]] = {}
-    for run in runs:
-        current = snapshots_by_run.get(str(run["id"]), {})
-        for ticker, snapshot in current.items():
-            if ticker not in previous:
-                entries[ticker] = {
-                    "type": "pulse_entry",
-                    "category": "Pulse",
-                    "label": "Entered Pulse",
-                    "time": str(snapshot["captured_at"]),
-                    "price": snapshot.get("price"),
-                    "tone": "pulse",
-                    "url": None,
-                }
-        previous = set(current)
+    for row in rows:
+        ticker = str(row["ticker"])
+        entries[ticker] = {
+            "type": "pulse_entry",
+            "category": "Pulse",
+            "label": "Entered Pulse",
+            "time": str(row["entered_at"]),
+            "price": row["price"],
+            "tone": "pulse",
+            "url": None,
+        }
     return entries
 
 
@@ -4009,9 +4123,8 @@ def ticker_chart_snapshots(tickers: list[str]) -> dict[str, TopicSnapshot]:
     return {ticker: snapshots[topic] for topic, ticker in topic_to_ticker.items()}
 
 
-def ticker_charts_payload(tickers: list[str]) -> dict[str, Any]:
-    requested = list(dict.fromkeys(tickers))[:50]
-    snapshots = ticker_chart_snapshots(tickers)
+def _ticker_charts_payload_uncached(requested: list[str]) -> dict[str, Any]:
+    snapshots = ticker_chart_snapshots(requested)
     return {
         "charts": {
             ticker: snapshot.data if isinstance(snapshot.data, list) else []
@@ -4020,6 +4133,122 @@ def ticker_charts_payload(tickers: list[str]) -> dict[str, Any]:
         "freshness": {ticker: snapshot.metadata() for ticker, snapshot in snapshots.items()},
         "annotations": _chart_annotations(requested),
     }
+
+
+def _compact_list_chart_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep the richer internal chart contract while sending small list sparklines."""
+
+    return {
+        **payload,
+        "charts": {
+            ticker: [
+                {"time": point.get("time"), "price": point.get("price")}
+                for point in points
+                if isinstance(point, dict)
+            ]
+            for ticker, points in payload.get("charts", {}).items()
+            if isinstance(points, list)
+        },
+    }
+
+
+def _chart_payload_cache_key(requested: list[str]) -> tuple[str, str]:
+    digest = hashlib.sha256("\0".join(requested).encode()).hexdigest()[:20]
+    local_key = f"{runner_db.database_identity()}:{digest}"
+    shared_key = f"{_shared_request_cache_name('charts')}:{digest}"
+    return local_key, shared_key
+
+
+def _refresh_chart_payload(
+    local_key: str,
+    shared_key: str,
+    requested: list[str],
+) -> None:
+    try:
+        payload = _ticker_charts_payload_uncached(requested)
+        with CHART_PAYLOAD_CONDITION:
+            CHART_PAYLOAD_CACHE[local_key] = (
+                time.monotonic() + CHART_PAYLOAD_CACHE_TTL_SECONDS,
+                payload,
+            )
+        shared_cache_set(
+            shared_key,
+            payload,
+            int(CHART_PAYLOAD_CACHE_TTL_SECONDS),
+        )
+    except Exception:
+        LOG.exception("Chart payload cache refresh failed")
+    finally:
+        with CHART_PAYLOAD_CONDITION:
+            CHART_PAYLOAD_REFRESHING.discard(local_key)
+            CHART_PAYLOAD_CONDITION.notify_all()
+
+
+def ticker_charts_payload(tickers: list[str]) -> dict[str, Any]:
+    requested = sorted(dict.fromkeys(str(ticker).upper() for ticker in tickers))[:50]
+    if not requested:
+        return {"charts": {}, "freshness": {}, "annotations": {}}
+    local_key, shared_key = _chart_payload_cache_key(requested)
+    current = time.monotonic()
+    with CHART_PAYLOAD_CONDITION:
+        cached = CHART_PAYLOAD_CACHE.get(local_key)
+        if cached and current < cached[0]:
+            return cached[1]
+        if cached:
+            if local_key not in CHART_PAYLOAD_REFRESHING:
+                CHART_PAYLOAD_REFRESHING.add(local_key)
+                threading.Thread(
+                    target=_refresh_chart_payload,
+                    args=(local_key, shared_key, requested),
+                    daemon=True,
+                    name="chart-payload-cache-refresh",
+                ).start()
+            return cached[1]
+    shared = shared_cache_get(shared_key)
+    if isinstance(shared, dict):
+        with CHART_PAYLOAD_CONDITION:
+            CHART_PAYLOAD_CACHE[local_key] = (
+                time.monotonic() + CHART_PAYLOAD_CACHE_TTL_SECONDS,
+                shared,
+            )
+        return shared
+    with CHART_PAYLOAD_CONDITION:
+        cached = CHART_PAYLOAD_CACHE.get(local_key)
+        if cached:
+            return cached[1]
+        if local_key in CHART_PAYLOAD_REFRESHING:
+            CHART_PAYLOAD_CONDITION.wait_for(
+                lambda: local_key in CHART_PAYLOAD_CACHE
+                or local_key not in CHART_PAYLOAD_REFRESHING,
+                timeout=CACHE_BUILD_WAIT_SECONDS,
+            )
+            cached = CHART_PAYLOAD_CACHE.get(local_key)
+            if cached:
+                return cached[1]
+        CHART_PAYLOAD_REFRESHING.add(local_key)
+    try:
+        payload = _ticker_charts_payload_uncached(requested)
+        with CHART_PAYLOAD_CONDITION:
+            if len(CHART_PAYLOAD_CACHE) >= 32 and local_key not in CHART_PAYLOAD_CACHE:
+                oldest_key = min(
+                    CHART_PAYLOAD_CACHE,
+                    key=lambda key: CHART_PAYLOAD_CACHE[key][0],
+                )
+                CHART_PAYLOAD_CACHE.pop(oldest_key, None)
+            CHART_PAYLOAD_CACHE[local_key] = (
+                time.monotonic() + CHART_PAYLOAD_CACHE_TTL_SECONDS,
+                payload,
+            )
+        shared_cache_set(
+            shared_key,
+            payload,
+            int(CHART_PAYLOAD_CACHE_TTL_SECONDS),
+        )
+        return payload
+    finally:
+        with CHART_PAYLOAD_CONDITION:
+            CHART_PAYLOAD_REFRESHING.discard(local_key)
+            CHART_PAYLOAD_CONDITION.notify_all()
 
 
 def ticker_chart_detail_payload(ticker: str) -> dict[str, Any]:
@@ -4462,8 +4691,9 @@ def _refresh_radar_base(cache_key: str) -> None:
     except Exception:
         LOG.exception("Radar cache refresh failed")
     finally:
-        with RADAR_DATA_LOCK:
+        with RADAR_DATA_CONDITION:
             RADAR_DATA_REFRESHING.discard(cache_key)
+            RADAR_DATA_CONDITION.notify_all()
 
 
 def _radar_base_data() -> list[dict[str, Any]]:
@@ -4491,18 +4721,40 @@ def _radar_base_data() -> list[dict[str, Any]]:
                 shared,
             )
         return shared
-    output = _radar_base_data_uncached()
-    with RADAR_DATA_LOCK:
-        if len(RADAR_DATA_CACHE) >= 8 and cache_key not in RADAR_DATA_CACHE:
-            oldest_key = min(RADAR_DATA_CACHE, key=lambda key: RADAR_DATA_CACHE[key][0])
-            RADAR_DATA_CACHE.pop(oldest_key, None)
-        RADAR_DATA_CACHE[cache_key] = (current + RADAR_CACHE_TTL_SECONDS, output)
-    shared_cache_set(
-        _shared_request_cache_name("radar"),
-        output,
-        RADAR_SHARED_CACHE_TTL_SECONDS,
-    )
-    return output
+    with RADAR_DATA_CONDITION:
+        cached = RADAR_DATA_CACHE.get(cache_key)
+        if cached:
+            return cached[1]
+        if cache_key in RADAR_DATA_REFRESHING:
+            RADAR_DATA_CONDITION.wait_for(
+                lambda: cache_key in RADAR_DATA_CACHE
+                or cache_key not in RADAR_DATA_REFRESHING,
+                timeout=CACHE_BUILD_WAIT_SECONDS,
+            )
+            cached = RADAR_DATA_CACHE.get(cache_key)
+            if cached:
+                return cached[1]
+        RADAR_DATA_REFRESHING.add(cache_key)
+    try:
+        output = _radar_base_data_uncached()
+        with RADAR_DATA_CONDITION:
+            if len(RADAR_DATA_CACHE) >= 8 and cache_key not in RADAR_DATA_CACHE:
+                oldest_key = min(RADAR_DATA_CACHE, key=lambda key: RADAR_DATA_CACHE[key][0])
+                RADAR_DATA_CACHE.pop(oldest_key, None)
+            RADAR_DATA_CACHE[cache_key] = (
+                time.monotonic() + RADAR_CACHE_TTL_SECONDS,
+                output,
+            )
+        shared_cache_set(
+            _shared_request_cache_name("radar"),
+            output,
+            RADAR_SHARED_CACHE_TTL_SECONDS,
+        )
+        return output
+    finally:
+        with RADAR_DATA_CONDITION:
+            RADAR_DATA_REFRESHING.discard(cache_key)
+            RADAR_DATA_CONDITION.notify_all()
 
 
 def radar_data() -> list[dict[str, Any]]:
@@ -4563,7 +4815,7 @@ async def radar_charts_api(
     enforce_rate(request, "radar-charts", limit=20, seconds=60)
     tickers = [row["ticker"] for row in radar_data()]
     payload = await run_in_threadpool(ticker_charts_payload, tickers)
-    return JSONResponse(payload)
+    return JSONResponse(_compact_list_chart_payload(payload))
 
 
 def _known_ticker(ticker: str) -> bool:
@@ -5661,6 +5913,42 @@ def _previous_trade_states(database: Any, tickers: list[str]) -> dict[str, str]:
     }
 
 
+def _record_pulse_entries_for_run(
+    database: Any,
+    scan_run_id: str,
+    captured_at: str,
+) -> int:
+    """Materialize entry events once, while the scan transaction is still open."""
+
+    previous = database.execute(
+        """
+        SELECT id FROM scan_runs
+        WHERE candidate_rows>0 AND id<>? AND captured_at<=?
+        ORDER BY captured_at DESC,id DESC LIMIT 1
+        """,
+        (scan_run_id, captured_at),
+    ).fetchone()
+    previous_run_id = str(previous["id"]) if previous else ""
+    inserted = database.execute(
+        """
+        INSERT INTO pulse_entries(
+            ticker,entered_at,scan_run_id,snapshot_id,price,created_at
+        )
+        SELECT current.ticker,current.captured_at,current.scan_run_id,
+               current.id,current.price,current.captured_at
+        FROM scan_snapshots current
+        WHERE current.scan_run_id=?
+          AND NOT EXISTS(
+              SELECT 1 FROM scan_snapshots prior
+              WHERE prior.scan_run_id=? AND prior.ticker=current.ticker
+          )
+        ON CONFLICT(ticker,entered_at) DO NOTHING
+        """,
+        (scan_run_id, previous_run_id),
+    )
+    return max(0, inserted.rowcount)
+
+
 def run_scan(mode: str = "penny") -> dict[str, Any]:
     with SCAN_LOCK:
         return _run_scan(mode)
@@ -5719,6 +6007,7 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
     captured_at = iso()
     scan_run_id = secrets.token_urlsafe(12)
     output: list[dict[str, Any]] = []
+    training_rows: list[dict[str, Any]] = []
     all_rows = result.all_rows or result.rows
     catalysts = recent_sec_catalysts([item.ticker for item in all_rows])
     persistent_risks = recent_sec_risks([item.ticker for item in all_rows])
@@ -5936,8 +6225,17 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
                 """,
                 values,
             )
+            training_rows.append(values)
             if baseline_rank <= len(result.rows):
                 output.append(values)
+
+        store_training_examples(
+            db,
+            training_rows,
+            scan_mode=mode,
+            expected_candidates=len(all_rows),
+        )
+        _record_pulse_entries_for_run(db, scan_run_id, captured_at)
 
     prediction = predict_and_store(scan_run_id)
     kol_result: dict[str, Any] = {

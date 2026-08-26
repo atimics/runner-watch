@@ -34,6 +34,7 @@ stonks-ranker = "runner_web.ranker:main"
 stonks-migrate = "runner_web.db:main"
 stonks-migrate-sqlite = "runner_web.migrate_sqlite:main"
 stonks-worker = "runner_web.main:worker_main"
+stonks-trainer = "runner_web.ranker:trainer_main"
 
 [build-system]
 requires = ["setuptools>=69"]
