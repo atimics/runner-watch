@@ -8,9 +8,7 @@ The public beta is at [stonks.rati.foundation](https://stonks.rati.foundation). 
 app has three main views: **Pulse** for live penny-stock intelligence, a compact ticker page with
 the chart and primary-source evidence, **Radar** for fresh market and evidence changes, and **Alpha**
 for public Calls. Signed-in users can spend Flash credits on private research and AI-written ticker
-comments. Pulse
-paginates as the user
-scrolls. Radar works before login and merges into the passkey profile later.
+comments. Pulse paginates as the user scrolls. Radar is shared and does not build a reading profile.
 
 The public scanner defaults to listed US penny stocks from $0.20 to $5 with market caps below
 about $2B. It combines Yahoo's strongest movers, most active names, and largest losers before
@@ -121,12 +119,12 @@ The end-to-end path from collectors to product evidence is in the
 Alpha is a public Call ledger. A signed-in user can make one open Call per ticker. Runner Watch
 freezes the current server quote and time; the browser cannot submit or edit either value. Closing a
 Call also uses the current server quote and time. Calls show percentage PnL only, with no implied
-position size. Each caller has a public alias page with open, closed, win/loss, and PnL stats.
+position size. Each Call uses a separately claimed random animal caller ID; account names stay
+private. Comments use a random emoji identity that is stable only inside that ticker thread, and the
+same account receives a different random identity in other threads.
 
 Bull, bear, heart, private position, and private case controls are not part of the product flow.
-Signed-in users can still leave short public comments. Public names are stable adjective-animal
-aliases chosen from a salted hash, while account names stay private. Set `COMMENT_PSEUDONYM_SALT` to
-a stable private value in each deployed environment before comments are opened to users.
+Signed-in users can still leave short public comments under thread-scoped emoji aliases.
 
 Reports are authored by **Flash ⚡**. Flash's current engine is `z-ai/glm-5.3`, routed through
 OpenRouter. The model label is shown beside Flash in the interface. Changing the engine later does
@@ -254,7 +252,7 @@ They are research results, not trade recommendations.
 
 Flash is the only seeded KOL slot today. Its records include ladder position, inference provider,
 and inference model, and each commissioned report snapshots those fields. This keeps future model
-promotions honest: an old report keeps its original model snapshot. Human reactions remain separate
+promotions honest: an old report keeps its original model snapshot. Human comments remain separate
 from AI calls. Scorecards are available at `/api/kols`, and ticker call history is available at
 `/api/t/{ticker}/kol-calls`.
 
