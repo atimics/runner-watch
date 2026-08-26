@@ -28,6 +28,9 @@ class RankerTrainingPolicy:
     minimum_groups: int = 160
     minimum_rows: int = 5_000
     minimum_per_outcome: int = 20
+    maximum_groups: int = 320
+    minimum_new_groups: int = 16
+    interval_seconds: int = 6 * 60 * 60
     validation_fraction: float = 0.10
     test_fraction: float = 0.10
 

@@ -1,13 +1,17 @@
 import asyncio
 import io
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from fastapi import HTTPException
 from pytest import MonkeyPatch
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request
 
 from runner_watch.ingestion import MarketEvent, SourceBatch, SourceFetch
@@ -27,6 +31,7 @@ from runner_web.main import (
     _previous_trade_states,
     _pulse_entry_markers,
     _pulse_label,
+    _record_pulse_entries_for_run,
     _stored_market_risk_contexts,
     alpha_board_data,
     alpha_comments_data,
@@ -34,6 +39,7 @@ from runner_web.main import (
     create_ticker_comment,
     get_commission,
     get_signal,
+    prune_storage,
     publish_signal,
     pulse_data,
     radar_data,
@@ -59,6 +65,10 @@ def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
     assert "body:JSON.stringify({entries})" not in pulse_template
     assert "1 new event" in radar_template
     assert "pendingUpdateTickers" in radar_template
+
+
+def test_large_responses_are_compressed() -> None:
+    assert any(middleware.cls is GZipMiddleware for middleware in web_main.app.user_middleware)
 
 
 def test_ticker_has_public_call_and_flash_actions() -> None:
@@ -364,6 +374,72 @@ def insert_scored_snapshot(
                 rank,
             ),
         )
+        _record_pulse_entries_for_run(database, run_id, captured_at)
+
+
+def test_storage_prune_removes_old_raw_snapshots_but_keeps_public_receipts(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "retention.db")
+    init_db()
+    captured_at = (datetime.now(UTC) - timedelta(days=200)).isoformat()
+    insert_scan_run("old-unreferenced-run", captured_at, 1)
+    insert_scored_snapshot(
+        "old-unreferenced-snapshot",
+        "old-unreferenced-run",
+        "OLD",
+        20,
+        1,
+        captured_at,
+    )
+    insert_scan_run("old-public-run", captured_at, 1)
+    insert_scored_snapshot(
+        "old-public-snapshot",
+        "old-public-run",
+        "KEPT",
+        40,
+        1,
+        captured_at,
+    )
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("receipt-user", "receipt_user", "Receipt User", "active", captured_at),
+        )
+        database.execute(
+            """
+            INSERT INTO signals(
+                id,public_id,snapshot_id,user_id,thesis,horizon,
+                invalidation,disclosure,status,created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                "receipt-signal",
+                "receipt-public",
+                "old-public-snapshot",
+                "receipt-user",
+                "Public receipt",
+                "intraday",
+                "Invalidated",
+                "No position",
+                "public",
+                captured_at,
+            ),
+        )
+
+    prune_storage()
+
+    with connection() as database:
+        snapshots = {
+            str(row["id"])
+            for row in database.execute("SELECT id FROM scan_snapshots").fetchall()
+        }
+        runs = {
+            str(row["id"])
+            for row in database.execute("SELECT id FROM scan_runs").fetchall()
+        }
+    assert snapshots == {"old-public-snapshot"}
+    assert runs == {"old-public-run"}
 
 
 def test_public_calls_use_an_owned_caller_id_not_the_account_name(
@@ -519,6 +595,104 @@ def test_pulse_reuses_the_shared_base_payload(
     assert pulse_data()["rows"][0]["ticker"] == "ONE"
     assert pulse_data()["rows"][0]["ticker"] == "ONE"
     assert calls == 1
+
+
+def test_pulse_coalesces_concurrent_first_build(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "pulse-single-flight.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_scan_run("single-flight-run", captured_at, 1)
+    insert_scored_snapshot(
+        "single-flight-one",
+        "single-flight-run",
+        "ONE",
+        42,
+        1,
+        captured_at,
+    )
+    web_main.PULSE_DATA_CACHE.clear()
+    web_main.PULSE_DATA_REFRESHING.clear()
+    original = web_main._pulse_data_uncached
+    started = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def counted() -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        started.set()
+        assert release.wait(timeout=2)
+        return original()
+
+    monkeypatch.setattr(web_main, "_pulse_data_uncached", counted)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(pulse_data)
+        assert started.wait(timeout=2)
+        second = pool.submit(pulse_data)
+        release.set()
+        assert first.result(timeout=2)["rows"][0]["ticker"] == "ONE"
+        assert second.result(timeout=2)["rows"][0]["ticker"] == "ONE"
+
+    assert calls == 1
+
+
+def test_chart_payload_caches_points_and_annotations_together(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "chart-payload-cache.db")
+    web_main.CHART_PAYLOAD_CACHE.clear()
+    web_main.CHART_PAYLOAD_REFRESHING.clear()
+    calls = 0
+    payload = {
+        "charts": {"ONE": [{"price": 1.25}]},
+        "freshness": {"ONE": {"status": "fresh"}},
+        "annotations": {"ONE": [{"type": "pulse_entry"}]},
+    }
+
+    def counted(requested: list[str]) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        assert requested == ["ONE"]
+        return payload
+
+    monkeypatch.setattr(web_main, "_ticker_charts_payload_uncached", counted)
+
+    assert ticker_charts_payload(["ONE"]) == payload
+    assert ticker_charts_payload(["ONE"]) == payload
+    assert calls == 1
+
+
+def test_list_chart_payload_sends_only_time_and_price(monkeypatch: MonkeyPatch) -> None:
+    snapshot = SimpleNamespace(
+        data=[
+            {
+                "time": "2026-08-26T12:00:00+00:00",
+                "price": 1.25,
+                "open": 1.20,
+                "high": 1.30,
+                "low": 1.18,
+                "volume": 50_000,
+                "vwap": 1.23,
+            }
+        ],
+        metadata=lambda: {"status": "fresh"},
+    )
+    monkeypatch.setattr(
+        web_main,
+        "ticker_chart_snapshots",
+        lambda requested: {"ONE": snapshot},
+    )
+    monkeypatch.setattr(web_main, "_chart_annotations", lambda requested: {"ONE": []})
+
+    payload = web_main._compact_list_chart_payload(
+        web_main._ticker_charts_payload_uncached(["ONE"])
+    )
+
+    assert payload["charts"] == {
+        "ONE": [{"time": "2026-08-26T12:00:00+00:00", "price": 1.25}]
+    }
 
 
 def test_radar_reuses_the_shared_base_payload(

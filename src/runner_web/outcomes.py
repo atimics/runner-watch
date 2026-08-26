@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from runner_web.cases import update_case
 from runner_web.db import connection
+from runner_web.ranker import sync_training_outcome
 
 LOG = logging.getLogger(__name__)
 HORIZONS = {"1h": timedelta(hours=1), "1d": timedelta(days=1), "5d": timedelta(days=5)}
@@ -603,6 +604,14 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
                 f"UPDATE scan_outcomes SET {assignments} WHERE snapshot_id=?",  # noqa: S608
                 (*changes.values(), row["snapshot_id"]),
             )
+            if changes.get("barrier_label"):
+                sync_training_outcome(
+                    db,
+                    str(row["snapshot_id"]),
+                    str(changes["barrier_label"]),
+                    changes.get("return_60m_pct"),
+                    timestamp,
+                )
         labeled = int(
             db.execute(
                 """

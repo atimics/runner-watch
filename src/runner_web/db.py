@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -1579,6 +1579,88 @@ def _migration_026_daily_report_alpha(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_031_scalable_scan_storage(db: DatabaseConnection) -> None:
+    """Store small read and training records separately from full scan snapshots."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS pulse_entries (
+            ticker TEXT NOT NULL,
+            entered_at TEXT NOT NULL,
+            scan_run_id TEXT NOT NULL,
+            snapshot_id TEXT NOT NULL,
+            price REAL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(ticker,entered_at)
+        );
+        CREATE INDEX IF NOT EXISTS pulse_entries_ticker_time
+            ON pulse_entries(ticker,entered_at DESC);
+        CREATE INDEX IF NOT EXISTS pulse_entries_time
+            ON pulse_entries(entered_at DESC);
+
+        CREATE TABLE IF NOT EXISTS ranker_training_examples (
+            snapshot_id TEXT PRIMARY KEY,
+            scan_run_id TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            feature_schema_version TEXT NOT NULL,
+            expected_candidates INTEGER NOT NULL,
+            captured_at TEXT NOT NULL,
+            feature_vector_json TEXT NOT NULL,
+            baseline_score_milli INTEGER NOT NULL,
+            barrier_label TEXT,
+            outcome_return_bp INTEGER,
+            labeled_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS ranker_training_examples_schema_time
+            ON ranker_training_examples(feature_schema_version,captured_at DESC,scan_run_id);
+        CREATE INDEX IF NOT EXISTS ranker_training_examples_labeled_time
+            ON ranker_training_examples(feature_schema_version,captured_at DESC)
+            WHERE barrier_label IS NOT NULL;
+
+        CREATE INDEX IF NOT EXISTS market_bars_collected
+            ON market_bars(last_collected_at);
+        """
+    )
+
+    cutoff = (datetime.now(UTC) - timedelta(days=6)).isoformat()
+    db.execute(
+        """
+        WITH recent_runs AS (
+            SELECT id,captured_at FROM scan_runs
+            WHERE candidate_rows>0 AND captured_at>=?
+        ),
+        prior_run AS (
+            SELECT id,captured_at FROM scan_runs
+            WHERE candidate_rows>0 AND captured_at<?
+            ORDER BY captured_at DESC,id DESC LIMIT 1
+        ),
+        ordered_source AS (
+            SELECT id,captured_at FROM recent_runs
+            UNION ALL
+            SELECT id,captured_at FROM prior_run
+        ),
+        ordered_runs AS (
+            SELECT id,captured_at,
+                   LAG(id) OVER (ORDER BY captured_at,id) AS previous_run_id
+            FROM ordered_source
+        )
+        INSERT INTO pulse_entries(
+            ticker,entered_at,scan_run_id,snapshot_id,price,created_at
+        )
+        SELECT current.ticker,current.captured_at,current.scan_run_id,
+               current.id,current.price,current.captured_at
+        FROM ordered_runs run
+        JOIN scan_snapshots current ON current.scan_run_id=run.id
+        LEFT JOIN scan_snapshots previous
+          ON previous.scan_run_id=run.previous_run_id
+         AND previous.ticker=current.ticker
+        WHERE run.captured_at>=? AND previous.id IS NULL
+        ON CONFLICT(ticker,entered_at) DO NOTHING
+        """,
+        (cutoff, cutoff, cutoff),
+    )
+
+
 def _migration_027_gdpr_privacy(db: DatabaseConnection) -> None:
     """Remove passive profiles and replace global public names with thread aliases."""
 
@@ -1795,6 +1877,7 @@ MIGRATIONS = (
     Migration(28, "caller_identities", _migration_028_caller_identities),
     Migration(29, "signal_caller_identities", _migration_029_signal_caller_identities),
     Migration(30, "drop_passive_tracking", _migration_030_drop_passive_tracking),
+    Migration(31, "scalable_scan_storage", _migration_031_scalable_scan_storage),
 )
 
 

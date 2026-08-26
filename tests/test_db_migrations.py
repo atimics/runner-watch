@@ -119,6 +119,13 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         flash_transaction_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='flash_transactions'"
         ).fetchone()
+        pulse_entries_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='pulse_entries'"
+        ).fetchone()
+        training_examples_table = database.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='ranker_training_examples'"
+        ).fetchone()
         flash = database.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
         commission_columns = {
             row["name"]
@@ -177,6 +184,8 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert flash_request_table is not None
     assert flash_wallet_table is not None
     assert flash_transaction_table is not None
+    assert pulse_entries_table is not None
+    assert training_examples_table is not None
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_provider"] == "openrouter"
@@ -272,6 +281,11 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "signals_caller_identity",
         "research_commissions_daily_actor",
         "research_commissions_daily_visibility",
+        "pulse_entries_ticker_time",
+        "pulse_entries_time",
+        "ranker_training_examples_schema_time",
+        "ranker_training_examples_labeled_time",
+        "market_bars_collected",
     } <= indexes
 
 
