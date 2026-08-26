@@ -244,6 +244,11 @@ def test_openrouter_request_has_no_user_fingerprint() -> None:
     assert '"user": hashlib.sha256(user_id.encode()).hexdigest()[:32]' not in source
 
 
+def test_production_does_not_write_web_access_logs() -> None:
+    assert "--no-access-log" in (ROOT / "fly.toml").read_text()
+    assert '"--no-access-log"' in (ROOT / "Dockerfile").read_text()
+
+
 def test_compliance_runbook_covers_operations_not_just_ui() -> None:
     runbook = (ROOT / "docs/privacy-operations.md").read_text()
 

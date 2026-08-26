@@ -158,7 +158,7 @@ details, invoices, and the customer portal. Runner Watch mirrors only customer I
 IDs, status, price ID, renewal time, and the local `free` or `subscriber` entitlement. Access changes
 only after a signed Stripe webhook; the Checkout success redirect does not grant Pro by itself.
 
-Set `STRIPE_SECRET_KEY`, `STRIPE_PRO_PRICE_ID`, and `STRIPE_WEBHOOK_SECRET`. For local testing, run:
+Set `STRIPE_SECRET_KEY`, `STRIPE_PRO_PRICE_ID`, and `STRIPE_WEBHOOK_SECRET`. Extra random caller IDs use a one-time Stripe payment. Set `STRIPE_CALLER_ID_PRICE_ID` to manage that price in Stripe, or set `CALLER_ID_CLAIM_PRICE_CENTS` and `CALLER_ID_CURRENCY` for inline pricing. For local testing, run:
 
 ```bash
 stripe listen \
@@ -336,7 +336,8 @@ Always confirm price, spread, volume, halt status, and news in a live broker bef
 Fly runs two stateless 512 MB web machines and one 1 GB background worker. PostgreSQL owns durable
 application data. Redis shares the short-lived Pulse, Radar, and Alpha caches, applies rate limits
 across both web machines, and carries encrypted research jobs between web and worker processes.
-The old SQLite volume is kept only for rollback during the migration window.
+Set one shared `RATE_LIMIT_HASH_KEY` so rate-limit keys contain neither raw IP addresses nor account
+IDs. The old SQLite volume must be retired after the migration check; it is not a standing backup.
 
 The low-cost layout is about $19–$21 per month at light traffic: about $6.40 for PostgreSQL, $6.64
 for both web machines, $5.92 for the worker, and usage-based Redis at $0.20 per 100,000 commands.

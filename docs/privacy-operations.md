@@ -30,12 +30,12 @@ The app must not write visitor IDs, page views, dwell time, share events, seen s
 - Member content: keep until the member deletes the item or account, unless a documented legal hold applies.
 - Deleted caller identities: keep only the random animal handle, tombstone state, and deletion time. Remove owner, payment reference, claim time, cost, and calls.
 - Application and security logs: configure providers for 30 days maximum. Do not log request bodies, cookies, passkey data, research evidence, exports, or deletion payloads.
-- Backups: configure a 30-day maximum. A deletion reaches live data immediately and backup copies through expiry. Restores must replay all deletion records made after the restored snapshot before the service reopens.
+- Backups: configure a 30-day maximum. Fly Volume snapshots currently default to 5 days. A deletion reaches live data immediately and backup copies through expiry. Keep the restricted request log outside the restored database, and replay every deletion recorded after a snapshot before the service reopens.
 - Review this schedule every six months and test pruning against a restored non-production backup.
 
 ## Data subject requests
 
-1. Accept requests through the signed-in export and deletion controls or at privacy@rati.foundation.
+1. Accept access requests through the signed-in export. Accept deletion and other rights requests at privacy@rati.foundation until the signed-in deletion control is released.
 2. Record the received date, request type, scope, verifier, owner, deadline, actions, recipients told, and completion date in the restricted request log.
 3. Verify through a current passkey session where possible. Ask only for the minimum extra proof needed.
 4. Search the account, passkeys, sessions, comments, aliases, caller identities, calls, private journal, cases, reports, billing mirror, provider tickets, logs, and current backups.
@@ -63,6 +63,7 @@ The present Fly `sjc` region is San Jose, United States. Before serving people i
 - Passkeys with user verification; no passwords or biometric templates on the server.
 - Random sessions stored only as hashes; Secure, HTTP-only, SameSite=Lax cookies in production.
 - TLS for public traffic, PostgreSQL and Redis; fail startup in production if database or cache transport is not encrypted.
+- Hash rate-limit subjects before writing short-lived Redis keys. Set the same secret `RATE_LIMIT_HASH_KEY` on every web machine so the limit remains shared without storing an IP address or account ID in the key.
 - Origin checks on state-changing browser requests, content security policy, HSTS, frame restrictions, and bounded rate limits.
 - No request-body, cookie, credential, research-evidence, export, or deletion logging.
 - Least-privilege production access, multi-factor authentication for infrastructure and processors, separate production credentials, secret rotation, and a reviewed access list each quarter.

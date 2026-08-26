@@ -1536,6 +1536,20 @@ def _migration_024_caller_identities(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_025_signal_caller_identities(db: DatabaseConnection) -> None:
+    """Stop exposing account names on human calls and require a separate caller ID."""
+
+    _ensure_column(
+        db,
+        "signals",
+        "caller_identity_id TEXT REFERENCES caller_identities(id)",
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS signals_caller_identity "
+        "ON signals(caller_identity_id,created_at DESC)"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -1568,6 +1582,7 @@ MIGRATIONS = (
     Migration(22, "stripe_billing", _migration_022_stripe_billing),
     Migration(23, "gdpr_privacy", _migration_023_gdpr_privacy),
     Migration(24, "caller_identities", _migration_024_caller_identities),
+    Migration(25, "signal_caller_identities", _migration_025_signal_caller_identities),
 )
 
 

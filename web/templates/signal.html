@@ -14,7 +14,7 @@
 <main class="signal-detail">
   <section class="asset-head">
     <span class="coin coin-large coin-{{ signal.coin_tone }}"><b>{{ signal.ticker[:2] }}</b><i></i></span>
-    <div><div class="asset-ticker"><h1>{{ signal.ticker }}</h1><span>{{ signal.trade_state or signal.stage|title }}</span></div><p>@{{ signal.username }} · {{ signal.horizon }}</p></div>
+    <div><div class="asset-ticker"><h1>{{ signal.ticker }}</h1><span>{{ signal.trade_state or signal.stage|title }}</span></div><p>{{ signal.caller_handle }} · {{ signal.horizon }}</p></div>
     <strong class="signal-score">{{ '%.0f'|format(signal.score) }}</strong>
   </section>
   <section class="price-block"><div><strong>${{ '%.4f'|format(signal.price) if signal.price < 1 else '%.2f'|format(signal.price) }}</strong><span class="{{ 'up' if signal.change_pct >= 0 else 'down' }}">{{ '+' if signal.change_pct >= 0 else '' }}{{ '%.1f'|format(signal.change_pct) }}%</span></div><small>captured {{ signal.captured_at[:16]|replace('T',' ') }} UTC</small></section>

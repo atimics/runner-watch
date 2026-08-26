@@ -5,16 +5,19 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 from pytest import MonkeyPatch
 from starlette.requests import Request
 
 from runner_watch.ingestion import MarketEvent, SourceBatch, SourceFetch
 from runner_web import db
 from runner_web import main as web_main
+from runner_web.caller_ids import claim_caller_id, delete_caller_id
 from runner_web.db import connection, init_db
 from runner_web.ingestion import record_source_batch
 from runner_web.main import (
     APP_ORIGIN,
+    PublishSignal,
     TickerCommentPayload,
     _chart_annotations,
     _commission_research,
@@ -29,6 +32,8 @@ from runner_web.main import (
     comments_for_ticker,
     create_ticker_comment,
     get_commission,
+    get_signal,
+    publish_signal,
     pulse_data,
     radar_data,
     register_options,
@@ -172,6 +177,40 @@ def test_passkey_signup_needs_no_profile_fields(tmp_path: Path, monkeypatch: Mon
     assert user["display_name"] == "Member"
 
 
+def test_rate_limit_keys_do_not_contain_the_ip_or_account_id(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    captured: list[str] = []
+    monkeypatch.setattr(web_main, "RATE_LIMIT_HASH_KEY", b"test-rate-limit-key")
+    monkeypatch.setattr(
+        web_main,
+        "rate_limit_allowed",
+        lambda key, limit, seconds: captured.append(key) or True,
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/pulse",
+            "headers": [],
+            "client": ("203.0.113.42", 4200),
+        }
+    )
+
+    web_main.enforce_rate(request, "public", limit=1, seconds=60)
+    web_main.enforce_rate(
+        request,
+        "account",
+        limit=1,
+        seconds=60,
+        subject="private-user-id",
+    )
+
+    assert len(captured) == 2
+    assert all("203.0.113.42" not in key for key in captured)
+    assert all("private-user-id" not in key for key in captured)
+
+
 def insert_filing(
     accession: str,
     ticker: str,
@@ -279,6 +318,72 @@ def insert_scored_snapshot(
                 rank,
             ),
         )
+
+
+def test_public_calls_use_an_owned_caller_id_not_the_account_name(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "caller-signals.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("signal-user", "secret_account", "Secret Account", "active", captured_at),
+        )
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("other-user", "other_account", "Other Account", "active", captured_at),
+        )
+    identity = claim_caller_id("signal-user")
+    foreign_identity = claim_caller_id("other-user")
+    insert_scan_run("signal-run", captured_at, 1)
+    insert_scored_snapshot(
+        "signal-snapshot", "signal-run", "CALL", 60, 1, captured_at
+    )
+    monkeypatch.setattr(
+        web_main,
+        "require_user",
+        lambda session: {"id": "signal-user", "username": "secret_account"},
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/signals",
+            "headers": [(b"origin", APP_ORIGIN.encode())],
+            "client": ("127.0.0.1", 4200),
+        }
+    )
+
+    payload = PublishSignal(
+        snapshot_id="signal-snapshot",
+        caller_identity_id=foreign_identity["id"],
+        thesis="A source-bound public call.",
+        horizon="intraday",
+        invalidation="Price loses support.",
+        disclosure="No position.",
+    )
+    with pytest.raises(HTTPException, match="active caller IDs"):
+        publish_signal(payload, request, None)
+
+    response = publish_signal(
+        payload.model_copy(update={"caller_identity_id": identity["id"]}),
+        request,
+        None,
+    )
+    signal = get_signal(json.loads(response.body)["url"].removeprefix("/s/"))
+
+    assert signal is not None
+    assert signal["caller_handle"] == identity["handle"]
+    assert "username" not in signal
+    assert "display_name" not in signal
+    templates_root = Path(__file__).parents[1] / "web/templates"
+    assert "signal.username" not in (templates_root / "signal.html").read_text()
+    assert "signal.username" not in (templates_root / "home.html").read_text()
+
+    delete_caller_id("signal-user", identity["id"])
+    assert get_signal(str(signal["public_id"])) is None
 
 
 def test_ticker_page_does_not_add_a_guest_research_action(

@@ -180,6 +180,15 @@ def delete_caller_id(user_id: str, caller_identity_id: str) -> dict[str, Any]:
             (caller_identity_id,),
         )
         database.execute(
+            "DELETE FROM reports WHERE signal_id IN "
+            "(SELECT id FROM signals WHERE caller_identity_id=?)",
+            (caller_identity_id,),
+        )
+        database.execute(
+            "DELETE FROM signals WHERE caller_identity_id=?",
+            (caller_identity_id,),
+        )
+        database.execute(
             "UPDATE caller_identity_claims SET caller_identity_id=NULL "
             "WHERE caller_identity_id=?",
             (caller_identity_id,),
