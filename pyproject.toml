@@ -23,12 +23,14 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
+  "pytest-cov>=6.0",
   "ruff>=0.9",
 ]
 
 [project.scripts]
 runner-watch = "runner_watch.cli:main"
 stonks-ranker = "runner_web.ranker:main"
+stonks-migrate = "runner_web.db:main"
 stonks-migrate-sqlite = "runner_web.migrate_sqlite:main"
 stonks-worker = "runner_web.main:worker_main"
 
@@ -40,8 +42,24 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.pytest.ini_options]
+cache_dir = ".test-cache.nosync/pytest"
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = [
+  "--cov=runner_watch",
+  "--cov=runner_web",
+  "--cov-branch",
+  "--cov-report=term-missing:skip-covered",
+]
+
+[tool.coverage.run]
+data_file = ".test-cache.nosync/coverage"
+
+[tool.coverage.report]
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+]
 
 [tool.ruff]
 line-length = 100

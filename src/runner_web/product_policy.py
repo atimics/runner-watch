@@ -1,0 +1,96 @@
+from __future__ import annotations
+
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass
+from typing import Any, Protocol
+
+PRODUCT_POLICY_VERSION = "stonks.product-policy.v1"
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceGatePolicy:
+    version: int = 2
+    mode: str = "independent_families"
+    required_family: str = "market"
+    threshold: int = 3
+    families: tuple[str, ...] = ("market", "primary", "news", "crowd")
+
+
+@dataclass(frozen=True, slots=True)
+class BaseRatePolicy:
+    minimum_samples: int = 20
+    lookback_days: int = 120
+    clock_tolerance_minutes: int = 45
+
+
+@dataclass(frozen=True, slots=True)
+class RankerTrainingPolicy:
+    minimum_groups: int = 160
+    minimum_rows: int = 5_000
+    minimum_per_outcome: int = 20
+    validation_fraction: float = 0.10
+    test_fraction: float = 0.10
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchPromotionPolicy:
+    learning_cases: int = 20
+    promotion_cases: int = 50
+    promotion_tickers: int = 10
+    minimum_accuracy_lower_bound: float = 0.50
+    maximum_brier_score: float = 0.25
+    confidence_level: float = 0.95
+
+
+@dataclass(frozen=True, slots=True)
+class OperationsPolicy:
+    worker_heartbeat_seconds: int = 30
+    worker_heartbeat_max_age_seconds: int = 120
+
+
+EVIDENCE_GATE = EvidenceGatePolicy()
+BASE_RATES = BaseRatePolicy()
+RANKER_TRAINING = RankerTrainingPolicy()
+RESEARCH_PROMOTION = ResearchPromotionPolicy()
+OPERATIONS = OperationsPolicy()
+
+
+class SourcePolicyLike(Protocol):
+    source: str
+    feed: str
+    review_status: str
+    enabled: bool
+
+
+def source_policy_warnings(policies: Iterable[SourcePolicyLike]) -> list[dict[str, Any]]:
+    """Expose enabled, unapproved collectors without silently changing behavior."""
+
+    return [
+        {
+            "source": policy.source,
+            "feed": policy.feed,
+            "review_status": policy.review_status,
+            "severity": "blocking" if policy.review_status == "poc_only" else "review",
+            "warning": "enabled source has not been approved for public product effects",
+        }
+        for policy in policies
+        if policy.enabled and policy.review_status != "approved"
+    ]
+
+
+def policy_manifest(
+    source_policies: Iterable[SourcePolicyLike] = (),
+) -> dict[str, Any]:
+    """Return the machine-readable policy contract used by docs and APIs."""
+
+    evidence_gate = asdict(EVIDENCE_GATE)
+    evidence_gate["families"] = list(EVIDENCE_GATE.families)
+    return {
+        "version": PRODUCT_POLICY_VERSION,
+        "evidence_gate": evidence_gate,
+        "market_base_rates": asdict(BASE_RATES),
+        "ranker_training": asdict(RANKER_TRAINING),
+        "research_promotion": asdict(RESEARCH_PROMOTION),
+        "operations": asdict(OPERATIONS),
+        "source_policy_warnings": source_policy_warnings(source_policies),
+    }

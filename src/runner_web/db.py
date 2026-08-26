@@ -21,6 +21,7 @@ from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "data/runner-watch.db"))
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 REQUIRE_DATABASE_URL = os.getenv("REQUIRE_DATABASE_URL", "0") == "1"
+MIGRATION_LOCK_ID = 7_348_195_620_341_977_301
 
 
 def database_identity() -> str:
@@ -945,7 +946,7 @@ def _migration_008_flash_actor(db: DatabaseConnection) -> None:
         "actor_snapshot_json TEXT NOT NULL DEFAULT '{}'",
     ):
         _ensure_column(db, "research_commissions", definition)
-    known_flash_models = {DEFAULT_FLASH_MODEL, FLASH.model}
+    known_flash_models = {DEFAULT_FLASH_MODEL, FLASH.model, "z-ai/glm-5.3"}
     historical = db.execute(
         """
         SELECT id,requested_model,model FROM research_commissions
@@ -1179,7 +1180,140 @@ def _migration_014_thesis_cases(db: DatabaseConnection) -> None:
         """
     )
 
+def _migration_015_evidence_claims(db: DatabaseConnection) -> None:
+    """Group repeated source items into one real-world evidence claim."""
 
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS evidence_claims (
+            id TEXT PRIMARY KEY,
+            ticker TEXT NOT NULL,
+            claim_key TEXT NOT NULL,
+            claim_type TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            direction TEXT NOT NULL
+                CHECK(direction IN ('supports','risks','neutral')),
+            primary_source_type TEXT NOT NULL,
+            primary_source_url TEXT,
+            occurred_at TEXT NOT NULL,
+            first_collected_at TEXT NOT NULL,
+            last_collected_at TEXT NOT NULL,
+            source_count INTEGER NOT NULL DEFAULT 1,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(ticker,claim_key)
+        );
+        CREATE INDEX IF NOT EXISTS evidence_claims_ticker_collected
+            ON evidence_claims(ticker,first_collected_at DESC);
+        CREATE INDEX IF NOT EXISTS evidence_claims_ticker_occurred
+            ON evidence_claims(ticker,occurred_at DESC);
+        CREATE TABLE IF NOT EXISTS evidence_claim_sources (
+            claim_id TEXT NOT NULL REFERENCES evidence_claims(id) ON DELETE CASCADE,
+            source_key TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            source_url TEXT,
+            title TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
+            collected_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY(claim_id,source_key)
+        );
+        CREATE INDEX IF NOT EXISTS evidence_claim_sources_url
+            ON evidence_claim_sources(source_url);
+        CREATE TABLE IF NOT EXISTS thesis_case_claims (
+            case_id TEXT NOT NULL REFERENCES thesis_cases(id) ON DELETE CASCADE,
+            claim_id TEXT NOT NULL REFERENCES evidence_claims(id) ON DELETE CASCADE,
+            linked_at TEXT NOT NULL,
+            PRIMARY KEY(case_id,claim_id)
+        );
+        CREATE INDEX IF NOT EXISTS thesis_case_claims_claim
+            ON thesis_case_claims(claim_id,case_id);
+        """
+    )
+
+
+def _migration_016_research_stages(db: DatabaseConnection) -> None:
+    """Freeze each role and model call in the verified research pipeline."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS research_stage_runs (
+            id TEXT PRIMARY KEY,
+            commission_id TEXT NOT NULL
+                REFERENCES research_commissions(id) ON DELETE CASCADE,
+            stage TEXT NOT NULL,
+            stage_order INTEGER NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('complete','failed')),
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            prompt_version TEXT NOT NULL,
+            input_fingerprint TEXT NOT NULL,
+            actor_snapshot_json TEXT NOT NULL,
+            output_json TEXT NOT NULL DEFAULT '{}',
+            usage_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT,
+            created_at TEXT NOT NULL,
+            completed_at TEXT NOT NULL,
+            UNIQUE(commission_id,stage,input_fingerprint)
+        );
+        CREATE INDEX IF NOT EXISTS research_stage_runs_commission_order
+            ON research_stage_runs(commission_id,stage_order);
+        CREATE INDEX IF NOT EXISTS research_stage_runs_model_time
+            ON research_stage_runs(provider,model,completed_at DESC);
+        """
+    )
+
+
+def _migration_017_case_outcomes(db: DatabaseConnection) -> None:
+    """Measure each private case at the horizon inferred from its comment."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS thesis_case_outcomes (
+            case_id TEXT PRIMARY KEY REFERENCES thesis_cases(id) ON DELETE CASCADE,
+            ticker TEXT NOT NULL,
+            base_price REAL NOT NULL,
+            base_at TEXT NOT NULL,
+            horizon_minutes INTEGER NOT NULL,
+            due_at TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('pending','complete')),
+            end_price REAL,
+            observed_at TEXT,
+            return_pct REAL,
+            return_direction TEXT CHECK(return_direction IN ('up','down','flat')),
+            max_favorable_pct REAL,
+            max_adverse_pct REAL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS thesis_case_outcomes_status_due
+            ON thesis_case_outcomes(status,due_at);
+        CREATE INDEX IF NOT EXISTS thesis_case_outcomes_ticker_due
+            ON thesis_case_outcomes(ticker,due_at);
+        """
+    )
+
+
+def _migration_018_research_policy_outcomes(db: DatabaseConnection) -> None:
+    """Link model-policy reports to the private case outcomes that judge them."""
+
+    for definition in (
+        "case_id TEXT REFERENCES thesis_cases(id)",
+        "case_effect TEXT",
+        "market_view TEXT",
+        "model_confidence REAL",
+        "policy_version TEXT",
+    ):
+        _ensure_column(db, "research_commissions", definition)
+    db.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS research_commissions_case_time
+            ON research_commissions(case_id,completed_at DESC);
+        CREATE INDEX IF NOT EXISTS research_commissions_policy_model
+            ON research_commissions(policy_version,model,completed_at DESC);
+        """
+    )
 def _migration_019_repair_thesis_case_sources(db: DatabaseConnection) -> None:
     """Repair thesis tables created by an earlier version of migration 14."""
 
@@ -1239,7 +1373,41 @@ def _migration_020_user_positions(db: DatabaseConnection) -> None:
         """
     )
 
+def _migration_021_short_data(db: DatabaseConnection) -> None:
+    """Cache current short and borrow facts and freeze them on each scan."""
 
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS short_data_cache (
+            ticker TEXT PRIMARY KEY,
+            short_interest_pct_float REAL,
+            short_interest_shares REAL,
+            days_to_cover REAL,
+            short_interest_settlement_date TEXT,
+            borrow_fee_pct REAL,
+            shares_available REAL,
+            borrow_observed_at TEXT,
+            source TEXT NOT NULL,
+            source_url TEXT,
+            collected_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS short_data_cache_collected
+            ON short_data_cache(collected_at DESC);
+        """
+    )
+    for definition in (
+        "short_interest_pct_float REAL",
+        "short_interest_shares REAL",
+        "days_to_cover REAL",
+        "short_interest_settlement_date TEXT",
+        "borrow_fee_pct REAL",
+        "shares_available REAL",
+        "borrow_observed_at TEXT",
+        "short_data_source TEXT",
+        "short_data_url TEXT",
+        "short_data_collected_at TEXT",
+    ):
+        _ensure_column(db, "scan_snapshots", definition)
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -1262,43 +1430,76 @@ MIGRATIONS = (
     Migration(12, "chart_structure", _migration_012_chart_structure),
     Migration(13, "comment_pseudonyms", _migration_013_comment_pseudonyms),
     Migration(14, "thesis_cases", _migration_014_thesis_cases),
+    Migration(15, "evidence_claims", _migration_015_evidence_claims),
+    Migration(16, "research_stages", _migration_016_research_stages),
+    Migration(17, "case_outcomes", _migration_017_case_outcomes),
+    Migration(18, "research_policy_outcomes", _migration_018_research_policy_outcomes),
     Migration(19, "repair_thesis_case_sources", _migration_019_repair_thesis_case_sources),
     Migration(20, "user_positions", _migration_020_user_positions),
+    Migration(21, "short_data", _migration_021_short_data),
 )
 
 
-def _apply_migrations(db: DatabaseConnection) -> None:
-    db.execute(
-        """
-        CREATE TABLE IF NOT EXISTS schema_migrations (
-            version INTEGER PRIMARY KEY,
-            name TEXT NOT NULL,
-            applied_at TEXT NOT NULL
-        )
-        """
-    )
-    applied = {
-        int(row["version"]): str(row["name"])
-        for row in db.execute("SELECT version,name FROM schema_migrations").fetchall()
-    }
-    known_versions = {migration.version for migration in MIGRATIONS}
-    unknown = sorted(set(applied) - known_versions)
-    if unknown:
-        raise RuntimeError(f"Database has migrations newer than this app: {unknown}")
-    for migration in MIGRATIONS:
-        applied_name = applied.get(migration.version)
-        if applied_name is not None:
-            if applied_name != migration.name:
-                raise RuntimeError(
-                    f"Migration {migration.version} is recorded as {applied_name!r}, "
-                    f"expected {migration.name!r}"
-                )
-            continue
-        migration.apply(db)
+def _acquire_migration_lock(db: DatabaseConnection) -> bool:
+    """Serialize PostgreSQL migrations across web, worker, and release processes."""
+
+    if db.backend == "postgres":
         db.execute(
-            "INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)",
-            (migration.version, migration.name, datetime.now(UTC).isoformat()),
+            "SELECT pg_advisory_lock(?)",
+            (MIGRATION_LOCK_ID,),
+        ).fetchone()
+        return True
+    return False
+
+
+def _release_migration_lock(db: DatabaseConnection) -> None:
+    db.execute(
+        "SELECT pg_advisory_unlock(?)",
+        (MIGRATION_LOCK_ID,),
+    ).fetchone()
+
+
+def _apply_migrations(db: DatabaseConnection) -> None:
+    locked = _acquire_migration_lock(db)
+    try:
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TEXT NOT NULL
+            )
+            """
         )
+        applied = {
+            int(row["version"]): str(row["name"])
+            for row in db.execute("SELECT version,name FROM schema_migrations").fetchall()
+        }
+        known_versions = {migration.version for migration in MIGRATIONS}
+        unknown = sorted(set(applied) - known_versions)
+        if unknown:
+            raise RuntimeError(f"Database has migrations newer than this app: {unknown}")
+        for migration in MIGRATIONS:
+            applied_name = applied.get(migration.version)
+            if applied_name is not None:
+                if applied_name != migration.name:
+                    raise RuntimeError(
+                        f"Migration {migration.version} is recorded as {applied_name!r}, "
+                        f"expected {migration.name!r}"
+                    )
+                continue
+            migration.apply(db)
+            db.execute(
+                "INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)",
+                (migration.version, migration.name, datetime.now(UTC).isoformat()),
+            )
+    except BaseException:
+        if locked:
+            db.rollback()
+        raise
+    finally:
+        if locked:
+            _release_migration_lock(db)
 
 
 def init_db() -> None:
@@ -1310,3 +1511,9 @@ def init_db() -> None:
         _apply_migrations(db)
         _sync_flash_actor(db)
         _seed_source_registry(db)
+
+
+def main() -> None:
+    """Apply the current database schema as a deployment release command."""
+
+    init_db()

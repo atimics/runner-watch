@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$project_root"
+
+test_environment=${UV_PROJECT_ENVIRONMENT:-.venv.nosync}
+export UV_PROJECT_ENVIRONMENT="$test_environment"
+test_cache=${UV_CACHE_DIR:-.test-cache.nosync/uv}
+export UV_CACHE_DIR="$test_cache"
+ranker_target=${STONKS_INTEGER_RANKER_TARGET_DIR:-/tmp/stonks-integer-ranker-target}
+export STONKS_INTEGER_RANKER_TARGET_DIR="$ranker_target"
+
+cargo test --locked --target-dir "$ranker_target" --manifest-path rust/stonks-ranker/Cargo.toml
+cargo build --locked --target-dir "$ranker_target" --manifest-path rust/stonks-ranker/Cargo.toml
+
+exec uv run --no-sync pytest "$@"

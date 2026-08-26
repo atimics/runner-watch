@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from runner_web.db import connection, init_db
+from runner_web.product_policy import RANKER_TRAINING
 
 FEATURE_SCHEMA_VERSION = "stonks.ranker_features.v4"
 MODEL_KIND = "integer_multiclass_logistic_barrier_v5"
@@ -319,8 +320,8 @@ def _training_payload(groups: list[list[dict[str, Any]]]) -> list[list[dict[str,
 def train_shadow_ranker(
     horizon: str = DEFAULT_HORIZON,
     *,
-    min_groups: int = 160,
-    min_rows: int = 5_000,
+    min_groups: int = RANKER_TRAINING.minimum_groups,
+    min_rows: int = RANKER_TRAINING.minimum_rows,
     epochs: int = 500,
 ) -> dict[str, Any]:
     """Train the deterministic integer Rust ranker in shadow status."""
@@ -341,7 +342,7 @@ def train_shadow_ranker(
         for label in CLASS_NAMES
     }
     minimum_per_class = min(
-        20,
+        RANKER_TRAINING.minimum_per_outcome,
         max(2, min_rows // 50),
     )
     if min(outcome_counts.values()) < minimum_per_class:
@@ -691,12 +692,12 @@ def main() -> None:
     train.add_argument(
         "--min-groups",
         type=int,
-        default=160,
+        default=RANKER_TRAINING.minimum_groups,
     )
     train.add_argument(
         "--min-rows",
         type=int,
-        default=5_000,
+        default=RANKER_TRAINING.minimum_rows,
     )
     train.add_argument("--epochs", type=int, default=500)
     export = subparsers.add_parser("export-crl")

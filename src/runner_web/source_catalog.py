@@ -242,4 +242,42 @@ DEFAULT_SOURCE_POLICIES = (
         review_status="poc_only",
         enabled=_enabled("NASDAQ_TRADE_HALTS_ENABLED"),
     ),
+    SourcePolicy(
+        source="fintel",
+        feed="short_interest",
+        title="Fintel exchange-reported short interest",
+        owner="Fintel Ventures LLC",
+        terms_url="https://fintel.io/terms",
+        credential_env="FINTEL_API_KEY",
+        expected_cadence_seconds=900,
+        stale_after_seconds=86_400,
+        schedule="us_extended_weekdays",
+        storage_policy="normalized_only",
+        display_policy="source_link_with_attribution",
+        attribution="Fintel",
+        review_status="review_required",
+        enabled=(
+            _enabled_by_default("FINTEL_SHORT_DATA_ENABLED")
+            and bool(os.getenv("FINTEL_API_KEY", "").strip())
+        ),
+    ),
+    SourcePolicy(
+        source="fintel",
+        feed="borrow_rate",
+        title="Fintel borrow fee and shares available",
+        owner="Fintel Ventures LLC",
+        terms_url="https://fintel.io/terms",
+        credential_env="FINTEL_API_KEY",
+        expected_cadence_seconds=900,
+        stale_after_seconds=2_700,
+        schedule="us_extended_weekdays",
+        storage_policy="normalized_only",
+        display_policy="source_link_with_attribution",
+        attribution="Fintel",
+        review_status="review_required",
+        enabled=(
+            _enabled_by_default("FINTEL_SHORT_DATA_ENABLED")
+            and bool(os.getenv("FINTEL_API_KEY", "").strip())
+        ),
+    ),
 )

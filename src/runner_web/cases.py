@@ -1,14 +1,46 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from runner_web.db import connection
 
 CASE_STATUSES = {"active", "closed", "archived"}
+DEFAULT_CASE_HORIZON_MINUTES = 5 * 24 * 60
+MAX_CASE_HORIZON_MINUTES = 180 * 24 * 60
+
+
+def infer_horizon_minutes(comment: str) -> int:
+    """Infer a useful case horizon from the user's normal short comment."""
+
+    text = " ".join(comment.casefold().split())
+    explicit = re.search(r"(?<![a-z0-9])(\d{1,3})\s*(h|hr|hrs|d|day|days|w|wk|wks)(?![a-z])", text)
+    if explicit:
+        value = int(explicit.group(1))
+        unit = explicit.group(2)
+        multiplier = 60 if unit in {"h", "hr", "hrs"} else 1440
+        if unit in {"w", "wk", "wks"}:
+            multiplier = 7 * 1440
+        return max(60, min(value * multiplier, MAX_CASE_HORIZON_MINUTES))
+    phrases = (
+        (("six months", "half year"), 180 * 1440),
+        (("quarter", "three months", "3 months"), 90 * 1440),
+        (("this month", "next month", "one month", "month"), 30 * 1440),
+        (("two weeks", "fortnight"), 14 * 1440),
+        (("this week", "next week", "one week", "week"), 7 * 1440),
+        (("two days",), 2 * 1440),
+        (("tomorrow", "next day", "one day"), 1440),
+        (("intraday", "today"), 390),
+        (("next hour", "one hour", "hour"), 60),
+    )
+    for needles, minutes in phrases:
+        if any(needle in text for needle in needles):
+            return minutes
+    return DEFAULT_CASE_HORIZON_MINUTES
 
 
 def _iso() -> str:
@@ -27,6 +59,16 @@ def _json_list(value: Any) -> list[str]:
     except (TypeError, ValueError, json.JSONDecodeError):
         return []
     return [str(item) for item in parsed if str(item).strip()] if isinstance(parsed, list) else []
+
+
+def _json_array(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    try:
+        parsed = json.loads(str(value or "[]"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    return parsed if isinstance(parsed, list) else []
 
 
 def _clean_items(items: list[str] | None, *, limit: int = 12) -> list[str]:
@@ -50,8 +92,16 @@ def _public_case(row: Any) -> dict[str, Any]:
     item["horizon_minutes"] = int(item["horizon_minutes"])
     if item.get("reference_price") is not None:
         item["reference_price"] = float(item["reference_price"])
+    for key in (
+        "outcome_end_price",
+        "outcome_return_pct",
+        "outcome_max_favorable_pct",
+        "outcome_max_adverse_pct",
+    ):
+        if item.get(key) is not None:
+            item[key] = float(item[key])
     if "citations_json" in item:
-        item["latest_citations"] = _json_list(item.pop("citations_json"))
+        item["latest_citations"] = _json_array(item.pop("citations_json"))
     return item
 
 
@@ -68,11 +118,17 @@ def get_case(user_id: str, public_id: str) -> dict[str, Any] | None:
             SELECT c.*,u.direction AS latest_direction,u.summary AS latest_summary,
                    u.recommended_action AS latest_action,
                    u.citations_json,u.created_at AS latest_update_at,
+                   o.status AS outcome_status,o.due_at AS outcome_due_at,
+                   o.end_price AS outcome_end_price,o.observed_at AS outcome_observed_at,
+                   o.return_pct AS outcome_return_pct,o.return_direction AS outcome_direction,
+                   o.max_favorable_pct AS outcome_max_favorable_pct,
+                   o.max_adverse_pct AS outcome_max_adverse_pct,
                    sp.pseudonym AS source_pseudonym,
                    (SELECT COUNT(*) FROM thesis_case_revisions r WHERE r.case_id=c.id)
                        AS revision_count
             FROM thesis_cases c
             LEFT JOIN latest_update u ON u.case_id=c.id AND u.position=1
+            LEFT JOIN thesis_case_outcomes o ON o.case_id=c.id
             LEFT JOIN ticker_comments sc ON sc.id=c.source_comment_id
             LEFT JOIN comment_pseudonyms sp ON sp.user_id=sc.user_id
             WHERE c.user_id=? AND c.public_id=?
@@ -95,8 +151,21 @@ def latest_case_for_ticker(user_id: str, ticker: str) -> dict[str, Any] | None:
     return get_case(user_id, str(row["public_id"])) if row else None
 
 
-def list_cases(user_id: str, *, include_inactive: bool = False) -> list[dict[str, Any]]:
-    status_clause = "" if include_inactive else "AND c.status='active'"
+def list_cases(
+    user_id: str,
+    *,
+    include_inactive: bool = False,
+    include_recent_closed: bool = False,
+) -> list[dict[str, Any]]:
+    if include_inactive:
+        status_clause = ""
+        parameters: tuple[Any, ...] = (user_id,)
+    elif include_recent_closed:
+        status_clause = "AND (c.status='active' OR c.closed_at>=?)"
+        parameters = (user_id, (datetime.now(UTC) - timedelta(days=30)).isoformat())
+    else:
+        status_clause = "AND c.status='active'"
+        parameters = (user_id,)
     with connection() as db:
         rows = db.execute(
             f"""
@@ -109,17 +178,23 @@ def list_cases(user_id: str, *, include_inactive: bool = False) -> list[dict[str
             SELECT c.*,u.direction AS latest_direction,u.summary AS latest_summary,
                    u.recommended_action AS latest_action,
                    u.citations_json,u.created_at AS latest_update_at,
+                   o.status AS outcome_status,o.due_at AS outcome_due_at,
+                   o.end_price AS outcome_end_price,o.observed_at AS outcome_observed_at,
+                   o.return_pct AS outcome_return_pct,o.return_direction AS outcome_direction,
+                   o.max_favorable_pct AS outcome_max_favorable_pct,
+                   o.max_adverse_pct AS outcome_max_adverse_pct,
                    sp.pseudonym AS source_pseudonym,
                    (SELECT COUNT(*) FROM thesis_case_revisions r WHERE r.case_id=c.id)
                        AS revision_count
             FROM thesis_cases c
             LEFT JOIN latest_update u ON u.case_id=c.id AND u.position=1
+            LEFT JOIN thesis_case_outcomes o ON o.case_id=c.id
             LEFT JOIN ticker_comments sc ON sc.id=c.source_comment_id
             LEFT JOIN comment_pseudonyms sp ON sp.user_id=sc.user_id
             WHERE c.user_id=? {status_clause}
             ORDER BY COALESCE(u.created_at,c.updated_at) DESC,c.updated_at DESC
             """,
-            (user_id,),
+            parameters,
         ).fetchall()
     return [_public_case(row) for row in rows]
 
@@ -218,7 +293,7 @@ def create_case(
                 confidence,
                 "active",
                 None,
-                "Thesis started",
+                "View saved",
                 timestamp,
             ),
         )
@@ -235,8 +310,8 @@ def create_case(
                 case_id,
                 "created",
                 "unchanged",
-                "Thesis tracking started. No new evidence has been reviewed yet.",
-                "Monitor for evidence that changes the thesis or its risks.",
+                "Personal view saved. No new evidence has been reviewed yet.",
+                "Watch for evidence that changes the view or its risks.",
                 None,
                 confidence,
                 "[]",

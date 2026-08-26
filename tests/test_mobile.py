@@ -62,6 +62,18 @@ def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
     assert "pendingUpdateTickers" in radar_template
 
 
+def test_ticker_uses_only_the_existing_comment_for_a_personal_view() -> None:
+    template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
+
+    assert "Track a thesis" not in template
+    assert "thesisDialog" not in template
+    assert "thesisForm" not in template
+    assert "Ask Flash" not in template
+    assert "commissionButton" not in template
+    assert template.count("<textarea") == 1
+    assert 'id="commentBody"' in template
+
+
 def test_ui_copy_drops_ai_and_corporate_filler() -> None:
     root = Path(__file__).parents[1]
     ui_copy = "\n".join(
@@ -233,7 +245,7 @@ def insert_scored_snapshot(
         )
 
 
-def test_ticker_page_renders_guest_flash_attribution(
+def test_ticker_page_does_not_add_a_guest_research_action(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "ticker-page.db")
@@ -266,7 +278,8 @@ def test_ticker_page_renders_guest_flash_attribution(
     response = web_main.ticker_page("ONE", request, None)
 
     assert response.status_code == 200
-    assert "Uses GLM 5.3 through OpenRouter" in response.body.decode()
+    assert "Ask Flash" not in response.body.decode()
+    assert "Connect OpenRouter" not in response.body.decode()
 
 
 def test_pulse_only_lists_tickers_from_the_latest_scored_scan(
@@ -1068,6 +1081,12 @@ def test_ticker_feedback_tracks_reactions_and_signed_in_comments(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "feedback.db")
+    scheduled: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        web_main,
+        "_schedule_case_research",
+        lambda user_id, ticker, case_id: scheduled.append((user_id, ticker, case_id)),
+    )
     init_db()
     timestamp = datetime.now(UTC)
     insert_filing("feedback-one", "ONE", 1.25, 70, timestamp.isoformat(), "P")
@@ -1115,7 +1134,7 @@ def test_ticker_feedback_tracks_reactions_and_signed_in_comments(
     )
     result = create_ticker_comment(
         "ONE",
-        TickerCommentPayload(body="  Watching   the close above VWAP.  "),
+        TickerCommentPayload(body="  Watching   this week above VWAP.  "),
         comment_request,
         raw_session,
     )
@@ -1123,7 +1142,7 @@ def test_ticker_feedback_tracks_reactions_and_signed_in_comments(
 
     assert result.status_code == 201
     assert payload["count"] == 1
-    assert payload["comment"]["body"] == "Watching the close above VWAP."
+    assert payload["comment"]["body"] == "Watching this week above VWAP."
     assert payload["comment"]["pseudonym"] == web_main.comment_pseudonym("feedback-user")
     assert payload["comment"]["pseudonym"].count("-") == 1
     assert payload["comment"]["pseudonym"].islower()
@@ -1133,6 +1152,7 @@ def test_ticker_feedback_tracks_reactions_and_signed_in_comments(
     assert comments_for_ticker("ONE") == [payload["comment"]]
     assert alpha_comments_data() == [{**payload["comment"], "ticker": "ONE"}]
     assert "radar_case" not in payload
+    assert scheduled == []
 
 
 def test_radar_orders_events_by_time_not_activity(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -1295,6 +1315,140 @@ def test_commissioned_report_is_public_without_storing_the_openrouter_key(
         assert database.execute("SELECT COUNT(*) FROM research_commissions").fetchone()[0] == 1
 
 
+def test_browser_commission_uses_the_server_openrouter_key(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "verified-commission.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_filing("verified-one", "ONE", 1.25, 90, captured_at, "P")
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("verified-user", "member_verified", "Member", "active", captured_at),
+        )
+    captured: dict[str, str] = {}
+
+    def fake_report(key: str, context: dict[str, Any], user_id: str, **kwargs: Any) -> Any:
+        captured["key"] = key
+        return (
+            {
+                "headline": "ONE checked report",
+                "thesis": "The stored evidence is mixed.",
+                "summary": "Flash reviewed the stored evidence.",
+                "catalysts": ["Verified catalyst"],
+                "risks": ["Verified risk"],
+                "watch": ["New filing"],
+                "unknowns": ["Financing terms"],
+                "sources": context["sources"],
+            },
+            "z-ai/glm-5.3",
+            {},
+        )
+
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "sk-or-server-side-test-key")
+    monkeypatch.setattr(web_main, "_generate_openrouter_report", fake_report)
+
+    report = _commission_research("verified-user", "ONE", "")
+
+    assert report["status"] == "complete"
+    assert report["research_mode"] == "one_shot_system_context"
+    assert report["usage"]["research_mode"] == "one_shot_system_context"
+    assert report["headline"] == "ONE checked report"
+    assert captured["key"] == "sk-or-server-side-test-key"
+
+
+def test_verified_pipeline_freezes_every_stage(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "research-stages.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_filing("stage-one", "ONE", 1.25, 70, captured_at, "P")
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("stage-user", "member_stage", "Member", "active", captured_at),
+        )
+    commission, created = web_main._create_research_commission("stage-user", "ONE")
+    assert created is True
+
+    def fake_stage(
+        stage: str,
+        instructions: str,
+        payload: dict[str, Any],
+        schema: dict[str, Any],
+        *,
+        model: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        del instructions, payload, schema
+        metadata = {
+            "provider": "openai",
+            "model": model,
+            "provider_request_id": f"request-{stage}",
+            "usage": {"total_tokens": 12},
+        }
+        if stage in {
+            "catalyst_researcher",
+            "financing_skeptic",
+            "market_liquidity_checker",
+        }:
+            return {"findings": [], "unknowns": []}, metadata
+        if stage == "independent_critic":
+            return (
+                {
+                    "supported_statements": [],
+                    "rejected_statements": [],
+                    "conflicts": [],
+                    "required_caveats": [],
+                    "verdict": "unchanged",
+                },
+                metadata,
+            )
+        return (
+            {
+                "headline": "ONE remains a watch",
+                "thesis": "No verified change yet.",
+                "summary": "The stored evidence does not support a stronger view.",
+                "case_effect": "unchanged",
+                "market_view": "neutral",
+                "confidence": 0.4,
+                "catalysts": [],
+                "risks": [],
+                "watch": [],
+                "unknowns": [],
+                "sources": [],
+            },
+            metadata,
+        )
+
+    monkeypatch.setattr(web_main, "_generate_openai_stage", fake_stage)
+    report, model, usage = web_main._generate_verified_report(
+        commission["id"],
+        {"ticker": "ONE", "primary_evidence": {}, "context_sections": [], "sources": []},
+        actor=web_main.FLASH,
+    )
+
+    with connection() as database:
+        stages = database.execute(
+            "SELECT * FROM research_stage_runs WHERE commission_id=? ORDER BY stage_order",
+            (commission["id"],),
+        ).fetchall()
+    assert report["headline"] == "ONE remains a watch"
+    assert model == "z-ai/glm-5.3"
+    assert usage["pipeline_version"] == "verified-research-v1"
+    assert [row["stage"] for row in stages] == [
+        "catalyst_researcher",
+        "financing_skeptic",
+        "market_liquidity_checker",
+        "independent_critic",
+        "synthesis",
+    ]
+    assert all(row["status"] == "complete" for row in stages)
+    assert all(row["prompt_version"] == "verified-research-v1" for row in stages)
+    assert all(len(row["input_fingerprint"]) == 64 for row in stages)
+
+
 def test_running_flash_commission_is_a_single_server_job(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
@@ -1322,17 +1476,17 @@ def test_running_flash_commission_is_a_single_server_job(
     assert "openrouter" not in " ".join(rows[0].keys()).lower()
 
 
-def test_flash_commission_page_resumes_the_server_job() -> None:
+def test_ticker_has_no_manual_research_job_controls() -> None:
     template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
 
-    assert "You can leave this page" in template
-    assert "Retry Flash" in template
-    assert "commissionNeedsRetry = result.retryable !== false" in template
-    assert "fetch(`/api/research/${encodeURIComponent(ticker)}`)" in template
-    assert "if (initialCommissionStatus === 'running') pollCommission()" in template
-    assert "View report" in template
-    assert "flashModelLabel" in template
-    assert 'class="flash-model-label">{{ flash.model_label }}' in template
+    assert "Ask Flash" not in template
+    assert "Retry Flash" not in template
+    assert "commissionButton" not in template
+    assert "fetch(`/api/research/${encodeURIComponent(ticker)}`)" not in template
+    assert "runnerOpenRouter" not in template
+    assert "X-OpenRouter-Key" not in template
+    assert 'Flash <small class="flash-model-label">{{ flash.model_label }}</small>' in template
+    assert "{{ call.inference_model_label }}" in template
 
 
 def test_flash_model_label_is_shown_on_public_flash_surfaces() -> None:
@@ -1349,7 +1503,7 @@ def test_flash_model_label_is_shown_on_public_flash_surfaces() -> None:
     assert "call.inference_model_label" in ticker_row
 
 
-def test_commission_request_uses_glm_53_with_a_minimal_prompt(
+def test_legacy_commission_request_uses_flash_model_with_a_minimal_prompt(
     monkeypatch: MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}

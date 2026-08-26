@@ -6,7 +6,42 @@ from pytest import MonkeyPatch
 
 from runner_web import db
 from runner_web.ai_kol import FLASH
-from runner_web.db import MIGRATIONS, connection, init_db
+from runner_web.db import (
+    MIGRATION_LOCK_ID,
+    MIGRATIONS,
+    _acquire_migration_lock,
+    _release_migration_lock,
+    connection,
+    init_db,
+)
+
+
+class _LockResult:
+    def fetchone(self) -> tuple[int]:
+        return (1,)
+
+
+class _PostgresLockDatabase:
+    backend = "postgres"
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[int, ...]]] = []
+
+    def execute(self, statement: str, parameters: tuple[int, ...]) -> _LockResult:
+        self.calls.append((statement, parameters))
+        return _LockResult()
+
+
+def test_postgres_migrations_take_one_session_lock() -> None:
+    database = _PostgresLockDatabase()
+
+    _acquire_migration_lock(database)  # type: ignore[arg-type]
+    _release_migration_lock(database)  # type: ignore[arg-type]
+
+    assert database.calls == [
+        ("SELECT pg_advisory_lock(?)", (MIGRATION_LOCK_ID,)),
+        ("SELECT pg_advisory_unlock(?)", (MIGRATION_LOCK_ID,)),
+    ]
 
 
 def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -46,6 +81,24 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         update_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='thesis_case_updates'"
         ).fetchone()
+        claim_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='evidence_claims'"
+        ).fetchone()
+        claim_source_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='evidence_claim_sources'"
+        ).fetchone()
+        research_stage_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='research_stage_runs'"
+        ).fetchone()
+        case_outcome_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='thesis_case_outcomes'"
+        ).fetchone()
+        position_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='user_positions'"
+        ).fetchone()
+        short_data_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='short_data_cache'"
+        ).fetchone()
         flash = database.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
         commission_columns = {
             row["name"]
@@ -65,6 +118,14 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             row["name"]
             for row in database.execute("PRAGMA table_info(scan_snapshots)").fetchall()
         }
+        case_columns = {
+            row["name"]
+            for row in database.execute("PRAGMA table_info(thesis_cases)").fetchall()
+        }
+        case_revision_columns = {
+            row["name"]
+            for row in database.execute("PRAGMA table_info(thesis_case_revisions)").fetchall()
+        }
     assert [tuple(row) for row in migrations] == [
         (migration.version, migration.name) for migration in MIGRATIONS
     ]
@@ -77,10 +138,24 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert revision_table is not None
     assert position_table is not None
     assert update_table is not None
+    assert claim_table is not None
+    assert claim_source_table is not None
+    assert research_stage_table is not None
+    assert case_outcome_table is not None
+    assert position_table is not None
+    assert short_data_table is not None
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
+    assert flash["inference_provider"] == "openrouter"
     assert flash["inference_model"] == "z-ai/glm-5.3"
     assert {"actor_id", "actor_snapshot_json"} <= commission_columns
+    assert {
+        "case_id",
+        "case_effect",
+        "market_view",
+        "model_confidence",
+        "policy_version",
+    } <= commission_columns
     assert "actor_snapshot_json" in call_columns
     assert {
         "opening_range_position",
@@ -89,7 +164,19 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "fib_retracement_pct",
         "structure_available",
         "fibonacci_available",
+        "short_interest_pct_float",
+        "short_interest_shares",
+        "days_to_cover",
+        "short_interest_settlement_date",
+        "borrow_fee_pct",
+        "shares_available",
+        "borrow_observed_at",
+        "short_data_source",
+        "short_data_url",
+        "short_data_collected_at",
     } <= snapshot_columns
+    assert {"source_kind", "source_comment_id", "horizon_minutes"} <= case_columns
+    assert "source_comment_id" in case_revision_columns
     assert {
         "market_events_event_time",
         "market_events_ticker_event_time",
@@ -103,8 +190,19 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "thesis_cases_user_status_time",
         "thesis_case_revisions_case_time",
         "thesis_case_updates_case_time",
+        "thesis_cases_active_source_comment",
+        "evidence_claims_ticker_collected",
+        "evidence_claim_sources_url",
+        "thesis_case_claims_claim",
+        "research_stage_runs_commission_order",
+        "research_stage_runs_model_time",
+        "thesis_case_outcomes_status_due",
+        "thesis_case_outcomes_ticker_due",
+        "research_commissions_case_time",
+        "research_commissions_policy_model",
         "user_positions_user_ticker_time",
         "user_positions_user_status_time",
+        "short_data_cache_collected",
     } <= indexes
 
 

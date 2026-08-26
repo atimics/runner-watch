@@ -4,7 +4,14 @@ from pathlib import Path
 from pytest import MonkeyPatch
 
 from runner_web import db
-from runner_web.cases import case_revisions, create_case, get_case, list_cases, update_case
+from runner_web.cases import (
+    case_revisions,
+    create_case,
+    get_case,
+    infer_horizon_minutes,
+    list_cases,
+    update_case,
+)
 from runner_web.db import connection, init_db
 
 
@@ -14,6 +21,13 @@ def seed_user(user_id: str = "case-user") -> None:
             "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
             (user_id, user_id, "Case User", "active", datetime.now(UTC).isoformat()),
         )
+
+
+def test_comment_text_infers_a_horizon_without_an_extra_form() -> None:
+    assert infer_horizon_minutes("Watching this today") == 390
+    assert infer_horizon_minutes("Could work over 48h") == 2880
+    assert infer_horizon_minutes("My view for the next month") == 43_200
+    assert infer_horizon_minutes("No time written here") == 7200
 
 
 def test_case_keeps_an_append_only_revision_history(
@@ -82,6 +96,44 @@ def test_cases_are_private_to_their_owner(tmp_path: Path, monkeypatch: MonkeyPat
     ) is None
 
 
+def test_case_keeps_its_social_comment_source(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "case-source.db")
+    init_db()
+    seed_user()
+    timestamp = datetime.now(UTC).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO comment_pseudonyms(user_id,pseudonym,created_at) VALUES(?,?,?)",
+            ("case-user", "quiet-fox", timestamp),
+        )
+        database.execute(
+            """
+            INSERT INTO ticker_comments(id,ticker,user_id,body,status,created_at)
+            VALUES(?,?,?,?,?,?)
+            """,
+            ("source-comment", "ONE", "case-user", "Watching volume", "public", timestamp),
+        )
+
+    created = create_case(
+        "case-user",
+        "ONE",
+        thesis="Watching volume",
+        horizon_minutes=7200,
+        reference_price=1.2,
+        invalidation="Unknown — not supplied by the user.",
+        risks=[],
+        open_questions=[],
+        confidence=None,
+        source_comment_id="source-comment",
+        source_kind="community_comment",
+    )
+
+    assert created["source_kind"] == "community_comment"
+    assert created["source_comment_id"] == "source-comment"
+    assert created["source_pseudonym"] == "quiet-fox"
+    assert created["confidence"] is None
+
+
 def test_closing_a_case_preserves_the_final_outcome(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
@@ -112,4 +164,5 @@ def test_closing_a_case_preserves_the_final_outcome(
     assert closed["closed_at"] is not None
     assert closed["final_outcome"] == "Target reached before invalidation."
     assert list_cases("case-user") == []
+    assert len(list_cases("case-user", include_recent_closed=True)) == 1
     assert len(list_cases("case-user", include_inactive=True)) == 1

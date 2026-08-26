@@ -8,11 +8,12 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from runner_web.db import connection
+from runner_web.product_policy import BASE_RATES
 
 EASTERN = ZoneInfo("America/New_York")
-MIN_BASE_RATE_SAMPLES = 20
-BASE_RATE_LOOKBACK_DAYS = 120
-MATCH_TOLERANCE_MINUTES = 45
+MIN_BASE_RATE_SAMPLES = BASE_RATES.minimum_samples
+BASE_RATE_LOOKBACK_DAYS = BASE_RATES.lookback_days
+MATCH_TOLERANCE_MINUTES = BASE_RATES.clock_tolerance_minutes
 
 MARKET_METRICS = {
     "relative_volume": "Relative volume",

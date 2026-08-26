@@ -2,10 +2,11 @@
 
 Runner Watch is a low-priced stock scanner for finding unusual price and volume movement early.
 It uses free Yahoo Finance data through `yfinance`. It does not need a broker login or a paid API.
+Optional Fintel short and borrow data needs a Fintel API key and the matching account access.
 
 The public beta is at [stonks.rati.foundation](https://stonks.rati.foundation). Its mobile-first
 app has three main views: **Pulse** for live penny-stock intelligence, a compact ticker page with
-the chart and primary-source evidence, **Radar** for automatic activity-based alerts, and **Alpha**
+the chart and primary-source evidence, **Radar** for personal and social changes, and **Alpha**
 for the community heart ranking and subscriber research reports. Pulse paginates as the user
 scrolls. Radar works before login and merges into the passkey profile later.
 
@@ -90,7 +91,23 @@ tracked with numbered forward migrations. See
 
 The Nasdaq Trader halt collector archives the RSS response and stores versioned halt state once a
 minute during the extended US session. It is off by default while the feed terms are reviewed. Set
-`NASDAQ_TRADE_HALTS_ENABLED=true` to opt in. An active halt is a hard risk veto.
+`NASDAQ_TRADE_HALTS_ENABLED=true` to opt in. An active halt is a hard risk veto. The production
+configuration currently opts in, so `/api/capabilities` reports a blocking policy warning until the
+catalog review state is explicitly approved.
+
+The scanner can also show exchange-reported short interest, short float, days to cover, borrow fee,
+and shares available. Set `FINTEL_API_KEY` to enable Fintel's documented API. The app refreshes only
+the displayed scan rows, caches normalized results for 15 minutes, links each value to its source,
+and keeps the settlement or observation time. It does not scrape Fintel or IBorrowDesk pages. A
+missing key, missing account entitlement, or source error leaves the values unknown without
+breaking the price scan. Use `FINTEL_SHORT_DATA_TTL_SECONDS`, `FINTEL_SHORT_DATA_MAX_SYMBOLS`,
+`FINTEL_SHORT_DATA_TIMEOUT_SECONDS`, and `FINTEL_SHORT_DATA_WORKERS` to tune the collector, or set
+`FINTEL_SHORT_DATA_ENABLED=false` to turn it off without removing the secret.
+
+Short interest is an open-position count reported twice monthly. Daily short-sale volume is a
+different measure and is not used as a substitute. Borrow fee and availability are intraday
+securities-lending readings from one feed, not a market-wide count of all shares that can be
+borrowed.
 
 The researched and prioritized plan for adding halts, quotes, fundamentals, news, biotech events,
 short activity, and market context is in [the data source ingestion roadmap](docs/data-source-roadmap.md).
@@ -109,25 +126,44 @@ also leave short comments. Public comment names are stable adjective-animal alia
 salted hash, while account names stay private. Set `COMMENT_PSEUDONYM_SALT` to a stable private value
 in each deployed environment before comments are opened to users.
 
-The report worker stays queued until `OPENAI_API_KEY` is configured. It uses the Responses API with
-strict structured output, sends only stored market and filing evidence, and defaults to the model in
-`AI_REPORT_MODEL` (`gpt-5.6`). A missing key never falls back to fake generated copy.
+A comment is also the only text needed for My Radar. The first comment on a ticker starts a private
+case from that public view; a later comment revises it and preserves the old version. Likes, votes,
+and recent discussion add social context, but they do not override primary evidence or deterministic
+risk vetoes. There is no separate thesis form, research button, or tracking button.
 
-Commissioned reports are authored by **Flash ⚡**, Runner Watch's first AI KOL. Flash is a durable
+The same comment can contain a natural horizon such as `today`, `48h`, `this week`, or `next month`.
+No picker is shown. If no horizon is written, the view lasts five days. Once archived market bars
+cover that time, My Radar records the ending return and best and worst move, closes the view, and
+keeps the result visible for 30 days.
+
+The same comment quietly starts a report job when the server has `OPENROUTER_API_KEY` configured.
+The worker sends only stored evidence to OpenRouter and never asks a user to connect a model
+provider. The key stays on the server and is never placed in a browser or job payload. A missing key
+never blocks the comment or falls back to fake generated copy.
+
+Reports are authored by **Flash ⚡**, Runner Watch's first AI KOL. Flash is a durable
 public identity in position 1 of a planned four-position model ladder. Its current engine is
 `z-ai/glm-5.3`; changing the engine later does not rename Flash or rewrite old reports. The other
 ladder positions are not active yet. Set Flash's engine with `FLASH_MODEL` when a model is promoted.
-The older `OPENROUTER_RESEARCH_MODEL` setting remains a compatibility fallback.
 
-Flash uses one OpenRouter call. It does not run a web search or an agent loop. Before the call,
-Runner Watch ranks and deduplicates its stored SEC filing
-text, named reporting people, issuer facts, news, social reports, corporate events, prior risk
-states, and market history. It fills up to 80% of the configured model context with relevant data,
-without padding the prompt when less evidence exists, and reserves the rest for reasoning and the
-report. The default GLM 5.3 context setting is 1,048,576 tokens. Override it with
-`OPENROUTER_RESEARCH_CONTEXT_TOKENS`, change the fill ratio with
-`OPENROUTER_RESEARCH_CONTEXT_FILL_RATIO`, or change the output cap with
-`OPENROUTER_RESEARCH_OUTPUT_TOKENS`.
+Flash makes one source-bound OpenRouter request. The stored evidence covers catalysts, financing,
+market and liquidity, filings, people, news, and social context. Unapproved source links are removed,
+and the deterministic rug engine keeps veto power outside the model.
+
+Before those stages, Runner Watch ranks and deduplicates its stored SEC filing text, named reporting
+people, issuer facts, news, social reports, corporate events, prior risk states, and market history.
+It fills up to 80% of the configured model context with relevant data without padding it when less
+evidence exists. Override the context with `RESEARCH_CONTEXT_TOKENS`, change the fill ratio with
+`RESEARCH_CONTEXT_FILL_RATIO`, or change the output reserve with
+`RESEARCH_OUTPUT_RESERVE_TOKENS`. The older `OPENROUTER_RESEARCH_*` context names remain accepted so
+existing deployments can migrate without losing their settings.
+
+Each verified report stores its market view, confidence, model, and policy version against the
+private case that caused it. When the case reaches its horizon, `/api/kols` reports accuracy, Brier
+score, Brier skill against a 50% baseline, and a 95% accuracy lower bound for each real model-policy
+pair. Repeated reports on the same case count once. Twenty independent cases move a policy from
+learning to evaluation. Promotion needs at least 50 independent cases across 10 tickers, a
+better-than-chance accuracy lower bound, and Brier score below 0.25.
 
 Commissioned Flash reports use BYOK. OpenRouter's browser OAuth flow gives the user a key, and the
 browser sends that key to Runner Watch over HTTPS only when starting a report. Runner Watch stores
@@ -199,9 +235,11 @@ uv run stonks-ranker export-crl data/stonks-crl-60m.csv --horizon 60m
 The status API is available at `/api/ranker/status`. Raw source storage will grow over time, so a
 long-running deployment should eventually move archived bars and documents to object storage.
 
-`/api/capabilities` combines live source, worker, model, evidence-gate, and base-rate modes without
-exposing credential names or values. Clients can use it instead of hardcoding which features are
-available in a deployment.
+`/api/capabilities` combines live source, worker, model, evidence-gate, base-rate, training, and
+promotion policy without exposing credential names or values. It also reports enabled sources that
+have not passed review. Clients can use it instead of hardcoding deployment behavior. `/health`
+requires a recent database-backed heartbeat from the separate worker, so a live web process no
+longer hides a dead worker.
 
 ## AI KOL calls
 
@@ -211,8 +249,8 @@ numeric signal. A call freezes its ticker, signal-model ID, confidence, expected
 time, and entry price. Repeated scans cannot reset the entry. Pulse shows active lightning tags with
 net paper PnL, and ticker pages show the complete call receipt.
 
-These existing paper calls benchmark Flash's fixed signal policy; they do not claim that GLM 5.3
-personally authored the call. Flash's GLM 5.3 attribution applies to its commissioned research. A
+These existing paper calls benchmark Flash's fixed signal policy; they do not claim that Flash's
+current model personally authored the call. Model attribution applies to commissioned research. A
 future model battle can add model-authored calls without mixing them with this older signal track.
 
 Flash uses the same `+8% before -4% within 60 minutes` contract as the shadow ranker. It can abandon
@@ -223,7 +261,7 @@ They are research results, not trade recommendations.
 
 Flash is the only seeded KOL slot today. Its records include ladder position, inference provider,
 and inference model, and each commissioned report snapshots those fields. This keeps future model
-promotions honest: an old GLM 5.3 report remains an old GLM 5.3 report. Human hearts remain separate
+promotions honest: an old report keeps its original model snapshot. Human hearts remain separate
 from AI reactions. Scorecards are available at `/api/kols`, and ticker call history is available at
 `/api/t/{ticker}/kol-calls`.
 
@@ -288,6 +326,7 @@ more useful during pre-market than a simple comparison with a full day's average
 ## Important limits
 
 - Yahoo Finance is unofficial, can be delayed, and sometimes returns missing or wrong bars.
+- Fintel short and borrow data needs an API subscription and may require separate feed access.
 - A broad free scan can be slow or hit rate limits. Raise the scan cap in steps.
 - The tool does not know the live bid/ask spread, current halt state, float, or all market news.
 - The saved quick list will age. Use the full list or your own symbols for better coverage.

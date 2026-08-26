@@ -1,3 +1,5 @@
+FROM ghcr.io/astral-sh/uv:0.12.3 AS uv
+
 FROM rust:1.88-slim-bookworm AS integer-ranker
 
 WORKDIR /ranker
@@ -13,26 +15,29 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+COPY --from=uv /uv /bin/uv
 COPY --from=integer-ranker /ranker/target/release/stonks-integer-ranker \
     /usr/local/bin/stonks-integer-ranker
 
 RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
 COPY web ./web
-RUN pip install .
+RUN uv sync --locked --no-dev --no-editable
 
-ENV STONKS_INTEGER_RANKER_BIN="/usr/local/bin/stonks-integer-ranker"
+ENV PATH="/app/.venv/bin:$PATH" \
+    STONKS_INTEGER_RANKER_BIN="/usr/local/bin/stonks-integer-ranker"
 
 EXPOSE 8080
 
 FROM base AS test
 COPY tests ./tests
-RUN pip install "pytest>=8.0" "ruff>=0.9"
-RUN pytest -q && ruff check src tests
-CMD ["pytest", "-q"]
+RUN uv sync --locked --extra dev --no-editable
+RUN uv run --no-sync pytest -q && uv run --no-sync ruff check src tests
+CMD ["uv", "run", "--no-sync", "pytest", "-q"]
 
 FROM base AS runtime
 CMD ["uvicorn", "runner_web.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--forwarded-allow-ips", "*"]

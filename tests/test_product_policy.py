@@ -1,0 +1,44 @@
+from dataclasses import replace
+
+from runner_web.product_policy import (
+    PRODUCT_POLICY_VERSION,
+    RANKER_TRAINING,
+    policy_manifest,
+)
+from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
+
+
+def test_policy_manifest_is_machine_readable_and_reports_source_review_drift() -> None:
+    trade_halts = next(
+        policy
+        for policy in DEFAULT_SOURCE_POLICIES
+        if policy.source == "nasdaq_trader" and policy.feed == "trade_halts"
+    )
+    policies = [
+        replace(
+            trade_halts,
+            enabled=True,
+            review_status="poc_only",
+        )
+    ]
+
+    manifest = policy_manifest(policies)
+
+    assert manifest["version"] == PRODUCT_POLICY_VERSION
+    assert manifest["ranker_training"] == {
+        "minimum_groups": 160,
+        "minimum_rows": 5_000,
+        "minimum_per_outcome": 20,
+        "validation_fraction": 0.10,
+        "test_fraction": 0.10,
+    }
+    assert manifest["source_policy_warnings"] == [
+        {
+            "source": "nasdaq_trader",
+            "feed": "trade_halts",
+            "review_status": "poc_only",
+            "severity": "blocking",
+            "warning": "enabled source has not been approved for public product effects",
+        }
+    ]
+    assert RANKER_TRAINING.minimum_rows == 5_000

@@ -12,6 +12,7 @@ from runner_web.ai_kol import KOL_LADDER_SIZE, model_display_name
 from runner_web.collection import recording_market_data
 from runner_web.db import connection
 from runner_web.outcomes import _bar_prices, barrier_outcome
+from runner_web.research_policy import research_policy_scorecards
 
 
 def _iso(value: datetime | None = None) -> str:
@@ -671,4 +672,5 @@ def kol_status() -> dict[str, Any]:
         "calls": sum(int(row["calls"]) for row in scorecards),
         "active_calls": sum(int(row["active_calls"]) for row in scorecards),
         "paper_pnl_note": "$1,000 paper calls with estimated trading costs.",
+        "research_policies": research_policy_scorecards(),
     }

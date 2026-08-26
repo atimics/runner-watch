@@ -13,13 +13,13 @@
   <link rel="stylesheet" href="/static/pulse-attention.css?v={{ static_version }}">
   <link rel="stylesheet" href="/static/kol.css?v={{ static_version }}">
   <link rel="stylesheet" href="/static/product-flows.css?v={{ static_version }}">
-  <script src="/static/openrouter.js?v={{ static_version }}"></script>
+  <link rel="stylesheet" href="/static/desktop-split.css?v={{ static_version }}">
   <script src="/static/market-clock.js?v={{ static_version }}" defer></script>
   {% block head %}{% endblock %}
   <link rel="stylesheet" href="/static/sharp.css?v={{ static_version }}">
 </head>
 <body>
-  <div class="mobile-app">
+  <div class="mobile-app {% block app_class %}{% endblock %}">
     {% block content %}{% endblock %}
     {% block bottom_nav %}
     <nav class="tab-bar" aria-label="Main navigation">
@@ -55,33 +55,16 @@
       <span class="profile-mark">{{ user.display_name[:1]|upper }}</span>
       <div><strong>{{ user.display_name }}</strong><small>Passkey account</small></div>
     </div>
-    <button type="button" class="openrouter-link" id="openRouterButton"><span>Connect OpenRouter</span><i>›</i></button>
     <a href="/settings/passkey">Add passkey <span>›</span></a>
     <a href="/scanner">Scanner <span>›</span></a>
     <button type="button" id="logoutButton">Log out</button>
     <button type="button" class="sheet-close" id="closeProfile">Close</button>
   </dialog>
   <script nonce="{{ request.state.csp_nonce }}">
-    window.runnerOpenRouter.setProfile({{ openrouter_storage_id|default('guest')|tojson }});
     const profileSheet = document.getElementById('profileSheet');
     document.querySelectorAll('[data-profile]').forEach(button => button.addEventListener('click', () => profileSheet.showModal()));
     document.getElementById('closeProfile')?.addEventListener('click', () => profileSheet.close());
     profileSheet?.addEventListener('click', event => { if (event.target === profileSheet) profileSheet.close(); });
-    const openRouterButton = document.getElementById('openRouterButton');
-    const renderOpenRouter = () => {
-      const connected = window.runnerOpenRouter.connected();
-      openRouterButton.querySelector('span').textContent = connected ? 'Disconnect OpenRouter' : 'Connect OpenRouter';
-      openRouterButton.classList.toggle('connected', connected);
-    };
-    renderOpenRouter();
-    openRouterButton.addEventListener('click', async () => {
-      if (window.runnerOpenRouter.connected()) {
-        window.runnerOpenRouter.disconnect();
-        renderOpenRouter();
-      } else {
-        await window.runnerOpenRouter.connect(location.href);
-      }
-    });
     document.getElementById('logoutButton')?.addEventListener('click', async () => {
       const response = await fetch('/api/auth/logout', {method: 'POST'});
       if (response.ok) location.href = '/';

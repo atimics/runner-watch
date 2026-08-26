@@ -4,8 +4,14 @@ from pathlib import Path
 from pytest import MonkeyPatch
 
 from runner_web import db, outcomes
+from runner_web.cases import create_case, get_case
 from runner_web.db import connection, init_db
-from runner_web.outcomes import barrier_outcome, due_horizons, return_pct
+from runner_web.outcomes import (
+    barrier_outcome,
+    case_horizon_outcome,
+    due_horizons,
+    return_pct,
+)
 
 
 def outcome_row(base_at: datetime) -> dict[str, object]:
@@ -73,6 +79,90 @@ def test_timeout_requires_bars_covering_the_full_hour() -> None:
     assert result is not None
     assert result["barrier_label"] == "timeout"
     assert barrier_outcome(complete[:4], base, 100.0) is None
+
+
+def test_case_horizon_uses_the_first_archived_bar_after_its_due_time() -> None:
+    base = datetime(2026, 8, 24, 14, tzinfo=UTC)
+    bars = [
+        (base + timedelta(minutes=30), 101.0, 98.0, 100.0),
+        (base + timedelta(minutes=65), 106.0, 99.0, 105.0),
+        (base + timedelta(minutes=70), 120.0, 80.0, 90.0),
+    ]
+
+    result = case_horizon_outcome(
+        bars,
+        base,
+        100.0,
+        60,
+        at=base + timedelta(minutes=90),
+    )
+
+    assert result is not None
+    assert result["end_price"] == 105.0
+    assert result["return_pct"] == 5.0
+    assert result["max_favorable_pct"] == 6.0
+    assert result["max_adverse_pct"] == -2.0
+
+
+def test_case_outcome_closes_the_view_at_its_inferred_horizon(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    current = datetime.now(UTC) + timedelta(minutes=70)
+    base_at = current - timedelta(minutes=70)
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "case-horizon.db")
+    monkeypatch.setattr(outcomes, "_latest_prices", lambda tickers: {"PEN": 2.2})
+    init_db()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("case-owner", "case_owner", "Case Owner", "active", base_at.isoformat()),
+        )
+    case = create_case(
+        "case-owner",
+        "PEN",
+        thesis="Watching PEN for one hour.",
+        horizon_minutes=60,
+        reference_price=2.0,
+        invalidation="Unknown — not supplied by the user.",
+        risks=[],
+        open_questions=[],
+        confidence=None,
+    )
+    observed_at = base_at + timedelta(minutes=65)
+    with connection() as database:
+        database.execute(
+            "UPDATE thesis_cases SET reference_at=? WHERE id=?",
+            (base_at.isoformat(), case["id"]),
+        )
+        database.execute(
+            """
+            INSERT INTO market_bars(
+                source,ticker,interval,bar_time,high,low,close,
+                first_collected_at,last_collected_at
+            ) VALUES(?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                "yahoo",
+                "PEN",
+                "5m",
+                observed_at.isoformat(),
+                2.3,
+                1.9,
+                2.2,
+                current.isoformat(),
+                current.isoformat(),
+            ),
+        )
+
+    result = outcomes.refresh_case_outcomes(current)
+    resolved = get_case("case-owner", case["public_id"])
+
+    assert result["completed"] == 1
+    assert resolved is not None
+    assert resolved["status"] == "closed"
+    assert resolved["outcome_status"] == "complete"
+    assert resolved["outcome_return_pct"] == 10.0
+    assert resolved["latest_summary"] == "1h view ended +10.0% at $2.2."
 
 
 def test_refresh_outcomes_labels_only_due_horizons(

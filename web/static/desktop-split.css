@@ -1,0 +1,119 @@
+.desktop-coin-panel { display: none; }
+
+@media (min-width: 900px) {
+  body { background: #050706; }
+
+  .mobile-app.pulse-app {
+    width: min(1180px, 100%);
+    max-width: 1180px;
+    min-height: 100dvh;
+    padding-bottom: 70px;
+    border-color: #1c231f;
+  }
+
+  .pulse-app .screen-head {
+    position: relative;
+    height: 76px;
+    padding-inline: 24px;
+  }
+
+  .pulse-app .session-clock { padding-inline: 24px; }
+
+  .pulse-desktop-shell {
+    min-height: calc(100dvh - 111px);
+    display: grid;
+    grid-template-columns: minmax(360px, 430px) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .pulse-list-column {
+    min-height: calc(100dvh - 111px);
+    border-right: 1px solid var(--line);
+  }
+
+  .pulse-list-column .kol-score-strip { margin: 0; border-inline: 0; }
+  .pulse-list-column .list-section { padding: 7px 14px 16px; }
+
+  .pulse-list-column .ticker-row.desktop-selected {
+    background: #111613;
+    box-shadow: inset 2px 0 var(--green);
+  }
+
+  .desktop-coin-panel {
+    position: sticky;
+    top: 0;
+    min-height: calc(100dvh - 111px);
+    display: block;
+    padding: 28px 34px 36px;
+    background: #090c0a;
+  }
+
+  .desktop-coin-empty {
+    min-height: 460px;
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .desktop-coin-content[hidden], .desktop-coin-empty[hidden] { display: none; }
+
+  .desktop-coin-head {
+    display: grid;
+    grid-template-columns: 58px minmax(0, 1fr) auto;
+    gap: 14px;
+    align-items: center;
+    padding-bottom: 22px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .desktop-coin-title { display: flex; align-items: center; gap: 9px; }
+  .desktop-coin-title h2 { margin: 0; font-size: 31px; letter-spacing: -.045em; }
+  .desktop-coin-title span { padding: 3px 6px; border: 1px solid #2b3630; color: #8f9d96; font-size: 8px; }
+  .desktop-coin-head p { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
+  .desktop-coin-price { text-align: right; }
+  .desktop-coin-price strong, .desktop-coin-price small { display: block; }
+  .desktop-coin-price strong { font-size: 24px; letter-spacing: -.03em; }
+  .desktop-coin-price small { margin-top: 4px; font-size: 12px; font-weight: 800; }
+
+  .desktop-coin-chart { height: 236px; padding: 22px 0 4px; border-bottom: 1px solid var(--line); }
+  .desktop-coin-chart svg { width: 100%; height: 100%; overflow: visible; color: var(--green); }
+  .desktop-coin-chart svg.falling { color: var(--red); }
+  .desktop-chart-line, .desktop-chart-placeholder { fill: none; stroke: currentColor; stroke-width: 2; vector-effect: non-scaling-stroke; }
+  .desktop-chart-placeholder { opacity: .55; }
+  .desktop-chart-area { fill: color-mix(in srgb, currentColor 12%, transparent); stroke: none; }
+
+  .desktop-coin-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    border-bottom: 1px solid var(--line);
+  }
+  .desktop-coin-metrics > div { padding: 16px 14px 15px; border-right: 1px solid var(--line); }
+  .desktop-coin-metrics > div:first-child { padding-left: 0; }
+  .desktop-coin-metrics > div:last-child { border-right: 0; }
+  .desktop-coin-metrics span, .desktop-coin-metrics strong { display: block; }
+  .desktop-coin-metrics span { color: var(--muted); font-size: 8px; text-transform: uppercase; letter-spacing: .08em; }
+  .desktop-coin-metrics strong { margin-top: 5px; font-size: 16px; }
+
+  .desktop-coin-reason { padding: 20px 0; border-bottom: 1px solid var(--line); }
+  .desktop-coin-reason > span { color: var(--green); font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .1em; }
+  .desktop-coin-reason h3 { margin: 8px 0 13px; font-size: 20px; line-height: 1.25; letter-spacing: -.025em; }
+  .desktop-coin-reason > div { display: flex; flex-wrap: wrap; gap: 6px; }
+  .desktop-coin-reason > div span { padding: 6px 8px; border: 1px solid #2a342f; color: #aeb9b3; font-size: 9px; }
+  .desktop-coin-reason > div span.risk { border-color: rgba(255,107,122,.28); color: #d9a1aa; }
+
+  .desktop-coin-social { min-height: 58px; display: flex; align-items: center; gap: 18px; }
+  .desktop-coin-social span { margin-right: auto; color: #ff6684; font-size: 11px; font-weight: 750; }
+  .desktop-coin-social a { color: var(--soft); font-size: 10px; }
+  .desktop-coin-social a:last-child { color: var(--green); font-weight: 750; }
+
+  .pulse-app .tab-bar {
+    width: min(1180px, 100%);
+    padding-inline: calc((100% - 420px) / 2);
+  }
+}
+
+@media (min-width: 1180px) {
+  .mobile-app.pulse-app { margin-block: 18px; min-height: calc(100dvh - 36px); }
+  .pulse-app .tab-bar { width: 1180px; }
+}

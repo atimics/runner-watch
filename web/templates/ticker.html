@@ -61,21 +61,6 @@
     <button class="reaction-button comment-jump" type="button" id="commentJump"><span>Comment</span><b id="commentCount">{{ comment_count }}</b></button>
   </section>
 
-  <section class="research-action">
-    {% if user %}
-      {% if latest_commission and latest_commission.status == 'complete' %}
-      <a class="commission-button" href="/research/{{ latest_commission.public_id }}">View report</a>
-      <small>Report ready</small>
-      {% else %}
-      <button class="commission-button" type="button" id="commissionButton"{% if latest_commission and latest_commission.status == 'running' %} disabled{% endif %}>{% if latest_commission and latest_commission.status == 'running' %}Flash is digging…{% elif latest_commission and latest_commission.status == 'failed' %}Retry Flash{% else %}Ask Flash{% endif %} <small class="flash-model-label">{{ flash.model_label }}</small></button>
-      <small id="commissionStatus">{% if latest_commission and latest_commission.status == 'running' %}You can leave this page{% elif latest_commission and latest_commission.status == 'failed' %}{{ latest_commission.error or 'Report failed. Try again.' }}{% endif %}</small>
-      {% endif %}
-    {% else %}
-    <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Log in to ask Flash <span class="flash-model-label">{{ flash.model_label }}</span></a>
-    <small>Uses {{ flash.model_label }} through OpenRouter</small>
-    {% endif %}
-  </section>
-
   <section class="chart-card" aria-label="Price chart">
     <div class="chart-modes" role="group" aria-label="Chart lens">
       <button class="active" type="button" data-chart-mode="tape">Tape</button>
@@ -215,11 +200,6 @@ const company = {{ detail.company|tojson }};
 const chart = document.getElementById('priceChart');
 const status = document.getElementById('chartStatus');
 const chartEvents = document.getElementById('chartEvents');
-const commissionButton = document.getElementById('commissionButton');
-const commissionStatus = document.getElementById('commissionStatus');
-const initialCommissionStatus = {{ (latest_commission.status if latest_commission else '')|tojson }};
-const positionData = {{ positions|tojson }};
-let commissionNeedsRetry = initialCommissionStatus === 'failed';
 let allPoints=[];
 let chartAnnotations=[];
 let chartLevels=[];
@@ -228,6 +208,7 @@ let chartStructure={};
 let chartMode='tape';
 let activeRange='1D';
 const initialPressure={{ detail.trade_pressure|tojson }};
+const positionData={{ positions|tojson }};
 const annotationColors={pulse:'#f5c66b',positive:'#57e389',risk:'#ff6b7a',media:'#75a7ff',neutral:'#a3ada8'};
 const chartModeNotes={tape:'OHLCV bars, volume, and session VWAP',gravity:'Repeated prices, heavy volume, and session reference zones',astrology:'Fixed-anchor Fibonacci crowd references · not a prediction'};
 function chartMoney(value){const number=Number(value);if(!Number.isFinite(number))return '—';return '$'+number.toFixed(number<1?4:number<10?3:2);}
@@ -407,81 +388,6 @@ commentForm?.addEventListener('submit',async event=>{
     document.getElementById('commentCount').textContent=result.count;document.getElementById('discussionCount').textContent=result.count;document.getElementById('commentEmpty').hidden=true;
   }catch(error){commentStatus.textContent=error.message||'Could not post';}finally{submit.disabled=false;}
 });
-if (commissionButton) {
-  let commissionPollTimer = null;
-  const flashModelLabel = {{ flash.model_label|tojson }};
-  const setCommissionButton = label => {
-    commissionButton.textContent = label;
-    if (!label.includes('Flash')) return;
-    commissionButton.append(document.createTextNode(' '));
-    const model = document.createElement('small');
-    model.className = 'flash-model-label';
-    model.textContent = flashModelLabel;
-    commissionButton.append(model);
-  };
-  const renderCommissionButton = () => {
-    setCommissionButton(window.runnerOpenRouter.connected() ? (commissionNeedsRetry ? 'Retry Flash' : 'Ask Flash') : 'Connect OpenRouter');
-  };
-  const pollCommission = async () => {
-    clearTimeout(commissionPollTimer);
-    try {
-      const response = await fetch(`/api/research/${encodeURIComponent(ticker)}`);
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.detail || 'Could not check the report');
-      if (result.status === 'complete' && result.url) {
-        location.href = result.url;
-        return;
-      }
-      if (result.status === 'failed') {
-        commissionNeedsRetry = result.retryable !== false;
-        commissionStatus.textContent = result.error || 'Report failed. Try again.';
-        commissionButton.disabled = false;
-        renderCommissionButton();
-        return;
-      }
-      commissionButton.disabled = true;
-      setCommissionButton('Flash is digging…');
-      commissionStatus.textContent = 'You can leave this page';
-      commissionPollTimer = setTimeout(pollCommission, 2500);
-    } catch (_) {
-      commissionStatus.textContent = 'Still running…';
-      commissionPollTimer = setTimeout(pollCommission, 5000);
-    }
-  };
-  if (initialCommissionStatus === 'running') pollCommission();
-  else renderCommissionButton();
-  commissionButton.addEventListener('click', async () => {
-    if (!window.runnerOpenRouter.connected()) {
-      await window.runnerOpenRouter.connect(location.href);
-      return;
-    }
-    commissionButton.disabled = true;
-    setCommissionButton('Flash is digging…');
-    commissionStatus.textContent = 'Starting…';
-    commissionNeedsRetry = false;
-    try {
-      const response = await fetch(`/api/research/${encodeURIComponent(ticker)}`, {
-        method: 'POST',
-        headers: {'X-OpenRouter-Key': window.runnerOpenRouter.key()}
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        if (response.status === 401 || response.status === 403) window.runnerOpenRouter.disconnect();
-        throw new Error(result.detail || 'Report failed');
-      }
-      if (result.status === 'complete' && result.url) {
-        location.href = result.url;
-        return;
-      }
-      await pollCommission();
-    } catch (error) {
-      commissionNeedsRetry = true;
-      commissionStatus.textContent = error.message || String(error);
-      commissionButton.disabled = false;
-      renderCommissionButton();
-    }
-  });
-}
 const openedAt=Date.now();
 addEventListener('pagehide',()=>{const seconds=Math.round((Date.now()-openedAt)/1000);if(seconds<3)return;navigator.sendBeacon('/api/activity',new Blob([JSON.stringify({ticker,event_type:'dwell',seconds})],{type:'application/json'}));});
 function compactVolume(value){

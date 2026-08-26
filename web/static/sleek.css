@@ -338,7 +338,7 @@ body {
   .session-clock { padding-left: 15px; padding-right: 15px; }
   .list-section, .radar-section, .alpha-section { padding-left: 10px; padding-right: 10px; }
   .alpha-board { padding-left: 10px; padding-right: 10px; }
-  .research-action, .research-report { margin-left: 15px; margin-right: 15px; }
+  .research-report { margin-left: 15px; margin-right: 15px; }
   .feedback-strip { margin-left: 15px; margin-right: 15px; }
   .discussion-section { padding-left: 15px; padding-right: 15px; }
   .tab-bar { width: calc(100% - 16px); padding-left: 22px; padding-right: 22px; }

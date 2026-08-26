@@ -13,7 +13,7 @@ jobs:
     name: Snapshot production data
     runs-on: ubuntu-latest
     steps:
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
       - run: flyctl volumes snapshots create vol_rnz3gwm5m9em2q1r --app runner-watch-db
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

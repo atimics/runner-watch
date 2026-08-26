@@ -120,6 +120,9 @@
     const caseSource = row.section === 'cases' && row.case_source_name
       ? `<span class="case-source">Shared by ${esc(row.case_source_name)}</span>`
       : '';
+    const caseSocial = row.section === 'cases' && row.social_label
+      ? `<span class="case-social">${esc(row.social_label)}</span>`
+      : '';
     const trackPrompt = row.needs_thesis
       ? '<span class="case-track-prompt">Comment once to make this view personal</span>'
       : '';
@@ -128,7 +131,7 @@
       <span class="token-copy">
         <span class="ticker-line"><strong>${esc(row.ticker)}</strong>${kolTags}${badge}<small class="ticker-age">${esc(age)}</small></span>
         <span class="company-name">${esc(company)}</span>
-        ${caseSource}${thesis}${trackPrompt}
+        ${caseSource}${thesis}${caseSocial}${trackPrompt}
         <span class="catalyst${catalystTone}">${esc(row.pulse_label || 'No recent event')}${events}${safety}</span>
       </span>
       <span class="quote">

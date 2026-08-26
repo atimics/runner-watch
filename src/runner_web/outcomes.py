@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import logging
 import math
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import pandas as pd
-
-from runner_web.collection import recording_market_data
+from runner_web.cases import update_case
 from runner_web.db import connection
 
 LOG = logging.getLogger(__name__)
@@ -18,6 +17,7 @@ UPPER_BARRIER_PCT = 8.0
 LOWER_BARRIER_PCT = 4.0
 BARRIER_HORIZON = timedelta(minutes=60)
 BAR_TOLERANCE = timedelta(minutes=10)
+CASE_OUTCOME_GRACE = timedelta(days=4)
 
 
 def iso(value: datetime | None = None) -> str:
@@ -44,6 +44,10 @@ def due_horizons(row: dict[str, Any], at: datetime | None = None) -> list[str]:
 
 
 def _latest_prices(tickers: list[str]) -> dict[str, float]:
+    import pandas as pd
+
+    from runner_web.collection import recording_market_data
+
     unique = list(dict.fromkeys(tickers))
     if not unique:
         return {}
@@ -291,6 +295,209 @@ def barrier_outcome(
         result.update(barrier_label="timeout", barrier_hit_at=None, barrier_ambiguous=0)
         return result
     return None
+
+
+def case_horizon_outcome(
+    bars: list[Bar],
+    base_at: datetime,
+    base_price: float,
+    horizon_minutes: int,
+    *,
+    at: datetime | None = None,
+) -> dict[str, Any] | None:
+    """Measure a case at its own horizon without reading bars after that point."""
+
+    current = (at or datetime.now(UTC)).astimezone(UTC)
+    base_utc = base_at.astimezone(UTC)
+    due = base_utc + timedelta(minutes=horizon_minutes)
+    if current < due:
+        return None
+    observed = next(
+        (
+            (stamp, high, low, close)
+            for stamp, high, low, close in bars
+            if due <= stamp <= min(current, due + CASE_OUTCOME_GRACE)
+        ),
+        None,
+    )
+    if observed is None:
+        return None
+    observed_at, _, _, end_price = observed
+    window = [bar for bar in bars if base_utc < bar[0] <= observed_at]
+    if not window:
+        return None
+    result = return_pct(base_price, end_price)
+    if result is None:
+        return None
+    max_high = max(float(bar[1]) for bar in window)
+    min_low = min(float(bar[2]) for bar in window)
+    direction = "up" if result > 0.5 else "down" if result < -0.5 else "flat"
+    return {
+        "end_price": float(end_price),
+        "observed_at": iso(observed_at),
+        "return_pct": result,
+        "return_direction": direction,
+        "max_favorable_pct": return_pct(base_price, max_high),
+        "max_adverse_pct": return_pct(base_price, min_low),
+    }
+
+
+def _horizon_label(minutes: int) -> str:
+    if minutes % (30 * 1440) == 0:
+        return f"{minutes // (30 * 1440)}mo"
+    if minutes % (7 * 1440) == 0:
+        return f"{minutes // (7 * 1440)}w"
+    if minutes % 1440 == 0:
+        return f"{minutes // 1440}d"
+    if minutes % 60 == 0:
+        return f"{minutes // 60}h"
+    return f"{minutes}m"
+
+
+def refresh_case_outcomes(at: datetime | None = None) -> dict[str, Any]:
+    """Close personal views only when archived prices cover their own horizon."""
+
+    current = (at or datetime.now(UTC)).astimezone(UTC)
+    timestamp = iso(current)
+    with connection() as db:
+        cases = [
+            dict(row)
+            for row in db.execute(
+                """
+                SELECT c.* FROM thesis_cases c
+                LEFT JOIN thesis_case_outcomes o ON o.case_id=c.id
+                WHERE c.status='active' AND c.reference_price>0
+                      AND (o.status IS NULL OR o.status='pending')
+                """
+            ).fetchall()
+        ]
+        for case in cases:
+            try:
+                base_at = datetime.fromisoformat(str(case["reference_at"]))
+            except ValueError:
+                continue
+            if base_at.tzinfo is None:
+                base_at = base_at.replace(tzinfo=UTC)
+            due_at = base_at.astimezone(UTC) + timedelta(
+                minutes=int(case["horizon_minutes"])
+            )
+            db.execute(
+                """
+                INSERT INTO thesis_case_outcomes(
+                    case_id,ticker,base_price,base_at,horizon_minutes,due_at,
+                    status,created_at,updated_at
+                ) VALUES(?,?,?,?,?,?,'pending',?,?)
+                ON CONFLICT(case_id) DO UPDATE SET
+                    horizon_minutes=excluded.horizon_minutes,
+                    due_at=excluded.due_at,updated_at=excluded.updated_at
+                WHERE thesis_case_outcomes.status='pending'
+                """,
+                (
+                    case["id"],
+                    case["ticker"],
+                    case["reference_price"],
+                    iso(base_at.astimezone(UTC)),
+                    case["horizon_minutes"],
+                    iso(due_at),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+
+    due_cases: list[dict[str, Any]] = []
+    for case in cases:
+        try:
+            base_at = datetime.fromisoformat(str(case["reference_at"]))
+        except ValueError:
+            continue
+        if base_at.tzinfo is None:
+            base_at = base_at.replace(tzinfo=UTC)
+        if current >= base_at.astimezone(UTC) + timedelta(
+            minutes=int(case["horizon_minutes"])
+        ):
+            due_cases.append(case)
+    tickers = [str(case["ticker"]) for case in due_cases]
+    _latest_prices(tickers)
+    archived = _bar_prices(tickers)
+    completed: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    with connection() as db:
+        for case in due_cases:
+            try:
+                base_at = datetime.fromisoformat(str(case["reference_at"]))
+            except ValueError:
+                continue
+            if base_at.tzinfo is None:
+                base_at = base_at.replace(tzinfo=UTC)
+            outcome = case_horizon_outcome(
+                archived.get(str(case["ticker"]), []),
+                base_at,
+                float(case["reference_price"]),
+                int(case["horizon_minutes"]),
+                at=current,
+            )
+            if outcome is None:
+                continue
+            db.execute(
+                """
+                UPDATE thesis_case_outcomes SET
+                    status='complete',end_price=?,observed_at=?,return_pct=?,
+                    return_direction=?,max_favorable_pct=?,max_adverse_pct=?,updated_at=?
+                WHERE case_id=? AND status='pending'
+                """,
+                (
+                    outcome["end_price"],
+                    outcome["observed_at"],
+                    outcome["return_pct"],
+                    outcome["return_direction"],
+                    outcome["max_favorable_pct"],
+                    outcome["max_adverse_pct"],
+                    timestamp,
+                    case["id"],
+                ),
+            )
+            completed.append((case, outcome))
+
+    for case, outcome in completed:
+        horizon = _horizon_label(int(case["horizon_minutes"]))
+        summary = (
+            f"{horizon} view ended {float(outcome['return_pct']):+.1f}% "
+            f"at ${float(outcome['end_price']):.4g}."
+        )
+        closed = update_case(
+            str(case["user_id"]),
+            str(case["public_id"]),
+            {"status": "closed", "final_outcome": summary},
+            change_note="Closed automatically at the comment's inferred horizon",
+        )
+        if not closed:
+            continue
+        with connection() as db:
+            db.execute(
+                """
+                INSERT OR IGNORE INTO thesis_case_updates(
+                    id,case_id,kind,direction,summary,recommended_action,
+                    confidence_before,confidence_after,citations_json,
+                    evidence_fingerprint,deterministic_veto_json,created_at
+                ) VALUES(?,?,?,'unchanged',?,?,?,?,?,?,?,?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    case["id"],
+                    "outcome",
+                    summary,
+                    "The view reached its horizon. A later comment starts a new view.",
+                    case.get("confidence"),
+                    case.get("confidence"),
+                    "[]",
+                    f"case-outcome:{case['id']}:{outcome['observed_at']}",
+                    "{}",
+                    outcome["observed_at"],
+                ),
+            )
+
+    _state("case_outcomes_last_refresh", timestamp, timestamp)
+    _state("case_outcomes_completed", str(len(completed)), timestamp)
+    return {"pending": len(cases), "due": len(due_cases), "completed": len(completed)}
 
 
 def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:

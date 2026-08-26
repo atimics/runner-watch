@@ -14,6 +14,9 @@ from runner_web.db import connection
 DEFAULT_CONTEXT_FILL_RATIO = 0.80
 DEFAULT_OUTPUT_RESERVE_TOKENS = 16_384
 KNOWN_MODEL_CONTEXT_TOKENS = {
+    "gpt-5.6-terra": 1_050_000,
+    "gpt-5.6-luna": 1_050_000,
+    "gpt-5.6-sol": 1_050_000,
     "z-ai/glm-5.3": 1_048_576,
     "z-ai/glm-5.2": 1_048_576,
 }
@@ -45,21 +48,30 @@ def research_context_budget(model: str | None = None) -> dict[str, Any]:
         32_768,
         int(
             os.getenv(
-                "OPENROUTER_RESEARCH_CONTEXT_TOKENS",
-                str(default_context),
+                "RESEARCH_CONTEXT_TOKENS",
+                os.getenv("OPENROUTER_RESEARCH_CONTEXT_TOKENS", str(default_context)),
             )
         ),
     )
     ratio = float(
-        os.getenv("OPENROUTER_RESEARCH_CONTEXT_FILL_RATIO", str(DEFAULT_CONTEXT_FILL_RATIO))
+        os.getenv(
+            "RESEARCH_CONTEXT_FILL_RATIO",
+            os.getenv(
+                "OPENROUTER_RESEARCH_CONTEXT_FILL_RATIO",
+                str(DEFAULT_CONTEXT_FILL_RATIO),
+            ),
+        )
     )
     ratio = max(0.20, min(0.85, ratio))
     output_reserve = max(
         4_096,
         int(
             os.getenv(
-                "OPENROUTER_RESEARCH_OUTPUT_RESERVE_TOKENS",
-                str(DEFAULT_OUTPUT_RESERVE_TOKENS),
+                "RESEARCH_OUTPUT_RESERVE_TOKENS",
+                os.getenv(
+                    "OPENROUTER_RESEARCH_OUTPUT_RESERVE_TOKENS",
+                    str(DEFAULT_OUTPUT_RESERVE_TOKENS),
+                ),
             )
         ),
     )

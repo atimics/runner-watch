@@ -72,20 +72,19 @@
       {% endfor %}
     </section>
     {% endif %}
-  {% endif %}
-
-  {% if not board.rows and board.contenders %}
+  {% elif board.contenders %}
   <section class="alpha-contenders">
     <div class="alpha-section-head"><h2>Contenders</h2><span>Vote Bull or Bear to start Alpha</span></div>
     {% for item in board.contenders %}
     <article class="alpha-rank-row contender-row">
+      <span class="rank-number">—</span>
       <a href="/t/{{ item.ticker }}"><span class="coin coin-{{ item.coin_tone }}"><b>{{ item.coin_label }}</b><i></i></span><span><strong>{{ item.ticker }}</strong><small>{{ item.pulse_label }}</small></span></a>
       <a class="alpha-open" href="/t/{{ item.ticker }}#discussion">Open</a>
     </article>
     {% endfor %}
   </section>
-  {% elif not board.rows %}
-  <div class="empty-list"><strong>No ranked tickers</strong></div>
+  {% else %}
+  <div class="empty-list"><strong>No ranked tickers</strong><span>React or comment on a ticker to start Alpha.</span></div>
   {% endif %}
 </main>
 {% endblock %}
