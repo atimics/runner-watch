@@ -1639,6 +1639,20 @@ def _migration_027_caller_identities(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_028_signal_caller_identities(db: DatabaseConnection) -> None:
+    """Stop exposing account names on human calls and require a separate caller ID."""
+
+    _ensure_column(
+        db,
+        "signals",
+        "caller_identity_id TEXT REFERENCES caller_identities(id)",
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS signals_caller_identity "
+        "ON signals(caller_identity_id,created_at DESC)"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -1674,6 +1688,7 @@ MIGRATIONS = (
     Migration(25, "flash_wallet", _migration_025_flash_wallet),
     Migration(26, "gdpr_privacy", _migration_026_gdpr_privacy),
     Migration(27, "caller_identities", _migration_027_caller_identities),
+    Migration(28, "signal_caller_identities", _migration_028_signal_caller_identities),
 )
 
 

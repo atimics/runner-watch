@@ -31,7 +31,7 @@
       <div><span>15m</span><strong>{{ '%+.1f'|format(signal.momentum_15m_pct) }}%</strong></div>
       <div><span>RVOL</span><strong>{% if signal.relative_volume %}{{ '%.1f'|format(signal.relative_volume) }}×{% else %}—{% endif %}</strong></div>
     </div>
-    <div class="signal-foot"><span>@{{ signal.username }}</span><span>{{ signal.horizon }}</span></div>
+    <div class="signal-foot"><span>{{ signal.caller_handle }}</span><span>{{ signal.horizon }}</span></div>
   </a>
   {% endfor %}
 </div>

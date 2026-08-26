@@ -162,9 +162,11 @@ missed days are not backfilled. A Flash report costs 10, an AI-written ticker co
 publishing a completed report earns 50 once. Ledger references make claims, charges, refunds, and
 publishing rewards safe to retry without paying twice.
 
-Buying credit packs is intentionally paused. Stripe checkout, portal, and webhook endpoints return
-an unavailable response even if old Stripe environment variables are still present. Historical
-Stripe columns remain only so existing databases migrate safely. The public product plan, including
+Buying Flash credit packs is intentionally paused. Extra random caller IDs use a one-time Stripe
+payment. Set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`, then use
+`STRIPE_CALLER_ID_PRICE_ID` to manage the price in Stripe or set
+`CALLER_ID_CLAIM_PRICE_CENTS` and `CALLER_ID_CURRENCY` for inline pricing. Historical subscription
+columns remain only so existing databases migrate safely. The public product plan, including
 features that are explicitly not being built, lives at `/roadmap` and `/api/roadmap`.
 
 The main screen ranks stocks with a **runner score**. The score looks for:
@@ -337,7 +339,8 @@ Always confirm price, spread, volume, halt status, and news in a live broker bef
 Fly runs two stateless 512 MB web machines and one 1 GB background worker. PostgreSQL owns durable
 application data. Redis shares the short-lived Pulse, Radar, and Alpha caches, applies rate limits
 across both web machines, and carries encrypted research jobs between web and worker processes.
-The old SQLite volume is kept only for rollback during the migration window.
+Set one shared `RATE_LIMIT_HASH_KEY` so rate-limit keys contain neither raw IP addresses nor account
+IDs. The old SQLite volume must be retired after the migration check; it is not a standing backup.
 
 The low-cost layout is about $19–$21 per month at light traffic: about $6.40 for PostgreSQL, $6.64
 for both web machines, $5.92 for the worker, and usage-based Redis at $0.20 per 100,000 commands.

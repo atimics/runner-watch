@@ -152,6 +152,9 @@ VISITOR_RE = re.compile(r"^[A-Za-z0-9_-]{20,80}$")
 AI_REPORT_MODEL = os.getenv("AI_REPORT_MODEL", "gpt-5.6-terra")
 AI_REPORT_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+RATE_LIMIT_HASH_KEY = (
+    os.getenv("RATE_LIMIT_HASH_KEY", "").encode() or secrets.token_bytes(32)
+)
 OPENROUTER_RESEARCH_OUTPUT_TOKENS = max(
     4_000, int(os.getenv("OPENROUTER_RESEARCH_OUTPUT_TOKENS", "12000"))
 )
@@ -413,7 +416,12 @@ def enforce_rate(
     subject: str | None = None,
 ) -> None:
     client = request.client.host if request.client else "unknown"
-    key = f"{scope}:{subject or client}"
+    private_subject = hashlib.blake2s(
+        str(subject or client).encode(),
+        key=RATE_LIMIT_HASH_KEY,
+        digest_size=16,
+    ).hexdigest()
+    key = f"{scope}:{private_subject}"
     shared_allowed = rate_limit_allowed(key, limit, seconds)
     if shared_allowed is False:
         raise HTTPException(429, "Too many requests. Please wait and try again.")
@@ -726,6 +734,7 @@ class PasskeyFinish(BaseModel):
 
 class PublishSignal(BaseModel):
     snapshot_id: str
+    caller_identity_id: str = Field(min_length=1, max_length=64)
     thesis: str = Field(min_length=8, max_length=500)
     horizon: str = Field(pattern="^(intraday|swing|watch)$")
     invalidation: str = Field(min_length=3, max_length=240)
@@ -6177,6 +6186,13 @@ def publish_signal(
     user = require_user(runner_session)
     enforce_rate(request, "publish", limit=8, seconds=3600, subject=user["id"])
     with connection() as db:
+        identity = db.execute(
+            "SELECT id FROM caller_identities "
+            "WHERE id=? AND user_id=? AND status='active'",
+            (payload.caller_identity_id, user["id"]),
+        ).fetchone()
+        if not identity:
+            raise HTTPException(400, "Choose one of your active caller IDs.")
         recent_count = db.execute(
             "SELECT COUNT(*) FROM signals WHERE user_id=? AND created_at>?",
             (user["id"], iso(now() - timedelta(hours=1))),
@@ -6202,15 +6218,16 @@ def publish_signal(
         db.execute(
             """
             INSERT INTO signals(
-                id,public_id,snapshot_id,user_id,thesis,horizon,invalidation,
-                disclosure,status,created_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                id,public_id,snapshot_id,user_id,caller_identity_id,thesis,horizon,
+                invalidation,disclosure,status,created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 signal_id,
                 public_id,
                 payload.snapshot_id,
                 user["id"],
+                payload.caller_identity_id,
                 payload.thesis.strip(),
                 payload.horizon,
                 payload.invalidation.strip(),
@@ -6226,14 +6243,16 @@ def get_signal(public_id: str) -> dict[str, Any] | None:
     with connection() as db:
         row = db.execute(
             """
-            SELECT sig.id AS signal_id,sig.public_id,sig.thesis,sig.horizon,
-                   sig.invalidation,sig.disclosure,sig.created_at,u.username,
-                   u.display_name,s.*,o.barrier_label,o.return_60m_pct,
+            SELECT sig.id AS signal_id,sig.public_id,sig.caller_identity_id,
+                   sig.thesis,sig.horizon,sig.invalidation,sig.disclosure,
+                   sig.created_at,ci.handle AS caller_handle,
+                   s.*,o.barrier_label,o.return_60m_pct,
                    o.max_favorable_pct,o.max_adverse_pct
-            FROM signals sig JOIN users u ON u.id=sig.user_id
+            FROM signals sig
+            JOIN caller_identities ci ON ci.id=sig.caller_identity_id
             JOIN scan_snapshots s ON s.id=sig.snapshot_id
             LEFT JOIN scan_outcomes o ON o.snapshot_id=s.id
-            WHERE sig.public_id=? AND sig.status='public'
+            WHERE sig.public_id=? AND sig.status='public' AND ci.status='active'
             """,
             (public_id,),
         ).fetchone()
@@ -6299,7 +6318,7 @@ def signal_card(public_id: str) -> Response:
     draw.multiline_text((420, 255), thesis, fill="#ecfdf5", font=font(30), spacing=12)
     draw.text(
         (95, 505),
-        f"@{signal['username']}  ·  delayed market data",
+        f"{signal['caller_handle']}  ·  delayed market data",
         fill="#9ca3af",
         font=font(25),
     )

@@ -8,7 +8,7 @@ primary_region = "sjc"
   release_command = "stonks-migrate"
 
 [processes]
-  web = "uvicorn runner_web.main:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips '*'"
+  web = "uvicorn runner_web.main:app --host 0.0.0.0 --port 8080 --proxy-headers --forwarded-allow-ips '*' --no-access-log"
   worker = "env PROCESS_ROLE=worker stonks-worker"
 
 [env]

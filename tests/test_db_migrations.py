@@ -149,6 +149,10 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             row["name"]
             for row in database.execute("PRAGMA table_info(thesis_case_revisions)").fetchall()
         }
+        signal_columns = {
+            row["name"]
+            for row in database.execute("PRAGMA table_info(signals)").fetchall()
+        }
     assert [tuple(row) for row in migrations] == [
         (migration.version, migration.name) for migration in MIGRATIONS
     ]
@@ -213,6 +217,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     } <= snapshot_columns
     assert {"source_kind", "source_comment_id", "horizon_minutes"} <= case_columns
     assert "source_comment_id" in case_revision_columns
+    assert "caller_identity_id" in signal_columns
     assert {
         "stripe_customer_id",
         "stripe_subscription_id",
@@ -259,6 +264,12 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "flash_report_requests_user_time",
         "flash_transactions_user_time",
         "research_commissions_public_time",
+        "public_aliases_user",
+        "caller_identities_owner",
+        "caller_identity_one_free_claim",
+        "caller_identity_claims_owner",
+        "community_calls_caller_time",
+        "signals_caller_identity",
     } <= indexes
 
 
