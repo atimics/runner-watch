@@ -6,23 +6,32 @@ import hashlib
 import json
 import math
 import os
+import shutil
+import subprocess
+import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 from runner_web.db import connection, init_db
 
 FEATURE_SCHEMA_VERSION = "stonks.ranker_features.v4"
-MODEL_KIND = "multiclass_logistic_barrier_v4"
+MODEL_KIND = "integer_multiclass_logistic_barrier_v5"
+ARTIFACT_SCHEMA = "stonks.integer_ranker.v1"
 HORIZONS = {"60m"}
 _configured_horizon = os.getenv("RANKER_HORIZON", "60m")
 DEFAULT_HORIZON = "60m" if _configured_horizon == "1h" else _configured_horizon
 CLASS_NAMES = ("down", "timeout", "up")
 CLASS_INDEX = {name: index for index, name in enumerate(CLASS_NAMES)}
+
+FEATURE_SCALE = 1_000
+NORMALIZED_SCALE = 1_024
+PROBABILITY_SCALE = 1_000_000
+RETURN_SCALE = 100
+MAX_NORMALIZED_FEATURE = 16 * NORMALIZED_SCALE
+
 FEATURE_NAMES = (
     "baseline_score",
     "log_price",
@@ -86,13 +95,20 @@ FEATURE_NAMES = (
 class RankerModel:
     id: str
     horizon: str
-    means: np.ndarray
-    scales: np.ndarray
-    weights: np.ndarray
-    bias: np.ndarray
-    temperature: float
-    timeout_return_pct: float
+    artifact: dict[str, Any]
     metrics: dict[str, Any]
+
+    @property
+    def weights(self) -> tuple[tuple[int, ...], ...]:
+        return tuple(tuple(int(value) for value in row) for row in self.artifact["weights"])
+
+    @property
+    def means(self) -> tuple[int, ...]:
+        return tuple(int(value) for value in self.artifact["means"])
+
+    @property
+    def scales(self) -> tuple[int, ...]:
+        return tuple(int(value) for value in self.artifact["scales"])
 
 
 def _iso() -> str:
@@ -107,11 +123,21 @@ def _float(value: Any, default: float = 0.0) -> float:
     return number if math.isfinite(number) else default
 
 
-def _log(value: Any) -> float:
-    return math.log1p(max(0.0, _float(value)))
+def _scaled(value: Any, default: float = 0.0) -> int:
+    return int(round(_float(value, default) * FEATURE_SCALE))
 
 
-def feature_vector(row: dict[str, Any]) -> np.ndarray:
+def _scaled_log(value: Any) -> int:
+    return int(round(math.log1p(max(0.0, _float(value))) * FEATURE_SCALE))
+
+
+def _flag(value: bool) -> int:
+    return FEATURE_SCALE if value else 0
+
+
+def feature_vector(row: dict[str, Any]) -> tuple[int, ...]:
+    """Quantize one database row before it crosses into the integer Rust model."""
+
     relative_volume = row.get("relative_volume")
     recent_relative_volume = row.get("recent_relative_volume")
     catalyst_score = row.get("catalyst_score")
@@ -123,79 +149,70 @@ def feature_vector(row: dict[str, Any]) -> np.ndarray:
         issuer = json.loads(str(row.get("issuer_risk_json") or "{}"))
     except (TypeError, ValueError, json.JSONDecodeError):
         issuer = {}
-    return np.asarray(
-        [
-            _float(row.get("score")),
-            _log(row.get("price")),
-            _float(row.get("change_pct")),
-            _float(row.get("momentum_5m_pct")),
-            _float(row.get("momentum_15m_pct")),
-            _float(row.get("momentum_previous_5m_pct")),
-            _float(row.get("momentum_acceleration_pct")),
-            _float(row.get("intraday_volatility_pct")),
-            _log(relative_volume),
-            float(relative_volume is None),
-            _log(recent_relative_volume),
-            float(recent_relative_volume is None),
-            _float(row.get("breakout_pct")),
-            _float(row.get("range_position"), 0.5),
-            _float(row.get("vwap_position_pct")),
-            _float(row.get("pullback_from_high_pct")),
-            _float(row.get("close_location"), 0.5),
-            _float(row.get("opening_range_position"), 0.5),
-            _float(row.get("opening_range_breakout_pct")),
-            _float(row.get("support_distance_pct")),
-            _float(row.get("support_strength")),
-            _float(row.get("resistance_distance_pct")),
-            _float(row.get("resistance_strength")),
-            _float(row.get("fib_retracement_pct")),
-            _float(row.get("fib_level_distance_pct")),
-            float(not bool(row.get("structure_available"))),
-            float(not bool(row.get("fibonacci_available"))),
-            _log(row.get("dollar_volume")),
-            _log(row.get("recent_dollar_volume")),
-            _log(row.get("average_dollar_volume")),
-            min(240.0, max(0.0, _float(row.get("stale_minutes")))),
-            float(session == "PRE-MARKET"),
-            float(session == "REGULAR"),
-            float(session == "AFTER-HOURS"),
-            float(scan_mode == "low_price"),
-            float(scan_mode == "crash"),
-            _float(catalyst_score),
-            float(catalyst_score is None),
-            float(sentiment == "positive"),
-            float(sentiment == "risk"),
-            _float(row.get("drawdown_20d_pct")),
-            _float(row.get("drawdown_90d_pct")),
-            _float(row.get("drawdown_52w_pct")),
-            _float(row.get("rebound_from_20d_low_pct")),
-            _float(row.get("rug_score")),
-            float(bool(row.get("hard_veto"))),
-            float(bool(row.get("crash_candidate"))),
-            float(trade_state == "armed"),
-            float(trade_state in {"triggered", "manage"}),
-            float(trade_state in {"avoid", "exit"}),
-            _float(issuer.get("shares_growth_pct")),
-            min(36.0, max(0.0, _float(issuer.get("cash_runway_months")))),
-            min(10.0, max(0.0, _float(issuer.get("current_ratio")))),
-            min(20.0, max(0.0, _float(issuer.get("debt_to_cash")))),
-            float(not bool(issuer.get("issuer_data_available"))),
-        ],
-        dtype=np.float64,
+    return (
+        _scaled(row.get("score")),
+        _scaled_log(row.get("price")),
+        _scaled(row.get("change_pct")),
+        _scaled(row.get("momentum_5m_pct")),
+        _scaled(row.get("momentum_15m_pct")),
+        _scaled(row.get("momentum_previous_5m_pct")),
+        _scaled(row.get("momentum_acceleration_pct")),
+        _scaled(row.get("intraday_volatility_pct")),
+        _scaled_log(relative_volume),
+        _flag(relative_volume is None),
+        _scaled_log(recent_relative_volume),
+        _flag(recent_relative_volume is None),
+        _scaled(row.get("breakout_pct")),
+        _scaled(row.get("range_position"), 0.5),
+        _scaled(row.get("vwap_position_pct")),
+        _scaled(row.get("pullback_from_high_pct")),
+        _scaled(row.get("close_location"), 0.5),
+        _scaled(row.get("opening_range_position"), 0.5),
+        _scaled(row.get("opening_range_breakout_pct")),
+        _scaled(row.get("support_distance_pct")),
+        _scaled(row.get("support_strength")),
+        _scaled(row.get("resistance_distance_pct")),
+        _scaled(row.get("resistance_strength")),
+        _scaled(row.get("fib_retracement_pct")),
+        _scaled(row.get("fib_level_distance_pct")),
+        _flag(not bool(row.get("structure_available"))),
+        _flag(not bool(row.get("fibonacci_available"))),
+        _scaled_log(row.get("dollar_volume")),
+        _scaled_log(row.get("recent_dollar_volume")),
+        _scaled_log(row.get("average_dollar_volume")),
+        _scaled(min(240.0, max(0.0, _float(row.get("stale_minutes"))))),
+        _flag(session == "PRE-MARKET"),
+        _flag(session == "REGULAR"),
+        _flag(session == "AFTER-HOURS"),
+        _flag(scan_mode == "low_price"),
+        _flag(scan_mode == "crash"),
+        _scaled(catalyst_score),
+        _flag(catalyst_score is None),
+        _flag(sentiment == "positive"),
+        _flag(sentiment == "risk"),
+        _scaled(row.get("drawdown_20d_pct")),
+        _scaled(row.get("drawdown_90d_pct")),
+        _scaled(row.get("drawdown_52w_pct")),
+        _scaled(row.get("rebound_from_20d_low_pct")),
+        _scaled(row.get("rug_score")),
+        _flag(bool(row.get("hard_veto"))),
+        _flag(bool(row.get("crash_candidate"))),
+        _flag(trade_state == "armed"),
+        _flag(trade_state in {"triggered", "manage"}),
+        _flag(trade_state in {"avoid", "exit"}),
+        _scaled(issuer.get("shares_growth_pct")),
+        _scaled(min(36.0, max(0.0, _float(issuer.get("cash_runway_months"))))),
+        _scaled(min(10.0, max(0.0, _float(issuer.get("current_ratio"))))),
+        _scaled(min(20.0, max(0.0, _float(issuer.get("debt_to_cash"))))),
+        _flag(not bool(issuer.get("issuer_data_available"))),
     )
-
-
-def _softmax(values: np.ndarray) -> np.ndarray:
-    shifted = values - np.max(values, axis=-1, keepdims=True)
-    weights = np.exp(np.clip(shifted, -60.0, 60.0))
-    return weights / np.sum(weights, axis=-1, keepdims=True)
 
 
 def _load_groups(horizon: str) -> list[list[dict[str, Any]]]:
     if horizon not in HORIZONS:
         raise ValueError(f"Unknown ranker horizon: {horizon}")
-    with connection() as db:
-        rows = db.execute(
+    with connection() as database:
+        rows = database.execute(
             """
             SELECT s.*,r.captured_at AS run_captured_at,r.mode AS scan_mode,
                    r.candidate_rows AS expected_candidates,
@@ -228,138 +245,75 @@ def _load_groups(horizon: str) -> list[list[dict[str, Any]]]:
     return complete
 
 
-def _split_groups(
-    groups: list[list[dict[str, Any]]], validation_fraction: float = 0.2
-) -> tuple[list[list[dict[str, Any]]], list[list[dict[str, Any]]]]:
-    validation_count = max(1, int(round(len(groups) * validation_fraction)))
-    validation_count = min(validation_count, max(1, len(groups) - 2))
-    return groups[:-validation_count], groups[-validation_count:]
-
-
-def _matrix(group: list[dict[str, Any]]) -> np.ndarray:
-    return np.vstack([feature_vector(row) for row in group])
-
-
-def _normalizer(groups: list[list[dict[str, Any]]]) -> tuple[np.ndarray, np.ndarray]:
-    rows = np.vstack([_matrix(group) for group in groups])
-    means = np.mean(rows, axis=0)
-    scales = np.std(rows, axis=0)
-    scales[scales < 1e-8] = 1.0
-    return means, scales
-
-
-def _evaluate(
-    groups: list[list[dict[str, Any]]],
-    means: np.ndarray,
-    scales: np.ndarray,
-    weights: np.ndarray,
-    bias: np.ndarray,
-    temperature: float,
-    timeout_return_pct: float,
-) -> dict[str, float]:
-    selected_returns: list[float] = []
-    baseline_returns: list[float] = []
-    selected_wins = 0
-    baseline_wins = 0
-    selected_rows = 0
-    top5_wins = 0
-    baseline_top5_wins = 0
-    top5_rows = 0
-    all_probabilities: list[np.ndarray] = []
-    all_targets: list[int] = []
-    for group in groups:
-        matrix = (_matrix(group) - means) / scales
-        logits = matrix @ weights + bias
-        probabilities = _softmax(logits / temperature)
-        expected = (
-            -4.0 * probabilities[:, CLASS_INDEX["down"]]
-            + timeout_return_pct * probabilities[:, CLASS_INDEX["timeout"]]
-            + 8.0 * probabilities[:, CLASS_INDEX["up"]]
+def _rust_command() -> list[str]:
+    configured = os.getenv("STONKS_INTEGER_RANKER_BIN", "").strip()
+    if configured:
+        return [configured]
+    installed = shutil.which("stonks-integer-ranker")
+    if installed:
+        return [installed]
+    root = Path(__file__).resolve().parents[2]
+    crate = root / "rust" / "stonks-ranker"
+    cargo = shutil.which("cargo")
+    if not cargo:
+        raise RuntimeError(
+            "The integer ranker binary is missing. Build rust/stonks-ranker first."
         )
-        predicted = int(np.argmax(expected))
-        baseline = int(np.argmax([_float(row["score"]) for row in group]))
-        selected_wins += int(group[predicted]["outcome"] == "up")
-        baseline_wins += int(group[baseline]["outcome"] == "up")
-        selected_rows += 1
-        selected_return = group[predicted].get("outcome_return")
-        baseline_return = group[baseline].get("outcome_return")
-        if selected_return is not None:
-            selected_returns.append(_float(selected_return))
-        if baseline_return is not None:
-            baseline_returns.append(_float(baseline_return))
-
-        top_count = min(5, len(group))
-        model_top = np.argsort(-expected)[:top_count]
-        baseline_top = sorted(
-            range(len(group)), key=lambda index: -_float(group[index]["score"])
-        )[:top_count]
-        top5_wins += sum(group[index]["outcome"] == "up" for index in model_top)
-        baseline_top5_wins += sum(
-            group[index]["outcome"] == "up" for index in baseline_top
-        )
-        top5_rows += top_count
-        all_probabilities.extend(probabilities)
-        all_targets.extend(CLASS_INDEX[str(row["outcome"])] for row in group)
-
-    probability_matrix = np.vstack(all_probabilities)
-    target_array = np.asarray(all_targets, dtype=np.int64)
-    chosen = probability_matrix[np.arange(len(target_array)), target_array]
-    log_loss = float(-np.mean(np.log(np.maximum(chosen, 1e-12))))
-    up_target = (target_array == CLASS_INDEX["up"]).astype(np.float64)
-    up_probability = probability_matrix[:, CLASS_INDEX["up"]]
-    brier = float(np.mean((up_probability - up_target) ** 2))
-    calibration_error = 0.0
-    for start in np.linspace(0.0, 0.9, 10):
-        mask = (up_probability >= start) & (up_probability < start + 0.1)
-        if np.any(mask):
-            calibration_error += float(np.mean(mask)) * abs(
-                float(np.mean(up_probability[mask])) - float(np.mean(up_target[mask]))
-            )
-    return {
-        "groups": float(len(groups)),
-        "rows": float(len(target_array)),
-        "selected_up_rate": round(selected_wins / max(1, selected_rows), 6),
-        "baseline_selected_up_rate": round(baseline_wins / max(1, selected_rows), 6),
-        "precision_at_5": round(top5_wins / max(1, top5_rows), 6),
-        "baseline_precision_at_5": round(
-            baseline_top5_wins / max(1, top5_rows), 6
+    return [
+        cargo,
+        "run",
+        "--quiet",
+        "--locked",
+        "--target-dir",
+        os.getenv(
+            "STONKS_INTEGER_RANKER_TARGET_DIR",
+            str(Path(tempfile.gettempdir()) / "stonks-integer-ranker-target"),
         ),
-        "mean_selected_return_pct": round(float(np.mean(selected_returns)), 6)
-        if selected_returns
-        else 0.0,
-        "baseline_mean_selected_return_pct": round(
-            float(np.mean(baseline_returns)), 6
+        "--manifest-path",
+        str(crate / "Cargo.toml"),
+        "--",
+    ]
+
+
+def _run_rust(request: dict[str, Any], *, timeout_seconds: int = 300) -> dict[str, Any]:
+    try:
+        completed = subprocess.run(  # noqa: S603
+            _rust_command(),
+            input=json.dumps(request, separators=(",", ":")),
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=timeout_seconds,
         )
-        if baseline_returns
-        else 0.0,
-        "multiclass_log_loss": round(log_loss, 6),
-        "up_brier_score": round(brier, 6),
-        "up_expected_calibration_error": round(calibration_error, 6),
-    }
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("The integer ranker timed out.") from exc
+    try:
+        response = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        detail = completed.stderr.strip()[:500] or "no diagnostic output"
+        raise RuntimeError(f"The integer ranker returned invalid output: {detail}") from exc
+    if completed.returncode != 0 or not response.get("ok"):
+        detail = str(response.get("error") or completed.stderr or "ranker failed")[:500]
+        raise RuntimeError(f"The integer ranker failed: {detail}")
+    return response
 
 
-def _calibrate_temperature(
-    groups: list[list[dict[str, Any]]],
-    means: np.ndarray,
-    scales: np.ndarray,
-    weights: np.ndarray,
-    bias: np.ndarray,
-) -> float:
-    logits = np.vstack([((_matrix(group) - means) / scales) @ weights + bias for group in groups])
-    targets = np.asarray(
-        [CLASS_INDEX[str(row["outcome"])] for group in groups for row in group],
-        dtype=np.int64,
-    )
-    best_temperature = 1.0
-    best_loss = math.inf
-    for temperature in np.linspace(0.5, 3.0, 51):
-        probabilities = _softmax(logits / temperature)
-        chosen = probabilities[np.arange(len(targets)), targets]
-        loss = float(-np.mean(np.log(np.maximum(chosen, 1e-12))))
-        if loss < best_loss:
-            best_loss = loss
-            best_temperature = float(temperature)
-    return best_temperature
+def _training_payload(groups: list[list[dict[str, Any]]]) -> list[list[dict[str, Any]]]:
+    return [
+        [
+            {
+                "ticker": str(row["ticker"]),
+                "features": list(feature_vector(row)),
+                "outcome": CLASS_INDEX[str(row["outcome"])],
+                "outcome_return_bp": int(
+                    round(_float(row.get("outcome_return")) * RETURN_SCALE)
+                ),
+                "baseline_score_milli": _scaled(row.get("score")),
+            }
+            for row in group
+        ]
+        for group in groups
+    ]
 
 
 def train_shadow_ranker(
@@ -369,7 +323,7 @@ def train_shadow_ranker(
     min_rows: int = 5_000,
     epochs: int = 500,
 ) -> dict[str, Any]:
-    """Train a calibrated barrier-probability model in shadow status."""
+    """Train the deterministic integer Rust ranker in shadow status."""
 
     groups = _load_groups(horizon)
     row_count = sum(len(group) for group in groups)
@@ -386,7 +340,10 @@ def train_shadow_ranker(
         label: sum(row["outcome"] == label for group in groups for row in group)
         for label in CLASS_NAMES
     }
-    minimum_per_class = min(20, max(2, min_rows // 50))
+    minimum_per_class = min(
+        20,
+        max(2, min_rows // 50),
+    )
     if min(outcome_counts.values()) < minimum_per_class:
         return {
             "trained": False,
@@ -397,88 +354,19 @@ def train_shadow_ranker(
             "minimum_per_outcome": minimum_per_class,
         }
 
-    train_groups, validation_groups = _split_groups(groups)
-    means, scales = _normalizer(train_groups)
-    weights = np.zeros((len(FEATURE_NAMES), len(CLASS_NAMES)), dtype=np.float64)
-    class_counts = np.ones(len(CLASS_NAMES), dtype=np.float64)
-    for group in train_groups:
-        for row in group:
-            class_counts[CLASS_INDEX[str(row["outcome"])]] += 1
-    bias = np.log(class_counts / np.sum(class_counts))
-    learning_rate = 0.06
-    l2 = 0.003
-    for epoch in range(epochs):
-        gradient = np.zeros_like(weights)
-        bias_gradient = np.zeros_like(bias)
-        for group in train_groups:
-            matrix = (_matrix(group) - means) / scales
-            target = np.zeros((len(group), len(CLASS_NAMES)), dtype=np.float64)
-            target[
-                np.arange(len(group)),
-                [CLASS_INDEX[str(row["outcome"])] for row in group],
-            ] = 1.0
-            predicted = _softmax(matrix @ weights + bias)
-            difference = (predicted - target) / len(group)
-            gradient += matrix.T @ difference
-            bias_gradient += np.sum(difference, axis=0)
-        gradient /= len(train_groups)
-        bias_gradient /= len(train_groups)
-        gradient += l2 * weights
-        step = learning_rate / (1.0 + epoch / 250.0)
-        weights -= step * np.clip(gradient, -10.0, 10.0)
-        bias -= step * np.clip(bias_gradient, -10.0, 10.0)
-
-    temperature = _calibrate_temperature(
-        validation_groups, means, scales, weights, bias
+    response = _run_rust(
+        {
+            "command": "train",
+            "feature_names": list(FEATURE_NAMES),
+            "groups": _training_payload(groups),
+            "epochs": max(1, epochs),
+        },
+        timeout_seconds=max(300, epochs * 2),
     )
-    timeout_returns = [
-        _float(row["outcome_return"])
-        for group in train_groups
-        for row in group
-        if row["outcome"] == "timeout" and row.get("outcome_return") is not None
-    ]
-    timeout_return_pct = (
-        float(np.clip(np.median(timeout_returns), -4.0, 8.0))
-        if timeout_returns
-        else 0.0
-    )
-
-    metrics = {
-        "train": _evaluate(
-            train_groups,
-            means,
-            scales,
-            weights,
-            bias,
-            temperature,
-            timeout_return_pct,
-        ),
-        "validation": _evaluate(
-            validation_groups,
-            means,
-            scales,
-            weights,
-            bias,
-            temperature,
-            timeout_return_pct,
-        ),
-        "feature_names": list(FEATURE_NAMES),
-        "target": "hit_plus_8_before_minus_4_within_60_minutes",
-        "class_names": list(CLASS_NAMES),
-        "temperature": temperature,
-        "timeout_return_pct": timeout_return_pct,
-        "split": "oldest_80_percent_train_newest_20_percent_validation",
-    }
-    artifact = {
-        "feature_names": list(FEATURE_NAMES),
-        "means": means.tolist(),
-        "scales": scales.tolist(),
-        "weights": weights.tolist(),
-        "bias": bias.tolist(),
-        "temperature": temperature,
-        "timeout_return_pct": timeout_return_pct,
-    }
-    created_at = _iso()
+    artifact = response["artifact"]
+    metrics = response["metrics"]
+    if not _valid_artifact(artifact):
+        raise RuntimeError("The integer ranker returned an incompatible artifact.")
     identity = hashlib.sha256(
         json.dumps(
             {
@@ -487,11 +375,15 @@ def train_shadow_ranker(
                 "training_end": groups[-1][0]["run_captured_at"],
             },
             sort_keys=True,
+            separators=(",", ":"),
         ).encode()
     ).hexdigest()[:20]
     model_id = f"ranker-{identity}"
-    with connection() as db:
-        db.execute(
+    holdout_count = min(max(2, (len(groups) + 2) // 5), len(groups) - 1)
+    training_group_count = len(groups) - holdout_count
+    created_at = _iso()
+    with connection() as database:
+        database.execute(
             """
             INSERT OR IGNORE INTO ranker_models(
                 id,feature_schema_version,horizon,model_kind,weights_json,metrics_json,
@@ -507,18 +399,55 @@ def train_shadow_ranker(
                 json.dumps(metrics, separators=(",", ":")),
                 str(groups[0][0]["run_captured_at"]),
                 str(groups[-1][0]["run_captured_at"]),
-                len(train_groups),
-                sum(len(group) for group in train_groups),
+                training_group_count,
+                sum(len(group) for group in groups[:training_group_count]),
                 "shadow",
                 created_at,
             ),
         )
-    return {"trained": True, "model_id": model_id, "metrics": metrics}
+    return {
+        "trained": True,
+        "model_id": model_id,
+        "model_kind": MODEL_KIND,
+        "integer_only": True,
+        "metrics": metrics,
+    }
+
+
+def _valid_artifact(artifact: Any) -> bool:
+    if not isinstance(artifact, dict):
+        return False
+    if artifact.get("schema") != ARTIFACT_SCHEMA:
+        return False
+    if tuple(artifact.get("feature_names", [])) != FEATURE_NAMES:
+        return False
+    if artifact.get("feature_scale") != FEATURE_SCALE:
+        return False
+    if artifact.get("normalized_scale") != NORMALIZED_SCALE:
+        return False
+    if artifact.get("probability_scale") != PROBABILITY_SCALE:
+        return False
+    scalar_integers = all(
+        isinstance(value, int) and not isinstance(value, bool)
+        for key, value in artifact.items()
+        if key.endswith("_scale") or key.endswith("_milli") or key.endswith("_bp")
+    )
+    vectors_are_integers = all(
+        isinstance(value, int) and not isinstance(value, bool)
+        for key in ("means", "scales", "bias")
+        for value in artifact.get(key, [])
+    )
+    weights_are_integers = all(
+        isinstance(value, int) and not isinstance(value, bool)
+        for row in artifact.get("weights", [])
+        for value in row
+    )
+    return scalar_integers and vectors_are_integers and weights_are_integers
 
 
 def load_latest_model(horizon: str = DEFAULT_HORIZON) -> RankerModel | None:
-    with connection() as db:
-        row = db.execute(
+    with connection() as database:
+        row = database.execute(
             """
             SELECT * FROM ranker_models
             WHERE horizon=? AND feature_schema_version=? AND model_kind=?
@@ -531,17 +460,12 @@ def load_latest_model(horizon: str = DEFAULT_HORIZON) -> RankerModel | None:
     if not row:
         return None
     artifact = json.loads(str(row["weights_json"]))
-    if tuple(artifact.get("feature_names", [])) != FEATURE_NAMES:
+    if not _valid_artifact(artifact):
         return None
     return RankerModel(
         id=str(row["id"]),
         horizon=str(row["horizon"]),
-        means=np.asarray(artifact["means"], dtype=np.float64),
-        scales=np.asarray(artifact["scales"], dtype=np.float64),
-        weights=np.asarray(artifact["weights"], dtype=np.float64),
-        bias=np.asarray(artifact["bias"], dtype=np.float64),
-        temperature=float(artifact.get("temperature", 1.0)),
-        timeout_return_pct=float(artifact.get("timeout_return_pct", 0.0)),
+        artifact=artifact,
         metrics=json.loads(str(row["metrics_json"])),
     )
 
@@ -550,10 +474,10 @@ def predict_and_store(scan_run_id: str, model: RankerModel | None = None) -> dic
     model = model or load_latest_model()
     if model is None:
         return {"predicted": False, "reason": "no_shadow_model"}
-    with connection() as db:
+    with connection() as database:
         rows = [
             dict(row)
-            for row in db.execute(
+            for row in database.execute(
                 """
                 SELECT s.*,r.mode AS scan_mode FROM scan_snapshots s
                 JOIN scan_runs r ON r.id=s.scan_run_id
@@ -564,22 +488,24 @@ def predict_and_store(scan_run_id: str, model: RankerModel | None = None) -> dic
         ]
     if not rows:
         return {"predicted": False, "reason": "empty_scan"}
-    matrix = np.vstack([feature_vector(row) for row in rows])
-    logits = ((matrix - model.means) / model.scales) @ model.weights + model.bias
-    probabilities = _softmax(logits / model.temperature)
-    expected_returns = (
-        -4.0 * probabilities[:, CLASS_INDEX["down"]]
-        + model.timeout_return_pct * probabilities[:, CLASS_INDEX["timeout"]]
-        + 8.0 * probabilities[:, CLASS_INDEX["up"]]
+    response = _run_rust(
+        {
+            "command": "predict",
+            "artifact": model.artifact,
+            "rows": [
+                {
+                    "id": str(row["id"]),
+                    "ticker": str(row["ticker"]),
+                    "features": list(feature_vector(row)),
+                }
+                for row in rows
+            ],
+        }
     )
-    ranked = sorted(
-        range(len(rows)),
-        key=lambda index: (-float(expected_returns[index]), rows[index]["ticker"]),
-    )
-    rank_by_index = {index: rank for rank, index in enumerate(ranked, start=1)}
+    predictions = response["predictions"]
     created_at = _iso()
-    with connection() as db:
-        db.executemany(
+    with connection() as database:
+        database.executemany(
             """
             INSERT INTO ranker_predictions(
                 snapshot_id,model_id,score,rank,created_at,probability_up,
@@ -596,25 +522,31 @@ def predict_and_store(scan_run_id: str, model: RankerModel | None = None) -> dic
             """,
             [
                 (
-                    rows[index]["id"],
+                    prediction["id"],
                     model.id,
-                    float(probabilities[index, CLASS_INDEX["up"]] * 100),
-                    rank_by_index[index],
+                    int(prediction["probability_up_ppm"]) / 10_000,
+                    int(prediction["rank"]),
                     created_at,
-                    float(probabilities[index, CLASS_INDEX["up"]]),
-                    float(probabilities[index, CLASS_INDEX["down"]]),
-                    float(probabilities[index, CLASS_INDEX["timeout"]]),
-                    float(expected_returns[index]),
+                    int(prediction["probability_up_ppm"]) / PROBABILITY_SCALE,
+                    int(prediction["probability_down_ppm"]) / PROBABILITY_SCALE,
+                    int(prediction["probability_timeout_ppm"]) / PROBABILITY_SCALE,
+                    int(prediction["expected_return_bp"]) / RETURN_SCALE,
                 )
-                for index in range(len(rows))
+                for prediction in predictions
             ],
         )
-    return {"predicted": True, "model_id": model.id, "rows": len(rows)}
+    return {
+        "predicted": True,
+        "model_id": model.id,
+        "model_kind": MODEL_KIND,
+        "integer_only": True,
+        "rows": len(rows),
+    }
 
 
 def ranker_status() -> dict[str, Any]:
-    with connection() as db:
-        counts = db.execute(
+    with connection() as database:
+        counts = database.execute(
             """
             SELECT
               (SELECT COUNT(*) FROM scan_runs) AS scan_runs,
@@ -633,9 +565,17 @@ def ranker_status() -> dict[str, Any]:
     model = load_latest_model()
     return {
         **dict(counts),
+        "engine": "rust_integer_fixed_point",
+        "integer_only": True,
+        "model_kind": MODEL_KIND,
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
         "model": (
-            {"id": model.id, "horizon": model.horizon, "status": "shadow", "metrics": model.metrics}
+            {
+                "id": model.id,
+                "horizon": model.horizon,
+                "status": "shadow",
+                "metrics": model.metrics,
+            }
             if model
             else None
         ),
@@ -647,21 +587,66 @@ def _stable_id(value: str, bits: int) -> int:
     return int.from_bytes(hashlib.sha256(value.encode()).digest()[:size], "big")
 
 
+def _rounded_div(numerator: int, denominator: int) -> int:
+    if numerator >= 0:
+        return (numerator + denominator // 2) // denominator
+    return -((-numerator + denominator // 2) // denominator)
+
+
+def _integer_normalizer(vectors: list[tuple[int, ...]]) -> tuple[list[int], list[int]]:
+    row_count = len(vectors)
+    means = [
+        _rounded_div(sum(vector[index] for vector in vectors), row_count)
+        for index in range(len(FEATURE_NAMES))
+    ]
+    scales = [
+        max(
+            1,
+            math.isqrt(
+                sum((vector[index] - means[index]) ** 2 for vector in vectors) // row_count
+            ),
+        )
+        for index in range(len(FEATURE_NAMES))
+    ]
+    return means, scales
+
+
+def _normalize_vector(
+    vector: tuple[int, ...], means: list[int], scales: list[int]
+) -> tuple[int, ...]:
+    return tuple(
+        max(
+            -MAX_NORMALIZED_FEATURE,
+            min(
+                MAX_NORMALIZED_FEATURE,
+                _rounded_div((value - means[index]) * NORMALIZED_SCALE, scales[index]),
+            ),
+        )
+        for index, value in enumerate(vector)
+    )
+
+
 def export_crl_dataset(path: Path, horizon: str = DEFAULT_HORIZON) -> dict[str, Any]:
-    """Write the grouped CSV contract consumed by crlplrimes' generic scorer."""
+    """Write integer grouped rows for crlplrimes' generic scorer contract."""
 
     groups = _load_groups(horizon)
     if not groups:
         raise ValueError("No complete labeled scan groups are available")
-    train_end = max(1, int(len(groups) * 0.7))
-    valid_end = max(train_end, int(len(groups) * 0.85))
-    normalizer_groups = groups[:train_end]
-    means, scales = _normalizer(normalizer_groups)
+    holdout_count = min(max(2, (len(groups) + 2) // 5), len(groups) - 1)
+    validation_count = holdout_count // 2
+    train_end = len(groups) - holdout_count
+    valid_end = train_end + validation_count
+    normalizer_vectors = [
+        feature_vector(row) for group in groups[:train_end] for row in group
+    ]
+    means, scales = _integer_normalizer(normalizer_vectors)
     path.parent.mkdir(parents=True, exist_ok=True)
     rows_written = 0
     with path.open("w", newline="", encoding="utf-8") as output:
         writer = csv.writer(output)
-        writer.writerow(["split", "group_id", "state_hash", "action_id", "target", *FEATURE_NAMES])
+        writer.writerow(
+            ["split", "group_id", "state_hash", "action_id", "target", *FEATURE_NAMES]
+        )
         for group_index, group in enumerate(groups, start=1):
             if group_index <= train_end:
                 split = "train"
@@ -675,7 +660,7 @@ def export_crl_dataset(path: Path, horizon: str = DEFAULT_HORIZON) -> dict[str, 
                 while action_id in used_actions:
                     action_id = (action_id + 1) & 0xFFFFFFFF
                 used_actions.add(action_id)
-                features = (feature_vector(row) - means) / scales
+                features = _normalize_vector(feature_vector(row), means, scales)
                 writer.writerow(
                     [
                         split,
@@ -683,7 +668,7 @@ def export_crl_dataset(path: Path, horizon: str = DEFAULT_HORIZON) -> dict[str, 
                         _stable_id(str(row["scan_run_id"]), 64),
                         action_id,
                         int(row["outcome"] == "up"),
-                        *[f"{value:.12g}" for value in features],
+                        *features,
                     ]
                 )
                 rows_written += 1
@@ -692,17 +677,28 @@ def export_crl_dataset(path: Path, horizon: str = DEFAULT_HORIZON) -> dict[str, 
         "groups": len(groups),
         "rows": rows_written,
         "features": len(FEATURE_NAMES),
+        "feature_encoding": "signed_integer_fixed_point",
+        "normalized_scale": NORMALIZED_SCALE,
     }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train and inspect the Stonks shadow ranker")
+    parser = argparse.ArgumentParser(description="Train and inspect the Stonks integer Rust ranker")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("status")
     train = subparsers.add_parser("train")
     train.add_argument("--horizon", choices=sorted(HORIZONS), default=DEFAULT_HORIZON)
-    train.add_argument("--min-groups", type=int, default=40)
-    train.add_argument("--min-rows", type=int, default=1_000)
+    train.add_argument(
+        "--min-groups",
+        type=int,
+        default=160,
+    )
+    train.add_argument(
+        "--min-rows",
+        type=int,
+        default=5_000,
+    )
+    train.add_argument("--epochs", type=int, default=500)
     export = subparsers.add_parser("export-crl")
     export.add_argument("path", type=Path)
     export.add_argument("--horizon", choices=sorted(HORIZONS), default=DEFAULT_HORIZON)
@@ -715,6 +711,7 @@ def main() -> None:
             arguments.horizon,
             min_groups=arguments.min_groups,
             min_rows=arguments.min_rows,
+            epochs=arguments.epochs,
         )
     else:
         result = export_crl_dataset(arguments.path, arguments.horizon)

@@ -20,6 +20,8 @@ jobs:
           python-version: "3.13"
           enable-cache: true
       - run: uv sync --locked --extra dev
+      - run: cargo test --locked --manifest-path rust/stonks-ranker/Cargo.toml
+      - run: cargo build --locked --manifest-path rust/stonks-ranker/Cargo.toml
       - run: uv run ruff check src tests
       - run: uv run pytest -q
 

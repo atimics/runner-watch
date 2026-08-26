@@ -1,0 +1,16 @@
+[package]
+name = "stonks-integer-ranker"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.146"
+
+[profile.release]
+codegen-units = 1
+lto = true
+panic = "abort"
+strip = true
