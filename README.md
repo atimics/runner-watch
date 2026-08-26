@@ -129,6 +129,12 @@ report. The default GLM 5.3 context setting is 1,048,576 tokens. Override it wit
 `OPENROUTER_RESEARCH_CONTEXT_FILL_RATIO`, or change the output cap with
 `OPENROUTER_RESEARCH_OUTPUT_TOKENS`.
 
+Commissioned Flash reports use BYOK. OpenRouter's browser OAuth flow gives the user a key, and the
+browser sends that key to Runner Watch over HTTPS only when starting a report. Runner Watch stores
+it only in the encrypted, short-lived Redis job payload, performs the OpenRouter inference in the
+worker, and deletes the payload when the job is acknowledged. The key is never stored in the SQL
+report record, and the browser never sends the evidence or inference request directly to OpenRouter.
+
 The report starts with an opinionated thesis, then explains who the company is, who the named people
 or entities are, why each one appears in a filing, what the filings mean, what supports the thesis,
 what could rug it, and what remains unknown. Source text is explicitly treated as evidence rather

@@ -108,7 +108,7 @@
       const value = number(call.display_return_pct);
       const tone = value === null ? 'flat' : value >= 0 ? 'up' : 'down';
       const pnl = value === null ? '' : `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
-      const title = `${call.display_name || 'Flash'} · ${call.status} · ${pnl || 'no price yet'}`;
+      const title = `${call.display_name || 'Flash'} · ${call.inference_model_label || ''} · ${call.status} · ${pnl || 'no price yet'}`;
       return `<span class="kol-tag ${tone}" title="${esc(title)}"><b>${esc(call.emoji || '⚡')}</b>${esc(pnl)}</span>`;
     }).join('');
     const marketLabel = `${statusLabel ? `, ${statusLabel}` : ''}${tradeState && tradeState !== 'UNKNOWN' ? `, ${tradeState}` : ''}${rugValue !== null ? `, rug risk ${rugValue.toFixed(0)}` : ''}`;

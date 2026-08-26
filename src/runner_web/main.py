@@ -2266,30 +2266,40 @@ def _openrouter_diagnostics(
 
 def _openrouter_report_json(content: Any) -> dict[str, Any]:
     if isinstance(content, dict):
-        return content
-    if isinstance(content, list):
-        content = "".join(str(item.get("text") or "") for item in content if isinstance(item, dict))
-    if not isinstance(content, str) or not content.strip():
-        raise ValueError("missing content")
-    text = content.strip()
-    if text.startswith("```"):
-        first_break = text.find("\n")
-        if first_break >= 0:
-            text = text[first_break + 1 :]
-        if text.rstrip().endswith("```"):
-            text = text.rstrip()[:-3]
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start < 0 or end <= start:
-            raise
-        parsed = json.loads(text[start : end + 1])
-    if isinstance(parsed, dict) and isinstance(parsed.get("report"), dict):
-        parsed = parsed["report"]
+        parsed = content
+    else:
+        if isinstance(content, list):
+            content = "".join(
+                str(item.get("text") or "") for item in content if isinstance(item, dict)
+            )
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("missing content")
+        text = content.strip()
+        if text.startswith("```"):
+            first_break = text.find("\n")
+            if first_break >= 0:
+                text = text[first_break + 1 :]
+            if text.rstrip().endswith("```"):
+                text = text.rstrip()[:-3]
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start < 0 or end <= start:
+                raise
+            parsed = json.loads(text[start : end + 1])
     if not isinstance(parsed, dict):
         raise ValueError("report is not an object")
+    for wrapper in ("report", "answer"):
+        nested = parsed.get(wrapper)
+        if isinstance(nested, dict):
+            return _openrouter_report_json(nested)
+        if isinstance(nested, str) and nested.strip():
+            try:
+                return _openrouter_report_json(nested)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                break
     return parsed
 
 
@@ -2319,8 +2329,15 @@ def _normalize_openrouter_report(
 
     normalized_fields: list[str] = []
     headline = _report_text(raw_report.get("headline"))
+    answer = _report_text(raw_report.get("answer"))
     thesis = _report_text(raw_report.get("thesis"))
     summary = _report_text(raw_report.get("summary"))
+    if not thesis and answer:
+        thesis = answer
+        normalized_fields.append("thesis")
+    if not summary and answer:
+        summary = answer
+        normalized_fields.append("summary")
     if not thesis and summary:
         thesis = summary
         normalized_fields.append("thesis")
@@ -4834,12 +4851,12 @@ def research_report_card(public_id: str) -> Response:
     if not report:
         raise HTTPException(404, "Research report not found")
     actor = report.get("actor") or {}
+    model_label = str(actor.get("model_label") or report.get("model") or report["requested_model"])
     card_label = (
-        f"{str(actor.get('display_name') or 'AI').upper()} RESEARCH"
+        f"{str(actor.get('display_name') or 'AI').upper()} · {model_label.upper()} RESEARCH"
         if actor
         else "RUNNER WATCH RESEARCH"
     )
-    model_label = str(actor.get("model_label") or report.get("model") or report["requested_model"])
     ladder_label = f"#{actor.get('ladder_position')} · " if actor else ""
     image = Image.new("RGB", (1200, 630), "#090b0b")
     draw = ImageDraw.Draw(image)

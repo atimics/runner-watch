@@ -67,11 +67,11 @@
       <a class="commission-button" href="/research/{{ latest_commission.public_id }}">View report</a>
       <small>Report ready</small>
       {% else %}
-      <button class="commission-button" type="button" id="commissionButton"{% if latest_commission and latest_commission.status == 'running' %} disabled{% endif %}>{% if latest_commission and latest_commission.status == 'running' %}Flash is digging…{% elif latest_commission and latest_commission.status == 'failed' %}Retry Flash{% else %}Ask Flash{% endif %}</button>
+      <button class="commission-button" type="button" id="commissionButton"{% if latest_commission and latest_commission.status == 'running' %} disabled{% endif %}>{% if latest_commission and latest_commission.status == 'running' %}Flash is digging…{% elif latest_commission and latest_commission.status == 'failed' %}Retry Flash{% else %}Ask Flash{% endif %} <small class="flash-model-label">{{ flash.model_label }}</small></button>
       <small id="commissionStatus">{% if latest_commission and latest_commission.status == 'running' %}You can leave this page{% elif latest_commission and latest_commission.status == 'failed' %}{{ latest_commission.error or 'Report failed. Try again.' }}{% endif %}</small>
       {% endif %}
     {% else %}
-    <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Log in to ask Flash</a>
+    <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Log in to ask Flash <span class="flash-model-label">{{ flash.model_label }}</span></a>
     <small>Uses {{ flash.model_label }} through OpenRouter</small>
     {% endif %}
   </section>
@@ -92,11 +92,11 @@
 
   {% if detail.kol_calls %}
   <section class="why-section kol-detail-section">
-    <div class="section-heading"><div><span>PAPER CALLS</span><h2>Flash</h2></div><b>{{ detail.kol_calls|length }} call{{ '' if detail.kol_calls|length == 1 else 's' }}</b></div>
+    <div class="section-heading"><div><span>PAPER CALLS</span><h2>Flash <small class="flash-model-label">{{ flash.model_label }}</small></h2></div><b>{{ detail.kol_calls|length }} call{{ '' if detail.kol_calls|length == 1 else 's' }}</b></div>
     <div class="kol-call-list">
       {% for call in detail.kol_calls %}
       <article class="kol-call-card">
-        <div class="kol-call-head"><span class="kol-avatar">{{ call.emoji }}</span><span><strong>{{ call.display_name }}</strong><small>Rule set · {{ call.contract_version }}</small></span><b class="kol-status kol-status-{{ call.status }}">{{ call.status|replace('_', ' ') }}</b></div>
+        <div class="kol-call-head"><span class="kol-avatar">{{ call.emoji }}</span><span><strong>{{ call.display_name }} <i class="flash-model-label">{{ call.inference_model_label }}</i></strong><small>Rule set · {{ call.contract_version }}</small></span><b class="kol-status kol-status-{{ call.status }}">{{ call.status|replace('_', ' ') }}</b></div>
         <div class="kol-call-numbers">
           <span><small>Entry</small><b>${{ '%.4f'|format(call.entry_price) if call.entry_price < 1 else ('%.2f'|format(call.entry_price)) }}</b></span>
           <span><small>{{ 'Current' if call.is_active else 'Exit' }}</small><b>${{ '%.4f'|format(call.last_price) if call.last_price < 1 else ('%.2f'|format(call.last_price)) }}</b></span>
@@ -409,8 +409,18 @@ commentForm?.addEventListener('submit',async event=>{
 });
 if (commissionButton) {
   let commissionPollTimer = null;
+  const flashModelLabel = {{ flash.model_label|tojson }};
+  const setCommissionButton = label => {
+    commissionButton.textContent = label;
+    if (!label.includes('Flash')) return;
+    commissionButton.append(document.createTextNode(' '));
+    const model = document.createElement('small');
+    model.className = 'flash-model-label';
+    model.textContent = flashModelLabel;
+    commissionButton.append(model);
+  };
   const renderCommissionButton = () => {
-    commissionButton.textContent = window.runnerOpenRouter.connected() ? (commissionNeedsRetry ? 'Retry Flash' : 'Ask Flash') : 'Connect OpenRouter';
+    setCommissionButton(window.runnerOpenRouter.connected() ? (commissionNeedsRetry ? 'Retry Flash' : 'Ask Flash') : 'Connect OpenRouter');
   };
   const pollCommission = async () => {
     clearTimeout(commissionPollTimer);
@@ -430,7 +440,7 @@ if (commissionButton) {
         return;
       }
       commissionButton.disabled = true;
-      commissionButton.textContent = 'Flash is digging…';
+      setCommissionButton('Flash is digging…');
       commissionStatus.textContent = 'You can leave this page';
       commissionPollTimer = setTimeout(pollCommission, 2500);
     } catch (_) {
@@ -446,7 +456,7 @@ if (commissionButton) {
       return;
     }
     commissionButton.disabled = true;
-    commissionButton.textContent = 'Flash is digging…';
+    setCommissionButton('Flash is digging…');
     commissionStatus.textContent = 'Starting…';
     commissionNeedsRetry = false;
     try {

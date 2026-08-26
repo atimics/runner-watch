@@ -12,7 +12,7 @@
 {% block content %}
 <header class="detail-nav">
   <a href="/community" aria-label="Back to Alpha">‹</a>
-  <strong>{% if report.actor %}{{ report.actor.emoji }} {{ report.actor.display_name }} report{% else %}Research report{% endif %}</strong>
+  <strong>{% if report.actor %}{{ report.actor.emoji }} {{ report.actor.display_name }} <span class="flash-model-label">{{ report.actor.model_label }}</span> report{% else %}Research report{% endif %}</strong>
   <button type="button" id="shareReport" aria-label="Share this report">↗</button>
 </header>
 
@@ -24,7 +24,7 @@
   {% if report.actor %}
   <section class="research-author">
     <span class="kol-avatar">{{ report.actor.emoji }}</span>
-    <span><strong>{{ report.actor.display_name }}</strong><small>#{{ report.actor.ladder_position }} of {{ report.actor.ladder_size }} · {{ report.actor.model_label }}</small></span>
+    <span><strong>{{ report.actor.display_name }} <span class="flash-model-label">{{ report.actor.model_label }}</span></strong><small>#{{ report.actor.ladder_position }} of {{ report.actor.ladder_size }}</small></span>
   </section>
   {% endif %}
   <h1>{{ report.headline }}</h1>

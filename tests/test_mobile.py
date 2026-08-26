@@ -1331,6 +1331,22 @@ def test_flash_commission_page_resumes_the_server_job() -> None:
     assert "fetch(`/api/research/${encodeURIComponent(ticker)}`)" in template
     assert "if (initialCommissionStatus === 'running') pollCommission()" in template
     assert "View report" in template
+    assert "flashModelLabel" in template
+    assert 'class="flash-model-label">{{ flash.model_label }}' in template
+
+
+def test_flash_model_label_is_shown_on_public_flash_surfaces() -> None:
+    root = Path(__file__).parents[1]
+    report = (root / "web/templates/research_report.html").read_text()
+    pulse = (root / "web/templates/pulse.html").read_text()
+    scanner = (root / "web/templates/scanner.html").read_text()
+    ticker_row = (root / "web/static/ticker-row.js").read_text()
+
+    assert "{{ report.actor.display_name }}" in report
+    assert "{{ report.actor.model_label }}" in report
+    assert "kol.inference_model_label" in pulse
+    assert "call.inference_model_label" in scanner
+    assert "call.inference_model_label" in ticker_row
 
 
 def test_commission_request_uses_glm_53_with_a_minimal_prompt(
@@ -1427,6 +1443,51 @@ def test_commission_normalizes_recoverable_glm_output(
     assert report["risks"] == ["Financing terms are unclear."]
     assert "thesis" in usage["generation"]["normalized_fields"]
     assert usage["generation"]["finish_reason"] == "stop"
+
+
+@pytest.mark.parametrize("as_text", [False, True])
+def test_commission_unwraps_glm_answer_envelope(
+    monkeypatch: MonkeyPatch,
+    as_text: bool,
+) -> None:
+    generated = {
+        "headline": "EU evidence report",
+        "thesis": "The stored evidence is mixed.",
+        "summary": "Watch for confirmation.",
+        "company_profile": {"source_urls": []},
+        "people": [],
+        "filings": [],
+        "catalysts": [],
+        "risks": [],
+        "watch": [],
+        "unknowns": [],
+        "sources": [],
+    }
+    answer: Any = json.dumps(generated) if as_text else generated
+
+    def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
+        return io.BytesIO(
+            json.dumps(
+                {
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {"content": json.dumps({"answer": answer})},
+                        }
+                    ],
+                    "model": "z-ai/glm-5.3",
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
+    report, model, usage = web_main._generate_openrouter_report(
+        "sk-or-test-key-long-enough", {"ticker": "EU"}, "member-eu"
+    )
+
+    assert report == generated
+    assert model == "z-ai/glm-5.3"
+    assert usage["generation"]["normalized_fields"] == []
 
 
 def test_commission_reports_cut_off_glm_output_without_storing_content(
@@ -1548,7 +1609,7 @@ def test_research_report_template_has_public_share_metadata(
     )
 
     assert "Shareable ONE report" in html
-    assert "<strong>Flash</strong>" in html
-    assert "#1 of 4 · GLM 5.3" in html
+    assert "<strong>Flash <span class=\"flash-model-label\">GLM 5.3</span>" in html
+    assert "#1 of 4" in html
     assert f"/research/{report['public_id']}/card.png" in html
     assert "sk-or-share-test-key" not in html
