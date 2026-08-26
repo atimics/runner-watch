@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from runner_web.db import connection, init_db
 from runner_web.ranker import (
     FEATURE_NAMES,
     FEATURE_SCHEMA_VERSION,
+    _load_groups,
     export_crl_dataset,
     feature_vector,
     load_latest_model,
@@ -194,6 +196,24 @@ def test_shadow_ranker_trains_predicts_and_exports_crl(
     assert len(rows) == 1 + 8 * 4
 
 
+def test_ranker_compacts_and_bounds_legacy_training_rows(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "bounded-ranker.db")
+    init_db()
+    _seed_ranker_data(group_count=12, candidates=4)
+
+    groups = _load_groups("60m", maximum_groups=5)
+
+    with connection() as database:
+        compact_rows = database.execute(
+            "SELECT COUNT(*) FROM ranker_training_examples"
+        ).fetchone()[0]
+    assert len(groups) == 5
+    assert sum(len(group) for group in groups) == 20
+    assert compact_rows == 20
+
+
 def test_web_scan_saves_one_complete_candidate_group(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
@@ -215,6 +235,10 @@ def test_web_scan_saves_one_complete_candidate_group(
         snapshots = database.execute(
             "SELECT * FROM scan_snapshots ORDER BY baseline_rank"
         ).fetchall()
+        training_examples = database.execute(
+            "SELECT * FROM ranker_training_examples ORDER BY ticker"
+        ).fetchall()
+        pulse_entries = database.execute("SELECT * FROM pulse_entries").fetchall()
     assert result["scan_run_id"] == run["id"]
     assert run["candidate_rows"] == len(snapshots)
     assert len(snapshots) == result["ranked_candidates"]
@@ -223,3 +247,6 @@ def test_web_scan_saves_one_complete_candidate_group(
     assert snapshots[0]["opening_range_position"] is not None
     assert snapshots[0]["structure_available"] == 1
     assert snapshots[0]["scan_run_id"] == run["id"]
+    assert len(training_examples) == len(snapshots)
+    assert len(pulse_entries) == len(snapshots)
+    assert len(json.loads(training_examples[0]["feature_vector_json"])) == len(FEATURE_NAMES)

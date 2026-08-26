@@ -31,6 +31,9 @@ def test_policy_manifest_is_machine_readable_and_reports_source_review_drift() -
         "minimum_per_outcome": 20,
         "validation_fraction": 0.10,
         "test_fraction": 0.10,
+        "maximum_groups": 320,
+        "minimum_new_groups": 16,
+        "interval_seconds": 21_600,
     }
     assert manifest["source_policy_warnings"] == [
         {

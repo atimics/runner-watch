@@ -190,17 +190,21 @@ presented as a probability.
 
 ## Integer Rust ranker
 
-Stonks keeps a complete, versioned training record for its learned ranker:
+Stonks keeps a compact, versioned training record for its learned ranker:
 
-- each scan has one `scan_run` and saves every intraday candidate, not only the displayed top 40
-- all feature inputs, missing values, baseline rank, catalyst context, and quote times are saved
+- each scan has one `scan_run` and records every intraday candidate, not only the displayed top 40
+- each candidate is quantized once into `ranker_training_examples`; training does not reload full
+  snapshot rows
+- full snapshots remain available for 150 days for receipts, signals, and 120-day base rates
 - Yahoo daily and 5-minute bars fetched by the web app are deduplicated into `market_bars`
 - every distinct SEC response body fetched by the listener is saved in `source_documents`
 - each candidate is labeled by whether price touches +8% or −4% first in the next 60 minutes
 - a row is called a timeout only when archived bars cover the full hour
 - a bar touching both levels is conservatively labeled down and marked as ambiguous
-- a three-way fixed-point logistic model predicts up, down, and timeout; the normal worker waits for
-  160 complete groups and 5,000 labels; manual experiments must override both limits explicitly
+- a three-way fixed-point logistic model predicts up, down, and timeout; the trainer waits for 160
+  complete groups and 5,000 labels, then uses at most the latest 320 complete groups
+- the trainer is a separate process, runs at most every six hours, and waits for 16 new groups before
+  rebuilding an existing model
 - the oldest 80% of complete groups train the model, the next 10% calibrates its probabilities, and
   the newest 10% is an untouched test set
 - learned probabilities and expected return are stored with the exact model ID
@@ -229,8 +233,9 @@ Export the same complete candidate groups to the generic `crlplrimes` dataset co
 uv run stonks-ranker export-crl data/stonks-crl-60m.csv --horizon 60m
 ```
 
-The status API is available at `/api/ranker/status`. Raw source storage will grow over time, so a
-long-running deployment should eventually move archived bars and documents to object storage.
+The status API is available at `/api/ranker/status`. Bars are retained for 60 days, full scan
+snapshots for 150 days, compact training examples for one year, and raw source documents for one
+year. Long-term raw archives should live in object storage.
 
 `/api/capabilities` combines live source, worker, model, evidence-gate, base-rate, training, and
 promotion policy without exposing credential names or values. It also reports enabled sources that
@@ -343,16 +348,21 @@ Always confirm price, spread, volume, halt status, and news in a live broker bef
 
 ## Production layout and budget
 
-Fly runs two stateless 512 MB web machines and one 1 GB background worker. PostgreSQL owns durable
-application data. Redis shares the short-lived Pulse, Radar, and Alpha caches, applies rate limits
-across both web machines, and carries encrypted research jobs between web and worker processes.
+Fly runs two stateless 512 MB web machines, one 1 GB collection worker, and one 1 GB bounded ranker
+trainer. PostgreSQL owns durable application data. Redis shares the short-lived Pulse, Radar,
+Alpha, and chart caches, applies rate limits across both web machines, and carries encrypted
+research jobs between web and worker processes.
+
+List charts send only time and price, use response compression, and cache their complete response
+for one minute.
+
 Set one shared `RATE_LIMIT_HASH_KEY` so rate-limit keys contain neither raw IP addresses nor account
 IDs. The old SQLite volume must be retired after the migration check; it is not a standing backup.
 
-The low-cost layout is about $19–$21 per month at light traffic: about $6.40 for PostgreSQL, $6.64
-for both web machines, $5.92 for the worker, and usage-based Redis at $0.20 per 100,000 commands.
-Network, snapshot, and Redis use can add a small amount. A Fly-managed PostgreSQL node would raise
-the starting total to roughly $53–$58 per month.
+The low-cost layout is about $25–$27 per month at light traffic: about $6.40 for PostgreSQL, $6.64
+for both web machines, $11.84 for the worker and trainer, and usage-based Redis at $0.20 per 100,000
+commands. Network, snapshot, and Redis use can add a small amount. A Fly-managed PostgreSQL node
+would raise the starting total further.
 
 SQLite remains supported for local development. To copy it to an empty PostgreSQL database:
 
@@ -368,3 +378,12 @@ uv run stonks-migrate-sqlite \
 uv run pytest
 uv run ruff check .
 ```
+
+Run bounded staging bursts at 20, 40, and 80 concurrent requests:
+
+```bash
+uv run python scripts/probe_scalability.py https://staging.example.com
+```
+
+The probe refuses a host that does not look like staging or localhost unless
+`--allow-production` is supplied explicitly.
