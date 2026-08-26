@@ -25,7 +25,8 @@ kill_timeout = 30
   REQUIRE_DATABASE_URL = "1"
   # Fly Postgres uses the encrypted private 6PN and does not accept direct TLS.
   REQUIRE_DATABASE_TLS = "0"
-  REQUIRE_REDIS_TLS = "1"
+  # The Upstash endpoint resolves to the encrypted private 6PN and rejects TLS.
+  REQUIRE_REDIS_TLS = "0"
   PYTHONUNBUFFERED = "1"
   BACKGROUND_SCAN_INTERVAL_SECONDS = "1800"
   RANKER_TRAIN_INTERVAL_SECONDS = "21600"
