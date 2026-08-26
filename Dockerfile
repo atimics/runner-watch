@@ -34,6 +34,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
 EXPOSE 8080
 
 FROM base AS test
+COPY scripts ./scripts
 COPY tests ./tests
 RUN uv sync --locked --extra dev --no-editable
 RUN uv run --no-sync pytest -q && uv run --no-sync ruff check src tests
