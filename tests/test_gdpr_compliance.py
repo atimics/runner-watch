@@ -181,6 +181,13 @@ def test_public_aliases_are_stable_only_inside_one_thread(
     assert any(ord(character) > 10_000 for character in first)
 
 
+def test_privacy_notice_explains_the_thread_alias_boundary() -> None:
+    notice = (ROOT / "web/templates/privacy.html").read_text()
+
+    assert "Within one thread, the same emoji means the same account." in notice
+    assert "Across different threads, different emojis do not imply different people." in notice
+
+
 def test_one_account_can_own_paid_animal_caller_ids_and_delete_them(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
