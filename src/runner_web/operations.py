@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import UTC, datetime
 from typing import Any
@@ -8,7 +9,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from runner_web.ai_kol import FLASH
-from runner_web.db import connection
+from runner_web.db import MIGRATIONS, connection
 from runner_web.flash_wallet import (
     COMMENT_COST,
     DAILY_CLAIM_AMOUNT,
@@ -32,6 +33,16 @@ def _time(value: Any) -> datetime | None:
     return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+def _heartbeat_detail(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(str(value or ""))
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def worker_health(
     states: dict[str, dict[str, Any]],
     *,
@@ -49,31 +60,74 @@ def worker_health(
         age_seconds is not None
         and age_seconds <= OPERATIONS.worker_heartbeat_max_age_seconds
     )
+    detail = _heartbeat_detail(heartbeat.get("value")) if heartbeat else {}
+    reported_status = str(detail.get("status", "unknown")).lower()
+    status = "stale" if not fresh else "ok" if reported_status == "ok" else "degraded"
     return {
-        "status": "ok" if fresh else "stale",
+        "status": status,
         "last_heartbeat_at": heartbeat_at.isoformat() if heartbeat_at else None,
         "age_seconds": round(age_seconds, 1) if age_seconds is not None else None,
         "maximum_age_seconds": OPERATIONS.worker_heartbeat_max_age_seconds,
-        "detail": heartbeat.get("value") if heartbeat else None,
+        "detail": detail or None,
+    }
+
+
+def readiness_status(*, checked_at: datetime | None = None) -> dict[str, Any]:
+    """Report whether this web process can safely receive user traffic."""
+
+    checked_at = checked_at or datetime.now(UTC)
+    expected_schema_version = MIGRATIONS[-1].version if MIGRATIONS else 0
+    try:
+        with connection() as database:
+            database.execute("SELECT 1").fetchone()
+            row = database.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
+            schema_version = int(row[0] or 0)
+    except Exception:
+        return {
+            "status": "unavailable",
+            "checked_at": checked_at.isoformat(),
+            "database": "unavailable",
+            "schema_version": None,
+            "minimum_schema_version": expected_schema_version,
+        }
+
+    schema_ready = schema_version >= expected_schema_version
+    return {
+        "status": "ok" if schema_ready else "unavailable",
+        "checked_at": checked_at.isoformat(),
+        "database": "ok",
+        "schema_version": schema_version,
+        "minimum_schema_version": expected_schema_version,
     }
 
 
 def health_status(*, checked_at: datetime | None = None) -> dict[str, Any]:
     checked_at = checked_at or datetime.now(UTC)
-    with connection() as database:
-        database.execute("SELECT 1").fetchone()
-        states = {
-            str(row["key"]): {
-                "value": row["value"],
-                "updated_at": row["updated_at"],
+    try:
+        with connection() as database:
+            database.execute("SELECT 1").fetchone()
+            states = {
+                str(row["key"]): {
+                    "value": row["value"],
+                    "updated_at": row["updated_at"],
+                }
+                for row in database.execute(
+                    "SELECT key,value,updated_at FROM worker_state"
+                ).fetchall()
             }
-            for row in database.execute(
-                "SELECT key,value,updated_at FROM worker_state"
-            ).fetchall()
+            latest_scan = database.execute(
+                "SELECT MAX(captured_at) FROM scan_runs"
+            ).fetchone()[0]
+    except Exception:
+        return {
+            "status": "degraded",
+            "checked_at": checked_at.isoformat(),
+            "database": "unavailable",
+            "worker": worker_health({}, checked_at=checked_at),
+            "latest_scan_at": None,
+            "edgar_updated_at": None,
+            "scan_error": None,
         }
-        latest_scan = database.execute(
-            "SELECT MAX(captured_at) FROM scan_runs"
-        ).fetchone()[0]
     workers = worker_health(states, checked_at=checked_at)
     return {
         "status": "ok" if workers["status"] == "ok" else "degraded",
@@ -217,7 +271,19 @@ def runtime_capabilities(
     }
 
 
+@router.get("/live")
+def liveness_api() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @router.get("/health")
+@router.get("/ready")
+def readiness_api() -> JSONResponse:
+    payload = readiness_status()
+    return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
+
+
+@router.get("/health/details")
 def health_api() -> JSONResponse:
     payload = health_status()
     return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
