@@ -54,18 +54,21 @@ jobs:
           echo "image=$image" >> "$GITHUB_OUTPUT"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-      - run: flyctl deploy --remote-only --image-label "${{ github.sha }}"
+      - id: deploy
+        continue-on-error: true
+        run: flyctl deploy --remote-only --image-label "${{ github.sha }}"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       - name: Verify production
         id: smoke
+        if: steps.deploy.outcome == 'success'
         continue-on-error: true
         run: scripts/smoke-production https://stonks.rati.foundation
       - name: Roll back failed release
-        if: steps.smoke.outcome == 'failure'
+        if: always() && (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure')
         run: flyctl deploy --remote-only --image "${{ steps.rollback.outputs.image }}" --strategy rolling --skip-release-command
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       - name: Report failed release
-        if: steps.smoke.outcome == 'failure'
+        if: always() && (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure')
         run: exit 1
