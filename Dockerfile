@@ -34,6 +34,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
 EXPOSE 8080
 
 FROM base AS test
+COPY scripts ./scripts
 COPY tests ./tests
 COPY docs/privacy-operations.md ./docs/privacy-operations.md
 COPY fly.toml Dockerfile ./
