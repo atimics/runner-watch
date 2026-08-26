@@ -157,10 +157,10 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         (migration.version, migration.name) for migration in MIGRATIONS
     ]
     assert topic_table is not None
-    assert pulse_state_table is not None
-    assert reaction_table is not None
+    assert pulse_state_table is None
+    assert reaction_table is None
     assert comment_table is not None
-    assert pseudonym_table is not None
+    assert pseudonym_table is None
     assert case_table is not None
     assert revision_table is not None
     assert position_table is not None
@@ -234,7 +234,6 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "sec_filings_ticker_filed_score",
         "scan_runs_candidate_captured",
         "scan_snapshots_ticker_captured",
-        "ticker_reactions_ticker_reaction",
         "ticker_comments_ticker_time",
         "ticker_comments_public_time",
         "thesis_cases_user_status_time",

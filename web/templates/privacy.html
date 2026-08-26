@@ -47,7 +47,7 @@
   <section class="plan-card">
     <h2>How long we keep data</h2>
     <ul class="feature-list compact">
-      <li><i>•</i><span><strong>No passive history</strong><small>Visitor, view, dwell, seen, notification, and reaction records are not collected. Old records are purged.</small></span></li>
+      <li><i>•</i><span><strong>No passive history</strong><small>Visitor, view, dwell, seen, notification, and reaction records are not collected. The old tracking tables have been permanently removed.</small></span></li>
       <li><i>•</i><span><strong>Security records</strong><small>Passkey challenges expire after 5 minutes, unfinished accounts after 15 minutes, and login sessions after 30 days.</small></span></li>
       <li><i>•</i><span><strong>Your content</strong><small>Account content stays until you delete it or the account. A deleted caller ID leaves only its animal name and a tombstone so nobody else can claim it.</small></span></li>
       <li><i>•</i><span><strong>Payments and backups</strong><small>Webhook event IDs are kept for up to 400 days. Providers may retain transaction records when law requires it. Deleted data may remain in encrypted backups for up to 30 days before expiry.</small></span></li>
@@ -67,6 +67,13 @@
   </section>
 
   {% if user %}
+  <section class="plan-card danger-card">
+    <h2>Delete my account</h2>
+    <p>This permanently deletes your local account, passkeys, sessions, comments, calls, saved work, and other content. It also deletes your linked Stripe customer, which immediately cancels active subscriptions. Caller-ID names remain only as anonymous, unusable tombstones.</p>
+    <button class="account-action danger-action" id="openAccountDelete" type="button">Delete my account</button>
+    <p class="plan-help">This cannot be undone. Download your data first if you want a copy.</p>
+  </section>
+
   <section class="plan-card">
     <h2>My caller IDs</h2>
     <p>Caller IDs are random animal names. They are separate from comment emojis and are not publicly linked to your account or to each other.</p>
@@ -86,6 +93,19 @@
     </form>
     <p class="plan-help">Your first caller ID is free. Each later claim costs {{ caller_id_price or 'the price shown in Stripe' }}. Names are random and cannot be chosen, sold, transferred, or reused after deletion.</p>
   </section>
+
+  <dialog class="account-delete-dialog" id="accountDeleteDialog" aria-labelledby="accountDeleteTitle">
+    <button class="dialog-close" id="closeAccountDelete" type="button" aria-label="Close">×</button>
+    <h2 id="accountDeleteTitle">Permanently delete your account?</h2>
+    <p>This removes your local account and content and deletes the linked Stripe customer. Active subscriptions stop immediately.</p>
+    <form id="accountDeleteForm">
+      <label for="accountDeleteConfirmation">Type <strong>DELETE MY ACCOUNT</strong> to confirm
+        <input id="accountDeleteConfirmation" name="confirmation" autocomplete="off" required>
+      </label>
+      <button class="account-action danger-action" type="submit">Delete everything</button>
+      <p class="account-delete-status" id="accountDeleteStatus" role="status"></p>
+    </form>
+  </dialog>
   {% endif %}
 
   <section class="plan-card">
@@ -95,3 +115,37 @@
 </main>
 {% endblock %}
 {% block bottom_nav %}{% endblock %}
+{% block scripts %}
+{% if user %}
+<script nonce="{{ request.state.csp_nonce }}">
+const accountDeleteDialog = document.getElementById('accountDeleteDialog');
+const accountDeleteForm = document.getElementById('accountDeleteForm');
+const accountDeleteStatus = document.getElementById('accountDeleteStatus');
+document.getElementById('openAccountDelete')?.addEventListener('click', () => accountDeleteDialog.showModal());
+document.getElementById('closeAccountDelete')?.addEventListener('click', () => accountDeleteDialog.close());
+accountDeleteDialog?.addEventListener('click', event => { if (event.target === accountDeleteDialog) accountDeleteDialog.close(); });
+accountDeleteForm?.addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = accountDeleteForm.querySelector('button[type="submit"]');
+  const confirmation = document.getElementById('accountDeleteConfirmation').value;
+  accountDeleteStatus.textContent = '';
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/account/delete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({confirmation}),
+    });
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      throw new Error(result.detail || 'Account deletion failed.');
+    }
+    location.href = '/';
+  } catch (error) {
+    accountDeleteStatus.textContent = error.message || String(error);
+    button.disabled = false;
+  }
+});
+</script>
+{% endif %}
+{% endblock %}

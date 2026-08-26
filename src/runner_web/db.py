@@ -1653,6 +1653,21 @@ def _migration_028_signal_caller_identities(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_029_drop_passive_tracking(db: DatabaseConnection) -> None:
+    """Permanently remove the legacy behavioural tracking schema."""
+
+    db.executescript(
+        """
+        DROP TABLE IF EXISTS activity_events;
+        DROP TABLE IF EXISTS ticker_hearts;
+        DROP TABLE IF EXISTS radar_seen;
+        DROP TABLE IF EXISTS pulse_profile_state;
+        DROP TABLE IF EXISTS ticker_reactions;
+        DROP TABLE IF EXISTS comment_pseudonyms;
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -1689,6 +1704,7 @@ MIGRATIONS = (
     Migration(26, "gdpr_privacy", _migration_026_gdpr_privacy),
     Migration(27, "caller_identities", _migration_027_caller_identities),
     Migration(28, "signal_caller_identities", _migration_028_signal_caller_identities),
+    Migration(29, "drop_passive_tracking", _migration_029_drop_passive_tracking),
 )
 
 

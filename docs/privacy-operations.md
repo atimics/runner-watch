@@ -25,7 +25,7 @@ The app must not write visitor IDs, page views, dwell time, share events, seen s
 - Authentication challenges: expire after 5 minutes and prune daily.
 - Unfinished accounts with no passkey: prune after 15 minutes.
 - Login sessions: expire after 30 days and prune daily.
-- Passive tracking tables: purge on migration and every retention run; never write new rows.
+- Passive tracking tables: permanently dropped by database migration 26. The retention job checks that they remain absent and never writes them.
 - Stripe webhook event IDs: prune after 400 days.
 - Member content: keep until the member deletes the item or account, unless a documented legal hold applies.
 - Deleted caller identities: keep only the random animal handle, tombstone state, and deletion time. Remove owner, payment reference, claim time, cost, and calls.
@@ -35,13 +35,14 @@ The app must not write visitor IDs, page views, dwell time, share events, seen s
 
 ## Data subject requests
 
-1. Accept access requests through the signed-in export. Accept deletion and other rights requests at privacy@rati.foundation until the signed-in deletion control is released.
+1. Accept access requests through the signed-in export and erasure through the signed-in deletion control. Accept correction, restriction, objection, and assisted requests at privacy@rati.foundation.
 2. Record the received date, request type, scope, verifier, owner, deadline, actions, recipients told, and completion date in the restricted request log.
 3. Verify through a current passkey session where possible. Ask only for the minimum extra proof needed.
 4. Search the account, passkeys, sessions, comments, aliases, caller identities, calls, private journal, cases, reports, billing mirror, provider tickets, logs, and current backups.
 5. Respond without undue delay and normally within one month. A complex request may take up to two more months only when the person is told, with reasons, within the first month.
 6. Send corrections or erasure to processors that received the data when required. Record exceptions and the legal reason.
 7. Exports must exclude authentication secrets and session hashes. Use a secure authenticated download and `Cache-Control: no-store`.
+8. Self-serve deletion must delete the Stripe customer first so active subscriptions stop immediately. If Stripe fails, keep local data so the member can safely retry. Then delete local account and content data in one database transaction, leaving only anonymous caller-name tombstones.
 
 ## Processor register
 

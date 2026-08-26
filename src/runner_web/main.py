@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from datetime import time as clock_time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -64,6 +64,19 @@ from runner_web.calls import (
     create_call,
     recent_calls,
 )
+from runner_web.billing import (
+    caller_id_price_label,
+    construct_webhook_event,
+    create_caller_id_checkout_session,
+    delete_customer,
+    process_webhook_event,
+)
+from runner_web.caller_ids import (
+    AdditionalCallerIdPaymentRequired,
+    caller_ids_for_user,
+    claim_caller_id,
+    delete_caller_id,
+)
 from runner_web.calls import (
     calls_for_ticker as community_calls_for_ticker,
 )
@@ -103,9 +116,10 @@ from runner_web.outcomes import (
     refresh_outcomes,
     refresh_scan_outcomes,
 )
+from runner_web.privacy import delete_user_data, export_user_data, prune_personal_data
 from runner_web.product_catalog import roadmap_snapshot
 from runner_web.product_policy import EVIDENCE_GATE, OPERATIONS
-from runner_web.pseudonyms import pseudonym_candidate
+from runner_web.pseudonyms import ensure_scoped_alias
 from runner_web.ranker import (
     FEATURE_SCHEMA_VERSION,
     predict_and_store,
@@ -760,6 +774,10 @@ class PulseAttentionPayload(BaseModel):
     entries: list[PulseAttentionItem] = Field(min_length=1, max_length=50)
 
 
+class AccountDeletePayload(BaseModel):
+    confirmation: Literal["DELETE MY ACCOUNT"]
+
+
 @app.get("/api/kols")
 def api_kol_status(request: Request) -> dict[str, Any]:
     enforce_rate(request, "kols", limit=120, seconds=60)
@@ -802,6 +820,107 @@ def claim_daily_flash_api(
     return JSONResponse({"claimed": claimed, "wallet": wallet})
 
 
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy_page(
+    request: Request,
+    caller: str | None = None,
+    runner_session: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    user = current_user(runner_session)
+    return templates.TemplateResponse(
+        request=request,
+        name="privacy.html",
+        context=page_context(
+            request,
+            runner_session,
+            caller_ids=caller_ids_for_user(str(user["id"])) if user else [],
+            caller_id_price=caller_id_price_label(),
+            caller=caller if caller in {"claimed", "deleted", "canceled"} else None,
+        ),
+    )
+
+
+@app.get("/api/account/export")
+def account_export_api(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    user = require_user(runner_session)
+    enforce_rate(request, "account-export", limit=3, seconds=3600, subject=user["id"])
+    response = JSONResponse(export_user_data(str(user["id"])))
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="runner-watch-export-{now().date().isoformat()}.json"'
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/account/delete")
+def account_delete_api(
+    payload: AccountDeletePayload,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "account-delete", limit=3, seconds=3600, subject=user["id"])
+    try:
+        delete_customer(user)
+    except Exception as exc:
+        LOG.warning(
+            "Could not delete Stripe customer during account deletion: %s",
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            502,
+            "We could not stop billing, so the local account was not deleted. Try again.",
+        ) from exc
+    result = delete_user_data(str(user["id"]))
+    if not result["deleted"]:
+        raise HTTPException(404, "Account not found")
+    response = JSONResponse({"deleted": True})
+    response.headers["Cache-Control"] = "no-store"
+    response.delete_cookie("runner_visitor", path="/")
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return response
+
+
+@app.post("/api/caller-identities/claim")
+def caller_identity_claim_api(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> RedirectResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "claim-caller-id", limit=5, seconds=3600, subject=user["id"])
+    try:
+        claim_caller_id(str(user["id"]))
+        return RedirectResponse("/privacy?caller=claimed", status_code=303)
+    except AdditionalCallerIdPaymentRequired:
+        pass
+    try:
+        url = create_caller_id_checkout_session(user, APP_ORIGIN)
+    except Exception as exc:
+        LOG.warning("Could not start caller-ID checkout: %s", type(exc).__name__)
+        raise HTTPException(502, "Caller-ID checkout is temporarily unavailable.") from exc
+    return RedirectResponse(url, status_code=303)
+
+
+@app.post("/api/caller-identities/{caller_identity_id}/delete")
+def caller_identity_delete_api(
+    caller_identity_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> RedirectResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "delete-caller-id", limit=10, seconds=3600, subject=user["id"])
+    result = delete_caller_id(str(user["id"]), caller_identity_id)
+    if not result["deleted"]:
+        raise HTTPException(404, "Caller ID not found")
+    return RedirectResponse("/privacy?caller=deleted", status_code=303)
+
+
 @app.post("/api/billing/checkout")
 def billing_checkout_api(
     request: Request,
@@ -824,7 +943,17 @@ def billing_portal_api(
 
 @app.post("/api/stripe/webhook")
 async def stripe_webhook_api(request: Request) -> JSONResponse:
-    raise HTTPException(503, "Stripe billing is disabled.")
+    signature = request.headers.get("stripe-signature", "")
+    if not signature:
+        raise HTTPException(400, "Missing Stripe signature")
+    try:
+        event = construct_webhook_event(await request.body(), signature)
+        result = process_webhook_event(event)
+    except RuntimeError as exc:
+        raise HTTPException(503, "Stripe webhook is not configured") from exc
+    except Exception as exc:
+        raise HTTPException(400, "Invalid Stripe webhook") from exc
+    return JSONResponse(result)
 
 
 @app.get("/roadmap", response_class=HTMLResponse)

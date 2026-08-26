@@ -552,7 +552,7 @@ def test_alpha_reuses_shared_public_call_data(
     assert calls == 1
 
 
-def test_pulse_entry_moves_from_unseen_to_seen_to_inspected(
+def test_pulse_entry_is_shared_without_storing_reader_attention(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "pulse-attention.db")
@@ -567,50 +567,14 @@ def test_pulse_entry_moves_from_unseen_to_seen_to_inspected(
     insert_scored_snapshot("attention-one", "attention-entry", "ONE", 60, 1, entered_at)
     insert_scan_run("attention-refresh", refreshed_at, 1)
     insert_scored_snapshot("attention-one-refresh", "attention-refresh", "ONE", 62, 1, refreshed_at)
-    item = PulseAttentionItem(ticker="ONE", entered_at=entered_at)
-
-    row = pulse_data(profile="v:reader")["rows"][0]
+    row = pulse_data()["rows"][0]
     assert row["entered_at"] == entered_at
-    assert row["novelty_state"] == "unseen"
-    assert row["rug_score"] is None
-    assert [entry["ticker"] for entry in pulse_notification_data("v:reader")["entries"]] == ["ONE"]
-
-    assert _write_pulse_attention("v:reader", [item], "notified") == 1
-    assert pulse_notification_data("v:reader")["entries"] == []
-    assert pulse_data(profile="v:reader")["rows"][0]["novelty_state"] == "unseen"
-
-    assert _write_pulse_attention("v:reader", [item], "seen") == 1
-    assert pulse_data(profile="v:reader")["rows"][0]["novelty_state"] == "seen"
-
-    assert _write_pulse_attention("v:reader", [item], "inspected") == 1
-    assert pulse_data(profile="v:reader")["rows"][0]["novelty_state"] == "inspected"
-
-
-def test_a_reentry_creates_a_new_unseen_pulse_episode(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "pulse-reentry.db")
-    init_db()
-    timestamp = datetime.now(UTC)
-    first_entry = (timestamp - timedelta(minutes=30)).isoformat()
-    absent = (timestamp - timedelta(minutes=20)).isoformat()
-    reentry = (timestamp - timedelta(minutes=10)).isoformat()
-    insert_scan_run("first-entry", first_entry, 1)
-    insert_scored_snapshot("first-one", "first-entry", "ONE", 55, 1, first_entry)
-    insert_scan_run("absent", absent, 1)
-    insert_scored_snapshot("absent-two", "absent", "TWO", 50, 1, absent)
-    _write_pulse_attention(
-        "v:reader",
-        [PulseAttentionItem(ticker="ONE", entered_at=first_entry)],
-        "inspected",
-    )
-    insert_scan_run("reentry", reentry, 1)
-    insert_scored_snapshot("reentry-one", "reentry", "ONE", 65, 1, reentry)
-
-    row = pulse_data(profile="v:reader")["rows"][0]
-
-    assert row["entered_at"] == reentry
-    assert row["novelty_state"] == "unseen"
+    assert "novelty_state" not in row
+    with connection() as database:
+        assert database.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='pulse_profile_state'"
+        ).fetchone() is None
 
 
 def test_news_and_social_flow_into_pulse_radar_and_alpha(
@@ -1139,14 +1103,18 @@ def test_radar_marks_new_state_seen(tmp_path: Path, monkeypatch: MonkeyPatch) ->
             ("user", "RAD", captured_at),
         )
 
-    first = radar_data("user", mark_seen=True)
-    second = radar_data("user")
+    first = radar_data()
+    second = radar_data()
 
     assert first[0]["has_update"] is True
     assert first[0]["source"] == "sec"
     assert first[0]["price"] == 2.1
     assert first[0]["evidence_gate"]["checks"] == ["Primary filing"]
-    assert second[0]["has_update"] is False
+    assert second[0]["has_update"] is True
+    with connection() as database:
+        assert database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='radar_seen'"
+        ).fetchone() is None
 
 
 def test_radar_excludes_events_for_tickers_not_in_pulse(

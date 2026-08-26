@@ -201,6 +201,27 @@ def create_portal_session(user: dict[str, Any], app_origin: str) -> str:
     return url
 
 
+def delete_customer(user: dict[str, Any]) -> bool:
+    """Delete the linked Stripe customer and cancel its active subscriptions."""
+
+    customer_id = str(user.get("stripe_customer_id") or "").strip()
+    if not customer_id:
+        return False
+    config = billing_config()
+    if not config.secret_key:
+        raise RuntimeError("Stripe is not configured")
+    stripe.api_key = config.secret_key
+    try:
+        deleted = stripe.Customer.delete(customer_id)
+    except stripe.InvalidRequestError as exc:
+        if getattr(exc, "code", None) == "resource_missing":
+            return True
+        raise
+    if not bool(_get(deleted, "deleted", False)):
+        raise RuntimeError("Stripe did not confirm customer deletion")
+    return True
+
+
 def caller_id_price_label(config: BillingConfig | None = None) -> str:
     config = config or billing_config()
     return _format_amount(CALLER_ID_CLAIM_PRICE_CENTS, config.caller_id_currency) or ""
@@ -247,8 +268,6 @@ def create_caller_id_checkout_session(user: dict[str, Any], app_origin: str) -> 
 
 
 def construct_webhook_event(payload: bytes, signature: str) -> Any:
-    if not STRIPE_BILLING_ENABLED:
-        raise RuntimeError("Stripe billing is disabled")
     config = billing_config()
     if not config.webhook_secret:
         raise RuntimeError("Stripe webhook is not configured")
@@ -383,7 +402,7 @@ def process_webhook_event(event: Any) -> dict[str, Any]:
                 if _get(metadata, "purpose") == "caller_identity"
                 else _apply_checkout(database, data_object)
             )
-        elif event_type in {
+        elif STRIPE_BILLING_ENABLED and event_type in {
             "customer.subscription.created",
             "customer.subscription.updated",
             "customer.subscription.deleted",

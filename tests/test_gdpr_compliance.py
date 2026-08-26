@@ -42,20 +42,6 @@ def _seed_user() -> None:
             "VALUES(?,?,?,?,?,'active',?,?)",
             ("position-one", "gdpr-user", "ONE", 1.25, timestamp, timestamp, timestamp),
         )
-        database.execute(
-            "INSERT INTO activity_events(profile_id,ticker,event_type,weight,created_at) "
-            "VALUES(?,?,?,?,?)",
-            ("u:gdpr-user", "ONE", "view", 1.0, timestamp),
-        )
-        database.execute(
-            "INSERT INTO radar_seen(profile_id,ticker,last_seen_at) VALUES(?,?,?)",
-            ("u:gdpr-user", "ONE", timestamp),
-        )
-        database.execute(
-            "INSERT INTO pulse_profile_state(profile_id,ticker,entered_at,first_seen_at) "
-            "VALUES(?,?,?,?)",
-            ("u:gdpr-user", "ONE", timestamp, timestamp),
-        )
 
 
 def test_public_app_has_a_complete_privacy_surface() -> None:
@@ -82,18 +68,28 @@ def test_public_app_has_a_complete_privacy_surface() -> None:
         assert required_copy in privacy_notice
 
 
-def test_export_and_delete_cover_account_content_and_old_tracking(
+def test_export_and_delete_cover_account_content_and_leave_anonymous_tombstone(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "gdpr-rights.db")
     init_db()
     _seed_user()
+    caller = claim_caller_id("gdpr-user")
+    timestamp = datetime.now(UTC).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO community_calls(id,caller_identity_id,ticker,body,status,created_at) "
+            "VALUES(?,?,?,?,?,?)",
+            ("gdpr-call", caller["id"], "ONE", "Public call", "public", timestamp),
+        )
 
     exported = export_user_data("gdpr-user")
 
     assert exported["account"]["username"] == "member_gdpr"
     assert exported["comments"][0]["body"] == "Public comment"
     assert exported["positions"][0]["ticker"] == "ONE"
+    assert exported["caller_identities"][0]["handle"] == caller["handle"]
+    assert exported["community_calls"][0]["body"] == "Public call"
     assert exported["passkeys"] == []
     assert "token_hash" not in str(exported)
 
@@ -105,51 +101,52 @@ def test_export_and_delete_cover_account_content_and_old_tracking(
         assert database.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM ticker_comments").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM user_positions").fetchone()[0] == 0
-        assert database.execute("SELECT COUNT(*) FROM activity_events").fetchone()[0] == 0
-        assert database.execute("SELECT COUNT(*) FROM radar_seen").fetchone()[0] == 0
-        assert database.execute("SELECT COUNT(*) FROM pulse_profile_state").fetchone()[0] == 0
+        assert database.execute("SELECT COUNT(*) FROM community_calls").fetchone()[0] == 0
+        tombstone = database.execute(
+            "SELECT handle,user_id,status,claim_cost_cents,payment_reference,claimed_at "
+            "FROM caller_identities WHERE id=?",
+            (caller["id"],),
+        ).fetchone()
+        assert dict(tombstone) == {
+            "handle": caller["handle"],
+            "user_id": None,
+            "status": "tombstoned",
+            "claim_cost_cents": None,
+            "payment_reference": None,
+            "claimed_at": None,
+        }
 
 
-def test_passive_tracking_purge_removes_every_legacy_profile_table(
+def test_passive_tracking_schema_is_removed_and_purge_stays_safe(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "gdpr-purge.db")
     init_db()
-    timestamp = datetime.now(UTC).isoformat()
     with connection() as database:
-        database.execute(
-            "INSERT INTO activity_events(profile_id,ticker,event_type,weight,created_at) "
-            "VALUES('v:legacy','ONE','view',1,?)",
-            (timestamp,),
-        )
-        database.execute(
-            "INSERT INTO ticker_hearts(profile_id,ticker,created_at,updated_at) "
-            "VALUES('v:legacy','ONE',?,?)",
-            (timestamp, timestamp),
-        )
-        database.execute(
-            "INSERT INTO radar_seen(profile_id,ticker,last_seen_at) VALUES('v:legacy','ONE',?)",
-            (timestamp,),
-        )
-        database.execute(
-            "INSERT INTO pulse_profile_state(profile_id,ticker,entered_at) "
-            "VALUES('v:legacy','ONE',?)",
-            (timestamp,),
-        )
-        database.execute(
-            "INSERT INTO ticker_reactions(profile_id,ticker,reaction,created_at,updated_at) "
-            "VALUES('v:legacy','ONE','bull',?,?)",
-            (timestamp, timestamp),
-        )
+        tables = {
+            row["name"]
+            for row in database.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+
+    assert {
+        "activity_events",
+        "ticker_hearts",
+        "radar_seen",
+        "pulse_profile_state",
+        "ticker_reactions",
+        "comment_pseudonyms",
+    }.isdisjoint(tables)
 
     result = purge_passive_tracking()
 
     assert result == {
-        "activity_events": 1,
-        "ticker_hearts": 1,
-        "radar_seen": 1,
-        "pulse_profile_state": 1,
-        "ticker_reactions": 1,
+        "activity_events": 0,
+        "ticker_hearts": 0,
+        "radar_seen": 0,
+        "pulse_profile_state": 0,
+        "ticker_reactions": 0,
     }
 
 
