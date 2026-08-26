@@ -18,7 +18,12 @@ from runner_web.ai_kol import (
     actor_snapshot,
     model_display_name,
 )
-from runner_web.database import DatabaseConnection, initialize_sqlite, open_database
+from runner_web.database import (
+    DatabaseConnection,
+    close_database_pool,
+    initialize_sqlite,
+    open_database,
+)
 from runner_web.pseudonyms import ADJECTIVES, ANIMALS, ensure_scoped_alias
 from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 
@@ -1954,6 +1959,11 @@ def _apply_migrations(db: DatabaseConnection) -> None:
                 "INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)",
                 (migration.version, migration.name, datetime.now(UTC).isoformat()),
             )
+            # Keep each PostgreSQL migration in its own transaction. A long
+            # transaction can deadlock with live requests when a later
+            # migration needs an exclusive table lock.
+            if db.backend == "postgres":
+                db.commit()
     except BaseException:
         if locked:
             db.rollback()
@@ -1977,4 +1987,7 @@ def init_db() -> None:
 def main() -> None:
     """Apply the current database schema as a deployment release command."""
 
-    init_db()
+    try:
+        init_db()
+    finally:
+        close_database_pool()

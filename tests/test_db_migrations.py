@@ -9,7 +9,9 @@ from runner_web.ai_kol import FLASH
 from runner_web.db import (
     MIGRATION_LOCK_ID,
     MIGRATIONS,
+    Migration,
     _acquire_migration_lock,
+    _apply_migrations,
     _migration_028_caller_identities,
     _release_migration_lock,
     connection,
@@ -43,6 +45,47 @@ def test_postgres_migrations_take_one_session_lock() -> None:
         ("SELECT pg_advisory_lock(?)", (MIGRATION_LOCK_ID,)),
         ("SELECT pg_advisory_unlock(?)", (MIGRATION_LOCK_ID,)),
     ]
+
+
+def test_postgres_commits_each_migration_before_releasing_lock(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class Result:
+        def fetchone(self) -> tuple[int]:
+            return (1,)
+
+        def fetchall(self) -> list[tuple[int, str]]:
+            return []
+
+    class Database:
+        backend = "postgres"
+
+        def execute(
+            self, statement: str, _parameters: tuple[object, ...] = ()
+        ) -> Result:
+            if "pg_advisory_unlock" in statement:
+                events.append("unlock")
+            elif statement.startswith("INSERT INTO schema_migrations"):
+                events.append("record")
+            return Result()
+
+        def commit(self) -> None:
+            events.append("commit")
+
+        def rollback(self) -> None:
+            events.append("rollback")
+
+    monkeypatch.setattr(
+        db,
+        "MIGRATIONS",
+        (Migration(1, "sample", lambda _database: events.append("apply")),),
+    )
+
+    _apply_migrations(Database())  # type: ignore[arg-type]
+
+    assert events == ["apply", "record", "commit", "unlock"]
 
 
 def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
