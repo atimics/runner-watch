@@ -1,0 +1,319 @@
+/*
+ * Taste audit layer: a sharp market newswire with a degen editorial edge.
+ * The product stays dense. Hierarchy and provenance keep the chaos readable.
+ */
+:root {
+  --bg: #070907;
+  --panel: #0e120f;
+  --panel-2: #141915;
+  --line: #29312b;
+  --text: #edf1ec;
+  --muted: #89938d;
+  --soft: #c3cbc5;
+  --green: #79ca91;
+  --red: #df7b82;
+  --amber: #cfad68;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: #040504;
+  font-family: "Avenir Next", "Helvetica Neue", Arial, sans-serif;
+  font-kerning: normal;
+  font-feature-settings: "tnum" 1;
+}
+
+.mobile-app {
+  background: var(--bg);
+  border-color: #151a16;
+}
+
+.skip-link {
+  position: fixed;
+  z-index: 100;
+  top: 8px;
+  left: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--green);
+  background: #0b100c;
+  color: var(--text);
+  font-size: 12px;
+  transform: translateY(-150%);
+}
+
+.skip-link:focus { transform: translateY(0); }
+
+:is(a, button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+.screen-head,
+.detail-nav {
+  background: rgba(7, 9, 7, .95);
+  border-color: var(--line);
+  backdrop-filter: none;
+}
+
+.screen-head h1,
+.asset-ticker h1,
+.section-heading h2 {
+  font-family: "Avenir Next Condensed", "Arial Narrow", "Helvetica Neue", sans-serif;
+  font-weight: 650;
+  letter-spacing: -.025em;
+}
+
+.head-meta {
+  color: #929d96;
+  letter-spacing: .015em;
+}
+
+.avatar-button {
+  border-radius: 2px;
+  background: #121713;
+  box-shadow: none;
+}
+
+.avatar-button.signed-out {
+  width: auto;
+  min-width: 52px;
+  padding: 0 10px;
+  color: var(--soft);
+  font-size: 9px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.session-clock {
+  background: #0a0d0a;
+  border-color: var(--line);
+}
+
+.session-state i,
+.live-label i,
+.timeline-dot.positive {
+  box-shadow: none;
+}
+
+.ticker-row {
+  min-height: 76px;
+  padding-right: 8px;
+  padding-left: 8px;
+  border-color: #202721;
+}
+
+.ticker-row::before {
+  background: rgba(121, 202, 145, .06);
+  box-shadow: inset 2px 0 rgba(121, 202, 145, .65);
+}
+
+.ticker-row .ticker-line strong,
+.quote,
+.price-block,
+.market-metrics strong,
+.risk-grid b,
+.risk-facts,
+.outcome-card strong,
+.alpha-leader-quote,
+.public-call-row,
+.call-ledger-mini,
+.chart-range,
+.chart-structure-strip {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.ticker-row .company-name { color: #828d86; }
+.ticker-row .catalyst { color: #b3bbb6; }
+.ticker-row .ticker-age { color: #737e77; }
+
+.tab-bar {
+  background: #0b0e0c;
+  border-color: var(--line);
+  backdrop-filter: none;
+}
+
+.tab-link {
+  position: relative;
+  color: #768078;
+  letter-spacing: .04em;
+}
+
+.tab-link.active { color: var(--text); }
+.tab-link.active::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  width: 26px;
+  height: 2px;
+  background: var(--green);
+}
+
+.pulse-empty .empty-seal {
+  width: 44px;
+  height: 44px;
+  border: 1px solid #465149;
+  border-left: 3px solid var(--green);
+  border-radius: 2px;
+}
+
+.empty-list p {
+  max-width: 260px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.alpha-leader {
+  border-color: #38423b;
+  border-left-color: var(--green);
+  background: #0e120f;
+}
+
+.contender-row > .rank-number { display: none; }
+.contender-row { grid-template-columns: minmax(0, 1fr) auto; }
+
+.asset-overview {
+  border-bottom: 1px solid var(--line);
+}
+
+.detail-principle {
+  margin: 0;
+  padding: 0 20px 13px;
+  color: #8b968f;
+  font-size: 9px;
+  letter-spacing: .035em;
+}
+
+.chart-card {
+  border-color: var(--line);
+}
+
+.chart-modes button,
+.range-buttons button {
+  border-radius: 1px;
+}
+
+.chart-modes button.active,
+.range-buttons button.active {
+  background: #182019;
+  color: var(--text);
+  box-shadow: inset 0 -1px var(--green);
+}
+
+.chart-mode-note { color: #8d9891; }
+
+.ai-report-disclaimer {
+  margin: 15px 0 2px;
+  padding: 11px 12px;
+  border: 1px solid #3a332a;
+  border-left: 2px solid var(--amber);
+  background: #11100c;
+}
+
+.ai-report-disclaimer strong {
+  color: var(--amber);
+  font-size: 9px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.ai-report-disclaimer p {
+  margin: 5px 0 0;
+  color: #a9a393;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.ai-report-disclaimer a {
+  display: inline-block;
+  margin-top: 7px;
+  color: var(--soft);
+  font-size: 9px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.report-source-index { scroll-margin-top: 62px; }
+
+.detail-actions .action-card {
+  border-color: #313a33;
+  background: #0d110e;
+}
+
+.detail-actions .call-card {
+  border-left: 2px solid #816b43;
+}
+
+.detail-actions .call-card .commission-button,
+.detail-actions .call-card .trade-login,
+.detail-actions .call-close,
+.call-card .commission-button,
+.call-close {
+  border: 1px solid rgba(207, 173, 104, .55);
+  background: transparent;
+  color: var(--amber);
+  box-shadow: none;
+}
+
+.risk-decision {
+  border-color: #3a332a;
+  border-left-color: var(--amber);
+  background: #11100c;
+}
+
+.risk-decision-head span {
+  color: #c6a967;
+  letter-spacing: .12em;
+}
+
+.dossier-mark {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #465149;
+  border-left: 3px solid var(--green);
+  color: var(--soft);
+  font: 700 12px/1 ui-monospace, "SFMono-Regular", Menlo, monospace;
+  letter-spacing: .08em;
+}
+
+.desktop-detail-empty {
+  flex-direction: column;
+  gap: 9px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.desktop-detail-empty strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.desktop-detail-empty p {
+  max-width: 250px;
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+@media (hover: hover) {
+  .ticker-row:hover { background: #0d110e; }
+  :is(a, button):active { transform: translateY(1px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+@media (min-width: 900px) {
+  .desktop-list-pane { border-color: var(--line); }
+  .desktop-detail-panel { background: #080b08; }
+  .detail-principle { padding-bottom: 15px; }
+}
