@@ -16,6 +16,7 @@ from runner_web.ai_kol import (
     model_display_name,
 )
 from runner_web.database import DatabaseConnection, initialize_sqlite, open_database
+from runner_web.pseudonyms import ensure_scoped_alias
 from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "data/runner-watch.db"))
@@ -1440,6 +1441,90 @@ def _migration_022_stripe_billing(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_023_gdpr_privacy(db: DatabaseConnection) -> None:
+    """Remove passive profiles and replace global public names with thread aliases."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS public_aliases (
+            scope TEXT NOT NULL,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            alias TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(scope,user_id),
+            UNIQUE(scope,alias)
+        );
+        CREATE INDEX IF NOT EXISTS public_aliases_user
+            ON public_aliases(user_id,scope);
+        """
+    )
+    comment_threads = db.execute(
+        "SELECT DISTINCT user_id,ticker FROM ticker_comments"
+    ).fetchall()
+    for row in comment_threads:
+        ensure_scoped_alias(db, str(row["user_id"]), f"comment:{row['ticker']}")
+    for table in (
+        "activity_events",
+        "ticker_hearts",
+        "radar_seen",
+        "pulse_profile_state",
+        "ticker_reactions",
+        "comment_pseudonyms",
+    ):
+        db.execute(f"DELETE FROM {table}")
+
+
+def _migration_024_caller_identities(db: DatabaseConnection) -> None:
+    """Give accounts unlinkable public caller IDs with permanent name tombstones."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS caller_identities (
+            id TEXT PRIMARY KEY,
+            handle TEXT NOT NULL UNIQUE,
+            user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+            status TEXT NOT NULL CHECK(status IN ('active','tombstoned')),
+            claim_cost_cents INTEGER,
+            payment_reference TEXT UNIQUE,
+            claimed_at TEXT,
+            deleted_at TEXT,
+            CHECK(
+                (status='active' AND user_id IS NOT NULL AND claimed_at IS NOT NULL)
+                OR
+                (status='tombstoned' AND user_id IS NULL AND claimed_at IS NULL)
+            )
+        );
+        CREATE INDEX IF NOT EXISTS caller_identities_owner
+            ON caller_identities(user_id,claimed_at) WHERE user_id IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS caller_identity_claims (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            caller_identity_id TEXT NOT NULL REFERENCES caller_identities(id),
+            payment_reference TEXT UNIQUE,
+            claim_cost_cents INTEGER NOT NULL,
+            free_claim INTEGER NOT NULL DEFAULT 0 CHECK(free_claim IN (0,1)),
+            claimed_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS caller_identity_one_free_claim
+            ON caller_identity_claims(user_id) WHERE free_claim=1;
+        CREATE INDEX IF NOT EXISTS caller_identity_claims_owner
+            ON caller_identity_claims(user_id,claimed_at);
+        CREATE TABLE IF NOT EXISTS community_calls (
+            id TEXT PRIMARY KEY,
+            caller_identity_id TEXT NOT NULL REFERENCES caller_identities(id),
+            ticker TEXT NOT NULL,
+            body TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'public' CHECK(status IN ('public','deleted')),
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS community_calls_ticker_time
+            ON community_calls(ticker,status,created_at DESC);
+        CREATE INDEX IF NOT EXISTS community_calls_caller_time
+            ON community_calls(caller_identity_id,created_at DESC);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -1470,6 +1555,8 @@ MIGRATIONS = (
     Migration(20, "user_positions", _migration_020_user_positions),
     Migration(21, "short_data", _migration_021_short_data),
     Migration(22, "stripe_billing", _migration_022_stripe_billing),
+    Migration(23, "gdpr_privacy", _migration_023_gdpr_privacy),
+    Migration(24, "caller_identities", _migration_024_caller_identities),
 )
 
 
