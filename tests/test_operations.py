@@ -6,7 +6,7 @@ from pytest import MonkeyPatch
 
 from runner_web import db
 from runner_web.db import connection, init_db
-from runner_web.operations import WORKER_HEARTBEAT_KEY, health_status
+from runner_web.operations import WORKER_HEARTBEAT_KEY, health_api, health_status
 
 
 def test_health_requires_a_fresh_worker_heartbeat(
@@ -56,3 +56,15 @@ def test_health_rejects_an_old_worker_heartbeat(
 
     assert result["status"] == "degraded"
     assert result["worker"]["status"] == "stale"
+
+
+def test_health_api_keeps_web_ready_when_worker_is_stale(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "ready-health.db")
+    init_db()
+
+    response = health_api()
+
+    assert response.status_code == 200
+    assert json.loads(response.body)["status"] == "degraded"

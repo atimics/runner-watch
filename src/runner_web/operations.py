@@ -199,7 +199,10 @@ def runtime_capabilities(
 @router.get("/health")
 def health_api() -> JSONResponse:
     payload = health_status()
-    return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
+    # This endpoint is also Fly's web readiness check. A stale worker should stay
+    # visible in the payload, but it must not remove healthy web machines from
+    # traffic. Database failures still fail the request before this response.
+    return JSONResponse(payload, status_code=200)
 
 
 @router.get("/api/ranker/status")
