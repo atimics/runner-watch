@@ -56,7 +56,7 @@ kill_timeout = 30
   [[http_service.machine_checks]]
     image = "curlimages/curl"
     entrypoint = ["/bin/sh", "-c"]
-    command = ["curl --fail --silent --show-error --max-time 5 http://[$FLY_TEST_MACHINE_IP]:8080/health"]
+    command = ["curl --fail --silent --show-error --retry 12 --retry-delay 2 --retry-max-time 30 --retry-all-errors --connect-timeout 2 --max-time 5 http://[$FLY_TEST_MACHINE_IP]:8080/health"]
     kill_signal = "SIGKILL"
     kill_timeout = "5s"
 
