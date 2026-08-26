@@ -190,7 +190,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "evidence_as_of",
         "citations_json",
     } <= commission_columns
-    assert {"visibility", "published_at"} <= commission_columns
+    assert {"visibility", "published_at", "report_day", "exclusive_until"} <= commission_columns
     assert {"source", "generation_model"} <= comment_columns
     assert "actor_snapshot_json" in call_columns
     assert {
@@ -259,6 +259,8 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "flash_report_requests_user_time",
         "flash_transactions_user_time",
         "research_commissions_public_time",
+        "research_commissions_daily_actor",
+        "research_commissions_daily_visibility",
     } <= indexes
 
 

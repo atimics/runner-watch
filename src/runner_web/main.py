@@ -74,6 +74,7 @@ from runner_web.flash_wallet import (
     COMMENT_COST,
     PUBLISH_REPORT_REWARD,
     REPORT_COST,
+    REPORT_EXCLUSIVE_HOURS,
     InsufficientFlashError,
     claim_daily_flash,
     credit_flash,
@@ -1882,6 +1883,51 @@ def _commission_record(
     return report
 
 
+def _release_expired_daily_reports(database: Any, *, at: datetime | None = None) -> int:
+    """Share completed daily reports when their private alpha hour ends."""
+
+    timestamp = iso(at)
+    updated = database.execute(
+        """
+        UPDATE research_commissions
+        SET visibility='public',published_at=COALESCE(published_at,exclusive_until),
+            updated_at=?
+        WHERE status='complete' AND report_day IS NOT NULL
+            AND visibility<>'public' AND exclusive_until IS NOT NULL
+            AND exclusive_until<=?
+        """,
+        (timestamp, timestamp),
+    )
+    return updated.rowcount
+
+
+def daily_report_for_ticker(
+    ticker: str,
+    viewer_user_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Return today's shared report or a safe description of its active lock."""
+
+    report_day = now().date().isoformat()
+    with connection() as database:
+        _release_expired_daily_reports(database)
+        row = database.execute(
+            """
+            SELECT * FROM research_commissions
+            WHERE ticker=? AND actor_id=? AND report_day=?
+                AND status IN ('running','complete')
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (ticker, FLASH.id, report_day),
+        ).fetchone()
+    report = _commission_record(row)
+    if not report:
+        return None
+    is_owner = bool(viewer_user_id and str(report["user_id"]) == str(viewer_user_id))
+    report["is_owner"] = is_owner
+    report["locked"] = str(report.get("visibility") or "private") != "public" and not is_owner
+    return report
+
+
 def _alpha_list_summary(
     ticker: str,
     pulse_lookup: dict[str, dict[str, Any]],
@@ -2678,36 +2724,38 @@ def _create_research_commission(
     actor: AIKol = FLASH,
     case_id: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    """Create one private, credit-backed server job for the requesting user."""
+    """Create the ticker's one credit-backed daily report and private alpha lock."""
 
-    timestamp = iso()
+    current_time = now()
+    timestamp = iso(current_time)
+    report_day = current_time.date().isoformat()
+    exclusive_until = iso(current_time + timedelta(hours=REPORT_EXCLUSIVE_HOURS))
     engagement_count = _community_engagement_count(ticker)
     evidence_key, evidence = _alpha_evidence(ticker, engagement_count)
     report_id = str(uuid.uuid4())
     public_id = secrets.token_urlsafe(8).replace("-", "").replace("_", "")[:10]
     try:
         with connection() as db:
-            running = db.execute(
+            _release_expired_daily_reports(db, at=current_time)
+            existing = db.execute(
                 """
                 SELECT * FROM research_commissions
-                WHERE user_id=? AND ticker=? AND actor_id=? AND status='running'
+                WHERE ticker=? AND actor_id=? AND report_day=?
+                    AND status IN ('running','complete')
                 ORDER BY created_at DESC LIMIT 1
                 """,
-                (user_id, ticker, actor.id),
+                (ticker, actor.id, report_day),
             ).fetchone()
-            if running:
-                return _commission_record(running) or {}, False
-            current = db.execute(
-                """
-                SELECT * FROM research_commissions
-                WHERE user_id=? AND ticker=? AND actor_id=? AND evidence_key=?
-                    AND status='complete' AND (? IS NULL OR case_id=?)
-                ORDER BY completed_at DESC LIMIT 1
-                """,
-                (user_id, ticker, actor.id, evidence_key, case_id, case_id),
-            ).fetchone()
-            if current:
-                return _commission_record(current) or {}, False
+            if existing:
+                report = _commission_record(existing) or {}
+                if str(existing["user_id"]) == user_id or str(
+                    existing["visibility"] or "private"
+                ) == "public":
+                    return report, False
+                raise HTTPException(
+                    423,
+                    "Today's alpha is private for one hour. It may be published sooner.",
+                )
             since = iso(now() - timedelta(days=1))
             global_count = db.execute(
                 """
@@ -2723,8 +2771,8 @@ def _create_research_commission(
                 INSERT INTO research_commissions(
                     id,public_id,user_id,ticker,evidence_key,status,requested_model,
                     actor_id,actor_snapshot_json,case_id,trigger,evidence_snapshot_json,
-                    evidence_as_of,created_at,updated_at
-                ) VALUES(?,?,?,?,?,'running',?,?,?,?,?,?,?,?,?)
+                    evidence_as_of,created_at,updated_at,report_day,exclusive_until
+                ) VALUES(?,?,?,?,?,'running',?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT DO NOTHING
                 """,
                 (
@@ -2742,19 +2790,30 @@ def _create_research_commission(
                     timestamp,
                     timestamp,
                     timestamp,
+                    report_day,
+                    exclusive_until,
                 ),
             )
             if inserted.rowcount == 0:
-                running = db.execute(
+                existing = db.execute(
                     """
                     SELECT * FROM research_commissions
-                    WHERE user_id=? AND ticker=? AND actor_id=? AND status='running'
+                    WHERE ticker=? AND actor_id=? AND report_day=?
+                        AND status IN ('running','complete')
                     ORDER BY created_at DESC LIMIT 1
                     """,
-                    (user_id, ticker, actor.id),
+                    (ticker, actor.id, report_day),
                 ).fetchone()
-                if running:
-                    return _commission_record(running) or {}, False
+                if existing:
+                    report = _commission_record(existing) or {}
+                    if str(existing["user_id"]) == user_id or str(
+                        existing["visibility"] or "private"
+                    ) == "public":
+                        return report, False
+                    raise HTTPException(
+                        423,
+                        "Today's alpha is private for one hour. It may be published sooner.",
+                    )
                 raise HTTPException(409, "This report is already running.")
             spend_flash(
                 db,
@@ -3099,6 +3158,7 @@ def _run_research_commission(
                     report_id,
                 ),
             )
+            _release_expired_daily_reports(db)
         with connection() as db:
             row = db.execute(
                 "SELECT * FROM research_commissions WHERE id=?", (report_id,)
@@ -3226,6 +3286,7 @@ async def research_job_worker() -> None:
 
 def get_commission(public_id: str) -> dict[str, Any] | None:
     with connection() as db:
+        _release_expired_daily_reports(db)
         row = db.execute(
             """
             SELECT * FROM research_commissions
@@ -3238,6 +3299,7 @@ def get_commission(public_id: str) -> dict[str, Any] | None:
 
 def latest_commission(user_id: str, ticker: str) -> dict[str, Any] | None:
     with connection() as db:
+        _release_expired_daily_reports(db)
         row = db.execute(
             """
             SELECT * FROM research_commissions
@@ -3260,6 +3322,7 @@ def _commission_api_payload(report: dict[str, Any]) -> dict[str, Any]:
         "retryable": status == "failed",
         "url": f"/research/{public_id}" if status == "complete" and public_id else None,
         "error": str(report.get("error") or "") if status == "failed" else None,
+        "exclusive_until": report.get("exclusive_until"),
     }
 
 
@@ -4113,10 +4176,9 @@ def ticker_page(
             comment_count=comment_count_for_ticker(normalized),
             active_call=active_call,
             calls=community_calls_for_ticker(normalized, current_price=mark, limit=20),
-            latest_commission=(
-                latest_commission(str(user["id"]), normalized)
-                if user
-                else None
+            latest_commission=daily_report_for_ticker(
+                normalized,
+                str(user["id"]) if user else None,
             ),
             active_tab="pulse",
         ),
@@ -5310,8 +5372,10 @@ def publish_research_report_api(
     require_origin(request)
     user = require_user(runner_session)
     enforce_rate(request, "publish-research", limit=12, seconds=3600, subject=user["id"])
-    timestamp = iso()
+    current_time = now()
+    timestamp = iso(current_time)
     with connection() as db:
+        _release_expired_daily_reports(db, at=current_time)
         row = db.execute(
             """
             SELECT * FROM research_commissions
@@ -5322,6 +5386,10 @@ def publish_research_report_api(
         if not row:
             raise HTTPException(404, "Research report not found")
         newly_published = str(row["visibility"] or "private") != "public"
+        exclusive_until = str(row["exclusive_until"] or "")
+        early_publish = newly_published and (
+            not exclusive_until or exclusive_until > timestamp
+        )
         if newly_published:
             db.execute(
                 """
@@ -5330,13 +5398,21 @@ def publish_research_report_api(
                 """,
                 (timestamp, timestamp, row["id"]),
             )
-        balance, rewarded = credit_flash(
-            db,
-            str(user["id"]),
-            PUBLISH_REPORT_REWARD,
-            kind="report_published",
-            reference_id=str(row["id"]),
-        )
+        if early_publish:
+            balance, rewarded = credit_flash(
+                db,
+                str(user["id"]),
+                PUBLISH_REPORT_REWARD,
+                kind="report_published",
+                reference_id=str(row["id"]),
+            )
+        else:
+            rewarded = False
+            wallet = db.execute(
+                "SELECT balance FROM flash_wallets WHERE user_id=?",
+                (str(user["id"]),),
+            ).fetchone()
+            balance = int(wallet["balance"]) if wallet else 0
     return JSONResponse(
         {
             "published": newly_published,

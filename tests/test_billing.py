@@ -62,7 +62,7 @@ def test_billing_page_is_now_a_public_flash_wallet() -> None:
     assert "There is no Pro subscription" in html
     assert "Claim 100 Flash" not in html
     assert "Log in to claim" in html
-    assert "Generate a Flash report" in html
+    assert "Generate today's ticker report" in html
     assert "AI-generated ticker comment" in html
     assert "Stripe checkout is disabled" in html
     assert 'href="/roadmap"' in html
@@ -144,13 +144,13 @@ def test_flash_spend_and_publish_reward_are_idempotent(
             reference_id="report-one",
         )
 
-    assert report_balance == 90
+    assert report_balance == 0
     assert spent is True
-    assert duplicate_balance == 90
+    assert duplicate_balance == 0
     assert spent_twice is False
-    assert rewarded_balance == 140
+    assert rewarded_balance == 50
     assert rewarded is True
-    assert final_balance == 140
+    assert final_balance == 50
     assert rewarded_twice is False
 
 
@@ -162,7 +162,7 @@ def test_flash_spend_rejects_an_empty_wallet(
     init_db()
     create_user()
 
-    with pytest.raises(InsufficientFlashError, match="costs 5 Flash"):
+    with pytest.raises(InsufficientFlashError, match="costs 10 Flash"):
         with connection() as database:
             spend_flash(
                 database,

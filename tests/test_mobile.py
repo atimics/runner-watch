@@ -67,7 +67,7 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert "Track a thesis" not in template
     assert "thesisDialog" not in template
     assert "thesisForm" not in template
-    assert "Generate Flash report" in template
+    assert "Generate today's report" in template
     assert "commissionButton" in template
     assert "Make Call" in template
     assert template.count("<textarea") == 0
@@ -320,7 +320,7 @@ def test_ticker_page_does_not_add_a_guest_research_action(
 
     assert response.status_code == 200
     assert "Ask Flash" not in response.body.decode()
-    assert "Log in to generate a Flash report" in response.body.decode()
+    assert "Log in to generate today's report" in response.body.decode()
     assert "Connect OpenRouter" not in response.body.decode()
 
 
@@ -1179,7 +1179,7 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
     assert payload["comment"]["body"] == "My read is above VWAP, but low volume is the risk."
     assert payload["comment"]["ai_generated"] is True
     assert payload["comment"]["generation_model"] == "test/model"
-    assert payload["balance"] == 95
+    assert payload["balance"] == 90
     assert payload["comment"]["pseudonym"] == web_main.comment_pseudonym("feedback-user")
     assert payload["comment"]["pseudonym"].count("-") == 1
     assert payload["comment"]["pseudonym"].islower()
@@ -1338,7 +1338,7 @@ def test_commissioned_report_stays_private_without_storing_the_openrouter_key(
     assert report["actor"]["ladder_position"] == 1
     assert report["actor"]["ladder_size"] == 4
     assert get_commission(report["public_id"])["summary"] == "A source-bound summary."
-    assert wallet_for_user("commissioner")["balance"] == 90
+    assert wallet_for_user("commissioner")["balance"] == 0
     assert "commissions" not in alpha_board_data("v:reader")
     with connection() as database:
         columns = {row[1] for row in database.execute("PRAGMA table_info(research_commissions)")}
@@ -1489,12 +1489,13 @@ def test_verified_pipeline_freezes_every_stage(
     assert all(len(row["input_fingerprint"]) == 64 for row in stages)
 
 
-def test_running_flash_commissions_are_private_per_user(
+def test_first_daily_flash_report_locks_other_users_for_one_hour(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "running-commission.db")
     init_db()
     captured_at = datetime.now(UTC).isoformat()
+    raw_session = "daily-report-session"
     insert_filing("running-one", "ONE", 1.25, 90, captured_at, "P")
     with connection() as database:
         database.execute(
@@ -1505,41 +1506,93 @@ def test_running_flash_commissions_are_private_per_user(
             "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
             ("other", "member_other", "Other member", "active", captured_at),
         )
+        database.execute(
+            "INSERT INTO sessions(token_hash,user_id,created_at,expires_at) VALUES(?,?,?,?)",
+            (
+                web_main.token_hash(raw_session),
+                "runner",
+                captured_at,
+                (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+            ),
+        )
     claim_daily_flash("runner")
     claim_daily_flash("other")
 
     first, first_created = web_main._create_research_commission("runner", "ONE")
-    second, second_created = web_main._create_research_commission("other", "ONE")
+    with pytest.raises(HTTPException) as locked:
+        web_main._create_research_commission("other", "ONE")
 
     assert first_created is True
-    assert second_created is True
     assert first["status"] == "running"
-    assert second["public_id"] != first["public_id"]
+    assert locked.value.status_code == 423
     assert web_main.latest_commission("runner", "ONE")["status"] == "running"
-    assert web_main.latest_commission("other", "ONE")["status"] == "running"
+    assert web_main.latest_commission("other", "ONE") is None
+    assert web_main.daily_report_for_ticker("ONE", "runner")["locked"] is False
+    assert web_main.daily_report_for_ticker("ONE", "other")["locked"] is True
     with connection() as database:
         rows = database.execute("SELECT * FROM research_commissions").fetchall()
         requests = database.execute(
             "SELECT user_id,created_new FROM flash_report_requests ORDER BY created_at,id"
         ).fetchall()
-    assert len(rows) == 2
-    assert wallet_for_user("runner")["balance"] == 90
-    assert wallet_for_user("other")["balance"] == 90
+    assert len(rows) == 1
+    assert wallet_for_user("runner")["balance"] == 0
+    assert wallet_for_user("other")["balance"] == 100
     assert requests == []
     assert "openrouter" not in " ".join(rows[0].keys()).lower()
+
+    expired_at = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    completed_at = datetime.now(UTC).isoformat()
+    with connection() as database:
+        database.execute(
+            """
+            UPDATE research_commissions
+            SET status='complete',headline='ONE daily alpha',summary='Daily evidence.',
+                completed_at=?,updated_at=?,exclusive_until=?
+            WHERE id=?
+            """,
+            (completed_at, completed_at, expired_at, first["id"]),
+        )
+
+    shared = web_main.daily_report_for_ticker("ONE", "other")
+    same_report, created = web_main._create_research_commission("other", "ONE")
+
+    assert shared is not None
+    assert shared["visibility"] == "public"
+    assert shared["locked"] is False
+    assert created is False
+    assert same_report["public_id"] == first["public_id"]
+    assert wallet_for_user("other")["balance"] == 100
+
+    publish_request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": f"/api/research/{first['public_id']}/publish",
+            "headers": [(b"origin", APP_ORIGIN.encode())],
+            "client": ("127.0.0.90", 4900),
+        }
+    )
+    late_publish = json.loads(
+        web_main.publish_research_report_api(
+            first["public_id"], publish_request, raw_session
+        ).body
+    )
+    assert late_publish["published"] is False
+    assert late_publish["reward"] == 0
+    assert late_publish["balance"] == 0
 
 
 def test_ticker_commissions_flash_with_no_browser_key() -> None:
     template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
 
-    assert "Generate Flash report" in template
+    assert "Generate today's report" in template
     assert "Retry Flash" in template
-    assert "10 Flash" in template
+    assert "100 Flash" in template
     assert "commissionButton" in template
     assert "fetch(`/api/research/${encodeURIComponent(ticker)}`,{method:'POST'})" in template
     assert "runnerOpenRouter" not in template
     assert "X-OpenRouter-Key" not in template
-    assert 'Flash <small class="flash-model-label">{{ flash.model }}</small>' in template
+    assert 'Daily Flash <small class="flash-model-label">{{ flash.model }}</small>' in template
     assert "{{ flash.model }}" in template
 
 
@@ -1821,7 +1874,7 @@ def test_failed_commission_stores_safe_diagnostics_and_is_retryable(
     retry, created = web_main._create_research_commission("failed-user", "EU")
     assert created is True
     assert retry["status"] == "running"
-    assert wallet_for_user("failed-user")["balance"] == 90
+    assert wallet_for_user("failed-user")["balance"] == 0
 
 
 def test_owner_can_publish_report_once_and_earn_flash(
@@ -1900,10 +1953,10 @@ def test_owner_can_publish_report_once_and_earn_flash(
 
     assert first_publish["published"] is True
     assert first_publish["reward"] == 50
-    assert first_publish["balance"] == 140
+    assert first_publish["balance"] == 50
     assert second_publish["published"] is False
     assert second_publish["reward"] == 0
-    assert second_publish["balance"] == 140
+    assert second_publish["balance"] == 50
     public_page = web_main.research_report_page(report["public_id"], public_request, None)
     assert public_page.status_code == 200
     request = Request({"type": "http", "method": "GET", "path": "/research", "headers": []})

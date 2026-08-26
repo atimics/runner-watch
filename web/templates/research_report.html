@@ -98,11 +98,11 @@
   <section class="research-section report-publish">
     {% if report.visibility == 'public' %}
     <h2>Published</h2>
-    <p>This report is public. Your 50 Flash publishing reward was issued once.</p>
+    <p>This daily report is open for everyone to read.</p>
     {% else %}
-    <h2>Publish and earn 50 Flash</h2>
-    <p>Publishing makes this report and its share card public. It cannot be made private again.</p>
-    <button id="publishReport" type="button">Publish report · +50 Flash</button>
+    <h2>Your private alpha</h2>
+    <p>You control this report for one hour. Publish now to share it early and earn 50 Flash; otherwise it opens automatically when the hour ends.</p>
+    <button id="publishReport" type="button">Publish now · +50 Flash</button>
     <small id="publishStatus">Current balance: {{ flash_wallet.balance }} Flash</small>
     {% endif %}
   </section>
