@@ -9,6 +9,7 @@ from typing import Any
 LOG = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL", "").strip()
+REQUIRE_REDIS_TLS = os.getenv("REQUIRE_REDIS_TLS", "0") == "1"
 KEY_PREFIX = os.getenv("REDIS_KEY_PREFIX", "stonks").strip() or "stonks"
 
 _CLIENT_LOCK = threading.Lock()
@@ -16,6 +17,8 @@ _CLIENT: Any | None = None
 
 
 def redis_configured() -> bool:
+    if REDIS_URL and REQUIRE_REDIS_TLS and not REDIS_URL.startswith("rediss://"):
+        raise RuntimeError("REDIS_URL must use TLS in this deployment")
     return bool(REDIS_URL)
 
 
@@ -23,6 +26,8 @@ def _client() -> Any:
     global _CLIENT
     if not REDIS_URL:
         raise RuntimeError("REDIS_URL is not configured")
+    if REQUIRE_REDIS_TLS and not REDIS_URL.startswith("rediss://"):
+        raise RuntimeError("REDIS_URL must use TLS in this deployment")
     with _CLIENT_LOCK:
         if _CLIENT is None:
             from redis import Redis

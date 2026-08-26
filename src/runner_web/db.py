@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from runner_web.ai_kol import (
     DEFAULT_FLASH_MODEL,
@@ -22,6 +23,7 @@ from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "data/runner-watch.db"))
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 REQUIRE_DATABASE_URL = os.getenv("REQUIRE_DATABASE_URL", "0") == "1"
+REQUIRE_DATABASE_TLS = os.getenv("REQUIRE_DATABASE_TLS", "0") == "1"
 MIGRATION_LOCK_ID = 7_348_195_620_341_977_301
 
 
@@ -32,6 +34,13 @@ def database_identity() -> str:
         digest = sha256(DATABASE_URL.encode()).hexdigest()[:12]
         return f"postgres:{digest}"
     return f"sqlite:{DATABASE_PATH}"
+
+
+def database_tls_enabled(database_url: str) -> bool:
+    if not database_url:
+        return False
+    values = parse_qs(urlparse(database_url).query).get("sslmode", [])
+    return bool(values and values[-1].lower() in {"require", "verify-ca", "verify-full"})
 
 
 def _columns(db: DatabaseConnection, table: str) -> set[str]:
@@ -102,6 +111,8 @@ def _seed_source_registry(db: DatabaseConnection) -> None:
 def connection() -> Iterator[DatabaseConnection]:
     if REQUIRE_DATABASE_URL and not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is required in this deployment")
+    if REQUIRE_DATABASE_TLS and not database_tls_enabled(DATABASE_URL):
+        raise RuntimeError("DATABASE_URL must require TLS in this deployment")
     with open_database(DATABASE_URL, DATABASE_PATH) as db:
         yield db
 

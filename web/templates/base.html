@@ -27,7 +27,7 @@
     </nav>
   </header>
   <main class="shell">{% block content %}{% endblock %}</main>
-  <footer>SEC filings + delayed market data · Research only · Don’t ape blind</footer>
+  <footer>SEC filings + delayed market data · Research only · <a href="/privacy">Privacy</a></footer>
   {% if user %}
   <script nonce="{{ request.state.csp_nonce }}">
     document.getElementById('logout')?.addEventListener('click', async () => {

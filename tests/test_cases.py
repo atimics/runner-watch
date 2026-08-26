@@ -13,6 +13,7 @@ from runner_web.cases import (
     update_case,
 )
 from runner_web.db import connection, init_db
+from runner_web.pseudonyms import ensure_scoped_alias
 
 
 def seed_user(user_id: str = "case-user") -> None:
@@ -102,10 +103,7 @@ def test_case_keeps_its_social_comment_source(tmp_path: Path, monkeypatch: Monke
     seed_user()
     timestamp = datetime.now(UTC).isoformat()
     with connection() as database:
-        database.execute(
-            "INSERT INTO comment_pseudonyms(user_id,pseudonym,created_at) VALUES(?,?,?)",
-            ("case-user", "quiet-fox", timestamp),
-        )
+        alias = ensure_scoped_alias(database, "case-user", "comment:ONE")
         database.execute(
             """
             INSERT INTO ticker_comments(id,ticker,user_id,body,status,created_at)
@@ -130,7 +128,7 @@ def test_case_keeps_its_social_comment_source(tmp_path: Path, monkeypatch: Monke
 
     assert created["source_kind"] == "community_comment"
     assert created["source_comment_id"] == "source-comment"
-    assert created["source_pseudonym"] == "quiet-fox"
+    assert created["source_pseudonym"] == alias
     assert created["confidence"] is None
 
 

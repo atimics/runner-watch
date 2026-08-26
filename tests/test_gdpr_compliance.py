@@ -227,6 +227,15 @@ def test_one_account_can_own_paid_animal_caller_ids_and_delete_them(
             "SELECT COUNT(*) FROM community_calls WHERE caller_identity_id=?",
             (second["id"],),
         ).fetchone()[0] == 0
+        claim = database.execute(
+            "SELECT caller_identity_id,payment_reference FROM caller_identity_claims "
+            "WHERE user_id=? AND free_claim=0",
+            ("caller-owner",),
+        ).fetchone()
+        assert dict(claim) == {
+            "caller_identity_id": None,
+            "payment_reference": "stripe:paid-once",
+        }
 
 
 def test_openrouter_request_has_no_user_fingerprint() -> None:
