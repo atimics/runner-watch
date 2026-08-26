@@ -1360,12 +1360,12 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
     )
     monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
 
-    comment, model = web_main._generate_ticker_comment_text("ONE", "member-one")
+    comment, model = web_main._generate_ticker_comment_text("ONE")
 
     assert comment == "My read is constructive, but thin volume is the risk."
     assert model == "z-ai/glm-5.3"
     assert captured["body"]["response_format"] == {"type": "json_object"}
-    assert captured["body"]["user"] != "member-one"
+    assert "user" not in captured["body"]
 
 
 def test_radar_orders_events_by_time_not_activity(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
