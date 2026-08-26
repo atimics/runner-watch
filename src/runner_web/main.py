@@ -160,6 +160,7 @@ OPENROUTER_RESEARCH_TIMEOUT_SECONDS = max(
     30, int(os.getenv("OPENROUTER_RESEARCH_TIMEOUT_SECONDS", "300"))
 )
 FLASH_GLOBAL_DAILY_LIMIT = max(1, int(os.getenv("FLASH_GLOBAL_DAILY_LIMIT", "50")))
+COMMENT_MAX_CHARS = 240
 SCAN_MODES = {
     "penny": {
         "label": "Penny stocks",
@@ -2327,6 +2328,67 @@ def _openrouter_report_json(content: Any) -> dict[str, Any]:
                 # normalizer can still turn that into a useful report.
                 break
     return parsed
+
+
+def _openrouter_comment_text(content: Any) -> str:
+    """Read a short comment from OpenRouter's supported response shapes."""
+
+    def unwrap(value: Any, depth: int = 0) -> str:
+        if depth > 5:
+            raise ValueError("comment response is too deeply nested")
+        if isinstance(value, dict):
+            for key in ("comment", "answer", "response", "text", "content", "output", "value"):
+                if key in value:
+                    return unwrap(value[key], depth + 1)
+            raise ValueError("comment field is missing")
+        if isinstance(value, list):
+            parts: list[str] = []
+            for item in value:
+                try:
+                    part = unwrap(item, depth + 1)
+                except ValueError:
+                    continue
+                if part:
+                    parts.append(part)
+            if not parts:
+                raise ValueError("comment content is missing")
+            return " ".join(parts)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("comment content is missing")
+
+        text = value.strip()
+        if text.startswith("```"):
+            first_break = text.find("\n")
+            if first_break >= 0:
+                text = text[first_break + 1 :]
+            if text.rstrip().endswith("```"):
+                text = text.rstrip()[:-3].rstrip()
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start >= 0 and end > start:
+                try:
+                    return unwrap(json.loads(text[start : end + 1]), depth + 1)
+                except json.JSONDecodeError:
+                    if text.startswith("{"):
+                        raise
+            return text
+        return unwrap(parsed, depth + 1)
+
+    comment = " ".join(unwrap(content).split())
+    comment = re.sub(r"^(?:comment|answer|response)\s*:\s*", "", comment, flags=re.I)
+    if not comment:
+        raise ValueError("comment content is missing")
+    if len(comment) > COMMENT_MAX_CHARS:
+        shortened = comment[:COMMENT_MAX_CHARS].rstrip()
+        if not comment[COMMENT_MAX_CHARS].isspace() and " " in shortened:
+            shortened = shortened.rsplit(" ", 1)[0].rstrip()
+        comment = shortened
+    if not comment:
+        raise ValueError("comment content is missing")
+    return comment
 
 
 def _report_text(value: Any) -> str:
@@ -5081,8 +5143,7 @@ def _generate_ticker_comment_text(ticker: str, user_id: str) -> tuple[str, str]:
         with urllib.request.urlopen(api_request, timeout=30) as response:  # noqa: S310
             result = json.load(response)
         content = result["choices"][0]["message"]["content"]
-        parsed = _openrouter_report_json(content)
-        comment = " ".join(str(parsed.get("comment") or "").split())
+        comment = _openrouter_comment_text(content)
     except urllib.error.HTTPError as exc:
         raise HTTPException(502, "AI comment generation failed. Your Flash was returned.") from exc
     except (TimeoutError, urllib.error.URLError) as exc:
@@ -5093,9 +5154,7 @@ def _generate_ticker_comment_text(ticker: str, user_id: str) -> tuple[str, str]:
         raise HTTPException(
             502, "AI returned an invalid comment. Your Flash was returned."
         ) from exc
-    if not comment:
-        raise HTTPException(502, "AI returned an empty comment. Your Flash was returned.")
-    return comment[:280], str(result.get("model") or FLASH.model)[:160]
+    return comment, str(result.get("model") or FLASH.model)[:160]
 
 
 @app.post("/api/comments/{ticker}")
