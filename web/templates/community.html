@@ -2,60 +2,40 @@
 {% block title %}Alpha · Runner Watch{% endblock %}
 {% block content %}
 <header class="screen-head">
-  <div><h1>Alpha</h1><span class="head-meta"><b>{{ board.rows|length }}</b> ranked <i></i><span>{{ board.total_votes }} votes · {{ board.total_comments }} comments</span></span></div>
+  <div><h1>Alpha</h1><span class="head-meta"><b>{{ board.active_calls }}</b> open Calls <i></i><span>{{ board.total_calls }} total</span></span></div>
   {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>{% else %}<a class="avatar-button signed-out" href="/login" aria-label="Log in">↗</a>{% endif %}
 </header>
 
-<main class="alpha-board">
-  {% if board.commissions %}
+<main class="alpha-board call-ledger">
   <section class="commission-feed">
-    <div class="alpha-section-head"><h2>Reports</h2><span>Latest</span></div>
+    <div class="alpha-section-head"><h2>Flash <small class="flash-model-label">{{ flash.model }}</small></h2><span>Public reports</span></div>
+    {% if board.commissions %}
     {% for report in board.commissions[:5] %}
     <a class="commission-row" href="/research/{{ report.public_id }}">
       <span class="coin coin-{{ report.coin_tone }}"><b>{{ report.coin_label }}</b><i></i></span>
-      <span><strong>{{ report.ticker }} · {{ report.headline }}</strong><small>{% if report.actor %}{{ report.actor.emoji }} {{ report.actor.display_name }} · {{ report.actor.model_label }}{% else %}{{ report.model or report.requested_model }}{% endif %}</small></span>
+      <span><strong>{{ report.ticker }} · {{ report.headline }}</strong><small>Flash · {% if report.actor %}{{ report.actor.model }}{% else %}{{ flash.model }}{% endif %}</small></span>
       <i>›</i>
     </a>
     {% endfor %}
+    {% else %}
+    <div class="empty-list"><strong>No Flash <small class="flash-model-label">{{ flash.model }}</small> reports yet</strong><span>Make a Call or ask Flash on a ticker.</span></div>
+    {% endif %}
   </section>
-  {% endif %}
 
   {% if board.rows %}
     {% set leader = board.rows[0] %}
     <article class="alpha-leader">
-      <div class="wolf-mark"><span>🐺</span><b>#1 Alpha</b></div>
+      <div class="wolf-mark"><span>🐺</span><b>#1 most called</b></div>
       <a class="alpha-leader-asset" href="/t/{{ leader.ticker }}">
         <span class="coin coin-{{ leader.coin_tone }}"><b>{{ leader.coin_label }}</b><i></i></span>
         <span><strong>{{ leader.ticker }}</strong><small>{{ leader.company }}</small></span>
         <span class="alpha-leader-quote"><b>{% if leader.price is not none %}${{ '%.4f'|format(leader.price) if leader.price < 1 else '%.2f'|format(leader.price) }}{% else %}—{% endif %}</b><small class="{{ 'up' if leader.change_pct is not none and leader.change_pct >= 0 else 'down' }}">{% if leader.change_pct is not none %}{{ '+' if leader.change_pct >= 0 else '' }}{{ '%.1f'|format(leader.change_pct) }}%{% else %}—{% endif %}</small></span>
       </a>
       <div class="alpha-leader-foot">
-        <span>{{ leader.pulse_label }}</span>
-        <div class="alpha-signals" aria-label="Community activity for {{ leader.ticker }}">
-          <button class="alpha-signal bull {% if leader.selected_reaction == 'bull' %}selected{% endif %}" type="button" data-alpha-reaction="bull" data-ticker="{{ leader.ticker }}" aria-label="Bull {{ leader.ticker }}" aria-pressed="{{ 'true' if leader.selected_reaction == 'bull' else 'false' }}"><span>🐂</span><b>{{ leader.bull_count }}</b></button>
-          <button class="alpha-signal bear {% if leader.selected_reaction == 'bear' %}selected{% endif %}" type="button" data-alpha-reaction="bear" data-ticker="{{ leader.ticker }}" aria-label="Bear {{ leader.ticker }}" aria-pressed="{{ 'true' if leader.selected_reaction == 'bear' else 'false' }}"><span>🐻</span><b>{{ leader.bear_count }}</b></button>
-          <a class="alpha-signal comments" href="/t/{{ leader.ticker }}#discussion" aria-label="Comments for {{ leader.ticker }}"><span>💬</span><b>{{ leader.comment_count }}</b></a>
-        </div>
+        <span>{{ leader.active_calls }} open Calls · {{ leader.total_calls }} total</span>
+        <a class="alpha-open" href="/t/{{ leader.ticker }}">Open</a>
       </div>
     </article>
-
-    {% if leader.ai_report %}
-      {% if is_subscriber %}
-      <article class="ai-report-card">
-        <header><span>Report</span><small>{{ leader.ai_report.updated_at[:16]|replace('T',' ') }} UTC</small></header>
-        <h2>{{ leader.ai_report.headline }}</h2>
-        <p>{{ leader.ai_report.summary }}</p>
-        {% if leader.ai_report.catalysts %}<div><b>Catalysts</b>{% for item in leader.ai_report.catalysts %}<span>{{ item }}</span>{% endfor %}</div>{% endif %}
-        {% if leader.ai_report.risks %}<div><b>Risks</b>{% for item in leader.ai_report.risks %}<span>{{ item }}</span>{% endfor %}</div>{% endif %}
-        {% if leader.ai_report.watch %}<div><b>Watch</b>{% for item in leader.ai_report.watch %}<span>{{ item }}</span>{% endfor %}</div>{% endif %}
-        {% if leader.ai_report.sources %}<footer>{% for source in leader.ai_report.sources %}<a href="{{ source }}" target="_blank" rel="noopener">Source {{ loop.index }}</a>{% endfor %}</footer>{% endif %}
-      </article>
-      {% else %}
-      <div class="ai-report-locked"><span>Report</span><strong>Subscribers only</strong><i>◆</i></div>
-      {% endif %}
-    {% else %}
-      <div class="ai-report-running"><span class="wolf-pulse">🐺</span><div><strong>Digging into {{ leader.ticker }}</strong><small>Report for the #1 Alpha ticker.</small></div></div>
-    {% endif %}
 
     {% if board.rows|length > 1 %}
     <section class="alpha-ranking" aria-label="Alpha ranking">
@@ -63,18 +43,14 @@
       <article class="alpha-rank-row">
         <span class="rank-number">{{ item.rank }}</span>
         <a href="/t/{{ item.ticker }}"><span class="coin coin-{{ item.coin_tone }}"><b>{{ item.coin_label }}</b><i></i></span><span><strong>{{ item.ticker }}</strong><small>{{ item.pulse_label }}</small></span></a>
-        <div class="alpha-signals" aria-label="Community activity for {{ item.ticker }}">
-          <button class="alpha-signal bull {% if item.selected_reaction == 'bull' %}selected{% endif %}" type="button" data-alpha-reaction="bull" data-ticker="{{ item.ticker }}" aria-label="Bull {{ item.ticker }}" aria-pressed="{{ 'true' if item.selected_reaction == 'bull' else 'false' }}"><span>🐂</span><b>{{ item.bull_count }}</b></button>
-          <button class="alpha-signal bear {% if item.selected_reaction == 'bear' %}selected{% endif %}" type="button" data-alpha-reaction="bear" data-ticker="{{ item.ticker }}" aria-label="Bear {{ item.ticker }}" aria-pressed="{{ 'true' if item.selected_reaction == 'bear' else 'false' }}"><span>🐻</span><b>{{ item.bear_count }}</b></button>
-          <a class="alpha-signal comments" href="/t/{{ item.ticker }}#discussion" aria-label="Comments for {{ item.ticker }}"><span>💬</span><b>{{ item.comment_count }}</b></a>
-        </div>
+        <div class="call-count"><b>{{ item.active_calls }}</b><small>open Calls</small></div>
       </article>
       {% endfor %}
     </section>
     {% endif %}
   {% elif board.contenders %}
   <section class="alpha-contenders">
-    <div class="alpha-section-head"><h2>Contenders</h2><span>Vote Bull or Bear to start Alpha</span></div>
+    <div class="alpha-section-head"><h2>Contenders</h2><span>Make the first Call</span></div>
     {% for item in board.contenders %}
     <article class="alpha-rank-row contender-row">
       <span class="rank-number">—</span>
@@ -84,18 +60,20 @@
     {% endfor %}
   </section>
   {% else %}
-  <div class="empty-list"><strong>No ranked tickers</strong><span>React or comment on a ticker to start Alpha.</span></div>
+  <div class="empty-list"><strong>No public Calls yet</strong><span>Open a ticker and make the first Call.</span></div>
+  {% endif %}
+
+  {% if board.calls %}
+  <section class="public-call-feed" aria-label="Public Calls">
+    <div class="alpha-section-head"><h2>Calls</h2><span>Entry, mark and PnL</span></div>
+    {% for call in board.calls %}
+    <article class="public-call-row">
+      <a class="call-owner" href="/u/{{ call.pseudonym }}"><strong>{{ call.pseudonym }}</strong><small>{{ call.status }}</small></a>
+      <a class="call-ticker" href="/t/{{ call.ticker }}"><strong>{{ call.ticker }}</strong><small>Entry ${{ '%.4f'|format(call.entry_price) if call.entry_price < 1 else ('%.2f'|format(call.entry_price)) }}</small></a>
+      <span class="call-pnl">{% if call.return_pct is not none %}<b class="{{ 'up' if call.return_pct >= 0 else 'down' }}">{{ '+' if call.return_pct >= 0 else '' }}{{ '%.1f'|format(call.return_pct) }}%</b><small>{% if call.mark_price is not none %}${{ '%.4f'|format(call.mark_price) if call.mark_price < 1 else ('%.2f'|format(call.mark_price)) }}{% endif %}</small>{% else %}<b>—</b><small>no mark</small>{% endif %}</span>
+    </article>
+    {% endfor %}
+  </section>
   {% endif %}
 </main>
-{% endblock %}
-{% block scripts %}
-<script nonce="{{ request.state.csp_nonce }}">
-document.querySelectorAll('[data-alpha-reaction]').forEach(button=>button.addEventListener('click',async()=>{
-  button.disabled=true;
-  try{
-    const response=await fetch(`/api/reaction/${encodeURIComponent(button.dataset.ticker)}/${button.dataset.alphaReaction}`,{method:'POST'});
-    if(response.ok)location.reload();
-  }finally{button.disabled=false;}
-}));
-</script>
 {% endblock %}

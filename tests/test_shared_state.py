@@ -3,8 +3,6 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from cryptography.fernet import Fernet
-
 from runner_web import shared_state
 
 
@@ -75,7 +73,6 @@ class FakeRedis:
 def _configure(monkeypatch: Any) -> FakeRedis:
     fake = FakeRedis()
     monkeypatch.setattr(shared_state, "REDIS_URL", "redis://example")
-    monkeypatch.setattr(shared_state, "JOB_ENCRYPTION_KEY", Fernet.generate_key().decode())
     monkeypatch.setattr(shared_state, "_CLIENT", fake)
     return fake
 
@@ -90,15 +87,13 @@ def test_cache_and_rate_limit_use_shared_redis(monkeypatch: Any) -> None:
     assert shared_state.rate_limit_allowed("visitor", 1, 60) is False
 
 
-def test_research_queue_encrypts_and_recovers_provider_key(monkeypatch: Any) -> None:
-    fake = _configure(monkeypatch)
-    provider_key = "provider-secret-that-must-not-be-plain-text"
+def test_research_queue_contains_only_report_ids(monkeypatch: Any) -> None:
+    _configure(monkeypatch)
 
-    shared_state.enqueue_research_job("report-1", provider_key)
+    shared_state.enqueue_research_job("report-1")
 
-    assert provider_key not in " ".join(fake.values.values())
-    assert shared_state.dequeue_research_job(1) == ("report-1", provider_key)
+    assert shared_state.dequeue_research_job(1) == "report-1"
     assert shared_state.recover_research_jobs() == 1
-    assert shared_state.dequeue_research_job(1) == ("report-1", provider_key)
+    assert shared_state.dequeue_research_job(1) == "report-1"
     shared_state.acknowledge_research_job("report-1")
     assert shared_state.dequeue_research_job(1) is None

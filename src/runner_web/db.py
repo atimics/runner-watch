@@ -1408,6 +1408,92 @@ def _migration_021_short_data(db: DatabaseConnection) -> None:
         "short_data_collected_at TEXT",
     ):
         _ensure_column(db, "scan_snapshots", definition)
+
+
+def _migration_022_public_calls_and_flash(db: DatabaseConnection) -> None:
+    """Add immutable public Calls and make Flash reports shared by ticker."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS community_calls (
+            id TEXT PRIMARY KEY,
+            public_id TEXT UNIQUE NOT NULL,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            ticker TEXT NOT NULL,
+            side TEXT NOT NULL DEFAULT 'long' CHECK(side IN ('long')),
+            entry_price REAL NOT NULL CHECK(entry_price>0),
+            entry_at TEXT NOT NULL,
+            exit_price REAL CHECK(exit_price IS NULL OR exit_price>0),
+            exit_at TEXT,
+            status TEXT NOT NULL DEFAULT 'active'
+                CHECK(status IN ('active','closed')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(
+                (status='active' AND exit_price IS NULL AND exit_at IS NULL)
+                OR (status='closed' AND exit_price IS NOT NULL AND exit_at IS NOT NULL)
+            )
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS community_calls_one_active
+            ON community_calls(user_id,ticker) WHERE status='active';
+        CREATE INDEX IF NOT EXISTS community_calls_user_status_time
+            ON community_calls(user_id,status,updated_at DESC);
+        CREATE INDEX IF NOT EXISTS community_calls_ticker_status_time
+            ON community_calls(ticker,status,updated_at DESC);
+        """
+    )
+    for definition in (
+        "trigger TEXT NOT NULL DEFAULT 'commission'",
+        "evidence_snapshot_json TEXT NOT NULL DEFAULT '{}'",
+        "evidence_as_of TEXT",
+        "citations_json TEXT NOT NULL DEFAULT '[]'",
+    ):
+        _ensure_column(db, "research_commissions", definition)
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS flash_report_requests (
+            id TEXT PRIMARY KEY,
+            report_id TEXT NOT NULL REFERENCES research_commissions(id) ON DELETE CASCADE,
+            user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+            trigger TEXT NOT NULL CHECK(trigger IN ('commission','community_auto')),
+            created_new INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS flash_report_requests_report_time
+            ON flash_report_requests(report_id,created_at DESC);
+        CREATE INDEX IF NOT EXISTS flash_report_requests_user_time
+            ON flash_report_requests(user_id,created_at DESC);
+        """
+    )
+    db.execute("DROP INDEX IF EXISTS research_commissions_running_actor")
+    duplicate_rows = db.execute(
+        """
+        SELECT id,ticker,actor_id,created_at FROM research_commissions
+        WHERE status='running' ORDER BY created_at DESC
+        """
+    ).fetchall()
+    seen: set[tuple[str, str]] = set()
+    timestamp = datetime.now(UTC).isoformat()
+    for row in duplicate_rows:
+        identity = (str(row["ticker"]), str(row["actor_id"] or ""))
+        if identity not in seen:
+            seen.add(identity)
+            continue
+        db.execute(
+            """
+            UPDATE research_commissions
+            SET status='failed',error=?,updated_at=? WHERE id=?
+            """,
+            ("Replaced by the shared public Flash queue.", timestamp, row["id"]),
+        )
+    db.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS research_commissions_running_shared
+        ON research_commissions(ticker,actor_id) WHERE status='running'
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -1437,6 +1523,7 @@ MIGRATIONS = (
     Migration(19, "repair_thesis_case_sources", _migration_019_repair_thesis_case_sources),
     Migration(20, "user_positions", _migration_020_user_positions),
     Migration(21, "short_data", _migration_021_short_data),
+    Migration(22, "public_calls_and_flash", _migration_022_public_calls_and_flash),
 )
 
 

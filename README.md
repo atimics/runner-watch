@@ -7,7 +7,7 @@ Optional Fintel short and borrow data needs a Fintel API key and the matching ac
 The public beta is at [stonks.rati.foundation](https://stonks.rati.foundation). Its mobile-first
 app has three main views: **Pulse** for live penny-stock intelligence, a compact ticker page with
 the chart and primary-source evidence, **Radar** for personal and social changes, and **Alpha**
-for the community heart ranking and subscriber research reports. Pulse paginates as the user
+for public Calls and shared Flash research reports. Pulse paginates as the user
 scrolls. Radar works before login and merges into the passkey profile later.
 
 The public scanner defaults to listed US penny stocks from $0.20 to $5 with market caps below
@@ -116,35 +116,19 @@ The end-to-end path from collectors to product evidence is in the
 
 ## Alpha reports
 
-Each profile can heart a ticker once. Active unique hearts determine the Alpha order, and the wolf
-marks the current leader. After the leader remains stable for three minutes, the report worker
-builds a source-bound structured report for that ticker. Full reports are only rendered for users
-whose `plan` is `subscriber`.
+Alpha is a public Call ledger. A signed-in user can make one open Call per ticker. Runner Watch
+freezes the current server quote and time; the browser cannot submit or edit either value. Closing a
+Call also uses the current server quote and time. Calls show percentage PnL only, with no implied
+position size. Each caller has a public alias page with open, closed, win/loss, and PnL stats.
 
-Bull and bear votes are separate from hearts and do not change the Alpha order. Signed-in users can
-also leave short comments. Public comment names are stable adjective-animal aliases chosen from a
-salted hash, while account names stay private. Set `COMMENT_PSEUDONYM_SALT` to a stable private value
-in each deployed environment before comments are opened to users.
+Bull, bear, heart, private position, and private case controls are not part of the product flow.
+Signed-in users can still leave short public comments. Public names are stable adjective-animal
+aliases chosen from a salted hash, while account names stay private. Set `COMMENT_PSEUDONYM_SALT` to
+a stable private value in each deployed environment before comments are opened to users.
 
-A comment is also the only text needed for My Radar. The first comment on a ticker starts a private
-case from that public view; a later comment revises it and preserves the old version. Likes, votes,
-and recent discussion add social context, but they do not override primary evidence or deterministic
-risk vetoes. There is no separate thesis form, research button, or tracking button.
-
-The same comment can contain a natural horizon such as `today`, `48h`, `this week`, or `next month`.
-No picker is shown. If no horizon is written, the view lasts five days. Once archived market bars
-cover that time, My Radar records the ending return and best and worst move, closes the view, and
-keeps the result visible for 30 days.
-
-The same comment quietly starts a report job when the server has `OPENROUTER_API_KEY` configured.
-The worker sends only stored evidence to OpenRouter and never asks a user to connect a model
-provider. The key stays on the server and is never placed in a browser or job payload. A missing key
-never blocks the comment or falls back to fake generated copy.
-
-Reports are authored by **Flash ⚡**, Runner Watch's first AI KOL. Flash is a durable
-public identity in position 1 of a planned four-position model ladder. Its current engine is
-`z-ai/glm-5.3`; changing the engine later does not rename Flash or rewrite old reports. The other
-ladder positions are not active yet. Set Flash's engine with `FLASH_MODEL` when a model is promoted.
+Reports are authored by **Flash ⚡**. Flash's current engine is `z-ai/glm-5.3`, routed through
+OpenRouter. The model label is shown beside Flash in the interface. Changing the engine later does
+not rename Flash or rewrite old report snapshots.
 
 Flash makes one source-bound OpenRouter request. The stored evidence covers catalysts, financing,
 market and liquidity, filings, people, news, and social context. Unapproved source links are removed,
@@ -158,23 +142,18 @@ evidence exists. Override the context with `RESEARCH_CONTEXT_TOKENS`, change the
 `RESEARCH_OUTPUT_RESERVE_TOKENS`. The older `OPENROUTER_RESEARCH_*` context names remain accepted so
 existing deployments can migrate without losing their settings.
 
-Each verified report stores its market view, confidence, model, and policy version against the
-private case that caused it. When the case reaches its horizon, `/api/kols` reports accuracy, Brier
-score, Brier skill against a 50% baseline, and a 95% accuracy lower bound for each real model-policy
-pair. Repeated reports on the same case count once. Twenty independent cases move a policy from
-learning to evaluation. Promotion needs at least 50 independent cases across 10 tickers, a
-better-than-chance accuracy lower bound, and Brier score below 0.25.
-
-Commissioned Flash reports use BYOK. OpenRouter's browser OAuth flow gives the user a key, and the
-browser sends that key to Runner Watch over HTTPS only when starting a report. Runner Watch stores
-it only in the encrypted, short-lived Redis job payload, performs the OpenRouter inference in the
-worker, and deletes the payload when the job is acknowledged. The key is never stored in the SQL
-report record, and the browser never sends the evidence or inference request directly to OpenRouter.
+Flash reports are public and shared per ticker and evidence snapshot. A user can commission one, and
+active community Calls also cause the worker to create one automatically when the stored evidence
+changes. The queue contains only a report ID. The worker reads `OPENROUTER_API_KEY` on the server and
+sends the frozen, ranked evidence context to OpenRouter. No provider key or inference payload is
+accepted from the browser. Request rows record whether a commission reused or created a report so a
+future billing policy can be added without changing report identity.
 
 The report starts with an opinionated thesis, then explains who the company is, who the named people
 or entities are, why each one appears in a filing, what the filings mean, what supports the thesis,
 what could rug it, and what remains unknown. Source text is explicitly treated as evidence rather
-than instructions.
+than instructions. Model-selected citations are checked against the supplied source URLs. A hard
+deterministic `AVOID` or `EXIT` state overrides the generated wording.
 
 The main screen ranks stocks with a **runner score**. The score looks for:
 
@@ -241,29 +220,12 @@ have not passed review. Clients can use it instead of hardcoding deployment beha
 requires a recent database-backed heartbeat from the separate worker, so a live web process no
 longer hides a dead worker.
 
-## AI KOL calls
+## Legacy model evaluations
 
-The calibrated ranker can now publish selective, permanent paper calls through **Flash ⚡**. Flash's
-public identity and current inference model are separate from the internal ranker that supplies the
-numeric signal. A call freezes its ticker, signal-model ID, confidence, expected return, contract,
-time, and entry price. Repeated scans cannot reset the entry. Pulse shows active lightning tags with
-net paper PnL, and ticker pages show the complete call receipt.
-
-These existing paper calls benchmark Flash's fixed signal policy; they do not claim that Flash's
-current model personally authored the call. Model attribution applies to commissioned research. A
-future model battle can add model-authored calls without mixing them with this older signal track.
-
-Flash uses the same `+8% before -4% within 60 minutes` contract as the shadow ranker. It can abandon
-a stock only when a later frozen prediction crosses its fixed abandon rule. An abandoned call keeps
-receiving the original 60-minute benchmark, so a model cannot hide a bad call by leaving early.
-Calls use a fixed $1,000 paper amount and subtract a conservative 50 basis point round-trip cost.
-They are research results, not trade recommendations.
-
-Flash is the only seeded KOL slot today. Its records include ladder position, inference provider,
-and inference model, and each commissioned report snapshots those fields. This keeps future model
-promotions honest: an old report keeps its original model snapshot. Human hearts remain separate
-from AI reactions. Scorecards are available at `/api/kols`, and ticker call history is available at
-`/api/t/{ticker}/kol-calls`.
+Older databases may still contain `kol_calls`, `user_positions`, `ticker_reactions`, and thesis-case
+tables so migrations remain safe and reversible. They are not used by the public Call or Flash
+report flow. New user Calls live in `community_calls`; new Flash work lives in shared
+`research_commissions` and `flash_report_requests`.
 
 ## Start the dashboard
 

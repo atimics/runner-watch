@@ -52,9 +52,6 @@
   }
 
   function fingerprint(row) {
-    const calls = Array.isArray(row.kol_calls)
-      ? row.kol_calls.map(call => `${call.id}:${call.status}:${call.display_return_pct}`).join(',')
-      : '';
     return [
       row.price,
       row.change_pct,
@@ -65,7 +62,6 @@
       row.pulse_label,
       row.event_at,
       row.session,
-      calls,
     ].join('|');
   }
 
@@ -103,16 +99,8 @@
     const updated = options.updated ?? row.has_update;
     const attentionClass = novelty === 'unseen' || novelty === 'seen' ? ` attention-${novelty}` : '';
     const updateClass = updated && novelty === 'normal' ? ' is-updated' : '';
-    const kolCalls = Array.isArray(row.kol_calls) ? row.kol_calls.slice(0, 3) : [];
-    const kolTags = kolCalls.map(call => {
-      const value = number(call.display_return_pct);
-      const tone = value === null ? 'flat' : value >= 0 ? 'up' : 'down';
-      const pnl = value === null ? '' : `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
-      const title = `${call.display_name || 'Flash'} · ${call.inference_model_label || ''} · ${call.status} · ${pnl || 'no price yet'}`;
-      return `<span class="kol-tag ${tone}" title="${esc(title)}"><b>${esc(call.emoji || '⚡')}</b>${esc(pnl)}</span>`;
-    }).join('');
     const marketLabel = `${statusLabel ? `, ${statusLabel}` : ''}${tradeState && tradeState !== 'UNKNOWN' ? `, ${tradeState}` : ''}${rugValue !== null ? `, rug risk ${rugValue.toFixed(0)}` : ''}`;
-    const label = `${row.ticker}, ${company}, ${money(row.price)}, ${percent(row.change_pct)}${marketLabel}${kolCalls.length ? ', paper call open' : ''}`;
+    const label = `${row.ticker}, ${company}, ${money(row.price)}, ${percent(row.change_pct)}${marketLabel}`;
     const enteredAt = row.entered_at ? ` data-entered-at="${esc(row.entered_at)}"` : '';
     const thesis = row.section === 'cases' && row.case_thesis
       ? `<span class="case-thesis">${esc(row.case_thesis)}</span>`
@@ -129,7 +117,7 @@
     return `<a class="token-row ticker-row${attentionClass}${updateClass}" href="/t/${encodeURIComponent(row.ticker)}" data-ticker-row="${esc(row.ticker)}" data-novelty="${esc(novelty)}"${enteredAt} aria-label="${esc(label)}">
       <span class="coin coin-${Number(row.coin_tone) || 0}"><b>${esc(row.coin_label || String(row.ticker).slice(0, 2))}</b><i></i></span>
       <span class="token-copy">
-        <span class="ticker-line"><strong>${esc(row.ticker)}</strong>${kolTags}${badge}<small class="ticker-age">${esc(age)}</small></span>
+        <span class="ticker-line"><strong>${esc(row.ticker)}</strong>${badge}<small class="ticker-age">${esc(age)}</small></span>
         <span class="company-name">${esc(company)}</span>
         ${caseSource}${thesis}${caseSocial}${trackPrompt}
         <span class="catalyst${catalystTone}">${esc(row.pulse_label || 'No recent event')}${events}${safety}</span>

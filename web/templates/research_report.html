@@ -12,7 +12,7 @@
 {% block content %}
 <header class="detail-nav">
   <a href="/community" aria-label="Back to Alpha">‹</a>
-  <strong>{% if report.actor %}{{ report.actor.emoji }} {{ report.actor.display_name }} <span class="flash-model-label">{{ report.actor.model_label }}</span> report{% else %}Research report{% endif %}</strong>
+  <strong>{% if report.actor %}{{ report.actor.emoji }} {{ report.actor.display_name }} <span class="flash-model-label">{{ report.actor.model }}</span> report{% else %}Research report{% endif %}</strong>
   <button type="button" id="shareReport" aria-label="Share this report">↗</button>
 </header>
 
@@ -24,7 +24,7 @@
   {% if report.actor %}
   <section class="research-author">
     <span class="kol-avatar">{{ report.actor.emoji }}</span>
-    <span><strong>{{ report.actor.display_name }} <span class="flash-model-label">{{ report.actor.model_label }}</span></strong><small>#{{ report.actor.ladder_position }} of {{ report.actor.ladder_size }}</small></span>
+    <span><strong>{{ report.actor.display_name }} <span class="flash-model-label">{{ report.actor.model }}</span></strong><small>#{{ report.actor.ladder_position }} of {{ report.actor.ladder_size }}</small></span>
   </section>
   {% endif %}
   <h1>{{ report.headline }}</h1>
@@ -88,10 +88,13 @@
   {% if report.unknowns %}
   <section class="research-section research-unknowns"><h2>Unknowns</h2>{% for item in report.unknowns %}<p>{{ item }}</p>{% endfor %}</section>
   {% endif %}
+  {% if report.citations %}
+  <section class="research-section"><h2>Citations</h2>{% for citation in report.citations %}<article class="research-citation"><p>{{ citation.claim }}</p><div class="research-sources">{% for source in citation.source_urls %}<a href="{{ source }}" target="_blank" rel="noopener">Source {{ loop.index }}</a>{% endfor %}</div></article>{% endfor %}</section>
+  {% endif %}
   {% if report.sources %}
   <section class="research-section"><h2>Sources</h2><div class="research-sources">{% for source in report.sources %}<a href="{{ source.url }}" target="_blank" rel="noopener">{{ source.label }}</a>{% endfor %}</div></section>
   {% endif %}
-  <div class="research-meta">{% if report.actor %}{{ report.actor.display_name }} · {{ report.actor.model_label }}{% else %}{{ report.model or report.requested_model }}{% endif %} · {{ report.completed_at[:16]|replace('T', ' ') }} UTC{% if report.usage.context %} · {{ report.usage.context.included_sections }} evidence sections{% endif %}</div>
+  <div class="research-meta">{% if report.actor %}{{ report.actor.display_name }} · {{ report.actor.model }}{% else %}{{ report.model or report.requested_model }}{% endif %} · {{ report.completed_at[:16]|replace('T', ' ') }} UTC{% if report.usage.context %} · {{ report.usage.context.included_sections }} evidence sections{% endif %}</div>
 </main>
 {% endblock %}
 {% block scripts %}
