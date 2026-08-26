@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from pytest import MonkeyPatch
 
 from runner_web import database as database_module
+from runner_web import db
 from runner_web.database import initialize_sqlite, open_database, postgres_statement
 
 
@@ -81,3 +83,18 @@ def test_sqlite_initialization_always_closes_its_connection(
         "PRAGMA busy_timeout=20000",
         "PRAGMA journal_mode=WAL",
     ]
+
+
+def test_production_database_requires_an_encrypted_connection(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    assert db.database_tls_enabled("postgresql://db/app?sslmode=require") is True
+    assert db.database_tls_enabled("postgresql://db/app?sslmode=verify-full") is True
+    assert db.database_tls_enabled("postgresql://db/app") is False
+    assert db.database_tls_enabled("postgresql://db/app?sslmode=disable") is False
+
+    monkeypatch.setattr(db, "DATABASE_URL", "postgresql://db/app?sslmode=disable")
+    monkeypatch.setattr(db, "REQUIRE_DATABASE_TLS", True)
+    with pytest.raises(RuntimeError, match="must require TLS"):
+        with db.connection():
+            pass

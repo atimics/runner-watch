@@ -72,8 +72,8 @@ def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
     assert "Add exit" in ticker
     assert "🐺" in alpha
     assert "ranked" in alpha
-    assert "data-alpha-reaction=\"bull\"" in alpha
-    assert "data-alpha-reaction=\"bear\"" in alpha
+    assert "data-alpha-reaction" not in alpha
+    assert "/api/reaction" not in alpha
     assert "comment_count" in alpha
     assert "alpha-heart" not in alpha
     assert "heartButton" not in ticker

@@ -14,11 +14,13 @@ from runner_web import billing, db
 from runner_web import main as web_main
 from runner_web.billing import (
     billing_account,
+    create_caller_id_checkout_session,
     create_checkout_session,
     create_portal_session,
     price_summary,
     process_webhook_event,
 )
+from runner_web.caller_ids import CALLER_ID_CLAIM_PRICE_CENTS, claim_caller_id
 from runner_web.db import connection, init_db
 from runner_web.main import billing_page, roadmap_page
 from runner_web.product_catalog import roadmap_snapshot
@@ -123,6 +125,86 @@ def test_checkout_and_portal_use_stripe_as_the_source_of_truth(
     }
     assert portal_url == "https://billing.stripe.test/session"
     assert captured["portal"]["customer"] == "cus_one"
+
+
+def test_extra_caller_id_uses_one_time_stripe_checkout(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_runner")
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_runner")
+    captured: dict[str, Any] = {}
+
+    def fake_checkout(**kwargs: Any) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"url": "https://checkout.stripe.test/caller"}
+
+    monkeypatch.setattr(billing.stripe.checkout.Session, "create", fake_checkout)
+
+    url = create_caller_id_checkout_session({"id": "caller-user"}, "https://stonks.test")
+
+    assert url == "https://checkout.stripe.test/caller"
+    assert captured["mode"] == "payment"
+    assert captured["metadata"] == {
+        "runner_user_id": "caller-user",
+        "purpose": "caller_identity",
+    }
+    assert captured["line_items"][0]["price_data"]["unit_amount"] == (
+        CALLER_ID_CLAIM_PRICE_CENTS
+    )
+    assert captured["customer_creation"] == "always"
+
+
+def test_paid_caller_id_is_created_only_by_a_paid_signed_event(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "caller-checkout.db")
+    init_db()
+    created_at = datetime.now(UTC).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("caller-user", "caller_user", "Caller", "active", created_at),
+        )
+    first = claim_caller_id("caller-user")
+
+    result = process_webhook_event(
+        {
+            "id": "evt_caller_paid",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_caller_paid",
+                    "client_reference_id": "caller-user",
+                    "customer": "cus_caller",
+                    "payment_status": "paid",
+                    "metadata": {
+                        "runner_user_id": "caller-user",
+                        "purpose": "caller_identity",
+                    },
+                }
+            },
+        }
+    )
+
+    with connection() as database:
+        identities = database.execute(
+            "SELECT id,claim_cost_cents FROM caller_identities "
+            "WHERE user_id=? ORDER BY claimed_at",
+            ("caller-user",),
+        ).fetchall()
+        user = database.execute(
+            "SELECT stripe_customer_id,stripe_subscription_status FROM users WHERE id=?",
+            ("caller-user",),
+        ).fetchone()
+    assert result["handled"] is True
+    assert len(identities) == 2
+    assert identities[0]["id"] == first["id"]
+    assert identities[1]["claim_cost_cents"] == CALLER_ID_CLAIM_PRICE_CENTS
+    assert dict(user) == {
+        "stripe_customer_id": "cus_caller",
+        "stripe_subscription_status": "none",
+    }
 
 
 def test_signed_subscription_events_control_the_local_entitlement(

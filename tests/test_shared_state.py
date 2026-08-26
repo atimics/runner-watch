@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+import pytest
 from cryptography.fernet import Fernet
 
 from runner_web import shared_state
@@ -75,6 +76,7 @@ class FakeRedis:
 def _configure(monkeypatch: Any) -> FakeRedis:
     fake = FakeRedis()
     monkeypatch.setattr(shared_state, "REDIS_URL", "redis://example")
+    monkeypatch.setattr(shared_state, "REQUIRE_REDIS_TLS", False)
     monkeypatch.setattr(shared_state, "JOB_ENCRYPTION_KEY", Fernet.generate_key().decode())
     monkeypatch.setattr(shared_state, "_CLIENT", fake)
     return fake
@@ -102,3 +104,13 @@ def test_research_queue_encrypts_and_recovers_provider_key(monkeypatch: Any) -> 
     assert shared_state.dequeue_research_job(1) == ("report-1", provider_key)
     shared_state.acknowledge_research_job("report-1")
     assert shared_state.dequeue_research_job(1) is None
+
+
+def test_production_redis_requires_an_encrypted_connection(monkeypatch: Any) -> None:
+    monkeypatch.setattr(shared_state, "REDIS_URL", "redis://example")
+    monkeypatch.setattr(shared_state, "REQUIRE_REDIS_TLS", True)
+    with pytest.raises(RuntimeError, match="must use TLS"):
+        shared_state.redis_configured()
+
+    monkeypatch.setattr(shared_state, "REDIS_URL", "rediss://example")
+    assert shared_state.redis_configured() is True

@@ -5,7 +5,7 @@
 <div class="desktop-workspace" data-desktop-workspace>
   <section class="desktop-list-pane" data-desktop-list>
     <header class="screen-head">
-      <div><h1>Alpha</h1><span class="head-meta"><b>{{ board.rows|length }}</b> ranked <i></i><span>{{ board.total_votes }} votes · {{ board.total_comments }} comments</span></span></div>
+      <div><h1>Alpha</h1><span class="head-meta"><b>{{ board.rows|length }}</b> ranked <i></i><span>{{ board.total_comments }} comments</span></span></div>
       {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>{% else %}<a class="avatar-button signed-out" href="/login" aria-label="Log in">↗</a>{% endif %}
     </header>
 
@@ -22,8 +22,6 @@
       <div class="alpha-leader-foot">
         <span>{{ leader.pulse_label }}</span>
         <div class="alpha-signals" aria-label="Community activity for {{ leader.ticker }}">
-          <button class="alpha-signal bull {% if leader.selected_reaction == 'bull' %}selected{% endif %}" type="button" data-alpha-reaction="bull" data-ticker="{{ leader.ticker }}" aria-label="Bull {{ leader.ticker }}" aria-pressed="{{ 'true' if leader.selected_reaction == 'bull' else 'false' }}"><span>🐂</span><b>{{ leader.bull_count }}</b></button>
-          <button class="alpha-signal bear {% if leader.selected_reaction == 'bear' %}selected{% endif %}" type="button" data-alpha-reaction="bear" data-ticker="{{ leader.ticker }}" aria-label="Bear {{ leader.ticker }}" aria-pressed="{{ 'true' if leader.selected_reaction == 'bear' else 'false' }}"><span>🐻</span><b>{{ leader.bear_count }}</b></button>
           <a class="alpha-signal comments" href="/t/{{ leader.ticker }}#discussion" aria-label="Comments for {{ leader.ticker }}"><span>💬</span><b>{{ leader.comment_count }}</b></a>
         </div>
       </div>
@@ -54,8 +52,6 @@
         <span class="rank-number">{{ item.rank }}</span>
         <a href="/t/{{ item.ticker }}"><span class="coin coin-{{ item.coin_tone }}"><b>{{ item.coin_label }}</b><i></i></span><span><strong>{{ item.ticker }}</strong><small>{{ item.pulse_label }}</small></span></a>
         <div class="alpha-signals" aria-label="Community activity for {{ item.ticker }}">
-          <button class="alpha-signal bull {% if item.selected_reaction == 'bull' %}selected{% endif %}" type="button" data-alpha-reaction="bull" data-ticker="{{ item.ticker }}" aria-label="Bull {{ item.ticker }}" aria-pressed="{{ 'true' if item.selected_reaction == 'bull' else 'false' }}"><span>🐂</span><b>{{ item.bull_count }}</b></button>
-          <button class="alpha-signal bear {% if item.selected_reaction == 'bear' %}selected{% endif %}" type="button" data-alpha-reaction="bear" data-ticker="{{ item.ticker }}" aria-label="Bear {{ item.ticker }}" aria-pressed="{{ 'true' if item.selected_reaction == 'bear' else 'false' }}"><span>🐻</span><b>{{ item.bear_count }}</b></button>
           <a class="alpha-signal comments" href="/t/{{ item.ticker }}#discussion" aria-label="Comments for {{ item.ticker }}"><span>💬</span><b>{{ item.comment_count }}</b></a>
         </div>
       </article>
@@ -64,7 +60,7 @@
     {% endif %}
   {% elif board.contenders %}
   <section class="alpha-contenders">
-    <div class="alpha-section-head"><h2>Contenders</h2><span>Vote Bull or Bear to start Alpha</span></div>
+    <div class="alpha-section-head"><h2>Contenders</h2><span>Comment to start Alpha</span></div>
     {% for item in board.contenders %}
     <article class="alpha-rank-row contender-row">
       <span class="rank-number">—</span>
@@ -74,21 +70,10 @@
     {% endfor %}
   </section>
   {% else %}
-  <div class="empty-list"><strong>No ranked tickers</strong><span>React or comment on a ticker to start Alpha.</span></div>
+  <div class="empty-list"><strong>No ranked tickers</strong><span>Comment on a ticker to start Alpha.</span></div>
   {% endif %}
     </main>
   </section>
   {% include "_desktop_panel.html" %}
 </div>
-{% endblock %}
-{% block scripts %}
-<script nonce="{{ request.state.csp_nonce }}">
-document.querySelectorAll('[data-alpha-reaction]').forEach(button=>button.addEventListener('click',async()=>{
-  button.disabled=true;
-  try{
-    const response=await fetch(`/api/reaction/${encodeURIComponent(button.dataset.ticker)}/${button.dataset.alphaReaction}`,{method:'POST'});
-    if(response.ok)location.reload();
-  }finally{button.disabled=false;}
-}));
-</script>
 {% endblock %}

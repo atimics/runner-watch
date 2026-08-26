@@ -311,11 +311,13 @@ def test_watchlist_prioritizes_pulse_then_alpha_then_flex(
                 ),
             )
         database.execute(
-            """
-            INSERT INTO ticker_reactions(profile_id,ticker,reaction,created_at,updated_at)
-            VALUES(?,?,?,?,?)
-            """,
-            ("v:fan", "ALPHA", "bull", captured_at, captured_at),
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("alpha-user", "alpha_user", "Alpha", "active", captured_at),
+        )
+        database.execute(
+            "INSERT INTO ticker_comments(id,ticker,user_id,body,status,created_at) "
+            "VALUES(?,?,?,?,?,?)",
+            ("alpha-comment", "ALPHA", "alpha-user", "Watching", "public", captured_at),
         )
 
     watchlist = discovery_watchlist(13)

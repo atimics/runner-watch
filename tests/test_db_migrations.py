@@ -103,6 +103,19 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             "SELECT name FROM sqlite_master WHERE type='table' "
             "AND name='stripe_webhook_events'"
         ).fetchone()
+        public_alias_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='public_aliases'"
+        ).fetchone()
+        caller_identity_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='caller_identities'"
+        ).fetchone()
+        caller_claim_table = database.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='caller_identity_claims'"
+        ).fetchone()
+        community_call_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='community_calls'"
+        ).fetchone()
         user_columns = {
             row["name"] for row in database.execute("PRAGMA table_info(users)").fetchall()
         }
@@ -152,6 +165,10 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert position_table is not None
     assert short_data_table is not None
     assert stripe_event_table is not None
+    assert public_alias_table is not None
+    assert caller_identity_table is not None
+    assert caller_claim_table is not None
+    assert community_call_table is not None
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_provider"] == "openrouter"
@@ -223,6 +240,12 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "users_stripe_customer",
         "users_stripe_subscription",
         "stripe_webhook_events_type_time",
+        "public_aliases_user",
+        "caller_identities_owner",
+        "caller_identity_one_free_claim",
+        "caller_identity_claims_owner",
+        "community_calls_ticker_time",
+        "community_calls_caller_time",
     } <= indexes
 
 

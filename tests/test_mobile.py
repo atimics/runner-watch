@@ -15,7 +15,6 @@ from runner_web.db import connection, init_db
 from runner_web.ingestion import record_source_batch
 from runner_web.main import (
     APP_ORIGIN,
-    PulseAttentionItem,
     TickerCommentPayload,
     _chart_annotations,
     _commission_research,
@@ -24,24 +23,19 @@ from runner_web.main import (
     _previous_trade_states,
     _pulse_entry_markers,
     _pulse_label,
-    _record_activity,
     _stored_market_risk_contexts,
-    _write_pulse_attention,
     alpha_board_data,
     alpha_comments_data,
     comments_for_ticker,
     create_ticker_comment,
     get_commission,
     pulse_data,
-    pulse_notification_data,
     radar_data,
-    reaction_state,
     register_options,
     templates,
     ticker_chart_detail_payload,
     ticker_charts_payload,
     ticker_detail_data,
-    toggle_reaction,
 )
 
 
@@ -55,8 +49,8 @@ def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
     assert "Pulse updated" not in pulse_template
     assert "TickerRow.fingerprint" not in pulse_template
     assert "New since you looked" not in pulse_template
-    assert "exposureQueue" in pulse_template
-    assert "body:JSON.stringify({entries})" in pulse_template
+    assert "exposureQueue" not in pulse_template
+    assert "/api/pulse/seen" not in pulse_template
     assert "1 new event" in radar_template
     assert "pendingUpdateTickers" in radar_template
 
@@ -313,8 +307,6 @@ def test_ticker_page_does_not_add_a_guest_research_action(
             "root_path": "",
         }
     )
-    request.state.visitor_id = "visitor-abcdefghijklmnopqrstuv"
-
     response = web_main.ticker_page("ONE", request, None)
 
     assert response.status_code == 200
@@ -370,8 +362,8 @@ def test_pulse_reuses_the_shared_base_payload(
 
     monkeypatch.setattr(web_main, "_pulse_data_uncached", counted)
 
-    assert pulse_data(profile="v:first")["rows"][0]["ticker"] == "ONE"
-    assert pulse_data(profile="v:second")["rows"][0]["ticker"] == "ONE"
+    assert pulse_data()["rows"][0]["ticker"] == "ONE"
+    assert pulse_data()["rows"][0]["ticker"] == "ONE"
     assert calls == 1
 
 
@@ -397,12 +389,12 @@ def test_radar_reuses_the_shared_base_payload(
 
     monkeypatch.setattr(web_main, "_radar_base_data_uncached", counted)
 
-    assert radar_data(visitor_id="first")[0]["ticker"] == "ONE"
-    assert radar_data(visitor_id="second")[0]["ticker"] == "ONE"
+    assert radar_data()[0]["ticker"] == "ONE"
+    assert radar_data()[0]["ticker"] == "ONE"
     assert calls == 1
 
 
-def test_alpha_reuses_shared_data_but_keeps_profile_reactions(
+def test_alpha_reuses_shared_data_without_a_reader_profile(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "alpha-cache.db")
@@ -411,11 +403,13 @@ def test_alpha_reuses_shared_data_but_keeps_profile_reactions(
     insert_filing("alpha-cache-one", "ONE", 1.25, 80, captured_at, "P")
     with connection() as database:
         database.execute(
-            """
-            INSERT INTO ticker_reactions(profile_id,ticker,reaction,created_at,updated_at)
-            VALUES(?,?,?,?,?)
-            """,
-            ("v:first", "ONE", "bull", captured_at, captured_at),
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("alpha-reader", "alpha_reader", "Reader", "active", captured_at),
+        )
+        database.execute(
+            "INSERT INTO ticker_comments(id,ticker,user_id,body,status,created_at) "
+            "VALUES(?,?,?,?,?,?)",
+            ("alpha-cache-comment", "ONE", "alpha-reader", "Watching", "public", captured_at),
         )
     web_main.ALPHA_DATA_CACHE.clear()
     original = web_main._alpha_base_data_uncached
@@ -428,18 +422,19 @@ def test_alpha_reuses_shared_data_but_keeps_profile_reactions(
 
     monkeypatch.setattr(web_main, "_alpha_base_data_uncached", counted)
 
-    first = alpha_board_data("v:first")
-    second = alpha_board_data("v:second")
+    first = alpha_board_data()
+    second = alpha_board_data()
 
-    assert first["rows"][0]["selected_reaction"] == "bull"
-    assert second["rows"][0]["selected_reaction"] is None
+    assert first == second
+    assert first["rows"][0]["comment_count"] == 1
+    assert "selected_reaction" not in first["rows"][0]
     assert calls == 1
 
 
-def test_pulse_entry_moves_from_unseen_to_seen_to_inspected(
+def test_pulse_entry_is_shared_without_storing_reader_attention(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "pulse-attention.db")
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "pulse-no-attention.db")
     init_db()
     timestamp = datetime.now(UTC)
     before = (timestamp - timedelta(minutes=20)).isoformat()
@@ -451,50 +446,13 @@ def test_pulse_entry_moves_from_unseen_to_seen_to_inspected(
     insert_scored_snapshot("attention-one", "attention-entry", "ONE", 60, 1, entered_at)
     insert_scan_run("attention-refresh", refreshed_at, 1)
     insert_scored_snapshot("attention-one-refresh", "attention-refresh", "ONE", 62, 1, refreshed_at)
-    item = PulseAttentionItem(ticker="ONE", entered_at=entered_at)
 
-    row = pulse_data(profile="v:reader")["rows"][0]
+    row = pulse_data()["rows"][0]
+
     assert row["entered_at"] == entered_at
-    assert row["novelty_state"] == "unseen"
-    assert row["rug_score"] is None
-    assert [entry["ticker"] for entry in pulse_notification_data("v:reader")["entries"]] == ["ONE"]
-
-    assert _write_pulse_attention("v:reader", [item], "notified") == 1
-    assert pulse_notification_data("v:reader")["entries"] == []
-    assert pulse_data(profile="v:reader")["rows"][0]["novelty_state"] == "unseen"
-
-    assert _write_pulse_attention("v:reader", [item], "seen") == 1
-    assert pulse_data(profile="v:reader")["rows"][0]["novelty_state"] == "seen"
-
-    assert _write_pulse_attention("v:reader", [item], "inspected") == 1
-    assert pulse_data(profile="v:reader")["rows"][0]["novelty_state"] == "inspected"
-
-
-def test_a_reentry_creates_a_new_unseen_pulse_episode(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "pulse-reentry.db")
-    init_db()
-    timestamp = datetime.now(UTC)
-    first_entry = (timestamp - timedelta(minutes=30)).isoformat()
-    absent = (timestamp - timedelta(minutes=20)).isoformat()
-    reentry = (timestamp - timedelta(minutes=10)).isoformat()
-    insert_scan_run("first-entry", first_entry, 1)
-    insert_scored_snapshot("first-one", "first-entry", "ONE", 55, 1, first_entry)
-    insert_scan_run("absent", absent, 1)
-    insert_scored_snapshot("absent-two", "absent", "TWO", 50, 1, absent)
-    _write_pulse_attention(
-        "v:reader",
-        [PulseAttentionItem(ticker="ONE", entered_at=first_entry)],
-        "inspected",
-    )
-    insert_scan_run("reentry", reentry, 1)
-    insert_scored_snapshot("reentry-one", "reentry", "ONE", 65, 1, reentry)
-
-    row = pulse_data(profile="v:reader")["rows"][0]
-
-    assert row["entered_at"] == reentry
-    assert row["novelty_state"] == "unseen"
+    assert "novelty_state" not in row
+    with connection() as database:
+        assert database.execute("SELECT COUNT(*) FROM pulse_profile_state").fetchone()[0] == 0
 
 
 def test_news_and_social_flow_into_pulse_radar_and_alpha(
@@ -508,11 +466,13 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
     insert_scored_snapshot("external-snapshot", "external-run", "FLOW", 40, 1, captured_at)
     with connection() as database:
         database.execute(
-            """
-            INSERT INTO ticker_reactions(profile_id,ticker,reaction,created_at,updated_at)
-            VALUES(?,?,?,?,?)
-            """,
-            ("v:fan", "FLOW", "bull", captured_at, captured_at),
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("flow-commenter", "flow_reader", "Reader", "active", captured_at),
+        )
+        database.execute(
+            "INSERT INTO ticker_comments(id,ticker,user_id,body,status,created_at) "
+            "VALUES(?,?,?,?,?,?)",
+            ("flow-comment", "FLOW", "flow-commenter", "Watching FLOW", "public", captured_at),
         )
     fetch = SourceFetch.success(
         source="test_discovery",
@@ -555,25 +515,25 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
     )
 
     pulse = pulse_data()["rows"][0]
-    radar = radar_data(visitor_id="reader")[0]
-    alpha = alpha_board_data("v:fan")["rows"][0]
+    radar = radar_data()[0]
+    alpha = alpha_board_data()["rows"][0]
 
     assert pulse["score_components"] == {
         "market": 40.0,
         "sec_event": 0.0,
         "news": 1.5,
         "social_search": 4.32,
-        "community": 2.0,
+        "community": 3.17,
         "safety": -0.0,
     }
-    assert pulse["custom_score"] == 47.82
+    assert pulse["custom_score"] == 48.99
     assert pulse["external_social_mentions"] == 4
     assert pulse["news_count"] == 1
     assert radar["pulse_label"] == "Bluesky · 4 cashtag mentions"
     assert radar["filing_url"].startswith("https://bsky.app/")
-    assert alpha["bull_count"] == 1
+    assert alpha["bull_count"] == 0
     assert alpha["bear_count"] == 0
-    assert alpha["comment_count"] == 0
+    assert alpha["comment_count"] == 1
     assert alpha["external_social_mentions"] == 4
     assert alpha["news_count"] == 1
     assert alpha["pulse_label"] == "Bluesky · 4 cashtag mentions"
@@ -1000,7 +960,7 @@ def test_ticker_detail_prefers_market_state_and_uses_scan_outcome(
     assert detail["events"][0]["evidence_label"] == "Insider purchase"
 
 
-def test_radar_marks_new_state_seen(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+def test_radar_does_not_store_seen_state(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "radar.db")
     init_db()
     captured_at = datetime.now(UTC).isoformat()
@@ -1017,14 +977,16 @@ def test_radar_marks_new_state_seen(tmp_path: Path, monkeypatch: MonkeyPatch) ->
             ("user", "RAD", captured_at),
         )
 
-    first = radar_data("user", mark_seen=True)
-    second = radar_data("user")
+    first = radar_data()
+    second = radar_data()
 
     assert first[0]["has_update"] is True
     assert first[0]["source"] == "sec"
     assert first[0]["price"] == 2.1
     assert first[0]["evidence_gate"]["checks"] == ["Primary filing"]
-    assert second[0]["has_update"] is False
+    assert second[0]["has_update"] is True
+    with connection() as database:
+        assert database.execute("SELECT COUNT(*) FROM radar_seen").fetchone()[0] == 0
 
 
 def test_radar_excludes_events_for_tickers_not_in_pulse(
@@ -1044,12 +1006,12 @@ def test_radar_excludes_events_for_tickers_not_in_pulse(
             ("user", "FILE", filed_at),
         )
 
-    result = radar_data("user")
+    result = radar_data()
 
     assert result == []
 
 
-def test_alpha_ranks_bull_bear_and_comment_activity(
+def test_alpha_ranks_comment_activity_without_reaction_profiles(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "alpha.db")
@@ -1058,27 +1020,20 @@ def test_alpha_ranks_bull_bear_and_comment_activity(
     insert_filing("alpha-one", "ONE", 1.25, 70, captured_at, "P")
     insert_filing("alpha-two", "TWO", 2.50, 80, captured_at, "P")
     with connection() as database:
-        database.executemany(
-            """
-            INSERT INTO ticker_reactions(profile_id,ticker,reaction,created_at,updated_at)
-            VALUES(?,?,?,?,?)
-            """,
-            [
-                ("v:first", "ONE", "bull", captured_at, captured_at),
-                ("v:second", "ONE", "bear", captured_at, captured_at),
-                ("v:first", "TWO", "bull", captured_at, captured_at),
-            ],
-        )
         database.execute(
             "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
             ("commenter", "commenter", "Commenter", "active", captured_at),
         )
-        database.execute(
+        database.executemany(
             """
             INSERT INTO ticker_comments(id,ticker,user_id,body,status,created_at)
             VALUES(?,?,?,?,?,?)
             """,
-            ("alpha-comment", "ONE", "commenter", "Watching ONE", "public", captured_at),
+            [
+                ("alpha-comment-1", "ONE", "commenter", "Watching ONE", "public", captured_at),
+                ("alpha-comment-2", "ONE", "commenter", "Still ONE", "public", captured_at),
+                ("alpha-comment-3", "TWO", "commenter", "Watching TWO", "public", captured_at),
+            ],
         )
         database.execute(
             """
@@ -1104,20 +1059,20 @@ def test_alpha_ranks_bull_bear_and_comment_activity(
             ),
         )
 
-    board = alpha_board_data("v:first")
+    board = alpha_board_data()
 
     assert [row["ticker"] for row in board["rows"]] == ["ONE", "TWO"]
-    assert board["rows"][0]["bull_count"] == 1
-    assert board["rows"][0]["bear_count"] == 1
-    assert board["rows"][0]["comment_count"] == 1
+    assert board["rows"][0]["bull_count"] == 0
+    assert board["rows"][0]["bear_count"] == 0
+    assert board["rows"][0]["comment_count"] == 2
     assert board["rows"][0]["engagement_count"] == 4
     assert board["rows"][0]["is_leader"] is True
-    assert board["rows"][0]["selected_reaction"] == "bull"
+    assert "selected_reaction" not in board["rows"][0]
     assert board["rows"][0]["ai_report"]["catalysts"] == ["Insider purchase"]
-    assert board["total_votes"] == 3
-    assert board["total_comments"] == 1
+    assert board["total_votes"] == 0
+    assert board["total_comments"] == 3
 
-def test_ticker_feedback_tracks_reactions_and_signed_in_comments(
+def test_ticker_comments_use_thread_only_emoji_aliases(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "feedback.db")
@@ -1130,24 +1085,6 @@ def test_ticker_feedback_tracks_reactions_and_signed_in_comments(
     init_db()
     timestamp = datetime.now(UTC)
     insert_filing("feedback-one", "ONE", 1.25, 70, timestamp.isoformat(), "P")
-    request = Request(
-        {
-            "type": "http",
-            "method": "POST",
-            "path": "/api/reaction/ONE/bull",
-            "headers": [(b"origin", APP_ORIGIN.encode())],
-            "client": ("127.0.0.77", 4770),
-        }
-    )
-    request.state.visitor_id = "feedback-visitor-abcdefghijklmnop"
-
-    bull = json.loads(toggle_reaction("ONE", "bull", request, None).body)
-    bear = json.loads(toggle_reaction("ONE", "bear", request, None).body)
-
-    assert bull == {"ticker": "ONE", "bull": 1, "bear": 0, "selected": "bull"}
-    assert bear == {"ticker": "ONE", "bull": 0, "bear": 1, "selected": "bear"}
-    assert reaction_state("ONE", "v:feedback-visitor-abcdefghijklmnop") == bear
-
     raw_session = "feedback-session"
     with connection() as database:
         database.execute(
@@ -1183,14 +1120,18 @@ def test_ticker_feedback_tracks_reactions_and_signed_in_comments(
     assert result.status_code == 201
     assert payload["count"] == 1
     assert payload["comment"]["body"] == "Watching this week above VWAP."
-    assert payload["comment"]["pseudonym"] == web_main.comment_pseudonym("feedback-user")
-    assert payload["comment"]["pseudonym"].count("-") == 1
-    assert payload["comment"]["pseudonym"].islower()
-    assert payload["comment"]["pseudonym"] not in {"chartreader", "Chart Reader"}
+    assert any(ord(character) > 10_000 for character in payload["comment"]["alias"])
+    assert payload["comment"]["alias"] not in {"chartreader", "Chart Reader"}
+    assert payload["comment"]["is_owner"] is True
     assert "username" not in payload["comment"]
     assert "display_name" not in payload["comment"]
-    assert comments_for_ticker("ONE") == [payload["comment"]]
-    assert alpha_comments_data() == [{**payload["comment"], "ticker": "ONE"}]
+    assert comments_for_ticker("ONE", current_user_id="feedback-user") == [
+        payload["comment"]
+    ]
+    public_comment = alpha_comments_data()[0]
+    assert public_comment["ticker"] == "ONE"
+    assert public_comment["alias"] == payload["comment"]["alias"]
+    assert public_comment["is_owner"] is False
     assert "radar_case" not in payload
     assert scheduled == []
 
@@ -1215,9 +1156,7 @@ def test_radar_orders_events_by_time_not_activity(tmp_path: Path, monkeypatch: M
     insert_scored_snapshot(
         "activity-two-snapshot", "activity-run", "TWO", 60, 2, captured_at.isoformat()
     )
-    _record_activity("v:device", "TWO", "share")
-
-    result = radar_data(visitor_id="device")
+    result = radar_data()
 
     assert result
     assert result[0]["ticker"] == "ONE"
@@ -1340,7 +1279,7 @@ def test_commissioned_report_stays_private_without_storing_the_openrouter_key(
     assert report["actor"]["ladder_position"] == 1
     assert report["actor"]["ladder_size"] == 4
     assert get_commission(report["public_id"])["summary"] == "A source-bound summary."
-    assert "commissions" not in alpha_board_data("v:reader")
+    assert "commissions" not in alpha_board_data()
     with connection() as database:
         columns = {row[1] for row in database.execute("PRAGMA table_info(research_commissions)")}
         stored = database.execute("SELECT * FROM research_commissions").fetchone()
@@ -1582,7 +1521,7 @@ def test_legacy_commission_request_uses_flash_model_with_a_minimal_prompt(
     assert request_payload["actor"]["id"] == "kol-flash"
     assert request_payload["actor"]["model"] == "z-ai/glm-5.3"
     assert body["response_format"] == {"type": "json_object"}
-    assert body["provider"] == {"require_parameters": True}
+    assert body["provider"] == {"require_parameters": True, "zdr": True}
     assert body["reasoning_effort"] == "high"
     assert "temperature" not in body
     assert "tools" not in body

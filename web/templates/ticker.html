@@ -55,9 +55,7 @@
     {% endif %}
   </section>
 
-  <section class="feedback-strip" aria-label="Community feedback">
-    <button class="reaction-button bull {% if reaction.selected == 'bull' %}selected{% endif %}" type="button" data-reaction="bull" aria-pressed="{{ 'true' if reaction.selected == 'bull' else 'false' }}"><span>🐂 Bull</span><b id="bullCount">{{ reaction.bull }}</b></button>
-    <button class="reaction-button bear {% if reaction.selected == 'bear' %}selected{% endif %}" type="button" data-reaction="bear" aria-pressed="{{ 'true' if reaction.selected == 'bear' else 'false' }}"><span>🐻 Bear</span><b id="bearCount">{{ reaction.bear }}</b></button>
+  <section class="feedback-strip" aria-label="Community discussion">
     <button class="reaction-button comment-jump" type="button" id="commentJump"><span>Comment</span><b id="commentCount">{{ comment_count }}</b></button>
   </section>
 
@@ -172,19 +170,21 @@
 
   <section class="discussion-section" id="discussion">
     <div class="section-heading"><div><h2>Comments</h2></div><b id="discussionCount">{{ comment_count }}</b></div>
+    <p class="thread-identity-note">Emoji names work only in this ticker thread. The same emoji means the same author here. Different emojis may still belong to the same person.</p>
     {% if user %}
     <form class="comment-form" id="commentForm">
       <textarea id="commentBody" maxlength="280" rows="3" aria-label="Add a comment about {{ detail.ticker }}" placeholder="What is your read on {{ detail.ticker }}?"></textarea>
       <div><small id="commentStatus">280 left</small><button type="submit">Post</button></div>
     </form>
+    <button class="comment-alias-swap" id="swapCommentAlias" type="button">Swap my emoji for this thread</button>
     {% else %}
     <a class="comment-login" href="/login?next=/t/{{ detail.ticker }}#discussion">Log in to comment</a>
     {% endif %}
     <ol class="comment-list" id="commentList">
       {% for comment in comments %}
-      <li>
-        <span class="comment-avatar">{{ comment.pseudonym[-2:] }}</span>
-        <div><header><strong>{{ comment.pseudonym }}</strong><small><time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time></small></header><p>{{ comment.body }}</p></div>
+      <li data-comment-id="{{ comment.id }}">
+        <span class="comment-avatar">{{ comment.alias }}</span>
+        <div><header><strong>{{ comment.alias }}</strong><small><time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time>{% if comment.is_owner %}<button type="button" data-delete-comment>Delete</button>{% endif %}</small></header><p>{{ comment.body }}</p></div>
       </li>
       {% endfor %}
     </ol>
@@ -311,24 +311,8 @@ document.querySelectorAll('[data-range]').forEach(button=>button.addEventListene
 document.querySelectorAll('[data-chart-mode]').forEach(button=>button.addEventListener('click',()=>{chartMode=button.dataset.chartMode;document.querySelectorAll('[data-chart-mode]').forEach(item=>item.classList.toggle('active',item===button));document.getElementById('chartModeNote').textContent=chartModeNotes[chartMode];draw(visibleChartPoints());}));
 document.getElementById('shareButton').addEventListener('click', async () => {
   const share = {title: ticker, text: `${ticker} · ${company}`, url: location.href};
-  try { fetch('/api/activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker,event_type:'share'})}); if (navigator.share) await navigator.share(share); else { await navigator.clipboard.writeText(location.href); document.getElementById('shareButton').textContent = '✓'; } } catch (_) {}
+  try { if (navigator.share) await navigator.share(share); else { await navigator.clipboard.writeText(location.href); document.getElementById('shareButton').textContent = '✓'; } } catch (_) {}
 });
-function renderReaction(result){
-  document.getElementById('bullCount').textContent=result.bull;
-  document.getElementById('bearCount').textContent=result.bear;
-  document.querySelectorAll('[data-reaction]').forEach(button=>{
-    const selected=button.dataset.reaction===result.selected;
-    button.classList.toggle('selected',selected);
-    button.setAttribute('aria-pressed',String(selected));
-  });
-}
-document.querySelectorAll('[data-reaction]').forEach(button=>button.addEventListener('click',async()=>{
-  button.disabled=true;
-  try{
-    const response=await fetch(`/api/reaction/${encodeURIComponent(ticker)}/${button.dataset.reaction}`,{method:'POST'});
-    if(response.ok)renderReaction(await response.json());
-  }finally{button.disabled=false;}
-}));
 function localDateTimeNow(){const current=new Date();return new Date(current.getTime()-current.getTimezoneOffset()*60000).toISOString().slice(0,16);}
 document.querySelectorAll('.trade-form input[type="datetime-local"]').forEach(input=>{if(!input.value)input.value=localDateTimeNow();});
 document.querySelectorAll('[data-trade-time]').forEach(item=>{const stamp=new Date(item.dateTime);if(Number.isFinite(stamp.getTime()))item.textContent=stamp.toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});});
@@ -363,12 +347,13 @@ function relativeCommentTime(value){
 }
 function refreshCommentTimes(){document.querySelectorAll('[data-comment-time]').forEach(item=>{item.textContent=relativeCommentTime(item.dateTime);});}
 function renderComment(comment){
-  const item=document.createElement('li');
-  const avatar=document.createElement('span');avatar.className='comment-avatar';avatar.textContent=(comment.pseudonym||'??').slice(-2);
+  const item=document.createElement('li');item.dataset.commentId=comment.id;
+  const avatar=document.createElement('span');avatar.className='comment-avatar';avatar.textContent=comment.alias||'🎲';
   const copy=document.createElement('div');const head=document.createElement('header');
-  const name=document.createElement('strong');name.textContent=comment.pseudonym;
+  const name=document.createElement('strong');name.textContent=comment.alias||'🎲';
   const meta=document.createElement('small');
   const stamp=document.createElement('time');stamp.dateTime=comment.created_at;stamp.dataset.commentTime='';stamp.textContent=relativeCommentTime(comment.created_at);meta.append(stamp);
+  if(comment.is_owner){const remove=document.createElement('button');remove.type='button';remove.dataset.deleteComment='';remove.textContent='Delete';meta.append(remove);}
   const body=document.createElement('p');body.textContent=comment.body;
   head.append(name,meta);copy.append(head,body);item.append(avatar,copy);return item;
 }
@@ -388,8 +373,18 @@ commentForm?.addEventListener('submit',async event=>{
     document.getElementById('commentCount').textContent=result.count;document.getElementById('discussionCount').textContent=result.count;document.getElementById('commentEmpty').hidden=true;
   }catch(error){commentStatus.textContent=error.message||'Could not post';}finally{submit.disabled=false;}
 });
-const openedAt=Date.now();
-addEventListener('pagehide',()=>{const seconds=Math.round((Date.now()-openedAt)/1000);if(seconds<3)return;navigator.sendBeacon('/api/activity',new Blob([JSON.stringify({ticker,event_type:'dwell',seconds})],{type:'application/json'}));});
+commentList.addEventListener('click',async event=>{
+  const button=event.target.closest('[data-delete-comment]');if(!button)return;
+  const item=button.closest('[data-comment-id]');if(!item)return;
+  button.disabled=true;
+  const response=await fetch(`/api/comments/${encodeURIComponent(item.dataset.commentId)}`,{method:'DELETE'});
+  if(response.ok){item.remove();const count=Math.max(0,Number(document.getElementById('commentCount').textContent)-1);document.getElementById('commentCount').textContent=count;document.getElementById('discussionCount').textContent=count;document.getElementById('commentEmpty').hidden=count!==0;}else{button.disabled=false;}
+});
+document.getElementById('swapCommentAlias')?.addEventListener('click',async event=>{
+  event.currentTarget.disabled=true;
+  const response=await fetch(`/api/comments/${encodeURIComponent(ticker)}/alias/swap`,{method:'POST'});
+  if(response.ok)location.reload();else{commentStatus.textContent='Post a comment before swapping your emoji.';event.currentTarget.disabled=false;}
+});
 function compactVolume(value){
   const number=Number(value);
   if(!Number.isFinite(number))return '—';

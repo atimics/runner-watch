@@ -33,10 +33,6 @@ const more=document.getElementById('pulseMore');
 const refreshButton=document.getElementById('pulseRefresh');
 let loadingMore=false;
 let pendingPulse=null;
-let exposureObserver=null;
-const exposedRows=new Map();
-const exposureQueue=new Map();
-let exposureFlushTimer=null;
 function esc(value){const node=document.createElement('span');node.textContent=String(value??'');return node.innerHTML;}
 function entryKey(row){return row?.entered_at?`${row.ticker}|${row.entered_at}`:'';}
 function renderKols(){
@@ -47,58 +43,12 @@ function renderKols(){
   const pnl=Number(kol.paper_pnl||0);const hit=kol.hit_rate==null?'no results':`${(Number(kol.hit_rate)*100).toFixed(0)}% hit`;
   box.innerHTML=`<span class="kol-avatar">${esc(kol.emoji||'⚡')}</span><span><strong>${esc(kol.display_name)} <i class="flash-model-label">${esc(kol.inference_model_label||'')}</i></strong><small>${Number(kol.active_calls||0)} open · ${Number(kol.calls||0)} calls · ${esc(hit)}</small></span><b class="${pnl>=0?'up':'down'}">${pnl>=0?'+':'−'}$${Math.abs(pnl).toFixed(2)}</b>`;
 }
-function flushExposures(){
-  clearTimeout(exposureFlushTimer);exposureFlushTimer=null;
-  const entries=[...exposureQueue.values()];
-  exposureQueue.clear();
-  if(!entries.length)return;
-  fetch('/api/pulse/seen',{
-    method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({entries}),
-    keepalive:true,
-  }).catch(()=>{});
-}
-function markExposed(row){
-  if(!row?.dataset.enteredAt||row.dataset.exposureSent==='true')return;
-  row.dataset.exposureSent='true';
-  const entry={ticker:row.dataset.tickerRow,entered_at:row.dataset.enteredAt};
-  exposureQueue.set(`${entry.ticker}|${entry.entered_at}`,entry);
-  exposureFlushTimer??=setTimeout(flushExposures,250);
-}
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')flushExposures();});
-function paintSeen(row){
-  if(!row||row.dataset.novelty!=='unseen')return;
-  row.dataset.novelty='seen';
-  row.classList.remove('attention-unseen');
-  row.classList.add('attention-seen');
-}
-function observeExposure(){
-  exposureObserver?.disconnect();
-  exposedRows.forEach(state=>clearTimeout(state.timer));
-  exposedRows.clear();
-  exposureObserver=new IntersectionObserver(entries=>entries.forEach(entry=>{
-    const row=entry.target;
-    if(entry.intersectionRatio>=.6){
-      if(exposedRows.has(row))return;
-      const state={qualified:false,timer:setTimeout(()=>{state.qualified=true;markExposed(row);},1000)};
-      exposedRows.set(row,state);
-      return;
-    }
-    const state=exposedRows.get(row);
-    if(!state)return;
-    clearTimeout(state.timer);
-    if(state.qualified)paintSeen(row);
-    exposedRows.delete(row);
-  }),{threshold:[0,.6]});
-  list.querySelectorAll('[data-novelty="unseen"][data-entered-at]').forEach(row=>exposureObserver.observe(row));
-}
 function render() {
   const rows = pulse.rows || [];
   list.innerHTML = rows.length?`<div class="token-list">${rows.map(row=>TickerRow.render(row)).join('')}</div>`:`<div class="empty-list"><strong>No movement</strong></div>`;
   more.hidden=!pulse.has_more;
   renderKols();
   TickerRow.paintCharts();
-  observeExposure();
 }
 async function loadMore(){
   if(loadingMore||!pulse.has_more)return;
@@ -127,7 +77,7 @@ setInterval(async () => {
     if (response.ok) {
       const nextPulse = await response.json();
       const currentEntries=new Set((pulse.rows||[]).map(entryKey).filter(Boolean));
-      const newCount=(nextPulse.rows||[]).filter(row=>row.novelty_state==='unseen'&&!currentEntries.has(entryKey(row))).length;
+      const newCount=(nextPulse.rows||[]).filter(row=>!currentEntries.has(entryKey(row))).length;
       if(newCount){
         pendingPulse=nextPulse;
         refreshButton.textContent=newCount===1?'1 new ticker':`${newCount} new tickers`;
