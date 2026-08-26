@@ -233,9 +233,12 @@ long-running deployment should eventually move archived bars and documents to ob
 
 `/api/capabilities` combines live source, worker, model, evidence-gate, base-rate, training, and
 promotion policy without exposing credential names or values. It also reports enabled sources that
-have not passed review. Clients can use it instead of hardcoding deployment behavior. `/health`
-requires a recent database-backed heartbeat from the separate worker, so a live web process no
-longer hides a dead worker.
+have not passed review. Clients can use it instead of hardcoding deployment behavior. `/live`
+reports only that the web process is running. `/health` and its `/ready` alias check the database
+and minimum schema without depending on the worker. `/health/details` also requires a recent
+healthy worker heartbeat. Fly routes traffic using the backward-compatible `/health` endpoint,
+while the detailed endpoint lets external monitoring detect a dead or partly failed worker without
+taking healthy web machines offline.
 
 ## Legacy model evaluations
 
