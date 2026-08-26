@@ -1,0 +1,80 @@
+{% extends "mobile_base.html" %}
+{% block app_class %}account-page billing-page{% endblock %}
+{% block title %}Billing · Runner Watch{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/account-pages.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+<header class="detail-nav account-nav">
+  <a href="/" aria-label="Back to Pulse">‹</a>
+  <strong>Billing</strong>
+  <a class="account-nav-link" href="/roadmap" aria-label="View roadmap">↗</a>
+</header>
+
+<main class="account-wrap">
+  {% if checkout == 'success' %}
+  <div class="account-notice success" role="status">
+    <strong>Stripe received your checkout.</strong>
+    <span>Pro turns on as soon as the signed subscription event arrives.</span>
+  </div>
+  {% elif checkout == 'canceled' %}
+  <div class="account-notice" role="status">
+    <strong>Checkout canceled.</strong>
+    <span>Your current plan did not change.</span>
+  </div>
+  {% endif %}
+
+  <section class="account-intro">
+    <span class="eyebrow">ONE PAID PLAN</span>
+    <h1>Research that shows its work.</h1>
+    <p>Pulse stays open. Pro pays for deeper, source-bound research without turning Runner Watch into a market-data supermarket.</p>
+  </section>
+
+  <section class="plan-card pro-plan">
+    <header>
+      <div><span class="decision-badge buy">PRO</span><h2>{{ price.name }}</h2></div>
+      <div class="plan-price">
+        <strong>{{ price.amount or 'Price set in Stripe' }}</strong>
+        {% if price.interval %}<span>{{ price.interval }}</span>{% endif %}
+      </div>
+    </header>
+    <ul class="feature-list">
+      <li><i>✓</i><span><strong>Everything in Free</strong><small>Pulse, Radar, Alpha ranking, ticker evidence, and the private trade journal.</small></span></li>
+      <li><i>✓</i><span><strong>Full Alpha research</strong><small>Read the complete source-bound report for the leading Alpha ticker.</small></span></li>
+      <li><i>✓</i><span><strong>Private Flash research</strong><small>Run up to three private evidence reviews per day. Private reports stay owner-only.</small></span></li>
+      <li><i>✓</i><span><strong>Self-serve billing</strong><small>Update payment details or cancel in Stripe's customer portal.</small></span></li>
+    </ul>
+
+    {% if user %}
+      <div class="plan-state"><span>Current plan</span><strong>{{ account.plan_label }} · {{ account.status_label }}</strong></div>
+      {% if account.customer_id and (account.has_access or account.needs_action or account.status == 'canceled') %}
+      <form method="post" action="/api/billing/portal">
+        <button class="account-action" type="submit">Manage billing in Stripe</button>
+      </form>
+      {% elif account.has_access %}
+      <button class="account-action" type="button" disabled>Pro is active</button>
+      {% elif billing_ready %}
+      <form method="post" action="/api/billing/checkout">
+        <button class="account-action" type="submit">Continue to Stripe</button>
+      </form>
+      {% else %}
+      <button class="account-action" type="button" disabled>Checkout is not open yet</button>
+      <p class="plan-help">The page is ready. Checkout opens when the Stripe recurring price and webhook secrets are connected.</p>
+      {% endif %}
+    {% else %}
+      <a class="account-action" href="/login">Log in with passkey</a>
+      <p class="plan-help">Log in first so Stripe can attach the subscription to the right account.</p>
+    {% endif %}
+  </section>
+
+  <section class="plan-card free-plan">
+    <header><div><span class="decision-badge own">FREE</span><h2>Core intelligence</h2></div><div class="plan-price"><strong>$0</strong></div></header>
+    <ul class="feature-list compact">
+      <li><i>✓</i><span><strong>Pulse and rug risk</strong><small>See unusual movement and the evidence that could block it.</small></span></li>
+      <li><i>✓</i><span><strong>Radar and Alpha</strong><small>Follow fresh events and community activity.</small></span></li>
+      <li><i>✓</i><span><strong>Primary sources</strong><small>Open the filings and evidence behind each claim.</small></span></li>
+    </ul>
+  </section>
+
+  <footer class="account-foot">Payments are handled by Stripe. Runner Watch stores subscription status, not card details. Research only; not financial advice.</footer>
+</main>
+{% endblock %}
+{% block bottom_nav %}{% endblock %}

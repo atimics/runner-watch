@@ -55,6 +55,15 @@ from runner_watch.universe import penny_runner_universe
 from runner_web import db as runner_db
 from runner_web.ai_kol import FLASH, AIKol, actor_snapshot
 from runner_web.base_rates import matched_market_base_rates
+from runner_web.billing import (
+    billing_account,
+    billing_config,
+    construct_webhook_event,
+    create_checkout_session,
+    create_portal_session,
+    price_summary,
+    process_webhook_event,
+)
 from runner_web.calls import (
     active_call_for_user,
     call_for_user,
@@ -92,6 +101,7 @@ from runner_web.outcomes import (
     refresh_outcomes,
     refresh_scan_outcomes,
 )
+from runner_web.product_catalog import roadmap_snapshot
 from runner_web.product_policy import EVIDENCE_GATE, OPERATIONS
 from runner_web.pseudonyms import pseudonym_candidate
 from runner_web.ranker import (
@@ -147,9 +157,6 @@ OPENROUTER_RESEARCH_TIMEOUT_SECONDS = max(
     30, int(os.getenv("OPENROUTER_RESEARCH_TIMEOUT_SECONDS", "300"))
 )
 FLASH_GLOBAL_DAILY_LIMIT = max(1, int(os.getenv("FLASH_GLOBAL_DAILY_LIMIT", "50")))
-FLASH_AUTO_INTERVAL_SECONDS = max(
-    60, int(os.getenv("FLASH_AUTO_INTERVAL_SECONDS", "300"))
-)
 SCAN_MODES = {
     "penny": {
         "label": "Penny stocks",
@@ -239,7 +246,6 @@ def _start_worker_tasks() -> list[asyncio.Task[Any]]:
         asyncio.create_task(apewisdom_source_worker(), name="apewisdom"),
         asyncio.create_task(outcome_worker(), name="outcomes"),
         asyncio.create_task(scan_collection_worker(), name="scan-collection"),
-        asyncio.create_task(community_flash_report_worker(), name="community-flash"),
         asyncio.create_task(research_job_worker(), name="research-jobs"),
     ]
     heartbeat = asyncio.create_task(
@@ -682,7 +688,9 @@ async def security_headers(request: Request, call_next: Any) -> Response:
             path="/",
         )
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
+    panel_path = request.url.path.startswith(("/t/", "/research/", "/s/"))
+    frame_ancestors = "'self'" if panel_path else "'none'"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN" if panel_path else "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     if COOKIE_SECURE:
@@ -690,7 +698,8 @@ async def security_headers(request: Request, call_next: Any) -> Response:
     response.headers["Content-Security-Policy"] = (
         f"default-src 'self'; script-src 'self' 'nonce-{nonce}'; "
         "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
-        "connect-src 'self'; frame-ancestors 'none'; "
+        "connect-src 'self'; frame-src 'self'; "
+        f"frame-ancestors {frame_ancestors}; "
         "base-uri 'self'; form-action 'self'"
     )
     if request.url.path.startswith("/static/"):
@@ -755,6 +764,104 @@ def api_ticker_kol_calls(request: Request, ticker: str) -> dict[str, Any]:
     enforce_rate(request, "ticker-kol-calls", limit=120, seconds=60)
     normalized = _clean_ticker(ticker)
     return {"ticker": normalized, "calls": kol_calls_for_ticker(normalized)}
+
+
+@app.get("/billing", response_class=HTMLResponse)
+def billing_page(
+    request: Request,
+    checkout: str | None = None,
+    runner_session: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    user = current_user(runner_session)
+    config = billing_config()
+    return templates.TemplateResponse(
+        request=request,
+        name="billing.html",
+        context=page_context(
+            request,
+            runner_session,
+            account=billing_account(user),
+            price=price_summary(config),
+            checkout=checkout if checkout in {"success", "canceled"} else None,
+            billing_ready=config.checkout_ready,
+        ),
+    )
+
+
+@app.post("/api/billing/checkout")
+def billing_checkout_api(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> RedirectResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "billing-checkout", limit=8, seconds=600, subject=user["id"])
+    account = billing_account(user)
+    try:
+        url = (
+            create_portal_session(user, APP_ORIGIN)
+            if account["has_access"] or account["needs_action"]
+            else create_checkout_session(user, APP_ORIGIN)
+        )
+    except Exception as exc:
+        LOG.warning("Could not start Stripe billing for user %s: %s", user["id"], exc)
+        raise HTTPException(502, "Billing is temporarily unavailable.") from exc
+    return RedirectResponse(url, status_code=303)
+
+
+@app.post("/api/billing/portal")
+def billing_portal_api(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> RedirectResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "billing-portal", limit=12, seconds=600, subject=user["id"])
+    try:
+        url = create_portal_session(user, APP_ORIGIN)
+    except Exception as exc:
+        LOG.warning("Could not open Stripe portal for user %s: %s", user["id"], exc)
+        raise HTTPException(502, "Billing management is temporarily unavailable.") from exc
+    return RedirectResponse(url, status_code=303)
+
+
+@app.post("/api/stripe/webhook")
+async def stripe_webhook_api(request: Request) -> JSONResponse:
+    signature = request.headers.get("stripe-signature", "")
+    if not signature:
+        raise HTTPException(400, "Missing Stripe signature")
+    payload = await request.body()
+    try:
+        event = construct_webhook_event(payload, signature)
+    except RuntimeError as exc:
+        LOG.error("Stripe webhook is not configured: %s", exc)
+        raise HTTPException(503, "Stripe webhook is not configured") from exc
+    except Exception as exc:
+        raise HTTPException(400, "Invalid Stripe webhook") from exc
+    try:
+        result = process_webhook_event(event)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return JSONResponse({"received": True, **result})
+
+
+@app.get("/roadmap", response_class=HTMLResponse)
+def roadmap_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    roadmap = roadmap_snapshot(billing_ready=billing_config().checkout_ready)
+    return templates.TemplateResponse(
+        request=request,
+        name="roadmap.html",
+        context=page_context(request, runner_session, roadmap=roadmap),
+    )
+
+
+@app.get("/api/roadmap")
+def roadmap_api(request: Request) -> dict[str, Any]:
+    enforce_rate(request, "roadmap", limit=120, seconds=60)
+    return roadmap_snapshot(billing_ready=billing_config().checkout_ready)
 
 
 @app.get("/api/market-clock")
@@ -1802,19 +1909,6 @@ def _commission_record(
     return report
 
 
-def commissioned_reports(limit: int = 12) -> list[dict[str, Any]]:
-    with connection() as db:
-        rows = db.execute(
-            """
-            SELECT c.* FROM research_commissions c
-            WHERE c.status='complete'
-            ORDER BY c.completed_at DESC LIMIT ?
-            """,
-            (max(1, min(limit, 50)),),
-        ).fetchall()
-    return [report for row in rows if (report := _commission_record(row))]
-
-
 def _alpha_list_summary(
     ticker: str,
     pulse_lookup: dict[str, dict[str, Any]],
@@ -1864,14 +1958,6 @@ def _alpha_base_data_uncached() -> dict[str, Any]:
             FROM ticker_comments WHERE status='public' GROUP BY ticker
             """
         ).fetchall()
-        commission_rows = db.execute(
-            """
-            SELECT c.* FROM research_commissions c
-            WHERE c.status='complete'
-            ORDER BY c.completed_at DESC LIMIT 12
-            """
-        ).fetchall()
-
     pulse = pulse_data(limit=50)
     pulse_lookup = {str(row["ticker"]): row for row in pulse["rows"]}
     community: dict[str, dict[str, Any]] = {}
@@ -1892,7 +1978,6 @@ def _alpha_base_data_uncached() -> dict[str, Any]:
             str(row["latest_activity"] or ""),
         )
     requested = list(community)
-    requested.extend(str(row["ticker"]) for row in commission_rows)
     fallback_lookup = _radar_market_summaries(
         [ticker for ticker in requested if ticker not in pulse_lookup]
     )
@@ -1926,16 +2011,6 @@ def _alpha_base_data_uncached() -> dict[str, Any]:
         rows.append(item)
     ranked = {row["ticker"] for row in rows}
     contenders = [row for row in pulse["rows"][:8] if row["ticker"] not in ranked][:5]
-    commissions = [
-        report
-        for raw in commission_rows
-        if (
-            report := _commission_record(
-                raw,
-                summary_lookup.get(str(raw["ticker"])),
-            )
-        )
-    ]
     current_prices = {
         ticker: (
             float(summary["price"])
@@ -1958,7 +2033,6 @@ def _alpha_base_data_uncached() -> dict[str, Any]:
         "active_calls": sum(item["status"] == "active" for item in calls),
         "total_comments": sum(row["comment_count"] for row in rows),
         "provider_ready": _flash_provider_ready(),
-        "commissions": commissions,
     }
 
 
@@ -2629,67 +2703,45 @@ def _create_research_commission(
     ticker: str,
     *,
     actor: AIKol = FLASH,
-    trigger: str = "commission",
+    case_id: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    """Create or reuse one shared public Flash report for this evidence snapshot."""
+    """Create one private, idempotent server job for the requesting user."""
 
-    if trigger not in {"commission", "community_auto"}:
-        raise ValueError("Unknown Flash report trigger")
     timestamp = iso()
     engagement_count = _community_engagement_count(ticker)
     evidence_key, evidence = _alpha_evidence(ticker, engagement_count)
-
-    def record_request(database: Any, report_id: str, created_new: bool) -> None:
-        database.execute(
-            """
-            INSERT INTO flash_report_requests(
-                id,report_id,user_id,trigger,created_new,created_at
-            ) VALUES(?,?,?,?,?,?)
-            """,
-            (
-                str(uuid.uuid4()),
-                report_id,
-                user_id,
-                trigger,
-                int(created_new),
-                timestamp,
-            ),
-        )
-
     with connection() as db:
         running = db.execute(
             """
             SELECT * FROM research_commissions
-            WHERE ticker=? AND actor_id=? AND status='running'
+            WHERE user_id=? AND ticker=? AND actor_id=? AND status='running'
             ORDER BY created_at DESC LIMIT 1
             """,
-            (ticker, actor.id),
+            (user_id, ticker, actor.id),
         ).fetchone()
         if running:
-            record_request(db, str(running["id"]), False)
             return _commission_record(running) or {}, False
         current = db.execute(
             """
             SELECT * FROM research_commissions
-            WHERE ticker=? AND actor_id=? AND evidence_key=? AND status='complete'
+            WHERE user_id=? AND ticker=? AND actor_id=? AND evidence_key=?
+                AND status='complete' AND (? IS NULL OR case_id=?)
             ORDER BY completed_at DESC LIMIT 1
             """,
-            (ticker, actor.id, evidence_key),
+            (user_id, ticker, actor.id, evidence_key, case_id, case_id),
         ).fetchone()
         if current:
-            record_request(db, str(current["id"]), False)
             return _commission_record(current) or {}, False
         since = iso(now() - timedelta(days=1))
-        if trigger == "commission":
-            recent_count = db.execute(
-                """
-                SELECT COUNT(*) FROM flash_report_requests
-                WHERE user_id=? AND trigger='commission' AND created_at>?
-                """,
-                (user_id, since),
-            ).fetchone()[0]
-            if recent_count >= 3:
-                raise HTTPException(429, "You can commission three reports per day.")
+        recent_count = db.execute(
+            """
+            SELECT COUNT(*) FROM research_commissions
+            WHERE user_id=? AND status IN ('running','complete') AND created_at>?
+            """,
+            (user_id, since),
+        ).fetchone()[0]
+        if recent_count >= 3:
+            raise HTTPException(429, "You can commission three reports per day.")
         global_count = db.execute(
             """
             SELECT COUNT(*) FROM research_commissions
@@ -2707,9 +2759,9 @@ def _create_research_commission(
             """
             INSERT INTO research_commissions(
                 id,public_id,user_id,ticker,evidence_key,status,requested_model,
-                actor_id,actor_snapshot_json,trigger,evidence_snapshot_json,
+                actor_id,actor_snapshot_json,case_id,trigger,evidence_snapshot_json,
                 evidence_as_of,created_at,updated_at
-            ) VALUES(?,?,?,?,?,'running',?,?,?,?,?,?,?,?)
+            ) VALUES(?,?,?,?,?,'running',?,?,?,?,?,?,?,?,?)
             ON CONFLICT DO NOTHING
             """,
             (
@@ -2721,7 +2773,8 @@ def _create_research_commission(
                 actor.model,
                 actor.id,
                 json.dumps(actor_snapshot(actor), separators=(",", ":")),
-                trigger,
+                case_id,
+                "commission",
                 json.dumps(evidence, separators=(",", ":"), default=str),
                 timestamp,
                 timestamp,
@@ -2732,16 +2785,14 @@ def _create_research_commission(
             running = db.execute(
                 """
                 SELECT * FROM research_commissions
-                WHERE ticker=? AND actor_id=? AND status='running'
+                WHERE user_id=? AND ticker=? AND actor_id=? AND status='running'
                 ORDER BY created_at DESC LIMIT 1
                 """,
-                (ticker, actor.id),
+                (user_id, ticker, actor.id),
             ).fetchone()
             if running:
-                record_request(db, str(running["id"]), False)
                 return _commission_record(running) or {}, False
             raise HTTPException(409, "This report is already running.")
-        record_request(db, report_id, True)
         row = db.execute(
             "SELECT * FROM research_commissions WHERE id=?", (report_id,)
         ).fetchone()
@@ -3195,15 +3246,15 @@ def get_commission(public_id: str) -> dict[str, Any] | None:
     return _commission_record(row)
 
 
-def latest_commission(ticker: str, user_id: str | None = None) -> dict[str, Any] | None:
+def latest_commission(user_id: str, ticker: str) -> dict[str, Any] | None:
     with connection() as db:
         row = db.execute(
             """
             SELECT * FROM research_commissions
-            WHERE ticker=? AND actor_id=?
+            WHERE user_id=? AND ticker=? AND actor_id=?
             ORDER BY created_at DESC LIMIT 1
             """,
-            (ticker, FLASH.id),
+            (user_id, ticker, FLASH.id),
         ).fetchone()
     return _commission_record(row)
 
@@ -3387,63 +3438,6 @@ async def alpha_report_worker() -> None:
         except Exception as exc:
             worker_state("alpha_report_last_error", str(exc)[:500])
         await asyncio.sleep(60)
-
-
-def refresh_community_flash_reports(limit: int = 12) -> list[str]:
-    """Find called tickers whose evidence changed and create shared Flash jobs."""
-
-    if not _flash_provider_ready():
-        return []
-    with connection() as db:
-        rows = db.execute(
-            """
-            SELECT ticker,MIN(user_id) AS requester,MAX(updated_at) AS latest_call
-            FROM community_calls WHERE status='active'
-            GROUP BY ticker ORDER BY latest_call DESC LIMIT ?
-            """,
-            (max(1, min(limit, 50)),),
-        ).fetchall()
-    report_ids: list[str] = []
-    for row in rows:
-        try:
-            report, created = _create_research_commission(
-                str(row["requester"]),
-                str(row["ticker"]),
-                trigger="community_auto",
-            )
-        except HTTPException as exc:
-            if exc.status_code == 429:
-                break
-            LOG.warning("Could not create automatic Flash report for %s", row["ticker"])
-            continue
-        except Exception:
-            LOG.exception("Could not create automatic Flash report for %s", row["ticker"])
-            continue
-        if created:
-            report_ids.append(str(report["id"]))
-    return report_ids
-
-
-async def community_flash_report_worker() -> None:
-    await asyncio.sleep(30)
-    while True:
-        try:
-            report_ids = await run_in_threadpool(refresh_community_flash_reports)
-            for report_id in report_ids:
-                if redis_configured():
-                    await asyncio.to_thread(enqueue_research_job, report_id)
-                else:
-                    await RESEARCH_JOB_QUEUE.put(report_id)
-            worker_state(
-                "community_flash_last_refresh",
-                json.dumps({"queued": len(report_ids), "at": iso()}, separators=(",", ":")),
-            )
-            worker_state("community_flash_last_error", "")
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            worker_state("community_flash_last_error", str(exc)[:500])
-        await asyncio.sleep(FLASH_AUTO_INTERVAL_SECONDS)
 
 
 def pulse_notification_data(profile: str) -> dict[str, Any]:
@@ -4129,7 +4123,11 @@ def ticker_page(
             comment_count=comment_count_for_ticker(normalized),
             active_call=active_call,
             calls=community_calls_for_ticker(normalized, current_price=mark, limit=20),
-            latest_commission=latest_commission(normalized),
+            latest_commission=(
+                latest_commission(str(user["id"]), normalized)
+                if user and user.get("plan") == "subscriber"
+                else None
+            ),
             active_tab="pulse",
         ),
     )
@@ -5046,25 +5044,6 @@ async def create_community_call(
         entry_price=entry_price,
         entry_at=entry_at,
     )
-    report: dict[str, Any] | None = None
-    if _flash_provider_ready():
-        try:
-            report, created = await run_in_threadpool(
-                _create_research_commission,
-                str(user["id"]),
-                normalized,
-                trigger="community_auto",
-            )
-            if created:
-                if redis_configured():
-                    await asyncio.to_thread(enqueue_research_job, str(report["id"]))
-                else:
-                    await RESEARCH_JOB_QUEUE.put(str(report["id"]))
-        except HTTPException as exc:
-            if exc.status_code != 429:
-                LOG.exception("Could not schedule the shared Flash report for %s", normalized)
-        except Exception:
-            LOG.exception("Could not schedule the shared Flash report for %s", normalized)
     with PULSE_DATA_LOCK:
         PULSE_DATA_CACHE.clear()
     with ALPHA_DATA_LOCK:
@@ -5073,13 +5052,7 @@ async def create_community_call(
         _shared_request_cache_name("pulse"),
         _shared_request_cache_name("alpha"),
     )
-    return JSONResponse(
-        {
-            "call": call,
-            "report": _commission_api_payload(report) if report else None,
-        },
-        status_code=201,
-    )
+    return JSONResponse({"call": call}, status_code=201)
 
 
 @app.post("/api/calls/{public_id}/close")
@@ -5123,6 +5096,8 @@ async def commission_research_api(
 ) -> JSONResponse:
     require_origin(request)
     user = require_user(runner_session)
+    if user.get("plan") != "subscriber":
+        raise HTTPException(403, "Runner Watch Pro is required for private research.")
     enforce_rate(request, "commission-research", limit=6, seconds=3600, subject=user["id"])
     normalized = _clean_ticker(ticker)
     if not _known_ticker(normalized):
@@ -5171,7 +5146,7 @@ def research_status_api(
     normalized = _clean_ticker(ticker)
     if not _known_ticker(normalized):
         raise HTTPException(404, "Ticker not found")
-    report = latest_commission(normalized)
+    report = latest_commission(str(user["id"]), normalized)
     if not report:
         raise HTTPException(404, "No Flash report found")
     enforce_rate(request, "research-status", limit=180, seconds=600, subject=user["id"])
@@ -5196,8 +5171,8 @@ def research_job_status_api(
     enforce_rate(request, "research-job-status", limit=180, seconds=600, subject=user["id"])
     with connection() as db:
         row = db.execute(
-            "SELECT * FROM research_commissions WHERE public_id=?",
-            (public_id,),
+            "SELECT * FROM research_commissions WHERE public_id=? AND user_id=?",
+            (public_id, str(user["id"])),
         ).fetchone()
     if not row:
         raise HTTPException(404, "Flash report not found")
@@ -5211,7 +5186,8 @@ def research_report_page(
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
     report = get_commission(public_id)
-    if not report:
+    user = current_user(runner_session)
+    if not report or not user or str(report["user_id"]) != str(user["id"]):
         raise HTTPException(404, "Research report not found")
     return templates.TemplateResponse(
         request=request,
@@ -5221,9 +5197,13 @@ def research_report_page(
 
 
 @app.get("/research/{public_id}/card.png")
-def research_report_card(public_id: str) -> Response:
+def research_report_card(
+    public_id: str,
+    runner_session: str | None = Cookie(default=None),
+) -> Response:
     report = get_commission(public_id)
-    if not report:
+    user = current_user(runner_session)
+    if not report or not user or str(report["user_id"]) != str(user["id"]):
         raise HTTPException(404, "Research report not found")
     actor = report.get("actor") or {}
     model_label = str(actor.get("model_label") or report.get("model") or report["requested_model"])
@@ -5253,7 +5233,7 @@ def research_report_card(public_id: str) -> Response:
     return Response(
         buffer.getvalue(),
         media_type="image/png",
-        headers={"Cache-Control": "public,max-age=3600"},
+        headers={"Cache-Control": "private,max-age=3600"},
     )
 
 
@@ -5551,21 +5531,6 @@ def logout(
     response = JSONResponse({"ok": True, "redirect": "/"})
     response.delete_cookie(SESSION_COOKIE, path="/")
     return response
-
-
-@app.get("/scanner", response_class=HTMLResponse)
-def scanner_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> HTMLResponse:
-    user = current_user(runner_session)
-    if not user:
-        return RedirectResponse("/login", 303)
-    return templates.TemplateResponse(
-        request=request,
-        name="scanner.html",
-        context={"request": request, "user": user, "app_origin": APP_ORIGIN},
-    )
 
 
 def recent_sec_catalysts(tickers: list[str]) -> dict[str, dict[str, Any]]:
@@ -6023,21 +5988,6 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
         },
         "warnings": scan_warnings[:4],
     }
-
-
-@app.post("/api/scan")
-async def api_scan(
-    request: Request,
-    mode: str = "penny",
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "scan", limit=6, seconds=600, subject=user["id"])
-    if mode not in SCAN_MODES:
-        raise HTTPException(400, "Unknown scan mode")
-    result = await run_in_threadpool(run_scan, mode)
-    return JSONResponse(result)
 
 
 @app.post("/api/signals")

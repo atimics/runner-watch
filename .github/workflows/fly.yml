@@ -1,13 +1,17 @@
 name: Fly Deploy
 
 on:
-  pull_request:
-    branches:
-      - main
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
+
+concurrency:
+  group: fly-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -16,6 +20,7 @@ jobs:
   test:
     name: Test and lint
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
@@ -26,14 +31,15 @@ jobs:
       - run: cargo test --locked --manifest-path rust/stonks-ranker/Cargo.toml
       - run: cargo build --locked --manifest-path rust/stonks-ranker/Cargo.toml
       - run: uv run ruff check src tests
-      - run: uv run pytest -q
+      - run: uv run pytest -q --cov-fail-under=68
       - run: docker build --target test --tag runner-watch:test .
 
   deploy:
     name: Deploy app
-    if: github.event_name == 'push'
     needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     concurrency: fly-production
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

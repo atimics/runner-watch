@@ -1411,7 +1411,7 @@ def _migration_021_short_data(db: DatabaseConnection) -> None:
 
 
 def _migration_022_public_calls_and_flash(db: DatabaseConnection) -> None:
-    """Add immutable public Calls and make Flash reports shared by ticker."""
+    """Add immutable public Calls and Flash request audit records."""
 
     db.executescript(
         """
@@ -1465,31 +1465,44 @@ def _migration_022_public_calls_and_flash(db: DatabaseConnection) -> None:
             ON flash_report_requests(user_id,created_at DESC);
         """
     )
-    db.execute("DROP INDEX IF EXISTS research_commissions_running_actor")
-    duplicate_rows = db.execute(
-        """
-        SELECT id,ticker,actor_id,created_at FROM research_commissions
-        WHERE status='running' ORDER BY created_at DESC
-        """
-    ).fetchall()
-    seen: set[tuple[str, str]] = set()
-    timestamp = datetime.now(UTC).isoformat()
-    for row in duplicate_rows:
-        identity = (str(row["ticker"]), str(row["actor_id"] or ""))
-        if identity not in seen:
-            seen.add(identity)
-            continue
-        db.execute(
-            """
-            UPDATE research_commissions
-            SET status='failed',error=?,updated_at=? WHERE id=?
-            """,
-            ("Replaced by the shared public Flash queue.", timestamp, row["id"]),
-        )
+def _migration_023_private_flash_commissions(db: DatabaseConnection) -> None:
+    """Keep commissioned Flash reports isolated to the requesting user."""
+
+    db.execute("DROP INDEX IF EXISTS research_commissions_running_shared")
     db.execute(
         """
-        CREATE UNIQUE INDEX IF NOT EXISTS research_commissions_running_shared
-        ON research_commissions(ticker,actor_id) WHERE status='running'
+        CREATE UNIQUE INDEX IF NOT EXISTS research_commissions_running_actor
+        ON research_commissions(user_id,ticker,actor_id) WHERE status='running'
+        """
+    )
+
+
+def _migration_024_stripe_billing(db: DatabaseConnection) -> None:
+    """Mirror Stripe subscription state without storing payment details."""
+
+    for definition in (
+        "stripe_customer_id TEXT",
+        "stripe_subscription_id TEXT",
+        "stripe_subscription_status TEXT NOT NULL DEFAULT 'none'",
+        "stripe_subscription_price_id TEXT",
+        "stripe_current_period_end TEXT",
+        "stripe_cancel_at_period_end INTEGER NOT NULL DEFAULT 0",
+        "billing_updated_at TEXT",
+    ):
+        _ensure_column(db, "users", definition)
+    db.executescript(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS users_stripe_customer
+            ON users(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS users_stripe_subscription
+            ON users(stripe_subscription_id) WHERE stripe_subscription_id IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+            event_id TEXT PRIMARY KEY,
+            event_type TEXT NOT NULL,
+            received_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS stripe_webhook_events_type_time
+            ON stripe_webhook_events(event_type,received_at DESC);
         """
     )
 
@@ -1524,6 +1537,8 @@ MIGRATIONS = (
     Migration(20, "user_positions", _migration_020_user_positions),
     Migration(21, "short_data", _migration_021_short_data),
     Migration(22, "public_calls_and_flash", _migration_022_public_calls_and_flash),
+    Migration(23, "private_flash_commissions", _migration_023_private_flash_commissions),
+    Migration(24, "stripe_billing", _migration_024_stripe_billing),
 )
 
 

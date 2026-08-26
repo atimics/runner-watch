@@ -1,0 +1,372 @@
+.account-page {
+  max-width: 840px;
+  padding-bottom: 0;
+}
+
+.account-nav {
+  position: sticky;
+  z-index: 5;
+  top: 0;
+  background: rgba(9, 11, 11, .94);
+  backdrop-filter: blur(16px);
+}
+
+.account-nav .account-nav-link {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.account-wrap {
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding: 34px 20px 56px;
+}
+
+.account-intro {
+  padding: 8px 0 30px;
+}
+
+.account-intro h1 {
+  max-width: 620px;
+  margin: 8px 0 12px;
+  font-size: clamp(34px, 8vw, 58px);
+  line-height: .98;
+  letter-spacing: -.055em;
+}
+
+.account-intro p {
+  max-width: 610px;
+  margin: 0;
+  color: #9ba6a1;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.account-notice {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 20px;
+  padding: 13px 15px;
+  border-left: 3px solid var(--amber);
+  background: #121511;
+}
+
+.account-notice.success {
+  border-left-color: var(--green);
+}
+
+.account-notice strong {
+  font-size: 12px;
+}
+
+.account-notice span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.plan-card,
+.roadmap-card {
+  border: 1px solid #29312d;
+  background: #0d100f;
+}
+
+.plan-card {
+  margin-bottom: 16px;
+  padding: 22px;
+}
+
+.pro-plan {
+  border-top: 3px solid var(--green);
+}
+
+.free-plan {
+  border-top: 3px solid #4e5a54;
+}
+
+.plan-card > header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.plan-card h2 {
+  margin: 8px 0 0;
+  font-size: 23px;
+  letter-spacing: -.035em;
+}
+
+.plan-price {
+  text-align: right;
+}
+
+.plan-price strong,
+.plan-price span {
+  display: block;
+}
+
+.plan-price strong {
+  font-size: 17px;
+}
+
+.plan-price span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.feature-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 8px 0 12px;
+  list-style: none;
+}
+
+.feature-list li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid #202622;
+}
+
+.feature-list li:last-child {
+  border-bottom: 0;
+}
+
+.feature-list i {
+  color: var(--green);
+  font-style: normal;
+  font-weight: 850;
+}
+
+.feature-list strong,
+.feature-list small {
+  display: block;
+}
+
+.feature-list strong {
+  font-size: 12px;
+}
+
+.feature-list small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.feature-list.compact {
+  padding-bottom: 0;
+}
+
+.plan-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 2px 0 14px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.plan-state strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.account-action {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid var(--green);
+  background: var(--green);
+  color: #07110b;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 850;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.account-action:disabled {
+  border-color: #303833;
+  background: #171c19;
+  color: #78847e;
+  cursor: not-allowed;
+}
+
+.plan-help {
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.account-foot {
+  padding: 18px 4px 0;
+  color: #64706a;
+  font-size: 9px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.account-foot a {
+  color: #91a49a;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.roadmap-intro {
+  padding-bottom: 24px;
+}
+
+.decision-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 18px;
+}
+
+.decision-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 7px;
+  border: 1px solid #354039;
+  color: #aeb8b3;
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+
+.decision-badge.own {
+  border-color: rgba(87, 227, 137, .35);
+  color: var(--green);
+}
+
+.decision-badge.copy {
+  border-color: rgba(117, 220, 255, .35);
+  color: #75dcff;
+}
+
+.decision-badge.buy {
+  border-color: rgba(245, 198, 107, .35);
+  color: var(--amber);
+}
+
+.decision-badge.cut {
+  border-color: rgba(255, 107, 122, .35);
+  color: var(--red);
+}
+
+.roadmap-group {
+  margin-top: 28px;
+}
+
+.roadmap-group > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--line);
+}
+
+.roadmap-group > header h2 {
+  margin: 0;
+  font-size: 19px;
+  letter-spacing: -.025em;
+}
+
+.roadmap-group > header span {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.roadmap-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.roadmap-card {
+  min-height: 166px;
+  padding: 16px;
+}
+
+.roadmap-card > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.roadmap-card > div i {
+  color: #5f6b65;
+  font-size: 8px;
+  font-style: normal;
+  text-transform: uppercase;
+}
+
+.roadmap-card h3 {
+  margin: 22px 0 7px;
+  font-size: 15px;
+  line-height: 1.15;
+  letter-spacing: -.02em;
+}
+
+.roadmap-card p {
+  margin: 0;
+  color: #89958f;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.status-live .roadmap-card {
+  border-top: 2px solid rgba(87, 227, 137, .55);
+}
+
+.status-now .roadmap-card,
+.status-ready .roadmap-card {
+  border-top: 2px solid rgba(245, 198, 107, .55);
+}
+
+.status-cut .roadmap-card {
+  opacity: .72;
+}
+
+@media (max-width: 580px) {
+  .account-wrap {
+    padding: 26px 16px 44px;
+  }
+
+  .account-intro h1 {
+    font-size: 39px;
+  }
+
+  .plan-card {
+    padding: 18px;
+  }
+
+  .plan-card > header {
+    display: grid;
+  }
+
+  .plan-price {
+    text-align: left;
+  }
+
+  .roadmap-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .roadmap-card {
+    min-height: 144px;
+  }
+}

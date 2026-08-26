@@ -1,32 +1,20 @@
 {% extends "mobile_base.html" %}
+{% block app_class %}workspace-app alpha-app{% endblock %}
 {% block title %}Alpha · Runner Watch{% endblock %}
 {% block content %}
-<header class="screen-head">
-  <div><h1>Alpha</h1><span class="head-meta"><b>{{ board.active_calls }}</b> open Calls <i></i><span>{{ board.total_calls }} total</span></span></div>
-  {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>{% else %}<a class="avatar-button signed-out" href="/login" aria-label="Log in">↗</a>{% endif %}
-</header>
+<div class="desktop-workspace" data-desktop-workspace>
+  <section class="desktop-list-pane" data-desktop-list>
+    <header class="screen-head">
+      <div><h1>Alpha</h1><span class="head-meta"><b>{{ board.active_calls }}</b> open Calls <i></i><span>{{ board.total_calls }} total</span></span></div>
+      {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>{% else %}<a class="avatar-button signed-out" href="/login" aria-label="Log in">↗</a>{% endif %}
+    </header>
 
-<main class="alpha-board call-ledger">
-  <section class="commission-feed">
-    <div class="alpha-section-head"><h2>Flash <small class="flash-model-label">{{ flash.model }}</small></h2><span>Public reports</span></div>
-    {% if board.commissions %}
-    {% for report in board.commissions[:5] %}
-    <a class="commission-row" href="/research/{{ report.public_id }}">
-      <span class="coin coin-{{ report.coin_tone }}"><b>{{ report.coin_label }}</b><i></i></span>
-      <span><strong>{{ report.ticker }} · {{ report.headline }}</strong><small>Flash · {% if report.actor %}{{ report.actor.model }}{% else %}{{ flash.model }}{% endif %}</small></span>
-      <i>›</i>
-    </a>
-    {% endfor %}
-    {% else %}
-    <div class="empty-list"><strong>No Flash <small class="flash-model-label">{{ flash.model }}</small> reports yet</strong><span>Make a Call or ask Flash on a ticker.</span></div>
-    {% endif %}
-  </section>
-
+    <main class="alpha-board call-ledger">
   {% if board.rows %}
     {% set leader = board.rows[0] %}
     <article class="alpha-leader">
       <div class="wolf-mark"><span>🐺</span><b>#1 most called</b></div>
-      <a class="alpha-leader-asset" href="/t/{{ leader.ticker }}">
+      <a class="alpha-leader-asset" href="/t/{{ leader.ticker }}" data-desktop-default>
         <span class="coin coin-{{ leader.coin_tone }}"><b>{{ leader.coin_label }}</b><i></i></span>
         <span><strong>{{ leader.ticker }}</strong><small>{{ leader.company }}</small></span>
         <span class="alpha-leader-quote"><b>{% if leader.price is not none %}${{ '%.4f'|format(leader.price) if leader.price < 1 else '%.2f'|format(leader.price) }}{% else %}—{% endif %}</b><small class="{{ 'up' if leader.change_pct is not none and leader.change_pct >= 0 else 'down' }}">{% if leader.change_pct is not none %}{{ '+' if leader.change_pct >= 0 else '' }}{{ '%.1f'|format(leader.change_pct) }}%{% else %}—{% endif %}</small></span>
@@ -75,5 +63,8 @@
     {% endfor %}
   </section>
   {% endif %}
-</main>
+    </main>
+  </section>
+  {% include "_desktop_panel.html" %}
+</div>
 {% endblock %}

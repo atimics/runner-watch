@@ -30,7 +30,6 @@ from runner_web.main import (
     alpha_board_data,
     alpha_comments_data,
     comments_for_ticker,
-    commissioned_reports,
     create_ticker_comment,
     get_commission,
     pulse_data,
@@ -97,6 +96,47 @@ def test_ui_copy_drops_ai_and_corporate_filler() -> None:
     )
     for phrase in banned:
         assert phrase not in ui_copy
+
+
+def test_scanner_page_is_removed() -> None:
+    root = Path(__file__).parents[1]
+    routes = {
+        path
+        for route in web_main.app.routes
+        if (path := getattr(route, "path", None)) is not None
+    }
+    templates_text = "\n".join(
+        path.read_text() for path in (root / "web/templates").glob("*.html")
+    )
+
+    assert "/scanner" not in routes
+    assert "/api/scan" not in routes
+    assert 'href="/scanner"' not in templates_text
+    assert not (root / "web/templates/scanner.html").exists()
+
+
+def test_desktop_feeds_share_full_info_and_article_panel() -> None:
+    root = Path(__file__).parents[1]
+    templates_dir = root / "web/templates"
+    pulse = (templates_dir / "pulse.html").read_text()
+    radar = (templates_dir / "radar.html").read_text()
+    alpha = (templates_dir / "community.html").read_text()
+    panel = (templates_dir / "_desktop_panel.html").read_text()
+    workspace = (root / "web/static/desktop-workspace.js").read_text()
+    desktop_css = (root / "web/static/desktop-split.css").read_text()
+
+    for template in (pulse, radar, alpha):
+        assert "workspace-app" in template
+        assert "data-desktop-workspace" in template
+        assert "data-desktop-list" in template
+        assert '{% include "_desktop_panel.html" %}' in template
+    assert "data-desktop-frame" in panel
+    assert "/t/" in workspace
+    assert "/research/" in workspace
+    assert "html.embedded-pane .mobile-app" in desktop_css
+    assert '"SAMEORIGIN" if panel_path else "DENY"' in (
+        root / "src/runner_web/main.py"
+    ).read_text()
 
 
 def test_ticker_rows_use_color_without_new_or_seen_tags() -> None:
@@ -1247,7 +1287,7 @@ def test_chart_annotations_keep_the_real_pulse_entry_and_detected_events(
     )
 
 
-def test_commissioned_report_is_public_without_storing_the_openrouter_key(
+def test_commissioned_report_stays_private_without_storing_the_openrouter_key(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "commission.db")
@@ -1287,8 +1327,7 @@ def test_commissioned_report_is_public_without_storing_the_openrouter_key(
     assert report["actor"]["ladder_position"] == 1
     assert report["actor"]["ladder_size"] == 4
     assert get_commission(report["public_id"])["summary"] == "A source-bound summary."
-    assert commissioned_reports()[0]["ticker"] == "ONE"
-    assert alpha_board_data("v:reader")["commissions"][0]["public_id"] == report["public_id"]
+    assert "commissions" not in alpha_board_data("v:reader")
     with connection() as database:
         columns = {row[1] for row in database.execute("PRAGMA table_info(research_commissions)")}
         stored = database.execute("SELECT * FROM research_commissions").fetchone()
@@ -1436,7 +1475,7 @@ def test_verified_pipeline_freezes_every_stage(
     assert all(len(row["input_fingerprint"]) == 64 for row in stages)
 
 
-def test_running_flash_commission_is_a_single_server_job(
+def test_running_flash_commissions_are_private_per_user(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "running-commission.db")
@@ -1457,18 +1496,18 @@ def test_running_flash_commission_is_a_single_server_job(
     second, second_created = web_main._create_research_commission("other", "ONE")
 
     assert first_created is True
-    assert second_created is False
+    assert second_created is True
     assert first["status"] == "running"
-    assert second["public_id"] == first["public_id"]
-    assert web_main.latest_commission("ONE")["status"] == "running"
+    assert second["public_id"] != first["public_id"]
+    assert web_main.latest_commission("runner", "ONE")["status"] == "running"
+    assert web_main.latest_commission("other", "ONE")["status"] == "running"
     with connection() as database:
         rows = database.execute("SELECT * FROM research_commissions").fetchall()
         requests = database.execute(
             "SELECT user_id,created_new FROM flash_report_requests ORDER BY created_at,id"
         ).fetchall()
-    assert len(rows) == 1
-    assert {row["user_id"] for row in requests} == {"runner", "other"}
-    assert sorted(row["created_new"] for row in requests) == [0, 1]
+    assert len(rows) == 2
+    assert requests == []
     assert "openrouter" not in " ".join(rows[0].keys()).lower()
 
 
@@ -1485,20 +1524,16 @@ def test_ticker_commissions_flash_with_no_browser_key() -> None:
     assert "{{ flash.model }}" in template
 
 
-def test_flash_model_label_is_shown_on_public_flash_surfaces() -> None:
+def test_flash_model_label_is_shown_on_research_and_pulse() -> None:
     root = Path(__file__).parents[1]
     report = (root / "web/templates/research_report.html").read_text()
     pulse = (root / "web/templates/pulse.html").read_text()
-    scanner = (root / "web/templates/scanner.html").read_text()
     ticker_row = (root / "web/static/ticker-row.js").read_text()
 
     assert "{{ report.actor.display_name }}" in report
     assert "{{ report.actor.model }}" in report
-    assert "kol.inference_model_label" not in pulse
-    assert "call.inference_model_label" not in scanner
+    assert "kol.inference_model_label" in pulse
     assert "call.inference_model_label" not in ticker_row
-    assert "paper call" not in scanner.lower()
-    assert "paper call" not in ticker_row.lower()
 
 
 def test_legacy_commission_request_uses_flash_model_with_a_minimal_prompt(
@@ -1756,7 +1791,7 @@ def test_failed_commission_stores_safe_diagnostics_and_is_retryable(
     with pytest.raises(web_main.ReportGenerationFailure):
         _commission_research("failed-user", "EU")
 
-    failed = web_main.latest_commission("EU")
+    failed = web_main.latest_commission("failed-user", "EU")
     assert failed is not None
     assert failed["status"] == "failed"
     assert failed["usage"]["failure"]["failure_kind"] == "invalid_json"
