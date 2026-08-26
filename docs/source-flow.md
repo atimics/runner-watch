@@ -61,7 +61,8 @@ but the source still raises a policy warning until its public-use review is appr
   ticker, keeps the newest state, and links back to the original source.
 - **Alpha** is the social view. Active public Calls determine the order; market and event data
   provide context but do not change the Call ranking. Yahoo coverage and Reddit mention counts are
-  shown as outside context, separate from public Calls. Private Flash reports never enter this feed.
+  shown as outside context, separate from public Calls. Flash reports do not enter this feed or
+  change its ranking, even when an owner chooses to publish one.
 
 The discovery worker rotates across 30 symbols: 10 current Pulse leaders, up to 10 Alpha Call
 leaders, then the next Pulse names as a flex group. One symbol is searched every 30 seconds, so the

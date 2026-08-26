@@ -94,6 +94,19 @@
   {% if report.sources %}
   <section class="research-section"><h2>Sources</h2><div class="research-sources">{% for source in report.sources %}<a href="{{ source.url }}" target="_blank" rel="noopener">{{ source.label }}</a>{% endfor %}</div></section>
   {% endif %}
+  {% if is_owner %}
+  <section class="research-section report-publish">
+    {% if report.visibility == 'public' %}
+    <h2>Published</h2>
+    <p>This report is public. Your 50 Flash publishing reward was issued once.</p>
+    {% else %}
+    <h2>Publish and earn 50 Flash</h2>
+    <p>Publishing makes this report and its share card public. It cannot be made private again.</p>
+    <button id="publishReport" type="button">Publish report · +50 Flash</button>
+    <small id="publishStatus">Current balance: {{ flash_wallet.balance }} Flash</small>
+    {% endif %}
+  </section>
+  {% endif %}
   <div class="research-meta">{% if report.actor %}{{ report.actor.display_name }} · {{ report.actor.model }}{% else %}{{ report.model or report.requested_model }}{% endif %} · {{ report.completed_at[:16]|replace('T', ' ') }} UTC{% if report.usage.context %} · {{ report.usage.context.included_sections }} evidence sections{% endif %}</div>
 </main>
 {% endblock %}
@@ -102,6 +115,11 @@
 document.getElementById('shareReport').addEventListener('click',async event=>{
   const share={title:{{ (report.ticker ~ ' · ' ~ report.headline)|tojson }},text:{{ report.summary|tojson }},url:location.href};
   try{if(navigator.share)await navigator.share(share);else{await navigator.clipboard.writeText(location.href);event.currentTarget.textContent='✓';}}catch(_){}
+});
+document.getElementById('publishReport')?.addEventListener('click',async event=>{
+  const button=event.currentTarget;const status=document.getElementById('publishStatus');button.disabled=true;status.textContent='Publishing…';
+  try{const response=await fetch('/api/research/{{ report.public_id }}/publish',{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not publish');button.textContent='Published · +'+result.reward+' Flash';status.textContent=`Balance: ${result.balance} Flash`;setTimeout(()=>location.reload(),700);}
+  catch(error){button.disabled=false;status.textContent=error.message||'Could not publish';}
 });
 </script>
 {% endblock %}

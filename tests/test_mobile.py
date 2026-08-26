@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 from datetime import UTC, datetime, timedelta
@@ -5,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 from pytest import MonkeyPatch
 from starlette.requests import Request
 
@@ -12,11 +14,11 @@ from runner_watch.ingestion import MarketEvent, SourceBatch, SourceFetch
 from runner_web import db
 from runner_web import main as web_main
 from runner_web.db import connection, init_db
+from runner_web.flash_wallet import claim_daily_flash, wallet_for_user
 from runner_web.ingestion import record_source_batch
 from runner_web.main import (
     APP_ORIGIN,
     PulseAttentionItem,
-    TickerCommentPayload,
     _chart_annotations,
     _commission_research,
     _evidence_gate,
@@ -65,11 +67,11 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert "Track a thesis" not in template
     assert "thesisDialog" not in template
     assert "thesisForm" not in template
-    assert "Ask Flash" in template
+    assert "Generate Flash report" in template
     assert "commissionButton" in template
     assert "Make Call" in template
-    assert template.count("<textarea") == 1
-    assert 'id="commentBody"' in template
+    assert template.count("<textarea") == 0
+    assert 'id="generateComment"' in template
 
 
 def test_ui_copy_drops_ai_and_corporate_filler() -> None:
@@ -318,7 +320,7 @@ def test_ticker_page_does_not_add_a_guest_research_action(
 
     assert response.status_code == 200
     assert "Ask Flash" not in response.body.decode()
-    assert "Log in to ask Flash" in response.body.decode()
+    assert "Log in to generate a Flash report" in response.body.decode()
     assert "Connect OpenRouter" not in response.body.decode()
 
 
@@ -1150,6 +1152,16 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
                 (timestamp + timedelta(days=1)).isoformat(),
             ),
         )
+    claim_daily_flash("feedback-user")
+    monkeypatch.setattr(
+        web_main,
+        "_generate_ticker_comment_text",
+        lambda ticker, user_id: (
+            "My read is above VWAP, but low volume is the risk.",
+            "test/model",
+        ),
+    )
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "sk-or-comment-test")
     comment_request = Request(
         {
             "type": "http",
@@ -1159,17 +1171,15 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
             "client": ("127.0.0.78", 4780),
         }
     )
-    result = create_ticker_comment(
-        "ONE",
-        TickerCommentPayload(body="  Watching   this week above VWAP.  "),
-        comment_request,
-        raw_session,
-    )
+    result = asyncio.run(create_ticker_comment("ONE", comment_request, raw_session))
     payload = json.loads(result.body)
 
     assert result.status_code == 201
     assert payload["count"] == 1
-    assert payload["comment"]["body"] == "Watching this week above VWAP."
+    assert payload["comment"]["body"] == "My read is above VWAP, but low volume is the risk."
+    assert payload["comment"]["ai_generated"] is True
+    assert payload["comment"]["generation_model"] == "test/model"
+    assert payload["balance"] == 95
     assert payload["comment"]["pseudonym"] == web_main.comment_pseudonym("feedback-user")
     assert payload["comment"]["pseudonym"].count("-") == 1
     assert payload["comment"]["pseudonym"].islower()
@@ -1299,6 +1309,7 @@ def test_commissioned_report_stays_private_without_storing_the_openrouter_key(
             "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
             ("commissioner", "member_commission", "Member", "active", captured_at),
         )
+    claim_daily_flash("commissioner")
     monkeypatch.setattr(
         web_main,
         "_generate_openrouter_report",
@@ -1327,6 +1338,7 @@ def test_commissioned_report_stays_private_without_storing_the_openrouter_key(
     assert report["actor"]["ladder_position"] == 1
     assert report["actor"]["ladder_size"] == 4
     assert get_commission(report["public_id"])["summary"] == "A source-bound summary."
+    assert wallet_for_user("commissioner")["balance"] == 90
     assert "commissions" not in alpha_board_data("v:reader")
     with connection() as database:
         columns = {row[1] for row in database.execute("PRAGMA table_info(research_commissions)")}
@@ -1353,6 +1365,7 @@ def test_browser_commission_uses_the_server_openrouter_key(
             "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
             ("verified-user", "member_verified", "Member", "active", captured_at),
         )
+    claim_daily_flash("verified-user")
     captured: dict[str, str] = {}
 
     def fake_report(key: str, context: dict[str, Any], user_id: str, **kwargs: Any) -> Any:
@@ -1396,6 +1409,7 @@ def test_verified_pipeline_freezes_every_stage(
             "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
             ("stage-user", "member_stage", "Member", "active", captured_at),
         )
+    claim_daily_flash("stage-user")
     commission, created = web_main._create_research_commission("stage-user", "ONE")
     assert created is True
 
@@ -1491,6 +1505,8 @@ def test_running_flash_commissions_are_private_per_user(
             "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
             ("other", "member_other", "Other member", "active", captured_at),
         )
+    claim_daily_flash("runner")
+    claim_daily_flash("other")
 
     first, first_created = web_main._create_research_commission("runner", "ONE")
     second, second_created = web_main._create_research_commission("other", "ONE")
@@ -1507,6 +1523,8 @@ def test_running_flash_commissions_are_private_per_user(
             "SELECT user_id,created_new FROM flash_report_requests ORDER BY created_at,id"
         ).fetchall()
     assert len(rows) == 2
+    assert wallet_for_user("runner")["balance"] == 90
+    assert wallet_for_user("other")["balance"] == 90
     assert requests == []
     assert "openrouter" not in " ".join(rows[0].keys()).lower()
 
@@ -1514,8 +1532,9 @@ def test_running_flash_commissions_are_private_per_user(
 def test_ticker_commissions_flash_with_no_browser_key() -> None:
     template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
 
-    assert "Ask Flash" in template
+    assert "Generate Flash report" in template
     assert "Retry Flash" in template
+    assert "10 Flash" in template
     assert "commissionButton" in template
     assert "fetch(`/api/research/${encodeURIComponent(ticker)}`,{method:'POST'})" in template
     assert "runnerOpenRouter" not in template
@@ -1773,6 +1792,7 @@ def test_failed_commission_stores_safe_diagnostics_and_is_retryable(
             "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
             ("failed-user", "member_failed", "Member", "active", captured_at),
         )
+    claim_daily_flash("failed-user")
 
     def fail_report(*args: Any, **kwargs: Any) -> Any:
         raise web_main.ReportGenerationFailure(
@@ -1796,24 +1816,37 @@ def test_failed_commission_stores_safe_diagnostics_and_is_retryable(
     assert failed["status"] == "failed"
     assert failed["usage"]["failure"]["failure_kind"] == "invalid_json"
     assert web_main._commission_api_payload(failed)["retryable"] is True
+    assert wallet_for_user("failed-user")["balance"] == 100
     assert "OPENROUTER_API_KEY" not in json.dumps(failed)
     retry, created = web_main._create_research_commission("failed-user", "EU")
     assert created is True
     assert retry["status"] == "running"
+    assert wallet_for_user("failed-user")["balance"] == 90
 
 
-def test_research_report_template_has_public_share_metadata(
+def test_owner_can_publish_report_once_and_earn_flash(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "share-report.db")
     init_db()
     captured_at = datetime.now(UTC).isoformat()
+    raw_session = "share-session"
     insert_filing("share-one", "ONE", 1.25, 90, captured_at, "P")
     with connection() as database:
         database.execute(
             "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
             ("sharer", "member_sharer", "Member", "active", captured_at),
         )
+        database.execute(
+            "INSERT INTO sessions(token_hash,user_id,created_at,expires_at) VALUES(?,?,?,?)",
+            (
+                web_main.token_hash(raw_session),
+                "sharer",
+                captured_at,
+                (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+            ),
+        )
+    claim_daily_flash("sharer")
     monkeypatch.setattr(
         web_main,
         "_generate_openrouter_report",
@@ -1837,6 +1870,42 @@ def test_research_report_template_has_public_share_metadata(
     )
     monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "sk-or-share-test-key")
     report = _commission_research("sharer", "ONE")
+    public_request = Request(
+        {"type": "http", "method": "GET", "path": "/research", "headers": []}
+    )
+    public_request.state.csp_nonce = "test"
+    with pytest.raises(HTTPException) as private_error:
+        web_main.research_report_page(report["public_id"], public_request, None)
+    assert private_error.value.status_code == 404
+
+    publish_request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": f"/api/research/{report['public_id']}/publish",
+            "headers": [(b"origin", APP_ORIGIN.encode())],
+            "client": ("127.0.0.88", 4880),
+        }
+    )
+    first_publish = json.loads(
+        web_main.publish_research_report_api(
+            report["public_id"], publish_request, raw_session
+        ).body
+    )
+    second_publish = json.loads(
+        web_main.publish_research_report_api(
+            report["public_id"], publish_request, raw_session
+        ).body
+    )
+
+    assert first_publish["published"] is True
+    assert first_publish["reward"] == 50
+    assert first_publish["balance"] == 140
+    assert second_publish["published"] is False
+    assert second_publish["reward"] == 0
+    assert second_publish["balance"] == 140
+    public_page = web_main.research_report_page(report["public_id"], public_request, None)
+    assert public_page.status_code == 200
     request = Request({"type": "http", "method": "GET", "path": "/research", "headers": []})
     request.state.csp_nonce = "test"
 

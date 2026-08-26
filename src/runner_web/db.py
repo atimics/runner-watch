@@ -1507,6 +1507,45 @@ def _migration_024_stripe_billing(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_025_flash_wallet(db: DatabaseConnection) -> None:
+    """Add claimable Flash credits and explicit report publishing."""
+
+    for definition in (
+        "visibility TEXT NOT NULL DEFAULT 'private'",
+        "published_at TEXT",
+    ):
+        _ensure_column(db, "research_commissions", definition)
+    for definition in (
+        "source TEXT NOT NULL DEFAULT 'user'",
+        "generation_model TEXT",
+    ):
+        _ensure_column(db, "ticker_comments", definition)
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS flash_wallets (
+            user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            balance INTEGER NOT NULL DEFAULT 0 CHECK(balance>=0),
+            last_claim_on TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS flash_transactions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            amount INTEGER NOT NULL CHECK(amount<>0),
+            kind TEXT NOT NULL,
+            reference_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(user_id,kind,reference_id)
+        );
+        CREATE INDEX IF NOT EXISTS flash_transactions_user_time
+            ON flash_transactions(user_id,created_at DESC);
+        CREATE INDEX IF NOT EXISTS research_commissions_public_time
+            ON research_commissions(visibility,published_at DESC);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -1539,6 +1578,7 @@ MIGRATIONS = (
     Migration(22, "public_calls_and_flash", _migration_022_public_calls_and_flash),
     Migration(23, "private_flash_commissions", _migration_023_private_flash_commissions),
     Migration(24, "stripe_billing", _migration_024_stripe_billing),
+    Migration(25, "flash_wallet", _migration_025_flash_wallet),
 )
 
 

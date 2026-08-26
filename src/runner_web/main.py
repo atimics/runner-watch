@@ -55,15 +55,6 @@ from runner_watch.universe import penny_runner_universe
 from runner_web import db as runner_db
 from runner_web.ai_kol import FLASH, AIKol, actor_snapshot
 from runner_web.base_rates import matched_market_base_rates
-from runner_web.billing import (
-    billing_account,
-    billing_config,
-    construct_webhook_event,
-    create_checkout_session,
-    create_portal_session,
-    price_summary,
-    process_webhook_event,
-)
 from runner_web.calls import (
     active_call_for_user,
     call_for_user,
@@ -79,6 +70,17 @@ from runner_web.calls import (
 from runner_web.case_monitor import refresh_case_monitor
 from runner_web.collection import recording_market_data
 from runner_web.db import connection, init_db
+from runner_web.flash_wallet import (
+    COMMENT_COST,
+    PUBLISH_REPORT_REWARD,
+    REPORT_COST,
+    InsufficientFlashError,
+    claim_daily_flash,
+    credit_flash,
+    recent_transactions,
+    spend_flash,
+    wallet_for_user,
+)
 from runner_web.ingestion import record_source_fetch
 from runner_web.intelligence import record_edgar_error, refresh_edgar
 from runner_web.issuer_risk import issuer_risk_contexts
@@ -577,7 +579,7 @@ def page_context(request: Request, session_token: str | None, **extra: Any) -> d
     return {
         "request": request,
         "user": user,
-        "is_subscriber": bool(user and user.get("plan") == "subscriber"),
+        "flash_wallet": wallet_for_user(str(user["id"])) if user else None,
         "app_origin": APP_ORIGIN,
         "market_clock": market_clock(),
         "flash": actor_snapshot(),
@@ -740,10 +742,6 @@ class ActivityPayload(BaseModel):
     seconds: int = Field(default=0, ge=0, le=3600)
 
 
-class TickerCommentPayload(BaseModel):
-    body: str = Field(min_length=1, max_length=280)
-
-
 class PulseAttentionItem(BaseModel):
     ticker: str = Field(min_length=1, max_length=12)
     entered_at: str = Field(min_length=10, max_length=64)
@@ -769,80 +767,55 @@ def api_ticker_kol_calls(request: Request, ticker: str) -> dict[str, Any]:
 @app.get("/billing", response_class=HTMLResponse)
 def billing_page(
     request: Request,
-    checkout: str | None = None,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
     user = current_user(runner_session)
-    config = billing_config()
     return templates.TemplateResponse(
         request=request,
         name="billing.html",
         context=page_context(
             request,
             runner_session,
-            account=billing_account(user),
-            price=price_summary(config),
-            checkout=checkout if checkout in {"success", "canceled"} else None,
-            billing_ready=config.checkout_ready,
+            transactions=recent_transactions(str(user["id"])) if user else [],
         ),
     )
+
+
+@app.post("/api/flash/claim")
+def claim_daily_flash_api(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "flash-claim", limit=6, seconds=600, subject=user["id"])
+    wallet, claimed = claim_daily_flash(str(user["id"]))
+    return JSONResponse({"claimed": claimed, "wallet": wallet})
 
 
 @app.post("/api/billing/checkout")
 def billing_checkout_api(
     request: Request,
     runner_session: str | None = Cookie(default=None),
-) -> RedirectResponse:
+) -> JSONResponse:
     require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "billing-checkout", limit=8, seconds=600, subject=user["id"])
-    account = billing_account(user)
-    try:
-        url = (
-            create_portal_session(user, APP_ORIGIN)
-            if account["has_access"] or account["needs_action"]
-            else create_checkout_session(user, APP_ORIGIN)
-        )
-    except Exception as exc:
-        LOG.warning("Could not start Stripe billing for user %s: %s", user["id"], exc)
-        raise HTTPException(502, "Billing is temporarily unavailable.") from exc
-    return RedirectResponse(url, status_code=303)
+    require_user(runner_session)
+    raise HTTPException(503, "Flash purchases are not open yet.")
 
 
 @app.post("/api/billing/portal")
 def billing_portal_api(
     request: Request,
     runner_session: str | None = Cookie(default=None),
-) -> RedirectResponse:
+) -> JSONResponse:
     require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "billing-portal", limit=12, seconds=600, subject=user["id"])
-    try:
-        url = create_portal_session(user, APP_ORIGIN)
-    except Exception as exc:
-        LOG.warning("Could not open Stripe portal for user %s: %s", user["id"], exc)
-        raise HTTPException(502, "Billing management is temporarily unavailable.") from exc
-    return RedirectResponse(url, status_code=303)
+    require_user(runner_session)
+    raise HTTPException(503, "Stripe billing is disabled.")
 
 
 @app.post("/api/stripe/webhook")
 async def stripe_webhook_api(request: Request) -> JSONResponse:
-    signature = request.headers.get("stripe-signature", "")
-    if not signature:
-        raise HTTPException(400, "Missing Stripe signature")
-    payload = await request.body()
-    try:
-        event = construct_webhook_event(payload, signature)
-    except RuntimeError as exc:
-        LOG.error("Stripe webhook is not configured: %s", exc)
-        raise HTTPException(503, "Stripe webhook is not configured") from exc
-    except Exception as exc:
-        raise HTTPException(400, "Invalid Stripe webhook") from exc
-    try:
-        result = process_webhook_event(event)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    return JSONResponse({"received": True, **result})
+    raise HTTPException(503, "Stripe billing is disabled.")
 
 
 @app.get("/roadmap", response_class=HTMLResponse)
@@ -850,7 +823,7 @@ def roadmap_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    roadmap = roadmap_snapshot(billing_ready=billing_config().checkout_ready)
+    roadmap = roadmap_snapshot()
     return templates.TemplateResponse(
         request=request,
         name="roadmap.html",
@@ -861,7 +834,7 @@ def roadmap_page(
 @app.get("/api/roadmap")
 def roadmap_api(request: Request) -> dict[str, Any]:
     enforce_rate(request, "roadmap", limit=120, seconds=60)
-    return roadmap_snapshot(billing_ready=billing_config().checkout_ready)
+    return roadmap_snapshot()
 
 
 @app.get("/api/market-clock")
@@ -2705,83 +2678,15 @@ def _create_research_commission(
     actor: AIKol = FLASH,
     case_id: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    """Create one private, idempotent server job for the requesting user."""
+    """Create one private, credit-backed server job for the requesting user."""
 
     timestamp = iso()
     engagement_count = _community_engagement_count(ticker)
     evidence_key, evidence = _alpha_evidence(ticker, engagement_count)
-    with connection() as db:
-        running = db.execute(
-            """
-            SELECT * FROM research_commissions
-            WHERE user_id=? AND ticker=? AND actor_id=? AND status='running'
-            ORDER BY created_at DESC LIMIT 1
-            """,
-            (user_id, ticker, actor.id),
-        ).fetchone()
-        if running:
-            return _commission_record(running) or {}, False
-        current = db.execute(
-            """
-            SELECT * FROM research_commissions
-            WHERE user_id=? AND ticker=? AND actor_id=? AND evidence_key=?
-                AND status='complete' AND (? IS NULL OR case_id=?)
-            ORDER BY completed_at DESC LIMIT 1
-            """,
-            (user_id, ticker, actor.id, evidence_key, case_id, case_id),
-        ).fetchone()
-        if current:
-            return _commission_record(current) or {}, False
-        since = iso(now() - timedelta(days=1))
-        recent_count = db.execute(
-            """
-            SELECT COUNT(*) FROM research_commissions
-            WHERE user_id=? AND status IN ('running','complete') AND created_at>?
-            """,
-            (user_id, since),
-        ).fetchone()[0]
-        if recent_count >= 3:
-            raise HTTPException(429, "You can commission three reports per day.")
-        global_count = db.execute(
-            """
-            SELECT COUNT(*) FROM research_commissions
-            WHERE actor_id=? AND created_at>?
-            """,
-            (actor.id, since),
-        ).fetchone()[0]
-        if global_count >= FLASH_GLOBAL_DAILY_LIMIT:
-            raise HTTPException(429, "Flash has reached today's shared report limit.")
-
     report_id = str(uuid.uuid4())
     public_id = secrets.token_urlsafe(8).replace("-", "").replace("_", "")[:10]
-    with connection() as db:
-        inserted = db.execute(
-            """
-            INSERT INTO research_commissions(
-                id,public_id,user_id,ticker,evidence_key,status,requested_model,
-                actor_id,actor_snapshot_json,case_id,trigger,evidence_snapshot_json,
-                evidence_as_of,created_at,updated_at
-            ) VALUES(?,?,?,?,?,'running',?,?,?,?,?,?,?,?,?)
-            ON CONFLICT DO NOTHING
-            """,
-            (
-                report_id,
-                public_id,
-                user_id,
-                ticker,
-                evidence_key,
-                actor.model,
-                actor.id,
-                json.dumps(actor_snapshot(actor), separators=(",", ":")),
-                case_id,
-                "commission",
-                json.dumps(evidence, separators=(",", ":"), default=str),
-                timestamp,
-                timestamp,
-                timestamp,
-            ),
-        )
-        if inserted.rowcount == 0:
+    try:
+        with connection() as db:
             running = db.execute(
                 """
                 SELECT * FROM research_commissions
@@ -2792,10 +2697,77 @@ def _create_research_commission(
             ).fetchone()
             if running:
                 return _commission_record(running) or {}, False
-            raise HTTPException(409, "This report is already running.")
-        row = db.execute(
-            "SELECT * FROM research_commissions WHERE id=?", (report_id,)
-        ).fetchone()
+            current = db.execute(
+                """
+                SELECT * FROM research_commissions
+                WHERE user_id=? AND ticker=? AND actor_id=? AND evidence_key=?
+                    AND status='complete' AND (? IS NULL OR case_id=?)
+                ORDER BY completed_at DESC LIMIT 1
+                """,
+                (user_id, ticker, actor.id, evidence_key, case_id, case_id),
+            ).fetchone()
+            if current:
+                return _commission_record(current) or {}, False
+            since = iso(now() - timedelta(days=1))
+            global_count = db.execute(
+                """
+                SELECT COUNT(*) FROM research_commissions
+                WHERE actor_id=? AND created_at>?
+                """,
+                (actor.id, since),
+            ).fetchone()[0]
+            if global_count >= FLASH_GLOBAL_DAILY_LIMIT:
+                raise HTTPException(429, "Flash has reached today's shared report limit.")
+            inserted = db.execute(
+                """
+                INSERT INTO research_commissions(
+                    id,public_id,user_id,ticker,evidence_key,status,requested_model,
+                    actor_id,actor_snapshot_json,case_id,trigger,evidence_snapshot_json,
+                    evidence_as_of,created_at,updated_at
+                ) VALUES(?,?,?,?,?,'running',?,?,?,?,?,?,?,?,?)
+                ON CONFLICT DO NOTHING
+                """,
+                (
+                    report_id,
+                    public_id,
+                    user_id,
+                    ticker,
+                    evidence_key,
+                    actor.model,
+                    actor.id,
+                    json.dumps(actor_snapshot(actor), separators=(",", ":")),
+                    case_id,
+                    "commission",
+                    json.dumps(evidence, separators=(",", ":"), default=str),
+                    timestamp,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            if inserted.rowcount == 0:
+                running = db.execute(
+                    """
+                    SELECT * FROM research_commissions
+                    WHERE user_id=? AND ticker=? AND actor_id=? AND status='running'
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    (user_id, ticker, actor.id),
+                ).fetchone()
+                if running:
+                    return _commission_record(running) or {}, False
+                raise HTTPException(409, "This report is already running.")
+            spend_flash(
+                db,
+                user_id,
+                REPORT_COST,
+                kind="report_generation",
+                reference_id=report_id,
+            )
+            row = db.execute(
+                "SELECT * FROM research_commissions WHERE id=?", (report_id,)
+            ).fetchone()
+    except InsufficientFlashError as exc:
+        raise HTTPException(402, str(exc)) from exc
     return _commission_record(row) or {}, True
 
 
@@ -3151,6 +3123,13 @@ def _run_research_commission(
                 """,
                 (str(detail)[:500], failure_usage, iso(), report_id),
             )
+            credit_flash(
+                db,
+                user_id,
+                REPORT_COST,
+                kind="report_refund",
+                reference_id=report_id,
+            )
         raise
 
 
@@ -3173,6 +3152,9 @@ def _fail_orphaned_research_jobs() -> None:
 
     timestamp = iso()
     with connection() as db:
+        rows = db.execute(
+            "SELECT id,user_id FROM research_commissions WHERE status='running'"
+        ).fetchall()
         db.execute(
             """
             UPDATE research_commissions
@@ -3181,6 +3163,14 @@ def _fail_orphaned_research_jobs() -> None:
             """,
             ("The server restarted before Flash finished. Please retry.", timestamp),
         )
+        for row in rows:
+            credit_flash(
+                db,
+                str(row["user_id"]),
+                REPORT_COST,
+                kind="report_refund",
+                reference_id=str(row["id"]),
+            )
 
 
 async def research_job_worker() -> None:
@@ -4125,7 +4115,7 @@ def ticker_page(
             calls=community_calls_for_ticker(normalized, current_price=mark, limit=20),
             latest_commission=(
                 latest_commission(str(user["id"]), normalized)
-                if user and user.get("plan") == "subscriber"
+                if user
                 else None
             ),
             active_tab="pulse",
@@ -4819,11 +4809,19 @@ def _ensure_comment_pseudonym(database: Any, user_id: str) -> str:
 
 
 def _public_comment(row: Any) -> dict[str, Any]:
+    keys = set(row.keys())
+    source = str(row["source"] or "user") if "source" in keys else "user"
     return {
         "id": str(row["id"]),
         "body": str(row["body"]),
         "created_at": str(row["created_at"]),
         "pseudonym": str(row["pseudonym"]),
+        "ai_generated": source == "ai_generated",
+        "generation_model": (
+            str(row["generation_model"] or "")
+            if "generation_model" in keys
+            else ""
+        ),
     }
 
 
@@ -4845,7 +4843,7 @@ def alpha_comments_data(*, limit: int = 50) -> list[dict[str, Any]]:
             _ensure_comment_pseudonym(db, str(row["user_id"]))
         rows = db.execute(
             """
-            SELECT c.id,c.ticker,c.body,c.created_at,p.pseudonym
+            SELECT c.id,c.ticker,c.body,c.created_at,c.source,c.generation_model,p.pseudonym
             FROM ticker_comments c
             JOIN comment_pseudonyms p ON p.user_id=c.user_id
             WHERE c.status='public'
@@ -4874,7 +4872,7 @@ def comments_for_ticker(ticker: str, *, limit: int = 50) -> list[dict[str, Any]]
             _ensure_comment_pseudonym(db, str(row["user_id"]))
         rows = db.execute(
             """
-            SELECT c.id,c.body,c.created_at,p.pseudonym
+            SELECT c.id,c.body,c.created_at,c.source,c.generation_model,p.pseudonym
             FROM ticker_comments c
             JOIN comment_pseudonyms p ON p.user_id=c.user_id
             WHERE c.ticker=? AND c.status='public'
@@ -4956,10 +4954,91 @@ def toggle_reaction(
     raise HTTPException(410, "Bull and Bear reactions were replaced by public Calls.")
 
 
+def _generate_ticker_comment_text(ticker: str, user_id: str) -> tuple[str, str]:
+    if not OPENROUTER_API_KEY:
+        raise HTTPException(503, "AI comments are temporarily unavailable.")
+    detail = ticker_detail_data(ticker)
+    if not detail:
+        raise HTTPException(404, "Ticker not found")
+    current = detail.get("current") or {}
+    evidence = {
+        "ticker": ticker,
+        "company": detail.get("company"),
+        "price": current.get("price"),
+        "change_pct": current.get("change_pct"),
+        "trade_state": current.get("trade_state"),
+        "rug_level": current.get("rug_level"),
+        "rug_score": current.get("rug_score"),
+        "signals": list(current.get("signals") or [])[:6],
+        "risks": list(current.get("risks") or [])[:6],
+        "evidence_gate": {
+            "summary": detail.get("evidence_gate", {}).get("summary"),
+            "checks": list(detail.get("evidence_gate", {}).get("checks") or [])[:6],
+            "blockers": list(detail.get("evidence_gate", {}).get("blockers") or [])[:6],
+        },
+        "filings": [
+            {
+                "form": item.get("form"),
+                "filed_at": item.get("filed_at"),
+                "text": item.get("evidence_text"),
+            }
+            for item in detail.get("events", [])[:3]
+        ],
+    }
+    body = {
+        "model": FLASH.model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Write one short stock comment in first person, as the user speaking. "
+                    "Use simple English and only the supplied evidence. Keep it under 240 "
+                    "characters. State a view and the key risk. Do not give buy or sell advice. "
+                    "Do not mention AI. Return JSON with one field named comment."
+                ),
+            },
+            {"role": "user", "content": json.dumps(evidence, separators=(",", ":"))},
+        ],
+        "response_format": {"type": "json_object"},
+        "provider": {"require_parameters": True},
+        "max_tokens": 180,
+        "user": hashlib.sha256(user_id.encode()).hexdigest()[:32],
+    }
+    api_request = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=json.dumps(body).encode(),
+        headers={
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": APP_ORIGIN,
+            "X-OpenRouter-Title": "Runner Watch",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(api_request, timeout=30) as response:  # noqa: S310
+            result = json.load(response)
+        content = result["choices"][0]["message"]["content"]
+        parsed = _openrouter_report_json(content)
+        comment = " ".join(str(parsed.get("comment") or "").split())
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(502, "AI comment generation failed. Your Flash was returned.") from exc
+    except (TimeoutError, urllib.error.URLError) as exc:
+        raise HTTPException(
+            504, "AI comment generation timed out. Your Flash was returned."
+        ) from exc
+    except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            502, "AI returned an invalid comment. Your Flash was returned."
+        ) from exc
+    if not comment:
+        raise HTTPException(502, "AI returned an empty comment. Your Flash was returned.")
+    return comment[:280], str(result.get("model") or FLASH.model)[:160]
+
+
 @app.post("/api/comments/{ticker}")
-def create_ticker_comment(
+async def create_ticker_comment(
     ticker: str,
-    payload: TickerCommentPayload,
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> JSONResponse:
@@ -4969,31 +5048,67 @@ def create_ticker_comment(
     normalized = _clean_ticker(ticker)
     if not _known_ticker(normalized):
         raise HTTPException(404, "Ticker not found")
-    body = " ".join(payload.body.split())
-    if not body:
-        raise HTTPException(400, "Comment cannot be empty")
+    if not OPENROUTER_API_KEY:
+        raise HTTPException(503, "AI comments are temporarily unavailable.")
     comment_id = str(uuid.uuid4())
     created_at = iso()
-    with connection() as db:
-        pseudonym = _ensure_comment_pseudonym(db, str(user["id"]))
-        db.execute(
-            """
-            INSERT INTO ticker_comments(id,ticker,user_id,body,status,created_at)
-            VALUES(?,?,?,?,?,?)
-            """,
-            (comment_id, normalized, user["id"], body, "public", created_at),
+    try:
+        with connection() as db:
+            spend_flash(
+                db,
+                str(user["id"]),
+                COMMENT_COST,
+                kind="comment_generation",
+                reference_id=comment_id,
+            )
+    except InsufficientFlashError as exc:
+        raise HTTPException(402, str(exc)) from exc
+    try:
+        body, model = await run_in_threadpool(
+            _generate_ticker_comment_text,
+            normalized,
+            str(user["id"]),
         )
-        row = db.execute(
-            """
-            SELECT id,body,created_at,? AS pseudonym
-            FROM ticker_comments WHERE id=?
-            """,
-            (pseudonym, comment_id),
-        ).fetchone()
-        count = db.execute(
-            "SELECT COUNT(*) FROM ticker_comments WHERE ticker=? AND status='public'",
-            (normalized,),
-        ).fetchone()[0]
+        with connection() as db:
+            pseudonym = _ensure_comment_pseudonym(db, str(user["id"]))
+            db.execute(
+                """
+                INSERT INTO ticker_comments(
+                    id,ticker,user_id,body,status,created_at,source,generation_model
+                ) VALUES(?,?,?,?,?,?,?,?)
+                """,
+                (
+                    comment_id,
+                    normalized,
+                    user["id"],
+                    body,
+                    "public",
+                    created_at,
+                    "ai_generated",
+                    model,
+                ),
+            )
+            row = db.execute(
+                """
+                SELECT id,body,created_at,source,generation_model,? AS pseudonym
+                FROM ticker_comments WHERE id=?
+                """,
+                (pseudonym, comment_id),
+            ).fetchone()
+            count = db.execute(
+                "SELECT COUNT(*) FROM ticker_comments WHERE ticker=? AND status='public'",
+                (normalized,),
+            ).fetchone()[0]
+    except Exception:
+        with connection() as db:
+            credit_flash(
+                db,
+                str(user["id"]),
+                COMMENT_COST,
+                kind="comment_refund",
+                reference_id=comment_id,
+            )
+        raise
     with PULSE_DATA_LOCK:
         PULSE_DATA_CACHE.clear()
     with ALPHA_DATA_LOCK:
@@ -5006,6 +5121,7 @@ def create_ticker_comment(
         {
             "comment": _public_comment(row),
             "count": int(count),
+            "balance": wallet_for_user(str(user["id"]))["balance"],
         },
         status_code=201,
     )
@@ -5096,9 +5212,7 @@ async def commission_research_api(
 ) -> JSONResponse:
     require_origin(request)
     user = require_user(runner_session)
-    if user.get("plan") != "subscriber":
-        raise HTTPException(403, "Runner Watch Pro is required for private research.")
-    enforce_rate(request, "commission-research", limit=6, seconds=3600, subject=user["id"])
+    enforce_rate(request, "commission-research", limit=20, seconds=3600, subject=user["id"])
     normalized = _clean_ticker(ticker)
     if not _known_ticker(normalized):
         raise HTTPException(404, "Ticker not found")
@@ -5125,6 +5239,13 @@ async def commission_research_api(
                         """,
                         ("The research queue is temporarily unavailable.", iso(), report["id"]),
                     )
+                    credit_flash(
+                        db,
+                        str(user["id"]),
+                        REPORT_COST,
+                        kind="report_refund",
+                        reference_id=str(report["id"]),
+                    )
                 raise HTTPException(
                     503,
                     "The research queue is temporarily unavailable. Please retry.",
@@ -5133,6 +5254,7 @@ async def commission_research_api(
             await RESEARCH_JOB_QUEUE.put(str(report["id"]))
     payload = _commission_api_payload(report)
     payload["created"] = created
+    payload["balance"] = wallet_for_user(str(user["id"]))["balance"]
     return JSONResponse(payload, status_code=202 if payload["status"] == "running" else 200)
 
 
@@ -5179,6 +5301,53 @@ def research_job_status_api(
     return JSONResponse(_commission_api_payload(_commission_record(row) or {}))
 
 
+@app.post("/api/research/{public_id}/publish")
+def publish_research_report_api(
+    public_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "publish-research", limit=12, seconds=3600, subject=user["id"])
+    timestamp = iso()
+    with connection() as db:
+        row = db.execute(
+            """
+            SELECT * FROM research_commissions
+            WHERE public_id=? AND user_id=? AND status='complete'
+            """,
+            (public_id, str(user["id"])),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Research report not found")
+        newly_published = str(row["visibility"] or "private") != "public"
+        if newly_published:
+            db.execute(
+                """
+                UPDATE research_commissions
+                SET visibility='public',published_at=?,updated_at=? WHERE id=?
+                """,
+                (timestamp, timestamp, row["id"]),
+            )
+        balance, rewarded = credit_flash(
+            db,
+            str(user["id"]),
+            PUBLISH_REPORT_REWARD,
+            kind="report_published",
+            reference_id=str(row["id"]),
+        )
+    return JSONResponse(
+        {
+            "published": newly_published,
+            "rewarded": rewarded,
+            "reward": PUBLISH_REPORT_REWARD if rewarded else 0,
+            "balance": balance,
+            "url": f"/research/{public_id}",
+        }
+    )
+
+
 @app.get("/research/{public_id}", response_class=HTMLResponse)
 def research_report_page(
     public_id: str,
@@ -5187,12 +5356,19 @@ def research_report_page(
 ) -> HTMLResponse:
     report = get_commission(public_id)
     user = current_user(runner_session)
-    if not report or not user or str(report["user_id"]) != str(user["id"]):
+    is_owner = bool(user and report and str(report["user_id"]) == str(user["id"]))
+    if not report or (str(report.get("visibility") or "private") != "public" and not is_owner):
         raise HTTPException(404, "Research report not found")
     return templates.TemplateResponse(
         request=request,
         name="research_report.html",
-        context=page_context(request, runner_session, report=report, active_tab="alpha"),
+        context=page_context(
+            request,
+            runner_session,
+            report=report,
+            is_owner=is_owner,
+            active_tab="alpha",
+        ),
     )
 
 
@@ -5203,7 +5379,8 @@ def research_report_card(
 ) -> Response:
     report = get_commission(public_id)
     user = current_user(runner_session)
-    if not report or not user or str(report["user_id"]) != str(user["id"]):
+    is_owner = bool(user and report and str(report["user_id"]) == str(user["id"]))
+    if not report or (str(report.get("visibility") or "private") != "public" and not is_owner):
         raise HTTPException(404, "Research report not found")
     actor = report.get("actor") or {}
     model_label = str(actor.get("model_label") or report.get("model") or report["requested_model"])

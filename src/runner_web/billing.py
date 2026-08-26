@@ -12,6 +12,7 @@ from runner_web.db import connection
 
 ACCESS_STATUSES = {"active", "trialing"}
 CUSTOMER_ACTION_STATUSES = {"past_due", "unpaid", "paused"}
+STRIPE_BILLING_ENABLED = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,11 +23,16 @@ class BillingConfig:
 
     @property
     def checkout_ready(self) -> bool:
-        return bool(self.secret_key and self.pro_price_id and self.webhook_secret)
+        return bool(
+            STRIPE_BILLING_ENABLED
+            and self.secret_key
+            and self.pro_price_id
+            and self.webhook_secret
+        )
 
     @property
     def portal_ready(self) -> bool:
-        return bool(self.secret_key)
+        return bool(STRIPE_BILLING_ENABLED and self.secret_key)
 
 
 def billing_config() -> BillingConfig:
@@ -184,6 +190,8 @@ def create_portal_session(user: dict[str, Any], app_origin: str) -> str:
 
 
 def construct_webhook_event(payload: bytes, signature: str) -> Any:
+    if not STRIPE_BILLING_ENABLED:
+        raise RuntimeError("Stripe billing is disabled")
     config = billing_config()
     if not config.webhook_secret:
         raise RuntimeError("Stripe webhook is not configured")

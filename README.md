@@ -7,7 +7,8 @@ Optional Fintel short and borrow data needs a Fintel API key and the matching ac
 The public beta is at [stonks.rati.foundation](https://stonks.rati.foundation). Its mobile-first
 app has three main views: **Pulse** for live penny-stock intelligence, a compact ticker page with
 the chart and primary-source evidence, **Radar** for fresh market and evidence changes, and **Alpha**
-for public Calls. Private Flash research is available to Pro users from ticker pages. Pulse
+for public Calls. Signed-in users can spend Flash credits on private research and AI-written ticker
+comments. Pulse
 paginates as the user
 scrolls. Radar works before login and merges into the passkey profile later.
 
@@ -143,10 +144,11 @@ evidence exists. Override the context with `RESEARCH_CONTEXT_TOKENS`, change the
 `RESEARCH_OUTPUT_RESERVE_TOKENS`. The older `OPENROUTER_RESEARCH_*` context names remain accepted so
 existing deployments can migrate without losing their settings.
 
-New private Flash research runs require Pro and are limited to three per user per day. The server
-uses its own provider key. Completed private reports stay owner-only and never appear in the public
-Alpha feed. The worker queue contains only a report ID, and the user does not provide or store a
-model-provider key.
+New private Flash research runs cost 10 Flash. Each user can explicitly claim 100 Flash once per UTC
+day; missed claims do not accrue. The server uses its own provider key. Completed reports stay
+owner-only unless the owner publishes one. Publishing makes the report public and awards 50 Flash
+once. The worker queue contains only a report ID, and the user does not provide or store a
+model-provider key. Failed reports refund their 10 Flash charge.
 
 The report starts with an opinionated thesis, then explains who the company is, who the named people
 or entities are, why each one appears in a filing, what the filings mean, what supports the thesis,
@@ -154,23 +156,18 @@ what could rug it, and what remains unknown. Source text is explicitly treated a
 than instructions. Model-selected citations are checked against the supplied source URLs. A hard
 deterministic `AVOID` or `EXIT` state overrides the generated wording.
 
-## Billing
+## Flash wallet
 
-`/billing` exposes one Free plan and one Pro plan. Stripe owns the recurring price, Checkout, card
-details, invoices, and the customer portal. Runner Watch mirrors only customer IDs, subscription
-IDs, status, price ID, renewal time, and the local `free` or `subscriber` entitlement. Access changes
-only after a signed Stripe webhook; the Checkout success redirect does not grant Pro by itself.
+`/billing` is now the Flash wallet. It has no subscription or Pro gate. A user starts at zero and
+must press the daily claim button to receive 100 Flash. The claim is available once per UTC day and
+missed days are not backfilled. A Flash report costs 10, an AI-written ticker comment costs 5, and
+publishing a completed report earns 50 once. Ledger references make claims, charges, refunds, and
+publishing rewards safe to retry without paying twice.
 
-Set `STRIPE_SECRET_KEY`, `STRIPE_PRO_PRICE_ID`, and `STRIPE_WEBHOOK_SECRET`. For local testing, run:
-
-```bash
-stripe listen \
-  --events checkout.session.completed,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted \
-  --forward-to http://127.0.0.1:8080/api/stripe/webhook
-```
-
-Copy the `whsec_...` value printed by the CLI into `STRIPE_WEBHOOK_SECRET`. The public product plan,
-including features that are explicitly not being built, lives at `/roadmap` and `/api/roadmap`.
+Buying credit packs is intentionally paused. Stripe checkout, portal, and webhook endpoints return
+an unavailable response even if old Stripe environment variables are still present. Historical
+Stripe columns remain only so existing databases migrate safely. The public product plan, including
+features that are explicitly not being built, lives at `/roadmap` and `/api/roadmap`.
 
 The main screen ranks stocks with a **runner score**. The score looks for:
 
@@ -332,7 +329,7 @@ more useful during pre-market than a simple comparison with a full day's average
 - The saved quick list will age. Use the full list or your own symbols for better coverage.
 - The public beta uses one PostgreSQL node with daily volume snapshots. It is not highly available
   yet; a managed or replicated PostgreSQL service is the next database reliability step.
-- Billing needs a Stripe recurring Price, secret key, webhook secret, and configured customer portal.
+- Flash credit packs cannot be purchased yet; only daily claims and publishing rewards are live.
 - This is a research tool, not financial advice or an automatic buy signal.
 
 Always confirm price, spread, volume, halt status, and news in a live broker before trading.

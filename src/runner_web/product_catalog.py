@@ -47,11 +47,11 @@ ROADMAP_ITEMS = (
         "live",
     ),
     RoadmapItem(
-        "billing",
-        "Free and Pro billing",
-        "Use Stripe Checkout, signed webhooks, and the customer portal for one clear paid plan.",
-        "buy",
-        "ready",
+        "flash-wallet",
+        "Flash credit wallet",
+        "Claim 100 Flash each day, spend it on AI actions, and earn it by publishing reports.",
+        "own",
+        "live",
     ),
     RoadmapItem(
         "ranker",
@@ -134,15 +134,8 @@ ROADMAP_ITEMS = (
 )
 
 
-def roadmap_snapshot(*, billing_ready: bool) -> dict[str, Any]:
-    items = []
-    for item in ROADMAP_ITEMS:
-        row = asdict(item)
-        if item.key == "billing":
-            row["status"] = "live" if billing_ready else "ready"
-            if not billing_ready:
-                row["summary"] += " Checkout opens after the Stripe price and secrets are set."
-        items.append(row)
+def roadmap_snapshot() -> dict[str, Any]:
+    items = [asdict(item) for item in ROADMAP_ITEMS]
     order = ("live", "ready", "learning", "now", "next", "later", "cut")
     groups = [
         {"status": status, "items": [item for item in items if item["status"] == status]}
