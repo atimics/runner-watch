@@ -1,4 +1,102 @@
+/* The ticker page has one reading order: chart, actions, then evidence. */
 .desktop-detail-panel { display: none; }
+
+.asset-overview,
+.detail-chart-panel,
+.detail-analysis {
+  min-width: 0;
+}
+
+.detail-dashboard {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.detail-actions {
+  display: grid;
+  gap: 10px;
+  padding: 0 20px 18px;
+}
+
+.detail-actions .action-card {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid #29312d;
+  background: #0e1210;
+}
+
+.detail-actions .section-heading {
+  margin-bottom: 14px;
+  align-items: flex-start;
+}
+
+.detail-actions .section-heading > div {
+  min-width: 0;
+}
+
+.detail-actions .commission-button,
+.detail-actions .trade-login,
+.detail-actions .call-close {
+  min-height: 42px;
+  padding: 8px 11px;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.detail-actions .call-card .commission-button,
+.detail-actions .call-card .trade-login,
+.detail-actions .call-close {
+  border-color: rgba(245, 198, 107, .48);
+  background: rgba(245, 198, 107, .07);
+  color: var(--amber);
+}
+
+.detail-actions .research-action > small,
+.detail-actions .trade-status {
+  margin-top: 8px;
+  color: #7f8b85;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.detail-actions .caller-id-picker {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  margin: 0 0 10px;
+  color: #89958f;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.detail-actions .caller-id-picker select {
+  height: 34px;
+  margin: 0;
+  padding: 0 8px;
+  font-size: 10px;
+}
+
+.detail-actions :is(a, button, select):focus-visible,
+.chart-card button:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .detail-actions .commission-button:hover {
+    border-color: rgba(87, 227, 137, .58);
+    background: rgba(87, 227, 137, .12);
+  }
+
+  .detail-actions .call-card .commission-button:hover,
+  .detail-actions .call-card .trade-login:hover,
+  .detail-actions .call-close:hover {
+    border-color: rgba(245, 198, 107, .72);
+    background: rgba(245, 198, 107, .13);
+  }
+}
 
 html.embedded-pane,
 html.embedded-pane body {
@@ -125,6 +223,105 @@ html.embedded-pane .research-report {
     transform: none;
     border-inline: 0;
     border-radius: 0;
+  }
+}
+
+@media (min-width: 760px) {
+  html.embedded-pane .detail-body {
+    width: min(1160px, 100%);
+    padding: 28px clamp(24px, 3.5vw, 42px) 72px;
+  }
+
+  html.embedded-pane .asset-overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 28px;
+    align-items: center;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  html.embedded-pane .asset-head,
+  html.embedded-pane .price-block {
+    padding: 0;
+  }
+
+  html.embedded-pane .asset-head {
+    grid-template-columns: 58px minmax(0, 1fr);
+  }
+
+  html.embedded-pane .price-block {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+  }
+
+  html.embedded-pane .price-block > div {
+    justify-content: flex-end;
+  }
+
+  html.embedded-pane .detail-dashboard {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) clamp(280px, 30vw, 330px);
+    grid-template-areas:
+      "chart actions"
+      "analysis actions";
+    gap: 20px 22px;
+    align-items: start;
+    margin-top: 18px;
+  }
+
+  html.embedded-pane .detail-chart-panel {
+    grid-area: chart;
+  }
+
+  html.embedded-pane .detail-actions {
+    position: sticky;
+    top: 22px;
+    grid-area: actions;
+    gap: 12px;
+    padding: 0;
+  }
+
+  html.embedded-pane .detail-actions .action-card {
+    padding: 17px;
+  }
+
+  html.embedded-pane .detail-analysis {
+    grid-area: analysis;
+  }
+
+  html.embedded-pane .chart-card {
+    height: 325px;
+    margin: 0;
+  }
+
+  html.embedded-pane .chart-structure-strip,
+  html.embedded-pane .chart-event-strip {
+    margin-right: 0;
+    margin-left: 0;
+  }
+
+  html.embedded-pane .detail-analysis > .why-section:first-child {
+    padding-right: 0;
+    padding-left: 0;
+  }
+
+  html.embedded-pane .detail-analysis > :is(.risk-decision, .evidence-gate) {
+    margin-right: 0;
+    margin-left: 0;
+  }
+
+  html.embedded-pane .detail-analysis > .pressure-section,
+  html.embedded-pane .detail-analysis > .catalyst-section,
+  html.embedded-pane .detail-analysis > .discussion-section {
+    padding-right: 0;
+    padding-left: 0;
+  }
+
+  html.embedded-pane .detail-analysis > .outcome-card {
+    margin-right: 0;
+    margin-left: 0;
   }
 }
 

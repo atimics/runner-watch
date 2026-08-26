@@ -9,20 +9,41 @@
 {% include "_market_clock.html" %}
 
 <main class="detail-body">
-  <section class="asset-head">
-    <span class="coin coin-large coin-{{ detail.coin_tone }}"><b>{{ detail.coin_label }}</b><i></i></span>
-    <div><div class="asset-ticker"><h1>{{ detail.ticker }}</h1><span>{{ detail.exchange }}</span></div><p>{{ detail.company }}</p></div>
-  </section>
+  <header class="asset-overview">
+    <section class="asset-head">
+      <span class="coin coin-large coin-{{ detail.coin_tone }}"><b>{{ detail.coin_label }}</b><i></i></span>
+      <div><div class="asset-ticker"><h1>{{ detail.ticker }}</h1><span>{{ detail.exchange }}</span></div><p>{{ detail.company }}</p></div>
+    </section>
 
-  <section class="price-block">
-    <div>
-      <strong>{% if detail.current.price is not none %}${{ '%.4f'|format(detail.current.price) if detail.current.price < 1 else ('%.2f'|format(detail.current.price)) }}{% else %}No price{% endif %}</strong>
-      {% if detail.current.change_pct is not none %}<span class="{{ 'up' if detail.current.change_pct >= 0 else 'down' }}">{{ '+' if detail.current.change_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.change_pct) }}%</span>{% endif %}
+    <section class="price-block">
+      <div>
+        <strong>{% if detail.current.price is not none %}${{ '%.4f'|format(detail.current.price) if detail.current.price < 1 else ('%.2f'|format(detail.current.price)) }}{% else %}No price{% endif %}</strong>
+        {% if detail.current.change_pct is not none %}<span class="{{ 'up' if detail.current.change_pct >= 0 else 'down' }}">{{ '+' if detail.current.change_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.change_pct) }}%</span>{% endif %}
+      </div>
+      <small>{% if detail.current.event_at %}{{ detail.current.event_at[:16]|replace('T', ' ') }} UTC{% else %}No recent quote{% endif %}</small>
+    </section>
+  </header>
+
+  <div class="detail-dashboard">
+    <div class="detail-chart-panel">
+      <section class="chart-card" aria-label="Price chart">
+        <div class="chart-modes" role="group" aria-label="Chart lens">
+          <button class="active" type="button" data-chart-mode="tape">Tape</button>
+          <button type="button" data-chart-mode="gravity">Gravity</button>
+          <button type="button" data-chart-mode="astrology">Astrology ✦</button>
+        </div>
+        <div class="chart-loading" id="chartStatus">Loading chart…</div>
+        <svg id="priceChart" role="img" aria-label="Price and volume chart" viewBox="0 0 600 250" preserveAspectRatio="none"></svg>
+        <div class="chart-range"><span class="range-buttons"><button class="active" type="button" data-range="1D">1D</button><button type="button" data-range="5D">5D</button></span><span id="chartLow"></span><span id="chartHigh"></span></div>
+        <p class="chart-mode-note" id="chartModeNote">OHLCV bars, volume, and session VWAP</p>
+      </section>
+      <div class="chart-structure-strip" id="chartStructure" aria-live="polite"></div>
+      <div class="chart-event-strip" id="chartEvents" aria-label="Detected chart events" hidden></div>
     </div>
-    <small>{% if detail.current.event_at %}{{ detail.current.event_at[:16]|replace('T', ' ') }} UTC{% else %}No recent quote{% endif %}</small>
-  </section>
 
-  <section class="research-action" aria-labelledby="flashActionTitle">
+    <aside class="detail-actions" aria-label="Ticker actions">
+
+  <section class="research-action action-card" aria-labelledby="flashActionTitle">
     <div class="section-heading"><div><h2 id="flashActionTitle">Daily Flash <small class="flash-model-label">{{ flash.model }}</small></h2></div><b>100 Flash</b></div>
     {% if latest_commission and latest_commission.locked %}
     <button class="commission-button" type="button" disabled>Today's alpha is locked</button>
@@ -42,7 +63,7 @@
     {% endif %}
   </section>
 
-  <section class="trade-journal call-card" aria-labelledby="callTitle">
+  <section class="trade-journal call-card action-card" aria-labelledby="callTitle">
     <div class="section-heading"><div><h2 id="callTitle">Call</h2><span>Public · server stamped</span></div><b>{{ calls|length }}</b></div>
     {% if user %}
     {% if active_call %}
@@ -70,20 +91,9 @@
     {% endif %}
     {% if calls %}<div class="call-ledger-mini">{% for call in calls[:5] %}<a href="/u/{{ call.caller_handle }}"><strong>{{ call.caller_handle }}</strong><span>{{ call.status }}</span>{% if call.return_pct is not none %}<b class="{{ 'up' if call.return_pct >= 0 else 'down' }}">{{ '+' if call.return_pct >= 0 else '' }}{{ '%.1f'|format(call.return_pct) }}%</b>{% endif %}</a>{% endfor %}</div>{% endif %}
   </section>
+    </aside>
 
-  <section class="chart-card" aria-label="Price chart">
-    <div class="chart-modes" role="group" aria-label="Chart lens">
-      <button class="active" type="button" data-chart-mode="tape">Tape</button>
-      <button type="button" data-chart-mode="gravity">Gravity</button>
-      <button type="button" data-chart-mode="astrology">Astrology ✦</button>
-    </div>
-    <div class="chart-loading" id="chartStatus">Loading chart…</div>
-    <svg id="priceChart" role="img" aria-label="Price and volume chart" viewBox="0 0 600 250" preserveAspectRatio="none"></svg>
-    <div class="chart-range"><span class="range-buttons"><button class="active" type="button" data-range="1D">1D</button><button type="button" data-range="5D">5D</button></span><span id="chartLow"></span><span id="chartHigh"></span></div>
-    <p class="chart-mode-note" id="chartModeNote">OHLCV bars, volume, and session VWAP</p>
-  </section>
-  <div class="chart-structure-strip" id="chartStructure" aria-live="polite"></div>
-  <div class="chart-event-strip" id="chartEvents" aria-label="Detected chart events" hidden></div>
+    <div class="detail-analysis">
 
   <section class="why-section">
     <div class="section-heading"><div><h2>Why it moved</h2></div>{% if detail.current.source == 'market' and detail.current.score %}<b>{{ '%.0f'|format(detail.current.score) }} score</b>{% elif detail.current.source == 'sec' %}<b>new filing</b>{% endif %}</div>
@@ -180,6 +190,8 @@
     </ol>
     <p class="comment-empty" id="commentEmpty" {% if comments %}hidden{% endif %}>No comments yet. Start the read.</p>
   </section>
+    </div>
+  </div>
 </main>
 {% endblock %}
 {% block bottom_nav %}{% endblock %}
