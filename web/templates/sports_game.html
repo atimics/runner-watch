@@ -85,7 +85,19 @@
     <div>
       <span>AI RESEARCH</span>
       <h2 id="gameFlashTitle">Daily Flash</h2>
-      <p>One source-bound report for this matchup: winner, odds, team form, relevant players, and news.</p>
+      <p>One source-bound AI prediction for this future matchup, kept separate from the team-form baseline.</p>
+      {% if latest_commission and not latest_commission.locked and latest_commission.sports_forecast %}
+      {% set ai_forecast = latest_commission.sports_forecast %}
+      <div class="game-flash-prediction">
+        <small>AI PREDICTION · #{{ latest_commission.actor.ladder_position }} OF {{ latest_commission.actor.ladder_size }}</small>
+        {% if ai_forecast.selection == 'pass' %}
+        <strong>PASS</strong><b>No winner call</b>
+        {% else %}
+        <strong>{{ ai_forecast.selected_abbreviation }} {{ '%.0f'|format(ai_forecast.selected_probability * 100) }}%</strong><b>{{ ai_forecast.selected_team }}</b>
+        {% endif %}
+        <em>{{ 'Agrees with' if ai_forecast.agrees_with_baseline else 'Differs from' }} {{ prediction.model_version }} · {{ latest_commission.actor.model_label }}</em>
+      </div>
+      {% endif %}
     </div>
     <div class="game-flash-action">
       {% if latest_commission and latest_commission.locked %}

@@ -208,6 +208,10 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             row["name"]
             for row in database.execute("PRAGMA table_info(sports_bookmaker_odds)").fetchall()
         }
+        sports_ai_forecast_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='sports_ai_forecasts'"
+        ).fetchone()
         flash = database.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
         commission_columns = {
             row["name"]
@@ -276,6 +280,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "source_updated_at",
         "observed_at",
     } <= sports_bookmaker_columns
+    assert sports_ai_forecast_table is not None
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_provider"] == "openrouter"
@@ -523,6 +528,6 @@ def test_flash_keeps_its_identity_when_its_model_assignment_changes(
     assert flash["ladder_position"] == 1
     assert flash["inference_model"] == "future/model"
     assert [(row["id"], row["status"], row["requested_model"]) for row in versions] == [
-        ("flash-2026-09-a", "retired", "z-ai/glm-5.3"),
+        ("flash-2026-09-b", "retired", "z-ai/glm-5.3"),
         ("flash-future-model", "active", "future/model"),
     ]

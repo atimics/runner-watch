@@ -8,14 +8,15 @@ from typing import Any
 
 DEFAULT_FLASH_MODEL = "z-ai/glm-5.3"
 KOL_LADDER_SIZE = 4
-FLASH_VERSION_ID = os.getenv("FLASH_VERSION_ID", "flash-2026-09-a")
-FLASH_VERSION_LABEL = os.getenv("FLASH_VERSION_LABEL", "Flash 2026.09")
-FLASH_PROMPT_VERSION = "daily-flash-v2"
+FLASH_VERSION_ID = os.getenv("FLASH_VERSION_ID", "flash-2026-09-b")
+FLASH_VERSION_LABEL = os.getenv("FLASH_VERSION_LABEL", "Flash 2026.09b")
+FLASH_PROMPT_VERSION = "daily-flash-v3"
 FLASH_CONTEXT_VERSION = "identity-thesis-v1"
 FLASH_RISK_POLICY_VERSION = "market_risk_v3"
-FLASH_OUTPUT_SCHEMA_VERSION = "flash-report-v2"
+FLASH_OUTPUT_SCHEMA_VERSION = "flash-report-v3"
 FLASH_PIPELINE_VERSION = "one-shot-system-context-v2"
 FLASH_FORECAST_CONTRACT_VERSION = "flash-next-session-v1"
+SPORTS_FORECAST_CONTRACT_VERSION = "sports-moneyline-v1"
 
 
 def model_display_name(model: str) -> str:
