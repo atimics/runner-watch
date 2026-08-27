@@ -28,40 +28,53 @@
 </aside>
 {% endif %}
 
-<section class="game-list pulse-winners" aria-label="Projected winners">
+<section class="game-list pulse-winners" aria-label="Pulse signals">
   {% for event in pulse.events %}
   {% set prediction = event.prediction %}
-  <a class="game-card winner-card" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}" aria-label="{{ event.signal_team_name }} projected winner against {{ event.opponent_abbreviation }}">
-    <span class="winner-coin winner-coin-{{ event.signal_coin_tone }}" aria-hidden="true">
-      <b>{{ event.signal_abbreviation[:3] }}</b><i></i>
+  <a class="game-card winner-card" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}" aria-label="{{ event.away_team_name }} {{ event.projected_away_score_display }} at {{ event.home_team_name }} {{ event.projected_home_score_display }}; model favors {{ event.model_winner_team_name }} at {{ '%.0f'|format(event.model_winner_probability_pct) }} percent; value edge {{ event.signal_abbreviation }} {{ '%+.1f'|format(prediction.edge_pct) }} points">
+    <span class="winner-coin winner-coin-{{ event.model_winner_coin_tone }}" aria-hidden="true">
+      <b>{{ event.model_winner_abbreviation[:3] }}</b><i></i>
     </span>
-    <span class="winner-copy">
-      <span class="winner-name">
-        <strong>{{ event.signal_abbreviation }}</strong>
-        <small>PROJECTED WINNER</small>
+    <span class="matchup-copy">
+      <span class="matchup-team{% if event.model_winner_side == 'away' %} model-favorite{% endif %}">
+        <strong>{{ event.away_abbreviation }}</strong>
+        <span>{{ event.away_team_name }}</span>
+        <b>{{ event.projected_away_score_display }}</b>
       </span>
-      <span class="winner-team">{{ event.signal_team_name }}</span>
+      <span class="matchup-team{% if event.model_winner_side == 'home' %} model-favorite{% endif %}">
+        <strong>{{ event.home_abbreviation }}</strong>
+        <span>{{ event.home_team_name }}</span>
+        <b>{{ event.projected_home_score_display }}</b>
+      </span>
       <span class="winner-context">
-        {{ event.league|upper }} · vs {{ event.opponent_abbreviation }} ·
+        {{ event.league|upper }} ·
         <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time>
+        · FORM SCORE
       </span>
     </span>
     <span class="winner-quote">
-      <strong>{% if event.model_probability_pct is not none %}{{ '%.0f'|format(event.model_probability_pct) }}%{% else %}—{% endif %}</strong>
-      <small>WIN CHANCE</small>
-      <em class="{{ prediction.signal|replace(' ','-') }}">{% if prediction.edge_pct is not none %}{{ '%+.1f'|format(prediction.edge_pct) }}% {{ prediction.signal|upper }}{% else %}{{ prediction.signal|upper }}{% endif %}</em>
+      <strong>{{ event.model_winner_abbreviation }} {{ '%.0f'|format(event.model_winner_probability_pct) }}%</strong>
+      <small>MODEL</small>
+      <em class="{{ prediction.signal|replace(' ','-') }}">{{ event.signal_abbreviation }} {{ '%+.1f'|format(prediction.edge_pct) }} EDGE</em>
+      {% if event.edge_history %}
+      <svg class="edge-spark" viewBox="0 0 92 24" role="img" aria-label="{{ event.edge_history.label }}">
+        <line class="edge-zero" x1="2" y1="12" x2="90" y2="12"></line>
+        <polyline points="{{ event.edge_history.plot_points }}"></polyline>
+        <circle cx="{{ event.edge_history.dot_x }}" cy="{{ event.edge_history.dot_y }}" r="2"></circle>
+      </svg>
+      {% endif %}
     </span>
     <span class="game-chevron" aria-hidden="true">›</span>
   </a>
   {% else %}
   <div class="sports-empty">
-    <strong>No projected winners right now.</strong>
+    <strong>No Pulse signals right now.</strong>
     <p>Pulse stays quiet until a game clears the model-versus-market threshold.</p>
   </div>
   {% endfor %}
 </section>
 
-<p class="sports-source">Preview schedule, odds, and team news: ESPN · Updated {{ pulse.updated_at[:16]|replace('T',' ') if pulse.updated_at else 'pending' }} UTC</p>
+<p class="sports-source">Form scores use model win probability and a market total when available; otherwise a league scoring baseline. Preview schedule, odds, and team news: ESPN · Updated {{ pulse.updated_at[:16]|replace('T',' ') if pulse.updated_at else 'pending' }} UTC</p>
 {% endblock %}
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
