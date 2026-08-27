@@ -69,16 +69,23 @@ def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
 def test_pulse_does_not_render_an_empty_scorecard_spacer() -> None:
     root = Path(__file__).parents[1]
     pulse_template = (root / "web/templates/pulse.html").read_text()
+    kol_styles = (root / "web/static/kol.css").read_text()
 
-    assert "kolScoreStrip" not in pulse_template
-    assert "renderKols" not in pulse_template
-    scorecard_condition = (
-        "{% if pulse.kols and "
-        "(pulse.kols[0].calls or pulse.kols[0].active_calls) %}"
-    )
+    assert 'id="kolScoreStrip"' in pulse_template
+    assert "{% if not has_kol_calls %} hidden{% endif %}" in pulse_template
+    assert ".kol-score-strip[hidden] { display: none; }" in kol_styles
+    assert "function renderKolScorecard()" in pulse_template
+    assert "pulse.kols = nextPulse.kols || [];" in pulse_template
 
-    assert scorecard_condition in pulse_template
-    assert 'class="kol-score-strip"' in pulse_template
+
+def test_pulse_refresh_handles_missing_markers_stale_updates_and_page_failures() -> None:
+    pulse_template = (Path(__file__).parents[1] / "web/templates/pulse.html").read_text()
+
+    assert "function tickerKey(row)" in pulse_template
+    assert "flatMap(row => [tickerKey(row), entryKey(row)])" in pulse_template
+    assert "pendingPulse = null;\n        refreshButton.hidden = true;" in pulse_template
+    assert "function scheduleLoadMoreRetry()" in pulse_template
+    assert "catch (_) {\n    scheduleLoadMoreRetry();" in pulse_template
 
 
 def test_large_responses_are_compressed() -> None:

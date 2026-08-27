@@ -9,6 +9,7 @@
   background: linear-gradient(90deg, rgba(245, 198, 107, .08), transparent);
 }
 
+.kol-score-strip[hidden] { display: none; }
 .kol-score-strip > span:nth-child(2) { min-width: 0; }
 .kol-score-strip strong, .kol-score-strip small { display: block; }
 .kol-score-strip strong { font-size: 11px; }
