@@ -116,7 +116,7 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert 'id="generateComment"' in template
 
 
-def test_ticker_layout_puts_chart_first_and_actions_in_a_side_rail() -> None:
+def test_ticker_layout_puts_subtle_actions_after_the_analysis() -> None:
     root = Path(__file__).parents[1]
     template = (root / "web/templates/ticker.html").read_text()
     desktop_css = (root / "web/static/desktop-split.css").read_text()
@@ -125,11 +125,12 @@ def test_ticker_layout_puts_chart_first_and_actions_in_a_side_rail() -> None:
     actions = template.index('class="detail-actions"')
     analysis = template.index('class="detail-analysis"')
 
-    assert chart < actions < analysis
+    assert chart < analysis < actions
     assert 'grid-template-areas:' in desktop_css
-    assert '"chart actions"' in desktop_css
-    assert '"analysis actions"' in desktop_css
-    assert "position: sticky" in desktop_css
+    assert '"chart"\n      "analysis"\n      "actions"' in desktop_css
+    assert "grid-template-columns: repeat(2, minmax(0, 210px))" in desktop_css
+    assert "background: rgba(255, 255, 255, .018)" in desktop_css
+    assert "min-height: 44px" in desktop_css
 
 
 @pytest.mark.parametrize(
