@@ -201,8 +201,9 @@ deterministic `AVOID` or `EXIT` state overrides the generated wording.
 must press the daily claim button to receive 100 Flash. The claim is available once per UTC day and
 missed days are not backfilled. A daily Flash report costs 100, an AI-written ticker comment costs
 10, publishing during the private alpha hour earns 50 once, and a winning sports Call earns 25 once
-its final score settles. Ledger references make claims, charges, refunds, and rewards safe to retry
-without paying twice.
+its final score settles. A profitable Runners Call earns 10 Flash, rising to 20 at a 20% return and
+30 at a 30% or higher return. Ledger references make claims, charges, refunds, and rewards safe to
+retry without paying twice.
 
 Buying Flash credit packs is intentionally paused. Historical subscription columns remain only so
 existing databases migrate safely. The public product plan, including features that are explicitly

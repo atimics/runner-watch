@@ -96,6 +96,7 @@ from runner_web.flash_wallet import (
     PUBLISH_REPORT_REWARD,
     REPORT_COST,
     REPORT_EXCLUSIVE_HOURS,
+    RUNNER_CALL_REWARD_TIERS,
     WINNING_CALL_REWARD,
     InsufficientFlashError,
     claim_daily_flash,
@@ -894,6 +895,7 @@ def page_context(request: Request, session_token: str | None, **extra: Any) -> d
         "sports_path_prefix": "" if product_for_request(request) == "sports" else "/sports",
         "market_clock": market_clock(),
         "flash": actor_snapshot(),
+        "runner_call_reward_tiers": RUNNER_CALL_REWARD_TIERS,
         "winning_call_reward": WINNING_CALL_REWARD,
         **extra,
     }
@@ -6217,7 +6219,14 @@ async def close_community_call(
     with ALPHA_DATA_LOCK:
         ALPHA_DATA_CACHE.clear()
     shared_cache_delete(_shared_request_cache_name("alpha"))
-    return JSONResponse({"call": call})
+    wallet = wallet_for_user(str(user["id"]))
+    return JSONResponse(
+        {
+            "call": call,
+            "reward": int(call.get("flash_reward") or 0),
+            "balance": wallet["balance"],
+        }
+    )
 
 
 @app.post("/api/research/{ticker}")
