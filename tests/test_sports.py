@@ -461,6 +461,51 @@ def test_sports_alpha_builds_team_and_player_win_rate_history(sports_db) -> None
     assert alpha["model"]["history_points"]
 
 
+def test_sports_alpha_fetches_history_only_for_ranked_players(sports_db) -> None:
+    def athletes(prefix: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "athlete": {"id": f"{prefix}{index}", "displayName": f"{prefix} Player {index}"},
+                "position": {"abbreviation": "P"},
+                "starter": True,
+                "stats": [str(20 - index)],
+            }
+            for index in range(5)
+        ]
+
+    payload = {
+        "boxscore": {
+            "players": [
+                {
+                    "team": {"id": "1", "displayName": "Home Club", "abbreviation": "HOM"},
+                    "statistics": [{"labels": ["PTS"], "athletes": athletes("Home")}],
+                },
+                {
+                    "team": {"id": "2", "displayName": "Away Club", "abbreviation": "AWY"},
+                    "statistics": [{"labels": ["PTS"], "athletes": athletes("Away")}],
+                },
+            ]
+        }
+    }
+    for event_number in range(1, 4):
+        raw = sample_event(completed=True)
+        raw["id"] = f"40200000{event_number}"
+        event = normalize_event("mlb", raw)
+        assert event is not None
+        store_events([event])
+        store_player_appearances(normalize_player_appearances(event, payload))
+
+    alpha = sports_alpha("mlb", limit=3)
+
+    assert len(alpha["players"]) == 3
+    assert alpha["coverage"]["player_count"] == 10
+    assert [player["name"] for player in alpha["players"]] == [
+        "Home Player 0",
+        "Home Player 1",
+        "Home Player 2",
+    ]
+
+
 def test_sports_history_backfill_moves_through_older_chunks(
     sports_db, monkeypatch: pytest.MonkeyPatch
 ) -> None:
