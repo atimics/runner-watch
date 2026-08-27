@@ -2014,6 +2014,60 @@ def _migration_033_one_automatic_caller_name(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_034_sports_performance_history(db: DatabaseConnection) -> None:
+    """Store completed box-score appearances for player performance history."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS sports_player_appearances (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL REFERENCES sports_events(id) ON DELETE CASCADE,
+            league TEXT NOT NULL,
+            team_id TEXT NOT NULL,
+            team_name TEXT NOT NULL,
+            team_abbreviation TEXT NOT NULL,
+            player_id TEXT NOT NULL,
+            player_name TEXT NOT NULL,
+            position TEXT NOT NULL DEFAULT '',
+            starter INTEGER NOT NULL DEFAULT 0,
+            won INTEGER NOT NULL CHECK(won IN (0,1)),
+            stats_json TEXT NOT NULL DEFAULT '{}',
+            collected_at TEXT NOT NULL,
+            UNIQUE(event_id,player_id)
+        );
+        CREATE INDEX IF NOT EXISTS sports_player_league_history
+            ON sports_player_appearances(league,player_id,event_id);
+        CREATE INDEX IF NOT EXISTS sports_player_team_history
+            ON sports_player_appearances(league,team_id,event_id);
+        """
+    )
+
+
+def _migration_035_sports_news(db: DatabaseConnection) -> None:
+    """Store team-linked news for promoted sports matchups."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS sports_news_articles (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL REFERENCES sports_events(id) ON DELETE CASCADE,
+            provider TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            team_side TEXT NOT NULL CHECK(team_side IN ('home','away','both')),
+            source_name TEXT NOT NULL,
+            headline TEXT NOT NULL,
+            summary TEXT NOT NULL DEFAULT '',
+            source_url TEXT NOT NULL,
+            published_at TEXT NOT NULL,
+            collected_at TEXT NOT NULL,
+            UNIQUE(event_id,provider,external_id)
+        );
+        CREATE INDEX IF NOT EXISTS sports_news_event_time
+            ON sports_news_articles(event_id,published_at DESC);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2055,6 +2109,8 @@ MIGRATIONS = (
     Migration(31, "scalable_scan_storage", _migration_031_scalable_scan_storage),
     Migration(32, "sports_domain", _migration_032_sports_domain),
     Migration(33, "one_automatic_caller_name", _migration_033_one_automatic_caller_name),
+    Migration(34, "sports_performance_history", _migration_034_sports_performance_history),
+    Migration(35, "sports_news", _migration_035_sports_news),
 )
 
 

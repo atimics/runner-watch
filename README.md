@@ -15,8 +15,19 @@ state, season records, moneyline snapshots, source times, and a versioned baseli
 model compares team form plus a small home advantage with the market price after removing the
 bookmaker margin. It does not promote preseason or exhibition games. Signed-in users can publish
 paper picks with frozen odds; completed games settle them as wins, losses, or pushes. The app does
-not place bets or connect to sportsbooks. Its current scoreboard source is marked as a preview feed
-until data rights and a licensed replacement are reviewed.
+not place bets or connect to sportsbooks. ESPN remains a preview source for schedules, records, and
+results. When the `ODDS_API_KEY` Fly secret is present, moneylines come from The Odds API instead of
+the preview odds. The worker requests one region and the `h2h` market only. It takes at most three
+snapshots per league slate: opening, pregame, and close. The 500-credit plan has a 450-credit working
+limit and a protected 50-credit reserve. Quota headers are checked before paid calls, and cached odds
+are served between snapshots. The key stays on the server and is never sent to the browser or logs.
+
+Sports now follows the same three-part product shape as Runners. **Pulse** ranks only Lean and Watch
+model-versus-market gaps by default while keeping the full slate one tap away. **Radar** shows
+material price or model changes only for games that entered Pulse. **Alpha** ranks current team win
+rates with their stored change history and adds players after at least three completed box-score
+appearances. A player rate means the team result in games where that player appeared; it is not an
+individual skill score.
 
 The public scanner defaults to listed US penny stocks from $0.20 to $5 with market caps below
 about $2B. It combines Yahoo's strongest movers, most active names, and largest losers before

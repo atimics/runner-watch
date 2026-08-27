@@ -161,6 +161,14 @@
 .game-call .signal.lean { color: #f8ca76; }
 .game-call .signal.pass,
 .game-call .signal.model-only { color: var(--muted); }
+.game-news-count {
+  display: block;
+  margin-top: 5px;
+  color: #79b7ff;
+  font-size: 7px;
+  font-weight: 850;
+  letter-spacing: .08em;
+}
 .game-chevron {
   color: #655b75;
   font-size: 22px;

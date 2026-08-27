@@ -157,8 +157,11 @@ from runner_web.sports import (
 from runner_web.sports import (
     create_sports_pick,
     refresh_sports,
+    sports_alpha,
     sports_event,
     sports_pick_stats,
+    sports_pulse,
+    sports_radar,
     sports_slate,
 )
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
@@ -747,6 +750,7 @@ def page_context(request: Request, session_token: str | None, **extra: Any) -> d
         "product": product_for_request(request),
         "runners_origin": RUNNERS_ORIGIN,
         "sports_origin": SPORTS_ORIGIN,
+        "sports_path_prefix": "" if product_for_request(request) == "sports" else "/sports",
         "market_clock": market_clock(),
         "flash": actor_snapshot(),
         **extra,
@@ -3718,9 +3722,10 @@ def home(
     request: Request,
     runner_session: str | None = Cookie(default=None),
     league: str = "all",
+    view: str = "signals",
 ) -> HTMLResponse:
     if product_for_request(request) == "sports":
-        return sports_home_response(request, runner_session, league)
+        return sports_home_response(request, runner_session, league, view)
     return templates.TemplateResponse(
         request=request,
         name="pulse.html",
@@ -3737,16 +3742,20 @@ def sports_home_response(
     request: Request,
     runner_session: str | None,
     league: str = "all",
+    view: str = "signals",
 ) -> HTMLResponse:
     selected_league = league if league in SPORTS_LEAGUES else "all"
+    sports_path_prefix = "" if product_for_request(request) == "sports" else "/sports"
     return templates.TemplateResponse(
         request=request,
         name="sports.html",
         context=page_context(
             request,
             runner_session,
-            slate=sports_slate(selected_league),
+            pulse=sports_pulse(selected_league, view=view),
             pick_stats=sports_pick_stats(),
+            sports_tab="pulse",
+            sports_path_prefix=sports_path_prefix,
         ),
     )
 
@@ -3756,8 +3765,109 @@ def sports_home(
     request: Request,
     runner_session: str | None = Cookie(default=None),
     league: str = "all",
+    view: str = "signals",
 ) -> HTMLResponse:
-    return sports_home_response(request, runner_session, league)
+    return sports_home_response(request, runner_session, league, view)
+
+
+def sports_radar_response(
+    request: Request,
+    runner_session: str | None,
+    league: str = "all",
+) -> HTMLResponse:
+    selected_league = league if league in SPORTS_LEAGUES else "all"
+    sports_path_prefix = "" if product_for_request(request) == "sports" else "/sports"
+    return templates.TemplateResponse(
+        request=request,
+        name="sports_radar.html",
+        context=page_context(
+            request,
+            runner_session,
+            radar=sports_radar(selected_league),
+            sports_tab="radar",
+            sports_path_prefix=sports_path_prefix,
+        ),
+    )
+
+
+@app.get("/sports/radar", response_class=HTMLResponse)
+def sports_radar_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+    league: str = "all",
+) -> HTMLResponse:
+    return sports_radar_response(request, runner_session, league)
+
+
+def sports_alpha_response(
+    request: Request,
+    runner_session: str | None,
+    league: str = "all",
+) -> HTMLResponse:
+    selected_league = league if league in SPORTS_LEAGUES else "all"
+    sports_path_prefix = "" if product_for_request(request) == "sports" else "/sports"
+    return templates.TemplateResponse(
+        request=request,
+        name="sports_alpha.html",
+        context=page_context(
+            request,
+            runner_session,
+            alpha=sports_alpha(selected_league),
+            sports_tab="alpha",
+            sports_path_prefix=sports_path_prefix,
+        ),
+    )
+
+
+@app.get("/alpha", response_class=HTMLResponse)
+def alpha_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+    league: str = "all",
+) -> HTMLResponse:
+    if product_for_request(request) == "sports":
+        return sports_alpha_response(request, runner_session, league)
+    return community(request, runner_session)
+
+
+@app.get("/sports/alpha", response_class=HTMLResponse)
+def sports_alpha_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+    league: str = "all",
+) -> HTMLResponse:
+    return sports_alpha_response(request, runner_session, league)
+
+
+@app.get("/api/sports/pulse")
+def sports_pulse_api(
+    request: Request,
+    league: str = "all",
+    view: str = "signals",
+    limit: int = 30,
+) -> JSONResponse:
+    enforce_rate(request, "sports-pulse", limit=120, seconds=60)
+    return JSONResponse(sports_pulse(league, view, limit))
+
+
+@app.get("/api/sports/radar")
+def sports_radar_api(
+    request: Request,
+    league: str = "all",
+    limit: int = 40,
+) -> JSONResponse:
+    enforce_rate(request, "sports-radar", limit=120, seconds=60)
+    return JSONResponse(sports_radar(league, limit))
+
+
+@app.get("/api/sports/alpha")
+def sports_alpha_api(
+    request: Request,
+    league: str = "all",
+    limit: int = 24,
+) -> JSONResponse:
+    enforce_rate(request, "sports-alpha", limit=120, seconds=60)
+    return JSONResponse(sports_alpha(league, limit))
 
 
 @app.get("/api/slate")
@@ -3788,6 +3898,7 @@ def sports_game_page(
             request,
             runner_session,
             event=event,
+            sports_tab="pulse",
         ),
     )
 
@@ -4934,7 +5045,10 @@ async def request_cache_warmer() -> None:
 def radar_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
+    league: str = "all",
 ) -> HTMLResponse:
+    if product_for_request(request) == "sports":
+        return sports_radar_response(request, runner_session, league)
     watches = radar_data()
     return templates.TemplateResponse(
         request=request,

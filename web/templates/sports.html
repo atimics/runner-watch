@@ -1,38 +1,63 @@
 {% extends "sports_base.html" %}
-{% block title %}Today’s Slate · RATi Sports{% endblock %}
+{% block title %}Pulse · RATi Sports{% endblock %}
 {% block content %}
+<dialog class="sports-announcement" id="sportsAnnouncement" data-announcement-version="sports-intro-2026-08-26" aria-labelledby="sportsAnnouncementTitle" aria-describedby="sportsAnnouncementCopy">
+  <div class="sports-announcement-inner">
+    <form method="dialog">
+      <button class="sports-announcement-close" type="submit" aria-label="Dismiss announcement">×</button>
+    </form>
+    <span class="sports-eyebrow">LATEST SNAPSHOT · {{ pulse.model }}</span>
+    <h2 id="sportsAnnouncementTitle">Today’s slate,<br><em>with receipts.</em></h2>
+    <p id="sportsAnnouncementCopy">We compare a simple team-form model with the no-vig moneyline. Every number keeps its source and time.</p>
+    <section class="sports-announcement-stats" aria-label="Paper pick record">
+      <div><small>SETTLED</small><strong>{{ pick_stats.settled }}</strong></div>
+      <div><small>W–L–P</small><strong>{{ pick_stats.wins }}–{{ pick_stats.losses }}–{{ pick_stats.pushes }}</strong></div>
+      <div><small>UNITS</small><strong class="{% if pick_stats.units >= 0 %}positive{% endif %}">{{ '%+.2f'|format(pick_stats.units) }}</strong></div>
+      <div><small>ROI</small><strong>{% if pick_stats.roi_pct is not none %}{{ '%+.1f%%'|format(pick_stats.roi_pct) }}{% else %}Learning{% endif %}</strong></div>
+    </section>
+    <form method="dialog">
+      <button class="sports-announcement-action" type="submit">Got it</button>
+    </form>
+  </div>
+</dialog>
+
 <section class="sports-hero">
-  <span class="sports-eyebrow">LIVE EVIDENCE · {{ slate.model }}</span>
-  <h1>Today’s slate,<br><em>with receipts.</em></h1>
-  <p>We compare a simple team-form model with the no-vig moneyline. Every number keeps its source and time.</p>
+  <span class="sports-eyebrow">RATi SPORTS · {{ pulse.model }}</span>
+  <h1>Pulse</h1>
+  <p>The strongest model-versus-market gaps, ranked first. The quiet games stay out of your way.</p>
 </section>
 
-<section class="sports-scoreboard" aria-label="Paper pick results">
-  <div><small>SETTLED</small><strong>{{ pick_stats.settled }}</strong></div>
-  <div><small>W–L–P</small><strong>{{ pick_stats.wins }}–{{ pick_stats.losses }}–{{ pick_stats.pushes }}</strong></div>
-  <div><small>UNITS</small><strong class="{% if pick_stats.units >= 0 %}positive{% else %}negative{% endif %}">{{ '%+.2f'|format(pick_stats.units) }}</strong></div>
-  <div><small>ROI</small><strong>{% if pick_stats.roi_pct is not none %}{{ '%+.1f'|format(pick_stats.roi_pct) }}%{% else %}Learning{% endif %}</strong></div>
+<section class="sports-scoreboard pulse-summary" aria-label="Pulse coverage">
+  <div><small>SIGNALS</small><strong class="positive">{{ pulse.signal_count }}</strong></div>
+  <div><small>GAMES READ</small><strong>{{ pulse.scanned_count }}</strong></div>
+  <div><small>QUIET</small><strong>{{ pulse.hidden_count }}</strong></div>
+  <div><small>PAPER RECORD</small><strong>{{ pick_stats.wins }}–{{ pick_stats.losses }}–{{ pick_stats.pushes }}</strong></div>
 </section>
+
+<nav class="sports-focus-tabs" aria-label="Pulse focus">
+  <a class="{% if pulse.view == 'signals' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/?league={{ pulse.league }}&view=signals">Signals</a>
+  <a class="{% if pulse.view == 'all' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/?league={{ pulse.league }}&view=all">Full slate</a>
+</nav>
 
 <nav class="league-tabs" aria-label="League filter">
-  <a class="{% if slate.league == 'all' %}active{% endif %}" href="/?league=all">All</a>
-  {% for league in slate.leagues %}
-    <a class="{% if slate.league == league.key %}active{% endif %}" href="/?league={{ league.key }}">{{ league.name }}</a>
+  <a class="{% if pulse.league == 'all' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/?league=all&view={{ pulse.view }}">All</a>
+  {% for league in pulse.leagues %}
+    <a class="{% if pulse.league == league.key %}active{% endif %}" href="{{ sports_path_prefix or '' }}/?league={{ league.key }}&view={{ pulse.view }}">{{ league.name }}</a>
   {% endfor %}
 </nav>
 
-{% if slate.source_status != 'success' %}
+{% if pulse.source_status != 'success' %}
 <aside class="source-warning">
-  <strong>Preview feed: {{ slate.source_status }}</strong>
-  <span>{% if slate.source_error %}{{ slate.source_error }}{% else %}The first sports refresh is still running.{% endif %}</span>
+  <strong>Preview feed: {{ pulse.source_status }}</strong>
+  <span>{% if pulse.source_error %}{{ pulse.source_error }}{% else %}The first sports refresh is still running.{% endif %}</span>
 </aside>
 {% endif %}
 
 <section class="game-list">
-  {% for event in slate.events %}
+  {% for event in pulse.events %}
   {% set prediction = event.prediction %}
   {% set odds = event.odds %}
-  <a class="game-card" href="/game/{{ event.id }}" aria-label="{{ event.name }}, {{ event.status_detail }}">
+  <a class="game-card" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}" aria-label="{{ event.name }}, {{ event.status_detail }}">
     <span class="game-meta">
       <strong>{{ event.league|upper }}</strong>
       <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time>
@@ -51,9 +76,9 @@
       </span>
     </span>
     <span class="game-model">
-      <small>MODEL</small>
+      <small>{% if pulse.view == 'signals' %}WHY NOW{% else %}MODEL{% endif %}</small>
       {% if prediction %}
-        <strong>{{ event.away_abbreviation }} {{ '%.0f'|format(prediction.away_probability * 100) }}% · {{ event.home_abbreviation }} {{ '%.0f'|format(prediction.home_probability * 100) }}%</strong>
+        <strong>{% if pulse.view == 'signals' %}{{ event.signal_reason }}{% else %}{{ event.away_abbreviation }} {{ '%.0f'|format(prediction.away_probability * 100) }}% · {{ event.home_abbreviation }} {{ '%.0f'|format(prediction.home_probability * 100) }}%{% endif %}</strong>
       {% else %}
         <strong>Prediction pending</strong>
       {% endif %}
@@ -80,25 +105,49 @@
       {% if prediction %}
         <small class="signal {{ prediction.signal|replace(' ','-') }}">{% if prediction.edge_pct is not none %}{{ '%+.1f'|format(prediction.edge_pct) }}% {{ prediction.signal }}{% else %}{{ prediction.signal }}{% endif %}</small>
       {% endif %}
+      {% if event.news_count %}<small class="game-news-count">{{ event.news_count }} NEWS</small>{% endif %}
     </span>
     <span class="game-chevron" aria-hidden="true">›</span>
   </a>
   {% else %}
   <div class="sports-empty">
-    <strong>No games in this window.</strong>
-    <p>The worker checks MLB, NFL, NBA, and NHL. Inactive leagues will be quiet.</p>
+    {% if pulse.view == 'signals' %}
+      <strong>No verified edges right now.</strong>
+      <p>Pulse stays quiet until a game clears the model-versus-market threshold.</p>
+      <a class="sports-empty-action" href="{{ sports_path_prefix or '' }}/?league={{ pulse.league }}&view=all">Open the full slate</a>
+    {% else %}
+      <strong>No games in this window.</strong>
+      <p>The worker checks MLB, NFL, NBA, and NHL. Inactive leagues will be quiet.</p>
+    {% endif %}
   </div>
   {% endfor %}
 </section>
 
-<p class="sports-source">Preview schedule and odds data: ESPN · Updated {{ slate.updated_at[:16]|replace('T',' ') if slate.updated_at else 'pending' }} UTC</p>
+<p class="sports-source">Preview schedule, odds, and team news: ESPN · Updated {{ pulse.updated_at[:16]|replace('T',' ') if pulse.updated_at else 'pending' }} UTC</p>
 {% endblock %}
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
+  const announcement=document.getElementById('sportsAnnouncement');
+  const announcementKey='rati:sports-announcement';
+  if(announcement?.showModal){
+    let seenVersion='';
+    try{seenVersion=localStorage.getItem(announcementKey)||'';}catch(error){}
+    if(seenVersion!==announcement.dataset.announcementVersion)announcement.showModal();
+    announcement.addEventListener('close',()=>{
+      try{localStorage.setItem(announcementKey,announcement.dataset.announcementVersion);}catch(error){}
+    });
+    announcement.addEventListener('click',event=>{
+      if(event.target===announcement)announcement.close();
+    });
+  }
   document.querySelectorAll('[data-local-time]').forEach(node=>{
     const date=new Date(node.dataset.localTime);
     if(!Number.isNaN(date.valueOf()))node.textContent=date.toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'});
   });
-  setTimeout(()=>location.reload(),60000);
+  const scheduleRefresh=()=>setTimeout(()=>{
+    if(document.querySelector('dialog[open]'))return scheduleRefresh();
+    location.reload();
+  },60000);
+  scheduleRefresh();
 </script>
 {% endblock %}
