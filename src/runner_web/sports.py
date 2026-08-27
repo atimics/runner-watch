@@ -39,6 +39,9 @@ SOURCE_URL = "https://site.api.espn.com/apis/site/v2/sports"
 PROMOTED_SIGNALS = {"lean", "watch"}
 NEWS_MAX_AGE = timedelta(days=7)
 NEWS_PER_EVENT = 6
+SERIES_WINDOW = timedelta(days=7)
+SERIES_MAX_GAP = timedelta(hours=52)
+BACK_TO_BACK_MAX_GAP = timedelta(hours=30)
 HISTORY_TARGET_DAYS = 210
 HISTORY_CHUNK_DAYS = 5
 ALPHA_HISTORY_POINTS = 160
@@ -436,17 +439,30 @@ def _article_team_ids(article: dict[str, Any]) -> set[str]:
     return team_ids
 
 
+def _article_event_ids(article: dict[str, Any]) -> set[str]:
+    event_ids: set[str] = set()
+    for category in article.get("categories") or []:
+        if not isinstance(category, dict) or category.get("type") != "event":
+            continue
+        event = category.get("event") or {}
+        event_id = str(event.get("id") or category.get("eventId") or "").strip()
+        if event_id:
+            event_ids.add(event_id)
+    return event_ids
+
+
 def normalize_news_articles(
     events: list[dict[str, Any]],
     payload: dict[str, Any],
     collected_at: datetime | None = None,
 ) -> list[dict[str, Any]]:
-    """Match recent league headlines to Lean and Watch games by source team ID."""
+    """Match recent headlines to exact games first, then fall back to source team IDs."""
 
     current = collected_at or datetime.now(UTC)
     promoted = [event for event in events if predict_event(event).get("signal") in PROMOTED_SIGNALS]
     if not promoted:
         return []
+    promoted_ids = {str(event["id"]) for event in promoted}
     articles = payload.get("articles")
     if not isinstance(articles, list):
         return []
@@ -465,27 +481,37 @@ def normalize_news_articles(
         if published < current - NEWS_MAX_AGE or published > current + timedelta(days=1):
             continue
         source_team_ids = _article_team_ids(raw)
-        if not source_team_ids:
+        source_event_ids = _article_event_ids(raw)
+        if not source_event_ids and not source_team_ids:
             continue
         external_id = str(raw.get("id") or "").strip()
         if not external_id:
             external_id = hashlib.sha256(source_url.encode()).hexdigest()[:32]
         summary = " ".join(str(raw.get("description") or "").split())[:500]
         source_name = str(raw.get("source") or "ESPN").strip()[:120] or "ESPN"
-        for event in promoted:
+        for event in events:
             event_id = str(event["id"])
+            if not source_event_ids and event_id not in promoted_ids:
+                continue
             if event_counts.get(event_id, 0) >= NEWS_PER_EVENT:
+                continue
+            if source_event_ids and str(event.get("external_id") or "") not in source_event_ids:
                 continue
             home_match = str(event["home"]["id"]) in source_team_ids
             away_match = str(event["away"]["id"]) in source_team_ids
-            if not home_match and not away_match:
+            if not source_event_ids and not home_match and not away_match:
                 continue
             unique_key = (event_id, external_id)
             if unique_key in seen:
                 continue
             seen.add(unique_key)
             event_counts[event_id] = event_counts.get(event_id, 0) + 1
-            team_side = "both" if home_match and away_match else "home" if home_match else "away"
+            if home_match == away_match:
+                team_side = "both"
+            elif home_match:
+                team_side = "home"
+            else:
+                team_side = "away"
             article_id = hashlib.sha256(f"{SOURCE}|{event_id}|{external_id}".encode()).hexdigest()[
                 :32
             ]
@@ -553,8 +579,20 @@ def fetch_league_news(
         raise
 
 
-def store_news_articles(articles: list[dict[str, Any]]) -> int:
+def store_news_articles(
+    articles: list[dict[str, Any]],
+    *,
+    replace_event_ids: list[str] | None = None,
+) -> int:
     with connection() as database:
+        if replace_event_ids:
+            event_ids = sorted(set(replace_event_ids))
+            placeholders = ",".join("?" for _ in event_ids)
+            database.execute(
+                f"DELETE FROM sports_news_articles "
+                f"WHERE provider=? AND event_id IN ({placeholders})",  # noqa: S608
+                (SOURCE, *event_ids),
+            )
         for article in articles:
             database.execute(
                 """
@@ -1129,9 +1167,17 @@ def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
             }
         except Exception as exc:
             history_errors[league] = str(exc)[:240]
-        if any(predict_event(event).get("signal") in PROMOTED_SIGNALS for event in events):
+        promoted_event_ids = [
+            str(event["id"])
+            for event in events
+            if predict_event(event).get("signal") in PROMOTED_SIGNALS
+        ]
+        if promoted_event_ids:
             try:
-                news_counts[league] = store_news_articles(fetch_league_news(league, events, at))
+                news_counts[league] = store_news_articles(
+                    fetch_league_news(league, events, at),
+                    replace_event_ids=[str(event["id"]) for event in events],
+                )
             except Exception as exc:
                 news_errors[league] = str(exc)[:240]
     settled = settle_picks()
@@ -2053,6 +2099,219 @@ def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
     }
 
 
+def _score_display(value: Any) -> str:
+    number = _number(value)
+    if number is None:
+        return "—"
+    return str(int(number)) if number.is_integer() else f"{number:g}"
+
+
+def _history_game(row: Any, team_id: str | None = None) -> dict[str, Any]:
+    item = dict(row)
+    game = {
+        "id": str(item["id"]),
+        "start_time": str(item["start_time"]),
+        "status_detail": str(item["status_detail"]),
+        "home_team_id": str(item["home_team_id"]),
+        "home_team_name": str(item["home_team_name"]),
+        "home_abbreviation": str(item["home_abbreviation"]),
+        "home_score": _score_display(item["home_score"]),
+        "away_team_id": str(item["away_team_id"]),
+        "away_team_name": str(item["away_team_name"]),
+        "away_abbreviation": str(item["away_abbreviation"]),
+        "away_score": _score_display(item["away_score"]),
+    }
+    if team_id is None:
+        return game
+    is_home = game["home_team_id"] == team_id
+    team_score = _number(item["home_score"] if is_home else item["away_score"])
+    opponent_score = _number(item["away_score"] if is_home else item["home_score"])
+    if team_score is None or opponent_score is None:
+        result = "—"
+    elif team_score > opponent_score:
+        result = "W"
+    elif team_score < opponent_score:
+        result = "L"
+    else:
+        result = "T"
+    game.update(
+        {
+            "result": result,
+            "venue_word": "vs" if is_home else "at",
+            "opponent_abbreviation": (
+                game["away_abbreviation"] if is_home else game["home_abbreviation"]
+            ),
+            "team_score": game["home_score"] if is_home else game["away_score"],
+            "opponent_score": game["away_score"] if is_home else game["home_score"],
+        }
+    )
+    return game
+
+
+def _recent_team_form(
+    database: Any,
+    event: dict[str, Any],
+    team_id: str,
+    abbreviation: str,
+) -> dict[str, Any]:
+    rows = database.execute(
+        """
+        SELECT id,start_time,status_detail,home_team_id,home_team_name,home_abbreviation,
+               home_score,away_team_id,away_team_name,away_abbreviation,away_score
+        FROM sports_events
+        WHERE league=? AND completed=1 AND start_time<?
+          AND (home_team_id=? OR away_team_id=?)
+        ORDER BY start_time DESC,id DESC LIMIT 5
+        """,
+        (event["league"], event["start_time"], team_id, team_id),
+    ).fetchall()
+    games = [_history_game(row, team_id) for row in rows]
+    wins = sum(game["result"] == "W" for game in games)
+    losses = sum(game["result"] == "L" for game in games)
+    ties = sum(game["result"] == "T" for game in games)
+    record = f"{wins}-{losses}" + (f"-{ties}" if ties else "")
+    return {
+        "team_id": team_id,
+        "abbreviation": abbreviation,
+        "record": record,
+        "games": games,
+    }
+
+
+def _series_context(database: Any, event: dict[str, Any]) -> dict[str, Any]:
+    home_id = str(event["home_team_id"])
+    away_id = str(event["away_team_id"])
+    start = _parse_time(event["start_time"])
+    history_columns = """
+        id,start_time,status_detail,home_team_id,home_team_name,home_abbreviation,
+        home_score,away_team_id,away_team_name,away_abbreviation,away_score
+    """
+    previous_rows = database.execute(
+        f"""
+        SELECT {history_columns}
+        FROM sports_events
+        WHERE league=? AND completed=1 AND start_time<?
+          AND ((home_team_id=? AND away_team_id=?)
+            OR (home_team_id=? AND away_team_id=?))
+        ORDER BY start_time DESC,id DESC LIMIT 5
+        """,  # noqa: S608 - selected columns are fixed above
+        (event["league"], event["start_time"], home_id, away_id, away_id, home_id),
+    ).fetchall()
+    previous_meetings = [_history_game(row) for row in previous_rows]
+
+    home_wins = 0
+    away_wins = 0
+    ties = 0
+    for row in previous_rows:
+        home_score = _number(row["home_score"])
+        away_score = _number(row["away_score"])
+        if home_score is None or away_score is None:
+            continue
+        if home_score == away_score:
+            ties += 1
+            continue
+        winner_id = str(row["home_team_id"] if home_score > away_score else row["away_team_id"])
+        if winner_id == home_id:
+            home_wins += 1
+        elif winner_id == away_id:
+            away_wins += 1
+
+    series_rows = database.execute(
+        f"""
+        SELECT {history_columns}
+        FROM sports_events
+        WHERE league=? AND start_time>=? AND start_time<=?
+          AND ((home_team_id=? AND away_team_id=?)
+            OR (home_team_id=? AND away_team_id=?))
+        ORDER BY start_time,id
+        """,  # noqa: S608 - selected columns are fixed above
+        (
+            event["league"],
+            _iso(start - SERIES_WINDOW),
+            _iso(start + SERIES_WINDOW),
+            home_id,
+            away_id,
+            away_id,
+            home_id,
+        ),
+    ).fetchall()
+    series_games = [_history_game(row) for row in series_rows]
+    current_index = next(
+        (index for index, game in enumerate(series_games) if game["id"] == event["id"]),
+        None,
+    )
+    if current_index is not None:
+        left = current_index
+        right = current_index
+        while left > 0:
+            gap = _parse_time(series_games[left]["start_time"]) - _parse_time(
+                series_games[left - 1]["start_time"]
+            )
+            if gap > SERIES_MAX_GAP:
+                break
+            left -= 1
+        while right + 1 < len(series_games):
+            gap = _parse_time(series_games[right + 1]["start_time"]) - _parse_time(
+                series_games[right]["start_time"]
+            )
+            if gap > SERIES_MAX_GAP:
+                break
+            right += 1
+        series_games = series_games[left : right + 1]
+        current_index -= left
+    else:
+        series_games = []
+
+    previous = previous_meetings[0] if previous_meetings else None
+    between_starts = start - _parse_time(previous["start_time"]) if previous else None
+    back_to_back = bool(
+        between_starts and timedelta(0) < between_starts <= BACK_TO_BACK_MAX_GAP
+    )
+    if previous:
+        recap = database.execute(
+            """
+            SELECT * FROM sports_news_articles WHERE event_id=?
+            ORDER BY published_at DESC,id DESC LIMIT 1
+            """,
+            (previous["id"],),
+        ).fetchone()
+        previous["recap"] = dict(recap) if recap else None
+
+    if back_to_back:
+        headline = "Back-to-back rematch"
+    elif len(series_games) > 1 and current_index is not None:
+        headline = f"Game {current_index + 1} of {len(series_games)} in this series"
+    elif previous:
+        headline = "Previous matchup and recent form"
+    else:
+        headline = "Recent team form"
+
+    between_starts_label = None
+    if between_starts:
+        minutes = int(between_starts.total_seconds() // 60)
+        hours, minute_part = divmod(minutes, 60)
+        between_starts_label = f"{hours}h {minute_part}m between starts"
+
+    return {
+        "headline": headline,
+        "back_to_back": back_to_back,
+        "between_starts_label": between_starts_label,
+        "series_game_number": current_index + 1 if current_index is not None else None,
+        "series_game_count": len(series_games),
+        "previous_meeting": previous,
+        "head_to_head": {
+            "meetings": len(previous_meetings),
+            "home_wins": home_wins,
+            "away_wins": away_wins,
+            "ties": ties,
+        },
+        "recent_form": [
+            _recent_team_form(database, event, away_id, str(event["away_abbreviation"])),
+            _recent_team_form(database, event, home_id, str(event["home_abbreviation"])),
+        ],
+    }
+
+
 def sports_event(event_id: str) -> dict[str, Any] | None:
     with connection() as database:
         row = database.execute("SELECT * FROM sports_events WHERE id=?", (event_id,)).fetchone()
@@ -2084,6 +2343,7 @@ def sports_event(event_id: str) -> dict[str, Any] | None:
             (event_id,),
         ).fetchall()
         event["news"] = [dict(item) for item in news_rows]
+        event["context"] = _series_context(database, event)
     return event
 
 
