@@ -31,6 +31,7 @@ DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "data/runner-watch.db"))
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 REQUIRE_DATABASE_URL = os.getenv("REQUIRE_DATABASE_URL", "0") == "1"
 REQUIRE_DATABASE_TLS = os.getenv("REQUIRE_DATABASE_TLS", "0") == "1"
+ALLOW_NEWER_DATABASE_SCHEMA = os.getenv("ALLOW_NEWER_DATABASE_SCHEMA", "0") == "1"
 MIGRATION_LOCK_ID = 7_348_195_620_341_977_301
 
 
@@ -2159,7 +2160,7 @@ def _apply_migrations(db: DatabaseConnection) -> None:
         }
         known_versions = {migration.version for migration in MIGRATIONS}
         unknown = sorted(set(applied) - known_versions)
-        if unknown:
+        if unknown and not ALLOW_NEWER_DATABASE_SCHEMA:
             raise RuntimeError(f"Database has migrations newer than this app: {unknown}")
         for migration in MIGRATIONS:
             applied_name = applied.get(migration.version)

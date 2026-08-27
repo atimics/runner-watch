@@ -190,7 +190,15 @@ AI_REPORT_MODEL = os.getenv("AI_REPORT_MODEL", "gpt-5.6-terra")
 AI_REPORT_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 RATE_LIMIT_HASH_KEY_VALUE = os.getenv("RATE_LIMIT_HASH_KEY", "").strip()
-RATE_LIMIT_HASH_KEY = RATE_LIMIT_HASH_KEY_VALUE.encode() or secrets.token_bytes(32)
+
+
+def _rate_limit_hash_key(value: str) -> bytes:
+    """Normalize operator-provided text to a valid BLAKE2 key."""
+
+    return hashlib.sha256(value.encode()).digest() if value else secrets.token_bytes(32)
+
+
+RATE_LIMIT_HASH_KEY = _rate_limit_hash_key(RATE_LIMIT_HASH_KEY_VALUE)
 REQUIRE_RATE_LIMIT_HASH_KEY = os.getenv("REQUIRE_RATE_LIMIT_HASH_KEY", "0") == "1"
 OPENROUTER_RESEARCH_OUTPUT_TOKENS = max(
     4_000, int(os.getenv("OPENROUTER_RESEARCH_OUTPUT_TOKENS", "12000"))
