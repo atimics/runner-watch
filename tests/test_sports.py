@@ -200,6 +200,77 @@ def test_recent_team_news_is_attached_only_to_promoted_matchups(sports_db) -> No
     assert normalize_news_articles([pass_event], payload, collected_at) == []
 
 
+def test_event_linked_recap_stays_with_previous_game_and_builds_series_context(
+    sports_db,
+) -> None:
+    collected_at = datetime(2026, 8, 27, 2, 30, tzinfo=UTC)
+    previous_raw = sample_event(completed=True)
+    previous_raw["id"] = "401816681"
+    previous_raw["date"] = "2026-08-26T22:45:00Z"
+    previous_raw["competitions"][0]["competitors"][0]["score"] = "1"
+    previous_raw["competitions"][0]["competitors"][1]["score"] = "13"
+    previous = normalize_event("mlb", previous_raw)
+    assert previous is not None
+    previous["home_odds"] = None
+    previous["away_odds"] = None
+
+    upcoming_raw = sample_event()
+    upcoming_raw["id"] = "401816695"
+    upcoming_raw["date"] = "2026-08-27T17:05:00Z"
+    upcoming = normalize_event("mlb", upcoming_raw)
+    assert upcoming is not None
+
+    payload = {
+        "articles": [
+            {
+                "id": "49737429",
+                "headline": "Away Club rolls past Home Club in the series opener",
+                "published": "2026-08-27T02:01:31Z",
+                "source": "AP",
+                "links": {"web": {"href": "https://example.test/recap?gameId=401816681"}},
+                "categories": [
+                    {"type": "team", "team": {"id": "1"}},
+                    {"type": "team", "team": {"id": "2"}},
+                    {"type": "event", "event": {"id": "401816681"}},
+                ],
+            }
+        ]
+    }
+
+    articles = normalize_news_articles([previous, upcoming], payload, collected_at)
+
+    assert [article["event_id"] for article in articles] == [previous["id"]]
+    store_events([previous, upcoming], observed_at=collected_at)
+    stale = {**articles[0], "id": "stale-link", "event_id": upcoming["id"]}
+    store_news_articles([stale])
+    store_news_articles(
+        articles,
+        replace_event_ids=[str(previous["id"]), str(upcoming["id"])],
+    )
+
+    detail = sports_event(str(upcoming["id"]))
+    assert detail is not None
+    assert detail["news"] == []
+    assert detail["context"]["back_to_back"] is True
+    assert detail["context"]["series_game_number"] == 2
+    assert detail["context"]["series_game_count"] == 2
+    assert detail["context"]["previous_meeting"]["id"] == previous["id"]
+    assert detail["context"]["previous_meeting"]["recap"]["external_id"] == "49737429"
+    assert detail["context"]["head_to_head"]["away_wins"] == 1
+    assert detail["context"]["recent_form"][0]["record"] == "1-0"
+    assert detail["context"]["recent_form"][1]["record"] == "0-1"
+
+    response = sports_game_page(
+        str(upcoming["id"]),
+        request(path=f"/game/{upcoming['id']}"),
+        None,
+    )
+    assert b"Back-to-back rematch" in response.body
+    assert b"GAME RECAP" in response.body
+    assert b"Game 2 of 2" in response.body
+    assert b"timeZoneName:'short'" in response.body
+
+
 def test_paper_pick_freezes_odds_and_settles(sports_db) -> None:
     event = normalize_event("mlb", sample_event())
     assert event is not None

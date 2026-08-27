@@ -138,7 +138,7 @@
   }
   document.querySelectorAll('[data-local-time]').forEach(node=>{
     const date=new Date(node.dataset.localTime);
-    if(!Number.isNaN(date.valueOf()))node.textContent=date.toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'});
+    if(!Number.isNaN(date.valueOf()))node.textContent=date.toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit',timeZoneName:'short'});
   });
   const scheduleRefresh=()=>setTimeout(()=>{
     if(document.querySelector('dialog[open]'))return scheduleRefresh();

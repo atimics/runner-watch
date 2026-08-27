@@ -26,6 +26,70 @@
     </div>
   </header>
 
+  {% set game_context = event.context %}
+  <section class="series-context">
+    <header>
+      <div>
+        <span>SERIES &amp; FORM</span>
+        <h2>{{ game_context.headline }}</h2>
+      </div>
+      <div class="series-badges">
+        {% if game_context.back_to_back %}<b>BACK-TO-BACK</b>{% endif %}
+        {% if game_context.series_game_count > 1 %}<small>Game {{ game_context.series_game_number }} of {{ game_context.series_game_count }}</small>{% endif %}
+      </div>
+    </header>
+
+    {% if game_context.previous_meeting %}
+      {% set previous = game_context.previous_meeting %}
+      <div class="previous-meeting">
+        <div class="previous-meeting-meta">
+          <span>PREVIOUS MEETING</span>
+          <time data-local-time="{{ previous.start_time }}">{{ previous.start_time[:16]|replace('T',' ') }} UTC</time>
+          {% if game_context.between_starts_label %}<small>{{ game_context.between_starts_label }}</small>{% endif %}
+        </div>
+        <a class="previous-score" href="{{ sports_path_prefix or '' }}/game/{{ previous.id }}">
+          <span>{{ previous.away_abbreviation }} <b>{{ previous.away_score }}</b></span>
+          <i>FINAL</i>
+          <span>{{ previous.home_abbreviation }} <b>{{ previous.home_score }}</b></span>
+        </a>
+        {% if previous.recap %}
+        <a class="series-recap" href="{{ previous.recap.source_url }}" rel="nofollow noreferrer">
+          <small>GAME RECAP · {{ previous.recap.source_name }} · <time data-local-time="{{ previous.recap.published_at }}">{{ previous.recap.published_at[:16]|replace('T',' ') }} UTC</time></small>
+          <strong>{{ previous.recap.headline }}</strong>
+          <i aria-hidden="true">↗</i>
+        </a>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {% if game_context.head_to_head.meetings %}
+    <p class="head-to-head-summary">
+      Last {{ game_context.head_to_head.meetings }} meetings:
+      {{ event.away_abbreviation }} {{ game_context.head_to_head.away_wins }}–{{ game_context.head_to_head.home_wins }} {{ event.home_abbreviation }}{% if game_context.head_to_head.ties %} · {{ game_context.head_to_head.ties }} tied{% endif %}
+    </p>
+    {% endif %}
+
+    <div class="recent-form-grid">
+      {% for team in game_context.recent_form %}
+      <section>
+        <header><strong>{{ team.abbreviation }}</strong><span>{{ team.record }} · LAST {{ team.games|length }}</span></header>
+        <div class="form-games">
+          {% for game in team.games %}
+          <a href="{{ sports_path_prefix or '' }}/game/{{ game.id }}">
+            <time data-local-date="{{ game.start_time }}">{{ game.start_time[:10] }}</time>
+            <span><b class="result-{{ game.result|lower }}">{{ game.result }}</b> {{ game.venue_word }} {{ game.opponent_abbreviation }}</span>
+            <strong>{{ game.team_score }}–{{ game.opponent_score }}</strong>
+          </a>
+          {% else %}
+          <p>No completed games stored yet.</p>
+          {% endfor %}
+        </div>
+      </section>
+      {% endfor %}
+    </div>
+    <p class="context-note">Series and recent form are context only; this baseline model still uses season records and market odds.</p>
+  </section>
+
   {% if prediction %}
     {% if prediction.selection != 'pass' %}
       {% set pick_name = event[prediction.selection ~ '_team_name'] %}
@@ -152,7 +216,10 @@
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
   document.querySelectorAll('[data-local-time]').forEach(node=>{
-    const date=new Date(node.dataset.localTime);if(!Number.isNaN(date.valueOf()))node.textContent=date.toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+    const date=new Date(node.dataset.localTime);if(!Number.isNaN(date.valueOf()))node.textContent=date.toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'});
+  });
+  document.querySelectorAll('[data-local-date]').forEach(node=>{
+    const date=new Date(node.dataset.localDate);if(!Number.isNaN(date.valueOf()))node.textContent=date.toLocaleDateString([],{month:'short',day:'numeric'});
   });
   document.querySelectorAll('[data-pick]').forEach(button=>button.addEventListener('click',async()=>{
     const status=document.getElementById('pickStatus');button.disabled=true;status.textContent='Freezing the receipt…';
