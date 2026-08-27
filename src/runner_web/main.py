@@ -49,6 +49,7 @@ from webauthn.helpers.structs import (
 )
 
 from runner_watch.chart_features import analyze_market_structure, clean_ohlcv
+from runner_watch.massive_data import refresh_massive_backfill
 from runner_watch.models import ScanSettings
 from runner_watch.risk import RiskInput, assess_risk
 from runner_watch.scanner import RunnerScanner
@@ -332,6 +333,7 @@ def _start_worker_tasks() -> list[asyncio.Task[Any]]:
         asyncio.create_task(apewisdom_source_worker(), name="apewisdom"),
         asyncio.create_task(outcome_worker(), name="outcomes"),
         asyncio.create_task(scan_collection_worker(), name="scan-collection"),
+        asyncio.create_task(massive_backfill_worker(), name="massive-backfill"),
         asyncio.create_task(research_job_worker(), name="research-jobs"),
     ]
     if SPORTS_INGESTION_ENABLED:
@@ -857,6 +859,25 @@ async def scan_collection_worker() -> None:
             except Exception as exc:
                 worker_state("background_scan_last_error", str(exc)[:500])
         await asyncio.sleep(BACKGROUND_SCAN_INTERVAL_SECONDS)
+
+
+async def massive_backfill_worker() -> None:
+    """Keep the Massive grouped daily cache warm.
+
+    Each pass fetches at most MASSIVE_BACKFILL_CALLS uncached sessions, so the
+    cache self-heals after a deploy and stays quiet once warm.
+    """
+    await asyncio.sleep(90)
+    while True:
+        try:
+            result = await run_in_threadpool(refresh_massive_backfill)
+            worker_state("massive_backfill_last_refresh", json.dumps(result, separators=(",", ":")))
+            worker_state("massive_backfill_last_error", "")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            worker_state("massive_backfill_last_error", str(exc)[:500])
+        await asyncio.sleep(3600)
 
 
 async def sports_ingestion_worker() -> None:

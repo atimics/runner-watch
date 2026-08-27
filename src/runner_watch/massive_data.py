@@ -16,6 +16,8 @@ Environment:
 - MASSIVE_MAX_SCAN_CALLS: uncached-session budget per scan-time fetch, default 10.
 - MASSIVE_CACHE_PATH: SQLite cache location, default data/massive_daily.sqlite3.
 - MASSIVE_TIMEOUT_SECONDS: per-request HTTP timeout, default 15.
+- MASSIVE_BACKFILL_CALLS: uncached-session budget for each worker warm-up pass,
+  default 20. A warm cache makes no calls.
 """
 
 from __future__ import annotations
@@ -106,6 +108,14 @@ def massive_timeout_seconds() -> float:
         return max(1.0, float(os.getenv("MASSIVE_TIMEOUT_SECONDS", "15").strip() or "15"))
     except ValueError:
         return 15.0
+
+
+def massive_backfill_calls() -> int:
+    """Uncached-session budget for one worker warm-up pass."""
+    try:
+        return max(0, int(os.getenv("MASSIVE_BACKFILL_CALLS", "20").strip() or "20"))
+    except ValueError:
+        return 20
 
 
 def _weekdays(start: date, end: date) -> list[date]:
@@ -421,6 +431,10 @@ class MassiveClient:
 
         status = payload.get("status")
         results = payload.get("results")
+        if status == "OK" and results is None:
+            # Market holidays return no results; cache them as empty sessions
+            # so they are not refetched on every scan.
+            results = []
         if status != "OK" or not isinstance(results, list):
             self._record(
                 SourceFetch.failure(
@@ -625,6 +639,29 @@ def backfill_daily_cache(
         "sessions_cached_before": len(sessions) - len(uncached),
         "sessions_fetched": fetched,
     }
+
+
+def refresh_massive_backfill() -> dict[str, int | bool]:
+    """Warm the daily cache from the environment for the worker loop.
+
+    Makes no API calls when the cache is already warm. Returns stats for the
+    worker heartbeat state and closes its cache connection after each pass.
+    """
+    if not massive_enabled():
+        return {"enabled": False}
+    adapter = massive_bar_adapter()
+    if adapter is None:  # pragma: no cover - enabled() guarantees a key
+        return {"enabled": False}
+    try:
+        return backfill_daily_cache(
+            adapter.client,
+            adapter.cache,
+            days=365,
+            budget=massive_backfill_calls(),
+            prune_days=730,
+        )
+    finally:
+        adapter.cache.close()
 
 
 def main() -> int:
