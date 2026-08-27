@@ -13,7 +13,30 @@
       {% endif %}
     </header>
     {% include "_market_clock.html" %}
-    <div class="kol-score-strip" id="kolScoreStrip" aria-live="polite"></div>
+    {% if pulse.kols and (pulse.kols[0].calls or pulse.kols[0].active_calls) %}
+      {% set kol = pulse.kols[0] %}
+      {% set paper_pnl = kol.paper_pnl|float %}
+      <aside class="kol-score-strip" aria-label="Flash paper Call record">
+        <span class="kol-avatar" aria-hidden="true">{{ kol.emoji or '⚡' }}</span>
+        <span>
+          <strong>
+            {{ kol.display_name }}
+            <i class="flash-model-label">{{ kol.inference_model_label }}</i>
+          </strong>
+          <small>
+            {{ kol.active_calls|int }} open · {{ kol.calls|int }} calls ·
+            {% if kol.hit_rate is none %}
+              no results
+            {% else %}
+              {{ '%.0f'|format(kol.hit_rate|float * 100) }}% hit
+            {% endif %}
+          </small>
+        </span>
+        <b class="{{ 'up' if paper_pnl >= 0 else 'down' }}">
+          {{ '+' if paper_pnl >= 0 else '−' }}${{ '%.2f'|format(paper_pnl|abs) }}
+        </b>
+      </aside>
+    {% endif %}
     <button class="pulse-refresh" id="pulseRefresh" type="button" aria-live="polite" hidden>1 new ticker</button>
 
     <main class="list-section pulse-feed">
@@ -27,64 +50,101 @@
 {% endblock %}
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
-let pulse={{ pulse|tojson }};
-const list=document.getElementById('pulseList');
-const more=document.getElementById('pulseMore');
-const refreshButton=document.getElementById('pulseRefresh');
-let loadingMore=false;
-let pendingPulse=null;
-function esc(value){const node=document.createElement('span');node.textContent=String(value??'');return node.innerHTML;}
-function entryKey(row){return row?.entered_at?`${row.ticker}|${row.entered_at}`:'';}
-function renderKols(){
-  const box=document.getElementById('kolScoreStrip');
-  const kol=(pulse.kols||[])[0];
-  if(!kol){box.hidden=true;return;}
-  box.hidden=false;
-  const pnl=Number(kol.paper_pnl||0);const hit=kol.hit_rate==null?'no results':`${(Number(kol.hit_rate)*100).toFixed(0)}% hit`;
-  box.innerHTML=`<span class="kol-avatar">${esc(kol.emoji||'⚡')}</span><span><strong>${esc(kol.display_name)} <i class="flash-model-label">${esc(kol.inference_model_label||'')}</i></strong><small>${Number(kol.active_calls||0)} open · ${Number(kol.calls||0)} calls · ${esc(hit)}</small></span><b class="${pnl>=0?'up':'down'}">${pnl>=0?'+':'−'}$${Math.abs(pnl).toFixed(2)}</b>`;
+let pulse = {{ pulse|tojson }};
+const list = document.getElementById('pulseList');
+const more = document.getElementById('pulseMore');
+const refreshButton = document.getElementById('pulseRefresh');
+const chartsUrl = '/api/pulse/charts';
+let loadingMore = false;
+let polling = false;
+let pollCount = 0;
+let pendingPulse = null;
+
+function entryKey(row) {
+  return row?.entered_at ? `${row.ticker}|${row.entered_at}` : '';
 }
+
+function mergeUniqueTickers(primaryRows, secondaryRows) {
+  const tickers = new Set();
+  return [...primaryRows, ...secondaryRows].filter(row => {
+    if (tickers.has(row.ticker)) return false;
+    tickers.add(row.ticker);
+    return true;
+  });
+}
+
 function render() {
   const rows = pulse.rows || [];
-  list.innerHTML = rows.length?`<div class="token-list">${rows.map(row=>TickerRow.render(row)).join('')}</div>`:`<div class="empty-list pulse-empty"><span class="empty-seal" aria-hidden="true"></span><strong>No verified movement</strong><p>The tape is quiet. New evidence will appear here.</p></div>`;
-  more.hidden=!pulse.has_more;
+  list.innerHTML = rows.length
+    ? `<div class="token-list">${rows.map(row => TickerRow.render(row)).join('')}</div>`
+    : `<div class="empty-list pulse-empty"><span class="empty-seal" aria-hidden="true"></span><strong>No verified movement</strong><p>The tape is quiet. New evidence will appear here.</p></div>`;
+  more.hidden = !pulse.has_more;
   TickerRow.paintCharts();
 }
-async function loadMore(){
-  if(loadingMore||!pulse.has_more)return;
-  loadingMore=true;more.classList.add('loading');
-  try{
-    const response=await fetch(`/api/pulse?offset=${pulse.next_offset||pulse.rows.length}&limit=20`);
-    if(!response.ok)return;
-    const next=await response.json();
-    const known=new Set((pulse.rows||[]).map(row=>row.ticker));
-    pulse.rows=[...(pulse.rows||[]),...(next.rows||[]).filter(row=>!known.has(row.ticker))];
-    pulse.next_offset=next.next_offset;pulse.has_more=next.has_more;render();
-  }finally{loadingMore=false;more.classList.remove('loading');}
+
+async function loadMore() {
+  if (loadingMore || !pulse.has_more) return;
+  loadingMore = true;
+  more.classList.add('loading');
+  try {
+    const offset = pulse.next_offset || pulse.rows.length;
+    const response = await fetch(`/api/pulse?offset=${offset}&limit=20`);
+    if (!response.ok) return;
+    const next = await response.json();
+    pulse.rows = mergeUniqueTickers(pulse.rows || [], next.rows || []);
+    pulse.next_offset = next.next_offset;
+    pulse.has_more = next.has_more;
+    render();
+  } finally {
+    loadingMore = false;
+    more.classList.remove('loading');
+  }
 }
-new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting))loadMore();},{rootMargin:'240px'}).observe(more);
-render();TickerRow.loadCharts('/api/pulse/charts');let pollCount=0;
-refreshButton.addEventListener('click',()=>{
-  if(!pendingPulse)return;
-  const freshTickers=new Set((pendingPulse.rows||[]).map(row=>row.ticker));
-  const tail=(pulse.rows||[]).filter(row=>!freshTickers.has(row.ticker));
-  pulse={...pendingPulse,rows:[...(pendingPulse.rows||[]),...tail],next_offset:Math.max(pendingPulse.next_offset||0,pulse.next_offset||0),has_more:pendingPulse.has_more||pulse.has_more};
-  pendingPulse=null;refreshButton.hidden=true;render();TickerRow.loadCharts('/api/pulse/charts');
+
+new IntersectionObserver(entries => {
+  if (entries.some(entry => entry.isIntersecting)) loadMore();
+}, {rootMargin: '240px'}).observe(more);
+
+refreshButton.addEventListener('click', () => {
+  if (!pendingPulse) return;
+  pulse = {
+    ...pendingPulse,
+    rows: mergeUniqueTickers(pendingPulse.rows || [], pulse.rows || []),
+    next_offset: Math.max(pendingPulse.next_offset || 0, pulse.next_offset || 0),
+    has_more: pendingPulse.has_more || pulse.has_more,
+  };
+  pendingPulse = null;
+  refreshButton.hidden = true;
+  render();
+  TickerRow.loadCharts(chartsUrl);
 });
-setInterval(async () => {
+
+async function pollForUpdates() {
+  if (polling || document.hidden) return;
+  polling = true;
   try {
     const response = await fetch('/api/pulse?offset=0&limit=20');
     if (response.ok) {
       const nextPulse = await response.json();
-      const currentEntries=new Set((pulse.rows||[]).map(entryKey).filter(Boolean));
-      const newCount=(nextPulse.rows||[]).filter(row=>!currentEntries.has(entryKey(row))).length;
-      if(newCount){
-        pendingPulse=nextPulse;
-        refreshButton.textContent=newCount===1?'1 new ticker':`${newCount} new tickers`;
-        refreshButton.hidden=false;
+      const currentEntries = new Set((pulse.rows || []).map(entryKey).filter(Boolean));
+      const newCount = (nextPulse.rows || []).filter(row => !currentEntries.has(entryKey(row))).length;
+      if (newCount) {
+        pendingPulse = nextPulse;
+        refreshButton.textContent = newCount === 1 ? '1 new ticker' : `${newCount} new tickers`;
+        refreshButton.hidden = false;
       }
-      pollCount+=1;if(pollCount%6===0)TickerRow.loadCharts('/api/pulse/charts');
+      pollCount += 1;
+      if (pollCount % 6 === 0) TickerRow.loadCharts(chartsUrl);
     }
-  } catch (_) {}
-}, 30000);
+  } catch (_) {
+    // Keep the current feed when a background refresh fails.
+  } finally {
+    polling = false;
+  }
+}
+
+render();
+TickerRow.loadCharts(chartsUrl);
+setInterval(pollForUpdates, 30000);
 </script>
 {% endblock %}
