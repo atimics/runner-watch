@@ -249,10 +249,8 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     assert b"Full slate" not in response.body
     assert b'class="sports-hero"' not in response.body
     assert b'class="sports-scoreboard pulse-summary"' not in response.body
-    assert b'id="sportsAnnouncement"' in response.body
-    assert b'data-announcement-version="sports-intro-2026-08-26"' in response.body
-    assert b"localStorage.getItem(announcementKey)" in response.body
-    assert b"Today\xe2\x80\x99s slate" in response.body
+    assert b'id="sportsAnnouncement"' not in response.body
+    assert b"localStorage.getItem(announcementKey)" not in response.body
 
     detail = sports_event(event["id"])
     assert detail is not None
