@@ -300,9 +300,6 @@ def test_sports_pulse_hides_passes_and_radar_keeps_real_moves(sports_db) -> None
 
 
 def test_sports_alpha_builds_team_and_player_win_rate_history(sports_db) -> None:
-    event = normalize_event("mlb", sample_event(completed=True))
-    assert event is not None
-    store_events([event])
     payload = {
         "boxscore": {
             "players": [
@@ -341,7 +338,13 @@ def test_sports_alpha_builds_team_and_player_win_rate_history(sports_db) -> None
             ]
         }
     }
-    store_player_appearances(normalize_player_appearances(event, payload))
+    for event_number in range(1, 4):
+        raw = sample_event(completed=True)
+        raw["id"] = f"40100000{event_number}"
+        event = normalize_event("mlb", raw)
+        assert event is not None
+        store_events([event])
+        store_player_appearances(normalize_player_appearances(event, payload))
 
     alpha = sports_alpha("mlb")
     home_team = next(team for team in alpha["teams"] if team["abbreviation"] == "HOM")
@@ -349,7 +352,7 @@ def test_sports_alpha_builds_team_and_player_win_rate_history(sports_db) -> None
     assert home_team["win_rate"] == 60.0
     assert home_team["history"]
     assert player["win_rate"] == 100.0
-    assert player["games"] == 1
+    assert player["games"] == 3
 
 
 def test_sports_host_has_radar_and_alpha_products(sports_db) -> None:

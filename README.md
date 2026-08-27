@@ -18,6 +18,13 @@ paper picks with frozen odds; completed games settle them as wins, losses, or pu
 not place bets or connect to sportsbooks. Its current scoreboard source is marked as a preview feed
 until data rights and a licensed replacement are reviewed.
 
+Sports now follows the same three-part product shape as Runners. **Pulse** ranks only Lean and Watch
+model-versus-market gaps by default while keeping the full slate one tap away. **Radar** shows
+material price or model changes only for games that entered Pulse. **Alpha** ranks current team win
+rates with their stored change history and adds players after at least three completed box-score
+appearances. A player rate means the team result in games where that player appeared; it is not an
+individual skill score.
+
 The public scanner defaults to listed US penny stocks from $0.20 to $5 with market caps below
 about $2B. It combines Yahoo's strongest movers, most active names, and largest losers before
 checking daily liquidity and 5-minute bars. A second mode widens the price ceiling to $20. A third

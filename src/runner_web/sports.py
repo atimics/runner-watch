@@ -1047,6 +1047,16 @@ def _event_row(database: Any, row: Any) -> dict[str, Any]:
     item["prediction"] = _latest_prediction(database, str(item["id"]))
     item["edge_history"] = _edge_sparkline(database, item, item["prediction"])
     item["news_count"], item["latest_news"] = _news_summary(database, str(item["id"]))
+    item["was_promoted"] = (
+        database.execute(
+            """
+            SELECT 1 FROM sports_predictions
+            WHERE event_id=? AND signal IN ('lean','watch') LIMIT 1
+            """,
+            (item["id"],),
+        ).fetchone()
+        is not None
+    )
     item.update(_event_attention(item))
     return item
 
@@ -1147,7 +1157,7 @@ def sports_radar(league: str = "all", limit: int = 40) -> dict[str, Any]:
         signal = str(prediction.get("signal") or "")
         market_move = float(event.get("market_move_pct") or 0)
         model_move = float(event.get("model_change_pct") or 0)
-        if event.get("status") == "in":
+        if event.get("status") == "in" and event.get("was_promoted"):
             item = dict(event)
             item.update(
                 radar_kind="live",
@@ -1194,9 +1204,9 @@ def sports_radar(league: str = "all", limit: int = 40) -> dict[str, Any]:
         "events": changes[: max(1, min(limit, 100))],
         "change_count": len(changes),
         "tracked_count": sum(
-            str((event.get("prediction") or {}).get("signal")) in PROMOTED_SIGNALS
+            bool(event.get("was_promoted"))
             for event in payload["events"]
-            if event.get("status") == "pre"
+            if event.get("status") in {"pre", "in"}
         ),
     }
 
@@ -1311,6 +1321,7 @@ def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
                 "wins": wins,
                 "losses": losses,
                 "games": games,
+                "stored_games": len(outcomes),
                 "win_rate": round(wins / games * 100, 1),
                 "recent_win_rate": recent_rate,
                 "trend_pct": round(history[-1] - history[0], 1) if len(history) > 1 else 0.0,
@@ -1343,7 +1354,7 @@ def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
     for player in player_groups.values():
         outcomes = player.pop("outcomes")
         games = len(outcomes)
-        if not games:
+        if games < 3:
             continue
         wins = sum(won for _, won in outcomes)
         history = _rate_history(outcomes)
@@ -1365,6 +1376,7 @@ def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
     return {
         "teams": team_rows[: max(1, min(limit, 100))],
         "players": player_output[: max(1, min(limit, 100))],
+        "player_min_games": 3,
         "league": selected_league,
         "leagues": [{"key": key, "name": value["name"]} for key, value in LEAGUES.items()],
         "updated_at": _iso(),

@@ -30,7 +30,7 @@
         <span class="leader-rate"><b>{{ '%.1f'|format(leader.win_rate) }}%</b><small class="{% if leader.trend_pct >= 0 %}positive{% else %}negative{% endif %}">{{ '%+.1f'|format(leader.trend_pct) }}pp</small></span>
       </div>
       <svg class="rate-chart rate-chart-large" data-rate-history="{{ leader.history|join(',') }}" viewBox="0 0 320 86" role="img" aria-label="{{ leader.name }} win rate history"></svg>
-      <div class="leader-foot"><span>Last 10 stored games: {{ '%.1f'|format(leader.recent_win_rate) }}%</span><span>{{ leader.games }} season games</span></div>
+      <div class="leader-foot"><span>{% if leader.stored_games %}Last {{ [leader.stored_games, 10]|min }} stored games: {{ '%.1f'|format(leader.recent_win_rate) }}%{% else %}History starts at the current season rate{% endif %}</span><span>{{ leader.games }} season games</span></div>
     </article>
 
     <section class="performance-ranking" aria-label="Team win rate ranking">
@@ -38,7 +38,7 @@
       <article class="performance-row">
         <span class="rank-number">{{ loop.index + 1 }}</span>
         <span class="team-orb small">{{ team.abbreviation[:3] }}</span>
-        <span class="performance-name"><strong>{{ team.name }}</strong><small>{{ team.league|upper }} · {{ team.wins }}–{{ team.losses }} · last 10 {{ '%.0f'|format(team.recent_win_rate) }}%</small></span>
+        <span class="performance-name"><strong>{{ team.name }}</strong><small>{{ team.league|upper }} · {{ team.wins }}–{{ team.losses }}{% if team.stored_games %} · last {{ [team.stored_games, 10]|min }} stored {{ '%.0f'|format(team.recent_win_rate) }}%{% endif %}</small></span>
         <svg class="rate-chart" data-rate-history="{{ team.history|join(',') }}" viewBox="0 0 92 32" role="img" aria-label="{{ team.name }} win rate history"></svg>
         <span class="performance-rate"><b>{{ '%.1f'|format(team.win_rate) }}%</b><small class="{% if team.trend_pct >= 0 %}positive{% else %}negative{% endif %}">{{ '%+.1f'|format(team.trend_pct) }}pp</small></span>
       </article>
@@ -64,7 +64,7 @@
     {% endfor %}
   </section>
   {% else %}
-    <div class="sports-empty"><strong>Player history is filling now.</strong><p>Completed box scores will add players automatically; no empty roster guesses are shown.</p></div>
+    <div class="sports-empty"><strong>Player history is filling now.</strong><p>A player appears here after {{ alpha.player_min_games }} completed box-score appearances, so one-game noise never becomes “alpha.”</p></div>
   {% endif %}
 </section>
 
