@@ -2030,15 +2030,19 @@ def test_first_daily_flash_report_locks_other_users_for_one_hour(
 
 
 def test_ticker_commissions_flash_with_no_browser_key() -> None:
-    template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
+    root = Path(__file__).parents[1]
+    template = (root / "web/templates/ticker.html").read_text()
+    script = (root / "web/static/ticker-detail.js").read_text()
 
     assert "Generate today's report" in template
-    assert "Retry Flash" in template
+    assert "Retry Flash" in script
     assert "100 Flash" in template
     assert "commissionButton" in template
-    assert "fetch(`/api/research/${encodeURIComponent(ticker)}`,{method:'POST'})" in template
-    assert "runnerOpenRouter" not in template
-    assert "X-OpenRouter-Key" not in template
+    assert "fetch(`/api/research/${encodeURIComponent(ticker)}`" in script
+    assert 'id="tickerPageData" type="application/json"' in template
+    assert 'src="/static/ticker-detail.js?v={{ static_version }}" defer' in template
+    assert "runnerOpenRouter" not in template + script
+    assert "X-OpenRouter-Key" not in template + script
     assert '<strong>Daily Flash</strong><span>100 Flash · private 1h</span>' in template
     assert "{{ flash.model }}" not in template
 
