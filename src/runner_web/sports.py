@@ -13,6 +13,7 @@ from typing import Any
 from runner_watch.ingestion import SourceFetch
 from runner_web.caller_ids import ensure_caller_identity_with_database
 from runner_web.db import connection
+from runner_web.flash_wallet import WINNING_CALL_REWARD, credit_flash
 from runner_web.ingestion import record_source_fetch
 from runner_web.odds_api import PROVIDER as ODDS_PROVIDER
 from runner_web.odds_api import (
@@ -1047,7 +1048,8 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
 
 
 def settle_picks() -> int:
-    timestamp = _iso()
+    current = datetime.now(UTC)
+    timestamp = _iso(current)
     settled = 0
     with connection() as database:
         rows = database.execute(
@@ -1079,6 +1081,15 @@ def settle_picks() -> int:
                 """,
                 (result, round(units, 4), timestamp, timestamp, row["id"]),
             )
+            if changed.rowcount == 1 and result == "win":
+                credit_flash(
+                    database,
+                    str(row["user_id"]),
+                    WINNING_CALL_REWARD,
+                    kind="sports_call_win",
+                    reference_id=str(row["id"]),
+                    at=current,
+                )
             settled += max(changed.rowcount, 0)
     return settled
 
@@ -3169,6 +3180,9 @@ def sports_alpha_board(league: str = "all", limit: int = 50) -> dict[str, Any]:
                 ),
                 "return_tone": (
                     "up" if return_units is not None and return_units >= 0 else "down"
+                ),
+                "reward_label": (
+                    f"+{WINNING_CALL_REWARD} Flash" if result == "win" else None
                 ),
                 "created_at": str(pick["created_at"]),
             }

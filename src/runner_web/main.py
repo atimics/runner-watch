@@ -85,6 +85,7 @@ from runner_web.flash_wallet import (
     PUBLISH_REPORT_REWARD,
     REPORT_COST,
     REPORT_EXCLUSIVE_HOURS,
+    WINNING_CALL_REWARD,
     InsufficientFlashError,
     claim_daily_flash,
     credit_flash,
@@ -762,6 +763,7 @@ def page_context(request: Request, session_token: str | None, **extra: Any) -> d
         "sports_path_prefix": "" if product_for_request(request) == "sports" else "/sports",
         "market_clock": market_clock(),
         "flash": actor_snapshot(),
+        "winning_call_reward": WINNING_CALL_REWARD,
         **extra,
     }
 

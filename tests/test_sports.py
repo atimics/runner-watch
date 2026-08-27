@@ -11,6 +11,7 @@ from runner_web import db
 from runner_web import main as web_main
 from runner_web import sports as sports_module
 from runner_web.db import connection, init_db
+from runner_web.flash_wallet import WINNING_CALL_REWARD, wallet_for_user
 from runner_web.main import (
     alpha_page,
     home,
@@ -306,13 +307,50 @@ def test_paper_pick_freezes_odds_and_settles(sports_db) -> None:
         settled = database.execute(
             "SELECT * FROM sports_picks WHERE id=?", (pick["id"],)
         ).fetchone()
+        rewards = database.execute(
+            "SELECT amount,kind,reference_id FROM flash_transactions WHERE user_id=?",
+            ("user-1",),
+        ).fetchall()
     assert settled["result"] == "win"
     assert settled["return_units"] == pytest.approx(100 / 130, abs=0.0001)
+    assert [tuple(reward) for reward in rewards] == [
+        (WINNING_CALL_REWARD, "sports_call_win", pick["id"])
+    ]
+    assert wallet_for_user("user-1")["balance"] == WINNING_CALL_REWARD
+
+    assert settle_picks() == 0
+    assert wallet_for_user("user-1")["balance"] == WINNING_CALL_REWARD
 
     settled_board = sports_alpha_board("mlb")
     assert settled_board["active_calls"] == 0
     assert settled_board["calls"][0]["status"] == "win"
     assert settled_board["calls"][0]["return_label"].endswith("u")
+    assert settled_board["calls"][0]["reward_label"] == f"+{WINNING_CALL_REWARD} Flash"
+
+
+def test_losing_sports_call_does_not_earn_flash(sports_db) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) "
+            "VALUES('loser','loser','Loser','active',?)",
+            (datetime.now(UTC).isoformat(),),
+        )
+    create_sports_pick("loser", event["id"], "away")
+
+    final_event = normalize_event("mlb", sample_event(completed=True))
+    assert final_event is not None
+    store_events([final_event])
+
+    assert settle_picks() == 1
+    assert wallet_for_user("loser")["balance"] == 0
+    with connection() as database:
+        reward_count = database.execute(
+            "SELECT COUNT(*) AS count FROM flash_transactions WHERE user_id='loser'"
+        ).fetchone()["count"]
+    assert reward_count == 0
 
 
 def test_sports_host_gets_the_sports_product(sports_db) -> None:
@@ -350,6 +388,7 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     assert b"They can point to different teams" in detail_response.body
     assert b"Team news" in detail_response.body
     assert b"Make a paper pick" in detail_response.body
+    assert f"A winning Call earns {WINNING_CALL_REWARD} Flash".encode() in detail_response.body
 
 
 def test_slate_builds_fixed_side_edge_history(sports_db) -> None:

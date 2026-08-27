@@ -253,7 +253,7 @@
   <section class="paper-pick">
     <span>PUBLIC RECEIPT</span>
     <h2>Make a paper pick</h2>
-    <p>The current moneyline and time will be frozen. This does not place a real bet.</p>
+    <p>The current moneyline and time will be frozen. A winning Call earns {{ winning_call_reward }} Flash. This does not place a real bet.</p>
     {% if not user %}
       <a href="/login">Log in to make a paper pick</a>
     {% elif event.status != 'pre' or not odds %}
@@ -270,7 +270,7 @@
   <section class="public-picks">
     <h3>Public paper picks</h3>
     {% for pick in event.picks %}
-      <div><strong>{{ pick.caller_handle }}</strong><span>{{ event[pick.selection ~ '_abbreviation'] }} {{ '%+d'|format(pick.american_odds) }} · {{ pick.status }}{% if pick.result %} / {{ pick.result }}{% endif %}</span></div>
+      <div><strong>{{ pick.caller_handle }}</strong><span>{{ event[pick.selection ~ '_abbreviation'] }} {{ '%+d'|format(pick.american_odds) }} · {{ pick.status }}{% if pick.result %} / {{ pick.result }}{% endif %}{% if pick.result == 'win' %} · +{{ winning_call_reward }} Flash{% endif %}</span></div>
     {% else %}<p>No public picks yet.</p>{% endfor %}
   </section>
 

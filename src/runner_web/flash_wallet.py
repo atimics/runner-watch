@@ -10,6 +10,7 @@ DAILY_CLAIM_AMOUNT = 100
 REPORT_COST = 100
 COMMENT_COST = 10
 PUBLISH_REPORT_REWARD = 50
+WINNING_CALL_REWARD = 25
 REPORT_EXCLUSIVE_HOURS = 1
 
 
@@ -65,6 +66,7 @@ def _wallet_payload(row: Any, current: datetime) -> dict[str, Any]:
         "report_cost": REPORT_COST,
         "comment_cost": COMMENT_COST,
         "publish_reward": PUBLISH_REPORT_REWARD,
+        "winning_call_reward": WINNING_CALL_REWARD,
     }
 
 
