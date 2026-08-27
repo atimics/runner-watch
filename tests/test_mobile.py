@@ -924,6 +924,63 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
     assert alpha["pulse_label"] == "Bluesky · 4 cashtag mentions"
 
 
+def test_negative_social_counts_do_not_break_pulse_or_radar(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "negative-social-counts.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    captured_at = timestamp.isoformat()
+    insert_scan_run("negative-social-run", captured_at, 1)
+    insert_scored_snapshot(
+        "negative-social-snapshot",
+        "negative-social-run",
+        "SAFE",
+        40,
+        1,
+        captured_at,
+    )
+    fetch = SourceFetch.success(
+        source="test_discovery",
+        feed="social",
+        locator="https://example.test/discovery",
+        started_at=timestamp,
+        payload={"ticker": "SAFE"},
+        content_type="application/json",
+    )
+    record_source_batch(
+        SourceBatch(
+            fetch=fetch,
+            market_events=(
+                MarketEvent(
+                    event_id="negative-social",
+                    ticker="SAFE",
+                    event_type="social_spike",
+                    event_at=timestamp,
+                    published_at=timestamp,
+                    status="active",
+                    source_url="https://example.test/social/safe",
+                    payload={
+                        "mention_count": -3,
+                        "engagement_count": -8,
+                        "network_label": "Social",
+                    },
+                ),
+            ),
+        )
+    )
+    web_main.RADAR_DATA_CACHE.clear()
+
+    pulse = pulse_data()["rows"][0]
+    radar = radar_data()[0]
+
+    assert pulse["external_social_mentions"] == 0
+    assert pulse["score_components"]["social_search"] == 0.0
+    assert radar["ticker"] == "SAFE"
+    assert radar["external_social_mentions"] == 0
+    assert radar["external_social_engagement"] == 0
+
+
 def test_ticker_detail_explains_form_four_purchase(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
