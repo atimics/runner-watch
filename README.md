@@ -26,12 +26,12 @@ snapshots per league slate: opening, pregame, and close. The 500-credit plan has
 limit and a protected 50-credit reserve. Quota headers are checked before paid calls, and cached odds
 are served between snapshots. The key stays on the server and is never sent to the browser or logs.
 
-Sports now follows the same three-part product shape as Runners. **Pulse** ranks only Lean and Watch
-model-versus-market gaps by default while keeping the full slate one tap away. **Radar** shows
-material price or model changes only for games that entered Pulse. **Alpha** ranks current team win
-rates with their stored change history and adds players after at least three completed box-score
-appearances. A player rate means the team result in games where that player appeared; it is not an
-individual skill score.
+Sports uses the same three public views as Runners. **Pulse** ranks current Lean and Watch
+model-versus-market gaps. **Radar** shows material odds or model changes only for games that entered
+Pulse. **Alpha** is the public Call ledger: each winner is treated like a ticker, its no-vig market
+probability is treated like a price, and every paper Call keeps its entry odds, current mark, and
+settled PnL. The old Receipts URLs redirect to Alpha. Sealed pregame model and odds records remain on
+each game page as supporting evidence.
 
 The public scanner defaults to listed US penny stocks from $0.20 to $5 with market caps below
 about $2B. It combines Yahoo's strongest movers, most active names, and largest losers before
@@ -200,8 +200,9 @@ deterministic `AVOID` or `EXIT` state overrides the generated wording.
 `/billing` is now the Flash wallet. It has no subscription or Pro gate. A user starts at zero and
 must press the daily claim button to receive 100 Flash. The claim is available once per UTC day and
 missed days are not backfilled. A daily Flash report costs 100, an AI-written ticker comment costs
-10, and publishing during the private alpha hour earns 50 once. Ledger references make claims,
-charges, refunds, and publishing rewards safe to retry without paying twice.
+10, publishing during the private alpha hour earns 50 once, and a winning sports Call earns 25 once
+its final score settles. Ledger references make claims, charges, refunds, and rewards safe to retry
+without paying twice.
 
 Buying Flash credit packs is intentionally paused. Historical subscription columns remain only so
 existing databases migrate safely. The public product plan, including features that are explicitly
@@ -375,7 +376,7 @@ more useful during pre-market than a simple comparison with a full day's average
 - The saved quick list will age. Use the full list or your own symbols for better coverage.
 - The public beta uses one PostgreSQL node with daily volume snapshots. It is not highly available
   yet; a managed or replicated PostgreSQL service is the next database reliability step.
-- Flash credit packs cannot be purchased yet; only daily claims and publishing rewards are live.
+- Flash credit packs cannot be purchased yet; only daily claims and earned rewards are live.
 - This is a research tool, not financial advice or an automatic buy signal.
 
 Always confirm price, spread, volume, halt status, and news in a live broker before trading.

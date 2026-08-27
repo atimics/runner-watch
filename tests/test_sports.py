@@ -11,6 +11,7 @@ from runner_web import db
 from runner_web import main as web_main
 from runner_web import sports as sports_module
 from runner_web.db import connection, init_db
+from runner_web.flash_wallet import WINNING_CALL_REWARD, wallet_for_user
 from runner_web.main import (
     alpha_page,
     home,
@@ -18,6 +19,7 @@ from runner_web.main import (
     product_for_request,
     radar_page,
     sports_game_page,
+    sports_receipts_page,
 )
 from runner_web.sports import (
     collect_stored_player_appearances,
@@ -31,7 +33,9 @@ from runner_web.sports import (
     predict_event,
     settle_picks,
     sports_alpha,
+    sports_alpha_board,
     sports_event,
+    sports_flash_evidence,
     sports_pulse,
     sports_radar,
     sports_slate,
@@ -201,6 +205,79 @@ def test_recent_team_news_is_attached_only_to_promoted_matchups(sports_db) -> No
     assert normalize_news_articles([pass_event], payload, collected_at) == []
 
 
+def test_event_linked_recap_stays_with_previous_game_and_builds_series_context(
+    sports_db,
+) -> None:
+    collected_at = datetime(2026, 8, 27, 2, 30, tzinfo=UTC)
+    previous_raw = sample_event(completed=True)
+    previous_raw["id"] = "401816681"
+    previous_raw["date"] = "2026-08-26T22:45:00Z"
+    previous_raw["competitions"][0]["competitors"][0]["score"] = "1"
+    previous_raw["competitions"][0]["competitors"][1]["score"] = "13"
+    previous = normalize_event("mlb", previous_raw)
+    assert previous is not None
+    previous["home_odds"] = None
+    previous["away_odds"] = None
+
+    upcoming_raw = sample_event()
+    upcoming_raw["id"] = "401816695"
+    upcoming_raw["date"] = "2026-08-27T17:05:00Z"
+    upcoming = normalize_event("mlb", upcoming_raw)
+    assert upcoming is not None
+
+    payload = {
+        "articles": [
+            {
+                "id": "49737429",
+                "headline": "Away Club rolls past Home Club in the series opener",
+                "published": "2026-08-27T02:01:31Z",
+                "source": "AP",
+                "links": {"web": {"href": "https://example.test/recap?gameId=401816681"}},
+                "categories": [
+                    {"type": "team", "team": {"id": "1"}},
+                    {"type": "team", "team": {"id": "2"}},
+                    {"type": "event", "event": {"id": "401816681"}},
+                ],
+            }
+        ]
+    }
+
+    articles = normalize_news_articles([previous, upcoming], payload, collected_at)
+
+    assert [article["event_id"] for article in articles] == [previous["id"]]
+    store_events([previous, upcoming], observed_at=collected_at)
+    stale = {**articles[0], "id": "stale-link", "event_id": upcoming["id"]}
+    store_news_articles([stale])
+    store_news_articles(
+        articles,
+        replace_event_ids=[str(previous["id"]), str(upcoming["id"])],
+    )
+
+    detail = sports_event(str(upcoming["id"]))
+    assert detail is not None
+    assert detail["news"] == []
+    assert detail["context"]["back_to_back"] is True
+    assert detail["context"]["series_game_number"] == 2
+    assert detail["context"]["series_game_count"] == 2
+    assert detail["context"]["previous_meeting"]["id"] == previous["id"]
+    assert detail["context"]["previous_meeting"]["recap"]["external_id"] == "49737429"
+    assert detail["context"]["head_to_head"]["away_wins"] == 1
+    assert detail["context"]["recent_form"][0]["record"] == "1-0"
+    assert detail["context"]["recent_form"][1]["record"] == "0-1"
+    assert detail["context"]["recent_form"][0]["short_rest"] is True
+    assert "since last start" in detail["context"]["recent_form"][0]["rest_label"]
+
+    response = sports_game_page(
+        str(upcoming["id"]),
+        request(path=f"/game/{upcoming['id']}"),
+        None,
+    )
+    assert b"Back-to-back rematch" in response.body
+    assert b"GAME RECAP" in response.body
+    assert b"Game 2 of 2" in response.body
+    assert b"timeZoneName:'short'" in response.body
+
+
 def test_paper_pick_freezes_odds_and_settles(sports_db) -> None:
     event = normalize_event("mlb", sample_event())
     assert event is not None
@@ -216,6 +293,12 @@ def test_paper_pick_freezes_odds_and_settles(sports_db) -> None:
     assert pick["status"] == "open"
     assert "-" in pick["caller_handle"]
 
+    board = sports_alpha_board("mlb")
+    assert board["active_calls"] == 1
+    assert board["rows"][0]["ticker"] == "HOM"
+    assert board["rows"][0]["price_label"].endswith("¢")
+    assert board["calls"][0]["entry_label"] == "-130"
+
     final_event = normalize_event("mlb", sample_event(completed=True))
     assert final_event is not None
     store_events([final_event])
@@ -224,8 +307,50 @@ def test_paper_pick_freezes_odds_and_settles(sports_db) -> None:
         settled = database.execute(
             "SELECT * FROM sports_picks WHERE id=?", (pick["id"],)
         ).fetchone()
+        rewards = database.execute(
+            "SELECT amount,kind,reference_id FROM flash_transactions WHERE user_id=?",
+            ("user-1",),
+        ).fetchall()
     assert settled["result"] == "win"
     assert settled["return_units"] == pytest.approx(100 / 130, abs=0.0001)
+    assert [tuple(reward) for reward in rewards] == [
+        (WINNING_CALL_REWARD, "sports_call_win", pick["id"])
+    ]
+    assert wallet_for_user("user-1")["balance"] == WINNING_CALL_REWARD
+
+    assert settle_picks() == 0
+    assert wallet_for_user("user-1")["balance"] == WINNING_CALL_REWARD
+
+    settled_board = sports_alpha_board("mlb")
+    assert settled_board["active_calls"] == 0
+    assert settled_board["calls"][0]["status"] == "win"
+    assert settled_board["calls"][0]["return_label"].endswith("u")
+    assert settled_board["calls"][0]["reward_label"] == f"+{WINNING_CALL_REWARD} Flash"
+
+
+def test_losing_sports_call_does_not_earn_flash(sports_db) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) "
+            "VALUES('loser','loser','Loser','active',?)",
+            (datetime.now(UTC).isoformat(),),
+        )
+    create_sports_pick("loser", event["id"], "away")
+
+    final_event = normalize_event("mlb", sample_event(completed=True))
+    assert final_event is not None
+    store_events([final_event])
+
+    assert settle_picks() == 1
+    assert wallet_for_user("loser")["balance"] == 0
+    with connection() as database:
+        reward_count = database.execute(
+            "SELECT COUNT(*) AS count FROM flash_transactions WHERE user_id='loser'"
+        ).fetchone()["count"]
+    assert reward_count == 0
 
 
 def test_bovada_odds_show_feed_attribution_and_freeze_on_paper_pick(sports_db) -> None:
@@ -305,6 +430,7 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     assert b"They can point to different teams" in detail_response.body
     assert b"Team news" in detail_response.body
     assert b"Make a paper pick" in detail_response.body
+    assert f"A winning Call earns {WINNING_CALL_REWARD} Flash".encode() in detail_response.body
 
 
 def test_slate_builds_fixed_side_edge_history(sports_db) -> None:
@@ -502,6 +628,205 @@ def test_sports_alpha_builds_team_and_player_win_rate_history(sports_db) -> None
     assert player["history_points"][-1]["rate"] == 100.0
     assert alpha["model"]["games"] == 3
     assert alpha["model"]["history_points"]
+    assert alpha["model"]["sample"]["label"] == "VERY EARLY SAMPLE"
+    assert alpha["model"]["sample"]["target"] == 250
+    assert len(alpha["model"]["receipts"]) == 3
+    assert alpha["model"]["receipts"][0]["receipt_id"]
+
+
+def test_game_page_keeps_player_context_and_flash_inside_the_matchup(sports_db) -> None:
+    payload = {
+        "boxscore": {
+            "players": [
+                {
+                    "team": {"id": "1", "displayName": "Home Club", "abbreviation": "HOM"},
+                    "statistics": [
+                        {
+                            "labels": ["PTS"],
+                            "athletes": [
+                                {
+                                    "athlete": {"id": "p1", "displayName": "Home Player"},
+                                    "position": {"abbreviation": "P"},
+                                    "starter": True,
+                                    "stats": ["20"],
+                                }
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "team": {"id": "2", "displayName": "Away Club", "abbreviation": "AWY"},
+                    "statistics": [
+                        {
+                            "labels": ["PTS"],
+                            "athletes": [
+                                {
+                                    "athlete": {"id": "p2", "displayName": "Away Player"},
+                                    "position": {"abbreviation": "P"},
+                                    "starter": True,
+                                    "stats": ["10"],
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ]
+        }
+    }
+    for number, days_ago in enumerate((2, 1), start=1):
+        raw = sample_event(completed=True)
+        raw["id"] = f"40120000{number}"
+        raw["date"] = (datetime.now(UTC) - timedelta(days=days_ago)).isoformat()
+        past_event = normalize_event("mlb", raw)
+        assert past_event is not None
+        store_events([past_event])
+        store_player_appearances(normalize_player_appearances(past_event, payload))
+
+    upcoming_raw = sample_event()
+    upcoming_raw["id"] = "401200003"
+    upcoming = normalize_event("mlb", upcoming_raw)
+    assert upcoming is not None
+    store_events([upcoming])
+
+    detail = sports_event(str(upcoming["id"]))
+    assert detail is not None
+    home = next(team for team in detail["matchup_players"] if team["side"] == "home")
+    assert home["players"][0]["name"] == "Home Player"
+    assert home["players"][0]["games"] == 2
+    assert home["players"][0]["wins"] == 2
+    assert home["players"][0]["last_stats_label"] == "PTS 20"
+
+    fingerprint, evidence = sports_flash_evidence(str(upcoming["id"]))
+    assert len(fingerprint) == 64
+    assert evidence["subject_type"] == "sports_game"
+    assert evidence["event_id"] == upcoming["id"]
+    assert evidence["players"][0]["players"]
+    assert all("caller_handle" not in item for item in evidence["public_picks"].values())
+
+    response = sports_game_page(
+        str(upcoming["id"]),
+        request(path=f"/game/{upcoming['id']}"),
+        None,
+    )
+    assert b"Daily Flash" in response.body
+    assert b"Players relevant to this game" in response.body
+    assert b"Home Player" in response.body
+    assert b"no global player list" in response.body
+    assert b"/api/sports/games/mlb:401200003/research" in response.body
+
+
+def test_sports_flash_uses_the_shared_daily_report_lifecycle(
+    sports_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    timestamp = datetime.now(UTC).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) "
+            "VALUES('sports-user','sports_user','Sports User','active',?)",
+            (timestamp,),
+        )
+        database.execute(
+            "INSERT INTO flash_wallets(user_id,balance,created_at,updated_at) "
+            "VALUES('sports-user',200,?,?)",
+            (timestamp, timestamp),
+        )
+
+    def fake_report(_key, evidence, _user_id, *, actor):
+        assert evidence["subject_type"] == "sports_game"
+        return (
+            {
+                "headline": "HOM has the cleaner setup",
+                "thesis": "The model prefers HOM, but the price leaves real uncertainty.",
+                "summary": "Team form and the current market both support a close HOM lean.",
+                "company_profile": {"what_it_does": "must not leak into sports"},
+                "people": [{"name": "must not leak"}],
+                "filings": [{"form": "must not leak"}],
+                "catalysts": ["Home form is stronger."],
+                "risks": ["The edge is small."],
+                "watch": ["Watch the moneyline."],
+                "unknowns": ["Lineups are not confirmed."],
+                "sources": evidence["sources"],
+                "citations": [],
+            },
+            actor.model,
+            {},
+        )
+
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(web_main, "_generate_openrouter_report", fake_report)
+    commission, created = web_main._create_research_commission(
+        "sports-user", web_main._sports_report_key(str(event["id"]))
+    )
+    assert created is True
+    assert commission["subject_type"] == "sports_game"
+    assert commission["nav_product"] == "sports"
+
+    report = web_main._run_research_commission(str(commission["id"]))
+    assert report["status"] == "complete"
+    assert report["ticker"] == "HOM"
+    assert report["company"] == "Away Club at Home Club"
+    assert report["company_profile"] == {}
+    assert report["people"] == []
+    assert report["filing_context"] == []
+    daily = web_main.daily_report_for_sports_game(str(event["id"]), "sports-user")
+    assert daily is not None
+    assert daily["locked"] is False
+    with connection() as database:
+        balance = database.execute(
+            "SELECT balance FROM flash_wallets WHERE user_id='sports-user'"
+        ).fetchone()["balance"]
+    assert balance == 100
+
+
+def test_finished_game_seals_the_last_pregame_prediction_and_market(sports_db) -> None:
+    start = datetime(2026, 8, 26, 20, 0, tzinfo=UTC)
+    pregame_at = start - timedelta(hours=1)
+    postgame_at = start + timedelta(hours=3)
+
+    pregame_raw = sample_event()
+    pregame_raw["date"] = start.isoformat()
+    pregame_event = normalize_event("mlb", pregame_raw)
+    assert pregame_event is not None
+    store_events([pregame_event], observed_at=pregame_at)
+
+    with connection() as database:
+        pregame_prediction = database.execute(
+            "SELECT input_hash FROM sports_predictions WHERE event_id=?",
+            (pregame_event["id"],),
+        ).fetchone()
+    assert pregame_prediction is not None
+
+    final_raw = sample_event(completed=True)
+    final_raw["date"] = start.isoformat()
+    final_raw["competitions"][0]["competitors"][0]["records"][0]["summary"] = "61-40"
+    final_raw["competitions"][0]["odds"][0]["moneyline"]["home"]["close"]["odds"] = "-170"
+    final_raw["competitions"][0]["odds"][0]["moneyline"]["away"]["close"]["odds"] = "+145"
+    final_event = normalize_event("mlb", final_raw)
+    assert final_event is not None
+    store_events([final_event], observed_at=postgame_at)
+
+    detail = sports_event(str(final_event["id"]))
+    assert detail is not None
+    assert detail["prediction"]["observed_at"] == pregame_at.isoformat()
+    assert detail["receipt"]["sealed"] is True
+    assert detail["receipt"]["input_hash"] == pregame_prediction["input_hash"]
+    assert detail["receipt"]["outcome"]["final_score"] == "AWY 3 – HOM 5"
+    assert detail["odds"]["observed_at"] == pregame_at.isoformat()
+    assert [row["observed_at"] for row in detail["odds_history"]] == [
+        pregame_at.isoformat()
+    ]
+
+    response = sports_game_page(
+        str(final_event["id"]),
+        request(path=f"/game/{final_event['id']}"),
+        None,
+    )
+    assert b"SEALED PREGAME" in response.body
+    assert b"Later news and results cannot rewrite it" in response.body
+    assert b"Pregame market timeline" in response.body
 
 
 def test_sports_alpha_fetches_history_only_for_ranked_players(sports_db) -> None:
@@ -583,15 +908,23 @@ def test_empty_player_boxscore_is_checked_only_once(
     assert second["events"] == 0
 
 
-def test_sports_host_has_radar_and_alpha_products(sports_db) -> None:
+def test_sports_host_has_the_same_alpha_product_as_runners(sports_db) -> None:
     radar_response = radar_page(request(path="/radar"), None)
     alpha_response = alpha_page(request(path="/alpha"), None)
+    receipts_response = sports_receipts_page(request(path="/receipts"), None)
     assert radar_response.status_code == 200
     assert b"material change" in radar_response.body
     assert b'class="sports-hero' not in radar_response.body
     assert alpha_response.status_code == 200
-    assert b"Team record in appearances" in alpha_response.body
-    assert b'data-history-range="30"' in alpha_response.body
+    assert b'<h1>Alpha</h1>' in alpha_response.body
+    assert b'class="alpha-board call-ledger"' in alpha_response.body
+    assert b"open Calls" in alpha_response.body
+    assert b"Receipts" not in alpha_response.body
+    assert b'href="/alpha"' in alpha_response.body
+    assert b'class="tab-link product-tab-link"' in alpha_response.body
+    assert b">Runners</span>" in alpha_response.body
+    assert receipts_response.status_code == 307
+    assert receipts_response.headers["location"] == "/alpha"
 
 
 def test_sports_alpha_page_reuses_warmed_result(sports_db, monkeypatch) -> None:
@@ -599,7 +932,7 @@ def test_sports_alpha_page_reuses_warmed_result(sports_db, monkeypatch) -> None:
     web_main.SPORTS_ALPHA_DATA_REFRESHING.clear()
     monkeypatch.setattr(web_main, "shared_cache_get", lambda _name: None)
     monkeypatch.setattr(web_main, "shared_cache_set", lambda *_args: None)
-    original = web_main.sports_alpha
+    original = web_main.sports_alpha_board
     calls = 0
 
     def counted(league: str = "all", limit: int = 24) -> dict[str, Any]:
@@ -607,7 +940,7 @@ def test_sports_alpha_page_reuses_warmed_result(sports_db, monkeypatch) -> None:
         calls += 1
         return original(league, limit)
 
-    monkeypatch.setattr(web_main, "sports_alpha", counted)
+    monkeypatch.setattr(web_main, "sports_alpha_board", counted)
 
     first = alpha_page(request(path="/alpha"), None)
     second = alpha_page(request(path="/alpha"), None)

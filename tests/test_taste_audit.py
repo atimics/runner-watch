@@ -19,6 +19,7 @@ def test_shared_product_system_is_loaded_after_existing_styles() -> None:
 def test_general_interface_keeps_its_editorial_edge() -> None:
     ticker = (ROOT / "web/templates/ticker.html").read_text()
     community = (ROOT / "web/templates/community.html").read_text()
+    community += (ROOT / "web/templates/_alpha_ledger.html").read_text()
     navigation = (ROOT / "web/templates/mobile_base.html").read_text()
 
     assert "Movement first. Evidence before conviction." in ticker

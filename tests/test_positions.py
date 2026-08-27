@@ -67,6 +67,7 @@ def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
     root = Path(__file__).parents[1]
     ticker = (root / "web/templates/ticker.html").read_text()
     alpha = (root / "web/templates/community.html").read_text()
+    alpha += (root / "web/templates/_alpha_ledger.html").read_text()
     navigation = (root / "web/templates/mobile_base.html").read_text()
     app_source = (root / "src/runner_web/main.py").read_text()
     radar = (root / "web/templates/radar.html").read_text()

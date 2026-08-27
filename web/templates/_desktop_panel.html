@@ -1,8 +1,8 @@
-<aside class="desktop-detail-panel" aria-label="Selected ticker dossier or research article">
+<aside class="desktop-detail-panel" aria-label="{{ detail_panel_label|default('Selected ticker dossier or research article') }}">
   <div class="desktop-detail-empty" data-desktop-empty>
-    <span class="dossier-mark" aria-hidden="true">RW</span>
-    <strong>Open a ticker dossier</strong>
-    <p>Read the chart, filing trail, and risks in one place.</p>
+    <span class="dossier-mark" aria-hidden="true">{{ detail_panel_mark|default('RW') }}</span>
+    <strong>{{ detail_panel_title|default('Open a ticker dossier') }}</strong>
+    <p>{{ detail_panel_copy|default('Read the chart, filing trail, and risks in one place.') }}</p>
   </div>
-  <iframe class="desktop-detail-frame" data-desktop-frame title="Selected ticker dossier or research article" hidden></iframe>
+  <iframe class="desktop-detail-frame" data-desktop-frame title="{{ detail_panel_label|default('Selected ticker dossier or research article') }}" hidden></iframe>
 </aside>
