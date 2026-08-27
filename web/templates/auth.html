@@ -1,10 +1,10 @@
 {% extends "mobile_base.html" %}
-{% block title %}Create a passkey · Runner Watch{% endblock %}
+{% block title %}Create a passkey · RATi{% endblock %}
 {% block head %}<link rel="stylesheet" href="/static/auth-mobile.css?v={{ static_version }}">{% endblock %}
 {% block content %}
 <header class="detail-nav auth-nav">
   <a href="/" aria-label="Back to Pulse">‹</a>
-  <strong>Runner Watch</strong>
+  <strong>{% if product == 'sports' %}RATi Sports{% else %}RATi Runners{% endif %}</strong>
   <span></span>
 </header>
 <main class="mobile-auth-wrap">
@@ -23,8 +23,17 @@
 const statusBox = document.getElementById('authStatus');
 const createButton = document.getElementById('createButton');
 const loginButton = document.getElementById('loginButton');
-const requestedNext = new URLSearchParams(location.search).get('next') || '/';
-const nextPath = requestedNext.startsWith('/') && !requestedNext.startsWith('//') ? requestedNext : '/';
+const requestedNext = {{ next_path | tojson }};
+function safeNextPath(value) {
+  try {
+    const target = new URL(value, location.origin);
+    if (!value.startsWith('/') || target.origin !== location.origin) return '/';
+    return `${target.pathname}${target.search}${target.hash}`;
+  } catch (_) {
+    return '/';
+  }
+}
+const nextPath = safeNextPath(requestedNext);
 function b64bytes(value) {
   const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4);
   return Uint8Array.from(atob(padded), c => c.charCodeAt(0));

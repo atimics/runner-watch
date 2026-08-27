@@ -1,14 +1,22 @@
-# Runner Watch
+# RATi Runners and RATi Sports
 
-Runner Watch is a low-priced stock scanner for finding unusual price and volume movement early.
+RATi is an evidence-first prediction platform. RATi Runners scans low-priced stocks for unusual movement. RATi Sports compares a transparent team-form baseline with timestamped no-vig moneyline odds and keeps public paper-pick receipts.
 It uses free Yahoo Finance data through `yfinance`. It does not need a broker login or a paid API.
 Optional Fintel short and borrow data needs a Fintel API key and the matching account access.
 
-The public beta is at [stonks.rati.foundation](https://stonks.rati.foundation). Its mobile-first
+RATi Runners is at [runners.rati.chat](https://runners.rati.chat), RATi Sports is at [sports.rati.chat](https://sports.rati.chat), and the old stock address remains available during migration. The mobile-first Runners
 app has three main views: **Pulse** for live penny-stock intelligence, a compact ticker page with
 the chart and primary-source evidence, **Radar** for fresh market and evidence changes, and **Alpha**
 for public Calls. Signed-in users can spend Flash credits on private research and AI-written ticker
 comments. Pulse paginates as the user scrolls. Radar is shared and does not build a reading profile.
+
+RATi Sports currently covers MLB, NFL, NBA, and NHL schedules. A background worker stores event
+state, season records, moneyline snapshots, source times, and a versioned baseline prediction. The
+model compares team form plus a small home advantage with the market price after removing the
+bookmaker margin. It does not promote preseason or exhibition games. Signed-in users can publish
+paper picks with frozen odds; completed games settle them as wins, losses, or pushes. The app does
+not place bets or connect to sportsbooks. Its current scoreboard source is marked as a preview feed
+until data rights and a licensed replacement are reviewed.
 
 The public scanner defaults to listed US penny stocks from $0.20 to $5 with market caps below
 about $2B. It combines Yahoo's strongest movers, most active names, and largest losers before
@@ -119,14 +127,14 @@ The end-to-end path from collectors to product evidence is in the
 Alpha is a public Call ledger. A signed-in user can make one open Call per ticker. Runner Watch
 freezes the current server quote and time; the browser cannot submit or edit either value. Closing a
 Call also uses the current server quote and time. Calls show percentage PnL only, with no implied
-position size. Each Call uses a separately claimed random animal caller ID; account names stay
-private. Comments use a random emoji identity that is stable only inside that ticker thread, and the
-same account receives a different random identity in other threads.
+position size. Each account gets one automatic random animal name for Calls; there is no identity
+picker or paid identity flow, and account names stay private. Comments use a random emoji identity
+that is stable inside that ticker thread.
 
 Bull, bear, heart, private position, and private case controls are not part of the product flow.
 Signed-in users can ask Flash to draft a short public ticker comment from their perspective. There
-is no free-text comment input. Each ticker thread gives the account a separate random two-emoji
-alias. Account names stay private, and comment aliases are not linked to animal caller IDs.
+is no free-text comment input. Each ticker thread gives the account a stable random two-emoji alias.
+Account names stay private, and the emoji cannot be changed from the thread.
 
 Reports are authored by **Flash ⚡**. Flash's current engine is `z-ai/glm-5.3`, routed through
 OpenRouter. The model label is shown beside Flash in the interface. Changing the engine later does
@@ -166,12 +174,9 @@ missed days are not backfilled. A daily Flash report costs 100, an AI-written ti
 10, and publishing during the private alpha hour earns 50 once. Ledger references make claims,
 charges, refunds, and publishing rewards safe to retry without paying twice.
 
-Buying Flash credit packs is intentionally paused. Extra random caller IDs use a one-time Stripe
-payment. Set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`, then use
-`STRIPE_CALLER_ID_PRICE_ID` to manage the price in Stripe or set
-`CALLER_ID_CLAIM_PRICE_CENTS` and `CALLER_ID_CURRENCY` for inline pricing. Historical subscription
-columns remain only so existing databases migrate safely. The public product plan, including
-features that are explicitly not being built, lives at `/roadmap` and `/api/roadmap`.
+Buying Flash credit packs is intentionally paused. Historical subscription columns remain only so
+existing databases migrate safely. The public product plan, including features that are explicitly
+not being built, lives at `/roadmap` and `/api/roadmap`.
 
 The main screen ranks stocks with a **runner score**. The score looks for:
 
@@ -352,6 +357,11 @@ Fly runs two stateless 512 MB web machines, one 1 GB collection worker, and one 
 trainer. PostgreSQL owns durable application data. Redis shares the short-lived Pulse, Radar,
 Alpha, and chart caches, applies rate limits across both web machines, and carries encrypted
 research jobs between web and worker processes.
+
+`cloudflare-router/` is the small edge router for `runners.rati.chat` and
+`sports.rati.chat`. Both public products share the same Fly deployment. The
+router passes the original public host through so branding, passkeys, and
+origin checks stay correct.
 
 List charts send only time and price, use response compression, and cache their complete response
 for one minute.

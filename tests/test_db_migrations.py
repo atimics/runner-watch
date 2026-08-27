@@ -318,6 +318,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "research_commissions_public_time",
         "public_aliases_user",
         "caller_identities_owner",
+        "caller_identities_one_active_per_user",
         "caller_identity_one_free_claim",
         "caller_identity_claims_owner",
         "community_calls_caller_time",

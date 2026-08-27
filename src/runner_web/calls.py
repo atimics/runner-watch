@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from statistics import median
 from typing import Any
 
+from runner_web.caller_ids import ensure_caller_identity_with_database
 from runner_web.db import connection
 
 
@@ -47,7 +48,6 @@ def _call(row: Any, current_price: float | None = None) -> dict[str, Any]:
 
 def create_call(
     user_id: str,
-    caller_identity_id: str,
     ticker: str,
     *,
     entry_price: float,
@@ -58,15 +58,7 @@ def create_call(
     call_id = str(uuid.uuid4())
     timestamp = _iso()
     with connection() as db:
-        identity = db.execute(
-            """
-            SELECT id,handle FROM caller_identities
-            WHERE id=? AND user_id=? AND status='active'
-            """,
-            (caller_identity_id, user_id),
-        ).fetchone()
-        if not identity:
-            raise PermissionError("Caller ID does not belong to this account")
+        identity = ensure_caller_identity_with_database(db, user_id)
         existing = db.execute(
             """
             SELECT c.*,ci.handle AS caller_handle FROM community_calls c
@@ -89,7 +81,7 @@ def create_call(
                 call_id,
                 _public_id(),
                 user_id,
-                caller_identity_id,
+                identity["id"],
                 ticker,
                 entry_price,
                 entry_at,

@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rati-products-router",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-26",
+  "routes": [
+    {
+      "pattern": "runners.rati.chat/*",
+      "zone_name": "rati.chat"
+    },
+    {
+      "pattern": "sports.rati.chat/*",
+      "zone_name": "rati.chat"
+    }
+  ]
+}

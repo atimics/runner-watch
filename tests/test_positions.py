@@ -4,7 +4,6 @@ from pathlib import Path
 from pytest import MonkeyPatch
 
 from runner_web import db
-from runner_web.caller_ids import claim_caller_id
 from runner_web.calls import (
     active_call_for_user,
     call_for_user,
@@ -32,11 +31,8 @@ def test_public_call_freezes_entry_and_exit_marks(
                 ("other", "other", "Other", "active", current.isoformat()),
             ],
         )
-    identity = claim_caller_id("owner")
-
     created = create_call(
         "owner",
-        identity["id"],
         "ONE",
         entry_price=2.0,
         entry_at=entered_at,
@@ -44,7 +40,8 @@ def test_public_call_freezes_entry_and_exit_marks(
 
     assert created["entry_at"] == entered_at
     assert active_call_for_user("owner", "ONE", current_price=2.5)["return_pct"] == 25.0
-    assert calls_for_ticker("ONE", current_price=2.5)[0]["caller_handle"] == identity["handle"]
+    caller_handle = calls_for_ticker("ONE", current_price=2.5)[0]["caller_handle"]
+    assert "-" in caller_handle
     assert "user_id" not in calls_for_ticker("ONE", current_price=2.5)[0]
     assert active_call_for_user("other", "ONE", current_price=2.5) is None
     assert call_for_user("other", created["public_id"]) is None
@@ -75,6 +72,12 @@ def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
     radar = (root / "web/templates/radar.html").read_text()
 
     assert "Make Call" in ticker
+    assert "Post as" not in ticker
+    assert "callerIdentity" not in ticker
+    assert "swapCommentAlias" not in ticker
+    assert "Swap this thread" not in ticker
+    assert "/api/caller-identities" not in app_source
+    assert "/alias/swap" not in app_source
     assert "server stamped" in ticker
     assert "Entry time" not in ticker
     assert "Add exit" not in ticker

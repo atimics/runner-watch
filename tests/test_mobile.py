@@ -17,7 +17,6 @@ from starlette.requests import Request
 from runner_watch.ingestion import MarketEvent, SourceBatch, SourceFetch
 from runner_web import db
 from runner_web import main as web_main
-from runner_web.caller_ids import claim_caller_id, delete_caller_id
 from runner_web.db import connection, init_db
 from runner_web.flash_wallet import claim_daily_flash, wallet_for_user
 from runner_web.ingestion import record_source_batch
@@ -460,7 +459,7 @@ def test_storage_prune_removes_old_raw_snapshots_but_keeps_public_receipts(
     assert runs == {"old-public-run"}
 
 
-def test_public_calls_use_an_owned_caller_id_not_the_account_name(
+def test_public_calls_get_an_automatic_identity_not_the_account_name(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "caller-signals.db")
@@ -471,12 +470,6 @@ def test_public_calls_use_an_owned_caller_id_not_the_account_name(
             "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
             ("signal-user", "secret_account", "Secret Account", "active", captured_at),
         )
-        database.execute(
-            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
-            ("other-user", "other_account", "Other Account", "active", captured_at),
-        )
-    identity = claim_caller_id("signal-user")
-    foreign_identity = claim_caller_id("other-user")
     insert_scan_run("signal-run", captured_at, 1)
     insert_scored_snapshot(
         "signal-snapshot", "signal-run", "CALL", 60, 1, captured_at
@@ -498,32 +491,23 @@ def test_public_calls_use_an_owned_caller_id_not_the_account_name(
 
     payload = PublishSignal(
         snapshot_id="signal-snapshot",
-        caller_identity_id=foreign_identity["id"],
         thesis="A source-bound public call.",
         horizon="intraday",
         invalidation="Price loses support.",
         disclosure="No position.",
     )
-    with pytest.raises(HTTPException, match="active caller IDs"):
-        publish_signal(payload, request, None)
-
-    response = publish_signal(
-        payload.model_copy(update={"caller_identity_id": identity["id"]}),
-        request,
-        None,
-    )
+    response = publish_signal(payload, request, None)
     signal = get_signal(json.loads(response.body)["url"].removeprefix("/s/"))
 
     assert signal is not None
-    assert signal["caller_handle"] == identity["handle"]
+    assert "-" in signal["caller_handle"]
     assert "username" not in signal
     assert "display_name" not in signal
     templates_root = Path(__file__).parents[1] / "web/templates"
     assert "signal.username" not in (templates_root / "signal.html").read_text()
     assert "signal.username" not in (templates_root / "home.html").read_text()
 
-    delete_caller_id("signal-user", identity["id"])
-    assert get_signal(str(signal["public_id"])) is None
+    assert get_signal(str(signal["public_id"])) is not None
 
 
 def test_ticker_page_does_not_add_a_guest_research_action(

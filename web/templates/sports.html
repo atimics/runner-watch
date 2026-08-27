@@ -1,0 +1,80 @@
+{% extends "sports_base.html" %}
+{% block title %}Today’s Slate · RATi Sports{% endblock %}
+{% block content %}
+<section class="sports-hero">
+  <span class="sports-eyebrow">LIVE EVIDENCE · {{ slate.model }}</span>
+  <h1>Today’s slate,<br><em>with receipts.</em></h1>
+  <p>We compare a simple team-form model with the no-vig moneyline. Every number keeps its source and time.</p>
+</section>
+
+<section class="sports-scoreboard" aria-label="Paper pick results">
+  <div><small>SETTLED</small><strong>{{ pick_stats.settled }}</strong></div>
+  <div><small>W–L–P</small><strong>{{ pick_stats.wins }}–{{ pick_stats.losses }}–{{ pick_stats.pushes }}</strong></div>
+  <div><small>UNITS</small><strong class="{% if pick_stats.units >= 0 %}positive{% else %}negative{% endif %}">{{ '%+.2f'|format(pick_stats.units) }}</strong></div>
+  <div><small>ROI</small><strong>{% if pick_stats.roi_pct is not none %}{{ '%+.1f'|format(pick_stats.roi_pct) }}%{% else %}Learning{% endif %}</strong></div>
+</section>
+
+<nav class="league-tabs" aria-label="League filter">
+  <a class="{% if slate.league == 'all' %}active{% endif %}" href="/?league=all">All</a>
+  {% for league in slate.leagues %}
+    <a class="{% if slate.league == league.key %}active{% endif %}" href="/?league={{ league.key }}">{{ league.name }}</a>
+  {% endfor %}
+</nav>
+
+{% if slate.source_status != 'success' %}
+<aside class="source-warning">
+  <strong>Preview feed: {{ slate.source_status }}</strong>
+  <span>{% if slate.source_error %}{{ slate.source_error }}{% else %}The first sports refresh is still running.{% endif %}</span>
+</aside>
+{% endif %}
+
+<section class="game-list">
+  {% for event in slate.events %}
+  {% set prediction = event.prediction %}
+  {% set odds = event.odds %}
+  <a class="game-card" href="/game/{{ event.id }}">
+    <header>
+      <span>{{ event.league|upper }} · <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time></span>
+      <b class="game-status {{ event.status }}">{{ event.status_detail }}</b>
+    </header>
+    <div class="matchup">
+      <div class="team-row">
+        <span class="team-mark">{{ event.away_abbreviation[:3] }}</span>
+        <div><strong>{{ event.away_team_name }}</strong><small>{{ event.away_record or 'Record unavailable' }}</small></div>
+        <b>{% if event.away_score is not none %}{{ event.away_score|int }}{% elif odds and odds.away_odds is not none %}{{ '%+d'|format(odds.away_odds) }}{% else %}—{% endif %}</b>
+      </div>
+      <div class="team-row">
+        <span class="team-mark home">{{ event.home_abbreviation[:3] }}</span>
+        <div><strong>{{ event.home_team_name }}</strong><small>{{ event.home_record or 'Record unavailable' }}</small></div>
+        <b>{% if event.home_score is not none %}{{ event.home_score|int }}{% elif odds and odds.home_odds is not none %}{{ '%+d'|format(odds.home_odds) }}{% else %}—{% endif %}</b>
+      </div>
+    </div>
+    <footer>
+      {% if prediction %}
+        <div><small>MODEL</small><strong>{{ event.away_abbreviation }} {{ '%.0f'|format(prediction.away_probability * 100) }}% · {{ event.home_abbreviation }} {{ '%.0f'|format(prediction.home_probability * 100) }}%</strong></div>
+        <div class="signal {{ prediction.signal|replace(' ','-') }}"><small>{{ prediction.signal|upper }}</small><strong>{% if prediction.edge_pct is not none %}{{ '%+.1f'|format(prediction.edge_pct) }}% edge{% else %}No market edge{% endif %}</strong></div>
+      {% else %}
+        <div><small>MODEL</small><strong>Waiting for a prediction</strong></div>
+      {% endif %}
+      <span aria-hidden="true">›</span>
+    </footer>
+  </a>
+  {% else %}
+  <div class="sports-empty">
+    <strong>No games in this window.</strong>
+    <p>The worker checks MLB, NFL, NBA, and NHL. Inactive leagues will be quiet.</p>
+  </div>
+  {% endfor %}
+</section>
+
+<p class="sports-source">Preview schedule and odds data: ESPN · Updated {{ slate.updated_at[:16]|replace('T',' ') if slate.updated_at else 'pending' }} UTC</p>
+{% endblock %}
+{% block scripts %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.querySelectorAll('[data-local-time]').forEach(node=>{
+    const date=new Date(node.dataset.localTime);
+    if(!Number.isNaN(date.valueOf()))node.textContent=date.toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'});
+  });
+  setTimeout(()=>location.reload(),60000);
+</script>
+{% endblock %}

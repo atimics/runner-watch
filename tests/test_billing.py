@@ -13,8 +13,7 @@ from starlette.requests import Request
 
 from runner_web import billing, db
 from runner_web import main as web_main
-from runner_web.billing import create_caller_id_checkout_session, delete_customer
-from runner_web.caller_ids import CALLER_ID_CLAIM_PRICE_CENTS
+from runner_web.billing import delete_customer
 from runner_web.db import connection, init_db
 from runner_web.flash_wallet import (
     COMMENT_COST,
@@ -225,80 +224,6 @@ def test_stripe_checkout_stays_disabled_even_when_secrets_exist(
     with pytest.raises(HTTPException) as error:
         billing_checkout_api(page_request("/api/billing/checkout", method="POST"), "missing")
     assert error.value.status_code == 401
-
-
-def test_extra_caller_id_uses_one_time_stripe_checkout(
-    monkeypatch: MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_runner")
-    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_runner")
-    captured: dict[str, Any] = {}
-    monkeypatch.setattr(
-        billing.stripe.checkout.Session,
-        "create",
-        lambda **kwargs: captured.update(kwargs)
-        or {"url": "https://checkout.stripe.test/caller"},
-    )
-
-    url = create_caller_id_checkout_session({"id": "caller-user"}, "https://stonks.test")
-
-    assert url == "https://checkout.stripe.test/caller"
-    assert captured["mode"] == "payment"
-    assert captured["metadata"] == {
-        "runner_user_id": "caller-user",
-        "purpose": "caller_identity",
-    }
-    assert captured["line_items"][0]["price_data"]["unit_amount"] == (
-        CALLER_ID_CLAIM_PRICE_CENTS
-    )
-
-
-def test_paid_caller_id_webhook_claims_once(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "caller-webhook.db")
-    init_db()
-    create_user("caller-user")
-    event = {
-        "id": "evt_caller_paid",
-        "type": "checkout.session.completed",
-        "data": {
-            "object": {
-                "id": "cs_caller_paid",
-                "client_reference_id": "caller-user",
-                "customer": "cus_caller",
-                "payment_status": "paid",
-                "metadata": {
-                    "runner_user_id": "caller-user",
-                    "purpose": "caller_identity",
-                },
-            }
-        },
-    }
-
-    first = billing.process_webhook_event(event)
-    duplicate = billing.process_webhook_event(event)
-
-    assert first == {
-        "handled": True,
-        "duplicate": False,
-        "type": "checkout.session.completed",
-    }
-    assert duplicate["duplicate"] is True
-    with connection() as database:
-        identity = database.execute(
-            "SELECT user_id,status,payment_reference FROM caller_identities"
-        ).fetchone()
-        user = database.execute(
-            "SELECT stripe_customer_id FROM users WHERE id='caller-user'"
-        ).fetchone()
-    assert dict(identity) == {
-        "user_id": "caller-user",
-        "status": "active",
-        "payment_reference": "stripe:cs_caller_paid",
-    }
-    assert user["stripe_customer_id"] == "cus_caller"
 
 
 def test_account_erasure_deletes_the_linked_stripe_customer(

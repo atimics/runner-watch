@@ -22,7 +22,13 @@ from runner_web.ranker import ranker_status
 from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 
 WORKER_HEARTBEAT_KEY = "worker_process_heartbeat"
+WORKER_HEARTBEAT_PREFIX = f"{WORKER_HEARTBEAT_KEY}:"
+WORKER_EXPECTED_INSTANCES = max(1, int(os.getenv("WORKER_EXPECTED_INSTANCES", "1")))
 router = APIRouter()
+
+
+def worker_heartbeat_key(instance_id: str) -> str:
+    return f"{WORKER_HEARTBEAT_PREFIX}{instance_id}"
 
 
 def _time(value: Any) -> datetime | None:
@@ -49,26 +55,66 @@ def worker_health(
     checked_at: datetime | None = None,
 ) -> dict[str, Any]:
     checked_at = checked_at or datetime.now(UTC)
-    heartbeat = states.get(WORKER_HEARTBEAT_KEY)
-    heartbeat_at = _time(heartbeat.get("updated_at")) if heartbeat else None
-    age_seconds = (
-        max(0.0, (checked_at - heartbeat_at).total_seconds())
-        if heartbeat_at is not None
-        else None
-    )
-    fresh = bool(
-        age_seconds is not None
-        and age_seconds <= OPERATIONS.worker_heartbeat_max_age_seconds
-    )
-    detail = _heartbeat_detail(heartbeat.get("value")) if heartbeat else {}
-    reported_status = str(detail.get("status", "unknown")).lower()
-    status = "stale" if not fresh else "ok" if reported_status == "ok" else "degraded"
+    heartbeats = [
+        (key.removeprefix(WORKER_HEARTBEAT_PREFIX), value)
+        for key, value in states.items()
+        if key.startswith(WORKER_HEARTBEAT_PREFIX)
+    ]
+    if not heartbeats and WORKER_HEARTBEAT_KEY in states:
+        heartbeats = [("legacy", states[WORKER_HEARTBEAT_KEY])]
+
+    instances: list[dict[str, Any]] = []
+    retirement_age = OPERATIONS.worker_heartbeat_retire_seconds
+    for instance_id, heartbeat in heartbeats:
+        heartbeat_at = _time(heartbeat.get("updated_at"))
+        if heartbeat_at is None:
+            continue
+        age = max(0.0, (checked_at - heartbeat_at).total_seconds())
+        if age > retirement_age:
+            continue
+        instance_detail = _heartbeat_detail(heartbeat.get("value"))
+        reported_status = str(instance_detail.get("status", "unknown")).lower()
+        fresh = age <= OPERATIONS.worker_heartbeat_max_age_seconds
+        instances.append(
+            {
+                "instance_id": instance_id,
+                **instance_detail,
+                "status": (
+                    "stale" if not fresh else "ok" if reported_status == "ok" else "degraded"
+                ),
+                "updated_at": heartbeat_at.isoformat(),
+                "age_seconds": round(age, 1),
+            }
+        )
+
+    newest = min(instances, key=lambda item: item["age_seconds"]) if instances else None
+    fresh_instances = sum(instance["status"] != "stale" for instance in instances)
+    if not instances or fresh_instances == 0:
+        status = "stale"
+    elif (
+        fresh_instances >= WORKER_EXPECTED_INSTANCES
+        and all(instance["status"] == "ok" for instance in instances)
+    ):
+        status = "ok"
+    else:
+        status = "degraded"
+    detail = {
+        "instances": instances,
+        "instances_expected": WORKER_EXPECTED_INSTANCES,
+        "instances_fresh": fresh_instances,
+        "instances_tracked": len(instances),
+        "workers_running": sum(int(instance.get("workers_running", 0)) for instance in instances),
+        "workers_expected": sum(int(instance.get("workers_expected", 0)) for instance in instances),
+        "failed_workers": [
+            name for instance in instances for name in instance.get("failed_workers", [])
+        ],
+    }
     return {
         "status": status,
-        "last_heartbeat_at": heartbeat_at.isoformat() if heartbeat_at else None,
-        "age_seconds": round(age_seconds, 1) if age_seconds is not None else None,
+        "last_heartbeat_at": newest["updated_at"] if newest else None,
+        "age_seconds": newest["age_seconds"] if newest else None,
         "maximum_age_seconds": OPERATIONS.worker_heartbeat_max_age_seconds,
-        "detail": detail or None,
+        "detail": detail,
     }
 
 

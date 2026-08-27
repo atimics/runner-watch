@@ -3,15 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
 from pytest import MonkeyPatch
 
 from runner_web import db
-from runner_web.caller_ids import (
-    AdditionalCallerIdPaymentRequired,
-    claim_caller_id,
-    delete_caller_id,
-)
+from runner_web.caller_ids import ensure_caller_identity
 from runner_web.db import connection, init_db
 from runner_web.privacy import delete_user_data, export_user_data, purge_passive_tracking
 from runner_web.pseudonyms import ensure_scoped_alias
@@ -75,7 +70,7 @@ def test_export_and_delete_cover_account_content_and_leave_anonymous_tombstone(
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "gdpr-rights.db")
     init_db()
     _seed_user()
-    caller = claim_caller_id("gdpr-user")
+    caller = ensure_caller_identity("gdpr-user")
     timestamp = datetime.now(UTC).isoformat()
     with connection() as database:
         database.execute(
@@ -181,7 +176,7 @@ def test_public_aliases_are_stable_only_inside_one_thread(
     assert any(ord(character) > 10_000 for character in first)
 
 
-def test_one_account_can_own_paid_animal_caller_ids_and_delete_them(
+def test_one_account_gets_one_automatic_anonymous_call_identity(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "gdpr-caller-ids.db")
@@ -193,55 +188,18 @@ def test_one_account_can_own_paid_animal_caller_ids_and_delete_them(
             ("caller-owner", "member_caller", "Caller", "active", timestamp),
         )
 
-    first = claim_caller_id("caller-owner")
-    assert first["claim_cost_cents"] == 0
+    first = ensure_caller_identity("caller-owner")
     assert "-" in first["handle"]
-
-    with pytest.raises(AdditionalCallerIdPaymentRequired):
-        claim_caller_id("caller-owner")
-
-    second = claim_caller_id("caller-owner", payment_reference="stripe:paid-once")
-    assert second["claim_cost_cents"] > 0
-    assert second["handle"] != first["handle"]
-
+    assert ensure_caller_identity("caller-owner") == first
     with connection() as database:
-        database.execute(
-            "INSERT INTO community_calls("
-            "id,public_id,user_id,caller_identity_id,ticker,entry_price,entry_at,"
-            "status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'active',?,?)",
-            (
-                "call-one", "call-public", "caller-owner", second["id"], "ONE", 1.0,
-                timestamp, timestamp, timestamp,
-            ),
-        )
-
-    deleted = delete_caller_id("caller-owner", second["id"])
-    assert deleted["deleted"] is True
-    assert deleted["handle"] == second["handle"]
-    with connection() as database:
-        tombstone = database.execute(
-            "SELECT handle,user_id,status,payment_reference FROM caller_identities WHERE id=?",
-            (second["id"],),
-        ).fetchone()
-        assert dict(tombstone) == {
-            "handle": second["handle"],
-            "user_id": None,
-            "status": "tombstoned",
-            "payment_reference": None,
-        }
         assert database.execute(
-            "SELECT COUNT(*) FROM community_calls WHERE caller_identity_id=?",
-            (second["id"],),
-        ).fetchone()[0] == 0
-        claim = database.execute(
-            "SELECT caller_identity_id,payment_reference FROM caller_identity_claims "
-            "WHERE user_id=? AND free_claim=0",
+            "SELECT COUNT(*) FROM caller_identities WHERE user_id=? AND status='active'",
             ("caller-owner",),
-        ).fetchone()
-        assert dict(claim) == {
-            "caller_identity_id": None,
-            "payment_reference": "stripe:paid-once",
-        }
+        ).fetchone()[0] == 1
+        assert database.execute(
+            "SELECT COUNT(*) FROM caller_identity_claims WHERE user_id=?",
+            ("caller-owner",),
+        ).fetchone()[0] == 0
 
 
 def test_openrouter_request_has_no_user_fingerprint() -> None:

@@ -1864,6 +1864,156 @@ def _migration_030_drop_passive_tracking(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_032_sports_domain(db: DatabaseConnection) -> None:
+    """Add source-bound sports events, odds, predictions, and paper picks."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS sports_events (
+            id TEXT PRIMARY KEY,
+            provider TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            league TEXT NOT NULL,
+            season_type TEXT NOT NULL DEFAULT 'unknown',
+            name TEXT NOT NULL,
+            start_time TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('pre','in','post')),
+            status_detail TEXT NOT NULL,
+            completed INTEGER NOT NULL DEFAULT 0,
+            home_team_id TEXT NOT NULL,
+            home_team_name TEXT NOT NULL,
+            home_abbreviation TEXT NOT NULL,
+            home_record TEXT,
+            home_score REAL,
+            away_team_id TEXT NOT NULL,
+            away_team_name TEXT NOT NULL,
+            away_abbreviation TEXT NOT NULL,
+            away_record TEXT,
+            away_score REAL,
+            venue TEXT NOT NULL DEFAULT '',
+            location TEXT NOT NULL DEFAULT '',
+            source_url TEXT NOT NULL,
+            first_collected_at TEXT NOT NULL,
+            last_collected_at TEXT NOT NULL,
+            UNIQUE(provider,league,external_id)
+        );
+        CREATE INDEX IF NOT EXISTS sports_events_league_start
+            ON sports_events(league,start_time,status);
+
+        CREATE TABLE IF NOT EXISTS sports_odds_snapshots (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL REFERENCES sports_events(id) ON DELETE CASCADE,
+            provider TEXT NOT NULL,
+            sportsbook TEXT NOT NULL,
+            market TEXT NOT NULL CHECK(market IN ('moneyline')),
+            home_odds INTEGER,
+            away_odds INTEGER,
+            home_open_odds INTEGER,
+            away_open_odds INTEGER,
+            spread REAL,
+            total REAL,
+            snapshot_hash TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            UNIQUE(event_id,provider,market,snapshot_hash)
+        );
+        CREATE INDEX IF NOT EXISTS sports_odds_event_time
+            ON sports_odds_snapshots(event_id,observed_at DESC);
+
+        CREATE TABLE IF NOT EXISTS sports_predictions (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL REFERENCES sports_events(id) ON DELETE CASCADE,
+            model_version TEXT NOT NULL,
+            input_hash TEXT NOT NULL,
+            selection TEXT NOT NULL CHECK(selection IN ('home','away','pass')),
+            home_probability REAL NOT NULL,
+            away_probability REAL NOT NULL,
+            home_market_probability REAL,
+            away_market_probability REAL,
+            edge REAL,
+            signal TEXT NOT NULL,
+            quality TEXT NOT NULL,
+            evidence_json TEXT NOT NULL DEFAULT '[]',
+            risks_json TEXT NOT NULL DEFAULT '[]',
+            observed_at TEXT NOT NULL,
+            UNIQUE(event_id,model_version,input_hash)
+        );
+        CREATE INDEX IF NOT EXISTS sports_predictions_event_time
+            ON sports_predictions(event_id,observed_at DESC);
+
+        CREATE TABLE IF NOT EXISTS sports_picks (
+            id TEXT PRIMARY KEY,
+            public_id TEXT UNIQUE NOT NULL,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            caller_identity_id TEXT NOT NULL REFERENCES caller_identities(id),
+            event_id TEXT NOT NULL REFERENCES sports_events(id),
+            market TEXT NOT NULL CHECK(market IN ('moneyline')),
+            selection TEXT NOT NULL CHECK(selection IN ('home','away')),
+            line REAL,
+            american_odds INTEGER NOT NULL CHECK(american_odds<>0),
+            sportsbook TEXT NOT NULL,
+            odds_observed_at TEXT NOT NULL,
+            prediction_id TEXT REFERENCES sports_predictions(id) ON DELETE SET NULL,
+            status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','settled','void')),
+            result TEXT CHECK(result IS NULL OR result IN ('win','loss','push','void')),
+            return_units REAL,
+            settled_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(user_id,event_id,market)
+        );
+        CREATE INDEX IF NOT EXISTS sports_picks_event_time
+            ON sports_picks(event_id,created_at DESC);
+        CREATE INDEX IF NOT EXISTS sports_picks_caller_time
+            ON sports_picks(caller_identity_id,created_at DESC);
+        """
+    )
+
+
+def _migration_033_one_automatic_caller_name(db: DatabaseConnection) -> None:
+    """Collapse the retired caller-ID picker to one automatic name per account."""
+
+    rows = db.execute(
+        """
+        SELECT id,user_id FROM caller_identities
+        WHERE user_id IS NOT NULL AND status='active'
+        ORDER BY user_id,claimed_at,id
+        """
+    ).fetchall()
+    canonical_by_user: dict[str, str] = {}
+    retired_at = datetime.now(UTC).isoformat()
+    for row in rows:
+        user_id = str(row["user_id"])
+        identity_id = str(row["id"])
+        canonical_id = canonical_by_user.setdefault(user_id, identity_id)
+        if identity_id == canonical_id:
+            continue
+        for table in ("community_calls", "signals", "sports_picks"):
+            if "caller_identity_id" in _columns(db, table):
+                db.execute(
+                    f"UPDATE {table} SET caller_identity_id=? WHERE caller_identity_id=?",
+                    (canonical_id, identity_id),
+                )
+        db.execute(
+            "UPDATE caller_identity_claims SET caller_identity_id=NULL "
+            "WHERE caller_identity_id=?",
+            (identity_id,),
+        )
+        db.execute(
+            """
+            UPDATE caller_identities
+            SET user_id=NULL,status='tombstoned',claim_cost_cents=NULL,
+                payment_reference=NULL,claimed_at=NULL,deleted_at=?
+            WHERE id=?
+            """,
+            (retired_at, identity_id),
+        )
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS caller_identities_one_active_per_user "
+        "ON caller_identities(user_id) "
+        "WHERE user_id IS NOT NULL AND status='active'"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -1903,6 +2053,8 @@ MIGRATIONS = (
     Migration(29, "signal_caller_identities", _migration_029_signal_caller_identities),
     Migration(30, "drop_passive_tracking", _migration_030_drop_passive_tracking),
     Migration(31, "scalable_scan_storage", _migration_031_scalable_scan_storage),
+    Migration(32, "sports_domain", _migration_032_sports_domain),
+    Migration(33, "one_automatic_caller_name", _migration_033_one_automatic_caller_name),
 )
 
 

@@ -151,6 +151,14 @@ def export_user_data(user_id: str) -> dict[str, Any]:
                 (user_id,),
                 order_by="created_at",
             ),
+            "sports_picks": _rows(
+                database,
+                tables,
+                "sports_picks",
+                "user_id=?",
+                (user_id,),
+                order_by="created_at",
+            ),
             "signals": _rows(
                 database,
                 tables,
@@ -305,6 +313,7 @@ def delete_user_data(user_id: str) -> dict[str, Any]:
         delete("public_aliases", "user_id=?", (user_id,))
         delete("comment_pseudonyms", "user_id=?", (user_id,))
         delete("community_calls", "user_id=?", (user_id,))
+        delete("sports_picks", "user_id=?", (user_id,))
         if "caller_identities" in tables:
             caller_ids = [
                 str(row["id"])

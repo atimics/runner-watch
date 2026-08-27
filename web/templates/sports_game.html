@@ -1,0 +1,84 @@
+{% extends "sports_base.html" %}
+{% block title %}{{ event.away_abbreviation }} at {{ event.home_abbreviation }} · RATi Sports{% endblock %}
+{% block content %}
+<a class="sports-back" href="/">← Back to slate</a>
+<article class="game-detail">
+  <header class="game-detail-head">
+    <span>{{ event.league|upper }} · <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time></span>
+    <h1>{{ event.away_team_name }}<i>at</i>{{ event.home_team_name }}</h1>
+    <p>{{ event.venue }}{% if event.location %} · {{ event.location }}{% endif %} · {{ event.status_detail }}</p>
+  </header>
+
+  {% set odds = event.odds %}
+  {% set prediction = event.prediction %}
+  <section class="detail-market">
+    <div><small>{{ event.away_abbreviation }} MONEYLINE</small><strong>{% if odds and odds.away_odds is not none %}{{ '%+d'|format(odds.away_odds) }}{% else %}—{% endif %}</strong><span>{% if prediction %}Model {{ '%.1f'|format(prediction.away_probability * 100) }}%{% endif %}</span></div>
+    <div><small>{{ event.home_abbreviation }} MONEYLINE</small><strong>{% if odds and odds.home_odds is not none %}{{ '%+d'|format(odds.home_odds) }}{% else %}—{% endif %}</strong><span>{% if prediction %}Model {{ '%.1f'|format(prediction.home_probability * 100) }}%{% endif %}</span></div>
+  </section>
+
+  {% if prediction %}
+  <section class="model-callout {{ prediction.signal|replace(' ','-') }}">
+    <span>{{ prediction.model_version }} · {{ prediction.quality }}</span>
+    <h2>{% if prediction.selection == 'pass' %}Pass at this price{% else %}Lean {{ event[prediction.selection ~ '_team_name'] }}{% endif %}</h2>
+    <p>{% if prediction.edge_pct is not none %}Estimated edge {{ '%+.1f'|format(prediction.edge_pct) }} percentage points against the no-vig market.{% else %}The model has no complete two-sided market price to compare.{% endif %}</p>
+  </section>
+
+  <div class="detail-grid">
+    <section>
+      <h3>What supports it</h3>
+      <ul>{% for item in prediction.evidence %}<li>{{ item }}</li>{% endfor %}</ul>
+    </section>
+    <section>
+      <h3>What could break it</h3>
+      <ul>{% for item in prediction.risks %}<li>{{ item }}</li>{% endfor %}</ul>
+    </section>
+  </div>
+  {% endif %}
+
+  <section class="paper-pick">
+    <span>PUBLIC RECEIPT</span>
+    <h2>Make a paper pick</h2>
+    <p>The current moneyline and time will be frozen. This does not place a real bet.</p>
+    {% if not user %}
+      <a href="/login">Log in to make a paper pick</a>
+    {% elif event.status != 'pre' or not odds %}
+      <strong>Picks are closed for this game.</strong>
+    {% else %}
+      <div class="pick-buttons">
+        <button type="button" data-pick="away">{{ event.away_abbreviation }} {% if odds.away_odds is not none %}{{ '%+d'|format(odds.away_odds) }}{% endif %}</button>
+        <button type="button" data-pick="home">{{ event.home_abbreviation }} {% if odds.home_odds is not none %}{{ '%+d'|format(odds.home_odds) }}{% endif %}</button>
+      </div>
+      <small id="pickStatus"></small>
+    {% endif %}
+  </section>
+
+  <section class="public-picks">
+    <h3>Public paper picks</h3>
+    {% for pick in event.picks %}
+      <div><strong>{{ pick.caller_handle }}</strong><span>{{ event[pick.selection ~ '_abbreviation'] }} {{ '%+d'|format(pick.american_odds) }} · {{ pick.status }}{% if pick.result %} / {{ pick.result }}{% endif %}</span></div>
+    {% else %}<p>No public picks yet.</p>{% endfor %}
+  </section>
+
+  <section class="odds-receipt">
+    <h3>Odds receipt</h3>
+    {% for item in event.odds_history %}
+      <div><time>{{ item.observed_at[:16]|replace('T',' ') }} UTC</time><span>{{ event.away_abbreviation }} {{ '%+d'|format(item.away_odds) if item.away_odds is not none else '—' }}</span><span>{{ event.home_abbreviation }} {{ '%+d'|format(item.home_odds) if item.home_odds is not none else '—' }}</span><small>{{ item.sportsbook }}</small></div>
+    {% else %}<p>No moneyline snapshots are available.</p>{% endfor %}
+  </section>
+  <a class="source-link" href="{{ event.source_url }}" rel="nofollow noreferrer">View source ↗</a>
+</article>
+{% endblock %}
+{% block scripts %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.querySelectorAll('[data-local-time]').forEach(node=>{
+    const date=new Date(node.dataset.localTime);if(!Number.isNaN(date.valueOf()))node.textContent=date.toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+  });
+  document.querySelectorAll('[data-pick]').forEach(button=>button.addEventListener('click',async()=>{
+    const status=document.getElementById('pickStatus');button.disabled=true;status.textContent='Freezing the receipt…';
+    const response=await fetch('/api/picks/{{ event.id }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({selection:button.dataset.pick})});
+    const payload=await response.json();
+    if(response.ok){status.textContent='Paper pick recorded.';setTimeout(()=>location.reload(),500);}
+    else{button.disabled=false;status.textContent=payload.detail||'Could not record the pick.';}
+  }));
+</script>
+{% endblock %}

@@ -108,22 +108,34 @@ def refresh_outcomes(at: datetime | None = None) -> dict[str, Any]:
         horizons = due_horizons(row, current)
         if horizons:
             pending.append((row, horizons))
-    prices = _latest_prices([row["ticker"] for row, _ in pending])
+    tickers = [str(row["ticker"]) for row, _ in pending]
+    # Fetching also records the newest bars. Outcomes themselves always come
+    # from the archived bar nearest their own horizon.
+    _latest_prices(tickers)
+    prices = _bar_prices(tickers)
 
     samples_added = 0
     with connection() as db:
         for row, horizons in pending:
-            price = prices.get(row["ticker"])
-            if price is None:
-                continue
             changes: dict[str, Any] = {"updated_at": timestamp}
+            try:
+                base_at = datetime.fromisoformat(str(row["base_at"]))
+            except ValueError:
+                continue
+            if base_at.tzinfo is None:
+                base_at = base_at.replace(tzinfo=UTC)
+            ticker_bars = prices.get(str(row["ticker"]), [])
             for horizon in horizons:
+                observed = _scan_horizon_price(ticker_bars, base_at, horizon)
+                if observed is None:
+                    continue
+                price, observed_at = observed
                 result = return_pct(float(row["base_price"]), price)
                 if result is None:
                     continue
                 changes[f"price_{horizon}"] = price
                 changes[f"return_{horizon}_pct"] = result
-                changes[f"observed_{horizon}_at"] = timestamp
+                changes[f"observed_{horizon}_at"] = iso(observed_at)
                 samples_added += 1
             if len(changes) == 1:
                 continue
@@ -252,6 +264,7 @@ def barrier_outcome(
 
     upper = base_price * (1 + UPPER_BARRIER_PCT / 100)
     lower = base_price * (1 - LOWER_BARRIER_PCT / 100)
+    window.sort(key=lambda bar: bar[0])
     maximum = max(bar[1] for bar in window)
     minimum = min(bar[2] for bar in window)
     maximum_return = return_pct(base_price, maximum)
@@ -263,7 +276,11 @@ def barrier_outcome(
         "max_favorable_pct": max(0.0, maximum_return or 0.0),
         "max_adverse_pct": min(0.0, minimum_return or 0.0),
     }
+    previous = base_utc
     for stamp, high, low, _ in window:
+        if stamp - previous > BAR_TOLERANCE:
+            return None
+        previous = stamp
         touched_up = high >= upper
         touched_down = low <= lower
         if touched_up and touched_down:
@@ -292,7 +309,7 @@ def barrier_outcome(
 
     # A timeout is valid only when bars cover the start and end of the window.
     # This avoids treating an overnight or halted gap as a calm hour.
-    if window[0][0] <= base_utc + BAR_TOLERANCE and window[-1][0] >= target - BAR_TOLERANCE:
+    if target - previous <= BAR_TOLERANCE:
         result.update(barrier_label="timeout", barrier_hit_at=None, barrier_ambiguous=0)
         return result
     return None

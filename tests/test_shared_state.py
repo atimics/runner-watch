@@ -13,6 +13,7 @@ class FakeRedis:
         self.values: dict[str, str] = {}
         self.lists: dict[str, list[str]] = defaultdict(list)
         self.counters: dict[str, int] = defaultdict(int)
+        self.sets: dict[str, set[str]] = defaultdict(set)
 
     def pipeline(self, *, transaction: bool) -> FakeRedis:
         assert transaction is True
@@ -58,18 +59,56 @@ class FakeRedis:
         return list(self.lists[key])
 
     def lrem(self, key: str, count: int, value: str) -> int:
-        assert count == 0
         before = len(self.lists[key])
-        self.lists[key] = [item for item in self.lists[key] if item != value]
+        if count == 0:
+            self.lists[key] = [item for item in self.lists[key] if item != value]
+        elif count > 0:
+            removed = 0
+            kept: list[str] = []
+            for item in self.lists[key]:
+                if item == value and removed < count:
+                    removed += 1
+                else:
+                    kept.append(item)
+            self.lists[key] = kept
+        else:
+            raise AssertionError("FakeRedis only supports non-negative LREM counts")
         return before - len(self.lists[key])
+
+    def sadd(self, key: str, value: str) -> int:
+        before = len(self.sets[key])
+        self.sets[key].add(value)
+        return len(self.sets[key]) - before
+
+    def smembers(self, key: str) -> set[str]:
+        return set(self.sets[key])
+
+    def srem(self, key: str, value: str) -> int:
+        existed = value in self.sets[key]
+        self.sets[key].discard(value)
+        return int(existed)
 
     def exists(self, key: str) -> int:
         return int(key in self.values)
 
-    def eval(self, script: str, key_count: int, key: str, seconds: int) -> int:
-        assert script and key_count == 1 and seconds > 0
-        self.counters[key] += 1
-        return self.counters[key]
+    def eval(self, script: str, key_count: int, *args: Any) -> int:
+        assert script
+        if key_count == 1:
+            key, seconds = args
+            assert seconds > 0
+            self.counters[key] += 1
+            return self.counters[key]
+        assert key_count == 4
+        lease_key, processing_key, queue_key, workers_key, worker_token = args
+        if self.exists(lease_key):
+            return 0
+        recovered = 0
+        for report_id in list(self.lists[processing_key]):
+            if self.lrem(processing_key, 1, report_id):
+                self.rpush(queue_key, report_id)
+                recovered += 1
+        self.srem(workers_key, worker_token)
+        return recovered
 
 
 def _configure(monkeypatch: Any) -> FakeRedis:
@@ -95,11 +134,13 @@ def test_research_queue_contains_only_report_ids(monkeypatch: Any) -> None:
 
     shared_state.enqueue_research_job("report-1")
 
-    assert shared_state.dequeue_research_job(1) == "report-1"
-    assert shared_state.recover_research_jobs() == 1
-    assert shared_state.dequeue_research_job(1) == "report-1"
-    shared_state.acknowledge_research_job("report-1")
-    assert shared_state.dequeue_research_job(1) is None
+    assert shared_state.dequeue_research_job("worker-a", 1) == "report-1"
+    assert shared_state.recover_research_jobs("worker-b") == 0
+    shared_state.release_research_worker("worker-a")
+    assert shared_state.recover_research_jobs("worker-b") == 1
+    assert shared_state.dequeue_research_job("worker-b", 1) == "report-1"
+    shared_state.acknowledge_research_job("worker-b", "report-1")
+    assert shared_state.dequeue_research_job("worker-b", 1) is None
 
 
 def test_production_redis_requires_an_encrypted_connection(monkeypatch: Any) -> None:

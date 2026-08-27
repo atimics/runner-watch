@@ -60,24 +60,6 @@
   line-height: 1.45;
 }
 
-.detail-actions .caller-id-picker {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 9px;
-  align-items: center;
-  margin: 0 0 10px;
-  color: #89958f;
-  font-size: 9px;
-  font-weight: 750;
-}
-
-.detail-actions .caller-id-picker select {
-  height: 34px;
-  margin: 0;
-  padding: 0 8px;
-  font-size: 10px;
-}
-
 .detail-actions :is(a, button, select):focus-visible,
 .chart-card button:focus-visible {
   outline: 2px solid var(--green);
