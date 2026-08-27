@@ -59,7 +59,7 @@ def test_public_app_has_a_complete_privacy_surface() -> None:
         "Service providers and transfers",
         "How long we keep data",
         "Your rights",
-        "privacy@rati.foundation",
+        "privacy@cenetex.com",
     ):
         assert required_copy in privacy_notice
 
