@@ -106,6 +106,7 @@ def test_public_call_freezes_entry_and_exit_marks(
 def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
     root = Path(__file__).parents[1]
     ticker = (root / "web/templates/ticker.html").read_text()
+    ticker_script = (root / "web/static/ticker-detail.js").read_text()
     alpha = (root / "web/templates/community.html").read_text()
     alpha += (root / "web/templates/_alpha_ledger.html").read_text()
     navigation = (root / "web/templates/mobile_base.html").read_text()
@@ -124,7 +125,7 @@ def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
     assert "Add exit" not in ticker
     assert "Generate today's report" in ticker
     assert "100 Flash" in ticker
-    assert "Call won" in ticker
+    assert "Call won" in ticker_script
     assert "call.reward_label" in alpha
     assert "flash.model" not in ticker
     assert "🐺" in alpha
