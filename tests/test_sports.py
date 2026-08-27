@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import json
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -494,7 +496,9 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     assert b'class="winner-coin ' in response.body
     assert b"Away Club" in response.body
     assert b"Home Club" in response.body
-    assert b"MARKET-TOTAL SCORE" in response.body
+    assert b"SEASON-RECORD BASELINE" in response.body
+    assert b"EXPERIMENTAL" in response.body
+    assert b"ESTIMATED SCORE" not in response.body
     assert b"MODEL" in response.body
     assert b"EDGE" in response.body
     assert b"distinct matchups" in response.body
@@ -511,9 +515,12 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     detail_response = sports_game_page(event["id"], request(path=f"/game/{event['id']}"), None)
     assert detail_response.status_code == 200
     assert b'class="decision-team"' in detail_response.body
-    assert b"PROJECTED WINNER" in detail_response.body
-    assert b"VALUE READ" in detail_response.body
-    assert b"They can point to different teams" in detail_response.body
+    assert b"BASELINE WINNER" in detail_response.body
+    assert b"MARKET GAP" in detail_response.body
+    assert b"fixed home advantage" in detail_response.body
+    assert detail_response.body.index(b"SEASON-RECORD BASELINE") < detail_response.body.index(
+        b"Daily Flash"
+    )
     assert b"Team news" in detail_response.body
     assert b"Make a paper pick" in detail_response.body
     assert f"A winning Call earns {WINNING_CALL_REWARD} Flash".encode() in detail_response.body
@@ -649,6 +656,7 @@ def test_pulse_groups_repeated_series_after_the_strongest_game(sports_db) -> Non
 
     pulse = sports_pulse("mlb")
 
+    assert pulse["model_record"]["sample"]["target"] == 250
     assert pulse["signal_count"] == 2
     assert pulse["display_count"] == 1
     assert len(pulse["events"]) == 1
@@ -787,6 +795,7 @@ def test_game_page_keeps_player_context_and_flash_inside_the_matchup(sports_db) 
     assert evidence["subject_type"] == "sports_game"
     assert evidence["event_id"] == upcoming["id"]
     assert evidence["players"][0]["players"]
+    assert "market_comparison" in evidence
     assert all("caller_handle" not in item for item in evidence["public_picks"].values())
 
     response = sports_game_page(
@@ -795,10 +804,84 @@ def test_game_page_keeps_player_context_and_flash_inside_the_matchup(sports_db) 
         None,
     )
     assert b"Daily Flash" in response.body
-    assert b"Players relevant to this game" in response.body
+    assert b"Last stored team rosters" in response.body
+    assert b"Previous team rosters" in response.body
     assert b"Home Player" in response.body
-    assert b"no global player list" in response.body
+    assert b"Not confirmed for this game" in response.body
+    assert b"team record in" not in response.body
     assert b"/api/sports/games/mlb:401200003/research" in response.body
+
+
+def test_sports_flash_uses_a_sports_only_contract_and_frozen_numbers(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+    evidence = {
+        "subject_type": "sports_game",
+        "winner": {"team_name": "Home Club", "model_probability_pct": 60.0},
+        "prediction": {
+            "model_version": "team-form-v1",
+            "home_probability": 0.6,
+            "away_probability": 0.4,
+            "edge_pct": 5.0,
+        },
+        "odds": {"home": -130, "away": 115, "home_open": -125, "away_open": 110},
+        "market_comparison": {},
+        "teams": {
+            "home": {"id": "1", "name": "Home Club", "abbreviation": "HOM"},
+            "away": {"id": "2", "name": "Away Club", "abbreviation": "AWY"},
+        },
+        "sources": [],
+    }
+    generated = {
+        "headline": "Home Club owns the frozen baseline",
+        "model_summary": "The frozen baseline gives Home Club a 60% win probability.",
+        "market_context": "Bovada lists Home Club at -130.",
+        "form_context": ["Recent form is context only."],
+        "availability_unknowns": ["The lineup is not confirmed."],
+        "news_context": [],
+        "risks": ["The baseline does not know the starter."],
+        "what_changes_call": ["A confirmed starter change could alter the context."],
+        "sports_forecast": {
+            "selection": "home",
+            "home_probability": 0.62,
+            "away_probability": 0.38,
+            "confidence": "medium",
+            "reason": "The full evidence gives Home Club a narrow edge.",
+        },
+        "sources": [],
+        "citations": [],
+    }
+
+    def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
+        captured["body"] = json.loads(request.data)
+        return io.BytesIO(
+            json.dumps(
+                {
+                    "choices": [{"message": {"content": json.dumps(generated)}}],
+                    "model": "z-ai/glm-5.3",
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
+    report, _, _ = web_main._generate_openrouter_report("server-key", evidence, "sports-user")
+
+    body = captured["body"]
+    request_payload = json.loads(body["messages"][1]["content"])
+    assert "stock forecast" not in body["messages"][0]["content"].lower()
+    assert "company_profile" not in request_payload["output"]
+    assert "forecast" not in request_payload["output"]
+    assert "sports_forecast" in request_payload["output"]
+    assert "evaluation_contract" not in request_payload
+    assert request_payload["model_contract"]["version"] == "team-form-v1"
+    assert report["thesis"] == generated["model_summary"]
+    assert report["summary"] == generated["market_context"]
+    assert report["company_profile"] == {}
+    assert report["forecast"] is None
+    assert report["sports_forecast"]["selection"] == "home"
+
+    invented = {**generated, "model_summary": "The baseline gives Home Club a 61% chance."}
+    with pytest.raises(ValueError, match="frozen probability"):
+        web_main._normalize_sports_openrouter_report(invented, evidence)
 
 
 def test_sports_flash_uses_the_shared_daily_report_lifecycle(

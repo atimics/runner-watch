@@ -2168,6 +2168,7 @@ def sports_pulse(league: str = "all", view: str = "signals", limit: int = 30) ->
     return {
         **payload,
         "events": shown,
+        "model_record": _model_alpha(league),
         "view": "signals",
         "signal_count": len(signals),
         "display_count": len(shown),
@@ -3195,6 +3196,7 @@ def sports_event(event_id: str) -> dict[str, Any] | None:
         event["news"] = [dict(item) for item in news_rows]
         event["context"] = _series_context(database, event)
         event["matchup_players"] = _matchup_player_context(database, event)
+    event["model_record"] = _model_alpha(str(event["league"]))
     return event
 
 
@@ -3274,6 +3276,7 @@ def sports_flash_evidence(event_id: str) -> tuple[str, dict[str, Any]]:
             "total": odds.get("total"),
             "history": event.get("odds_history") or [],
         },
+        "market_comparison": event.get("market_comparison") or {},
         "teams": {
             side: {
                 "id": str(event[f"{side}_team_id"]),

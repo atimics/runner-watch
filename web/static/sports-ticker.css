@@ -109,7 +109,7 @@
 
 .matchup-team {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 30px;
+  grid-template-columns: 40px minmax(0, 1fr);
   gap: 8px;
   align-items: baseline;
   color: #81798e;
@@ -273,7 +273,7 @@
   }
 
   .matchup-team {
-    grid-template-columns: 35px minmax(0, 1fr) 28px;
+    grid-template-columns: 35px minmax(0, 1fr);
     gap: 5px;
   }
 
@@ -322,7 +322,7 @@
   }
 
   .matchup-team {
-    grid-template-columns: 32px minmax(0, 1fr) 25px;
+    grid-template-columns: 32px minmax(0, 1fr);
     gap: 4px;
   }
 }

@@ -521,3 +521,40 @@
   .receipt-scope > section{padding:14px}
   .receipt-scope > section + section{border-top:1px solid var(--line);border-left:0}
 }
+
+/* Keep the frozen decision visible and fold secondary matchup context away. */
+.game-detail-compact{max-width:860px}
+.model-maturity{margin-top:14px;padding:12px 14px;border:1px solid rgba(248,202,118,.22);border-radius:10px;background:rgba(248,202,118,.055)}
+.model-maturity>div{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.model-maturity strong,.model-maturity span{font-size:8px;font-weight:850;letter-spacing:.06em}
+.model-maturity strong{color:#f8ca76}
+.model-maturity span,.model-maturity p{color:var(--muted)}
+.model-maturity p{margin:6px 0 9px;font-size:9px;line-height:1.45}
+.model-maturity>i{display:block;height:3px;overflow:hidden;border-radius:999px;background:#2b2633}
+.model-maturity>i>b{display:block;min-width:3px;height:100%;border-radius:inherit;background:#f8ca76}
+.game-flash-compact{grid-template-columns:minmax(0,1fr) 230px;gap:14px;padding:14px 16px}
+.game-flash-compact h2{font-size:16px}
+.game-disclosure{overflow:hidden;margin-top:10px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.game-disclosure>summary{display:grid;grid-template-columns:minmax(0,1fr) auto 18px;gap:14px;align-items:center;min-height:58px;padding:10px 14px;cursor:pointer;list-style:none}
+.game-disclosure>summary::-webkit-details-marker{display:none}
+.game-disclosure>summary>span,.game-disclosure>summary b,.game-disclosure>summary strong{display:block;min-width:0}
+.game-disclosure>summary b{color:var(--accent);font-size:7px;font-weight:900;letter-spacing:.12em}
+.game-disclosure>summary strong{margin-top:4px;overflow:hidden;font-size:12px;text-overflow:ellipsis;white-space:nowrap}
+.game-disclosure>summary small{max-width:320px;color:var(--muted);font-size:8px;line-height:1.35;text-align:right}
+.game-disclosure>summary>i{color:var(--muted);font-size:18px;font-style:normal;text-align:center;transition:transform .15s}
+.game-disclosure[open]>summary>i{transform:rotate(45deg)}
+.game-disclosure-body{border-top:1px solid var(--line)}
+.game-disclosure-body>:is(.market-compare,.series-context,.matchup-players,.prediction-receipt,.match-news,.public-picks,.odds-receipt){margin-top:0;border:0;border-radius:0}
+.game-disclosure .matchup-player-grid article{grid-template-columns:1fr}
+.game-disclosure .public-picks,.game-disclosure .odds-receipt{margin-top:0}
+.paper-pick{padding:16px 18px}
+.paper-pick h2{font-size:21px}
+
+@media(max-width:700px){
+  .decision-kicker{align-items:flex-start;flex-direction:column;gap:6px}
+  .decision-board .decision-summary{line-height:1.45}
+  .model-maturity>div{align-items:flex-start;flex-direction:column;gap:3px}
+  .game-flash-compact{grid-template-columns:1fr}
+  .game-disclosure>summary{grid-template-columns:minmax(0,1fr) 16px;gap:9px;min-height:54px;padding:9px 12px}
+  .game-disclosure>summary small{display:none}
+}
