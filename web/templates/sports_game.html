@@ -3,6 +3,7 @@
 {% block content %}
 {% set odds = event.odds %}
 {% set prediction = event.prediction %}
+{% set receipt = event.receipt %}
 <a class="sports-back" href="{{ sports_path_prefix or '' }}/">← Back to Pulse</a>
 <article class="game-detail">
   <header class="match-strip">
@@ -15,16 +16,127 @@
       <div>
         <small>{{ event.away_abbreviation }} · {{ event.away_record or 'No record' }}</small>
         <strong>{{ event.away_team_name }}</strong>
-        <span>{% if odds and odds.away_odds is not none %}{{ '%+d'|format(odds.away_odds) }}{% else %}—{% endif %}</span>
+        <span>{% if event.completed %}{{ event.away_score|int }}{% elif odds and odds.away_odds is not none %}{{ '%+d'|format(odds.away_odds) }}{% else %}—{% endif %}</span>
       </div>
       <i>at</i>
       <div>
         <small>{{ event.home_abbreviation }} · {{ event.home_record or 'No record' }}</small>
         <strong>{{ event.home_team_name }}</strong>
-        <span>{% if odds and odds.home_odds is not none %}{{ '%+d'|format(odds.home_odds) }}{% else %}—{% endif %}</span>
+        <span>{% if event.completed %}{{ event.home_score|int }}{% elif odds and odds.home_odds is not none %}{{ '%+d'|format(odds.home_odds) }}{% else %}—{% endif %}</span>
       </div>
     </div>
   </header>
+
+  <section class="game-flash" aria-labelledby="gameFlashTitle">
+    <div>
+      <span>AI RESEARCH</span>
+      <h2 id="gameFlashTitle">Daily Flash</h2>
+      <p>One source-bound report for this matchup: winner, odds, team form, relevant players, and news.</p>
+    </div>
+    <div class="game-flash-action">
+      {% if latest_commission and latest_commission.locked %}
+      <button type="button" disabled><strong>Locked today</strong><small>The first report has a private hour</small></button>
+      {% elif latest_commission and latest_commission.status == 'complete' %}
+      <a href="/research/{{ latest_commission.public_id }}"><strong>Read Flash</strong><small>{{ 'Public report' if latest_commission.visibility == 'public' else 'Private report' }}</small></a>
+      {% elif latest_commission and latest_commission.status == 'running' %}
+      <button id="commissionButton" type="button" data-job-id="{{ latest_commission.public_id }}" disabled><strong>Researching…</strong><small>Building the game report</small></button>
+      {% elif user %}
+      <button id="commissionButton" type="button"><strong>Generate report</strong><small>100 Flash · private 1h</small></button>
+      {% else %}
+      <a href="/login?next=/game/{{ event.id }}"><strong>Log in for Flash</strong><small>100 Flash · private 1h</small></a>
+      {% endif %}
+      <p id="commissionStatus" role="status"></p>
+    </div>
+  </section>
+
+  {% set game_context = event.context %}
+  <section class="series-context">
+    <header>
+      <div>
+        <span>SERIES &amp; FORM</span>
+        <h2>{{ game_context.headline }}</h2>
+      </div>
+      <div class="series-badges">
+        {% if game_context.back_to_back %}<b>BACK-TO-BACK</b>{% endif %}
+        {% if game_context.series_game_count > 1 %}<small>Game {{ game_context.series_game_number }} of {{ game_context.series_game_count }}</small>{% endif %}
+      </div>
+    </header>
+
+    {% if game_context.previous_meeting %}
+      {% set previous = game_context.previous_meeting %}
+      <div class="previous-meeting">
+        <div class="previous-meeting-meta">
+          <span>PREVIOUS MEETING</span>
+          <time data-local-time="{{ previous.start_time }}">{{ previous.start_time[:16]|replace('T',' ') }} UTC</time>
+          {% if game_context.between_starts_label %}<small>{{ game_context.between_starts_label }}</small>{% endif %}
+        </div>
+        <a class="previous-score" href="{{ sports_path_prefix or '' }}/game/{{ previous.id }}">
+          <span>{{ previous.away_abbreviation }} <b>{{ previous.away_score }}</b></span>
+          <i>FINAL</i>
+          <span>{{ previous.home_abbreviation }} <b>{{ previous.home_score }}</b></span>
+        </a>
+        {% if previous.recap %}
+        <a class="series-recap" href="{{ previous.recap.source_url }}" rel="nofollow noreferrer">
+          <small>GAME RECAP · {{ previous.recap.source_name }} · <time data-local-time="{{ previous.recap.published_at }}">{{ previous.recap.published_at[:16]|replace('T',' ') }} UTC</time></small>
+          <strong>{{ previous.recap.headline }}</strong>
+          <i aria-hidden="true">↗</i>
+        </a>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {% if game_context.head_to_head.meetings %}
+    <p class="head-to-head-summary">
+      Last {{ game_context.head_to_head.meetings }} meetings:
+      {{ event.away_abbreviation }} {{ game_context.head_to_head.away_wins }}–{{ game_context.head_to_head.home_wins }} {{ event.home_abbreviation }}{% if game_context.head_to_head.ties %} · {{ game_context.head_to_head.ties }} tied{% endif %}
+    </p>
+    {% endif %}
+
+    <div class="recent-form-grid">
+      {% for team in game_context.recent_form %}
+      <section>
+        <header><strong>{{ team.abbreviation }}</strong><span>{{ team.record }} · LAST {{ team.games|length }}</span></header>
+        <p class="team-rest{% if team.short_rest %} short{% endif %}">{{ 'SHORT REST · ' if team.short_rest else 'REST · ' }}{{ team.rest_label }}</p>
+        <div class="form-games">
+          {% for game in team.games %}
+          <a href="{{ sports_path_prefix or '' }}/game/{{ game.id }}">
+            <time data-local-date="{{ game.start_time }}">{{ game.start_time[:10] }}</time>
+            <span><b class="result-{{ game.result|lower }}">{{ game.result }}</b> {{ game.venue_word }} {{ game.opponent_abbreviation }}</span>
+            <strong>{{ game.team_score }}–{{ game.opponent_score }}</strong>
+          </a>
+          {% else %}
+          <p>No completed games stored yet.</p>
+          {% endfor %}
+        </div>
+      </section>
+      {% endfor %}
+    </div>
+    <p class="context-note">Series and recent form are context only; this baseline model still uses season records and market odds.</p>
+  </section>
+
+  {% if event.matchup_players %}
+  <section class="matchup-players">
+    <header>
+      <div><span>MATCHUP STATS</span><h2>Players relevant to this game</h2></div>
+      <small>Latest stored roster for each team · no global player list</small>
+    </header>
+    <div class="matchup-player-grid">
+      {% for team in event.matchup_players %}
+      <section>
+        <header><strong>{{ team.team_abbreviation }}</strong><span>{{ team.record }}</span></header>
+        {% for player in team.players %}
+        <article>
+          <div><strong>{{ player.name }}</strong><small>{{ player.position }}{% if player.starter %} · latest starter{% endif %}</small></div>
+          <span><b>{{ player.wins }}–{{ player.losses }}</b><small>team record in {{ player.games }} appearance{{ '' if player.games == 1 else 's' }}</small></span>
+          {% if player.last_stats_label %}<p>{{ player.last_stats_label }}</p>{% endif %}
+        </article>
+        {% else %}<p>No stored player appearances for this team yet.</p>{% endfor %}
+      </section>
+      {% endfor %}
+    </div>
+    <p class="context-note">Appearance records show the team result when the player appeared. They are context, not individual skill ratings or confirmed lineups.</p>
+  </section>
+  {% endif %}
 
   {% if prediction %}
     {% if prediction.selection != 'pass' %}
@@ -81,6 +193,38 @@
     {% endif %}
   </section>
 
+  {% if receipt %}
+  <section class="prediction-receipt">
+    <header>
+      <div><span>{{ receipt.status_label }}</span><h2>Prediction receipt</h2></div>
+      <div class="receipt-seal"><small>RECEIPT</small><b>{{ receipt.id }}</b></div>
+    </header>
+    <div class="receipt-meta-grid">
+      <div><small>MODEL</small><strong>{{ receipt.model_version }}</strong><span>{{ receipt.quality }}</span></div>
+      <div><small>CAPTURED</small><strong><time data-local-time="{{ receipt.captured_at }}">{{ receipt.captured_at[:16]|replace('T',' ') }} UTC</time></strong><span>{{ receipt.timing_label }}</span></div>
+      <div><small>MARKET SOURCE</small><strong>{{ receipt.sportsbook or 'No complete market' }}</strong><span>{% if receipt.odds_observed_at %}<time data-local-time="{{ receipt.odds_observed_at }}">{{ receipt.odds_observed_at[:16]|replace('T',' ') }} UTC</time>{% else %}No odds snapshot{% endif %}</span></div>
+      <div><small>INPUT FINGERPRINT</small><strong>{{ receipt.input_hash[:12]|upper }}</strong><span>Changes create a new receipt</span></div>
+    </div>
+    <div class="receipt-probabilities">
+      <div><span>{{ event.away_abbreviation }}</span><small>MODEL</small><strong>{{ '%.1f'|format(prediction.away_probability * 100) }}%</strong><small>NO-VIG MARKET</small><b>{% if prediction.away_market_probability is not none %}{{ '%.1f'|format(prediction.away_market_probability * 100) }}%{% else %}—{% endif %}</b></div>
+      <i>versus</i>
+      <div><span>{{ event.home_abbreviation }}</span><small>MODEL</small><strong>{{ '%.1f'|format(prediction.home_probability * 100) }}%</strong><small>NO-VIG MARKET</small><b>{% if prediction.home_market_probability is not none %}{{ '%.1f'|format(prediction.home_market_probability * 100) }}%{% else %}—{% endif %}</b></div>
+    </div>
+    {% if receipt.outcome %}
+    <div class="receipt-outcome">
+      <span><small>FINAL</small><strong>{{ receipt.outcome.final_score }}</strong></span>
+      <span><small>MODEL WINNER</small><strong class="result-{{ receipt.outcome.model_result }}">{{ receipt.outcome.model_result|upper }}</strong></span>
+      <span><small>VALUE CALL</small><strong class="result-{{ receipt.outcome.value_result }}">{{ receipt.outcome.value_result|upper }}</strong></span>
+    </div>
+    {% endif %}
+    <div class="receipt-scope">
+      <section><h3>Included at capture</h3><ul>{% for item in receipt.included %}<li>{{ item }}</li>{% else %}<li>No complete model inputs were available.</li>{% endfor %}</ul></section>
+      <section><h3>Not included in this model</h3><ul>{% for item in receipt.excluded %}<li>{{ item }}</li>{% endfor %}</ul></section>
+    </div>
+    <p>This record uses the final model snapshot before the game started. Later news and results cannot rewrite it.</p>
+  </section>
+  {% endif %}
+
   <section class="match-news">
     <header>
       <div><span>LIVE CONTEXT</span><h2>Team news</h2></div>
@@ -104,22 +248,12 @@
     </div>
   </section>
 
-  <div class="detail-grid">
-    <section>
-      <h3>What supports it</h3>
-      <ul>{% for item in prediction.evidence %}<li>{{ item }}</li>{% endfor %}</ul>
-    </section>
-    <section>
-      <h3>What could break it</h3>
-      <ul>{% for item in prediction.risks %}<li>{{ item }}</li>{% endfor %}</ul>
-    </section>
-  </div>
   {% endif %}
 
   <section class="paper-pick">
     <span>PUBLIC RECEIPT</span>
     <h2>Make a paper pick</h2>
-    <p>The current moneyline and time will be frozen. This does not place a real bet.</p>
+    <p>The current moneyline and time will be frozen. A winning Call earns {{ winning_call_reward }} Flash. This does not place a real bet.</p>
     {% if not user %}
       <a href="/login">Log in to make a paper pick</a>
     {% elif event.status != 'pre' or not odds %}
@@ -136,14 +270,14 @@
   <section class="public-picks">
     <h3>Public paper picks</h3>
     {% for pick in event.picks %}
-      <div><strong>{{ pick.caller_handle }}</strong><span>{{ event[pick.selection ~ '_abbreviation'] }} {{ '%+d'|format(pick.american_odds) }} · {{ pick.status }}{% if pick.result %} / {{ pick.result }}{% endif %}</span></div>
+      <div><strong>{{ pick.caller_handle }}</strong><span>{{ event[pick.selection ~ '_abbreviation'] }} {{ '%+d'|format(pick.american_odds) }} · {{ pick.status }}{% if pick.result %} / {{ pick.result }}{% endif %}{% if pick.result == 'win' %} · +{{ winning_call_reward }} Flash{% endif %}</span></div>
     {% else %}<p>No public picks yet.</p>{% endfor %}
   </section>
 
   <section class="odds-receipt">
-    <h3>Odds receipt</h3>
+    <h3>Pregame market timeline</h3>
     {% for item in event.odds_history %}
-      <div><time>{{ item.observed_at[:16]|replace('T',' ') }} UTC</time><span>{{ event.away_abbreviation }} {{ '%+d'|format(item.away_odds) if item.away_odds is not none else '—' }}</span><span>{{ event.home_abbreviation }} {{ '%+d'|format(item.home_odds) if item.home_odds is not none else '—' }}</span><small>{{ item.sportsbook }}</small></div>
+      <div><time data-local-time="{{ item.observed_at }}">{{ item.observed_at[:16]|replace('T',' ') }} UTC</time><span>{{ event.away_abbreviation }} {{ '%+d'|format(item.away_odds) if item.away_odds is not none else '—' }}</span><span>{{ event.home_abbreviation }} {{ '%+d'|format(item.home_odds) if item.home_odds is not none else '—' }}</span><small>{% if loop.first %}OPEN · {% elif loop.last %}{{ receipt.market_label|upper if receipt else 'LATEST' }} · {% endif %}{{ item.sportsbook }}</small></div>
     {% else %}<p>No moneyline snapshots are available.</p>{% endfor %}
   </section>
   <a class="source-link" href="{{ event.source_url }}" rel="nofollow noreferrer">View game source ↗</a>
@@ -152,7 +286,10 @@
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
   document.querySelectorAll('[data-local-time]').forEach(node=>{
-    const date=new Date(node.dataset.localTime);if(!Number.isNaN(date.valueOf()))node.textContent=date.toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+    const date=new Date(node.dataset.localTime);if(!Number.isNaN(date.valueOf()))node.textContent=date.toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'});
+  });
+  document.querySelectorAll('[data-local-date]').forEach(node=>{
+    const date=new Date(node.dataset.localDate);if(!Number.isNaN(date.valueOf()))node.textContent=date.toLocaleDateString([],{month:'short',day:'numeric'});
   });
   document.querySelectorAll('[data-pick]').forEach(button=>button.addEventListener('click',async()=>{
     const status=document.getElementById('pickStatus');button.disabled=true;status.textContent='Freezing the receipt…';
@@ -161,5 +298,19 @@
     if(response.ok){status.textContent='Paper pick recorded.';setTimeout(()=>location.reload(),500);}
     else{button.disabled=false;status.textContent=payload.detail||'Could not record the pick.';}
   }));
+  const commissionButton=document.getElementById('commissionButton');
+  const commissionStatus=document.getElementById('commissionStatus');
+  async function pollFlash(jobId){
+    const response=await fetch(`/api/research/jobs/${encodeURIComponent(jobId)}`);const result=await response.json().catch(()=>({}));
+    if(result.status==='complete'&&result.url){location.href=result.url;return;}
+    if(result.status==='failed'){commissionButton.disabled=false;commissionButton.innerHTML='<strong>Retry Flash</strong><small>100 Flash</small>';commissionStatus.textContent=result.error||'Flash failed. You can retry.';return;}
+    commissionStatus.textContent='Flash is reading this matchup and writing your private report…';setTimeout(()=>pollFlash(jobId),2500);
+  }
+  if(commissionButton?.dataset.jobId)pollFlash(commissionButton.dataset.jobId);
+  commissionButton?.addEventListener('click',async()=>{
+    commissionButton.disabled=true;commissionButton.innerHTML='<strong>Starting…</strong><small>Building the game report</small>';commissionStatus.textContent='Sending the report to the queue…';
+    try{const response=await fetch('/api/sports/games/{{ event.id }}/research',{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||result.error||'Could not start Flash');if(Number.isFinite(Number(result.balance)))document.querySelectorAll('[data-flash-balance]').forEach(item=>{item.textContent=result.balance;});if(result.status==='complete'&&result.url){location.href=result.url;return;}commissionButton.innerHTML='<strong>Researching…</strong><small>Building the game report</small>';pollFlash(result.job_id);}
+    catch(error){commissionButton.disabled=false;commissionButton.innerHTML='<strong>Retry Flash</strong><small>100 Flash</small>';commissionStatus.textContent=error.message||'Could not start Flash';}
+  });
 </script>
 {% endblock %}

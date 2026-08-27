@@ -4,66 +4,7 @@
 {% block content %}
 <div class="desktop-workspace" data-desktop-workspace>
   <section class="desktop-list-pane" data-desktop-list>
-    <header class="screen-head">
-      <div><span class="rati-product">RATi RUNNERS</span><h1>Alpha</h1><span class="head-meta"><b>{{ board.active_calls }}</b> open Calls <i></i><span>{{ board.total_calls }} total</span></span></div>
-      {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>{% else %}<a class="avatar-button signed-out" href="/login">Log in</a>{% endif %}
-    </header>
-
-    <main class="alpha-board call-ledger">
-  {% if board.rows %}
-    {% set leader = board.rows[0] %}
-    <article class="alpha-leader">
-      <div class="wolf-mark"><span>🐺</span><b>#1 most called</b></div>
-      <a class="alpha-leader-asset" href="/t/{{ leader.ticker }}" data-desktop-default>
-        <span class="coin coin-{{ leader.coin_tone }}"><b>{{ leader.coin_label }}</b><i></i></span>
-        <span><strong>{{ leader.ticker }}</strong><small>{{ leader.company }}</small></span>
-        <span class="alpha-leader-quote"><b>{% if leader.price is not none %}${{ '%.4f'|format(leader.price) if leader.price < 1 else '%.2f'|format(leader.price) }}{% else %}—{% endif %}</b><small class="{{ 'up' if leader.change_pct is not none and leader.change_pct >= 0 else 'down' }}">{% if leader.change_pct is not none %}{{ '+' if leader.change_pct >= 0 else '' }}{{ '%.1f'|format(leader.change_pct) }}%{% else %}—{% endif %}</small></span>
-      </a>
-      <div class="alpha-leader-foot">
-        <span>{{ leader.active_calls }} open Calls · {{ leader.total_calls }} total</span>
-        <a class="alpha-open" href="/t/{{ leader.ticker }}">Open</a>
-      </div>
-    </article>
-
-    {% if board.rows|length > 1 %}
-    <section class="alpha-ranking" aria-label="Alpha ranking">
-      {% for item in board.rows[1:] %}
-      <article class="alpha-rank-row">
-        <span class="rank-number">{{ item.rank }}</span>
-        <a href="/t/{{ item.ticker }}"><span class="coin coin-{{ item.coin_tone }}"><b>{{ item.coin_label }}</b><i></i></span><span><strong>{{ item.ticker }}</strong><small>{{ item.pulse_label }}</small></span></a>
-        <div class="call-count"><b>{{ item.active_calls }}</b><small>open Calls</small></div>
-      </article>
-      {% endfor %}
-    </section>
-    {% endif %}
-  {% elif board.contenders %}
-  <section class="alpha-contenders">
-    <div class="alpha-section-head"><h2>Contenders</h2><span>Make the first Call</span></div>
-    {% for item in board.contenders %}
-    <article class="alpha-rank-row contender-row">
-      <span class="rank-number">—</span>
-      <a href="/t/{{ item.ticker }}"><span class="coin coin-{{ item.coin_tone }}"><b>{{ item.coin_label }}</b><i></i></span><span><strong>{{ item.ticker }}</strong><small>{{ item.pulse_label }}</small></span></a>
-      <a class="alpha-open" href="/t/{{ item.ticker }}#discussion">Open</a>
-    </article>
-    {% endfor %}
-  </section>
-  {% else %}
-  <div class="empty-list"><strong>No public Calls yet</strong><span>Open a ticker and make the first Call.</span></div>
-  {% endif %}
-
-  {% if board.calls %}
-  <section class="public-call-feed" aria-label="Public Calls">
-    <div class="alpha-section-head"><h2>Calls</h2><span>Entry, mark and PnL</span></div>
-    {% for call in board.calls %}
-    <article class="public-call-row">
-      <a class="call-owner" href="/u/{{ call.caller_handle }}"><strong>{{ call.caller_handle }}</strong><small>{{ call.status }}</small></a>
-      <a class="call-ticker" href="/t/{{ call.ticker }}"><strong>{{ call.ticker }}</strong><small>Entry ${{ '%.4f'|format(call.entry_price) if call.entry_price < 1 else ('%.2f'|format(call.entry_price)) }}</small></a>
-      <span class="call-pnl">{% if call.return_pct is not none %}<b class="{{ 'up' if call.return_pct >= 0 else 'down' }}">{{ '+' if call.return_pct >= 0 else '' }}{{ '%.1f'|format(call.return_pct) }}%</b><small>{% if call.mark_price is not none %}${{ '%.4f'|format(call.mark_price) if call.mark_price < 1 else ('%.2f'|format(call.mark_price)) }}{% endif %}</small>{% else %}<b>—</b><small>no mark</small>{% endif %}</span>
-    </article>
-    {% endfor %}
-  </section>
-  {% endif %}
-    </main>
+    {% include "_alpha_ledger.html" %}
   </section>
   {% include "_desktop_panel.html" %}
 </div>
