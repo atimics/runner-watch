@@ -1575,6 +1575,13 @@ def _event_payload(row: dict[str, Any]) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _nonnegative_event_count(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def _event_timestamp(row: dict[str, Any]) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(str(row.get("event_at") or ""))
@@ -1613,8 +1620,13 @@ def _external_event_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
     news.sort(key=lambda event: str(event.get("event_at") or ""), reverse=True)
     social = list(social_by_source.values())
     social.sort(key=lambda event: str(event.get("event_at") or ""), reverse=True)
-    mention_count = sum(int(event["payload"].get("mention_count") or 0) for event in social)
-    engagement_count = sum(int(event["payload"].get("engagement_count") or 0) for event in social)
+    mention_count = sum(
+        _nonnegative_event_count(event["payload"].get("mention_count")) for event in social
+    )
+    engagement_count = sum(
+        _nonnegative_event_count(event["payload"].get("engagement_count"))
+        for event in social
+    )
     news_boost = min(6.0, 1.5 * math.sqrt(len(news)))
     social_boost = min(
         8.0,
@@ -4986,8 +4998,8 @@ def _radar_base_data_uncached() -> list[dict[str, Any]]:
             title = str(payload.get("title") or "New company coverage")
             label = f"News · {title[:96]}"
         elif event_type_key == "social_spike":
-            mentions = int(payload.get("mention_count") or 0)
-            engagement = int(payload.get("engagement_count") or 0)
+            mentions = _nonnegative_event_count(payload.get("mention_count"))
+            engagement = _nonnegative_event_count(payload.get("engagement_count"))
             score = round(
                 min(80.0, 45.0 + mentions * 2.0 + math.log2(engagement + 1) * 2.0),
                 2,
@@ -5015,8 +5027,12 @@ def _radar_base_data_uncached() -> list[dict[str, Any]]:
                 "event_at": event["event_at"],
                 "attention_score": score,
                 "filing_url": event.get("source_url"),
-                "external_social_mentions": int(payload.get("mention_count") or 0),
-                "external_social_engagement": int(payload.get("engagement_count") or 0),
+                "external_social_mentions": _nonnegative_event_count(
+                    payload.get("mention_count")
+                ),
+                "external_social_engagement": _nonnegative_event_count(
+                    payload.get("engagement_count")
+                ),
             }
         )
 
