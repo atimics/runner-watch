@@ -102,9 +102,10 @@ def _company_for_cik(cik: int) -> dict[str, Any] | None:
 
 def _already_seen(accession: str) -> bool:
     with connection() as db:
-        stored = db.execute(
-            "SELECT 1 FROM sec_filings WHERE accession=?", (accession,)
-        ).fetchone() is not None
+        stored = (
+            db.execute("SELECT 1 FROM sec_filings WHERE accession=?", (accession,)).fetchone()
+            is not None
+        )
     return stored or source_item_is_terminal("sec", "filing", accession)
 
 
@@ -130,17 +131,18 @@ def _market_context(tickers: list[str]) -> dict[str, dict[str, float | None]]:
         return {}
     unique = list(dict.fromkeys(tickers))
     try:
-        result = RunnerScanner(recording_market_data(batch_size=60)).scan(
-            unique,
-            ScanSettings(
-                min_price=0.01,
-                max_price=100_000,
-                min_avg_volume=0,
-                min_avg_dollar_volume=0,
-                max_symbols=len(unique),
-                top_n=len(unique),
-            ),
-        )
+        with recording_market_data(batch_size=60) as market_data:
+            result = RunnerScanner(market_data).scan(
+                unique,
+                ScanSettings(
+                    min_price=0.01,
+                    max_price=100_000,
+                    min_avg_volume=0,
+                    min_avg_dollar_volume=0,
+                    max_symbols=len(unique),
+                    top_n=len(unique),
+                ),
+            )
     except Exception as exc:
         LOG.warning("Market confirmation failed: %s", exc)
         return {}
@@ -179,9 +181,7 @@ def _prepare_event(
         "actor": ownership.owner_name if ownership else None,
         "actor_title": ownership.owner_title if ownership else None,
         "transaction_codes": ",".join(ownership.codes) if ownership else "",
-        "transaction_shares": (
-            ownership.purchase_shares if is_purchase else ownership.sale_shares
-        )
+        "transaction_shares": (ownership.purchase_shares if is_purchase else ownership.sale_shares)
         if ownership
         else None,
         "transaction_price": (
@@ -189,9 +189,7 @@ def _prepare_event(
         )
         if ownership
         else None,
-        "transaction_value": (
-            ownership.purchase_value if is_purchase else ownership.sale_value
-        )
+        "transaction_value": (ownership.purchase_value if is_purchase else ownership.sale_value)
         if ownership
         else None,
         "post_transaction_shares": ownership.post_transaction_shares if ownership else None,

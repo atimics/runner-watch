@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from fastapi import Request
@@ -289,6 +291,39 @@ def test_slate_builds_fixed_side_edge_history(sports_db) -> None:
     assert "fell 3.2 points" in history["label"]
 
 
+def test_slate_database_query_count_does_not_grow_per_event(
+    sports_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events = []
+    for number in range(12):
+        raw = sample_event()
+        raw["id"] = f"401100{number:03d}"
+        event = normalize_event("mlb", raw)
+        assert event is not None
+        events.append(event)
+    store_events(events)
+
+    statements: list[str] = []
+
+    class CountingDatabase:
+        def __init__(self, database: Any) -> None:
+            self.database = database
+
+        def execute(self, statement: str, parameters: Any = ()):
+            statements.append(" ".join(statement.split()))
+            return self.database.execute(statement, parameters)
+
+    @contextmanager
+    def counted_connection():
+        with connection() as database:
+            yield CountingDatabase(database)
+
+    monkeypatch.setattr(sports_module, "connection", counted_connection)
+
+    assert len(sports_slate("mlb")["events"]) >= len(events)
+    assert len(statements) == 6
+
+
 def test_sports_pulse_hides_passes_and_radar_keeps_real_moves(sports_db) -> None:
     promoted_raw = sample_event()
     promoted = normalize_event("mlb", promoted_raw)
@@ -470,7 +505,7 @@ def test_sports_host_has_radar_and_alpha_products(sports_db) -> None:
     assert b'class="sports-hero' not in radar_response.body
     assert alpha_response.status_code == 200
     assert b"Team record in appearances" in alpha_response.body
-    assert b"data-history-range=\"30\"" in alpha_response.body
+    assert b'data-history-range="30"' in alpha_response.body
 
 
 def test_cloudflare_forwarded_host_selects_the_public_product() -> None:

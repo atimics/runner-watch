@@ -20,11 +20,17 @@ fallback after an exception, error response, or empty response. A partial respon
 partial and is not silently combined with a second provider. This protects timestamp and price
 semantics.
 
-The first route is:
+The routes are:
 
 ```text
-bars -> yahoo
+daily bars -> massive -> yahoo (when MASSIVE_API_KEY is set; otherwise yahoo only)
+intraday bars -> yahoo
 ```
+
+Massive serves end-of-day daily bars from its grouped daily endpoint. Its adapter keeps a local
+SQLite cache of whole sessions and bounds scan-time backfill with `MASSIVE_MAX_SCAN_CALLS`; a cold
+cache fails fast and falls back to Yahoo instead of stalling a scan. Run
+`stonks-massive-backfill` nightly to keep the cache warm.
 
 The scanner still receives pandas frames through `RoutedMarketData`, so scoring behavior does not
 change. The frame compatibility layer now sits after the canonical boundary.

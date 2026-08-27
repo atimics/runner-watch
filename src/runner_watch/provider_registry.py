@@ -55,9 +55,7 @@ class ProviderRegistry:
             if provider is None:
                 raise ProviderConfigurationError(f"Provider {name!r} is not registered")
             if kind not in provider.capabilities:
-                raise ProviderConfigurationError(
-                    f"Provider {name!r} does not support {kind.value}"
-                )
+                raise ProviderConfigurationError(f"Provider {name!r} does not support {kind.value}")
         self._routes[kind] = ProviderRoute(kind=kind, providers=names)
 
     def fetch(self, request: ProviderRequest, progress: Any = None) -> FetchBatch:
@@ -81,8 +79,7 @@ class ProviderRegistry:
                 )
             if batch.provenance.provider.strip().lower() != name:
                 raise ProviderConfigurationError(
-                    f"Provider {name!r} reported provenance for "
-                    f"{batch.provenance.provider!r}"
+                    f"Provider {name!r} reported provenance for {batch.provenance.provider!r}"
                 )
             if batch.status == "error" or batch.item_count == 0:
                 attempts.append((name, batch.error or "provider returned no canonical records"))
@@ -100,8 +97,7 @@ class ProviderRegistry:
                     "quality": {
                         **batch.provenance.quality,
                         "provider_failures": [
-                            {"provider": provider, "error": error}
-                            for provider, error in attempts
+                            {"provider": provider, "error": error} for provider, error in attempts
                         ],
                     },
                 }
@@ -121,3 +117,11 @@ class ProviderRegistry:
                 for kind, route in sorted(self._routes.items(), key=lambda item: item[0].value)
             },
         }
+
+    def close(self) -> None:
+        """Release resources owned by registered providers."""
+
+        for provider in self._providers.values():
+            close = getattr(provider, "close", None)
+            if callable(close):
+                close()

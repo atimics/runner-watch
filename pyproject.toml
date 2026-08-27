@@ -23,8 +23,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "pip-audit>=2.9",
   "pytest>=8.0",
   "pytest-cov>=6.0",
+  "pytest-playwright>=0.7",
   "ruff>=0.9",
 ]
 
@@ -35,6 +37,7 @@ stonks-migrate = "runner_web.db:main"
 stonks-migrate-sqlite = "runner_web.migrate_sqlite:main"
 stonks-worker = "runner_web.main:worker_main"
 stonks-trainer = "runner_web.ranker:trainer_main"
+stonks-massive-backfill = "runner_watch.massive_data:main"
 
 [build-system]
 requires = ["setuptools>=69"]
@@ -52,6 +55,13 @@ addopts = [
   "--cov=runner_web",
   "--cov-branch",
   "--cov-report=term-missing:skip-covered",
+  "-m=not browser",
+]
+filterwarnings = [
+  "error::ResourceWarning",
+]
+markers = [
+  "browser: real Chromium behavior tests run separately from the unit suite",
 ]
 
 [tool.coverage.run]

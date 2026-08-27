@@ -28,10 +28,13 @@ jobs:
           python-version: "3.13"
           enable-cache: true
       - run: uv sync --locked --extra dev
+      - run: uv run playwright install --with-deps chromium
       - run: cargo test --locked --manifest-path rust/stonks-ranker/Cargo.toml
       - run: cargo build --locked --manifest-path rust/stonks-ranker/Cargo.toml
       - run: uv run ruff check src tests
+      - run: uv run pip-audit --local --skip-editable --progress-spinner off --timeout 10 --vulnerability-service osv
       - run: uv run pytest -q --cov-fail-under=68
+      - run: uv run pytest -q tests/test_browser_pulse.py -o addopts=
       - run: docker build --target test --tag runner-watch:test .
 
   deploy:

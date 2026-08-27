@@ -52,7 +52,8 @@ def _latest_prices(tickers: list[str]) -> dict[str, float]:
     unique = list(dict.fromkeys(tickers))
     if not unique:
         return {}
-    result = recording_market_data(batch_size=60).intraday(unique)
+    with recording_market_data(batch_size=60) as market_data:
+        result = market_data.intraday(unique)
     prices: dict[str, float] = {}
     for ticker, frame in result.frames.items():
         close = pd.Series(dtype="float64")
@@ -203,9 +204,7 @@ def _bar_prices(tickers: list[str]) -> dict[str, list[Bar]]:
     return output
 
 
-def _first_price_at_or_after(
-    bars: list[Bar], target: datetime
-) -> tuple[float, datetime] | None:
+def _first_price_at_or_after(bars: list[Bar], target: datetime) -> tuple[float, datetime] | None:
     target_utc = target.astimezone(UTC)
     return next(((close, stamp) for stamp, _, _, close in bars if stamp >= target_utc), None)
 
@@ -251,9 +250,7 @@ def _scan_horizon_price(
     return price, stamp
 
 
-def barrier_outcome(
-    bars: list[Bar], base_at: datetime, base_price: float
-) -> dict[str, Any] | None:
+def barrier_outcome(bars: list[Bar], base_at: datetime, base_price: float) -> dict[str, Any] | None:
     """Label whether +8% or -4% was touched first during the next 60 minutes."""
 
     base_utc = base_at.astimezone(UTC)
@@ -396,9 +393,7 @@ def refresh_case_outcomes(at: datetime | None = None) -> dict[str, Any]:
                 continue
             if base_at.tzinfo is None:
                 base_at = base_at.replace(tzinfo=UTC)
-            due_at = base_at.astimezone(UTC) + timedelta(
-                minutes=int(case["horizon_minutes"])
-            )
+            due_at = base_at.astimezone(UTC) + timedelta(minutes=int(case["horizon_minutes"]))
             db.execute(
                 """
                 INSERT INTO thesis_case_outcomes(
@@ -430,9 +425,7 @@ def refresh_case_outcomes(at: datetime | None = None) -> dict[str, Any]:
             continue
         if base_at.tzinfo is None:
             base_at = base_at.replace(tzinfo=UTC)
-        if current >= base_at.astimezone(UTC) + timedelta(
-            minutes=int(case["horizon_minutes"])
-        ):
+        if current >= base_at.astimezone(UTC) + timedelta(minutes=int(case["horizon_minutes"])):
             due_cases.append(case)
     tickers = [str(case["ticker"]) for case in due_cases]
     _latest_prices(tickers)
@@ -589,21 +582,15 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
                 barrier = barrier_outcome(ticker_bars, base_at, float(row["base_price"]))
                 if barrier is not None:
                     changes.update(barrier)
-                    observed_60m = _price_near_target(
-                        ticker_bars, base_at + BARRIER_HORIZON
-                    )
+                    observed_60m = _price_near_target(ticker_bars, base_at + BARRIER_HORIZON)
                     if observed_60m is not None:
                         price_60m, observed_60m_at = observed_60m
                         changes["price_60m"] = price_60m
-                        changes["return_60m_pct"] = return_pct(
-                            float(row["base_price"]), price_60m
-                        )
+                        changes["return_60m_pct"] = return_pct(float(row["base_price"]), price_60m)
                         changes["observed_60m_at"] = iso(observed_60m_at)
                     barrier_labels_added += 1
             for horizon in horizons:
-                observed = _scan_horizon_price(
-                    ticker_bars, base_at, horizon
-                )
+                observed = _scan_horizon_price(ticker_bars, base_at, horizon)
                 if observed is None:
                     continue
                 price, observed_at = observed
