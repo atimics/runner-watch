@@ -16,6 +16,8 @@ Environment:
 - MASSIVE_MAX_SCAN_CALLS: uncached-session budget per scan-time fetch, default 10.
 - MASSIVE_CACHE_PATH: SQLite cache location, default data/massive_daily.sqlite3.
 - MASSIVE_TIMEOUT_SECONDS: per-request HTTP timeout, default 15.
+- MASSIVE_BACKFILL_CALLS: uncached-session budget for each worker warm-up pass,
+  default 20. A warm cache makes no calls.
 """
 
 from __future__ import annotations
@@ -108,6 +110,14 @@ def massive_timeout_seconds() -> float:
         return 15.0
 
 
+def massive_backfill_calls() -> int:
+    """Uncached-session budget for one worker warm-up pass."""
+    try:
+        return max(0, int(os.getenv("MASSIVE_BACKFILL_CALLS", "20").strip() or "20"))
+    except ValueError:
+        return 20
+
+
 def _weekdays(start: date, end: date) -> list[date]:
     """Inclusive list of weekday dates between start and end."""
     output: list[date] = []
@@ -179,6 +189,10 @@ CREATE TABLE IF NOT EXISTS fetched_dates (
     rows INTEGER NOT NULL,
     fetched_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS rate_limit (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    last_call_at REAL NOT NULL
+);
 """
 
 
@@ -205,6 +219,45 @@ class MassiveDailyCache:
                 ) from exc
             self._connection = connection
         return self._connection
+
+    def acquire_call_slot(
+        self, min_interval_seconds: float, max_wait_seconds: float = 300.0
+    ) -> None:
+        """Reserve one API call slot across every process sharing this cache.
+
+        The worker daemon and a manual backfill both rate-limit separately in
+        memory, so they can exceed the plan limit together. This SQLite slot
+        spreads calls at least `min_interval_seconds` apart machine-wide.
+        """
+        deadline = time.monotonic() + max_wait_seconds
+        while True:
+            try:
+                with self._lock:
+                    connection = self._connect()
+                    connection.execute("BEGIN IMMEDIATE")
+                    try:
+                        row = connection.execute(
+                            "SELECT last_call_at FROM rate_limit WHERE id = 1"
+                        ).fetchone()
+                        now = time.time()
+                        last = float(row[0]) if row else 0.0
+                        if now - last >= min_interval_seconds:
+                            connection.execute(
+                                "INSERT OR REPLACE INTO rate_limit VALUES (1, ?)", (now,)
+                            )
+                            connection.commit()
+                            return
+                        wait = min_interval_seconds - (now - last)
+                    finally:
+                        if connection.in_transaction:
+                            connection.rollback()
+            except sqlite3.Error as exc:
+                raise MassiveAPIError(f"Massive rate limit slot failed: {exc}") from exc
+            if time.monotonic() + wait > deadline:
+                raise MassiveRateLimitError(
+                    f"Massive rate limit slot would need {wait:.1f}s of waiting"
+                )
+            time.sleep(min(wait, 5.0) + 0.05)
 
     def fetched_dates(self) -> set[date]:
         try:
@@ -339,12 +392,16 @@ class MassiveClient:
         limiter: RateLimiter | None = None,
         timeout: float = 15.0,
         fetch_recorder: SourceFetchRecorder | None = None,
+        shared_cache: MassiveDailyCache | None = None,
+        calls_per_minute: int = 5,
     ) -> None:
         self.api_key = api_key
         self.api_root = api_root.rstrip("/")
         self.limiter = limiter or RateLimiter()
         self.timeout = timeout
         self.fetch_recorder = fetch_recorder
+        self.shared_cache = shared_cache
+        self.calls_per_minute = max(1, calls_per_minute)
 
     def _record(self, fetch: SourceFetch) -> None:
         if self.fetch_recorder is None:
@@ -364,16 +421,39 @@ class MassiveClient:
                 message = message.replace(secret, "[redacted]")
         return message
 
+    def _reserve_call(self) -> None:
+        """Apply both the in-process bucket and the machine-wide slot."""
+        self.limiter.acquire()
+        if self.shared_cache is not None:
+            self.shared_cache.acquire_call_slot(60.0 / self.calls_per_minute)
+
     def grouped_daily(self, session: date) -> list[dict[str, Any]]:
         path = GROUPED_DAILY_PATH.format(date=session.isoformat())
         safe_locator = f"{self.api_root}{path}?adjusted=true"
         request_url = safe_locator + f"&apiKey={urllib.parse.quote(self.api_key)}"
-        self.limiter.acquire()
+        attempts = 3
+        for attempt in range(attempts):
+            self._reserve_call()
+            body = self._grouped_daily_request(session, safe_locator, request_url)
+            if body is not None:
+                return self._parse_grouped_daily(session, safe_locator, body)
+            if attempt + 1 < attempts:
+                # Back off hard before the retry; other processes on this
+                # machine share the plan's call budget.
+                time.sleep(60.0 * (attempt + 1))
+        raise MassiveAPIError(
+            f"Massive kept returning HTTP 429 for {session} after {attempts} attempts"
+        )
+
+    def _grouped_daily_request(
+        self, session: date, safe_locator: str, request_url: str
+    ) -> bytes | None:
+        """Issue one grouped daily request; None means retry on rate limit."""
         started_at = datetime.now(UTC)
         request = urllib.request.Request(request_url, headers={"User-Agent": USER_AGENT})
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                body = response.read()
+                return response.read()
         except urllib.error.HTTPError as exc:
             self._record(
                 SourceFetch.failure(
@@ -385,6 +465,8 @@ class MassiveClient:
                     metadata={"session": session.isoformat()},
                 )
             )
+            if exc.code == 429:
+                return None
             # HTTPError retains the full request URL, including credentials.
             # Do not attach it as a printable exception cause.
             raise MassiveAPIError(f"Massive returned HTTP {exc.code} for {session}") from None
@@ -402,8 +484,14 @@ class MassiveClient:
             )
             # URLError reasons can repeat the full URL. The safe outer error is
             # enough for operators and keeps tracebacks free of credentials.
-            raise MassiveAPIError(f"Could not reach Massive for {session}: {safe_error}") from None
+            raise MassiveAPIError(
+                f"Could not reach Massive for {session}: {safe_error}"
+            ) from None
 
+    def _parse_grouped_daily(
+        self, session: date, safe_locator: str, body: bytes
+    ) -> list[dict[str, Any]]:
+        started_at = datetime.now(UTC)
         try:
             payload = json.loads(body)
         except ValueError as exc:
@@ -421,6 +509,10 @@ class MassiveClient:
 
         status = payload.get("status")
         results = payload.get("results")
+        if status == "OK" and results is None:
+            # Market holidays return no results; cache them as empty sessions
+            # so they are not refetched on every scan.
+            results = []
         if status != "OK" or not isinstance(results, list):
             self._record(
                 SourceFetch.failure(
@@ -580,14 +672,17 @@ def massive_bar_adapter(
     key = massive_api_key()
     if not key:
         return None
+    cache = MassiveDailyCache(massive_cache_path())
     return MassiveBarAdapter(
         client=MassiveClient(
             key,
             limiter=RateLimiter(massive_calls_per_minute()),
             timeout=massive_timeout_seconds(),
             fetch_recorder=fetch_recorder,
+            shared_cache=cache,
+            calls_per_minute=massive_calls_per_minute(),
         ),
-        cache=MassiveDailyCache(massive_cache_path()),
+        cache=cache,
         max_fetch_calls=massive_max_scan_calls(),
     )
 
@@ -625,6 +720,29 @@ def backfill_daily_cache(
         "sessions_cached_before": len(sessions) - len(uncached),
         "sessions_fetched": fetched,
     }
+
+
+def refresh_massive_backfill() -> dict[str, int | bool]:
+    """Warm the daily cache from the environment for the worker loop.
+
+    Makes no API calls when the cache is already warm. Returns stats for the
+    worker heartbeat state and closes its cache connection after each pass.
+    """
+    if not massive_enabled():
+        return {"enabled": False}
+    adapter = massive_bar_adapter()
+    if adapter is None:  # pragma: no cover - enabled() guarantees a key
+        return {"enabled": False}
+    try:
+        return backfill_daily_cache(
+            adapter.client,
+            adapter.cache,
+            days=365,
+            budget=massive_backfill_calls(),
+            prune_days=730,
+        )
+    finally:
+        adapter.cache.close()
 
 
 def main() -> int:

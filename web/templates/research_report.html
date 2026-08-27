@@ -54,6 +54,7 @@
     {% if forecast.start_price %}<small>From ${{ '%.4f'|format(forecast.start_price) if forecast.start_price < 1 else '%.2f'|format(forecast.start_price) }}{% if forecast.end_price %} → ${{ '%.4f'|format(forecast.end_price) if forecast.end_price < 1 else '%.2f'|format(forecast.end_price) }}{% endif %} · next regular-session close</small>{% endif %}
     {% if forecast.return_pct is not none %}<strong class="{{ 'up' if forecast.classification == 'hit' else 'down' }}">{{ '%+.1f'|format(forecast.return_pct) }}% price move</strong>{% endif %}
     {% if forecast.void_reason %}<aside>{{ forecast.void_reason }}</aside>{% endif %}
+    {% for correction in forecast.corrections %}<aside>Corrected {{ correction.created_at[:10] }} · {{ correction.reason }}</aside>{% endfor %}
     <footer>This judges the frozen price forecast, not every fact in the report.</footer>
   </section>
   {% elif report.subject_type == 'ticker' and not report.flash_version_id %}

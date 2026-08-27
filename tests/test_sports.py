@@ -787,6 +787,51 @@ def test_finished_game_seals_the_last_pregame_prediction_and_market(sports_db) -
     assert b"Pregame market timeline" in response.body
 
 
+def test_sports_alpha_fetches_history_only_for_ranked_players(sports_db) -> None:
+    def athletes(prefix: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "athlete": {"id": f"{prefix}{index}", "displayName": f"{prefix} Player {index}"},
+                "position": {"abbreviation": "P"},
+                "starter": True,
+                "stats": [str(20 - index)],
+            }
+            for index in range(5)
+        ]
+
+    payload = {
+        "boxscore": {
+            "players": [
+                {
+                    "team": {"id": "1", "displayName": "Home Club", "abbreviation": "HOM"},
+                    "statistics": [{"labels": ["PTS"], "athletes": athletes("Home")}],
+                },
+                {
+                    "team": {"id": "2", "displayName": "Away Club", "abbreviation": "AWY"},
+                    "statistics": [{"labels": ["PTS"], "athletes": athletes("Away")}],
+                },
+            ]
+        }
+    }
+    for event_number in range(1, 4):
+        raw = sample_event(completed=True)
+        raw["id"] = f"40200000{event_number}"
+        event = normalize_event("mlb", raw)
+        assert event is not None
+        store_events([event])
+        store_player_appearances(normalize_player_appearances(event, payload))
+
+    alpha = sports_alpha("mlb", limit=3)
+
+    assert len(alpha["players"]) == 3
+    assert alpha["coverage"]["player_count"] == 10
+    assert [player["name"] for player in alpha["players"]] == [
+        "Home Player 0",
+        "Home Player 1",
+        "Home Player 2",
+    ]
+
+
 def test_sports_history_backfill_moves_through_older_chunks(
     sports_db, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -838,6 +883,29 @@ def test_sports_host_has_the_same_alpha_product_as_runners(sports_db) -> None:
     assert b">Runners</span>" in alpha_response.body
     assert receipts_response.status_code == 307
     assert receipts_response.headers["location"] == "/alpha"
+
+
+def test_sports_alpha_page_reuses_warmed_result(sports_db, monkeypatch) -> None:
+    web_main.SPORTS_ALPHA_DATA_CACHE.clear()
+    web_main.SPORTS_ALPHA_DATA_REFRESHING.clear()
+    monkeypatch.setattr(web_main, "shared_cache_get", lambda _name: None)
+    monkeypatch.setattr(web_main, "shared_cache_set", lambda *_args: None)
+    original = web_main.sports_alpha_board
+    calls = 0
+
+    def counted(league: str = "all", limit: int = 24) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return original(league, limit)
+
+    monkeypatch.setattr(web_main, "sports_alpha_board", counted)
+
+    first = alpha_page(request(path="/alpha"), None)
+    second = alpha_page(request(path="/alpha"), None)
+
+    assert first.status_code == 200
+    assert second.body == first.body
+    assert calls == 1
 
 
 def test_cloudflare_forwarded_host_selects_the_public_product() -> None:

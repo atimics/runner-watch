@@ -50,6 +50,14 @@ from runner_web.main import (
 )
 
 
+def _test_flash_forecast() -> dict[str, Any]:
+    return {
+        "direction": "no_call",
+        "probability_up": 0.5,
+        "reason": "The frozen evidence does not support a directional call.",
+    }
+
+
 def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
     root = Path(__file__).parents[1]
     pulse_template = (root / "web/templates/pulse.html").read_text()
@@ -72,10 +80,10 @@ def test_pulse_does_not_render_an_empty_scorecard_spacer() -> None:
     kol_styles = (root / "web/static/kol.css").read_text()
 
     assert 'id="kolScoreStrip"' in pulse_template
-    assert "{% if not has_kol_calls %} hidden{% endif %}" in pulse_template
+    assert "{% if not flash_record %} hidden{% endif %}" in pulse_template
     assert ".kol-score-strip[hidden] { display: none; }" in kol_styles
     assert "function renderKolScorecard()" in pulse_template
-    assert "pulse.kols = nextPulse.kols || [];" in pulse_template
+    assert "pulse.flash_record = nextPulse.flash_record || null;" in pulse_template
 
 
 def test_pulse_refresh_handles_missing_markers_stale_updates_and_page_failures() -> None:
@@ -916,6 +924,63 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
     assert alpha["pulse_label"] == "Bluesky · 4 cashtag mentions"
 
 
+def test_negative_social_counts_do_not_break_pulse_or_radar(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "negative-social-counts.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    captured_at = timestamp.isoformat()
+    insert_scan_run("negative-social-run", captured_at, 1)
+    insert_scored_snapshot(
+        "negative-social-snapshot",
+        "negative-social-run",
+        "SAFE",
+        40,
+        1,
+        captured_at,
+    )
+    fetch = SourceFetch.success(
+        source="test_discovery",
+        feed="social",
+        locator="https://example.test/discovery",
+        started_at=timestamp,
+        payload={"ticker": "SAFE"},
+        content_type="application/json",
+    )
+    record_source_batch(
+        SourceBatch(
+            fetch=fetch,
+            market_events=(
+                MarketEvent(
+                    event_id="negative-social",
+                    ticker="SAFE",
+                    event_type="social_spike",
+                    event_at=timestamp,
+                    published_at=timestamp,
+                    status="active",
+                    source_url="https://example.test/social/safe",
+                    payload={
+                        "mention_count": -3,
+                        "engagement_count": -8,
+                        "network_label": "Social",
+                    },
+                ),
+            ),
+        )
+    )
+    web_main.RADAR_DATA_CACHE.clear()
+
+    pulse = pulse_data()["rows"][0]
+    radar = radar_data()[0]
+
+    assert pulse["external_social_mentions"] == 0
+    assert pulse["score_components"]["social_search"] == 0.0
+    assert radar["ticker"] == "SAFE"
+    assert radar["external_social_mentions"] == 0
+    assert radar["external_social_engagement"] == 0
+
+
 def test_ticker_detail_explains_form_four_purchase(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
@@ -1699,8 +1764,9 @@ def test_commissioned_report_stays_private_without_storing_the_openrouter_key(
                 "catalysts": ["Verified insider purchase"],
                 "risks": ["Low liquidity"],
                 "watch": ["Volume"],
+                "forecast": _test_flash_forecast(),
             },
-            "test/research-model",
+            "z-ai/glm-5.3",
             {"total_tokens": 321},
         ),
     )
@@ -1759,6 +1825,7 @@ def test_browser_commission_uses_the_server_openrouter_key(
                 "watch": ["New filing"],
                 "unknowns": ["Financing terms"],
                 "sources": context["sources"],
+                "forecast": _test_flash_forecast(),
             },
             "z-ai/glm-5.3",
             {},
@@ -1983,8 +2050,35 @@ def test_flash_model_label_is_shown_on_research_and_pulse() -> None:
 
     assert "{{ report.actor.display_name }}" in report
     assert "{{ report.actor.model }}" in report
-    assert "kol.inference_model_label" in pulse
+    assert "flash_record.model_label" in pulse
     assert "call.inference_model_label" not in ticker_row
+
+
+def test_flash_record_page_and_api_show_the_fixed_contract(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "flash-record-page.db")
+    monkeypatch.setattr(web_main, "rate_limit_allowed", lambda *args, **kwargs: True)
+    init_db()
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/flash/record",
+            "headers": [],
+            "client": ("127.0.0.1", 4300),
+        }
+    )
+    request.state.csp_nonce = "test"
+
+    page = web_main.flash_record_page(request, None)
+    payload = web_main.api_flash_record(request)
+
+    assert page.status_code == 200
+    assert "Forecast record" in page.body.decode()
+    assert "Frozen calls. Later prices. No rewrites." in page.body.decode()
+    assert payload["contract"]["id"] == "flash-next-session-v1"
+    assert payload["current_version"]["headline_rate_visible"] is False
 
 
 def test_legacy_commission_request_uses_flash_model_with_a_minimal_prompt(
@@ -2004,6 +2098,7 @@ def test_legacy_commission_request_uses_flash_model_with_a_minimal_prompt(
         "unknowns": ["Financing terms"],
         "sources": [],
         "citations": [],
+        "forecast": _test_flash_forecast(),
     }
 
     def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
@@ -2036,7 +2131,9 @@ def test_legacy_commission_request_uses_flash_model_with_a_minimal_prompt(
     assert "tools" not in body
     assert "plugins" not in body
     assert "untrusted evidence" in body["messages"][0]["content"]
-    assert len(body["messages"][0]["content"].split()) <= 55
+    assert len(body["messages"][0]["content"].split()) <= 75
+    assert "evaluation_contract" in request_payload
+    assert request_payload["output"]["forecast"]["direction"] == "up, down, or no_call"
     assert report == generated
     assert model == "z-ai/glm-5.3"
     assert usage["total_tokens"] == 123
@@ -2060,6 +2157,7 @@ def test_commission_normalizes_recoverable_glm_output(
                                     {
                                         "summary": "EU has attention, but the setup needs proof.",
                                         "risks": [{"text": "Financing terms are unclear."}],
+                                        "forecast": _test_flash_forecast(),
                                     }
                                 )
                             },
@@ -2106,6 +2204,7 @@ def test_flash_keeps_only_citations_from_the_frozen_context(
             {"claim": "Verified claim", "source_urls": [allowed, invented]},
             {"claim": "Invented claim", "source_urls": [invented]},
         ],
+        "forecast": _test_flash_forecast(),
     }
 
     def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
@@ -2151,6 +2250,7 @@ def test_commission_unwraps_glm_answer_envelope(
         "unknowns": [],
         "sources": [],
         "citations": [],
+        "forecast": _test_flash_forecast(),
     }
     answer: Any = json.dumps(generated) if as_text else generated
 
@@ -2295,8 +2395,9 @@ def test_owner_can_publish_report_once_and_earn_flash(
                 "watch": [],
                 "unknowns": [],
                 "sources": [],
+                "forecast": _test_flash_forecast(),
             },
-            "test/model",
+            "z-ai/glm-5.3",
             {},
         ),
     )

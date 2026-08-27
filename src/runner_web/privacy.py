@@ -107,6 +107,9 @@ def export_user_data(user_id: str) -> dict[str, Any]:
                 ).fetchall()
             ]
 
+        flash_forecasts = related("flash_forecasts", "report_id", commission_ids)
+        forecast_ids = [str(row["id"]) for row in flash_forecasts]
+
         return {
             "exported_at": _iso(),
             "account": account_rows[0],
@@ -199,6 +202,13 @@ def export_user_data(user_id: str) -> dict[str, Any]:
             "research_stages": related(
                 "research_stage_runs", "commission_id", commission_ids
             ),
+            "flash_forecasts": flash_forecasts,
+            "flash_forecast_outcomes": related(
+                "flash_forecast_outcomes", "forecast_id", forecast_ids
+            ),
+            "flash_evaluation_events": related(
+                "flash_evaluation_events", "forecast_id", forecast_ids
+            ),
             "flash_wallet": _rows(
                 database, tables, "flash_wallets", "user_id=?", (user_id,)
             ),
@@ -280,6 +290,23 @@ def delete_user_data(user_id: str) -> dict[str, Any]:
 
         # Remove dependent records before older foreign keys that do not cascade.
         delete("flash_report_requests", "user_id=?", (user_id,))
+        delete(
+            "flash_evaluation_events",
+            "forecast_id IN (SELECT f.id FROM flash_forecasts f "
+            "JOIN research_commissions r ON r.id=f.report_id WHERE r.user_id=?)",
+            (user_id,),
+        )
+        delete(
+            "flash_forecast_outcomes",
+            "forecast_id IN (SELECT f.id FROM flash_forecasts f "
+            "JOIN research_commissions r ON r.id=f.report_id WHERE r.user_id=?)",
+            (user_id,),
+        )
+        delete(
+            "flash_forecasts",
+            "report_id IN (SELECT id FROM research_commissions WHERE user_id=?)",
+            (user_id,),
+        )
         delete(
             "research_stage_runs",
             "commission_id IN (SELECT id FROM research_commissions WHERE user_id=?)",

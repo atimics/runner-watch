@@ -1,0 +1,64 @@
+{% extends "mobile_base.html" %}
+{% block app_class %}flash-record-app{% endblock %}
+{% block title %}Flash forecast record · RATi Runners{% endblock %}
+{% block content %}
+<header class="screen-head flash-record-head">
+  <div><span class="rati-product">FLASH ⚡</span><h1>Forecast record</h1><span class="head-meta">Frozen calls. Later prices. No rewrites.</span></div>
+  {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>{% else %}<a class="avatar-button signed-out" href="/login">Log in</a>{% endif %}
+</header>
+
+<main class="flash-record-page">
+  {% set current = record.current_version %}
+  {% if current %}
+  <section class="flash-record-hero state-{{ current.state }}">
+    <div><span class="kol-avatar" aria-hidden="true">⚡</span><p><strong>{{ current.label }}</strong><small>{{ current.model_label }} · {{ current.state|replace('_', ' ') }}</small></p></div>
+    {% if current.headline_rate_visible and current.hit_rate is not none %}
+    <b>{{ '%.0f'|format(current.hit_rate * 100) }}% <small>hit rate</small></b>
+    {% else %}
+    <b>{{ current.settled }} <small>settled</small></b>
+    {% endif %}
+    <p>{{ current.hits }} hits · {{ current.misses }} misses · {{ current.no_calls }} no calls · {{ current.pending }} pending</p>
+    <p>{{ current.distinct_tickers }} tickers · {{ current.distinct_trading_days }} trading days{% if current.hit_rate_interval_95 %} · 95% range {{ '%.0f'|format(current.hit_rate_interval_95[0] * 100) }}–{{ '%.0f'|format(current.hit_rate_interval_95[1] * 100) }}%{% endif %}</p>
+    {% if not current.headline_rate_visible %}<aside>Building record. The headline percentage appears after {{ record.contract.headline_sample }} settled forecasts.</aside>{% endif %}
+  </section>
+  {% endif %}
+
+  <section class="flash-record-method">
+    <span>THE CONTRACT</span>
+    <h2>One fixed finish line</h2>
+    <p>An up or down call is judged at the next regular-session close. It is a hit only when the price moves more than {{ '%.1f'|format(record.contract.minimum_move_pct) }}% in Flash's direction.</p>
+    <p>No calls, pending results, and void data never enter the hit rate. Their counts stay visible.</p>
+  </section>
+
+  <section class="flash-version-history">
+    <header><span>VERSIONS</span><h2>Permanent scorecards</h2></header>
+    <div>
+      {% for version in record.versions %}
+      <article>
+        <div><strong>{{ version.label }}</strong><small>{{ version.model_label }} · {{ version.state }}</small></div>
+        <p><b>{{ version.hits }}</b> hit <b>{{ version.misses }}</b> miss <b>{{ version.no_calls }}</b> no call <b>{{ version.voids + version.under_review }}</b> excluded</p>
+        <p>{% if version.headline_rate_visible %}{{ '%.0f'|format(version.hit_rate * 100) }}% across {% endif %}{{ version.settled }} settled · {{ version.distinct_tickers }} tickers</p>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="flash-result-ledger">
+    <header><span>RECEIPTS</span><h2>Latest public results</h2></header>
+    {% if record.recent_results %}
+    <div>
+      {% for item in record.recent_results %}
+      <a href="{{ item.report_url }}">
+        <strong>{{ item.ticker }}</strong>
+        <span>{{ item.direction|replace('_', ' ') }} · {{ '%.0f'|format(item.probability_up * 100) }}% up</span>
+        <b class="{% if item.classification == 'hit' %}up{% elif item.classification == 'miss' %}down{% endif %}">{{ item.classification|upper if item.classification else item.status|replace('_', ' ')|upper }}</b>
+        <small>{% if item.return_pct is not none %}{{ '%+.1f'|format(item.return_pct) }}% · {% endif %}{{ item.version_label }}{% if item.correction_count %} · corrected{% endif %}</small>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}<p class="flash-record-empty">No public forecast receipts yet.</p>{% endif %}
+  </section>
+
+  <aside class="flash-record-note" role="note">{{ record.method_note }} A price hit does not prove every fact was correct or tell you whether to buy or sell.</aside>
+</main>
+{% endblock %}
