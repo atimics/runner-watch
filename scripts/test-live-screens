@@ -301,7 +301,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--slow-ms",
         type=int,
-        default=int(os.getenv("LIVE_SCREEN_SLOW_MS", "5000")),
+        default=int(os.getenv("LIVE_SCREEN_SLOW_MS", "1000")),
     )
     parser.add_argument(
         "--workers",
