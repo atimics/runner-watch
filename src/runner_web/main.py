@@ -15,12 +15,13 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from datetime import time as clock_time
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -276,6 +277,13 @@ SPORTS_ALPHA_DATA_LOCK = threading.Lock()
 SPORTS_ALPHA_DATA_CONDITION = threading.Condition(SPORTS_ALPHA_DATA_LOCK)
 SPORTS_ALPHA_DATA_CACHE: dict[tuple[str, str, int], tuple[float, dict[str, Any]]] = {}
 SPORTS_ALPHA_DATA_REFRESHING: set[tuple[str, str, int]] = set()
+PUBLIC_SCREEN_CACHE_TTL_SECONDS = max(
+    30.0, float(os.getenv("PUBLIC_SCREEN_CACHE_TTL_SECONDS", "60"))
+)
+PUBLIC_SCREEN_DATA_LOCK = threading.Lock()
+PUBLIC_SCREEN_DATA_CONDITION = threading.Condition(PUBLIC_SCREEN_DATA_LOCK)
+PUBLIC_SCREEN_DATA_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+PUBLIC_SCREEN_DATA_REFRESHING: set[str] = set()
 SPORTS_INGESTION_ENABLED = os.getenv("SPORTS_INGESTION_ENABLED", "true").strip().lower() not in {
     "0",
     "false",
@@ -331,6 +339,110 @@ STATIC_VERSION = _static_version()
 def _shared_request_cache_name(scope: str) -> str:
     version = "v4" if scope == "pulse" else "v3" if scope == "alpha" else "v1"
     return f"{runner_db.database_identity()}:{scope}:{version}"
+
+
+def _public_screen_cache_keys(scope: str, identity: str) -> tuple[str, str]:
+    digest = hashlib.sha256(identity.encode()).hexdigest()[:20]
+    local_key = f"{runner_db.database_identity()}:{scope}:{digest}"
+    shared_key = f"{_shared_request_cache_name('public-screen')}:{scope}:{digest}"
+    return local_key, shared_key
+
+
+def _invalidate_public_screen_data(scope: str, identity: str) -> None:
+    local_key, shared_key = _public_screen_cache_keys(scope, identity)
+    with PUBLIC_SCREEN_DATA_CONDITION:
+        PUBLIC_SCREEN_DATA_CACHE.pop(local_key, None)
+    shared_cache_delete(shared_key)
+
+
+def _refresh_public_screen_data(
+    local_key: str,
+    shared_key: str,
+    builder: Callable[[], dict[str, Any]],
+) -> None:
+    try:
+        payload = builder()
+        with PUBLIC_SCREEN_DATA_CONDITION:
+            PUBLIC_SCREEN_DATA_CACHE[local_key] = (
+                time.monotonic() + PUBLIC_SCREEN_CACHE_TTL_SECONDS,
+                payload,
+            )
+        shared_cache_set(shared_key, payload, int(PUBLIC_SCREEN_CACHE_TTL_SECONDS))
+    except Exception:
+        LOG.exception("Public screen cache refresh failed")
+    finally:
+        with PUBLIC_SCREEN_DATA_CONDITION:
+            PUBLIC_SCREEN_DATA_REFRESHING.discard(local_key)
+            PUBLIC_SCREEN_DATA_CONDITION.notify_all()
+
+
+def _public_screen_data(
+    scope: str,
+    identity: str,
+    builder: Callable[[], dict[str, Any]],
+) -> dict[str, Any]:
+    local_key, shared_key = _public_screen_cache_keys(scope, identity)
+    current = time.monotonic()
+    with PUBLIC_SCREEN_DATA_CONDITION:
+        cached = PUBLIC_SCREEN_DATA_CACHE.get(local_key)
+        if cached and current < cached[0]:
+            return cached[1]
+        if cached:
+            if local_key not in PUBLIC_SCREEN_DATA_REFRESHING:
+                PUBLIC_SCREEN_DATA_REFRESHING.add(local_key)
+                threading.Thread(
+                    target=_refresh_public_screen_data,
+                    args=(local_key, shared_key, builder),
+                    daemon=True,
+                    name=f"public-screen-cache-{scope}",
+                ).start()
+            return cached[1]
+
+    shared = shared_cache_get(shared_key)
+    if isinstance(shared, dict):
+        with PUBLIC_SCREEN_DATA_CONDITION:
+            PUBLIC_SCREEN_DATA_CACHE[local_key] = (
+                time.monotonic() + PUBLIC_SCREEN_CACHE_TTL_SECONDS,
+                shared,
+            )
+        return shared
+
+    with PUBLIC_SCREEN_DATA_CONDITION:
+        cached = PUBLIC_SCREEN_DATA_CACHE.get(local_key)
+        if cached:
+            return cached[1]
+        if local_key in PUBLIC_SCREEN_DATA_REFRESHING:
+            PUBLIC_SCREEN_DATA_CONDITION.wait_for(
+                lambda: (
+                    local_key in PUBLIC_SCREEN_DATA_CACHE
+                    or local_key not in PUBLIC_SCREEN_DATA_REFRESHING
+                ),
+                timeout=CACHE_BUILD_WAIT_SECONDS,
+            )
+            cached = PUBLIC_SCREEN_DATA_CACHE.get(local_key)
+            if cached:
+                return cached[1]
+        PUBLIC_SCREEN_DATA_REFRESHING.add(local_key)
+
+    try:
+        payload = builder()
+        with PUBLIC_SCREEN_DATA_CONDITION:
+            if len(PUBLIC_SCREEN_DATA_CACHE) >= 64 and local_key not in PUBLIC_SCREEN_DATA_CACHE:
+                oldest_key = min(
+                    PUBLIC_SCREEN_DATA_CACHE,
+                    key=lambda key: PUBLIC_SCREEN_DATA_CACHE[key][0],
+                )
+                PUBLIC_SCREEN_DATA_CACHE.pop(oldest_key, None)
+            PUBLIC_SCREEN_DATA_CACHE[local_key] = (
+                time.monotonic() + PUBLIC_SCREEN_CACHE_TTL_SECONDS,
+                payload,
+            )
+        shared_cache_set(shared_key, payload, int(PUBLIC_SCREEN_CACHE_TTL_SECONDS))
+        return payload
+    finally:
+        with PUBLIC_SCREEN_DATA_CONDITION:
+            PUBLIC_SCREEN_DATA_REFRESHING.discard(local_key)
+            PUBLIC_SCREEN_DATA_CONDITION.notify_all()
 
 
 def _start_worker_tasks() -> list[asyncio.Task[Any]]:
@@ -965,6 +1077,15 @@ class SportsPickPayload(BaseModel):
     selection: Literal["home", "away"]
 
 
+def _public_flash_record_data() -> dict[str, Any]:
+    def build() -> dict[str, Any]:
+        with connection() as database:
+            _release_expired_daily_reports(database)
+        return flash_record()
+
+    return _public_screen_data("flash-record", "public", build)
+
+
 @app.get("/api/kols")
 def api_kol_status(request: Request) -> dict[str, Any]:
     enforce_rate(request, "kols", limit=120, seconds=60)
@@ -974,9 +1095,7 @@ def api_kol_status(request: Request) -> dict[str, Any]:
 @app.get("/api/flash/record")
 def api_flash_record(request: Request) -> dict[str, Any]:
     enforce_rate(request, "flash-record", limit=120, seconds=60)
-    with connection() as database:
-        _release_expired_daily_reports(database)
-    return flash_record()
+    return _public_flash_record_data()
 
 
 @app.get("/api/smoke/screens")
@@ -995,15 +1114,13 @@ def flash_record_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    with connection() as database:
-        _release_expired_daily_reports(database)
     return templates.TemplateResponse(
         request=request,
         name="flash_record.html",
         context=page_context(
             request,
             runner_session,
-            record=flash_record(),
+            record=_public_flash_record_data(),
             active_tab="alpha",
         ),
     )
@@ -1200,22 +1317,51 @@ def my_calls_page(
     return RedirectResponse(f"/u/{identity['handle']}", status_code=303)
 
 
+def _public_caller_page_data(caller_handle: str) -> dict[str, Any]:
+    def build() -> dict[str, Any]:
+        calls = caller_calls(caller_handle)
+        if calls is None:
+            return {"found": False}
+        tickers = list(dict.fromkeys(str(item["ticker"]) for item in calls))
+        summaries = _radar_market_summaries(tickers)
+        marks = {
+            ticker: float(summary["price"]) if summary.get("price") is not None else None
+            for ticker, summary in summaries.items()
+        }
+        marked_calls = caller_calls(caller_handle, current_prices=marks) or []
+        return {
+            "found": True,
+            "calls": marked_calls,
+            "stats": call_stats(marked_calls),
+        }
+
+    return _public_screen_data("caller", caller_handle, build)
+
+
 @app.get("/u/{caller_handle}", response_class=HTMLResponse)
 def caller_page(
     caller_handle: str,
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    calls = caller_calls(caller_handle)
-    if calls is None:
-        raise HTTPException(404, "Caller not found")
-    tickers = list(dict.fromkeys(str(item["ticker"]) for item in calls))
-    summaries = _radar_market_summaries(tickers)
-    marks = {
-        ticker: float(summary["price"]) if summary.get("price") is not None else None
-        for ticker, summary in summaries.items()
-    }
-    marked_calls = caller_calls(caller_handle, current_prices=marks) or []
+    if runner_session:
+        calls = caller_calls(caller_handle)
+        if calls is None:
+            raise HTTPException(404, "Caller not found")
+        tickers = list(dict.fromkeys(str(item["ticker"]) for item in calls))
+        summaries = _radar_market_summaries(tickers)
+        marks = {
+            ticker: float(summary["price"]) if summary.get("price") is not None else None
+            for ticker, summary in summaries.items()
+        }
+        marked_calls = caller_calls(caller_handle, current_prices=marks) or []
+        stats = call_stats(marked_calls)
+    else:
+        public_data = _public_caller_page_data(caller_handle)
+        if not public_data.get("found"):
+            raise HTTPException(404, "Caller not found")
+        marked_calls = list(public_data["calls"])
+        stats = dict(public_data["stats"])
     return templates.TemplateResponse(
         request=request,
         name="user_calls.html",
@@ -1224,7 +1370,7 @@ def caller_page(
             runner_session,
             caller=caller_handle,
             calls=marked_calls,
-            stats=call_stats(marked_calls),
+            stats=stats,
             active_tab="alpha",
         ),
     )
@@ -3683,6 +3829,14 @@ def get_commission(public_id: str) -> dict[str, Any] | None:
     return report
 
 
+def _public_research_report_data(public_id: str) -> dict[str, Any]:
+    return _public_screen_data(
+        "research",
+        public_id,
+        lambda: {"report": get_commission(public_id)},
+    )
+
+
 def latest_commission(user_id: str, ticker: str) -> dict[str, Any] | None:
     with connection() as db:
         _release_expired_daily_reports(db)
@@ -3900,6 +4054,34 @@ def home(
     )
 
 
+def _public_sports_pulse_data(
+    league: str = "all",
+    view: str = "signals",
+    limit: int = 30,
+) -> dict[str, Any]:
+    selected_league = league if league in SPORTS_LEAGUES else "all"
+    result_limit = max(1, min(limit, 100))
+    identity = f"{selected_league}:{view}:{result_limit}"
+    return _public_screen_data(
+        "sports-pulse",
+        identity,
+        lambda: {
+            "pulse": sports_pulse(selected_league, view=view, limit=result_limit),
+            "pick_stats": sports_pick_stats(),
+        },
+    )
+
+
+def _public_sports_radar_data(league: str = "all", limit: int = 40) -> dict[str, Any]:
+    selected_league = league if league in SPORTS_LEAGUES else "all"
+    result_limit = max(1, min(limit, 100))
+    return _public_screen_data(
+        "sports-radar",
+        f"{selected_league}:{result_limit}",
+        lambda: {"radar": sports_radar(selected_league, result_limit)},
+    )
+
+
 def sports_home_response(
     request: Request,
     runner_session: str | None,
@@ -3908,14 +4090,15 @@ def sports_home_response(
 ) -> HTMLResponse:
     selected_league = league if league in SPORTS_LEAGUES else "all"
     sports_path_prefix = "" if product_for_request(request) == "sports" else "/sports"
+    public_data = _public_sports_pulse_data(selected_league, view)
     return templates.TemplateResponse(
         request=request,
         name="sports.html",
         context=page_context(
             request,
             runner_session,
-            pulse=sports_pulse(selected_league, view=view),
-            pick_stats=sports_pick_stats(),
+            pulse=public_data["pulse"],
+            pick_stats=public_data["pick_stats"],
             sports_tab="pulse",
             sports_path_prefix=sports_path_prefix,
         ),
@@ -3939,13 +4122,14 @@ def sports_radar_response(
 ) -> HTMLResponse:
     selected_league = league if league in SPORTS_LEAGUES else "all"
     sports_path_prefix = "" if product_for_request(request) == "sports" else "/sports"
+    public_data = _public_sports_radar_data(selected_league)
     return templates.TemplateResponse(
         request=request,
         name="sports_radar.html",
         context=page_context(
             request,
             runner_session,
-            radar=sports_radar(selected_league),
+            radar=public_data["radar"],
             sports_tab="radar",
             sports_path_prefix=sports_path_prefix,
         ),
@@ -4109,7 +4293,7 @@ def sports_pulse_api(
     limit: int = 30,
 ) -> JSONResponse:
     enforce_rate(request, "sports-pulse", limit=120, seconds=60)
-    return JSONResponse(sports_pulse(league, view, limit))
+    return JSONResponse(_public_sports_pulse_data(league, view, limit)["pulse"])
 
 
 @app.get("/api/sports/radar")
@@ -4119,7 +4303,7 @@ def sports_radar_api(
     limit: int = 40,
 ) -> JSONResponse:
     enforce_rate(request, "sports-radar", limit=120, seconds=60)
-    return JSONResponse(sports_radar(league, limit))
+    return JSONResponse(_public_sports_radar_data(league, limit)["radar"])
 
 
 @app.get("/api/sports/alpha")
@@ -4150,7 +4334,12 @@ def sports_game_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    event = sports_event(event_id)
+    public_data = _public_screen_data(
+        "sports-game",
+        event_id,
+        lambda: {"event": sports_event(event_id)},
+    )
+    event = public_data.get("event")
     if not event:
         raise HTTPException(404, "Game not found")
     return templates.TemplateResponse(
@@ -4801,6 +4990,25 @@ def ticker_chart_data(ticker: str) -> list[dict[str, Any]]:
     return ticker_charts_data([ticker]).get(ticker, [])
 
 
+def _public_ticker_page_data(ticker: str) -> dict[str, Any]:
+    def build() -> dict[str, Any]:
+        detail = ticker_detail_data(ticker)
+        if detail is None:
+            return {"found": False}
+        current_price = detail.get("current", {}).get("price")
+        mark = float(current_price) if current_price is not None else None
+        return {
+            "found": True,
+            "detail": detail,
+            "comments": comments_for_ticker(ticker),
+            "comment_count": comment_count_for_ticker(ticker),
+            "calls": community_calls_for_ticker(ticker, current_price=mark, limit=20),
+            "latest_commission": daily_report_for_ticker(ticker),
+        }
+
+    return _public_screen_data("ticker", ticker, build)
+
+
 @app.get("/t/{ticker}", response_class=HTMLResponse)
 def ticker_page(
     ticker: str,
@@ -4808,25 +5016,33 @@ def ticker_page(
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
     normalized = _clean_ticker(ticker)
-    detail = ticker_detail_data(normalized)
-    if detail is None:
-        raise HTTPException(404, "Ticker not found")
     user = current_user(runner_session)
-    comments = comments_for_ticker(
-        normalized,
-        current_user_id=str(user["id"]) if user else None,
-    )
-    current_price = detail.get("current", {}).get("price")
-    mark = float(current_price) if current_price is not None else None
-    active_call = (
-        active_call_for_user(
-            str(user["id"]),
+    if user:
+        detail = ticker_detail_data(normalized)
+        if detail is None:
+            raise HTTPException(404, "Ticker not found")
+        comments = comments_for_ticker(
             normalized,
-            current_price=mark,
+            current_user_id=str(user["id"]),
         )
-        if user
-        else None
-    )
+        current_price = detail.get("current", {}).get("price")
+        mark = float(current_price) if current_price is not None else None
+        active_call = active_call_for_user(
+            str(user["id"]), normalized, current_price=mark
+        )
+        comment_count = comment_count_for_ticker(normalized)
+        calls = community_calls_for_ticker(normalized, current_price=mark, limit=20)
+        latest_commission = daily_report_for_ticker(normalized, str(user["id"]))
+    else:
+        public_data = _public_ticker_page_data(normalized)
+        if not public_data.get("found"):
+            raise HTTPException(404, "Ticker not found")
+        detail = dict(public_data["detail"])
+        comments = list(public_data["comments"])
+        comment_count = int(public_data["comment_count"])
+        active_call = None
+        calls = list(public_data["calls"])
+        latest_commission = public_data.get("latest_commission")
     return templates.TemplateResponse(
         request=request,
         name="ticker.html",
@@ -4835,13 +5051,10 @@ def ticker_page(
             runner_session,
             detail=detail,
             comments=comments,
-            comment_count=comment_count_for_ticker(normalized),
+            comment_count=comment_count,
             active_call=active_call,
-            calls=community_calls_for_ticker(normalized, current_price=mark, limit=20),
-            latest_commission=daily_report_for_ticker(
-                normalized,
-                str(user["id"]) if user else None,
-            ),
+            calls=calls,
+            latest_commission=latest_commission,
             active_tab="pulse",
         ),
     )
@@ -5294,11 +5507,48 @@ async def request_cache_warmer() -> None:
     """Fill request caches shortly after startup without delaying health checks."""
 
     await asyncio.sleep(1)
-    for builder in (_sports_alpha_data, _radar_base_data, _pulse_base_data):
-        try:
-            await asyncio.to_thread(builder)
-        except Exception:
-            LOG.exception("Startup request cache warm failed")
+    builders: list[Callable[[], Any]] = [
+        _sports_alpha_data,
+        _radar_base_data,
+        _pulse_base_data,
+        _public_flash_record_data,
+        _public_sports_pulse_data,
+        _public_sports_radar_data,
+    ]
+    try:
+        with connection() as database:
+            dynamic = public_dynamic_screen_paths(database)
+    except Exception:
+        LOG.exception("Startup public screen discovery failed")
+        dynamic = {}
+
+    dynamic_builders: dict[str, Callable[[str], dict[str, Any]]] = {
+        "ticker": _public_ticker_page_data,
+        "caller": _public_caller_page_data,
+        "signal": _public_signal_page_data,
+        "research": _public_research_report_data,
+        "sports_game": lambda event_id: _public_screen_data(
+            "sports-game",
+            event_id,
+            lambda: {"event": sports_event(event_id)},
+        ),
+    }
+    for key, builder in dynamic_builders.items():
+        path = dynamic.get(key)
+        if path:
+            identity = unquote(path.rsplit("/", 1)[-1])
+            builders.append(lambda builder=builder, identity=identity: builder(identity))
+
+    results = await asyncio.gather(
+        *(asyncio.to_thread(builder) for builder in builders),
+        return_exceptions=True,
+    )
+    for result in results:
+        if isinstance(result, BaseException):
+            LOG.error(
+                "Startup request cache warm failed",
+                exc_info=(type(result), result, result.__traceback__),
+            )
 
 
 @app.get("/radar", response_class=HTMLResponse)
@@ -5896,6 +6146,8 @@ def publish_research_report_api(
                 (str(user["id"]),),
             ).fetchone()
             balance = int(wallet["balance"]) if wallet else 0
+    if newly_published:
+        _invalidate_public_screen_data("research", public_id)
     return JSONResponse(
         {
             "published": newly_published,
@@ -5913,8 +6165,12 @@ def research_report_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    report = get_commission(public_id)
     user = current_user(runner_session)
+    report = (
+        get_commission(public_id)
+        if user
+        else _public_research_report_data(public_id).get("report")
+    )
     is_owner = bool(user and report and str(report["user_id"]) == str(user["id"]))
     if not report or (str(report.get("visibility") or "private") != "public" and not is_owner):
         raise HTTPException(404, "Research report not found")
@@ -6860,17 +7116,32 @@ def get_signal(public_id: str) -> dict[str, Any] | None:
     return signal
 
 
+def _public_signal_page_data(public_id: str) -> dict[str, Any]:
+    def build() -> dict[str, Any]:
+        signal = get_signal(public_id)
+        if not signal:
+            return {"signal": None}
+        return {
+            "signal": {
+                **signal,
+                "signals": json.loads(signal["signals_json"]),
+                "risks": json.loads(signal["risks_json"]),
+            }
+        }
+
+    return _public_screen_data("signal", public_id, build)
+
+
 @app.get("/s/{public_id}", response_class=HTMLResponse)
 def signal_page(
     public_id: str,
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    signal = get_signal(public_id)
+    public_data = _public_signal_page_data(public_id)
+    signal = public_data.get("signal")
     if not signal:
         raise HTTPException(404, "Signal not found")
-    signal["signals"] = json.loads(signal["signals_json"])
-    signal["risks"] = json.loads(signal["risks_json"])
     return templates.TemplateResponse(
         request=request,
         name="signal.html",
