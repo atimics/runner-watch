@@ -17,6 +17,7 @@ from runner_web.main import (
     product_for_request,
     radar_page,
     sports_game_page,
+    sports_receipts_page,
 )
 from runner_web.sports import (
     collect_stored_player_appearances,
@@ -259,6 +260,8 @@ def test_event_linked_recap_stays_with_previous_game_and_builds_series_context(
     assert detail["context"]["head_to_head"]["away_wins"] == 1
     assert detail["context"]["recent_form"][0]["record"] == "1-0"
     assert detail["context"]["recent_form"][1]["record"] == "0-1"
+    assert detail["context"]["recent_form"][0]["short_rest"] is True
+    assert "since last start" in detail["context"]["recent_form"][0]["rest_label"]
 
     response = sports_game_page(
         str(upcoming["id"]),
@@ -532,6 +535,58 @@ def test_sports_alpha_builds_team_and_player_win_rate_history(sports_db) -> None
     assert player["history_points"][-1]["rate"] == 100.0
     assert alpha["model"]["games"] == 3
     assert alpha["model"]["history_points"]
+    assert alpha["model"]["sample"]["label"] == "VERY EARLY SAMPLE"
+    assert alpha["model"]["sample"]["target"] == 250
+    assert len(alpha["model"]["receipts"]) == 3
+    assert alpha["model"]["receipts"][0]["receipt_id"]
+
+
+def test_finished_game_seals_the_last_pregame_prediction_and_market(sports_db) -> None:
+    start = datetime(2026, 8, 26, 20, 0, tzinfo=UTC)
+    pregame_at = start - timedelta(hours=1)
+    postgame_at = start + timedelta(hours=3)
+
+    pregame_raw = sample_event()
+    pregame_raw["date"] = start.isoformat()
+    pregame_event = normalize_event("mlb", pregame_raw)
+    assert pregame_event is not None
+    store_events([pregame_event], observed_at=pregame_at)
+
+    with connection() as database:
+        pregame_prediction = database.execute(
+            "SELECT input_hash FROM sports_predictions WHERE event_id=?",
+            (pregame_event["id"],),
+        ).fetchone()
+    assert pregame_prediction is not None
+
+    final_raw = sample_event(completed=True)
+    final_raw["date"] = start.isoformat()
+    final_raw["competitions"][0]["competitors"][0]["records"][0]["summary"] = "61-40"
+    final_raw["competitions"][0]["odds"][0]["moneyline"]["home"]["close"]["odds"] = "-170"
+    final_raw["competitions"][0]["odds"][0]["moneyline"]["away"]["close"]["odds"] = "+145"
+    final_event = normalize_event("mlb", final_raw)
+    assert final_event is not None
+    store_events([final_event], observed_at=postgame_at)
+
+    detail = sports_event(str(final_event["id"]))
+    assert detail is not None
+    assert detail["prediction"]["observed_at"] == pregame_at.isoformat()
+    assert detail["receipt"]["sealed"] is True
+    assert detail["receipt"]["input_hash"] == pregame_prediction["input_hash"]
+    assert detail["receipt"]["outcome"]["final_score"] == "AWY 3 – HOM 5"
+    assert detail["odds"]["observed_at"] == pregame_at.isoformat()
+    assert [row["observed_at"] for row in detail["odds_history"]] == [
+        pregame_at.isoformat()
+    ]
+
+    response = sports_game_page(
+        str(final_event["id"]),
+        request(path=f"/game/{final_event['id']}"),
+        None,
+    )
+    assert b"SEALED PREGAME" in response.body
+    assert b"Later news and results cannot rewrite it" in response.body
+    assert b"Pregame market timeline" in response.body
 
 
 def test_sports_history_backfill_moves_through_older_chunks(
@@ -568,15 +623,21 @@ def test_empty_player_boxscore_is_checked_only_once(
     assert second["events"] == 0
 
 
-def test_sports_host_has_radar_and_alpha_products(sports_db) -> None:
+def test_sports_host_has_radar_and_receipts_products(sports_db) -> None:
     radar_response = radar_page(request(path="/radar"), None)
     alpha_response = alpha_page(request(path="/alpha"), None)
+    receipts_response = sports_receipts_page(request(path="/receipts"), None)
     assert radar_response.status_code == 200
     assert b"material change" in radar_response.body
     assert b'class="sports-hero' not in radar_response.body
     assert alpha_response.status_code == 200
-    assert b"Team record in appearances" in alpha_response.body
-    assert b'data-history-range="30"' in alpha_response.body
+    assert b"PUBLIC MODEL SCORECARD" in alpha_response.body
+    assert receipts_response.status_code == 200
+    assert b"Receipts" in receipts_response.body
+    assert b"How this is scored" in receipts_response.body
+    assert b'data-alpha-tab="model"' in receipts_response.body
+    assert b'data-alpha-panel="teams" hidden' in receipts_response.body
+    assert b'data-history-range="30"' in receipts_response.body
 
 
 def test_cloudflare_forwarded_host_selects_the_public_product() -> None:

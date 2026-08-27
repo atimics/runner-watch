@@ -3814,7 +3814,7 @@ def sports_alpha_response(
             request,
             runner_session,
             alpha=sports_alpha(selected_league),
-            sports_tab="alpha",
+            sports_tab="receipts",
             sports_path_prefix=sports_path_prefix,
         ),
     )
@@ -3833,6 +3833,26 @@ def alpha_page(
 
 @app.get("/sports/alpha", response_class=HTMLResponse)
 def sports_alpha_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+    league: str = "all",
+) -> HTMLResponse:
+    return sports_alpha_response(request, runner_session, league)
+
+
+@app.get("/receipts", response_class=HTMLResponse)
+def sports_receipts_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+    league: str = "all",
+) -> Response:
+    if product_for_request(request) == "sports":
+        return sports_alpha_response(request, runner_session, league)
+    return RedirectResponse(f"{SPORTS_ORIGIN}/receipts", status_code=307)
+
+
+@app.get("/sports/receipts", response_class=HTMLResponse)
+def sports_receipts_legacy_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
     league: str = "all",

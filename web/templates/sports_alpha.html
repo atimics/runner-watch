@@ -1,22 +1,22 @@
 {% extends "sports_base.html" %}
-{% block title %}Alpha · RATi Sports{% endblock %}
+{% block title %}Receipts · RATi Sports{% endblock %}
 {% block content %}
 <header class="sports-screen-head alpha-screen-head">
-  <div><span class="sports-eyebrow">SETTLED RESULTS</span><h1>Alpha</h1></div>
-  <p><strong>{{ alpha.coverage.completed_games }}</strong> completed games stored{% if alpha.coverage.history_start %} since <time data-history-date="{{ alpha.coverage.history_start }}">{{ alpha.coverage.history_start[:10] }}</time>{% endif %}. Season records and stored history are labelled separately.</p>
+  <div><span class="sports-eyebrow">PUBLIC MODEL SCORECARD</span><h1>Receipts</h1></div>
+  <p><strong>{{ alpha.model.games }}</strong> sealed {{ alpha.model.version }} forecast{% if alpha.model.games != 1 %}s{% endif %}. Nothing is removed after the result.</p>
 </header>
 
 <nav class="league-tabs" aria-label="League filter">
-  <a class="{% if alpha.league == 'all' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/alpha?league=all">All</a>
+  <a class="{% if alpha.league == 'all' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/receipts?league=all">All</a>
   {% for league in alpha.leagues %}
-    <a class="{% if alpha.league == league.key %}active{% endif %}{% if not league.has_data %} no-data{% endif %}" href="{{ sports_path_prefix or '' }}/alpha?league={{ league.key }}">{{ league.name }}</a>
+    <a class="{% if alpha.league == league.key %}active{% endif %}{% if not league.has_data %} no-data{% endif %}" href="{{ sports_path_prefix or '' }}/receipts?league={{ league.key }}">{{ league.name }}</a>
   {% endfor %}
 </nav>
 
 <div class="alpha-controls">
   <div class="performance-switch" role="tablist" aria-label="Performance ranking">
-    <button type="button" role="tab" aria-selected="false" data-alpha-tab="model">Model <b>{{ alpha.model.games }}</b></button>
-    <button class="active" type="button" role="tab" aria-selected="true" data-alpha-tab="teams">Teams <b>{{ alpha.teams|length }}</b></button>
+    <button class="active" type="button" role="tab" aria-selected="true" data-alpha-tab="model">Model <b>{{ alpha.model.games }}</b></button>
+    <button type="button" role="tab" aria-selected="false" data-alpha-tab="teams">Teams <b>{{ alpha.teams|length }}</b></button>
     <button type="button" role="tab" aria-selected="false" data-alpha-tab="players">Players <b>{{ alpha.players|length }}</b></button>
   </div>
   <div class="history-range" aria-label="Chart range">
@@ -26,34 +26,65 @@
   </div>
 </div>
 
-<section class="performance-panel" data-alpha-panel="model" hidden>
-  <aside class="performance-definition"><strong>What model performance means</strong><span>The final pre-game model probability is checked against the settled result. Lower Brier score is better. Edge calls are the automatic Lean and Watch sides, not user paper picks.</span></aside>
+<section class="performance-panel" data-alpha-panel="model">
+  <aside class="performance-definition"><strong>How this is scored</strong><span>Forecast accuracy and Brier use the final pregame probability. Edge results use the first public Lean or Watch signal and its stored price. Lower Brier is better; positive ROI and closing-line value are better.</span></aside>
   {% if alpha.model.games %}
+  <aside class="sample-warning">
+    <div><strong>{{ alpha.model.sample.label }}</strong><span>{{ alpha.model.games }} of {{ alpha.model.sample.target }} settled forecasts</span></div>
+    <p>{{ alpha.model.sample.message }}</p>
+    <i><b style="width:{{ alpha.model.sample.progress_pct }}%"></b></i>
+  </aside>
   <article class="model-performance-card">
-    <header><span><small>{{ alpha.model.version }}</small><strong>{{ '%.1f'|format(alpha.model.accuracy) }}% winner accuracy</strong></span><b>{{ alpha.model.wins }}–{{ alpha.model.losses }}</b></header>
+    <header><span><small>{{ alpha.model.version }}</small><strong>{{ '%.1f'|format(alpha.model.accuracy) }}% forecast accuracy</strong></span><b>{{ alpha.model.wins }}–{{ alpha.model.losses }}</b></header>
     <span class="rate-chart-wrap rate-chart-wrap-large">
       <svg class="rate-chart rate-chart-large" data-rate-history="{{ alpha.model.history|join(',') }}" data-rate-dates="{{ alpha.model.history_points|map(attribute='at')|join('|') }}" viewBox="0 0 320 86" role="img" aria-label="Model winner accuracy over time"></svg>
       <span class="rate-tooltip" aria-hidden="true"></span>
     </span>
     <div class="model-metrics">
-      <div><small>GAMES</small><strong>{{ alpha.model.games }}</strong></div>
+      <div><small>FORECASTS</small><strong>{{ alpha.model.games }}</strong></div>
       <div><small>BRIER</small><strong>{{ '%.3f'|format(alpha.model.brier) }}</strong></div>
-      <div><small>EDGE CALLS</small><strong>{{ alpha.model.edge_calls }}</strong></div>
-      <div><small>EDGE HIT RATE</small><strong>{% if alpha.model.edge_accuracy is not none %}{{ '%.1f'|format(alpha.model.edge_accuracy) }}%{% else %}—{% endif %}</strong></div>
+      <div><small>EDGE RECORD</small><strong>{% if alpha.model.edge_calls %}{{ alpha.model.edge_wins }}–{{ alpha.model.edge_losses }}{% else %}—{% endif %}</strong></div>
+      <div><small>EDGE ROI</small><strong>{% if alpha.model.edge_roi is not none %}{{ '%+.1f'|format(alpha.model.edge_roi) }}%{% else %}—{% endif %}</strong><span>{% if alpha.model.edge_units is not none %}{{ '%+.2f'|format(alpha.model.edge_units) }} units{% else %}price needed{% endif %}</span></div>
+      <div><small>AVG CLV</small><strong>{% if alpha.model.average_clv_pct is not none %}{{ '%+.2f'|format(alpha.model.average_clv_pct) }} pp{% else %}—{% endif %}</strong><span>{{ alpha.model.clv_calls }} graded</span></div>
+      <div><small>REVIEW TARGET</small><strong>{{ alpha.model.sample.target }}</strong><span>{{ alpha.model.sample.remaining }} remaining</span></div>
     </div>
     {% if alpha.model.calibration %}
     <div class="calibration-list">
       <small>CONFIDENCE CHECK</small>
-      {% for bucket in alpha.model.calibration %}<div><span>{{ bucket.label }}</span><b>{{ '%.1f'|format(bucket.hit_rate) }}%</b><small>{{ bucket.games }} games</small></div>{% endfor %}
+      {% for bucket in alpha.model.calibration %}<div><span>{{ bucket.label }}</span><b>{{ '%.1f'|format(bucket.expected) }}% expected · {{ '%.1f'|format(bucket.hit_rate) }}% actual</b><small>{{ bucket.games }} games</small></div>{% endfor %}
     </div>
     {% endif %}
   </article>
+
+  {% if alpha.model.league_breakdown or alpha.model.edge_breakdown %}
+  <div class="receipt-breakdowns">
+    {% if alpha.model.league_breakdown %}
+    <section><span>BY LEAGUE</span>{% for item in alpha.model.league_breakdown %}<div><b>{{ item.league|upper }}</b><strong>{{ '%.1f'|format(item.accuracy) }}%</strong><small>{{ item.games }} games · Brier {{ '%.3f'|format(item.brier) }}</small></div>{% endfor %}</section>
+    {% endif %}
+    {% if alpha.model.edge_breakdown %}
+    <section><span>BY EDGE AT FIRST CALL</span>{% for item in alpha.model.edge_breakdown %}<div><b>{{ item.label }}</b><strong>{{ item.wins }}–{{ item.calls - item.wins }}</strong><small>{% if item.roi is not none %}{{ '%+.1f'|format(item.roi) }}% ROI{% else %}price needed{% endif %}</small></div>{% endfor %}</section>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <section class="receipt-archive" aria-label="Settled prediction receipts">
+    <header><div><span>PERMANENT ARCHIVE</span><h2>Settled forecasts</h2></div><small>Final pregame probability · first edge call</small></header>
+    {% for receipt in alpha.model.receipts %}
+    <a href="{{ sports_path_prefix or '' }}/game/{{ receipt.id }}">
+      <time data-history-date="{{ receipt.start_time }}">{{ receipt.start_time[:10] }}</time>
+      <span><small>{{ receipt.league|upper }} · {{ receipt.receipt_id }}</small><strong>{{ receipt.away_abbreviation }} {{ receipt.away_score }} at {{ receipt.home_abbreviation }} {{ receipt.home_score }}</strong></span>
+      <span class="receipt-forecast"><small>MODEL</small><b>{{ receipt.winner_abbreviation }} {{ '%.1f'|format(receipt.winner_probability_pct) }}%</b></span>
+      <span class="receipt-edge"><small>VALUE</small><b>{% if receipt.edge_result %}{{ receipt.selection_abbreviation }} {{ receipt.signal|upper }}{% else %}PASS{% endif %}</b>{% if receipt.edge_odds is not none %}<i>{{ '%+d'|format(receipt.edge_odds) }}</i>{% endif %}</span>
+      <em class="receipt-result result-{{ receipt.model_result }}">{{ 'W' if receipt.model_result == 'win' else 'L' }}</em>
+    </a>
+    {% endfor %}
+  </section>
   {% else %}
-  <div class="sports-empty"><strong>Model history is building.</strong><p>Settled games appear here once a pre-game prediction is available.</p></div>
+  <div class="sports-empty"><strong>Receipts are building.</strong><p>Every settled game with a pregame forecast will appear here. Nothing will be removed after the result.</p></div>
   {% endif %}
 </section>
 
-<section class="performance-panel" data-alpha-panel="teams">
+<section class="performance-panel" data-alpha-panel="teams" hidden>
   <aside class="performance-definition"><strong>What team win rate means</strong><span>The headline rate is the season record. The line adds each completed game stored by RATi, with its date and sample size visible.</span></aside>
   {% if alpha.teams %}
     {% set leader = alpha.teams[0] %}
@@ -112,7 +143,7 @@
   {% endif %}
 </section>
 
-<p class="sports-source">Team headlines use season records. Lines use stored settled games. Player rates mean team record in box-score appearances · Data last collected {{ alpha.updated_at[:16]|replace('T',' ') if alpha.updated_at else 'pending' }} UTC</p>
+<p class="sports-source">Forecasts use the final model snapshot before start. Edge returns use the first stored Lean or Watch price. Team and player tabs are context, not model proof · Data last collected {{ alpha.updated_at[:16]|replace('T',' ') if alpha.updated_at else 'pending' }} UTC</p>
 {% endblock %}
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">

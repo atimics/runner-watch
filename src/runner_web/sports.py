@@ -45,6 +45,7 @@ BACK_TO_BACK_MAX_GAP = timedelta(hours=30)
 HISTORY_TARGET_DAYS = 210
 HISTORY_CHUNK_DAYS = 5
 ALPHA_HISTORY_POINTS = 160
+MODEL_SCORECARD_TARGET = 250
 LEAGUES = {
     "mlb": {"sport": "baseball", "path": "mlb", "name": "MLB", "home_edge": 0.035},
     "nfl": {"sport": "football", "path": "nfl", "name": "NFL", "home_edge": 0.055},
@@ -1228,6 +1229,40 @@ def _latest_prediction(database: Any, event_id: str) -> dict[str, Any] | None:
     return _prediction_item(row)
 
 
+def _pregame_prediction(
+    database: Any,
+    event_id: str,
+    start_time: str,
+) -> dict[str, Any] | None:
+    """Return the last forecast that existed before the game started."""
+
+    row = database.execute(
+        """
+        SELECT * FROM sports_predictions
+        WHERE event_id=? AND observed_at<=?
+        ORDER BY observed_at DESC,id DESC LIMIT 1
+        """,
+        (event_id, start_time),
+    ).fetchone()
+    return _prediction_item(row)
+
+
+def _odds_at_or_before(
+    database: Any,
+    event_id: str,
+    observed_at: str,
+) -> dict[str, Any] | None:
+    row = database.execute(
+        """
+        SELECT * FROM sports_odds_snapshots
+        WHERE event_id=? AND observed_at<=?
+        ORDER BY observed_at DESC,id DESC LIMIT 1
+        """,
+        (event_id, observed_at),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def _prediction_item(row: Any) -> dict[str, Any] | None:
     if row is None:
         return None
@@ -1238,6 +1273,82 @@ def _prediction_item(row: Any) -> dict[str, Any] | None:
     item["risks"] = json.loads(item.pop("risks_json") or "[]")
     item["edge_pct"] = round(float(item["edge"]) * 100, 1) if item.get("edge") is not None else None
     return item
+
+
+def _receipt_timing(start_time: str, observed_at: str) -> str:
+    delta = _parse_time(start_time) - _parse_time(observed_at)
+    minutes = max(0, int(delta.total_seconds() // 60))
+    hours, minute_part = divmod(minutes, 60)
+    if hours and minute_part:
+        return f"{hours}h {minute_part}m before start"
+    if hours:
+        return f"{hours}h before start"
+    if minutes:
+        return f"{minutes}m before start"
+    return "at the pregame cutoff"
+
+
+def _prediction_receipt(
+    event: dict[str, Any],
+    prediction: dict[str, Any] | None,
+    odds: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not prediction:
+        return None
+    start = _parse_time(event["start_time"])
+    sealed = bool(
+        event.get("completed")
+        or event.get("status") != "pre"
+        or start <= datetime.now(UTC)
+    )
+    home_probability = float(prediction["home_probability"])
+    winner_side = "home" if home_probability >= 0.5 else "away"
+    selection = str(prediction.get("selection") or "pass")
+    outcome: dict[str, Any] | None = None
+    if event.get("completed"):
+        home_score = _number(event.get("home_score"))
+        away_score = _number(event.get("away_score"))
+        if home_score is not None and away_score is not None and home_score != away_score:
+            actual_side = "home" if home_score > away_score else "away"
+            outcome = {
+                "actual_side": actual_side,
+                "actual_abbreviation": str(event[f"{actual_side}_abbreviation"]),
+                "model_result": "win" if winner_side == actual_side else "loss",
+                "value_result": (
+                    "pass" if selection == "pass" else "win" if selection == actual_side else "loss"
+                ),
+                "final_score": (
+                    f"{event['away_abbreviation']} {_score_display(away_score)} – "
+                    f"{event['home_abbreviation']} {_score_display(home_score)}"
+                ),
+            }
+    receipt_id = str(prediction.get("input_hash") or prediction.get("id") or "")[:12].upper()
+    return {
+        "id": receipt_id,
+        "sealed": sealed,
+        "status_label": "SEALED PREGAME" if sealed else "LIVE PREGAME SNAPSHOT",
+        "captured_at": str(prediction["observed_at"]),
+        "timing_label": _receipt_timing(str(event["start_time"]), str(prediction["observed_at"])),
+        "model_version": str(prediction["model_version"]),
+        "quality": str(prediction["quality"]),
+        "input_hash": str(prediction.get("input_hash") or ""),
+        "selection": selection,
+        "signal": str(prediction.get("signal") or "model only"),
+        "edge_pct": prediction.get("edge_pct"),
+        "winner_side": winner_side,
+        "winner_abbreviation": str(event[f"{winner_side}_abbreviation"]),
+        "winner_probability_pct": round(
+            float(prediction[f"{winner_side}_probability"]) * 100,
+            1,
+        ),
+        "odds_observed_at": str(odds.get("observed_at") or "") if odds else "",
+        "sportsbook": str(odds.get("sportsbook") or "") if odds else "",
+        "odds_provider": str(odds.get("provider") or "") if odds else "",
+        "market_label": "Final pregame" if sealed else "Current",
+        "included": list(prediction.get("evidence") or []),
+        "excluded": list(prediction.get("risks") or []),
+        "outcome": outcome,
+    }
 
 
 def _news_summary(database: Any, event_id: str) -> tuple[int, dict[str, Any] | None]:
@@ -1280,10 +1391,10 @@ def _edge_sparkline(
         SELECT home_probability,away_probability,
                home_market_probability,away_market_probability,observed_at
         FROM sports_predictions
-        WHERE event_id=? AND model_version=?
+        WHERE event_id=? AND model_version=? AND observed_at<=?
         ORDER BY observed_at DESC,id DESC LIMIT 24
         """,
-        (event["id"], prediction["model_version"]),
+        (event["id"], prediction["model_version"], event["start_time"]),
     ).fetchall()
     return _edge_sparkline_from_rows(event, prediction, rows)
 
@@ -1831,6 +1942,40 @@ def _rate_history(
     return [point["rate"] for point in _rate_history_points(outcomes, current_record)]
 
 
+def _american_profit(odds: int | None) -> float | None:
+    if odds is None or odds == 0:
+        return None
+    return odds / 100 if odds > 0 else 100 / abs(odds)
+
+
+def _sample_assessment(games: int) -> dict[str, Any]:
+    if games < 25:
+        label = "VERY EARLY SAMPLE"
+        message = (
+            "Too few settled forecasts to judge the model. "
+            "These numbers are a receipt, not proof."
+        )
+    elif games < 100:
+        label = "EARLY SAMPLE"
+        message = "Results can still move sharply. Treat every rate as descriptive, not predictive."
+    elif games < MODEL_SCORECARD_TARGET:
+        label = "BUILDING SAMPLE"
+        message = "The record is becoming useful, but it has not reached the public review target."
+    else:
+        label = "REVIEWABLE SAMPLE"
+        message = (
+            "The scorecard has reached the public review target. "
+            "Calibration still matters most."
+        )
+    return {
+        "label": label,
+        "message": message,
+        "target": MODEL_SCORECARD_TARGET,
+        "remaining": max(0, MODEL_SCORECARD_TARGET - games),
+        "progress_pct": round(min(1, games / MODEL_SCORECARD_TARGET) * 100, 1),
+    }
+
+
 def _model_alpha(league: str) -> dict[str, Any]:
     parameters: list[Any] = [_iso(datetime.now(UTC) - timedelta(days=HISTORY_TARGET_DAYS))]
     league_filter = ""
@@ -1841,12 +1986,41 @@ def _model_alpha(league: str) -> dict[str, Any]:
         rows = database.execute(
             f"""
             SELECT e.id,e.league,e.start_time,e.home_score,e.away_score,
-                   p.home_probability,p.away_probability,p.selection,p.signal,p.edge
+                   e.home_team_name,e.home_abbreviation,e.away_team_name,e.away_abbreviation,
+                   p.id AS prediction_id,p.model_version,p.input_hash,
+                   p.observed_at AS prediction_observed_at,
+                   p.home_probability,p.away_probability,p.selection,p.signal,p.edge,
+                   ep.id AS edge_prediction_id,ep.observed_at AS edge_observed_at,
+                   ep.selection AS edge_selection,ep.signal AS edge_signal,ep.edge AS edge_value,
+                   ep.home_market_probability AS edge_home_market_probability,
+                   ep.away_market_probability AS edge_away_market_probability,
+                   eo.home_odds AS edge_home_odds,eo.away_odds AS edge_away_odds,
+                   eo.sportsbook AS edge_sportsbook,
+                   co.home_odds AS close_home_odds,co.away_odds AS close_away_odds
             FROM sports_events e
             JOIN sports_predictions p ON p.id=(
                 SELECT p2.id FROM sports_predictions p2
                 WHERE p2.event_id=e.id AND p2.observed_at<=e.start_time
                 ORDER BY p2.observed_at DESC,p2.id DESC LIMIT 1
+            )
+            LEFT JOIN sports_predictions ep ON ep.id=(
+                SELECT p3.id FROM sports_predictions p3
+                WHERE p3.event_id=e.id AND p3.model_version=p.model_version
+                  AND p3.observed_at<=e.start_time
+                  AND p3.signal IN ('lean','watch')
+                  AND p3.selection IN ('home','away')
+                ORDER BY p3.observed_at,p3.id LIMIT 1
+            )
+            LEFT JOIN sports_odds_snapshots eo ON eo.id=(
+                SELECT o1.id FROM sports_odds_snapshots o1
+                WHERE o1.event_id=e.id AND ep.observed_at IS NOT NULL
+                  AND o1.observed_at<=ep.observed_at
+                ORDER BY o1.observed_at DESC,o1.id DESC LIMIT 1
+            )
+            LEFT JOIN sports_odds_snapshots co ON co.id=(
+                SELECT o2.id FROM sports_odds_snapshots o2
+                WHERE o2.event_id=e.id AND o2.observed_at<=e.start_time
+                ORDER BY o2.observed_at DESC,o2.id DESC LIMIT 1
             )
             WHERE e.completed=1
               AND e.start_time>=?
@@ -1856,14 +2030,20 @@ def _model_alpha(league: str) -> dict[str, Any]:
             tuple(parameters),
         ).fetchall()
 
+    all_rows = [dict(row) for row in rows]
+    current_rows = [row for row in all_rows if str(row["model_version"]) == MODEL_VERSION]
     evaluated: list[dict[str, Any]] = []
-    edge_calls = edge_wins = 0
-    buckets: dict[str, list[bool]] = defaultdict(list)
+    edge_calls = edge_wins = edge_graded = 0
+    edge_return_units = 0.0
+    confidence_buckets: dict[str, list[tuple[bool, float]]] = defaultdict(list)
+    edge_buckets: dict[str, list[tuple[bool, float | None]]] = defaultdict(list)
+    league_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    clv_values: list[float] = []
     correct = 0
     brier_total = 0.0
     history_points: list[dict[str, Any]] = []
-    for raw in rows:
-        row = dict(raw)
+    receipt_rows: list[dict[str, Any]] = []
+    for row in current_rows:
         home_score = _number(row.get("home_score"))
         away_score = _number(row.get("away_score"))
         if home_score is None or away_score is None or home_score == away_score:
@@ -1873,33 +2053,143 @@ def _model_alpha(league: str) -> dict[str, Any]:
         winner_side = "home" if home_probability >= 0.5 else "away"
         model_won = home_won if winner_side == "home" else not home_won
         correct += int(model_won)
-        brier_total += (home_probability - int(home_won)) ** 2
+        brier = (home_probability - int(home_won)) ** 2
+        brier_total += brier
         confidence = max(home_probability, 1 - home_probability)
-        bucket = "50–55%" if confidence < 0.55 else "55–60%" if confidence < 0.60 else "60%+"
-        buckets[bucket].append(model_won)
-        selection = str(row.get("selection") or "pass")
-        if str(row.get("signal")) in PROMOTED_SIGNALS and selection in {"home", "away"}:
+        confidence_label = (
+            "50–55%" if confidence < 0.55 else "55–60%" if confidence < 0.60 else "60%+"
+        )
+        confidence_buckets[confidence_label].append((model_won, confidence))
+
+        edge_selection = str(row.get("edge_selection") or "pass")
+        edge_result: str | None = None
+        edge_odds: int | None = None
+        edge_clv: float | None = None
+        if row.get("edge_prediction_id") and edge_selection in {"home", "away"}:
             edge_calls += 1
-            selected_won = home_won if selection == "home" else not home_won
+            selected_won = home_won if edge_selection == "home" else not home_won
             edge_wins += int(selected_won)
+            edge_result = "win" if selected_won else "loss"
+            edge_odds = (
+                row.get("edge_home_odds")
+                if edge_selection == "home"
+                else row.get("edge_away_odds")
+            )
+            profit = _american_profit(int(edge_odds)) if edge_odds is not None else None
+            if profit is None:
+                result_units = None
+            else:
+                result_units = profit if selected_won else -1.0
+            if result_units is not None:
+                edge_graded += 1
+                edge_return_units += result_units
+            close_home, close_away = no_vig_probabilities(
+                row.get("close_home_odds"), row.get("close_away_odds")
+            )
+            entry_market = _number(row.get(f"edge_{edge_selection}_market_probability"))
+            close_market = close_home if edge_selection == "home" else close_away
+            if entry_market is not None and close_market is not None:
+                edge_clv = round((close_market - entry_market) * 100, 2)
+                clv_values.append(edge_clv)
+            edge_size = abs(float(row.get("edge_value") or 0)) * 100
+            edge_label = "2–5 pp" if edge_size < 5 else "5–8 pp" if edge_size < 8 else "8+ pp"
+            edge_buckets[edge_label].append((selected_won, result_units))
+
+        row["model_won"] = model_won
+        row["brier"] = brier
         evaluated.append(row)
+        league_groups[str(row["league"])].append(row)
         history_points.append(
             {
                 "at": str(row["start_time"]),
                 "rate": round(correct / len(evaluated) * 100, 1),
             }
         )
+        receipt_rows.append(
+            {
+                "id": str(row["id"]),
+                "league": str(row["league"]),
+                "start_time": str(row["start_time"]),
+                "away_abbreviation": str(row["away_abbreviation"]),
+                "home_abbreviation": str(row["home_abbreviation"]),
+                "away_score": _score_display(away_score),
+                "home_score": _score_display(home_score),
+                "winner_abbreviation": str(row[f"{winner_side}_abbreviation"]),
+                "winner_probability_pct": round(
+                    float(row[f"{winner_side}_probability"]) * 100,
+                    1,
+                ),
+                "model_result": "win" if model_won else "loss",
+                "signal": str(row.get("edge_signal") or "pass"),
+                "selection_abbreviation": (
+                    str(row[f"{edge_selection}_abbreviation"])
+                    if edge_selection in {"home", "away"}
+                    else "PASS"
+                ),
+                "edge_pct": (
+                    round(float(row["edge_value"]) * 100, 1)
+                    if row.get("edge_value") is not None
+                    else None
+                ),
+                "edge_result": edge_result,
+                "edge_odds": int(edge_odds) if edge_odds is not None else None,
+                "edge_clv_pct": edge_clv,
+                "receipt_id": str(row.get("input_hash") or "")[:12].upper(),
+                "captured_at": str(row["prediction_observed_at"]),
+            }
+        )
 
     sample = len(evaluated)
-    calibration = [
-        {
-            "label": label,
-            "games": len(results),
-            "hit_rate": round(sum(results) / len(results) * 100, 1),
-        }
-        for label in ("50–55%", "55–60%", "60%+")
-        if (results := buckets.get(label))
-    ]
+    calibration = []
+    for label in ("50–55%", "55–60%", "60%+"):
+        results = confidence_buckets.get(label)
+        if not results:
+            continue
+        expected = sum(confidence for _, confidence in results) / len(results) * 100
+        actual = sum(won for won, _ in results) / len(results) * 100
+        calibration.append(
+            {
+                "label": label,
+                "games": len(results),
+                "expected": round(expected, 1),
+                "hit_rate": round(actual, 1),
+                "gap_pct": round(actual - expected, 1),
+            }
+        )
+
+    edge_breakdown = []
+    for label in ("2–5 pp", "5–8 pp", "8+ pp"):
+        results = edge_buckets.get(label)
+        if not results:
+            continue
+        graded = [units for _, units in results if units is not None]
+        edge_breakdown.append(
+            {
+                "label": label,
+                "calls": len(results),
+                "wins": sum(won for won, _ in results),
+                "roi": round(sum(graded) / len(graded) * 100, 1) if graded else None,
+            }
+        )
+
+    league_breakdown = []
+    for league_key in LEAGUES:
+        league_rows = league_groups.get(league_key)
+        if not league_rows:
+            continue
+        league_correct = sum(bool(row["model_won"]) for row in league_rows)
+        league_breakdown.append(
+            {
+                "league": league_key,
+                "games": len(league_rows),
+                "accuracy": round(league_correct / len(league_rows) * 100, 1),
+                "brier": round(
+                    sum(float(row["brier"]) for row in league_rows) / len(league_rows),
+                    3,
+                ),
+            }
+        )
+
     return {
         "version": MODEL_VERSION,
         "games": sample,
@@ -1909,10 +2199,20 @@ def _model_alpha(league: str) -> dict[str, Any]:
         "brier": round(brier_total / sample, 3) if sample else None,
         "edge_calls": edge_calls,
         "edge_wins": edge_wins,
+        "edge_losses": edge_calls - edge_wins,
         "edge_accuracy": round(edge_wins / edge_calls * 100, 1) if edge_calls else None,
+        "edge_graded": edge_graded,
+        "edge_units": round(edge_return_units, 2) if edge_graded else None,
+        "edge_roi": round(edge_return_units / edge_graded * 100, 1) if edge_graded else None,
+        "average_clv_pct": round(sum(clv_values) / len(clv_values), 2) if clv_values else None,
+        "clv_calls": len(clv_values),
         "history": [point["rate"] for point in history_points[-ALPHA_HISTORY_POINTS:]],
         "history_points": history_points[-ALPHA_HISTORY_POINTS:],
         "calibration": calibration,
+        "edge_breakdown": edge_breakdown,
+        "league_breakdown": league_breakdown,
+        "receipts": list(reversed(receipt_rows[-40:])),
+        "sample": _sample_assessment(sample),
     }
 
 
@@ -2170,11 +2470,25 @@ def _recent_team_form(
     losses = sum(game["result"] == "L" for game in games)
     ties = sum(game["result"] == "T" for game in games)
     record = f"{wins}-{losses}" + (f"-{ties}" if ties else "")
+    rest_label = "No prior game stored"
+    short_rest = False
+    if games:
+        between_starts = _parse_time(str(event["start_time"])) - _parse_time(games[0]["start_time"])
+        minutes = max(0, int(between_starts.total_seconds() // 60))
+        hours, minute_part = divmod(minutes, 60)
+        short_rest = timedelta(0) < between_starts <= BACK_TO_BACK_MAX_GAP
+        if hours < 48:
+            rest_label = f"{hours}h {minute_part}m since last start"
+        else:
+            days = hours // 24
+            rest_label = f"{days}d since last start"
     return {
         "team_id": team_id,
         "abbreviation": abbreviation,
         "record": record,
         "games": games,
+        "rest_label": rest_label,
+        "short_rest": short_rest,
     }
 
 
@@ -2318,12 +2632,22 @@ def sports_event(event_id: str) -> dict[str, Any] | None:
         if not row:
             return None
         event = _event_row(database, row)
+        prediction = _pregame_prediction(database, event_id, str(event["start_time"]))
+        prediction_cutoff = (
+            str(prediction["observed_at"]) if prediction else str(event["start_time"])
+        )
+        receipt_odds = _odds_at_or_before(database, event_id, prediction_cutoff)
+        event["prediction"] = prediction
+        event["odds"] = receipt_odds
+        event["edge_history"] = _edge_sparkline(database, event, prediction)
+        event.update(_event_attention(event))
+        event["receipt"] = _prediction_receipt(event, prediction, receipt_odds)
         odds_rows = database.execute(
             """
-            SELECT * FROM sports_odds_snapshots WHERE event_id=?
+            SELECT * FROM sports_odds_snapshots WHERE event_id=? AND observed_at<=?
             ORDER BY observed_at DESC,id DESC LIMIT 30
             """,
-            (event_id,),
+            (event_id, event["start_time"]),
         ).fetchall()
         event["odds_history"] = [dict(item) for item in reversed(odds_rows)]
         pick_rows = database.execute(
