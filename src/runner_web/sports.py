@@ -14,6 +14,20 @@ from runner_watch.ingestion import SourceFetch
 from runner_web.caller_ids import ensure_caller_identity_with_database
 from runner_web.db import connection
 from runner_web.ingestion import record_source_fetch
+from runner_web.odds_api import PROVIDER as ODDS_PROVIDER
+from runner_web.odds_api import (
+    OddsApiConfig,
+    OddsApiError,
+    Quota,
+    apply_moneylines,
+    can_spend,
+    clear_event_odds,
+    fetch_moneylines,
+    last_recorded_quota,
+    mark_refresh_attempt,
+    probe_quota,
+    refresh_decision,
+)
 
 MODEL_VERSION = "team-form-v1"
 SOURCE = "espn"
@@ -687,6 +701,40 @@ def _input_hash(event: dict[str, Any], prediction: dict[str, Any]) -> str:
     return hashlib.sha256(_json(fields).encode()).hexdigest()
 
 
+def _apply_cached_moneylines(events: list[dict[str, Any]]) -> int:
+    """Use the latest paid snapshot between scheduled API refreshes."""
+
+    applied = 0
+    with connection() as database:
+        for event in events:
+            if event.get("odds_provider") == ODDS_PROVIDER:
+                continue
+            row = database.execute(
+                """
+                SELECT * FROM sports_odds_snapshots
+                WHERE event_id=? AND provider=?
+                ORDER BY observed_at DESC,id DESC LIMIT 1
+                """,
+                (event["id"], ODDS_PROVIDER),
+            ).fetchone()
+            if not row:
+                continue
+            event.update(
+                {
+                    "odds_provider": ODDS_PROVIDER,
+                    "sportsbook": row["sportsbook"],
+                    "home_odds": row["home_odds"],
+                    "away_odds": row["away_odds"],
+                    "home_open_odds": row["home_open_odds"],
+                    "away_open_odds": row["away_open_odds"],
+                    "spread": row["spread"],
+                    "total": row["total"],
+                }
+            )
+            applied += 1
+    return applied
+
+
 def store_events(events: list[dict[str, Any]], observed_at: datetime | None = None) -> int:
     timestamp = _iso(observed_at)
     with connection() as database:
@@ -721,14 +769,33 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                 ),
             )
             if event.get("home_odds") is not None or event.get("away_odds") is not None:
+                odds_provider = str(event.get("odds_provider") or SOURCE)
+                home_open_odds = event.get("home_open_odds")
+                away_open_odds = event.get("away_open_odds")
+                if home_open_odds is None or away_open_odds is None:
+                    opening = database.execute(
+                        """
+                        SELECT home_odds,away_odds,home_open_odds,away_open_odds
+                        FROM sports_odds_snapshots
+                        WHERE event_id=? AND provider=?
+                        ORDER BY observed_at,id LIMIT 1
+                        """,
+                        (event["id"], odds_provider),
+                    ).fetchone()
+                    if opening:
+                        home_open_odds = opening["home_open_odds"] or opening["home_odds"]
+                        away_open_odds = opening["away_open_odds"] or opening["away_odds"]
+                    else:
+                        home_open_odds = event.get("home_odds")
+                        away_open_odds = event.get("away_odds")
                 odds_hash = hashlib.sha256(
                     _json(
                         {
                             "sportsbook": event["sportsbook"],
                             "home": event["home_odds"],
                             "away": event["away_odds"],
-                            "home_open": event["home_open_odds"],
-                            "away_open": event["away_open_odds"],
+                            "home_open": home_open_odds,
+                            "away_open": away_open_odds,
                             "spread": event["spread"],
                             "total": event["total"],
                         }
@@ -742,9 +809,9 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING
                     """,
                     (
-                        str(uuid.uuid4()), event["id"], SOURCE, event["sportsbook"],
+                        str(uuid.uuid4()), event["id"], odds_provider, event["sportsbook"],
                         "moneyline", event["home_odds"], event["away_odds"],
-                        event["home_open_odds"], event["away_open_odds"], event["spread"],
+                        home_open_odds, away_open_odds, event["spread"],
                         event["total"], odds_hash, timestamp,
                     ),
                 )
@@ -808,15 +875,74 @@ def settle_picks() -> int:
 
 
 def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
+    current = (at or datetime.now(UTC)).astimezone(UTC)
     counts: dict[str, int] = {}
     player_counts: dict[str, dict[str, int]] = {}
     news_counts: dict[str, int] = {}
     news_errors: dict[str, str] = {}
     errors: dict[str, str] = {}
+    odds_counts: dict[str, int] = {}
+    cached_odds_counts: dict[str, int] = {}
+    odds_slots: dict[str, str] = {}
+    odds_errors: dict[str, str] = {}
+    quota: Quota | None = None
+    reported_quota: Quota | None = None
+    quota_error: str | None = None
+    try:
+        odds_config = OddsApiConfig.from_env()
+    except (TypeError, ValueError) as exc:
+        odds_config = OddsApiConfig(api_key="", enabled=False)
+        quota_error = str(exc)[:240]
+    if odds_config.active:
+        reported_quota = last_recorded_quota()
     for league in LEAGUES:
         try:
             events = fetch_league(league, at)
-            counts[league] = store_events(events)
+            if odds_config.active:
+                clear_event_odds(events)
+                decision = refresh_decision(
+                    league,
+                    events,
+                    current,
+                    retry_seconds=odds_config.retry_seconds,
+                )
+                if decision:
+                    odds_slots[league] = decision.slot
+                    if quota is None and quota_error is None:
+                        try:
+                            quota = probe_quota(odds_config)
+                            reported_quota = quota
+                        except OddsApiError as exc:
+                            quota_error = str(exc)[:240]
+                    if quota is not None and can_spend(odds_config, quota):
+                        try:
+                            result = fetch_moneylines(odds_config, league)
+                            quota = result.quota
+                            reported_quota = quota
+                            odds_counts[league] = apply_moneylines(events, result.moneylines)
+                            mark_refresh_attempt(
+                                decision,
+                                successful=result.quota.last > 0,
+                                at=current,
+                            )
+                        except OddsApiError as exc:
+                            odds_errors[league] = str(exc)[:240]
+                            if exc.quota is not None:
+                                quota = exc.quota
+                                reported_quota = quota
+                            mark_refresh_attempt(
+                                decision,
+                                successful=bool(exc.quota and exc.quota.last > 0),
+                                at=current,
+                            )
+                    elif quota_error:
+                        odds_errors[league] = quota_error
+                        mark_refresh_attempt(decision, successful=False, at=current)
+                    else:
+                        odds_errors[league] = "Monthly odds budget is paused at its safe limit."
+                        mark_refresh_attempt(decision, successful=False, at=current)
+                cached_odds_counts[league] = _apply_cached_moneylines(events)
+            counts[league] = store_events(events, observed_at=current)
             player_counts[league] = collect_player_appearances(events)
         except Exception as exc:
             errors[league] = str(exc)[:240]
@@ -833,6 +959,18 @@ def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
         "news_counts": news_counts,
         "news_errors": news_errors,
         "errors": errors,
+        "odds_api": {
+            "enabled": odds_config.active,
+            "working_limit": odds_config.working_limit,
+            "reserve": odds_config.reserve_credits,
+            "credits_used": reported_quota.used if reported_quota else None,
+            "credits_remaining": reported_quota.remaining if reported_quota else None,
+            "fresh_matches": odds_counts,
+            "cached_matches": cached_odds_counts,
+            "slots": odds_slots,
+            "errors": odds_errors,
+            "quota_error": quota_error,
+        },
         "settled": settled,
         "model": MODEL_VERSION,
     }

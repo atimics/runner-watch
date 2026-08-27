@@ -297,6 +297,24 @@ DEFAULT_SOURCE_POLICIES = (
         enabled=_enabled_by_default("SPORTS_INGESTION_ENABLED"),
     ),
     SourcePolicy(
+        source="the-odds-api",
+        feed="sports_moneyline_odds",
+        title="The Odds API moneyline odds",
+        owner="The Odds API",
+        terms_url="https://the-odds-api.com/terms-and-conditions.html",
+        credential_env="ODDS_API_KEY",
+        expected_cadence_seconds=21_600,
+        stale_after_seconds=86_400,
+        schedule="game_windows",
+        storage_policy="normalized_only",
+        display_policy="source_link_with_attribution",
+        attribution="The Odds API and the named bookmaker",
+        enabled=(
+            _enabled_by_default("ODDS_API_ENABLED")
+            and bool(os.getenv("ODDS_API_KEY", "").strip())
+        ),
+    ),
+    SourcePolicy(
         source="espn",
         feed="sports_boxscore_preview",
         title="ESPN sports box score preview",
