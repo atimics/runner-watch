@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 from runner_web import db
 from runner_web import main as web_main
@@ -32,6 +32,8 @@ from runner_web.sports import (
     normalize_player_appearances,
     predict_event,
     settle_picks,
+    settle_sports_ai_forecasts,
+    sports_ai_tournament,
     sports_alpha,
     sports_alpha_board,
     sports_event,
@@ -42,6 +44,7 @@ from runner_web.sports import (
     store_events,
     store_news_articles,
     store_player_appearances,
+    validate_sports_ai_forecast,
 )
 
 
@@ -149,6 +152,77 @@ def test_scoreboard_event_becomes_a_source_bound_prediction() -> None:
     assert prediction["risks"]
 
 
+def test_sports_ai_forecast_contract_is_a_separate_winner_probability() -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    evidence = {
+        "teams": {"home": event["home"], "away": event["away"]},
+    }
+
+    forecast = validate_sports_ai_forecast(
+        {
+            "selection": "HOM",
+            "home_probability": 61,
+            "away_probability": 39,
+            "confidence": "medium",
+            "reason": "Home form is stronger, but the missing lineup keeps this close.",
+        },
+        evidence,
+    )
+
+    assert forecast["selection"] == "home"
+    assert forecast["home_probability"] == pytest.approx(0.61)
+    assert forecast["away_probability"] == pytest.approx(0.39)
+    assert forecast["contract_version"] == "sports-moneyline-v1"
+    with pytest.raises(ValueError, match="conflicts"):
+        validate_sports_ai_forecast(
+            {
+                "selection": "away",
+                "home_probability": 0.7,
+                "away_probability": 0.3,
+                "reason": "Contradictory output.",
+            },
+            evidence,
+        )
+    with pytest.raises(ValueError, match="sum to 1"):
+        validate_sports_ai_forecast(
+            {
+                "selection": "home",
+                "home_probability": 0.8,
+                "away_probability": 0.8,
+                "reason": "Invalid probability total.",
+            },
+            evidence,
+        )
+
+
+def test_sports_ai_forecast_record_rejects_a_late_prediction(sports_db) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    _, evidence = sports_flash_evidence(str(event["id"]))
+    forecast = validate_sports_ai_forecast(
+        {
+            "selection": "home",
+            "home_probability": 0.6,
+            "away_probability": 0.4,
+            "reason": "Home form is stronger.",
+        },
+        evidence,
+    )
+
+    with connection() as database, pytest.raises(ValueError, match="completed before"):
+        sports_module.record_sports_ai_forecast(
+            database,
+            report_id="late-report",
+            evidence=evidence,
+            forecast=forecast,
+            actor=web_main.actor_snapshot(),
+            resolved_model=web_main.FLASH.model,
+            observed_at=str(evidence["start_time"]),
+        )
+
+
 def test_preseason_game_is_never_promoted_as_an_edge() -> None:
     raw = sample_event()
     raw["season"] = {"year": 2026, "type": 1, "slug": "preseason"}
@@ -158,6 +232,18 @@ def test_preseason_game_is_never_promoted_as_an_edge() -> None:
     assert prediction["selection"] == "pass"
     assert prediction["signal"] == "pass"
     assert prediction["edge"] is None
+
+
+def test_ai_prediction_cannot_be_created_after_a_game_starts(sports_db) -> None:
+    event = normalize_event("mlb", sample_event(completed=True))
+    assert event is not None
+    store_events([event])
+
+    with pytest.raises(HTTPException, match="only before the game starts"):
+        web_main._create_research_commission(
+            "unused-user",
+            web_main._sports_report_key(str(event["id"])),
+        )
 
 
 def test_recent_team_news_is_attached_only_to_promoted_matchups(sports_db) -> None:
@@ -750,6 +836,14 @@ def test_sports_flash_uses_the_shared_daily_report_lifecycle(
                 "unknowns": ["Lineups are not confirmed."],
                 "sources": evidence["sources"],
                 "citations": [],
+                "sports_forecast": {
+                    "contract_version": "sports-moneyline-v1",
+                    "selection": "home",
+                    "home_probability": 0.61,
+                    "away_probability": 0.39,
+                    "confidence": "medium",
+                    "reason": "Home form is stronger, but missing lineups keep uncertainty high.",
+                },
             },
             actor.model,
             {},
@@ -771,6 +865,8 @@ def test_sports_flash_uses_the_shared_daily_report_lifecycle(
     assert report["company_profile"] == {}
     assert report["people"] == []
     assert report["filing_context"] == []
+    assert report["sports_forecast"]["selection"] == "home"
+    assert report["sports_forecast"]["selected_abbreviation"] == "HOM"
     daily = web_main.daily_report_for_sports_game(str(event["id"]), "sports-user")
     assert daily is not None
     assert daily["locked"] is False
@@ -778,7 +874,30 @@ def test_sports_flash_uses_the_shared_daily_report_lifecycle(
         balance = database.execute(
             "SELECT balance FROM flash_wallets WHERE user_id='sports-user'"
         ).fetchone()["balance"]
+        frozen = database.execute(
+            "SELECT * FROM sports_ai_forecasts WHERE report_id=?",
+            (commission["id"],),
+        ).fetchone()
     assert balance == 100
+    assert frozen["selection"] == "home"
+    assert frozen["resolved_model"] == web_main.FLASH.model
+    assert frozen["ladder_position"] == 1
+    assert frozen["ladder_size"] == 4
+
+    final_event = normalize_event("mlb", sample_event(completed=True))
+    assert final_event is not None
+    store_events([final_event])
+    assert settle_sports_ai_forecasts() == 1
+    settled_report = web_main.get_commission(str(commission["public_id"]))
+    assert settled_report is not None
+    assert settled_report["sports_forecast"]["result"] == "win"
+    assert settled_report["sports_forecast"]["brier_score"] == pytest.approx(0.1521)
+    tournament = sports_ai_tournament("mlb")
+    assert len(tournament["slots"]) == 4
+    assert tournament["slots"][0]["status"] == "champion"
+    assert tournament["slots"][0]["scored"] == 1
+    assert tournament["slots"][0]["accuracy"] == 100.0
+    assert tournament["slots"][1]["status"] == "open"
 
 
 def test_finished_game_seals_the_last_pregame_prediction_and_market(sports_db) -> None:
@@ -918,6 +1037,8 @@ def test_sports_host_has_the_same_alpha_product_as_runners(sports_db) -> None:
     assert alpha_response.status_code == 200
     assert b'<h1>Alpha</h1>' in alpha_response.body
     assert b'class="alpha-board call-ledger"' in alpha_response.body
+    assert b"Four prediction slots" in alpha_response.body
+    assert alpha_response.body.count(b"Open challenger slot") == 3
     assert b"open Calls" in alpha_response.body
     assert b"Receipts" not in alpha_response.body
     assert b'href="/alpha"' in alpha_response.body

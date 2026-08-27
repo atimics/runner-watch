@@ -44,6 +44,9 @@
 .game-flash-action>button:disabled{cursor:default;opacity:.75}
 .game-flash-action strong,.game-flash-action small{display:block}
 .game-flash-action strong{font-size:12px}.game-flash-action small{color:var(--muted);font-size:8px}
+.game-flash-prediction{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 10px;align-items:end;margin-top:13px;padding-top:11px;border-top:1px solid rgba(157,124,255,.25)}
+.game-flash-prediction small,.game-flash-prediction em{grid-column:1/-1;color:var(--muted);font-size:8px;font-style:normal;letter-spacing:.05em}
+.game-flash-prediction strong{color:#d7caff;font-size:18px}.game-flash-prediction b{overflow:hidden;font-size:11px;text-overflow:ellipsis;white-space:nowrap}
 #commissionStatus{min-height:12px;margin:7px 0 0;color:var(--muted);font-size:8px}
 .series-context{overflow:hidden;margin-top:12px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,rgba(121,183,255,.08),rgba(19,17,29,.92) 48%)}
 .series-context>header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px 18px;border-bottom:1px solid var(--line)}

@@ -203,6 +203,9 @@ def export_user_data(user_id: str) -> dict[str, Any]:
                 "research_stage_runs", "commission_id", commission_ids
             ),
             "flash_forecasts": flash_forecasts,
+            "sports_ai_forecasts": related(
+                "sports_ai_forecasts", "report_id", commission_ids
+            ),
             "flash_forecast_outcomes": related(
                 "flash_forecast_outcomes", "forecast_id", forecast_ids
             ),

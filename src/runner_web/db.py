@@ -2269,6 +2269,49 @@ def _migration_038_sports_bookmaker_odds(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_039_sports_ai_forecasts(db: DatabaseConnection) -> None:
+    """Freeze and score pregame AI forecasts separately from the sports baseline."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS sports_ai_forecasts (
+            id TEXT PRIMARY KEY,
+            report_id TEXT NOT NULL UNIQUE
+                REFERENCES research_commissions(id) ON DELETE CASCADE,
+            event_id TEXT NOT NULL REFERENCES sports_events(id) ON DELETE CASCADE,
+            league TEXT NOT NULL CHECK(league IN ('mlb','nfl','nba','nhl')),
+            actor_id TEXT NOT NULL,
+            actor_snapshot_json TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            requested_model TEXT NOT NULL,
+            resolved_model TEXT NOT NULL,
+            ladder_position INTEGER NOT NULL CHECK(ladder_position>=1),
+            ladder_size INTEGER NOT NULL CHECK(ladder_size>=ladder_position),
+            evidence_fingerprint TEXT NOT NULL,
+            selection TEXT NOT NULL CHECK(selection IN ('home','away','pass')),
+            home_probability REAL NOT NULL
+                CHECK(home_probability>=0 AND home_probability<=1),
+            away_probability REAL NOT NULL
+                CHECK(away_probability>=0 AND away_probability<=1),
+            confidence TEXT NOT NULL CHECK(confidence IN ('low','medium','high')),
+            reason TEXT NOT NULL,
+            contract_version TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            start_time TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open'
+                CHECK(status IN ('open','settled','void')),
+            result TEXT CHECK(result IS NULL OR result IN ('win','loss','pass','void')),
+            brier_score REAL CHECK(brier_score IS NULL OR (brier_score>=0 AND brier_score<=1)),
+            settled_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS sports_ai_forecasts_event_time
+            ON sports_ai_forecasts(event_id,observed_at DESC);
+        CREATE INDEX IF NOT EXISTS sports_ai_forecasts_model_league
+            ON sports_ai_forecasts(actor_id,resolved_model,league,status,start_time);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2315,6 +2358,7 @@ MIGRATIONS = (
     Migration(36, "sports_request_indexes", _migration_036_sports_request_indexes),
     Migration(37, "flash_forecast_record", _migration_037_flash_forecast_record),
     Migration(38, "sports_bookmaker_odds", _migration_038_sports_bookmaker_odds),
+    Migration(39, "sports_ai_forecasts", _migration_039_sports_ai_forecasts),
 )
 
 

@@ -33,6 +33,13 @@ probability is treated like a price, and every paper Call keeps its entry odds, 
 settled PnL. The old Receipts URLs redirect to Alpha. Sealed pregame model and odds records remain on
 each game page as supporting evidence.
 
+Future MLB, NFL, NBA, and NHL game pages can also generate a source-bound Flash report. The report
+must include its own home, away, or pass probability. This AI prediction is stored separately from
+the transparent team-form algorithm, frozen before the game, and scored with Brier score after the
+final result. Sports Alpha shows a four-slot AI model ladder. Flash holds the first slot today; three
+challenger slots stay open for future models. A model cannot change rank until the competitors have
+at least 20 scored forecasts on the same games.
+
 The public scanner defaults to listed US penny stocks from $0.20 to $5 with market caps below
 about $2B. It combines Yahoo's strongest movers, most active names, and largest losers before
 checking daily liquidity and 5-minute bars. A second mode widens the price ceiling to $20. A third

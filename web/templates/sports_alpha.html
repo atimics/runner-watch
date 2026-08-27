@@ -5,6 +5,29 @@
 <div class="desktop-workspace" data-desktop-workspace>
   <section class="desktop-list-pane" data-desktop-list>
     {% include "_alpha_ledger.html" %}
+    <section class="sports-ai-tournament" aria-labelledby="sportsAiTournamentTitle">
+      <header>
+        <div><span>AI MODEL LADDER</span><h2 id="sportsAiTournamentTitle">Four prediction slots</h2></div>
+        <small>{{ board.ai_tournament.shared_scored_games }} shared scored games</small>
+      </header>
+      <p>Each model keeps its own frozen pregame probabilities. New challengers must beat later games on accuracy and Brier score; the team-form algorithm stays a separate baseline.</p>
+      <div class="sports-ai-slots">
+        {% for slot in board.ai_tournament.slots %}
+        <article class="{{ slot.status }}">
+          <b>#{{ slot.position }}</b>
+          <span><strong>{{ slot.emoji }} {{ slot.display_name }}</strong><small>{{ slot.model_label }}</small></span>
+          {% if slot.status == 'open' %}
+          <em>OPEN</em>
+          {% elif slot.scored %}
+          <em>{{ '%.1f'|format(slot.accuracy) if slot.accuracy is not none else '—' }}% · Brier {{ '%.3f'|format(slot.brier) }}</em>
+          {% else %}
+          <em>{{ slot.open }} live · learning</em>
+          {% endif %}
+        </article>
+        {% endfor %}
+      </div>
+      <footer>{{ 'Comparison ready' if board.ai_tournament.comparison_ready else 'Needs 20 shared scored games before models can change rank' }} · {{ board.ai_tournament.contract_version }}</footer>
+    </section>
   </section>
   {% include "_desktop_panel.html" %}
 </div>

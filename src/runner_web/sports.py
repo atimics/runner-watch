@@ -12,6 +12,13 @@ from statistics import median
 from typing import Any
 
 from runner_watch.ingestion import SourceFetch
+from runner_web.ai_kol import (
+    FLASH,
+    KOL_LADDER_SIZE,
+    SPORTS_FORECAST_CONTRACT_VERSION,
+    actor_snapshot,
+    model_display_name,
+)
 from runner_web.caller_ids import ensure_caller_identity_with_database
 from runner_web.db import connection
 from runner_web.flash_wallet import WINNING_CALL_REWARD, credit_flash
@@ -316,6 +323,86 @@ def predict_event(event: dict[str, Any]) -> dict[str, Any]:
         "quality": quality,
         "evidence": evidence,
         "risks": risks,
+    }
+
+
+def _probability(value: Any) -> float | None:
+    probability = _number(value)
+    if probability is None:
+        return None
+    if 1 < probability <= 100:
+        probability /= 100
+    return probability if 0 <= probability <= 1 else None
+
+
+def validate_sports_ai_forecast(
+    value: Any,
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize one independent, pregame AI winner forecast."""
+
+    if not isinstance(value, dict):
+        raise ValueError("sports forecast is missing")
+    raw_home_probability = _number(value.get("home_probability"))
+    raw_away_probability = _number(value.get("away_probability"))
+    if (
+        raw_home_probability is not None
+        and raw_away_probability is not None
+        and max(raw_home_probability, raw_away_probability) > 1
+    ):
+        home_probability = _probability(raw_home_probability / 100)
+        away_probability = _probability(raw_away_probability / 100)
+    else:
+        home_probability = _probability(raw_home_probability)
+        away_probability = _probability(raw_away_probability)
+    if home_probability is None and away_probability is not None:
+        home_probability = 1 - away_probability
+    if away_probability is None and home_probability is not None:
+        away_probability = 1 - home_probability
+    if home_probability is None or away_probability is None:
+        raise ValueError("sports forecast probabilities are missing")
+    total = home_probability + away_probability
+    if not 0.98 <= total <= 1.02:
+        raise ValueError("sports forecast probabilities must sum to 1")
+    home_probability = home_probability / total
+    away_probability = 1 - home_probability
+
+    teams = evidence.get("teams") or {}
+    raw_selection = str(value.get("selection") or "").strip().casefold()
+    selection_aliases = {
+        "home": "home",
+        "away": "away",
+        "pass": "pass",
+        "no_call": "pass",
+    }
+    for side in ("home", "away"):
+        team = teams.get(side) or {}
+        for candidate in (team.get("id"), team.get("name"), team.get("abbreviation")):
+            if candidate:
+                selection_aliases[str(candidate).strip().casefold()] = side
+    selection = selection_aliases.get(raw_selection)
+    if selection not in {"home", "away", "pass"}:
+        raise ValueError("sports forecast selection is invalid")
+    if selection == "home" and home_probability < away_probability:
+        raise ValueError("sports forecast selection conflicts with its probabilities")
+    if selection == "away" and away_probability < home_probability:
+        raise ValueError("sports forecast selection conflicts with its probabilities")
+
+    maximum = max(home_probability, away_probability)
+    default_confidence = "high" if maximum >= 0.65 else "medium" if maximum >= 0.56 else "low"
+    confidence = str(value.get("confidence") or default_confidence).strip().lower()
+    if confidence not in {"low", "medium", "high"}:
+        confidence = default_confidence
+    reason = " ".join(str(value.get("reason") or "").split())[:500]
+    if not reason:
+        raise ValueError("sports forecast reason is missing")
+    return {
+        "contract_version": SPORTS_FORECAST_CONTRACT_VERSION,
+        "selection": selection,
+        "home_probability": round(home_probability, 6),
+        "away_probability": round(away_probability, 6),
+        "confidence": confidence,
+        "reason": reason,
     }
 
 
@@ -1168,6 +1255,46 @@ def settle_picks() -> int:
     return settled
 
 
+def settle_sports_ai_forecasts() -> int:
+    """Score frozen AI probabilities after the matching game becomes final."""
+
+    timestamp = _iso()
+    settled = 0
+    with connection() as database:
+        rows = database.execute(
+            """
+            SELECT f.*,e.home_score,e.away_score
+            FROM sports_ai_forecasts f
+            JOIN sports_events e ON e.id=f.event_id
+            WHERE f.status='open' AND e.completed=1
+            """
+        ).fetchall()
+        for row in rows:
+            home_score = _number(row["home_score"])
+            away_score = _number(row["away_score"])
+            if home_score is None or away_score is None:
+                continue
+            if home_score == away_score:
+                status, result, brier = "void", "void", None
+            else:
+                home_won = home_score > away_score
+                brier = round((float(row["home_probability"]) - int(home_won)) ** 2, 6)
+                selection = str(row["selection"])
+                winner = "home" if home_won else "away"
+                result = "pass" if selection == "pass" else "win" if selection == winner else "loss"
+                status = "settled"
+            changed = database.execute(
+                """
+                UPDATE sports_ai_forecasts
+                SET status=?,result=?,brier_score=?,settled_at=?
+                WHERE id=? AND status='open'
+                """,
+                (status, result, brier, timestamp, row["id"]),
+            )
+            settled += max(changed.rowcount, 0)
+    return settled
+
+
 def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
     current = (at or datetime.now(UTC)).astimezone(UTC)
     counts: dict[str, int] = {}
@@ -1267,6 +1394,7 @@ def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
             except Exception as exc:
                 news_errors[league] = str(exc)[:240]
     settled = settle_picks()
+    ai_settled = settle_sports_ai_forecasts()
     return {
         "counts": counts,
         "history_counts": history_counts,
@@ -1288,6 +1416,7 @@ def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
             "quota_error": quota_error,
         },
         "settled": settled,
+        "ai_settled": ai_settled,
         "model": MODEL_VERSION,
     }
 
@@ -3168,6 +3297,17 @@ def sports_flash_evidence(event_id: str) -> tuple[str, dict[str, Any]]:
             for article in event.get("news") or []
         ],
         "public_picks": pick_counts,
+        "forecast_contract": {
+            "version": SPORTS_FORECAST_CONTRACT_VERSION,
+            "subject": "pregame moneyline winner",
+            "selections": ["home", "away", "pass"],
+            "probabilities": "home and away must sum to 1",
+            "scoring": "Brier score after the final result",
+            "independence": (
+                "Make an AI forecast from the supplied evidence. Keep it separate from the "
+                "team-form baseline and the market price."
+            ),
+        },
         "sources": list(dict.fromkeys(value for value in source_values if value)),
     }
     fingerprint = hashlib.sha256(
@@ -3184,7 +3324,220 @@ def sports_flash_evidence(event_id: str) -> tuple[str, dict[str, Any]]:
             }
         ).encode()
     ).hexdigest()
+    evidence["evidence_fingerprint"] = fingerprint
     return fingerprint, evidence
+
+
+def record_sports_ai_forecast(
+    database: Any,
+    *,
+    report_id: str,
+    evidence: dict[str, Any],
+    forecast: dict[str, Any],
+    actor: dict[str, Any],
+    resolved_model: str,
+    observed_at: str,
+) -> dict[str, Any]:
+    """Store one immutable model forecast before the game starts."""
+
+    try:
+        predicted_at = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        starts_at = datetime.fromisoformat(
+            str(evidence["start_time"]).replace("Z", "+00:00")
+        )
+        if predicted_at.tzinfo is None:
+            predicted_at = predicted_at.replace(tzinfo=UTC)
+        if starts_at.tzinfo is None:
+            starts_at = starts_at.replace(tzinfo=UTC)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("Sports AI forecast timing is invalid") from exc
+    if predicted_at >= starts_at:
+        raise ValueError("Sports AI forecasts must be completed before the game starts")
+
+    forecast_id = str(uuid.uuid4())
+    database.execute(
+        """
+        INSERT INTO sports_ai_forecasts(
+            id,report_id,event_id,league,actor_id,actor_snapshot_json,provider,
+            requested_model,resolved_model,ladder_position,ladder_size,
+            evidence_fingerprint,selection,home_probability,away_probability,
+            confidence,reason,contract_version,observed_at,start_time,status
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'open')
+        ON CONFLICT(report_id) DO NOTHING
+        """,
+        (
+            forecast_id,
+            report_id,
+            str(evidence["event_id"]),
+            str(evidence["league"]),
+            str(actor.get("id") or "unknown"),
+            _json(actor),
+            str(actor.get("provider") or "unknown"),
+            str(actor.get("model") or resolved_model),
+            resolved_model,
+            int(actor.get("ladder_position") or 1),
+            int(actor.get("ladder_size") or KOL_LADDER_SIZE),
+            str(evidence.get("evidence_fingerprint") or ""),
+            forecast["selection"],
+            forecast["home_probability"],
+            forecast["away_probability"],
+            forecast["confidence"],
+            forecast["reason"],
+            forecast["contract_version"],
+            observed_at,
+            str(evidence["start_time"]),
+        ),
+    )
+    row = database.execute(
+        "SELECT * FROM sports_ai_forecasts WHERE report_id=?",
+        (report_id,),
+    ).fetchone()
+    if not row:
+        raise RuntimeError("Sports AI forecast was not stored")
+    return dict(row)
+
+
+def sports_ai_tournament(league: str = "all") -> dict[str, Any]:
+    """Return four durable model slots and scored pregame forecast records."""
+
+    selected_league = league if league in LEAGUES else "all"
+    league_filter = " WHERE league=?" if selected_league in LEAGUES else ""
+    parameters: tuple[Any, ...] = (selected_league,) if league_filter else ()
+    with connection() as database:
+        rows = database.execute(
+            f"""
+            SELECT * FROM (
+                SELECT f.*,ROW_NUMBER() OVER(
+                    PARTITION BY actor_id,resolved_model,event_id
+                    ORDER BY observed_at DESC,id DESC
+                ) AS final_rank
+                FROM sports_ai_forecasts f{league_filter}
+            ) ranked
+            WHERE final_rank=1
+            ORDER BY observed_at,id
+            """,  # noqa: S608 - filter is a fixed internal fragment
+            parameters,
+        ).fetchall()
+
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for raw in rows:
+        item = dict(raw)
+        grouped[(str(item["actor_id"]), str(item["resolved_model"]))].append(item)
+
+    cards: list[dict[str, Any]] = []
+    resolved_events: dict[tuple[str, str], set[str]] = {}
+    for identity, forecasts in grouped.items():
+        actor_id, resolved_model = identity
+        try:
+            actor = json.loads(str(forecasts[-1]["actor_snapshot_json"] or "{}"))
+        except (TypeError, ValueError):
+            actor = {}
+        if not isinstance(actor, dict):
+            actor = {}
+        settled = [item for item in forecasts if item.get("brier_score") is not None]
+        decisions = [item for item in settled if item.get("result") in {"win", "loss"}]
+        hits = sum(item.get("result") == "win" for item in decisions)
+        resolved_events[identity] = {str(item["event_id"]) for item in settled}
+        cards.append(
+            {
+                "actor_id": actor_id,
+                "display_name": str(actor.get("display_name") or actor_id),
+                "emoji": str(actor.get("emoji") or "AI"),
+                "model": resolved_model,
+                "model_label": model_display_name(resolved_model),
+                "position": int(actor.get("ladder_position") or forecasts[-1]["ladder_position"]),
+                "forecasts": len(forecasts),
+                "open": sum(item["status"] == "open" for item in forecasts),
+                "scored": len(settled),
+                "hits": hits,
+                "accuracy": round(hits / len(decisions) * 100, 1) if decisions else None,
+                "brier": (
+                    round(
+                        sum(float(item["brier_score"]) for item in settled) / len(settled),
+                        3,
+                    )
+                    if settled
+                    else None
+                ),
+                "last_forecast_at": str(forecasts[-1]["observed_at"]),
+            }
+        )
+
+    latest_by_position: dict[int, dict[str, Any]] = {}
+    for card in cards:
+        position = int(card["position"])
+        current = latest_by_position.get(position)
+        if not current or str(card["last_forecast_at"]) > str(current["last_forecast_at"]):
+            latest_by_position[position] = card
+    current_actor = actor_snapshot(FLASH)
+    current_identity = (str(current_actor["id"]), str(current_actor["model"]))
+    current_card = next(
+        (
+            card
+            for card in cards
+            if (str(card["actor_id"]), str(card["model"])) == current_identity
+        ),
+        None,
+    )
+    latest_by_position[int(current_actor["ladder_position"])] = current_card or {
+        "actor_id": current_actor["id"],
+        "display_name": current_actor["display_name"],
+        "emoji": current_actor["emoji"],
+        "model": current_actor["model"],
+        "model_label": current_actor["model_label"],
+        "position": current_actor["ladder_position"],
+        "forecasts": 0,
+        "open": 0,
+        "scored": 0,
+        "hits": 0,
+        "accuracy": None,
+        "brier": None,
+        "last_forecast_at": "",
+    }
+
+    active_identities = [
+        (str(card["actor_id"]), str(card["model"])) for card in latest_by_position.values()
+    ]
+    shared_events: set[str] = set()
+    if len(active_identities) > 1:
+        event_sets = [resolved_events.get(identity, set()) for identity in active_identities]
+        shared_events = set.intersection(*event_sets) if event_sets else set()
+
+    slots: list[dict[str, Any]] = []
+    for position in range(1, KOL_LADDER_SIZE + 1):
+        card = latest_by_position.get(position)
+        if card:
+            slots.append(
+                {
+                    **card,
+                    "status": "champion" if position == 1 else "challenger",
+                }
+            )
+        else:
+            slots.append(
+                {
+                    "position": position,
+                    "status": "open",
+                    "display_name": "Future model",
+                    "emoji": "+",
+                    "model": None,
+                    "model_label": "Open challenger slot",
+                    "forecasts": 0,
+                    "open": 0,
+                    "scored": 0,
+                    "hits": 0,
+                    "accuracy": None,
+                    "brier": None,
+                }
+            )
+    return {
+        "league": selected_league,
+        "ladder_size": KOL_LADDER_SIZE,
+        "slots": slots,
+        "shared_scored_games": len(shared_events),
+        "comparison_ready": len(shared_events) >= 20,
+        "contract_version": SPORTS_FORECAST_CONTRACT_VERSION,
+    }
 
 
 def create_sports_pick(
@@ -3488,6 +3841,7 @@ def sports_alpha_board(league: str = "all", limit: int = 50) -> dict[str, Any]:
         "contenders": contenders,
         "total_calls": len(picks),
         "active_calls": sum(pick["status"] == "open" for pick in picks),
+        "ai_tournament": sports_ai_tournament(selected_league),
         "league": selected_league,
         "leagues": [
             {"key": key, "name": value["name"]} for key, value in LEAGUES.items()
