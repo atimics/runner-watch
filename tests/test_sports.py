@@ -266,7 +266,7 @@ def test_bovada_odds_show_feed_attribution_and_freeze_on_paper_pick(sports_db) -
     )
     assert response.status_code == 200
     assert b"Bovada via The Odds API" in response.body
-    assert b"Captured <time" in response.body
+    assert b"Updated <time" in response.body
     assert b"2026-08-26 18:00 UTC" in response.body
 
 
@@ -362,7 +362,7 @@ def test_slate_database_query_count_does_not_grow_per_event(
     monkeypatch.setattr(sports_module, "connection", counted_connection)
 
     assert len(sports_slate("mlb")["events"]) >= len(events)
-    assert len(statements) == 6
+    assert len(statements) == 7
 
 
 def test_sports_pulse_hides_passes_and_radar_keeps_real_moves(sports_db) -> None:

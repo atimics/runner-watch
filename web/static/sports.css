@@ -13,6 +13,29 @@
 .match-strip-teams span{font-size:20px;font-weight:900;font-variant-numeric:tabular-nums}
 .match-strip-source{display:flex;justify-content:space-between;gap:12px;padding:8px 16px;border-top:1px solid var(--line);color:var(--muted);font-size:8px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
 .match-strip-source time{font-variant-numeric:tabular-nums}
+.market-compare{margin-top:12px;overflow:hidden;border:1px solid var(--line);border-radius:14px;background:rgba(19,17,29,.78)}
+.market-compare>header{display:flex;align-items:end;justify-content:space-between;gap:16px;padding:15px 18px;border-bottom:1px solid var(--line)}
+.market-compare>header span{color:#79b7ff;font-size:8px;font-weight:900;letter-spacing:.12em}
+.market-compare h2{margin:3px 0 0;font-size:19px}
+.market-compare>header small,.market-note{color:var(--muted);font-size:8px}
+.market-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line)}
+.market-summary>div{min-width:0;padding:14px 16px;background:var(--panel)}
+.market-summary small,.market-summary strong,.market-summary span{display:block}
+.market-summary small{color:var(--muted);font-size:7px;font-weight:900;letter-spacing:.1em}
+.market-summary strong{margin-top:7px;font-size:13px;font-variant-numeric:tabular-nums}
+.market-summary span{margin-top:5px;color:var(--muted);font-size:8px;line-height:1.35}
+.market-summary .market-outlier{background:linear-gradient(135deg,rgba(255,120,73,.16),var(--panel))}
+.market-summary .market-outlier strong,.bovada-outlier{color:var(--hot)}
+.market-thin{margin:0;padding:10px 18px;border-bottom:1px solid var(--line);background:rgba(248,202,118,.08);color:#f8ca76;font-size:9px}
+.market-books>div{display:grid;grid-template-columns:minmax(120px,1fr) 90px 90px 130px;gap:12px;align-items:center;padding:9px 18px;border-top:1px solid var(--line);font-size:9px}
+.market-books>div:first-child{border-top:0;background:rgba(8,7,13,.38);color:var(--muted);font-size:7px;letter-spacing:.08em;text-transform:uppercase}
+.market-books strong,.market-books span{min-width:0;font-variant-numeric:tabular-nums}
+.market-books strong,.market-books [role="columnheader"]:not(:first-child){text-align:right}
+.market-books span:last-child{color:var(--muted);text-align:right}
+.market-books i{color:var(--green);font-size:6px;font-style:normal}
+.market-books .bovada-row{background:rgba(255,120,73,.055)}
+.market-books .bovada-row>span:first-child{color:var(--hot);font-weight:900}
+.market-note{margin:0;padding:10px 18px;border-top:1px solid var(--line);line-height:1.45}
 .decision-hero{--decision-accent:var(--violet);position:relative;overflow:hidden;margin-top:12px;padding:clamp(24px,5vw,46px);border:1px solid color-mix(in srgb,var(--decision-accent) 28%,var(--line));border-radius:18px;background:radial-gradient(circle at 90% 10%,color-mix(in srgb,var(--decision-accent) 18%,transparent),transparent 42%),linear-gradient(135deg,rgba(157,124,255,.12),rgba(255,120,73,.05))}
 .decision-hero.watch{--decision-accent:var(--green)}
 .decision-hero.lean{--decision-accent:#f8ca76}
@@ -47,6 +70,12 @@
   .match-strip-teams strong{margin:4px 0;font-size:13px;white-space:normal}
   .match-strip-teams span{font-size:16px}
   .match-strip-source{align-items:flex-start;flex-direction:column;gap:3px;padding:8px 12px}
+  .market-compare>header{align-items:flex-start;flex-direction:column;gap:4px;padding:13px 14px}
+  .market-summary{grid-template-columns:1fr}
+  .market-summary>div{padding:12px 14px}
+  .market-books{overflow-x:auto}
+  .market-books>div{grid-template-columns:110px 68px 68px 105px;min-width:390px;padding:9px 14px}
+  .market-note{padding:10px 14px}
   .decision-hero{padding:24px 18px}
   .decision-movement{align-items:flex-start;flex-direction:column}
   .match-news>header{align-items:flex-start;flex-direction:column;gap:5px}
