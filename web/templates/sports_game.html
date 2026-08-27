@@ -2,6 +2,8 @@
 {% block title %}{{ event.away_abbreviation }} at {{ event.home_abbreviation }} · RATi Sports{% endblock %}
 {% block content %}
 {% set odds = event.odds %}
+{% set quote = event.paper_odds %}
+{% set market = event.market_comparison %}
 {% set prediction = event.prediction %}
 {% set receipt = event.receipt %}
 <a class="sports-back" href="{{ sports_path_prefix or '' }}/">← Back to Pulse</a>
@@ -16,16 +18,68 @@
       <div>
         <small>{{ event.away_abbreviation }} · {{ event.away_record or 'No record' }}</small>
         <strong>{{ event.away_team_name }}</strong>
-        <span>{% if event.completed %}{{ event.away_score|int }}{% elif odds and odds.away_odds is not none %}{{ '%+d'|format(odds.away_odds) }}{% else %}—{% endif %}</span>
+        <span>{% if event.completed %}{{ event.away_score|int }}{% elif quote and quote.away_odds is not none %}{{ '%+d'|format(quote.away_odds) }}{% else %}—{% endif %}</span>
       </div>
       <i>at</i>
       <div>
         <small>{{ event.home_abbreviation }} · {{ event.home_record or 'No record' }}</small>
         <strong>{{ event.home_team_name }}</strong>
-        <span>{% if event.completed %}{{ event.home_score|int }}{% elif odds and odds.home_odds is not none %}{{ '%+d'|format(odds.home_odds) }}{% else %}—{% endif %}</span>
+        <span>{% if event.completed %}{{ event.home_score|int }}{% elif quote and quote.home_odds is not none %}{{ '%+d'|format(quote.home_odds) }}{% else %}—{% endif %}</span>
       </div>
     </div>
+    {% if quote %}
+    <div class="match-strip-source">
+      <span>{{ quote.source_label }} moneyline</span>
+      <span>Updated <time data-local-time="{{ quote.fresh_at or quote.observed_at }}">{{ (quote.fresh_at or quote.observed_at)[:16]|replace('T',' ') }} UTC</time></span>
+    </div>
+    {% endif %}
   </header>
+
+  {% if market and market.books %}
+  <section class="market-compare">
+    <header>
+      <div><span>MULTI-BOOK MARKET</span><h2>Consensus and Bovada</h2></div>
+      <small>{{ market.book_count }} fresh book{% if market.book_count != 1 %}s{% endif %} · no-vig probabilities</small>
+    </header>
+    {% if not market.enough_books %}
+    <p class="market-thin">A market signal needs at least {{ market.minimum_book_count }} fresh, complete sportsbook lines.</p>
+    {% endif %}
+    <div class="market-summary">
+      <div>
+        <small>MARKET CONSENSUS</small>
+        {% if market.enough_books %}<strong>{{ event.away_abbreviation }} {{ '%.1f'|format(market.away_probability_pct) }}% · {{ event.home_abbreviation }} {{ '%.1f'|format(market.home_probability_pct) }}%</strong>{% else %}<strong>Building</strong>{% endif %}
+        <span>Median across {{ market.book_count }} fresh books</span>
+      </div>
+      <div class="{% if market.bovada and market.bovada.material %}market-outlier{% endif %}">
+        <small>BOVADA DIVERGENCE</small>
+        {% if market.bovada and market.bovada.divergence_pct is not none %}
+          <strong>{{ market.bovada.divergence_team }} +{{ '%.1f'|format(market.bovada.divergence_pct) }} pp</strong>
+          <span>Versus {{ market.bovada.comparison_book_count }} other books{% if not market.bovada.material %} · within normal range{% endif %}</span>
+        {% elif market.bovada %}<strong>No comparison yet</strong><span>More non-Bovada lines are needed</span>
+        {% else %}<strong>Unavailable</strong><span>No fresh Bovada quote</span>{% endif %}
+      </div>
+      <div>
+        <small>BEST DISPLAYED PRICE</small>
+        {% if market.best_away and market.best_home %}
+          <strong>{{ event.away_abbreviation }} {{ '%+d'|format(market.best_away.away_odds) }} · {{ event.home_abbreviation }} {{ '%+d'|format(market.best_home.home_odds) }}</strong>
+          <span>{{ market.best_away.sportsbook }} · {{ market.best_home.sportsbook }}</span>
+        {% else %}<strong>Unavailable</strong><span>Waiting for complete lines</span>{% endif %}
+      </div>
+    </div>
+    <div class="market-books" role="table" aria-label="Fresh sportsbook moneylines">
+      <div role="row"><b role="columnheader">Sportsbook</b><b role="columnheader">{{ event.away_abbreviation }}</b><b role="columnheader">{{ event.home_abbreviation }}</b><b role="columnheader">vs consensus</b></div>
+      {% for book in market.books %}
+      <div role="row" class="{% if book.sportsbook_key == 'bovada' %}bovada-row{% endif %}">
+        <span role="cell">{{ book.sportsbook }}</span>
+        <strong role="cell">{{ '%+d'|format(book.away_odds) }}{% if book.best_away %}<i> BEST</i>{% endif %}</strong>
+        <strong role="cell">{{ '%+d'|format(book.home_odds) }}{% if book.best_home %}<i> BEST</i>{% endif %}</strong>
+        <span role="cell">{% if book.home_vs_consensus_pct is not none %}{{ event.home_abbreviation }} {{ '%+.1f'|format(book.home_vs_consensus_pct) }} pp{% else %}—{% endif %}</span>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="market-note">Divergence shows a pricing difference, not a recommended bet. Stale and incomplete lines are excluded.</p>
+  </section>
+  {% endif %}
 
   <section class="game-flash" aria-labelledby="gameFlashTitle">
     <div>
@@ -144,8 +198,8 @@
       {% set pick_code = event[prediction.selection ~ '_abbreviation'] %}
       {% set pick_probability = prediction[prediction.selection ~ '_probability'] %}
       {% set pick_market = prediction[prediction.selection ~ '_market_probability'] %}
-      {% set pick_odds = odds[prediction.selection ~ '_odds'] if odds else none %}
-      {% set pick_open_odds = odds[prediction.selection ~ '_open_odds'] if odds else none %}
+      {% set pick_odds = quote[prediction.selection ~ '_odds'] if quote else none %}
+      {% set pick_open_odds = quote[prediction.selection ~ '_open_odds'] if quote and (prediction.selection ~ '_open_odds') in quote else none %}
     {% endif %}
   <section class="decision-hero decision-board {{ prediction.signal|replace(' ','-') }}">
     <div class="decision-kicker">
@@ -176,7 +230,7 @@
           <p>{{ pick_name }} is {{ '%.1f'|format(pick_probability * 100) }}% in the model versus {{ '%.1f'|format(pick_market * 100) if pick_market is not none else '—' }}% in the no-vig market.</p>
           <div class="value-numbers">
             <span><small>EDGE</small><b>{{ '%+.1f'|format(prediction.edge_pct) }} pp</b></span>
-            <span><small>PRICE</small><b>{% if pick_odds is not none %}{{ '%+d'|format(pick_odds) }}{% else %}—{% endif %}</b>{% if pick_open_odds is not none %}<i>Open {{ '%+d'|format(pick_open_odds) }}</i>{% endif %}</span>
+            <span><small>BOVADA PRICE</small><b>{% if pick_odds is not none %}{{ '%+d'|format(pick_odds) }}{% else %}—{% endif %}</b>{% if pick_open_odds is not none %}<i>Open {{ '%+d'|format(pick_open_odds) }}</i>{% endif %}</span>
           </div>
         {% endif %}
       </div>
@@ -253,15 +307,15 @@
   <section class="paper-pick">
     <span>PUBLIC RECEIPT</span>
     <h2>Make a paper pick</h2>
-    <p>The current moneyline and time will be frozen. A winning Call earns {{ winning_call_reward }} Flash. This does not place a real bet.</p>
+    <p>The current{% if quote %} {{ quote.source_label }}{% endif %} moneyline and time will be frozen. A winning Call earns {{ winning_call_reward }} Flash. This does not place a real bet.</p>
     {% if not user %}
       <a href="/login">Log in to make a paper pick</a>
-    {% elif event.status != 'pre' or not odds %}
+    {% elif event.status != 'pre' or not quote %}
       <strong>Picks are closed for this game.</strong>
     {% else %}
       <div class="pick-buttons">
-        <button type="button" data-pick="away">{{ event.away_abbreviation }} {% if odds.away_odds is not none %}{{ '%+d'|format(odds.away_odds) }}{% endif %}</button>
-        <button type="button" data-pick="home">{{ event.home_abbreviation }} {% if odds.home_odds is not none %}{{ '%+d'|format(odds.home_odds) }}{% endif %}</button>
+        <button type="button" data-pick="away">{{ event.away_abbreviation }} {% if quote.away_odds is not none %}{{ '%+d'|format(quote.away_odds) }}{% endif %}</button>
+        <button type="button" data-pick="home">{{ event.home_abbreviation }} {% if quote.home_odds is not none %}{{ '%+d'|format(quote.home_odds) }}{% endif %}</button>
       </div>
       <small id="pickStatus"></small>
     {% endif %}
@@ -277,7 +331,7 @@
   <section class="odds-receipt">
     <h3>Pregame market timeline</h3>
     {% for item in event.odds_history %}
-      <div><time data-local-time="{{ item.observed_at }}">{{ item.observed_at[:16]|replace('T',' ') }} UTC</time><span>{{ event.away_abbreviation }} {{ '%+d'|format(item.away_odds) if item.away_odds is not none else '—' }}</span><span>{{ event.home_abbreviation }} {{ '%+d'|format(item.home_odds) if item.home_odds is not none else '—' }}</span><small>{% if loop.first %}OPEN · {% elif loop.last %}{{ receipt.market_label|upper if receipt else 'LATEST' }} · {% endif %}{{ item.sportsbook }}</small></div>
+      <div><time data-local-time="{{ item.observed_at }}">{{ item.observed_at[:16]|replace('T',' ') }} UTC</time><span>{{ event.away_abbreviation }} {{ '%+d'|format(item.away_odds) if item.away_odds is not none else '—' }}</span><span>{{ event.home_abbreviation }} {{ '%+d'|format(item.home_odds) if item.home_odds is not none else '—' }}</span><small>{% if loop.first %}OPEN · {% elif loop.last %}{{ receipt.market_label|upper if receipt else 'LATEST' }} · {% endif %}{{ item.source_label }}</small></div>
     {% else %}<p>No moneyline snapshots are available.</p>{% endfor %}
   </section>
   <a class="source-link" href="{{ event.source_url }}" rel="nofollow noreferrer">View game source ↗</a>

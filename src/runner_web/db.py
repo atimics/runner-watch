@@ -2240,6 +2240,35 @@ def _migration_037_flash_forecast_record(db: DatabaseConnection) -> None:
     _sync_flash_version(db)
 
 
+def _migration_038_sports_bookmaker_odds(db: DatabaseConnection) -> None:
+    """Store each fresh sportsbook quote separately from the consensus receipt."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS sports_bookmaker_odds (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL REFERENCES sports_events(id) ON DELETE CASCADE,
+            provider TEXT NOT NULL,
+            sportsbook_key TEXT NOT NULL,
+            sportsbook TEXT NOT NULL,
+            market TEXT NOT NULL CHECK(market IN ('moneyline')),
+            home_odds INTEGER NOT NULL CHECK(home_odds<>0),
+            away_odds INTEGER NOT NULL CHECK(away_odds<>0),
+            home_probability REAL NOT NULL,
+            away_probability REAL NOT NULL,
+            source_updated_at TEXT,
+            quote_hash TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            UNIQUE(event_id,provider,sportsbook_key,quote_hash)
+        );
+        CREATE INDEX IF NOT EXISTS sports_bookmaker_odds_event_book_time
+            ON sports_bookmaker_odds(event_id,sportsbook_key,observed_at DESC);
+        CREATE INDEX IF NOT EXISTS sports_bookmaker_odds_event_source_time
+            ON sports_bookmaker_odds(event_id,source_updated_at DESC);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2285,6 +2314,7 @@ MIGRATIONS = (
     Migration(35, "sports_news", _migration_035_sports_news),
     Migration(36, "sports_request_indexes", _migration_036_sports_request_indexes),
     Migration(37, "flash_forecast_record", _migration_037_flash_forecast_record),
+    Migration(38, "sports_bookmaker_odds", _migration_038_sports_bookmaker_odds),
 )
 
 

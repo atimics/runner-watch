@@ -29,6 +29,7 @@
         {{ event.league|upper }} ·
         <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time>
         · {% if event.projected_score_basis == 'market total' %}MARKET-TOTAL SCORE{% else %}BASELINE SCORE{% endif %}
+        {% if event.bovada_divergence_material %} · <b class="bovada-outlier">BOVADA {{ event.bovada_divergence_team }} +{{ '%.1f'|format(event.bovada_divergence_pct) }}PP</b>{% endif %}
       </span>
     </span>
     <span class="winner-quote">
@@ -99,7 +100,7 @@
 {% endif %}
 </div>
 
-<p class="sports-source">Score estimates use model win probability and a market total when available; otherwise a clearly marked league baseline. Schedule and team context: ESPN. Moneylines may use the configured odds provider · Updated {{ pulse.updated_at[:16]|replace('T',' ') if pulse.updated_at else 'pending' }} UTC</p>
+<p class="sports-source">Score estimates use model win probability and a market total when available; otherwise a clearly marked league baseline. Schedule and team context: ESPN. The market benchmark is the median of fresh sportsbook moneylines; Bovada divergence is shown separately · Updated {{ pulse.updated_at[:16]|replace('T',' ') if pulse.updated_at else 'pending' }} UTC</p>
 {% endblock %}
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">

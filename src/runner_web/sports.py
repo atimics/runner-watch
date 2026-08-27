@@ -8,6 +8,7 @@ import urllib.request
 import uuid
 from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
+from statistics import median
 from typing import Any
 
 from runner_watch.ingestion import SourceFetch
@@ -15,8 +16,10 @@ from runner_web.caller_ids import ensure_caller_identity_with_database
 from runner_web.db import connection
 from runner_web.flash_wallet import WINNING_CALL_REWARD, credit_flash
 from runner_web.ingestion import record_source_fetch
-from runner_web.odds_api import PROVIDER as ODDS_PROVIDER
 from runner_web.odds_api import (
+    BOOKMAKER_FRESHNESS,
+    CONSENSUS_SPORTSBOOK,
+    MIN_CONSENSUS_BOOKS,
     OddsApiConfig,
     OddsApiError,
     Quota,
@@ -29,6 +32,7 @@ from runner_web.odds_api import (
     probe_quota,
     refresh_decision,
 )
+from runner_web.odds_api import PROVIDER as ODDS_PROVIDER
 
 MODEL_VERSION = "team-form-v1"
 SOURCE = "espn"
@@ -59,6 +63,7 @@ SCORE_MODELS = {
     "nba": {"total": 228.0, "exponent": 13.91, "decimals": 0},
     "nhl": {"total": 6.1, "exponent": 2.0, "decimals": 1},
 }
+BOVADA_BOOKMAKER_KEY = "bovada"
 
 
 def _iso(value: datetime | None = None) -> str:
@@ -247,7 +252,11 @@ def predict_event(event: dict[str, Any]) -> dict[str, Any]:
     home_probability = max(0.18, min(0.82, probability))
     away_probability = 1 - home_probability
     home_market, away_market = no_vig_probabilities(event["home_odds"], event["away_odds"])
+    market_book_count = int(event.get("market_book_count") or 0)
+    market_is_consensus = bool(event.get("market_is_consensus"))
     if home_market is not None and away_market is not None:
+        if market_is_consensus:
+            evidence.append(f"Fresh market consensus: {market_book_count} sportsbooks.")
         evidence.append(
             f"No-vig market: {home['abbreviation']} {home_market:.1%}, "
             f"{away['abbreviation']} {away_market:.1%}."
@@ -272,6 +281,16 @@ def predict_event(event: dict[str, Any]) -> dict[str, Any]:
         edge = None
         signal = "model only"
         risks.append("A complete two-sided moneyline is not available.")
+    if event.get("odds_provider") == ODDS_PROVIDER and not market_is_consensus:
+        risks.append(
+            f"Only {market_book_count} fresh sportsbook line"
+            f"{'s are' if market_book_count != 1 else ' is'} available; "
+            f"{MIN_CONSENSUS_BOOKS} are required for a market signal."
+        )
+        selection = "pass"
+        edge = None
+        signal = "pass"
+        quality = "thin"
     selected_probability = (
         home_probability
         if selection == "home"
@@ -895,6 +914,12 @@ def _apply_cached_moneylines(events: list[dict[str, Any]]) -> int:
             ).fetchone()
             if not row:
                 continue
+            book_count_row = database.execute(
+                "SELECT COUNT(DISTINCT sportsbook_key) AS count "
+                "FROM sports_bookmaker_odds WHERE event_id=? AND provider=?",
+                (event["id"], ODDS_PROVIDER),
+            ).fetchone()
+            book_count = int(book_count_row["count"] or 0) if book_count_row else 0
             event.update(
                 {
                     "odds_provider": ODDS_PROVIDER,
@@ -905,10 +930,58 @@ def _apply_cached_moneylines(events: list[dict[str, Any]]) -> int:
                     "away_open_odds": row["away_open_odds"],
                     "spread": row["spread"],
                     "total": row["total"],
+                    "market_book_count": book_count,
+                    "market_is_consensus": row["sportsbook"] == CONSENSUS_SPORTSBOOK,
+                    "bookmaker_moneylines": [],
                 }
             )
             applied += 1
     return applied
+
+
+def _store_bookmaker_moneylines(
+    database: Any,
+    event: dict[str, Any],
+    timestamp: str,
+) -> None:
+    for line in event.get("bookmaker_moneylines") or []:
+        sportsbook_key = str(line.get("sportsbook_key") or "").strip().lower()
+        sportsbook = str(line.get("sportsbook") or "").strip()
+        if not sportsbook_key or not sportsbook:
+            continue
+        quote_hash = hashlib.sha256(
+            _json(
+                {
+                    "sportsbook_key": sportsbook_key,
+                    "home_odds": line.get("home_odds"),
+                    "away_odds": line.get("away_odds"),
+                    "source_updated_at": line.get("last_update"),
+                }
+            ).encode()
+        ).hexdigest()
+        database.execute(
+            """
+            INSERT INTO sports_bookmaker_odds(
+                id,event_id,provider,sportsbook_key,sportsbook,market,
+                home_odds,away_odds,home_probability,away_probability,
+                source_updated_at,quote_hash,observed_at
+            ) VALUES(?,?,?,?,?,'moneyline',?,?,?,?,?,?,?) ON CONFLICT DO NOTHING
+            """,
+            (
+                str(uuid.uuid4()),
+                event["id"],
+                ODDS_PROVIDER,
+                sportsbook_key,
+                sportsbook,
+                int(line["home_odds"]),
+                int(line["away_odds"]),
+                float(line["home_probability"]),
+                float(line["away_probability"]),
+                str(line.get("last_update") or "") or None,
+                quote_hash,
+                timestamp,
+            ),
+        )
 
 
 def store_events(events: list[dict[str, Any]], observed_at: datetime | None = None) -> int:
@@ -1016,6 +1089,7 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                         timestamp,
                     ),
                 )
+            _store_bookmaker_moneylines(database, event, timestamp)
             prediction = predict_event(event)
             input_hash = _input_hash(event, prediction)
             database.execute(
@@ -1226,7 +1300,134 @@ def _latest_odds(database: Any, event_id: str) -> dict[str, Any] | None:
         """,
         (event_id,),
     ).fetchone()
-    return dict(row) if row else None
+    return _odds_item(row)
+
+
+def _odds_item(row: Any) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    item = dict(row)
+    sportsbook = str(item.get("sportsbook") or "").strip()
+    provider = str(item.get("provider") or "").strip()
+    if sportsbook and provider == ODDS_PROVIDER:
+        item["source_label"] = f"{sportsbook} via The Odds API"
+    else:
+        item["source_label"] = sportsbook or provider or "Unknown source"
+    return item
+
+
+def _bookmaker_odds_item(row: Any) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    item = dict(row)
+    sportsbook = str(item.get("sportsbook") or "Unknown")
+    item["source_label"] = f"{sportsbook} via The Odds API"
+    item["home_probability_pct"] = round(float(item["home_probability"]) * 100, 1)
+    item["away_probability_pct"] = round(float(item["away_probability"]) * 100, 1)
+    item["fresh_at"] = str(item.get("source_updated_at") or item.get("observed_at") or "")
+    item.pop("latest_rank", None)
+    return item
+
+
+def _latest_bookmaker_rows(database: Any, event_ids: list[str]) -> list[Any]:
+    if not event_ids:
+        return []
+    placeholders = ",".join("?" for _ in event_ids)
+    return database.execute(
+        f"""
+        SELECT * FROM (
+            SELECT b.*,ROW_NUMBER() OVER(
+                PARTITION BY event_id,sportsbook_key ORDER BY observed_at DESC,id DESC
+            ) AS latest_rank
+            FROM sports_bookmaker_odds b
+            WHERE event_id IN ({placeholders}) AND provider=?
+        ) latest
+        WHERE latest_rank=1
+        """,  # noqa: S608 - placeholders are generated, not user input
+        (*event_ids, ODDS_PROVIDER),
+    ).fetchall()
+
+
+def _fresh_bookmaker_items(rows: list[Any]) -> list[dict[str, Any]]:
+    items = [item for row in rows if (item := _bookmaker_odds_item(row)) is not None]
+    timed: list[tuple[dict[str, Any], datetime]] = []
+    for item in items:
+        try:
+            updated = _parse_time(item["fresh_at"])
+        except (TypeError, ValueError):
+            continue
+        timed.append((item, updated))
+    if not timed:
+        return []
+    newest = max(updated for _item, updated in timed)
+    return [item for item, updated in timed if newest - updated <= BOOKMAKER_FRESHNESS]
+
+
+def _market_comparison(event: dict[str, Any], rows: list[Any]) -> dict[str, Any]:
+    books = _fresh_bookmaker_items(rows)
+    book_count = len(books)
+    consensus_home = (
+        float(median(book["home_probability"] for book in books))
+        if book_count >= MIN_CONSENSUS_BOOKS
+        else None
+    )
+    consensus_away = 1 - consensus_home if consensus_home is not None else None
+    best_home = max(books, key=lambda book: int(book["home_odds"]), default=None)
+    best_away = max(books, key=lambda book: int(book["away_odds"]), default=None)
+    bovada = next(
+        (book for book in books if book["sportsbook_key"] == BOVADA_BOOKMAKER_KEY),
+        None,
+    )
+    other_books = [book for book in books if book["sportsbook_key"] != BOVADA_BOOKMAKER_KEY]
+    other_home = (
+        float(median(book["home_probability"] for book in other_books))
+        if len(other_books) >= MIN_CONSENSUS_BOOKS
+        else None
+    )
+    bovada_summary: dict[str, Any] | None = None
+    if bovada is not None:
+        bovada_summary = dict(bovada)
+        if other_home is not None:
+            home_divergence = (float(bovada["home_probability"]) - other_home) * 100
+            side = "home" if home_divergence >= 0 else "away"
+            divergence = abs(home_divergence)
+            bovada_summary.update(
+                {
+                    "comparison_book_count": len(other_books),
+                    "home_divergence_pct": round(home_divergence, 1),
+                    "away_divergence_pct": round(-home_divergence, 1),
+                    "divergence_pct": round(divergence, 1),
+                    "divergence_side": side,
+                    "divergence_team": str(event.get(f"{side}_abbreviation") or "—"),
+                    "material": divergence >= 2.0,
+                }
+            )
+    output_books: list[dict[str, Any]] = []
+    for book in sorted(books, key=lambda item: str(item["sportsbook"]).lower()):
+        item = dict(book)
+        item["home_vs_consensus_pct"] = (
+            round((float(item["home_probability"]) - consensus_home) * 100, 1)
+            if consensus_home is not None
+            else None
+        )
+        item["best_home"] = best_home is not None and item["id"] == best_home["id"]
+        item["best_away"] = best_away is not None and item["id"] == best_away["id"]
+        output_books.append(item)
+    return {
+        "book_count": book_count,
+        "minimum_book_count": MIN_CONSENSUS_BOOKS,
+        "enough_books": consensus_home is not None,
+        "home_probability_pct": round(consensus_home * 100, 1)
+        if consensus_home is not None
+        else None,
+        "away_probability_pct": round(consensus_away * 100, 1)
+        if consensus_away is not None
+        else None,
+        "bovada": bovada_summary,
+        "best_home": dict(best_home) if best_home else None,
+        "best_away": dict(best_away) if best_away else None,
+        "books": output_books,
+    }
 
 
 def _latest_prediction(database: Any, event_id: str) -> dict[str, Any] | None:
@@ -1271,7 +1472,7 @@ def _odds_at_or_before(
         """,
         (event_id, observed_at),
     ).fetchone()
-    return dict(row) if row else None
+    return _odds_item(row)
 
 
 def _prediction_item(row: Any) -> dict[str, Any] | None:
@@ -1558,6 +1759,7 @@ def _event_attention(event: dict[str, Any]) -> dict[str, Any]:
     projected_home_score = projected_total * score_ratio / (1 + score_ratio)
     projected_away_score = projected_total - projected_home_score
     score_decimals = int(score_model["decimals"])
+    bovada = (event.get("market_comparison") or {}).get("bovada") or {}
 
     return {
         "signal_side": side,
@@ -1592,12 +1794,19 @@ def _event_attention(event: dict[str, Any]) -> dict[str, Any]:
         "projected_home_score_display": f"{projected_home_score:.{score_decimals}f}",
         "projected_away_score_display": f"{projected_away_score:.{score_decimals}f}",
         "projected_score_basis": "market total" if market_total else "league baseline",
+        "bovada_divergence_pct": bovada.get("divergence_pct"),
+        "bovada_divergence_team": bovada.get("divergence_team"),
+        "bovada_divergence_material": bool(bovada.get("material")),
     }
 
 
 def _event_row(database: Any, row: Any) -> dict[str, Any]:
     item = dict(row)
     item["odds"] = _latest_odds(database, str(item["id"]))
+    bookmaker_rows = _latest_bookmaker_rows(database, [str(item["id"])])
+    item["market_comparison"] = _market_comparison(item, bookmaker_rows)
+    item["bovada_odds"] = item["market_comparison"].get("bovada")
+    item["paper_odds"] = item["bovada_odds"] if bookmaker_rows else item["odds"]
     item["prediction"] = _latest_prediction(database, str(item["id"]))
     item["edge_history"] = _edge_sparkline(database, item, item["prediction"])
     item["news_count"], item["latest_news"] = _news_summary(database, str(item["id"]))
@@ -1640,9 +1849,15 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
     ).fetchall()
     odds_by_event: dict[str, dict[str, Any]] = {}
     for row in odds_rows:
-        item = dict(row)
+        item = _odds_item(row)
+        assert item is not None
         item.pop("latest_rank", None)
         odds_by_event[str(item["event_id"])] = item
+
+    bookmaker_rows = _latest_bookmaker_rows(database, event_ids)
+    bookmakers_by_event: dict[str, list[Any]] = defaultdict(list)
+    for row in bookmaker_rows:
+        bookmakers_by_event[str(row["event_id"])].append(row)
 
     prediction_rows = database.execute(
         f"""
@@ -1713,6 +1928,13 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
         event_id = str(event["id"])
         prediction = predictions_by_event.get(event_id)
         event["odds"] = odds_by_event.get(event_id)
+        event_bookmaker_rows = bookmakers_by_event.get(event_id, [])
+        event["market_comparison"] = _market_comparison(
+            event,
+            event_bookmaker_rows,
+        )
+        event["bovada_odds"] = event["market_comparison"].get("bovada")
+        event["paper_odds"] = event["bovada_odds"] if event_bookmaker_rows else event["odds"]
         event["prediction"] = prediction
         event["edge_history"] = _edge_sparkline_from_rows(
             event,
@@ -2820,7 +3042,11 @@ def sports_event(event_id: str) -> dict[str, Any] | None:
             """,
             (event_id, event["start_time"]),
         ).fetchall()
-        event["odds_history"] = [dict(item) for item in reversed(odds_rows)]
+        event["odds_history"] = [
+            odds_item
+            for item in reversed(odds_rows)
+            if (odds_item := _odds_item(item)) is not None
+        ]
         pick_rows = database.execute(
             """
             SELECT p.*,ci.handle AS caller_handle FROM sports_picks p
@@ -2977,9 +3203,11 @@ def create_sports_pick(
         ).fetchone()
         if not event:
             raise ValueError("This game is no longer open for picks")
-        odds = _latest_odds(database, event_id)
+        bookmaker_rows = _latest_bookmaker_rows(database, [event_id])
+        comparison = _market_comparison(dict(event), bookmaker_rows)
+        odds = comparison.get("bovada") if bookmaker_rows else _latest_odds(database, event_id)
         if not odds:
-            raise ValueError("Moneyline odds are not available")
+            raise ValueError("A fresh Bovada moneyline is not available")
         american_odds = odds[f"{selection}_odds"]
         if american_odds is None:
             raise ValueError("Moneyline odds are not available for that side")

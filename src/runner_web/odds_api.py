@@ -6,6 +6,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from statistics import median
 from typing import Any
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
@@ -29,6 +30,10 @@ REFRESH_SLOTS = (
     ("close", timedelta(minutes=90)),
 )
 SPORTS_DAY_TIMEZONE = ZoneInfo("America/New_York")
+CONSENSUS_BOOKMAKER_KEY = "consensus"
+CONSENSUS_SPORTSBOOK = "Market consensus"
+MIN_CONSENSUS_BOOKS = 3
+BOOKMAKER_FRESHNESS = timedelta(minutes=20)
 
 
 class OddsApiError(RuntimeError):
@@ -184,6 +189,26 @@ def can_spend(config: OddsApiConfig, quota: Quota) -> bool:
     return quota.used < config.working_limit and quota.remaining > config.reserve_credits
 
 
+def _implied_probability(american_odds: int) -> float:
+    if american_odds > 0:
+        return 100 / (american_odds + 100)
+    return -american_odds / (-american_odds + 100)
+
+
+def _no_vig_probabilities(home_odds: int, away_odds: int) -> tuple[float, float]:
+    home = _implied_probability(home_odds)
+    away = _implied_probability(away_odds)
+    total = home + away
+    return home / total, away / total
+
+
+def _american_from_probability(probability: float) -> int:
+    bounded = max(0.01, min(0.99, probability))
+    if bounded >= 0.5:
+        return -round(100 * bounded / (1 - bounded))
+    return round(100 * (1 - bounded) / bounded)
+
+
 def _moneyline_from_bookmaker(
     bookmaker: dict[str, Any], home_team: str, away_team: str
 ) -> dict[str, Any] | None:
@@ -204,25 +229,21 @@ def _moneyline_from_bookmaker(
         return None
     if not home_odds or not away_odds:
         return None
+    home_probability, away_probability = _no_vig_probabilities(home_odds, away_odds)
     return {
         "sportsbook": str(bookmaker.get("title") or bookmaker.get("key") or "Unknown"),
         "sportsbook_key": str(bookmaker.get("key") or ""),
         "home_odds": home_odds,
         "away_odds": away_odds,
+        "home_probability": home_probability,
+        "away_probability": away_probability,
         "last_update": str(market.get("last_update") or bookmaker.get("last_update") or ""),
     }
 
 
 def _select_bookmaker(
-    event: dict[str, Any], preferred: tuple[str, ...]
+    candidates: list[dict[str, Any]], preferred: tuple[str, ...]
 ) -> dict[str, Any] | None:
-    home_team = str(event.get("home_team") or "")
-    away_team = str(event.get("away_team") or "")
-    candidates = [
-        line
-        for bookmaker in event.get("bookmakers") or []
-        if (line := _moneyline_from_bookmaker(bookmaker, home_team, away_team)) is not None
-    ]
     if not candidates:
         return None
     preference = {name: index for index, name in enumerate(preferred)}
@@ -241,6 +262,45 @@ def _select_bookmaker(
     return min(candidates, key=rank)
 
 
+def _fresh_moneylines(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    timestamps = [
+        parsed
+        for line in candidates
+        if (parsed := _parse_time(line.get("last_update"))) is not None
+    ]
+    if not timestamps:
+        return candidates
+    newest = max(timestamps)
+    return [
+        line
+        for line in candidates
+        if (updated := _parse_time(line.get("last_update"))) is not None
+        and newest - updated <= BOOKMAKER_FRESHNESS
+    ]
+
+
+def _consensus_moneyline(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if len(candidates) < MIN_CONSENSUS_BOOKS:
+        return None
+    home_probability = float(median(line["home_probability"] for line in candidates))
+    away_probability = 1 - home_probability
+    updates = [
+        parsed
+        for line in candidates
+        if (parsed := _parse_time(line.get("last_update"))) is not None
+    ]
+    return {
+        "sportsbook": CONSENSUS_SPORTSBOOK,
+        "sportsbook_key": CONSENSUS_BOOKMAKER_KEY,
+        "home_odds": _american_from_probability(home_probability),
+        "away_odds": _american_from_probability(away_probability),
+        "home_probability": home_probability,
+        "away_probability": away_probability,
+        "last_update": max(updates).isoformat() if updates else "",
+        "bookmaker_count": len(candidates),
+    }
+
+
 def normalize_moneylines(
     payload: Any, preferred: tuple[str, ...] = ()
 ) -> tuple[dict[str, Any], ...]:
@@ -250,7 +310,15 @@ def normalize_moneylines(
     for event in payload:
         if not isinstance(event, dict):
             continue
-        selected = _select_bookmaker(event, preferred)
+        home_team = str(event.get("home_team") or "")
+        away_team = str(event.get("away_team") or "")
+        candidates = [
+            line
+            for bookmaker in event.get("bookmakers") or []
+            if (line := _moneyline_from_bookmaker(bookmaker, home_team, away_team)) is not None
+        ]
+        fresh = _fresh_moneylines(candidates)
+        selected = _select_bookmaker(fresh, preferred)
         if not selected:
             continue
         moneylines.append(
@@ -259,7 +327,9 @@ def normalize_moneylines(
                 "home_team": str(event.get("home_team") or ""),
                 "away_team": str(event.get("away_team") or ""),
                 "start_time": _parse_time(event.get("commence_time")),
-                **selected,
+                "bookmakers": tuple(fresh),
+                "consensus": _consensus_moneyline(fresh),
+                "preferred": selected,
             }
         )
     return tuple(moneylines)
@@ -303,6 +373,9 @@ def fetch_moneylines(config: OddsApiConfig, league: str) -> OddsFetchResult:
                     "league": league,
                     "event_count": len(payload) if isinstance(payload, list) else 0,
                     "moneyline_count": len(moneylines),
+                    "bookmaker_line_count": sum(
+                        len(event.get("bookmakers") or ()) for event in moneylines
+                    ),
                 },
                 content_type="application/json",
                 metadata={
@@ -352,8 +425,14 @@ def apply_moneylines(
     matched = 0
     for event in events:
         key = (_team_key(event["home"]["name"]), _team_key(event["away"]["name"]))
-        line = by_teams.get(key)
-        if not line:
+        market = by_teams.get(key)
+        if not market:
+            continue
+        consensus = market.get("consensus")
+        preferred = market.get("preferred")
+        line = consensus or preferred
+        bookmakers = list(market.get("bookmakers") or ())
+        if not line or not preferred:
             continue
         event.update(
             {
@@ -365,6 +444,10 @@ def apply_moneylines(
                 "away_open_odds": None,
                 "spread": None,
                 "total": None,
+                "market_book_count": len(bookmakers),
+                "market_is_consensus": consensus is not None,
+                "bookmaker_moneylines": bookmakers,
+                "preferred_sportsbook": preferred["sportsbook"],
             }
         )
         matched += 1
@@ -383,6 +466,10 @@ def clear_event_odds(events: list[dict[str, Any]]) -> None:
                 "away_open_odds": None,
                 "spread": None,
                 "total": None,
+                "market_book_count": 0,
+                "market_is_consensus": False,
+                "bookmaker_moneylines": [],
+                "preferred_sportsbook": "",
             }
         )
 

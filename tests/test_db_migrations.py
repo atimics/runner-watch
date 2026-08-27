@@ -200,6 +200,14 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             "SELECT name FROM sqlite_master WHERE type='table' "
             "AND name='flash_evaluation_events'"
         ).fetchone()
+        sports_bookmaker_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='sports_bookmaker_odds'"
+        ).fetchone()
+        sports_bookmaker_columns = {
+            row["name"]
+            for row in database.execute("PRAGMA table_info(sports_bookmaker_odds)").fetchall()
+        }
         flash = database.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
         commission_columns = {
             row["name"]
@@ -259,6 +267,15 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert flash_forecast_table is not None
     assert flash_outcome_table is not None
     assert flash_event_table is not None
+    assert sports_bookmaker_table is not None
+    assert {
+        "sportsbook_key",
+        "sportsbook",
+        "home_probability",
+        "away_probability",
+        "source_updated_at",
+        "observed_at",
+    } <= sports_bookmaker_columns
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_provider"] == "openrouter"
@@ -360,6 +377,8 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "ranker_training_examples_schema_time",
         "ranker_training_examples_labeled_time",
         "market_bars_collected",
+        "sports_bookmaker_odds_event_book_time",
+        "sports_bookmaker_odds_event_source_time",
     } <= indexes
 
 

@@ -353,6 +353,48 @@ def test_losing_sports_call_does_not_earn_flash(sports_db) -> None:
     assert reward_count == 0
 
 
+def test_bovada_odds_show_feed_attribution_and_freeze_on_paper_pick(sports_db) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    event.update(
+        {
+            "odds_provider": "the-odds-api",
+            "sportsbook": "Bovada",
+            "home_odds": -132,
+            "away_odds": 117,
+            "home_open_odds": None,
+            "away_open_odds": None,
+        }
+    )
+    observed_at = datetime(2026, 8, 26, 18, 0, tzinfo=UTC)
+    store_events([event], observed_at=observed_at)
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) "
+            "VALUES('bovada-user','bovada_member','Bovada Member','active',?)",
+            (datetime.now(UTC).isoformat(),),
+        )
+
+    detail = sports_event(str(event["id"]))
+    assert detail is not None
+    assert detail["odds"]["source_label"] == "Bovada via The Odds API"
+    assert detail["odds_history"][0]["source_label"] == "Bovada via The Odds API"
+
+    pick = create_sports_pick("bovada-user", str(event["id"]), "home")
+    assert pick["sportsbook"] == "Bovada"
+    assert pick["odds_observed_at"] == observed_at.isoformat()
+
+    response = sports_game_page(
+        str(event["id"]),
+        request(path=f"/game/{event['id']}"),
+        None,
+    )
+    assert response.status_code == 200
+    assert b"Bovada via The Odds API" in response.body
+    assert b"Updated <time" in response.body
+    assert b"2026-08-26 18:00 UTC" in response.body
+
+
 def test_sports_host_gets_the_sports_product(sports_db) -> None:
     event = normalize_event("mlb", sample_event())
     assert event is not None
@@ -446,7 +488,7 @@ def test_slate_database_query_count_does_not_grow_per_event(
     monkeypatch.setattr(sports_module, "connection", counted_connection)
 
     assert len(sports_slate("mlb")["events"]) >= len(events)
-    assert len(statements) == 6
+    assert len(statements) == 7
 
 
 def test_sports_pulse_hides_passes_and_radar_keeps_real_moves(sports_db) -> None:
