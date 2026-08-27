@@ -269,6 +269,13 @@ ALPHA_DATA_LOCK = threading.Lock()
 ALPHA_DATA_CONDITION = threading.Condition(ALPHA_DATA_LOCK)
 ALPHA_DATA_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 ALPHA_DATA_REFRESHING: set[str] = set()
+SPORTS_ALPHA_CACHE_TTL_SECONDS = max(
+    30.0, float(os.getenv("SPORTS_ALPHA_CACHE_TTL_SECONDS", "300"))
+)
+SPORTS_ALPHA_DATA_LOCK = threading.Lock()
+SPORTS_ALPHA_DATA_CONDITION = threading.Condition(SPORTS_ALPHA_DATA_LOCK)
+SPORTS_ALPHA_DATA_CACHE: dict[tuple[str, str, int], tuple[float, dict[str, Any]]] = {}
+SPORTS_ALPHA_DATA_REFRESHING: set[tuple[str, str, int]] = set()
 SPORTS_INGESTION_ENABLED = os.getenv("SPORTS_INGESTION_ENABLED", "true").strip().lower() not in {
     "0",
     "false",
@@ -3954,6 +3961,106 @@ def sports_radar_page(
     return sports_radar_response(request, runner_session, league)
 
 
+def _sports_alpha_shared_cache_name(league: str, limit: int) -> str:
+    return f"{_shared_request_cache_name('sports-alpha')}:{league}:{limit}"
+
+
+def _refresh_sports_alpha_data(
+    cache_key: tuple[str, str, int],
+    league: str,
+    limit: int,
+) -> None:
+    try:
+        payload = sports_alpha(league, limit)
+        with SPORTS_ALPHA_DATA_LOCK:
+            SPORTS_ALPHA_DATA_CACHE[cache_key] = (
+                time.monotonic() + SPORTS_ALPHA_CACHE_TTL_SECONDS,
+                payload,
+            )
+        shared_cache_set(
+            _sports_alpha_shared_cache_name(league, limit),
+            payload,
+            int(SPORTS_ALPHA_CACHE_TTL_SECONDS),
+        )
+    except Exception:
+        LOG.exception("Sports Alpha cache refresh failed")
+    finally:
+        with SPORTS_ALPHA_DATA_CONDITION:
+            SPORTS_ALPHA_DATA_REFRESHING.discard(cache_key)
+            SPORTS_ALPHA_DATA_CONDITION.notify_all()
+
+
+def _sports_alpha_data(league: str = "all", limit: int = 24) -> dict[str, Any]:
+    selected_league = league if league in SPORTS_LEAGUES else "all"
+    result_limit = max(1, min(limit, 100))
+    cache_key = (runner_db.database_identity(), selected_league, result_limit)
+    current = time.monotonic()
+    with SPORTS_ALPHA_DATA_LOCK:
+        cached = SPORTS_ALPHA_DATA_CACHE.get(cache_key)
+        if cached and current < cached[0]:
+            return cached[1]
+        if cached:
+            if cache_key not in SPORTS_ALPHA_DATA_REFRESHING:
+                SPORTS_ALPHA_DATA_REFRESHING.add(cache_key)
+                threading.Thread(
+                    target=_refresh_sports_alpha_data,
+                    args=(cache_key, selected_league, result_limit),
+                    daemon=True,
+                    name="sports-alpha-cache-refresh",
+                ).start()
+            return cached[1]
+
+    shared = shared_cache_get(_sports_alpha_shared_cache_name(selected_league, result_limit))
+    if isinstance(shared, dict):
+        with SPORTS_ALPHA_DATA_LOCK:
+            SPORTS_ALPHA_DATA_CACHE[cache_key] = (
+                time.monotonic() + SPORTS_ALPHA_CACHE_TTL_SECONDS,
+                shared,
+            )
+        return shared
+
+    with SPORTS_ALPHA_DATA_CONDITION:
+        cached = SPORTS_ALPHA_DATA_CACHE.get(cache_key)
+        if cached:
+            return cached[1]
+        if cache_key in SPORTS_ALPHA_DATA_REFRESHING:
+            SPORTS_ALPHA_DATA_CONDITION.wait_for(
+                lambda: (
+                    cache_key in SPORTS_ALPHA_DATA_CACHE
+                    or cache_key not in SPORTS_ALPHA_DATA_REFRESHING
+                ),
+                timeout=CACHE_BUILD_WAIT_SECONDS,
+            )
+            cached = SPORTS_ALPHA_DATA_CACHE.get(cache_key)
+            if cached:
+                return cached[1]
+        SPORTS_ALPHA_DATA_REFRESHING.add(cache_key)
+
+    try:
+        payload = sports_alpha(selected_league, result_limit)
+        with SPORTS_ALPHA_DATA_CONDITION:
+            if len(SPORTS_ALPHA_DATA_CACHE) >= 32 and cache_key not in SPORTS_ALPHA_DATA_CACHE:
+                oldest_key = min(
+                    SPORTS_ALPHA_DATA_CACHE,
+                    key=lambda key: SPORTS_ALPHA_DATA_CACHE[key][0],
+                )
+                SPORTS_ALPHA_DATA_CACHE.pop(oldest_key, None)
+            SPORTS_ALPHA_DATA_CACHE[cache_key] = (
+                time.monotonic() + SPORTS_ALPHA_CACHE_TTL_SECONDS,
+                payload,
+            )
+        shared_cache_set(
+            _sports_alpha_shared_cache_name(selected_league, result_limit),
+            payload,
+            int(SPORTS_ALPHA_CACHE_TTL_SECONDS),
+        )
+        return payload
+    finally:
+        with SPORTS_ALPHA_DATA_CONDITION:
+            SPORTS_ALPHA_DATA_REFRESHING.discard(cache_key)
+            SPORTS_ALPHA_DATA_CONDITION.notify_all()
+
+
 def sports_alpha_response(
     request: Request,
     runner_session: str | None,
@@ -3967,7 +4074,7 @@ def sports_alpha_response(
         context=page_context(
             request,
             runner_session,
-            alpha=sports_alpha(selected_league),
+            alpha=_sports_alpha_data(selected_league),
             sports_tab="alpha",
             sports_path_prefix=sports_path_prefix,
         ),
@@ -4022,7 +4129,7 @@ def sports_alpha_api(
     limit: int = 24,
 ) -> JSONResponse:
     enforce_rate(request, "sports-alpha", limit=120, seconds=60)
-    return JSONResponse(sports_alpha(league, limit))
+    return JSONResponse(_sports_alpha_data(league, limit))
 
 
 @app.get("/api/slate")
@@ -5187,7 +5294,7 @@ async def request_cache_warmer() -> None:
     """Fill request caches shortly after startup without delaying health checks."""
 
     await asyncio.sleep(1)
-    for builder in (_radar_base_data, _pulse_base_data):
+    for builder in (_sports_alpha_data, _radar_base_data, _pulse_base_data):
         try:
             await asyncio.to_thread(builder)
         except Exception:

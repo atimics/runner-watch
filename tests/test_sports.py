@@ -8,6 +8,7 @@ import pytest
 from fastapi import Request
 
 from runner_web import db
+from runner_web import main as web_main
 from runner_web import sports as sports_module
 from runner_web.db import connection, init_db
 from runner_web.main import (
@@ -549,6 +550,29 @@ def test_sports_host_has_radar_and_alpha_products(sports_db) -> None:
     assert alpha_response.status_code == 200
     assert b"Team record in appearances" in alpha_response.body
     assert b'data-history-range="30"' in alpha_response.body
+
+
+def test_sports_alpha_page_reuses_warmed_result(sports_db, monkeypatch) -> None:
+    web_main.SPORTS_ALPHA_DATA_CACHE.clear()
+    web_main.SPORTS_ALPHA_DATA_REFRESHING.clear()
+    monkeypatch.setattr(web_main, "shared_cache_get", lambda _name: None)
+    monkeypatch.setattr(web_main, "shared_cache_set", lambda *_args: None)
+    original = web_main.sports_alpha
+    calls = 0
+
+    def counted(league: str = "all", limit: int = 24) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return original(league, limit)
+
+    monkeypatch.setattr(web_main, "sports_alpha", counted)
+
+    first = alpha_page(request(path="/alpha"), None)
+    second = alpha_page(request(path="/alpha"), None)
+
+    assert first.status_code == 200
+    assert second.body == first.body
+    assert calls == 1
 
 
 def test_cloudflare_forwarded_host_selects_the_public_product() -> None:
