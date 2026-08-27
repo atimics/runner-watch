@@ -115,8 +115,12 @@ budget stays small. Intraday 5-minute bars keep using Yahoo because the Massive 
 end-of-day only. If the cache is cold or a fetch would exceed the scan budget, the registry falls
 back to Yahoo for that request and records the attempt in provenance. Warm the cache with
 `stonks-massive-backfill` (one run covers a year of sessions at the plan's 5 calls per minute, so
-schedule it nightly). `MASSIVE_ENABLED`, `MASSIVE_CALLS_PER_MINUTE`, `MASSIVE_MAX_SCAN_CALLS`,
-`MASSIVE_CACHE_PATH`, and `MASSIVE_TIMEOUT_SECONDS` tune the collector.
+schedule it nightly). The worker runs its own hourly warm-up pass bounded by
+`MASSIVE_BACKFILL_CALLS`, so the cache self-heals after every deploy. `MASSIVE_ENABLED`,
+`MASSIVE_CALLS_PER_MINUTE`, `MASSIVE_MAX_SCAN_CALLS`, `MASSIVE_CACHE_PATH`, and
+`MASSIVE_TIMEOUT_SECONDS` tune the collector. Call timing is coordinated machine-wide through
+the shared cache, so the worker daemon and a manual backfill cannot exceed the plan's rate limit
+together, and HTTP 429 responses are retried with backoff.
 
 The Nasdaq Trader halt collector archives the RSS response and stores versioned halt state once a
 minute during the extended US session. It is off by default while the feed terms are reviewed. Set
