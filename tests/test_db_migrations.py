@@ -2,6 +2,7 @@ import sqlite3
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from pytest import MonkeyPatch
 
 from runner_web import db
@@ -62,9 +63,7 @@ def test_postgres_commits_each_migration_before_releasing_lock(
     class Database:
         backend = "postgres"
 
-        def execute(
-            self, statement: str, _parameters: tuple[object, ...] = ()
-        ) -> Result:
+        def execute(self, statement: str, _parameters: tuple[object, ...] = ()) -> Result:
             if "pg_advisory_unlock" in statement:
                 events.append("unlock")
             elif statement.startswith("INSERT INTO schema_migrations"):
@@ -86,6 +85,26 @@ def test_postgres_commits_each_migration_before_releasing_lock(
     _apply_migrations(Database())  # type: ignore[arg-type]
 
     assert events == ["apply", "record", "commit", "unlock"]
+
+
+def test_newer_additive_schema_is_only_allowed_for_rollback_compatibility(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "newer-schema.db")
+    init_db()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)",
+            (999, "future_additive_migration", "2026-08-27T00:00:00+00:00"),
+        )
+
+    monkeypatch.setattr(db, "ALLOW_NEWER_DATABASE_SCHEMA", False)
+    with connection() as database, pytest.raises(RuntimeError, match="newer than this app"):
+        _apply_migrations(database)
+
+    monkeypatch.setattr(db, "ALLOW_NEWER_DATABASE_SCHEMA", True)
+    with connection() as database:
+        _apply_migrations(database)
 
 
 def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -144,8 +163,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             "SELECT name FROM sqlite_master WHERE type='table' AND name='short_data_cache'"
         ).fetchone()
         stripe_event_table = database.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name='stripe_webhook_events'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='stripe_webhook_events'"
         ).fetchone()
         user_columns = {
             row["name"] for row in database.execute("PRAGMA table_info(users)").fetchall()
@@ -166,8 +184,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             "SELECT name FROM sqlite_master WHERE type='table' AND name='pulse_entries'"
         ).fetchone()
         training_examples_table = database.execute(
-            "SELECT name FROM sqlite_master "
-            "WHERE type='table' AND name='ranker_training_examples'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='ranker_training_examples'"
         ).fetchone()
         flash = database.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
         commission_columns = {
@@ -175,8 +192,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             for row in database.execute("PRAGMA table_info(research_commissions)").fetchall()
         }
         comment_columns = {
-            row["name"]
-            for row in database.execute("PRAGMA table_info(ticker_comments)").fetchall()
+            row["name"] for row in database.execute("PRAGMA table_info(ticker_comments)").fetchall()
         }
         indexes = {
             row["name"]
@@ -185,24 +201,20 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             ).fetchall()
         }
         call_columns = {
-            row["name"]
-            for row in database.execute("PRAGMA table_info(kol_calls)").fetchall()
+            row["name"] for row in database.execute("PRAGMA table_info(kol_calls)").fetchall()
         }
         snapshot_columns = {
-            row["name"]
-            for row in database.execute("PRAGMA table_info(scan_snapshots)").fetchall()
+            row["name"] for row in database.execute("PRAGMA table_info(scan_snapshots)").fetchall()
         }
         case_columns = {
-            row["name"]
-            for row in database.execute("PRAGMA table_info(thesis_cases)").fetchall()
+            row["name"] for row in database.execute("PRAGMA table_info(thesis_cases)").fetchall()
         }
         case_revision_columns = {
             row["name"]
             for row in database.execute("PRAGMA table_info(thesis_case_revisions)").fetchall()
         }
         signal_columns = {
-            row["name"]
-            for row in database.execute("PRAGMA table_info(signals)").fetchall()
+            row["name"] for row in database.execute("PRAGMA table_info(signals)").fetchall()
         }
     assert [tuple(row) for row in migrations] == [
         (migration.version, migration.name) for migration in MIGRATIONS
@@ -365,8 +377,7 @@ def test_existing_public_calls_get_a_random_animal_identity(
     timestamp = "2026-08-26T00:00:00+00:00"
     with connection() as database:
         database.execute(
-            "INSERT INTO users(id,username,display_name,status,created_at) "
-            "VALUES(?,?,?,?,?)",
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
             ("legacy-caller", "old_account", "Old Account", "active", timestamp),
         )
         database.execute(
@@ -374,8 +385,14 @@ def test_existing_public_calls_get_a_random_animal_identity(
             "id,public_id,user_id,ticker,entry_price,entry_at,status,created_at,updated_at) "
             "VALUES(?,?,?,?,?,?,'active',?,?)",
             (
-                "old-call", "old-public", "legacy-caller", "ONE", 1.0,
-                timestamp, timestamp, timestamp,
+                "old-call",
+                "old-public",
+                "legacy-caller",
+                "ONE",
+                1.0,
+                timestamp,
+                timestamp,
+                timestamp,
             ),
         )
         _migration_028_caller_identities(database)

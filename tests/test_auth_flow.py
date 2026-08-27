@@ -86,3 +86,11 @@ def test_required_rate_limit_key_fails_closed(monkeypatch: MonkeyPatch) -> None:
 
     monkeypatch.setattr(web_main, "RATE_LIMIT_HASH_KEY_VALUE", "shared-test-key")
     web_main.validate_runtime_configuration()
+
+
+def test_rate_limit_key_accepts_long_operator_secrets() -> None:
+    first = web_main._rate_limit_hash_key("a" * 128)
+    second = web_main._rate_limit_hash_key("a" * 128)
+
+    assert len(first) == 32
+    assert first == second
