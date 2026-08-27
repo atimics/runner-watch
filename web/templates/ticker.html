@@ -162,7 +162,7 @@
           {% if user %}
           {% if active_call %}
           <button class="ticker-action ticker-action-call" id="closeCallButton" type="button" data-call-id="{{ active_call.public_id }}" aria-label="Close the open Call at the server's current price"><strong>Close Call</strong><span>{% if active_call.return_pct is not none %}{{ '+' if active_call.return_pct >= 0 else '' }}{{ '%.1f'|format(active_call.return_pct) }}% now{% else %}Open position{% endif %}</span></button>
-          <p class="ticker-action-status" id="callStatus">Entry ${{ '%.4f'|format(active_call.entry_price) if active_call.entry_price < 1 else ('%.2f'|format(active_call.entry_price)) }} · <time datetime="{{ active_call.entry_at }}" data-call-time>{{ active_call.entry_at[:16]|replace('T', ' ') }}</time></p>
+          <p class="ticker-action-status" id="callStatus">Entry ${{ '%.4f'|format(active_call.entry_price) if active_call.entry_price < 1 else ('%.2f'|format(active_call.entry_price)) }} · <time datetime="{{ active_call.entry_at }}" data-call-time>{{ active_call.entry_at[:16]|replace('T', ' ') }}</time> · Win {{ runner_call_reward_tiers|join(' / ') }} Flash</p>
           {% else %}
           <button class="ticker-action ticker-action-call" id="makeCallButton" type="button" aria-label="Make a public Call on {{ detail.ticker }} at the server's current price and time"><strong>Make Call</strong><span>Public · stamped</span></button>
           <p class="ticker-action-status" id="callStatus" role="status"></p>
@@ -314,7 +314,7 @@ document.getElementById('makeCallButton')?.addEventListener('click',async event=
 });
 document.getElementById('closeCallButton')?.addEventListener('click',async event=>{
   const button=event.currentTarget;button.disabled=true;setTickerAction(button,'Close Call','Stamping exit…');
-  try{const response=await fetch(`/api/calls/${encodeURIComponent(button.dataset.callId)}/close`,{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not close Call');location.reload();}
+  try{const response=await fetch(`/api/calls/${encodeURIComponent(button.dataset.callId)}/close`,{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not close Call');const reward=Number(result.reward)||0;if(reward>0){setTickerAction(button,'Call won',`+${reward} Flash`);if(callStatus)callStatus.textContent=`Balance: ${result.balance} Flash`;setTimeout(()=>location.reload(),700);}else{location.reload();}}
   catch(error){if(callStatus)callStatus.textContent=error.message||'Could not close Call';setTickerAction(button,'Close Call','Try again');button.disabled=false;}
 });
 const commissionButton=document.getElementById('commissionButton');

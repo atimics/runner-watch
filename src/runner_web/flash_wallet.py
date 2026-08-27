@@ -11,6 +11,7 @@ REPORT_COST = 100
 COMMENT_COST = 10
 PUBLISH_REPORT_REWARD = 50
 WINNING_CALL_REWARD = 25
+RUNNER_CALL_REWARD_TIERS = (10, 20, 30)
 REPORT_EXCLUSIVE_HOURS = 1
 
 
@@ -19,6 +20,18 @@ class InsufficientFlashError(ValueError):
         self.balance = balance
         self.cost = cost
         super().__init__(f"This action costs {cost} Flash. Your balance is {balance}.")
+
+
+def runner_call_reward(return_pct: float | int | None) -> int:
+    """Return the capped Flash reward for a profitable closed Runners Call."""
+
+    if return_pct is None or float(return_pct) <= 0:
+        return 0
+    if float(return_pct) >= 30:
+        return RUNNER_CALL_REWARD_TIERS[2]
+    if float(return_pct) >= 20:
+        return RUNNER_CALL_REWARD_TIERS[1]
+    return RUNNER_CALL_REWARD_TIERS[0]
 
 
 def _timestamp(value: datetime | None = None) -> datetime:
@@ -67,6 +80,7 @@ def _wallet_payload(row: Any, current: datetime) -> dict[str, Any]:
         "comment_cost": COMMENT_COST,
         "publish_reward": PUBLISH_REPORT_REWARD,
         "winning_call_reward": WINNING_CALL_REWARD,
+        "runner_call_reward_tiers": RUNNER_CALL_REWARD_TIERS,
     }
 
 

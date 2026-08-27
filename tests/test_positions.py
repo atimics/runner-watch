@@ -13,6 +13,19 @@ from runner_web.calls import (
     create_call,
 )
 from runner_web.db import connection, init_db
+from runner_web.flash_wallet import runner_call_reward, wallet_for_user
+
+
+def test_runner_call_reward_is_tiered_and_capped() -> None:
+    assert runner_call_reward(None) == 0
+    assert runner_call_reward(-1) == 0
+    assert runner_call_reward(0) == 0
+    assert runner_call_reward(0.01) == 10
+    assert runner_call_reward(19.99) == 10
+    assert runner_call_reward(20) == 20
+    assert runner_call_reward(29.99) == 20
+    assert runner_call_reward(30) == 30
+    assert runner_call_reward(100) == 30
 
 
 def test_public_call_freezes_entry_and_exit_marks(
@@ -57,10 +70,37 @@ def test_public_call_freezes_entry_and_exit_marks(
     assert closed["status"] == "closed"
     assert closed["exit_at"] == exited_at
     assert closed["return_pct"] == 50.0
+    assert closed["flash_reward"] == 30
+    assert closed["reward_label"] == "+30 Flash"
+    assert wallet_for_user("owner")["balance"] == 30
     assert call_stats([closed])["wins"] == 1
     assert close_call(
         "owner", created["public_id"], exit_price=3.1, exit_at=current.isoformat()
     ) is None
+    assert wallet_for_user("owner")["balance"] == 30
+
+    losing = create_call(
+        "other",
+        "TWO",
+        entry_price=2.0,
+        entry_at=entered_at,
+    )
+    lost = close_call(
+        "other",
+        losing["public_id"],
+        exit_price=1.0,
+        exit_at=exited_at,
+    )
+    assert lost is not None
+    assert lost["flash_reward"] == 0
+    assert lost["reward_label"] is None
+    assert wallet_for_user("other")["balance"] == 0
+
+    with connection() as database:
+        rewards = database.execute(
+            "SELECT user_id,amount,kind FROM flash_transactions ORDER BY created_at"
+        ).fetchall()
+    assert [tuple(row) for row in rewards] == [("owner", 30, "runner_call_win")]
 
 
 def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
@@ -84,6 +124,8 @@ def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
     assert "Add exit" not in ticker
     assert "Generate today's report" in ticker
     assert "100 Flash" in ticker
+    assert "Call won" in ticker
+    assert "call.reward_label" in alpha
     assert "flash.model" not in ticker
     assert "🐺" in alpha
     assert "open Calls" in alpha
