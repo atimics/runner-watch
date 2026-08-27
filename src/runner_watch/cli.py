@@ -18,9 +18,7 @@ def _parser() -> argparse.ArgumentParser:
         prog="runner-watch", description="Scan stocks for unusual volume and momentum."
     )
     parser.add_argument("--sample", action="store_true", help="Use fake demo data.")
-    parser.add_argument(
-        "--universe", choices=["starter", "broad", "custom"], default="starter"
-    )
+    parser.add_argument("--universe", choices=["starter", "broad", "custom"], default="starter")
     parser.add_argument("--symbols", default="", help="Comma- or space-separated custom symbols.")
     parser.add_argument("--min-price", type=float, default=0.50)
     parser.add_argument("--max-price", type=float, default=50.0)
@@ -129,7 +127,12 @@ def main() -> int:
         top_n=args.top,
         crash_only=args.crash_only,
     )
-    result = RunnerScanner(provider).scan(symbols, settings, progress=_progress)
+    try:
+        result = RunnerScanner(provider).scan(symbols, settings, progress=_progress)
+    finally:
+        close = getattr(provider, "close", None)
+        if callable(close):
+            close()
     result.warnings[:0] = warnings
     text = _render(result, args.format)
     if args.output:

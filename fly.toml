@@ -29,6 +29,7 @@ kill_timeout = 30
   WORKER_EXPECTED_INSTANCES = "1"
   PROCESS_ROLE = "web"
   REQUIRE_DATABASE_URL = "1"
+  REQUIRE_RATE_LIMIT_HASH_KEY = "1"
   # Fly Postgres uses the encrypted private 6PN and does not accept direct TLS.
   REQUIRE_DATABASE_TLS = "0"
   # The Upstash endpoint resolves to the encrypted private 6PN and rejects TLS.

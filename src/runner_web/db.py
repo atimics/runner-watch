@@ -136,9 +136,7 @@ def connection() -> Iterator[DatabaseConnection]:
     if REQUIRE_DATABASE_URL and not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is required in this deployment")
     database_url = (
-        database_url_with_required_tls(DATABASE_URL)
-        if REQUIRE_DATABASE_TLS
-        else DATABASE_URL
+        database_url_with_required_tls(DATABASE_URL) if REQUIRE_DATABASE_TLS else DATABASE_URL
     )
     with open_database(database_url, DATABASE_PATH) as db:
         yield db
@@ -1219,6 +1217,7 @@ def _migration_014_thesis_cases(db: DatabaseConnection) -> None:
         """
     )
 
+
 def _migration_015_evidence_claims(db: DatabaseConnection) -> None:
     """Group repeated source items into one real-world evidence claim."""
 
@@ -1353,6 +1352,8 @@ def _migration_018_research_policy_outcomes(db: DatabaseConnection) -> None:
             ON research_commissions(policy_version,model,completed_at DESC);
         """
     )
+
+
 def _migration_019_repair_thesis_case_sources(db: DatabaseConnection) -> None:
     """Repair thesis tables created by an earlier version of migration 14."""
 
@@ -1411,6 +1412,7 @@ def _migration_020_user_positions(db: DatabaseConnection) -> None:
             ON ticker_comments(status,created_at DESC);
         """
     )
+
 
 def _migration_021_short_data(db: DatabaseConnection) -> None:
     """Cache current short and borrow facts and freeze them on each scan."""
@@ -1504,6 +1506,8 @@ def _migration_022_public_calls_and_flash(db: DatabaseConnection) -> None:
             ON flash_report_requests(user_id,created_at DESC);
         """
     )
+
+
 def _migration_023_private_flash_commissions(db: DatabaseConnection) -> None:
     """Keep commissioned Flash reports isolated to the requesting user."""
 
@@ -1703,9 +1707,7 @@ def _migration_027_gdpr_privacy(db: DatabaseConnection) -> None:
             ON public_aliases(user_id,scope);
         """
     )
-    comment_threads = db.execute(
-        "SELECT DISTINCT user_id,ticker FROM ticker_comments"
-    ).fetchall()
+    comment_threads = db.execute("SELECT DISTINCT user_id,ticker FROM ticker_comments").fetchall()
     for row in comment_threads:
         ensure_scoped_alias(db, str(row["user_id"]), f"comment:{row['ticker']}")
     for table in (
@@ -1763,13 +1765,10 @@ def _migration_028_caller_identities(db: DatabaseConnection) -> None:
     )
     migrated_at = datetime.now(UTC).isoformat()
     owners = db.execute(
-        "SELECT DISTINCT user_id FROM community_calls "
-        "WHERE caller_identity_id IS NULL"
+        "SELECT DISTINCT user_id FROM community_calls WHERE caller_identity_id IS NULL"
     ).fetchall()
     for owner in owners:
-        caller_identity_id = _migrated_caller_identity(
-            db, str(owner["user_id"]), migrated_at
-        )
+        caller_identity_id = _migrated_caller_identity(db, str(owner["user_id"]), migrated_at)
         db.execute(
             "UPDATE community_calls SET caller_identity_id=? "
             "WHERE user_id=? AND caller_identity_id IS NULL",
@@ -1795,9 +1794,7 @@ def _migration_029_signal_caller_identities(db: DatabaseConnection) -> None:
         "WHERE user_id IS NOT NULL AND caller_identity_id IS NULL"
     ).fetchall()
     for owner in owners:
-        caller_identity_id = _migrated_caller_identity(
-            db, str(owner["user_id"]), migrated_at
-        )
+        caller_identity_id = _migrated_caller_identity(db, str(owner["user_id"]), migrated_at)
         db.execute(
             "UPDATE signals SET caller_identity_id=? "
             "WHERE user_id=? AND caller_identity_id IS NULL",
@@ -1994,8 +1991,7 @@ def _migration_033_one_automatic_caller_name(db: DatabaseConnection) -> None:
                     (canonical_id, identity_id),
                 )
         db.execute(
-            "UPDATE caller_identity_claims SET caller_identity_id=NULL "
-            "WHERE caller_identity_id=?",
+            "UPDATE caller_identity_claims SET caller_identity_id=NULL WHERE caller_identity_id=?",
             (identity_id,),
         )
         db.execute(
@@ -2068,6 +2064,17 @@ def _migration_035_sports_news(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_036_sports_request_indexes(db: DatabaseConnection) -> None:
+    """Keep bounded slate and history reads fast across all leagues."""
+
+    db.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS sports_events_start_league
+            ON sports_events(start_time,league,completed);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2111,6 +2118,7 @@ MIGRATIONS = (
     Migration(33, "one_automatic_caller_name", _migration_033_one_automatic_caller_name),
     Migration(34, "sports_performance_history", _migration_034_sports_performance_history),
     Migration(35, "sports_news", _migration_035_sports_news),
+    Migration(36, "sports_request_indexes", _migration_036_sports_request_indexes),
 )
 
 

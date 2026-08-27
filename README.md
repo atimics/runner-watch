@@ -108,6 +108,16 @@ value, and expose source and freshness metadata through the chart APIs. Database
 tracked with numbered forward migrations. See
 [the provider and live-data runtime](docs/provider-runtime.md).
 
+Daily bars can come from Massive (https://massive.com) instead of Yahoo. Set `MASSIVE_API_KEY` to
+enable it. Massive's grouped daily endpoint returns one trading session for every listed US stock
+in a single request, so the adapter caches whole sessions in a local SQLite store and the scan-time
+budget stays small. Intraday 5-minute bars keep using Yahoo because the Massive entry plan is
+end-of-day only. If the cache is cold or a fetch would exceed the scan budget, the registry falls
+back to Yahoo for that request and records the attempt in provenance. Warm the cache with
+`stonks-massive-backfill` (one run covers a year of sessions at the plan's 5 calls per minute, so
+schedule it nightly). `MASSIVE_ENABLED`, `MASSIVE_CALLS_PER_MINUTE`, `MASSIVE_MAX_SCAN_CALLS`,
+`MASSIVE_CACHE_PATH`, and `MASSIVE_TIMEOUT_SECONDS` tune the collector.
+
 The Nasdaq Trader halt collector archives the RSS response and stores versioned halt state once a
 minute during the extended US session. It is off by default while the feed terms are reviewed. Set
 `NASDAQ_TRADE_HALTS_ENABLED=true` to opt in. An active halt is a hard risk veto. The production
@@ -378,7 +388,9 @@ List charts send only time and price, use response compression, and cache their 
 for one minute.
 
 Set one shared `RATE_LIMIT_HASH_KEY` so rate-limit keys contain neither raw IP addresses nor account
-IDs. The old SQLite volume must be retired after the migration check; it is not a standing backup.
+IDs. Production sets `REQUIRE_RATE_LIMIT_HASH_KEY=1`, so a missing shared key stops startup instead
+of silently weakening limits across machines. The old SQLite volume must be retired after the
+migration check; it is not a standing backup.
 
 The low-cost layout is about $25–$27 per month at light traffic: about $6.40 for PostgreSQL, $6.64
 for both web machines, $11.84 for the worker and trainer, and usage-based Redis at $0.20 per 100,000

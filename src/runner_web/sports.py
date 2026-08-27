@@ -32,12 +32,16 @@ from runner_web.odds_api import (
 MODEL_VERSION = "team-form-v1"
 SOURCE = "espn"
 FEED = "sports_scoreboard_preview"
+HISTORY_FEED = "sports_scoreboard_history"
 PLAYER_FEED = "sports_boxscore_preview"
 NEWS_FEED = "sports_news_preview"
 SOURCE_URL = "https://site.api.espn.com/apis/site/v2/sports"
 PROMOTED_SIGNALS = {"lean", "watch"}
 NEWS_MAX_AGE = timedelta(days=7)
 NEWS_PER_EVENT = 6
+HISTORY_TARGET_DAYS = 210
+HISTORY_CHUNK_DAYS = 5
+ALPHA_HISTORY_POINTS = 160
 LEAGUES = {
     "mlb": {"sport": "baseball", "path": "mlb", "name": "MLB", "home_edge": 0.035},
     "nfl": {"sport": "football", "path": "nfl", "name": "NFL", "home_edge": 0.055},
@@ -196,8 +200,7 @@ def normalize_event(league: str, event: dict[str, Any]) -> dict[str, Any] | None
         "spread": _number(odds.get("spread")),
         "total": _number(odds.get("overUnder")),
         "source_url": (
-            f"https://www.espn.com/{LEAGUES[league]['sport']}/game/_/gameId/"
-            f"{event.get('id')}"
+            f"https://www.espn.com/{LEAGUES[league]['sport']}/game/_/gameId/{event.get('id')}"
         ),
     }
 
@@ -296,20 +299,20 @@ def _scoreboard_url(league: str, start: date, end: date) -> str:
     config = LEAGUES[league]
     date_range = f"{start:%Y%m%d}-{end:%Y%m%d}"
     return (
-        f"{SOURCE_URL}/{config['sport']}/{config['path']}/scoreboard"
-        f"?dates={date_range}&limit=100"
+        f"{SOURCE_URL}/{config['sport']}/{config['path']}/scoreboard?dates={date_range}&limit=100"
     )
 
 
-def fetch_league(league: str, at: datetime | None = None) -> list[dict[str, Any]]:
+def _fetch_league_range(
+    league: str,
+    start: date,
+    end: date,
+    *,
+    feed: str,
+) -> list[dict[str, Any]]:
     if league not in LEAGUES:
         raise ValueError("Unsupported league")
-    current = at or datetime.now(UTC)
-    locator = _scoreboard_url(
-        league,
-        current.date() - timedelta(days=1),
-        current.date() + timedelta(days=3),
-    )
+    locator = _scoreboard_url(league, start, end)
     started = datetime.now(UTC)
     request = urllib.request.Request(locator)
     try:
@@ -324,7 +327,7 @@ def fetch_league(league: str, at: datetime | None = None) -> list[dict[str, Any]
         record_source_fetch(
             SourceFetch.success(
                 source=SOURCE,
-                feed=FEED,
+                feed=feed,
                 locator=locator,
                 started_at=started,
                 payload={
@@ -341,7 +344,7 @@ def fetch_league(league: str, at: datetime | None = None) -> list[dict[str, Any]
         record_source_fetch(
             SourceFetch.failure(
                 source=SOURCE,
-                feed=FEED,
+                feed=feed,
                 locator=locator,
                 started_at=started,
                 error=exc,
@@ -349,6 +352,64 @@ def fetch_league(league: str, at: datetime | None = None) -> list[dict[str, Any]
             )
         )
         raise
+
+
+def fetch_league(league: str, at: datetime | None = None) -> list[dict[str, Any]]:
+    current = at or datetime.now(UTC)
+    return _fetch_league_range(
+        league,
+        current.date() - timedelta(days=1),
+        current.date() + timedelta(days=3),
+        feed=FEED,
+    )
+
+
+def _history_cursor(league: str, current: datetime) -> date | None:
+    key = f"sports_history_cursor:{league}"
+    with connection() as database:
+        row = database.execute(
+            "SELECT value FROM worker_state WHERE key=?",
+            (key,),
+        ).fetchone()
+    if row:
+        try:
+            cursor = date.fromisoformat(str(row["value"]))
+        except ValueError:
+            cursor = current.date() - timedelta(days=2)
+    else:
+        cursor = current.date() - timedelta(days=2)
+    if cursor < current.date() - timedelta(days=HISTORY_TARGET_DAYS):
+        return None
+    return cursor
+
+
+def _advance_history_cursor(league: str, cursor: date, current: datetime) -> None:
+    next_cursor = cursor - timedelta(days=HISTORY_CHUNK_DAYS)
+    timestamp = _iso(current)
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at
+            """,
+            (f"sports_history_cursor:{league}", next_cursor.isoformat(), timestamp),
+        )
+
+
+def fetch_league_history_chunk(
+    league: str,
+    at: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch one older scoreboard chunk so Alpha fills without a request storm."""
+
+    current = (at or datetime.now(UTC)).astimezone(UTC)
+    cursor = _history_cursor(league, current)
+    if cursor is None:
+        return []
+    start = cursor - timedelta(days=HISTORY_CHUNK_DAYS - 1)
+    events = _fetch_league_range(league, start, cursor, feed=HISTORY_FEED)
+    _advance_history_cursor(league, cursor, current)
+    return events
 
 
 def _league_news_url(league: str) -> str:
@@ -383,9 +444,7 @@ def normalize_news_articles(
     """Match recent league headlines to Lean and Watch games by source team ID."""
 
     current = collected_at or datetime.now(UTC)
-    promoted = [
-        event for event in events if predict_event(event).get("signal") in PROMOTED_SIGNALS
-    ]
+    promoted = [event for event in events if predict_event(event).get("signal") in PROMOTED_SIGNALS]
     if not promoted:
         return []
     articles = payload.get("articles")
@@ -427,9 +486,9 @@ def normalize_news_articles(
             seen.add(unique_key)
             event_counts[event_id] = event_counts.get(event_id, 0) + 1
             team_side = "both" if home_match and away_match else "home" if home_match else "away"
-            article_id = hashlib.sha256(
-                f"{SOURCE}|{event_id}|{external_id}".encode()
-            ).hexdigest()[:32]
+            article_id = hashlib.sha256(f"{SOURCE}|{event_id}|{external_id}".encode()).hexdigest()[
+                :32
+            ]
             matched.append(
                 {
                     "id": article_id,
@@ -510,10 +569,17 @@ def store_news_articles(articles: list[dict[str, Any]]) -> int:
                     collected_at=excluded.collected_at
                 """,
                 (
-                    article["id"], article["event_id"], article["provider"],
-                    article["external_id"], article["team_side"], article["source_name"],
-                    article["headline"], article["summary"], article["source_url"],
-                    article["published_at"], article["collected_at"],
+                    article["id"],
+                    article["event_id"],
+                    article["provider"],
+                    article["external_id"],
+                    article["team_side"],
+                    article["source_name"],
+                    article["headline"],
+                    article["summary"],
+                    article["source_url"],
+                    article["published_at"],
+                    article["collected_at"],
                 ),
             )
     return len(articles)
@@ -522,10 +588,7 @@ def store_news_articles(articles: list[dict[str, Any]]) -> int:
 def _summary_url(event: dict[str, Any]) -> str:
     league = str(event["league"])
     config = LEAGUES[league]
-    return (
-        f"{SOURCE_URL}/{config['sport']}/{config['path']}/summary"
-        f"?event={event['external_id']}"
-    )
+    return f"{SOURCE_URL}/{config['sport']}/{config['path']}/summary?event={event['external_id']}"
 
 
 def normalize_player_appearances(
@@ -537,13 +600,8 @@ def normalize_player_appearances(
     away_score = _number(event["away"].get("score"))
     if home_score is None or away_score is None or home_score == away_score:
         return []
-    winning_team_id = str(
-        event["home"]["id"] if home_score > away_score else event["away"]["id"]
-    )
-    team_lookup = {
-        str(event[side]["id"]): event[side]
-        for side in ("home", "away")
-    }
+    winning_team_id = str(event["home"]["id"] if home_score > away_score else event["away"]["id"])
+    team_lookup = {str(event[side]["id"]): event[side] for side in ("home", "away")}
     appearances: dict[str, dict[str, Any]] = {}
     for team_block in (payload.get("boxscore") or {}).get("players") or []:
         source_team = team_block.get("team") or {}
@@ -655,13 +713,34 @@ def store_player_appearances(
                     stats_json=excluded.stats_json,collected_at=excluded.collected_at
                 """,
                 (
-                    str(uuid.uuid4()), row["event_id"], row["league"], row["team_id"],
-                    row["team_name"], row["team_abbreviation"], row["player_id"],
-                    row["player_name"], row["position"], int(row["starter"]),
-                    int(row["won"]), _json(row["stats"]), timestamp,
+                    str(uuid.uuid4()),
+                    row["event_id"],
+                    row["league"],
+                    row["team_id"],
+                    row["team_name"],
+                    row["team_abbreviation"],
+                    row["player_id"],
+                    row["player_name"],
+                    row["position"],
+                    int(row["starter"]),
+                    int(row["won"]),
+                    _json(row["stats"]),
+                    timestamp,
                 ),
             )
     return len(appearances)
+
+
+def _mark_player_boxscore_checked(event_id: str) -> None:
+    timestamp = _iso()
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at
+            """,
+            (f"sports_player_checked:{event_id}", "complete", timestamp),
+        )
 
 
 def collect_player_appearances(
@@ -689,10 +768,61 @@ def collect_player_appearances(
             continue
         fetched += 1
         try:
-            players += store_player_appearances(fetch_player_appearances(event))
+            appearances = fetch_player_appearances(event)
+            players += store_player_appearances(appearances)
+            _mark_player_boxscore_checked(str(event["id"]))
         except Exception:
             errors += 1
     return {"events": fetched, "players": players, "errors": errors}
+
+
+def collect_stored_player_appearances(
+    league: str,
+    max_events: int = 3,
+) -> dict[str, int]:
+    """Fill the newest missing completed box scores from stored Alpha history."""
+
+    with connection() as database:
+        rows = database.execute(
+            """
+            SELECT e.* FROM sports_events e
+            WHERE e.league=? AND e.completed=1
+              AND e.season_type NOT IN ('preseason','pre-season')
+              AND NOT EXISTS(
+                SELECT 1 FROM sports_player_appearances a WHERE a.event_id=e.id
+              )
+              AND NOT EXISTS(
+                SELECT 1 FROM worker_state w
+                WHERE w.key=('sports_player_checked:' || e.id)
+              )
+            ORDER BY e.start_time DESC,e.id DESC LIMIT ?
+            """,
+            (league, max(1, max_events)),
+        ).fetchall()
+    events = []
+    for raw in rows:
+        row = dict(raw)
+        events.append(
+            {
+                "id": str(row["id"]),
+                "external_id": str(row["external_id"]),
+                "league": str(row["league"]),
+                "completed": True,
+                "home": {
+                    "id": str(row["home_team_id"]),
+                    "name": str(row["home_team_name"]),
+                    "abbreviation": str(row["home_abbreviation"]),
+                    "score": row["home_score"],
+                },
+                "away": {
+                    "id": str(row["away_team_id"]),
+                    "name": str(row["away_team_name"]),
+                    "abbreviation": str(row["away_abbreviation"]),
+                    "score": row["away_score"],
+                },
+            }
+        )
+    return collect_player_appearances(events, max_events=max_events)
 
 
 def _input_hash(event: dict[str, Any], prediction: dict[str, Any]) -> str:
@@ -763,15 +893,31 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                     last_collected_at=excluded.last_collected_at
                 """,
                 (
-                    event["id"], SOURCE, event["external_id"], event["league"],
-                    event["season_type"], event["name"],
-                    _iso(event["start_time"]), event["status"], event["status_detail"],
-                    int(event["completed"]), event["home"]["id"], event["home"]["name"],
-                    event["home"]["abbreviation"], event["home"]["record"],
-                    event["home"]["score"], event["away"]["id"], event["away"]["name"],
-                    event["away"]["abbreviation"], event["away"]["record"],
-                    event["away"]["score"], event["venue"], event["location"],
-                    event["source_url"], timestamp, timestamp,
+                    event["id"],
+                    SOURCE,
+                    event["external_id"],
+                    event["league"],
+                    event["season_type"],
+                    event["name"],
+                    _iso(event["start_time"]),
+                    event["status"],
+                    event["status_detail"],
+                    int(event["completed"]),
+                    event["home"]["id"],
+                    event["home"]["name"],
+                    event["home"]["abbreviation"],
+                    event["home"]["record"],
+                    event["home"]["score"],
+                    event["away"]["id"],
+                    event["away"]["name"],
+                    event["away"]["abbreviation"],
+                    event["away"]["record"],
+                    event["away"]["score"],
+                    event["venue"],
+                    event["location"],
+                    event["source_url"],
+                    timestamp,
+                    timestamp,
                 ),
             )
             if event.get("home_odds") is not None or event.get("away_odds") is not None:
@@ -815,10 +961,19 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING
                     """,
                     (
-                        str(uuid.uuid4()), event["id"], odds_provider, event["sportsbook"],
-                        "moneyline", event["home_odds"], event["away_odds"],
-                        home_open_odds, away_open_odds, event["spread"],
-                        event["total"], odds_hash, timestamp,
+                        str(uuid.uuid4()),
+                        event["id"],
+                        odds_provider,
+                        event["sportsbook"],
+                        "moneyline",
+                        event["home_odds"],
+                        event["away_odds"],
+                        home_open_odds,
+                        away_open_odds,
+                        event["spread"],
+                        event["total"],
+                        odds_hash,
+                        timestamp,
                     ),
                 )
             prediction = predict_event(event)
@@ -832,12 +987,21 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                 ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING
                 """,
                 (
-                    str(uuid.uuid4()), event["id"], prediction["model_version"], input_hash,
-                    prediction["selection"], prediction["home_probability"],
-                    prediction["away_probability"], prediction["home_market_probability"],
-                    prediction["away_market_probability"], prediction["edge"],
-                    prediction["signal"], prediction["quality"],
-                    _json(prediction["evidence"]), _json(prediction["risks"]), timestamp,
+                    str(uuid.uuid4()),
+                    event["id"],
+                    prediction["model_version"],
+                    input_hash,
+                    prediction["selection"],
+                    prediction["home_probability"],
+                    prediction["away_probability"],
+                    prediction["home_market_probability"],
+                    prediction["away_market_probability"],
+                    prediction["edge"],
+                    prediction["signal"],
+                    prediction["quality"],
+                    _json(prediction["evidence"]),
+                    _json(prediction["risks"]),
+                    timestamp,
                 ),
             )
     return len(events)
@@ -883,6 +1047,8 @@ def settle_picks() -> int:
 def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
     current = (at or datetime.now(UTC)).astimezone(UTC)
     counts: dict[str, int] = {}
+    history_counts: dict[str, int] = {}
+    history_errors: dict[str, str] = {}
     player_counts: dict[str, dict[str, int]] = {}
     news_counts: dict[str, int] = {}
     news_errors: dict[str, str] = {}
@@ -953,6 +1119,16 @@ def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
         except Exception as exc:
             errors[league] = str(exc)[:240]
             continue
+        try:
+            history_events = fetch_league_history_chunk(league, at)
+            history_counts[league] = store_events(history_events, observed_at=current)
+            stored_players = collect_stored_player_appearances(league)
+            player_counts[league] = {
+                key: int(player_counts[league].get(key, 0)) + int(stored_players.get(key, 0))
+                for key in {"events", "players", "errors"}
+            }
+        except Exception as exc:
+            history_errors[league] = str(exc)[:240]
         if any(predict_event(event).get("signal") in PROMOTED_SIGNALS for event in events):
             try:
                 news_counts[league] = store_news_articles(fetch_league_news(league, events, at))
@@ -961,6 +1137,8 @@ def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
     settled = settle_picks()
     return {
         "counts": counts,
+        "history_counts": history_counts,
+        "history_errors": history_errors,
         "player_counts": player_counts,
         "news_counts": news_counts,
         "news_errors": news_errors,
@@ -1001,9 +1179,15 @@ def _latest_prediction(database: Any, event_id: str) -> dict[str, Any] | None:
         """,
         (event_id,),
     ).fetchone()
-    if not row:
+    return _prediction_item(row)
+
+
+def _prediction_item(row: Any) -> dict[str, Any] | None:
+    if row is None:
         return None
     item = dict(row)
+    item.pop("history_rank", None)
+    item.pop("latest_rank", None)
     item["evidence"] = json.loads(item.pop("evidence_json") or "[]")
     item["risks"] = json.loads(item.pop("risks_json") or "[]")
     item["edge_pct"] = round(float(item["edge"]) * 100, 1) if item.get("edge") is not None else None
@@ -1043,11 +1227,7 @@ def _edge_sparkline(
 ) -> dict[str, Any] | None:
     """Build a small, fixed-scale history for the latest preferred side."""
 
-    if (
-        not prediction
-        or prediction.get("edge") is None
-        or not (side := _preferred_side(prediction))
-    ):
+    if not prediction or prediction.get("edge") is None or not _preferred_side(prediction):
         return None
     rows = database.execute(
         """
@@ -1059,6 +1239,20 @@ def _edge_sparkline(
         """,
         (event["id"], prediction["model_version"]),
     ).fetchall()
+    return _edge_sparkline_from_rows(event, prediction, rows)
+
+
+def _edge_sparkline_from_rows(
+    event: dict[str, Any],
+    prediction: dict[str, Any] | None,
+    rows: list[Any],
+) -> dict[str, Any] | None:
+    if (
+        not prediction
+        or prediction.get("edge") is None
+        or not (side := _preferred_side(prediction))
+    ):
+        return None
     points: list[dict[str, Any]] = []
     for row in reversed(rows):
         model_probability = row[f"{side}_probability"]
@@ -1176,9 +1370,7 @@ def _event_attention(event: dict[str, Any]) -> dict[str, Any]:
         else 0
     )
     attention_rank = (
-        signal_rank * 1000
-        + abs(float(edge_pct or 0)) * 10
-        + abs(float(market_move_pct or 0))
+        signal_rank * 1000 + abs(float(edge_pct or 0)) * 10 + abs(float(market_move_pct or 0))
     )
 
     home_probability = float(prediction.get("home_probability") or 0.5)
@@ -1219,9 +1411,7 @@ def _event_attention(event: dict[str, Any]) -> dict[str, Any]:
         "attention_rank": round(attention_rank, 2),
         "model_winner_side": winner_side,
         "model_winner_team_id": winner_team_id,
-        "model_winner_team_name": str(
-            event.get(f"{winner_side}_team_name") or "Unknown"
-        ),
+        "model_winner_team_name": str(event.get(f"{winner_side}_team_name") or "Unknown"),
         "model_winner_abbreviation": winner_abbreviation,
         "model_winner_record": event.get(f"{winner_side}_record"),
         "model_winner_probability_pct": round(
@@ -1257,6 +1447,117 @@ def _event_row(database: Any, row: Any) -> dict[str, Any]:
     return item
 
 
+def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
+    """Build slate rows with a fixed number of database queries."""
+
+    events = [dict(row) for row in rows]
+    event_ids = [str(event["id"]) for event in events]
+    if not event_ids:
+        return []
+    placeholders = ",".join("?" for _ in event_ids)
+    parameters = tuple(event_ids)
+
+    odds_rows = database.execute(
+        f"""
+        SELECT * FROM (
+            SELECT o.*,ROW_NUMBER() OVER(
+                PARTITION BY event_id ORDER BY observed_at DESC,id DESC
+            ) AS latest_rank
+            FROM sports_odds_snapshots o
+            WHERE event_id IN ({placeholders})
+        ) latest
+        WHERE latest_rank=1
+        """,  # noqa: S608 - placeholders are generated, not user input
+        parameters,
+    ).fetchall()
+    odds_by_event: dict[str, dict[str, Any]] = {}
+    for row in odds_rows:
+        item = dict(row)
+        item.pop("latest_rank", None)
+        odds_by_event[str(item["event_id"])] = item
+
+    prediction_rows = database.execute(
+        f"""
+        WITH latest_models AS (
+            SELECT event_id,model_version FROM (
+                SELECT event_id,model_version,ROW_NUMBER() OVER(
+                    PARTITION BY event_id ORDER BY observed_at DESC,id DESC
+                ) AS latest_rank
+                FROM sports_predictions
+                WHERE event_id IN ({placeholders})
+            ) latest
+            WHERE latest_rank=1
+        ), ranked AS (
+            SELECT p.*,ROW_NUMBER() OVER(
+                PARTITION BY p.event_id ORDER BY p.observed_at DESC,p.id DESC
+            ) AS history_rank
+            FROM sports_predictions p
+            JOIN latest_models latest
+              ON latest.event_id=p.event_id AND latest.model_version=p.model_version
+        )
+        SELECT * FROM ranked
+        WHERE history_rank<=24
+        ORDER BY event_id,observed_at DESC,id DESC
+        """,  # noqa: S608 - placeholders are generated, not user input
+        parameters,
+    ).fetchall()
+    prediction_history: dict[str, list[Any]] = defaultdict(list)
+    for row in prediction_rows:
+        prediction_history[str(row["event_id"])].append(row)
+    predictions_by_event = {
+        event_id: _prediction_item(history[0])
+        for event_id, history in prediction_history.items()
+        if history
+    }
+
+    news_rows = database.execute(
+        f"""
+        SELECT * FROM (
+            SELECT n.*,COUNT(*) OVER(PARTITION BY event_id) AS event_news_count,
+                   ROW_NUMBER() OVER(
+                       PARTITION BY event_id ORDER BY published_at DESC,id DESC
+                   ) AS latest_rank
+            FROM sports_news_articles n
+            WHERE event_id IN ({placeholders})
+        ) latest
+        WHERE latest_rank=1
+        """,  # noqa: S608 - placeholders are generated, not user input
+        parameters,
+    ).fetchall()
+    news_by_event: dict[str, tuple[int, dict[str, Any]]] = {}
+    for row in news_rows:
+        item = dict(row)
+        count = int(item.pop("event_news_count"))
+        item.pop("latest_rank", None)
+        news_by_event[str(item["event_id"])] = (count, item)
+
+    promoted_rows = database.execute(
+        f"""
+        SELECT DISTINCT event_id FROM sports_predictions
+        WHERE event_id IN ({placeholders}) AND signal IN ('lean','watch')
+        """,  # noqa: S608 - placeholders are generated, not user input
+        parameters,
+    ).fetchall()
+    promoted_ids = {str(row["event_id"]) for row in promoted_rows}
+
+    output: list[dict[str, Any]] = []
+    for event in events:
+        event_id = str(event["id"])
+        prediction = predictions_by_event.get(event_id)
+        event["odds"] = odds_by_event.get(event_id)
+        event["prediction"] = prediction
+        event["edge_history"] = _edge_sparkline_from_rows(
+            event,
+            prediction,
+            prediction_history.get(event_id, []),
+        )
+        event["news_count"], event["latest_news"] = news_by_event.get(event_id, (0, None))
+        event["was_promoted"] = event_id in promoted_ids
+        event.update(_event_attention(event))
+        output.append(event)
+    return output
+
+
 def sports_slate(league: str = "all", limit: int = 80) -> dict[str, Any]:
     current = datetime.now(UTC)
     parameters: list[Any] = [
@@ -1278,7 +1579,7 @@ def sports_slate(league: str = "all", limit: int = 80) -> dict[str, Any]:
             """,  # noqa: S608 - filter is a fixed internal fragment
             tuple(parameters),
         ).fetchall()
-        events = [_event_row(database, row) for row in rows]
+        events = _event_rows(database, rows)
         last_run = database.execute(
             """
             SELECT status,finished_at,error FROM ingestion_runs
@@ -1297,16 +1598,12 @@ def sports_slate(league: str = "all", limit: int = 80) -> dict[str, Any]:
     }
 
 
-def sports_pulse(
-    league: str = "all", view: str = "signals", limit: int = 30
-) -> dict[str, Any]:
-    """Return only promoted pre-game signals, ranked by signal strength."""
+def sports_pulse(league: str = "all", view: str = "signals", limit: int = 30) -> dict[str, Any]:
+    """Return promoted signals ranked first, with repeated series kept together."""
 
     _ = view  # Keep the old query parameter harmless while the slate view is hidden.
     payload = sports_slate(league, limit=200)
-    available = [
-        event for event in payload["events"] if str(event.get("status")) in {"pre", "in"}
-    ]
+    available = [event for event in payload["events"] if str(event.get("status")) in {"pre", "in"}]
     signals = [
         event
         for event in available
@@ -1320,11 +1617,41 @@ def sports_pulse(
             str(event.get("id") or ""),
         )
     )
+    series: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for event in signals:
+        team_ids = sorted(
+            (str(event.get("away_team_id") or ""), str(event.get("home_team_id") or ""))
+        )
+        series_key = f"{event.get('league')}:{':'.join(team_ids)}"
+        series[series_key].append(event)
+
+    grouped: list[dict[str, Any]] = []
+    used: set[str] = set()
+    for event in signals:
+        team_ids = sorted(
+            (str(event.get("away_team_id") or ""), str(event.get("home_team_id") or ""))
+        )
+        series_key = f"{event.get('league')}:{':'.join(team_ids)}"
+        if series_key in used:
+            continue
+        used.add(series_key)
+        lead = dict(event)
+        more = [item for item in series[series_key] if item["id"] != event["id"]]
+        lead.update(
+            series_key=series_key,
+            series_game_count=len(series[series_key]),
+            series_more_count=len(more),
+            series_more=more,
+        )
+        grouped.append(lead)
+
+    shown = grouped[: max(1, min(limit, 100))]
     return {
         **payload,
-        "events": signals[: max(1, min(limit, 100))],
+        "events": shown,
         "view": "signals",
         "signal_count": len(signals),
+        "display_count": len(shown),
         "scanned_count": len(available),
         "hidden_count": max(0, len(available) - len(signals)),
     }
@@ -1366,11 +1693,11 @@ def sports_radar(league: str = "all", limit: int = 40) -> dict[str, Any]:
             direction = "strengthened" if model_move > 0 else "weakened"
             item = dict(event)
             item.update(
-                radar_kind="model",
-                radar_label="MODEL",
+                radar_kind="edge",
+                radar_label="EDGE",
                 radar_value=round(model_move, 1),
                 radar_detail=(
-                    f"{event['signal_abbreviation']} model edge {direction} by "
+                    f"{event['signal_abbreviation']} model-versus-market edge {direction} by "
                     f"{abs(model_move):.1f} points."
                 ),
             )
@@ -1396,21 +1723,28 @@ def sports_radar(league: str = "all", limit: int = 40) -> dict[str, Any]:
     }
 
 
-def _rate_history(
-    outcomes: list[tuple[str, bool]], current_record: tuple[int, int] | None = None
-) -> list[float]:
+def _rate_history_points(
+    outcomes: list[tuple[str, bool]],
+    current_record: tuple[int, int] | None = None,
+) -> list[dict[str, Any]]:
+    recent = outcomes[-ALPHA_HISTORY_POINTS:]
     if current_record is None:
-        wins = sum(won for _, won in outcomes)
-        losses = len(outcomes) - wins
         running_wins = running_losses = 0
-        points: list[float] = []
-        for _, won in outcomes[-20:]:
+        points: list[dict[str, Any]] = []
+        for observed_at, won in recent:
             running_wins += int(won)
             running_losses += int(not won)
-            points.append(round(running_wins / (running_wins + running_losses) * 100, 1))
-        return points or ([round(wins / (wins + losses) * 100, 1)] if wins + losses else [])
+            points.append(
+                {
+                    "at": observed_at,
+                    "rate": round(
+                        running_wins / (running_wins + running_losses) * 100,
+                        1,
+                    ),
+                }
+            )
+        return points
     wins, losses = current_record
-    recent = outcomes[-20:]
     previous_wins, previous_losses = wins, losses
     for _, won in reversed(recent):
         if won and previous_wins > 0:
@@ -1419,38 +1753,173 @@ def _rate_history(
             previous_losses -= 1
     points = []
     if previous_wins + previous_losses:
-        points.append(round(previous_wins / (previous_wins + previous_losses) * 100, 1))
-    for _, won in recent:
+        points.append(
+            {
+                "at": recent[0][0] if recent else "",
+                "rate": round(
+                    previous_wins / (previous_wins + previous_losses) * 100,
+                    1,
+                ),
+            }
+        )
+    for observed_at, won in recent:
         previous_wins += int(won)
         previous_losses += int(not won)
-        points.append(round(previous_wins / (previous_wins + previous_losses) * 100, 1))
-    return points or ([round(wins / (wins + losses) * 100, 1)] if wins + losses else [])
+        points.append(
+            {
+                "at": observed_at,
+                "rate": round(
+                    previous_wins / (previous_wins + previous_losses) * 100,
+                    1,
+                ),
+            }
+        )
+    return points or (
+        [{"at": "", "rate": round(wins / (wins + losses) * 100, 1)}] if wins + losses else []
+    )
+
+
+def _rate_history(
+    outcomes: list[tuple[str, bool]], current_record: tuple[int, int] | None = None
+) -> list[float]:
+    return [point["rate"] for point in _rate_history_points(outcomes, current_record)]
+
+
+def _model_alpha(league: str) -> dict[str, Any]:
+    parameters: list[Any] = [_iso(datetime.now(UTC) - timedelta(days=HISTORY_TARGET_DAYS))]
+    league_filter = ""
+    if league in LEAGUES:
+        league_filter = " AND e.league=?"
+        parameters.append(league)
+    with connection() as database:
+        rows = database.execute(
+            f"""
+            SELECT e.id,e.league,e.start_time,e.home_score,e.away_score,
+                   p.home_probability,p.away_probability,p.selection,p.signal,p.edge
+            FROM sports_events e
+            JOIN sports_predictions p ON p.id=(
+                SELECT p2.id FROM sports_predictions p2
+                WHERE p2.event_id=e.id AND p2.observed_at<=e.start_time
+                ORDER BY p2.observed_at DESC,p2.id DESC LIMIT 1
+            )
+            WHERE e.completed=1
+              AND e.start_time>=?
+              AND e.season_type NOT IN ('preseason','pre-season'){league_filter}
+            ORDER BY e.start_time,e.id
+            """,  # noqa: S608 - filter is a fixed internal fragment
+            tuple(parameters),
+        ).fetchall()
+
+    evaluated: list[dict[str, Any]] = []
+    edge_calls = edge_wins = 0
+    buckets: dict[str, list[bool]] = defaultdict(list)
+    correct = 0
+    brier_total = 0.0
+    history_points: list[dict[str, Any]] = []
+    for raw in rows:
+        row = dict(raw)
+        home_score = _number(row.get("home_score"))
+        away_score = _number(row.get("away_score"))
+        if home_score is None or away_score is None or home_score == away_score:
+            continue
+        home_won = home_score > away_score
+        home_probability = float(row["home_probability"])
+        winner_side = "home" if home_probability >= 0.5 else "away"
+        model_won = home_won if winner_side == "home" else not home_won
+        correct += int(model_won)
+        brier_total += (home_probability - int(home_won)) ** 2
+        confidence = max(home_probability, 1 - home_probability)
+        bucket = "50–55%" if confidence < 0.55 else "55–60%" if confidence < 0.60 else "60%+"
+        buckets[bucket].append(model_won)
+        selection = str(row.get("selection") or "pass")
+        if str(row.get("signal")) in PROMOTED_SIGNALS and selection in {"home", "away"}:
+            edge_calls += 1
+            selected_won = home_won if selection == "home" else not home_won
+            edge_wins += int(selected_won)
+        evaluated.append(row)
+        history_points.append(
+            {
+                "at": str(row["start_time"]),
+                "rate": round(correct / len(evaluated) * 100, 1),
+            }
+        )
+
+    sample = len(evaluated)
+    calibration = [
+        {
+            "label": label,
+            "games": len(results),
+            "hit_rate": round(sum(results) / len(results) * 100, 1),
+        }
+        for label in ("50–55%", "55–60%", "60%+")
+        if (results := buckets.get(label))
+    ]
+    return {
+        "version": MODEL_VERSION,
+        "games": sample,
+        "wins": correct,
+        "losses": sample - correct,
+        "accuracy": round(correct / sample * 100, 1) if sample else None,
+        "brier": round(brier_total / sample, 3) if sample else None,
+        "edge_calls": edge_calls,
+        "edge_wins": edge_wins,
+        "edge_accuracy": round(edge_wins / edge_calls * 100, 1) if edge_calls else None,
+        "history": [point["rate"] for point in history_points[-ALPHA_HISTORY_POINTS:]],
+        "history_points": history_points[-ALPHA_HISTORY_POINTS:],
+        "calibration": calibration,
+    }
 
 
 def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
     """Rank team and player results and keep the underlying rate history visible."""
 
     selected_league = league if league in LEAGUES else "all"
-    parameters: tuple[Any, ...] = (selected_league,) if selected_league in LEAGUES else ()
-    league_filter = " AND league=?" if parameters else ""
-    player_league_filter = " AND a.league=?" if parameters else ""
+    cutoff = _iso(datetime.now(UTC) - timedelta(days=HISTORY_TARGET_DAYS))
+    coverage_parameters: tuple[Any, ...] = (selected_league,) if selected_league in LEAGUES else ()
+    history_parameters: list[Any] = [cutoff]
+    league_filter = ""
+    player_league_filter = ""
+    if coverage_parameters:
+        league_filter = " AND league=?"
+        player_league_filter = " AND a.league=?"
+        history_parameters.append(selected_league)
     with connection() as database:
         event_rows = database.execute(
             f"""
             SELECT * FROM sports_events
-            WHERE season_type NOT IN ('preseason','pre-season'){league_filter}
+            WHERE start_time>=?
+              AND season_type NOT IN ('preseason','pre-season'){league_filter}
             ORDER BY start_time,id
             """,  # noqa: S608 - filter is a fixed internal fragment
-            parameters,
+            tuple(history_parameters),
         ).fetchall()
+        coverage_row = database.execute(
+            f"""
+            SELECT COUNT(*) AS events,
+                   SUM(CASE WHEN completed=1 THEN 1 ELSE 0 END) AS completed,
+                   MIN(CASE WHEN completed=1 THEN start_time END) AS history_start,
+                   MAX(CASE WHEN completed=1 THEN start_time END) AS history_end,
+                   MAX(last_collected_at) AS updated_at
+            FROM sports_events
+            WHERE season_type NOT IN ('preseason','pre-season'){league_filter}
+            """,  # noqa: S608 - filter is a fixed internal fragment
+            coverage_parameters,
+        ).fetchone()
         player_rows = database.execute(
             f"""
-            SELECT a.*,e.start_time FROM sports_player_appearances a
-            JOIN sports_events e ON e.id=a.event_id
-            WHERE 1=1{player_league_filter}
-            ORDER BY e.start_time,a.event_id,a.player_id
+            SELECT * FROM (
+                SELECT a.*,e.start_time,ROW_NUMBER() OVER(
+                    PARTITION BY a.league,a.player_id
+                    ORDER BY e.start_time DESC,a.event_id DESC
+                ) AS history_rank
+                FROM sports_player_appearances a
+                JOIN sports_events e ON e.id=a.event_id
+                WHERE e.start_time>=?{player_league_filter}
+            ) recent
+            WHERE history_rank<=?
+            ORDER BY start_time,event_id,player_id
             """,  # noqa: S608 - filter is a fixed internal fragment
-            parameters,
+            (*history_parameters, ALPHA_HISTORY_POINTS),
         ).fetchall()
 
     teams: dict[tuple[str, str], dict[str, Any]] = {}
@@ -1477,9 +1946,7 @@ def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
             opponent_score = _number(event.get(f"{opponent}_score"))
             if event.get("completed") and side_score is not None and opponent_score is not None:
                 if side_score != opponent_score:
-                    team["outcomes"].append(
-                        (str(event["start_time"]), side_score > opponent_score)
-                    )
+                    team["outcomes"].append((str(event["start_time"]), side_score > opponent_score))
 
     team_rows: list[dict[str, Any]] = []
     for team in teams.values():
@@ -1493,7 +1960,8 @@ def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
         games = wins + losses
         if not games:
             continue
-        history = _rate_history(outcomes, (wins, losses))
+        history_points = _rate_history_points(outcomes, (wins, losses))
+        history = [point["rate"] for point in history_points]
         recent = outcomes[-10:]
         recent_rate = (
             round(sum(won for _, won in recent) / len(recent) * 100, 1)
@@ -1511,12 +1979,13 @@ def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
                 "recent_win_rate": recent_rate,
                 "trend_pct": round(history[-1] - history[0], 1) if len(history) > 1 else 0.0,
                 "history": history,
+                "history_points": history_points,
+                "history_start": history_points[0]["at"] if history_points else "",
+                "history_end": history_points[-1]["at"] if history_points else "",
                 "rank_score": (wins + 4) / (games + 8),
             }
         )
-    team_rows.sort(
-        key=lambda row: (-row["rank_score"], -row["games"], row["abbreviation"])
-    )
+    team_rows.sort(key=lambda row: (-row["rank_score"], -row["games"], row["abbreviation"]))
 
     player_groups: dict[tuple[str, str], dict[str, Any]] = defaultdict(dict)
     for raw in player_rows:
@@ -1542,7 +2011,8 @@ def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
         if games < 3:
             continue
         wins = sum(won for _, won in outcomes)
-        history = _rate_history(outcomes)
+        history_points = _rate_history_points(outcomes)
+        history = [point["rate"] for point in history_points]
         player_output.append(
             {
                 **player,
@@ -1552,19 +2022,34 @@ def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
                 "win_rate": round(wins / games * 100, 1),
                 "trend_pct": round(history[-1] - history[0], 1) if len(history) > 1 else 0.0,
                 "history": history,
+                "history_points": history_points,
+                "history_start": history_points[0]["at"] if history_points else "",
+                "history_end": history_points[-1]["at"] if history_points else "",
                 "rank_score": (wins + 2) / (games + 4),
             }
         )
-    player_output.sort(
-        key=lambda row: (-row["rank_score"], -row["games"], row["name"])
-    )
+    player_output.sort(key=lambda row: (-row["rank_score"], -row["games"], row["name"]))
+    leagues_with_data = {str(team["league"]) for team in team_rows}
+    coverage = dict(coverage_row) if coverage_row else {}
     return {
+        "model": _model_alpha(selected_league),
         "teams": team_rows[: max(1, min(limit, 100))],
         "players": player_output[: max(1, min(limit, 100))],
         "player_min_games": 3,
         "league": selected_league,
-        "leagues": [{"key": key, "name": value["name"]} for key, value in LEAGUES.items()],
-        "updated_at": _iso(),
+        "leagues": [
+            {"key": key, "name": value["name"], "has_data": key in leagues_with_data}
+            for key, value in LEAGUES.items()
+        ],
+        "coverage": {
+            "events": int(coverage.get("events") or 0),
+            "completed_games": int(coverage.get("completed") or 0),
+            "history_start": str(coverage.get("history_start") or ""),
+            "history_end": str(coverage.get("history_end") or ""),
+            "team_count": len(team_rows),
+            "player_count": len(player_output),
+        },
+        "updated_at": str(coverage.get("updated_at") or ""),
     }
 
 
@@ -1645,10 +2130,19 @@ def create_sports_pick(
             ) VALUES(?,?,?,?,?,'moneyline',?,?,?, ?,?,?, 'open',?,?)
             """,
             (
-                pick_id, public_id, user_id, identity["id"], event_id, selection, None,
-                int(american_odds), odds.get("sportsbook") or "Unknown",
-                odds["observed_at"], prediction.get("id") if prediction else None,
-                timestamp, timestamp,
+                pick_id,
+                public_id,
+                user_id,
+                identity["id"],
+                event_id,
+                selection,
+                None,
+                int(american_odds),
+                odds.get("sportsbook") or "Unknown",
+                odds["observed_at"],
+                prediction.get("id") if prediction else None,
+                timestamp,
+                timestamp,
             ),
         )
         row = database.execute(

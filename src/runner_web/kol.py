@@ -320,7 +320,8 @@ def publish_calls_for_scan(
 def _latest_prices(tickers: list[str]) -> dict[str, float]:
     if not tickers:
         return {}
-    result = recording_market_data(batch_size=60).intraday(list(dict.fromkeys(tickers)))
+    with recording_market_data(batch_size=60) as market_data:
+        result = market_data.intraday(list(dict.fromkeys(tickers)))
     prices: dict[str, float] = {}
     for ticker, frame in result.frames.items():
         close = pd.Series(dtype="float64")
@@ -348,8 +349,10 @@ def refresh_kol_calls(
             dict(row)
             for row in db.execute("SELECT * FROM kol_calls WHERE status='active'").fetchall()
         ]
-    prices = latest_prices if latest_prices is not None else _latest_prices(
-        [str(call["ticker"]) for call in active]
+    prices = (
+        latest_prices
+        if latest_prices is not None
+        else _latest_prices([str(call["ticker"]) for call in active])
     )
     archived_bars = _bar_prices([str(call["ticker"]) for call in active])
 
@@ -374,9 +377,7 @@ def refresh_kol_calls(
             price = _valid_price(prices.get(str(call["ticker"])))
             if price is not None:
                 gross_return = _return_pct(float(call["entry_price"]), price)
-                net_return = round(
-                    gross_return - float(call["round_trip_cost_bps"]) / 100.0, 4
-                )
+                net_return = round(gross_return - float(call["round_trip_cost_bps"]) / 100.0, 4)
                 paper_pnl = round(float(call["paper_notional"]) * net_return / 100.0, 2)
                 db.execute(
                     """
@@ -424,7 +425,8 @@ def refresh_kol_calls(
                         window = [
                             bar
                             for bar in ticker_bars
-                            if entry_at.astimezone(UTC) < bar[0]
+                            if entry_at.astimezone(UTC)
+                            < bar[0]
                             <= entry_at.astimezone(UTC)
                             + timedelta(minutes=int(call["horizon_minutes"]))
                         ]
@@ -456,9 +458,7 @@ def refresh_kol_calls(
                 status = "stopped"
                 reason = "Hit the stop first."
             else:
-                exit_price = _valid_price(outcome.get("price_60m")) or float(
-                    call["last_price"]
-                )
+                exit_price = _valid_price(outcome.get("price_60m")) or float(call["last_price"])
                 status = "timed_out"
                 reason = "Ended after 60 minutes."
             closed_at = str(
@@ -540,8 +540,7 @@ def _display_call(raw: Any) -> dict[str, Any]:
         if actor.get(actor_key) is not None:
             call[key] = actor[actor_key]
     call["inference_model_label"] = str(
-        actor.get("model_label")
-        or model_display_name(str(call.get("inference_model") or ""))
+        actor.get("model_label") or model_display_name(str(call.get("inference_model") or ""))
     )
     gross = (
         call.get("realized_return_pct")

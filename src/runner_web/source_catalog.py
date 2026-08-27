@@ -200,8 +200,7 @@ DEFAULT_SOURCE_POLICIES = (
         attribution="GDELT",
         review_status="poc_only",
         enabled=(
-            _enabled_by_default("DISCOVERY_SOURCES_ENABLED")
-            and _enabled("GDELT_NEWS_ENABLED")
+            _enabled_by_default("DISCOVERY_SOURCES_ENABLED") and _enabled("GDELT_NEWS_ENABLED")
         ),
     ),
     SourcePolicy(
@@ -219,9 +218,24 @@ DEFAULT_SOURCE_POLICIES = (
         attribution="Bluesky",
         review_status="poc_only",
         enabled=(
-            _enabled_by_default("DISCOVERY_SOURCES_ENABLED")
-            and _enabled("BLUESKY_SEARCH_ENABLED")
+            _enabled_by_default("DISCOVERY_SOURCES_ENABLED") and _enabled("BLUESKY_SEARCH_ENABLED")
         ),
+    ),
+    SourcePolicy(
+        source="massive",
+        feed="market_bars",
+        title="Massive daily price bars",
+        owner="Massive",
+        terms_url="https://massive.com/docs/rest/quickstart",
+        credential_env="MASSIVE_API_KEY",
+        expected_cadence_seconds=180,
+        stale_after_seconds=900,
+        schedule="us_extended_weekdays",
+        storage_policy="archive_raw_and_normalized",
+        display_policy="source_link_with_attribution",
+        attribution="Massive",
+        review_status="review_required",
+        enabled=_enabled_by_default("MASSIVE_ENABLED"),
     ),
     SourcePolicy(
         source="nasdaq_trader",
@@ -310,8 +324,7 @@ DEFAULT_SOURCE_POLICIES = (
         display_policy="source_link_with_attribution",
         attribution="The Odds API and the named bookmaker",
         enabled=(
-            _enabled_by_default("ODDS_API_ENABLED")
-            and bool(os.getenv("ODDS_API_KEY", "").strip())
+            _enabled_by_default("ODDS_API_ENABLED") and bool(os.getenv("ODDS_API_KEY", "").strip())
         ),
     ),
     SourcePolicy(

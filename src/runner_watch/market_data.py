@@ -13,6 +13,7 @@ import pandas as pd
 import yfinance as yf
 
 from runner_watch.ingestion import SourceFetch, SourceFetchRecorder
+from runner_watch.massive_data import massive_bar_adapter
 from runner_watch.provider_contracts import (
     Bar,
     DataKind,
@@ -190,9 +191,7 @@ class YahooMarketData:
             progress(len(groups), len(groups), f"{label} complete")
         return DownloadResult(frames=frames, failed=failed, warnings=warnings)
 
-    def daily(
-        self, tickers: list[str], progress: ProgressCallback | None = None
-    ) -> DownloadResult:
+    def daily(self, tickers: list[str], progress: ProgressCallback | None = None) -> DownloadResult:
         return self._download(
             tickers,
             period="1y",
@@ -231,9 +230,7 @@ def _canonical_timestamp(value: Any) -> datetime:
 
 
 def _frame_bars(symbol: str, interval: str, frame: pd.DataFrame) -> list[Bar]:
-    columns = {
-        str(column).lower().replace(" ", ""): column for column in frame.columns
-    }
+    columns = {str(column).lower().replace(" ", ""): column for column in frame.columns}
     output: list[Bar] = []
     for index, row in frame.iterrows():
         output.append(
@@ -348,8 +345,30 @@ def _bars_to_frames(batch: FetchBatch) -> dict[str, pd.DataFrame]:
 class RoutedMarketData:
     """Scanner-compatible view over the canonical provider registry."""
 
-    def __init__(self, registry: ProviderRegistry) -> None:
+    def __init__(
+        self,
+        registry: ProviderRegistry,
+        intraday_registry: ProviderRegistry | None = None,
+    ) -> None:
+        # The daily registry may include slower end-of-day providers (Massive);
+        # intraday scans stay on providers that serve the live session.
         self.registry = registry
+        self.intraday_registry = intraday_registry or registry
+        self._closed = False
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self.registry.close()
+        if self.intraday_registry is not self.registry:
+            self.intraday_registry.close()
+        self._closed = True
+
+    def __enter__(self) -> RoutedMarketData:
+        return self
+
+    def __exit__(self, *_error: object) -> None:
+        self.close()
 
     def _fetch(
         self,
@@ -357,6 +376,7 @@ class RoutedMarketData:
         interval: str,
         progress: ProgressCallback | None,
     ) -> DownloadResult:
+        registry = self.intraday_registry if interval != "1d" else self.registry
         request = ProviderRequest(
             kind=DataKind.BARS,
             symbols=tickers,
@@ -365,7 +385,7 @@ class RoutedMarketData:
             extended_hours=interval != "1d",
         )
         try:
-            batch = self.registry.fetch(request, progress=progress)
+            batch = registry.fetch(request, progress=progress)
         except ProvidersExhaustedError as exc:
             return DownloadResult(
                 frames={},
@@ -387,9 +407,7 @@ class RoutedMarketData:
             provenance=batch.provenance,
         )
 
-    def daily(
-        self, tickers: list[str], progress: ProgressCallback | None = None
-    ) -> DownloadResult:
+    def daily(self, tickers: list[str], progress: ProgressCallback | None = None) -> DownloadResult:
         global _DAILY_CACHE_DAY, _DAILY_CACHE_PROVENANCE
 
         # Completed daily bars stay fixed during one Eastern trading day. This
@@ -451,15 +469,23 @@ def routed_market_data(
     timeout: float = 15.0,
     fetch_recorder: SourceFetchRecorder | None = None,
 ) -> RoutedMarketData:
-    registry = ProviderRegistry()
-    registry.register(
-        YahooBarAdapter(
-            YahooMarketData(
-                batch_size=batch_size,
-                timeout=timeout,
-                fetch_recorder=fetch_recorder,
-            )
+    yahoo = YahooBarAdapter(
+        YahooMarketData(
+            batch_size=batch_size,
+            timeout=timeout,
+            fetch_recorder=fetch_recorder,
         )
     )
-    registry.route(DataKind.BARS, "yahoo")
-    return RoutedMarketData(registry)
+    daily = ProviderRegistry()
+    intraday = ProviderRegistry()
+    massive = massive_bar_adapter(fetch_recorder=fetch_recorder)
+    if massive is not None:
+        daily.register(massive)
+        daily.register(yahoo)
+        daily.route(DataKind.BARS, "massive", "yahoo")
+    else:
+        daily.register(yahoo)
+        daily.route(DataKind.BARS, "yahoo")
+    intraday.register(yahoo)
+    intraday.route(DataKind.BARS, "yahoo")
+    return RoutedMarketData(daily, intraday_registry=intraday)

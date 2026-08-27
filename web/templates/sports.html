@@ -28,10 +28,9 @@
 </aside>
 {% endif %}
 
-<section class="game-list pulse-winners" aria-label="Pulse signals">
-  {% for event in pulse.events %}
+{% macro pulse_card(event, compact=false) -%}
   {% set prediction = event.prediction %}
-  <a class="game-card winner-card" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}" aria-label="{{ event.away_team_name }} {{ event.projected_away_score_display }} at {{ event.home_team_name }} {{ event.projected_home_score_display }}; model favors {{ event.model_winner_team_name }} at {{ '%.0f'|format(event.model_winner_probability_pct) }} percent; value edge {{ event.signal_abbreviation }} {{ '%+.1f'|format(prediction.edge_pct) }} points">
+  <a class="game-card winner-card{% if compact %} winner-card-compact{% endif %}" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}" aria-label="{{ event.away_team_name }} {{ event.projected_away_score_display }} at {{ event.home_team_name }} {{ event.projected_home_score_display }}; model favors {{ event.model_winner_team_name }} at {{ '%.0f'|format(event.model_winner_probability_pct) }} percent; value edge {{ event.signal_abbreviation }} {{ '%+.1f'|format(prediction.edge_pct) }} points">
     <span class="winner-coin winner-coin-{{ event.model_winner_coin_tone }}" aria-hidden="true">
       <b>{{ event.model_winner_abbreviation[:3] }}</b><i></i>
     </span>
@@ -49,7 +48,7 @@
       <span class="winner-context">
         {{ event.league|upper }} ·
         <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time>
-        · FORM SCORE
+        · {% if event.projected_score_basis == 'market total' %}MARKET-TOTAL SCORE{% else %}BASELINE SCORE{% endif %}
       </span>
     </span>
     <span class="winner-quote">
@@ -66,6 +65,25 @@
     </span>
     <span class="game-chevron" aria-hidden="true">›</span>
   </a>
+{%- endmacro %}
+
+<header class="sports-screen-head pulse-screen-head">
+  <div><span class="sports-eyebrow">{{ pulse.model }} · {{ pulse.signal_count }} SIGNALS</span><h1>Pulse</h1></div>
+  <p><strong>{{ pulse.display_count }}</strong> distinct matchups from {{ pulse.scanned_count }} games. Repeated series stay together.</p>
+</header>
+
+<div class="pulse-workspace">
+<section class="game-list pulse-winners" aria-label="Pulse signals">
+  {% for event in pulse.events %}
+    {{ pulse_card(event) }}
+    {% if event.series_more_count %}
+    <details class="series-cluster">
+      <summary><span>{{ event.away_abbreviation }}–{{ event.home_abbreviation }} series</span><b>+{{ event.series_more_count }} more game{% if event.series_more_count != 1 %}s{% endif %}</b></summary>
+      <div class="series-games">
+      {% for related in event.series_more %}{{ pulse_card(related, true) }}{% endfor %}
+      </div>
+    </details>
+    {% endif %}
   {% else %}
   <div class="sports-empty">
     <strong>No Pulse signals right now.</strong>
@@ -74,7 +92,34 @@
   {% endfor %}
 </section>
 
-<p class="sports-source">Form scores use model win probability and a market total when available; otherwise a league scoring baseline. Preview schedule, odds, and team news: ESPN · Updated {{ pulse.updated_at[:16]|replace('T',' ') if pulse.updated_at else 'pending' }} UTC</p>
+{% if pulse.events %}
+{% set lead = pulse.events[0] %}
+{% set lead_prediction = lead.prediction %}
+<aside class="pulse-inspector" aria-label="Top Pulse signal">
+  <span class="inspector-kicker">TOP READ · {{ lead.league|upper }}</span>
+  <div class="inspector-winner">
+    <span class="winner-coin winner-coin-{{ lead.model_winner_coin_tone }}"><b>{{ lead.model_winner_abbreviation[:3] }}</b><i></i></span>
+    <span><small>MODEL WINNER</small><strong>{{ lead.model_winner_team_name }}</strong><b>{{ '%.1f'|format(lead.model_winner_probability_pct) }}%</b></span>
+  </div>
+  <div class="inspector-score">
+    <small>ESTIMATED SCORE</small>
+    <strong>{{ lead.away_abbreviation }} {{ lead.projected_away_score_display }} <i>–</i> {{ lead.home_abbreviation }} {{ lead.projected_home_score_display }}</strong>
+    <span>{{ lead.projected_score_basis }}</span>
+  </div>
+  <div class="inspector-edge">
+    <small>VALUE SIDE</small>
+    <strong>{{ lead.signal_abbreviation }} {{ '%+.1f'|format(lead_prediction.edge_pct) }} pp</strong>
+    <span>The value side can differ from the projected winner.</span>
+  </div>
+  {% if lead.edge_history %}
+  <div class="inspector-history"><span>{{ lead.edge_history.label }}</span><svg class="edge-spark" viewBox="0 0 92 24" role="img" aria-label="{{ lead.edge_history.label }}"><line class="edge-zero" x1="2" y1="12" x2="90" y2="12"></line><polyline points="{{ lead.edge_history.plot_points }}"></polyline><circle cx="{{ lead.edge_history.dot_x }}" cy="{{ lead.edge_history.dot_y }}" r="2"></circle></svg></div>
+  {% endif %}
+  <a href="{{ sports_path_prefix or '' }}/game/{{ lead.id }}">Open matchup receipt <span>›</span></a>
+</aside>
+{% endif %}
+</div>
+
+<p class="sports-source">Score estimates use model win probability and a market total when available; otherwise a clearly marked league baseline. Schedule and team context: ESPN. Moneylines may use the configured odds provider · Updated {{ pulse.updated_at[:16]|replace('T',' ') if pulse.updated_at else 'pending' }} UTC</p>
 {% endblock %}
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
