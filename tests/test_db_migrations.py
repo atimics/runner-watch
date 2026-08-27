@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pytest import MonkeyPatch
 
-from runner_web import db
+from runner_web import ai_kol, db
 from runner_web.ai_kol import FLASH
 from runner_web.db import (
     MIGRATION_LOCK_ID,
@@ -186,6 +186,20 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         training_examples_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='ranker_training_examples'"
         ).fetchone()
+        flash_version_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='flash_versions'"
+        ).fetchone()
+        flash_forecast_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='flash_forecasts'"
+        ).fetchone()
+        flash_outcome_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='flash_forecast_outcomes'"
+        ).fetchone()
+        flash_event_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='flash_evaluation_events'"
+        ).fetchone()
         flash = database.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
         commission_columns = {
             row["name"]
@@ -241,11 +255,15 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert flash_transaction_table is not None
     assert pulse_entries_table is not None
     assert training_examples_table is not None
+    assert flash_version_table is not None
+    assert flash_forecast_table is not None
+    assert flash_outcome_table is not None
+    assert flash_event_table is not None
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_provider"] == "openrouter"
     assert flash["inference_model"] == "z-ai/glm-5.3"
-    assert {"actor_id", "actor_snapshot_json"} <= commission_columns
+    assert {"actor_id", "actor_snapshot_json", "flash_version_id"} <= commission_columns
     assert {
         "case_id",
         "case_effect",
@@ -468,6 +486,8 @@ def test_flash_keeps_its_identity_when_its_model_assignment_changes(
         description="Runner Watch's lead AI KOL, currently powered by a future model.",
     )
     monkeypatch.setattr(db, "FLASH", replacement)
+    monkeypatch.setattr(ai_kol, "FLASH_VERSION_ID", "flash-future-model")
+    monkeypatch.setattr(ai_kol, "FLASH_VERSION_LABEL", "Flash Future")
 
     init_db()
 
@@ -476,7 +496,14 @@ def test_flash_keeps_its_identity_when_its_model_assignment_changes(
             "SELECT id,slot,ladder_position,inference_model FROM kol_predictors WHERE id=?",
             (FLASH.id,),
         ).fetchone()
+        versions = database.execute(
+            "SELECT id,status,requested_model FROM flash_versions ORDER BY launched_at,id"
+        ).fetchall()
     assert flash["id"] == "kol-flash"
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_model"] == "future/model"
+    assert [(row["id"], row["status"], row["requested_model"]) for row in versions] == [
+        ("flash-2026-09-a", "retired", "z-ai/glm-5.3"),
+        ("flash-future-model", "active", "future/model"),
+    ]

@@ -45,12 +45,12 @@ def _row(ticker: str, entered_at: str | None = None) -> dict[str, Any]:
 
 def _pulse(
     *rows: dict[str, Any],
-    kols: list[dict[str, Any]] | None = None,
+    flash_record: dict[str, Any] | None = None,
     has_more: bool = False,
 ) -> dict[str, Any]:
     return {
         "rows": list(rows),
-        "kols": kols or [],
+        "flash_record": flash_record,
         "has_more": has_more,
         "next_offset": len(rows),
     }
@@ -100,7 +100,7 @@ def _load(
     return errors
 
 
-def test_empty_kol_scorecard_has_no_layout_gap(page: Page, monkeypatch) -> None:
+def test_empty_flash_record_has_no_layout_gap(page: Page, monkeypatch) -> None:
     html = _rendered_pulse(monkeypatch, _pulse(_row("AAA")))
     errors = _load(page, html, [])
 
@@ -126,28 +126,29 @@ def test_refresh_executes_missing_markers_and_clears_stale_alerts(page: Page, mo
     assert errors == []
 
 
-def test_refresh_updates_kol_stats_and_merges_new_ticker(page: Page, monkeypatch) -> None:
+def test_refresh_updates_flash_record_and_merges_new_ticker(page: Page, monkeypatch) -> None:
     initial = _pulse(_row("AAA", "2026-08-26T18:00:00+00:00"))
-    kol = {
-        "display_name": "Flash",
-        "emoji": "⚡",
-        "inference_model_label": "Model",
-        "active_calls": 1,
-        "calls": 2,
+    record = {
+        "label": "Flash 2026.09",
+        "model_label": "GLM 5.3",
+        "hits": 12,
+        "misses": 8,
+        "settled": 20,
         "hit_rate": 0.5,
-        "paper_pnl": 3.25,
+        "headline_rate_visible": True,
     }
     newer = _pulse(
         _row("BBB", "2026-08-26T18:05:00+00:00"),
         _row("AAA", "2026-08-26T18:00:00+00:00"),
-        kols=[kol],
+        flash_record=record,
     )
     html = _rendered_pulse(monkeypatch, initial)
     errors = _load(page, html, [newer])
 
     page.evaluate("pollForUpdates()")
     assert page.locator("#kolScoreStrip").is_visible()
-    assert "1 open · 2 calls · 50% hit" in page.locator("[data-kol-stats]").text_content()
+    assert "12 hits · 8 misses · 50% hit" in page.locator("[data-kol-stats]").text_content()
+    assert page.locator("[data-kol-pnl]").text_content() == "20 settled"
     page.locator("#pulseRefresh").click()
     assert page.locator('[data-ticker-row="BBB"]').count() == 1
     assert page.locator('[data-ticker-row="AAA"]').count() == 1

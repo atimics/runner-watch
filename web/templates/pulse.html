@@ -13,27 +13,25 @@
       {% endif %}
     </header>
     {% include "_market_clock.html" %}
-    {% set kol = pulse.kols[0] if pulse.kols else none %}
-    {% set has_kol_calls = kol and (kol.calls or kol.active_calls) %}
-    {% set paper_pnl = kol.paper_pnl|float if kol else 0 %}
-    <aside class="kol-score-strip" id="kolScoreStrip" aria-label="Flash paper Call record"{% if not has_kol_calls %} hidden{% endif %}>
-      <span class="kol-avatar" data-kol-avatar aria-hidden="true">{{ kol.emoji if kol and kol.emoji else '⚡' }}</span>
+    {% set flash_record = pulse.flash_record %}
+    <a class="kol-score-strip" id="kolScoreStrip" href="/flash/record" aria-label="Open the Flash forecast record"{% if not flash_record %} hidden{% endif %}>
+      <span class="kol-avatar" data-kol-avatar aria-hidden="true">⚡</span>
       <span>
         <strong>
-          <span data-kol-name>{{ kol.display_name if kol else '' }}</span>
-          <i class="flash-model-label" data-kol-model>{{ kol.inference_model_label if kol else '' }}</i>
+          <span data-kol-name>{{ flash_record.label if flash_record else '' }}</span>
+          <i class="flash-model-label" data-kol-model>{{ flash_record.model_label if flash_record else '' }}</i>
         </strong>
         <small data-kol-stats>
-          {% if kol %}
-            {{ kol.active_calls|int }} open · {{ kol.calls|int }} calls ·
-            {% if kol.hit_rate is none %}no results{% else %}{{ '%.0f'|format(kol.hit_rate|float * 100) }}% hit{% endif %}
+          {% if flash_record %}
+            {{ flash_record.hits }} hits · {{ flash_record.misses }} misses ·
+            {% if flash_record.headline_rate_visible %}{{ '%.0f'|format(flash_record.hit_rate * 100) }}% hit{% else %}building record{% endif %}
           {% endif %}
         </small>
       </span>
-      <b data-kol-pnl class="{{ 'up' if paper_pnl >= 0 else 'down' }}">
-        {% if kol %}{{ '+' if paper_pnl >= 0 else '−' }}${{ '%.2f'|format(paper_pnl|abs) }}{% endif %}
+      <b data-kol-pnl>
+        {% if flash_record %}{{ flash_record.settled }} settled{% endif %}
       </b>
-    </aside>
+    </a>
     <button class="pulse-refresh" id="pulseRefresh" type="button" aria-live="polite" hidden>1 new ticker</button>
 
     <main class="list-section pulse-feed">
@@ -80,25 +78,20 @@ function mergeUniqueTickers(primaryRows, secondaryRows) {
 
 function renderKolScorecard() {
   const scorecard = document.getElementById('kolScoreStrip');
-  const kol = (pulse.kols || [])[0];
-  const calls = Number(kol?.calls || 0);
-  const activeCalls = Number(kol?.active_calls || 0);
-  if (!kol || (!calls && !activeCalls)) {
+  const record = pulse.flash_record;
+  if (!record) {
     scorecard.hidden = true;
     return;
   }
 
-  const pnl = Number(kol.paper_pnl || 0);
-  const hitRate = kol.hit_rate == null
-    ? 'no results'
-    : `${(Number(kol.hit_rate) * 100).toFixed(0)}% hit`;
-  scorecard.querySelector('[data-kol-avatar]').textContent = kol.emoji || '⚡';
-  scorecard.querySelector('[data-kol-name]').textContent = kol.display_name || '';
-  scorecard.querySelector('[data-kol-model]').textContent = kol.inference_model_label || '';
-  scorecard.querySelector('[data-kol-stats]').textContent = `${activeCalls} open · ${calls} calls · ${hitRate}`;
-  const pnlNode = scorecard.querySelector('[data-kol-pnl]');
-  pnlNode.className = pnl >= 0 ? 'up' : 'down';
-  pnlNode.textContent = `${pnl >= 0 ? '+' : '−'}$${Math.abs(pnl).toFixed(2)}`;
+  const rate = record.headline_rate_visible && record.hit_rate != null
+    ? `${(Number(record.hit_rate) * 100).toFixed(0)}% hit`
+    : 'building record';
+  scorecard.querySelector('[data-kol-avatar]').textContent = '⚡';
+  scorecard.querySelector('[data-kol-name]').textContent = record.label || 'Flash';
+  scorecard.querySelector('[data-kol-model]').textContent = record.model_label || '';
+  scorecard.querySelector('[data-kol-stats]').textContent = `${record.hits || 0} hits · ${record.misses || 0} misses · ${rate}`;
+  scorecard.querySelector('[data-kol-pnl]').textContent = `${record.settled || 0} settled`;
   scorecard.hidden = false;
 }
 
@@ -174,7 +167,7 @@ async function pollForUpdates() {
         (pulse.rows || []).flatMap(row => [tickerKey(row), entryKey(row)]).filter(Boolean),
       );
       const newCount = (nextPulse.rows || []).filter(row => !currentEntries.has(entryKey(row))).length;
-      pulse.kols = nextPulse.kols || [];
+      pulse.flash_record = nextPulse.flash_record || null;
       renderKolScorecard();
       if (newCount) {
         pendingPulse = nextPulse;

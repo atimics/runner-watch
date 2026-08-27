@@ -24,7 +24,7 @@
   {% if report.actor %}
   <section class="research-author">
     <span class="kol-avatar">{{ report.actor.emoji }}</span>
-    <span><strong>{{ report.actor.display_name }} <span class="flash-model-label">{{ report.actor.model }}</span></strong><small>#{{ report.actor.ladder_position }} of {{ report.actor.ladder_size }}</small></span>
+    <span><strong>{{ report.actor.display_name }} <span class="flash-model-label">{{ report.actor.model }}</span></strong><small>#{{ report.actor.ladder_position }} of {{ report.actor.ladder_size }} · <a href="/flash/record">forecast record</a></small></span>
   </section>
   {% endif %}
   <aside class="ai-report-disclaimer" role="note" aria-label="About this AI report">
@@ -38,6 +38,24 @@
     <p>{{ report.thesis or report.summary }}</p>
   </section>
   <p class="research-summary">{{ report.summary }}</p>
+
+  {% if report.forecast_record %}
+  {% set forecast = report.forecast_record %}
+  <section class="flash-forecast-receipt state-{{ forecast.classification or forecast.status }}">
+    <header><span>FORECAST · <a href="/flash/record">{{ forecast.version_label }}</a></span><b>{{ forecast.classification|upper if forecast.classification else forecast.status|replace('_', ' ')|upper }}</b></header>
+    {% if forecast.direction == 'up' %}<h2>Up · {{ '%.0f'|format(forecast.probability_up * 100) }}% chance up</h2>
+    {% elif forecast.direction == 'down' %}<h2>Down · {{ '%.0f'|format((1 - forecast.probability_up) * 100) }}% chance down</h2>
+    {% else %}<h2>No directional call</h2>{% endif %}
+    <p>{{ forecast.reason }}</p>
+    {% if forecast.start_price %}<small>From ${{ '%.4f'|format(forecast.start_price) if forecast.start_price < 1 else '%.2f'|format(forecast.start_price) }}{% if forecast.end_price %} → ${{ '%.4f'|format(forecast.end_price) if forecast.end_price < 1 else '%.2f'|format(forecast.end_price) }}{% endif %} · next regular-session close</small>{% endif %}
+    {% if forecast.return_pct is not none %}<strong class="{{ 'up' if forecast.classification == 'hit' else 'down' }}">{{ '%+.1f'|format(forecast.return_pct) }}% price move</strong>{% endif %}
+    {% if forecast.void_reason %}<aside>{{ forecast.void_reason }}</aside>{% endif %}
+    {% for correction in forecast.corrections %}<aside>Corrected {{ correction.created_at[:10] }} · {{ correction.reason }}</aside>{% endfor %}
+    <footer>This judges the frozen price forecast, not every fact in the report.</footer>
+  </section>
+  {% elif not report.flash_version_id %}
+  <section class="flash-forecast-receipt state-unscored"><header><span>FORECAST RECORD</span><b>NOT SCORED</b></header><p>This report predates the fixed forecast contract.</p></section>
+  {% endif %}
 
   {% if report.company_profile %}
   <section class="research-section company-profile">

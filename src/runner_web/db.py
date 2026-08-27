@@ -16,6 +16,7 @@ from runner_web.ai_kol import (
     DEFAULT_FLASH_MODEL,
     FLASH,
     actor_snapshot,
+    flash_version_snapshot,
     model_display_name,
 )
 from runner_web.database import (
@@ -2076,6 +2077,169 @@ def _migration_036_sports_request_indexes(db: DatabaseConnection) -> None:
     )
 
 
+def _sync_flash_version(db: DatabaseConnection) -> None:
+    """Register one exact Flash release and reject silent configuration drift."""
+
+    version = flash_version_snapshot(FLASH)
+    existing = db.execute("SELECT * FROM flash_versions WHERE id=?", (version["id"],)).fetchone()
+    timestamp = datetime.now(UTC).isoformat()
+    if existing:
+        row = dict(existing)
+        if str(row["configuration_fingerprint"]) != version["configuration_fingerprint"]:
+            raise RuntimeError(
+                f"Flash version {version['id']!r} changed configuration. "
+                "Set a new FLASH_VERSION_ID before starting the app."
+            )
+        db.execute(
+            "UPDATE flash_versions SET status='active',retired_at=NULL WHERE id=?",
+            (version["id"],),
+        )
+    else:
+        db.execute(
+            """
+            INSERT INTO flash_versions(
+                id,public_label,actor_id,status,provider,requested_model,
+                allowed_resolved_model,prompt_version,context_version,
+                risk_policy_version,output_schema_version,pipeline_version,
+                forecast_contract_version,configuration_fingerprint,
+                launched_at,created_at
+            ) VALUES(?,?,?,'active',?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                version["id"],
+                version["public_label"],
+                version["actor_id"],
+                version["provider"],
+                version["requested_model"],
+                version["allowed_resolved_model"],
+                version["prompt_version"],
+                version["context_version"],
+                version["risk_policy_version"],
+                version["output_schema_version"],
+                version["pipeline_version"],
+                version["forecast_contract_version"],
+                version["configuration_fingerprint"],
+                timestamp,
+                timestamp,
+            ),
+        )
+    db.execute(
+        """
+        UPDATE flash_versions SET status='retired',retired_at=COALESCE(retired_at,?)
+        WHERE id<>? AND status='active'
+        """,
+        (timestamp, version["id"]),
+    )
+
+
+def _migration_037_flash_forecast_record(db: DatabaseConnection) -> None:
+    """Add immutable, versioned Daily Flash forecasts and later market results."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS flash_versions (
+            id TEXT PRIMARY KEY,
+            public_label TEXT NOT NULL,
+            actor_id TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('active','retired')),
+            provider TEXT NOT NULL,
+            requested_model TEXT NOT NULL,
+            allowed_resolved_model TEXT NOT NULL,
+            prompt_version TEXT NOT NULL,
+            context_version TEXT NOT NULL,
+            risk_policy_version TEXT NOT NULL,
+            output_schema_version TEXT NOT NULL,
+            pipeline_version TEXT NOT NULL,
+            forecast_contract_version TEXT NOT NULL,
+            configuration_fingerprint TEXT NOT NULL,
+            launched_at TEXT NOT NULL,
+            retired_at TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS flash_versions_status_time
+            ON flash_versions(status,launched_at DESC);
+
+        CREATE TABLE IF NOT EXISTS flash_forecasts (
+            id TEXT PRIMARY KEY,
+            report_id TEXT NOT NULL UNIQUE
+                REFERENCES research_commissions(id) ON DELETE CASCADE,
+            version_id TEXT NOT NULL REFERENCES flash_versions(id),
+            actor_snapshot_json TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            requested_model TEXT NOT NULL,
+            resolved_model TEXT NOT NULL,
+            provider_request_id TEXT,
+            ticker TEXT NOT NULL,
+            exchange TEXT NOT NULL DEFAULT '',
+            evidence_key TEXT NOT NULL,
+            evidence_as_of TEXT NOT NULL,
+            direction TEXT NOT NULL CHECK(direction IN ('up','down','no_call')),
+            probability_up REAL NOT NULL CHECK(probability_up>=0 AND probability_up<=1),
+            reason TEXT NOT NULL,
+            start_price REAL CHECK(start_price IS NULL OR start_price>0),
+            start_at TEXT,
+            price_source TEXT,
+            market_session TEXT,
+            contract_version TEXT NOT NULL,
+            target_session_date TEXT,
+            eligibility TEXT NOT NULL CHECK(eligibility IN ('eligible','unscored')),
+            ineligibility_reason TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS flash_forecasts_version_time
+            ON flash_forecasts(version_id,created_at DESC);
+        CREATE INDEX IF NOT EXISTS flash_forecasts_ticker_time
+            ON flash_forecasts(ticker,created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS flash_forecast_outcomes (
+            forecast_id TEXT PRIMARY KEY REFERENCES flash_forecasts(id) ON DELETE CASCADE,
+            status TEXT NOT NULL
+                CHECK(status IN ('pending','resolved','no_call','void','under_review')),
+            classification TEXT CHECK(classification IS NULL OR classification IN ('hit','miss')),
+            miss_reason TEXT CHECK(
+                miss_reason IS NULL OR miss_reason IN ('wrong_way','no_meaningful_move')
+            ),
+            end_price REAL CHECK(end_price IS NULL OR end_price>0),
+            observed_at TEXT,
+            return_pct REAL,
+            signed_move_pct REAL,
+            max_favorable_pct REAL,
+            max_adverse_pct REAL,
+            bar_source TEXT,
+            bar_fingerprint TEXT,
+            corporate_action_state TEXT,
+            void_reason TEXT,
+            first_checked_at TEXT,
+            resolved_at TEXT,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS flash_forecast_outcomes_status_time
+            ON flash_forecast_outcomes(status,updated_at);
+
+        CREATE TABLE IF NOT EXISTS flash_evaluation_events (
+            id TEXT PRIMARY KEY,
+            forecast_id TEXT NOT NULL REFERENCES flash_forecasts(id) ON DELETE CASCADE,
+            event_type TEXT NOT NULL
+                CHECK(event_type IN ('created','resolved','voided','reviewed','corrected')),
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS flash_evaluation_events_forecast_time
+            ON flash_evaluation_events(forecast_id,created_at);
+        """
+    )
+    _ensure_column(
+        db,
+        "research_commissions",
+        "flash_version_id TEXT REFERENCES flash_versions(id)",
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS research_commissions_flash_version "
+        "ON research_commissions(flash_version_id,created_at DESC)"
+    )
+    _sync_flash_version(db)
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2120,6 +2284,7 @@ MIGRATIONS = (
     Migration(34, "sports_performance_history", _migration_034_sports_performance_history),
     Migration(35, "sports_news", _migration_035_sports_news),
     Migration(36, "sports_request_indexes", _migration_036_sports_request_indexes),
+    Migration(37, "flash_forecast_record", _migration_037_flash_forecast_record),
 )
 
 
@@ -2198,6 +2363,7 @@ def init_db() -> None:
     with connection() as db:
         _apply_migrations(db)
         _sync_flash_actor(db)
+        _sync_flash_version(db)
         _seed_source_registry(db)
 
 
