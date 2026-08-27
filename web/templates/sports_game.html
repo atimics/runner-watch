@@ -35,24 +35,41 @@
       {% set pick_odds = odds[prediction.selection ~ '_odds'] if odds else none %}
       {% set pick_open_odds = odds[prediction.selection ~ '_open_odds'] if odds else none %}
     {% endif %}
-  <section class="decision-hero {{ prediction.signal|replace(' ','-') }}">
+  <section class="decision-hero decision-board {{ prediction.signal|replace(' ','-') }}">
     <div class="decision-kicker">
-      <strong>{{ prediction.signal|upper }}</strong>
-      <span>{{ prediction.model_version }} · {{ prediction.quality }}</span>
+      <strong>MODEL CALL</strong>
+      <span>{{ prediction.model_version }} · {{ prediction.quality }} · score {{ event.projected_score_basis }}</span>
     </div>
-    {% if prediction.selection == 'pass' %}
-      <h1 class="decision-team"><small>MODEL CALL</small>Pass</h1>
-      <p class="decision-summary">The market is too close to the baseline model to support a side.</p>
-    {% else %}
-      <h1 class="decision-team"><small>{{ prediction.signal|upper }} {{ pick_code }}</small>{{ pick_name }}</h1>
-      <p class="decision-summary">The baseline model sees {{ pick_name }} above the no-vig market price. News below is context, not yet part of the model.</p>
-    {% endif %}
-    <div class="decision-stats">
-      <div><small>MODEL</small><strong>{% if prediction.selection != 'pass' %}{{ '%.1f'|format(pick_probability * 100) }}%{% else %}—{% endif %}</strong></div>
-      <div><small>NO-VIG MARKET</small><strong>{% if prediction.selection != 'pass' and pick_market is not none %}{{ '%.1f'|format(pick_market * 100) }}%{% else %}—{% endif %}</strong></div>
-      <div><small>EDGE</small><strong>{% if prediction.edge_pct is not none %}{{ '%+.1f'|format(prediction.edge_pct) }} pp{% else %}—{% endif %}</strong></div>
-      <div><small>PRICE</small><strong>{% if prediction.selection != 'pass' and pick_odds is not none %}{{ '%+d'|format(pick_odds) }}{% else %}—{% endif %}</strong>{% if prediction.selection != 'pass' and pick_open_odds is not none %}<span>Open {{ '%+d'|format(pick_open_odds) }}</span>{% endif %}</div>
+    <div class="decision-columns">
+      <div class="decision-model-call">
+        <span class="winner-coin winner-coin-{{ event.model_winner_coin_tone }}" aria-hidden="true"><b>{{ event.model_winner_abbreviation[:3] }}</b><i></i></span>
+        <div>
+          <small>PROJECTED WINNER</small>
+          <h1 class="decision-team">{{ event.model_winner_team_name }}</h1>
+          <strong class="decision-probability">{{ '%.1f'|format(event.model_winner_probability_pct) }}%</strong>
+        </div>
+        <div class="decision-score">
+          <small>ESTIMATED SCORE</small>
+          <strong>{{ event.away_abbreviation }} {{ event.projected_away_score_display }} <i>–</i> {{ event.home_abbreviation }} {{ event.projected_home_score_display }}</strong>
+          <span>{{ event.projected_score_basis }}</span>
+        </div>
+      </div>
+      <div class="decision-value-call">
+        <small>VALUE READ</small>
+        {% if prediction.selection == 'pass' %}
+          <strong>PASS</strong>
+          <p>The market is too close to the baseline model to support a side.</p>
+        {% else %}
+          <strong>{{ pick_code }} {{ prediction.signal|upper }}</strong>
+          <p>{{ pick_name }} is {{ '%.1f'|format(pick_probability * 100) }}% in the model versus {{ '%.1f'|format(pick_market * 100) if pick_market is not none else '—' }}% in the no-vig market.</p>
+          <div class="value-numbers">
+            <span><small>EDGE</small><b>{{ '%+.1f'|format(prediction.edge_pct) }} pp</b></span>
+            <span><small>PRICE</small><b>{% if pick_odds is not none %}{{ '%+d'|format(pick_odds) }}{% else %}—{% endif %}</b>{% if pick_open_odds is not none %}<i>Open {{ '%+d'|format(pick_open_odds) }}</i>{% endif %}</span>
+          </div>
+        {% endif %}
+      </div>
     </div>
+    <p class="decision-summary">Projected winner answers who the model expects to win. Value read answers which market price may be too low. They can point to different teams.</p>
     {% if event.edge_history %}
     <div class="decision-movement">
       <span>{{ event.edge_history.label }}</span>

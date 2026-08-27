@@ -272,6 +272,7 @@ def test_sports_refresh_uses_one_paid_moneyline_call_per_due_league(
         )
 
     monkeypatch.setattr(sports, "fetch_league", fake_league)
+    monkeypatch.setattr(sports, "fetch_league_history_chunk", lambda *_args: [])
     monkeypatch.setattr(sports, "fetch_moneylines", fake_moneylines)
     monkeypatch.setattr(sports, "probe_quota", lambda _config: Quota(0, 500, 0))
     monkeypatch.setattr(

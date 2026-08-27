@@ -67,3 +67,142 @@
   .news-item>p{grid-column:1;margin:0}
   .news-item>i{grid-column:2;grid-row:1/4}
 }
+
+.decision-board {
+  padding: 24px;
+}
+
+.decision-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(250px, .75fr);
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.decision-model-call,
+.decision-value-call {
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 13px;
+  background: rgba(5, 4, 9, .25);
+}
+
+.decision-model-call {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  padding: 18px;
+}
+
+.decision-model-call > div > small,
+.decision-score small,
+.decision-score span,
+.decision-value-call > small,
+.value-numbers small,
+.value-numbers i {
+  display: block;
+  color: var(--muted);
+  font-size: 7px;
+  font-weight: 850;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.decision-team {
+  margin: 4px 0 0;
+  font-size: clamp(25px, 4vw, 38px);
+  letter-spacing: -.045em;
+  line-height: 1;
+}
+
+.decision-probability {
+  display: block;
+  margin-top: 5px;
+  color: var(--green);
+  font-size: 24px;
+}
+
+.decision-score {
+  grid-column: 1 / -1;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, .08);
+}
+
+.decision-score strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 18px;
+}
+
+.decision-score strong i {
+  color: #655b75;
+  font-style: normal;
+}
+
+.decision-score span {
+  margin-top: 5px;
+  letter-spacing: .04em;
+  text-transform: none;
+}
+
+.decision-value-call {
+  padding: 18px;
+}
+
+.decision-value-call > strong {
+  display: block;
+  margin-top: 10px;
+  color: var(--decision-accent);
+  font-size: 26px;
+}
+
+.decision-value-call > p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.value-numbers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.value-numbers > span {
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 8px;
+}
+
+.value-numbers b {
+  display: block;
+  margin-top: 5px;
+  font-size: 16px;
+}
+
+.value-numbers i {
+  margin-top: 3px;
+  font-style: normal;
+  letter-spacing: .03em;
+  text-transform: none;
+}
+
+.decision-board .decision-summary {
+  max-width: none;
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid rgba(255, 255, 255, .08);
+  font-size: 10px;
+}
+
+@media(max-width:700px){
+  .decision-board{padding:18px 14px}
+  .decision-columns{grid-template-columns:1fr}
+  .decision-model-call{grid-template-columns:48px minmax(0,1fr);padding:14px}
+  .decision-model-call .winner-coin{width:46px;height:46px}
+  .decision-team{font-size:26px}
+  .decision-probability{font-size:21px}
+  .decision-value-call{padding:14px}
+}

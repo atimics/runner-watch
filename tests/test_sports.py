@@ -6,6 +6,7 @@ import pytest
 from fastapi import Request
 
 from runner_web import db
+from runner_web import sports as sports_module
 from runner_web.db import connection, init_db
 from runner_web.main import (
     alpha_page,
@@ -16,7 +17,9 @@ from runner_web.main import (
     sports_game_page,
 )
 from runner_web.sports import (
+    collect_stored_player_appearances,
     create_sports_pick,
+    fetch_league_history_chunk,
     implied_probability,
     no_vig_probabilities,
     normalize_event,
@@ -235,9 +238,10 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     assert b'class="winner-coin ' in response.body
     assert b"Away Club" in response.body
     assert b"Home Club" in response.body
-    assert b"FORM SCORE" in response.body
+    assert b"MARKET-TOTAL SCORE" in response.body
     assert b"MODEL" in response.body
     assert b"EDGE" in response.body
+    assert b"distinct matchups" in response.body
     assert b'class="edge-spark"' in response.body
     assert b"PROJECTED WINNER" not in response.body
     assert b"Full slate" not in response.body
@@ -253,6 +257,9 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     detail_response = sports_game_page(event["id"], request(path=f"/game/{event['id']}"), None)
     assert detail_response.status_code == 200
     assert b'class="decision-team"' in detail_response.body
+    assert b"PROJECTED WINNER" in detail_response.body
+    assert b"VALUE READ" in detail_response.body
+    assert b"They can point to different teams" in detail_response.body
     assert b"Team news" in detail_response.body
     assert b"Make a paper pick" in detail_response.body
 
@@ -342,6 +349,25 @@ def test_pulse_separates_model_favorite_from_value_edge(sports_db) -> None:
     assert card["projected_score_basis"] == "market total"
 
 
+def test_pulse_groups_repeated_series_after_the_strongest_game(sports_db) -> None:
+    first = normalize_event("mlb", sample_event())
+    assert first is not None
+    second_raw = sample_event()
+    second_raw["id"] = "401000002"
+    second_raw["date"] = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    second = normalize_event("mlb", second_raw)
+    assert second is not None
+    store_events([first, second])
+
+    pulse = sports_pulse("mlb")
+
+    assert pulse["signal_count"] == 2
+    assert pulse["display_count"] == 1
+    assert len(pulse["events"]) == 1
+    assert pulse["events"][0]["series_more_count"] == 1
+    assert pulse["events"][0]["series_more"][0]["id"] == second["id"]
+
+
 def test_sports_alpha_builds_team_and_player_win_rate_history(sports_db) -> None:
     payload = {
         "boxscore": {
@@ -394,17 +420,57 @@ def test_sports_alpha_builds_team_and_player_win_rate_history(sports_db) -> None
     player = next(row for row in alpha["players"] if row["player_id"] == "p1")
     assert home_team["win_rate"] == 60.0
     assert home_team["history"]
+    assert home_team["history_points"][0]["at"]
     assert player["win_rate"] == 100.0
     assert player["games"] == 3
+    assert player["history_points"][-1]["rate"] == 100.0
+    assert alpha["model"]["games"] == 3
+    assert alpha["model"]["history_points"]
+
+
+def test_sports_history_backfill_moves_through_older_chunks(
+    sports_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = []
+
+    def fake_range(league, start, end, *, feed):
+        calls.append((league, start, end, feed))
+        return []
+
+    monkeypatch.setattr(sports_module, "_fetch_league_range", fake_range)
+    current = datetime(2026, 8, 26, 20, tzinfo=UTC)
+
+    assert fetch_league_history_chunk("mlb", current) == []
+    assert fetch_league_history_chunk("mlb", current) == []
+    assert calls[0][2] == current.date() - timedelta(days=2)
+    assert calls[1][2] == calls[0][2] - timedelta(days=sports_module.HISTORY_CHUNK_DAYS)
+
+
+def test_empty_player_boxscore_is_checked_only_once(
+    sports_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = sample_event(completed=True)
+    event = normalize_event("mlb", raw)
+    assert event is not None
+    store_events([event])
+    monkeypatch.setattr(sports_module, "fetch_player_appearances", lambda _event: [])
+
+    first = collect_stored_player_appearances("mlb")
+    second = collect_stored_player_appearances("mlb")
+
+    assert first["events"] == 1
+    assert second["events"] == 0
 
 
 def test_sports_host_has_radar_and_alpha_products(sports_db) -> None:
     radar_response = radar_page(request(path="/radar"), None)
     alpha_response = alpha_page(request(path="/alpha"), None)
     assert radar_response.status_code == 200
-    assert b"Only material changes" in radar_response.body
+    assert b"material change" in radar_response.body
+    assert b'class="sports-hero' not in radar_response.body
     assert alpha_response.status_code == 200
-    assert b"player win rate" in alpha_response.body
+    assert b"Team record in appearances" in alpha_response.body
+    assert b"data-history-range=\"30\"" in alpha_response.body
 
 
 def test_cloudflare_forwarded_host_selects_the_public_product() -> None:
