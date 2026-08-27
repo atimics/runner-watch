@@ -899,7 +899,11 @@ def _edge_sparkline(
 ) -> dict[str, Any] | None:
     """Build a small, fixed-scale history for the latest preferred side."""
 
-    if not prediction or not (side := _preferred_side(prediction)):
+    if (
+        not prediction
+        or prediction.get("edge") is None
+        or not (side := _preferred_side(prediction))
+    ):
         return None
     rows = database.execute(
         """
@@ -934,8 +938,14 @@ def _edge_sparkline(
     chart_midline = 12.0
     chart_range = 9.0
     coordinates: list[str] = []
-    for index, point in enumerate(points):
-        x = chart_width / 2 if len(points) == 1 else 2 + index * 88 / (len(points) - 1)
+    observed_times = [_parse_time(point["observed_at"]) for point in points]
+    time_span = (observed_times[-1] - observed_times[0]).total_seconds()
+    for point, observed_time in zip(points, observed_times, strict=True):
+        x = (
+            chart_width / 2
+            if time_span <= 0
+            else 2 + (observed_time - observed_times[0]).total_seconds() * 88 / time_span
+        )
         clipped_edge = max(-12.0, min(12.0, float(point["edge_pct"])))
         y = chart_midline - (clipped_edge / 12.0) * chart_range
         coordinates.append(f"{x:.1f},{y:.1f}")
