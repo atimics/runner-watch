@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="/static/sports-ticker.css?v={{ static_version }}">
   <link rel="stylesheet" href="/static/sports-dashboard.css?v={{ static_version }}">
   {% block head %}{% endblock %}
+  <link rel="stylesheet" href="/static/product-system.css?v={{ static_version }}">
 </head>
 <body class="sports-product">
   <header class="sports-topbar">
@@ -21,7 +22,7 @@
       <a class="{% if sports_tab == 'pulse' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/">Pulse</a>
       <a class="{% if sports_tab == 'radar' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/radar">Radar</a>
       <a class="{% if sports_tab == 'alpha' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/alpha">Alpha</a>
-      <a href="{{ runners_origin }}">RATi Runners</a>
+      <a href="{{ runners_origin }}">Runners</a>
       {% if user %}
         <button type="button" data-profile>{{ user.display_name[:1]|upper }}</button>
       {% else %}
@@ -37,7 +38,8 @@
   <nav class="sports-tab-bar" aria-label="Sports navigation">
     <a class="{% if sports_tab == 'pulse' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/"><span class="sports-tab-icon pulse"></span><b>Pulse</b></a>
     <a class="{% if sports_tab == 'radar' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/radar"><span class="sports-tab-icon radar"></span><b>Radar</b></a>
-    <a class="{% if sports_tab == 'alpha' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/alpha"><span class="sports-tab-icon alpha">🐺</span><b>Alpha</b></a>
+    <a class="{% if sports_tab == 'alpha' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/alpha"><span class="sports-tab-icon alpha">▲</span><b>Alpha</b></a>
+    <a href="{{ runners_origin }}"><span class="sports-tab-icon product">R</span><b>Runners</b></a>
   </nav>
   {% if user %}
   <dialog class="sports-profile" id="sportsProfile">

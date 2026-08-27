@@ -1,26 +1,6 @@
 {% extends "sports_base.html" %}
 {% block title %}Pulse · RATi Sports{% endblock %}
 {% block content %}
-<dialog class="sports-announcement" id="sportsAnnouncement" data-announcement-version="sports-intro-2026-08-26" aria-labelledby="sportsAnnouncementTitle" aria-describedby="sportsAnnouncementCopy">
-  <div class="sports-announcement-inner">
-    <form method="dialog">
-      <button class="sports-announcement-close" type="submit" aria-label="Dismiss announcement">×</button>
-    </form>
-    <span class="sports-eyebrow">LATEST SNAPSHOT · {{ pulse.model }}</span>
-    <h2 id="sportsAnnouncementTitle">Today’s slate,<br><em>with receipts.</em></h2>
-    <p id="sportsAnnouncementCopy">We compare a simple team-form model with the no-vig moneyline. Every number keeps its source and time.</p>
-    <section class="sports-announcement-stats" aria-label="Paper pick record">
-      <div><small>SETTLED</small><strong>{{ pick_stats.settled }}</strong></div>
-      <div><small>W–L–P</small><strong>{{ pick_stats.wins }}–{{ pick_stats.losses }}–{{ pick_stats.pushes }}</strong></div>
-      <div><small>UNITS</small><strong class="{% if pick_stats.units >= 0 %}positive{% endif %}">{{ '%+.2f'|format(pick_stats.units) }}</strong></div>
-      <div><small>ROI</small><strong>{% if pick_stats.roi_pct is not none %}{{ '%+.1f%%'|format(pick_stats.roi_pct) }}{% else %}Learning{% endif %}</strong></div>
-    </section>
-    <form method="dialog">
-      <button class="sports-announcement-action" type="submit">Got it</button>
-    </form>
-  </div>
-</dialog>
-
 {% if pulse.source_status != 'success' %}
 <aside class="source-warning">
   <strong>Preview feed: {{ pulse.source_status }}</strong>
@@ -123,19 +103,6 @@
 {% endblock %}
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
-  const announcement=document.getElementById('sportsAnnouncement');
-  const announcementKey='rati:sports-announcement';
-  if(announcement?.showModal){
-    let seenVersion='';
-    try{seenVersion=localStorage.getItem(announcementKey)||'';}catch(error){}
-    if(seenVersion!==announcement.dataset.announcementVersion)announcement.showModal();
-    announcement.addEventListener('close',()=>{
-      try{localStorage.setItem(announcementKey,announcement.dataset.announcementVersion);}catch(error){}
-    });
-    announcement.addEventListener('click',event=>{
-      if(event.target===announcement)announcement.close();
-    });
-  }
   document.querySelectorAll('[data-local-time]').forEach(node=>{
     const date=new Date(node.dataset.localTime);
     if(!Number.isNaN(date.valueOf()))node.textContent=date.toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit',timeZoneName:'short'});

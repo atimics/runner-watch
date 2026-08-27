@@ -81,16 +81,7 @@
 .decision-hero.pass{--decision-accent:var(--muted)}
 .decision-kicker{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:9px;font-weight:850;letter-spacing:.11em;text-transform:uppercase}
 .decision-kicker strong{padding:5px 8px;border-radius:999px;background:color-mix(in srgb,var(--decision-accent) 15%,transparent);color:var(--decision-accent);font-size:10px}
-.decision-team{max-width:880px;margin:20px 0 18px;color:var(--text);font-size:clamp(64px,10vw,108px);font-weight:950;letter-spacing:-.075em;line-height:.8;text-wrap:balance}
-.decision-team small{display:block;margin:0 0 12px;color:var(--decision-accent);font-size:10px;font-weight:900;letter-spacing:.14em;line-height:1;text-transform:uppercase}
 .decision-summary{max-width:650px;margin:0;color:#b7afc4;font-size:13px;line-height:1.55}
-.decision-stats{display:grid;grid-template-columns:repeat(4,1fr);margin-top:26px;border:1px solid rgba(255,255,255,.08);border-radius:11px;background:rgba(5,4,9,.26)}
-.decision-stats>div{min-width:0;padding:14px;border-right:1px solid rgba(255,255,255,.08)}
-.decision-stats>div:last-child{border-right:0}
-.decision-stats small,.decision-stats strong,.decision-stats span{display:block}
-.decision-stats small{color:var(--muted);font-size:8px;font-weight:850;letter-spacing:.1em}
-.decision-stats strong{margin-top:5px;font-size:23px;font-variant-numeric:tabular-nums}
-.decision-stats span{margin-top:3px;color:var(--muted);font-size:8px}
 .decision-movement{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:12px;color:var(--decision-accent);font-size:9px}
 .decision-movement .edge-spark{flex:0 0 92px}
 .match-news{margin-top:14px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
@@ -127,11 +118,6 @@
   .matchup-players>header{align-items:flex-start;flex-direction:column;gap:5px;padding:13px 14px}
   .matchup-player-grid{grid-template-columns:1fr;padding:13px 14px}
   .decision-hero{padding:24px 18px}
-  .decision-team{font-size:clamp(52px,16vw,72px);line-height:.84}
-  .decision-stats{grid-template-columns:1fr 1fr}
-  .decision-stats>div:nth-child(2){border-right:0}
-  .decision-stats>div:nth-child(-n+2){border-bottom:1px solid rgba(255,255,255,.08)}
-  .decision-stats strong{font-size:20px}
   .decision-movement{align-items:flex-start;flex-direction:column}
   .match-news>header{align-items:flex-start;flex-direction:column;gap:5px}
   .news-item{grid-template-columns:1fr 16px;gap:7px 10px}

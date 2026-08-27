@@ -3,12 +3,17 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 
 
-def test_taste_layer_is_loaded_after_existing_styles() -> None:
+def test_shared_product_system_is_loaded_after_existing_styles() -> None:
     base = (ROOT / "web/templates/mobile_base.html").read_text()
+    sports = (ROOT / "web/templates/sports_base.html").read_text()
 
-    assert base.index("sharp.css") < base.index("taste-audit.css")
+    assert base.index("desktop-split.css") < base.index("product-system.css")
+    assert sports.index("sports-dashboard.css") < sports.index("product-system.css")
     assert 'class="skip-link"' in base
     assert 'id="app-content"' in base
+    assert 'class="tab-link product-tab-link"' in base
+    assert 'class="sports-tab-icon product"' in sports
+    assert 'class="product-switch"' not in base
 
 
 def test_general_interface_keeps_its_editorial_edge() -> None:
