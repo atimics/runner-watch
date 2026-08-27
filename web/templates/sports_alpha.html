@@ -1,0 +1,95 @@
+{% extends "sports_base.html" %}
+{% block title %}Alpha · RATi Sports{% endblock %}
+{% block content %}
+<section class="sports-hero sports-hero-compact">
+  <span class="sports-eyebrow">RESULTS OVER REPUTATION</span>
+  <h1>Alpha</h1>
+  <p>Teams and players earn their rank through completed games. Every rate keeps its history visible.</p>
+</section>
+
+<nav class="league-tabs" aria-label="League filter">
+  <a class="{% if alpha.league == 'all' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/alpha?league=all">All</a>
+  {% for league in alpha.leagues %}
+    <a class="{% if alpha.league == league.key %}active{% endif %}" href="{{ sports_path_prefix or '' }}/alpha?league={{ league.key }}">{{ league.name }}</a>
+  {% endfor %}
+</nav>
+
+<div class="performance-switch" role="tablist" aria-label="Performance ranking">
+  <button class="active" type="button" role="tab" aria-selected="true" data-alpha-tab="teams">Teams <b>{{ alpha.teams|length }}</b></button>
+  <button type="button" role="tab" aria-selected="false" data-alpha-tab="players">Players <b>{{ alpha.players|length }}</b></button>
+</div>
+
+<section class="performance-panel" data-alpha-panel="teams">
+  {% if alpha.teams %}
+    {% set leader = alpha.teams[0] %}
+    <article class="performance-leader">
+      <div class="leader-kicker"><span>▲</span><b>#1 win-rate signal</b></div>
+      <div class="leader-main">
+        <span class="team-orb">{{ leader.abbreviation[:3] }}</span>
+        <span><strong>{{ leader.name }}</strong><small>{{ leader.league|upper }} · {{ leader.wins }}–{{ leader.losses }}</small></span>
+        <span class="leader-rate"><b>{{ '%.1f'|format(leader.win_rate) }}%</b><small class="{% if leader.trend_pct >= 0 %}positive{% else %}negative{% endif %}">{{ '%+.1f'|format(leader.trend_pct) }}pp</small></span>
+      </div>
+      <svg class="rate-chart rate-chart-large" data-rate-history="{{ leader.history|join(',') }}" viewBox="0 0 320 86" role="img" aria-label="{{ leader.name }} win rate history"></svg>
+      <div class="leader-foot"><span>Last 10 stored games: {{ '%.1f'|format(leader.recent_win_rate) }}%</span><span>{{ leader.games }} season games</span></div>
+    </article>
+
+    <section class="performance-ranking" aria-label="Team win rate ranking">
+    {% for team in alpha.teams[1:] %}
+      <article class="performance-row">
+        <span class="rank-number">{{ loop.index + 1 }}</span>
+        <span class="team-orb small">{{ team.abbreviation[:3] }}</span>
+        <span class="performance-name"><strong>{{ team.name }}</strong><small>{{ team.league|upper }} · {{ team.wins }}–{{ team.losses }} · last 10 {{ '%.0f'|format(team.recent_win_rate) }}%</small></span>
+        <svg class="rate-chart" data-rate-history="{{ team.history|join(',') }}" viewBox="0 0 92 32" role="img" aria-label="{{ team.name }} win rate history"></svg>
+        <span class="performance-rate"><b>{{ '%.1f'|format(team.win_rate) }}%</b><small class="{% if team.trend_pct >= 0 %}positive{% else %}negative{% endif %}">{{ '%+.1f'|format(team.trend_pct) }}pp</small></span>
+      </article>
+    {% endfor %}
+    </section>
+  {% else %}
+    <div class="sports-empty"><strong>Team history is still learning.</strong><p>Completed regular-season games will build the first win-rate lines.</p></div>
+  {% endif %}
+</section>
+
+<section class="performance-panel" data-alpha-panel="players" hidden>
+  <aside class="performance-definition"><strong>What “player win rate” means</strong><span>The team’s result in completed games where this player logged a box-score appearance. It is context, not an individual skill score.</span></aside>
+  {% if alpha.players %}
+  <section class="performance-ranking" aria-label="Player appearance win rate ranking">
+    {% for player in alpha.players %}
+    <article class="performance-row player-row">
+      <span class="rank-number">{{ loop.index }}</span>
+      <span class="team-orb small player-orb">{{ player.name[:2]|upper }}</span>
+      <span class="performance-name"><strong>{{ player.name }}</strong><small>{{ player.team_abbreviation }} · {{ player.position }} · {{ player.wins }}–{{ player.losses }} in appearances</small></span>
+      <svg class="rate-chart" data-rate-history="{{ player.history|join(',') }}" viewBox="0 0 92 32" role="img" aria-label="{{ player.name }} appearance win rate history"></svg>
+      <span class="performance-rate"><b>{{ '%.1f'|format(player.win_rate) }}%</b><small>{{ player.games }} games</small></span>
+    </article>
+    {% endfor %}
+  </section>
+  {% else %}
+    <div class="sports-empty"><strong>Player history is filling now.</strong><p>Completed box scores will add players automatically; no empty roster guesses are shown.</p></div>
+  {% endif %}
+</section>
+
+<p class="sports-source">Rates use stored completed games · Player appearances use the ESPN preview box score</p>
+{% endblock %}
+{% block scripts %}
+<script nonce="{{ request.state.csp_nonce }}">
+  function paintRateCharts(){
+    document.querySelectorAll('[data-rate-history]').forEach(svg=>{
+      const values=svg.dataset.rateHistory.split(',').map(Number).filter(Number.isFinite);
+      if(!values.length)return;
+      const box=svg.viewBox.baseVal,width=box.width||92,height=box.height||32,pad=3;
+      const points=values.map((value,index)=>{
+        const x=values.length===1?width/2:pad+index*(width-pad*2)/(values.length-1);
+        const y=height-pad-(Math.max(0,Math.min(100,value))/100)*(height-pad*2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+      svg.innerHTML=`<line x1="0" y1="${height/2}" x2="${width}" y2="${height/2}" class="rate-mid"></line><polyline points="${points}"></polyline><circle cx="${points.split(' ').at(-1).split(',')[0]}" cy="${points.split(' ').at(-1).split(',')[1]}" r="2.5"></circle>`;
+    });
+  }
+  document.querySelectorAll('[data-alpha-tab]').forEach(button=>button.addEventListener('click',()=>{
+    const target=button.dataset.alphaTab;
+    document.querySelectorAll('[data-alpha-tab]').forEach(item=>{const active=item===button;item.classList.toggle('active',active);item.setAttribute('aria-selected',String(active));});
+    document.querySelectorAll('[data-alpha-panel]').forEach(panel=>panel.hidden=panel.dataset.alphaPanel!==target);
+  }));
+  paintRateCharts();
+</script>
+{% endblock %}

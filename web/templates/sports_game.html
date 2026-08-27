@@ -1,26 +1,90 @@
 {% extends "sports_base.html" %}
 {% block title %}{{ event.away_abbreviation }} at {{ event.home_abbreviation }} · RATi Sports{% endblock %}
 {% block content %}
-<a class="sports-back" href="/">← Back to slate</a>
+{% set odds = event.odds %}
+{% set prediction = event.prediction %}
+<a class="sports-back" href="{{ sports_path_prefix or '' }}/">← Back to Pulse</a>
 <article class="game-detail">
-  <header class="game-detail-head">
-    <span>{{ event.league|upper }} · <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time></span>
-    <h1>{{ event.away_team_name }}<i>at</i>{{ event.home_team_name }}</h1>
-    <p>{{ event.venue }}{% if event.location %} · {{ event.location }}{% endif %} · {{ event.status_detail }}</p>
+  <header class="match-strip">
+    <div class="match-strip-meta">
+      <strong>{{ event.league|upper }}</strong>
+      <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time>
+      <span>{{ event.venue }}{% if event.location %} · {{ event.location }}{% endif %}</span>
+    </div>
+    <div class="match-strip-teams">
+      <div>
+        <small>{{ event.away_abbreviation }} · {{ event.away_record or 'No record' }}</small>
+        <strong>{{ event.away_team_name }}</strong>
+        <span>{% if odds and odds.away_odds is not none %}{{ '%+d'|format(odds.away_odds) }}{% else %}—{% endif %}</span>
+      </div>
+      <i>at</i>
+      <div>
+        <small>{{ event.home_abbreviation }} · {{ event.home_record or 'No record' }}</small>
+        <strong>{{ event.home_team_name }}</strong>
+        <span>{% if odds and odds.home_odds is not none %}{{ '%+d'|format(odds.home_odds) }}{% else %}—{% endif %}</span>
+      </div>
+    </div>
   </header>
 
-  {% set odds = event.odds %}
-  {% set prediction = event.prediction %}
-  <section class="detail-market">
-    <div><small>{{ event.away_abbreviation }} MONEYLINE</small><strong>{% if odds and odds.away_odds is not none %}{{ '%+d'|format(odds.away_odds) }}{% else %}—{% endif %}</strong><span>{% if prediction %}Model {{ '%.1f'|format(prediction.away_probability * 100) }}%{% endif %}</span></div>
-    <div><small>{{ event.home_abbreviation }} MONEYLINE</small><strong>{% if odds and odds.home_odds is not none %}{{ '%+d'|format(odds.home_odds) }}{% else %}—{% endif %}</strong><span>{% if prediction %}Model {{ '%.1f'|format(prediction.home_probability * 100) }}%{% endif %}</span></div>
+  {% if prediction %}
+    {% if prediction.selection != 'pass' %}
+      {% set pick_name = event[prediction.selection ~ '_team_name'] %}
+      {% set pick_code = event[prediction.selection ~ '_abbreviation'] %}
+      {% set pick_probability = prediction[prediction.selection ~ '_probability'] %}
+      {% set pick_market = prediction[prediction.selection ~ '_market_probability'] %}
+      {% set pick_odds = odds[prediction.selection ~ '_odds'] if odds else none %}
+      {% set pick_open_odds = odds[prediction.selection ~ '_open_odds'] if odds else none %}
+    {% endif %}
+  <section class="decision-hero {{ prediction.signal|replace(' ','-') }}">
+    <div class="decision-kicker">
+      <strong>{{ prediction.signal|upper }}</strong>
+      <span>{{ prediction.model_version }} · {{ prediction.quality }}</span>
+    </div>
+    {% if prediction.selection == 'pass' %}
+      <h1 class="decision-team"><small>MODEL CALL</small>Pass</h1>
+      <p class="decision-summary">The market is too close to the baseline model to support a side.</p>
+    {% else %}
+      <h1 class="decision-team"><small>{{ prediction.signal|upper }} {{ pick_code }}</small>{{ pick_name }}</h1>
+      <p class="decision-summary">The baseline model sees {{ pick_name }} above the no-vig market price. News below is context, not yet part of the model.</p>
+    {% endif %}
+    <div class="decision-stats">
+      <div><small>MODEL</small><strong>{% if prediction.selection != 'pass' %}{{ '%.1f'|format(pick_probability * 100) }}%{% else %}—{% endif %}</strong></div>
+      <div><small>NO-VIG MARKET</small><strong>{% if prediction.selection != 'pass' and pick_market is not none %}{{ '%.1f'|format(pick_market * 100) }}%{% else %}—{% endif %}</strong></div>
+      <div><small>EDGE</small><strong>{% if prediction.edge_pct is not none %}{{ '%+.1f'|format(prediction.edge_pct) }} pp{% else %}—{% endif %}</strong></div>
+      <div><small>PRICE</small><strong>{% if prediction.selection != 'pass' and pick_odds is not none %}{{ '%+d'|format(pick_odds) }}{% else %}—{% endif %}</strong>{% if prediction.selection != 'pass' and pick_open_odds is not none %}<span>Open {{ '%+d'|format(pick_open_odds) }}</span>{% endif %}</div>
+    </div>
+    {% if event.edge_history %}
+    <div class="decision-movement">
+      <span>{{ event.edge_history.label }}</span>
+      <svg class="edge-spark" viewBox="0 0 92 24" role="img" aria-label="{{ event.edge_history.label }}" preserveAspectRatio="none">
+        <line class="edge-zero" x1="1" y1="12" x2="91" y2="12"></line>
+        {% if event.edge_history.points|length > 1 %}<polyline points="{{ event.edge_history.plot_points }}"></polyline>{% else %}<circle cx="46" cy="{{ event.edge_history.dot_y }}" r="2.2"></circle>{% endif %}
+      </svg>
+    </div>
+    {% endif %}
   </section>
 
-  {% if prediction %}
-  <section class="model-callout {{ prediction.signal|replace(' ','-') }}">
-    <span>{{ prediction.model_version }} · {{ prediction.quality }}</span>
-    <h2>{% if prediction.selection == 'pass' %}Pass at this price{% else %}Lean {{ event[prediction.selection ~ '_team_name'] }}{% endif %}</h2>
-    <p>{% if prediction.edge_pct is not none %}Estimated edge {{ '%+.1f'|format(prediction.edge_pct) }} percentage points against the no-vig market.{% else %}The model has no complete two-sided market price to compare.{% endif %}</p>
+  <section class="match-news">
+    <header>
+      <div><span>LIVE CONTEXT</span><h2>Team news</h2></div>
+      <small>Source-linked · not used by {{ prediction.model_version }}</small>
+    </header>
+    <div class="news-list">
+      {% for article in event.news[:4] %}
+      <a class="news-item" href="{{ article.source_url }}" rel="nofollow noreferrer">
+        <span class="news-item-meta">
+          <b>{% if article.team_side == 'home' %}{{ event.home_abbreviation }}{% elif article.team_side == 'away' %}{{ event.away_abbreviation }}{% else %}MATCHUP{% endif %}</b>
+          <span>{{ article.source_name }}</span>
+          <time data-local-time="{{ article.published_at }}">{{ article.published_at[:16]|replace('T',' ') }} UTC</time>
+        </span>
+        <strong>{{ article.headline }}</strong>
+        {% if article.summary %}<p>{{ article.summary }}</p>{% endif %}
+        <i aria-hidden="true">↗</i>
+      </a>
+      {% else %}
+      <p class="news-empty">{% if prediction.signal in ['lean', 'watch'] %}No fresh team-linked headlines have arrived yet.{% else %}News starts collecting when a matchup reaches Lean or Watch.{% endif %}</p>
+      {% endfor %}
+    </div>
   </section>
 
   <div class="detail-grid">
@@ -65,7 +129,7 @@
       <div><time>{{ item.observed_at[:16]|replace('T',' ') }} UTC</time><span>{{ event.away_abbreviation }} {{ '%+d'|format(item.away_odds) if item.away_odds is not none else '—' }}</span><span>{{ event.home_abbreviation }} {{ '%+d'|format(item.home_odds) if item.home_odds is not none else '—' }}</span><small>{{ item.sportsbook }}</small></div>
     {% else %}<p>No moneyline snapshots are available.</p>{% endfor %}
   </section>
-  <a class="source-link" href="{{ event.source_url }}" rel="nofollow noreferrer">View source ↗</a>
+  <a class="source-link" href="{{ event.source_url }}" rel="nofollow noreferrer">View game source ↗</a>
 </article>
 {% endblock %}
 {% block scripts %}

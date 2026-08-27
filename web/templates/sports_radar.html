@@ -1,0 +1,65 @@
+{% extends "sports_base.html" %}
+{% block title %}Radar · RATi Sports{% endblock %}
+{% block content %}
+<section class="sports-hero sports-hero-compact">
+  <span class="sports-eyebrow">LIVE CHANGES · {{ radar.tracked_count }} SIGNALS TRACKED</span>
+  <h1>Radar</h1>
+  <p>Only material changes to Pulse games: price movement, model movement, and games that are live now.</p>
+</section>
+
+<section class="sports-scoreboard radar-summary" aria-label="Radar coverage">
+  <div><small>CHANGES</small><strong class="positive">{{ radar.change_count }}</strong></div>
+  <div><small>TRACKED</small><strong>{{ radar.tracked_count }}</strong></div>
+  <div><small>REFRESH</small><strong>60s</strong></div>
+  <div><small>STATE</small><strong class="positive">Live</strong></div>
+</section>
+
+<nav class="league-tabs" aria-label="League filter">
+  <a class="{% if radar.league == 'all' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/radar?league=all">All</a>
+  {% for league in radar.leagues %}
+    <a class="{% if radar.league == league.key %}active{% endif %}" href="{{ sports_path_prefix or '' }}/radar?league={{ league.key }}">{{ league.name }}</a>
+  {% endfor %}
+</nav>
+
+<section class="radar-list" aria-label="Material sports changes">
+  {% for event in radar.events %}
+  {% set prediction = event.prediction %}
+  <a class="radar-card {{ event.radar_kind }}" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}">
+    <span class="radar-mark"><b>{{ event.signal_abbreviation[:3] }}</b><small>{{ event.league|upper }}</small></span>
+    <span class="radar-copy">
+      <span><strong>{{ event.signal_abbreviation }}</strong> vs {{ event.opponent_abbreviation }} <b class="radar-kind">{{ event.radar_label }}</b></span>
+      <small>{{ event.radar_detail }}</small>
+      <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time>
+    </span>
+    {% if event.edge_history %}
+    <svg class="edge-spark radar-spark" viewBox="0 0 92 24" role="img" aria-label="{{ event.edge_history.label }}" preserveAspectRatio="none">
+      <line class="edge-zero" x1="1" y1="12" x2="91" y2="12"></line>
+      {% if event.edge_history.points|length > 1 %}<polyline points="{{ event.edge_history.plot_points }}"></polyline>{% else %}<circle cx="46" cy="{{ event.edge_history.dot_y }}" r="2.2"></circle>{% endif %}
+    </svg>
+    {% endif %}
+    <span class="radar-value">
+      {% if event.radar_kind == 'live' %}<b>LIVE</b><small>{{ event.status_detail }}</small>{% else %}<b class="{% if event.radar_value >= 0 %}positive{% else %}negative{% endif %}">{{ '%+.1f'|format(event.radar_value) }}pp</b><small>{{ event.radar_label|lower }}</small>{% endif %}
+    </span>
+    <span class="game-chevron" aria-hidden="true">›</span>
+  </a>
+  {% else %}
+  <div class="sports-empty radar-empty-state">
+    <span class="empty-radar" aria-hidden="true"></span>
+    <strong>No material change yet.</strong>
+    <p>Radar will light up when a Pulse signal moves by at least half a point or goes live.</p>
+    <a class="sports-empty-action" href="{{ sports_path_prefix or '' }}/">Back to Pulse</a>
+  </div>
+  {% endfor %}
+</section>
+
+<p class="sports-source">Odds and game state are source-timestamped · ESPN preview feed</p>
+{% endblock %}
+{% block scripts %}
+<script nonce="{{ request.state.csp_nonce }}">
+  document.querySelectorAll('[data-local-time]').forEach(node=>{
+    const date=new Date(node.dataset.localTime);
+    if(!Number.isNaN(date.valueOf()))node.textContent=date.toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'});
+  });
+  setTimeout(()=>location.reload(),60000);
+</script>
+{% endblock %}
