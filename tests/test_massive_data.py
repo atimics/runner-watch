@@ -253,6 +253,50 @@ def test_adapter_reports_partial_when_symbol_is_missing(tmp_path: Path) -> None:
     cache.close()
 
 
+def test_shared_call_slot_spreads_two_clients(tmp_path: Path) -> None:
+    """Two processes sharing one cache cannot call back-to-back."""
+    cache = MassiveDailyCache(tmp_path / "cache.sqlite3")
+    cache.acquire_call_slot(min_interval_seconds=1.0, max_wait_seconds=0.0)
+    with pytest.raises(massive_data.MassiveRateLimitError):
+        cache.acquire_call_slot(min_interval_seconds=1.0, max_wait_seconds=0.0)
+    cache.close()
+
+
+def test_client_retries_429_then_succeeds(monkeypatch: MonkeyPatch) -> None:
+    import urllib.error
+
+    calls = {"count": 0}
+
+    def fake_urlopen(request, timeout=None):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise urllib.error.HTTPError(
+                request.full_url, 429, "Too Many Requests", hdrs=None, fp=BytesIO(b"{}")
+            )
+        return _FakeResponse(_grouped_body("AAA"))
+
+    monkeypatch.setattr(massive_data.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(massive_data.time, "sleep", lambda seconds: None)
+    client = MassiveClient("k", limiter=RateLimiter(calls_per_minute=1000))
+    assert [row["T"] for row in client.grouped_daily(TODAY)] == ["AAA"]
+    assert calls["count"] == 2
+
+
+def test_client_gives_up_after_persistent_429(monkeypatch: MonkeyPatch) -> None:
+    import urllib.error
+
+    def fake_urlopen(request, timeout=None):
+        raise urllib.error.HTTPError(
+            request.full_url, 429, "Too Many Requests", hdrs=None, fp=BytesIO(b"{}")
+        )
+
+    monkeypatch.setattr(massive_data.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(massive_data.time, "sleep", lambda seconds: None)
+    client = MassiveClient("k", limiter=RateLimiter(calls_per_minute=1000))
+    with pytest.raises(MassiveAPIError, match="429"):
+        client.grouped_daily(TODAY)
+
+
 def test_client_treats_market_holiday_as_empty_session(monkeypatch: MonkeyPatch) -> None:
     """Massive returns status OK with null results on market holidays."""
 
