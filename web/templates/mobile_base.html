@@ -18,10 +18,9 @@
   <link rel="stylesheet" href="/static/desktop-split.css?v={{ static_version }}">
   <script src="/static/market-clock.js?v={{ static_version }}" defer></script>
   {% block head %}{% endblock %}
-  <link rel="stylesheet" href="/static/sharp.css?v={{ static_version }}">
-  <link rel="stylesheet" href="/static/taste-audit.css?v={{ static_version }}">
+  <link rel="stylesheet" href="/static/product-system.css?v={{ static_version }}">
 </head>
-<body>
+<body class="runners-product">
   <a class="skip-link" href="#app-content">Skip to content</a>
   <div class="mobile-app {% block app_class %}{% endblock %}" id="app-content">
     {% block content %}{% endblock %}
@@ -38,6 +37,10 @@
       <a class="tab-link {% if active_tab == 'alpha' %}active{% endif %}" href="/community">
         <span class="tab-icon alpha-icon" aria-hidden="true">🐺</span>
         <span>Alpha</span>
+      </a>
+      <a class="tab-link product-tab-link" href="{{ sports_origin }}">
+        <span class="tab-icon product-tab-icon" aria-hidden="true">S</span>
+        <span>Sports</span>
       </a>
     </nav>
     {% endblock %}
@@ -69,7 +72,6 @@
     });
   </script>
   {% endif %}
-  <a class="product-switch" href="{{ sports_origin }}" aria-label="Open RATi Sports">Sports</a>
   <script src="/static/ticker-row.js?v={{ static_version }}"></script>
   <script src="/static/desktop-workspace.js?v={{ static_version }}" defer></script>
   {% block scripts %}{% endblock %}

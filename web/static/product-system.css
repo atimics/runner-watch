@@ -1,0 +1,651 @@
+/* Shared product shell for RATi Runners and RATi Sports. */
+:root {
+  color-scheme: dark;
+  --bg: #080b09;
+  --panel: #0d1210;
+  --panel-2: #121815;
+  --panel2: var(--panel-2);
+  --line: #253029;
+  --text: #f0f4f1;
+  --muted: #89938d;
+  --soft: #c2c9c4;
+  --green: #78d095;
+  --red: #e47e88;
+  --amber: #d6b36d;
+  --hot: var(--green);
+  --violet: #a9b4ad;
+  --accent: var(--green);
+  --app-font: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 11px;
+}
+
+html {
+  background: #050706;
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--app-font);
+  font-feature-settings: "tnum" 1;
+  font-kerning: normal;
+  -webkit-font-smoothing: antialiased;
+}
+
+body.sports-product {
+  --hot: #e6a16f;
+  --accent: var(--hot);
+  background: var(--bg);
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+.skip-link {
+  position: fixed;
+  z-index: 100;
+  top: 8px;
+  left: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-xs);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  transform: translateY(-150%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+:is(a, button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Runners shell */
+.runners-product .mobile-app {
+  background: var(--bg);
+  border-color: #171d19;
+}
+
+.runners-product .screen-head,
+.runners-product .detail-nav {
+  background: rgba(8, 11, 9, .96);
+  border-color: var(--line);
+  backdrop-filter: blur(16px);
+}
+
+.runners-product .screen-head {
+  height: 72px;
+  padding: 11px 18px;
+}
+
+.runners-product .screen-head > div {
+  gap: 3px;
+}
+
+.runners-product .screen-head h1,
+.runners-product .asset-ticker h1,
+.runners-product .section-heading h2 {
+  font-family: var(--app-font);
+  font-weight: 720;
+  letter-spacing: -.035em;
+}
+
+.runners-product .screen-head h1 {
+  font-size: 27px;
+}
+
+.rati-product,
+.sports-eyebrow {
+  color: var(--accent);
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+}
+
+.head-meta {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0;
+}
+
+.runners-product .avatar-button {
+  width: auto;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  border-color: var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  box-shadow: none;
+}
+
+.runners-product .avatar-button.signed-out {
+  color: var(--soft);
+  font-size: 9px;
+  letter-spacing: .03em;
+  text-transform: none;
+}
+
+.runners-product .session-clock {
+  height: 40px;
+  padding: 0 18px;
+  background: #0a0e0b;
+  border-color: var(--line);
+}
+
+.runners-product .session-state i,
+.runners-product .live-label i,
+.runners-product .timeline-dot.positive {
+  box-shadow: none;
+}
+
+.runners-product .ticker-row {
+  min-height: 78px;
+  padding: 9px 8px;
+  border-color: #202921;
+}
+
+.runners-product .ticker-row::before {
+  background: rgba(120, 208, 149, .055);
+  box-shadow: inset 2px 0 rgba(120, 208, 149, .7);
+}
+
+.runners-product .ticker-row .ticker-line strong,
+.runners-product .quote,
+.runners-product .price-block,
+.runners-product .market-metrics strong,
+.runners-product .risk-grid b,
+.runners-product .risk-facts,
+.runners-product .outcome-card strong,
+.runners-product .alpha-leader-quote,
+.runners-product .public-call-row,
+.runners-product .call-ledger-mini,
+.runners-product .chart-range,
+.runners-product .chart-structure-strip {
+  font-family: var(--app-font);
+  font-variant-numeric: tabular-nums;
+}
+
+.runners-product .ticker-row .company-name {
+  color: #858f89;
+}
+
+.runners-product .ticker-row .catalyst {
+  color: #b5bdb8;
+}
+
+.runners-product .ticker-row .ticker-age {
+  color: #737d76;
+}
+
+.runners-product .list-section,
+.runners-product .radar-section,
+.runners-product .alpha-section {
+  padding-top: 5px;
+}
+
+.runners-product .tab-bar {
+  bottom: 0;
+  width: min(520px, 100%);
+  height: calc(64px + env(safe-area-inset-bottom));
+  padding: 5px 18px env(safe-area-inset-bottom);
+  grid-template-columns: repeat(4, 1fr);
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: rgba(9, 13, 10, .97);
+  box-shadow: none;
+  backdrop-filter: blur(16px);
+}
+
+.runners-product .tab-link {
+  position: relative;
+  gap: 3px;
+  color: #747e77;
+  font-size: 8px;
+  letter-spacing: .02em;
+}
+
+.runners-product .tab-link.active {
+  color: var(--text);
+}
+
+.runners-product .tab-link.active::before {
+  position: absolute;
+  top: -5px;
+  width: 24px;
+  height: 2px;
+  background: var(--accent);
+  content: "";
+}
+
+.product-tab-icon,
+.sports-tab-icon.product {
+  display: grid !important;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-xs);
+  font-size: 9px !important;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.runners-product .product-tab-link {
+  color: #b99a82;
+}
+
+.runners-product .pulse-empty .empty-seal,
+.runners-product .dossier-mark {
+  border-color: #465149;
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius-xs);
+}
+
+.runners-product .desktop-detail-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.runners-product .desktop-detail-empty[hidden] {
+  display: none;
+}
+
+.runners-product .desktop-detail-empty strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.runners-product .desktop-detail-empty p {
+  max-width: 260px;
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.runners-product .detail-principle {
+  color: var(--muted);
+}
+
+.runners-product .chart-modes button,
+.runners-product .range-buttons button {
+  border-radius: var(--radius-xs);
+}
+
+.runners-product .chart-modes button.active,
+.runners-product .range-buttons button.active {
+  background: #182019;
+  color: var(--text);
+  box-shadow: inset 0 -1px var(--accent);
+}
+
+.runners-product :is(
+  .global-pulse-ticker,
+  .pulse-refresh,
+  .alpha-leader,
+  .ai-report-card,
+  .ai-report-running,
+  .ai-report-locked,
+  .research-thesis,
+  .research-person,
+  .research-filings article,
+  .market-metrics,
+  .signal-thesis,
+  .evidence-gate,
+  .risk-decision,
+  .mobile-auth-card,
+  .auth-card,
+  .heat-cell,
+  .watch-button,
+  input,
+  textarea,
+  select
+) {
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+}
+
+.runners-product :is(
+  .alpha-leader,
+  .ai-report-card,
+  .ai-report-running,
+  .ai-report-locked,
+  .research-thesis,
+  .research-person,
+  .research-filings article,
+  .market-metrics,
+  .signal-thesis,
+  .evidence-gate,
+  .risk-decision,
+  .mobile-auth-card,
+  .auth-card,
+  .heat-cell
+) {
+  background-image: none;
+}
+
+.runners-product .account-intro h1 {
+  max-width: 760px;
+  font-family: var(--app-font);
+  font-size: clamp(30px, 5vw, 42px);
+  font-weight: 720;
+  letter-spacing: -.045em;
+  line-height: 1.05;
+}
+
+.runners-product .hero {
+  grid-template-columns: 1fr;
+  min-height: 0;
+  padding: 54px 0;
+}
+
+.runners-product .hero-orb {
+  display: none;
+}
+
+.runners-product .hero h1,
+.runners-product .scanner-head h1,
+.runners-product .intel-head h1 {
+  font-size: clamp(34px, 5vw, 48px);
+}
+
+.runners-product .alpha-header h1 {
+  font-size: clamp(34px, 5vw, 44px);
+}
+
+.runners-product .alpha-score > strong {
+  font-size: 34px;
+}
+
+html.embedded-pane .product-tab-link {
+  display: none;
+}
+
+/* Sports shell */
+.sports-product .sports-topbar {
+  height: 64px;
+  padding: 0 max(20px, calc((100% - 1040px) / 2));
+  border-color: var(--line);
+  background: rgba(8, 11, 9, .96);
+  backdrop-filter: blur(16px);
+}
+
+.sports-product .sports-brand {
+  gap: 9px;
+  font-size: 13px;
+}
+
+.sports-product .sports-brand i {
+  width: 30px;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--line));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  color: var(--accent);
+}
+
+.sports-product .sports-brand b,
+.sports-product .sports-topbar nav a.active {
+  color: var(--accent);
+}
+
+.sports-product .sports-topbar nav {
+  gap: 20px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.sports-product .login-link {
+  padding: 8px 12px;
+  border-color: var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.sports-product .sports-shell {
+  width: min(1040px, 100%);
+  padding-right: 20px;
+  padding-bottom: 64px;
+  padding-left: 20px;
+}
+
+.sports-product .sports-screen-head {
+  gap: 24px;
+  padding: 24px 0 14px;
+  border-color: var(--line);
+}
+
+.sports-product .sports-screen-head h1 {
+  margin-top: 4px;
+  font-size: 31px;
+  font-weight: 720;
+  letter-spacing: -.04em;
+}
+
+.sports-product .sports-screen-head p {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.sports-product .league-tabs {
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.sports-product .league-tabs a {
+  padding: 8px 12px;
+  border-color: var(--line);
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+}
+
+.sports-product .league-tabs a.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  color: var(--text);
+}
+
+.sports-product :is(
+  .game-list,
+  .pulse-inspector,
+  .radar-list,
+  .performance-ranking,
+  .performance-leader,
+  .model-performance-card,
+  .match-strip,
+  .series-context,
+  .decision-hero,
+  .match-news,
+  .detail-grid > section,
+  .paper-pick,
+  .public-picks,
+  .odds-receipt,
+  .sports-empty,
+  .source-warning
+) {
+  border-color: var(--line);
+  border-radius: var(--radius-md);
+  background-color: var(--panel);
+  background-image: none;
+  box-shadow: none;
+}
+
+.sports-product .game-card,
+.sports-product .radar-card {
+  background: var(--panel);
+}
+
+.sports-product :is(.game-card:hover, .radar-card:hover) {
+  background: var(--panel-2);
+}
+
+.sports-product .pulse-inspector {
+  top: 78px;
+}
+
+.sports-product .performance-leader,
+.sports-product .model-performance-card,
+.sports-product .decision-hero {
+  background: var(--panel);
+}
+
+.sports-product .decision-board {
+  padding: 20px;
+}
+
+.sports-product .decision-model-call,
+.sports-product .decision-value-call {
+  border-color: var(--line);
+  border-radius: var(--radius-sm);
+  background: #0a0e0c;
+}
+
+.sports-product .decision-team {
+  font-size: clamp(23px, 3vw, 32px);
+  font-weight: 720;
+  letter-spacing: -.04em;
+}
+
+.sports-product .decision-probability,
+.sports-product .inspector-winner b,
+.sports-product .inspector-edge strong {
+  color: var(--green);
+}
+
+.sports-product .decision-value-call > strong {
+  color: var(--accent);
+  font-size: 23px;
+}
+
+.sports-product .team-orb,
+.sports-product .radar-mark {
+  border-color: var(--line);
+  background: var(--panel-2);
+  color: var(--soft);
+}
+
+.sports-product .sports-source,
+.sports-product .sports-footer {
+  color: #69736c;
+}
+
+.sports-product .sports-footer {
+  border-color: var(--line);
+}
+
+.sports-product .sports-tab-bar {
+  grid-template-columns: repeat(4, 1fr);
+  background: rgba(9, 13, 10, .97);
+  border-color: var(--line);
+  backdrop-filter: blur(16px);
+}
+
+.sports-product .sports-tab-bar a {
+  color: #747e77;
+}
+
+.sports-product .sports-tab-bar a.active {
+  color: var(--accent);
+}
+
+.sports-product .sports-tab-icon.product {
+  width: 20px;
+  height: 18px;
+  color: #8eb69b;
+}
+
+@media (hover: hover) {
+  .runners-product .ticker-row:hover {
+    background: #0d120f;
+  }
+
+  :is(a, button):active {
+    transform: translateY(1px);
+  }
+}
+
+@media (min-width: 900px) {
+  .runners-product .mobile-app.workspace-app {
+    --desktop-rail: clamp(410px, 33vw, 470px);
+    width: min(1360px, 100%);
+    max-width: 1360px;
+    border-color: var(--line);
+  }
+
+  .runners-product .desktop-list-pane {
+    border-color: var(--line);
+  }
+
+  .runners-product .desktop-detail-panel,
+  html.embedded-pane,
+  html.embedded-pane body {
+    background: #070a08;
+  }
+
+  .runners-product .workspace-app .tab-bar {
+    bottom: 0;
+    width: var(--desktop-rail);
+    height: 64px;
+    padding-inline: 18px;
+  }
+}
+
+@media (max-width: 760px) {
+  .sports-product .sports-topbar {
+    height: 60px;
+    padding: 0 14px;
+  }
+
+  .sports-product .sports-shell {
+    padding-right: 13px;
+    padding-left: 13px;
+  }
+
+  .sports-product .sports-screen-head {
+    gap: 7px;
+    padding-top: 18px;
+  }
+
+  .sports-product .sports-screen-head h1 {
+    font-size: 28px;
+  }
+
+  .sports-product .decision-board {
+    padding: 14px;
+  }
+
+  .sports-product .sports-tab-bar {
+    height: calc(64px + env(safe-area-inset-bottom));
+    padding: 5px 12px env(safe-area-inset-bottom);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
