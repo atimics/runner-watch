@@ -66,6 +66,21 @@ def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
     assert "pendingUpdateTickers" in radar_template
 
 
+def test_pulse_does_not_render_an_empty_scorecard_spacer() -> None:
+    root = Path(__file__).parents[1]
+    pulse_template = (root / "web/templates/pulse.html").read_text()
+
+    assert "kolScoreStrip" not in pulse_template
+    assert "renderKols" not in pulse_template
+    scorecard_condition = (
+        "{% if pulse.kols and "
+        "(pulse.kols[0].calls or pulse.kols[0].active_calls) %}"
+    )
+
+    assert scorecard_condition in pulse_template
+    assert 'class="kol-score-strip"' in pulse_template
+
+
 def test_large_responses_are_compressed() -> None:
     assert any(middleware.cls is GZipMiddleware for middleware in web_main.app.user_middleware)
 

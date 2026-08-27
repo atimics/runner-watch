@@ -231,9 +231,18 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     response = home(sports_request, None)
     assert response.status_code == 200
     assert b"RATi Sports" in response.body
-    assert b'class="game-matchup"' in response.body
-    assert b'class="ticker-team"' in response.body
-    assert b'class="game-edge' in response.body
+    assert b'class="game-card winner-card"' in response.body
+    assert b'class="winner-coin ' in response.body
+    assert b"Away Club" in response.body
+    assert b"Home Club" in response.body
+    assert b"FORM SCORE" in response.body
+    assert b"MODEL" in response.body
+    assert b"EDGE" in response.body
+    assert b'class="edge-spark"' in response.body
+    assert b"PROJECTED WINNER" not in response.body
+    assert b"Full slate" not in response.body
+    assert b'class="sports-hero"' not in response.body
+    assert b'class="sports-scoreboard pulse-summary"' not in response.body
     assert b'id="sportsAnnouncement"' in response.body
     assert b'data-announcement-version="sports-intro-2026-08-26"' in response.body
     assert b"localStorage.getItem(announcementKey)" in response.body
@@ -297,10 +306,40 @@ def test_sports_pulse_hides_passes_and_radar_keeps_real_moves(sports_db) -> None
     pulse = sports_pulse()
     assert [event["id"] for event in pulse["events"]] == [promoted["id"]]
     assert pulse["hidden_count"] == 1
+    assert pulse["events"][0]["signal_team_name"] == "Home Club"
+    assert pulse["events"][0]["signal_abbreviation"] == "HOM"
+    assert pulse["events"][0]["signal_coin_tone"] in range(5)
+    assert pulse["events"][0]["model_winner_abbreviation"] == "HOM"
+    assert pulse["events"][0]["projected_home_score"] > pulse["events"][0]["projected_away_score"]
+
+    full_slate_request = sports_pulse(view="all")
+    assert full_slate_request["view"] == "signals"
+    assert [event["id"] for event in full_slate_request["events"]] == [promoted["id"]]
 
     radar = sports_radar()
     assert radar["events"][0]["id"] == promoted["id"]
     assert radar["events"][0]["radar_kind"] == "market"
+
+
+def test_pulse_separates_model_favorite_from_value_edge(sports_db) -> None:
+    raw = sample_event()
+    competitors = raw["competitions"][0]["competitors"]
+    competitors[0]["records"][0]["summary"] = "60-73"
+    competitors[1]["records"][0]["summary"] = "82-51"
+    moneyline = raw["competitions"][0]["odds"][0]["moneyline"]
+    moneyline["home"]["close"]["odds"] = "+180"
+    moneyline["away"]["close"]["odds"] = "-215"
+    event = normalize_event("mlb", raw)
+    assert event is not None
+    store_events([event])
+
+    card = sports_pulse()["events"][0]
+
+    assert card["signal_abbreviation"] == "HOM"
+    assert card["model_winner_abbreviation"] == "AWY"
+    assert card["model_winner_probability_pct"] > 50
+    assert card["projected_away_score"] > card["projected_home_score"]
+    assert card["projected_score_basis"] == "market total"
 
 
 def test_sports_alpha_builds_team_and_player_win_rate_history(sports_db) -> None:

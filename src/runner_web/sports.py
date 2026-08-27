@@ -44,6 +44,12 @@ LEAGUES = {
     "nba": {"sport": "basketball", "path": "nba", "name": "NBA", "home_edge": 0.060},
     "nhl": {"sport": "hockey", "path": "nhl", "name": "NHL", "home_edge": 0.040},
 }
+SCORE_MODELS = {
+    "mlb": {"total": 8.6, "exponent": 1.83, "decimals": 1},
+    "nfl": {"total": 44.5, "exponent": 2.37, "decimals": 0},
+    "nba": {"total": 228.0, "exponent": 13.91, "decimals": 0},
+    "nhl": {"total": 6.1, "exponent": 2.0, "decimals": 1},
+}
 
 
 def _iso(value: datetime | None = None) -> str:
@@ -1105,7 +1111,8 @@ def _edge_sparkline(
         "team": team,
         "points": points,
         "plot_points": " ".join(coordinates),
-        "dot_y": coordinates[0].split(",", 1)[1],
+        "dot_x": coordinates[-1].split(",", 1)[0],
+        "dot_y": coordinates[-1].split(",", 1)[1],
         "current_pct": current,
         "change_pct": change,
         "label": f"{team} model edge {movement}; now {current:+.1f} percentage points",
@@ -1126,7 +1133,10 @@ def _event_attention(event: dict[str, Any]) -> dict[str, Any]:
             else "away"
         )
     other_side = "away" if side == "home" else "home"
+    team_id = str(event.get(f"{side}_team_id") or "")
     abbreviation = str(event.get(f"{side}_abbreviation") or "—")
+    coin_seed = f"{team_id}:{abbreviation}".encode()
+    coin_tone = int(hashlib.sha256(coin_seed).hexdigest()[:2], 16) % 5
     model_probability = _number(prediction.get(f"{side}_probability"))
     market_probability = _number(prediction.get(f"{side}_market_probability"))
     if market_probability is None:
@@ -1170,10 +1180,31 @@ def _event_attention(event: dict[str, Any]) -> dict[str, Any]:
         + abs(float(edge_pct or 0)) * 10
         + abs(float(market_move_pct or 0))
     )
+
+    home_probability = float(prediction.get("home_probability") or 0.5)
+    away_probability = float(prediction.get("away_probability") or 0.5)
+    winner_side = "home" if home_probability >= away_probability else "away"
+    winner_team_id = str(event.get(f"{winner_side}_team_id") or "")
+    winner_abbreviation = str(event.get(f"{winner_side}_abbreviation") or "—")
+    winner_seed = f"{winner_team_id}:{winner_abbreviation}".encode()
+    winner_coin_tone = int(hashlib.sha256(winner_seed).hexdigest()[:2], 16) % 5
+
+    score_model = SCORE_MODELS.get(str(event.get("league")), SCORE_MODELS["mlb"])
+    market_total = _number(odds.get("total"))
+    projected_total = market_total or float(score_model["total"])
+    exponent = float(score_model["exponent"])
+    safe_home_probability = max(0.05, min(0.95, home_probability))
+    score_ratio = (safe_home_probability / (1 - safe_home_probability)) ** (1 / exponent)
+    projected_home_score = projected_total * score_ratio / (1 + score_ratio)
+    projected_away_score = projected_total - projected_home_score
+    score_decimals = int(score_model["decimals"])
+
     return {
         "signal_side": side,
+        "signal_team_id": team_id,
         "signal_team_name": str(event.get(f"{side}_team_name") or "Unknown"),
         "signal_abbreviation": abbreviation,
+        "signal_coin_tone": coin_tone,
         "opponent_abbreviation": str(event.get(f"{other_side}_abbreviation") or "—"),
         "signal_record": event.get(f"{side}_record"),
         "model_probability_pct": (
@@ -1186,6 +1217,23 @@ def _event_attention(event: dict[str, Any]) -> dict[str, Any]:
         "model_change_pct": round(model_change_pct, 1),
         "signal_reason": reason,
         "attention_rank": round(attention_rank, 2),
+        "model_winner_side": winner_side,
+        "model_winner_team_id": winner_team_id,
+        "model_winner_team_name": str(
+            event.get(f"{winner_side}_team_name") or "Unknown"
+        ),
+        "model_winner_abbreviation": winner_abbreviation,
+        "model_winner_record": event.get(f"{winner_side}_record"),
+        "model_winner_probability_pct": round(
+            (home_probability if winner_side == "home" else away_probability) * 100,
+            1,
+        ),
+        "model_winner_coin_tone": winner_coin_tone,
+        "projected_home_score": round(projected_home_score, score_decimals),
+        "projected_away_score": round(projected_away_score, score_decimals),
+        "projected_home_score_display": f"{projected_home_score:.{score_decimals}f}",
+        "projected_away_score_display": f"{projected_away_score:.{score_decimals}f}",
+        "projected_score_basis": "market total" if market_total else "league baseline",
     }
 
 
@@ -1252,8 +1300,9 @@ def sports_slate(league: str = "all", limit: int = 80) -> dict[str, Any]:
 def sports_pulse(
     league: str = "all", view: str = "signals", limit: int = 30
 ) -> dict[str, Any]:
-    """Return promoted pre-game signals first, with the full slate kept one tap away."""
+    """Return only promoted pre-game signals, ranked by signal strength."""
 
+    _ = view  # Keep the old query parameter harmless while the slate view is hidden.
     payload = sports_slate(league, limit=200)
     available = [
         event for event in payload["events"] if str(event.get("status")) in {"pre", "in"}
@@ -1271,22 +1320,10 @@ def sports_pulse(
             str(event.get("id") or ""),
         )
     )
-    selected_view = "all" if view == "all" else "signals"
-    if selected_view == "all":
-        visible = sorted(
-            available,
-            key=lambda event: (
-                0 if event.get("status") == "in" else 1,
-                str(event.get("start_time") or ""),
-                str(event.get("id") or ""),
-            ),
-        )
-    else:
-        visible = signals
     return {
         **payload,
-        "events": visible[: max(1, min(limit, 100))],
-        "view": selected_view,
+        "events": signals[: max(1, min(limit, 100))],
+        "view": "signals",
         "signal_count": len(signals),
         "scanned_count": len(available),
         "hidden_count": max(0, len(available) - len(signals)),
