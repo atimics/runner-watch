@@ -42,43 +42,6 @@
       <div class="chart-event-strip" id="chartEvents" aria-label="Detected chart events" hidden></div>
     </div>
 
-    <aside class="detail-actions" aria-label="Ticker actions">
-      <div class="ticker-action-row">
-        <section class="ticker-action-slot" aria-labelledby="flashActionTitle">
-          <h2 class="visually-hidden" id="flashActionTitle">Daily Flash</h2>
-          {% if latest_commission and latest_commission.locked %}
-          <button class="ticker-action ticker-action-flash" type="button" disabled><strong>Daily Flash</strong><span>Locked today</span></button>
-          {% elif latest_commission and latest_commission.status == 'complete' %}
-          <a class="ticker-action ticker-action-flash" href="/research/{{ latest_commission.public_id }}"><strong>Read Flash</strong><span>{{ 'Public report' if latest_commission.visibility == 'public' else 'Private report' }}</span></a>
-          {% elif latest_commission and latest_commission.status == 'running' %}
-          <button class="ticker-action ticker-action-flash" id="commissionButton" type="button" data-job-id="{{ latest_commission.public_id }}" disabled><strong>Daily Flash</strong><span>Researching…</span></button>
-          {% elif user %}
-          <button class="ticker-action ticker-action-flash" id="commissionButton" type="button" aria-label="Generate today's report with Daily Flash for 100 Flash. The first generator gets one private hour."><strong>Daily Flash</strong><span>100 Flash · private 1h</span></button>
-          {% else %}
-          <a class="ticker-action ticker-action-flash" href="/login?next=/t/{{ detail.ticker }}"><strong>Daily Flash</strong><span>Log in · 100 Flash</span></a>
-          {% endif %}
-          <p class="ticker-action-status" id="commissionStatus" role="status"></p>
-        </section>
-
-        <section class="ticker-action-slot" aria-labelledby="callTitle">
-          <h2 class="visually-hidden" id="callTitle">Call</h2>
-          {% if user %}
-          {% if active_call %}
-          <button class="ticker-action ticker-action-call" id="closeCallButton" type="button" data-call-id="{{ active_call.public_id }}" aria-label="Close the open Call at the server's current price"><strong>Close Call</strong><span>{% if active_call.return_pct is not none %}{{ '+' if active_call.return_pct >= 0 else '' }}{{ '%.1f'|format(active_call.return_pct) }}% now{% else %}Open position{% endif %}</span></button>
-          <p class="ticker-action-status" id="callStatus">Entry ${{ '%.4f'|format(active_call.entry_price) if active_call.entry_price < 1 else ('%.2f'|format(active_call.entry_price)) }} · <time datetime="{{ active_call.entry_at }}" data-call-time>{{ active_call.entry_at[:16]|replace('T', ' ') }}</time></p>
-          {% else %}
-          <button class="ticker-action ticker-action-call" id="makeCallButton" type="button" aria-label="Make a public Call on {{ detail.ticker }} at the server's current price and time"><strong>Make Call</strong><span>Public · stamped</span></button>
-          <p class="ticker-action-status" id="callStatus" role="status"></p>
-          {% endif %}
-          {% else %}
-          <a class="ticker-action ticker-action-call" href="/login?next=/t/{{ detail.ticker }}"><strong>Make Call</strong><span>Log in · public</span></a>
-          <p class="ticker-action-status" id="callStatus" role="status"></p>
-          {% endif %}
-        </section>
-      </div>
-      {% if calls %}<div class="call-ledger-mini">{% for call in calls[:5] %}<a href="/u/{{ call.caller_handle }}"><strong>{{ call.caller_handle }}</strong><span>{{ call.status }}</span>{% if call.return_pct is not none %}<b class="{{ 'up' if call.return_pct >= 0 else 'down' }}">{{ '+' if call.return_pct >= 0 else '' }}{{ '%.1f'|format(call.return_pct) }}%</b>{% endif %}</a>{% endfor %}</div>{% endif %}
-    </aside>
-
     <div class="detail-analysis">
       <section class="why-section">
     <div class="section-heading"><div><h2>Why it moved</h2></div>{% if detail.current.source == 'market' and detail.current.score %}<b>{{ '%.0f'|format(detail.current.score) }} score</b>{% elif detail.current.source == 'sec' %}<b>new filing</b>{% endif %}</div>
@@ -175,6 +138,43 @@
     <p class="comment-empty" id="commentEmpty" {% if comments %}hidden{% endif %}>No comments yet. Start the read.</p>
   </section>
     </div>
+
+    <aside class="detail-actions" aria-label="Ticker actions">
+      <div class="ticker-action-row">
+        <section class="ticker-action-slot" aria-labelledby="flashActionTitle">
+          <h2 class="visually-hidden" id="flashActionTitle">Daily Flash</h2>
+          {% if latest_commission and latest_commission.locked %}
+          <button class="ticker-action ticker-action-flash" type="button" disabled><strong>Daily Flash</strong><span>Locked today</span></button>
+          {% elif latest_commission and latest_commission.status == 'complete' %}
+          <a class="ticker-action ticker-action-flash" href="/research/{{ latest_commission.public_id }}"><strong>Read Flash</strong><span>{{ 'Public report' if latest_commission.visibility == 'public' else 'Private report' }}</span></a>
+          {% elif latest_commission and latest_commission.status == 'running' %}
+          <button class="ticker-action ticker-action-flash" id="commissionButton" type="button" data-job-id="{{ latest_commission.public_id }}" disabled><strong>Daily Flash</strong><span>Researching…</span></button>
+          {% elif user %}
+          <button class="ticker-action ticker-action-flash" id="commissionButton" type="button" aria-label="Generate today's report with Daily Flash for 100 Flash. The first generator gets one private hour."><strong>Daily Flash</strong><span>100 Flash · private 1h</span></button>
+          {% else %}
+          <a class="ticker-action ticker-action-flash" href="/login?next=/t/{{ detail.ticker }}"><strong>Daily Flash</strong><span>Log in · 100 Flash</span></a>
+          {% endif %}
+          <p class="ticker-action-status" id="commissionStatus" role="status"></p>
+        </section>
+
+        <section class="ticker-action-slot" aria-labelledby="callTitle">
+          <h2 class="visually-hidden" id="callTitle">Call</h2>
+          {% if user %}
+          {% if active_call %}
+          <button class="ticker-action ticker-action-call" id="closeCallButton" type="button" data-call-id="{{ active_call.public_id }}" aria-label="Close the open Call at the server's current price"><strong>Close Call</strong><span>{% if active_call.return_pct is not none %}{{ '+' if active_call.return_pct >= 0 else '' }}{{ '%.1f'|format(active_call.return_pct) }}% now{% else %}Open position{% endif %}</span></button>
+          <p class="ticker-action-status" id="callStatus">Entry ${{ '%.4f'|format(active_call.entry_price) if active_call.entry_price < 1 else ('%.2f'|format(active_call.entry_price)) }} · <time datetime="{{ active_call.entry_at }}" data-call-time>{{ active_call.entry_at[:16]|replace('T', ' ') }}</time></p>
+          {% else %}
+          <button class="ticker-action ticker-action-call" id="makeCallButton" type="button" aria-label="Make a public Call on {{ detail.ticker }} at the server's current price and time"><strong>Make Call</strong><span>Public · stamped</span></button>
+          <p class="ticker-action-status" id="callStatus" role="status"></p>
+          {% endif %}
+          {% else %}
+          <a class="ticker-action ticker-action-call" href="/login?next=/t/{{ detail.ticker }}"><strong>Make Call</strong><span>Log in · public</span></a>
+          <p class="ticker-action-status" id="callStatus" role="status"></p>
+          {% endif %}
+        </section>
+      </div>
+      {% if calls %}<div class="call-ledger-mini">{% for call in calls[:5] %}<a href="/u/{{ call.caller_handle }}"><strong>{{ call.caller_handle }}</strong><span>{{ call.status }}</span>{% if call.return_pct is not none %}<b class="{{ 'up' if call.return_pct >= 0 else 'down' }}">{{ '+' if call.return_pct >= 0 else '' }}{{ '%.1f'|format(call.return_pct) }}%</b>{% endif %}</a>{% endfor %}</div>{% endif %}
+    </aside>
   </div>
 </main>
 {% endblock %}

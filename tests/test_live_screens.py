@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import runpy
 import sqlite3
+import sys
 from contextlib import closing
 from pathlib import Path
 
@@ -110,3 +112,35 @@ def test_live_screen_manifest_returns_only_public_path_keys(
         "research",
         "sports_game",
     }
+
+
+def test_live_screen_sweep_defaults_to_one_second(monkeypatch: MonkeyPatch) -> None:
+    script = Path(__file__).resolve().parents[1] / "scripts" / "test-live-screens"
+    namespace = runpy.run_path(str(script))
+    monkeypatch.delenv("LIVE_SCREEN_SLOW_MS", raising=False)
+    monkeypatch.setattr(sys, "argv", [str(script)])
+
+    assert namespace["parse_args"]().slow_ms == 1_000
+
+
+def test_public_screen_data_reuses_warmed_payload(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "public-screen-cache.db")
+    monkeypatch.setattr(web_main, "shared_cache_get", lambda _name: None)
+    monkeypatch.setattr(web_main, "shared_cache_set", lambda *_args: None)
+    web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
+    web_main.PUBLIC_SCREEN_DATA_REFRESHING.clear()
+    calls = 0
+
+    def build() -> dict[str, str]:
+        nonlocal calls
+        calls += 1
+        return {"value": "ready"}
+
+    first = web_main._public_screen_data("test", "fixture", build)
+    second = web_main._public_screen_data("test", "fixture", build)
+
+    assert first == {"value": "ready"}
+    assert second == first
+    assert calls == 1
