@@ -253,6 +253,81 @@ def test_adapter_reports_partial_when_symbol_is_missing(tmp_path: Path) -> None:
     cache.close()
 
 
+def test_client_treats_market_holiday_as_empty_session(monkeypatch: MonkeyPatch) -> None:
+    """Massive returns status OK with null results on market holidays."""
+
+    def fake_urlopen(request, timeout=None):
+        return _FakeResponse(json.dumps({"status": "OK", "results": None}).encode())
+
+    monkeypatch.setattr(massive_data.urllib.request, "urlopen", fake_urlopen)
+    client = MassiveClient("k", limiter=RateLimiter(calls_per_minute=1000))
+    assert client.grouped_daily(TODAY) == []
+
+
+def test_client_still_rejects_malformed_results(monkeypatch: MonkeyPatch) -> None:
+    def fake_urlopen(request, timeout=None):
+        return _FakeResponse(json.dumps({"status": "OK", "results": "nope"}).encode())
+
+    monkeypatch.setattr(massive_data.urllib.request, "urlopen", fake_urlopen)
+    client = MassiveClient("k", limiter=RateLimiter(calls_per_minute=1000))
+    with pytest.raises(MassiveAPIError, match="not usable"):
+        client.grouped_daily(TODAY)
+
+
+def test_backfill_daily_cache_continues_past_holidays(tmp_path: Path) -> None:
+    cache = MassiveDailyCache(tmp_path / "cache.sqlite3")
+
+    class HolidayAwareClient(MassiveClient):
+        def grouped_daily(self, session: date):
+            if session.weekday() == 0:  # pretend every Monday is a holiday
+                return []
+            return [{"T": "AAA", "c": 1.0}]
+
+    stats = backfill_daily_cache(
+        HolidayAwareClient("k", limiter=RateLimiter(calls_per_minute=1000)),
+        cache,
+        days=14,
+        today_et=TODAY,
+        prune_days=None,
+    )
+    assert stats["sessions_fetched"] == stats["sessions_needed"]
+    cache.close()
+
+
+def test_refresh_massive_backfill_returns_disabled_without_key(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+    assert massive_data.refresh_massive_backfill() == {"enabled": False}
+
+
+def test_refresh_massive_backfill_respects_budget(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("MASSIVE_API_KEY", "test-key")
+    monkeypatch.setenv("MASSIVE_CACHE_PATH", str(tmp_path / "cache.sqlite3"))
+    monkeypatch.setenv("MASSIVE_BACKFILL_CALLS", "3")
+
+    calls: list[date] = []
+
+    class CountingClient(MassiveClient):
+        def grouped_daily(self, session: date):
+            calls.append(session)
+            return [{"T": "AAA", "c": 1.0}]
+
+    monkeypatch.setattr(
+        massive_data, "massive_bar_adapter", lambda **kwargs: MassiveBarAdapter(
+            CountingClient("k", limiter=RateLimiter(calls_per_minute=1000)),
+            MassiveDailyCache(tmp_path / "cache.sqlite3"),
+            max_fetch_calls=10,
+            today_et=TODAY,
+        ),
+    )
+    stats = massive_data.refresh_massive_backfill()
+    assert stats["sessions_fetched"] == 3
+    assert len(calls) == 3
+
+
 def test_backfill_daily_cache_fetches_each_session_once(tmp_path: Path) -> None:
     cache = MassiveDailyCache(tmp_path / "cache.sqlite3")
     calls: list[date] = []
