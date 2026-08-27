@@ -16,8 +16,9 @@ model compares team form plus a small home advantage with the market price after
 bookmaker margin. It does not promote preseason or exhibition games. Signed-in users can publish
 paper picks with frozen odds; completed games settle them as wins, losses, or pushes. The app does
 not place bets or connect to sportsbooks. ESPN remains a preview source for schedules, records, and
-results. When the `ODDS_API_KEY` Fly secret is present, moneylines come from The Odds API instead of
-the preview odds. The worker requests one region and the `h2h` market only. It takes at most three
+results. When the `ODDS_API_KEY` Fly secret is present, production requests Bovada moneylines through
+The Odds API instead of using the preview odds. The bookmaker is selected with
+`ODDS_API_BOOKMAKERS=bovada`; the worker requests the `h2h` market only. It takes at most three
 snapshots per league slate: opening, pregame, and close. The 500-credit plan has a 450-credit working
 limit and a protected 50-credit reserve. Quota headers are checked before paid calls, and cached odds
 are served between snapshots. The key stays on the server and is never sent to the browser or logs.

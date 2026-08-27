@@ -116,6 +116,19 @@ def test_config_refuses_more_than_one_credit_of_bookmakers(
         OddsApiConfig.from_env()
 
 
+def test_config_selects_bovada_as_the_only_bookmaker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ODDS_API_KEY", "secret")
+    monkeypatch.setenv("ODDS_API_BOOKMAKERS", "bovada")
+    monkeypatch.setenv("ODDS_API_PREFERRED_BOOKMAKERS", "bovada")
+
+    config = OddsApiConfig.from_env()
+
+    assert config.bookmakers == ("bovada",)
+    assert config.preferred_bookmakers == ("bovada",)
+
+
 def test_preferred_bookmaker_provides_a_complete_two_sided_line() -> None:
     lines = normalize_moneylines(api_payload(), ("preferred-book",))
     assert len(lines) == 1
@@ -187,14 +200,22 @@ def test_paid_request_logs_only_a_sanitized_locator(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(odds_api, "record_source_fetch", recorded_fetches.append)
     monkeypatch.setattr(odds_api, "record_quota", lambda _quota: None)
 
-    result = fetch_moneylines(OddsApiConfig(api_key="very-secret"), "mlb")
+    result = fetch_moneylines(
+        OddsApiConfig(
+            api_key="very-secret",
+            bookmakers=("bovada",),
+            preferred_bookmakers=("bovada",),
+        ),
+        "mlb",
+    )
 
     assert isinstance(result, OddsFetchResult)
     assert "very-secret" in captured_request["url"]
     assert "very-secret" not in result.locator
     assert "very-secret" not in recorded_fetches[0].locator
     assert "markets=h2h" in result.locator
-    assert "regions=us" in result.locator
+    assert "bookmakers=bovada" in result.locator
+    assert "regions=" not in result.locator
 
 
 def test_billed_bad_response_carries_quota_to_prevent_retry_spend(

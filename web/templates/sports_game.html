@@ -24,6 +24,12 @@
         <span>{% if odds and odds.home_odds is not none %}{{ '%+d'|format(odds.home_odds) }}{% else %}—{% endif %}</span>
       </div>
     </div>
+    {% if odds %}
+    <div class="match-strip-source">
+      <span>{{ odds.source_label }} moneyline</span>
+      <span>Captured <time data-local-time="{{ odds.observed_at }}">{{ odds.observed_at[:16]|replace('T',' ') }} UTC</time></span>
+    </div>
+    {% endif %}
   </header>
 
   {% if prediction %}
@@ -119,7 +125,7 @@
   <section class="paper-pick">
     <span>PUBLIC RECEIPT</span>
     <h2>Make a paper pick</h2>
-    <p>The current moneyline and time will be frozen. This does not place a real bet.</p>
+    <p>The current{% if odds %} {{ odds.source_label }}{% endif %} moneyline and time will be frozen. This does not place a real bet.</p>
     {% if not user %}
       <a href="/login">Log in to make a paper pick</a>
     {% elif event.status != 'pre' or not odds %}
@@ -143,7 +149,7 @@
   <section class="odds-receipt">
     <h3>Odds receipt</h3>
     {% for item in event.odds_history %}
-      <div><time>{{ item.observed_at[:16]|replace('T',' ') }} UTC</time><span>{{ event.away_abbreviation }} {{ '%+d'|format(item.away_odds) if item.away_odds is not none else '—' }}</span><span>{{ event.home_abbreviation }} {{ '%+d'|format(item.home_odds) if item.home_odds is not none else '—' }}</span><small>{{ item.sportsbook }}</small></div>
+      <div><time>{{ item.observed_at[:16]|replace('T',' ') }} UTC</time><span>{{ event.away_abbreviation }} {{ '%+d'|format(item.away_odds) if item.away_odds is not none else '—' }}</span><span>{{ event.home_abbreviation }} {{ '%+d'|format(item.home_odds) if item.home_odds is not none else '—' }}</span><small>{{ item.source_label }}</small></div>
     {% else %}<p>No moneyline snapshots are available.</p>{% endfor %}
   </section>
   <a class="source-link" href="{{ event.source_url }}" rel="nofollow noreferrer">View game source ↗</a>

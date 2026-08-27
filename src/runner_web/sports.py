@@ -1168,7 +1168,20 @@ def _latest_odds(database: Any, event_id: str) -> dict[str, Any] | None:
         """,
         (event_id,),
     ).fetchone()
-    return dict(row) if row else None
+    return _odds_item(row)
+
+
+def _odds_item(row: Any) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    item = dict(row)
+    sportsbook = str(item.get("sportsbook") or "").strip()
+    provider = str(item.get("provider") or "").strip()
+    if sportsbook and provider == ODDS_PROVIDER:
+        item["source_label"] = f"{sportsbook} via The Odds API"
+    else:
+        item["source_label"] = sportsbook or provider or "Unknown source"
+    return item
 
 
 def _latest_prediction(database: Any, event_id: str) -> dict[str, Any] | None:
@@ -1472,7 +1485,8 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
     ).fetchall()
     odds_by_event: dict[str, dict[str, Any]] = {}
     for row in odds_rows:
-        item = dict(row)
+        item = _odds_item(row)
+        assert item is not None
         item.pop("latest_rank", None)
         odds_by_event[str(item["event_id"])] = item
 
@@ -2091,7 +2105,11 @@ def sports_event(event_id: str) -> dict[str, Any] | None:
             """,
             (event_id,),
         ).fetchall()
-        event["odds_history"] = [dict(item) for item in reversed(odds_rows)]
+        event["odds_history"] = [
+            odds_item
+            for item in reversed(odds_rows)
+            if (odds_item := _odds_item(item)) is not None
+        ]
         pick_rows = database.execute(
             """
             SELECT p.*,ci.handle AS caller_handle FROM sports_picks p
