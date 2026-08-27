@@ -1,0 +1,158 @@
+.game-list {
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(19, 17, 29, .72);
+}
+
+.game-card {
+  display: grid;
+  grid-template-columns: 82px minmax(210px, 1fr) minmax(155px, 190px) 98px 12px;
+  gap: 10px;
+  align-items: center;
+  min-height: 72px;
+  padding: 10px 14px;
+  overflow: visible;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: linear-gradient(90deg, rgba(26, 23, 37, .92), rgba(17, 15, 25, .92));
+  transition: background .16s;
+}
+
+.game-card:last-child { border-bottom: 0; }
+.game-card:hover {
+  border-color: transparent;
+  background: linear-gradient(90deg, rgba(35, 30, 49, .98), rgba(20, 17, 29, .96));
+  transform: none;
+}
+
+.game-meta { min-width: 0; }
+.game-meta strong,
+.game-meta time { display: block; }
+.game-meta strong {
+  color: var(--hot);
+  font-size: 9px;
+  letter-spacing: .12em;
+}
+.game-meta time {
+  margin-top: 5px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.game-matchup {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.game-matchup > i {
+  color: #5f586c;
+  font-size: 9px;
+  font-style: normal;
+}
+.ticker-team {
+  display: grid;
+  grid-template-columns: 38px minmax(36px, auto) 24px;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+}
+.team-code {
+  display: grid;
+  place-items: center;
+  height: 28px;
+  border-radius: 8px;
+  background: #2a2240;
+  color: #cabbff;
+  font-size: 10px;
+  letter-spacing: .02em;
+}
+.team-code.home {
+  background: #3a211f;
+  color: #ffb498;
+}
+.ticker-team small {
+  font-size: 8px !important;
+  letter-spacing: 0 !important;
+  white-space: nowrap;
+}
+.ticker-team > strong {
+  font-size: 15px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.game-model { min-width: 0; }
+.game-model small,
+.game-model strong { display: block; }
+.game-model strong {
+  margin-top: 5px;
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.game-call {
+  min-width: 0;
+  text-align: right;
+}
+.game-call .game-status {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.game-call .signal {
+  display: block;
+  margin-top: 5px;
+  overflow: hidden;
+  font-size: 8px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.game-call .signal.watch { color: var(--green); }
+.game-call .signal.lean { color: #f8ca76; }
+.game-call .signal.pass,
+.game-call .signal.model-only { color: var(--muted); }
+.game-chevron {
+  color: #655b75;
+  font-size: 22px;
+}
+
+@media (max-width: 700px) {
+  .game-card {
+    grid-template-columns: 48px minmax(0, 1fr) 74px 10px;
+    gap: 6px;
+    min-height: 64px;
+    padding: 8px 10px;
+  }
+  .game-meta time { font-size: 8px; }
+  .game-matchup { gap: 5px; }
+  .ticker-team {
+    grid-template-columns: 32px 18px;
+    gap: 4px;
+  }
+  .ticker-team small { display: none; }
+  .team-code {
+    height: 26px;
+    font-size: 9px;
+  }
+  .ticker-team > strong { font-size: 13px; }
+  .game-model { display: none; }
+  .game-status {
+    padding: 3px 5px;
+    font-size: 7px;
+  }
+  .game-call .signal { font-size: 7px; }
+  .game-chevron { font-size: 18px; }
+}

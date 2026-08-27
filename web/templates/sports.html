@@ -32,32 +32,39 @@
   {% for event in slate.events %}
   {% set prediction = event.prediction %}
   {% set odds = event.odds %}
-  <a class="game-card" href="/game/{{ event.id }}">
-    <header>
-      <span>{{ event.league|upper }} · <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time></span>
-      <b class="game-status {{ event.status }}">{{ event.status_detail }}</b>
-    </header>
-    <div class="matchup">
-      <div class="team-row">
-        <span class="team-mark">{{ event.away_abbreviation[:3] }}</span>
-        <div><strong>{{ event.away_team_name }}</strong><small>{{ event.away_record or 'Record unavailable' }}</small></div>
-        <b>{% if event.away_score is not none %}{{ event.away_score|int }}{% elif odds and odds.away_odds is not none %}{{ '%+d'|format(odds.away_odds) }}{% else %}—{% endif %}</b>
-      </div>
-      <div class="team-row">
-        <span class="team-mark home">{{ event.home_abbreviation[:3] }}</span>
-        <div><strong>{{ event.home_team_name }}</strong><small>{{ event.home_record or 'Record unavailable' }}</small></div>
-        <b>{% if event.home_score is not none %}{{ event.home_score|int }}{% elif odds and odds.home_odds is not none %}{{ '%+d'|format(odds.home_odds) }}{% else %}—{% endif %}</b>
-      </div>
-    </div>
-    <footer>
+  <a class="game-card" href="/game/{{ event.id }}" aria-label="{{ event.name }}, {{ event.status_detail }}">
+    <span class="game-meta">
+      <strong>{{ event.league|upper }}</strong>
+      <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time>
+    </span>
+    <span class="game-matchup">
+      <span class="ticker-team">
+        <b class="team-code away">{{ event.away_abbreviation[:3] }}</b>
+        <small>{{ event.away_record or '—' }}</small>
+        <strong>{% if event.away_score is not none %}{{ event.away_score|int }}{% elif odds and odds.away_odds is not none %}{{ '%+d'|format(odds.away_odds) }}{% else %}—{% endif %}</strong>
+      </span>
+      <i>@</i>
+      <span class="ticker-team">
+        <b class="team-code home">{{ event.home_abbreviation[:3] }}</b>
+        <small>{{ event.home_record or '—' }}</small>
+        <strong>{% if event.home_score is not none %}{{ event.home_score|int }}{% elif odds and odds.home_odds is not none %}{{ '%+d'|format(odds.home_odds) }}{% else %}—{% endif %}</strong>
+      </span>
+    </span>
+    <span class="game-model">
+      <small>MODEL</small>
       {% if prediction %}
-        <div><small>MODEL</small><strong>{{ event.away_abbreviation }} {{ '%.0f'|format(prediction.away_probability * 100) }}% · {{ event.home_abbreviation }} {{ '%.0f'|format(prediction.home_probability * 100) }}%</strong></div>
-        <div class="signal {{ prediction.signal|replace(' ','-') }}"><small>{{ prediction.signal|upper }}</small><strong>{% if prediction.edge_pct is not none %}{{ '%+.1f'|format(prediction.edge_pct) }}% edge{% else %}No market edge{% endif %}</strong></div>
+        <strong>{{ event.away_abbreviation }} {{ '%.0f'|format(prediction.away_probability * 100) }}% · {{ event.home_abbreviation }} {{ '%.0f'|format(prediction.home_probability * 100) }}%</strong>
       {% else %}
-        <div><small>MODEL</small><strong>Waiting for a prediction</strong></div>
+        <strong>Prediction pending</strong>
       {% endif %}
-      <span aria-hidden="true">›</span>
-    </footer>
+    </span>
+    <span class="game-call">
+      <b class="game-status {{ event.status }}">{{ event.status_detail }}</b>
+      {% if prediction %}
+        <small class="signal {{ prediction.signal|replace(' ','-') }}">{% if prediction.edge_pct is not none %}{{ '%+.1f'|format(prediction.edge_pct) }}% {{ prediction.signal }}{% else %}{{ prediction.signal }}{% endif %}</small>
+      {% endif %}
+    </span>
+    <span class="game-chevron" aria-hidden="true">›</span>
   </a>
   {% else %}
   <div class="sports-empty">

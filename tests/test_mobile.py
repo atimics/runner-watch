@@ -79,6 +79,9 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert "Generate today's report" in template
     assert "commissionButton" in template
     assert "Make Call" in template
+    assert 'class="ticker-action-row"' in template
+    assert template.count('class="ticker-action-slot"') == 2
+    assert "action-card" not in template
     assert template.count("<textarea") == 0
     assert 'id="generateComment"' in template
 
@@ -542,7 +545,8 @@ def test_ticker_page_does_not_add_a_guest_research_action(
 
     assert response.status_code == 200
     assert "Ask Flash" not in response.body.decode()
-    assert "Log in to generate today's report" in response.body.decode()
+    assert "Daily Flash" in response.body.decode()
+    assert "Log in · 100 Flash" in response.body.decode()
     assert "Connect OpenRouter" not in response.body.decode()
 
 
@@ -1945,8 +1949,8 @@ def test_ticker_commissions_flash_with_no_browser_key() -> None:
     assert "fetch(`/api/research/${encodeURIComponent(ticker)}`,{method:'POST'})" in template
     assert "runnerOpenRouter" not in template
     assert "X-OpenRouter-Key" not in template
-    assert 'Daily Flash <small class="flash-model-label">{{ flash.model }}</small>' in template
-    assert "{{ flash.model }}" in template
+    assert '<strong>Daily Flash</strong><span>100 Flash · private 1h</span>' in template
+    assert "{{ flash.model }}" not in template
 
 
 def test_flash_model_label_is_shown_on_research_and_pulse() -> None:
