@@ -498,10 +498,103 @@ def _latest_prediction(database: Any, event_id: str) -> dict[str, Any] | None:
     return item
 
 
+def _preferred_side(prediction: dict[str, Any]) -> str | None:
+    home_market = prediction.get("home_market_probability")
+    away_market = prediction.get("away_market_probability")
+    if home_market is None or away_market is None:
+        return None
+    home_edge = float(prediction["home_probability"]) - float(home_market)
+    away_edge = float(prediction["away_probability"]) - float(away_market)
+    return "home" if home_edge >= away_edge else "away"
+
+
+def _edge_sparkline(
+    database: Any,
+    event: dict[str, Any],
+    prediction: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Build a small, fixed-scale history for the latest preferred side."""
+
+    if (
+        not prediction
+        or prediction.get("edge") is None
+        or not (side := _preferred_side(prediction))
+    ):
+        return None
+    rows = database.execute(
+        """
+        SELECT home_probability,away_probability,
+               home_market_probability,away_market_probability,observed_at
+        FROM sports_predictions
+        WHERE event_id=? AND model_version=?
+        ORDER BY observed_at DESC,id DESC LIMIT 24
+        """,
+        (event["id"], prediction["model_version"]),
+    ).fetchall()
+    points: list[dict[str, Any]] = []
+    for row in reversed(rows):
+        model_probability = row[f"{side}_probability"]
+        market_probability = row[f"{side}_market_probability"]
+        if model_probability is None or market_probability is None:
+            continue
+        points.append(
+            {
+                "observed_at": str(row["observed_at"]),
+                "edge_pct": round(
+                    (float(model_probability) - float(market_probability)) * 100,
+                    1,
+                ),
+            }
+        )
+    if not points:
+        return None
+
+    # A fixed +/-12 point scale keeps small moves from looking dramatic.
+    chart_width = 92.0
+    chart_midline = 12.0
+    chart_range = 9.0
+    coordinates: list[str] = []
+    observed_times = [_parse_time(point["observed_at"]) for point in points]
+    time_span = (observed_times[-1] - observed_times[0]).total_seconds()
+    for point, observed_time in zip(points, observed_times, strict=True):
+        x = (
+            chart_width / 2
+            if time_span <= 0
+            else 2 + (observed_time - observed_times[0]).total_seconds() * 88 / time_span
+        )
+        clipped_edge = max(-12.0, min(12.0, float(point["edge_pct"])))
+        y = chart_midline - (clipped_edge / 12.0) * chart_range
+        coordinates.append(f"{x:.1f},{y:.1f}")
+
+    start = float(points[0]["edge_pct"])
+    current = float(points[-1]["edge_pct"])
+    change = round(current - start, 1)
+    team = str(event[f"{side}_abbreviation"])
+    if len(points) == 1:
+        movement = "is new"
+    elif change > 0.2:
+        movement = f"grew {change:.1f} points"
+    elif change < -0.2:
+        movement = f"fell {abs(change):.1f} points"
+    else:
+        movement = "was steady"
+    return {
+        "side": side,
+        "team": team,
+        "points": points,
+        "plot_points": " ".join(coordinates),
+        "dot_y": coordinates[0].split(",", 1)[1],
+        "current_pct": current,
+        "change_pct": change,
+        "label": f"{team} model edge {movement}; now {current:+.1f} percentage points",
+    }
+
+
 def _event_row(database: Any, row: Any) -> dict[str, Any]:
     item = dict(row)
     item["odds"] = _latest_odds(database, str(item["id"]))
     item["prediction"] = _latest_prediction(database, str(item["id"]))
+    item["edge_history"] = _edge_sparkline(database, item, item["prediction"])
     return item
 
 
