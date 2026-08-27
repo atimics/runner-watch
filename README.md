@@ -416,6 +416,15 @@ uv run pytest
 uv run ruff check .
 ```
 
+The production browser sweep checks all 17 Runners, Sports, and account screen routes. It uses
+current public ticker, caller, signal, research, and game records, fails screens slower than five
+seconds, and saves a screenshot for each failure. A dynamic screen with no public record is called
+out; the legacy Signal screen is skipped until production has a real public Signal to render.
+
+```bash
+scripts/test-live-screens
+```
+
 Run bounded staging bursts at 20, 40, and 80 concurrent requests:
 
 ```bash

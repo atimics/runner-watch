@@ -1,0 +1,292 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["playwright>=1.55,<2"]
+# ///
+from __future__ import annotations
+
+import argparse
+import asyncio
+import os
+import re
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import urljoin, urlsplit
+
+from playwright.async_api import Browser, BrowserContext, Error, async_playwright
+
+
+@dataclass(frozen=True)
+class Screen:
+    key: str
+    name: str
+    origin: str
+    path: str | None
+    heading: str
+    dynamic_key: str | None = None
+    final_path: str | None = None
+    fixture_required: bool = True
+
+
+@dataclass(frozen=True)
+class Result:
+    screen: Screen
+    url: str
+    duration_ms: int | None
+    error: str | None
+    skipped: str | None = None
+
+
+SCREENS = (
+    Screen("runners_pulse", "Runners · Pulse", "runners", "/", r"^Pulse$"),
+    Screen("ticker", "Runners · Ticker", "runners", None, r"\S+", "ticker"),
+    Screen("runners_radar", "Runners · Radar", "runners", "/radar", r"^Radar$"),
+    Screen("runners_alpha", "Runners · Alpha", "runners", "/community", r"^Alpha$"),
+    Screen("caller", "Runners · Caller", "runners", None, r"\S+", "caller"),
+    Screen(
+        "signal",
+        "Runners · Signal",
+        "runners",
+        None,
+        r"\S+",
+        "signal",
+        fixture_required=False,
+    ),
+    Screen("research", "Runners · Research", "runners", None, r"\S+", "research"),
+    Screen(
+        "forecast_record",
+        "Runners · Forecast record",
+        "runners",
+        "/flash/record",
+        r"^Forecast record$",
+    ),
+    Screen("sports_pulse", "Sports · Pulse", "sports", "/", r"^Pulse$"),
+    Screen("sports_game", "Sports · Game", "sports", None, r"\S+", "sports_game"),
+    Screen("sports_radar", "Sports · Radar", "sports", "/radar", r"^Radar$"),
+    Screen("sports_alpha", "Sports · Alpha", "sports", "/alpha", r"^Alpha$"),
+    Screen("login", "Account · Login", "runners", "/login", r"^Create your passkey$"),
+    Screen(
+        "backup_passkey",
+        "Account · Backup passkey (signed-out gate)",
+        "runners",
+        "/settings/passkey",
+        r"^Create your passkey$",
+        final_path="/login",
+    ),
+    Screen(
+        "wallet", "Account · Flash wallet", "runners", "/billing", r"^Flash pays for AI actions\.$"
+    ),
+    Screen(
+        "roadmap",
+        "Account · Roadmap",
+        "runners",
+        "/roadmap",
+        r"^Focused on the decision loop\.$",
+    ),
+    Screen(
+        "privacy",
+        "Account · Privacy",
+        "runners",
+        "/privacy",
+        r"^We do not track what you read\.$",
+    ),
+)
+DYNAMIC_KEYS = frozenset(screen.dynamic_key for screen in SCREENS if screen.dynamic_key)
+
+
+def _origin_url(origin: str, path: str) -> str:
+    return urljoin(f"{origin.rstrip('/')}/", path.lstrip("/"))
+
+
+async def _manifest(
+    context: BrowserContext, runners_origin: str, timeout_ms: int
+) -> dict[str, str]:
+    url = _origin_url(runners_origin, "/api/smoke/screens")
+    response = await context.request.get(url, timeout=timeout_ms)
+    if not response.ok:
+        raise RuntimeError(f"screen manifest returned HTTP {response.status}: {url}")
+    payload = await response.json()
+    dynamic = payload.get("dynamic") if isinstance(payload, dict) else None
+    if not isinstance(dynamic, dict):
+        raise RuntimeError("screen manifest did not return a dynamic path map")
+    unknown = set(dynamic) - DYNAMIC_KEYS
+    if unknown:
+        raise RuntimeError(f"screen manifest returned unknown keys: {', '.join(sorted(unknown))}")
+    return {key: value for key, value in dynamic.items() if isinstance(value, str) and value}
+
+
+async def _check_screen(
+    context: BrowserContext,
+    semaphore: asyncio.Semaphore,
+    screen: Screen,
+    origins: dict[str, str],
+    dynamic: dict[str, str],
+    timeout_ms: int,
+    slow_ms: int,
+    output_dir: Path,
+) -> Result:
+    path = dynamic.get(screen.dynamic_key, "") if screen.dynamic_key else screen.path
+    if not path:
+        reason = f"production has no public fixture for {screen.dynamic_key}"
+        if not screen.fixture_required:
+            return Result(screen, "", None, None, reason)
+        return Result(
+            screen,
+            "",
+            None,
+            reason,
+        )
+    url = _origin_url(origins[screen.origin], path)
+    async with semaphore:
+        page = await context.new_page()
+        browser_errors: list[str] = []
+
+        def record_console(message: object) -> None:
+            if getattr(message, "type", "") == "error":
+                browser_errors.append(str(getattr(message, "text", message)))
+
+        page.on("console", record_console)
+        page.on("pageerror", lambda error: browser_errors.append(str(error)))
+        started = time.monotonic()
+        try:
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            if response is None:
+                raise RuntimeError("navigation returned no document response")
+            if response.status >= 400:
+                raise RuntimeError(f"document returned HTTP {response.status}")
+
+            heading = page.locator("h1").first
+            await heading.wait_for(state="visible", timeout=timeout_ms)
+            heading_text = (await heading.inner_text()).strip()
+            if not re.search(screen.heading, heading_text):
+                raise RuntimeError(f"unexpected heading {heading_text!r}")
+
+            expected_path = screen.final_path or path
+            actual_path = urlsplit(page.url).path
+            if actual_path != expected_path:
+                raise RuntimeError(f"ended at {actual_path!r}, expected {expected_path!r}")
+
+            body_length = await page.locator("body").evaluate(
+                "node => node.innerText.trim().length"
+            )
+            if body_length < 40:
+                raise RuntimeError("screen body is blank")
+
+            duration_ms = round((time.monotonic() - started) * 1000)
+            await page.wait_for_timeout(350)
+            if browser_errors:
+                raise RuntimeError(f"browser error: {browser_errors[0]}")
+            if duration_ms > slow_ms:
+                raise RuntimeError(f"slow screen: {duration_ms}ms exceeds {slow_ms}ms")
+            return Result(screen, page.url, duration_ms, None)
+        except Exception as exc:
+            duration_ms = round((time.monotonic() - started) * 1000)
+            screenshot = output_dir / f"{screen.key}.png"
+            try:
+                await page.screenshot(path=screenshot, full_page=True)
+            except Error:
+                pass
+            return Result(screen, page.url or url, duration_ms, str(exc))
+        finally:
+            await page.close()
+
+
+async def _launch_browser(playwright: object, channel: str) -> Browser:
+    try:
+        return await playwright.chromium.launch(channel=channel or None, headless=True)
+    except Error:
+        if not channel:
+            raise
+        return await playwright.chromium.launch(headless=True)
+
+
+async def run(args: argparse.Namespace) -> int:
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    origins = {"runners": args.runners_origin, "sports": args.sports_origin}
+
+    async with async_playwright() as playwright:
+        browser = await _launch_browser(playwright, args.browser_channel)
+        context = await browser.new_context(
+            viewport={"width": 390, "height": 844},
+            user_agent="RATi production screen monitor",
+        )
+        try:
+            dynamic = await _manifest(context, args.runners_origin, args.timeout_ms)
+            semaphore = asyncio.Semaphore(args.workers)
+            results = await asyncio.gather(
+                *(
+                    _check_screen(
+                        context,
+                        semaphore,
+                        screen,
+                        origins,
+                        dynamic,
+                        args.timeout_ms,
+                        args.slow_ms,
+                        output_dir,
+                    )
+                    for screen in SCREENS
+                )
+            )
+        finally:
+            await context.close()
+            await browser.close()
+
+    failures = [result for result in results if result.error]
+    skipped = [result for result in results if result.skipped]
+    for result in results:
+        if result.error:
+            print(f"FAIL  {result.screen.name}: {result.error} ({result.url or 'no URL'})")
+        elif result.skipped:
+            print(f"SKIP  {result.screen.name}: {result.skipped}")
+        else:
+            print(f"PASS  {result.screen.name}: {result.duration_ms}ms ({result.url})")
+    passed = len(results) - len(failures) - len(skipped)
+    print(f"\n{passed} passed, {len(skipped)} skipped, {len(failures)} failed")
+    if failures:
+        print(f"Failure screenshots: {output_dir}")
+        return 1
+    return 0
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Render and time every public production screen")
+    parser.add_argument(
+        "--runners-origin",
+        default=os.getenv("RUNNERS_ORIGIN", "https://runners.rati.chat"),
+    )
+    parser.add_argument(
+        "--sports-origin",
+        default=os.getenv("SPORTS_ORIGIN", "https://sports.rati.chat"),
+    )
+    parser.add_argument(
+        "--timeout-ms",
+        type=int,
+        default=int(os.getenv("LIVE_SCREEN_TIMEOUT_MS", "15000")),
+    )
+    parser.add_argument(
+        "--slow-ms",
+        type=int,
+        default=int(os.getenv("LIVE_SCREEN_SLOW_MS", "5000")),
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=int(os.getenv("LIVE_SCREEN_WORKERS", "3")),
+    )
+    parser.add_argument(
+        "--browser-channel",
+        default=os.getenv("LIVE_SCREEN_BROWSER_CHANNEL", "chrome"),
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=os.getenv("LIVE_SCREEN_OUTPUT_DIR", "test-results/live-screens"),
+    )
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    sys.exit(asyncio.run(run(parse_args())))
