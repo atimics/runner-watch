@@ -11,6 +11,15 @@
 .match-strip-teams small{grid-column:1/-1;color:var(--muted);font-size:8px;font-weight:800;letter-spacing:.09em}
 .match-strip-teams strong{overflow:hidden;font-size:17px;letter-spacing:-.025em;text-overflow:ellipsis;white-space:nowrap}
 .match-strip-teams span{font-size:20px;font-weight:900;font-variant-numeric:tabular-nums}
+.game-flash{display:grid;grid-template-columns:minmax(0,1fr) minmax(250px,.55fr);gap:20px;align-items:center;margin-top:12px;padding:18px;border:1px solid rgba(157,124,255,.32);border-radius:14px;background:linear-gradient(135deg,rgba(157,124,255,.12),rgba(19,17,29,.9))}
+.game-flash>div>span,.matchup-players>header span{color:var(--violet);font-size:8px;font-weight:900;letter-spacing:.13em}
+.game-flash h2,.matchup-players h2{margin:4px 0 0;font-size:20px;letter-spacing:-.025em}
+.game-flash>div>p{max-width:560px;margin:6px 0 0;color:var(--muted);font-size:10px;line-height:1.5}
+.game-flash-action>a,.game-flash-action>button{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:52px;padding:11px 13px;border:1px solid rgba(157,124,255,.4);border-radius:9px;background:rgba(157,124,255,.13);color:var(--text);text-align:left;cursor:pointer}
+.game-flash-action>button:disabled{cursor:default;opacity:.75}
+.game-flash-action strong,.game-flash-action small{display:block}
+.game-flash-action strong{font-size:12px}.game-flash-action small{color:var(--muted);font-size:8px}
+#commissionStatus{min-height:12px;margin:7px 0 0;color:var(--muted);font-size:8px}
 .series-context{overflow:hidden;margin-top:12px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,rgba(121,183,255,.08),rgba(19,17,29,.92) 48%)}
 .series-context>header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px 18px;border-bottom:1px solid var(--line)}
 .series-context>header span{color:#79b7ff;font-size:8px;font-weight:900;letter-spacing:.13em}
@@ -53,6 +62,19 @@
 .form-games span b.result-l{background:rgba(255,111,131,.12);color:var(--red)}
 .form-games>p{margin:0;padding:16px 12px;color:var(--muted);font-size:9px}
 .context-note{margin:0;padding:0 18px 14px;color:#756d82;font-size:8px}
+.matchup-players{overflow:hidden;margin-top:12px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+.matchup-players>header{display:flex;align-items:end;justify-content:space-between;gap:20px;padding:15px 18px;border-bottom:1px solid var(--line)}
+.matchup-players>header>small{color:var(--muted);font-size:8px}
+.matchup-player-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px 18px}
+.matchup-player-grid>section{overflow:hidden;border:1px solid #332d40;border-radius:10px;background:rgba(7,6,12,.26)}
+.matchup-player-grid>section>header{display:flex;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #332d40}
+.matchup-player-grid>section>header strong{font-size:12px}.matchup-player-grid>section>header span{color:var(--muted);font-size:8px}
+.matchup-player-grid article{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;padding:10px 12px;border-bottom:1px solid rgba(43,38,57,.7)}
+.matchup-player-grid article:last-child{border-bottom:0}.matchup-player-grid article>div strong,.matchup-player-grid article>div small,.matchup-player-grid article>span small{display:block}
+.matchup-player-grid article>div strong{font-size:10px}.matchup-player-grid article small{margin-top:2px;color:var(--muted);font-size:7px}
+.matchup-player-grid article>span{text-align:right}.matchup-player-grid article>span b{font-size:12px;font-variant-numeric:tabular-nums}
+.matchup-player-grid article>p{grid-column:1/-1;margin:2px 0 0;color:#8f879c;font-size:7px}
+.matchup-player-grid>section>p{margin:0;padding:14px 12px;color:var(--muted);font-size:9px}
 .decision-hero{--decision-accent:var(--violet);position:relative;overflow:hidden;margin-top:12px;padding:clamp(24px,5vw,46px);border:1px solid color-mix(in srgb,var(--decision-accent) 28%,var(--line));border-radius:18px;background:radial-gradient(circle at 90% 10%,color-mix(in srgb,var(--decision-accent) 18%,transparent),transparent 42%),linear-gradient(135deg,rgba(157,124,255,.12),rgba(255,120,73,.05))}
 .decision-hero.watch{--decision-accent:var(--green)}
 .decision-hero.lean{--decision-accent:#f8ca76}
@@ -95,12 +117,15 @@
   .match-strip-teams strong,.match-strip-teams span{display:block}
   .match-strip-teams strong{margin:4px 0;font-size:13px;white-space:normal}
   .match-strip-teams span{font-size:16px}
+  .game-flash{grid-template-columns:1fr;gap:13px;padding:14px}
   .series-context>header{align-items:flex-start;flex-direction:column;padding:13px 14px}
   .series-badges{flex-wrap:wrap}
   .previous-meeting{grid-template-columns:1fr;padding:13px 14px}
   .recent-form-grid{grid-template-columns:1fr;padding:13px 14px}
   .head-to-head-summary{padding-right:14px;padding-left:14px}
   .context-note{padding-right:14px;padding-left:14px}
+  .matchup-players>header{align-items:flex-start;flex-direction:column;gap:5px;padding:13px 14px}
+  .matchup-player-grid{grid-template-columns:1fr;padding:13px 14px}
   .decision-hero{padding:24px 18px}
   .decision-team{font-size:clamp(52px,16vw,72px);line-height:.84}
   .decision-stats{grid-template-columns:1fr 1fr}

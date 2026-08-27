@@ -4,8 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0b0a12">
-  <meta name="description" content="Public pregame prediction receipts with model probabilities, market odds, context, and settled results.">
+  <meta name="description" content="Winner odds, stats, public Calls, and source-backed sports research.">
   <title>{% block title %}RATi Sports{% endblock %}</title>
+  <script nonce="{{ request.state.csp_nonce }}">if (window.self !== window.top) document.documentElement.classList.add('embedded-pane');</script>
   <link rel="icon" href="/static/favicon.svg?v={{ static_version }}" type="image/svg+xml">
   <link rel="stylesheet" href="/static/sports-core.css?v={{ static_version }}">
   <link rel="stylesheet" href="/static/sports.css?v={{ static_version }}">
@@ -13,13 +14,13 @@
   <link rel="stylesheet" href="/static/sports-dashboard.css?v={{ static_version }}">
   {% block head %}{% endblock %}
 </head>
-<body>
+<body class="sports-product">
   <header class="sports-topbar">
     <a class="sports-brand" aria-label="RATi Sports" href="{{ sports_path_prefix or '' }}/"><i aria-hidden="true">R</i><span>RATi <b>Sports</b></span></a>
     <nav>
       <a class="{% if sports_tab == 'pulse' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/">Pulse</a>
       <a class="{% if sports_tab == 'radar' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/radar">Radar</a>
-      <a class="{% if sports_tab == 'receipts' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/receipts">Receipts</a>
+      <a class="{% if sports_tab == 'alpha' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/alpha">Alpha</a>
       <a href="{{ runners_origin }}">RATi Runners</a>
       {% if user %}
         <button type="button" data-profile>{{ user.display_name[:1]|upper }}</button>
@@ -36,7 +37,7 @@
   <nav class="sports-tab-bar" aria-label="Sports navigation">
     <a class="{% if sports_tab == 'pulse' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/"><span class="sports-tab-icon pulse"></span><b>Pulse</b></a>
     <a class="{% if sports_tab == 'radar' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/radar"><span class="sports-tab-icon radar"></span><b>Radar</b></a>
-    <a class="{% if sports_tab == 'receipts' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/receipts"><span class="sports-tab-icon alpha">✓</span><b>Receipts</b></a>
+    <a class="{% if sports_tab == 'alpha' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/alpha"><span class="sports-tab-icon alpha">🐺</span><b>Alpha</b></a>
   </nav>
   {% if user %}
   <dialog class="sports-profile" id="sportsProfile">

@@ -27,6 +27,28 @@
     </div>
   </header>
 
+  <section class="game-flash" aria-labelledby="gameFlashTitle">
+    <div>
+      <span>AI RESEARCH</span>
+      <h2 id="gameFlashTitle">Daily Flash</h2>
+      <p>One source-bound report for this matchup: winner, odds, team form, relevant players, and news.</p>
+    </div>
+    <div class="game-flash-action">
+      {% if latest_commission and latest_commission.locked %}
+      <button type="button" disabled><strong>Locked today</strong><small>The first report has a private hour</small></button>
+      {% elif latest_commission and latest_commission.status == 'complete' %}
+      <a href="/research/{{ latest_commission.public_id }}"><strong>Read Flash</strong><small>{{ 'Public report' if latest_commission.visibility == 'public' else 'Private report' }}</small></a>
+      {% elif latest_commission and latest_commission.status == 'running' %}
+      <button id="commissionButton" type="button" data-job-id="{{ latest_commission.public_id }}" disabled><strong>Researching…</strong><small>Building the game report</small></button>
+      {% elif user %}
+      <button id="commissionButton" type="button"><strong>Generate report</strong><small>100 Flash · private 1h</small></button>
+      {% else %}
+      <a href="/login?next=/game/{{ event.id }}"><strong>Log in for Flash</strong><small>100 Flash · private 1h</small></a>
+      {% endif %}
+      <p id="commissionStatus" role="status"></p>
+    </div>
+  </section>
+
   {% set game_context = event.context %}
   <section class="series-context">
     <header>
@@ -91,6 +113,30 @@
     </div>
     <p class="context-note">Series and recent form are context only; this baseline model still uses season records and market odds.</p>
   </section>
+
+  {% if event.matchup_players %}
+  <section class="matchup-players">
+    <header>
+      <div><span>MATCHUP STATS</span><h2>Players relevant to this game</h2></div>
+      <small>Latest stored roster for each team · no global player list</small>
+    </header>
+    <div class="matchup-player-grid">
+      {% for team in event.matchup_players %}
+      <section>
+        <header><strong>{{ team.team_abbreviation }}</strong><span>{{ team.record }}</span></header>
+        {% for player in team.players %}
+        <article>
+          <div><strong>{{ player.name }}</strong><small>{{ player.position }}{% if player.starter %} · latest starter{% endif %}</small></div>
+          <span><b>{{ player.wins }}–{{ player.losses }}</b><small>team record in {{ player.games }} appearance{{ '' if player.games == 1 else 's' }}</small></span>
+          {% if player.last_stats_label %}<p>{{ player.last_stats_label }}</p>{% endif %}
+        </article>
+        {% else %}<p>No stored player appearances for this team yet.</p>{% endfor %}
+      </section>
+      {% endfor %}
+    </div>
+    <p class="context-note">Appearance records show the team result when the player appeared. They are context, not individual skill ratings or confirmed lineups.</p>
+  </section>
+  {% endif %}
 
   {% if prediction %}
     {% if prediction.selection != 'pass' %}
@@ -252,5 +298,19 @@
     if(response.ok){status.textContent='Paper pick recorded.';setTimeout(()=>location.reload(),500);}
     else{button.disabled=false;status.textContent=payload.detail||'Could not record the pick.';}
   }));
+  const commissionButton=document.getElementById('commissionButton');
+  const commissionStatus=document.getElementById('commissionStatus');
+  async function pollFlash(jobId){
+    const response=await fetch(`/api/research/jobs/${encodeURIComponent(jobId)}`);const result=await response.json().catch(()=>({}));
+    if(result.status==='complete'&&result.url){location.href=result.url;return;}
+    if(result.status==='failed'){commissionButton.disabled=false;commissionButton.innerHTML='<strong>Retry Flash</strong><small>100 Flash</small>';commissionStatus.textContent=result.error||'Flash failed. You can retry.';return;}
+    commissionStatus.textContent='Flash is reading this matchup and writing your private report…';setTimeout(()=>pollFlash(jobId),2500);
+  }
+  if(commissionButton?.dataset.jobId)pollFlash(commissionButton.dataset.jobId);
+  commissionButton?.addEventListener('click',async()=>{
+    commissionButton.disabled=true;commissionButton.innerHTML='<strong>Starting…</strong><small>Building the game report</small>';commissionStatus.textContent='Sending the report to the queue…';
+    try{const response=await fetch('/api/sports/games/{{ event.id }}/research',{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||result.error||'Could not start Flash');if(Number.isFinite(Number(result.balance)))document.querySelectorAll('[data-flash-balance]').forEach(item=>{item.textContent=result.balance;});if(result.status==='complete'&&result.url){location.href=result.url;return;}commissionButton.innerHTML='<strong>Researching…</strong><small>Building the game report</small>';pollFlash(result.job_id);}
+    catch(error){commissionButton.disabled=false;commissionButton.innerHTML='<strong>Retry Flash</strong><small>100 Flash</small>';commissionStatus.textContent=error.message||'Could not start Flash';}
+  });
 </script>
 {% endblock %}

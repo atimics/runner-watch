@@ -6,7 +6,8 @@
     if (url.origin !== window.location.origin) return null;
     const supported = /^\/t\/[^/]+\/?$/.test(url.pathname)
       || /^\/research\/[^/]+\/?$/.test(url.pathname)
-      || /^\/s\/[^/]+\/?$/.test(url.pathname);
+      || /^\/s\/[^/]+\/?$/.test(url.pathname)
+      || /^\/(?:sports\/)?game\/[^/]+\/?$/.test(url.pathname);
     return supported ? url : null;
   }
 
@@ -19,7 +20,7 @@
     let current = '';
 
     function defaultUrl() {
-      const preferred = list.querySelector('a[data-desktop-default], a[href^="/t/"], a[href^="/research/"], a[href^="/s/"]');
+      const preferred = list.querySelector('a[data-desktop-default], a[href^="/t/"], a[href^="/research/"], a[href^="/s/"], a[href^="/game/"], a[href^="/sports/game/"]');
       return preferred ? panelUrl(preferred.href) : null;
     }
 

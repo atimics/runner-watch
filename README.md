@@ -22,12 +22,12 @@ snapshots per league slate: opening, pregame, and close. The 500-credit plan has
 limit and a protected 50-credit reserve. Quota headers are checked before paid calls, and cached odds
 are served between snapshots. The key stays on the server and is never sent to the browser or logs.
 
-Sports uses three public views. **Pulse** ranks current Lean and Watch model-versus-market gaps.
-**Radar** shows material price or model changes only for games that entered Pulse. **Receipts** is
-the model-first public scorecard: it seals the last forecast before game time, scores calibration and
-the first public edge call, and keeps a permanent game-by-game archive. Team and player history are
-secondary context inside Receipts. A player rate means the team result in games where that player
-appeared; it is not an individual skill score.
+Sports uses the same three public views as Runners. **Pulse** ranks current Lean and Watch
+model-versus-market gaps. **Radar** shows material odds or model changes only for games that entered
+Pulse. **Alpha** is the public Call ledger: each winner is treated like a ticker, its no-vig market
+probability is treated like a price, and every paper Call keeps its entry odds, current mark, and
+settled PnL. The old Receipts URLs redirect to Alpha. Sealed pregame model and odds records remain on
+each game page as supporting evidence.
 
 The public scanner defaults to listed US penny stocks from $0.20 to $5 with market caps below
 about $2B. It combines Yahoo's strongest movers, most active names, and largest losers before

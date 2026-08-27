@@ -1,0 +1,72 @@
+<header class="screen-head">
+  <div><h1>Alpha</h1><span class="head-meta"><b>{{ board.active_calls }}</b> open Calls <i></i><span>{{ board.total_calls }} total</span></span></div>
+  {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>{% else %}<a class="avatar-button signed-out" href="/login">Log in</a>{% endif %}
+</header>
+
+<main class="alpha-board call-ledger">
+{% if board.rows %}
+  {% set leader = board.rows[0] %}
+  {% set leader_href = leader.href if leader.href is defined else '/t/' ~ leader.ticker %}
+  <article class="alpha-leader">
+    <div class="wolf-mark"><span>🐺</span><b>#1 most called</b></div>
+    <a class="alpha-leader-asset" href="{{ leader_href }}" data-desktop-default>
+      <span class="coin coin-{{ leader.coin_tone }}"><b>{{ leader.coin_label }}</b><i></i></span>
+      <span><strong>{{ leader.ticker }}</strong><small>{{ leader.company }}</small></span>
+      <span class="alpha-leader-quote">
+        <b>{% if leader.price_label is defined %}{{ leader.price_label }}{% elif leader.price is not none %}${{ '%.4f'|format(leader.price) if leader.price < 1 else '%.2f'|format(leader.price) }}{% else %}—{% endif %}</b>
+        <small class="{% if leader.change_tone is defined %}{{ leader.change_tone }}{% else %}{{ 'up' if leader.change_pct is not none and leader.change_pct >= 0 else 'down' }}{% endif %}">{% if leader.change_label is defined %}{{ leader.change_label }}{% elif leader.change_pct is not none %}{{ '+' if leader.change_pct >= 0 else '' }}{{ '%.1f'|format(leader.change_pct) }}%{% else %}—{% endif %}</small>
+      </span>
+    </a>
+    <div class="alpha-leader-foot">
+      <span>{{ leader.active_calls }} open Calls · {{ leader.total_calls }} total{% if leader.odds_label is defined %} · {{ leader.odds_label }} odds{% endif %}</span>
+      <a class="alpha-open" href="{{ leader_href }}">Open</a>
+    </div>
+  </article>
+
+  {% if board.rows|length > 1 %}
+  <section class="alpha-ranking" aria-label="Alpha ranking">
+    {% for item in board.rows[1:] %}
+    {% set item_href = item.href if item.href is defined else '/t/' ~ item.ticker %}
+    <article class="alpha-rank-row">
+      <span class="rank-number">{{ item.rank }}</span>
+      <a href="{{ item_href }}"><span class="coin coin-{{ item.coin_tone }}"><b>{{ item.coin_label }}</b><i></i></span><span><strong>{{ item.ticker }}</strong><small>{{ item.pulse_label }}</small></span></a>
+      <div class="call-count"><b>{{ item.active_calls }}</b><small>open Calls</small></div>
+    </article>
+    {% endfor %}
+  </section>
+  {% endif %}
+{% elif board.contenders %}
+<section class="alpha-contenders">
+  <div class="alpha-section-head"><h2>Contenders</h2><span>Make the first Call</span></div>
+  {% for item in board.contenders %}
+  {% set item_href = item.href if item.href is defined else '/t/' ~ item.ticker %}
+  <article class="alpha-rank-row contender-row">
+    <span class="rank-number">—</span>
+    <a href="{{ item_href }}"><span class="coin coin-{{ item.coin_tone }}"><b>{{ item.coin_label }}</b><i></i></span><span><strong>{{ item.ticker }}</strong><small>{{ item.pulse_label }}</small></span></a>
+    <a class="alpha-open" href="{{ item_href }}">Open</a>
+  </article>
+  {% endfor %}
+</section>
+{% else %}
+<div class="empty-list"><strong>No public Calls yet</strong><span>Open a winner and make the first Call.</span></div>
+{% endif %}
+
+{% if board.calls %}
+<section class="public-call-feed" aria-label="Public Calls">
+  <div class="alpha-section-head"><h2>Calls</h2><span>Entry, mark and PnL</span></div>
+  {% for call in board.calls %}
+  {% set call_href = call.href if call.href is defined else '/t/' ~ call.ticker %}
+  {% set caller_href = call.caller_href if call.caller_href is defined else '/u/' ~ call.caller_handle %}
+  <article class="public-call-row">
+    <a class="call-owner" href="{{ caller_href }}"><strong>{{ call.caller_handle }}</strong><small>{{ call.status }}</small></a>
+    <a class="call-ticker" href="{{ call_href }}"><strong>{{ call.ticker }}</strong><small>Entry {% if call.entry_label is defined %}{{ call.entry_label }}{% else %}${{ '%.4f'|format(call.entry_price) if call.entry_price < 1 else ('%.2f'|format(call.entry_price)) }}{% endif %}</small></a>
+    <span class="call-pnl">
+      {% if call.return_label is defined and call.return_label %}<b class="{{ call.return_tone }}">{{ call.return_label }}</b><small>{% if call.mark_label is defined %}{{ call.mark_label }}{% endif %}</small>
+      {% elif call.return_pct is defined and call.return_pct is not none %}<b class="{{ 'up' if call.return_pct >= 0 else 'down' }}">{{ '+' if call.return_pct >= 0 else '' }}{{ '%.1f'|format(call.return_pct) }}%</b><small>{% if call.mark_price is not none %}${{ '%.4f'|format(call.mark_price) if call.mark_price < 1 else ('%.2f'|format(call.mark_price)) }}{% endif %}</small>
+      {% else %}<b>—</b><small>{% if call.mark_label is defined %}{{ call.mark_label }}{% else %}no mark{% endif %}</small>{% endif %}
+    </span>
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
+</main>

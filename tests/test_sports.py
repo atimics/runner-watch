@@ -8,6 +8,7 @@ import pytest
 from fastapi import Request
 
 from runner_web import db
+from runner_web import main as web_main
 from runner_web import sports as sports_module
 from runner_web.db import connection, init_db
 from runner_web.main import (
@@ -31,7 +32,9 @@ from runner_web.sports import (
     predict_event,
     settle_picks,
     sports_alpha,
+    sports_alpha_board,
     sports_event,
+    sports_flash_evidence,
     sports_pulse,
     sports_radar,
     sports_slate,
@@ -289,6 +292,12 @@ def test_paper_pick_freezes_odds_and_settles(sports_db) -> None:
     assert pick["status"] == "open"
     assert "-" in pick["caller_handle"]
 
+    board = sports_alpha_board("mlb")
+    assert board["active_calls"] == 1
+    assert board["rows"][0]["ticker"] == "HOM"
+    assert board["rows"][0]["price_label"].endswith("¢")
+    assert board["calls"][0]["entry_label"] == "-130"
+
     final_event = normalize_event("mlb", sample_event(completed=True))
     assert final_event is not None
     store_events([final_event])
@@ -299,6 +308,11 @@ def test_paper_pick_freezes_odds_and_settles(sports_db) -> None:
         ).fetchone()
     assert settled["result"] == "win"
     assert settled["return_units"] == pytest.approx(100 / 130, abs=0.0001)
+
+    settled_board = sports_alpha_board("mlb")
+    assert settled_board["active_calls"] == 0
+    assert settled_board["calls"][0]["status"] == "win"
+    assert settled_board["calls"][0]["return_label"].endswith("u")
 
 
 def test_sports_host_gets_the_sports_product(sports_db) -> None:
@@ -541,6 +555,153 @@ def test_sports_alpha_builds_team_and_player_win_rate_history(sports_db) -> None
     assert alpha["model"]["receipts"][0]["receipt_id"]
 
 
+def test_game_page_keeps_player_context_and_flash_inside_the_matchup(sports_db) -> None:
+    payload = {
+        "boxscore": {
+            "players": [
+                {
+                    "team": {"id": "1", "displayName": "Home Club", "abbreviation": "HOM"},
+                    "statistics": [
+                        {
+                            "labels": ["PTS"],
+                            "athletes": [
+                                {
+                                    "athlete": {"id": "p1", "displayName": "Home Player"},
+                                    "position": {"abbreviation": "P"},
+                                    "starter": True,
+                                    "stats": ["20"],
+                                }
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "team": {"id": "2", "displayName": "Away Club", "abbreviation": "AWY"},
+                    "statistics": [
+                        {
+                            "labels": ["PTS"],
+                            "athletes": [
+                                {
+                                    "athlete": {"id": "p2", "displayName": "Away Player"},
+                                    "position": {"abbreviation": "P"},
+                                    "starter": True,
+                                    "stats": ["10"],
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ]
+        }
+    }
+    for number, days_ago in enumerate((2, 1), start=1):
+        raw = sample_event(completed=True)
+        raw["id"] = f"40120000{number}"
+        raw["date"] = (datetime.now(UTC) - timedelta(days=days_ago)).isoformat()
+        past_event = normalize_event("mlb", raw)
+        assert past_event is not None
+        store_events([past_event])
+        store_player_appearances(normalize_player_appearances(past_event, payload))
+
+    upcoming_raw = sample_event()
+    upcoming_raw["id"] = "401200003"
+    upcoming = normalize_event("mlb", upcoming_raw)
+    assert upcoming is not None
+    store_events([upcoming])
+
+    detail = sports_event(str(upcoming["id"]))
+    assert detail is not None
+    home = next(team for team in detail["matchup_players"] if team["side"] == "home")
+    assert home["players"][0]["name"] == "Home Player"
+    assert home["players"][0]["games"] == 2
+    assert home["players"][0]["wins"] == 2
+    assert home["players"][0]["last_stats_label"] == "PTS 20"
+
+    fingerprint, evidence = sports_flash_evidence(str(upcoming["id"]))
+    assert len(fingerprint) == 64
+    assert evidence["subject_type"] == "sports_game"
+    assert evidence["event_id"] == upcoming["id"]
+    assert evidence["players"][0]["players"]
+    assert all("caller_handle" not in item for item in evidence["public_picks"].values())
+
+    response = sports_game_page(
+        str(upcoming["id"]),
+        request(path=f"/game/{upcoming['id']}"),
+        None,
+    )
+    assert b"Daily Flash" in response.body
+    assert b"Players relevant to this game" in response.body
+    assert b"Home Player" in response.body
+    assert b"no global player list" in response.body
+    assert b"/api/sports/games/mlb:401200003/research" in response.body
+
+
+def test_sports_flash_uses_the_shared_daily_report_lifecycle(
+    sports_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    timestamp = datetime.now(UTC).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) "
+            "VALUES('sports-user','sports_user','Sports User','active',?)",
+            (timestamp,),
+        )
+        database.execute(
+            "INSERT INTO flash_wallets(user_id,balance,created_at,updated_at) "
+            "VALUES('sports-user',200,?,?)",
+            (timestamp, timestamp),
+        )
+
+    def fake_report(_key, evidence, _user_id, *, actor):
+        assert evidence["subject_type"] == "sports_game"
+        return (
+            {
+                "headline": "HOM has the cleaner setup",
+                "thesis": "The model prefers HOM, but the price leaves real uncertainty.",
+                "summary": "Team form and the current market both support a close HOM lean.",
+                "company_profile": {"what_it_does": "must not leak into sports"},
+                "people": [{"name": "must not leak"}],
+                "filings": [{"form": "must not leak"}],
+                "catalysts": ["Home form is stronger."],
+                "risks": ["The edge is small."],
+                "watch": ["Watch the moneyline."],
+                "unknowns": ["Lineups are not confirmed."],
+                "sources": evidence["sources"],
+                "citations": [],
+            },
+            actor.model,
+            {},
+        )
+
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(web_main, "_generate_openrouter_report", fake_report)
+    commission, created = web_main._create_research_commission(
+        "sports-user", web_main._sports_report_key(str(event["id"]))
+    )
+    assert created is True
+    assert commission["subject_type"] == "sports_game"
+    assert commission["nav_product"] == "sports"
+
+    report = web_main._run_research_commission(str(commission["id"]))
+    assert report["status"] == "complete"
+    assert report["ticker"] == "HOM"
+    assert report["company"] == "Away Club at Home Club"
+    assert report["company_profile"] == {}
+    assert report["people"] == []
+    assert report["filing_context"] == []
+    daily = web_main.daily_report_for_sports_game(str(event["id"]), "sports-user")
+    assert daily is not None
+    assert daily["locked"] is False
+    with connection() as database:
+        balance = database.execute(
+            "SELECT balance FROM flash_wallets WHERE user_id='sports-user'"
+        ).fetchone()["balance"]
+    assert balance == 100
+
+
 def test_finished_game_seals_the_last_pregame_prediction_and_market(sports_db) -> None:
     start = datetime(2026, 8, 26, 20, 0, tzinfo=UTC)
     pregame_at = start - timedelta(hours=1)
@@ -623,7 +784,7 @@ def test_empty_player_boxscore_is_checked_only_once(
     assert second["events"] == 0
 
 
-def test_sports_host_has_radar_and_receipts_products(sports_db) -> None:
+def test_sports_host_has_the_same_alpha_product_as_runners(sports_db) -> None:
     radar_response = radar_page(request(path="/radar"), None)
     alpha_response = alpha_page(request(path="/alpha"), None)
     receipts_response = sports_receipts_page(request(path="/receipts"), None)
@@ -631,13 +792,14 @@ def test_sports_host_has_radar_and_receipts_products(sports_db) -> None:
     assert b"material change" in radar_response.body
     assert b'class="sports-hero' not in radar_response.body
     assert alpha_response.status_code == 200
-    assert b"PUBLIC MODEL SCORECARD" in alpha_response.body
-    assert receipts_response.status_code == 200
-    assert b"Receipts" in receipts_response.body
-    assert b"How this is scored" in receipts_response.body
-    assert b'data-alpha-tab="model"' in receipts_response.body
-    assert b'data-alpha-panel="teams" hidden' in receipts_response.body
-    assert b'data-history-range="30"' in receipts_response.body
+    assert b'<h1>Alpha</h1>' in alpha_response.body
+    assert b'class="alpha-board call-ledger"' in alpha_response.body
+    assert b"open Calls" in alpha_response.body
+    assert b"Receipts" not in alpha_response.body
+    assert b'href="/alpha"' in alpha_response.body
+    assert b">Runners</a>" in alpha_response.body
+    assert receipts_response.status_code == 307
+    assert receipts_response.headers["location"] == "/alpha"
 
 
 def test_cloudflare_forwarded_host_selects_the_public_product() -> None:
