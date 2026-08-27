@@ -47,6 +47,10 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
       - name: Save rollback image
         id: rollback
@@ -67,11 +71,23 @@ jobs:
         if: steps.deploy.outcome == 'success'
         continue-on-error: true
         run: scripts/smoke-production https://stonks.rati.foundation
+      - name: Render every production screen
+        id: screens
+        if: steps.deploy.outcome == 'success' && steps.smoke.outcome == 'success'
+        continue-on-error: true
+        run: scripts/test-live-screens
+      - name: Save failure screenshots
+        if: always() && steps.screens.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-screen-failures
+          path: test-results/live-screens
+          if-no-files-found: ignore
       - name: Roll back failed release
-        if: always() && (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure')
+        if: always() && (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.screens.outcome == 'failure')
         run: flyctl deploy --remote-only --image "${{ steps.rollback.outputs.image }}" --strategy rolling --skip-release-command
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       - name: Report failed release
-        if: always() && (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure')
+        if: always() && (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.screens.outcome == 'failure')
         run: exit 1

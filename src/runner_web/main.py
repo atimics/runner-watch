@@ -115,6 +115,7 @@ from runner_web.kol import (
     publish_calls_for_scan,
     refresh_kol_calls,
 )
+from runner_web.live_screens import public_dynamic_screen_paths
 from runner_web.market_clock import market_clock
 from runner_web.operations import router as operations_router
 from runner_web.operations import runtime_capabilities as runtime_capabilities
@@ -969,6 +970,17 @@ def api_flash_record(request: Request) -> dict[str, Any]:
     with connection() as database:
         _release_expired_daily_reports(database)
     return flash_record()
+
+
+@app.get("/api/smoke/screens")
+def live_screen_manifest(request: Request) -> JSONResponse:
+    """Expose only public paths used by the production browser smoke test."""
+
+    enforce_rate(request, "screen-manifest", limit=30, seconds=60)
+    with connection() as database:
+        _release_expired_daily_reports(database)
+        dynamic = public_dynamic_screen_paths(database)
+    return JSONResponse({"dynamic": dynamic})
 
 
 @app.get("/flash/record", response_class=HTMLResponse)
