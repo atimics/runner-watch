@@ -13,30 +13,27 @@
       {% endif %}
     </header>
     {% include "_market_clock.html" %}
-    {% if pulse.kols and (pulse.kols[0].calls or pulse.kols[0].active_calls) %}
-      {% set kol = pulse.kols[0] %}
-      {% set paper_pnl = kol.paper_pnl|float %}
-      <aside class="kol-score-strip" aria-label="Flash paper Call record">
-        <span class="kol-avatar" aria-hidden="true">{{ kol.emoji or '⚡' }}</span>
-        <span>
-          <strong>
-            {{ kol.display_name }}
-            <i class="flash-model-label">{{ kol.inference_model_label }}</i>
-          </strong>
-          <small>
+    {% set kol = pulse.kols[0] if pulse.kols else none %}
+    {% set has_kol_calls = kol and (kol.calls or kol.active_calls) %}
+    {% set paper_pnl = kol.paper_pnl|float if kol else 0 %}
+    <aside class="kol-score-strip" id="kolScoreStrip" aria-label="Flash paper Call record"{% if not has_kol_calls %} hidden{% endif %}>
+      <span class="kol-avatar" data-kol-avatar aria-hidden="true">{{ kol.emoji if kol and kol.emoji else '⚡' }}</span>
+      <span>
+        <strong>
+          <span data-kol-name>{{ kol.display_name if kol else '' }}</span>
+          <i class="flash-model-label" data-kol-model>{{ kol.inference_model_label if kol else '' }}</i>
+        </strong>
+        <small data-kol-stats>
+          {% if kol %}
             {{ kol.active_calls|int }} open · {{ kol.calls|int }} calls ·
-            {% if kol.hit_rate is none %}
-              no results
-            {% else %}
-              {{ '%.0f'|format(kol.hit_rate|float * 100) }}% hit
-            {% endif %}
-          </small>
-        </span>
-        <b class="{{ 'up' if paper_pnl >= 0 else 'down' }}">
-          {{ '+' if paper_pnl >= 0 else '−' }}${{ '%.2f'|format(paper_pnl|abs) }}
-        </b>
-      </aside>
-    {% endif %}
+            {% if kol.hit_rate is none %}no results{% else %}{{ '%.0f'|format(kol.hit_rate|float * 100) }}% hit{% endif %}
+          {% endif %}
+        </small>
+      </span>
+      <b data-kol-pnl class="{{ 'up' if paper_pnl >= 0 else 'down' }}">
+        {% if kol %}{{ '+' if paper_pnl >= 0 else '−' }}${{ '%.2f'|format(paper_pnl|abs) }}{% endif %}
+      </b>
+    </aside>
     <button class="pulse-refresh" id="pulseRefresh" type="button" aria-live="polite" hidden>1 new ticker</button>
 
     <main class="list-section pulse-feed">
@@ -56,12 +53,20 @@ const more = document.getElementById('pulseMore');
 const refreshButton = document.getElementById('pulseRefresh');
 const chartsUrl = '/api/pulse/charts';
 let loadingMore = false;
+let loadMoreRetryTimer = null;
+let moreVisible = false;
 let polling = false;
 let pollCount = 0;
 let pendingPulse = null;
 
+function tickerKey(row) {
+  const ticker = String(row?.ticker || '').trim().toUpperCase();
+  return ticker;
+}
+
 function entryKey(row) {
-  return row?.entered_at ? `${row.ticker}|${row.entered_at}` : '';
+  const ticker = tickerKey(row);
+  return ticker && row?.entered_at ? `${ticker}|${row.entered_at}` : ticker;
 }
 
 function mergeUniqueTickers(primaryRows, secondaryRows) {
@@ -73,13 +78,46 @@ function mergeUniqueTickers(primaryRows, secondaryRows) {
   });
 }
 
+function renderKolScorecard() {
+  const scorecard = document.getElementById('kolScoreStrip');
+  const kol = (pulse.kols || [])[0];
+  const calls = Number(kol?.calls || 0);
+  const activeCalls = Number(kol?.active_calls || 0);
+  if (!kol || (!calls && !activeCalls)) {
+    scorecard.hidden = true;
+    return;
+  }
+
+  const pnl = Number(kol.paper_pnl || 0);
+  const hitRate = kol.hit_rate == null
+    ? 'no results'
+    : `${(Number(kol.hit_rate) * 100).toFixed(0)}% hit`;
+  scorecard.querySelector('[data-kol-avatar]').textContent = kol.emoji || '⚡';
+  scorecard.querySelector('[data-kol-name]').textContent = kol.display_name || '';
+  scorecard.querySelector('[data-kol-model]').textContent = kol.inference_model_label || '';
+  scorecard.querySelector('[data-kol-stats]').textContent = `${activeCalls} open · ${calls} calls · ${hitRate}`;
+  const pnlNode = scorecard.querySelector('[data-kol-pnl]');
+  pnlNode.className = pnl >= 0 ? 'up' : 'down';
+  pnlNode.textContent = `${pnl >= 0 ? '+' : '−'}$${Math.abs(pnl).toFixed(2)}`;
+  scorecard.hidden = false;
+}
+
 function render() {
   const rows = pulse.rows || [];
   list.innerHTML = rows.length
     ? `<div class="token-list">${rows.map(row => TickerRow.render(row)).join('')}</div>`
     : `<div class="empty-list pulse-empty"><span class="empty-seal" aria-hidden="true"></span><strong>No verified movement</strong><p>The tape is quiet. New evidence will appear here.</p></div>`;
   more.hidden = !pulse.has_more;
+  renderKolScorecard();
   TickerRow.paintCharts();
+}
+
+function scheduleLoadMoreRetry() {
+  if (loadMoreRetryTimer || !moreVisible || !pulse.has_more || document.hidden) return;
+  loadMoreRetryTimer = setTimeout(() => {
+    loadMoreRetryTimer = null;
+    loadMore();
+  }, 5000);
 }
 
 async function loadMore() {
@@ -89,12 +127,17 @@ async function loadMore() {
   try {
     const offset = pulse.next_offset || pulse.rows.length;
     const response = await fetch(`/api/pulse?offset=${offset}&limit=20`);
-    if (!response.ok) return;
+    if (!response.ok) {
+      scheduleLoadMoreRetry();
+      return;
+    }
     const next = await response.json();
     pulse.rows = mergeUniqueTickers(pulse.rows || [], next.rows || []);
     pulse.next_offset = next.next_offset;
     pulse.has_more = next.has_more;
     render();
+  } catch (_) {
+    scheduleLoadMoreRetry();
   } finally {
     loadingMore = false;
     more.classList.remove('loading');
@@ -102,7 +145,8 @@ async function loadMore() {
 }
 
 new IntersectionObserver(entries => {
-  if (entries.some(entry => entry.isIntersecting)) loadMore();
+  moreVisible = entries.some(entry => entry.isIntersecting);
+  if (moreVisible) loadMore();
 }, {rootMargin: '240px'}).observe(more);
 
 refreshButton.addEventListener('click', () => {
@@ -126,12 +170,19 @@ async function pollForUpdates() {
     const response = await fetch('/api/pulse?offset=0&limit=20');
     if (response.ok) {
       const nextPulse = await response.json();
-      const currentEntries = new Set((pulse.rows || []).map(entryKey).filter(Boolean));
+      const currentEntries = new Set(
+        (pulse.rows || []).flatMap(row => [tickerKey(row), entryKey(row)]).filter(Boolean),
+      );
       const newCount = (nextPulse.rows || []).filter(row => !currentEntries.has(entryKey(row))).length;
+      pulse.kols = nextPulse.kols || [];
+      renderKolScorecard();
       if (newCount) {
         pendingPulse = nextPulse;
         refreshButton.textContent = newCount === 1 ? '1 new ticker' : `${newCount} new tickers`;
         refreshButton.hidden = false;
+      } else {
+        pendingPulse = null;
+        refreshButton.hidden = true;
       }
       pollCount += 1;
       if (pollCount % 6 === 0) TickerRow.loadCharts(chartsUrl);
@@ -146,5 +197,10 @@ async function pollForUpdates() {
 render();
 TickerRow.loadCharts(chartsUrl);
 setInterval(pollForUpdates, 30000);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  if (moreVisible) loadMore();
+  pollForUpdates();
+});
 </script>
 {% endblock %}
