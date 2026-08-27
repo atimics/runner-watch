@@ -58,6 +58,23 @@
         <strong>Prediction pending</strong>
       {% endif %}
     </span>
+    {% set edge_history = event.edge_history %}
+    <span class="game-edge{% if prediction %} {{ prediction.signal|replace(' ','-') }}{% endif %}">
+      {% if edge_history %}
+        <small><span class="edge-team">{{ edge_history.team }}</span> EDGE</small>
+        <svg class="edge-spark" viewBox="0 0 92 24" role="img" aria-label="{{ edge_history.label }}" preserveAspectRatio="none">
+          <line class="edge-zero" x1="1" y1="12" x2="91" y2="12"></line>
+          {% if edge_history.points|length > 1 %}
+            <polyline points="{{ edge_history.plot_points }}"></polyline>
+          {% else %}
+            <circle cx="46" cy="{{ edge_history.dot_y }}" r="2.2"></circle>
+          {% endif %}
+        </svg>
+      {% else %}
+        <small>EDGE</small>
+        <span class="edge-empty">No history</span>
+      {% endif %}
+    </span>
     <span class="game-call">
       <b class="game-status {{ event.status }}">{{ event.status_detail }}</b>
       {% if prediction %}

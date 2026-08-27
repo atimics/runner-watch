@@ -16,6 +16,7 @@ from runner_web.sports import (
     predict_event,
     settle_picks,
     sports_event,
+    sports_slate,
     store_events,
 )
 
@@ -173,12 +174,38 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     assert b"RATi Sports" in response.body
     assert b'class="game-matchup"' in response.body
     assert b'class="ticker-team"' in response.body
+    assert b'class="game-edge' in response.body
 
     detail = sports_event(event["id"])
     assert detail is not None
     detail_response = sports_game_page(event["id"], request(path=f"/game/{event['id']}"), None)
     assert detail_response.status_code == 200
     assert b"Make a paper pick" in detail_response.body
+
+
+def test_slate_builds_fixed_side_edge_history(sports_db) -> None:
+    first_raw = sample_event()
+    first = normalize_event("mlb", first_raw)
+    assert first is not None
+    store_events([first], observed_at=datetime(2026, 8, 26, 18, 0, tzinfo=UTC))
+
+    second_raw = sample_event()
+    moneyline = second_raw["competitions"][0]["odds"][0]["moneyline"]
+    moneyline["home"]["close"]["odds"] = "-150"
+    moneyline["away"]["close"]["odds"] = "+130"
+    second = normalize_event("mlb", second_raw)
+    assert second is not None
+    store_events([second], observed_at=datetime(2026, 8, 26, 18, 10, tzinfo=UTC))
+
+    event = next(item for item in sports_slate("mlb")["events"] if item["id"] == first["id"])
+    history = event["edge_history"]
+
+    assert history["side"] == "home"
+    assert history["team"] == "HOM"
+    assert [point["edge_pct"] for point in history["points"]] == [5.4, 2.2]
+    assert history["change_pct"] == -3.2
+    assert len(history["plot_points"].split()) == 2
+    assert "fell 3.2 points" in history["label"]
 
 
 def test_cloudflare_forwarded_host_selects_the_public_product() -> None:
