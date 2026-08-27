@@ -280,4 +280,20 @@ DEFAULT_SOURCE_POLICIES = (
             and bool(os.getenv("FINTEL_API_KEY", "").strip())
         ),
     ),
+    SourcePolicy(
+        source="espn",
+        feed="sports_scoreboard_preview",
+        title="ESPN sports scoreboard preview",
+        owner="ESPN",
+        terms_url="https://disneytermsofuse.com/",
+        credential_env=None,
+        expected_cadence_seconds=600,
+        stale_after_seconds=1_800,
+        schedule="always",
+        storage_policy="normalized_only",
+        display_policy="preview_with_attribution",
+        attribution="ESPN",
+        review_status="poc_only",
+        enabled=_enabled_by_default("SPORTS_INGESTION_ENABLED"),
+    ),
 )

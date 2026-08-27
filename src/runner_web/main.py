@@ -57,17 +57,13 @@ from runner_web import db as runner_db
 from runner_web.ai_kol import FLASH, AIKol, actor_snapshot
 from runner_web.base_rates import matched_market_base_rates
 from runner_web.billing import (
-    caller_id_price_label,
     construct_webhook_event,
-    create_caller_id_checkout_session,
     delete_customer,
     process_webhook_event,
 )
 from runner_web.caller_ids import (
-    AdditionalCallerIdPaymentRequired,
-    caller_ids_for_user,
-    claim_caller_id,
-    delete_caller_id,
+    ensure_caller_identity,
+    ensure_caller_identity_with_database,
 )
 from runner_web.calls import (
     active_call_for_user,
@@ -110,9 +106,9 @@ from runner_web.kol import (
     refresh_kol_calls,
 )
 from runner_web.market_clock import market_clock
-from runner_web.operations import WORKER_HEARTBEAT_KEY
 from runner_web.operations import router as operations_router
 from runner_web.operations import runtime_capabilities as runtime_capabilities
+from runner_web.operations import worker_heartbeat_key
 from runner_web.outcomes import (
     record_outcome_error,
     refresh_outcomes,
@@ -127,6 +123,7 @@ from runner_web.ranker import (
     predict_and_store,
     store_training_examples,
 )
+from runner_web.request_security import request_client_ip, safe_next_path
 from runner_web.research_context import build_research_context
 from runner_web.research_pipeline import PIPELINE_VERSION, run_verified_pipeline
 from runner_web.shared_state import (
@@ -136,6 +133,8 @@ from runner_web.shared_state import (
     rate_limit_allowed,
     recover_research_jobs,
     redis_configured,
+    release_research_worker,
+    touch_research_worker,
 )
 from runner_web.shared_state import (
     cache_delete as shared_cache_delete,
@@ -152,14 +151,35 @@ from runner_web.source_workers import (
     discovery_source_worker,
     trading_halt_worker,
 )
+from runner_web.sports import (
+    LEAGUES as SPORTS_LEAGUES,
+)
+from runner_web.sports import (
+    create_sports_pick,
+    refresh_sports,
+    sports_event,
+    sports_pick_stats,
+    sports_slate,
+)
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
 
 LOG = logging.getLogger(__name__)
 
 APP_ORIGIN = os.getenv("APP_ORIGIN", "http://localhost:8080").rstrip("/")
+RUNNERS_ORIGIN = os.getenv("RUNNERS_ORIGIN", APP_ORIGIN).rstrip("/")
+SPORTS_ORIGIN = os.getenv("SPORTS_ORIGIN", "https://sports.rati.chat").rstrip("/")
+LEGACY_ORIGIN = os.getenv("LEGACY_ORIGIN", "https://stonks.rati.foundation").rstrip("/")
 RP_ID = os.getenv("RP_ID", "localhost")
+LEGACY_RP_ID = os.getenv("LEGACY_RP_ID", "stonks.rati.foundation")
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0") == "1"
+COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "").strip() or None
+TRUST_FLY_CLIENT_IP = os.getenv("TRUST_FLY_CLIENT_IP", "0") == "1"
 PROCESS_ROLE = os.getenv("PROCESS_ROLE", "all").strip().lower()
+WORKER_INSTANCE_ID = (
+    os.getenv("WORKER_INSTANCE_ID", "").strip()
+    or os.getenv("FLY_MACHINE_ID", "").strip()
+    or f"{os.getenv('HOSTNAME', 'worker')}:{os.getpid()}"
+)
 ROOT = Path(os.getenv("RUNNER_ROOT", Path.cwd()))
 SESSION_COOKIE = "runner_session"
 TICKER_RE = re.compile(r"^[A-Z0-9.-]{1,12}$")
@@ -233,6 +253,13 @@ ALPHA_DATA_LOCK = threading.Lock()
 ALPHA_DATA_CONDITION = threading.Condition(ALPHA_DATA_LOCK)
 ALPHA_DATA_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 ALPHA_DATA_REFRESHING: set[str] = set()
+SPORTS_INGESTION_ENABLED = os.getenv("SPORTS_INGESTION_ENABLED", "true").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+SPORTS_REFRESH_SECONDS = max(300, int(os.getenv("SPORTS_REFRESH_SECONDS", "600")))
 CHART_PAYLOAD_CACHE_TTL_SECONDS = max(
     15.0, float(os.getenv("CHART_PAYLOAD_CACHE_TTL_SECONDS", "60"))
 )
@@ -295,6 +322,8 @@ def _start_worker_tasks() -> list[asyncio.Task[Any]]:
         asyncio.create_task(scan_collection_worker(), name="scan-collection"),
         asyncio.create_task(research_job_worker(), name="research-jobs"),
     ]
+    if SPORTS_INGESTION_ENABLED:
+        workers.append(asyncio.create_task(sports_ingestion_worker(), name="sports-ingestion"))
     heartbeat = asyncio.create_task(
         worker_process_heartbeat(workers),
         name="worker-heartbeat",
@@ -306,7 +335,7 @@ async def worker_process_heartbeat(workers: list[asyncio.Task[Any]]) -> None:
     while True:
         failed = [task.get_name() for task in workers if task.done()]
         worker_state(
-            WORKER_HEARTBEAT_KEY,
+            worker_heartbeat_key(WORKER_INSTANCE_ID),
             json.dumps(
                 {
                     "status": "degraded" if failed else "ok",
@@ -317,6 +346,14 @@ async def worker_process_heartbeat(workers: list[asyncio.Task[Any]]) -> None:
                 separators=(",", ":"),
             ),
         )
+        research_worker = next(
+            (task for task in workers if task.get_name() == "research-jobs"), None
+        )
+        if redis_configured() and research_worker and not research_worker.done():
+            try:
+                await asyncio.to_thread(touch_research_worker, WORKER_INSTANCE_ID)
+            except Exception:
+                LOG.exception("Research worker lease refresh failed")
         await asyncio.sleep(OPERATIONS.worker_heartbeat_seconds)
 
 
@@ -351,6 +388,9 @@ async def lifespan(application: FastAPI):
         yield
     finally:
         await _stop_tasks(tasks)
+        if worker_tasks:
+            delete_worker_state(worker_heartbeat_key(WORKER_INSTANCE_ID))
+            release_research_worker(WORKER_INSTANCE_ID)
 
 
 async def run_worker() -> None:
@@ -366,13 +406,15 @@ async def run_worker() -> None:
         await asyncio.gather(*tasks)
     finally:
         await _stop_tasks(tasks)
+        delete_worker_state(worker_heartbeat_key(WORKER_INSTANCE_ID))
+        release_research_worker(WORKER_INSTANCE_ID)
 
 
 def worker_main() -> None:
     asyncio.run(run_worker())
 
 
-app = FastAPI(title="Runner Watch", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title="RATi", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=1_000, compresslevel=5)
 app.include_router(operations_router)
 templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
@@ -398,6 +440,11 @@ def worker_state(key: str, value: str) -> None:
             """,
             (key, value, timestamp),
         )
+
+
+def delete_worker_state(key: str) -> None:
+    with connection() as db:
+        db.execute("DELETE FROM worker_state WHERE key=?", (key,))
 
 
 def _delete_batched(
@@ -534,10 +581,51 @@ def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def _origin_host(origin: str) -> str:
+    return (urlparse(origin).hostname or "").lower()
+
+
+def _request_host(request: Request) -> str:
+    """Return a known public host, including the Cloudflare edge host."""
+    direct_host = (request.url.hostname or "").lower()
+    forwarded_host = request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip()
+    forwarded_host = forwarded_host.split(":", 1)[0].lower()
+    known_hosts = {
+        _origin_host(RUNNERS_ORIGIN),
+        _origin_host(SPORTS_ORIGIN),
+        _origin_host(LEGACY_ORIGIN),
+    }
+    return forwarded_host if forwarded_host in known_hosts else direct_host
+
+
+def product_for_request(request: Request) -> str:
+    host = _request_host(request)
+    return "sports" if host == _origin_host(SPORTS_ORIGIN) else "runners"
+
+
+def origin_for_request(request: Request) -> str:
+    host = _request_host(request)
+    known = {
+        _origin_host(RUNNERS_ORIGIN): RUNNERS_ORIGIN,
+        _origin_host(SPORTS_ORIGIN): SPORTS_ORIGIN,
+        _origin_host(LEGACY_ORIGIN): LEGACY_ORIGIN,
+    }
+    return known.get(host, APP_ORIGIN)
+
+
+def rp_id_for_request(request: Request) -> str:
+    host = _request_host(request)
+    return LEGACY_RP_ID if host == _origin_host(LEGACY_ORIGIN) else RP_ID
+
+
 def require_origin(request: Request) -> None:
     origin = request.headers.get("origin")
-    if not origin or origin.rstrip("/") != APP_ORIGIN:
+    if not origin or origin.rstrip("/") != origin_for_request(request):
         raise HTTPException(403, "Origin check failed")
+
+
+def _request_client_ip(request: Request) -> str:
+    return request_client_ip(request, trust_fly_client_ip=TRUST_FLY_CLIENT_IP)
 
 
 def enforce_rate(
@@ -548,7 +636,7 @@ def enforce_rate(
     seconds: int,
     subject: str | None = None,
 ) -> None:
-    client = request.client.host if request.client else "unknown"
+    client = _request_client_ip(request)
     private_subject = hashlib.blake2s(
         str(subject or client).encode(),
         key=RATE_LIMIT_HASH_KEY,
@@ -618,6 +706,7 @@ def create_session(user_id: str, response: JSONResponse) -> None:
         secure=COOKIE_SECURE,
         samesite="lax",
         path="/",
+        domain=COOKIE_DOMAIN,
     )
 
 
@@ -654,7 +743,10 @@ def page_context(request: Request, session_token: str | None, **extra: Any) -> d
         "request": request,
         "user": user,
         "flash_wallet": wallet_for_user(str(user["id"])) if user else None,
-        "app_origin": APP_ORIGIN,
+        "app_origin": origin_for_request(request),
+        "product": product_for_request(request),
+        "runners_origin": RUNNERS_ORIGIN,
+        "sports_origin": SPORTS_ORIGIN,
         "market_clock": market_clock(),
         "flash": actor_snapshot(),
         **extra,
@@ -742,6 +834,20 @@ async def scan_collection_worker() -> None:
         await asyncio.sleep(BACKGROUND_SCAN_INTERVAL_SECONDS)
 
 
+async def sports_ingestion_worker() -> None:
+    await asyncio.sleep(5)
+    while True:
+        try:
+            result = await run_in_threadpool(refresh_sports)
+            worker_state("sports_last_refresh", json.dumps(result, separators=(",", ":")))
+            worker_state("sports_last_error", "")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            worker_state("sports_last_error", str(exc)[:500])
+        await asyncio.sleep(SPORTS_REFRESH_SECONDS)
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next: Any) -> Response:
     started = time.perf_counter()
@@ -787,7 +893,6 @@ class PasskeyFinish(BaseModel):
 
 class PublishSignal(BaseModel):
     snapshot_id: str
-    caller_identity_id: str = Field(min_length=1, max_length=64)
     thesis: str = Field(min_length=8, max_length=500)
     horizon: str = Field(pattern="^(intraday|swing|watch)$")
     invalidation: str = Field(min_length=3, max_length=240)
@@ -802,8 +907,8 @@ class AccountDeletePayload(BaseModel):
     confirmation: Literal["DELETE MY ACCOUNT"]
 
 
-class CommunityCallPayload(BaseModel):
-    caller_identity_id: str = Field(min_length=1, max_length=64)
+class SportsPickPayload(BaseModel):
+    selection: Literal["home", "away"]
 
 
 @app.get("/api/kols")
@@ -851,20 +956,12 @@ def claim_daily_flash_api(
 @app.get("/privacy", response_class=HTMLResponse)
 def privacy_page(
     request: Request,
-    caller: str | None = None,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    user = current_user(runner_session)
     return templates.TemplateResponse(
         request=request,
         name="privacy.html",
-        context=page_context(
-            request,
-            runner_session,
-            caller_ids=caller_ids_for_user(str(user["id"])) if user else [],
-            caller_id_price=caller_id_price_label(),
-            caller=caller if caller in {"claimed", "deleted", "canceled"} else None,
-        ),
+        context=page_context(request, runner_session),
     )
 
 
@@ -909,44 +1006,8 @@ def account_delete_api(
     response = JSONResponse({"deleted": True})
     response.headers["Cache-Control"] = "no-store"
     response.delete_cookie("runner_visitor", path="/")
-    response.delete_cookie(SESSION_COOKIE, path="/")
+    response.delete_cookie(SESSION_COOKIE, path="/", domain=COOKIE_DOMAIN)
     return response
-
-
-@app.post("/api/caller-identities/claim")
-def caller_identity_claim_api(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> RedirectResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "claim-caller-id", limit=5, seconds=3600, subject=user["id"])
-    try:
-        claim_caller_id(str(user["id"]))
-        return RedirectResponse("/privacy?caller=claimed", status_code=303)
-    except AdditionalCallerIdPaymentRequired:
-        pass
-    try:
-        url = create_caller_id_checkout_session(user, APP_ORIGIN)
-    except Exception as exc:
-        LOG.warning("Could not start caller-ID checkout: %s", type(exc).__name__)
-        raise HTTPException(502, "Caller-ID checkout is temporarily unavailable.") from exc
-    return RedirectResponse(url, status_code=303)
-
-
-@app.post("/api/caller-identities/{caller_identity_id}/delete")
-def caller_identity_delete_api(
-    caller_identity_id: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> RedirectResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "delete-caller-id", limit=10, seconds=3600, subject=user["id"])
-    result = delete_caller_id(str(user["id"]), caller_identity_id)
-    if not result["deleted"]:
-        raise HTTPException(404, "Caller ID not found")
-    return RedirectResponse("/privacy?caller=deleted", status_code=303)
 
 
 @app.post("/api/billing/checkout")
@@ -1043,10 +1104,8 @@ def my_calls_page(
     runner_session: str | None = Cookie(default=None),
 ) -> RedirectResponse:
     user = require_user(runner_session)
-    identities = caller_ids_for_user(str(user["id"]))
-    if not identities:
-        return RedirectResponse("/privacy", status_code=303)
-    return RedirectResponse(f"/u/{identities[0]['handle']}", status_code=303)
+    identity = ensure_caller_identity(str(user["id"]))
+    return RedirectResponse(f"/u/{identity['handle']}", status_code=303)
 
 
 @app.get("/u/{caller_handle}", response_class=HTMLResponse)
@@ -3394,7 +3453,9 @@ async def research_job_worker() -> None:
     if redis_configured():
         while True:
             try:
-                recovered = await asyncio.to_thread(recover_research_jobs)
+                recovered = await asyncio.to_thread(
+                    recover_research_jobs, WORKER_INSTANCE_ID
+                )
                 if recovered:
                     LOG.info("Recovered %s interrupted research jobs", recovered)
                 break
@@ -3407,7 +3468,9 @@ async def research_job_worker() -> None:
         durable = redis_configured()
         if durable:
             try:
-                job = await asyncio.to_thread(dequeue_research_job, 5)
+                job = await asyncio.to_thread(
+                    dequeue_research_job, WORKER_INSTANCE_ID, 5
+                )
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -3429,7 +3492,9 @@ async def research_job_worker() -> None:
             if durable:
                 if not asyncio.current_task() or not asyncio.current_task().cancelling():
                     try:
-                        await asyncio.to_thread(acknowledge_research_job, report_id)
+                        await asyncio.to_thread(
+                            acknowledge_research_job, WORKER_INSTANCE_ID, report_id
+                        )
                     except Exception:
                         LOG.exception(
                             "Research job acknowledgement failed; it remains recoverable: %s",
@@ -3652,7 +3717,10 @@ async def alpha_report_worker() -> None:
 def home(
     request: Request,
     runner_session: str | None = Cookie(default=None),
+    league: str = "all",
 ) -> HTMLResponse:
+    if product_for_request(request) == "sports":
+        return sports_home_response(request, runner_session, league)
     return templates.TemplateResponse(
         request=request,
         name="pulse.html",
@@ -3663,6 +3731,87 @@ def home(
             active_tab="pulse",
         ),
     )
+
+
+def sports_home_response(
+    request: Request,
+    runner_session: str | None,
+    league: str = "all",
+) -> HTMLResponse:
+    selected_league = league if league in SPORTS_LEAGUES else "all"
+    return templates.TemplateResponse(
+        request=request,
+        name="sports.html",
+        context=page_context(
+            request,
+            runner_session,
+            slate=sports_slate(selected_league),
+            pick_stats=sports_pick_stats(),
+        ),
+    )
+
+
+@app.get("/sports", response_class=HTMLResponse)
+def sports_home(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+    league: str = "all",
+) -> HTMLResponse:
+    return sports_home_response(request, runner_session, league)
+
+
+@app.get("/api/slate")
+@app.get("/api/sports/slate")
+def sports_slate_api(
+    request: Request,
+    league: str = "all",
+    limit: int = 80,
+) -> JSONResponse:
+    enforce_rate(request, "sports-slate", limit=120, seconds=60)
+    return JSONResponse(sports_slate(league, limit))
+
+
+@app.get("/game/{event_id}", response_class=HTMLResponse)
+@app.get("/sports/game/{event_id}", response_class=HTMLResponse)
+def sports_game_page(
+    event_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    event = sports_event(event_id)
+    if not event:
+        raise HTTPException(404, "Game not found")
+    return templates.TemplateResponse(
+        request=request,
+        name="sports_game.html",
+        context=page_context(
+            request,
+            runner_session,
+            event=event,
+        ),
+    )
+
+
+@app.post("/api/picks/{event_id}")
+@app.post("/api/sports/picks/{event_id}")
+def create_sports_pick_api(
+    event_id: str,
+    payload: SportsPickPayload,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "sports-pick", limit=20, seconds=60, subject=str(user["id"]))
+    try:
+        pick = create_sports_pick(
+            str(user["id"]),
+            event_id,
+            payload.selection,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return JSONResponse(pick, status_code=201)
 
 
 @app.get("/api/pulse")
@@ -4316,7 +4465,6 @@ def ticker_page(
             comments=comments,
             comment_count=comment_count_for_ticker(normalized),
             active_call=active_call,
-            caller_ids=caller_ids_for_user(str(user["id"])) if user else [],
             calls=community_calls_for_ticker(normalized, current_price=mark, limit=20),
             latest_commission=daily_report_for_ticker(
                 normalized,
@@ -5141,22 +5289,12 @@ def delete_ticker_comment(
     enforce_rate(request, "delete-comment", limit=30, seconds=3600, subject=user["id"])
     with connection() as db:
         row = db.execute(
-            "SELECT ticker FROM ticker_comments WHERE id=? AND user_id=?",
+            "SELECT 1 FROM ticker_comments WHERE id=? AND user_id=?",
             (comment_id, user["id"]),
         ).fetchone()
         if not row:
             raise HTTPException(404, "Comment not found")
-        ticker = str(row["ticker"])
         db.execute("DELETE FROM ticker_comments WHERE id=?", (comment_id,))
-        remaining = db.execute(
-            "SELECT 1 FROM ticker_comments WHERE ticker=? AND user_id=? LIMIT 1",
-            (ticker, user["id"]),
-        ).fetchone()
-        if not remaining:
-            db.execute(
-                "DELETE FROM public_aliases WHERE scope=? AND user_id=?",
-                (f"comment:{ticker}", user["id"]),
-            )
     with PULSE_DATA_LOCK:
         PULSE_DATA_CACHE.clear()
     with ALPHA_DATA_LOCK:
@@ -5166,31 +5304,6 @@ def delete_ticker_comment(
         _shared_request_cache_name("alpha"),
     )
     return JSONResponse({"deleted": True, "id": comment_id})
-
-
-@app.post("/api/comments/{ticker}/alias/swap")
-def swap_comment_alias(
-    ticker: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    normalized = _clean_ticker(ticker)
-    enforce_rate(request, "swap-comment-alias", limit=5, seconds=3600, subject=user["id"])
-    with connection() as db:
-        has_comment = db.execute(
-            "SELECT 1 FROM ticker_comments WHERE ticker=? AND user_id=? LIMIT 1",
-            (normalized, user["id"]),
-        ).fetchone()
-        if not has_comment:
-            raise HTTPException(404, "No comment identity exists in this thread")
-        db.execute(
-            "DELETE FROM public_aliases WHERE scope=? AND user_id=?",
-            (f"comment:{normalized}", user["id"]),
-        )
-        alias = ensure_scoped_alias(db, str(user["id"]), f"comment:{normalized}")
-    return JSONResponse({"alias": alias})
 
 
 def _current_call_mark(ticker: str) -> tuple[float, str]:
@@ -5207,7 +5320,6 @@ def _current_call_mark(ticker: str) -> tuple[float, str]:
 @app.post("/api/calls/{ticker}")
 async def create_community_call(
     ticker: str,
-    payload: CommunityCallPayload,
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> JSONResponse:
@@ -5218,17 +5330,13 @@ async def create_community_call(
     if not _known_ticker(normalized):
         raise HTTPException(404, "Ticker not found")
     entry_price, entry_at = await run_in_threadpool(_current_call_mark, normalized)
-    try:
-        call = await run_in_threadpool(
-            create_call,
-            str(user["id"]),
-            payload.caller_identity_id,
-            normalized,
-            entry_price=entry_price,
-            entry_at=entry_at,
-        )
-    except PermissionError as exc:
-        raise HTTPException(403, "Choose one of your active caller IDs") from exc
+    call = await run_in_threadpool(
+        create_call,
+        str(user["id"]),
+        normalized,
+        entry_price=entry_price,
+        entry_at=entry_at,
+    )
     with PULSE_DATA_LOCK:
         PULSE_DATA_CACHE.clear()
     with ALPHA_DATA_LOCK:
@@ -5563,7 +5671,13 @@ def login_page(request: Request, runner_session: str | None = Cookie(default=Non
     return templates.TemplateResponse(
         request=request,
         name="auth.html",
-        context=page_context(request, runner_session),
+        context=page_context(
+            request,
+            runner_session,
+            next_path=safe_next_path(
+                request.query_params.get("next") if "query_string" in request.scope else None
+            ),
+        ),
     )
 
 
@@ -5588,8 +5702,8 @@ def register_options(request: Request) -> JSONResponse:
             (user_id, username, display_name, "pending", iso()),
         )
     options = generate_registration_options(
-        rp_id=RP_ID,
-        rp_name="Runner Watch",
+        rp_id=rp_id_for_request(request),
+        rp_name="RATi",
         user_id=user_id.encode(),
         user_name=username,
         user_display_name=display_name,
@@ -5614,8 +5728,8 @@ def register_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
         verification = verify_registration_response(
             credential=payload.credential,
             expected_challenge=flow["challenge"],
-            expected_rp_id=RP_ID,
-            expected_origin=APP_ORIGIN,
+            expected_rp_id=rp_id_for_request(request),
+            expected_origin=origin_for_request(request),
             require_user_verification=True,
         )
     except Exception as exc:
@@ -5651,7 +5765,7 @@ def login_options(request: Request) -> JSONResponse:
     require_origin(request)
     enforce_rate(request, "login-options", limit=15, seconds=600)
     options = generate_authentication_options(
-        rp_id=RP_ID,
+        rp_id=rp_id_for_request(request),
         timeout=60_000,
         user_verification=UserVerificationRequirement.REQUIRED,
     )
@@ -5675,8 +5789,8 @@ def login_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
         verification = verify_authentication_response(
             credential=payload.credential,
             expected_challenge=flow["challenge"],
-            expected_rp_id=RP_ID,
-            expected_origin=APP_ORIGIN,
+            expected_rp_id=rp_id_for_request(request),
+            expected_origin=origin_for_request(request),
             credential_public_key=passkey["public_key"],
             credential_current_sign_count=passkey["sign_count"],
             require_user_verification=True,
@@ -5717,8 +5831,8 @@ def add_passkey_options(
     user = require_user(runner_session)
     enforce_rate(request, "add-passkey", limit=6, seconds=600, subject=user["id"])
     options = generate_registration_options(
-        rp_id=RP_ID,
-        rp_name="Runner Watch",
+        rp_id=rp_id_for_request(request),
+        rp_name="RATi",
         user_id=user["id"].encode(),
         user_name=user["username"],
         user_display_name=user["display_name"],
@@ -5749,8 +5863,8 @@ def add_passkey_verify(
         verification = verify_registration_response(
             credential=payload.credential,
             expected_challenge=flow["challenge"],
-            expected_rp_id=RP_ID,
-            expected_origin=APP_ORIGIN,
+            expected_rp_id=rp_id_for_request(request),
+            expected_origin=origin_for_request(request),
             require_user_verification=True,
         )
     except Exception as exc:
@@ -5789,7 +5903,7 @@ def logout(
         with connection() as db:
             db.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash(runner_session),))
     response = JSONResponse({"ok": True, "redirect": "/"})
-    response.delete_cookie(SESSION_COOKIE, path="/")
+    response.delete_cookie(SESSION_COOKIE, path="/", domain=COOKIE_DOMAIN)
     return response
 
 
@@ -6306,13 +6420,7 @@ def publish_signal(
     user = require_user(runner_session)
     enforce_rate(request, "publish", limit=8, seconds=3600, subject=user["id"])
     with connection() as db:
-        identity = db.execute(
-            "SELECT id FROM caller_identities "
-            "WHERE id=? AND user_id=? AND status='active'",
-            (payload.caller_identity_id, user["id"]),
-        ).fetchone()
-        if not identity:
-            raise HTTPException(400, "Choose one of your active caller IDs.")
+        identity = ensure_caller_identity_with_database(db, str(user["id"]))
         recent_count = db.execute(
             "SELECT COUNT(*) FROM signals WHERE user_id=? AND created_at>?",
             (user["id"], iso(now() - timedelta(hours=1))),
@@ -6347,7 +6455,7 @@ def publish_signal(
                 public_id,
                 payload.snapshot_id,
                 user["id"],
-                payload.caller_identity_id,
+                identity["id"],
                 payload.thesis.strip(),
                 payload.horizon,
                 payload.invalidation.strip(),

@@ -158,3 +158,29 @@
   .tab-bar { padding-left: 22px; padding-right: 22px; }
   .chart-event-strip, .chart-structure-strip { margin-left: 15px; margin-right: 15px; }
 }
+
+.rati-product {
+  display: block;
+  color: var(--green);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .16em;
+}
+
+.screen-head .rati-product + h1 { margin-top: 4px; }
+
+.product-switch {
+  position: fixed;
+  z-index: 25;
+  right: max(12px, calc((100% - 520px) / 2 + 12px));
+  bottom: calc(72px + env(safe-area-inset-bottom));
+  padding: 7px 10px;
+  border: 1px solid #403550;
+  border-radius: 14px;
+  background: #17131f;
+  color: #bda7ff;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}

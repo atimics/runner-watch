@@ -4,9 +4,14 @@ from pathlib import Path
 
 from pytest import MonkeyPatch
 
-from runner_web import db
+from runner_web import db, operations
 from runner_web.db import connection, init_db
-from runner_web.operations import WORKER_HEARTBEAT_KEY, health_status, readiness_status
+from runner_web.operations import (
+    WORKER_HEARTBEAT_KEY,
+    health_status,
+    readiness_status,
+    worker_heartbeat_key,
+)
 
 
 def test_health_requires_a_fresh_worker_heartbeat(
@@ -86,6 +91,73 @@ def test_health_reports_a_fresh_degraded_worker(
     assert result["status"] == "degraded"
     assert result["worker"]["status"] == "degraded"
     assert result["worker"]["detail"]["failed_workers"] == ["outcomes"]
+
+
+def test_health_reports_one_stale_instance_when_another_is_fresh(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "multi-worker-health.db")
+    init_db()
+    checked_at = datetime(2026, 8, 25, 18, tzinfo=UTC)
+    with connection() as database:
+        for instance_id, age in (("machine-a", 30), ("machine-b", 180)):
+            database.execute(
+                "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?)",
+                (
+                    worker_heartbeat_key(instance_id),
+                    json.dumps(
+                        {
+                            "status": "ok",
+                            "workers_running": 8,
+                            "workers_expected": 8,
+                            "failed_workers": [],
+                        }
+                    ),
+                    (checked_at - timedelta(seconds=age)).isoformat(),
+                ),
+            )
+
+    result = health_status(checked_at=checked_at)
+
+    assert result["status"] == "degraded"
+    assert result["worker"]["status"] == "degraded"
+    assert result["worker"]["detail"]["instances_tracked"] == 2
+    assert {item["status"] for item in result["worker"]["detail"]["instances"]} == {
+        "ok",
+        "stale",
+    }
+
+
+def test_health_requires_the_configured_number_of_worker_instances(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "expected-worker-health.db")
+    monkeypatch.setattr(operations, "WORKER_EXPECTED_INSTANCES", 2)
+    init_db()
+    checked_at = datetime(2026, 8, 25, 18, tzinfo=UTC)
+    with connection() as database:
+        database.execute(
+            "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?)",
+            (
+                worker_heartbeat_key("machine-a"),
+                json.dumps(
+                    {
+                        "status": "ok",
+                        "workers_running": 8,
+                        "workers_expected": 8,
+                        "failed_workers": [],
+                    }
+                ),
+                (checked_at - timedelta(seconds=30)).isoformat(),
+            ),
+        )
+
+    result = health_status(checked_at=checked_at)
+
+    assert result["status"] == "degraded"
+    assert result["worker"]["status"] == "degraded"
+    assert result["worker"]["detail"]["instances_expected"] == 2
+    assert result["worker"]["detail"]["instances_fresh"] == 1
 
 
 def test_readiness_does_not_depend_on_worker_heartbeat(

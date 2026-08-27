@@ -88,7 +88,6 @@ def _copy_table(
     target: DatabaseConnection,
     table: str,
     batch_size: int,
-    source_count: int,
 ) -> int:
     source_columns = _source_columns(source, table)
     target_columns = _target_columns(target, table)
@@ -99,12 +98,7 @@ def _copy_table(
     column_sql = ",".join(_quote_identifier(column) for column in columns)
     placeholders = ",".join("?" for _ in columns)
     select = source.execute(f"SELECT {column_sql} FROM {quoted_table}")
-    target_count = int(
-        target.execute(f"SELECT COUNT(*) FROM {quoted_table}").fetchone()[0]
-    )
-    if target_count >= source_count:
-        return 0
-    if target.backend == "postgres" and target_count == 0:
+    if target.backend == "postgres":
         copied = 0
         with target.raw.cursor().copy(
             f"COPY {quoted_table}({column_sql}) FROM STDIN"
@@ -124,6 +118,14 @@ def _copy_table(
         target.commit()
         copied += len(batch)
     return copied
+
+
+def _require_empty_target(table: str, target_count: int) -> None:
+    if target_count:
+        raise RuntimeError(
+            f"Target table {table} is not empty ({target_count} rows). "
+            "Use --reset-target before migrating."
+        )
 
 
 def _reset_target(database_url: str, source_path: Path) -> None:
@@ -204,25 +206,37 @@ def migrate(
     counts: dict[str, int] = {}
     with sqlite3.connect(source_uri, uri=True) as source:
         with open_database(database_url, source_path) as target:
-            for table in _ordered_tables(source):
-                source_count = int(
+            tables = _ordered_tables(source)
+            source_counts = {
+                table: int(
                     source.execute(
                         f"SELECT COUNT(*) FROM {_quote_identifier(table)}"
                     ).fetchone()[0]
                 )
+                for table in tables
+            }
+            for table in tables:
+                target_count = int(
+                    target.execute(
+                        f"SELECT COUNT(*) FROM {_quote_identifier(table)}"
+                    ).fetchone()[0]
+                )
+                _require_empty_target(table, target_count)
+
+            for table in tables:
+                source_count = source_counts[table]
                 _copy_table(
                     source,
                     target,
                     table,
                     max(1, batch_size),
-                    source_count,
                 )
                 target_count = int(
                     target.execute(
                         f"SELECT COUNT(*) FROM {_quote_identifier(table)}"
                     ).fetchone()[0]
                 )
-                if target_count < source_count:
+                if target_count != source_count:
                     raise RuntimeError(
                         f"Verification failed for {table}: source={source_count}, "
                         f"target={target_count}"
@@ -243,7 +257,7 @@ def main() -> None:
     parser.add_argument(
         "--reset-target",
         action="store_true",
-        help="Drop and recreate the target public schema before copying",
+        help="Truncate target tables before copying",
     )
     parser.add_argument(
         "--grant-role",

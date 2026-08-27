@@ -81,6 +81,16 @@ def test_timeout_requires_bars_covering_the_full_hour() -> None:
     assert barrier_outcome(complete[:4], base, 100.0) is None
 
 
+def test_barrier_outcome_rejects_an_internal_bar_gap() -> None:
+    base = datetime(2026, 8, 24, 14, tzinfo=UTC)
+    bars = [
+        (base + timedelta(minutes=5), 102.0, 98.0, 100.0),
+        (base + timedelta(minutes=55), 109.0, 98.0, 108.0),
+    ]
+
+    assert barrier_outcome(bars, base, 100.0) is None
+
+
 def test_case_horizon_uses_the_first_archived_bar_after_its_due_time() -> None:
     base = datetime(2026, 8, 24, 14, tzinfo=UTC)
     bars = [
@@ -165,14 +175,15 @@ def test_case_outcome_closes_the_view_at_its_inferred_horizon(
     assert resolved["latest_summary"] == "1h view ended +10.0% at $2.2."
 
 
-def test_refresh_outcomes_labels_only_due_horizons(
+def test_refresh_outcomes_uses_archived_prices_at_each_due_horizon(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
-    current = datetime(2026, 8, 24, 20, tzinfo=UTC)
+    current = datetime(2026, 8, 26, 20, tzinfo=UTC)
+    base_at = current - timedelta(days=2, hours=6)
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "outcomes.db")
     monkeypatch.setattr(outcomes, "_latest_prices", lambda tickers: {"PEN": 3.0})
     init_db()
-    created_at = (current - timedelta(days=2)).isoformat()
+    created_at = base_at.isoformat()
     with connection() as database:
         database.execute(
             """
@@ -199,14 +210,36 @@ def test_refresh_outcomes_labels_only_due_horizons(
                 created_at,
             ),
         )
+        for stamp, price in (
+            (base_at + timedelta(hours=1, minutes=5), 2.5),
+            (base_at + timedelta(days=1, hours=6), 3.0),
+        ):
+            database.execute(
+                """
+                INSERT INTO market_bars(
+                    source,ticker,interval,bar_time,close,
+                    first_collected_at,last_collected_at
+                ) VALUES(?,?,?,?,?,?,?)
+                """,
+                (
+                    "yahoo",
+                    "PEN",
+                    "5m",
+                    stamp.isoformat(),
+                    price,
+                    current.isoformat(),
+                    current.isoformat(),
+                ),
+            )
 
     result = outcomes.refresh_outcomes(current)
     with connection() as database:
         row = database.execute("SELECT * FROM sec_outcomes").fetchone()
     assert result["samples_added"] == 2
-    assert row["return_1h_pct"] == 50.0
+    assert row["return_1h_pct"] == 25.0
     assert row["return_1d_pct"] == 50.0
     assert row["return_5d_pct"] is None
+    assert row["observed_1h_at"] != row["observed_1d_at"]
 
 
 def test_scan_outcomes_use_first_archived_bar_after_horizon(

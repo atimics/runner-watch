@@ -49,6 +49,7 @@ class ResearchPromotionPolicy:
 class OperationsPolicy:
     worker_heartbeat_seconds: int = 30
     worker_heartbeat_max_age_seconds: int = 120
+    worker_heartbeat_retire_seconds: int = 600
 
 
 EVIDENCE_GATE = EvidenceGatePolicy()

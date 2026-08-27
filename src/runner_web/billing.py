@@ -8,10 +8,6 @@ from typing import Any
 
 import stripe
 
-from runner_web.caller_ids import (
-    CALLER_ID_CLAIM_PRICE_CENTS,
-    claim_caller_id_with_database,
-)
 from runner_web.db import connection
 
 ACCESS_STATUSES = {"active", "trialing"}
@@ -24,8 +20,6 @@ class BillingConfig:
     secret_key: str
     pro_price_id: str
     webhook_secret: str
-    caller_id_price_id: str = ""
-    caller_id_currency: str = "cad"
 
     @property
     def checkout_ready(self) -> bool:
@@ -40,18 +34,11 @@ class BillingConfig:
     def portal_ready(self) -> bool:
         return bool(STRIPE_BILLING_ENABLED and self.secret_key)
 
-    @property
-    def caller_id_ready(self) -> bool:
-        return bool(self.secret_key and self.webhook_secret)
-
-
 def billing_config() -> BillingConfig:
     return BillingConfig(
         secret_key=os.getenv("STRIPE_SECRET_KEY", "").strip(),
         pro_price_id=os.getenv("STRIPE_PRO_PRICE_ID", "").strip(),
         webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET", "").strip(),
-        caller_id_price_id=os.getenv("STRIPE_CALLER_ID_PRICE_ID", "").strip(),
-        caller_id_currency=os.getenv("CALLER_ID_CURRENCY", "cad").strip().lower() or "cad",
     )
 
 
@@ -222,51 +209,6 @@ def delete_customer(user: dict[str, Any]) -> bool:
     return True
 
 
-def caller_id_price_label(config: BillingConfig | None = None) -> str:
-    config = config or billing_config()
-    return _format_amount(CALLER_ID_CLAIM_PRICE_CENTS, config.caller_id_currency) or ""
-
-
-def create_caller_id_checkout_session(user: dict[str, Any], app_origin: str) -> str:
-    config = billing_config()
-    if not config.caller_id_ready:
-        raise RuntimeError("Stripe caller-ID checkout is not configured")
-    stripe.api_key = config.secret_key
-    line_item: dict[str, Any]
-    if config.caller_id_price_id:
-        line_item = {"price": config.caller_id_price_id, "quantity": 1}
-    else:
-        line_item = {
-            "price_data": {
-                "currency": config.caller_id_currency,
-                "unit_amount": CALLER_ID_CLAIM_PRICE_CENTS,
-                "product_data": {"name": "Runner Watch caller ID"},
-            },
-            "quantity": 1,
-        }
-    parameters: dict[str, Any] = {
-        "mode": "payment",
-        "line_items": [line_item],
-        "client_reference_id": str(user["id"]),
-        "metadata": {
-            "runner_user_id": str(user["id"]),
-            "purpose": "caller_identity",
-        },
-        "success_url": f"{app_origin}/privacy?caller=claimed",
-        "cancel_url": f"{app_origin}/privacy?caller=canceled",
-    }
-    customer_id = str(user.get("stripe_customer_id") or "").strip()
-    if customer_id:
-        parameters["customer"] = customer_id
-    else:
-        parameters["customer_creation"] = "always"
-    session = stripe.checkout.Session.create(**parameters)
-    url = str(_get(session, "url") or "")
-    if not url:
-        raise RuntimeError("Stripe did not return a Checkout URL")
-    return url
-
-
 def construct_webhook_event(payload: bytes, signature: str) -> Any:
     config = billing_config()
     if not config.webhook_secret:
@@ -321,29 +263,6 @@ def _apply_checkout(database: Any, session: Any) -> bool:
     return updated.rowcount > 0
 
 
-def _apply_caller_id_checkout(database: Any, session: Any) -> bool:
-    metadata = _get(session, "metadata", {}) or {}
-    user_id = str(
-        _get(metadata, "runner_user_id") or _get(session, "client_reference_id") or ""
-    ).strip()
-    session_id = str(_get(session, "id") or "").strip()
-    payment_status = str(_get(session, "payment_status") or "").strip()
-    if not user_id or not session_id or payment_status not in {"paid", "no_payment_required"}:
-        return False
-    customer_id = str(_get(session, "customer") or "").strip() or None
-    if customer_id:
-        database.execute(
-            "UPDATE users SET stripe_customer_id=COALESCE(stripe_customer_id,?) WHERE id=?",
-            (customer_id, user_id),
-        )
-    claim_caller_id_with_database(
-        database,
-        user_id,
-        payment_reference=f"stripe:{session_id}",
-    )
-    return True
-
-
 def _apply_subscription(database: Any, subscription: Any, event_type: str) -> bool:
     user_id = _user_for_billing_object(database, subscription)
     if not user_id:
@@ -395,12 +314,8 @@ def process_webhook_event(event: Any) -> dict[str, Any]:
         if inserted.rowcount == 0:
             return {"handled": False, "duplicate": True, "type": event_type}
         handled = False
-        if event_type == "checkout.session.completed":
-            metadata = _get(data_object, "metadata", {}) or {}
-            if _get(metadata, "purpose") == "caller_identity":
-                handled = _apply_caller_id_checkout(database, data_object)
-            elif STRIPE_BILLING_ENABLED:
-                handled = _apply_checkout(database, data_object)
+        if event_type == "checkout.session.completed" and STRIPE_BILLING_ENABLED:
+            handled = _apply_checkout(database, data_object)
         elif STRIPE_BILLING_ENABLED and event_type in {
             "customer.subscription.created",
             "customer.subscription.updated",

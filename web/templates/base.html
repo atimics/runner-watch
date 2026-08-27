@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#07110d">
-  <title>{% block title %}Runner Watch{% endblock %}</title>
+  <title>{% block title %}RATi Runners{% endblock %}</title>
   <link rel="icon" href="/static/favicon.svg?v={{ static_version }}" type="image/svg+xml">
   <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
   {% block head %}{% endblock %}
@@ -12,11 +12,12 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/"><span>⚡</span> Runner Watch</a>
+    <a class="brand" href="/"><span>⚡</span> RATi Runners</a>
     <nav>
       <a href="/">Pulse</a>
       <a href="/roadmap">Roadmap</a>
       <a href="/billing">Flash wallet</a>
+      <a href="{{ sports_origin }}">RATi Sports</a>
       {% if user %}
         <span class="handle">@{{ user.username }}</span>
         <button class="link-button" id="logout">Log out</button>

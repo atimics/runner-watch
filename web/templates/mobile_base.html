@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#090b0b">
   <meta name="description" content="Market movement, filings, risk context, and public research calls in one evidence-first view.">
-  <title>{% block title %}Runner Watch{% endblock %}</title>
+  <title>{% block title %}RATi Runners{% endblock %}</title>
   <script nonce="{{ request.state.csp_nonce }}">if (window.self !== window.top) document.documentElement.classList.add('embedded-pane');</script>
   <link rel="icon" href="/static/favicon.svg?v={{ static_version }}" type="image/svg+xml">
   <link rel="stylesheet" href="/static/mobile.css?v={{ static_version }}">
@@ -69,6 +69,7 @@
     });
   </script>
   {% endif %}
+  <a class="product-switch" href="{{ sports_origin }}" aria-label="Open RATi Sports">Sports</a>
   <script src="/static/ticker-row.js?v={{ static_version }}"></script>
   <script src="/static/desktop-workspace.js?v={{ static_version }}" defer></script>
   {% block scripts %}{% endblock %}

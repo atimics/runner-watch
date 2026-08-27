@@ -1,11 +1,11 @@
 {% extends "mobile_base.html" %}
 {% block app_class %}workspace-app pulse-app{% endblock %}
-{% block title %}Pulse · Runner Watch{% endblock %}
+{% block title %}Pulse · RATi Runners{% endblock %}
 {% block content %}
 <div class="desktop-workspace" data-desktop-workspace>
   <section class="desktop-list-pane pulse-list-column" data-desktop-list>
     <header class="screen-head">
-      <div><h1>Pulse</h1><span class="head-meta">Movement is only the first clue.</span></div>
+      <div><span class="rati-product">RATi RUNNERS</span><h1>Pulse</h1><span class="head-meta">Movement is only the first clue.</span></div>
       {% if user %}
         <button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>
       {% else %}

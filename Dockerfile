@@ -43,4 +43,4 @@ RUN uv run --no-sync pytest -q && uv run --no-sync ruff check src tests
 CMD ["uv", "run", "--no-sync", "pytest", "-q"]
 
 FROM base AS runtime
-CMD ["uvicorn", "runner_web.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--forwarded-allow-ips", "*", "--no-access-log"]
+CMD ["uvicorn", "runner_web.main:app", "--host", "0.0.0.0", "--port", "8080", "--no-proxy-headers", "--no-access-log"]
