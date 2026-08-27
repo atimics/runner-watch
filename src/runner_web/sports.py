@@ -1126,7 +1126,10 @@ def _event_attention(event: dict[str, Any]) -> dict[str, Any]:
             else "away"
         )
     other_side = "away" if side == "home" else "home"
+    team_id = str(event.get(f"{side}_team_id") or "")
     abbreviation = str(event.get(f"{side}_abbreviation") or "—")
+    coin_seed = f"{team_id}:{abbreviation}".encode()
+    coin_tone = int(hashlib.sha256(coin_seed).hexdigest()[:2], 16) % 5
     model_probability = _number(prediction.get(f"{side}_probability"))
     market_probability = _number(prediction.get(f"{side}_market_probability"))
     if market_probability is None:
@@ -1172,8 +1175,10 @@ def _event_attention(event: dict[str, Any]) -> dict[str, Any]:
     )
     return {
         "signal_side": side,
+        "signal_team_id": team_id,
         "signal_team_name": str(event.get(f"{side}_team_name") or "Unknown"),
         "signal_abbreviation": abbreviation,
+        "signal_coin_tone": coin_tone,
         "opponent_abbreviation": str(event.get(f"{other_side}_abbreviation") or "—"),
         "signal_record": event.get(f"{side}_record"),
         "model_probability_pct": (
@@ -1252,8 +1257,9 @@ def sports_slate(league: str = "all", limit: int = 80) -> dict[str, Any]:
 def sports_pulse(
     league: str = "all", view: str = "signals", limit: int = 30
 ) -> dict[str, Any]:
-    """Return promoted pre-game signals first, with the full slate kept one tap away."""
+    """Return only promoted pre-game winners, ranked by signal strength."""
 
+    _ = view  # Keep the old query parameter harmless while the slate view is hidden.
     payload = sports_slate(league, limit=200)
     available = [
         event for event in payload["events"] if str(event.get("status")) in {"pre", "in"}
@@ -1271,22 +1277,10 @@ def sports_pulse(
             str(event.get("id") or ""),
         )
     )
-    selected_view = "all" if view == "all" else "signals"
-    if selected_view == "all":
-        visible = sorted(
-            available,
-            key=lambda event: (
-                0 if event.get("status") == "in" else 1,
-                str(event.get("start_time") or ""),
-                str(event.get("id") or ""),
-            ),
-        )
-    else:
-        visible = signals
     return {
         **payload,
-        "events": visible[: max(1, min(limit, 100))],
-        "view": selected_view,
+        "events": signals[: max(1, min(limit, 100))],
+        "view": "signals",
         "signal_count": len(signals),
         "scanned_count": len(available),
         "hidden_count": max(0, len(available) - len(signals)),

@@ -21,31 +21,6 @@
   </div>
 </dialog>
 
-<section class="sports-hero">
-  <span class="sports-eyebrow">RATi SPORTS · {{ pulse.model }}</span>
-  <h1>Pulse</h1>
-  <p>The strongest model-versus-market gaps, ranked first. The quiet games stay out of your way.</p>
-</section>
-
-<section class="sports-scoreboard pulse-summary" aria-label="Pulse coverage">
-  <div><small>SIGNALS</small><strong class="positive">{{ pulse.signal_count }}</strong></div>
-  <div><small>GAMES READ</small><strong>{{ pulse.scanned_count }}</strong></div>
-  <div><small>QUIET</small><strong>{{ pulse.hidden_count }}</strong></div>
-  <div><small>PAPER RECORD</small><strong>{{ pick_stats.wins }}–{{ pick_stats.losses }}–{{ pick_stats.pushes }}</strong></div>
-</section>
-
-<nav class="sports-focus-tabs" aria-label="Pulse focus">
-  <a class="{% if pulse.view == 'signals' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/?league={{ pulse.league }}&view=signals">Signals</a>
-  <a class="{% if pulse.view == 'all' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/?league={{ pulse.league }}&view=all">Full slate</a>
-</nav>
-
-<nav class="league-tabs" aria-label="League filter">
-  <a class="{% if pulse.league == 'all' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/?league=all&view={{ pulse.view }}">All</a>
-  {% for league in pulse.leagues %}
-    <a class="{% if pulse.league == league.key %}active{% endif %}" href="{{ sports_path_prefix or '' }}/?league={{ league.key }}&view={{ pulse.view }}">{{ league.name }}</a>
-  {% endfor %}
-</nav>
-
 {% if pulse.source_status != 'success' %}
 <aside class="source-warning">
   <strong>Preview feed: {{ pulse.source_status }}</strong>
@@ -53,72 +28,35 @@
 </aside>
 {% endif %}
 
-<section class="game-list">
+<section class="game-list pulse-winners" aria-label="Projected winners">
   {% for event in pulse.events %}
   {% set prediction = event.prediction %}
-  {% set odds = event.odds %}
-  <a class="game-card" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}" aria-label="{{ event.name }}, {{ event.status_detail }}">
-    <span class="game-meta">
-      <strong>{{ event.league|upper }}</strong>
-      <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time>
+  <a class="game-card winner-card" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}" aria-label="{{ event.signal_team_name }} projected winner against {{ event.opponent_abbreviation }}">
+    <span class="winner-coin winner-coin-{{ event.signal_coin_tone }}" aria-hidden="true">
+      <b>{{ event.signal_abbreviation[:3] }}</b><i></i>
     </span>
-    <span class="game-matchup">
-      <span class="ticker-team">
-        <b class="team-code away">{{ event.away_abbreviation[:3] }}</b>
-        <small>{{ event.away_record or '—' }}</small>
-        <strong>{% if event.away_score is not none %}{{ event.away_score|int }}{% elif odds and odds.away_odds is not none %}{{ '%+d'|format(odds.away_odds) }}{% else %}—{% endif %}</strong>
+    <span class="winner-copy">
+      <span class="winner-name">
+        <strong>{{ event.signal_abbreviation }}</strong>
+        <small>PROJECTED WINNER</small>
       </span>
-      <i>@</i>
-      <span class="ticker-team">
-        <b class="team-code home">{{ event.home_abbreviation[:3] }}</b>
-        <small>{{ event.home_record or '—' }}</small>
-        <strong>{% if event.home_score is not none %}{{ event.home_score|int }}{% elif odds and odds.home_odds is not none %}{{ '%+d'|format(odds.home_odds) }}{% else %}—{% endif %}</strong>
+      <span class="winner-team">{{ event.signal_team_name }}</span>
+      <span class="winner-context">
+        {{ event.league|upper }} · vs {{ event.opponent_abbreviation }} ·
+        <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time>
       </span>
     </span>
-    <span class="game-model">
-      <small>{% if pulse.view == 'signals' %}WHY NOW{% else %}MODEL{% endif %}</small>
-      {% if prediction %}
-        <strong>{% if pulse.view == 'signals' %}{{ event.signal_reason }}{% else %}{{ event.away_abbreviation }} {{ '%.0f'|format(prediction.away_probability * 100) }}% · {{ event.home_abbreviation }} {{ '%.0f'|format(prediction.home_probability * 100) }}%{% endif %}</strong>
-      {% else %}
-        <strong>Prediction pending</strong>
-      {% endif %}
-    </span>
-    {% set edge_history = event.edge_history %}
-    <span class="game-edge{% if prediction %} {{ prediction.signal|replace(' ','-') }}{% endif %}">
-      {% if edge_history %}
-        <small><span class="edge-team">{{ edge_history.team }}</span> EDGE</small>
-        <svg class="edge-spark" viewBox="0 0 92 24" role="img" aria-label="{{ edge_history.label }}" preserveAspectRatio="none">
-          <line class="edge-zero" x1="1" y1="12" x2="91" y2="12"></line>
-          {% if edge_history.points|length > 1 %}
-            <polyline points="{{ edge_history.plot_points }}"></polyline>
-          {% else %}
-            <circle cx="46" cy="{{ edge_history.dot_y }}" r="2.2"></circle>
-          {% endif %}
-        </svg>
-      {% else %}
-        <small>EDGE</small>
-        <span class="edge-empty">No history</span>
-      {% endif %}
-    </span>
-    <span class="game-call">
-      <b class="game-status {{ event.status }}">{{ event.status_detail }}</b>
-      {% if prediction %}
-        <small class="signal {{ prediction.signal|replace(' ','-') }}">{% if prediction.edge_pct is not none %}{{ '%+.1f'|format(prediction.edge_pct) }}% {{ prediction.signal }}{% else %}{{ prediction.signal }}{% endif %}</small>
-      {% endif %}
-      {% if event.news_count %}<small class="game-news-count">{{ event.news_count }} NEWS</small>{% endif %}
+    <span class="winner-quote">
+      <strong>{% if event.model_probability_pct is not none %}{{ '%.0f'|format(event.model_probability_pct) }}%{% else %}—{% endif %}</strong>
+      <small>WIN CHANCE</small>
+      <em class="{{ prediction.signal|replace(' ','-') }}">{% if prediction.edge_pct is not none %}{{ '%+.1f'|format(prediction.edge_pct) }}% {{ prediction.signal|upper }}{% else %}{{ prediction.signal|upper }}{% endif %}</em>
     </span>
     <span class="game-chevron" aria-hidden="true">›</span>
   </a>
   {% else %}
   <div class="sports-empty">
-    {% if pulse.view == 'signals' %}
-      <strong>No verified edges right now.</strong>
-      <p>Pulse stays quiet until a game clears the model-versus-market threshold.</p>
-      <a class="sports-empty-action" href="{{ sports_path_prefix or '' }}/?league={{ pulse.league }}&view=all">Open the full slate</a>
-    {% else %}
-      <strong>No games in this window.</strong>
-      <p>The worker checks MLB, NFL, NBA, and NHL. Inactive leagues will be quiet.</p>
-    {% endif %}
+    <strong>No projected winners right now.</strong>
+    <p>Pulse stays quiet until a game clears the model-versus-market threshold.</p>
   </div>
   {% endfor %}
 </section>

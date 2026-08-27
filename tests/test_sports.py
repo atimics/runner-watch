@@ -231,9 +231,13 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     response = home(sports_request, None)
     assert response.status_code == 200
     assert b"RATi Sports" in response.body
-    assert b'class="game-matchup"' in response.body
-    assert b'class="ticker-team"' in response.body
-    assert b'class="game-edge' in response.body
+    assert b'class="game-card winner-card"' in response.body
+    assert b'class="winner-coin ' in response.body
+    assert b"PROJECTED WINNER" in response.body
+    assert b"WIN CHANCE" in response.body
+    assert b"Full slate" not in response.body
+    assert b'class="sports-hero"' not in response.body
+    assert b'class="sports-scoreboard pulse-summary"' not in response.body
     assert b'id="sportsAnnouncement"' in response.body
     assert b'data-announcement-version="sports-intro-2026-08-26"' in response.body
     assert b"localStorage.getItem(announcementKey)" in response.body
@@ -297,6 +301,13 @@ def test_sports_pulse_hides_passes_and_radar_keeps_real_moves(sports_db) -> None
     pulse = sports_pulse()
     assert [event["id"] for event in pulse["events"]] == [promoted["id"]]
     assert pulse["hidden_count"] == 1
+    assert pulse["events"][0]["signal_team_name"] == "Home Club"
+    assert pulse["events"][0]["signal_abbreviation"] == "HOM"
+    assert pulse["events"][0]["signal_coin_tone"] in range(5)
+
+    full_slate_request = sports_pulse(view="all")
+    assert full_slate_request["view"] == "signals"
+    assert [event["id"] for event in full_slate_request["events"]] == [promoted["id"]]
 
     radar = sports_radar()
     assert radar["events"][0]["id"] == promoted["id"]
