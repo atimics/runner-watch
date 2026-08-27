@@ -1,4 +1,4 @@
-/* The ticker page has one reading order: chart, actions, then evidence. */
+/* The ticker page has one reading order: chart, evidence, then actions. */
 .desktop-detail-panel { display: none; }
 
 .asset-overview,
@@ -15,7 +15,9 @@
 
 .detail-actions {
   min-width: 0;
-  padding: 0 20px 18px;
+  margin-top: 12px;
+  padding: 18px 20px 6px;
+  border-top: 1px solid rgba(255, 255, 255, .07);
 }
 
 .visually-hidden {
@@ -33,7 +35,7 @@
 .ticker-action-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .ticker-action-slot {
@@ -42,12 +44,12 @@
 
 .ticker-action {
   width: 100%;
-  min-height: 54px;
-  padding: 10px 12px;
-  border: 1px solid rgba(87, 227, 137, .42);
-  border-radius: 11px;
-  background: rgba(87, 227, 137, .07);
-  color: var(--green);
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid rgba(130, 151, 141, .24);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .018);
+  color: #a9b8b1;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -69,23 +71,23 @@
 }
 
 .ticker-action strong {
-  font-size: 12px;
-  font-weight: 850;
+  font-size: 11px;
+  font-weight: 760;
 }
 
 .ticker-action span {
-  color: #8ca197;
-  font-size: 9px;
-  font-weight: 700;
+  color: #6f7d77;
+  font-size: 8px;
+  font-weight: 650;
 }
 
 .ticker-action-call {
-  border-color: rgba(245, 198, 107, .5);
-  background: rgba(245, 198, 107, .07);
-  color: var(--amber);
+  border-color: rgba(178, 154, 104, .25);
+  background: rgba(245, 198, 107, .018);
+  color: #b5a47f;
 }
 
-.ticker-action-call span { color: #aa9874; }
+.ticker-action-call span { color: #796f5a; }
 
 .ticker-action:disabled {
   opacity: .58;
@@ -111,13 +113,15 @@
 
 @media (hover: hover) {
   .ticker-action-flash:hover:not(:disabled) {
-    border-color: rgba(87, 227, 137, .58);
-    background: rgba(87, 227, 137, .12);
+    border-color: rgba(87, 227, 137, .38);
+    background: rgba(87, 227, 137, .055);
+    color: var(--green);
   }
 
   .ticker-action-call:hover:not(:disabled) {
-    border-color: rgba(245, 198, 107, .72);
-    background: rgba(245, 198, 107, .13);
+    border-color: rgba(245, 198, 107, .4);
+    background: rgba(245, 198, 107, .055);
+    color: var(--amber);
   }
 }
 
@@ -285,11 +289,12 @@ html.embedded-pane .research-report {
 
   html.embedded-pane .detail-dashboard {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) clamp(280px, 30vw, 330px);
+    grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
-      "chart actions"
-      "analysis actions";
-    gap: 20px 22px;
+      "chart"
+      "analysis"
+      "actions";
+    gap: 20px;
     align-items: start;
     margin-top: 18px;
   }
@@ -299,11 +304,22 @@ html.embedded-pane .research-report {
   }
 
   html.embedded-pane .detail-actions {
-    position: sticky;
-    top: 22px;
     grid-area: actions;
-    gap: 12px;
-    padding: 0;
+    margin: 4px 0 0;
+    padding: 18px 0 0;
+  }
+
+  html.embedded-pane .ticker-action-row {
+    grid-template-columns: repeat(2, minmax(0, 210px));
+    justify-content: end;
+  }
+
+  html.embedded-pane .ticker-action {
+    min-height: 40px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
   }
 
   html.embedded-pane .detail-analysis {
