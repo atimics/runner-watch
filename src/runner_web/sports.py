@@ -1874,6 +1874,7 @@ def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
     """Rank team and player results and keep the underlying rate history visible."""
 
     selected_league = league if league in LEAGUES else "all"
+    result_limit = max(1, min(limit, 100))
     cutoff = _iso(datetime.now(UTC) - timedelta(days=HISTORY_TARGET_DAYS))
     coverage_parameters: tuple[Any, ...] = (selected_league,) if selected_league in LEAGUES else ()
     history_parameters: list[Any] = [cutoff]
@@ -1907,19 +1908,42 @@ def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
         ).fetchone()
         player_rows = database.execute(
             f"""
-            SELECT * FROM (
-                SELECT a.*,e.start_time,ROW_NUMBER() OVER(
-                    PARTITION BY a.league,a.player_id
-                    ORDER BY e.start_time DESC,a.event_id DESC
-                ) AS history_rank
+            WITH player_totals AS (
+                SELECT a.league,a.player_id,MAX(a.player_name) AS player_name,
+                       COUNT(*) AS games,SUM(a.won) AS wins
                 FROM sports_player_appearances a
                 JOIN sports_events e ON e.id=a.event_id
                 WHERE e.start_time>=?{player_league_filter}
-            ) recent
+                GROUP BY a.league,a.player_id
+                HAVING COUNT(*)>=3
+            ),
+            ranked_players AS (
+                SELECT *,COUNT(*) OVER() AS eligible_player_count,
+                       ROW_NUMBER() OVER(
+                           ORDER BY (wins+2.0)/(games+4.0) DESC,games DESC,player_name
+                       ) AS player_rank
+                FROM player_totals
+            ),
+            selected_players AS (
+                SELECT * FROM ranked_players WHERE player_rank<=?
+            ),
+            ranked_history AS (
+                SELECT a.*,e.start_time,selected.eligible_player_count,
+                       ROW_NUMBER() OVER(
+                           PARTITION BY a.league,a.player_id
+                           ORDER BY e.start_time DESC,a.event_id DESC
+                       ) AS history_rank
+                FROM sports_player_appearances a
+                JOIN sports_events e ON e.id=a.event_id
+                JOIN selected_players selected
+                  ON selected.league=a.league AND selected.player_id=a.player_id
+                WHERE e.start_time>=?{player_league_filter}
+            )
+            SELECT * FROM ranked_history
             WHERE history_rank<=?
             ORDER BY start_time,event_id,player_id
             """,  # noqa: S608 - filter is a fixed internal fragment
-            (*history_parameters, ALPHA_HISTORY_POINTS),
+            (*history_parameters, result_limit, *history_parameters, ALPHA_HISTORY_POINTS),
         ).fetchall()
 
     teams: dict[tuple[str, str], dict[str, Any]] = {}
@@ -1987,6 +2011,7 @@ def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
         )
     team_rows.sort(key=lambda row: (-row["rank_score"], -row["games"], row["abbreviation"]))
 
+    eligible_player_count = int(player_rows[0]["eligible_player_count"]) if player_rows else 0
     player_groups: dict[tuple[str, str], dict[str, Any]] = defaultdict(dict)
     for raw in player_rows:
         row = dict(raw)
@@ -2033,8 +2058,8 @@ def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
     coverage = dict(coverage_row) if coverage_row else {}
     return {
         "model": _model_alpha(selected_league),
-        "teams": team_rows[: max(1, min(limit, 100))],
-        "players": player_output[: max(1, min(limit, 100))],
+        "teams": team_rows[:result_limit],
+        "players": player_output[:result_limit],
         "player_min_games": 3,
         "league": selected_league,
         "leagues": [
@@ -2047,7 +2072,7 @@ def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
             "history_start": str(coverage.get("history_start") or ""),
             "history_end": str(coverage.get("history_end") or ""),
             "team_count": len(team_rows),
-            "player_count": len(player_output),
+            "player_count": eligible_player_count,
         },
         "updated_at": str(coverage.get("updated_at") or ""),
     }

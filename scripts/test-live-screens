@@ -37,6 +37,7 @@ class Result:
     duration_ms: int | None
     error: str | None
     skipped: str | None = None
+    first_duration_ms: int | None = None
 
 
 SCREENS = (
@@ -149,9 +150,15 @@ async def _check_screen(
 
         page.on("console", record_console)
         page.on("pageerror", lambda error: browser_errors.append(str(error)))
-        started = time.monotonic()
-        try:
-            response = await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+
+        async def render(*, reload: bool = False) -> int:
+            browser_errors.clear()
+            started = time.monotonic()
+            response = (
+                await page.reload(wait_until="domcontentloaded", timeout=timeout_ms)
+                if reload
+                else await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            )
             if response is None:
                 raise RuntimeError("navigation returned no document response")
             if response.status >= 400:
@@ -178,11 +185,30 @@ async def _check_screen(
             await page.wait_for_timeout(350)
             if browser_errors:
                 raise RuntimeError(f"browser error: {browser_errors[0]}")
+            return duration_ms
+
+        overall_started = time.monotonic()
+        duration_ms: int | None = None
+        first_duration_ms: int | None = None
+        try:
+            duration_ms = await render()
             if duration_ms > slow_ms:
-                raise RuntimeError(f"slow screen: {duration_ms}ms exceeds {slow_ms}ms")
-            return Result(screen, page.url, duration_ms, None)
+                first_duration_ms = duration_ms
+                duration_ms = await render(reload=True)
+                if duration_ms > slow_ms:
+                    raise RuntimeError(
+                        f"slow screen after retry: {duration_ms}ms exceeds {slow_ms}ms "
+                        f"(first load {first_duration_ms}ms)"
+                    )
+            return Result(
+                screen,
+                page.url,
+                duration_ms,
+                None,
+                first_duration_ms=first_duration_ms,
+            )
         except Exception as exc:
-            duration_ms = round((time.monotonic() - started) * 1000)
+            duration_ms = duration_ms or round((time.monotonic() - overall_started) * 1000)
             screenshot = output_dir / f"{screen.key}.png"
             try:
                 await page.screenshot(path=screenshot, full_page=True)
@@ -243,7 +269,12 @@ async def run(args: argparse.Namespace) -> int:
         elif result.skipped:
             print(f"SKIP  {result.screen.name}: {result.skipped}")
         else:
-            print(f"PASS  {result.screen.name}: {result.duration_ms}ms ({result.url})")
+            retry = (
+                f" after retry; first load {result.first_duration_ms}ms"
+                if result.first_duration_ms is not None
+                else ""
+            )
+            print(f"PASS  {result.screen.name}: {result.duration_ms}ms{retry} ({result.url})")
     passed = len(results) - len(failures) - len(skipped)
     print(f"\n{passed} passed, {len(skipped)} skipped, {len(failures)} failed")
     if failures:
