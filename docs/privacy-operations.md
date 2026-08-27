@@ -35,7 +35,7 @@ The app must not write visitor IDs, page views, dwell time, share events, seen s
 
 ## Data subject requests
 
-1. Accept access requests through the signed-in export and erasure through the signed-in deletion control. Accept correction, restriction, objection, and assisted requests at privacy@rati.foundation.
+1. Accept access requests through the signed-in export and erasure through the signed-in deletion control. Accept correction, restriction, objection, and assisted requests at privacy@cenetex.com.
 2. Record the received date, request type, scope, verifier, owner, deadline, actions, recipients told, and completion date in the restricted request log.
 3. Verify through a current passkey session where possible. Ask only for the minimum extra proof needed.
 4. Search the account, passkeys, sessions, comments, automatic public names, calls, private journal, cases, reports, billing mirror, provider tickets, logs, and current backups.
