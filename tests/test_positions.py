@@ -78,12 +78,12 @@ def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
     assert "Swap this thread" not in ticker
     assert "/api/caller-identities" not in app_source
     assert "/alias/swap" not in app_source
-    assert "server stamped" in ticker
+    assert "Public · stamped" in ticker
     assert "Entry time" not in ticker
     assert "Add exit" not in ticker
     assert "Generate today's report" in ticker
     assert "100 Flash" in ticker
-    assert "flash.model" in ticker
+    assert "flash.model" not in ticker
     assert "🐺" in alpha
     assert "open Calls" in alpha
     assert "data-alpha-reaction" not in alpha

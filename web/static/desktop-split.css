@@ -14,67 +14,108 @@
 }
 
 .detail-actions {
-  display: grid;
-  gap: 10px;
+  min-width: 0;
   padding: 0 20px 18px;
 }
 
-.detail-actions .action-card {
-  margin: 0;
-  padding: 14px;
-  border: 1px solid #29312d;
-  background: #0e1210;
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
-.detail-actions .section-heading {
-  margin-bottom: 14px;
-  align-items: flex-start;
+.ticker-action-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
-.detail-actions .section-heading > div {
+.ticker-action-slot {
   min-width: 0;
 }
 
-.detail-actions .commission-button,
-.detail-actions .trade-login,
-.detail-actions .call-close {
-  min-height: 42px;
-  padding: 8px 11px;
-  line-height: 1.25;
-  text-align: center;
+.ticker-action {
+  width: 100%;
+  min-height: 54px;
+  padding: 10px 12px;
+  border: 1px solid rgba(87, 227, 137, .42);
+  border-radius: 11px;
+  background: rgba(87, 227, 137, .07);
+  color: var(--green);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+  font: inherit;
+  line-height: 1.15;
+  text-align: left;
+  cursor: pointer;
 }
 
-.detail-actions .call-card .commission-button,
-.detail-actions .call-card .trade-login,
-.detail-actions .call-close {
-  border-color: rgba(245, 198, 107, .48);
+.ticker-action strong,
+.ticker-action span {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ticker-action strong {
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.ticker-action span {
+  color: #8ca197;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.ticker-action-call {
+  border-color: rgba(245, 198, 107, .5);
   background: rgba(245, 198, 107, .07);
   color: var(--amber);
 }
 
-.detail-actions .research-action > small,
-.detail-actions .trade-status {
-  margin-top: 8px;
+.ticker-action-call span { color: #aa9874; }
+
+.ticker-action:disabled {
+  opacity: .58;
+  cursor: not-allowed;
+}
+
+.ticker-action-status {
+  margin: 6px 2px 0;
   color: #7f8b85;
   font-size: 9px;
   line-height: 1.45;
 }
 
-.detail-actions :is(a, button, select):focus-visible,
+.ticker-action-status:empty { display: none; }
+
+.detail-actions > .call-ledger-mini { margin-top: 10px; }
+
+.detail-actions :is(a, button):focus-visible,
 .chart-card button:focus-visible {
   outline: 2px solid var(--green);
   outline-offset: 2px;
 }
 
 @media (hover: hover) {
-  .detail-actions .commission-button:hover {
+  .ticker-action-flash:hover:not(:disabled) {
     border-color: rgba(87, 227, 137, .58);
     background: rgba(87, 227, 137, .12);
   }
 
-  .detail-actions .call-card .commission-button:hover,
-  .detail-actions .call-card .trade-login:hover,
-  .detail-actions .call-close:hover {
+  .ticker-action-call:hover:not(:disabled) {
     border-color: rgba(245, 198, 107, .72);
     background: rgba(245, 198, 107, .13);
   }
@@ -263,10 +304,6 @@ html.embedded-pane .research-report {
     grid-area: actions;
     gap: 12px;
     padding: 0;
-  }
-
-  html.embedded-pane .detail-actions .action-card {
-    padding: 17px;
   }
 
   html.embedded-pane .detail-analysis {

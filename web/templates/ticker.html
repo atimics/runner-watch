@@ -43,44 +43,40 @@
     </div>
 
     <aside class="detail-actions" aria-label="Ticker actions">
-      <section class="research-action action-card" aria-labelledby="flashActionTitle">
-        <div class="section-heading"><div><h2 id="flashActionTitle">Daily Flash <small class="flash-model-label">{{ flash.model }}</small></h2></div><b>100 Flash</b></div>
-        {% if latest_commission and latest_commission.locked %}
-        <button class="commission-button" type="button" disabled>Today's alpha is locked</button>
-        <small id="commissionStatus">The first generator gets one private hour, unless they publish sooner.</small>
-        {% elif latest_commission and latest_commission.status == 'complete' %}
-        <a class="commission-button" href="/research/{{ latest_commission.public_id }}">Read Flash report <span class="flash-model-label">{{ flash.model }}</span></a>
-        <small id="commissionStatus">{% if latest_commission.visibility == 'public' %}Today's report is public.{% else %}Your alpha stays private for one hour, or until you publish it.{% endif %}{% if user %} Balance: <span data-flash-balance>{{ flash_wallet.balance }}</span> Flash.{% endif %}</small>
-        {% elif latest_commission and latest_commission.status == 'running' %}
-        <button class="commission-button" id="commissionButton" type="button" data-job-id="{{ latest_commission.public_id }}" disabled>Flash is researching · {{ flash.model }}</button>
-        <small id="commissionStatus">Your one-hour private alpha window has started.{% if user %} Balance: <span data-flash-balance>{{ flash_wallet.balance }}</span> Flash.{% endif %}</small>
-        {% elif user %}
-        <button class="commission-button" id="commissionButton" type="button">Generate today's report · 100 Flash</button>
-        <small id="commissionStatus">First generator gets the report privately for one hour. Publish early to earn 50 Flash. Balance: <span data-flash-balance>{{ flash_wallet.balance }}</span> Flash.</small>
-        {% else %}
-        <a class="commission-button" href="/login?next=/t/{{ detail.ticker }}">Log in to generate today's report</a>
-        <small id="commissionStatus">First generator gets one private alpha hour.</small>
-        {% endif %}
-      </section>
+      <div class="ticker-action-row">
+        <section class="ticker-action-slot" aria-labelledby="flashActionTitle">
+          <h2 class="visually-hidden" id="flashActionTitle">Daily Flash</h2>
+          {% if latest_commission and latest_commission.locked %}
+          <button class="ticker-action ticker-action-flash" type="button" disabled><strong>Daily Flash</strong><span>Locked today</span></button>
+          {% elif latest_commission and latest_commission.status == 'complete' %}
+          <a class="ticker-action ticker-action-flash" href="/research/{{ latest_commission.public_id }}"><strong>Read Flash</strong><span>{{ 'Public report' if latest_commission.visibility == 'public' else 'Private report' }}</span></a>
+          {% elif latest_commission and latest_commission.status == 'running' %}
+          <button class="ticker-action ticker-action-flash" id="commissionButton" type="button" data-job-id="{{ latest_commission.public_id }}" disabled><strong>Daily Flash</strong><span>Researching…</span></button>
+          {% elif user %}
+          <button class="ticker-action ticker-action-flash" id="commissionButton" type="button" aria-label="Generate today's report with Daily Flash for 100 Flash. The first generator gets one private hour."><strong>Daily Flash</strong><span>100 Flash · private 1h</span></button>
+          {% else %}
+          <a class="ticker-action ticker-action-flash" href="/login?next=/t/{{ detail.ticker }}"><strong>Daily Flash</strong><span>Log in · 100 Flash</span></a>
+          {% endif %}
+          <p class="ticker-action-status" id="commissionStatus" role="status"></p>
+        </section>
 
-      <section class="trade-journal call-card action-card" aria-labelledby="callTitle">
-        <div class="section-heading"><div><h2 id="callTitle">Call</h2><span>Public · server stamped</span></div><b>{{ calls|length }}</b></div>
-        {% if user %}
-        {% if active_call %}
-          <article class="trade-position trade-position-active">
-            <header><strong>Open Call</strong>{% if active_call.return_pct is not none %}<b class="{{ 'up' if active_call.return_pct >= 0 else 'down' }}">{{ '+' if active_call.return_pct >= 0 else '' }}{{ '%.1f'|format(active_call.return_pct) }}%</b>{% endif %}</header>
-            <div class="trade-leg"><span>Entry</span><b>${{ '%.4f'|format(active_call.entry_price) if active_call.entry_price < 1 else ('%.2f'|format(active_call.entry_price)) }}</b><time datetime="{{ active_call.entry_at }}" data-call-time>{{ active_call.entry_at[:16]|replace('T', ' ') }}</time></div>
-            <button class="call-close" id="closeCallButton" type="button" data-call-id="{{ active_call.public_id }}">Close Call at the server's current price</button>
-          </article>
-        {% else %}
-          <button class="commission-button" id="makeCallButton" type="button">Make Call on {{ detail.ticker }}</button>
-          <small class="trade-status" id="callStatus">Your entry price and time come from the server and cannot be edited.</small>
-        {% endif %}
-        {% else %}
-        <a class="trade-login" href="/login?next=/t/{{ detail.ticker }}">Log in to make a public Call</a>
-        {% endif %}
-        {% if calls %}<div class="call-ledger-mini">{% for call in calls[:5] %}<a href="/u/{{ call.caller_handle }}"><strong>{{ call.caller_handle }}</strong><span>{{ call.status }}</span>{% if call.return_pct is not none %}<b class="{{ 'up' if call.return_pct >= 0 else 'down' }}">{{ '+' if call.return_pct >= 0 else '' }}{{ '%.1f'|format(call.return_pct) }}%</b>{% endif %}</a>{% endfor %}</div>{% endif %}
-      </section>
+        <section class="ticker-action-slot" aria-labelledby="callTitle">
+          <h2 class="visually-hidden" id="callTitle">Call</h2>
+          {% if user %}
+          {% if active_call %}
+          <button class="ticker-action ticker-action-call" id="closeCallButton" type="button" data-call-id="{{ active_call.public_id }}" aria-label="Close the open Call at the server's current price"><strong>Close Call</strong><span>{% if active_call.return_pct is not none %}{{ '+' if active_call.return_pct >= 0 else '' }}{{ '%.1f'|format(active_call.return_pct) }}% now{% else %}Open position{% endif %}</span></button>
+          <p class="ticker-action-status" id="callStatus">Entry ${{ '%.4f'|format(active_call.entry_price) if active_call.entry_price < 1 else ('%.2f'|format(active_call.entry_price)) }} · <time datetime="{{ active_call.entry_at }}" data-call-time>{{ active_call.entry_at[:16]|replace('T', ' ') }}</time></p>
+          {% else %}
+          <button class="ticker-action ticker-action-call" id="makeCallButton" type="button" aria-label="Make a public Call on {{ detail.ticker }} at the server's current price and time"><strong>Make Call</strong><span>Public · stamped</span></button>
+          <p class="ticker-action-status" id="callStatus" role="status"></p>
+          {% endif %}
+          {% else %}
+          <a class="ticker-action ticker-action-call" href="/login?next=/t/{{ detail.ticker }}"><strong>Make Call</strong><span>Log in · public</span></a>
+          <p class="ticker-action-status" id="callStatus" role="status"></p>
+          {% endif %}
+        </section>
+      </div>
+      {% if calls %}<div class="call-ledger-mini">{% for call in calls[:5] %}<a href="/u/{{ call.caller_handle }}"><strong>{{ call.caller_handle }}</strong><span>{{ call.status }}</span>{% if call.return_pct is not none %}<b class="{{ 'up' if call.return_pct >= 0 else 'down' }}">{{ '+' if call.return_pct >= 0 else '' }}{{ '%.1f'|format(call.return_pct) }}%</b>{% endif %}</a>{% endfor %}</div>{% endif %}
     </aside>
 
     <div class="detail-analysis">
@@ -305,29 +301,35 @@ document.getElementById('shareButton').addEventListener('click', async () => {
 });
 document.querySelectorAll('[data-call-time]').forEach(item=>{const stamp=new Date(item.dateTime);if(Number.isFinite(stamp.getTime()))item.textContent=stamp.toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});});
 const callStatus=document.getElementById('callStatus');
+function setTickerAction(button,label,detail){
+  if(!button)return;
+  const title=document.createElement('strong');title.textContent=label;
+  const meta=document.createElement('span');meta.textContent=detail;
+  button.replaceChildren(title,meta);
+}
 document.getElementById('makeCallButton')?.addEventListener('click',async event=>{
-  const button=event.currentTarget;button.disabled=true;if(callStatus)callStatus.textContent='Stamping the server quote…';
+  const button=event.currentTarget;button.disabled=true;setTickerAction(button,'Make Call','Stamping quote…');if(callStatus)callStatus.textContent='';
   try{const response=await fetch(`/api/calls/${encodeURIComponent(ticker)}`,{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not make Call');location.reload();}
-  catch(error){if(callStatus)callStatus.textContent=error.message||'Could not make Call';button.disabled=false;}
+  catch(error){if(callStatus)callStatus.textContent=error.message||'Could not make Call';setTickerAction(button,'Make Call','Public · stamped');button.disabled=false;}
 });
 document.getElementById('closeCallButton')?.addEventListener('click',async event=>{
-  const button=event.currentTarget;button.disabled=true;button.textContent='Closing at the server quote…';
+  const button=event.currentTarget;button.disabled=true;setTickerAction(button,'Close Call','Stamping exit…');
   try{const response=await fetch(`/api/calls/${encodeURIComponent(button.dataset.callId)}/close`,{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not close Call');location.reload();}
-  catch(error){button.textContent=error.message||'Could not close Call';button.disabled=false;}
+  catch(error){if(callStatus)callStatus.textContent=error.message||'Could not close Call';setTickerAction(button,'Close Call','Try again');button.disabled=false;}
 });
 const commissionButton=document.getElementById('commissionButton');
 const commissionStatus=document.getElementById('commissionStatus');
 async function pollFlash(jobId){
   const response=await fetch(`/api/research/jobs/${encodeURIComponent(jobId)}`);const result=await response.json().catch(()=>({}));
   if(result.status==='complete'&&result.url){location.href=result.url;return;}
-  if(result.status==='failed'){commissionButton.disabled=false;commissionButton.textContent='Retry Flash · {{ flash.model }}';commissionStatus.textContent=result.error||'Flash failed. You can retry.';return;}
+  if(result.status==='failed'){commissionButton.disabled=false;setTickerAction(commissionButton,'Retry Flash','100 Flash');commissionStatus.textContent=result.error||'Flash failed. You can retry.';return;}
   commissionStatus.textContent='Flash is filling its context and writing your private report…';setTimeout(()=>pollFlash(jobId),2500);
 }
 if(commissionButton?.dataset.jobId)pollFlash(commissionButton.dataset.jobId);
 commissionButton?.addEventListener('click',async()=>{
-  commissionButton.disabled=true;commissionButton.textContent='Starting Flash · {{ flash.model }}';commissionStatus.textContent='Sending the report ID to the server queue…';
-  try{const response=await fetch(`/api/research/${encodeURIComponent(ticker)}`,{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||result.error||'Could not start Flash');if(Number.isFinite(Number(result.balance)))document.querySelectorAll('[data-flash-balance]').forEach(item=>{item.textContent=result.balance;});if(result.status==='complete'&&result.url){location.href=result.url;return;}commissionButton.textContent='Flash is researching · {{ flash.model }}';pollFlash(result.job_id);}
-  catch(error){commissionButton.disabled=false;commissionButton.textContent='Retry Flash · {{ flash.model }}';commissionStatus.textContent=error.message||'Could not start Flash';}
+  commissionButton.disabled=true;setTickerAction(commissionButton,'Daily Flash','Starting…');commissionStatus.textContent='Sending the report to the queue…';
+  try{const response=await fetch(`/api/research/${encodeURIComponent(ticker)}`,{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||result.error||'Could not start Flash');if(Number.isFinite(Number(result.balance)))document.querySelectorAll('[data-flash-balance]').forEach(item=>{item.textContent=result.balance;});if(result.status==='complete'&&result.url){location.href=result.url;return;}setTickerAction(commissionButton,'Daily Flash','Researching…');pollFlash(result.job_id);}
+  catch(error){commissionButton.disabled=false;setTickerAction(commissionButton,'Retry Flash','100 Flash');commissionStatus.textContent=error.message||'Could not start Flash';}
 });
 const generateComment=document.getElementById('generateComment');
 const commentStatus=document.getElementById('commentStatus');

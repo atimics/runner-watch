@@ -171,6 +171,8 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     response = home(sports_request, None)
     assert response.status_code == 200
     assert b"RATi Sports" in response.body
+    assert b'class="game-matchup"' in response.body
+    assert b'class="ticker-team"' in response.body
 
     detail = sports_event(event["id"])
     assert detail is not None

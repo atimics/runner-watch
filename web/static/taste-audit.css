@@ -236,26 +236,6 @@ body {
 
 .report-source-index { scroll-margin-top: 62px; }
 
-.detail-actions .action-card {
-  border-color: #313a33;
-  background: #0d110e;
-}
-
-.detail-actions .call-card {
-  border-left: 2px solid #816b43;
-}
-
-.detail-actions .call-card .commission-button,
-.detail-actions .call-card .trade-login,
-.detail-actions .call-close,
-.call-card .commission-button,
-.call-close {
-  border: 1px solid rgba(207, 173, 104, .55);
-  background: transparent;
-  color: var(--amber);
-  box-shadow: none;
-}
-
 .risk-decision {
   border-color: #3a332a;
   border-left-color: var(--amber);
