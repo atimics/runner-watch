@@ -7,10 +7,10 @@
 {% macro pulse_card(event, compact=false) -%}
   {% set prediction = event.prediction %}
   {% set value_agrees = event.model_winner_abbreviation == event.signal_abbreviation %}
-  <a class="game-card winner-card team-projection-card{% if compact %} winner-card-compact{% endif %}" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}" aria-label="{{ event.model_winner_team_name }} projected to beat {{ event.model_winner_opponent_team_name }} with a {{ '%.0f'|format(event.model_winner_probability_pct) }} percent win chance; value side {{ event.signal_abbreviation }} with a {{ '%+.1f'|format(prediction.edge_pct) }} percentage-point model edge">
+  <a class="game-card winner-card team-projection-card{% if compact %} winner-card-compact{% endif %}" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}" aria-label="{{ event.model_winner_team_name }} {{ event.model_winner_aria_action }} {{ event.model_winner_opponent_team_name }} with a {{ '%.0f'|format(event.model_winner_probability_pct) }} percent win chance; value side {{ event.signal_abbreviation }} with a {{ '%+.1f'|format(prediction.edge_pct) }} percentage-point model edge">
     <span class="winner-coin winner-coin-{{ event.model_winner_coin_tone }}" aria-hidden="true"><b>{{ event.model_winner_abbreviation }}</b><i></i></span>
     <span class="matchup-copy team-projection-copy">
-      <span class="team-projection-line"><strong>{{ event.model_winner_abbreviation }}</strong><small>PROJECTED</small></span>
+      <span class="team-projection-line"><strong>{{ event.model_winner_abbreviation }}</strong><small>{{ event.model_winner_label }}</small></span>
       <span class="team-projection-name">{{ event.model_winner_team_name }}</span>
       <span class="winner-context">
         vs {{ event.model_winner_opponent_abbreviation }} · {{ event.league|upper }} · <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time>

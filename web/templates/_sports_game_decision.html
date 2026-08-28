@@ -18,7 +18,7 @@
       <div class="decision-model-call">
         <span class="winner-coin winner-coin-{{ event.model_winner_coin_tone }}" aria-hidden="true"><b>{{ event.model_winner_abbreviation[:3] }}</b><i></i></span>
         <div>
-          <small>BASELINE WINNER</small>
+          <small>{{ event.model_winner_detail_label }}</small>
           <h1 class="decision-team">{{ event.model_winner_team_name }}</h1>
           <strong class="decision-probability">{{ '%.1f'|format(event.model_winner_probability_pct) }}%</strong>
         </div>

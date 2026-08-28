@@ -1958,6 +1958,8 @@ def _event_attention(event: dict[str, Any]) -> dict[str, Any]:
     winner_abbreviation = str(event.get(f"{winner_side}_abbreviation") or "—")
     winner_seed = f"{winner_team_id}:{winner_abbreviation}".encode()
     winner_coin_tone = int(hashlib.sha256(winner_seed).hexdigest()[:2], 16) % 5
+    winner_probability = home_probability if winner_side == "home" else away_probability
+    winner_is_slight_edge = winner_probability < 0.55
 
     score_model = SCORE_MODELS.get(str(event.get("league")), SCORE_MODELS["mlb"])
     market_total = _number(odds.get("total"))
@@ -1999,9 +2001,13 @@ def _event_attention(event: dict[str, Any]) -> dict[str, Any]:
         "model_winner_opponent_abbreviation": str(
             event.get(f"{winner_opponent_side}_abbreviation") or "—"
         ),
-        "model_winner_probability_pct": round(
-            (home_probability if winner_side == "home" else away_probability) * 100,
-            1,
+        "model_winner_probability_pct": round(winner_probability * 100, 1),
+        "model_winner_label": "SLIGHT EDGE" if winner_is_slight_edge else "PROJECTED",
+        "model_winner_detail_label": (
+            "BASELINE LEAN" if winner_is_slight_edge else "BASELINE WINNER"
+        ),
+        "model_winner_aria_action": (
+            "has a slight model edge over" if winner_is_slight_edge else "is projected to beat"
         ),
         "model_winner_coin_tone": winner_coin_tone,
         "projected_home_score": round(projected_home_score, score_decimals),
