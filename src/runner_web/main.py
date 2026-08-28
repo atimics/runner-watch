@@ -32,6 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 from starlette.middleware.gzip import GZipMiddleware
 from webauthn import (
     base64url_to_bytes,
@@ -230,11 +231,26 @@ OPENROUTER_RESEARCH_OUTPUT_TOKENS = max(
 OPENROUTER_COMMENT_OUTPUT_TOKENS = max(
     1_200, int(os.getenv("OPENROUTER_COMMENT_OUTPUT_TOKENS", "1200"))
 )
+_COMMENT_FALLBACK_MODELS = (
+    "z-ai/glm-5.3-flash",
+    "nvidia/nemotron-3.5-lightning",
+    "deepseek/deepseek-v4-flash-0731",
+)
+_configured_comment_models = tuple(
+    model.strip()
+    for model in os.getenv("OPENROUTER_COMMENT_MODELS", "").split(",")
+    if model.strip()
+)
+OPENROUTER_COMMENT_MODELS = tuple(
+    dict.fromkeys((FLASH.model, *(_configured_comment_models or _COMMENT_FALLBACK_MODELS)))
+)[:4]
 OPENROUTER_RESEARCH_TIMEOUT_SECONDS = max(
     30, int(os.getenv("OPENROUTER_RESEARCH_TIMEOUT_SECONDS", "300"))
 )
 FLASH_GLOBAL_DAILY_LIMIT = max(1, int(os.getenv("FLASH_GLOBAL_DAILY_LIMIT", "50")))
 COMMENT_MAX_CHARS = 240
+COMMENT_REQUEST_KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
+COMMENT_REQUEST_PENDING_SECONDS = max(90, int(os.getenv("COMMENT_REQUEST_PENDING_SECONDS", "120")))
 SCAN_MODES = {
     "penny": {
         "label": "Penny stocks",
@@ -6502,6 +6518,99 @@ def thesis_case_revisions_api(
     raise HTTPException(410, "Private cases were replaced by public Calls.")
 
 
+def _openrouter_route_diagnostics(payload: Any) -> dict[str, Any]:
+    """Keep useful routing facts while excluding prompts and provider response text."""
+
+    if not isinstance(payload, dict):
+        return {}
+    diagnostics: dict[str, Any] = {}
+    error = payload.get("error")
+    if isinstance(error, dict) and isinstance(error.get("code"), (str, int)):
+        diagnostics["error_code"] = error["code"]
+    metadata = payload.get("openrouter_metadata")
+    if not isinstance(metadata, dict) and isinstance(error, dict):
+        metadata = error.get("metadata")
+    if not isinstance(metadata, dict):
+        return diagnostics
+
+    allowed = (
+        "provider",
+        "provider_name",
+        "model",
+        "status",
+        "status_code",
+        "latency_ms",
+    )
+    for key in allowed:
+        value = metadata.get(key)
+        if isinstance(value, (str, int, float, bool)):
+            diagnostics[key] = str(value)[:160] if isinstance(value, str) else value
+    attempts: list[dict[str, Any]] = []
+    for attempt in list(metadata.get("attempts") or [])[:8]:
+        if not isinstance(attempt, dict):
+            continue
+        safe_attempt = {
+            key: (str(attempt[key])[:160] if isinstance(attempt[key], str) else attempt[key])
+            for key in allowed
+            if isinstance(attempt.get(key), (str, int, float, bool))
+        }
+        if safe_attempt:
+            attempts.append(safe_attempt)
+    if attempts:
+        diagnostics["attempts"] = attempts
+    return diagnostics
+
+
+def _request_openrouter_comment(body: dict[str, Any], models: tuple[str, ...]) -> Any:
+    request_body = {**body, "models": list(models)}
+    api_request = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=json.dumps(request_body).encode(),
+        headers={
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": APP_ORIGIN,
+            "X-OpenRouter-Title": "Runner Watch",
+            "X-OpenRouter-Metadata": "enabled",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(api_request, timeout=30) as response:  # noqa: S310
+            result = json.load(response)
+    except urllib.error.HTTPError as exc:
+        try:
+            error_payload = json.loads(exc.read(65_536))
+        except (OSError, TypeError, ValueError):
+            error_payload = {}
+        LOG.warning(
+            "OpenRouter comment request failed status=%s models=%s routing=%s",
+            exc.code,
+            len(models),
+            json.dumps(_openrouter_route_diagnostics(error_payload), separators=(",", ":")),
+        )
+        raise HTTPException(502, "AI comment generation failed. Your Flash was returned.") from exc
+    except (TimeoutError, urllib.error.URLError) as exc:
+        LOG.warning("OpenRouter comment request timed out models=%s", len(models))
+        raise HTTPException(
+            504, "AI comment generation timed out. Your Flash was returned."
+        ) from exc
+
+    resolved_model = str(result.get("model") or "")[:160] if isinstance(result, dict) else ""
+    LOG.info(
+        "OpenRouter comment request succeeded model=%s routing=%s",
+        resolved_model or "unknown",
+        json.dumps(_openrouter_route_diagnostics(result), separators=(",", ":")),
+    )
+    return result
+
+
+def _comment_from_openrouter_result(result: Any) -> tuple[str, str]:
+    content = result["choices"][0]["message"]["content"]
+    comment = _openrouter_comment_text(content)
+    return comment, str(result.get("model") or FLASH.model)[:160]
+
+
 def _generate_ticker_comment_text(
     ticker: str,
     *,
@@ -6539,7 +6648,6 @@ def _generate_ticker_comment_text(
     }
     ability = comment_avatar_ability(avatar_ability_id)
     body = {
-        "model": FLASH.model,
         "messages": [
             {
                 "role": "system",
@@ -6557,36 +6665,138 @@ def _generate_ticker_comment_text(
             {"role": "user", "content": json.dumps(evidence, separators=(",", ":"))},
         ],
         "response_format": {"type": "json_object"},
-        "provider": {"require_parameters": True, "zdr": True},
+        "provider": {
+            "allow_fallbacks": True,
+            "require_parameters": True,
+            "zdr": True,
+        },
         "max_tokens": OPENROUTER_COMMENT_OUTPUT_TOKENS,
     }
-    api_request = urllib.request.Request(
-        "https://openrouter.ai/api/v1/chat/completions",
-        data=json.dumps(body).encode(),
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": APP_ORIGIN,
-            "X-OpenRouter-Title": "Runner Watch",
-        },
-        method="POST",
-    )
+    models = OPENROUTER_COMMENT_MODELS
+    result: Any = None
     try:
-        with urllib.request.urlopen(api_request, timeout=30) as response:  # noqa: S310
-            result = json.load(response)
-        content = result["choices"][0]["message"]["content"]
-        comment = _openrouter_comment_text(content)
-    except urllib.error.HTTPError as exc:
-        raise HTTPException(502, "AI comment generation failed. Your Flash was returned.") from exc
-    except (TimeoutError, urllib.error.URLError) as exc:
+        result = _request_openrouter_comment(body, models)
+        return _comment_from_openrouter_result(result)
+    except HTTPException:
+        raise
+    except (KeyError, IndexError, TypeError, ValueError) as first_error:
+        resolved = str(result.get("model") or "") if isinstance(result, dict) else ""
+        remaining = tuple(model for model in models if model != resolved)
+        if len(remaining) == len(models):
+            remaining = models[1:]
+        if not remaining:
+            raise HTTPException(
+                502, "AI returned an invalid comment. Your Flash was returned."
+            ) from first_error
+        LOG.warning(
+            "OpenRouter returned an invalid comment model=%s; retrying with %s models",
+            resolved[:160] or "unknown",
+            len(remaining),
+        )
+        try:
+            retry_result = _request_openrouter_comment(body, remaining)
+            return _comment_from_openrouter_result(retry_result)
+        except HTTPException:
+            raise
+        except (KeyError, IndexError, TypeError, ValueError) as retry_error:
+            raise HTTPException(
+                502, "AI returned an invalid comment. Your Flash was returned."
+            ) from retry_error
+
+
+def _comment_request_key_hash(request: Request) -> str:
+    value = request.headers.get("idempotency-key", "").strip() or str(uuid.uuid4())
+    if not COMMENT_REQUEST_KEY_RE.fullmatch(value):
+        raise HTTPException(400, "Invalid comment request key.")
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _comment_request_is_stale(row: Any) -> bool:
+    try:
+        updated_at = datetime.fromisoformat(str(row["updated_at"]))
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=UTC)
+    except (TypeError, ValueError):
+        return False
+    return datetime.now(UTC) - updated_at.astimezone(UTC) > timedelta(
+        seconds=COMMENT_REQUEST_PENDING_SECONDS
+    )
+
+
+def _comment_response_payload(comment_id: str, ticker: str, user_id: str) -> dict[str, Any]:
+    with connection() as db:
+        row = db.execute(
+            """
+            SELECT c.id,c.user_id,c.body,c.created_at,c.source,c.generation_model,
+                   a.name AS avatar_name,a.seed AS avatar_seed,
+                   a.ability_id AS avatar_ability_id,a.level AS avatar_level
+            FROM ticker_comments c
+            JOIN comment_avatars a ON a.user_id=c.user_id
+            WHERE c.id=?
+            """,
+            (comment_id,),
+        ).fetchone()
+        count = db.execute(
+            "SELECT COUNT(*) FROM ticker_comments WHERE ticker=? AND status='public'",
+            (ticker,),
+        ).fetchone()[0]
+    if row is None:
+        raise HTTPException(410, "This comment was already removed.")
+    return {
+        "comment": _public_comment(row, user_id),
+        "count": int(count),
+        "balance": wallet_for_user(user_id)["balance"],
+    }
+
+
+def _replay_comment_request(row: Any, ticker: str, user_id: str) -> JSONResponse:
+    if str(row["ticker"]) != ticker:
+        raise HTTPException(409, "This comment request key was used for another ticker.")
+    status = str(row["status"])
+    if status == "pending" and _comment_request_is_stale(row):
+        expired = False
+        expired_detail = "Comment generation timed out. Your Flash was returned."
+        with connection() as db:
+            updated = db.execute(
+                """
+                UPDATE comment_generation_requests
+                SET status='failed',error_status=504,error_detail=?,updated_at=?
+                WHERE id=? AND status='pending' AND updated_at=?
+                """,
+                (expired_detail, iso(), row["id"], row["updated_at"]),
+            )
+            if updated.rowcount:
+                credit_flash(
+                    db,
+                    user_id,
+                    COMMENT_COST,
+                    kind="comment_refund",
+                    reference_id=str(row["id"]),
+                )
+                expired = True
+            else:
+                row = db.execute(
+                    "SELECT * FROM comment_generation_requests WHERE id=?",
+                    (row["id"],),
+                ).fetchone()
+        if expired:
+            raise HTTPException(504, expired_detail)
+        status = str(row["status"])
+    if status == "completed":
+        payload = _comment_response_payload(str(row["comment_id"]), ticker, user_id)
+        return JSONResponse(payload)
+    if status == "failed":
         raise HTTPException(
-            504, "AI comment generation timed out. Your Flash was returned."
-        ) from exc
-    except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise HTTPException(
-            502, "AI returned an invalid comment. Your Flash was returned."
-        ) from exc
-    return comment, str(result.get("model") or FLASH.model)[:160]
+            int(row["error_status"] or 502),
+            str(row["error_detail"] or "Could not post. Your Flash was returned."),
+        )
+    return JSONResponse(
+        {
+            "detail": "Flash is still drafting this comment. Please try again shortly.",
+            "retryable": True,
+        },
+        status_code=409,
+    )
 
 
 @app.post("/api/comments/{ticker}")
@@ -6597,33 +6807,93 @@ async def create_ticker_comment(
 ) -> JSONResponse:
     require_origin(request)
     user = require_user(runner_session)
-    enforce_rate(request, "ticker-comment", limit=20, seconds=3600, subject=user["id"])
     normalized = _clean_ticker(ticker)
     if not _known_ticker(normalized):
         raise HTTPException(404, "Ticker not found")
+    user_id = str(user["id"])
+    request_key_hash = _comment_request_key_hash(request)
+    with connection() as db:
+        existing_request = db.execute(
+            """
+            SELECT * FROM comment_generation_requests
+            WHERE user_id=? AND idempotency_key_hash=?
+            """,
+            (user_id, request_key_hash),
+        ).fetchone()
+    if existing_request is not None:
+        return _replay_comment_request(existing_request, normalized, user_id)
     if not OPENROUTER_API_KEY:
         raise HTTPException(503, "AI comments are temporarily unavailable.")
-    comment_id = str(uuid.uuid4())
+    await run_in_threadpool(
+        enforce_rate,
+        request,
+        "ticker-comment",
+        limit=20,
+        seconds=3600,
+        subject=user_id,
+    )
+    request_id = str(uuid.uuid4())
     created_at = iso()
+    existing_request = None
+    avatar: Any = None
     try:
         with connection() as db:
-            avatar = ensure_comment_avatar(db, str(user["id"]))
-            spend_flash(
-                db,
-                str(user["id"]),
-                COMMENT_COST,
-                kind="comment_generation",
-                reference_id=comment_id,
+            inserted = db.execute(
+                """
+                INSERT INTO comment_generation_requests(
+                    id,user_id,idempotency_key_hash,ticker,status,created_at,updated_at
+                ) VALUES(?,?,?,?,?,?,?) ON CONFLICT DO NOTHING
+                """,
+                (
+                    request_id,
+                    user_id,
+                    request_key_hash,
+                    normalized,
+                    "pending",
+                    created_at,
+                    created_at,
+                ),
             )
+            if inserted.rowcount:
+                avatar = ensure_comment_avatar(db, user_id)
+                spend_flash(
+                    db,
+                    user_id,
+                    COMMENT_COST,
+                    kind="comment_generation",
+                    reference_id=request_id,
+                )
+            else:
+                existing_request = db.execute(
+                    """
+                    SELECT * FROM comment_generation_requests
+                    WHERE user_id=? AND idempotency_key_hash=?
+                    """,
+                    (user_id, request_key_hash),
+                ).fetchone()
     except InsufficientFlashError as exc:
         raise HTTPException(402, str(exc)) from exc
+    if existing_request is not None:
+        return _replay_comment_request(existing_request, normalized, user_id)
+    if avatar is None:
+        raise HTTPException(409, "Could not start this comment request. Please try again.")
     try:
         body, model = await run_in_threadpool(
             _generate_ticker_comment_text,
             normalized,
             avatar_ability_id=str(avatar["ability_id"]),
         )
+        completed_at = iso()
         with connection() as db:
+            reserved = db.execute(
+                """
+                UPDATE comment_generation_requests SET updated_at=?
+                WHERE id=? AND status='pending'
+                """,
+                (completed_at, request_id),
+            )
+            if not reserved.rowcount:
+                raise HTTPException(409, "This comment request expired. Your Flash was returned.")
             db.execute(
                 """
                 INSERT INTO ticker_comments(
@@ -6631,9 +6901,9 @@ async def create_ticker_comment(
                 ) VALUES(?,?,?,?,?,?,?,?)
                 """,
                 (
-                    comment_id,
+                    request_id,
                     normalized,
-                    user["id"],
+                    user_id,
                     body,
                     "public",
                     created_at,
@@ -6641,46 +6911,51 @@ async def create_ticker_comment(
                     model,
                 ),
             )
-            row = db.execute(
+            db.execute(
                 """
-                SELECT c.id,c.user_id,c.body,c.created_at,c.source,c.generation_model,
-                       a.name AS avatar_name,a.seed AS avatar_seed,
-                       a.ability_id AS avatar_ability_id,a.level AS avatar_level
-                FROM ticker_comments c
-                JOIN comment_avatars a ON a.user_id=c.user_id
-                WHERE c.id=?
+                UPDATE comment_generation_requests
+                SET comment_id=?,status='completed',updated_at=? WHERE id=?
                 """,
-                (comment_id,),
-            ).fetchone()
-            count = db.execute(
-                "SELECT COUNT(*) FROM ticker_comments WHERE ticker=? AND status='public'",
-                (normalized,),
-            ).fetchone()[0]
-    except Exception:
-        with connection() as db:
-            credit_flash(
-                db,
-                str(user["id"]),
-                COMMENT_COST,
-                kind="comment_refund",
-                reference_id=comment_id,
+                (request_id, completed_at, request_id),
             )
-        raise
+    except Exception as exc:
+        if isinstance(exc, HTTPException):
+            error_status = int(exc.status_code)
+            error_detail = str(exc.detail)
+        else:
+            LOG.exception("Comment generation failed request=%s", request_id)
+            error_status = 500
+            error_detail = "Could not post. Your Flash was returned."
+        with connection() as db:
+            failed = db.execute(
+                """
+                UPDATE comment_generation_requests
+                SET status='failed',error_status=?,error_detail=?,updated_at=?
+                WHERE id=? AND status='pending'
+                """,
+                (error_status, error_detail[:240], iso(), request_id),
+            )
+            if failed.rowcount:
+                credit_flash(
+                    db,
+                    user_id,
+                    COMMENT_COST,
+                    kind="comment_refund",
+                    reference_id=request_id,
+                )
+        raise HTTPException(error_status, error_detail) from exc
     with PULSE_DATA_LOCK:
         PULSE_DATA_CACHE.clear()
     with ALPHA_DATA_LOCK:
         ALPHA_DATA_CACHE.clear()
-    shared_cache_delete(
-        _shared_request_cache_name("pulse"),
-        _shared_request_cache_name("alpha"),
-    )
     return JSONResponse(
-        {
-            "comment": _public_comment(row, str(user["id"])),
-            "count": int(count),
-            "balance": wallet_for_user(str(user["id"]))["balance"],
-        },
+        _comment_response_payload(request_id, normalized, user_id),
         status_code=201,
+        background=BackgroundTask(
+            shared_cache_delete,
+            _shared_request_cache_name("pulse"),
+            _shared_request_cache_name("alpha"),
+        ),
     )
 
 

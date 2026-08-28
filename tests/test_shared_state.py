@@ -116,6 +116,7 @@ def _configure(monkeypatch: Any) -> FakeRedis:
     monkeypatch.setattr(shared_state, "REDIS_URL", "redis://example")
     monkeypatch.setattr(shared_state, "REQUIRE_REDIS_TLS", False)
     monkeypatch.setattr(shared_state, "_CLIENT", fake)
+    monkeypatch.setattr(shared_state, "_BLOCKING_CLIENT", fake)
     return fake
 
 
@@ -141,6 +142,33 @@ def test_research_queue_contains_only_report_ids(monkeypatch: Any) -> None:
     assert shared_state.dequeue_research_job("worker-b", 1) == "report-1"
     shared_state.acknowledge_research_job("worker-b", "report-1")
     assert shared_state.dequeue_research_job("worker-b", 1) is None
+
+
+def test_web_redis_calls_do_not_use_the_blocking_queue_timeout(monkeypatch: Any) -> None:
+    from redis import Redis
+
+    clients: list[tuple[object, dict[str, Any]]] = []
+
+    def fake_from_url(url: str, **options: Any) -> object:
+        client = object()
+        clients.append((client, options))
+        assert url == "redis://example"
+        return client
+
+    monkeypatch.setattr(shared_state, "REDIS_URL", "redis://example")
+    monkeypatch.setattr(shared_state, "REQUIRE_REDIS_TLS", False)
+    monkeypatch.setattr(shared_state, "_CLIENT", None)
+    monkeypatch.setattr(shared_state, "_BLOCKING_CLIENT", None)
+    monkeypatch.setattr(Redis, "from_url", staticmethod(fake_from_url))
+
+    fast_client = shared_state._client()
+    blocking_client = shared_state._blocking_client()
+
+    assert fast_client is clients[0][0]
+    assert blocking_client is clients[1][0]
+    assert clients[0][1]["socket_timeout"] == shared_state.REDIS_FAST_TIMEOUT_SECONDS
+    assert clients[1][1]["socket_timeout"] == shared_state.REDIS_BLOCKING_TIMEOUT_SECONDS
+    assert clients[0][1]["socket_timeout"] < clients[1][1]["socket_timeout"]
 
 
 def test_production_redis_requires_an_encrypted_connection(monkeypatch: Any) -> None:

@@ -15,9 +15,17 @@ KEY_PREFIX = os.getenv("REDIS_KEY_PREFIX", "stonks").strip() or "stonks"
 RESEARCH_WORKER_LEASE_SECONDS = max(
     60, int(os.getenv("RESEARCH_WORKER_LEASE_SECONDS", "300"))
 )
+REDIS_FAST_TIMEOUT_SECONDS = max(
+    0.1, float(os.getenv("REDIS_FAST_TIMEOUT_SECONDS", "1"))
+)
+REDIS_BLOCKING_TIMEOUT_SECONDS = max(
+    6.0, float(os.getenv("REDIS_BLOCKING_TIMEOUT_SECONDS", "10"))
+)
 
 _CLIENT_LOCK = threading.Lock()
 _CLIENT: Any | None = None
+_BLOCKING_CLIENT_LOCK = threading.Lock()
+_BLOCKING_CLIENT: Any | None = None
 
 
 def redis_configured() -> bool:
@@ -39,14 +47,35 @@ def _client() -> Any:
             _CLIENT = Redis.from_url(
                 REDIS_URL,
                 decode_responses=True,
-                socket_connect_timeout=2,
-                # Blocking queue reads wait up to five seconds. Leave enough
-                # headroom for Redis to send its empty response without the
-                # client treating a normal queue poll as a network failure.
-                socket_timeout=10,
+                socket_connect_timeout=REDIS_FAST_TIMEOUT_SECONDS,
+                socket_timeout=REDIS_FAST_TIMEOUT_SECONDS,
                 health_check_interval=30,
             )
         return _CLIENT
+
+
+def _blocking_client() -> Any:
+    """Use a longer timeout only for the worker's blocking queue read."""
+
+    global _BLOCKING_CLIENT
+    if not REDIS_URL:
+        raise RuntimeError("REDIS_URL is not configured")
+    if REQUIRE_REDIS_TLS and not REDIS_URL.startswith("rediss://"):
+        raise RuntimeError("REDIS_URL must use TLS in this deployment")
+    with _BLOCKING_CLIENT_LOCK:
+        if _BLOCKING_CLIENT is None:
+            from redis import Redis
+
+            _BLOCKING_CLIENT = Redis.from_url(
+                REDIS_URL,
+                decode_responses=True,
+                socket_connect_timeout=2,
+                # Queue reads wait up to five seconds. This client is never
+                # used by latency-sensitive web requests.
+                socket_timeout=REDIS_BLOCKING_TIMEOUT_SECONDS,
+                health_check_interval=30,
+            )
+        return _BLOCKING_CLIENT
 
 
 def _key(name: str) -> str:
@@ -223,7 +252,7 @@ def recover_research_jobs(worker_id: str) -> int:
 def dequeue_research_job(worker_id: str, timeout_seconds: int = 5) -> str | None:
     """Atomically claim one job while leaving it recoverable until it is acknowledged."""
 
-    client = _client()
+    client = _blocking_client()
     worker_token = _worker_token(worker_id)
     _recover_stale_research_workers(client, worker_token)
     touch_research_worker(worker_id)

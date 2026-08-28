@@ -2348,6 +2348,30 @@ def _migration_041_persistent_comment_avatars(db: DatabaseConnection) -> None:
         ensure_comment_avatar(db, str(row["id"]))
 
 
+def _migration_042_comment_generation_requests(db: DatabaseConnection) -> None:
+    """Make paid AI comment requests safe to replay after a lost response."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS comment_generation_requests (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            idempotency_key_hash TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            comment_id TEXT UNIQUE REFERENCES ticker_comments(id) ON DELETE SET NULL,
+            status TEXT NOT NULL CHECK(status IN ('pending','completed','failed')),
+            error_status INTEGER,
+            error_detail TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(user_id,idempotency_key_hash)
+        );
+        CREATE INDEX IF NOT EXISTS comment_generation_requests_status_time
+            ON comment_generation_requests(status,updated_at);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2397,6 +2421,7 @@ MIGRATIONS = (
     Migration(39, "sports_ai_forecasts", _migration_039_sports_ai_forecasts),
     Migration(40, "comment_glyph_avatars", _migration_040_comment_glyph_avatars),
     Migration(41, "persistent_comment_avatars", _migration_041_persistent_comment_avatars),
+    Migration(42, "comment_generation_requests", _migration_042_comment_generation_requests),
 )
 
 
