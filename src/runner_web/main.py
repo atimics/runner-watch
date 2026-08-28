@@ -4574,8 +4574,13 @@ def sports_home_response(
             runner_session,
             pulse=public_data["pulse"],
             pick_stats=public_data["pick_stats"],
-            sports_tab="pulse",
+            active_tab="pulse",
+            nav_product="sports",
             sports_path_prefix=sports_path_prefix,
+            detail_panel_label="Selected matchup odds, evidence, and public Calls",
+            detail_panel_mark="RS",
+            detail_panel_title="Open a matchup",
+            detail_panel_copy="Read the model, market price, context, and receipt in one place.",
         ),
     )
 
@@ -4605,8 +4610,15 @@ def sports_radar_response(
             request,
             runner_session,
             radar=public_data["radar"],
-            sports_tab="radar",
+            active_tab="radar",
+            nav_product="sports",
             sports_path_prefix=sports_path_prefix,
+            detail_panel_label="Selected matchup change and evidence",
+            detail_panel_mark="RS",
+            detail_panel_title="Open a Radar event",
+            detail_panel_copy=(
+                "Read the changed line, live score, context, and receipt in one place."
+            ),
         ),
     )
 
@@ -4750,6 +4762,7 @@ def sports_alpha_response(
             active_tab="alpha",
             sports_tab="alpha",
             nav_product="sports",
+            alpha_product_label="RATi SPORTS",
             sports_path_prefix=sports_path_prefix,
             detail_panel_label="Selected winner, odds, stats, and Alpha",
             detail_panel_mark="RS",
@@ -4883,7 +4896,8 @@ def sports_game_page(
                 event_id,
                 str(user["id"]) if user else None,
             ),
-            sports_tab="pulse",
+            active_tab="pulse",
+            nav_product="sports",
         ),
     )
 

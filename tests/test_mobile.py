@@ -261,6 +261,34 @@ def test_desktop_panel_security_allows_only_supported_detail_pages() -> None:
         assert not web_main._is_panel_path(path)
 
 
+def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
+    root = Path(__file__).parents[1]
+    templates_dir = root / "web/templates"
+    sports_templates = [
+        (templates_dir / name).read_text()
+        for name in ("sports.html", "sports_radar.html", "sports_alpha.html")
+    ]
+    game = (templates_dir / "sports_game.html").read_text()
+    live_script = (root / "web/static/sports-live.js").read_text()
+    core_styles = (root / "web/static/sports-core.css").read_text()
+
+    for template in sports_templates:
+        assert '{% extends "mobile_base.html" %}' in template
+        assert "workspace-app" in template
+        assert "data-desktop-workspace" in template
+        assert "data-desktop-list" in template
+        assert '{% include "_desktop_panel.html" %}' in template
+        assert "sports_base.html" not in template
+    assert '{% extends "mobile_base.html" %}' in game
+    assert 'class="detail-nav sports-detail-nav"' in game
+    assert 'class="detail-body sports-detail-body"' in game
+    assert not (templates_dir / "sports_base.html").exists()
+    assert "location.reload" not in "\n".join([*sports_templates, game, live_script])
+    assert "setInterval(poll, POLL_INTERVAL)" in live_script
+    assert "body.sports-product" in core_styles
+    assert not core_styles.startswith(":root")
+
+
 def test_ticker_rows_have_no_reader_attention_state() -> None:
     root = Path(__file__).parents[1]
     row_script = (root / "web/static/ticker-row.js").read_text()

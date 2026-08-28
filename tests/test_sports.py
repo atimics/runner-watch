@@ -612,8 +612,10 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     assert b"Full slate" not in response.body
     assert b'class="sports-hero"' not in response.body
     assert b'class="sports-scoreboard pulse-summary"' not in response.body
+    assert b'class="sports-record-strip"' in response.body
     assert b'id="sportsAnnouncement"' not in response.body
     assert b"localStorage.getItem(announcementKey)" not in response.body
+    assert b'id="sportsPulseRefresh"' in response.body
 
     detail = sports_event(event["id"])
     assert detail is not None
@@ -1277,20 +1279,21 @@ def test_sports_host_uses_the_sports_shell_for_alpha(sports_db) -> None:
     alpha_response = alpha_page(request(path="/alpha"), None)
     receipts_response = sports_receipts_page(request(path="/receipts"), None)
     assert radar_response.status_code == 200
-    assert b"LIVE CHANGES" in radar_response.body
+    assert b"RATi SPORTS" in radar_response.body
+    assert b'id="sportsRadarRefresh"' in radar_response.body
     assert b'class="sports-hero' not in radar_response.body
     assert alpha_response.status_code == 200
     assert b'<h1>Alpha</h1>' in alpha_response.body
     assert b'class="alpha-sample-note"' in alpha_response.body
-    assert b'class="sports-topbar"' in alpha_response.body
+    assert b'class="desktop-workspace"' in alpha_response.body
     assert b"Four prediction slots" not in alpha_response.body
     assert b"rank skill" in alpha_response.body
     assert b"Call activity" in alpha_response.body
     assert b'<span class="alpha-rank">1</span>' not in alpha_response.body
     assert b"open Calls" in alpha_response.body
     assert b'href="/alpha"' in alpha_response.body
-    assert b'class="sports-tab-icon product"' in alpha_response.body
-    assert b">Runners</a>" in alpha_response.body
+    assert b'class="tab-link product-tab-link"' in alpha_response.body
+    assert b">Runners<" in alpha_response.body
     assert b'class="skip-link"' in alpha_response.body
     assert receipts_response.status_code == 307
     assert receipts_response.headers["location"] == "/alpha"

@@ -1,0 +1,232 @@
+.sports-product .screen-head {
+  border-bottom-color: var(--line);
+}
+
+.sports-product .screen-head .rati-product {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .14em;
+}
+
+.sports-feed-pane {
+  min-width: 0;
+}
+
+.sports-record-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 10px 14px 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.sports-record-strip > span {
+  min-width: 0;
+  padding: 10px;
+  border-right: 1px solid var(--line);
+}
+
+.sports-record-strip > span:last-child {
+  border-right: 0;
+}
+
+.sports-record-strip small,
+.sports-record-strip strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sports-record-strip small {
+  color: var(--muted);
+  font-size: 7px;
+  font-weight: 850;
+  letter-spacing: .1em;
+}
+
+.sports-record-strip strong {
+  margin-top: 4px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sports-feed-pane .source-warning {
+  margin: 10px 14px 0;
+}
+
+.sports-live-refresh {
+  width: calc(100% - 28px);
+  margin: 10px 14px 0;
+}
+
+.sports-list-section {
+  padding-top: 10px;
+}
+
+.sports-list-section .pulse-winners,
+.sports-list-section .radar-list {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.sports-product .winner-card,
+.sports-product .radar-card {
+  background: var(--panel);
+}
+
+.sports-product .winner-card:hover,
+.sports-product .radar-card:hover {
+  background: var(--panel-2);
+}
+
+.sports-product .winner-card {
+  grid-template-columns: 46px minmax(0, 1fr) 82px 10px;
+  gap: 9px;
+  min-height: 98px;
+  padding: 11px 12px;
+}
+
+.sports-product .winner-coin {
+  width: 44px;
+  height: 44px;
+}
+
+.sports-product .matchup-team {
+  grid-template-columns: 35px minmax(0, 1fr);
+  gap: 5px;
+}
+
+.sports-product .winner-quote strong {
+  font-size: 12px;
+}
+
+.sports-product .winner-quote .edge-spark {
+  width: 70px;
+}
+
+.sports-product .series-cluster {
+  background: var(--bg);
+}
+
+.sports-product .series-cluster summary {
+  padding-left: 67px;
+}
+
+.sports-product .radar-card {
+  grid-template-columns: 43px minmax(0, 1fr) 63px 10px;
+  gap: 9px;
+  min-height: 78px;
+  padding: 10px 12px;
+}
+
+.sports-product .radar-card .radar-spark {
+  display: none;
+}
+
+.sports-product .radar-value b {
+  font-size: 12px;
+}
+
+.sports-product .sports-empty {
+  min-height: 250px;
+  margin: 10px 14px;
+}
+
+.sports-detail-nav strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sports-detail-body .game-detail {
+  max-width: none;
+}
+
+.sports-game-app .sports-source {
+  margin-bottom: 20px;
+}
+
+html.embedded-pane .sports-detail-body {
+  padding-top: 28px;
+}
+
+@media (min-width: 900px) {
+  .sports-product .sports-feed-pane {
+    width: clamp(360px, 32vw, 450px);
+  }
+
+  .sports-product .sports-source {
+    margin-bottom: 30px;
+  }
+
+  .sports-product .sports-game-app {
+    max-width: 560px;
+  }
+
+  html.embedded-pane .sports-game-app {
+    max-width: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .sports-product .winner-card {
+    grid-template-columns: 44px minmax(0, 1fr) 10px;
+  }
+
+  .sports-product .winner-quote {
+    grid-column: 2;
+    display: grid;
+    grid-template-columns: auto auto;
+    gap: 3px 8px;
+    justify-content: start;
+    text-align: left;
+  }
+
+  .sports-product .winner-quote small,
+  .sports-product .winner-quote .edge-spark {
+    display: none;
+  }
+
+  .sports-product .winner-quote em {
+    margin: 0;
+  }
+
+  .sports-product .winner-card .game-chevron {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+  }
+
+  .sports-product .radar-card {
+    grid-template-columns: 42px minmax(0, 1fr) 58px 10px;
+  }
+
+  .sports-record-strip {
+    margin-right: 12px;
+    margin-left: 12px;
+  }
+
+  .sports-record-strip > span {
+    padding: 9px 7px;
+  }
+
+  .sports-feed-pane .source-warning,
+  .sports-live-refresh {
+    margin-right: 12px;
+    margin-left: 12px;
+  }
+
+  .sports-live-refresh {
+    width: calc(100% - 24px);
+  }
+
+  .sports-detail-body {
+    padding-top: 14px;
+  }
+}
