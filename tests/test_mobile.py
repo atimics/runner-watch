@@ -239,8 +239,12 @@ def test_desktop_feeds_share_full_info_and_article_panel() -> None:
         assert "data-desktop-list" in template
         assert '{% include "_desktop_panel.html" %}' in template
     assert "data-desktop-frame" in panel
+    assert "data-desktop-loading" in panel
     assert "/t/" in workspace
     assert "/research/" in workspace
+    assert "frame.addEventListener('load'" in workspace
+    assert "frame.hidden = true" in workspace
+    assert ".desktop-detail-loading[hidden]" in desktop_css
     assert "openPanel(current ? panelUrl(current) : defaultUrl())" in workspace
     assert "sessionStorage" not in workspace
     assert "html.embedded-pane .mobile-app" in desktop_css

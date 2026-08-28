@@ -4,5 +4,9 @@
     <strong>{{ detail_panel_title|default('Open a ticker dossier') }}</strong>
     <p>{{ detail_panel_copy|default('Read the chart, filing trail, and risks in one place.') }}</p>
   </div>
+  <div class="desktop-detail-loading" data-desktop-loading role="status" aria-live="polite" hidden>
+    <span aria-hidden="true"></span>
+    <strong>Loading details…</strong>
+  </div>
   <iframe class="desktop-detail-frame" data-desktop-frame title="{{ detail_panel_label|default('Selected ticker dossier or research article') }}" hidden></iframe>
 </aside>

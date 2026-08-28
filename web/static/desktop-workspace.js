@@ -15,9 +15,11 @@
     const list = workspace.querySelector('[data-desktop-list]');
     const frame = workspace.querySelector('[data-desktop-frame]');
     const empty = workspace.querySelector('[data-desktop-empty]');
-    if (!list || !frame || !empty) return;
+    const loading = workspace.querySelector('[data-desktop-loading]');
+    if (!list || !frame || !empty || !loading) return;
 
     let current = '';
+    let loaded = false;
 
     function defaultUrl() {
       const preferred = list.querySelector('a[data-desktop-default], a[href^="/t/"], a[href^="/research/"], a[href^="/s/"], a[href^="/game/"], a[href^="/sports/game/"]');
@@ -37,12 +39,28 @@
     function openPanel(url) {
       if (!desktop.matches || !url) return;
       const value = `${url.pathname}${url.search}${url.hash}`;
-      if (current !== value) frame.src = value;
-      current = value;
-      frame.hidden = false;
-      empty.hidden = true;
+      if (current !== value) {
+        current = value;
+        loaded = false;
+        frame.hidden = true;
+        loading.hidden = false;
+        empty.hidden = true;
+        frame.src = value;
+      } else if (loaded) {
+        frame.hidden = false;
+        loading.hidden = true;
+        empty.hidden = true;
+      }
       markSelected(url);
     }
+
+    frame.addEventListener('load', () => {
+      if (!current || frame.getAttribute('src') !== current) return;
+      loaded = true;
+      frame.hidden = false;
+      loading.hidden = true;
+      empty.hidden = true;
+    });
 
     list.addEventListener('click', event => {
       if (!desktop.matches || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;

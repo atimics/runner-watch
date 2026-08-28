@@ -228,7 +228,32 @@ html.embedded-pane .research-report {
     font-size: 12px;
   }
 
+  .desktop-detail-loading {
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 12px;
+    background: #090c0a;
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .desktop-detail-loading > span {
+    width: 24px;
+    height: 24px;
+    border: 2px solid #27312b;
+    border-top-color: var(--green);
+    border-radius: 50%;
+    animation: desktop-detail-spin .8s linear infinite;
+  }
+
+  .desktop-detail-loading > strong { font-weight: 650; }
+
   .desktop-detail-empty[hidden],
+  .desktop-detail-loading[hidden],
   .desktop-detail-frame[hidden] { display: none; }
 
   .desktop-detail-frame {
@@ -251,6 +276,14 @@ html.embedded-pane .research-report {
     border-inline: 0;
     border-radius: 0;
   }
+}
+
+@keyframes desktop-detail-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-detail-loading > span { animation: none; }
 }
 
 @media (min-width: 760px) {

@@ -258,6 +258,43 @@ def test_sports_radar_applies_changes_without_reloading_or_losing_detail(
     assert errors == []
 
 
+def test_sports_detail_panel_stays_dark_while_a_game_loads(
+    page: Page, monkeypatch
+) -> None:
+    first = _event("first-game", "ONE", "HME")
+    second = _event("second-game", "TWO", "HME")
+    page.set_viewport_size({"width": 1280, "height": 800})
+    errors = _load(page, _rendered_pulse(monkeypatch, _pulse(first, second)), [])
+    frame = page.locator("[data-desktop-frame]")
+    loading = page.locator("[data-desktop-loading]")
+
+    frame.wait_for(state="visible")
+    assert loading.is_hidden()
+
+    loading_state = page.evaluate(
+        """() => {
+          document.querySelector('a[href="/game/second-game"]').click();
+          const frame = document.querySelector('[data-desktop-frame]');
+          const loading = document.querySelector('[data-desktop-loading]');
+          return {
+            frameHidden: frame.hidden,
+            loadingHidden: loading.hidden,
+            loadingBackground: getComputedStyle(loading).backgroundColor,
+          };
+        }"""
+    )
+
+    assert loading_state == {
+        "frameHidden": True,
+        "loadingHidden": False,
+        "loadingBackground": "rgb(9, 12, 10)",
+    }
+    frame.wait_for(state="visible")
+    assert frame.get_attribute("src") == "/game/second-game"
+    assert loading.is_hidden()
+    assert errors == []
+
+
 @pytest.mark.parametrize("width", [390, 900, 1280])
 def test_sports_pulse_respects_shared_responsive_breakpoints(
     page: Page, monkeypatch, width: int
