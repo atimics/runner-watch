@@ -6835,8 +6835,9 @@ def intelligence_data() -> dict[str, Any]:
         state_rows = db.execute(
             """
             SELECT key,value,updated_at FROM worker_state
-            WHERE key LIKE 'edgar_%' OR key LIKE 'outcomes_%'
-            """
+            WHERE key LIKE ? OR key LIKE ?
+            """,
+            ("edgar_%", "outcomes_%"),
         ).fetchall()
     events = [_intelligence_evidence(dict(row)) for row in rows]
     outcome_keys = ("return_1h_pct", "return_1d_pct", "return_5d_pct")
