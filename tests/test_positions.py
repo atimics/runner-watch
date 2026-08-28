@@ -16,16 +16,14 @@ from runner_web.db import connection, init_db
 from runner_web.flash_wallet import runner_call_reward, wallet_for_user
 
 
-def test_runner_call_reward_is_tiered_and_capped() -> None:
+def test_runner_call_reward_is_ten_times_positive_pnl() -> None:
     assert runner_call_reward(None) == 0
     assert runner_call_reward(-1) == 0
     assert runner_call_reward(0) == 0
-    assert runner_call_reward(0.01) == 10
-    assert runner_call_reward(19.99) == 10
-    assert runner_call_reward(20) == 20
-    assert runner_call_reward(29.99) == 20
-    assert runner_call_reward(30) == 30
-    assert runner_call_reward(100) == 30
+    assert runner_call_reward(0.01) == 0
+    assert runner_call_reward(1.25) == 13
+    assert runner_call_reward(10) == 100
+    assert runner_call_reward(50) == 500
 
 
 def test_public_call_freezes_entry_and_exit_marks(
@@ -52,7 +50,10 @@ def test_public_call_freezes_entry_and_exit_marks(
     )
 
     assert created["entry_at"] == entered_at
-    assert active_call_for_user("owner", "ONE", current_price=2.5)["return_pct"] == 25.0
+    active = active_call_for_user("owner", "ONE", current_price=2.5)
+    assert active["return_pct"] == 25.0
+    assert active["flash_reward"] == 0
+    assert active["projected_flash_reward"] == 250
     caller_handle = calls_for_ticker("ONE", current_price=2.5)[0]["caller_handle"]
     assert "-" in caller_handle
     assert "user_id" not in calls_for_ticker("ONE", current_price=2.5)[0]
@@ -70,14 +71,15 @@ def test_public_call_freezes_entry_and_exit_marks(
     assert closed["status"] == "closed"
     assert closed["exit_at"] == exited_at
     assert closed["return_pct"] == 50.0
-    assert closed["flash_reward"] == 30
-    assert closed["reward_label"] == "+30 Flash"
-    assert wallet_for_user("owner")["balance"] == 30
+    assert closed["flash_reward"] == 500
+    assert closed["projected_flash_reward"] == 500
+    assert closed["reward_label"] == "+500 Flash"
+    assert wallet_for_user("owner")["balance"] == 500
     assert call_stats([closed])["wins"] == 1
     assert close_call(
         "owner", created["public_id"], exit_price=3.1, exit_at=current.isoformat()
     ) is None
-    assert wallet_for_user("owner")["balance"] == 30
+    assert wallet_for_user("owner")["balance"] == 500
 
     losing = create_call(
         "other",
@@ -100,7 +102,7 @@ def test_public_call_freezes_entry_and_exit_marks(
         rewards = database.execute(
             "SELECT user_id,amount,kind FROM flash_transactions ORDER BY created_at"
         ).fetchall()
-    assert [tuple(row) for row in rewards] == [("owner", 30, "runner_call_win")]
+    assert [tuple(row) for row in rewards] == [("owner", 500, "runner_call_win")]
 
 
 def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
@@ -125,7 +127,7 @@ def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
     assert "Add exit" not in ticker
     assert "Generate today's report" in ticker
     assert "100 Flash" in ticker
-    assert "Call won" in ticker_script
+    assert "Flash earned" in ticker_script
     assert "call.reward_label" in alpha
     assert "flash.model" not in ticker
     assert "🐺" in alpha

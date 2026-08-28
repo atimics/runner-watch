@@ -70,8 +70,8 @@ def test_billing_page_is_now_a_public_flash_wallet() -> None:
     assert "Generate today's ticker report" in html
     assert "AI-generated ticker comment" in html
     assert "Win a sports Call" in html
-    assert "Win a Runners Call" in html
-    assert "10 / 20 / 30" in html
+    assert "Close a profitable stock Call" in html
+    assert "10× PnL" in html
     assert "Stripe checkout is disabled" in html
     assert 'href="/roadmap"' in html
 
@@ -101,6 +101,7 @@ def test_daily_flash_must_be_claimed_and_does_not_backfill(
     later, claimed_later = claim_daily_flash("wallet-user", at=first_day + timedelta(days=3))
 
     assert empty["balance"] == 0
+    assert empty["claim_day"] == "2026-08-26"
     assert empty["can_claim"] is True
     assert empty["sports_call_reward_cap"] == SPORTS_CALL_REWARD_CAP
     assert claimed is True
@@ -112,6 +113,66 @@ def test_daily_flash_must_be_claimed_and_does_not_backfill(
     assert missed_day["can_claim"] is True
     assert claimed_later is True
     assert later["balance"] == 200
+
+
+def test_signed_in_pages_show_flash_pnl_and_the_release_claim_modal(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "account-strip.db")
+    init_db()
+    create_user()
+    raw_session = "account-strip-session"
+    timestamp = datetime.now(UTC)
+    with connection() as database:
+        database.execute(
+            "INSERT INTO sessions(token_hash,user_id,created_at,expires_at) VALUES(?,?,?,?)",
+            (
+                token_hash(raw_session),
+                "wallet-user",
+                timestamp.isoformat(),
+                (timestamp + timedelta(days=1)).isoformat(),
+            ),
+        )
+        database.execute(
+            "INSERT INTO caller_identities("
+            "id,handle,user_id,status,claim_cost_cents,claimed_at) "
+            "VALUES(?,?,?,'active',0,?)",
+            ("wallet-identity", "steady-wolf", "wallet-user", timestamp.isoformat()),
+        )
+        database.execute(
+            """
+            INSERT INTO community_calls(
+                id,public_id,user_id,caller_identity_id,ticker,entry_price,entry_at,
+                exit_price,exit_at,status,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,'closed',?,?)
+            """,
+            (
+                "wallet-call",
+                "wallet-public-call",
+                "wallet-user",
+                "wallet-identity",
+                "ONE",
+                1.0,
+                timestamp.isoformat(),
+                1.1,
+                timestamp.isoformat(),
+                timestamp.isoformat(),
+                timestamp.isoformat(),
+            ),
+        )
+
+    response = billing_page(page_request("/billing"), raw_session)
+    html = response.body.decode()
+
+    assert 'class="account-strip runners-account-strip"' in html
+    assert "Caller PnL" in html
+    assert "+10.0%" in html
+    assert "1–0 record" in html
+    assert 'id="flashReleaseDialog"' in html
+    assert "/static/flash-daily-release.webp" in html
+    assert "Claim 100 Flash" in html
+    assert "window.RatiFlash" in html
 
 
 def test_flash_spend_and_publish_reward_are_idempotent(

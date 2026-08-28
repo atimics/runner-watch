@@ -45,6 +45,11 @@ def _call(row: Any, current_price: float | None = None) -> dict[str, Any]:
         else None
     )
     item["flash_reward"] = int(stored.get("flash_reward") or 0)
+    item["projected_flash_reward"] = (
+        runner_call_reward(item["return_pct"])
+        if item["status"] == "active"
+        else item["flash_reward"]
+    )
     item["reward_label"] = (
         f"+{item['flash_reward']} Flash" if item["flash_reward"] > 0 else None
     )
@@ -324,3 +329,29 @@ def call_stats(calls: list[dict[str, Any]]) -> dict[str, Any]:
         "worst_return_pct": round(min(returns), 2) if returns else None,
         "tickers": len({str(item["ticker"]) for item in calls}),
     }
+
+
+def caller_summary_for_user(user_id: str) -> dict[str, Any]:
+    """Return a small, stored-price performance summary for the account bar."""
+
+    with connection() as database:
+        identity = database.execute(
+            """
+            SELECT id,handle FROM caller_identities
+            WHERE user_id=? AND status='active'
+            ORDER BY claimed_at,id LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+        if not identity:
+            return {"handle": None, **call_stats([])}
+        rows = database.execute(
+            """
+            SELECT c.*,? AS caller_handle FROM community_calls c
+            WHERE c.user_id=? AND c.caller_identity_id=?
+            ORDER BY c.updated_at DESC,c.id DESC
+            """,
+            (identity["handle"], user_id, identity["id"]),
+        ).fetchall()
+    calls = [_call(row) for row in rows]
+    return {"handle": str(identity["handle"]), **call_stats(calls)}

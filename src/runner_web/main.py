@@ -72,6 +72,7 @@ from runner_web.calls import (
     call_for_user,
     call_stats,
     caller_calls,
+    caller_summary_for_user,
     close_call,
     create_call,
     recent_calls,
@@ -92,11 +93,11 @@ from runner_web.flash_evaluations import (
     validate_forecast,
 )
 from runner_web.flash_wallet import (
+    CALL_CLOSE_REWARD_MULTIPLIER,
     COMMENT_COST,
     PUBLISH_REPORT_REWARD,
     REPORT_COST,
     REPORT_EXCLUSIVE_HOURS,
-    RUNNER_CALL_REWARD_TIERS,
     SPORTS_CALL_REWARD_CAP,
     WINNING_CALL_REWARD,
     InsufficientFlashError,
@@ -891,15 +892,18 @@ def take_challenge(token: str, kind: str) -> dict[str, Any]:
 
 def page_context(request: Request, session_token: str | None, **extra: Any) -> dict[str, Any]:
     user = current_user(session_token)
+    user_id = str(user["id"]) if user else None
     comment_avatar = None
-    if user:
+    if user_id:
         with connection() as db:
-            comment_avatar = ensure_comment_avatar(db, str(user["id"]))
+            comment_avatar = ensure_comment_avatar(db, user_id)
     return {
         "request": request,
         "user": user,
         "comment_avatar": comment_avatar,
-        "flash_wallet": wallet_for_user(str(user["id"])) if user else None,
+        "flash_wallet": wallet_for_user(user_id) if user_id else None,
+        "caller_summary": caller_summary_for_user(user_id) if user_id else None,
+        "release_announcement_id": "flash-edge-2026-08-28",
         "app_origin": origin_for_request(request),
         "product": product_for_request(request),
         "runners_origin": RUNNERS_ORIGIN,
@@ -907,7 +911,7 @@ def page_context(request: Request, session_token: str | None, **extra: Any) -> d
         "sports_path_prefix": "" if product_for_request(request) == "sports" else "/sports",
         "market_clock": market_clock(),
         "flash": actor_snapshot(),
-        "runner_call_reward_tiers": RUNNER_CALL_REWARD_TIERS,
+        "call_close_reward_multiplier": CALL_CLOSE_REWARD_MULTIPLIER,
         "winning_call_reward": WINNING_CALL_REWARD,
         "sports_call_reward_cap": SPORTS_CALL_REWARD_CAP,
         **extra,

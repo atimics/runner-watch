@@ -581,8 +581,10 @@
       if (!response.ok) throw new Error(result.detail || 'Could not close Call');
       const reward = Number(result.reward) || 0;
       if (reward > 0) {
-        setTickerAction(button, 'Call won', `+${reward} Flash`);
-        if (callStatus) callStatus.textContent = `Balance: ${result.balance} Flash`;
+        window.RatiFlash?.updateBalance(result.balance);
+        setTickerAction(button, 'Call closed', `+${reward} Flash earned`);
+        if (callStatus) callStatus.textContent =
+          `Your +${Number(result.call.return_pct).toFixed(1)}% close earned ${reward} Flash.`;
         setTimeout(() => location.reload(), 700);
       } else {
         location.reload();

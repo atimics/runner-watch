@@ -162,8 +162,8 @@
           <h2 class="visually-hidden" id="callTitle">Call</h2>
           {% if user %}
           {% if active_call %}
-          <button class="ticker-action ticker-action-call" id="closeCallButton" type="button" data-call-id="{{ active_call.public_id }}" aria-label="Close the open Call at the server's current price"><strong>Close Call</strong><span>{% if active_call.return_pct is not none %}{{ '+' if active_call.return_pct >= 0 else '' }}{{ '%.1f'|format(active_call.return_pct) }}% now{% else %}Open position{% endif %}</span></button>
-          <p class="ticker-action-status" id="callStatus">Entry ${{ '%.4f'|format(active_call.entry_price) if active_call.entry_price < 1 else ('%.2f'|format(active_call.entry_price)) }} · <time datetime="{{ active_call.entry_at }}" data-call-time>{{ active_call.entry_at[:16]|replace('T', ' ') }}</time> · Win {{ runner_call_reward_tiers|join(' / ') }} Flash</p>
+          <button class="ticker-action ticker-action-call" id="closeCallButton" type="button" data-call-id="{{ active_call.public_id }}" aria-label="Close the open Call at the server's current price"><strong>Close Call</strong><span>{% if active_call.return_pct is not none %}{{ '+' if active_call.return_pct >= 0 else '' }}{{ '%.1f'|format(active_call.return_pct) }}% now{% if active_call.projected_flash_reward %} · +{{ active_call.projected_flash_reward }} Flash{% endif %}{% else %}Open position{% endif %}</span></button>
+          <p class="ticker-action-status" id="callStatus">Entry ${{ '%.4f'|format(active_call.entry_price) if active_call.entry_price < 1 else ('%.2f'|format(active_call.entry_price)) }} · <time datetime="{{ active_call.entry_at }}" data-call-time>{{ active_call.entry_at[:16]|replace('T', ' ') }}</time> · Earn {{ call_close_reward_multiplier }}× positive PnL</p>
           {% else %}
           <button class="ticker-action ticker-action-call" id="makeCallButton" type="button" aria-label="Make a public Call on {{ detail.ticker }} at the server's current price and time"><strong>Make Call</strong><span>Public · stamped</span></button>
           <p class="ticker-action-status" id="callStatus" role="status"></p>

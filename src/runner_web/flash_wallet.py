@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from runner_web.db import connection
@@ -12,7 +13,7 @@ COMMENT_COST = 10
 PUBLISH_REPORT_REWARD = 50
 WINNING_CALL_REWARD = 25
 SPORTS_CALL_REWARD_CAP = 50
-RUNNER_CALL_REWARD_TIERS = (10, 20, 30)
+CALL_CLOSE_REWARD_MULTIPLIER = 10
 REPORT_EXCLUSIVE_HOURS = 1
 
 
@@ -24,15 +25,12 @@ class InsufficientFlashError(ValueError):
 
 
 def runner_call_reward(return_pct: float | int | None) -> int:
-    """Return the capped Flash reward for a profitable closed Runners Call."""
+    """Return 10× positive PnL, rounded to whole Flash."""
 
     if return_pct is None or float(return_pct) <= 0:
         return 0
-    if float(return_pct) >= 30:
-        return RUNNER_CALL_REWARD_TIERS[2]
-    if float(return_pct) >= 20:
-        return RUNNER_CALL_REWARD_TIERS[1]
-    return RUNNER_CALL_REWARD_TIERS[0]
+    reward = Decimal(str(return_pct)) * CALL_CLOSE_REWARD_MULTIPLIER
+    return int(reward.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def sports_call_reward(american_odds: int | float | None) -> int:
@@ -85,6 +83,7 @@ def _wallet_payload(row: Any, current: datetime) -> dict[str, Any]:
     claimed_today = str(row["last_claim_on"] or "") == today
     return {
         "balance": int(row["balance"]),
+        "claim_day": today,
         "daily_claim": DAILY_CLAIM_AMOUNT,
         "claimed_today": claimed_today,
         "can_claim": not claimed_today,
@@ -94,7 +93,7 @@ def _wallet_payload(row: Any, current: datetime) -> dict[str, Any]:
         "publish_reward": PUBLISH_REPORT_REWARD,
         "winning_call_reward": WINNING_CALL_REWARD,
         "sports_call_reward_cap": SPORTS_CALL_REWARD_CAP,
-        "runner_call_reward_tiers": RUNNER_CALL_REWARD_TIERS,
+        "call_close_reward_multiplier": CALL_CLOSE_REWARD_MULTIPLIER,
     }
 
 

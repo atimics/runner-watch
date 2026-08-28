@@ -1,0 +1,17 @@
+{% set account_product = current_product|default(product|default('runners')) %}
+{% if user %}
+<nav class="account-strip {{ account_product }}-account-strip" aria-label="Account summary" data-flash-low="{{ 'true' if flash_wallet.balance < flash_wallet.report_cost else 'false' }}">
+  <button class="account-strip-flash" type="button" data-flash-trigger aria-label="Open Flash wallet. Current balance: {{ flash_wallet.balance }} Flash">
+    <span aria-hidden="true">⚡</span>
+    <b data-flash-balance>{{ flash_wallet.balance }}</b>
+    <small>Flash</small>
+  </button>
+  <a class="account-strip-caller" href="{{ runners_origin ~ '/my-calls' if account_product == 'sports' else '/my-calls' }}">
+    <span>Caller PnL</span>
+    <b class="{% if caller_summary.average_return_pct is not none %}{{ 'up' if caller_summary.average_return_pct >= 0 else 'down' }}{% endif %}">
+      {% if caller_summary.average_return_pct is not none %}{{ '+' if caller_summary.average_return_pct >= 0 else '' }}{{ '%.1f'|format(caller_summary.average_return_pct) }}%{% else %}—{% endif %}
+    </b>
+    <small>{{ caller_summary.wins }}–{{ caller_summary.losses }} record</small>
+  </a>
+</nav>
+{% endif %}

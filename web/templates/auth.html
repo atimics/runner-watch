@@ -34,6 +34,11 @@ function safeNextPath(value) {
   }
 }
 const nextPath = safeNextPath(requestedNext);
+function welcomePath(value) {
+  const target = new URL(value || '/', location.origin);
+  target.searchParams.set('welcome', '1');
+  return `${target.pathname}${target.search}${target.hash}`;
+}
 function b64bytes(value) {
   const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4);
   return Uint8Array.from(atob(padded), c => c.charCodeAt(0));
@@ -90,12 +95,12 @@ async function runPasskey(action) {
       start = await api('/api/auth/register/options');
       credential = await navigator.credentials.create({publicKey: prepareCreate(start.options)});
       const done = await api('/api/auth/register/verify', {flow_token: start.flow_token, credential: serialize(credential)});
-      location.href = nextPath || done.redirect;
+      location.href = welcomePath(nextPath || done.redirect);
     } else {
       start = await api('/api/auth/login/options');
       credential = await navigator.credentials.get({publicKey: prepareGet(start.options)});
       const done = await api('/api/auth/login/verify', {flow_token: start.flow_token, credential: serialize(credential)});
-      location.href = nextPath || done.redirect;
+      location.href = welcomePath(nextPath || done.redirect);
     }
   } catch (error) {
     statusBox.className = 'status error';
