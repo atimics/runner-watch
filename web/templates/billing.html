@@ -20,7 +20,7 @@
     {% if user %}
     <header>
       <div><span class="decision-badge buy">WALLET</span><h2>Your Flash</h2></div>
-      <div class="plan-price"><strong id="flashBalance">{{ flash_wallet.balance }}</strong><span>Flash</span></div>
+      <div class="plan-price"><strong id="flashBalance" data-flash-balance>{{ flash_wallet.balance }}</strong><span>Flash</span></div>
     </header>
     <div class="daily-claim">
       <div><strong>Daily claim</strong><small>100 Flash. Missed days do not stack.</small></div>
@@ -40,6 +40,7 @@
       <li><i>−</i><span><strong>Generate today's ticker report</strong><small>The first generator gets one private alpha hour.</small></span><b>100</b></li>
       <li><i>−</i><span><strong>AI-generated ticker comment</strong><small>Written from your perspective using current evidence.</small></span><b>10</b></li>
       <li><i>+</i><span><strong>Publish during your alpha hour</strong><small>Share the daily report early and unlock it for everyone.</small></span><b>50</b></li>
+      <li><i>+</i><span><strong>Close a profitable stock Call</strong><small>Every positive PnL point earns {{ call_close_reward_multiplier }} Flash.</small></span><b>{{ call_close_reward_multiplier }}× PnL</b></li>
       <li><i>+</i><span><strong>Win a sports Call</strong><small>Paid once when the final score settles your paper pick.</small></span><b>{{ winning_call_reward }}</b></li>
     </ul>
   </section>
@@ -74,7 +75,7 @@
 <script nonce="{{ request.state.csp_nonce }}">
 document.getElementById('claimFlash')?.addEventListener('click',async event=>{
   const button=event.currentTarget;const status=document.getElementById('claimStatus');button.disabled=true;status.textContent='Claiming…';
-  try{const response=await fetch('/api/flash/claim',{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not claim Flash');document.getElementById('flashBalance').textContent=result.wallet.balance;button.textContent='Claimed today';status.textContent=result.claimed?'100 Flash added':'Already claimed today';}
+  try{const response=await fetch('/api/flash/claim',{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not claim Flash');if(!window.RatiFlash?.applyClaim(result)){document.getElementById('flashBalance').textContent=result.wallet.balance;button.textContent='Claimed today';status.textContent=result.claimed?'100 Flash added':'Already claimed today';}}
   catch(error){button.disabled=false;status.textContent=error.message||'Could not claim Flash';}
 });
 </script>

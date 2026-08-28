@@ -30,6 +30,7 @@
       {% endif %}
     </nav>
   </header>
+  {% include "_account_strip.html" %}
   <main class="sports-shell">{% block content %}{% endblock %}</main>
   <footer class="sports-footer">
     <strong>Paper picks only.</strong> RATi does not take bets or connect to a sportsbook.
@@ -60,6 +61,7 @@
     });
   </script>
   {% endif %}
+  {% include "_flash_release_modal.html" %}
   {% block scripts %}{% endblock %}
 </body>
 </html>

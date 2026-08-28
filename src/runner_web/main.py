@@ -72,6 +72,7 @@ from runner_web.calls import (
     call_for_user,
     call_stats,
     caller_calls,
+    caller_summary_for_user,
     close_call,
     create_call,
     recent_calls,
@@ -92,6 +93,7 @@ from runner_web.flash_evaluations import (
     validate_forecast,
 )
 from runner_web.flash_wallet import (
+    CALL_CLOSE_REWARD_MULTIPLIER,
     COMMENT_COST,
     PUBLISH_REPORT_REWARD,
     REPORT_COST,
@@ -883,10 +885,13 @@ def take_challenge(token: str, kind: str) -> dict[str, Any]:
 
 def page_context(request: Request, session_token: str | None, **extra: Any) -> dict[str, Any]:
     user = current_user(session_token)
+    user_id = str(user["id"]) if user else None
     return {
         "request": request,
         "user": user,
-        "flash_wallet": wallet_for_user(str(user["id"])) if user else None,
+        "flash_wallet": wallet_for_user(user_id) if user_id else None,
+        "caller_summary": caller_summary_for_user(user_id) if user_id else None,
+        "release_announcement_id": "flash-edge-2026-08-28",
         "app_origin": origin_for_request(request),
         "product": product_for_request(request),
         "runners_origin": RUNNERS_ORIGIN,
@@ -895,6 +900,7 @@ def page_context(request: Request, session_token: str | None, **extra: Any) -> d
         "market_clock": market_clock(),
         "flash": actor_snapshot(),
         "winning_call_reward": WINNING_CALL_REWARD,
+        "call_close_reward_multiplier": CALL_CLOSE_REWARD_MULTIPLIER,
         **extra,
     }
 
@@ -6217,7 +6223,13 @@ async def close_community_call(
     with ALPHA_DATA_LOCK:
         ALPHA_DATA_CACHE.clear()
     shared_cache_delete(_shared_request_cache_name("alpha"))
-    return JSONResponse({"call": call})
+    return JSONResponse(
+        {
+            "call": call,
+            "flash_reward": int(call.get("flash_reward") or 0),
+            "balance": call.get("flash_balance"),
+        }
+    )
 
 
 @app.post("/api/research/{ticker}")

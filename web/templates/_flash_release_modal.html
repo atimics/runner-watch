@@ -1,0 +1,168 @@
+{% if user %}
+<dialog
+  class="flash-release-dialog"
+  id="flashReleaseDialog"
+  data-release-id="{{ release_announcement_id }}"
+  data-balance="{{ flash_wallet.balance }}"
+  data-can-claim="{{ 'true' if flash_wallet.can_claim else 'false' }}"
+  data-claim-day="{{ flash_wallet.claim_day }}"
+  aria-labelledby="flashReleaseTitle"
+>
+  <div class="flash-release-visual">
+    <img src="/static/flash-daily-release.webp?v={{ static_version }}" alt="">
+    <span>RELEASE · EDGE AT A GLANCE</span>
+    <button type="button" data-flash-modal-close aria-label="Close announcement">×</button>
+  </div>
+  <div class="flash-release-body">
+    <header>
+      <span id="flashReleaseKicker">NEW THIS RELEASE</span>
+      <h2 id="flashReleaseTitle">Your edge, one glance away.</h2>
+      <p id="flashReleaseIntro">Flash balance, Caller PnL, and your record now stay close while you move through RATi.</p>
+    </header>
+    <ul class="flash-release-features">
+      <li><i aria-hidden="true">⚡</i><span><strong>Flash is always visible</strong><small>Tap your balance to claim or review the wallet.</small></span></li>
+      <li><i aria-hidden="true">↗</i><span><strong>Caller PnL in the top bar</strong><small>See your average closed-Call return and record.</small></span></li>
+      <li><i aria-hidden="true">＋</i><span><strong>10× PnL rewards</strong><small>Close a profitable stock Call and earn 10× its PnL in Flash.</small></span></li>
+    </ul>
+    <section class="flash-daily-card" aria-labelledby="flashDailyTitle">
+      <div>
+        <span>DAILY DROP</span>
+        <strong id="flashDailyTitle">{{ 'Claim 100 Flash' if flash_wallet.can_claim else 'Claimed today' }}</strong>
+        <small id="flashClaimStatus">{{ 'Ready now · missed days do not stack' if flash_wallet.can_claim else 'Your next drop opens at 00:00 UTC' }}</small>
+      </div>
+      <button id="flashModalClaim" type="button" {% if not flash_wallet.can_claim %}disabled{% endif %}>{{ 'Claim now' if flash_wallet.can_claim else 'Claimed' }}</button>
+    </section>
+    <footer>
+      <a href="/billing" data-flash-modal-close>Open Flash wallet</a>
+      <button type="button" data-flash-modal-close>Continue</button>
+    </footer>
+  </div>
+</dialog>
+<script nonce="{{ request.state.csp_nonce }}">
+(() => {
+  const dialog = document.getElementById('flashReleaseDialog');
+  if (!dialog) return;
+  const claimButton = document.getElementById('flashModalClaim');
+  const claimTitle = document.getElementById('flashDailyTitle');
+  const claimStatus = document.getElementById('flashClaimStatus');
+  const releaseKicker = document.getElementById('flashReleaseKicker');
+  const releaseTitle = document.getElementById('flashReleaseTitle');
+  const releaseIntro = document.getElementById('flashReleaseIntro');
+  const releaseId = dialog.dataset.releaseId;
+  const releaseKey = `rati-release:${releaseId}`;
+  const dailyKey = `rati-flash-prompt:${dialog.dataset.claimDay}`;
+  let balance = Number(dialog.dataset.balance || 0);
+  let canClaim = dialog.dataset.canClaim === 'true';
+
+  function stored(store, key) {
+    try { return store.getItem(key) === '1'; } catch (_) { return false; }
+  }
+  function remember(store, key) {
+    try { store.setItem(key, '1'); } catch (_) {}
+  }
+  function markSeen() {
+    remember(localStorage, releaseKey);
+    remember(sessionStorage, dailyKey);
+  }
+  function updateBalance(value) {
+    const next = Number(value);
+    if (!Number.isFinite(next)) return;
+    balance = next;
+    dialog.dataset.balance = String(next);
+    document.querySelectorAll('[data-flash-balance]').forEach(item => { item.textContent = String(next); });
+    document.querySelectorAll('[data-flash-low]').forEach(item => { item.dataset.flashLow = next < 100 ? 'true' : 'false'; });
+    document.querySelectorAll('[data-flash-trigger]').forEach(item => item.setAttribute('aria-label', `Open Flash wallet. Current balance: ${next} Flash`));
+  }
+  function setReleaseCopy() {
+    releaseKicker.textContent = 'NEW THIS RELEASE';
+    releaseTitle.textContent = 'Your edge, one glance away.';
+    releaseIntro.textContent = 'Flash balance, Caller PnL, and your record now stay close while you move through RATi.';
+  }
+  function setLowBalanceCopy(required) {
+    const shortfall = Math.max(0, Number(required || 0) - balance);
+    releaseKicker.textContent = 'LOW FLASH BALANCE';
+    releaseTitle.textContent = shortfall ? `You need ${shortfall} more Flash.` : 'Add Flash before you retry.';
+    releaseIntro.textContent = canClaim
+      ? 'Your daily drop is ready. Claim it here, then retry the Flash action.'
+      : 'You already claimed today. Earn more by publishing a report early or winning a sports Call.';
+  }
+  function open(options = {}) {
+    if (options.lowBalance) setLowBalanceCopy(options.required);
+    else setReleaseCopy();
+    if (!dialog.open) dialog.showModal();
+  }
+  function close() {
+    markSeen();
+    dialog.close();
+  }
+  function hasInsufficientMessage(message) {
+    return /costs?\s+\d+\s+Flash[\s\S]*balance/i.test(String(message || ''));
+  }
+  function applyClaim(result) {
+    updateBalance(result.wallet.balance);
+    canClaim = false;
+    dialog.dataset.canClaim = 'false';
+    claimTitle.textContent = result.claimed ? '100 Flash added' : 'Claimed today';
+    claimStatus.textContent = result.claimed ? 'Your balance is ready to use.' : 'Your next drop opens at 00:00 UTC.';
+    claimButton.disabled = true;
+    claimButton.textContent = 'Claimed';
+    const pageClaimButton = document.getElementById('claimFlash');
+    const pageClaimStatus = document.getElementById('claimStatus');
+    if (pageClaimButton) {
+      pageClaimButton.disabled = true;
+      pageClaimButton.textContent = 'Claimed today';
+    }
+    if (pageClaimStatus) pageClaimStatus.textContent = result.claimed ? '100 Flash added' : 'Already claimed today';
+    remember(localStorage, releaseKey);
+    remember(sessionStorage, dailyKey);
+    return true;
+  }
+
+  window.RatiFlash = {
+    open,
+    updateBalance,
+    applyClaim,
+    canSpend(cost) {
+      if (balance >= Number(cost)) return true;
+      open({lowBalance: true, required: Number(cost)});
+      return false;
+    },
+    handleInsufficient(message, cost) {
+      if (!hasInsufficientMessage(message) && balance >= Number(cost)) return false;
+      open({lowBalance: true, required: Number(cost)});
+      return true;
+    }
+  };
+
+  document.querySelectorAll('[data-flash-trigger]').forEach(button => button.addEventListener('click', () => open({lowBalance: balance < 100, required: 100})));
+  document.querySelectorAll('[data-flash-modal-close]').forEach(button => button.addEventListener('click', close));
+  dialog.addEventListener('click', event => { if (event.target === dialog) close(); });
+  dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
+  claimButton?.addEventListener('click', async () => {
+    claimButton.disabled = true;
+    claimButton.textContent = 'Claiming…';
+    claimStatus.textContent = 'Adding your daily Flash…';
+    try {
+      const response = await fetch('/api/flash/claim', {method: 'POST'});
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || 'Could not claim Flash');
+      applyClaim(result);
+    } catch (error) {
+      claimButton.disabled = false;
+      claimButton.textContent = 'Try again';
+      claimStatus.textContent = error.message || 'Could not claim Flash';
+    }
+  });
+
+  const url = new URL(location.href);
+  const justLoggedIn = url.searchParams.get('welcome') === '1';
+  const shouldAnnounce = !stored(localStorage, releaseKey);
+  const shouldClaim = canClaim && !stored(sessionStorage, dailyKey);
+  if (justLoggedIn) {
+    url.searchParams.delete('welcome');
+    history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  }
+  if (justLoggedIn || shouldAnnounce || shouldClaim) setTimeout(() => open(), 180);
+})();
+</script>
+{% endif %}

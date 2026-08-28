@@ -114,6 +114,28 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert "action-card" not in template
     assert template.count("<textarea") == 0
     assert 'id="generateComment"' in template
+    assert "active_call.flash_reward" in template
+    assert "Flash earned" in template
+
+
+def test_flash_actions_open_the_shared_claim_flow_when_balance_is_low() -> None:
+    root = Path(__file__).parents[1]
+    ticker = (root / "web/templates/ticker.html").read_text()
+    sports_game = (root / "web/templates/sports_game.html").read_text()
+    mobile_base = (root / "web/templates/mobile_base.html").read_text()
+    sports_base = (root / "web/templates/sports_base.html").read_text()
+    auth = (root / "web/templates/auth.html").read_text()
+    artwork = root / "web/static/flash-daily-release.webp"
+
+    assert "RatiFlash.canSpend(100)" in ticker
+    assert "RatiFlash.canSpend(10)" in ticker
+    assert "RatiFlash.canSpend(100)" in sports_game
+    assert '{% include "_account_strip.html" %}' in mobile_base
+    assert '{% include "_account_strip.html" %}' in sports_base
+    assert '{% include "_flash_release_modal.html" %}' in mobile_base
+    assert '{% include "_flash_release_modal.html" %}' in sports_base
+    assert "welcomePath" in auth
+    assert artwork.stat().st_size > 100_000
 
 
 def test_ticker_layout_puts_subtle_actions_after_the_analysis() -> None:

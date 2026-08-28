@@ -11,6 +11,7 @@ REPORT_COST = 100
 COMMENT_COST = 10
 PUBLISH_REPORT_REWARD = 50
 WINNING_CALL_REWARD = 25
+CALL_CLOSE_REWARD_MULTIPLIER = 10
 REPORT_EXCLUSIVE_HOURS = 1
 
 
@@ -59,6 +60,7 @@ def _wallet_payload(row: Any, current: datetime) -> dict[str, Any]:
     claimed_today = str(row["last_claim_on"] or "") == today
     return {
         "balance": int(row["balance"]),
+        "claim_day": today,
         "daily_claim": DAILY_CLAIM_AMOUNT,
         "claimed_today": claimed_today,
         "can_claim": not claimed_today,
@@ -67,6 +69,7 @@ def _wallet_payload(row: Any, current: datetime) -> dict[str, Any]:
         "comment_cost": COMMENT_COST,
         "publish_reward": PUBLISH_REPORT_REWARD,
         "winning_call_reward": WINNING_CALL_REWARD,
+        "call_close_reward_multiplier": CALL_CLOSE_REWARD_MULTIPLIER,
     }
 
 

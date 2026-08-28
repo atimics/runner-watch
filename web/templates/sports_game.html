@@ -308,9 +308,10 @@
   }
   if(commissionButton?.dataset.jobId)pollFlash(commissionButton.dataset.jobId);
   commissionButton?.addEventListener('click',async()=>{
+    if(window.RatiFlash&&!window.RatiFlash.canSpend(100)){commissionStatus.textContent='Claim Flash to continue.';return;}
     commissionButton.disabled=true;commissionButton.innerHTML='<strong>Starting…</strong><small>Building the game report</small>';commissionStatus.textContent='Sending the report to the queue…';
-    try{const response=await fetch('/api/sports/games/{{ event.id }}/research',{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||result.error||'Could not start Flash');if(Number.isFinite(Number(result.balance)))document.querySelectorAll('[data-flash-balance]').forEach(item=>{item.textContent=result.balance;});if(result.status==='complete'&&result.url){location.href=result.url;return;}commissionButton.innerHTML='<strong>Researching…</strong><small>Building the game report</small>';pollFlash(result.job_id);}
-    catch(error){commissionButton.disabled=false;commissionButton.innerHTML='<strong>Retry Flash</strong><small>100 Flash</small>';commissionStatus.textContent=error.message||'Could not start Flash';}
+    try{const response=await fetch('/api/sports/games/{{ event.id }}/research',{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||result.error||'Could not start Flash');if(Number.isFinite(Number(result.balance)))window.RatiFlash?.updateBalance(result.balance);if(result.status==='complete'&&result.url){location.href=result.url;return;}commissionButton.innerHTML='<strong>Researching…</strong><small>Building the game report</small>';pollFlash(result.job_id);}
+    catch(error){commissionButton.disabled=false;commissionButton.innerHTML='<strong>Retry Flash</strong><small>100 Flash</small>';commissionStatus.textContent=window.RatiFlash?.handleInsufficient(error.message,100)?'Claim Flash to continue.':(error.message||'Could not start Flash');}
   });
 </script>
 {% endblock %}

@@ -3,11 +3,13 @@ from __future__ import annotations
 import secrets
 import uuid
 from datetime import UTC, datetime
+from decimal import ROUND_HALF_UP, Decimal
 from statistics import median
 from typing import Any
 
 from runner_web.caller_ids import ensure_caller_identity_with_database
 from runner_web.db import connection
+from runner_web.flash_wallet import CALL_CLOSE_REWARD_MULTIPLIER, credit_flash
 
 
 def _iso() -> str:
@@ -16,6 +18,15 @@ def _iso() -> str:
 
 def _public_id() -> str:
     return secrets.token_urlsafe(9).replace("-", "").replace("_", "")[:12]
+
+
+def call_close_flash_reward(return_pct: float | None) -> int:
+    """Convert a positive Call return into whole Flash at the published rate."""
+
+    if return_pct is None or return_pct <= 0:
+        return 0
+    reward = Decimal(str(return_pct)) * CALL_CLOSE_REWARD_MULTIPLIER
+    return int(reward.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def _call(row: Any, current_price: float | None = None) -> dict[str, Any]:
@@ -43,6 +54,7 @@ def _call(row: Any, current_price: float | None = None) -> dict[str, Any]:
         if mark_price is not None
         else None
     )
+    item["flash_reward"] = call_close_flash_reward(item["return_pct"])
     return item
 
 
@@ -182,7 +194,18 @@ def close_call(
             """,
             (user_id, public_id),
         ).fetchone()
-    return _call(row)
+        call = _call(row)
+        reward = int(call["flash_reward"])
+        if reward:
+            balance, _rewarded = credit_flash(
+                db,
+                user_id,
+                reward,
+                kind="call_close_reward",
+                reference_id=public_id,
+            )
+            call["flash_balance"] = balance
+        return call
 
 
 def calls_for_ticker(
@@ -271,3 +294,29 @@ def call_stats(calls: list[dict[str, Any]]) -> dict[str, Any]:
         "worst_return_pct": round(min(returns), 2) if returns else None,
         "tickers": len({str(item["ticker"]) for item in calls}),
     }
+
+
+def caller_summary_for_user(user_id: str) -> dict[str, Any]:
+    """Return a small, stored-price performance summary for the account bar."""
+
+    with connection() as database:
+        identity = database.execute(
+            """
+            SELECT id,handle FROM caller_identities
+            WHERE user_id=? AND status='active'
+            ORDER BY claimed_at,id LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+        if not identity:
+            return {"handle": None, **call_stats([])}
+        rows = database.execute(
+            """
+            SELECT c.*,? AS caller_handle FROM community_calls c
+            WHERE c.user_id=? AND c.caller_identity_id=?
+            ORDER BY c.updated_at DESC,c.id DESC
+            """,
+            (identity["handle"], user_id, identity["id"]),
+        ).fetchall()
+    calls = [_call(row) for row in rows]
+    return {"handle": str(identity["handle"]), **call_stats(calls)}
