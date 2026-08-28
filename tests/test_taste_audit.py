@@ -31,7 +31,7 @@ def test_general_interface_keeps_its_editorial_edge() -> None:
     assert "Evidence review, not a trade alert." not in ticker
     assert "#1 most called" in community
     assert "🐺" in community
-    assert "🐺" in navigation
+    assert '<span class="tab-icon alpha-icon" aria-hidden="true"></span>' in navigation
 
 
 def test_ai_report_carries_the_single_clear_disclaimer() -> None:

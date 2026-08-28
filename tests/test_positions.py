@@ -134,7 +134,7 @@ def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
     assert "call.return_pct" in alpha
     assert "heart" not in alpha.lower()
     assert "heartButton" not in ticker
-    assert '<span class="tab-icon alpha-icon" aria-hidden="true">🐺</span>' in navigation
+    assert '<span class="tab-icon alpha-icon" aria-hidden="true"></span>' in navigation
     assert "My Calls" in navigation
     assert '@app.post("/api/calls/{ticker}")' in app_source
     assert '@app.post("/api/positions/' not in app_source

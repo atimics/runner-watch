@@ -30,16 +30,16 @@
     {% block content %}{% endblock %}
     {% block bottom_nav %}
     <nav class="tab-bar" aria-label="Main navigation">
-      <a class="tab-link {% if active_tab == 'pulse' %}active{% endif %}" href="{% if current_product == 'sports' %}{{ sports_prefix }}/{% else %}/{% endif %}">
+      <a class="tab-link {% if active_tab == 'pulse' %}active{% endif %}" href="{% if current_product == 'sports' %}{{ sports_prefix }}/{% else %}/{% endif %}"{% if active_tab == 'pulse' %} aria-current="page"{% endif %}>
         <span class="tab-icon pulse-icon" aria-hidden="true"></span>
         <span>Pulse</span>
       </a>
-      <a class="tab-link {% if active_tab == 'radar' %}active{% endif %}" href="{% if current_product == 'sports' %}{{ sports_prefix }}/radar{% else %}/radar{% endif %}">
+      <a class="tab-link {% if active_tab == 'radar' %}active{% endif %}" href="{% if current_product == 'sports' %}{{ sports_prefix }}/radar{% else %}/radar{% endif %}"{% if active_tab == 'radar' %} aria-current="page"{% endif %}>
         <span class="tab-icon radar-icon" aria-hidden="true"></span>
         <span>Radar</span>
       </a>
-      <a class="tab-link {% if active_tab == 'alpha' %}active{% endif %}" href="{% if current_product == 'sports' %}{{ sports_prefix }}/alpha{% else %}/community{% endif %}">
-        <span class="tab-icon alpha-icon" aria-hidden="true">🐺</span>
+      <a class="tab-link {% if active_tab == 'alpha' %}active{% endif %}" href="{% if current_product == 'sports' %}{{ sports_prefix }}/alpha{% else %}/community{% endif %}"{% if active_tab == 'alpha' %} aria-current="page"{% endif %}>
+        <span class="tab-icon alpha-icon" aria-hidden="true"></span>
         <span>Alpha</span>
       </a>
       <a class="tab-link product-tab-link" href="{{ runners_origin if current_product == 'sports' else sports_origin }}">

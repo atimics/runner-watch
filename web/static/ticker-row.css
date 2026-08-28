@@ -79,6 +79,7 @@
 .rug-count.rug-unknown { color:#a0aaa5; border-color:#59645f; }
 
 .ticker-row .quote { min-width: 74px; }
+.ticker-row .quote-period { color: var(--muted); font-size: 8px; font-weight: 650; }
 .mini-chart {
   display: block;
   width: 64px;

@@ -601,12 +601,12 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     assert b'class="winner-coin ' in response.body
     assert b"Away Club" in response.body
     assert b"Home Club" in response.body
-    assert b"price value" in response.body
-    assert b"EXPERIMENTAL" in response.body
+    assert b"value side" in response.body
+    assert b"baseline results graded" in response.body
     assert b"ESTIMATED SCORE" not in response.body
-    assert b"MODEL" in response.body
-    assert b"PRICE VALUE" in response.body
-    assert b"distinct matchups" in response.body
+    assert b"Model " in response.body
+    assert b"VALUE SIDE" in response.body
+    assert b"games checked" in response.body
     assert b'class="edge-spark"' in response.body
     assert b"PROJECTED WINNER" not in response.body
     assert b"Full slate" not in response.body
@@ -1287,7 +1287,8 @@ def test_sports_host_uses_the_sports_shell_for_alpha(sports_db) -> None:
     assert b'class="alpha-sample-note"' in alpha_response.body
     assert b'class="desktop-workspace"' in alpha_response.body
     assert b"Four prediction slots" not in alpha_response.body
-    assert b"rank skill" in alpha_response.body
+    assert b"Rankings stay hidden" in alpha_response.body
+    assert b"3 of 20 public Calls recorded" in alpha_response.body
     assert b"Call activity" in alpha_response.body
     assert b'<span class="alpha-rank">1</span>' not in alpha_response.body
     assert b"open Calls" in alpha_response.body

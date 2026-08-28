@@ -44,6 +44,8 @@ def _event(event_id: str, away: str, home: str) -> dict[str, Any]:
         "model_winner_team_name": f"{away} Club",
         "model_winner_abbreviation": away,
         "model_winner_probability_pct": 58.2,
+        "model_probability_pct": 58.2,
+        "market_probability_pct": 55.6,
         "signal_coin_tone": "0",
         "signal_abbreviation": away,
         "signal_team_name": f"{away} Club",
@@ -266,12 +268,52 @@ def test_sports_pulse_respects_shared_responsive_breakpoints(
     assert page.locator(".screen-head").is_visible()
     assert page.locator(".tab-bar").is_visible()
     assert page.locator(".product-tab-link").is_visible()
+    navigation = page.locator(".tab-bar")
+    navigation_box = navigation.bounding_box()
+    assert navigation_box is not None
+    assert page.evaluate(
+        "getComputedStyle(document.querySelector('.tab-bar')).gridTemplateColumns.split(' ').length"
+    ) == 4
+    links = navigation.locator(".tab-link")
+    assert links.count() == 4
+    for index in range(links.count()):
+        link_box = links.nth(index).bounding_box()
+        assert link_box is not None
+        assert link_box["y"] >= navigation_box["y"]
+        assert link_box["y"] + link_box["height"] <= navigation_box["y"] + navigation_box["height"]
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     if width < 900:
         assert page.locator(".desktop-detail-panel").is_hidden()
     else:
         assert page.locator(".desktop-detail-panel").is_visible()
         assert page.locator("[data-desktop-frame]").get_attribute("src") == "/game/game-1"
+    assert errors == []
+
+
+def test_sports_pulse_separates_value_side_from_baseline_winner(
+    page: Page, monkeypatch
+) -> None:
+    event = {
+        **_event("split-decision", "AWY", "HME"),
+        "signal_abbreviation": "HME",
+        "signal_team_name": "HME Club",
+        "model_probability_pct": 41.8,
+        "market_probability_pct": 34.0,
+        "prediction": {"signal": "watch", "edge_pct": 7.8},
+    }
+    page.set_viewport_size({"width": 390, "height": 800})
+    errors = _load(page, _rendered_pulse(monkeypatch, _pulse(event)), [])
+
+    card = page.locator(".winner-card")
+    copy = card.text_content()
+    assert "VALUE SIDE" in copy
+    assert "Model 42% · Market 34% · Edge +7.8 percentage points" in copy
+    assert "Baseline winner · AWY 58%" in copy
+    assert page.locator(".model-favorite").count() == 0
+    assert card.get_attribute("aria-label") == (
+        "AWY Club at HME Club; baseline winner AWY at 58 percent; "
+        "value side HME with a +7.8 percentage-point model edge"
+    )
     assert errors == []
 
 

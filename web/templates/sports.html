@@ -6,21 +6,21 @@
 {% block content %}
 {% macro pulse_card(event, compact=false) -%}
   {% set prediction = event.prediction %}
-  <a class="game-card winner-card{% if compact %} winner-card-compact{% endif %}" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}" aria-label="{{ event.away_team_name }} at {{ event.home_team_name }}; model {{ event.model_winner_abbreviation }} {{ '%.0f'|format(event.model_winner_probability_pct) }} percent; price value {{ event.signal_abbreviation }} {{ '%+.1f'|format(prediction.edge_pct) }} points">
+  <a class="game-card winner-card{% if compact %} winner-card-compact{% endif %}" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}" aria-label="{{ event.away_team_name }} at {{ event.home_team_name }}; baseline winner {{ event.model_winner_abbreviation }} at {{ '%.0f'|format(event.model_winner_probability_pct) }} percent; value side {{ event.signal_abbreviation }} with a {{ '%+.1f'|format(prediction.edge_pct) }} percentage-point model edge">
     <span class="winner-coin winner-coin-{{ event.signal_coin_tone }}" aria-hidden="true"><b>{{ event.signal_abbreviation[:3] }}</b><i></i></span>
     <span class="matchup-copy">
-      <span class="matchup-team{% if event.model_winner_side == 'away' %} model-favorite{% endif %}"><strong>{{ event.away_abbreviation }}</strong><span>{{ event.away_team_name }}</span></span>
-      <span class="matchup-team{% if event.model_winner_side == 'home' %} model-favorite{% endif %}"><strong>{{ event.home_abbreviation }}</strong><span>{{ event.home_team_name }}</span></span>
+      <span class="matchup-team"><strong>{{ event.away_abbreviation }}</strong><span>{{ event.away_team_name }}</span></span>
+      <span class="matchup-team"><strong>{{ event.home_abbreviation }}</strong><span>{{ event.home_team_name }}</span></span>
       <span class="winner-context">
         {{ event.league|upper }} · <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time>
-        · Model {{ event.model_winner_abbreviation }} {{ '%.0f'|format(event.model_winner_probability_pct) }}%; price value {{ event.signal_abbreviation }} {{ '%+.1f'|format(prediction.edge_pct) }} pp
-        {% if event.bovada_divergence_material %} · <b class="bovada-outlier">BOVADA {{ event.bovada_divergence_team }} +{{ '%.1f'|format(event.bovada_divergence_pct) }}PP</b>{% endif %}
       </span>
     </span>
     <span class="winner-quote">
-      <strong>{{ event.signal_abbreviation }} {{ '%+.1f'|format(prediction.edge_pct) }} pp</strong>
-      <small>PRICE VALUE</small>
-      <em class="{{ prediction.signal|replace(' ','-') }}">MODEL {{ event.model_winner_abbreviation }} {{ '%.0f'|format(event.model_winner_probability_pct) }}%</em>
+      <small>VALUE SIDE</small>
+      <strong>{{ event.signal_abbreviation }}</strong>
+      <span class="winner-edge">{% if event.model_probability_pct is not none and event.market_probability_pct is not none %}Model {{ '%.0f'|format(event.model_probability_pct) }}% · Market {{ '%.0f'|format(event.market_probability_pct) }}% · {% endif %}Edge {{ '%+.1f'|format(prediction.edge_pct) }} percentage points</span>
+      <em class="baseline-winner">Baseline winner · {{ event.model_winner_abbreviation }} {{ '%.0f'|format(event.model_winner_probability_pct) }}%</em>
+      {% if event.bovada_divergence_material %}<span class="bovada-outlier">Bovada differs on {{ event.bovada_divergence_team }} by {{ '%.1f'|format(event.bovada_divergence_pct) }} points</span>{% endif %}
       {% if event.edge_history %}
       <svg class="edge-spark" viewBox="0 0 92 24" role="img" aria-label="{{ event.edge_history.label }}">
         <line class="edge-zero" x1="2" y1="12" x2="90" y2="12"></line>
@@ -29,7 +29,7 @@
       </svg>
       {% endif %}
     </span>
-    <span class="game-chevron" aria-hidden="true">›</span>
+    <span class="game-chevron" aria-hidden="true"><small>View</small>›</span>
   </a>
 {%- endmacro %}
 
@@ -39,7 +39,7 @@
       <div>
         <span class="rati-product">RATi SPORTS</span>
         <h1>Pulse</h1>
-        <span class="head-meta"><b id="sportsPulseCount">{{ pulse.display_count }}</b> distinct matchups from {{ pulse.scanned_count }} games <i></i><span id="sportsPulseMaturity">EXPERIMENTAL · {{ pulse.model_record.games }}/{{ pulse.model_record.sample.target }} GRADED</span> <i></i><span id="sportsPulseStatus">Live</span></span>
+        <span class="head-meta sports-pulse-summary"><span><b id="sportsPulseCount">{{ pulse.display_count }}</b> value matchup{% if pulse.display_count != 1 %}s{% endif %}</span><span>{{ pulse.scanned_count }} games checked</span><span id="sportsPulseMaturity">{{ pulse.model_record.games }} of {{ pulse.model_record.sample.target }} baseline results graded</span><span id="sportsPulseStatus">Live updates</span></span>
       </div>
       {% if user %}
         <button class="avatar-button" type="button" data-profile aria-label="Open {{ comment_avatar.name }} profile">{{ render_comment_avatar(comment_avatar) }}</button>
@@ -49,10 +49,10 @@
     </header>
 
     <aside class="sports-record-strip" aria-label="Paper pick record">
-      <span><small>SETTLED</small><strong>{{ pick_stats.settled }}</strong></span>
-      <span><small>W–L–P</small><strong>{{ pick_stats.wins }}–{{ pick_stats.losses }}–{{ pick_stats.pushes }}</strong></span>
-      <span><small>UNITS</small><strong class="{% if pick_stats.units >= 0 %}positive{% else %}negative{% endif %}">{{ '%+.2f'|format(pick_stats.units) }}</strong></span>
-      <span><small>ROI</small><strong>{% if pick_stats.roi_pct is not none %}{{ '%+.1f%%'|format(pick_stats.roi_pct) }}{% else %}Learning{% endif %}</strong></span>
+      <span><small>PUBLIC CALLS SETTLED</small><strong>{{ pick_stats.settled }}</strong></span>
+      <span><small>CALL RECORD</small><strong>{{ pick_stats.wins }}–{{ pick_stats.losses }}–{{ pick_stats.pushes }}</strong></span>
+      <span><small>NET RESULT</small><strong class="sports-unit-value {% if pick_stats.units >= 0 %}positive{% else %}negative{% endif %}">{{ '%+.2f'|format(pick_stats.units) }} <i>units</i></strong></span>
+      <span><small>RETURN ON CALLS</small><strong>{% if pick_stats.roi_pct is not none %}{{ '%+.1f%%'|format(pick_stats.roi_pct) }}{% else %}Learning{% endif %}</strong></span>
     </aside>
 
     {% if pulse.source_status != 'success' %}

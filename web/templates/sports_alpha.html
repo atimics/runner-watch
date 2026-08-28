@@ -17,8 +17,11 @@
     </nav>
 
     <section class="alpha-sample-note" aria-label="Community record maturity">
-      <strong>{{ 'EARLY COMMUNITY RECORD' if board.total_calls < 20 else 'COMMUNITY RECORD' }}</strong>
-      <p>{% if board.total_calls < 20 %}There are not enough Calls to rank skill. This board shows activity, not proof.{% else %}Rankings show settled paper Calls and frozen entry odds.{% endif %}</p>
+      <div>
+        <strong>{{ 'COMMUNITY RECORD IS BUILDING' if board.total_calls < 20 else 'COMMUNITY RECORD' }}</strong>
+        <p>{% if board.total_calls < 20 %}<b>{{ board.total_calls }} of 20 public Calls recorded.</b> Rankings stay hidden until the sample is large enough. Activity is not evidence of skill.{% else %}Rankings use settled paper Calls with frozen entry odds.{% endif %}</p>
+      </div>
+      {% if board.total_calls < 20 %}<progress max="20" value="{{ board.total_calls }}">{{ board.total_calls }} of 20</progress>{% endif %}
     </section>
 
     <main class="list-section sports-list-section sports-alpha-list">
