@@ -13,8 +13,8 @@
   <section class="account-intro">
     <span class="eyebrow">PRIVACY BY LESS DATA</span>
     <h1>We do not track what you read.</h1>
-    <p>RATi does not use analytics, advertising pixels, visitor IDs, reaction profiles, view logs, dwell logs, or cross-thread public identities.</p>
-    <p>Last updated: 26 August 2026.</p>
+    <p>RATi does not use analytics, advertising pixels, visitor IDs, reaction profiles, view logs, or dwell logs. If you publish comments, your lasting public avatar intentionally links those comments across ticker threads.</p>
+    <p>Last updated: 28 August 2026.</p>
   </section>
 
   <section class="plan-card">
@@ -27,7 +27,7 @@
     <ul class="feature-list compact">
       <li><i>•</i><span><strong>Account and security</strong><small>Your chosen account name, passkey public-key records, essential session records, and short-lived security challenges. We never receive your fingerprint, face scan, device PIN, or private passkey key.</small></span></li>
       <li><i>•</i><span><strong>Things you save or publish</strong><small>AI-generated ticker comments, public stock Calls, public sports paper picks, private trade-journal entries, cases, research requests, and reports you choose to create. A stock report freezes Flash's forecast, model version, starting price, and later scored result. Sports picks freeze the event, market odds, source time, and result.</small></span></li>
-      <li><i>•</i><span><strong>Private public names</strong><small>Comments use a stable random emoji name in each ticker thread. Within one thread, the same emoji means the same account. Across different threads, different emojis do not imply different people. Stock Calls and sports paper picks use one automatic random animal name. Public pages do not expose the account behind either name.</small></span></li>
+      <li><i>•</i><span><strong>Persistent public avatars</strong><small>Each account receives one random avatar name, visual seed, and research ability. The same avatar appears on that account's public comments across tickers, so readers can link those comments together. This is pseudonymity, not anonymity from RATi: the server keeps the private account link for deletion and abuse controls, while public pages do not expose the account name. Stock Calls and sports paper picks still use one automatic random animal name.</small></span></li>
       <li><i>•</i><span><strong>Billing</strong><small>Stripe customer and subscription references, plan status, and signed webhook event IDs. Stripe handles card details; RATi does not store them.</small></span></li>
       <li><i>•</i><span><strong>Service security</strong><small>Short-lived rate-limit keys and infrastructure logs may contain an IP address and request details. They are used only to keep the service working and safe.</small></span></li>
     </ul>
@@ -40,7 +40,7 @@
 
   <section class="plan-card">
     <h2>Service providers and transfers</h2>
-    <p>Fly.io hosts the app and production data in San Jose, United States. Stripe processes payments. OpenRouter and the selected model provider process the evidence included in a research request. OpenRouter requests require zero-data-retention routing and do not contain a RATi user fingerprint.</p>
+    <p>Fly.io hosts the app and production data in San Jose, United States. Stripe processes payments. OpenRouter and the selected model provider process the evidence included in a research request or AI-drafted comment. Comment requests include the avatar's research ability, but not its public name, account name, or a RATi user fingerprint. OpenRouter requests require zero-data-retention routing.</p>
     <p>These providers may process data outside the EEA, UK, or Switzerland. RATi must keep processor terms and an approved transfer safeguard, such as Standard Contractual Clauses, on file before serving people in those regions.</p>
   </section>
 

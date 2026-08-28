@@ -25,7 +25,13 @@ from runner_web.database import (
     initialize_sqlite,
     open_database,
 )
-from runner_web.pseudonyms import ADJECTIVES, ANIMALS, ensure_scoped_alias
+from runner_web.pseudonyms import (
+    ADJECTIVES,
+    ANIMALS,
+    ensure_comment_avatar,
+    ensure_scoped_alias,
+    migrate_comment_aliases_to_glyphs,
+)
 from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "data/runner-watch.db"))
@@ -2312,6 +2318,36 @@ def _migration_039_sports_ai_forecasts(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_040_comment_glyph_avatars(db: DatabaseConnection) -> None:
+    """Replace public comment emoji pairs with one abstract glyph per author and ticker."""
+
+    migrate_comment_aliases_to_glyphs(db)
+
+
+def _migration_041_persistent_comment_avatars(db: DatabaseConnection) -> None:
+    """Give every account one durable public comment avatar and research ability."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS comment_avatars (
+            user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL UNIQUE,
+            seed TEXT NOT NULL UNIQUE,
+            ability_id TEXT NOT NULL CHECK(ability_id IN (
+                'catalyst_scout','risk_sentinel','filing_sleuth',
+                'pattern_mapper','liquidity_reader','countervoice'
+            )),
+            level INTEGER NOT NULL DEFAULT 1 CHECK(level>=1),
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS comment_avatars_ability
+            ON comment_avatars(ability_id,level);
+        """
+    )
+    for row in db.execute("SELECT id FROM users WHERE status='active'").fetchall():
+        ensure_comment_avatar(db, str(row["id"]))
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2359,6 +2395,8 @@ MIGRATIONS = (
     Migration(37, "flash_forecast_record", _migration_037_flash_forecast_record),
     Migration(38, "sports_bookmaker_odds", _migration_038_sports_bookmaker_odds),
     Migration(39, "sports_ai_forecasts", _migration_039_sports_ai_forecasts),
+    Migration(40, "comment_glyph_avatars", _migration_040_comment_glyph_avatars),
+    Migration(41, "persistent_comment_avatars", _migration_041_persistent_comment_avatars),
 )
 
 
