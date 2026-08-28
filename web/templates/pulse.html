@@ -15,7 +15,7 @@
     {% include "_market_clock.html" %}
     <form class="pulse-search" id="pulseSearch" role="search">
       <label for="pulseTickerSearch">Open a ticker</label>
-      <input id="pulseTickerSearch" name="ticker" type="search" inputmode="latin" autocomplete="off" maxlength="12" placeholder="Ticker, for example RKLB" aria-label="Ticker symbol">
+      <input id="pulseTickerSearch" name="ticker" type="search" inputmode="latin" autocomplete="off" maxlength="12" pattern="[A-Za-z0-9.-]{1,12}" required title="Enter a ticker using letters, numbers, a dot, or a dash" placeholder="Ticker, for example RKLB" aria-label="Ticker symbol">
       <button type="submit">Open</button>
     </form>
     {% set flash_record = pulse.flash_record %}

@@ -4622,6 +4622,19 @@ def _sports_alpha_shared_cache_name(league: str, limit: int) -> str:
     return f"{_shared_request_cache_name('sports-alpha')}:{league}:{limit}"
 
 
+def _invalidate_sports_alpha_data() -> None:
+    shared_keys = {
+        _sports_alpha_shared_cache_name(league, 24)
+        for league in ("all", *SPORTS_LEAGUES)
+    }
+    with SPORTS_ALPHA_DATA_CONDITION:
+        for _identity, league, limit in SPORTS_ALPHA_DATA_CACHE:
+            shared_keys.add(_sports_alpha_shared_cache_name(league, limit))
+        SPORTS_ALPHA_DATA_CACHE.clear()
+    for shared_key in shared_keys:
+        shared_cache_delete(shared_key)
+
+
 def _refresh_sports_alpha_data(
     cache_key: tuple[str, str, int],
     league: str,
@@ -4918,6 +4931,8 @@ def create_sports_pick_api(
         )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+    _invalidate_public_screen_data("sports-game", event_id)
+    _invalidate_sports_alpha_data()
     return JSONResponse(pick, status_code=201)
 
 

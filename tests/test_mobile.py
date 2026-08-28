@@ -260,6 +260,14 @@ def test_ticker_rows_have_no_reader_attention_state() -> None:
     assert "new to you" not in row_script
     assert "seen but not opened" not in row_script
     assert "return ['NEW', 'update']" not in row_script
+    assert "tradeState !== statusLabel" in row_script
+
+
+def test_pulse_ticker_search_uses_native_validation() -> None:
+    pulse_template = (Path(__file__).parents[1] / "web/templates/pulse.html").read_text()
+
+    assert 'pattern="[A-Za-z0-9.-]{1,12}"' in pulse_template
+    assert " required " in pulse_template
 
 
 def test_passkey_signup_needs_no_profile_fields(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
