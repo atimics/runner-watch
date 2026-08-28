@@ -114,6 +114,8 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert "action-card" not in template
     assert template.count("<textarea") == 0
     assert 'id="generateComment"' in template
+    assert "active_call.flash_reward" in template
+    assert "Flash earned" in template
 
 
 def test_flash_actions_open_the_shared_claim_flow_when_balance_is_low() -> None:

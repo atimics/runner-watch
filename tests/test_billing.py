@@ -68,6 +68,8 @@ def test_billing_page_is_now_a_public_flash_wallet() -> None:
     assert "Log in to claim" in html
     assert "Generate today's ticker report" in html
     assert "AI-generated ticker comment" in html
+    assert "Close a profitable stock Call" in html
+    assert "10× PnL" in html
     assert "Win a sports Call" in html
     assert "Stripe checkout is disabled" in html
     assert 'href="/roadmap"' in html

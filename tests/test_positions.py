@@ -6,6 +6,7 @@ from pytest import MonkeyPatch
 from runner_web import db
 from runner_web.calls import (
     active_call_for_user,
+    call_close_flash_reward,
     call_for_user,
     call_stats,
     calls_for_ticker,
@@ -13,6 +14,7 @@ from runner_web.calls import (
     create_call,
 )
 from runner_web.db import connection, init_db
+from runner_web.flash_wallet import wallet_for_user
 
 
 def test_public_call_freezes_entry_and_exit_marks(
@@ -39,7 +41,9 @@ def test_public_call_freezes_entry_and_exit_marks(
     )
 
     assert created["entry_at"] == entered_at
-    assert active_call_for_user("owner", "ONE", current_price=2.5)["return_pct"] == 25.0
+    active = active_call_for_user("owner", "ONE", current_price=2.5)
+    assert active["return_pct"] == 25.0
+    assert active["flash_reward"] == 250
     caller_handle = calls_for_ticker("ONE", current_price=2.5)[0]["caller_handle"]
     assert "-" in caller_handle
     assert "user_id" not in calls_for_ticker("ONE", current_price=2.5)[0]
@@ -57,10 +61,21 @@ def test_public_call_freezes_entry_and_exit_marks(
     assert closed["status"] == "closed"
     assert closed["exit_at"] == exited_at
     assert closed["return_pct"] == 50.0
+    assert closed["flash_reward"] == 500
+    assert closed["flash_balance"] == 500
+    assert wallet_for_user("owner")["balance"] == 500
     assert call_stats([closed])["wins"] == 1
     assert close_call(
         "owner", created["public_id"], exit_price=3.1, exit_at=current.isoformat()
     ) is None
+    assert wallet_for_user("owner")["balance"] == 500
+
+
+def test_call_close_rewards_round_positive_pnl_and_ignore_losses() -> None:
+    assert call_close_flash_reward(10) == 100
+    assert call_close_flash_reward(1.25) == 13
+    assert call_close_flash_reward(0) == 0
+    assert call_close_flash_reward(-4.2) == 0
 
 
 def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
