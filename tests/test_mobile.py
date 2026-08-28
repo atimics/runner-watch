@@ -2181,11 +2181,11 @@ def test_legacy_commission_request_uses_flash_model_with_a_minimal_prompt(
     assert request_payload["actor"]["id"] == "kol-flash"
     assert request_payload["actor"]["model"] == "z-ai/glm-5.3"
     assert body["response_format"] == {"type": "json_object"}
+    assert body["plugins"] == [{"id": "response-healing"}]
     assert body["provider"] == {"require_parameters": True, "zdr": True}
     assert body["reasoning_effort"] == "high"
     assert "temperature" not in body
     assert "tools" not in body
-    assert "plugins" not in body
     assert "untrusted evidence" in body["messages"][0]["content"]
     assert len(body["messages"][0]["content"].split()) <= 75
     assert "evaluation_contract" in request_payload
@@ -2288,9 +2288,11 @@ def test_flash_keeps_only_citations_from_the_frozen_context(
     assert invented not in json.dumps(report)
 
 
+@pytest.mark.parametrize("wrapper", ["answer", "output"])
 @pytest.mark.parametrize("as_text", [False, True])
-def test_commission_unwraps_glm_answer_envelope(
+def test_commission_unwraps_glm_report_envelope(
     monkeypatch: MonkeyPatch,
+    wrapper: str,
     as_text: bool,
 ) -> None:
     generated = {
@@ -2308,7 +2310,7 @@ def test_commission_unwraps_glm_answer_envelope(
         "citations": [],
         "forecast": _test_flash_forecast(),
     }
-    answer: Any = json.dumps(generated) if as_text else generated
+    wrapped_report: Any = json.dumps(generated) if as_text else generated
 
     def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
         return io.BytesIO(
@@ -2317,7 +2319,9 @@ def test_commission_unwraps_glm_answer_envelope(
                     "choices": [
                         {
                             "finish_reason": "stop",
-                            "message": {"content": json.dumps({"answer": answer})},
+                            "message": {
+                                "content": json.dumps({wrapper: wrapped_report})
+                            },
                         }
                     ],
                     "model": "z-ai/glm-5.3",

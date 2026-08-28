@@ -2824,7 +2824,7 @@ def _openrouter_report_json(content: Any) -> dict[str, Any]:
             parsed = json.loads(text[start : end + 1])
     if not isinstance(parsed, dict):
         raise ValueError("report is not an object")
-    for wrapper in ("report", "answer"):
+    for wrapper in ("report", "answer", "output"):
         nested = parsed.get(wrapper)
         if isinstance(nested, dict):
             return _openrouter_report_json(nested)
@@ -3318,6 +3318,7 @@ def _generate_openrouter_report(
             },
         ],
         "response_format": {"type": "json_object"},
+        "plugins": [{"id": "response-healing"}],
         "provider": {"require_parameters": True, "zdr": True},
         "reasoning_effort": "high",
         "max_tokens": OPENROUTER_RESEARCH_OUTPUT_TOKENS,
