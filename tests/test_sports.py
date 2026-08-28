@@ -598,14 +598,15 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     assert response.status_code == 200
     assert b"RATi Sports" in response.body
     assert b'class="game-card winner-card"' in response.body
-    assert b'class="winner-coin ' in response.body
+    assert b'class="winner-coin ' not in response.body
+    assert b'class="matchup-value">VALUE</small>' in response.body
     assert b"Away Club" in response.body
     assert b"Home Club" in response.body
     assert b"value side" in response.body
     assert b"baseline results graded" in response.body
     assert b"ESTIMATED SCORE" not in response.body
     assert b"Model " in response.body
-    assert b"VALUE SIDE" in response.body
+    assert b"VALUE EDGE" in response.body
     assert b"games checked" in response.body
     assert b'class="edge-spark"' in response.body
     assert b"PROJECTED WINNER" not in response.body

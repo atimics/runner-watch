@@ -6,21 +6,21 @@
 {% block content %}
 {% macro pulse_card(event, compact=false) -%}
   {% set prediction = event.prediction %}
+  {% set baseline_agrees = event.model_winner_abbreviation == event.signal_abbreviation %}
   <a class="game-card winner-card{% if compact %} winner-card-compact{% endif %}" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}" aria-label="{{ event.away_team_name }} at {{ event.home_team_name }}; baseline winner {{ event.model_winner_abbreviation }} at {{ '%.0f'|format(event.model_winner_probability_pct) }} percent; value side {{ event.signal_abbreviation }} with a {{ '%+.1f'|format(prediction.edge_pct) }} percentage-point model edge">
-    <span class="winner-coin winner-coin-{{ event.signal_coin_tone }}" aria-hidden="true"><b>{{ event.signal_abbreviation[:3] }}</b><i></i></span>
     <span class="matchup-copy">
-      <span class="matchup-team"><strong>{{ event.away_abbreviation }}</strong><span>{{ event.away_team_name }}</span></span>
-      <span class="matchup-team"><strong>{{ event.home_abbreviation }}</strong><span>{{ event.home_team_name }}</span></span>
+      <span class="matchup-team{% if event.signal_abbreviation == event.away_abbreviation %} is-value{% endif %}"><strong>{{ event.away_abbreviation }}</strong><span>{{ event.away_team_name }}</span>{% if event.signal_abbreviation == event.away_abbreviation %}<small class="matchup-value">VALUE</small>{% endif %}</span>
+      <span class="matchup-team{% if event.signal_abbreviation == event.home_abbreviation %} is-value{% endif %}"><strong>{{ event.home_abbreviation }}</strong><span>{{ event.home_team_name }}</span>{% if event.signal_abbreviation == event.home_abbreviation %}<small class="matchup-value">VALUE</small>{% endif %}</span>
       <span class="winner-context">
         {{ event.league|upper }} · <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time>
       </span>
     </span>
     <span class="winner-quote">
-      <small>VALUE SIDE</small>
-      <strong>{{ event.signal_abbreviation }}</strong>
-      <span class="winner-edge">{% if event.model_probability_pct is not none and event.market_probability_pct is not none %}Model {{ '%.0f'|format(event.model_probability_pct) }}% · Market {{ '%.0f'|format(event.market_probability_pct) }}% · {% endif %}Edge {{ '%+.1f'|format(prediction.edge_pct) }} percentage points</span>
-      <em class="baseline-winner">Baseline winner · {{ event.model_winner_abbreviation }} {{ '%.0f'|format(event.model_winner_probability_pct) }}%</em>
-      {% if event.bovada_divergence_material %}<span class="bovada-outlier">Bovada differs on {{ event.bovada_divergence_team }} by {{ '%.1f'|format(event.bovada_divergence_pct) }} points</span>{% endif %}
+      <small>VALUE EDGE</small>
+      <strong>{{ '%+.1f'|format(prediction.edge_pct) }} pp</strong>
+      <span class="winner-edge">{% if event.model_probability_pct is not none and event.market_probability_pct is not none %}Model {{ '%.0f'|format(event.model_probability_pct) }}% · Market {{ '%.0f'|format(event.market_probability_pct) }}%{% else %}Model and market building{% endif %}</span>
+      <em class="baseline-winner">Baseline {% if baseline_agrees %}agrees{% else %}favors opponent{% endif %} · {{ '%.0f'|format(event.model_winner_probability_pct) }}%</em>
+      {% if event.bovada_divergence_material %}<span class="bovada-outlier">Bovada differs by {{ '%.1f'|format(event.bovada_divergence_pct) }} points</span>{% endif %}
       {% if event.edge_history %}
       <svg class="edge-spark" viewBox="0 0 92 24" role="img" aria-label="{{ event.edge_history.label }}">
         <line class="edge-zero" x1="2" y1="12" x2="90" y2="12"></line>

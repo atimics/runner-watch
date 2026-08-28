@@ -4614,7 +4614,6 @@ SPORTS_PULSE_EVENT_FIELDS = (
     "league",
     "start_time",
     "signal_abbreviation",
-    "signal_coin_tone",
     "model_probability_pct",
     "market_probability_pct",
     "model_winner_abbreviation",

@@ -306,9 +306,14 @@ def test_sports_pulse_separates_value_side_from_baseline_winner(
 
     card = page.locator(".winner-card")
     copy = card.text_content()
-    assert "VALUE SIDE" in copy
-    assert "Model 42% · Market 34% · Edge +7.8 percentage points" in copy
-    assert "Baseline winner · AWY 58%" in copy
+    assert "VALUE EDGE" in copy
+    assert "+7.8 pp" in copy
+    assert "Model 42% · Market 34%" in copy
+    assert "Baseline favors opponent · 58%" in copy
+    assert card.locator(".winner-coin").count() == 0
+    assert card.locator(".matchup-team strong").all_text_contents() == ["AWY", "HME"]
+    assert card.locator(".matchup-team.is-value strong").text_content() == "HME"
+    assert card.locator(".matchup-value").text_content() == "VALUE"
     assert page.locator(".model-favorite").count() == 0
     assert card.get_attribute("aria-label") == (
         "AWY Club at HME Club; baseline winner AWY at 58 percent; "

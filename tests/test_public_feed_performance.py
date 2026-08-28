@@ -127,6 +127,7 @@ def test_sports_public_feeds_keep_only_list_rendering_fields() -> None:
     assert "points" not in pulse_event["edge_history"]
     assert "market_comparison" not in pulse_event
     assert "latest_news" not in pulse_event
+    assert "signal_coin_tone" not in pulse_event
     assert pulse_event["series_more"][0]["id"] == "game-2"
     assert pulse["model_record"] == {"games": 12, "sample": {"target": 250}}
     assert radar["events"][0]["radar_detail"] == "Market moved toward HME."
