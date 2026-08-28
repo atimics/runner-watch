@@ -25,9 +25,9 @@
       </div>
       <div class="decision-value-call">
         <small>MARKET GAP</small>
-        {% if prediction.selection == 'pass' %}
+        {% if prediction.selection == 'pass' or prediction.edge_pct is none %}
           <strong>PASS</strong>
-          <p>The fresh market is too close to this simple baseline to show a useful gap.</p>
+          <p>{% if prediction.edge_pct is none %}A complete fresh market is not available, so there is no value call.{% else %}The fresh market is too close to this simple baseline to show a useful gap.{% endif %}</p>
         {% else %}
           <strong>{{ pick_code }} {{ prediction.signal|upper }}</strong>
           <p>{{ pick_name }} is {{ '%.1f'|format(pick_probability * 100) }}% in the baseline versus {{ '%.1f'|format(pick_market * 100) if pick_market is not none else '—' }}% in the no-vig market.</p>
