@@ -672,12 +672,21 @@
 
     const avatar = document.createElement('span');
     avatar.className = 'comment-avatar';
-    avatar.textContent = comment.alias || '❔';
+    avatar.setAttribute('aria-hidden', 'true');
+    avatar.textContent = comment.alias || '◇';
 
     const copy = document.createElement('div');
     const head = document.createElement('header');
-    const name = document.createElement('strong');
-    name.textContent = comment.alias || '❔';
+    const author = document.createElement('strong');
+    author.className = 'visually-hidden';
+    author.textContent = `Pseudonymous commenter ${comment.alias || '◇'}`;
+    head.append(author);
+    if (comment.is_owner) {
+      const owner = document.createElement('span');
+      owner.className = 'comment-owner';
+      owner.textContent = 'You';
+      head.append(owner);
+    }
     const meta = document.createElement('small');
     const stamp = document.createElement('time');
     stamp.dateTime = comment.created_at;
@@ -697,7 +706,7 @@
 
     const body = document.createElement('p');
     body.textContent = comment.body;
-    head.append(name, meta);
+    head.append(meta);
     copy.append(head, body);
     item.append(avatar, copy);
     return item;

@@ -48,6 +48,7 @@ from runner_web.main import (
     ticker_charts_payload,
     ticker_detail_data,
 )
+from runner_web.pseudonyms import COMMENT_GLYPHS
 
 
 def _test_flash_forecast() -> dict[str, Any]:
@@ -114,6 +115,8 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert "action-card" not in template
     assert template.count("<textarea") == 0
     assert 'id="generateComment"' in template
+    assert "Random glyphs · this ticker only" in template
+    assert 'class="comment-avatar" aria-hidden="true"' in template
 
 
 def test_ticker_layout_puts_subtle_actions_after_the_analysis() -> None:
@@ -1626,7 +1629,8 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
     assert payload["comment"]["ai_generated"] is True
     assert payload["comment"]["generation_model"] == "test/model"
     assert payload["balance"] == 90
-    assert any(ord(character) > 10_000 for character in payload["comment"]["alias"])
+    assert payload["comment"]["alias"] in COMMENT_GLYPHS
+    assert len(payload["comment"]["alias"]) == 1
     assert payload["comment"]["alias"] not in {"chartreader", "Chart Reader"}
     assert "username" not in payload["comment"]
     assert "display_name" not in payload["comment"]

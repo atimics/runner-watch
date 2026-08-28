@@ -25,7 +25,12 @@ from runner_web.database import (
     initialize_sqlite,
     open_database,
 )
-from runner_web.pseudonyms import ADJECTIVES, ANIMALS, ensure_scoped_alias
+from runner_web.pseudonyms import (
+    ADJECTIVES,
+    ANIMALS,
+    ensure_scoped_alias,
+    migrate_comment_aliases_to_glyphs,
+)
 from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "data/runner-watch.db"))
@@ -2312,6 +2317,12 @@ def _migration_039_sports_ai_forecasts(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_040_comment_glyph_avatars(db: DatabaseConnection) -> None:
+    """Replace public comment emoji pairs with one abstract glyph per author and ticker."""
+
+    migrate_comment_aliases_to_glyphs(db)
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2359,6 +2370,7 @@ MIGRATIONS = (
     Migration(37, "flash_forecast_record", _migration_037_flash_forecast_record),
     Migration(38, "sports_bookmaker_odds", _migration_038_sports_bookmaker_odds),
     Migration(39, "sports_ai_forecasts", _migration_039_sports_ai_forecasts),
+    Migration(40, "comment_glyph_avatars", _migration_040_comment_glyph_avatars),
 )
 
 

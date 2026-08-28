@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+import unicodedata
 from datetime import UTC, datetime
 from typing import Any
 
@@ -47,8 +48,68 @@ EMOJIS = tuple(
     "💎 🧭 🎲 🎯 🛸 🚀 🛰️ 🗿 🎈 🪁 🧩 🎨 🎸 🥁 🛹 🚲 ⛵ 🏔️".split()
 )
 
+_COMMENT_GLYPH_RANGES = (
+    (0x2200, 0x23FF),  # mathematical and technical symbols
+    (0x2500, 0x25FF),  # box, block, and geometric symbols
+    (0x27C0, 0x27EF),  # miscellaneous mathematical symbols
+    (0x2801, 0x28FF),  # non-empty braille patterns
+    (0x2980, 0x2AFF),  # supplemental mathematical symbols
+)
+_MISLEADING_GLYPH_TERMS = (
+    "ARROW",
+    "PLUS",
+    "MINUS",
+    "UPWARDS",
+    "DOWNWARDS",
+    "LEFTWARDS",
+    "RIGHTWARDS",
+)
+COMMENT_GLYPHS = tuple(
+    chr(codepoint)
+    for start, end in _COMMENT_GLYPH_RANGES
+    for codepoint in range(start, end + 1)
+    if unicodedata.category(chr(codepoint)) in {"Sm", "So"}
+    and not any(term in unicodedata.name(chr(codepoint), "") for term in _MISLEADING_GLYPH_TERMS)
+)
+_COMMENT_GLYPH_SET = frozenset(COMMENT_GLYPHS)
+_EMOJI_ALIASES = tuple(first + second for first in EMOJIS for second in EMOJIS)
+
+
+def migrate_comment_aliases_to_glyphs(database: Any) -> int:
+    """Replace old comment emoji pairs with unique one-glyph thread aliases."""
+
+    rows = database.execute(
+        "SELECT scope,user_id,alias FROM public_aliases "
+        "WHERE scope LIKE 'comment:%' ORDER BY scope,created_at,user_id"
+    ).fetchall()
+    scopes: dict[str, list[Any]] = {}
+    for row in rows:
+        scopes.setdefault(str(row["scope"]), []).append(row)
+
+    changed = 0
+    for scope, scoped_rows in scopes.items():
+        used = {
+            str(row["alias"])
+            for row in scoped_rows
+            if str(row["alias"]) in _COMMENT_GLYPH_SET
+        }
+        available = [glyph for glyph in COMMENT_GLYPHS if glyph not in used]
+        for row in scoped_rows:
+            if str(row["alias"]) in _COMMENT_GLYPH_SET:
+                continue
+            if not available:
+                raise RuntimeError(f"The comment glyph space is full for {scope}")
+            glyph = available.pop(secrets.randbelow(len(available)))
+            database.execute(
+                "UPDATE public_aliases SET alias=? WHERE scope=? AND user_id=?",
+                (glyph, scope, row["user_id"]),
+            )
+            changed += 1
+    return changed
+
+
 def ensure_scoped_alias(database: Any, user_id: str, scope: str) -> str:
-    """Assign an unlinkable public emoji identity inside one discussion or Call thread."""
+    """Assign a random public pseudonym inside one discussion or Call thread."""
 
     if not scope.startswith(("comment:", "call:")):
         raise ValueError("Public alias scope must be a comment or Call thread")
@@ -58,9 +119,19 @@ def ensure_scoped_alias(database: Any, user_id: str, scope: str) -> str:
     ).fetchone()
     if existing:
         return str(existing["alias"])
+
+    pool = COMMENT_GLYPHS if scope.startswith("comment:") else _EMOJI_ALIASES
+    used = {
+        str(row["alias"])
+        for row in database.execute(
+            "SELECT alias FROM public_aliases WHERE scope=?",
+            (scope,),
+        ).fetchall()
+    }
+    available = [alias for alias in pool if alias not in used]
     timestamp = datetime.now(UTC).isoformat()
-    for _ in range(1_000):
-        alias = f"{secrets.choice(EMOJIS)}{secrets.choice(EMOJIS)}"
+    while available:
+        alias = available.pop(secrets.randbelow(len(available)))
         database.execute(
             """
             INSERT INTO public_aliases(scope,user_id,alias,created_at)
@@ -74,4 +145,4 @@ def ensure_scoped_alias(database: Any, user_id: str, scope: str) -> str:
         ).fetchone()
         if assigned:
             return str(assigned["alias"])
-    raise RuntimeError("Could not assign a unique thread identity")
+    raise RuntimeError(f"The public alias space is full for {scope}")

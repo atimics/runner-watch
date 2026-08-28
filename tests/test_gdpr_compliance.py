@@ -9,7 +9,7 @@ from runner_web import db
 from runner_web.caller_ids import ensure_caller_identity
 from runner_web.db import connection, init_db
 from runner_web.privacy import delete_user_data, export_user_data, purge_passive_tracking
-from runner_web.pseudonyms import ensure_scoped_alias
+from runner_web.pseudonyms import COMMENT_GLYPHS, ensure_scoped_alias
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -172,15 +172,19 @@ def test_public_aliases_are_stable_only_inside_one_thread(
         other_author = ensure_scoped_alias(database, "alias-two", "comment:ONE")
 
     assert first == repeated
-    assert len({first, other_thread, call_identity, other_author}) == 4
-    assert any(ord(character) > 10_000 for character in first)
+    assert first in COMMENT_GLYPHS
+    assert other_thread in COMMENT_GLYPHS
+    assert other_author in COMMENT_GLYPHS
+    assert first != other_author
+    assert call_identity not in COMMENT_GLYPHS
 
 
 def test_privacy_notice_explains_the_thread_alias_boundary() -> None:
     notice = (ROOT / "web/templates/privacy.html").read_text()
 
-    assert "Within one thread, the same emoji means the same account." in notice
-    assert "Across different threads, different emojis do not imply different people." in notice
+    assert "Within one thread, the same glyph means the same account." in notice
+    assert "Matching or different glyphs across threads" in notice
+    assert "pseudonymity, not anonymity from RATi" in notice
 
 
 def test_one_account_gets_one_automatic_anonymous_call_identity(

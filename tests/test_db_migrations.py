@@ -14,10 +14,12 @@ from runner_web.db import (
     _acquire_migration_lock,
     _apply_migrations,
     _migration_028_caller_identities,
+    _migration_040_comment_glyph_avatars,
     _release_migration_lock,
     connection,
     init_db,
 )
+from runner_web.pseudonyms import COMMENT_GLYPHS
 
 
 class _LockResult:
@@ -454,6 +456,50 @@ def test_existing_public_calls_get_a_random_animal_identity(
     assert upgraded["user_id"] == "legacy-caller"
     assert upgraded["status"] == "active"
     assert dict(claim) == {"free_claim": 1, "claim_cost_cents": 0}
+
+
+def test_existing_comment_emoji_aliases_become_unique_glyphs(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "comment-glyph-upgrade.db")
+    init_db()
+    timestamp = "2026-08-28T00:00:00+00:00"
+    with connection() as database:
+        database.executemany(
+            "INSERT INTO users(id,username,display_name,status,created_at) "
+            "VALUES(?,?,?,?,?)",
+            [
+                ("glyph-one", "glyph_one", "One", "active", timestamp),
+                ("glyph-two", "glyph_two", "Two", "active", timestamp),
+            ],
+        )
+        database.executemany(
+            "INSERT INTO public_aliases(scope,user_id,alias,created_at) VALUES(?,?,?,?)",
+            [
+                ("comment:ONE", "glyph-one", "🐺🦊", timestamp),
+                ("comment:ONE", "glyph-two", "🐺🐻", timestamp),
+                ("call:ONE", "glyph-one", "🐺🦊", timestamp),
+            ],
+        )
+
+        _migration_040_comment_glyph_avatars(database)
+        first_pass = database.execute(
+            "SELECT scope,user_id,alias FROM public_aliases ORDER BY scope,user_id"
+        ).fetchall()
+        _migration_040_comment_glyph_avatars(database)
+        second_pass = database.execute(
+            "SELECT scope,user_id,alias FROM public_aliases ORDER BY scope,user_id"
+        ).fetchall()
+
+    comment_aliases = [
+        str(row["alias"]) for row in first_pass if row["scope"] == "comment:ONE"
+    ]
+    assert len(comment_aliases) == 2
+    assert len(set(comment_aliases)) == 2
+    assert all(alias in COMMENT_GLYPHS and len(alias) == 1 for alias in comment_aliases)
+    call_alias = next(row["alias"] for row in first_pass if row["scope"] == "call:ONE")
+    assert call_alias == "🐺🦊"
+    assert [tuple(row) for row in second_pass] == [tuple(row) for row in first_pass]
 
 
 def test_thesis_source_columns_repair_an_already_applied_migration(
