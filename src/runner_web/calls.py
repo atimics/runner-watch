@@ -3,13 +3,12 @@ from __future__ import annotations
 import secrets
 import uuid
 from datetime import UTC, datetime
-from decimal import ROUND_HALF_UP, Decimal
 from statistics import median
 from typing import Any
 
 from runner_web.caller_ids import ensure_caller_identity_with_database
 from runner_web.db import connection
-from runner_web.flash_wallet import CALL_CLOSE_REWARD_MULTIPLIER, credit_flash
+from runner_web.flash_wallet import credit_flash, runner_call_reward
 
 
 def _iso() -> str:
@@ -18,15 +17,6 @@ def _iso() -> str:
 
 def _public_id() -> str:
     return secrets.token_urlsafe(9).replace("-", "").replace("_", "")[:12]
-
-
-def call_close_flash_reward(return_pct: float | None) -> int:
-    """Convert a positive Call return into whole Flash at the published rate."""
-
-    if return_pct is None or return_pct <= 0:
-        return 0
-    reward = Decimal(str(return_pct)) * CALL_CLOSE_REWARD_MULTIPLIER
-    return int(reward.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def _call(row: Any, current_price: float | None = None) -> dict[str, Any]:
@@ -54,7 +44,15 @@ def _call(row: Any, current_price: float | None = None) -> dict[str, Any]:
         if mark_price is not None
         else None
     )
-    item["flash_reward"] = call_close_flash_reward(item["return_pct"])
+    item["flash_reward"] = int(stored.get("flash_reward") or 0)
+    item["projected_flash_reward"] = (
+        runner_call_reward(item["return_pct"])
+        if item["status"] == "active"
+        else item["flash_reward"]
+    )
+    item["reward_label"] = (
+        f"+{item['flash_reward']} Flash" if item["flash_reward"] > 0 else None
+    )
     return item
 
 
@@ -73,8 +71,12 @@ def create_call(
         identity = ensure_caller_identity_with_database(db, user_id)
         existing = db.execute(
             """
-            SELECT c.*,ci.handle AS caller_handle FROM community_calls c
+            SELECT c.*,ci.handle AS caller_handle,
+                   COALESCE(ft.amount,0) AS flash_reward
+            FROM community_calls c
             JOIN caller_identities ci ON ci.id=c.caller_identity_id
+            LEFT JOIN flash_transactions ft
+              ON ft.user_id=c.user_id AND ft.kind='runner_call_win' AND ft.reference_id=c.id
             WHERE c.user_id=? AND c.ticker=? AND c.status='active'
             ORDER BY c.created_at DESC LIMIT 1
             """,
@@ -104,16 +106,27 @@ def create_call(
         if inserted.rowcount == 1:
             row = db.execute(
                 """
-                SELECT c.*,ci.handle AS caller_handle FROM community_calls c
-                JOIN caller_identities ci ON ci.id=c.caller_identity_id WHERE c.id=?
+                SELECT c.*,ci.handle AS caller_handle,
+                       COALESCE(ft.amount,0) AS flash_reward
+                FROM community_calls c
+                JOIN caller_identities ci ON ci.id=c.caller_identity_id
+                LEFT JOIN flash_transactions ft
+                  ON ft.user_id=c.user_id AND ft.kind='runner_call_win'
+                 AND ft.reference_id=c.id
+                WHERE c.id=?
                 """,
                 (call_id,),
             ).fetchone()
         else:
             row = db.execute(
                 """
-                SELECT c.*,ci.handle AS caller_handle FROM community_calls c
+                SELECT c.*,ci.handle AS caller_handle,
+                       COALESCE(ft.amount,0) AS flash_reward
+                FROM community_calls c
                 JOIN caller_identities ci ON ci.id=c.caller_identity_id
+                LEFT JOIN flash_transactions ft
+                  ON ft.user_id=c.user_id AND ft.kind='runner_call_win'
+                 AND ft.reference_id=c.id
                 WHERE c.user_id=? AND c.ticker=? AND c.status='active'
                 ORDER BY c.created_at DESC LIMIT 1
                 """,
@@ -131,8 +144,12 @@ def active_call_for_user(
     with connection() as db:
         row = db.execute(
             """
-            SELECT c.*,ci.handle AS caller_handle FROM community_calls c
+            SELECT c.*,ci.handle AS caller_handle,
+                   COALESCE(ft.amount,0) AS flash_reward
+            FROM community_calls c
             JOIN caller_identities ci ON ci.id=c.caller_identity_id
+            LEFT JOIN flash_transactions ft
+              ON ft.user_id=c.user_id AND ft.kind='runner_call_win' AND ft.reference_id=c.id
             WHERE c.user_id=? AND c.ticker=? AND c.status='active'
             ORDER BY c.created_at DESC LIMIT 1
             """,
@@ -145,8 +162,12 @@ def call_for_user(user_id: str, public_id: str) -> dict[str, Any] | None:
     with connection() as db:
         row = db.execute(
             """
-            SELECT c.*,ci.handle AS caller_handle FROM community_calls c
+            SELECT c.*,ci.handle AS caller_handle,
+                   COALESCE(ft.amount,0) AS flash_reward
+            FROM community_calls c
             JOIN caller_identities ci ON ci.id=c.caller_identity_id
+            LEFT JOIN flash_transactions ft
+              ON ft.user_id=c.user_id AND ft.kind='runner_call_win' AND ft.reference_id=c.id
             WHERE c.user_id=? AND c.public_id=?
             """,
             (user_id, public_id),
@@ -186,26 +207,29 @@ def close_call(
         )
         if changed.rowcount != 1:
             return None
+        return_pct = (float(exit_price) / float(existing["entry_price"]) - 1) * 100
+        reward = runner_call_reward(return_pct)
+        if reward:
+            credit_flash(
+                db,
+                user_id,
+                reward,
+                kind="runner_call_win",
+                reference_id=str(existing["id"]),
+            )
         row = db.execute(
             """
-            SELECT c.*,ci.handle AS caller_handle FROM community_calls c
+            SELECT c.*,ci.handle AS caller_handle,
+                   COALESCE(ft.amount,0) AS flash_reward
+            FROM community_calls c
             JOIN caller_identities ci ON ci.id=c.caller_identity_id
+            LEFT JOIN flash_transactions ft
+              ON ft.user_id=c.user_id AND ft.kind='runner_call_win' AND ft.reference_id=c.id
             WHERE c.user_id=? AND c.public_id=?
             """,
             (user_id, public_id),
         ).fetchone()
-        call = _call(row)
-        reward = int(call["flash_reward"])
-        if reward:
-            balance, _rewarded = credit_flash(
-                db,
-                user_id,
-                reward,
-                kind="call_close_reward",
-                reference_id=public_id,
-            )
-            call["flash_balance"] = balance
-        return call
+    return _call(row)
 
 
 def calls_for_ticker(
@@ -217,8 +241,12 @@ def calls_for_ticker(
     with connection() as db:
         rows = db.execute(
             """
-            SELECT c.*,ci.handle AS caller_handle FROM community_calls c
+            SELECT c.*,ci.handle AS caller_handle,
+                   COALESCE(ft.amount,0) AS flash_reward
+            FROM community_calls c
             JOIN caller_identities ci ON ci.id=c.caller_identity_id
+            LEFT JOIN flash_transactions ft
+              ON ft.user_id=c.user_id AND ft.kind='runner_call_win' AND ft.reference_id=c.id
             WHERE c.ticker=?
             ORDER BY CASE WHEN c.status='active' THEN 0 ELSE 1 END,
                      c.updated_at DESC,c.id DESC LIMIT ?
@@ -236,8 +264,12 @@ def recent_calls(
     with connection() as db:
         rows = db.execute(
             """
-            SELECT c.*,ci.handle AS caller_handle FROM community_calls c
+            SELECT c.*,ci.handle AS caller_handle,
+                   COALESCE(ft.amount,0) AS flash_reward
+            FROM community_calls c
             JOIN caller_identities ci ON ci.id=c.caller_identity_id
+            LEFT JOIN flash_transactions ft
+              ON ft.user_id=c.user_id AND ft.kind='runner_call_win' AND ft.reference_id=c.id
             ORDER BY c.updated_at DESC,c.id DESC LIMIT ?
             """,
             (max(1, min(limit, 200)),),
@@ -264,7 +296,10 @@ def caller_calls(
             return None
         rows = db.execute(
             """
-            SELECT c.*,? AS caller_handle FROM community_calls c
+            SELECT c.*,? AS caller_handle,COALESCE(ft.amount,0) AS flash_reward
+            FROM community_calls c
+            LEFT JOIN flash_transactions ft
+              ON ft.user_id=c.user_id AND ft.kind='runner_call_win' AND ft.reference_id=c.id
             WHERE c.caller_identity_id=?
             ORDER BY c.updated_at DESC,c.id DESC LIMIT ?
             """,

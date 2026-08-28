@@ -16,8 +16,12 @@ model compares team form plus a small home advantage with the market price after
 bookmaker margin. It does not promote preseason or exhibition games. Signed-in users can publish
 paper picks with frozen odds; completed games settle them as wins, losses, or pushes. The app does
 not place bets or connect to sportsbooks. ESPN remains a preview source for schedules, records, and
-results. When the `ODDS_API_KEY` Fly secret is present, moneylines come from The Odds API instead of
-the preview odds. The worker requests one region and the `h2h` market only. It takes at most three
+results. When the `ODDS_API_KEY` Fly secret is present, production requests Bovada, DraftKings,
+FanDuel, BetMGM, and BetOnline moneylines through The Odds API instead of using the preview odds.
+The worker requests the `h2h` market only, removes each book's margin, and uses the median of at
+least three fresh two-sided lines as the model's market benchmark. Bovada remains a separate quote:
+the game receipt shows its difference from the other-book consensus and freezes its price for paper
+picks. Stale and incomplete lines are excluded. The worker takes at most three
 snapshots per league slate: opening, pregame, and close. The 500-credit plan has a 450-credit working
 limit and a protected 50-credit reserve. Quota headers are checked before paid calls, and cached odds
 are served between snapshots. The key stays on the server and is never sent to the browser or logs.
@@ -28,6 +32,13 @@ Pulse. **Alpha** is the public Call ledger: each winner is treated like a ticker
 probability is treated like a price, and every paper Call keeps its entry odds, current mark, and
 settled PnL. The old Receipts URLs redirect to Alpha. Sealed pregame model and odds records remain on
 each game page as supporting evidence.
+
+Future MLB, NFL, NBA, and NHL game pages can also generate a source-bound Flash report. The report
+must include its own home, away, or pass probability. This AI prediction is stored separately from
+the transparent team-form algorithm, frozen before the game, and scored with Brier score after the
+final result. Sports Alpha shows a four-slot AI model ladder. Flash holds the first slot today; three
+challenger slots stay open for future models. A model cannot change rank until the competitors have
+at least 20 scored forecasts on the same games.
 
 The public scanner defaults to listed US penny stocks from $0.20 to $5 with market caps below
 about $2B. It combines Yahoo's strongest movers, most active names, and largest losers before
@@ -197,8 +208,9 @@ deterministic `AVOID` or `EXIT` state overrides the generated wording.
 must press the daily claim button to receive 100 Flash. The claim is available once per UTC day and
 missed days are not backfilled. A daily Flash report costs 100, an AI-written ticker comment costs
 10, publishing during the private alpha hour earns 50 once, and a winning sports Call earns 25 once
-its final score settles. Ledger references make claims, charges, refunds, and rewards safe to retry
-without paying twice.
+its final score settles. A profitable Runners Call earns 10 Flash, rising to 20 at a 20% return and
+30 at a 30% or higher return. Ledger references make claims, charges, refunds, and rewards safe to
+retry without paying twice.
 
 Buying Flash credit packs is intentionally paused. Historical subscription columns remain only so
 existing databases migrate safely. The public product plan, including features that are explicitly

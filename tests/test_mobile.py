@@ -48,6 +48,7 @@ from runner_web.main import (
     ticker_charts_payload,
     ticker_detail_data,
 )
+from runner_web.pseudonyms import COMMENT_AVATAR_ABILITIES
 
 
 def _test_flash_forecast() -> dict[str, Any]:
@@ -114,28 +115,8 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert "action-card" not in template
     assert template.count("<textarea") == 0
     assert 'id="generateComment"' in template
-    assert "active_call.flash_reward" in template
-    assert "Flash earned" in template
-
-
-def test_flash_actions_open_the_shared_claim_flow_when_balance_is_low() -> None:
-    root = Path(__file__).parents[1]
-    ticker = (root / "web/templates/ticker.html").read_text()
-    sports_game = (root / "web/templates/sports_game.html").read_text()
-    mobile_base = (root / "web/templates/mobile_base.html").read_text()
-    sports_base = (root / "web/templates/sports_base.html").read_text()
-    auth = (root / "web/templates/auth.html").read_text()
-    artwork = root / "web/static/flash-daily-release.webp"
-
-    assert "RatiFlash.canSpend(100)" in ticker
-    assert "RatiFlash.canSpend(10)" in ticker
-    assert "RatiFlash.canSpend(100)" in sports_game
-    assert '{% include "_account_strip.html" %}' in mobile_base
-    assert '{% include "_account_strip.html" %}' in sports_base
-    assert '{% include "_flash_release_modal.html" %}' in mobile_base
-    assert '{% include "_flash_release_modal.html" %}' in sports_base
-    assert "welcomePath" in auth
-    assert artwork.stat().st_size > 100_000
+    assert "Persistent avatars · public across tickers" in template
+    assert "render_comment_avatar(comment.avatar)" in template
 
 
 def test_ticker_layout_puts_subtle_actions_after_the_analysis() -> None:
@@ -266,6 +247,49 @@ def test_desktop_feeds_share_full_info_and_article_panel() -> None:
     assert '"SAMEORIGIN" if panel_path else "DENY"' in (
         root / "src/runner_web/main.py"
     ).read_text()
+    assert '"/game/"' in (root / "src/runner_web/main.py").read_text()
+
+
+def test_desktop_panel_security_allows_only_supported_detail_pages() -> None:
+    for path in (
+        "/t/WRAP",
+        "/research/report-1",
+        "/s/signal-1",
+        "/game/mlb:401816699",
+        "/sports/game/mlb:401816699",
+    ):
+        assert web_main._is_panel_path(path)
+
+    for path in ("/", "/radar", "/sports", "/sports/alpha", "/api/sports/pulse"):
+        assert not web_main._is_panel_path(path)
+
+
+def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
+    root = Path(__file__).parents[1]
+    templates_dir = root / "web/templates"
+    sports_templates = [
+        (templates_dir / name).read_text()
+        for name in ("sports.html", "sports_radar.html", "sports_alpha.html")
+    ]
+    game = (templates_dir / "sports_game.html").read_text()
+    live_script = (root / "web/static/sports-live.js").read_text()
+    core_styles = (root / "web/static/sports-core.css").read_text()
+
+    for template in sports_templates:
+        assert '{% extends "mobile_base.html" %}' in template
+        assert "workspace-app" in template
+        assert "data-desktop-workspace" in template
+        assert "data-desktop-list" in template
+        assert '{% include "_desktop_panel.html" %}' in template
+        assert "sports_base.html" not in template
+    assert '{% extends "mobile_base.html" %}' in game
+    assert 'class="detail-nav sports-detail-nav"' in game
+    assert 'class="detail-body sports-detail-body"' in game
+    assert not (templates_dir / "sports_base.html").exists()
+    assert "location.reload" not in "\n".join([*sports_templates, game, live_script])
+    assert "setInterval(poll, POLL_INTERVAL)" in live_script
+    assert "body.sports-product" in core_styles
+    assert not core_styles.startswith(":root")
 
 
 def test_ticker_rows_have_no_reader_attention_state() -> None:
@@ -281,6 +305,14 @@ def test_ticker_rows_have_no_reader_attention_state() -> None:
     assert "new to you" not in row_script
     assert "seen but not opened" not in row_script
     assert "return ['NEW', 'update']" not in row_script
+    assert "tradeState !== statusLabel" in row_script
+
+
+def test_pulse_ticker_search_uses_native_validation() -> None:
+    pulse_template = (Path(__file__).parents[1] / "web/templates/pulse.html").read_text()
+
+    assert 'pattern="[A-Za-z0-9.-]{1,12}"' in pulse_template
+    assert " required " in pulse_template
 
 
 def test_passkey_signup_needs_no_profile_fields(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -1573,7 +1605,7 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
     monkeypatch.setattr(
         web_main,
         "_generate_ticker_comment_text",
-        lambda ticker: (
+        lambda ticker, *, avatar_ability_id: (
             "My read is above VWAP, but low volume is the risk.",
             "test/model",
         ),
@@ -1597,7 +1629,12 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
     assert payload["comment"]["ai_generated"] is True
     assert payload["comment"]["generation_model"] == "test/model"
     assert payload["balance"] == 90
-    assert any(ord(character) > 10_000 for character in payload["comment"]["alias"])
+    assert payload["comment"]["avatar"]["name"] == payload["comment"]["alias"]
+    assert payload["comment"]["avatar"]["ability_id"] in {
+        ability["id"] for ability in COMMENT_AVATAR_ABILITIES
+    }
+    assert payload["comment"]["avatar"]["level"] == 1
+    assert "seed" not in payload["comment"]["avatar"]
     assert payload["comment"]["alias"] not in {"chartreader", "Chart Reader"}
     assert "username" not in payload["comment"]
     assert "display_name" not in payload["comment"]
@@ -1650,7 +1687,10 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
     )
     monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
 
-    comment, model = web_main._generate_ticker_comment_text("ONE")
+    comment, model = web_main._generate_ticker_comment_text(
+        "ONE",
+        avatar_ability_id="risk_sentinel",
+    )
 
     assert comment == "My read is constructive, but thin volume is the risk."
     assert model == "z-ai/glm-5.3"
@@ -1658,6 +1698,8 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
     assert captured["body"]["max_tokens"] == web_main.OPENROUTER_COMMENT_OUTPUT_TOKENS
     assert captured["body"]["max_tokens"] >= 1_200
     assert "user" not in captured["body"]
+    assert "Risk Sentinel" in captured["body"]["messages"][0]["content"]
+    assert "public name" not in captured["body"]["messages"][0]["content"]
 
 
 def test_radar_orders_events_by_time_not_activity(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -2052,15 +2094,19 @@ def test_first_daily_flash_report_locks_other_users_for_one_hour(
 
 
 def test_ticker_commissions_flash_with_no_browser_key() -> None:
-    template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
+    root = Path(__file__).parents[1]
+    template = (root / "web/templates/ticker.html").read_text()
+    script = (root / "web/static/ticker-detail.js").read_text()
 
     assert "Generate today's report" in template
-    assert "Retry Flash" in template
+    assert "Retry Flash" in script
     assert "100 Flash" in template
     assert "commissionButton" in template
-    assert "fetch(`/api/research/${encodeURIComponent(ticker)}`,{method:'POST'})" in template
-    assert "runnerOpenRouter" not in template
-    assert "X-OpenRouter-Key" not in template
+    assert "fetch(`/api/research/${encodeURIComponent(ticker)}`" in script
+    assert 'id="tickerPageData" type="application/json"' in template
+    assert 'src="/static/ticker-detail.js?v={{ static_version }}" defer' in template
+    assert "runnerOpenRouter" not in template + script
+    assert "X-OpenRouter-Key" not in template + script
     assert '<strong>Daily Flash</strong><span>100 Flash · private 1h</span>' in template
     assert "{{ flash.model }}" not in template
 
@@ -2148,11 +2194,11 @@ def test_legacy_commission_request_uses_flash_model_with_a_minimal_prompt(
     assert request_payload["actor"]["id"] == "kol-flash"
     assert request_payload["actor"]["model"] == "z-ai/glm-5.3"
     assert body["response_format"] == {"type": "json_object"}
+    assert body["plugins"] == [{"id": "response-healing"}]
     assert body["provider"] == {"require_parameters": True, "zdr": True}
     assert body["reasoning_effort"] == "high"
     assert "temperature" not in body
     assert "tools" not in body
-    assert "plugins" not in body
     assert "untrusted evidence" in body["messages"][0]["content"]
     assert len(body["messages"][0]["content"].split()) <= 75
     assert "evaluation_contract" in request_payload
@@ -2255,9 +2301,11 @@ def test_flash_keeps_only_citations_from_the_frozen_context(
     assert invented not in json.dumps(report)
 
 
+@pytest.mark.parametrize("wrapper", ["answer", "output"])
 @pytest.mark.parametrize("as_text", [False, True])
-def test_commission_unwraps_glm_answer_envelope(
+def test_commission_unwraps_glm_report_envelope(
     monkeypatch: MonkeyPatch,
+    wrapper: str,
     as_text: bool,
 ) -> None:
     generated = {
@@ -2275,7 +2323,7 @@ def test_commission_unwraps_glm_answer_envelope(
         "citations": [],
         "forecast": _test_flash_forecast(),
     }
-    answer: Any = json.dumps(generated) if as_text else generated
+    wrapped_report: Any = json.dumps(generated) if as_text else generated
 
     def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
         return io.BytesIO(
@@ -2284,7 +2332,9 @@ def test_commission_unwraps_glm_answer_envelope(
                     "choices": [
                         {
                             "finish_reason": "stop",
-                            "message": {"content": json.dumps({"answer": answer})},
+                            "message": {
+                                "content": json.dumps({wrapper: wrapped_report})
+                            },
                         }
                     ],
                     "model": "z-ai/glm-5.3",

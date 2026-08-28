@@ -1,10 +1,19 @@
-{% extends "sports_base.html" %}
+{% extends "mobile_base.html" %}
+{% block app_class %}detail-app sports-game-app{% endblock %}
 {% block title %}{{ event.away_abbreviation }} at {{ event.home_abbreviation }} · RATi Sports{% endblock %}
+{% block product_head %}{% include "_sports_styles.html" %}{% endblock %}
 {% block content %}
 {% set odds = event.odds %}
+{% set quote = event.paper_odds %}
+{% set market = event.market_comparison %}
 {% set prediction = event.prediction %}
 {% set receipt = event.receipt %}
-<a class="sports-back" href="{{ sports_path_prefix or '' }}/">← Back to Pulse</a>
+<header class="detail-nav sports-detail-nav">
+  <a href="{{ sports_path_prefix or '' }}/" aria-label="Back to Pulse">‹</a>
+  <strong>{{ event.away_abbreviation }} at {{ event.home_abbreviation }}</strong>
+  <span aria-hidden="true"></span>
+</header>
+<main class="detail-body sports-detail-body">
 <article class="game-detail">
   <header class="match-strip">
     <div class="match-strip-meta">
@@ -16,22 +25,93 @@
       <div>
         <small>{{ event.away_abbreviation }} · {{ event.away_record or 'No record' }}</small>
         <strong>{{ event.away_team_name }}</strong>
-        <span>{% if event.completed %}{{ event.away_score|int }}{% elif odds and odds.away_odds is not none %}{{ '%+d'|format(odds.away_odds) }}{% else %}—{% endif %}</span>
+        <span>{% if event.completed %}{{ event.away_score|int }}{% elif quote and quote.away_odds is not none %}{{ '%+d'|format(quote.away_odds) }}{% else %}—{% endif %}</span>
       </div>
       <i>at</i>
       <div>
         <small>{{ event.home_abbreviation }} · {{ event.home_record or 'No record' }}</small>
         <strong>{{ event.home_team_name }}</strong>
-        <span>{% if event.completed %}{{ event.home_score|int }}{% elif odds and odds.home_odds is not none %}{{ '%+d'|format(odds.home_odds) }}{% else %}—{% endif %}</span>
+        <span>{% if event.completed %}{{ event.home_score|int }}{% elif quote and quote.home_odds is not none %}{{ '%+d'|format(quote.home_odds) }}{% else %}—{% endif %}</span>
       </div>
     </div>
+    {% if quote %}
+    <div class="match-strip-source">
+      <span>{{ quote.source_label }} moneyline</span>
+      <span>Updated <time data-local-time="{{ quote.fresh_at or quote.observed_at }}">{{ (quote.fresh_at or quote.observed_at)[:16]|replace('T',' ') }} UTC</time></span>
+    </div>
+    {% endif %}
   </header>
 
-  <section class="game-flash" aria-labelledby="gameFlashTitle">
+  {% include "_sports_game_decision.html" %}
+
+  {% if market and market.books %}
+  <details class="game-disclosure">
+    <summary><span><b>MARKET</b><strong>Consensus and Bovada</strong></span><small>{{ market.book_count }} fresh books{% if market.bovada and market.bovada.divergence_pct is not none %} · {{ market.bovada.divergence_team }} {{ '%+.1f'|format(market.bovada.divergence_pct) }} pp at Bovada{% endif %}</small><i aria-hidden="true">+</i></summary>
+    <div class="game-disclosure-body">
+  <section class="market-compare">
+    <header>
+      <div><span>MULTI-BOOK MARKET</span><h2>Consensus and Bovada</h2></div>
+      <small>{{ market.book_count }} fresh book{% if market.book_count != 1 %}s{% endif %} · no-vig probabilities</small>
+    </header>
+    {% if not market.enough_books %}
+    <p class="market-thin">A market signal needs at least {{ market.minimum_book_count }} fresh, complete sportsbook lines.</p>
+    {% endif %}
+    <div class="market-summary">
+      <div>
+        <small>MARKET CONSENSUS</small>
+        {% if market.enough_books %}<strong>{{ event.away_abbreviation }} {{ '%.1f'|format(market.away_probability_pct) }}% · {{ event.home_abbreviation }} {{ '%.1f'|format(market.home_probability_pct) }}%</strong>{% else %}<strong>Building</strong>{% endif %}
+        <span>Median across {{ market.book_count }} fresh books</span>
+      </div>
+      <div class="{% if market.bovada and market.bovada.material %}market-outlier{% endif %}">
+        <small>BOVADA DIVERGENCE</small>
+        {% if market.bovada and market.bovada.divergence_pct is not none %}
+          <strong>{{ market.bovada.divergence_team }} +{{ '%.1f'|format(market.bovada.divergence_pct) }} pp</strong>
+          <span>Versus {{ market.bovada.comparison_book_count }} other books{% if not market.bovada.material %} · within normal range{% endif %}</span>
+        {% elif market.bovada %}<strong>No comparison yet</strong><span>More non-Bovada lines are needed</span>
+        {% else %}<strong>Unavailable</strong><span>No fresh Bovada quote</span>{% endif %}
+      </div>
+      <div>
+        <small>BEST DISPLAYED PRICE</small>
+        {% if market.best_away and market.best_home %}
+          <strong>{{ event.away_abbreviation }} {{ '%+d'|format(market.best_away.away_odds) }} · {{ event.home_abbreviation }} {{ '%+d'|format(market.best_home.home_odds) }}</strong>
+          <span>{{ market.best_away.sportsbook }} · {{ market.best_home.sportsbook }}</span>
+        {% else %}<strong>Unavailable</strong><span>Waiting for complete lines</span>{% endif %}
+      </div>
+    </div>
+    <div class="market-books" role="table" aria-label="Fresh sportsbook moneylines">
+      <div role="row"><b role="columnheader">Sportsbook</b><b role="columnheader">{{ event.away_abbreviation }}</b><b role="columnheader">{{ event.home_abbreviation }}</b><b role="columnheader">vs consensus</b></div>
+      {% for book in market.books %}
+      <div role="row" class="{% if book.sportsbook_key == 'bovada' %}bovada-row{% endif %}">
+        <span role="cell">{{ book.sportsbook }}</span>
+        <strong role="cell">{{ '%+d'|format(book.away_odds) }}{% if book.best_away %}<i> BEST</i>{% endif %}</strong>
+        <strong role="cell">{{ '%+d'|format(book.home_odds) }}{% if book.best_home %}<i> BEST</i>{% endif %}</strong>
+        <span role="cell">{% if book.home_vs_consensus_pct is not none %}{{ event.home_abbreviation }} {{ '%+.1f'|format(book.home_vs_consensus_pct) }} pp{% else %}—{% endif %}</span>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="market-note">Divergence shows a pricing difference, not a recommended bet. Stale and incomplete lines are excluded.</p>
+  </section>
+    </div>
+  </details>
+  {% endif %}
+
+  <section class="game-flash game-flash-compact" aria-labelledby="gameFlashTitle">
     <div>
-      <span>AI RESEARCH</span>
+      <span>AI FORECAST · SEPARATE AND SCORED</span>
       <h2 id="gameFlashTitle">Daily Flash</h2>
-      <p>One source-bound report for this matchup: winner, odds, team form, relevant players, and news.</p>
+      <p>One source-bound, scored AI forecast for this future matchup. It stays separate from the season-record baseline above.</p>
+      {% if latest_commission and not latest_commission.locked and latest_commission.sports_forecast %}
+      {% set ai_forecast = latest_commission.sports_forecast %}
+      <div class="game-flash-prediction">
+        <small>SEPARATE AI FORECAST · #{{ latest_commission.actor.ladder_position }} OF {{ latest_commission.actor.ladder_size }}</small>
+        {% if ai_forecast.selection == 'pass' %}
+        <strong>PASS</strong><b>No winner call</b>
+        {% else %}
+        <strong>{{ ai_forecast.selected_abbreviation }} {{ '%.0f'|format(ai_forecast.selected_probability * 100) }}%</strong><b>{{ ai_forecast.selected_team }}</b>
+        {% endif %}
+        <em>{{ 'Agrees with' if ai_forecast.agrees_with_baseline else 'Differs from' }} {{ prediction.model_version }} · {{ latest_commission.actor.model_label }}</em>
+      </div>
+      {% endif %}
     </div>
     <div class="game-flash-action">
       {% if latest_commission and latest_commission.locked %}
@@ -43,13 +123,16 @@
       {% elif user %}
       <button id="commissionButton" type="button"><strong>Generate report</strong><small>100 Flash · private 1h</small></button>
       {% else %}
-      <a href="/login?next=/game/{{ event.id }}"><strong>Log in for Flash</strong><small>100 Flash · private 1h</small></a>
+      <a href="/login?next={{ sports_path_prefix or '' }}/game/{{ event.id }}"><strong>Log in for Flash</strong><small>100 Flash · private 1h</small></a>
       {% endif %}
       <p id="commissionStatus" role="status"></p>
     </div>
   </section>
 
   {% set game_context = event.context %}
+  <details class="game-disclosure">
+    <summary><span><b>FORM</b><strong>{{ game_context.headline }}</strong></span><small>{% if game_context.back_to_back %}Back-to-back · {% endif %}Context only, not a model input</small><i aria-hidden="true">+</i></summary>
+    <div class="game-disclosure-body">
   <section class="series-context">
     <header>
       <div>
@@ -113,12 +196,17 @@
     </div>
     <p class="context-note">Series and recent form are context only; this baseline model still uses season records and market odds.</p>
   </section>
+    </div>
+  </details>
 
   {% if event.matchup_players %}
+  <details class="game-disclosure">
+    <summary><span><b>ROSTER</b><strong>Last stored team rosters</strong></span><small>Not confirmed for this game</small><i aria-hidden="true">+</i></summary>
+    <div class="game-disclosure-body">
   <section class="matchup-players">
     <header>
-      <div><span>MATCHUP STATS</span><h2>Players relevant to this game</h2></div>
-      <small>Latest stored roster for each team · no global player list</small>
+      <div><span>LAST STORED GAME</span><h2>Previous team rosters</h2></div>
+      <small>Not a confirmed lineup or availability report</small>
     </header>
     <div class="matchup-player-grid">
       {% for team in event.matchup_players %}
@@ -126,74 +214,24 @@
         <header><strong>{{ team.team_abbreviation }}</strong><span>{{ team.record }}</span></header>
         {% for player in team.players %}
         <article>
-          <div><strong>{{ player.name }}</strong><small>{{ player.position }}{% if player.starter %} · latest starter{% endif %}</small></div>
-          <span><b>{{ player.wins }}–{{ player.losses }}</b><small>team record in {{ player.games }} appearance{{ '' if player.games == 1 else 's' }}</small></span>
+          <div><strong>{{ player.name }}</strong><small>{{ player.position }}{% if player.starter %} · started last stored game{% endif %}</small></div>
           {% if player.last_stats_label %}<p>{{ player.last_stats_label }}</p>{% endif %}
         </article>
         {% else %}<p>No stored player appearances for this team yet.</p>{% endfor %}
       </section>
       {% endfor %}
     </div>
-    <p class="context-note">Appearance records show the team result when the player appeared. They are context, not individual skill ratings or confirmed lineups.</p>
+    <p class="context-note">These names came from the last stored team roster. They are not confirmed for this matchup and are not used by the baseline.</p>
   </section>
+    </div>
+  </details>
   {% endif %}
 
   {% if prediction %}
-    {% if prediction.selection != 'pass' %}
-      {% set pick_name = event[prediction.selection ~ '_team_name'] %}
-      {% set pick_code = event[prediction.selection ~ '_abbreviation'] %}
-      {% set pick_probability = prediction[prediction.selection ~ '_probability'] %}
-      {% set pick_market = prediction[prediction.selection ~ '_market_probability'] %}
-      {% set pick_odds = odds[prediction.selection ~ '_odds'] if odds else none %}
-      {% set pick_open_odds = odds[prediction.selection ~ '_open_odds'] if odds else none %}
-    {% endif %}
-  <section class="decision-hero decision-board {{ prediction.signal|replace(' ','-') }}">
-    <div class="decision-kicker">
-      <strong>MODEL CALL</strong>
-      <span>{{ prediction.model_version }} · {{ prediction.quality }} · score {{ event.projected_score_basis }}</span>
-    </div>
-    <div class="decision-columns">
-      <div class="decision-model-call">
-        <span class="winner-coin winner-coin-{{ event.model_winner_coin_tone }}" aria-hidden="true"><b>{{ event.model_winner_abbreviation[:3] }}</b><i></i></span>
-        <div>
-          <small>PROJECTED WINNER</small>
-          <h1 class="decision-team">{{ event.model_winner_team_name }}</h1>
-          <strong class="decision-probability">{{ '%.1f'|format(event.model_winner_probability_pct) }}%</strong>
-        </div>
-        <div class="decision-score">
-          <small>ESTIMATED SCORE</small>
-          <strong>{{ event.away_abbreviation }} {{ event.projected_away_score_display }} <i>–</i> {{ event.home_abbreviation }} {{ event.projected_home_score_display }}</strong>
-          <span>{{ event.projected_score_basis }}</span>
-        </div>
-      </div>
-      <div class="decision-value-call">
-        <small>VALUE READ</small>
-        {% if prediction.selection == 'pass' %}
-          <strong>PASS</strong>
-          <p>The market is too close to the baseline model to support a side.</p>
-        {% else %}
-          <strong>{{ pick_code }} {{ prediction.signal|upper }}</strong>
-          <p>{{ pick_name }} is {{ '%.1f'|format(pick_probability * 100) }}% in the model versus {{ '%.1f'|format(pick_market * 100) if pick_market is not none else '—' }}% in the no-vig market.</p>
-          <div class="value-numbers">
-            <span><small>EDGE</small><b>{{ '%+.1f'|format(prediction.edge_pct) }} pp</b></span>
-            <span><small>PRICE</small><b>{% if pick_odds is not none %}{{ '%+d'|format(pick_odds) }}{% else %}—{% endif %}</b>{% if pick_open_odds is not none %}<i>Open {{ '%+d'|format(pick_open_odds) }}</i>{% endif %}</span>
-          </div>
-        {% endif %}
-      </div>
-    </div>
-    <p class="decision-summary">Projected winner answers who the model expects to win. Value read answers which market price may be too low. They can point to different teams.</p>
-    {% if event.edge_history %}
-    <div class="decision-movement">
-      <span>{{ event.edge_history.label }}</span>
-      <svg class="edge-spark" viewBox="0 0 92 24" role="img" aria-label="{{ event.edge_history.label }}" preserveAspectRatio="none">
-        <line class="edge-zero" x1="1" y1="12" x2="91" y2="12"></line>
-        {% if event.edge_history.points|length > 1 %}<polyline points="{{ event.edge_history.plot_points }}"></polyline>{% else %}<circle cx="46" cy="{{ event.edge_history.dot_y }}" r="2.2"></circle>{% endif %}
-      </svg>
-    </div>
-    {% endif %}
-  </section>
-
   {% if receipt %}
+  <details class="game-disclosure">
+    <summary><span><b>RECEIPT</b><strong>Frozen prediction and market record</strong></span><small>{{ receipt.status_label }} · {{ receipt.id }}</small><i aria-hidden="true">+</i></summary>
+    <div class="game-disclosure-body">
   <section class="prediction-receipt">
     <header>
       <div><span>{{ receipt.status_label }}</span><h2>Prediction receipt</h2></div>
@@ -223,8 +261,13 @@
     </div>
     <p>This record uses the final model snapshot before the game started. Later news and results cannot rewrite it.</p>
   </section>
+    </div>
+  </details>
   {% endif %}
 
+  <details class="game-disclosure">
+    <summary><span><b>NEWS</b><strong>Source-linked team news</strong></span><small>{{ event.news|length }} headline{% if event.news|length != 1 %}s{% endif %} · not a model input</small><i aria-hidden="true">+</i></summary>
+    <div class="game-disclosure-body">
   <section class="match-news">
     <header>
       <div><span>LIVE CONTEXT</span><h2>Team news</h2></div>
@@ -247,41 +290,53 @@
       {% endfor %}
     </div>
   </section>
+    </div>
+  </details>
 
   {% endif %}
 
   <section class="paper-pick">
     <span>PUBLIC RECEIPT</span>
     <h2>Make a paper pick</h2>
-    <p>The current moneyline and time will be frozen. A winning Call earns {{ winning_call_reward }} Flash. This does not place a real bet.</p>
+    <p>The current{% if quote %} {{ quote.source_label }}{% endif %} moneyline and time will be frozen. Winning rewards scale with the frozen odds, up to {{ sports_call_reward_cap }} Flash, so a heavy favorite does not pay like an underdog. This does not place a real bet.</p>
     {% if not user %}
       <a href="/login">Log in to make a paper pick</a>
-    {% elif event.status != 'pre' or not odds %}
+    {% elif event.status != 'pre' or not quote %}
       <strong>Picks are closed for this game.</strong>
     {% else %}
       <div class="pick-buttons">
-        <button type="button" data-pick="away">{{ event.away_abbreviation }} {% if odds.away_odds is not none %}{{ '%+d'|format(odds.away_odds) }}{% endif %}</button>
-        <button type="button" data-pick="home">{{ event.home_abbreviation }} {% if odds.home_odds is not none %}{{ '%+d'|format(odds.home_odds) }}{% endif %}</button>
+        <button type="button" data-pick="away">{{ event.away_abbreviation }} {% if quote.away_odds is not none %}{{ '%+d'|format(quote.away_odds) }}{% endif %}</button>
+        <button type="button" data-pick="home">{{ event.home_abbreviation }} {% if quote.home_odds is not none %}{{ '%+d'|format(quote.home_odds) }}{% endif %}</button>
       </div>
       <small id="pickStatus"></small>
     {% endif %}
   </section>
 
+  <details class="game-disclosure">
+    <summary><span><b>PUBLIC CALLS</b><strong>Paper picks</strong></span><small>{{ event.picks|length }} recorded</small><i aria-hidden="true">+</i></summary>
+    <div class="game-disclosure-body">
   <section class="public-picks">
-    <h3>Public paper picks</h3>
     {% for pick in event.picks %}
-      <div><strong>{{ pick.caller_handle }}</strong><span>{{ event[pick.selection ~ '_abbreviation'] }} {{ '%+d'|format(pick.american_odds) }} · {{ pick.status }}{% if pick.result %} / {{ pick.result }}{% endif %}{% if pick.result == 'win' %} · +{{ winning_call_reward }} Flash{% endif %}</span></div>
+      <div><strong>{{ pick.caller_handle }}</strong><span>{{ event[pick.selection ~ '_abbreviation'] }} {{ '%+d'|format(pick.american_odds) if pick.american_odds is not none else 'no frozen line' }} · {{ pick.status }}{% if pick.result %} / {{ pick.result }}{% endif %}{% if pick.result == 'win' and pick.reward_flash %} · +{{ pick.reward_flash }} Flash{% endif %}</span></div>
     {% else %}<p>No public picks yet.</p>{% endfor %}
   </section>
+    </div>
+  </details>
 
+  <details class="game-disclosure">
+    <summary><span><b>MARKET HISTORY</b><strong>Pregame moneyline timeline</strong></span><small>{{ event.odds_history|length }} snapshot{% if event.odds_history|length != 1 %}s{% endif %}</small><i aria-hidden="true">+</i></summary>
+    <div class="game-disclosure-body">
   <section class="odds-receipt">
     <h3>Pregame market timeline</h3>
     {% for item in event.odds_history %}
-      <div><time data-local-time="{{ item.observed_at }}">{{ item.observed_at[:16]|replace('T',' ') }} UTC</time><span>{{ event.away_abbreviation }} {{ '%+d'|format(item.away_odds) if item.away_odds is not none else '—' }}</span><span>{{ event.home_abbreviation }} {{ '%+d'|format(item.home_odds) if item.home_odds is not none else '—' }}</span><small>{% if loop.first %}OPEN · {% elif loop.last %}{{ receipt.market_label|upper if receipt else 'LATEST' }} · {% endif %}{{ item.sportsbook }}</small></div>
+      <div><time data-local-time="{{ item.observed_at }}">{{ item.observed_at[:16]|replace('T',' ') }} UTC</time><span>{{ event.away_abbreviation }} {{ '%+d'|format(item.away_odds) if item.away_odds is not none else '—' }}</span><span>{{ event.home_abbreviation }} {{ '%+d'|format(item.home_odds) if item.home_odds is not none else '—' }}</span><small>{% if loop.first %}OPEN · {% elif loop.last %}{{ receipt.market_label|upper if receipt else 'LATEST' }} · {% endif %}{{ item.source_label }}</small></div>
     {% else %}<p>No moneyline snapshots are available.</p>{% endfor %}
   </section>
+    </div>
+  </details>
   <a class="source-link" href="{{ event.source_url }}" rel="nofollow noreferrer">View game source ↗</a>
 </article>
+</main>
 {% endblock %}
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
@@ -295,7 +350,7 @@
     const status=document.getElementById('pickStatus');button.disabled=true;status.textContent='Freezing the receipt…';
     const response=await fetch('/api/picks/{{ event.id }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({selection:button.dataset.pick})});
     const payload=await response.json();
-    if(response.ok){status.textContent='Paper pick recorded.';setTimeout(()=>location.reload(),500);}
+    if(response.ok){status.textContent='Paper pick recorded.';document.querySelectorAll('[data-pick]').forEach(item=>{item.disabled=true;});}
     else{button.disabled=false;status.textContent=payload.detail||'Could not record the pick.';}
   }));
   const commissionButton=document.getElementById('commissionButton');
@@ -308,10 +363,9 @@
   }
   if(commissionButton?.dataset.jobId)pollFlash(commissionButton.dataset.jobId);
   commissionButton?.addEventListener('click',async()=>{
-    if(window.RatiFlash&&!window.RatiFlash.canSpend(100)){commissionStatus.textContent='Claim Flash to continue.';return;}
     commissionButton.disabled=true;commissionButton.innerHTML='<strong>Starting…</strong><small>Building the game report</small>';commissionStatus.textContent='Sending the report to the queue…';
-    try{const response=await fetch('/api/sports/games/{{ event.id }}/research',{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||result.error||'Could not start Flash');if(Number.isFinite(Number(result.balance)))window.RatiFlash?.updateBalance(result.balance);if(result.status==='complete'&&result.url){location.href=result.url;return;}commissionButton.innerHTML='<strong>Researching…</strong><small>Building the game report</small>';pollFlash(result.job_id);}
-    catch(error){commissionButton.disabled=false;commissionButton.innerHTML='<strong>Retry Flash</strong><small>100 Flash</small>';commissionStatus.textContent=window.RatiFlash?.handleInsufficient(error.message,100)?'Claim Flash to continue.':(error.message||'Could not start Flash');}
+    try{const response=await fetch('/api/sports/games/{{ event.id }}/research',{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||result.error||'Could not start Flash');if(Number.isFinite(Number(result.balance)))document.querySelectorAll('[data-flash-balance]').forEach(item=>{item.textContent=result.balance;});if(result.status==='complete'&&result.url){location.href=result.url;return;}commissionButton.innerHTML='<strong>Researching…</strong><small>Building the game report</small>';pollFlash(result.job_id);}
+    catch(error){commissionButton.disabled=false;commissionButton.innerHTML='<strong>Retry Flash</strong><small>100 Flash</small>';commissionStatus.textContent=error.message||'Could not start Flash';}
   });
 </script>
 {% endblock %}

@@ -43,7 +43,21 @@
   </section>
   <p class="research-summary">{{ report.summary }}</p>
 
-  {% if report.subject_type == 'ticker' and report.forecast_record %}
+  {% if report.subject_type == 'sports_game' and report.sports_forecast %}
+  {% set forecast = report.sports_forecast %}
+  <section class="flash-forecast-receipt state-{{ forecast.result or forecast.status or 'open' }}">
+    <header><span>AI PREDICTION · {{ forecast.contract_version }}</span><b>{{ forecast.result|upper if forecast.result else 'FROZEN PREGAME' }}</b></header>
+    {% if forecast.selection == 'pass' %}
+    <h2>Pass · no winner call</h2>
+    {% else %}
+    <h2>{{ forecast.selected_abbreviation }} · {{ '%.0f'|format(forecast.selected_probability * 100) }}% win probability</h2>
+    {% endif %}
+    <p>{{ forecast.reason }}</p>
+    <small>{{ report.actor.display_name }} · {{ report.actor.model_label }} · #{{ report.actor.ladder_position }} of {{ report.actor.ladder_size }} · {{ forecast.confidence }} confidence</small>
+    {% if forecast.brier_score is not none %}<strong class="{{ 'up' if forecast.result == 'win' else 'down' }}">Brier {{ '%.3f'|format(forecast.brier_score) }}</strong>{% endif %}
+    <footer>This AI prediction is separate from the team-form baseline. Its probability is scored after the final result so future models can compete on the same contract.</footer>
+  </section>
+  {% elif report.subject_type == 'ticker' and report.forecast_record %}
   {% set forecast = report.forecast_record %}
   <section class="flash-forecast-receipt state-{{ forecast.classification or forecast.status }}">
     <header><span>FORECAST · <a href="/flash/record">{{ forecast.version_label }}</a></span><b>{{ forecast.classification|upper if forecast.classification else forecast.status|replace('_', ' ')|upper }}</b></header>

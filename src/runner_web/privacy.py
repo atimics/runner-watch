@@ -129,6 +129,14 @@ def export_user_data(user_id: str) -> dict[str, Any]:
                 (user_id,),
                 order_by="created_at",
             ),
+            "comment_avatar": _rows(
+                database,
+                tables,
+                "comment_avatars",
+                "user_id=?",
+                (user_id,),
+                order_by="created_at",
+            ),
             "public_thread_aliases": _rows(
                 database,
                 tables,
@@ -203,6 +211,9 @@ def export_user_data(user_id: str) -> dict[str, Any]:
                 "research_stage_runs", "commission_id", commission_ids
             ),
             "flash_forecasts": flash_forecasts,
+            "sports_ai_forecasts": related(
+                "sports_ai_forecasts", "report_id", commission_ids
+            ),
             "flash_forecast_outcomes": related(
                 "flash_forecast_outcomes", "forecast_id", forecast_ids
             ),
@@ -337,6 +348,7 @@ def delete_user_data(user_id: str) -> dict[str, Any]:
             )
         delete("thesis_cases", "user_id=?", (user_id,))
         delete("ticker_comments", "user_id=?", (user_id,))
+        delete("comment_avatars", "user_id=?", (user_id,))
         delete("public_aliases", "user_id=?", (user_id,))
         delete("comment_pseudonyms", "user_id=?", (user_id,))
         delete("community_calls", "user_id=?", (user_id,))

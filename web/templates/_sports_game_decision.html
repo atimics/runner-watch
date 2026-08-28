@@ -1,0 +1,60 @@
+{% if prediction %}
+  {% set model_record = event.model_record %}
+  {% set sample = model_record.sample %}
+  {% if prediction.selection != 'pass' %}
+    {% set pick_name = event[prediction.selection ~ '_team_name'] %}
+    {% set pick_code = event[prediction.selection ~ '_abbreviation'] %}
+    {% set pick_probability = prediction[prediction.selection ~ '_probability'] %}
+    {% set pick_market = prediction[prediction.selection ~ '_market_probability'] %}
+    {% set pick_odds = quote[prediction.selection ~ '_odds'] if quote else none %}
+    {% set pick_open_odds = quote[prediction.selection ~ '_open_odds'] if quote and (prediction.selection ~ '_open_odds') in quote else none %}
+  {% endif %}
+  <section class="decision-hero decision-board {{ prediction.signal|replace(' ','-') }}">
+    <div class="decision-kicker">
+      <strong>SEASON-RECORD BASELINE</strong>
+      <span>{{ sample.label }} · {{ model_record.games }}/{{ sample.target }} GRADED</span>
+    </div>
+    <div class="decision-columns">
+      <div class="decision-model-call">
+        <span class="winner-coin winner-coin-{{ event.model_winner_coin_tone }}" aria-hidden="true"><b>{{ event.model_winner_abbreviation[:3] }}</b><i></i></span>
+        <div>
+          <small>BASELINE WINNER</small>
+          <h1 class="decision-team">{{ event.model_winner_team_name }}</h1>
+          <strong class="decision-probability">{{ '%.1f'|format(event.model_winner_probability_pct) }}%</strong>
+        </div>
+      </div>
+      <div class="decision-value-call">
+        <small>MARKET GAP</small>
+        {% if prediction.selection == 'pass' %}
+          <strong>PASS</strong>
+          <p>The fresh market is too close to this simple baseline to show a useful gap.</p>
+        {% else %}
+          <strong>{{ pick_code }} {{ prediction.signal|upper }}</strong>
+          <p>{{ pick_name }} is {{ '%.1f'|format(pick_probability * 100) }}% in the baseline versus {{ '%.1f'|format(pick_market * 100) if pick_market is not none else '—' }}% in the no-vig market.</p>
+          <div class="value-numbers">
+            <span><small>GAP</small><b>{{ '%+.1f'|format(prediction.edge_pct) }} pp</b></span>
+            <span><small>BOVADA</small><b>{% if pick_odds is not none %}{{ '%+d'|format(pick_odds) }}{% else %}—{% endif %}</b>{% if pick_open_odds is not none %}<i>Open {{ '%+d'|format(pick_open_odds) }}</i>{% endif %}</span>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+    <aside class="model-maturity" aria-label="Model maturity">
+      <div>
+        <strong>{{ 'EXPERIMENTAL' if sample.remaining else 'REVIEWABLE' }}</strong>
+        <span>{{ model_record.games }} of {{ sample.target }} predictions graded</span>
+      </div>
+      <p>{{ sample.message }}</p>
+      <i aria-hidden="true"><b style="width:{{ sample.progress_pct }}%"></b></i>
+    </aside>
+    <p class="decision-summary">This is a season-record baseline with a fixed home advantage. It does not use the form, roster, injury, or news sections below.</p>
+    {% if event.edge_history %}
+    <div class="decision-movement">
+      <span>{{ event.edge_history.label }}</span>
+      <svg class="edge-spark" viewBox="0 0 92 24" role="img" aria-label="{{ event.edge_history.label }}" preserveAspectRatio="none">
+        <line class="edge-zero" x1="1" y1="12" x2="91" y2="12"></line>
+        {% if event.edge_history.points|length > 1 %}<polyline points="{{ event.edge_history.plot_points }}"></polyline>{% else %}<circle cx="46" cy="{{ event.edge_history.dot_y }}" r="2.2"></circle>{% endif %}
+      </svg>
+    </div>
+    {% endif %}
+  </section>
+{% endif %}

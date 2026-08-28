@@ -107,6 +107,10 @@ def test_empty_flash_record_has_no_layout_gap(page: Page, monkeypatch) -> None:
     scorecard = page.locator("#kolScoreStrip")
     assert scorecard.is_hidden()
     assert scorecard.evaluate("element => element.getBoundingClientRect().height") == 0
+    assert "Today +4.2%" in page.locator('[data-ticker-row="AAA"] .quote').text_content()
+    assert page.evaluate(
+        "TickerRow.ago(new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString())"
+    ) == "3h ago"
     assert errors == []
 
 
@@ -148,7 +152,7 @@ def test_refresh_updates_flash_record_and_merges_new_ticker(page: Page, monkeypa
     page.evaluate("pollForUpdates()")
     assert page.locator("#kolScoreStrip").is_visible()
     assert "12 hits · 8 misses · 50% hit" in page.locator("[data-kol-stats]").text_content()
-    assert page.locator("[data-kol-pnl]").text_content() == "20 settled"
+    assert page.locator("[data-kol-pnl]").text_content() == "View record ›"
     page.locator("#pulseRefresh").click()
     assert page.locator('[data-ticker-row="BBB"]').count() == 1
     assert page.locator('[data-ticker-row="AAA"]').count() == 1

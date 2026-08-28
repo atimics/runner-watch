@@ -16,7 +16,7 @@
   function tick() {
     clocks.forEach(clock => {
       const remaining = (new Date(clock.dataset.nextAt).getTime() - Date.now()) / 1000;
-      clock.querySelector('[data-session-countdown]').textContent = `${clock.dataset.nextLabel} · ${duration(remaining)}`;
+      clock.querySelector('[data-session-countdown]').textContent = `${clock.dataset.nextLabel} in ${duration(remaining)}`;
     });
   }
 

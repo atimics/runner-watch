@@ -1,4 +1,5 @@
 {% extends "mobile_base.html" %}
+{% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
 {% block app_class %}workspace-app pulse-app{% endblock %}
 {% block title %}Pulse · RATi Runners{% endblock %}
 {% block content %}
@@ -7,30 +8,32 @@
     <header class="screen-head">
       <div><span class="rati-product">RATi RUNNERS</span><h1>Pulse</h1><span class="head-meta">Movement is only the first clue.</span></div>
       {% if user %}
-        <button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>
+        <button class="avatar-button" type="button" data-profile aria-label="Open {{ comment_avatar.name }} profile">{{ render_comment_avatar(comment_avatar) }}</button>
       {% else %}
         <a class="avatar-button signed-out" href="/login">Log in</a>
       {% endif %}
     </header>
     {% include "_market_clock.html" %}
+    <form class="pulse-search" id="pulseSearch" role="search">
+      <label for="pulseTickerSearch">Open a ticker</label>
+      <input id="pulseTickerSearch" name="ticker" type="search" inputmode="latin" autocomplete="off" maxlength="12" pattern="[A-Za-z0-9.-]{1,12}" required title="Enter a ticker using letters, numbers, a dot, or a dash" placeholder="Ticker, for example RKLB" aria-label="Ticker symbol">
+      <button type="submit">View ticker</button>
+    </form>
     {% set flash_record = pulse.flash_record %}
     <a class="kol-score-strip" id="kolScoreStrip" href="/flash/record" aria-label="Open the Flash forecast record"{% if not flash_record %} hidden{% endif %}>
       <span class="kol-avatar" data-kol-avatar aria-hidden="true">⚡</span>
       <span>
         <strong>
           <span data-kol-name>{{ flash_record.label if flash_record else '' }}</span>
-          <i class="flash-model-label" data-kol-model>{{ flash_record.model_label if flash_record else '' }}</i>
+          <i class="flash-model-label" data-kol-model>{% if flash_record %}Model: {{ flash_record.model_label }}{% endif %}</i>
         </strong>
         <small data-kol-stats>
           {% if flash_record %}
-            {{ flash_record.hits }} hits · {{ flash_record.misses }} misses ·
-            {% if flash_record.headline_rate_visible %}{{ '%.0f'|format(flash_record.hit_rate * 100) }}% hit{% else %}building record{% endif %}
+            {% if flash_record.settled %}{{ flash_record.hits }} hits · {{ flash_record.misses }} misses · {% if flash_record.headline_rate_visible %}{{ '%.0f'|format(flash_record.hit_rate * 100) }}% hit{% else %}{{ flash_record.settled }} settled{% endif %}{% else %}No settled forecasts yet · building record{% endif %}
           {% endif %}
         </small>
       </span>
-      <b data-kol-pnl>
-        {% if flash_record %}{{ flash_record.settled }} settled{% endif %}
-      </b>
+      <b data-kol-pnl>{% if flash_record %}View record ›{% endif %}</b>
     </a>
     <button class="pulse-refresh" id="pulseRefresh" type="button" aria-live="polite" hidden>1 new ticker</button>
 
@@ -56,6 +59,14 @@ let moreVisible = false;
 let polling = false;
 let pollCount = 0;
 let pendingPulse = null;
+const tickerSearch = document.getElementById('pulseSearch');
+
+tickerSearch.addEventListener('submit', event => {
+  event.preventDefault();
+  const ticker = new FormData(tickerSearch).get('ticker')?.toString().trim().toUpperCase();
+  if (!ticker || !/^[A-Z0-9.-]{1,12}$/.test(ticker)) return;
+  location.href = `/t/${encodeURIComponent(ticker)}`;
+});
 
 function tickerKey(row) {
   const ticker = String(row?.ticker || '').trim().toUpperCase();
@@ -84,14 +95,16 @@ function renderKolScorecard() {
     return;
   }
 
-  const rate = record.headline_rate_visible && record.hit_rate != null
-    ? `${(Number(record.hit_rate) * 100).toFixed(0)}% hit`
-    : 'building record';
   scorecard.querySelector('[data-kol-avatar]').textContent = '⚡';
   scorecard.querySelector('[data-kol-name]').textContent = record.label || 'Flash';
-  scorecard.querySelector('[data-kol-model]').textContent = record.model_label || '';
-  scorecard.querySelector('[data-kol-stats]').textContent = `${record.hits || 0} hits · ${record.misses || 0} misses · ${rate}`;
-  scorecard.querySelector('[data-kol-pnl]').textContent = `${record.settled || 0} settled`;
+  const rate = record.headline_rate_visible && record.hit_rate != null
+    ? `${(Number(record.hit_rate) * 100).toFixed(0)}% hit`
+    : `${record.settled} settled`;
+  scorecard.querySelector('[data-kol-model]').textContent = record.model_label ? `Model: ${record.model_label}` : '';
+  scorecard.querySelector('[data-kol-stats]').textContent = Number(record.settled)
+    ? `${record.hits || 0} hits · ${record.misses || 0} misses · ${rate}`
+    : 'No settled forecasts yet · building record';
+  scorecard.querySelector('[data-kol-pnl]').textContent = 'View record ›';
   scorecard.hidden = false;
 }
 

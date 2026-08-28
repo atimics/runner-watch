@@ -1,22 +1,11 @@
-{% extends "sports_base.html" %}
+{% extends "mobile_base.html" %}
+{% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
+{% block app_class %}workspace-app sports-radar-app{% endblock %}
 {% block title %}Radar · RATi Sports{% endblock %}
+{% block product_head %}{% include "_sports_styles.html" %}{% endblock %}
 {% block content %}
-<header class="sports-screen-head">
-  <div><span class="sports-eyebrow">LIVE CHANGES</span><h1>Radar</h1></div>
-  <p><strong>{{ radar.change_count }}</strong> material change{% if radar.change_count != 1 %}s{% endif %} across {{ radar.tracked_count }} tracked Pulse signals · refreshes every minute</p>
-</header>
-
-<nav class="league-tabs" aria-label="League filter">
-  <a class="{% if radar.league == 'all' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/radar?league=all">All</a>
-  {% for league in radar.leagues %}
-    <a class="{% if radar.league == league.key %}active{% endif %}" href="{{ sports_path_prefix or '' }}/radar?league={{ league.key }}">{{ league.name }}</a>
-  {% endfor %}
-</nav>
-
-<section class="radar-list" aria-label="Material sports changes">
-  {% for event in radar.events %}
-  {% set prediction = event.prediction %}
-  <a class="radar-card {{ event.radar_kind }}" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}">
+{% macro radar_card(event, compact=false) -%}
+  <a class="radar-card {{ event.radar_kind }}{% if compact %} radar-card-compact{% endif %}" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}">
     <span class="radar-mark"><b>{{ event.signal_abbreviation[:3] }}</b><small>{{ event.league|upper }}</small></span>
     <span class="radar-copy">
       <span><strong>{{ event.away_abbreviation }}</strong> at {{ event.home_abbreviation }} <b class="radar-kind">{{ event.radar_label }}</b></span>
@@ -34,24 +23,56 @@
     </span>
     <span class="game-chevron" aria-hidden="true">›</span>
   </a>
-  {% else %}
-  <div class="sports-empty radar-empty-state">
-    <span class="empty-radar" aria-hidden="true"></span>
-    <strong>No material change yet.</strong>
-    <p>Radar will light up when a Pulse signal moves by at least half a point or goes live.</p>
-    <a class="sports-empty-action" href="{{ sports_path_prefix or '' }}/">Back to Pulse</a>
-  </div>
-  {% endfor %}
-</section>
+{%- endmacro %}
 
-<p class="sports-source">Game state: ESPN. Moneyline movement may use the configured odds provider. Every change keeps its source timestamp.</p>
+<div class="desktop-workspace" data-desktop-workspace>
+  <section class="desktop-list-pane sports-feed-pane" data-desktop-list>
+    <header class="screen-head">
+      <div>
+        <span class="rati-product">RATi SPORTS</span>
+        <h1>Radar</h1>
+        <span class="head-meta"><b id="sportsRadarCount">{{ radar.display_count }}</b> changed matchup{% if radar.display_count != 1 %}s{% endif %} from {{ radar.change_count }} material change{% if radar.change_count != 1 %}s{% endif %} <i></i><span id="sportsRadarStatus">Live</span></span>
+      </div>
+      {% if user %}
+        <button class="avatar-button" type="button" data-profile aria-label="Open {{ comment_avatar.name }} profile">{{ render_comment_avatar(comment_avatar) }}</button>
+      {% else %}
+        <a class="avatar-button signed-out" href="/login">Log in</a>
+      {% endif %}
+    </header>
+
+    <nav class="league-tabs" aria-label="League filter">
+      <a class="{% if radar.league == 'all' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/radar?league=all">All</a>
+      {% for league in radar.leagues %}<a class="{% if radar.league == league.key %}active{% endif %}" href="{{ sports_path_prefix or '' }}/radar?league={{ league.key }}">{{ league.name }}</a>{% endfor %}
+    </nav>
+    <button class="pulse-refresh radar-refresh sports-live-refresh" id="sportsRadarRefresh" type="button" aria-live="polite" hidden>Radar updated</button>
+
+    <main class="list-section sports-list-section" aria-label="Material sports changes">
+      <div class="radar-list" id="sportsRadarList">
+        {% for event in radar.events %}
+          {{ radar_card(event) }}
+          {% if event.series_more_count %}
+          <details class="series-cluster radar-series-cluster">
+            <summary><span>{{ event.away_abbreviation }}–{{ event.home_abbreviation }} series</span><b>+{{ event.series_more_count }} related game{% if event.series_more_count != 1 %}s{% endif %}</b></summary>
+            <div class="series-games">{% for related in event.series_more %}{{ radar_card(related, true) }}{% endfor %}</div>
+          </details>
+          {% endif %}
+        {% else %}
+        <div class="sports-empty radar-empty-state"><span class="empty-radar" aria-hidden="true"></span><strong>No material change yet.</strong><p>Radar will light up when a Pulse signal moves by at least half a point or goes live.</p><a class="sports-empty-action" href="{{ sports_path_prefix or '' }}/">Back to Pulse</a></div>
+        {% endfor %}
+      </div>
+    </main>
+
+    <p class="sports-source">Game state currently uses an ESPN preview feed. Moneyline movement may use the configured odds provider. Every change keeps its source timestamp.</p>
+  </section>
+  {% include "_desktop_panel.html" %}
+</div>
 {% endblock %}
 {% block scripts %}
+<script src="/static/sports-live.js?v={{ static_version }}"></script>
 <script nonce="{{ request.state.csp_nonce }}">
-  document.querySelectorAll('[data-local-time]').forEach(node=>{
-    const date=new Date(node.dataset.localTime);
-    if(!Number.isNaN(date.valueOf()))node.textContent=date.toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit',timeZoneName:'short'});
+  window.sportsRadarLive = SportsLive.mountRadar({
+    initial: {{ radar|tojson }},
+    prefix: {{ (sports_path_prefix or '')|tojson }},
   });
-  setTimeout(()=>location.reload(),60000);
 </script>
 {% endblock %}

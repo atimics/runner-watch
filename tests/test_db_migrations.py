@@ -14,10 +14,13 @@ from runner_web.db import (
     _acquire_migration_lock,
     _apply_migrations,
     _migration_028_caller_identities,
+    _migration_040_comment_glyph_avatars,
+    _migration_041_persistent_comment_avatars,
     _release_migration_lock,
     connection,
     init_db,
 )
+from runner_web.pseudonyms import COMMENT_AVATAR_ABILITIES, COMMENT_GLYPHS
 
 
 class _LockResult:
@@ -200,6 +203,18 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             "SELECT name FROM sqlite_master WHERE type='table' "
             "AND name='flash_evaluation_events'"
         ).fetchone()
+        sports_bookmaker_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='sports_bookmaker_odds'"
+        ).fetchone()
+        sports_bookmaker_columns = {
+            row["name"]
+            for row in database.execute("PRAGMA table_info(sports_bookmaker_odds)").fetchall()
+        }
+        sports_ai_forecast_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='sports_ai_forecasts'"
+        ).fetchone()
         flash = database.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
         commission_columns = {
             row["name"]
@@ -259,6 +274,16 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert flash_forecast_table is not None
     assert flash_outcome_table is not None
     assert flash_event_table is not None
+    assert sports_bookmaker_table is not None
+    assert {
+        "sportsbook_key",
+        "sportsbook",
+        "home_probability",
+        "away_probability",
+        "source_updated_at",
+        "observed_at",
+    } <= sports_bookmaker_columns
+    assert sports_ai_forecast_table is not None
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_provider"] == "openrouter"
@@ -347,6 +372,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "flash_transactions_user_time",
         "research_commissions_public_time",
         "public_aliases_user",
+        "comment_avatars_ability",
         "caller_identities_owner",
         "caller_identities_one_active_per_user",
         "caller_identity_one_free_claim",
@@ -360,6 +386,8 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "ranker_training_examples_schema_time",
         "ranker_training_examples_labeled_time",
         "market_bars_collected",
+        "sports_bookmaker_odds_event_book_time",
+        "sports_bookmaker_odds_event_source_time",
     } <= indexes
 
 
@@ -430,6 +458,88 @@ def test_existing_public_calls_get_a_random_animal_identity(
     assert upgraded["user_id"] == "legacy-caller"
     assert upgraded["status"] == "active"
     assert dict(claim) == {"free_claim": 1, "claim_cost_cents": 0}
+
+
+def test_existing_comment_emoji_aliases_become_unique_glyphs(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "comment-glyph-upgrade.db")
+    init_db()
+    timestamp = "2026-08-28T00:00:00+00:00"
+    with connection() as database:
+        database.executemany(
+            "INSERT INTO users(id,username,display_name,status,created_at) "
+            "VALUES(?,?,?,?,?)",
+            [
+                ("glyph-one", "glyph_one", "One", "active", timestamp),
+                ("glyph-two", "glyph_two", "Two", "active", timestamp),
+            ],
+        )
+        database.executemany(
+            "INSERT INTO public_aliases(scope,user_id,alias,created_at) VALUES(?,?,?,?)",
+            [
+                ("comment:ONE", "glyph-one", "🐺🦊", timestamp),
+                ("comment:ONE", "glyph-two", "🐺🐻", timestamp),
+                ("call:ONE", "glyph-one", "🐺🦊", timestamp),
+            ],
+        )
+
+        _migration_040_comment_glyph_avatars(database)
+        first_pass = database.execute(
+            "SELECT scope,user_id,alias FROM public_aliases ORDER BY scope,user_id"
+        ).fetchall()
+        _migration_040_comment_glyph_avatars(database)
+        second_pass = database.execute(
+            "SELECT scope,user_id,alias FROM public_aliases ORDER BY scope,user_id"
+        ).fetchall()
+
+    comment_aliases = [
+        str(row["alias"]) for row in first_pass if row["scope"] == "comment:ONE"
+    ]
+    assert len(comment_aliases) == 2
+    assert len(set(comment_aliases)) == 2
+    assert all(alias in COMMENT_GLYPHS and len(alias) == 1 for alias in comment_aliases)
+    call_alias = next(row["alias"] for row in first_pass if row["scope"] == "call:ONE")
+    assert call_alias == "🐺🦊"
+    assert [tuple(row) for row in second_pass] == [tuple(row) for row in first_pass]
+
+
+def test_persistent_comment_avatar_migration_covers_active_accounts_and_is_idempotent(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "persistent-comment-avatars.db")
+    init_db()
+    timestamp = "2026-08-28T00:00:00+00:00"
+    with connection() as database:
+        database.executemany(
+            "INSERT INTO users(id,username,display_name,status,created_at) "
+            "VALUES(?,?,?,?,?)",
+            [
+                ("avatar-one", "avatar_one", "One", "active", timestamp),
+                ("avatar-two", "avatar_two", "Two", "active", timestamp),
+                ("avatar-pending", "avatar_pending", "Pending", "pending", timestamp),
+            ],
+        )
+
+        _migration_041_persistent_comment_avatars(database)
+        first_pass = database.execute(
+            "SELECT user_id,name,seed,ability_id,level FROM comment_avatars "
+            "WHERE user_id LIKE 'avatar-%' ORDER BY user_id"
+        ).fetchall()
+        _migration_041_persistent_comment_avatars(database)
+        second_pass = database.execute(
+            "SELECT user_id,name,seed,ability_id,level FROM comment_avatars "
+            "WHERE user_id LIKE 'avatar-%' ORDER BY user_id"
+        ).fetchall()
+
+    assert [row["user_id"] for row in first_pass] == ["avatar-one", "avatar-two"]
+    assert len({row["name"] for row in first_pass}) == 2
+    assert len({row["seed"] for row in first_pass}) == 2
+    assert {row["ability_id"] for row in first_pass} <= {
+        ability["id"] for ability in COMMENT_AVATAR_ABILITIES
+    }
+    assert {row["level"] for row in first_pass} == {1}
+    assert [tuple(row) for row in second_pass] == [tuple(row) for row in first_pass]
 
 
 def test_thesis_source_columns_repair_an_already_applied_migration(
@@ -504,6 +614,6 @@ def test_flash_keeps_its_identity_when_its_model_assignment_changes(
     assert flash["ladder_position"] == 1
     assert flash["inference_model"] == "future/model"
     assert [(row["id"], row["status"], row["requested_model"]) for row in versions] == [
-        ("flash-2026-09-a", "retired", "z-ai/glm-5.3"),
+        ("flash-2026-09-b", "retired", "z-ai/glm-5.3"),
         ("flash-future-model", "active", "future/model"),
     ]

@@ -32,15 +32,19 @@
     if (!value) return '';
     const seconds = Math.max(0, (Date.now() - new Date(value).getTime()) / 1000);
     if (seconds < 90) return 'now';
-    if (seconds < 5400) return Math.round(seconds / 60) + 'm';
-    if (seconds < 129600) return Math.round(seconds / 3600) + 'h';
-    return Math.round(seconds / 86400) + 'd';
+    if (seconds < 5400) return Math.round(seconds / 60) + 'm ago';
+    if (seconds < 129600) return Math.round(seconds / 3600) + 'h ago';
+    return Math.round(seconds / 86400) + 'd ago';
   }
 
   function status(row) {
     if (row.section === 'cases') {
       const confidence = number(row.case_confidence);
       return [confidence === null ? 'VIEW' : `${Math.round(confidence * 100)}%`, 'thesis'];
+    }
+    const tradeState = String(row.trade_state || '').toUpperCase();
+    if (tradeState && tradeState !== 'UNKNOWN') {
+      return [tradeState, `state-${tradeState.toLowerCase()}`];
     }
     const stage = String(row.stage || '').toUpperCase();
     if (row.section === 'scored' && stage) return [stage, `stage-${stage.toLowerCase()}`];
@@ -67,21 +71,18 @@
     const rugLevel = String(row.rug_level || 'unknown').toLowerCase();
     const tradeState = String(row.trade_state || '').toUpperCase();
     let safety = '';
-    if (['AVOID', 'EXIT'].includes(tradeState)) {
-      safety = `<span class="state-count state-${esc(tradeState.toLowerCase())}">${esc(tradeState)}</span>`;
-    } else if (rugValue !== null && ['high', 'critical'].includes(rugLevel)) {
-      safety = `<span class="rug-count rug-${esc(rugLevel)}">RUG ${rugValue.toFixed(0)}</span>`;
-    } else if (tradeState && tradeState !== 'UNKNOWN') {
-      safety = `<span class="state-count state-${esc(tradeState.toLowerCase())}">${esc(tradeState)}</span>`;
-    } else if (rugValue !== null && rugLevel === 'guarded') {
-      safety = `<span class="rug-count rug-guarded">RUG ${rugValue.toFixed(0)}</span>`;
+    if (rugValue !== null && ['high', 'critical'].includes(rugLevel)) {
+      safety = `<span class="rug-count rug-${esc(rugLevel)}">HIGH RISK</span>`;
     } else if (row.section === 'scored' && rugValue === null) {
-      safety = '<span class="rug-count rug-unknown">RUG —</span>';
+      safety = '<span class="rug-count rug-unknown">RISK UNKNOWN</span>';
     }
     const catalystTone = row.sentiment === 'risk' ? ' risk' : row.sentiment === 'gap' ? ' gap' : '';
     const updated = options.updated ?? row.has_update;
     const updateClass = updated ? ' is-updated' : '';
-    const marketLabel = `${statusLabel ? `, ${statusLabel}` : ''}${tradeState && tradeState !== 'UNKNOWN' ? `, ${tradeState}` : ''}${rugValue !== null ? `, rug risk ${rugValue.toFixed(0)}` : ''}`;
+    const tradeStateLabel = tradeState && tradeState !== 'UNKNOWN' && tradeState !== statusLabel
+      ? `, ${tradeState}`
+      : '';
+    const marketLabel = `${statusLabel ? `, ${statusLabel}` : ''}${tradeStateLabel}${rugValue !== null ? `, rug risk ${rugValue.toFixed(0)}` : ''}`;
     const label = `${row.ticker}, ${company}, ${money(row.price)}, ${percent(row.change_pct)}${marketLabel}`;
     const thesis = row.section === 'cases' && row.case_thesis
       ? `<span class="case-thesis">${esc(row.case_thesis)}</span>`
@@ -106,7 +107,7 @@
       <span class="quote">
         <strong>${esc(money(row.price))}</strong>
         <svg class="mini-chart" data-ticker="${esc(row.ticker)}" viewBox="0 0 64 18" preserveAspectRatio="none" aria-hidden="true"><path class="chart-placeholder" d="M1 12 L13 10 L25 13 L39 8 L51 10 L63 7"/></svg>
-        <small class="${changeClass}">${esc(percent(row.change_pct))}</small>
+        <small class="${changeClass}"><span class="quote-period">Today</span> ${esc(percent(row.change_pct))}</small>
       </span>
     </a>`;
   }

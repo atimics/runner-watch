@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from pathlib import Path
 
 from runner_web.market_clock import market_clock
 
@@ -32,3 +33,12 @@ def test_market_clock_handles_the_weekend_boundary() -> None:
     assert saturday["next_label"] == "Overnight venues"
     assert sunday_night["session"] == "overnight"
     assert sunday_night["next_label"] == "Pre-market"
+
+
+def test_market_clock_copy_distinguishes_now_from_the_next_session() -> None:
+    root = Path(__file__).parents[1]
+    template = (root / "web/templates/_market_clock.html").read_text()
+    script = (root / "web/static/market-clock.js").read_text()
+
+    assert "{{ market_clock.next_label }} in …" in template
+    assert "`${clock.dataset.nextLabel} in ${duration(remaining)}`" in script

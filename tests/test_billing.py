@@ -19,6 +19,7 @@ from runner_web.flash_wallet import (
     COMMENT_COST,
     PUBLISH_REPORT_REWARD,
     REPORT_COST,
+    SPORTS_CALL_REWARD_CAP,
     InsufficientFlashError,
     claim_daily_flash,
     credit_flash,
@@ -68,9 +69,9 @@ def test_billing_page_is_now_a_public_flash_wallet() -> None:
     assert "Log in to claim" in html
     assert "Generate today's ticker report" in html
     assert "AI-generated ticker comment" in html
+    assert "Win a sports Call" in html
     assert "Close a profitable stock Call" in html
     assert "10× PnL" in html
-    assert "Win a sports Call" in html
     assert "Stripe checkout is disabled" in html
     assert 'href="/roadmap"' in html
 
@@ -102,6 +103,7 @@ def test_daily_flash_must_be_claimed_and_does_not_backfill(
     assert empty["balance"] == 0
     assert empty["claim_day"] == "2026-08-26"
     assert empty["can_claim"] is True
+    assert empty["sports_call_reward_cap"] == SPORTS_CALL_REWARD_CAP
     assert claimed is True
     assert first["balance"] == 100
     assert first["claimed_today"] is True

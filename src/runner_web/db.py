@@ -25,7 +25,13 @@ from runner_web.database import (
     initialize_sqlite,
     open_database,
 )
-from runner_web.pseudonyms import ADJECTIVES, ANIMALS, ensure_scoped_alias
+from runner_web.pseudonyms import (
+    ADJECTIVES,
+    ANIMALS,
+    ensure_comment_avatar,
+    ensure_scoped_alias,
+    migrate_comment_aliases_to_glyphs,
+)
 from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "data/runner-watch.db"))
@@ -2240,6 +2246,108 @@ def _migration_037_flash_forecast_record(db: DatabaseConnection) -> None:
     _sync_flash_version(db)
 
 
+def _migration_038_sports_bookmaker_odds(db: DatabaseConnection) -> None:
+    """Store each fresh sportsbook quote separately from the consensus receipt."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS sports_bookmaker_odds (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL REFERENCES sports_events(id) ON DELETE CASCADE,
+            provider TEXT NOT NULL,
+            sportsbook_key TEXT NOT NULL,
+            sportsbook TEXT NOT NULL,
+            market TEXT NOT NULL CHECK(market IN ('moneyline')),
+            home_odds INTEGER NOT NULL CHECK(home_odds<>0),
+            away_odds INTEGER NOT NULL CHECK(away_odds<>0),
+            home_probability REAL NOT NULL,
+            away_probability REAL NOT NULL,
+            source_updated_at TEXT,
+            quote_hash TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            UNIQUE(event_id,provider,sportsbook_key,quote_hash)
+        );
+        CREATE INDEX IF NOT EXISTS sports_bookmaker_odds_event_book_time
+            ON sports_bookmaker_odds(event_id,sportsbook_key,observed_at DESC);
+        CREATE INDEX IF NOT EXISTS sports_bookmaker_odds_event_source_time
+            ON sports_bookmaker_odds(event_id,source_updated_at DESC);
+        """
+    )
+
+
+def _migration_039_sports_ai_forecasts(db: DatabaseConnection) -> None:
+    """Freeze and score pregame AI forecasts separately from the sports baseline."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS sports_ai_forecasts (
+            id TEXT PRIMARY KEY,
+            report_id TEXT NOT NULL UNIQUE
+                REFERENCES research_commissions(id) ON DELETE CASCADE,
+            event_id TEXT NOT NULL REFERENCES sports_events(id) ON DELETE CASCADE,
+            league TEXT NOT NULL CHECK(league IN ('mlb','nfl','nba','nhl')),
+            actor_id TEXT NOT NULL,
+            actor_snapshot_json TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            requested_model TEXT NOT NULL,
+            resolved_model TEXT NOT NULL,
+            ladder_position INTEGER NOT NULL CHECK(ladder_position>=1),
+            ladder_size INTEGER NOT NULL CHECK(ladder_size>=ladder_position),
+            evidence_fingerprint TEXT NOT NULL,
+            selection TEXT NOT NULL CHECK(selection IN ('home','away','pass')),
+            home_probability REAL NOT NULL
+                CHECK(home_probability>=0 AND home_probability<=1),
+            away_probability REAL NOT NULL
+                CHECK(away_probability>=0 AND away_probability<=1),
+            confidence TEXT NOT NULL CHECK(confidence IN ('low','medium','high')),
+            reason TEXT NOT NULL,
+            contract_version TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            start_time TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open'
+                CHECK(status IN ('open','settled','void')),
+            result TEXT CHECK(result IS NULL OR result IN ('win','loss','pass','void')),
+            brier_score REAL CHECK(brier_score IS NULL OR (brier_score>=0 AND brier_score<=1)),
+            settled_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS sports_ai_forecasts_event_time
+            ON sports_ai_forecasts(event_id,observed_at DESC);
+        CREATE INDEX IF NOT EXISTS sports_ai_forecasts_model_league
+            ON sports_ai_forecasts(actor_id,resolved_model,league,status,start_time);
+        """
+    )
+
+
+def _migration_040_comment_glyph_avatars(db: DatabaseConnection) -> None:
+    """Replace public comment emoji pairs with one abstract glyph per author and ticker."""
+
+    migrate_comment_aliases_to_glyphs(db)
+
+
+def _migration_041_persistent_comment_avatars(db: DatabaseConnection) -> None:
+    """Give every account one durable public comment avatar and research ability."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS comment_avatars (
+            user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL UNIQUE,
+            seed TEXT NOT NULL UNIQUE,
+            ability_id TEXT NOT NULL CHECK(ability_id IN (
+                'catalyst_scout','risk_sentinel','filing_sleuth',
+                'pattern_mapper','liquidity_reader','countervoice'
+            )),
+            level INTEGER NOT NULL DEFAULT 1 CHECK(level>=1),
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS comment_avatars_ability
+            ON comment_avatars(ability_id,level);
+        """
+    )
+    for row in db.execute("SELECT id FROM users WHERE status='active'").fetchall():
+        ensure_comment_avatar(db, str(row["id"]))
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2285,6 +2393,10 @@ MIGRATIONS = (
     Migration(35, "sports_news", _migration_035_sports_news),
     Migration(36, "sports_request_indexes", _migration_036_sports_request_indexes),
     Migration(37, "flash_forecast_record", _migration_037_flash_forecast_record),
+    Migration(38, "sports_bookmaker_odds", _migration_038_sports_bookmaker_odds),
+    Migration(39, "sports_ai_forecasts", _migration_039_sports_ai_forecasts),
+    Migration(40, "comment_glyph_avatars", _migration_040_comment_glyph_avatars),
+    Migration(41, "persistent_comment_avatars", _migration_041_persistent_comment_avatars),
 )
 
 
