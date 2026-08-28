@@ -125,7 +125,7 @@
 }
 
 .sports-product .winner-card {
-  grid-template-columns: 46px minmax(0, 1fr) 136px 32px;
+  grid-template-columns: minmax(0, 1fr) 136px 32px;
   gap: 9px;
   min-height: 98px;
   padding: 11px 12px;
@@ -137,7 +137,7 @@
 }
 
 .sports-product .matchup-team {
-  grid-template-columns: 35px minmax(0, 1fr);
+  grid-template-columns: 35px minmax(0, 1fr) auto;
   gap: 5px;
 }
 
@@ -163,7 +163,7 @@
 }
 
 .sports-product .series-cluster summary {
-  padding-left: 67px;
+  padding-left: 12px;
   color: var(--muted);
   font-size: 9px;
 }
@@ -272,11 +272,11 @@ html.embedded-pane .sports-detail-body {
 
 @media (max-width: 700px) {
   .sports-product .winner-card {
-    grid-template-columns: 44px minmax(0, 1fr) 10px;
+    grid-template-columns: minmax(0, 1fr) 10px;
   }
 
   .sports-product .winner-quote {
-    grid-column: 2;
+    grid-column: 1;
     display: grid;
     grid-template-columns: auto 1fr;
     gap: 3px 8px;
@@ -289,7 +289,6 @@ html.embedded-pane .sports-detail-body {
     display: none;
   }
 
-  .sports-product .winner-edge,
   .sports-product .winner-quote em,
   .sports-product .winner-quote .bovada-outlier {
     grid-column: 1 / -1;
@@ -300,7 +299,7 @@ html.embedded-pane .sports-detail-body {
   }
 
   .sports-product .winner-card .game-chevron {
-    grid-column: 3;
+    grid-column: 2;
     grid-row: 1 / span 2;
   }
 
@@ -339,11 +338,11 @@ html.embedded-pane .sports-detail-body {
 
 @container (max-width: 520px) {
   .sports-product .winner-card {
-    grid-template-columns: 44px minmax(0, 1fr) 28px;
+    grid-template-columns: minmax(0, 1fr) 28px;
   }
 
   .sports-product .winner-quote {
-    grid-column: 2;
+    grid-column: 1;
     display: grid;
     grid-template-columns: auto 1fr;
     gap: 3px 8px;
@@ -356,14 +355,13 @@ html.embedded-pane .sports-detail-body {
     display: none;
   }
 
-  .sports-product .winner-edge,
   .sports-product .winner-quote em,
   .sports-product .winner-quote .bovada-outlier {
     grid-column: 1 / -1;
   }
 
   .sports-product .winner-card .game-chevron {
-    grid-column: 3;
+    grid-column: 2;
     grid-row: 1 / span 2;
   }
 }

@@ -9,7 +9,7 @@
 
 .winner-card {
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) 116px 12px;
+  grid-template-columns: minmax(0, 1fr) 116px 12px;
   gap: 13px;
   align-items: center;
   min-height: 108px;
@@ -109,7 +109,7 @@
 
 .matchup-team {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
+  grid-template-columns: 40px minmax(0, 1fr) auto;
   gap: 8px;
   align-items: baseline;
   color: var(--soft);
@@ -130,6 +130,21 @@
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.matchup-team.is-value strong,
+.matchup-team.is-value span {
+  color: var(--green);
+}
+
+.matchup-value {
+  padding: 2px 4px;
+  border: 1px solid color-mix(in srgb, var(--green) 35%, transparent);
+  border-radius: 4px;
+  color: var(--green);
+  font-size: 6px;
+  font-weight: 900;
+  letter-spacing: .08em;
 }
 
 .matchup-team b {
@@ -268,7 +283,7 @@
   }
 
   .winner-card {
-    grid-template-columns: 46px minmax(0, 1fr) 82px 10px;
+    grid-template-columns: minmax(0, 1fr) 82px 10px;
     gap: 9px;
     min-height: 104px;
     padding: 10px;
@@ -288,7 +303,7 @@
   }
 
   .matchup-team {
-    grid-template-columns: 35px minmax(0, 1fr);
+    grid-template-columns: 35px minmax(0, 1fr) auto;
     gap: 5px;
   }
 
@@ -325,7 +340,7 @@
 
 @media (max-width: 370px) {
   .winner-card {
-    grid-template-columns: 42px minmax(0, 1fr) 76px 8px;
+    grid-template-columns: minmax(0, 1fr) 76px 8px;
     gap: 7px;
     padding-right: 8px;
     padding-left: 8px;
@@ -337,7 +352,7 @@
   }
 
   .matchup-team {
-    grid-template-columns: 32px minmax(0, 1fr);
+    grid-template-columns: 32px minmax(0, 1fr) auto;
     gap: 4px;
   }
 }

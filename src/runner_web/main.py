@@ -365,8 +365,26 @@ STATIC_VERSION = _static_version()
 
 
 def _shared_request_cache_name(scope: str) -> str:
-    version = "v4" if scope == "pulse" else "v3" if scope == "alpha" else "v1"
+    version = {"pulse": "v4", "alpha": "v3", "public-screen": "v2"}.get(scope, "v1")
     return f"{runner_db.database_identity()}:{scope}:{version}"
+
+
+def _conditional_json_response(request: Request, payload: Any) -> Response:
+    """Return compact public JSON with cheap browser revalidation."""
+
+    response = JSONResponse(payload)
+    etag = f'W/"{hashlib.sha256(response.body).hexdigest()[:24]}"'
+    headers = {
+        "Cache-Control": "private, max-age=15, must-revalidate",
+        "ETag": etag,
+    }
+    requested_etags = {
+        value.strip() for value in request.headers.get("if-none-match", "").split(",")
+    }
+    if etag in requested_etags or "*" in requested_etags:
+        return Response(status_code=304, headers=headers)
+    response.headers.update(headers)
+    return response
 
 
 def _public_screen_cache_keys(scope: str, identity: str) -> tuple[str, str]:
@@ -2267,6 +2285,50 @@ def pulse_data(
         "stats": {**base["stats"], "live": len(rows)},
         "next_offset": offset + len(rows),
         "has_more": offset + len(rows) < total,
+    }
+
+
+PUBLIC_PULSE_ROW_FIELDS = (
+    "ticker",
+    "company",
+    "name",
+    "price",
+    "change_pct",
+    "section",
+    "trade_state",
+    "stage",
+    "session",
+    "source",
+    "coin_tone",
+    "coin_label",
+    "entered_at",
+    "event_at",
+    "event_count",
+    "rug_score",
+    "rug_level",
+    "sentiment",
+    "pulse_label",
+    "has_update",
+    "case_confidence",
+    "case_thesis",
+    "case_source_name",
+    "social_label",
+    "needs_thesis",
+)
+
+
+def _public_pulse_data(*, offset: int = 0, limit: int = 50) -> dict[str, Any]:
+    payload = pulse_data(offset=offset, limit=limit)
+    return {
+        **payload,
+        "rows": [
+            {
+                field: row[field]
+                for field in PUBLIC_PULSE_ROW_FIELDS
+                if field in row and row[field] is not None
+            }
+            for row in payload["rows"]
+        ],
     }
 
 
@@ -4553,10 +4615,98 @@ def home(
         context=page_context(
             request,
             runner_session,
-            pulse=pulse_data(limit=20),
+            pulse=_public_pulse_data(limit=20),
             active_tab="pulse",
         ),
     )
+
+
+SPORTS_PULSE_EVENT_FIELDS = (
+    "id",
+    "away_abbreviation",
+    "away_team_name",
+    "home_abbreviation",
+    "home_team_name",
+    "league",
+    "start_time",
+    "signal_abbreviation",
+    "model_probability_pct",
+    "market_probability_pct",
+    "model_winner_abbreviation",
+    "model_winner_probability_pct",
+    "bovada_divergence_material",
+    "bovada_divergence_pct",
+    "bovada_divergence_team",
+)
+SPORTS_RADAR_EVENT_FIELDS = (
+    "id",
+    "away_abbreviation",
+    "home_abbreviation",
+    "away_score",
+    "home_score",
+    "league",
+    "start_time",
+    "status_detail",
+    "signal_abbreviation",
+    "radar_kind",
+    "radar_label",
+    "radar_value",
+    "radar_detail",
+)
+
+
+def _compact_edge_history(history: Any) -> dict[str, Any] | None:
+    if not isinstance(history, dict):
+        return None
+    compact = {
+        field: history[field]
+        for field in ("label", "plot_points", "dot_x", "dot_y")
+        if field in history and history[field] is not None
+    }
+    compact["point_count"] = len(history.get("points") or [])
+    return compact
+
+
+def _compact_sports_event(event: dict[str, Any], *, radar: bool) -> dict[str, Any]:
+    fields = SPORTS_RADAR_EVENT_FIELDS if radar else SPORTS_PULSE_EVENT_FIELDS
+    compact = {
+        field: event[field]
+        for field in fields
+        if field in event and event[field] is not None
+    }
+    history = _compact_edge_history(event.get("edge_history"))
+    if history:
+        compact["edge_history"] = history
+    if not radar:
+        prediction = event.get("prediction")
+        if isinstance(prediction, dict) and prediction.get("edge_pct") is not None:
+            compact["prediction"] = {"edge_pct": prediction["edge_pct"]}
+    compact["series_more"] = [
+        _compact_sports_event(related, radar=radar)
+        for related in event.get("series_more") or []
+        if isinstance(related, dict)
+    ]
+    compact["series_more_count"] = len(compact["series_more"])
+    return compact
+
+
+def _compact_sports_feed(payload: dict[str, Any], *, radar: bool) -> dict[str, Any]:
+    compact = {
+        **payload,
+        "events": [
+            _compact_sports_event(event, radar=radar)
+            for event in payload.get("events") or []
+            if isinstance(event, dict)
+        ],
+    }
+    if not radar:
+        record = payload.get("model_record") or {}
+        sample = record.get("sample") or {}
+        compact["model_record"] = {
+            "games": int(record.get("games") or 0),
+            "sample": {"target": sample.get("target")},
+        }
+    return compact
 
 
 def _public_sports_pulse_data(
@@ -4564,27 +4714,43 @@ def _public_sports_pulse_data(
     view: str = "signals",
     limit: int = 30,
 ) -> dict[str, Any]:
+    _ = view  # The public Pulse only has the signals view.
     selected_league = league if league in SPORTS_LEAGUES else "all"
     result_limit = max(1, min(limit, 100))
-    identity = f"{selected_league}:{view}:{result_limit}"
-    return _public_screen_data(
+    cached = _public_screen_data(
         "sports-pulse",
-        identity,
+        selected_league,
         lambda: {
-            "pulse": sports_pulse(selected_league, view=view, limit=result_limit),
+            "pulse": _compact_sports_feed(
+                sports_pulse(selected_league, view="signals", limit=100),
+                radar=False,
+            ),
             "pick_stats": sports_pick_stats(),
         },
     )
+    pulse = cached["pulse"]
+    events = pulse["events"][:result_limit]
+    return {
+        "pulse": {**pulse, "events": events, "display_count": len(events)},
+        "pick_stats": cached["pick_stats"],
+    }
 
 
 def _public_sports_radar_data(league: str = "all", limit: int = 40) -> dict[str, Any]:
     selected_league = league if league in SPORTS_LEAGUES else "all"
     result_limit = max(1, min(limit, 100))
-    return _public_screen_data(
+    cached = _public_screen_data(
         "sports-radar",
-        f"{selected_league}:{result_limit}",
-        lambda: {"radar": sports_radar(selected_league, result_limit)},
+        selected_league,
+        lambda: {
+            "radar": _compact_sports_feed(
+                sports_radar(selected_league, 100),
+                radar=True,
+            )
+        },
     )
+    radar = cached["radar"]
+    return {"radar": {**radar, "events": radar["events"][:result_limit]}}
 
 
 def sports_home_response(
@@ -4851,9 +5017,12 @@ def sports_pulse_api(
     league: str = "all",
     view: str = "signals",
     limit: int = 30,
-) -> JSONResponse:
+) -> Response:
     enforce_rate(request, "sports-pulse", limit=120, seconds=60)
-    return JSONResponse(_public_sports_pulse_data(league, view, limit)["pulse"])
+    return _conditional_json_response(
+        request,
+        _public_sports_pulse_data(league, view, limit)["pulse"],
+    )
 
 
 @app.get("/api/sports/radar")
@@ -4861,9 +5030,12 @@ def sports_radar_api(
     request: Request,
     league: str = "all",
     limit: int = 40,
-) -> JSONResponse:
+) -> Response:
     enforce_rate(request, "sports-radar", limit=120, seconds=60)
-    return JSONResponse(_public_sports_radar_data(league, limit)["radar"])
+    return _conditional_json_response(
+        request,
+        _public_sports_radar_data(league, limit)["radar"],
+    )
 
 
 @app.get("/api/sports/alpha")
@@ -4871,9 +5043,9 @@ def sports_alpha_api(
     request: Request,
     league: str = "all",
     limit: int = 24,
-) -> JSONResponse:
+) -> Response:
     enforce_rate(request, "sports-alpha", limit=120, seconds=60)
-    return JSONResponse(_sports_alpha_data(league, limit))
+    return _conditional_json_response(request, _sports_alpha_data(league, limit))
 
 
 @app.get("/api/sports/stats")
@@ -4985,17 +5157,20 @@ def pulse_api(
     request: Request,
     offset: int = 0,
     limit: int = 20,
-) -> JSONResponse:
+) -> Response:
     enforce_rate(request, "pulse", limit=180, seconds=60)
-    return JSONResponse(pulse_data(offset=offset, limit=limit))
+    return _conditional_json_response(
+        request,
+        _public_pulse_data(offset=offset, limit=limit),
+    )
 
 
 @app.get("/api/pulse/charts")
-async def pulse_charts_api(request: Request) -> JSONResponse:
+async def pulse_charts_api(request: Request) -> Response:
     enforce_rate(request, "pulse-charts", limit=20, seconds=60)
     tickers = [row["ticker"] for row in pulse_data(limit=20)["rows"]]
     payload = await run_in_threadpool(ticker_charts_payload, tickers)
-    return JSONResponse(_compact_list_chart_payload(payload))
+    return _conditional_json_response(request, _compact_list_chart_payload(payload))
 
 
 def _clean_ticker(ticker: str) -> str:
