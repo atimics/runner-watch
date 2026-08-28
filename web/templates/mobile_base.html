@@ -21,6 +21,7 @@
   <script src="/static/market-clock.js?v={{ static_version }}" defer></script>
   {% block head %}{% endblock %}
   <link rel="stylesheet" href="/static/product-system.css?v={{ static_version }}">
+  {% block product_head %}{% endblock %}
 </head>
 <body class="{{ current_product }}-product">
   <a class="skip-link" href="#app-content">Skip to content</a>

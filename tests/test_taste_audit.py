@@ -5,15 +5,16 @@ ROOT = Path(__file__).parents[1]
 
 def test_shared_product_system_is_loaded_after_existing_styles() -> None:
     base = (ROOT / "web/templates/mobile_base.html").read_text()
-    sports = (ROOT / "web/templates/sports_base.html").read_text()
+    sports = (ROOT / "web/templates/sports.html").read_text()
 
     assert base.index("desktop-split.css") < base.index("product-system.css")
-    assert sports.index("sports-dashboard.css") < sports.index("product-system.css")
+    assert '{% block product_head %}{% endblock %}' in base
+    assert '{% include "_sports_styles.html" %}' in sports
     assert 'class="skip-link"' in base
-    assert 'class="skip-link"' in sports
     assert 'id="app-content"' in base
     assert 'class="tab-link product-tab-link"' in base
-    assert 'class="sports-tab-icon product"' in sports
+    assert 'data-desktop-workspace' in sports
+    assert not (ROOT / "web/templates/sports_base.html").exists()
     assert 'class="product-switch"' not in base
 
 

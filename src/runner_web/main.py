@@ -1024,6 +1024,10 @@ async def sports_ingestion_worker() -> None:
         await asyncio.sleep(SPORTS_REFRESH_SECONDS)
 
 
+def _is_panel_path(path: str) -> bool:
+    return path.startswith(("/t/", "/research/", "/s/", "/game/", "/sports/game/"))
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next: Any) -> Response:
     started = time.perf_counter()
@@ -1033,9 +1037,7 @@ async def security_headers(request: Request, call_next: Any) -> Response:
     if "runner_visitor" in request.cookies:
         response.delete_cookie("runner_visitor", path="/")
     response.headers["X-Content-Type-Options"] = "nosniff"
-    panel_path = request.url.path.startswith(
-        ("/t/", "/research/", "/s/", "/game/", "/sports/game/")
-    )
+    panel_path = _is_panel_path(request.url.path)
     frame_ancestors = "'self'" if panel_path else "'none'"
     response.headers["X-Frame-Options"] = "SAMEORIGIN" if panel_path else "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -4572,8 +4574,13 @@ def sports_home_response(
             runner_session,
             pulse=public_data["pulse"],
             pick_stats=public_data["pick_stats"],
-            sports_tab="pulse",
+            active_tab="pulse",
+            nav_product="sports",
             sports_path_prefix=sports_path_prefix,
+            detail_panel_label="Selected matchup odds, evidence, and public Calls",
+            detail_panel_mark="RS",
+            detail_panel_title="Open a matchup",
+            detail_panel_copy="Read the model, market price, context, and receipt in one place.",
         ),
     )
 
@@ -4603,8 +4610,15 @@ def sports_radar_response(
             request,
             runner_session,
             radar=public_data["radar"],
-            sports_tab="radar",
+            active_tab="radar",
+            nav_product="sports",
             sports_path_prefix=sports_path_prefix,
+            detail_panel_label="Selected matchup change and evidence",
+            detail_panel_mark="RS",
+            detail_panel_title="Open a Radar event",
+            detail_panel_copy=(
+                "Read the changed line, live score, context, and receipt in one place."
+            ),
         ),
     )
 
@@ -4746,7 +4760,6 @@ def sports_alpha_response(
             runner_session,
             board=_sports_alpha_data(selected_league),
             active_tab="alpha",
-            sports_tab="alpha",
             nav_product="sports",
             sports_path_prefix=sports_path_prefix,
             detail_panel_label="Selected winner, odds, stats, and Alpha",
@@ -4881,7 +4894,8 @@ def sports_game_page(
                 event_id,
                 str(user["id"]) if user else None,
             ),
-            sports_tab="pulse",
+            active_tab="pulse",
+            nav_product="sports",
         ),
     )
 

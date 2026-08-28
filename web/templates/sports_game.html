@@ -1,12 +1,19 @@
-{% extends "sports_base.html" %}
+{% extends "mobile_base.html" %}
+{% block app_class %}detail-app sports-game-app{% endblock %}
 {% block title %}{{ event.away_abbreviation }} at {{ event.home_abbreviation }} · RATi Sports{% endblock %}
+{% block product_head %}{% include "_sports_styles.html" %}{% endblock %}
 {% block content %}
 {% set odds = event.odds %}
 {% set quote = event.paper_odds %}
 {% set market = event.market_comparison %}
 {% set prediction = event.prediction %}
 {% set receipt = event.receipt %}
-<a class="sports-back" href="{{ sports_path_prefix or '' }}/">← Back to Pulse</a>
+<header class="detail-nav sports-detail-nav">
+  <a href="{{ sports_path_prefix or '' }}/" aria-label="Back to Pulse">‹</a>
+  <strong>{{ event.away_abbreviation }} at {{ event.home_abbreviation }}</strong>
+  <span aria-hidden="true"></span>
+</header>
+<main class="detail-body sports-detail-body">
 <article class="game-detail">
   <header class="match-strip">
     <div class="match-strip-meta">
@@ -329,6 +336,7 @@
   </details>
   <a class="source-link" href="{{ event.source_url }}" rel="nofollow noreferrer">View game source ↗</a>
 </article>
+</main>
 {% endblock %}
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
@@ -342,7 +350,7 @@
     const status=document.getElementById('pickStatus');button.disabled=true;status.textContent='Freezing the receipt…';
     const response=await fetch('/api/picks/{{ event.id }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({selection:button.dataset.pick})});
     const payload=await response.json();
-    if(response.ok){status.textContent='Paper pick recorded.';setTimeout(()=>location.reload(),500);}
+    if(response.ok){status.textContent='Paper pick recorded.';document.querySelectorAll('[data-pick]').forEach(item=>{item.disabled=true;});}
     else{button.disabled=false;status.textContent=payload.detail||'Could not record the pick.';}
   }));
   const commissionButton=document.getElementById('commissionButton');

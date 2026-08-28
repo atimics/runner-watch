@@ -1,65 +1,72 @@
-{% extends "sports_base.html" %}
+{% extends "mobile_base.html" %}
+{% block app_class %}workspace-app alpha-app sports-alpha-app{% endblock %}
 {% block title %}Alpha · RATi Sports{% endblock %}
+{% block product_head %}{% include "_sports_styles.html" %}{% endblock %}
 {% block content %}
-<header class="sports-screen-head">
-  <div><span class="sports-eyebrow">PUBLIC PAPER CALLS</span><h1>Alpha</h1></div>
-  <p><strong>{{ board.active_calls }}</strong> open Calls · {{ board.total_calls }} total. Small samples are shown plainly.</p>
-</header>
+<div class="desktop-workspace" data-desktop-workspace>
+  <section class="desktop-list-pane sports-feed-pane" data-desktop-list>
+    <header class="screen-head">
+      <div><span class="rati-product">RATi SPORTS</span><h1>Alpha</h1><span class="head-meta"><b>{{ board.active_calls }}</b> open Calls <i></i><span>{{ board.total_calls }} total</span></span></div>
+      {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>{% else %}<a class="avatar-button signed-out" href="/login">Log in</a>{% endif %}
+    </header>
 
-<nav class="league-tabs" aria-label="League filter">
-  <a class="{% if board.league == 'all' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/alpha?league=all">All</a>
-  {% for league in board.leagues %}
-    <a class="{% if board.league == league.key %}active{% endif %}" href="{{ sports_path_prefix or '' }}/alpha?league={{ league.key }}">{{ league.name }}</a>
-  {% endfor %}
-</nav>
+    <nav class="league-tabs" aria-label="League filter">
+      <a class="{% if board.league == 'all' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/alpha?league=all">All</a>
+      {% for league in board.leagues %}<a class="{% if board.league == league.key %}active{% endif %}" href="{{ sports_path_prefix or '' }}/alpha?league={{ league.key }}">{{ league.name }}</a>{% endfor %}
+    </nav>
 
-<section class="alpha-sample-note" aria-label="Community record maturity">
-  <strong>{{ 'EARLY COMMUNITY RECORD' if board.total_calls < 20 else 'COMMUNITY RECORD' }}</strong>
-  <p>{% if board.total_calls < 20 %}There are not enough Calls to rank skill. This board shows activity, not proof.{% else %}Rankings show settled paper Calls and frozen entry odds.{% endif %}</p>
-</section>
+    <section class="alpha-sample-note" aria-label="Community record maturity">
+      <strong>{{ 'EARLY COMMUNITY RECORD' if board.total_calls < 20 else 'COMMUNITY RECORD' }}</strong>
+      <p>{% if board.total_calls < 20 %}There are not enough Calls to rank skill. This board shows activity, not proof.{% else %}Rankings show settled paper Calls and frozen entry odds.{% endif %}</p>
+    </section>
 
-{% if board.rows %}
-<section class="sports-alpha-board" aria-labelledby="publicCallBoardTitle">
-  <header><div><span>PUBLIC BOARD</span><h2 id="publicCallBoardTitle">Call activity</h2></div><small>Entry odds stay frozen</small></header>
-  {% for item in board.rows %}
-  <a class="sports-alpha-row" href="{{ sports_path_prefix or '' }}{{ item.href }}">
-    <span class="alpha-rank">{{ item.rank if board.total_calls >= 20 else '•' }}</span>
-    <span class="alpha-team"><strong>{{ item.ticker }}</strong><small>{{ item.company }} · {{ item.pulse_label }}</small></span>
-    <span class="alpha-price"><strong>{{ item.odds_label }}</strong><small class="{{ item.change_tone }}">{{ item.change_label }}</small></span>
-    <span class="alpha-calls"><strong>{{ item.active_calls }}</strong><small>open · {{ item.total_calls }} total</small></span>
-    <span class="game-chevron" aria-hidden="true">›</span>
-  </a>
-  {% endfor %}
-</section>
-{% elif board.contenders %}
-<section class="sports-alpha-board" aria-labelledby="contenderTitle">
-  <header><div><span>NO PUBLIC CALLS YET</span><h2 id="contenderTitle">Games to inspect</h2></div><small>Be the first caller</small></header>
-  {% for item in board.contenders %}
-  <a class="sports-alpha-row" href="{{ sports_path_prefix or '' }}{{ item.href }}">
-    <span class="alpha-rank">•</span>
-    <span class="alpha-team"><strong>{{ item.ticker }}</strong><small>{{ item.company }} · {{ item.pulse_label }}</small></span>
-    <span class="alpha-price"><strong>{{ item.odds_label }}</strong><small>{{ item.change_label }}</small></span>
-    <span class="alpha-calls"><strong>0</strong><small>public Calls</small></span>
-    <span class="game-chevron" aria-hidden="true">›</span>
-  </a>
-  {% endfor %}
-</section>
-{% else %}
-<div class="sports-empty alpha-empty-state"><strong>No public Calls yet.</strong><p>Open a Pulse game to inspect the receipt and make a paper Call.</p><a class="sports-empty-action" href="{{ sports_path_prefix or '' }}/">Open Pulse</a></div>
-{% endif %}
+    <main class="list-section sports-list-section sports-alpha-list">
+    {% if board.rows %}
+    <section class="sports-alpha-board" aria-labelledby="publicCallBoardTitle">
+      <header><div><span>PUBLIC BOARD</span><h2 id="publicCallBoardTitle">Call activity</h2></div><small>Entry odds stay frozen</small></header>
+      {% for item in board.rows %}
+      <a class="sports-alpha-row" href="{{ sports_path_prefix or '' }}{{ item.href }}"{% if loop.first %} data-desktop-default{% endif %}>
+        <span class="alpha-rank">{{ item.rank if board.total_calls >= 20 else '•' }}</span>
+        <span class="alpha-team"><strong>{{ item.ticker }}</strong><small>{{ item.company }} · {{ item.pulse_label }}</small></span>
+        <span class="alpha-price"><strong>{{ item.odds_label }}</strong><small class="{{ item.change_tone }}">{{ item.change_label }}</small></span>
+        <span class="alpha-calls"><strong>{{ item.active_calls }}</strong><small>open · {{ item.total_calls }} total</small></span>
+        <span class="game-chevron" aria-hidden="true">›</span>
+      </a>
+      {% endfor %}
+    </section>
+    {% elif board.contenders %}
+    <section class="sports-alpha-board" aria-labelledby="contenderTitle">
+      <header><div><span>NO PUBLIC CALLS YET</span><h2 id="contenderTitle">Games to inspect</h2></div><small>Be the first caller</small></header>
+      {% for item in board.contenders %}
+      <a class="sports-alpha-row" href="{{ sports_path_prefix or '' }}{{ item.href }}"{% if loop.first %} data-desktop-default{% endif %}>
+        <span class="alpha-rank">•</span>
+        <span class="alpha-team"><strong>{{ item.ticker }}</strong><small>{{ item.company }} · {{ item.pulse_label }}</small></span>
+        <span class="alpha-price"><strong>{{ item.odds_label }}</strong><small>{{ item.change_label }}</small></span>
+        <span class="alpha-calls"><strong>0</strong><small>public Calls</small></span>
+        <span class="game-chevron" aria-hidden="true">›</span>
+      </a>
+      {% endfor %}
+    </section>
+    {% else %}
+    <div class="sports-empty alpha-empty-state"><strong>No public Calls yet.</strong><p>Open a Pulse game to inspect the receipt and make a paper Call.</p><a class="sports-empty-action" href="{{ sports_path_prefix or '' }}/">Open Pulse</a></div>
+    {% endif %}
 
-{% if board.calls %}
-<section class="sports-call-feed" aria-labelledby="recentCallsTitle">
-  <header><div><span>RECEIPTS</span><h2 id="recentCallsTitle">Recent Calls</h2></div><small>Entry, mark and result</small></header>
-  {% for call in board.calls %}
-  <article>
-    <a href="{{ call.caller_href }}"><strong>{{ call.caller_handle }}</strong><small>{{ call.status }}</small></a>
-    <a href="{{ sports_path_prefix or '' }}{{ call.href }}"><strong>{{ call.ticker }}</strong><small>Entry {{ call.entry_label }}</small></a>
-    <span><strong class="{{ call.return_tone }}">{{ call.return_label or '—' }}</strong><small>{{ call.reward_label or call.mark_label }}</small></span>
-  </article>
-  {% endfor %}
-</section>
-{% endif %}
+    {% if board.calls %}
+    <section class="sports-call-feed" aria-labelledby="recentCallsTitle">
+      <header><div><span>RECEIPTS</span><h2 id="recentCallsTitle">Recent Calls</h2></div><small>Entry, mark and result</small></header>
+      {% for call in board.calls %}
+      <article>
+        <a href="{{ call.caller_href }}"><strong>{{ call.caller_handle }}</strong><small>{{ call.status }}</small></a>
+        <a href="{{ sports_path_prefix or '' }}{{ call.href }}"><strong>{{ call.ticker }}</strong><small>Entry {{ call.entry_label }}</small></a>
+        <span><strong class="{{ call.return_tone }}">{{ call.return_label or '—' }}</strong><small>{{ call.reward_label or call.mark_label }}</small></span>
+      </article>
+      {% endfor %}
+    </section>
+    {% endif %}
+    </main>
 
-<p class="sports-source">Paper Calls only. A high activity count is not a prediction and does not show skill until enough Calls settle.</p>
+    <p class="sports-source">Paper Calls only. A high activity count is not a prediction and does not show skill until enough Calls settle.</p>
+  </section>
+  {% include "_desktop_panel.html" %}
+</div>
 {% endblock %}
