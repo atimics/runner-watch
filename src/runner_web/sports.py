@@ -1610,6 +1610,34 @@ def _market_comparison(event: dict[str, Any], rows: list[Any]) -> dict[str, Any]
     }
 
 
+def _paper_moneyline(
+    event: dict[str, Any],
+    odds: dict[str, Any] | None,
+    comparison: dict[str, Any],
+    *,
+    has_bookmaker_rows: bool,
+) -> dict[str, Any] | None:
+    """Choose a recent line for a paper Call, preferring Bovada when present."""
+
+    bovada = comparison.get("bovada")
+    if bovada:
+        return dict(bovada)
+    if has_bookmaker_rows and not comparison.get("books"):
+        return None
+    if not odds:
+        return None
+    completed = bool(event.get("completed")) or str(event.get("status")) == "post"
+    reference = _parse_time(event["start_time"]) if completed else datetime.now(UTC)
+    try:
+        observed = _parse_time(str(odds.get("fresh_at") or odds.get("observed_at") or ""))
+    except (TypeError, ValueError):
+        return None
+    age = reference - observed
+    if not -BOOKMAKER_FUTURE_TOLERANCE <= age <= BOOKMAKER_MAX_AGE:
+        return None
+    return dict(odds)
+
+
 def _latest_prediction(database: Any, event_id: str) -> dict[str, Any] | None:
     row = database.execute(
         """
@@ -1986,7 +2014,12 @@ def _event_row(database: Any, row: Any) -> dict[str, Any]:
     bookmaker_rows = _latest_bookmaker_rows(database, [str(item["id"])])
     item["market_comparison"] = _market_comparison(item, bookmaker_rows)
     item["bovada_odds"] = item["market_comparison"].get("bovada")
-    item["paper_odds"] = item["bovada_odds"] if bookmaker_rows else item["odds"]
+    item["paper_odds"] = _paper_moneyline(
+        item,
+        item["odds"],
+        item["market_comparison"],
+        has_bookmaker_rows=bool(bookmaker_rows),
+    )
     item["prediction"] = _latest_prediction(database, str(item["id"]))
     item["edge_history"] = _edge_sparkline(database, item, item["prediction"])
     item["news_count"], item["latest_news"] = _news_summary(database, str(item["id"]))
@@ -2114,7 +2147,12 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
             event_bookmaker_rows,
         )
         event["bovada_odds"] = event["market_comparison"].get("bovada")
-        event["paper_odds"] = event["bovada_odds"] if event_bookmaker_rows else event["odds"]
+        event["paper_odds"] = _paper_moneyline(
+            event,
+            event["odds"],
+            event["market_comparison"],
+            has_bookmaker_rows=bool(event_bookmaker_rows),
+        )
         event["prediction"] = prediction
         event["edge_history"] = _edge_sparkline_from_rows(
             event,
@@ -3633,21 +3671,6 @@ def create_sports_pick(
         raise ValueError("Pick must be home or away")
     timestamp = _iso()
     with connection() as database:
-        identity = ensure_caller_identity_with_database(database, user_id)
-        event = database.execute(
-            "SELECT * FROM sports_events WHERE id=? AND status='pre' AND start_time>?",
-            (event_id, timestamp),
-        ).fetchone()
-        if not event:
-            raise ValueError("This game is no longer open for picks")
-        bookmaker_rows = _latest_bookmaker_rows(database, [event_id])
-        comparison = _market_comparison(dict(event), bookmaker_rows)
-        odds = comparison.get("bovada") if bookmaker_rows else _latest_odds(database, event_id)
-        if not odds:
-            raise ValueError("A fresh Bovada moneyline is not available")
-        american_odds = odds[f"{selection}_odds"]
-        if american_odds is None:
-            raise ValueError("Moneyline odds are not available for that side")
         existing = database.execute(
             """
             SELECT * FROM sports_picks
@@ -3657,6 +3680,26 @@ def create_sports_pick(
         ).fetchone()
         if existing:
             return dict(existing)
+        event = database.execute(
+            "SELECT * FROM sports_events WHERE id=? AND status='pre' AND start_time>?",
+            (event_id, timestamp),
+        ).fetchone()
+        if not event:
+            raise ValueError("This game is no longer open for picks")
+        bookmaker_rows = _latest_bookmaker_rows(database, [event_id])
+        comparison = _market_comparison(dict(event), bookmaker_rows)
+        odds = _paper_moneyline(
+            dict(event),
+            _latest_odds(database, event_id),
+            comparison,
+            has_bookmaker_rows=bool(bookmaker_rows),
+        )
+        if not odds:
+            raise ValueError("A fresh moneyline is not available")
+        american_odds = odds[f"{selection}_odds"]
+        if american_odds is None:
+            raise ValueError("Moneyline odds are not available for that side")
+        identity = ensure_caller_identity_with_database(database, user_id)
         prediction = _latest_prediction(database, event_id)
         pick_id = str(uuid.uuid4())
         public_id = secrets.token_urlsafe(9).replace("-", "").replace("_", "")[:12]
@@ -3786,7 +3829,7 @@ def _sports_alpha_item(
 
 
 def sports_alpha_board(league: str = "all", limit: int = 50) -> dict[str, Any]:
-    """Build the same public Call ledger used by Runners, with winners as assets."""
+    """Build public paper-Call activity for the Sports Alpha screen."""
 
     selected_league = league if league in LEAGUES else "all"
     parameters: list[Any] = []
@@ -3809,6 +3852,14 @@ def sports_alpha_board(league: str = "all", limit: int = 50) -> dict[str, Any]:
                 FROM sports_odds_snapshots o
             )
             SELECT p.*,ci.handle AS caller_handle,
+                   COUNT(*) OVER() AS board_total_calls,
+                   SUM(CASE WHEN p.status='open' THEN 1 ELSE 0 END)
+                       OVER() AS board_active_calls,
+                   COUNT(*) OVER(PARTITION BY p.event_id,p.selection)
+                       AS group_total_calls,
+                   SUM(CASE WHEN p.status='open' THEN 1 ELSE 0 END)
+                       OVER(PARTITION BY p.event_id,p.selection)
+                       AS group_active_calls,
                    e.league,e.start_time,e.status AS event_status,
                    e.home_team_id,e.home_team_name,e.home_abbreviation,
                    e.away_team_id,e.away_team_name,e.away_abbreviation,
@@ -3839,13 +3890,11 @@ def sports_alpha_board(league: str = "all", limit: int = 50) -> dict[str, Any]:
             key,
             {
                 "event": pick,
-                "active_calls": 0,
-                "total_calls": 0,
+                "active_calls": int(pick["group_active_calls"]),
+                "total_calls": int(pick["group_total_calls"]),
                 "latest_activity": str(pick["updated_at"]),
             },
         )
-        group["total_calls"] += 1
-        group["active_calls"] += int(pick["status"] == "open")
         group["latest_activity"] = max(
             str(group["latest_activity"]), str(pick["updated_at"])
         )
@@ -3922,8 +3971,8 @@ def sports_alpha_board(league: str = "all", limit: int = 50) -> dict[str, Any]:
         "rows": board_rows,
         "calls": calls[:100],
         "contenders": contenders,
-        "total_calls": len(picks),
-        "active_calls": sum(pick["status"] == "open" for pick in picks),
+        "total_calls": int(picks[0]["board_total_calls"]) if picks else 0,
+        "active_calls": int(picks[0]["board_active_calls"]) if picks else 0,
         "league": selected_league,
         "leagues": [
             {"key": key, "name": value["name"]} for key, value in LEAGUES.items()
