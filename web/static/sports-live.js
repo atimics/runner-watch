@@ -66,26 +66,26 @@
     const prediction = event.prediction || {};
     const signal = event.signal_abbreviation || '';
     const model = event.model_winner_abbreviation || '';
+    const baselineRelationship = model === signal ? 'agrees' : 'favors opponent';
     const hasValueProbabilities = Number.isFinite(Number(event.model_probability_pct))
       && Number.isFinite(Number(event.market_probability_pct));
     const valueComparison = hasValueProbabilities
-      ? `Model ${number(event.model_probability_pct)}% · Market ${number(event.market_probability_pct)}% · `
-      : '';
+      ? `Model ${number(event.model_probability_pct)}% · Market ${number(event.market_probability_pct)}%`
+      : 'Model and market building';
     const divergence = event.bovada_divergence_material
-      ? `<span class="bovada-outlier">Bovada differs on ${escapeHtml(event.bovada_divergence_team)} by ${number(event.bovada_divergence_pct, 1)} points</span>`
+      ? `<span class="bovada-outlier">Bovada differs by ${number(event.bovada_divergence_pct, 1)} points</span>`
       : '';
     const label = `${event.away_team_name || ''} at ${event.home_team_name || ''}; baseline winner ${model} at ${number(event.model_winner_probability_pct)} percent; value side ${signal} with a ${signed(prediction.edge_pct)} percentage-point model edge`;
     return `<a class="game-card winner-card${compact ? ' winner-card-compact' : ''}" href="${gameHref(prefix, event.id)}" aria-label="${escapeHtml(label)}">
-      <span class="winner-coin winner-coin-${safeToken(event.signal_coin_tone, 'neutral')}" aria-hidden="true"><b>${escapeHtml(String(signal).slice(0, 3))}</b><i></i></span>
       <span class="matchup-copy">
-        <span class="matchup-team"><strong>${escapeHtml(event.away_abbreviation)}</strong><span>${escapeHtml(event.away_team_name)}</span></span>
-        <span class="matchup-team"><strong>${escapeHtml(event.home_abbreviation)}</strong><span>${escapeHtml(event.home_team_name)}</span></span>
+        <span class="matchup-team${signal === event.away_abbreviation ? ' is-value' : ''}"><strong>${escapeHtml(event.away_abbreviation)}</strong><span>${escapeHtml(event.away_team_name)}</span>${signal === event.away_abbreviation ? '<small class="matchup-value">VALUE</small>' : ''}</span>
+        <span class="matchup-team${signal === event.home_abbreviation ? ' is-value' : ''}"><strong>${escapeHtml(event.home_abbreviation)}</strong><span>${escapeHtml(event.home_team_name)}</span>${signal === event.home_abbreviation ? '<small class="matchup-value">VALUE</small>' : ''}</span>
         <span class="winner-context">${escapeHtml(String(event.league || '').toUpperCase())} · <time data-local-time="${escapeHtml(event.start_time)}">${escapeHtml(localTime(event.start_time))}</time></span>
       </span>
       <span class="winner-quote">
-        <small>VALUE SIDE</small><strong>${escapeHtml(signal)}</strong>
-        <span class="winner-edge">${valueComparison}Edge ${signed(prediction.edge_pct)} percentage points</span>
-        <em class="baseline-winner">Baseline winner · ${escapeHtml(model)} ${number(event.model_winner_probability_pct)}%</em>
+        <small>VALUE EDGE</small><strong>${signed(prediction.edge_pct)} pp</strong>
+        <span class="winner-edge">${valueComparison}</span>
+        <em class="baseline-winner">Baseline ${baselineRelationship} · ${number(event.model_winner_probability_pct)}%</em>
         ${divergence}
         ${historySvg(event.edge_history)}
       </span>

@@ -103,6 +103,7 @@ def test_large_responses_are_compressed() -> None:
 
 def test_ticker_has_public_call_and_flash_actions() -> None:
     template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
+    script = (Path(__file__).parents[1] / "web/static/ticker-detail.js").read_text()
 
     assert "Track a thesis" not in template
     assert "thesisDialog" not in template
@@ -117,6 +118,9 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert 'id="generateComment"' in template
     assert "Persistent avatars · public across tickers" in template
     assert "render_comment_avatar(comment.avatar)" in template
+    assert "'Idempotency-Key': pendingCommentRequestId" in script
+    assert "sessionStorage.setItem(pendingCommentStorageKey" in script
+    assert "item.dataset.commentId === String(result.comment.id)" in script
 
 
 def test_ticker_layout_puts_subtle_actions_after_the_analysis() -> None:
@@ -1606,28 +1610,38 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
             ),
         )
     claim_daily_flash("feedback-user")
-    monkeypatch.setattr(
-        web_main,
-        "_generate_ticker_comment_text",
-        lambda ticker, *, avatar_ability_id: (
+    generation_calls = 0
+
+    def generate_comment(ticker: str, *, avatar_ability_id: str) -> tuple[str, str]:
+        nonlocal generation_calls
+        generation_calls += 1
+        return (
             "My read is above VWAP, but low volume is the risk.",
             "test/model",
-        ),
-    )
+        )
+
+    monkeypatch.setattr(web_main, "_generate_ticker_comment_text", generate_comment)
     monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "sk-or-comment-test")
-    comment_request = Request(
-        {
-            "type": "http",
-            "method": "POST",
-            "path": "/api/comments/ONE",
-            "headers": [(b"origin", APP_ORIGIN.encode())],
-            "client": ("127.0.0.78", 4780),
-        }
-    )
+    request_scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/comments/ONE",
+        "headers": [
+            (b"origin", APP_ORIGIN.encode()),
+            (b"idempotency-key", b"comment-request-0001"),
+        ],
+        "client": ("127.0.0.78", 4780),
+    }
+    comment_request = Request(request_scope)
     result = asyncio.run(create_ticker_comment("ONE", comment_request, raw_session))
+    replay = asyncio.run(create_ticker_comment("ONE", Request(request_scope), raw_session))
     payload = json.loads(result.body)
+    replay_payload = json.loads(replay.body)
 
     assert result.status_code == 201
+    assert replay.status_code == 200
+    assert replay_payload == payload
+    assert generation_calls == 1
     assert payload["count"] == 1
     assert payload["comment"]["body"] == "My read is above VWAP, but low volume is the risk."
     assert payload["comment"]["ai_generated"] is True
@@ -1646,6 +1660,16 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
     assert comments_for_ticker("ONE") == [public_comment]
     assert alpha_comments_data() == [{**public_comment, "ticker": "ONE"}]
     assert "radar_case" not in payload
+    with connection() as database:
+        request_row = database.execute(
+            "SELECT status,comment_id FROM comment_generation_requests"
+        ).fetchone()
+        transaction_count = database.execute(
+            "SELECT COUNT(*) FROM flash_transactions WHERE kind='comment_generation'"
+        ).fetchone()[0]
+    assert request_row["status"] == "completed"
+    assert request_row["comment_id"] == payload["comment"]["id"]
+    assert transaction_count == 1
 
 
 def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
@@ -1698,12 +1722,168 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
 
     assert comment == "My read is constructive, but thin volume is the risk."
     assert model == "z-ai/glm-5.3"
+    assert captured["body"]["models"] == list(web_main.OPENROUTER_COMMENT_MODELS)
+    assert "model" not in captured["body"]
     assert captured["body"]["response_format"] == {"type": "json_object"}
+    assert captured["body"]["provider"] == {
+        "allow_fallbacks": True,
+        "require_parameters": True,
+        "zdr": True,
+    }
     assert captured["body"]["max_tokens"] == web_main.OPENROUTER_COMMENT_OUTPUT_TOKENS
     assert captured["body"]["max_tokens"] >= 1_200
     assert "user" not in captured["body"]
     assert "Risk Sentinel" in captured["body"]["messages"][0]["content"]
     assert "public name" not in captured["body"]["messages"][0]["content"]
+
+
+def test_failed_ticker_comment_request_refunds_once_and_replays_the_error(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "failed-comment.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    insert_filing("failed-comment-one", "ONE", 1.25, 70, timestamp.isoformat(), "P")
+    raw_session = "failed-comment-session"
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("failed-comment-user", "failed", "Failed", "active", timestamp.isoformat()),
+        )
+        database.execute(
+            "INSERT INTO sessions(token_hash,user_id,created_at,expires_at) VALUES(?,?,?,?)",
+            (
+                web_main.token_hash(raw_session),
+                "failed-comment-user",
+                timestamp.isoformat(),
+                (timestamp + timedelta(days=1)).isoformat(),
+            ),
+        )
+    claim_daily_flash("failed-comment-user")
+    generation_calls = 0
+
+    def fail_generation(ticker: str, *, avatar_ability_id: str) -> tuple[str, str]:
+        nonlocal generation_calls
+        generation_calls += 1
+        raise HTTPException(502, "AI comment generation failed. Your Flash was returned.")
+
+    monkeypatch.setattr(web_main, "_generate_ticker_comment_text", fail_generation)
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "sk-or-comment-test")
+    request_scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/comments/ONE",
+        "headers": [
+            (b"origin", APP_ORIGIN.encode()),
+            (b"idempotency-key", b"failed-comment-request-0001"),
+        ],
+        "client": ("127.0.0.79", 4781),
+    }
+
+    for _attempt in range(2):
+        with pytest.raises(HTTPException) as error:
+            asyncio.run(create_ticker_comment("ONE", Request(request_scope), raw_session))
+        assert error.value.status_code == 502
+        assert error.value.detail == "AI comment generation failed. Your Flash was returned."
+
+    assert generation_calls == 1
+    assert wallet_for_user("failed-comment-user")["balance"] == 100
+    with connection() as database:
+        request_row = database.execute(
+            "SELECT status,error_status FROM comment_generation_requests"
+        ).fetchone()
+        transactions = database.execute(
+            "SELECT kind,amount FROM flash_transactions ORDER BY created_at,id"
+        ).fetchall()
+        comment_count = database.execute("SELECT COUNT(*) FROM ticker_comments").fetchone()[0]
+    assert request_row["status"] == "failed"
+    assert request_row["error_status"] == 502
+    assert {(row["kind"], row["amount"]) for row in transactions} >= {
+        ("comment_generation", -10),
+        ("comment_refund", 10),
+    }
+    assert comment_count == 0
+
+
+def test_ticker_comment_generator_retries_invalid_content_with_other_models(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    requests: list[dict[str, Any]] = []
+    responses = [
+        {
+            "choices": [{"message": {"content": {"wrong": "shape"}}}],
+            "model": "contender/one",
+        },
+        {
+            "choices": [
+                {"message": {"content": {"comment": "My view is mixed; cash is the risk."}}}
+            ],
+            "model": "contender/two",
+        },
+    ]
+
+    def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
+        assert timeout == 30
+        requests.append(json.loads(request.data))
+        assert request.get_header("X-openrouter-metadata") == "enabled"
+        return io.BytesIO(json.dumps(responses.pop(0)).encode())
+
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "sk-or-comment-test")
+    monkeypatch.setattr(
+        web_main,
+        "OPENROUTER_COMMENT_MODELS",
+        ("contender/one", "contender/two", "contender/three"),
+    )
+    monkeypatch.setattr(
+        web_main,
+        "ticker_detail_data",
+        lambda ticker: {
+            "ticker": ticker,
+            "company": "One Corp",
+            "current": {},
+            "evidence_gate": {},
+            "events": [],
+        },
+    )
+    monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
+
+    comment, model = web_main._generate_ticker_comment_text("ONE")
+
+    assert comment == "My view is mixed; cash is the risk."
+    assert model == "contender/two"
+    assert requests[0]["models"] == ["contender/one", "contender/two", "contender/three"]
+    assert requests[1]["models"] == ["contender/two", "contender/three"]
+
+
+def test_openrouter_route_diagnostics_exclude_prompts_and_raw_errors() -> None:
+    payload = {
+        "error": {
+            "code": 502,
+            "message": "private prompt text",
+            "metadata": {
+                "raw": "provider secret",
+                "attempts": [
+                    {
+                        "provider_name": "Provider A",
+                        "model": "contender/one",
+                        "status": 503,
+                        "raw": "upstream body",
+                    }
+                ],
+            },
+        }
+    }
+
+    diagnostics = web_main._openrouter_route_diagnostics(payload)
+
+    assert diagnostics == {
+        "error_code": 502,
+        "attempts": [
+            {"provider_name": "Provider A", "model": "contender/one", "status": 503}
+        ],
+    }
+    assert "private prompt text" not in json.dumps(diagnostics)
+    assert "provider secret" not in json.dumps(diagnostics)
 
 
 def test_radar_orders_events_by_time_not_activity(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

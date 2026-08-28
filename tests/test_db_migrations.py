@@ -177,6 +177,10 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         flash_request_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='flash_report_requests'"
         ).fetchone()
+        comment_generation_request_table = database.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='comment_generation_requests'"
+        ).fetchone()
         flash_wallet_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='flash_wallets'"
         ).fetchone()
@@ -223,6 +227,12 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         comment_columns = {
             row["name"] for row in database.execute("PRAGMA table_info(ticker_comments)").fetchall()
         }
+        comment_generation_request_columns = {
+            row["name"]
+            for row in database.execute(
+                "PRAGMA table_info(comment_generation_requests)"
+            ).fetchall()
+        }
         indexes = {
             row["name"]
             for row in database.execute(
@@ -266,6 +276,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert stripe_event_table is not None
     assert community_call_table is not None
     assert flash_request_table is not None
+    assert comment_generation_request_table is not None
     assert flash_wallet_table is not None
     assert flash_transaction_table is not None
     assert pulse_entries_table is not None
@@ -304,6 +315,18 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     } <= commission_columns
     assert {"visibility", "published_at", "report_day", "exclusive_until"} <= commission_columns
     assert {"source", "generation_model"} <= comment_columns
+    assert {
+        "id",
+        "user_id",
+        "idempotency_key_hash",
+        "ticker",
+        "comment_id",
+        "status",
+        "error_status",
+        "error_detail",
+        "created_at",
+        "updated_at",
+    } <= comment_generation_request_columns
     assert "actor_snapshot_json" in call_columns
     assert {
         "opening_range_position",
@@ -373,6 +396,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "research_commissions_public_time",
         "public_aliases_user",
         "comment_avatars_ability",
+        "comment_generation_requests_status_time",
         "caller_identities_owner",
         "caller_identities_one_active_per_user",
         "caller_identity_one_free_claim",
