@@ -66,26 +66,32 @@
     const prediction = event.prediction || {};
     const signal = event.signal_abbreviation || '';
     const model = event.model_winner_abbreviation || '';
-    const baselineRelationship = model === signal ? 'agrees' : 'favors opponent';
-    const hasValueProbabilities = Number.isFinite(Number(event.model_probability_pct))
-      && Number.isFinite(Number(event.market_probability_pct));
-    const valueComparison = hasValueProbabilities
-      ? `Model ${number(event.model_probability_pct)}% · Market ${number(event.market_probability_pct)}%`
-      : 'Model and market building';
+    const valueAgrees = model === signal;
+    const opponentAbbreviation = event.model_winner_opponent_abbreviation
+      || (event.model_winner_side === 'home' ? event.away_abbreviation : event.home_abbreviation)
+      || '';
+    const opponentName = event.model_winner_opponent_team_name
+      || (event.model_winner_side === 'home' ? event.away_team_name : event.home_team_name)
+      || '';
+    const projectedScore = event.model_winner_projected_score_display != null
+      && event.model_winner_opponent_projected_score_display != null
+      ? `Projected ${escapeHtml(event.model_winner_projected_score_display)}–${escapeHtml(event.model_winner_opponent_projected_score_display)}`
+      : 'Projected score building';
     const divergence = event.bovada_divergence_material
       ? `<span class="bovada-outlier">Bovada differs by ${number(event.bovada_divergence_pct, 1)} points</span>`
       : '';
-    const label = `${event.away_team_name || ''} at ${event.home_team_name || ''}; baseline winner ${model} at ${number(event.model_winner_probability_pct)} percent; value side ${signal} with a ${signed(prediction.edge_pct)} percentage-point model edge`;
-    return `<a class="game-card winner-card${compact ? ' winner-card-compact' : ''}" href="${gameHref(prefix, event.id)}" aria-label="${escapeHtml(label)}">
-      <span class="matchup-copy">
-        <span class="matchup-team${signal === event.away_abbreviation ? ' is-value' : ''}"><strong>${escapeHtml(event.away_abbreviation)}</strong><span>${escapeHtml(event.away_team_name)}</span>${signal === event.away_abbreviation ? '<small class="matchup-value">VALUE</small>' : ''}</span>
-        <span class="matchup-team${signal === event.home_abbreviation ? ' is-value' : ''}"><strong>${escapeHtml(event.home_abbreviation)}</strong><span>${escapeHtml(event.home_team_name)}</span>${signal === event.home_abbreviation ? '<small class="matchup-value">VALUE</small>' : ''}</span>
-        <span class="winner-context">${escapeHtml(String(event.league || '').toUpperCase())} · <time data-local-time="${escapeHtml(event.start_time)}">${escapeHtml(localTime(event.start_time))}</time></span>
+    const label = `${event.model_winner_team_name || model} projected to beat ${opponentName} with a ${number(event.model_winner_probability_pct)} percent win chance; value side ${signal} with a ${signed(prediction.edge_pct)} percentage-point model edge`;
+    return `<a class="game-card winner-card team-projection-card${compact ? ' winner-card-compact' : ''}" href="${gameHref(prefix, event.id)}" aria-label="${escapeHtml(label)}">
+      <span class="winner-coin winner-coin-${safeToken(event.model_winner_coin_tone, '0')}" aria-hidden="true"><b>${escapeHtml(model)}</b><i></i></span>
+      <span class="matchup-copy team-projection-copy">
+        <span class="team-projection-line"><strong>${escapeHtml(model)}</strong><small>PROJECTED</small></span>
+        <span class="team-projection-name">${escapeHtml(event.model_winner_team_name || model)}</span>
+        <span class="winner-context">vs ${escapeHtml(opponentAbbreviation)} · ${escapeHtml(String(event.league || '').toUpperCase())} · <time data-local-time="${escapeHtml(event.start_time)}">${escapeHtml(localTime(event.start_time))}</time></span>
       </span>
       <span class="winner-quote">
-        <small>VALUE EDGE</small><strong>${signed(prediction.edge_pct)} pp</strong>
-        <span class="winner-edge">${valueComparison}</span>
-        <em class="baseline-winner">Baseline ${baselineRelationship} · ${number(event.model_winner_probability_pct)}%</em>
+        <small>WIN CHANCE</small><strong>${number(event.model_winner_probability_pct)}%</strong>
+        <span class="winner-edge">${projectedScore}</span>
+        <em class="value-note${valueAgrees ? ' agrees' : ''}">Value${valueAgrees ? ' agrees' : ''}: ${escapeHtml(signal)} ${signed(prediction.edge_pct)} pp</em>
         ${divergence}
         ${historySvg(event.edge_history)}
       </span>
@@ -95,7 +101,7 @@
 
   function renderPulseEvents(events, prefix) {
     if (!events.length) {
-      return '<div class="sports-empty"><strong>No Pulse signals right now.</strong><p>Pulse stays quiet until a game clears the model-versus-market threshold.</p></div>';
+      return '<div class="sports-empty"><strong>No team projections right now.</strong><p>Pulse stays quiet until a game clears the model-versus-market threshold.</p></div>';
     }
     return events.map(event => {
       const related = event.series_more || [];
@@ -212,7 +218,7 @@
         const currentIds = new Set((current.events || []).map(eventKey));
         const newCount = (next.events || []).filter(event => !currentIds.has(eventKey(event))).length;
         pending = next;
-        refresh.textContent = newCount === 1 ? '1 new matchup' : (newCount > 1 ? `${newCount} new matchups` : 'Slate updated');
+        refresh.textContent = newCount === 1 ? '1 new team projection' : (newCount > 1 ? `${newCount} new team projections` : 'Slate updated');
         refresh.hidden = false;
       } catch (_) {
         status.textContent = 'Offline';

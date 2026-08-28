@@ -6,20 +6,21 @@
 {% block content %}
 {% macro pulse_card(event, compact=false) -%}
   {% set prediction = event.prediction %}
-  {% set baseline_agrees = event.model_winner_abbreviation == event.signal_abbreviation %}
-  <a class="game-card winner-card{% if compact %} winner-card-compact{% endif %}" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}" aria-label="{{ event.away_team_name }} at {{ event.home_team_name }}; baseline winner {{ event.model_winner_abbreviation }} at {{ '%.0f'|format(event.model_winner_probability_pct) }} percent; value side {{ event.signal_abbreviation }} with a {{ '%+.1f'|format(prediction.edge_pct) }} percentage-point model edge">
-    <span class="matchup-copy">
-      <span class="matchup-team{% if event.signal_abbreviation == event.away_abbreviation %} is-value{% endif %}"><strong>{{ event.away_abbreviation }}</strong><span>{{ event.away_team_name }}</span>{% if event.signal_abbreviation == event.away_abbreviation %}<small class="matchup-value">VALUE</small>{% endif %}</span>
-      <span class="matchup-team{% if event.signal_abbreviation == event.home_abbreviation %} is-value{% endif %}"><strong>{{ event.home_abbreviation }}</strong><span>{{ event.home_team_name }}</span>{% if event.signal_abbreviation == event.home_abbreviation %}<small class="matchup-value">VALUE</small>{% endif %}</span>
+  {% set value_agrees = event.model_winner_abbreviation == event.signal_abbreviation %}
+  <a class="game-card winner-card team-projection-card{% if compact %} winner-card-compact{% endif %}" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}" aria-label="{{ event.model_winner_team_name }} projected to beat {{ event.model_winner_opponent_team_name }} with a {{ '%.0f'|format(event.model_winner_probability_pct) }} percent win chance; value side {{ event.signal_abbreviation }} with a {{ '%+.1f'|format(prediction.edge_pct) }} percentage-point model edge">
+    <span class="winner-coin winner-coin-{{ event.model_winner_coin_tone }}" aria-hidden="true"><b>{{ event.model_winner_abbreviation }}</b><i></i></span>
+    <span class="matchup-copy team-projection-copy">
+      <span class="team-projection-line"><strong>{{ event.model_winner_abbreviation }}</strong><small>PROJECTED</small></span>
+      <span class="team-projection-name">{{ event.model_winner_team_name }}</span>
       <span class="winner-context">
-        {{ event.league|upper }} · <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time>
+        vs {{ event.model_winner_opponent_abbreviation }} · {{ event.league|upper }} · <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time>
       </span>
     </span>
     <span class="winner-quote">
-      <small>VALUE EDGE</small>
-      <strong>{{ '%+.1f'|format(prediction.edge_pct) }} pp</strong>
-      <span class="winner-edge">{% if event.model_probability_pct is not none and event.market_probability_pct is not none %}Model {{ '%.0f'|format(event.model_probability_pct) }}% · Market {{ '%.0f'|format(event.market_probability_pct) }}%{% else %}Model and market building{% endif %}</span>
-      <em class="baseline-winner">Baseline {% if baseline_agrees %}agrees{% else %}favors opponent{% endif %} · {{ '%.0f'|format(event.model_winner_probability_pct) }}%</em>
+      <small>WIN CHANCE</small>
+      <strong>{{ '%.0f'|format(event.model_winner_probability_pct) }}%</strong>
+      <span class="winner-edge">Projected {{ event.model_winner_projected_score_display }}–{{ event.model_winner_opponent_projected_score_display }}</span>
+      <em class="value-note{% if value_agrees %} agrees{% endif %}">Value{% if value_agrees %} agrees{% endif %}: {{ event.signal_abbreviation }} {{ '%+.1f'|format(prediction.edge_pct) }} pp</em>
       {% if event.bovada_divergence_material %}<span class="bovada-outlier">Bovada differs by {{ '%.1f'|format(event.bovada_divergence_pct) }} points</span>{% endif %}
       {% if event.edge_history %}
       <svg class="edge-spark" viewBox="0 0 92 24" role="img" aria-label="{{ event.edge_history.label }}">
@@ -39,7 +40,7 @@
       <div>
         <span class="rati-product">RATi SPORTS</span>
         <h1>Pulse</h1>
-        <span class="head-meta sports-pulse-summary"><span><b id="sportsPulseCount">{{ pulse.display_count }}</b> matchup{% if pulse.display_count != 1 %}s{% endif %}</span><span>{{ pulse.scanned_count }} checked</span><span id="sportsPulseMaturity">Baseline {{ pulse.model_record.games }}/{{ pulse.model_record.sample.target }} graded</span><span id="sportsPulseStatus">Live</span></span>
+        <span class="head-meta sports-pulse-summary"><span><b id="sportsPulseCount">{{ pulse.display_count }}</b> team projection{% if pulse.display_count != 1 %}s{% endif %}</span><span>{{ pulse.scanned_count }} games checked</span><span id="sportsPulseMaturity">Baseline {{ pulse.model_record.games }}/{{ pulse.model_record.sample.target }} graded</span><span id="sportsPulseStatus">Live</span></span>
       </div>
       {% if user %}
         <button class="avatar-button" type="button" data-profile aria-label="Open {{ comment_avatar.name }} profile">{{ render_comment_avatar(comment_avatar) }}</button>
@@ -75,7 +76,7 @@
           </details>
           {% endif %}
         {% else %}
-        <div class="sports-empty"><strong>No Pulse signals right now.</strong><p>Pulse stays quiet until a game clears the model-versus-market threshold.</p></div>
+        <div class="sports-empty"><strong>No team projections right now.</strong><p>Pulse stays quiet until a game clears the model-versus-market threshold.</p></div>
         {% endfor %}
       </div>
     </main>

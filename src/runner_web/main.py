@@ -1797,6 +1797,46 @@ def _baseline_summary(base_rates: dict[str, Any] | None) -> str | None:
     )
 
 
+def _ranker_directional_thesis(prediction: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Describe the ranker's forward outcome without reusing attention colour."""
+
+    if not prediction:
+        return None
+    probabilities: dict[str, float] = {}
+    for outcome in ("up", "down", "timeout"):
+        value = prediction.get(f"probability_{outcome}")
+        try:
+            probability = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not 0 <= probability <= 1:
+            return None
+        probabilities[outcome] = probability
+
+    directional_margin = probabilities["up"] - probabilities["down"]
+    if probabilities["timeout"] >= max(probabilities["up"], probabilities["down"]):
+        outcome = "timeout"
+    elif directional_margin >= 0.05:
+        outcome = "up"
+    elif directional_margin <= -0.05:
+        outcome = "down"
+    else:
+        outcome = "timeout"
+
+    direction = "flat" if outcome == "timeout" else outcome
+    labels = {"up": "Upside", "down": "Downside", "timeout": "No clear edge"}
+    arrows = {"up": "↑", "down": "↓", "timeout": "↔"}
+    return {
+        "direction": direction,
+        "label": labels[outcome],
+        "arrow": arrows[outcome],
+        "probability": round(probabilities[outcome], 4),
+        "probability_pct": round(probabilities[outcome] * 100),
+        "horizon": "next 60m",
+        "contract": "+8% before -4% within 60m",
+    }
+
+
 def _market_pulse_label(snapshot: dict[str, Any], catalyst: dict[str, Any] | None) -> str:
     if catalyst:
         label = _pulse_label(catalyst)
@@ -2100,6 +2140,7 @@ def _pulse_data_uncached() -> dict[str, Any]:
         if snapshot.get("rug_score") is not None or snapshot.get("trade_state") is not None:
             score_components.update({"rug": -round(rug_penalty, 2), "state": -state_penalty})
         external_label = _external_event_label(external)
+        directional_thesis = _ranker_directional_thesis(prediction)
         runner = {
             **snapshot,
             "baseline_score": float(snapshot.get("score") or 0),
@@ -2111,6 +2152,7 @@ def _pulse_data_uncached() -> dict[str, Any]:
             "score": pulse_score,
             "custom_score": pulse_score,
             "runner_probability": prediction.get("probability_up") if prediction else None,
+            "directional_thesis": directional_thesis,
             "expected_return_pct": (prediction.get("expected_return_pct") if prediction else None),
             "call_count": call_count,
             "bull_count": 0,
@@ -2308,6 +2350,7 @@ PUBLIC_PULSE_ROW_FIELDS = (
     "rug_level",
     "sentiment",
     "pulse_label",
+    "directional_thesis",
     "has_update",
     "case_confidence",
     "case_thesis",
@@ -4638,8 +4681,15 @@ SPORTS_PULSE_EVENT_FIELDS = (
     "signal_abbreviation",
     "model_probability_pct",
     "market_probability_pct",
+    "model_winner_side",
+    "model_winner_team_name",
     "model_winner_abbreviation",
+    "model_winner_coin_tone",
+    "model_winner_opponent_team_name",
+    "model_winner_opponent_abbreviation",
     "model_winner_probability_pct",
+    "model_winner_projected_score_display",
+    "model_winner_opponent_projected_score_display",
     "bovada_divergence_material",
     "bovada_divergence_pct",
     "bovada_divergence_team",
@@ -5231,6 +5281,20 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
             """,
             (ticker,),
         ).fetchone()
+        prediction = (
+            db.execute(
+                """
+                SELECT probability_up,probability_down,probability_timeout,
+                       expected_return_pct,created_at
+                FROM ranker_predictions
+                WHERE snapshot_id=?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (snapshot["id"],),
+            ).fetchone()
+            if snapshot is not None
+            else None
+        )
         external_rows = db.execute(
             """
             SELECT source,ticker,event_type,status,event_at,source_url,payload_json
@@ -5286,6 +5350,9 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
     pressure = _market_trade_pressure(ticker)
     external = _external_event_context([dict(row) for row in external_rows])
     base_rates = matched_market_base_rates(current)
+    directional_thesis = _ranker_directional_thesis(
+        dict(prediction) if prediction is not None else None
+    )
     return {
         "ticker": ticker,
         "company": company["name"] if company else current.get("company", ticker),
@@ -5300,6 +5367,7 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
         "external_context": external,
         "base_rates": base_rates,
         "trade_pressure": pressure,
+        "directional_thesis": directional_thesis,
         "kol_calls": kol_calls_for_ticker(ticker),
         "evidence_gate": _evidence_gate(
             current,

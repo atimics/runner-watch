@@ -43,7 +43,12 @@ def _event(event_id: str, away: str, home: str) -> dict[str, Any]:
         "model_winner_side": "away",
         "model_winner_team_name": f"{away} Club",
         "model_winner_abbreviation": away,
+        "model_winner_coin_tone": "0",
+        "model_winner_opponent_team_name": f"{home} Club",
+        "model_winner_opponent_abbreviation": home,
         "model_winner_probability_pct": 58.2,
+        "model_winner_projected_score_display": "5.1",
+        "model_winner_opponent_projected_score_display": "4.2",
         "model_probability_pct": 58.2,
         "market_probability_pct": 55.6,
         "signal_coin_tone": "0",
@@ -218,7 +223,7 @@ def test_sports_pulse_applies_updates_without_reloading_or_losing_detail(
 
     refresh = page.locator("#sportsPulseRefresh")
     assert refresh.is_visible()
-    assert refresh.text_content() == "1 new matchup"
+    assert refresh.text_content() == "1 new team projection"
     assert frame.get_attribute("src") == original_detail
     assert page.locator('a[href="/game/new-game"]').count() == 0
 
@@ -327,7 +332,7 @@ def test_sports_pulse_respects_shared_responsive_breakpoints(
     assert errors == []
 
 
-def test_sports_pulse_separates_value_side_from_baseline_winner(
+def test_sports_pulse_leads_with_the_projected_team_and_keeps_value_separate(
     page: Page, monkeypatch
 ) -> None:
     event = {
@@ -343,17 +348,16 @@ def test_sports_pulse_separates_value_side_from_baseline_winner(
 
     card = page.locator(".winner-card")
     copy = card.text_content()
-    assert "VALUE EDGE" in copy
-    assert "+7.8 pp" in copy
-    assert "Model 42% · Market 34%" in copy
-    assert "Baseline favors opponent · 58%" in copy
-    assert card.locator(".winner-coin").count() == 0
-    assert card.locator(".matchup-team strong").all_text_contents() == ["AWY", "HME"]
-    assert card.locator(".matchup-team.is-value strong").text_content() == "HME"
-    assert card.locator(".matchup-value").text_content() == "VALUE"
+    assert "PROJECTED" in copy
+    assert "WIN CHANCE" in copy
+    assert "58%" in copy
+    assert "Value: HME +7.8 pp" in copy
+    assert card.locator(".winner-coin").count() == 1
+    assert card.locator(".team-projection-line strong").text_content() == "AWY"
+    assert card.locator(".team-projection-name").text_content() == "AWY Club"
     assert page.locator(".model-favorite").count() == 0
     assert card.get_attribute("aria-label") == (
-        "AWY Club at HME Club; baseline winner AWY at 58 percent; "
+        "AWY Club projected to beat HME Club with a 58 percent win chance; "
         "value side HME with a +7.8 percentage-point model edge"
     )
     assert errors == []

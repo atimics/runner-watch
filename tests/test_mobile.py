@@ -59,6 +59,39 @@ def _test_flash_forecast() -> dict[str, Any]:
     }
 
 
+@pytest.mark.parametrize(
+    ("probabilities", "direction", "label", "arrow"),
+    [
+        ((0.62, 0.18, 0.20), "up", "Upside", "↑"),
+        ((0.19, 0.58, 0.23), "down", "Downside", "↓"),
+        ((0.34, 0.32, 0.34), "flat", "No clear edge", "↔"),
+        ((0.39, 0.36, 0.25), "flat", "No clear edge", "↔"),
+    ],
+)
+def test_ranker_directional_thesis_uses_the_three_way_contract(
+    probabilities: tuple[float, float, float],
+    direction: str,
+    label: str,
+    arrow: str,
+) -> None:
+    up, down, timeout = probabilities
+
+    thesis = web_main._ranker_directional_thesis(
+        {
+            "probability_up": up,
+            "probability_down": down,
+            "probability_timeout": timeout,
+        }
+    )
+
+    assert thesis is not None
+    assert thesis["direction"] == direction
+    assert thesis["label"] == label
+    assert thesis["arrow"] == arrow
+    assert thesis["horizon"] == "next 60m"
+    assert thesis["contract"] == "+8% before -4% within 60m"
+
+
 def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
     root = Path(__file__).parents[1]
     pulse_template = (root / "web/templates/pulse.html").read_text()
