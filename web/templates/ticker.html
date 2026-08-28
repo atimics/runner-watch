@@ -1,5 +1,13 @@
 {% extends "mobile_base.html" %}
 {% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
+{% macro evidence_gate(detail, embedded=false) -%}
+<div class="{{ 'risk-evidence' if embedded else 'evidence-gate' }} gate-{{ detail.evidence_gate.state }}" id="evidenceGate" data-base-class="{{ 'risk-evidence' if embedded else 'evidence-gate' }}">
+  <div><span>Evidence</span><strong id="gateSummary">{{ detail.evidence_gate.summary }}</strong><small id="gateCount">{{ detail.evidence_gate.count }}/{{ detail.evidence_gate.threshold }}</small></div>
+  <div class="gate-meter" id="gateMeter">{% for index in range(detail.evidence_gate.threshold) %}<i class="{% if index < detail.evidence_gate.count %}hit{% endif %}"></i>{% endfor %}</div>
+  <p id="gateChecks">{{ (detail.evidence_gate.blockers if detail.evidence_gate.blockers else detail.evidence_gate.checks)|join(' · ') or 'Waiting for evidence.' }}</p>
+  <p id="gateBaseline">{{ detail.evidence_gate.baseline_summary or 'Building the same-time baseline.' }}</p>
+</div>
+{%- endmacro %}
 {% block title %}{{ detail.ticker }} intel · RATi Runners{% endblock %}
 {% block content %}
 <header class="detail-nav">
@@ -23,7 +31,6 @@
       </div>
       <small>{% if detail.current.event_at %}{{ detail.current.event_at[:16]|replace('T', ' ') }} UTC{% else %}No recent quote{% endif %}</small>
     </section>
-    <p class="detail-principle">Movement first. Evidence before conviction.</p>
   </header>
 
   <div class="detail-dashboard">
@@ -53,8 +60,8 @@
       <div><span>Recent $ vol</span><strong>{% if detail.current.recent_dollar_volume %}${{ '%.1f'|format(detail.current.recent_dollar_volume / 1000000) }}m{% else %}—{% endif %}</strong></div>
     </div>
     <div class="reason-list">
-      {% for reason in detail.current.signals %}<span class="reason-chip">{{ reason }}</span>{% endfor %}
-      {% for risk in detail.current.risks %}<span class="reason-chip risk">{{ risk }}</span>{% endfor %}
+      {% for reason in detail.current.signals[:3] %}<span class="reason-chip">{{ reason }}</span>{% endfor %}
+      {% for risk in detail.current.risks[:2] %}<span class="reason-chip risk">{{ risk }}</span>{% endfor %}
       {% if not detail.current.signals and not detail.current.risks %}<p>No extra signals yet.</p>{% endif %}
     </div>
     {% else %}<p class="quiet-reason">No recent market data.</p>{% endif %}
@@ -64,7 +71,7 @@
       <section class="risk-decision risk-{{ (detail.current.rug_level or 'unknown')|lower }} state-{{ (detail.current.trade_state or 'watch')|lower }}">
     <div class="risk-decision-head"><span>RUG CHECK</span><strong>{{ detail.current.trade_state or 'WATCH' }}</strong></div>
     <div class="risk-grid">
-      <div><span>Setup</span><b>{{ '%.0f'|format(detail.current.setup_score or detail.current.score or 0) }}</b><small>could send</small></div>
+      <div><span>Setup</span><b>{{ '%.0f'|format(detail.current.setup_score or detail.current.score or 0) }}</b><small>score</small></div>
       <div><span>Rug risk</span><b>{{ '%.0f'|format(detail.current.rug_score or 0) }}</b><small>{{ detail.current.rug_level or 'unknown' }}</small></div>
       <div><span>52w fall</span><b>{{ '%.0f'|format(detail.current.drawdown_52w_pct or 0) }}%</b><small>{{ 'crash candidate' if detail.current.crash_candidate else 'from high' }}</small></div>
     </div>
@@ -75,15 +82,11 @@
       <span>Share growth: {% if issuer.get('shares_growth_pct') is not none %}{{ '%+.0f'|format(issuer.get('shares_growth_pct')) }}%{% else %}unknown{% endif %}</span>
       <span>Current ratio: {% if issuer.get('current_ratio') is not none %}{{ '%.2f'|format(issuer.get('current_ratio')) }}{% else %}unknown{% endif %}</span>
     </div>
+    {{ evidence_gate(detail, true) }}
       </section>
+  {% else %}
+      {{ evidence_gate(detail) }}
   {% endif %}
-
-      <section class="evidence-gate gate-{{ detail.evidence_gate.state }}" id="evidenceGate">
-    <div><span>Signal check</span><strong id="gateSummary">{{ detail.evidence_gate.summary }}</strong><small id="gateCount">{{ detail.evidence_gate.count }}/{{ detail.evidence_gate.threshold }}</small></div>
-    <div class="gate-meter" id="gateMeter">{% for index in range(detail.evidence_gate.threshold) %}<i class="{% if index < detail.evidence_gate.count %}hit{% endif %}"></i>{% endfor %}</div>
-    <p id="gateChecks">{{ (detail.evidence_gate.blockers if detail.evidence_gate.blockers else detail.evidence_gate.checks)|join(' · ') or 'Waiting for more evidence.' }}</p>
-    <p id="gateBaseline">{{ detail.evidence_gate.baseline_summary or 'Building a same-time historical baseline.' }}</p>
-      </section>
 
       <section class="pressure-section" id="pressureSection">
     <div class="section-heading"><div><span>From 5-minute bars</span><h2>Buy/sell pressure</h2></div><b id="pressureLabel">waiting</b></div>

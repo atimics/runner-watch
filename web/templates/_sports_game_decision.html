@@ -12,7 +12,7 @@
   <section class="decision-hero decision-board {{ prediction.signal|replace(' ','-') }}">
     <div class="decision-kicker">
       <strong>SEASON-RECORD BASELINE</strong>
-      <span>{{ sample.label }} · {{ model_record.games }}/{{ sample.target }} GRADED</span>
+      <span>{{ sample.label }}</span>
     </div>
     <div class="decision-columns">
       <div class="decision-model-call">
@@ -38,15 +38,7 @@
         {% endif %}
       </div>
     </div>
-    <aside class="model-maturity" aria-label="Model maturity">
-      <div>
-        <strong>{{ 'EXPERIMENTAL' if sample.remaining else 'REVIEWABLE' }}</strong>
-        <span>{{ model_record.games }} of {{ sample.target }} predictions graded</span>
-      </div>
-      <p>{{ sample.message }}</p>
-      <i aria-hidden="true"><b style="width:{{ sample.progress_pct }}%"></b></i>
-    </aside>
-    <p class="decision-summary">This is a season-record baseline with a fixed home advantage. It does not use the form, roster, injury, or news sections below.</p>
+    <p class="decision-summary"><strong>{{ 'Experimental' if sample.remaining else 'Reviewable' }} · {{ model_record.games }}/{{ sample.target }} graded.</strong> Season records plus home edge; roster and news are context only.</p>
     {% if event.edge_history %}
     <div class="decision-movement">
       <span>{{ event.edge_history.label }}</span>
