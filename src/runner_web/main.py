@@ -1024,6 +1024,10 @@ async def sports_ingestion_worker() -> None:
         await asyncio.sleep(SPORTS_REFRESH_SECONDS)
 
 
+def _is_panel_path(path: str) -> bool:
+    return path.startswith(("/t/", "/research/", "/s/", "/game/", "/sports/game/"))
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next: Any) -> Response:
     started = time.perf_counter()
@@ -1033,9 +1037,7 @@ async def security_headers(request: Request, call_next: Any) -> Response:
     if "runner_visitor" in request.cookies:
         response.delete_cookie("runner_visitor", path="/")
     response.headers["X-Content-Type-Options"] = "nosniff"
-    panel_path = request.url.path.startswith(
-        ("/t/", "/research/", "/s/", "/game/", "/sports/game/")
-    )
+    panel_path = _is_panel_path(request.url.path)
     frame_ancestors = "'self'" if panel_path else "'none'"
     response.headers["X-Frame-Options"] = "SAMEORIGIN" if panel_path else "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"

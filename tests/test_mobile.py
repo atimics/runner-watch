@@ -247,6 +247,20 @@ def test_desktop_feeds_share_full_info_and_article_panel() -> None:
     assert '"/game/"' in (root / "src/runner_web/main.py").read_text()
 
 
+def test_desktop_panel_security_allows_only_supported_detail_pages() -> None:
+    for path in (
+        "/t/WRAP",
+        "/research/report-1",
+        "/s/signal-1",
+        "/game/mlb:401816699",
+        "/sports/game/mlb:401816699",
+    ):
+        assert web_main._is_panel_path(path)
+
+    for path in ("/", "/radar", "/sports", "/sports/alpha", "/api/sports/pulse"):
+        assert not web_main._is_panel_path(path)
+
+
 def test_ticker_rows_have_no_reader_attention_state() -> None:
     root = Path(__file__).parents[1]
     row_script = (root / "web/static/ticker-row.js").read_text()
