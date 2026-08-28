@@ -17,7 +17,7 @@
     <form class="pulse-search" id="pulseSearch" role="search">
       <label for="pulseTickerSearch">Open a ticker</label>
       <input id="pulseTickerSearch" name="ticker" type="search" inputmode="latin" autocomplete="off" maxlength="12" pattern="[A-Za-z0-9.-]{1,12}" required title="Enter a ticker using letters, numbers, a dot, or a dash" placeholder="Ticker, for example RKLB" aria-label="Ticker symbol">
-      <button type="submit">Open</button>
+      <button type="submit">View ticker</button>
     </form>
     {% set flash_record = pulse.flash_record %}
     <a class="kol-score-strip" id="kolScoreStrip" href="/flash/record" aria-label="Open the Flash forecast record"{% if not flash_record %} hidden{% endif %}>
@@ -25,18 +25,15 @@
       <span>
         <strong>
           <span data-kol-name>{{ flash_record.label if flash_record else '' }}</span>
-          <i class="flash-model-label" data-kol-model>{{ flash_record.model_label if flash_record else '' }}</i>
+          <i class="flash-model-label" data-kol-model>{% if flash_record %}Model: {{ flash_record.model_label }}{% endif %}</i>
         </strong>
         <small data-kol-stats>
           {% if flash_record %}
-            {{ flash_record.hits }} hits · {{ flash_record.misses }} misses ·
-            {% if flash_record.headline_rate_visible %}{{ '%.0f'|format(flash_record.hit_rate * 100) }}% hit{% else %}building record{% endif %}
+            {% if flash_record.settled %}{{ flash_record.hits }} hits · {{ flash_record.misses }} misses · {% if flash_record.headline_rate_visible %}{{ '%.0f'|format(flash_record.hit_rate * 100) }}% hit{% else %}{{ flash_record.settled }} settled{% endif %}{% else %}No settled forecasts yet · building record{% endif %}
           {% endif %}
         </small>
       </span>
-      <b data-kol-pnl>
-        {% if flash_record %}{{ flash_record.settled }} settled{% endif %}
-      </b>
+      <b data-kol-pnl>{% if flash_record %}View record ›{% endif %}</b>
     </a>
     <button class="pulse-refresh" id="pulseRefresh" type="button" aria-live="polite" hidden>1 new ticker</button>
 
@@ -98,14 +95,16 @@ function renderKolScorecard() {
     return;
   }
 
-  const rate = record.headline_rate_visible && record.hit_rate != null
-    ? `${(Number(record.hit_rate) * 100).toFixed(0)}% hit`
-    : 'building record';
   scorecard.querySelector('[data-kol-avatar]').textContent = '⚡';
   scorecard.querySelector('[data-kol-name]').textContent = record.label || 'Flash';
-  scorecard.querySelector('[data-kol-model]').textContent = record.model_label || '';
-  scorecard.querySelector('[data-kol-stats]').textContent = `${record.hits || 0} hits · ${record.misses || 0} misses · ${rate}`;
-  scorecard.querySelector('[data-kol-pnl]').textContent = `${record.settled || 0} settled`;
+  const rate = record.headline_rate_visible && record.hit_rate != null
+    ? `${(Number(record.hit_rate) * 100).toFixed(0)}% hit`
+    : `${record.settled} settled`;
+  scorecard.querySelector('[data-kol-model]').textContent = record.model_label ? `Model: ${record.model_label}` : '';
+  scorecard.querySelector('[data-kol-stats]').textContent = Number(record.settled)
+    ? `${record.hits || 0} hits · ${record.misses || 0} misses · ${rate}`
+    : 'No settled forecasts yet · building record';
+  scorecard.querySelector('[data-kol-pnl]').textContent = 'View record ›';
   scorecard.hidden = false;
 }
 

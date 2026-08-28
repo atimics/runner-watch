@@ -31,6 +31,8 @@
     if (Number.isNaN(date.valueOf())) return value ? String(value) : 'pending';
     return date.toLocaleString([], {
       weekday: 'short',
+      month: 'short',
+      day: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
       timeZoneName: 'short',
@@ -62,27 +64,32 @@
 
   function pulseCard(event, prefix, compact = false) {
     const prediction = event.prediction || {};
-    const awayFavorite = event.model_winner_side === 'away' ? ' model-favorite' : '';
-    const homeFavorite = event.model_winner_side === 'home' ? ' model-favorite' : '';
     const signal = event.signal_abbreviation || '';
     const model = event.model_winner_abbreviation || '';
-    const divergence = event.bovada_divergence_material
-      ? ` · <b class="bovada-outlier">BOVADA ${escapeHtml(event.bovada_divergence_team)} +${number(event.bovada_divergence_pct, 1)}PP</b>`
+    const hasValueProbabilities = Number.isFinite(Number(event.model_probability_pct))
+      && Number.isFinite(Number(event.market_probability_pct));
+    const valueComparison = hasValueProbabilities
+      ? `Model ${number(event.model_probability_pct)}% · Market ${number(event.market_probability_pct)}% · `
       : '';
-    const label = `${event.away_team_name || ''} at ${event.home_team_name || ''}; model ${model} ${number(event.model_winner_probability_pct)} percent; price value ${signal} ${signed(prediction.edge_pct)} points`;
+    const divergence = event.bovada_divergence_material
+      ? `<span class="bovada-outlier">Bovada differs on ${escapeHtml(event.bovada_divergence_team)} by ${number(event.bovada_divergence_pct, 1)} points</span>`
+      : '';
+    const label = `${event.away_team_name || ''} at ${event.home_team_name || ''}; baseline winner ${model} at ${number(event.model_winner_probability_pct)} percent; value side ${signal} with a ${signed(prediction.edge_pct)} percentage-point model edge`;
     return `<a class="game-card winner-card${compact ? ' winner-card-compact' : ''}" href="${gameHref(prefix, event.id)}" aria-label="${escapeHtml(label)}">
       <span class="winner-coin winner-coin-${safeToken(event.signal_coin_tone, 'neutral')}" aria-hidden="true"><b>${escapeHtml(String(signal).slice(0, 3))}</b><i></i></span>
       <span class="matchup-copy">
-        <span class="matchup-team${awayFavorite}"><strong>${escapeHtml(event.away_abbreviation)}</strong><span>${escapeHtml(event.away_team_name)}</span></span>
-        <span class="matchup-team${homeFavorite}"><strong>${escapeHtml(event.home_abbreviation)}</strong><span>${escapeHtml(event.home_team_name)}</span></span>
-        <span class="winner-context">${escapeHtml(String(event.league || '').toUpperCase())} · <time data-local-time="${escapeHtml(event.start_time)}">${escapeHtml(localTime(event.start_time))}</time> · Model ${escapeHtml(model)} ${number(event.model_winner_probability_pct)}%; price value ${escapeHtml(signal)} ${signed(prediction.edge_pct)} pp${divergence}</span>
+        <span class="matchup-team"><strong>${escapeHtml(event.away_abbreviation)}</strong><span>${escapeHtml(event.away_team_name)}</span></span>
+        <span class="matchup-team"><strong>${escapeHtml(event.home_abbreviation)}</strong><span>${escapeHtml(event.home_team_name)}</span></span>
+        <span class="winner-context">${escapeHtml(String(event.league || '').toUpperCase())} · <time data-local-time="${escapeHtml(event.start_time)}">${escapeHtml(localTime(event.start_time))}</time></span>
       </span>
       <span class="winner-quote">
-        <strong>${escapeHtml(signal)} ${signed(prediction.edge_pct)} pp</strong><small>PRICE VALUE</small>
-        <em class="${safeToken(prediction.signal)}">MODEL ${escapeHtml(model)} ${number(event.model_winner_probability_pct)}%</em>
+        <small>VALUE SIDE</small><strong>${escapeHtml(signal)}</strong>
+        <span class="winner-edge">${valueComparison}Edge ${signed(prediction.edge_pct)} percentage points</span>
+        <em class="baseline-winner">Baseline winner · ${escapeHtml(model)} ${number(event.model_winner_probability_pct)}%</em>
+        ${divergence}
         ${historySvg(event.edge_history)}
       </span>
-      <span class="game-chevron" aria-hidden="true">›</span>
+      <span class="game-chevron" aria-hidden="true"><small>View</small>›</span>
     </a>`;
   }
 
@@ -171,7 +178,7 @@
       list.innerHTML = renderPulseEvents(current.events || [], prefix);
       count.textContent = current.display_count ?? (current.events || []).length;
       if (maturity && current.model_record) {
-        maturity.textContent = `EXPERIMENTAL · ${current.model_record.games}/${current.model_record.sample?.target ?? '—'} GRADED`;
+        maturity.textContent = `${current.model_record.games} of ${current.model_record.sample?.target ?? '—'} baseline results graded`;
       }
       if (updated) {
         updated.dataset.localTime = current.updated_at || '';
@@ -195,7 +202,7 @@
         const response = await fetch(queryEndpoint('/api/sports/pulse'));
         if (!response.ok) throw new Error('Sports Pulse refresh failed');
         const next = await response.json();
-        status.textContent = 'Live';
+        status.textContent = 'Live updates';
         if (!payloadChanged(current, next)) {
           current = {...current, ...next};
           pending = null;

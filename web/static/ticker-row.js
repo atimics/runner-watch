@@ -32,9 +32,9 @@
     if (!value) return '';
     const seconds = Math.max(0, (Date.now() - new Date(value).getTime()) / 1000);
     if (seconds < 90) return 'now';
-    if (seconds < 5400) return Math.round(seconds / 60) + 'm';
-    if (seconds < 129600) return Math.round(seconds / 3600) + 'h';
-    return Math.round(seconds / 86400) + 'd';
+    if (seconds < 5400) return Math.round(seconds / 60) + 'm ago';
+    if (seconds < 129600) return Math.round(seconds / 3600) + 'h ago';
+    return Math.round(seconds / 86400) + 'd ago';
   }
 
   function status(row) {
@@ -107,7 +107,7 @@
       <span class="quote">
         <strong>${esc(money(row.price))}</strong>
         <svg class="mini-chart" data-ticker="${esc(row.ticker)}" viewBox="0 0 64 18" preserveAspectRatio="none" aria-hidden="true"><path class="chart-placeholder" d="M1 12 L13 10 L25 13 L39 8 L51 10 L63 7"/></svg>
-        <small class="${changeClass}">${esc(percent(row.change_pct))}</small>
+        <small class="${changeClass}"><span class="quote-period">Today</span> ${esc(percent(row.change_pct))}</small>
       </span>
     </a>`;
   }
