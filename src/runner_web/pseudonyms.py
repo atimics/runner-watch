@@ -220,7 +220,8 @@ def migrate_comment_aliases_to_glyphs(database: Any) -> int:
 
     rows = database.execute(
         "SELECT scope,user_id,alias FROM public_aliases "
-        "WHERE scope LIKE 'comment:%' ORDER BY scope,created_at,user_id"
+        "WHERE scope LIKE ? ORDER BY scope,created_at,user_id",
+        ("comment:%",),
     ).fetchall()
     scopes: dict[str, list[Any]] = {}
     for row in rows:
