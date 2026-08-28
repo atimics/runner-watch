@@ -291,7 +291,7 @@
   <section class="paper-pick">
     <span>PUBLIC RECEIPT</span>
     <h2>Make a paper pick</h2>
-    <p>The current{% if quote %} {{ quote.source_label }}{% endif %} moneyline and time will be frozen. A winning Call earns {{ winning_call_reward }} Flash. This does not place a real bet.</p>
+    <p>The current{% if quote %} {{ quote.source_label }}{% endif %} moneyline and time will be frozen. Winning rewards scale with the frozen odds, up to {{ sports_call_reward_cap }} Flash, so a heavy favorite does not pay like an underdog. This does not place a real bet.</p>
     {% if not user %}
       <a href="/login">Log in to make a paper pick</a>
     {% elif event.status != 'pre' or not quote %}
@@ -310,7 +310,7 @@
     <div class="game-disclosure-body">
   <section class="public-picks">
     {% for pick in event.picks %}
-      <div><strong>{{ pick.caller_handle }}</strong><span>{{ event[pick.selection ~ '_abbreviation'] }} {{ '%+d'|format(pick.american_odds) }} · {{ pick.status }}{% if pick.result %} / {{ pick.result }}{% endif %}{% if pick.result == 'win' %} · +{{ winning_call_reward }} Flash{% endif %}</span></div>
+      <div><strong>{{ pick.caller_handle }}</strong><span>{{ event[pick.selection ~ '_abbreviation'] }} {{ '%+d'|format(pick.american_odds) }} · {{ pick.status }}{% if pick.result %} / {{ pick.result }}{% endif %}{% if pick.result == 'win' %} · +{{ pick.reward_flash }} Flash{% endif %}</span></div>
     {% else %}<p>No public picks yet.</p>{% endfor %}
   </section>
     </div>

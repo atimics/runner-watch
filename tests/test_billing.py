@@ -19,6 +19,7 @@ from runner_web.flash_wallet import (
     COMMENT_COST,
     PUBLISH_REPORT_REWARD,
     REPORT_COST,
+    SPORTS_CALL_REWARD_CAP,
     InsufficientFlashError,
     claim_daily_flash,
     credit_flash,
@@ -101,6 +102,7 @@ def test_daily_flash_must_be_claimed_and_does_not_backfill(
 
     assert empty["balance"] == 0
     assert empty["can_claim"] is True
+    assert empty["sports_call_reward_cap"] == SPORTS_CALL_REWARD_CAP
     assert claimed is True
     assert first["balance"] == 100
     assert first["claimed_today"] is True

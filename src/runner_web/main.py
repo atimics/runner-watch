@@ -97,6 +97,7 @@ from runner_web.flash_wallet import (
     REPORT_COST,
     REPORT_EXCLUSIVE_HOURS,
     RUNNER_CALL_REWARD_TIERS,
+    SPORTS_CALL_REWARD_CAP,
     WINNING_CALL_REWARD,
     InsufficientFlashError,
     claim_daily_flash,
@@ -899,6 +900,7 @@ def page_context(request: Request, session_token: str | None, **extra: Any) -> d
         "flash": actor_snapshot(),
         "runner_call_reward_tiers": RUNNER_CALL_REWARD_TIERS,
         "winning_call_reward": WINNING_CALL_REWARD,
+        "sports_call_reward_cap": SPORTS_CALL_REWARD_CAP,
         **extra,
     }
 
@@ -1031,7 +1033,9 @@ async def security_headers(request: Request, call_next: Any) -> Response:
     if "runner_visitor" in request.cookies:
         response.delete_cookie("runner_visitor", path="/")
     response.headers["X-Content-Type-Options"] = "nosniff"
-    panel_path = request.url.path.startswith(("/t/", "/research/", "/s/"))
+    panel_path = request.url.path.startswith(
+        ("/t/", "/research/", "/s/", "/game/", "/sports/game/")
+    )
     frame_ancestors = "'self'" if panel_path else "'none'"
     response.headers["X-Frame-Options"] = "SAMEORIGIN" if panel_path else "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -4729,6 +4733,7 @@ def sports_alpha_response(
             runner_session,
             board=_sports_alpha_data(selected_league),
             active_tab="alpha",
+            sports_tab="alpha",
             nav_product="sports",
             sports_path_prefix=sports_path_prefix,
             detail_panel_label="Selected winner, odds, stats, and Alpha",

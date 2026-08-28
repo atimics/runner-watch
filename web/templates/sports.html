@@ -10,9 +10,9 @@
 
 {% macro pulse_card(event, compact=false) -%}
   {% set prediction = event.prediction %}
-  <a class="game-card winner-card{% if compact %} winner-card-compact{% endif %}" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}" aria-label="{{ event.away_team_name }} at {{ event.home_team_name }}; season-record baseline favors {{ event.model_winner_team_name }} at {{ '%.0f'|format(event.model_winner_probability_pct) }} percent; market gap {{ event.signal_abbreviation }} {{ '%+.1f'|format(prediction.edge_pct) }} points">
+  <a class="game-card winner-card{% if compact %} winner-card-compact{% endif %}" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}" aria-label="{{ event.away_team_name }} at {{ event.home_team_name }}; model {{ event.model_winner_abbreviation }} {{ '%.0f'|format(event.model_winner_probability_pct) }} percent; price value {{ event.signal_abbreviation }} {{ '%+.1f'|format(prediction.edge_pct) }} points">
     <span class="winner-coin winner-coin-{{ event.model_winner_coin_tone }}" aria-hidden="true">
-      <b>{{ event.model_winner_abbreviation[:3] }}</b><i></i>
+      <b>{{ event.signal_abbreviation[:3] }}</b><i></i>
     </span>
     <span class="matchup-copy">
       <span class="matchup-team{% if event.model_winner_side == 'away' %} model-favorite{% endif %}">
@@ -26,14 +26,14 @@
       <span class="winner-context">
         {{ event.league|upper }} ·
         <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time>
-        · SEASON-RECORD BASELINE
+        · Model {{ event.model_winner_abbreviation }} {{ '%.0f'|format(event.model_winner_probability_pct) }}%; price value {{ event.signal_abbreviation }} {{ '%+.1f'|format(prediction.edge_pct) }} pp
         {% if event.bovada_divergence_material %} · <b class="bovada-outlier">BOVADA {{ event.bovada_divergence_team }} +{{ '%.1f'|format(event.bovada_divergence_pct) }}PP</b>{% endif %}
       </span>
     </span>
     <span class="winner-quote">
-      <strong>{{ event.model_winner_abbreviation }} {{ '%.0f'|format(event.model_winner_probability_pct) }}%</strong>
-      <small>MODEL</small>
-      <em class="{{ prediction.signal|replace(' ','-') }}">{{ event.signal_abbreviation }} {{ '%+.1f'|format(prediction.edge_pct) }} EDGE</em>
+      <strong>{{ event.signal_abbreviation }} {{ '%+.1f'|format(prediction.edge_pct) }} pp</strong>
+      <small>PRICE VALUE</small>
+      <em class="{{ prediction.signal|replace(' ','-') }}">MODEL {{ event.model_winner_abbreviation }} {{ '%.0f'|format(event.model_winner_probability_pct) }}%</em>
       {% if event.edge_history %}
       <svg class="edge-spark" viewBox="0 0 92 24" role="img" aria-label="{{ event.edge_history.label }}">
         <line class="edge-zero" x1="2" y1="12" x2="90" y2="12"></line>
@@ -50,6 +50,7 @@
   <div><span class="sports-eyebrow">EXPERIMENTAL · {{ pulse.model_record.games }}/{{ pulse.model_record.sample.target }} GRADED</span><h1>Pulse</h1></div>
   <p><strong>{{ pulse.display_count }}</strong> distinct matchups from {{ pulse.scanned_count }} games. Repeated series stay together.</p>
 </header>
+<button class="sports-update-button" type="button" data-sports-update hidden>New Sports data · refresh</button>
 
 <div class="pulse-workspace">
 <section class="game-list pulse-winners" aria-label="Pulse signals">
@@ -74,11 +75,11 @@
 {% if pulse.events %}
 {% set lead = pulse.events[0] %}
 {% set lead_prediction = lead.prediction %}
-<aside class="pulse-inspector" aria-label="Top Pulse signal">
-  <span class="inspector-kicker">TOP READ · {{ lead.league|upper }}</span>
+  <aside class="pulse-inspector" aria-label="Top Pulse signal">
+    <span class="inspector-kicker">TOP READ · {{ lead.league|upper }}</span>
   <div class="inspector-winner">
-    <span class="winner-coin winner-coin-{{ lead.model_winner_coin_tone }}"><b>{{ lead.model_winner_abbreviation[:3] }}</b><i></i></span>
-    <span><small>MODEL WINNER</small><strong>{{ lead.model_winner_team_name }}</strong><b>{{ '%.1f'|format(lead.model_winner_probability_pct) }}%</b></span>
+    <span class="winner-coin winner-coin-{{ lead.signal_coin_tone }}"><b>{{ lead.signal_abbreviation[:3] }}</b><i></i></span>
+    <span><small>PRICE VALUE</small><strong>{{ lead.signal_team_name }}</strong><b>{{ '%+.1f'|format(lead_prediction.edge_pct) }} pp</b></span>
   </div>
   <div class="inspector-score">
     <small>MODEL MATURITY</small>
@@ -86,9 +87,9 @@
     <span>{{ pulse.model_record.sample.message }}</span>
   </div>
   <div class="inspector-edge">
-    <small>VALUE SIDE</small>
-    <strong>{{ lead.signal_abbreviation }} {{ '%+.1f'|format(lead_prediction.edge_pct) }} pp</strong>
-    <span>The value side can differ from the projected winner.</span>
+    <small>BASELINE WINNER</small>
+    <strong>{{ lead.model_winner_abbreviation }} {{ '%.1f'|format(lead.model_winner_probability_pct) }}%</strong>
+    <span>The projected winner can differ from the better price.</span>
   </div>
   {% if lead.edge_history %}
   <div class="inspector-history"><span>{{ lead.edge_history.label }}</span><svg class="edge-spark" viewBox="0 0 92 24" role="img" aria-label="{{ lead.edge_history.label }}"><line class="edge-zero" x1="2" y1="12" x2="90" y2="12"></line><polyline points="{{ lead.edge_history.plot_points }}"></polyline><circle cx="{{ lead.edge_history.dot_x }}" cy="{{ lead.edge_history.dot_y }}" r="2"></circle></svg></div>
@@ -98,7 +99,7 @@
 {% endif %}
 </div>
 
-<p class="sports-source">The experimental baseline uses season records and a fixed home advantage. It does not use lineups, injuries, starters, recent form, or news. The market benchmark is the median of fresh sportsbook moneylines; Bovada divergence is shown separately · Updated {{ pulse.updated_at[:16]|replace('T',' ') if pulse.updated_at else 'pending' }} UTC</p>
+<p class="sports-source">Schedule and game state currently use an ESPN preview feed. The experimental baseline uses overall season records and a fixed home advantage; it does not use lineups, injuries, starters, recent form, or news. The market benchmark is the median of recent sportsbook moneylines; Bovada divergence is shown separately · Updated {{ pulse.updated_at[:16]|replace('T',' ') if pulse.updated_at else 'pending' }} UTC</p>
 {% endblock %}
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
@@ -106,10 +107,19 @@
     const date=new Date(node.dataset.localTime);
     if(!Number.isNaN(date.valueOf()))node.textContent=date.toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit',timeZoneName:'short'});
   });
-  const scheduleRefresh=()=>setTimeout(()=>{
-    if(document.querySelector('dialog[open]'))return scheduleRefresh();
-    location.reload();
-  },60000);
-  scheduleRefresh();
+  const updateButton=document.querySelector('[data-sports-update]');
+  const currentSignature=JSON.stringify([{{ pulse.updated_at|tojson }},{{ pulse.signal_count }}]);
+  updateButton.addEventListener('click',()=>location.reload());
+  const pollForSportsUpdate=async()=>{
+    if(document.hidden)return;
+    try{
+      const response=await fetch('/api/sports/pulse?league={{ pulse.league }}&limit=30');
+      if(!response.ok)return;
+      const next=await response.json();
+      updateButton.hidden=JSON.stringify([next.updated_at,next.signal_count])===currentSignature;
+    }catch(_){}
+  };
+  setInterval(pollForSportsUpdate,60000);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)pollForSportsUpdate();});
 </script>
 {% endblock %}

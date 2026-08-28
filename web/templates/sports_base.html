@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="/static/product-system.css?v={{ static_version }}">
 </head>
 <body class="sports-product">
+  <a class="skip-link" href="#app-content">Skip to content</a>
   <header class="sports-topbar">
     <a class="sports-brand" aria-label="RATi Sports" href="{{ sports_path_prefix or '' }}/"><i aria-hidden="true">R</i><span>RATi <b>Sports</b></span></a>
     <nav>
@@ -30,7 +31,7 @@
       {% endif %}
     </nav>
   </header>
-  <main class="sports-shell">{% block content %}{% endblock %}</main>
+  <main class="sports-shell" id="app-content">{% block content %}{% endblock %}</main>
   <footer class="sports-footer">
     <strong>Paper picks only.</strong> RATi does not take bets or connect to a sportsbook.
     Odds may be delayed. Adults only; follow your local laws and limits.

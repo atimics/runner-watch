@@ -11,6 +11,7 @@ REPORT_COST = 100
 COMMENT_COST = 10
 PUBLISH_REPORT_REWARD = 50
 WINNING_CALL_REWARD = 25
+SPORTS_CALL_REWARD_CAP = 50
 RUNNER_CALL_REWARD_TIERS = (10, 20, 30)
 REPORT_EXCLUSIVE_HOURS = 1
 
@@ -32,6 +33,18 @@ def runner_call_reward(return_pct: float | int | None) -> int:
     if float(return_pct) >= 20:
         return RUNNER_CALL_REWARD_TIERS[1]
     return RUNNER_CALL_REWARD_TIERS[0]
+
+
+def sports_call_reward(american_odds: int | float | None) -> int:
+    """Scale a winning paper-Call reward by its frozen market payout."""
+
+    if american_odds is None:
+        return 0
+    odds = int(american_odds)
+    if odds == 0:
+        return 0
+    profit_units = odds / 100 if odds > 0 else 100 / abs(odds)
+    return max(1, min(SPORTS_CALL_REWARD_CAP, round(WINNING_CALL_REWARD * profit_units)))
 
 
 def _timestamp(value: datetime | None = None) -> datetime:
@@ -80,6 +93,7 @@ def _wallet_payload(row: Any, current: datetime) -> dict[str, Any]:
         "comment_cost": COMMENT_COST,
         "publish_reward": PUBLISH_REPORT_REWARD,
         "winning_call_reward": WINNING_CALL_REWARD,
+        "sports_call_reward_cap": SPORTS_CALL_REWARD_CAP,
         "runner_call_reward_tiers": RUNNER_CALL_REWARD_TIERS,
     }
 

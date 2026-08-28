@@ -108,7 +108,7 @@ textarea {
 .rati-product,
 .sports-eyebrow {
   color: var(--accent);
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 850;
   letter-spacing: .13em;
   text-transform: uppercase;
@@ -129,6 +129,52 @@ textarea {
   border-radius: var(--radius-sm);
   background: var(--panel-2);
   box-shadow: none;
+}
+
+.pulse-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin: 10px 14px 0;
+}
+
+.pulse-search label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.pulse-search input,
+.pulse-search button {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  font: inherit;
+}
+
+.pulse-search input {
+  min-width: 0;
+  padding: 0 12px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.pulse-search input::placeholder {
+  color: var(--muted);
+  text-transform: none;
+}
+
+.pulse-search button {
+  padding: 0 14px;
+  background: color-mix(in srgb, var(--accent) 13%, var(--panel));
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 850;
+  cursor: pointer;
 }
 
 .runners-product .avatar-button.signed-out {
@@ -440,7 +486,7 @@ html.embedded-pane .product-tab-link {
 
 .sports-product .sports-screen-head p {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .sports-product .league-tabs {
@@ -452,7 +498,7 @@ html.embedded-pane .product-tab-link {
   padding: 8px 12px;
   border-color: var(--line);
   border-radius: var(--radius-sm);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .sports-product .league-tabs a.active {
@@ -543,6 +589,8 @@ html.embedded-pane .product-tab-link {
 .sports-product .sports-source,
 .sports-product .sports-footer {
   color: #69736c;
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .sports-product .sports-footer {

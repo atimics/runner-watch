@@ -1,22 +1,8 @@
 {% extends "sports_base.html" %}
 {% block title %}Radar · RATi Sports{% endblock %}
 {% block content %}
-<header class="sports-screen-head">
-  <div><span class="sports-eyebrow">LIVE CHANGES</span><h1>Radar</h1></div>
-  <p><strong>{{ radar.change_count }}</strong> material change{% if radar.change_count != 1 %}s{% endif %} across {{ radar.tracked_count }} tracked Pulse signals · refreshes every minute</p>
-</header>
-
-<nav class="league-tabs" aria-label="League filter">
-  <a class="{% if radar.league == 'all' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/radar?league=all">All</a>
-  {% for league in radar.leagues %}
-    <a class="{% if radar.league == league.key %}active{% endif %}" href="{{ sports_path_prefix or '' }}/radar?league={{ league.key }}">{{ league.name }}</a>
-  {% endfor %}
-</nav>
-
-<section class="radar-list" aria-label="Material sports changes">
-  {% for event in radar.events %}
-  {% set prediction = event.prediction %}
-  <a class="radar-card {{ event.radar_kind }}" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}">
+{% macro radar_card(event, compact=false) -%}
+  <a class="radar-card {{ event.radar_kind }}{% if compact %} radar-card-compact{% endif %}" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}">
     <span class="radar-mark"><b>{{ event.signal_abbreviation[:3] }}</b><small>{{ event.league|upper }}</small></span>
     <span class="radar-copy">
       <span><strong>{{ event.away_abbreviation }}</strong> at {{ event.home_abbreviation }} <b class="radar-kind">{{ event.radar_label }}</b></span>
@@ -34,6 +20,29 @@
     </span>
     <span class="game-chevron" aria-hidden="true">›</span>
   </a>
+{%- endmacro %}
+<header class="sports-screen-head">
+  <div><span class="sports-eyebrow">LIVE CHANGES</span><h1>Radar</h1></div>
+  <p><strong>{{ radar.display_count }}</strong> changed matchup{% if radar.display_count != 1 %}s{% endif %} from {{ radar.change_count }} material game change{% if radar.change_count != 1 %}s{% endif %} · checks every minute without moving your place</p>
+</header>
+<button class="sports-update-button" type="button" data-sports-update hidden>New Radar data · refresh</button>
+
+<nav class="league-tabs" aria-label="League filter">
+  <a class="{% if radar.league == 'all' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/radar?league=all">All</a>
+  {% for league in radar.leagues %}
+    <a class="{% if radar.league == league.key %}active{% endif %}" href="{{ sports_path_prefix or '' }}/radar?league={{ league.key }}">{{ league.name }}</a>
+  {% endfor %}
+</nav>
+
+<section class="radar-list" aria-label="Material sports changes">
+  {% for event in radar.events %}
+    {{ radar_card(event) }}
+    {% if event.series_more_count %}
+    <details class="series-cluster radar-series-cluster">
+      <summary><span>{{ event.away_abbreviation }}–{{ event.home_abbreviation }} series</span><b>+{{ event.series_more_count }} related game{% if event.series_more_count != 1 %}s{% endif %}</b></summary>
+      <div class="series-games">{% for related in event.series_more %}{{ radar_card(related, true) }}{% endfor %}</div>
+    </details>
+    {% endif %}
   {% else %}
   <div class="sports-empty radar-empty-state">
     <span class="empty-radar" aria-hidden="true"></span>
@@ -44,7 +53,7 @@
   {% endfor %}
 </section>
 
-<p class="sports-source">Game state: ESPN. Moneyline movement may use the configured odds provider. Every change keeps its source timestamp.</p>
+<p class="sports-source">Game state currently uses an ESPN preview feed. Moneyline movement may use the configured odds provider. Every change keeps its source timestamp.</p>
 {% endblock %}
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
@@ -52,6 +61,19 @@
     const date=new Date(node.dataset.localTime);
     if(!Number.isNaN(date.valueOf()))node.textContent=date.toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit',timeZoneName:'short'});
   });
-  setTimeout(()=>location.reload(),60000);
+  const updateButton=document.querySelector('[data-sports-update]');
+  const currentSignature=JSON.stringify([{{ radar.updated_at|tojson }},{{ radar.change_count }}]);
+  updateButton.addEventListener('click',()=>location.reload());
+  const pollForRadarUpdate=async()=>{
+    if(document.hidden)return;
+    try{
+      const response=await fetch('/api/sports/radar?league={{ radar.league }}&limit=40');
+      if(!response.ok)return;
+      const next=await response.json();
+      updateButton.hidden=JSON.stringify([next.updated_at,next.change_count])===currentSignature;
+    }catch(_){}
+  };
+  setInterval(pollForRadarUpdate,60000);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)pollForRadarUpdate();});
 </script>
 {% endblock %}
