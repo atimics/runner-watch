@@ -73,6 +73,11 @@
     const opponentName = event.model_winner_opponent_team_name
       || (event.model_winner_side === 'home' ? event.away_team_name : event.home_team_name)
       || '';
+    const winProbability = Number(event.model_winner_probability_pct);
+    const slightEdge = Number.isFinite(winProbability) && winProbability < 55;
+    const projectionLabel = event.model_winner_label || (slightEdge ? 'SLIGHT EDGE' : 'PROJECTED');
+    const ariaAction = event.model_winner_aria_action
+      || (slightEdge ? 'has a slight model edge over' : 'is projected to beat');
     const projectedScore = event.model_winner_projected_score_display != null
       && event.model_winner_opponent_projected_score_display != null
       ? `Projected ${escapeHtml(event.model_winner_projected_score_display)}–${escapeHtml(event.model_winner_opponent_projected_score_display)}`
@@ -80,11 +85,11 @@
     const divergence = event.bovada_divergence_material
       ? `<span class="bovada-outlier">Bovada differs by ${number(event.bovada_divergence_pct, 1)} points</span>`
       : '';
-    const label = `${event.model_winner_team_name || model} projected to beat ${opponentName} with a ${number(event.model_winner_probability_pct)} percent win chance; value side ${signal} with a ${signed(prediction.edge_pct)} percentage-point model edge`;
+    const label = `${event.model_winner_team_name || model} ${ariaAction} ${opponentName} with a ${number(event.model_winner_probability_pct)} percent win chance; value side ${signal} with a ${signed(prediction.edge_pct)} percentage-point model edge`;
     return `<a class="game-card winner-card team-projection-card${compact ? ' winner-card-compact' : ''}" href="${gameHref(prefix, event.id)}" aria-label="${escapeHtml(label)}">
       <span class="winner-coin winner-coin-${safeToken(event.model_winner_coin_tone, '0')}" aria-hidden="true"><b>${escapeHtml(model)}</b><i></i></span>
       <span class="matchup-copy team-projection-copy">
-        <span class="team-projection-line"><strong>${escapeHtml(model)}</strong><small>PROJECTED</small></span>
+        <span class="team-projection-line"><strong>${escapeHtml(model)}</strong><small>${escapeHtml(projectionLabel)}</small></span>
         <span class="team-projection-name">${escapeHtml(event.model_winner_team_name || model)}</span>
         <span class="winner-context">vs ${escapeHtml(opponentAbbreviation)} · ${escapeHtml(String(event.league || '').toUpperCase())} · <time data-local-time="${escapeHtml(event.start_time)}">${escapeHtml(localTime(event.start_time))}</time></span>
       </span>

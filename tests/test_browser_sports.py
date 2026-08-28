@@ -47,6 +47,9 @@ def _event(event_id: str, away: str, home: str) -> dict[str, Any]:
         "model_winner_opponent_team_name": f"{home} Club",
         "model_winner_opponent_abbreviation": home,
         "model_winner_probability_pct": 58.2,
+        "model_winner_label": "PROJECTED",
+        "model_winner_detail_label": "BASELINE WINNER",
+        "model_winner_aria_action": "is projected to beat",
         "model_winner_projected_score_display": "5.1",
         "model_winner_opponent_projected_score_display": "4.2",
         "model_probability_pct": 58.2,
@@ -357,8 +360,31 @@ def test_sports_pulse_leads_with_the_projected_team_and_keeps_value_separate(
     assert card.locator(".team-projection-name").text_content() == "AWY Club"
     assert page.locator(".model-favorite").count() == 0
     assert card.get_attribute("aria-label") == (
-        "AWY Club projected to beat HME Club with a 58 percent win chance; "
+        "AWY Club is projected to beat HME Club with a 58 percent win chance; "
         "value side HME with a +7.8 percentage-point model edge"
+    )
+    assert errors == []
+
+
+def test_sports_pulse_calls_a_close_projection_a_slight_edge(
+    page: Page, monkeypatch
+) -> None:
+    event = {
+        **_event("close-game", "AWY", "HME"),
+        "model_winner_probability_pct": 51.2,
+        "model_winner_label": "SLIGHT EDGE",
+        "model_winner_detail_label": "BASELINE LEAN",
+        "model_winner_aria_action": "has a slight model edge over",
+    }
+    page.set_viewport_size({"width": 390, "height": 800})
+    errors = _load(page, _rendered_pulse(monkeypatch, _pulse(event)), [])
+
+    card = page.locator(".winner-card")
+    assert "SLIGHT EDGE" in card.text_content()
+    assert "51%" in card.text_content()
+    assert card.get_attribute("aria-label") == (
+        "AWY Club has a slight model edge over HME Club with a 51 percent win chance; "
+        "value side AWY with a +2.6 percentage-point model edge"
     )
     assert errors == []
 

@@ -752,6 +752,15 @@ def test_sports_pulse_hides_passes_and_radar_keeps_real_moves(sports_db) -> None
     assert pulse["events"][0]["model_winner_abbreviation"] == "HOM"
     assert pulse["events"][0]["model_winner_opponent_abbreviation"] == "AWY"
     assert pulse["events"][0]["model_winner_opponent_team_name"] == "Away Club"
+    assert pulse["events"][0]["model_winner_label"] in {"SLIGHT EDGE", "PROJECTED"}
+    assert pulse["events"][0]["model_winner_detail_label"] in {
+        "BASELINE LEAN",
+        "BASELINE WINNER",
+    }
+    assert pulse["events"][0]["model_winner_aria_action"] in {
+        "has a slight model edge over",
+        "is projected to beat",
+    }
     assert pulse["events"][0]["projected_home_score"] > pulse["events"][0]["projected_away_score"]
     assert pulse["events"][0]["model_winner_projected_score_display"] == (
         pulse["events"][0]["projected_home_score_display"]

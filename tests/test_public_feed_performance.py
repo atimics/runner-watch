@@ -41,6 +41,9 @@ def _sports_event(event_id: str) -> dict[str, Any]:
         "market_probability_pct": 48.0,
         "model_winner_abbreviation": "HME",
         "model_winner_probability_pct": 56.0,
+        "model_winner_label": "PROJECTED",
+        "model_winner_detail_label": "BASELINE WINNER",
+        "model_winner_aria_action": "is projected to beat",
         "bovada_divergence_material": True,
         "bovada_divergence_pct": 3.1,
         "bovada_divergence_team": "HME",
@@ -123,6 +126,8 @@ def test_sports_public_feeds_keep_only_list_rendering_fields() -> None:
 
     pulse_event = pulse["events"][0]
     assert pulse_event["prediction"] == {"edge_pct": 8.0}
+    assert pulse_event["model_winner_label"] == "PROJECTED"
+    assert pulse_event["model_winner_aria_action"] == "is projected to beat"
     assert pulse_event["edge_history"]["point_count"] == 2
     assert "points" not in pulse_event["edge_history"]
     assert "market_comparison" not in pulse_event
