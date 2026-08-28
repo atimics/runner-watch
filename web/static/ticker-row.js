@@ -79,7 +79,10 @@
     const catalystTone = row.sentiment === 'risk' ? ' risk' : row.sentiment === 'gap' ? ' gap' : '';
     const updated = options.updated ?? row.has_update;
     const updateClass = updated ? ' is-updated' : '';
-    const marketLabel = `${statusLabel ? `, ${statusLabel}` : ''}${tradeState && tradeState !== 'UNKNOWN' ? `, ${tradeState}` : ''}${rugValue !== null ? `, rug risk ${rugValue.toFixed(0)}` : ''}`;
+    const tradeStateLabel = tradeState && tradeState !== 'UNKNOWN' && tradeState !== statusLabel
+      ? `, ${tradeState}`
+      : '';
+    const marketLabel = `${statusLabel ? `, ${statusLabel}` : ''}${tradeStateLabel}${rugValue !== null ? `, rug risk ${rugValue.toFixed(0)}` : ''}`;
     const label = `${row.ticker}, ${company}, ${money(row.price)}, ${percent(row.change_pct)}${marketLabel}`;
     const thesis = row.section === 'cases' && row.case_thesis
       ? `<span class="case-thesis">${esc(row.case_thesis)}</span>`

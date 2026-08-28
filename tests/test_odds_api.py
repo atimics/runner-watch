@@ -476,6 +476,45 @@ def test_multi_book_consensus_drives_model_and_bovada_drives_paper_pick(
     assert pick["odds_observed_at"] == observed_at.isoformat()
 
 
+def test_consensus_line_keeps_paper_picks_available_without_bovada(
+    sports_db: None,
+) -> None:
+    observed_at = datetime.now(UTC)
+    start_time = observed_at + timedelta(hours=4)
+    raw = raw_event()
+    raw["date"] = start_time.isoformat()
+    event = normalize_event("mlb", raw)
+    assert event is not None
+    payload = multi_book_payload()
+    payload[0]["commence_time"] = start_time.isoformat()
+    payload[0]["bookmakers"] = [
+        bookmaker
+        for bookmaker in payload[0]["bookmakers"]
+        if bookmaker["key"] not in {"bovada", "stale"}
+    ]
+    for offset, bookmaker in enumerate(payload[0]["bookmakers"]):
+        bookmaker["last_update"] = (observed_at - timedelta(minutes=offset + 1)).isoformat()
+    markets = normalize_moneylines(payload, ("bovada",), observed_at)
+
+    assert apply_moneylines([event], markets) == 1
+    store_events([event], observed_at=observed_at)
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) "
+            "VALUES('fallback-user','fallback_member','Fallback Member','active',?)",
+            (observed_at.isoformat(),),
+        )
+
+    detail = sports.sports_event(str(event["id"]))
+    assert detail is not None
+    assert detail["market_comparison"]["bovada"] is None
+    assert detail["paper_odds"]["sportsbook"] == "Market consensus"
+
+    pick = sports.create_sports_pick("fallback-user", str(event["id"]), "home")
+    assert pick["sportsbook"] == "Market consensus"
+    assert pick["american_odds"] == detail["paper_odds"]["home_odds"]
+
+
 def test_sports_refresh_uses_one_paid_moneyline_call_per_due_league(
     sports_db: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

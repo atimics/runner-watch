@@ -405,6 +405,9 @@ def test_paper_pick_freezes_odds_and_settles(sports_db) -> None:
     final_event = normalize_event("mlb", sample_event(completed=True))
     assert final_event is not None
     store_events([final_event])
+    retry = create_sports_pick("user-1", event["id"], "away")
+    assert retry["id"] == pick["id"]
+    assert retry["selection"] == "home"
     assert settle_picks() == 1
     with connection() as database:
         settled = database.execute(
@@ -430,6 +433,85 @@ def test_paper_pick_freezes_odds_and_settles(sports_db) -> None:
     assert settled_board["calls"][0]["status"] == "win"
     assert settled_board["calls"][0]["return_label"].endswith("u")
     assert settled_board["calls"][0]["reward_label"] == f"+{expected_reward} Flash"
+
+
+def test_paper_pick_rejects_an_old_moneyline(sports_db) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    observed_at = datetime.now(UTC) - timedelta(hours=3)
+    store_events([event], observed_at=observed_at)
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) "
+            "VALUES('stale-user','stale_member','Stale Member','active',?)",
+            (datetime.now(UTC).isoformat(),),
+        )
+
+    detail = sports_event(str(event["id"]))
+    assert detail is not None
+    assert detail["paper_odds"] is None
+    with pytest.raises(ValueError, match="fresh moneyline"):
+        create_sports_pick("stale-user", str(event["id"]), "home")
+
+
+def test_pick_api_invalidates_game_and_alpha_caches(monkeypatch: pytest.MonkeyPatch) -> None:
+    invalidated: list[tuple[str, ...]] = []
+    monkeypatch.setattr(web_main, "require_origin", lambda _request: None)
+    monkeypatch.setattr(web_main, "require_user", lambda _session: {"id": "cache-user"})
+    monkeypatch.setattr(web_main, "enforce_rate", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        web_main,
+        "create_sports_pick",
+        lambda *_args: {"id": "pick-1", "selection": "home"},
+    )
+    monkeypatch.setattr(
+        web_main,
+        "_invalidate_public_screen_data",
+        lambda scope, identity: invalidated.append((scope, identity)),
+    )
+    monkeypatch.setattr(
+        web_main,
+        "_invalidate_sports_alpha_data",
+        lambda: invalidated.append(("sports-alpha",)),
+    )
+
+    response = web_main.create_sports_pick_api(
+        "event-1",
+        web_main.SportsPickPayload(selection="home"),
+        request(),
+        "session-token",
+    )
+
+    assert response.status_code == 201
+    assert invalidated == [("sports-game", "event-1"), ("sports-alpha",)]
+
+
+def test_sports_alpha_counts_calls_beyond_the_feed_limit(sports_db) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    with connection() as database:
+        for index in range(12):
+            database.execute(
+                "INSERT INTO users(id,username,display_name,status,created_at) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    f"count-user-{index}",
+                    f"count_member_{index}",
+                    f"Count Member {index}",
+                    "active",
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+    for index in range(12):
+        create_sports_pick(f"count-user-{index}", str(event["id"]), "home")
+
+    board = sports_alpha_board("mlb", limit=1)
+
+    assert len(board["calls"]) == 10
+    assert board["total_calls"] == 12
+    assert board["active_calls"] == 12
+    assert board["rows"][0]["total_calls"] == 12
 
 
 def test_sports_call_reward_scales_with_frozen_odds() -> None:
@@ -477,7 +559,7 @@ def test_bovada_odds_show_feed_attribution_and_freeze_on_paper_pick(sports_db) -
             "away_open_odds": None,
         }
     )
-    observed_at = datetime(2026, 8, 26, 18, 0, tzinfo=UTC)
+    observed_at = datetime.now(UTC)
     store_events([event], observed_at=observed_at)
     with connection() as database:
         database.execute(
@@ -503,7 +585,7 @@ def test_bovada_odds_show_feed_attribution_and_freeze_on_paper_pick(sports_db) -
     assert response.status_code == 200
     assert b"Bovada via The Odds API" in response.body
     assert b"Updated <time" in response.body
-    assert b"2026-08-26 18:00 UTC" in response.body
+    assert observed_at.isoformat()[:16].replace("T", " ").encode() in response.body
 
 
 def test_sports_host_gets_the_sports_product(sports_db) -> None:
@@ -547,6 +629,14 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     assert b"Team news" in detail_response.body
     assert b"Make a paper pick" in detail_response.body
     assert b"Winning rewards scale with the frozen odds" in detail_response.body
+
+    path_response = sports_game_page(
+        event["id"],
+        request(host="localhost", path=f"/sports/game/{event['id']}"),
+        None,
+    )
+    expected_return = f'href="/login?next=/sports/game/{event["id"]}"'.encode()
+    assert expected_return in path_response.body
 
 
 def test_slate_builds_fixed_side_edge_history(sports_db) -> None:
@@ -1164,11 +1254,30 @@ def test_empty_player_boxscore_is_checked_only_once(
 
 
 def test_sports_host_uses_the_sports_shell_for_alpha(sports_db) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    with connection() as database:
+        for index in range(3):
+            database.execute(
+                "INSERT INTO users(id,username,display_name,status,created_at) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    f"alpha-user-{index}",
+                    f"alpha_member_{index}",
+                    f"Alpha Member {index}",
+                    "active",
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+    for index in range(3):
+        create_sports_pick(f"alpha-user-{index}", str(event["id"]), "home")
+
     radar_response = radar_page(request(path="/radar"), None)
     alpha_response = alpha_page(request(path="/alpha"), None)
     receipts_response = sports_receipts_page(request(path="/receipts"), None)
     assert radar_response.status_code == 200
-    assert b"material change" in radar_response.body
+    assert b"LIVE CHANGES" in radar_response.body
     assert b'class="sports-hero' not in radar_response.body
     assert alpha_response.status_code == 200
     assert b'<h1>Alpha</h1>' in alpha_response.body
@@ -1176,6 +1285,8 @@ def test_sports_host_uses_the_sports_shell_for_alpha(sports_db) -> None:
     assert b'class="sports-topbar"' in alpha_response.body
     assert b"Four prediction slots" not in alpha_response.body
     assert b"rank skill" in alpha_response.body
+    assert b"Call activity" in alpha_response.body
+    assert b'<span class="alpha-rank">1</span>' not in alpha_response.body
     assert b"open Calls" in alpha_response.body
     assert b'href="/alpha"' in alpha_response.body
     assert b'class="sports-tab-icon product"' in alpha_response.body
