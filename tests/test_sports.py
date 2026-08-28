@@ -643,6 +643,27 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     assert expected_return in path_response.body
 
 
+def test_game_page_handles_winner_without_market_gap(sports_db) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    with connection() as database:
+        database.execute(
+            "UPDATE sports_predictions SET edge=NULL WHERE event_id=?",
+            (event["id"],),
+        )
+
+    response = sports_game_page(
+        event["id"],
+        request(path=f"/game/{event['id']}"),
+        None,
+    )
+
+    assert response.status_code == 200
+    assert b"BASELINE WINNER" in response.body
+    assert b"A complete fresh market is not available" in response.body
+
+
 def test_slate_builds_fixed_side_edge_history(sports_db) -> None:
     first_raw = sample_event()
     first = normalize_event("mlb", first_raw)
