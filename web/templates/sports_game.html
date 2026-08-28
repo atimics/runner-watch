@@ -89,7 +89,7 @@
       </div>
       {% endfor %}
     </div>
-    <p class="market-note">Divergence shows a pricing difference, not a recommended bet. Stale and incomplete lines are excluded.</p>
+    <p class="market-note">Pricing differences are not picks. Stale lines are excluded.</p>
   </section>
     </div>
   </details>
@@ -99,7 +99,6 @@
     <div>
       <span>AI FORECAST · SEPARATE AND SCORED</span>
       <h2 id="gameFlashTitle">Daily Flash</h2>
-      <p>One source-bound, scored AI forecast for this future matchup. It stays separate from the season-record baseline above.</p>
       {% if latest_commission and not latest_commission.locked and latest_commission.sports_forecast %}
       {% set ai_forecast = latest_commission.sports_forecast %}
       <div class="game-flash-prediction">
@@ -221,7 +220,6 @@
       </section>
       {% endfor %}
     </div>
-    <p class="context-note">These names came from the last stored team roster. They are not confirmed for this matchup and are not used by the baseline.</p>
   </section>
     </div>
   </details>
@@ -271,7 +269,6 @@
   <section class="match-news">
     <header>
       <div><span>LIVE CONTEXT</span><h2>Team news</h2></div>
-      <small>Source-linked · not used by {{ prediction.model_version }}</small>
     </header>
     <div class="news-list">
       {% for article in event.news[:4] %}
@@ -298,7 +295,7 @@
   <section class="paper-pick">
     <span>PUBLIC RECEIPT</span>
     <h2>Make a paper pick</h2>
-    <p>The current{% if quote %} {{ quote.source_label }}{% endif %} moneyline and time will be frozen. Winning rewards scale with the frozen odds, up to {{ sports_call_reward_cap }} Flash, so a heavy favorite does not pay like an underdog. This does not place a real bet.</p>
+    <p>Freeze the current{% if quote %} {{ quote.source_label }}{% endif %} line. Wins earn up to {{ sports_call_reward_cap }} Flash. No real bet.</p>
     {% if not user %}
       <a href="/login">Log in to make a paper pick</a>
     {% elif event.status != 'pre' or not quote %}

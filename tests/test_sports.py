@@ -603,11 +603,11 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     assert b"Away Club" in response.body
     assert b"Home Club" in response.body
     assert b"value side" in response.body
-    assert b"baseline results graded" in response.body
+    assert b"Baseline " in response.body
     assert b"ESTIMATED SCORE" not in response.body
     assert b"Model " in response.body
     assert b"VALUE EDGE" in response.body
-    assert b"games checked" in response.body
+    assert b"checked" in response.body
     assert b'class="edge-spark"' in response.body
     assert b"PROJECTED WINNER" not in response.body
     assert b"Full slate" not in response.body
@@ -625,13 +625,13 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     assert b'class="decision-team"' in detail_response.body
     assert b"BASELINE WINNER" in detail_response.body
     assert b"MARKET GAP" in detail_response.body
-    assert b"fixed home advantage" in detail_response.body
+    assert b"Season records plus home edge" in detail_response.body
     assert detail_response.body.index(b"SEASON-RECORD BASELINE") < detail_response.body.index(
         b"Daily Flash"
     )
     assert b"Team news" in detail_response.body
     assert b"Make a paper pick" in detail_response.body
-    assert b"Winning rewards scale with the frozen odds" in detail_response.body
+    assert b"Wins earn up to" in detail_response.body
 
     path_response = sports_game_page(
         event["id"],

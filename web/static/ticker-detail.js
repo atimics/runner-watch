@@ -849,15 +849,15 @@
     if (!gate) return;
     const root = document.getElementById('evidenceGate');
     if (!root) return;
-    root.className = 'evidence-gate gate-' + gate.state;
+    root.className = (root.dataset.baseClass || 'evidence-gate') + ' gate-' + gate.state;
     document.getElementById('gateSummary').textContent = gate.summary || 'Watching';
     document.getElementById('gateCount').textContent = gate.count + '/' + gate.threshold;
     const gateNotes =
       (gate.blockers && gate.blockers.length ? gate.blockers : gate.checks) || [];
     document.getElementById('gateChecks').textContent =
-      gateNotes.join(' · ') || 'Waiting for more evidence.';
+      gateNotes.join(' · ') || 'Waiting for evidence.';
     document.getElementById('gateBaseline').textContent =
-      gate.baseline_summary || 'Building a same-time historical baseline.';
+      gate.baseline_summary || 'Building the same-time baseline.';
     document.querySelectorAll('#gateMeter i').forEach((item, index) => {
       item.classList.toggle('hit', index < gate.count);
     });

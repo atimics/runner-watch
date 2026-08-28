@@ -25,8 +25,10 @@ def test_general_interface_keeps_its_editorial_edge() -> None:
     community += (ROOT / "web/templates/_alpha_ledger.html").read_text()
     navigation = (ROOT / "web/templates/mobile_base.html").read_text()
 
-    assert "Movement first. Evidence before conviction." in ticker
+    assert "Movement first. Evidence before conviction." not in ticker
+    assert "could send" not in ticker
     assert "RUG CHECK" in ticker
+    assert "risk-evidence" in ticker
     assert "astrology for the tape" in ticker_script
     assert "Evidence review, not a trade alert." not in ticker
     assert "#1 most called" in community
@@ -41,8 +43,19 @@ def test_ai_report_carries_the_single_clear_disclaimer() -> None:
     )
 
     assert "AI-generated opinion" in report
-    assert "They may be incomplete or inaccurate and are not financial advice." in report
+    assert "May be incomplete or wrong. Not financial advice." in report
     assert 'href="#report-sources"' in report
     assert 'id="report-sources"' in report
     assert report.index("AI-generated opinion") < report.index('id="report-sources"')
-    assert all_templates.count("not financial advice") == 1
+    assert all_templates.lower().count("not financial advice") == 1
+
+
+def test_ai_report_does_not_repeat_its_opening_summary() -> None:
+    report = (ROOT / "web/templates/research_report.html").read_text()
+
+    assert 'class="research-summary"' not in report
+    assert report.index('class="flash-forecast-receipt') < report.index(
+        'class="research-thesis"'
+    )
+    assert "All {{ report.sources|length }} source links" in report
+    assert "People in the filings" not in report

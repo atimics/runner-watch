@@ -468,7 +468,7 @@ def test_multi_book_consensus_drives_model_and_bovada_drives_paper_pick(
     assert b"Consensus and Bovada" in response.body
     assert b"BOVADA DIVERGENCE" in response.body
     assert b"BEST DISPLAYED PRICE" in response.body
-    assert b"Divergence shows a pricing difference, not a recommended bet" in response.body
+    assert b"Pricing differences are not picks" in response.body
 
     pick = sports.create_sports_pick("multi-user", str(event["id"]), "home")
     assert pick["sportsbook"] == "Bovada"

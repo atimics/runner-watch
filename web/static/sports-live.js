@@ -89,7 +89,7 @@
         ${divergence}
         ${historySvg(event.edge_history)}
       </span>
-      <span class="game-chevron" aria-hidden="true"><small>View</small>›</span>
+      <span class="game-chevron" aria-hidden="true">›</span>
     </a>`;
   }
 
@@ -178,7 +178,7 @@
       list.innerHTML = renderPulseEvents(current.events || [], prefix);
       count.textContent = current.display_count ?? (current.events || []).length;
       if (maturity && current.model_record) {
-        maturity.textContent = `${current.model_record.games} of ${current.model_record.sample?.target ?? '—'} baseline results graded`;
+        maturity.textContent = `Baseline ${current.model_record.games}/${current.model_record.sample?.target ?? '—'} graded`;
       }
       if (updated) {
         updated.dataset.localTime = current.updated_at || '';
@@ -202,7 +202,7 @@
         const response = await fetch(queryEndpoint('/api/sports/pulse'));
         if (!response.ok) throw new Error('Sports Pulse refresh failed');
         const next = await response.json();
-        status.textContent = 'Live updates';
+        status.textContent = 'Live';
         if (!payloadChanged(current, next)) {
           current = {...current, ...next};
           pending = null;

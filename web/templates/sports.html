@@ -29,7 +29,7 @@
       </svg>
       {% endif %}
     </span>
-    <span class="game-chevron" aria-hidden="true"><small>View</small>›</span>
+    <span class="game-chevron" aria-hidden="true">›</span>
   </a>
 {%- endmacro %}
 
@@ -39,7 +39,7 @@
       <div>
         <span class="rati-product">RATi SPORTS</span>
         <h1>Pulse</h1>
-        <span class="head-meta sports-pulse-summary"><span><b id="sportsPulseCount">{{ pulse.display_count }}</b> value matchup{% if pulse.display_count != 1 %}s{% endif %}</span><span>{{ pulse.scanned_count }} games checked</span><span id="sportsPulseMaturity">{{ pulse.model_record.games }} of {{ pulse.model_record.sample.target }} baseline results graded</span><span id="sportsPulseStatus">Live updates</span></span>
+        <span class="head-meta sports-pulse-summary"><span><b id="sportsPulseCount">{{ pulse.display_count }}</b> matchup{% if pulse.display_count != 1 %}s{% endif %}</span><span>{{ pulse.scanned_count }} checked</span><span id="sportsPulseMaturity">Baseline {{ pulse.model_record.games }}/{{ pulse.model_record.sample.target }} graded</span><span id="sportsPulseStatus">Live</span></span>
       </div>
       {% if user %}
         <button class="avatar-button" type="button" data-profile aria-label="Open {{ comment_avatar.name }} profile">{{ render_comment_avatar(comment_avatar) }}</button>
@@ -80,7 +80,7 @@
       </div>
     </main>
 
-    <p class="sports-source">Schedule and game state currently use an ESPN preview feed. The experimental baseline uses overall season records and a fixed home advantage; it does not use lineups, injuries, starters, recent form, or news. The market benchmark is the median of recent sportsbook moneylines; Bovada divergence is shown separately · Updated <time id="sportsPulseUpdated" data-local-time="{{ pulse.updated_at or '' }}">{{ pulse.updated_at[:16]|replace('T',' ') if pulse.updated_at else 'pending' }} UTC</time></p>
+    <p class="sports-source">ESPN schedule · season-record baseline · median no-vig market · Updated <time id="sportsPulseUpdated" data-local-time="{{ pulse.updated_at or '' }}">{{ pulse.updated_at[:16]|replace('T',' ') if pulse.updated_at else 'pending' }} UTC</time></p>
   </section>
 
   {% include "_desktop_panel.html" %}

@@ -106,19 +106,20 @@
 .report-link-mobile { display: block; margin: 17px auto 0; border: 0; background: transparent; color: #68756f; font-size: 9px; }
 
 .evidence-gate { margin: 14px 20px 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
-.evidence-gate > div:first-child { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; }
-.evidence-gate span { color: #6f7b76; font-size: 8px; font-weight: 800; letter-spacing: .1em; }
-.evidence-gate strong { grid-column: 1; font-size: 12px; }
-.evidence-gate small { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--muted); font-size: 8px; }
-.evidence-gate.gate-ready strong { color: var(--green); }
-.evidence-gate.gate-near strong { color: var(--amber); }
+.risk-evidence { margin-top: 11px; padding-top: 11px; border-top: 1px solid var(--line); }
+:is(.evidence-gate, .risk-evidence) > div:first-child { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; }
+:is(.evidence-gate, .risk-evidence) span { color: #6f7b76; font-size: 8px; font-weight: 800; letter-spacing: .1em; }
+:is(.evidence-gate, .risk-evidence) strong { grid-column: 1; font-size: 12px; }
+:is(.evidence-gate, .risk-evidence) small { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--muted); font-size: 8px; }
+:is(.evidence-gate, .risk-evidence).gate-ready strong { color: var(--green); }
+:is(.evidence-gate, .risk-evidence).gate-near strong { color: var(--amber); }
 .evidence-gate.gate-blocked { border-color: rgba(255, 107, 122, .38); }
-.evidence-gate.gate-blocked strong { color: var(--red); }
+:is(.evidence-gate, .risk-evidence).gate-blocked strong { color: var(--red); }
 .gate-meter { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 9px 0 7px; }
 .gate-meter i { height: 3px; border-radius: 3px; background: #28312d; }
 .gate-meter i.hit { background: var(--green); box-shadow: 0 0 6px rgba(87, 227, 137, .35); }
-.evidence-gate p { color: #84908b; font-size: 8px; line-height: 1.45; margin: 0; }
-.evidence-gate #gateBaseline { color: #64706b; margin-top: 5px; }
+:is(.evidence-gate, .risk-evidence) p { color: #84908b; font-size: 8px; line-height: 1.45; margin: 0; }
+:is(.evidence-gate, .risk-evidence) #gateBaseline { color: #64706b; margin-top: 5px; }
 
 .risk-decision { margin: 14px 20px 0; padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: #0f1311; }
 .risk-decision-head { display: flex; align-items: center; justify-content: space-between; }
