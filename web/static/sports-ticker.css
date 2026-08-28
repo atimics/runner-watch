@@ -19,6 +19,11 @@
   transition: background .16s;
 }
 
+.winner-card.team-projection-card {
+  grid-template-columns: 50px minmax(0, 1fr) 116px 12px;
+  min-height: 96px;
+}
+
 .winner-card:last-child {
   border-bottom: 0;
 }
@@ -105,6 +110,40 @@
 
 .matchup-copy {
   overflow: hidden;
+}
+
+.team-projection-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.team-projection-line strong {
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: .02em;
+}
+
+.team-projection-line small {
+  color: var(--green);
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+
+.team-projection-name {
+  display: block;
+  margin-top: 1px;
+  overflow: hidden;
+  color: var(--soft);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-projection-copy .winner-context {
+  margin-top: 6px;
 }
 
 .matchup-team {
@@ -222,6 +261,10 @@
   color: #f8ca76;
 }
 
+.winner-quote .value-note.agrees {
+  color: var(--green);
+}
+
 .edge-spark {
   display: block;
   width: 92px;
@@ -289,6 +332,11 @@
     padding: 10px;
   }
 
+  .winner-card.team-projection-card {
+    grid-template-columns: 44px minmax(0, 1fr) 82px 10px;
+    min-height: 94px;
+  }
+
   .winner-coin {
     width: 44px;
     height: 44px;
@@ -328,6 +376,14 @@
     font-size: 8px;
   }
 
+  .team-projection-line strong {
+    font-size: 14px;
+  }
+
+  .team-projection-name {
+    font-size: 10px;
+  }
+
   .edge-spark {
     width: 72px;
     height: 19px;
@@ -344,6 +400,10 @@
     gap: 7px;
     padding-right: 8px;
     padding-left: 8px;
+  }
+
+  .winner-card.team-projection-card {
+    grid-template-columns: 40px minmax(0, 1fr) 76px 8px;
   }
 
   .winner-coin {

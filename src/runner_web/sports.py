@@ -1953,6 +1953,7 @@ def _event_attention(event: dict[str, Any]) -> dict[str, Any]:
     home_probability = float(prediction.get("home_probability") or 0.5)
     away_probability = float(prediction.get("away_probability") or 0.5)
     winner_side = "home" if home_probability >= away_probability else "away"
+    winner_opponent_side = "away" if winner_side == "home" else "home"
     winner_team_id = str(event.get(f"{winner_side}_team_id") or "")
     winner_abbreviation = str(event.get(f"{winner_side}_abbreviation") or "—")
     winner_seed = f"{winner_team_id}:{winner_abbreviation}".encode()
@@ -1992,6 +1993,12 @@ def _event_attention(event: dict[str, Any]) -> dict[str, Any]:
         "model_winner_team_name": str(event.get(f"{winner_side}_team_name") or "Unknown"),
         "model_winner_abbreviation": winner_abbreviation,
         "model_winner_record": event.get(f"{winner_side}_record"),
+        "model_winner_opponent_team_name": str(
+            event.get(f"{winner_opponent_side}_team_name") or "Unknown"
+        ),
+        "model_winner_opponent_abbreviation": str(
+            event.get(f"{winner_opponent_side}_abbreviation") or "—"
+        ),
         "model_winner_probability_pct": round(
             (home_probability if winner_side == "home" else away_probability) * 100,
             1,
@@ -2001,6 +2008,16 @@ def _event_attention(event: dict[str, Any]) -> dict[str, Any]:
         "projected_away_score": round(projected_away_score, score_decimals),
         "projected_home_score_display": f"{projected_home_score:.{score_decimals}f}",
         "projected_away_score_display": f"{projected_away_score:.{score_decimals}f}",
+        "model_winner_projected_score_display": (
+            f"{projected_home_score:.{score_decimals}f}"
+            if winner_side == "home"
+            else f"{projected_away_score:.{score_decimals}f}"
+        ),
+        "model_winner_opponent_projected_score_display": (
+            f"{projected_away_score:.{score_decimals}f}"
+            if winner_side == "home"
+            else f"{projected_home_score:.{score_decimals}f}"
+        ),
         "projected_score_basis": "market total" if market_total else "league baseline",
         "bovada_divergence_pct": bovada.get("divergence_pct"),
         "bovada_divergence_team": bovada.get("divergence_team"),

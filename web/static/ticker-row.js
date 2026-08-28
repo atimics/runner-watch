@@ -55,6 +55,20 @@
     return ['', ''];
   }
 
+  function thesisCue(row) {
+    const thesis = row.directional_thesis;
+    const direction = String(thesis?.direction || '').toLowerCase();
+    if (!['up', 'down', 'flat'].includes(direction)) return ['', ''];
+    const arrows = {up: '↑', down: '↓', flat: '↔'};
+    const label = String(thesis.label || (direction === 'flat' ? 'No clear edge' : direction));
+    const horizon = String(thesis.horizon || 'next 60m');
+    const description = `Model thesis: ${label}, ${horizon}`;
+    return [
+      `<small class="ticker-thesis ticker-thesis-${direction}" title="${esc(description)}" aria-hidden="true">${arrows[direction]}</small>`,
+      description,
+    ];
+  }
+
   function render(row, options = {}) {
     const change = number(row.change_pct);
     const changeClass = change === null ? 'flat' : change >= 0 ? 'up' : 'down';
@@ -63,6 +77,7 @@
     const badge = statusLabel
       ? `<small class="ticker-badge ticker-badge-${statusTone}">${esc(statusLabel)}</small>`
       : '';
+    const [thesisCueMarkup, thesisLabel] = thesisCue(row);
     const age = ago(row.entered_at || row.event_at);
     const events = Number(row.event_count) > 1
       ? `<span class="event-count">+${Number(row.event_count) - 1}</span>`
@@ -83,7 +98,7 @@
       ? `, ${tradeState}`
       : '';
     const marketLabel = `${statusLabel ? `, ${statusLabel}` : ''}${tradeStateLabel}${rugValue !== null ? `, rug risk ${rugValue.toFixed(0)}` : ''}`;
-    const label = `${row.ticker}, ${company}, ${money(row.price)}, ${percent(row.change_pct)}${marketLabel}`;
+    const label = `${row.ticker}, ${company}, ${money(row.price)}, ${percent(row.change_pct)}${marketLabel}${thesisLabel ? `, ${thesisLabel}` : ''}`;
     const thesis = row.section === 'cases' && row.case_thesis
       ? `<span class="case-thesis">${esc(row.case_thesis)}</span>`
       : '';
@@ -99,7 +114,7 @@
     return `<a class="token-row ticker-row${updateClass}" href="/t/${encodeURIComponent(row.ticker)}" data-ticker-row="${esc(row.ticker)}" aria-label="${esc(label)}">
       <span class="coin coin-${Number(row.coin_tone) || 0}"><b>${esc(row.coin_label || String(row.ticker).slice(0, 2))}</b><i></i></span>
       <span class="token-copy">
-        <span class="ticker-line"><strong>${esc(row.ticker)}</strong>${badge}<small class="ticker-age">${esc(age)}</small></span>
+        <span class="ticker-line"><strong>${esc(row.ticker)}</strong>${badge}${thesisCueMarkup}<small class="ticker-age">${esc(age)}</small></span>
         <span class="company-name">${esc(company)}</span>
         ${caseSource}${thesis}${caseSocial}${trackPrompt}
         <span class="catalyst${catalystTone}">${esc(row.pulse_label || 'No recent event')}${events}${safety}</span>

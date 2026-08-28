@@ -41,6 +41,40 @@
 .ticker-badge-stage-extended { color: #ffad70 !important; border-color: #a85826; }
 .ticker-badge-stage-watch { color: #aeb8b3 !important; border-color: #59645f; }
 .ticker-badge-thesis { color: var(--green) !important; }
+.ticker-thesis {
+  flex: 0 0 auto;
+  margin-left: -2px;
+  color: var(--muted);
+  font-size: 10px !important;
+  font-weight: 950;
+  line-height: 1;
+}
+.ticker-thesis-up { color: var(--green) !important; }
+.ticker-thesis-down { color: var(--red) !important; }
+.ticker-thesis-flat { color: #aeb8b3 !important; }
+.ticker-thesis-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 3px 0 0 !important;
+  overflow: hidden;
+  color: var(--soft) !important;
+  font-size: 9px !important;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+.ticker-thesis-line span {
+  color: var(--muted);
+  font-size: 7px;
+  font-weight: 850;
+  letter-spacing: .08em;
+}
+.ticker-thesis-line b { font-size: 11px; line-height: 1; }
+.ticker-thesis-line strong { overflow: hidden; text-overflow: ellipsis; }
+.ticker-thesis-line small { color: var(--muted); font-size: 8px; }
+.ticker-thesis-line.thesis-up b { color: var(--green); }
+.ticker-thesis-line.thesis-down b { color: var(--red); }
+.ticker-thesis-line.thesis-flat b { color: #aeb8b3; }
 .ticker-row:has(.case-thesis) { min-height: 106px; }
 .case-thesis {
   display: -webkit-box;

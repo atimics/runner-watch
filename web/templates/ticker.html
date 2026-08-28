@@ -21,7 +21,15 @@
   <header class="asset-overview">
     <section class="asset-head">
       <span class="coin coin-large coin-{{ detail.coin_tone }}"><b>{{ detail.coin_label }}</b><i></i></span>
-      <div><div class="asset-ticker"><h1>{{ detail.ticker }}</h1><span>{{ detail.exchange }}</span></div><p>{{ detail.company }}</p></div>
+      <div>
+        <div class="asset-ticker"><h1>{{ detail.ticker }}</h1><span>{{ detail.exchange }}</span></div>
+        <p>{{ detail.company }}</p>
+        {% if detail.directional_thesis %}
+        <p class="ticker-thesis-line thesis-{{ detail.directional_thesis.direction }}" aria-label="Model thesis: {{ detail.directional_thesis.label }}, {{ detail.directional_thesis.horizon }}, {{ detail.directional_thesis.probability_pct }} percent outcome probability" title="Contract: {{ detail.directional_thesis.contract }}">
+          <span>MODEL THESIS</span><b aria-hidden="true">{{ detail.directional_thesis.arrow }}</b><strong>{{ detail.directional_thesis.label }}</strong><small>· {{ detail.directional_thesis.horizon }}</small>
+        </p>
+        {% endif %}
+      </div>
     </section>
 
     <section class="price-block">

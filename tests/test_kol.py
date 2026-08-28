@@ -155,8 +155,14 @@ def test_ranker_prediction_becomes_one_immutable_flash_call(
     assert calls[0]["entry_price"] == 10.0
     assert calls[0]["confidence"] == 0.7
     assert calls[0]["status"] == "active"
-    assert pulse_data()["rows"][0]["kol_calls"][0]["emoji"] == "⚡"
-    assert ticker_detail_data("RUNR")["kol_calls"][0]["id"] == calls[0]["id"]
+    pulse_row = pulse_data()["rows"][0]
+    ticker_detail = ticker_detail_data("RUNR")
+    assert ticker_detail is not None
+    assert pulse_row["kol_calls"][0]["emoji"] == "⚡"
+    assert pulse_row["directional_thesis"]["direction"] == "up"
+    assert pulse_row["directional_thesis"]["horizon"] == "next 60m"
+    assert ticker_detail["kol_calls"][0]["id"] == calls[0]["id"]
+    assert ticker_detail["directional_thesis"]["direction"] == "up"
     with connection() as database:
         events = database.execute(
             "SELECT event_type FROM kol_call_events WHERE call_id=?",

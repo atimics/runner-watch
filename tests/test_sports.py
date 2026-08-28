@@ -597,16 +597,17 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     response = home(sports_request, None)
     assert response.status_code == 200
     assert b"RATi Sports" in response.body
-    assert b'class="game-card winner-card"' in response.body
-    assert b'class="winner-coin ' not in response.body
-    assert b'class="matchup-value">VALUE</small>' in response.body
+    assert b'class="game-card winner-card team-projection-card"' in response.body
+    assert b'class="winner-coin winner-coin-' in response.body
+    assert b'class="team-projection-name">Home Club</span>' in response.body
     assert b"Away Club" in response.body
     assert b"Home Club" in response.body
     assert b"value side" in response.body
-    assert b"Baseline " in response.body
     assert b"ESTIMATED SCORE" not in response.body
-    assert b"Model " in response.body
-    assert b"VALUE EDGE" in response.body
+    assert b"PROJECTED" in response.body
+    assert b"WIN CHANCE" in response.body
+    assert b"Value agrees: HOM" in response.body
+    assert b"team projection" in response.body
     assert b"checked" in response.body
     assert b'class="edge-spark"' in response.body
     assert b"PROJECTED WINNER" not in response.body
@@ -728,7 +729,12 @@ def test_sports_pulse_hides_passes_and_radar_keeps_real_moves(sports_db) -> None
     assert pulse["events"][0]["signal_abbreviation"] == "HOM"
     assert pulse["events"][0]["signal_coin_tone"] in range(5)
     assert pulse["events"][0]["model_winner_abbreviation"] == "HOM"
+    assert pulse["events"][0]["model_winner_opponent_abbreviation"] == "AWY"
+    assert pulse["events"][0]["model_winner_opponent_team_name"] == "Away Club"
     assert pulse["events"][0]["projected_home_score"] > pulse["events"][0]["projected_away_score"]
+    assert pulse["events"][0]["model_winner_projected_score_display"] == (
+        pulse["events"][0]["projected_home_score_display"]
+    )
 
     full_slate_request = sports_pulse(view="all")
     assert full_slate_request["view"] == "signals"
@@ -755,8 +761,10 @@ def test_pulse_separates_model_favorite_from_value_edge(sports_db) -> None:
 
     assert card["signal_abbreviation"] == "HOM"
     assert card["model_winner_abbreviation"] == "AWY"
+    assert card["model_winner_opponent_abbreviation"] == "HOM"
     assert card["model_winner_probability_pct"] > 50
     assert card["projected_away_score"] > card["projected_home_score"]
+    assert card["model_winner_projected_score_display"] == card["projected_away_score_display"]
     assert card["projected_score_basis"] == "market total"
 
 

@@ -114,6 +114,30 @@ def test_empty_flash_record_has_no_layout_gap(page: Page, monkeypatch) -> None:
     assert errors == []
 
 
+def test_pulse_renders_the_forward_thesis_as_a_tiny_separate_cue(
+    page: Page, monkeypatch
+) -> None:
+    row = {
+        **_row("AAA"),
+        "directional_thesis": {
+            "direction": "down",
+            "label": "Downside",
+            "arrow": "↓",
+            "horizon": "next 60m",
+        },
+    }
+    html = _rendered_pulse(monkeypatch, _pulse(row))
+    errors = _load(page, html, [])
+
+    cue = page.locator('[data-ticker-row="AAA"] .ticker-thesis')
+    assert cue.text_content() == "↓"
+    assert cue.get_attribute("class") == "ticker-thesis ticker-thesis-down"
+    assert "Model thesis: Downside, next 60m" in page.locator(
+        '[data-ticker-row="AAA"]'
+    ).get_attribute("aria-label")
+    assert errors == []
+
+
 def test_refresh_executes_missing_markers_and_clears_stale_alerts(page: Page, monkeypatch) -> None:
     initial = _pulse(_row("AAA"))
     newer = _pulse(_row("BBB"), _row("AAA"))
