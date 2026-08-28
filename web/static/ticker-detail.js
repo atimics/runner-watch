@@ -651,6 +651,29 @@
   const generateComment = document.getElementById('generateComment');
   const commentStatus = document.getElementById('commentStatus');
   const commentList = document.getElementById('commentList');
+  const pendingCommentStorageKey = `pending-comment:${ticker}`;
+  let pendingCommentRequestId = null;
+  try {
+    pendingCommentRequestId = sessionStorage.getItem(pendingCommentStorageKey);
+  } catch (_) {
+    // A private browser may disable storage. In-memory replay still works.
+  }
+
+  function newCommentRequestId() {
+    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+    const random = Math.random().toString(36).slice(2);
+    return `comment-${Date.now()}-${random}`;
+  }
+
+  function rememberCommentRequest(value) {
+    pendingCommentRequestId = value;
+    try {
+      if (value) sessionStorage.setItem(pendingCommentStorageKey, value);
+      else sessionStorage.removeItem(pendingCommentStorageKey);
+    } catch (_) {
+      // Keep the in-memory value when storage is unavailable.
+    }
+  }
 
   function relativeCommentTime(value) {
     const seconds = Math.max(0, (Date.now() - new Date(value).getTime()) / 1000);
@@ -733,21 +756,38 @@
 
   refreshCommentTimes();
   generateComment?.addEventListener('click', async () => {
+    if (!pendingCommentRequestId) rememberCommentRequest(newCommentRequestId());
     generateComment.disabled = true;
     commentStatus.textContent = 'Flash is drafting your comment…';
     try {
       const response = await fetch(`/api/comments/${encodeURIComponent(ticker)}`, {
         method: 'POST',
+        headers: { 'Idempotency-Key': pendingCommentRequestId },
       });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.detail || 'Could not post');
-      commentList.prepend(renderComment(result.comment));
+      const responseText = await response.text();
+      let result;
+      try {
+        result = JSON.parse(responseText);
+      } catch (_) {
+        throw new Error('Could not confirm whether the comment posted. Try again.');
+      }
+      if (!response.ok) {
+        const error = new Error(result.detail || 'Could not post');
+        error.retryable = result.retryable === true;
+        if (!error.retryable) rememberCommentRequest(null);
+        throw error;
+      }
+      const alreadyShown = Array.from(commentList.children).some(
+        item => item.dataset.commentId === String(result.comment.id)
+      );
+      if (!alreadyShown) commentList.prepend(renderComment(result.comment));
       commentStatus.textContent = `Posted · ${result.balance} Flash left`;
       document.querySelectorAll('[data-flash-balance]').forEach(item => {
         item.textContent = result.balance;
       });
       document.getElementById('discussionCount').textContent = result.count;
       document.getElementById('commentEmpty').hidden = true;
+      rememberCommentRequest(null);
     } catch (error) {
       commentStatus.textContent = error.message || 'Could not post';
     } finally {
