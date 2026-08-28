@@ -25,6 +25,8 @@ from runner_web.odds_api import (
 )
 from runner_web.sports import _apply_cached_moneylines, normalize_event, store_events
 
+ODDS_OBSERVED_AT = datetime(2026, 8, 26, 18, 10, tzinfo=UTC)
+
 
 def raw_event() -> dict[str, Any]:
     return {
@@ -194,7 +196,7 @@ def test_config_selects_multi_book_feed_and_prefers_bovada(
 
 
 def test_preferred_bookmaker_provides_a_complete_two_sided_line() -> None:
-    lines = normalize_moneylines(api_payload(), ("preferred-book",))
+    lines = normalize_moneylines(api_payload(), ("preferred-book",), ODDS_OBSERVED_AT)
     assert len(lines) == 1
     assert lines[0]["preferred"]["sportsbook"] == "Preferred Book"
     assert lines[0]["preferred"]["home_odds"] == -130
@@ -203,7 +205,7 @@ def test_preferred_bookmaker_provides_a_complete_two_sided_line() -> None:
 
 
 def test_fresh_multi_book_lines_build_median_consensus_and_exclude_stale_book() -> None:
-    markets = normalize_moneylines(multi_book_payload(), ("bovada",))
+    markets = normalize_moneylines(multi_book_payload(), ("bovada",), ODDS_OBSERVED_AT)
 
     assert len(markets) == 1
     market = markets[0]
@@ -219,6 +221,55 @@ def test_fresh_multi_book_lines_build_median_consensus_and_exclude_stale_book() 
     assert market["consensus"]["sportsbook"] == "Market consensus"
     assert market["consensus"]["bookmaker_count"] == 5
     assert market["consensus"]["home_probability"] == pytest.approx(0.5279, abs=0.002)
+
+
+def test_all_old_bookmaker_lines_are_rejected_even_when_they_agree() -> None:
+    observed_at = ODDS_OBSERVED_AT + timedelta(hours=3)
+
+    markets = normalize_moneylines(multi_book_payload(), ("bovada",), observed_at)
+
+    assert markets == ()
+
+
+def test_same_team_series_matches_each_market_by_start_time_once() -> None:
+    first_raw = raw_event()
+    second_raw = raw_event()
+    second_raw["id"] = "401000002"
+    second_raw["date"] = "2026-08-27T06:00:00Z"
+    first = normalize_event("mlb", first_raw)
+    second = normalize_event("mlb", second_raw)
+    assert first is not None and second is not None
+
+    payload = api_payload()
+    second_market = json.loads(json.dumps(payload[0]))
+    second_market["id"] = "odds-event-2"
+    second_market["commence_time"] = "2026-08-27T06:00:00Z"
+    second_market["bookmakers"][0]["markets"][0]["outcomes"][0]["price"] = -175
+    second_market["bookmakers"][1]["markets"][0]["outcomes"][0]["price"] = -170
+    markets = normalize_moneylines(
+        [second_market, payload[0]],
+        ("preferred-book",),
+        ODDS_OBSERVED_AT,
+    )
+
+    assert apply_moneylines([first, second], markets) == 2
+    assert first["home_odds"] == -130
+    assert second["home_odds"] == -170
+
+
+def test_one_market_is_not_reused_for_another_game_in_the_series() -> None:
+    first_raw = raw_event()
+    second_raw = raw_event()
+    second_raw["id"] = "401000002"
+    second_raw["date"] = "2026-08-27T06:00:00Z"
+    first = normalize_event("mlb", first_raw)
+    second = normalize_event("mlb", second_raw)
+    assert first is not None and second is not None
+    markets = normalize_moneylines(api_payload(), ("preferred-book",), ODDS_OBSERVED_AT)
+
+    assert apply_moneylines([first, second], markets) == 1
+    assert first["home_odds"] == -130
+    assert second.get("odds_provider") != odds_api.PROVIDER
 
 
 def test_refresh_schedule_uses_three_progressive_game_windows() -> None:
@@ -332,11 +383,19 @@ def test_billed_bad_response_carries_quota_to_prevent_retry_spend(
 
 
 def test_api_odds_keep_provider_and_opening_snapshot(sports_db: None) -> None:
-    event = normalize_event("mlb", raw_event())
+    observed_at = datetime.now(UTC)
+    start_time = observed_at + timedelta(hours=4)
+    raw = raw_event()
+    raw["date"] = start_time.isoformat()
+    event = normalize_event("mlb", raw)
     assert event is not None
-    lines = normalize_moneylines(api_payload(), ("preferred-book",))
+    payload = api_payload()
+    payload[0]["commence_time"] = start_time.isoformat()
+    for offset, bookmaker in enumerate(payload[0]["bookmakers"]):
+        bookmaker["last_update"] = (observed_at - timedelta(minutes=offset + 1)).isoformat()
+    lines = normalize_moneylines(payload, ("preferred-book",), observed_at)
     assert apply_moneylines([event], lines) == 1
-    store_events([event], observed_at=datetime(2026, 8, 26, 18, tzinfo=UTC))
+    store_events([event], observed_at=observed_at)
 
     with connection() as database:
         row = database.execute("SELECT * FROM sports_odds_snapshots").fetchone()
@@ -358,17 +417,23 @@ def test_api_odds_keep_provider_and_opening_snapshot(sports_db: None) -> None:
 def test_multi_book_consensus_drives_model_and_bovada_drives_paper_pick(
     sports_db: None,
 ) -> None:
+    observed_at = datetime.now(UTC)
+    start_time = observed_at + timedelta(hours=4)
     raw = raw_event()
-    raw["date"] = (datetime.now(UTC) + timedelta(hours=4)).isoformat()
+    raw["date"] = start_time.isoformat()
     event = normalize_event("mlb", raw)
     assert event is not None
-    markets = normalize_moneylines(multi_book_payload(), ("bovada",))
+    payload = multi_book_payload()
+    payload[0]["commence_time"] = start_time.isoformat()
+    for offset, bookmaker in enumerate(payload[0]["bookmakers"]):
+        age = timedelta(hours=3) if bookmaker["key"] == "stale" else timedelta(minutes=offset + 1)
+        bookmaker["last_update"] = (observed_at - age).isoformat()
+    markets = normalize_moneylines(payload, ("bovada",), observed_at)
 
     assert apply_moneylines([event], markets) == 1
     assert event["sportsbook"] == "Market consensus"
     assert event["market_book_count"] == 5
     assert event["market_is_consensus"] is True
-    observed_at = datetime(2026, 8, 26, 18, 10, tzinfo=UTC)
     store_events([event], observed_at=observed_at)
 
     with connection() as database:
@@ -416,7 +481,7 @@ def test_sports_refresh_uses_one_paid_moneyline_call_per_due_league(
 ) -> None:
     monkeypatch.setenv("ODDS_API_KEY", "server-only-secret")
     now = datetime(2026, 8, 26, 20, tzinfo=UTC)
-    lines = normalize_moneylines(api_payload(), ("preferred-book",))
+    lines = normalize_moneylines(api_payload(), ("preferred-book",), ODDS_OBSERVED_AT)
     spent = {"credits": 0}
 
     def fake_league(league: str, _at: datetime | None = None) -> list[dict[str, Any]]:

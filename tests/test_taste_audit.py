@@ -10,6 +10,7 @@ def test_shared_product_system_is_loaded_after_existing_styles() -> None:
     assert base.index("desktop-split.css") < base.index("product-system.css")
     assert sports.index("sports-dashboard.css") < sports.index("product-system.css")
     assert 'class="skip-link"' in base
+    assert 'class="skip-link"' in sports
     assert 'id="app-content"' in base
     assert 'class="tab-link product-tab-link"' in base
     assert 'class="sports-tab-icon product"' in sports

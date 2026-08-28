@@ -13,7 +13,7 @@ from runner_web import db
 from runner_web import main as web_main
 from runner_web import sports as sports_module
 from runner_web.db import connection, init_db
-from runner_web.flash_wallet import WINNING_CALL_REWARD, wallet_for_user
+from runner_web.flash_wallet import SPORTS_CALL_REWARD_CAP, sports_call_reward, wallet_for_user
 from runner_web.main import (
     alpha_page,
     home,
@@ -236,6 +236,21 @@ def test_preseason_game_is_never_promoted_as_an_edge() -> None:
     assert prediction["edge"] is None
 
 
+def test_unknown_season_is_not_eligible_and_records_are_labeled_overall() -> None:
+    raw = sample_event()
+    raw["season"] = {}
+    event = normalize_event("mlb", raw)
+    assert event is not None
+
+    prediction = predict_event(event)
+
+    assert prediction["selection"] == "pass"
+    assert prediction["signal"] == "pass"
+    assert any("competition type is not verified" in risk for risk in prediction["risks"])
+    assert any("Overall season records" in evidence for evidence in prediction["evidence"])
+    assert all(" away," not in evidence for evidence in prediction["evidence"])
+
+
 def test_ai_prediction_cannot_be_created_after_a_game_starts(sports_db) -> None:
     event = normalize_event("mlb", sample_event(completed=True))
     assert event is not None
@@ -401,19 +416,27 @@ def test_paper_pick_freezes_odds_and_settles(sports_db) -> None:
         ).fetchall()
     assert settled["result"] == "win"
     assert settled["return_units"] == pytest.approx(100 / 130, abs=0.0001)
+    expected_reward = sports_call_reward(-130)
     assert [tuple(reward) for reward in rewards] == [
-        (WINNING_CALL_REWARD, "sports_call_win", pick["id"])
+        (expected_reward, "sports_call_win", pick["id"])
     ]
-    assert wallet_for_user("user-1")["balance"] == WINNING_CALL_REWARD
+    assert wallet_for_user("user-1")["balance"] == expected_reward
 
     assert settle_picks() == 0
-    assert wallet_for_user("user-1")["balance"] == WINNING_CALL_REWARD
+    assert wallet_for_user("user-1")["balance"] == expected_reward
 
     settled_board = sports_alpha_board("mlb")
     assert settled_board["active_calls"] == 0
     assert settled_board["calls"][0]["status"] == "win"
     assert settled_board["calls"][0]["return_label"].endswith("u")
-    assert settled_board["calls"][0]["reward_label"] == f"+{WINNING_CALL_REWARD} Flash"
+    assert settled_board["calls"][0]["reward_label"] == f"+{expected_reward} Flash"
+
+
+def test_sports_call_reward_scales_with_frozen_odds() -> None:
+    assert sports_call_reward(None) == 0
+    assert sports_call_reward(-400) < sports_call_reward(-130)
+    assert sports_call_reward(-130) < sports_call_reward(150)
+    assert sports_call_reward(1000) == SPORTS_CALL_REWARD_CAP
 
 
 def test_losing_sports_call_does_not_earn_flash(sports_db) -> None:
@@ -496,11 +519,11 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     assert b'class="winner-coin ' in response.body
     assert b"Away Club" in response.body
     assert b"Home Club" in response.body
-    assert b"SEASON-RECORD BASELINE" in response.body
+    assert b"price value" in response.body
     assert b"EXPERIMENTAL" in response.body
     assert b"ESTIMATED SCORE" not in response.body
     assert b"MODEL" in response.body
-    assert b"EDGE" in response.body
+    assert b"PRICE VALUE" in response.body
     assert b"distinct matchups" in response.body
     assert b'class="edge-spark"' in response.body
     assert b"PROJECTED WINNER" not in response.body
@@ -523,7 +546,7 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     )
     assert b"Team news" in detail_response.body
     assert b"Make a paper pick" in detail_response.body
-    assert f"A winning Call earns {WINNING_CALL_REWARD} Flash".encode() in detail_response.body
+    assert b"Winning rewards scale with the frozen odds" in detail_response.body
 
 
 def test_slate_builds_fixed_side_edge_history(sports_db) -> None:
@@ -662,6 +685,36 @@ def test_pulse_groups_repeated_series_after_the_strongest_game(sports_db) -> Non
     assert len(pulse["events"]) == 1
     assert pulse["events"][0]["series_more_count"] == 1
     assert pulse["events"][0]["series_more"][0]["id"] == second["id"]
+
+
+def test_radar_groups_repeated_series_changes(sports_db) -> None:
+    first_raw = sample_event()
+    second_raw = sample_event()
+    second_raw["id"] = "401000002"
+    second_raw["date"] = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    first = normalize_event("mlb", first_raw)
+    second = normalize_event("mlb", second_raw)
+    assert first is not None and second is not None
+    store_events([first, second], observed_at=datetime.now(UTC))
+
+    for raw in (first_raw, second_raw):
+        moneyline = raw["competitions"][0]["odds"][0]["moneyline"]
+        moneyline["home"]["close"]["odds"] = "-105"
+        moneyline["away"]["close"]["odds"] = "-105"
+    moved_first = normalize_event("mlb", first_raw)
+    moved_second = normalize_event("mlb", second_raw)
+    assert moved_first is not None and moved_second is not None
+    store_events(
+        [moved_first, moved_second],
+        observed_at=datetime.now(UTC) + timedelta(minutes=10),
+    )
+
+    radar = sports_radar("mlb")
+
+    assert radar["change_count"] == 2
+    assert radar["display_count"] == 1
+    assert len(radar["events"]) == 1
+    assert radar["events"][0]["series_more_count"] == 1
 
 
 def test_sports_alpha_builds_team_and_player_win_rate_history(sports_db) -> None:
@@ -1110,7 +1163,7 @@ def test_empty_player_boxscore_is_checked_only_once(
     assert second["events"] == 0
 
 
-def test_sports_host_has_the_same_alpha_product_as_runners(sports_db) -> None:
+def test_sports_host_uses_the_sports_shell_for_alpha(sports_db) -> None:
     radar_response = radar_page(request(path="/radar"), None)
     alpha_response = alpha_page(request(path="/alpha"), None)
     receipts_response = sports_receipts_page(request(path="/receipts"), None)
@@ -1119,16 +1172,37 @@ def test_sports_host_has_the_same_alpha_product_as_runners(sports_db) -> None:
     assert b'class="sports-hero' not in radar_response.body
     assert alpha_response.status_code == 200
     assert b'<h1>Alpha</h1>' in alpha_response.body
-    assert b'class="alpha-board call-ledger"' in alpha_response.body
-    assert b"Four prediction slots" in alpha_response.body
-    assert alpha_response.body.count(b"Open challenger slot") == 3
+    assert b'class="alpha-sample-note"' in alpha_response.body
+    assert b'class="sports-topbar"' in alpha_response.body
+    assert b"Four prediction slots" not in alpha_response.body
+    assert b"rank skill" in alpha_response.body
     assert b"open Calls" in alpha_response.body
-    assert b"Receipts" not in alpha_response.body
     assert b'href="/alpha"' in alpha_response.body
-    assert b'class="tab-link product-tab-link"' in alpha_response.body
-    assert b">Runners</span>" in alpha_response.body
+    assert b'class="sports-tab-icon product"' in alpha_response.body
+    assert b">Runners</a>" in alpha_response.body
+    assert b'class="skip-link"' in alpha_response.body
     assert receipts_response.status_code == 307
     assert receipts_response.headers["location"] == "/alpha"
+
+
+def test_game_pages_reuse_the_cached_model_record(sports_db, monkeypatch) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    sports_module._MODEL_RECORD_CACHE.clear()
+    original = sports_module._build_model_alpha
+    calls = 0
+
+    def counted(league: str) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return original(league)
+
+    monkeypatch.setattr(sports_module, "_build_model_alpha", counted)
+
+    assert sports_event(str(event["id"])) is not None
+    assert sports_event(str(event["id"])) is not None
+    assert calls == 1
 
 
 def test_sports_alpha_page_reuses_warmed_result(sports_db, monkeypatch) -> None:

@@ -13,6 +13,11 @@
       {% endif %}
     </header>
     {% include "_market_clock.html" %}
+    <form class="pulse-search" id="pulseSearch" role="search">
+      <label for="pulseTickerSearch">Open a ticker</label>
+      <input id="pulseTickerSearch" name="ticker" type="search" inputmode="latin" autocomplete="off" maxlength="12" placeholder="Ticker, for example RKLB" aria-label="Ticker symbol">
+      <button type="submit">Open</button>
+    </form>
     {% set flash_record = pulse.flash_record %}
     <a class="kol-score-strip" id="kolScoreStrip" href="/flash/record" aria-label="Open the Flash forecast record"{% if not flash_record %} hidden{% endif %}>
       <span class="kol-avatar" data-kol-avatar aria-hidden="true">⚡</span>
@@ -56,6 +61,14 @@ let moreVisible = false;
 let polling = false;
 let pollCount = 0;
 let pendingPulse = null;
+const tickerSearch = document.getElementById('pulseSearch');
+
+tickerSearch.addEventListener('submit', event => {
+  event.preventDefault();
+  const ticker = new FormData(tickerSearch).get('ticker')?.toString().trim().toUpperCase();
+  if (!ticker || !/^[A-Z0-9.-]{1,12}$/.test(ticker)) return;
+  location.href = `/t/${encodeURIComponent(ticker)}`;
+});
 
 function tickerKey(row) {
   const ticker = String(row?.ticker || '').trim().toUpperCase();

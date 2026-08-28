@@ -42,6 +42,10 @@
       const confidence = number(row.case_confidence);
       return [confidence === null ? 'VIEW' : `${Math.round(confidence * 100)}%`, 'thesis'];
     }
+    const tradeState = String(row.trade_state || '').toUpperCase();
+    if (tradeState && tradeState !== 'UNKNOWN') {
+      return [tradeState, `state-${tradeState.toLowerCase()}`];
+    }
     const stage = String(row.stage || '').toUpperCase();
     if (row.section === 'scored' && stage) return [stage, `stage-${stage.toLowerCase()}`];
     const sessions = {regular: 'REG', pre: 'PRE', after: 'AH', overnight: 'OVN'};
@@ -67,16 +71,10 @@
     const rugLevel = String(row.rug_level || 'unknown').toLowerCase();
     const tradeState = String(row.trade_state || '').toUpperCase();
     let safety = '';
-    if (['AVOID', 'EXIT'].includes(tradeState)) {
-      safety = `<span class="state-count state-${esc(tradeState.toLowerCase())}">${esc(tradeState)}</span>`;
-    } else if (rugValue !== null && ['high', 'critical'].includes(rugLevel)) {
-      safety = `<span class="rug-count rug-${esc(rugLevel)}">RUG ${rugValue.toFixed(0)}</span>`;
-    } else if (tradeState && tradeState !== 'UNKNOWN') {
-      safety = `<span class="state-count state-${esc(tradeState.toLowerCase())}">${esc(tradeState)}</span>`;
-    } else if (rugValue !== null && rugLevel === 'guarded') {
-      safety = `<span class="rug-count rug-guarded">RUG ${rugValue.toFixed(0)}</span>`;
+    if (rugValue !== null && ['high', 'critical'].includes(rugLevel)) {
+      safety = `<span class="rug-count rug-${esc(rugLevel)}">HIGH RISK</span>`;
     } else if (row.section === 'scored' && rugValue === null) {
-      safety = '<span class="rug-count rug-unknown">RUG —</span>';
+      safety = '<span class="rug-count rug-unknown">RISK UNKNOWN</span>';
     }
     const catalystTone = row.sentiment === 'risk' ? ' risk' : row.sentiment === 'gap' ? ' gap' : '';
     const updated = options.updated ?? row.has_update;

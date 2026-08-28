@@ -244,6 +244,7 @@ def test_desktop_feeds_share_full_info_and_article_panel() -> None:
     assert '"SAMEORIGIN" if panel_path else "DENY"' in (
         root / "src/runner_web/main.py"
     ).read_text()
+    assert '"/game/"' in (root / "src/runner_web/main.py").read_text()
 
 
 def test_ticker_rows_have_no_reader_attention_state() -> None:

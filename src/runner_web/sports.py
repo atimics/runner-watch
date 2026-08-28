@@ -4,6 +4,8 @@ import hashlib
 import json
 import math
 import secrets
+import threading
+import time
 import urllib.request
 import uuid
 from collections import defaultdict
@@ -12,6 +14,7 @@ from statistics import median
 from typing import Any
 
 from runner_watch.ingestion import SourceFetch
+from runner_web import db as runner_db
 from runner_web.ai_kol import (
     FLASH,
     KOL_LADDER_SIZE,
@@ -21,10 +24,12 @@ from runner_web.ai_kol import (
 )
 from runner_web.caller_ids import ensure_caller_identity_with_database
 from runner_web.db import connection
-from runner_web.flash_wallet import WINNING_CALL_REWARD, credit_flash
+from runner_web.flash_wallet import credit_flash, sports_call_reward
 from runner_web.ingestion import record_source_fetch
 from runner_web.odds_api import (
     BOOKMAKER_FRESHNESS,
+    BOOKMAKER_FUTURE_TOLERANCE,
+    BOOKMAKER_MAX_AGE,
     CONSENSUS_SPORTSBOOK,
     MIN_CONSENSUS_BOOKS,
     OddsApiConfig,
@@ -71,6 +76,14 @@ SCORE_MODELS = {
     "nhl": {"total": 6.1, "exponent": 2.0, "decimals": 1},
 }
 BOVADA_BOOKMAKER_KEY = "bovada"
+MODEL_RECORD_CACHE_TTL_SECONDS = 300.0
+_MODEL_RECORD_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+_MODEL_RECORD_CACHE_LOCK = threading.Lock()
+
+
+def _clear_model_record_cache() -> None:
+    with _MODEL_RECORD_CACHE_LOCK:
+        _MODEL_RECORD_CACHE.clear()
 
 
 def _iso(value: datetime | None = None) -> str:
@@ -241,15 +254,21 @@ def predict_event(event: dict[str, Any]) -> dict[str, Any]:
         "regular-season",
         "post-season",
         "postseason",
-        "unknown",
     }
+    if event.get("season_type") == "unknown":
+        risks.append(
+            "The competition type is not verified, so this game is not eligible for a signal."
+        )
     if not eligible_season:
         risks.append("Exhibition and preseason records are not used to promote an edge.")
     if home_record and away_record:
         home_rate = (home_record[0] + 8) / (sum(home_record) + 16)
         away_rate = (away_record[0] + 8) / (sum(away_record) + 16)
         probability = 0.5 + (home_rate - away_rate) * 0.65
-        evidence.append(f"Season form: {away['record']} away, {home['record']} home.")
+        evidence.append(
+            f"Overall season records: {away['name']} {away['record']}, "
+            f"{home['name']} {home['record']}."
+        )
         quality = "baseline"
     else:
         probability = 0.5
@@ -984,7 +1003,7 @@ def _input_hash(event: dict[str, Any], prediction: dict[str, Any]) -> str:
 
 
 def _apply_cached_moneylines(events: list[dict[str, Any]]) -> int:
-    """Use the latest paid snapshot between scheduled API refreshes."""
+    """Use a recent paid snapshot between scheduled API refreshes."""
 
     applied = 0
     with connection() as database:
@@ -1001,12 +1020,33 @@ def _apply_cached_moneylines(events: list[dict[str, Any]]) -> int:
             ).fetchone()
             if not row:
                 continue
-            book_count_row = database.execute(
-                "SELECT COUNT(DISTINCT sportsbook_key) AS count "
-                "FROM sports_bookmaker_odds WHERE event_id=? AND provider=?",
+            completed = bool(event.get("completed")) or str(event.get("status")) == "post"
+            reference_time = (
+                _parse_time(event["start_time"]) if completed else datetime.now(UTC)
+            )
+            observed_at = _parse_time(row["observed_at"])
+            observed_age = reference_time - observed_at
+            if not (-BOOKMAKER_FUTURE_TOLERANCE <= observed_age <= BOOKMAKER_MAX_AGE):
+                continue
+            bookmaker_rows = database.execute(
+                """
+                SELECT * FROM (
+                    SELECT b.*,ROW_NUMBER() OVER(
+                        PARTITION BY sportsbook_key ORDER BY observed_at DESC,id DESC
+                    ) AS latest_rank
+                    FROM sports_bookmaker_odds b
+                    WHERE event_id=? AND provider=?
+                ) latest WHERE latest_rank=1
+                """,
                 (event["id"], ODDS_PROVIDER),
-            ).fetchone()
-            book_count = int(book_count_row["count"] or 0) if book_count_row else 0
+            ).fetchall()
+            fresh_books = _fresh_bookmaker_items(bookmaker_rows, reference_time)
+            book_count = len(fresh_books)
+            is_consensus = row["sportsbook"] == CONSENSUS_SPORTSBOOK
+            if is_consensus and book_count < MIN_CONSENSUS_BOOKS:
+                continue
+            if not is_consensus and bookmaker_rows and not fresh_books:
+                continue
             event.update(
                 {
                     "odds_provider": ODDS_PROVIDER,
@@ -1018,7 +1058,7 @@ def _apply_cached_moneylines(events: list[dict[str, Any]]) -> int:
                     "spread": row["spread"],
                     "total": row["total"],
                     "market_book_count": book_count,
-                    "market_is_consensus": row["sportsbook"] == CONSENSUS_SPORTSBOOK,
+                    "market_is_consensus": is_consensus,
                     "bookmaker_moneylines": [],
                 }
             )
@@ -1205,6 +1245,8 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                     timestamp,
                 ),
             )
+    if events:
+        _clear_model_record_cache()
     return len(events)
 
 
@@ -1243,14 +1285,16 @@ def settle_picks() -> int:
                 (result, round(units, 4), timestamp, timestamp, row["id"]),
             )
             if changed.rowcount == 1 and result == "win":
-                credit_flash(
-                    database,
-                    str(row["user_id"]),
-                    WINNING_CALL_REWARD,
-                    kind="sports_call_win",
-                    reference_id=str(row["id"]),
-                    at=current,
-                )
+                reward = sports_call_reward(row["american_odds"])
+                if reward:
+                    credit_flash(
+                        database,
+                        str(row["user_id"]),
+                        reward,
+                        kind="sports_call_win",
+                        reference_id=str(row["id"]),
+                        at=current,
+                    )
             settled += max(changed.rowcount, 0)
     return settled
 
@@ -1477,15 +1521,20 @@ def _latest_bookmaker_rows(database: Any, event_ids: list[str]) -> list[Any]:
     ).fetchall()
 
 
-def _fresh_bookmaker_items(rows: list[Any]) -> list[dict[str, Any]]:
+def _fresh_bookmaker_items(
+    rows: list[Any], reference_time: datetime | None = None
+) -> list[dict[str, Any]]:
     items = [item for row in rows if (item := _bookmaker_odds_item(row)) is not None]
     timed: list[tuple[dict[str, Any], datetime]] = []
+    reference = (reference_time or datetime.now(UTC)).astimezone(UTC)
     for item in items:
         try:
             updated = _parse_time(item["fresh_at"])
         except (TypeError, ValueError):
             continue
-        timed.append((item, updated))
+        age = reference - updated
+        if -BOOKMAKER_FUTURE_TOLERANCE <= age <= BOOKMAKER_MAX_AGE:
+            timed.append((item, updated))
     if not timed:
         return []
     newest = max(updated for _item, updated in timed)
@@ -1493,7 +1542,9 @@ def _fresh_bookmaker_items(rows: list[Any]) -> list[dict[str, Any]]:
 
 
 def _market_comparison(event: dict[str, Any], rows: list[Any]) -> dict[str, Any]:
-    books = _fresh_bookmaker_items(rows)
+    completed = bool(event.get("completed")) or str(event.get("status")) == "post"
+    reference_time = _parse_time(event["start_time"]) if completed else datetime.now(UTC)
+    books = _fresh_bookmaker_items(rows, reference_time)
     book_count = len(books)
     consensus_home = (
         float(median(book["home_probability"] for book in books))
@@ -2117,6 +2168,36 @@ def sports_slate(league: str = "all", limit: int = 80) -> dict[str, Any]:
     }
 
 
+def _sports_series_key(event: dict[str, Any]) -> str:
+    team_ids = sorted(
+        (str(event.get("away_team_id") or ""), str(event.get("home_team_id") or ""))
+    )
+    return f"{event.get('league')}:{':'.join(team_ids)}"
+
+
+def _group_sports_series(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    series: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for event in events:
+        series[_sports_series_key(event)].append(event)
+    grouped: list[dict[str, Any]] = []
+    used: set[str] = set()
+    for event in events:
+        series_key = _sports_series_key(event)
+        if series_key in used:
+            continue
+        used.add(series_key)
+        lead = dict(event)
+        more = [item for item in series[series_key] if item["id"] != event["id"]]
+        lead.update(
+            series_key=series_key,
+            series_game_count=len(series[series_key]),
+            series_more_count=len(more),
+            series_more=more,
+        )
+        grouped.append(lead)
+    return grouped
+
+
 def sports_pulse(league: str = "all", view: str = "signals", limit: int = 30) -> dict[str, Any]:
     """Return promoted signals ranked first, with repeated series kept together."""
 
@@ -2136,33 +2217,7 @@ def sports_pulse(league: str = "all", view: str = "signals", limit: int = 30) ->
             str(event.get("id") or ""),
         )
     )
-    series: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for event in signals:
-        team_ids = sorted(
-            (str(event.get("away_team_id") or ""), str(event.get("home_team_id") or ""))
-        )
-        series_key = f"{event.get('league')}:{':'.join(team_ids)}"
-        series[series_key].append(event)
-
-    grouped: list[dict[str, Any]] = []
-    used: set[str] = set()
-    for event in signals:
-        team_ids = sorted(
-            (str(event.get("away_team_id") or ""), str(event.get("home_team_id") or ""))
-        )
-        series_key = f"{event.get('league')}:{':'.join(team_ids)}"
-        if series_key in used:
-            continue
-        used.add(series_key)
-        lead = dict(event)
-        more = [item for item in series[series_key] if item["id"] != event["id"]]
-        lead.update(
-            series_key=series_key,
-            series_game_count=len(series[series_key]),
-            series_more_count=len(more),
-            series_more=more,
-        )
-        grouped.append(lead)
+    grouped = _group_sports_series(signals)
 
     shown = grouped[: max(1, min(limit, 100))]
     return {
@@ -2231,14 +2286,18 @@ def sports_radar(league: str = "all", limit: int = 40) -> dict[str, Any]:
             str(event.get("start_time") or ""),
         )
     )
+    grouped = _group_sports_series(changes)
     return {
         **payload,
-        "events": changes[: max(1, min(limit, 100))],
+        "events": grouped[: max(1, min(limit, 100))],
         "change_count": len(changes),
-        "tracked_count": sum(
-            bool(event.get("was_promoted"))
-            for event in payload["events"]
-            if event.get("status") in {"pre", "in"}
+        "display_count": len(grouped),
+        "tracked_count": len(
+            {
+                _sports_series_key(event)
+                for event in payload["events"]
+                if event.get("status") in {"pre", "in"} and event.get("was_promoted")
+            }
         ),
     }
 
@@ -2340,6 +2399,22 @@ def _sample_assessment(games: int) -> dict[str, Any]:
 
 
 def _model_alpha(league: str) -> dict[str, Any]:
+    cache_key = (str(runner_db.DATABASE_PATH), league)
+    current = time.monotonic()
+    with _MODEL_RECORD_CACHE_LOCK:
+        cached = _MODEL_RECORD_CACHE.get(cache_key)
+        if cached and cached[0] > current:
+            return cached[1]
+    result = _build_model_alpha(league)
+    with _MODEL_RECORD_CACHE_LOCK:
+        _MODEL_RECORD_CACHE[cache_key] = (
+            current + MODEL_RECORD_CACHE_TTL_SECONDS,
+            result,
+        )
+    return result
+
+
+def _build_model_alpha(league: str) -> dict[str, Any]:
     parameters: list[Any] = [_iso(datetime.now(UTC) - timedelta(days=HISTORY_TARGET_DAYS))]
     league_filter = ""
     if league in LEAGUES:
@@ -3185,7 +3260,13 @@ def sports_event(event_id: str) -> dict[str, Any] | None:
             """,
             (event_id,),
         ).fetchall()
-        event["picks"] = [dict(item) for item in pick_rows]
+        event["picks"] = []
+        for item in pick_rows:
+            pick = dict(item)
+            pick["reward_flash"] = (
+                sports_call_reward(pick.get("american_odds")) if pick.get("result") == "win" else 0
+            )
+            event["picks"].append(pick)
         news_rows = database.execute(
             """
             SELECT * FROM sports_news_articles WHERE event_id=?
@@ -3774,6 +3855,7 @@ def sports_alpha_board(league: str = "all", limit: int = 50) -> dict[str, Any]:
         current_odds = pick.get(f"current_{selection}_odds")
         result = str(pick.get("result") or "")
         return_units = _number(pick.get("return_units"))
+        reward = sports_call_reward(pick.get("american_odds")) if result == "win" else 0
         calls.append(
             {
                 "caller_handle": str(pick["caller_handle"]),
@@ -3790,9 +3872,7 @@ def sports_alpha_board(league: str = "all", limit: int = 50) -> dict[str, Any]:
                 "return_tone": (
                     "up" if return_units is not None and return_units >= 0 else "down"
                 ),
-                "reward_label": (
-                    f"+{WINNING_CALL_REWARD} Flash" if result == "win" else None
-                ),
+                "reward_label": f"+{reward} Flash" if reward else None,
                 "created_at": str(pick["created_at"]),
             }
         )
@@ -3844,7 +3924,6 @@ def sports_alpha_board(league: str = "all", limit: int = 50) -> dict[str, Any]:
         "contenders": contenders,
         "total_calls": len(picks),
         "active_calls": sum(pick["status"] == "open" for pick in picks),
-        "ai_tournament": sports_ai_tournament(selected_league),
         "league": selected_league,
         "leagues": [
             {"key": key, "name": value["name"]} for key, value in LEAGUES.items()
