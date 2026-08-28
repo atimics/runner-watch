@@ -71,6 +71,356 @@ textarea {
   outline-offset: 2px;
 }
 
+/* Signed-in account strip */
+.account-strip {
+  position: relative;
+  z-index: 9;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  width: 100%;
+  height: 33px;
+  border-bottom: 1px solid var(--line);
+  background: #070a08;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.account-strip button,
+.account-strip a {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 0 12px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.account-strip button:hover,
+.account-strip a:hover {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.account-strip b {
+  color: var(--text);
+  font-size: 10px;
+}
+
+.account-strip small,
+.account-strip span {
+  font-size: 8px;
+  line-height: 1;
+}
+
+.account-strip-flash > span {
+  color: #e6d56d;
+  font-size: 11px;
+}
+
+.account-strip[data-flash-low="true"] .account-strip-flash {
+  background: rgba(230, 213, 109, .06);
+}
+
+.account-strip[data-flash-low="true"] .account-strip-flash::after {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #e6d56d;
+  box-shadow: 0 0 8px rgba(230, 213, 109, .55);
+  content: "";
+}
+
+.account-strip-caller b {
+  margin-left: 2px;
+}
+
+.account-strip-caller small {
+  color: #657069;
+}
+
+.sports-product > .account-strip {
+  padding-right: max(20px, calc((100% - 1040px) / 2));
+  background: rgba(8, 11, 9, .98);
+}
+
+html.embedded-pane .account-strip {
+  display: none;
+}
+
+/* Flash claim and release announcement */
+.flash-release-dialog {
+  width: min(620px, calc(100% - 28px));
+  max-height: min(780px, calc(100dvh - 28px));
+  padding: 0;
+  overflow: auto;
+  border: 1px solid #344238;
+  border-radius: 16px;
+  background: #0c110e;
+  color: var(--text);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, .72), 0 0 42px rgba(208, 223, 91, .08);
+}
+
+.flash-release-dialog::backdrop {
+  background: rgba(2, 4, 3, .82);
+  backdrop-filter: blur(8px);
+}
+
+.flash-release-visual {
+  position: relative;
+  height: 230px;
+  overflow: hidden;
+  background: #030604;
+}
+
+.flash-release-visual::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 42%, #0c110e 100%);
+  content: "";
+}
+
+.flash-release-visual img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.flash-release-visual > span {
+  position: absolute;
+  z-index: 1;
+  top: 18px;
+  left: 20px;
+  padding: 6px 8px;
+  border: 1px solid rgba(226, 238, 130, .35);
+  border-radius: 999px;
+  background: rgba(4, 8, 5, .68);
+  color: #e2ee82;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .12em;
+  backdrop-filter: blur(8px);
+}
+
+.flash-release-visual > button {
+  position: absolute;
+  z-index: 2;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0 0 2px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 50%;
+  background: rgba(4, 8, 5, .68);
+  color: #eef2ef;
+  font-size: 20px;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+.flash-release-body {
+  padding: 0 24px 22px;
+}
+
+.flash-release-body > header {
+  margin-top: -12px;
+}
+
+.flash-release-body > header > span,
+.flash-daily-card > div > span {
+  color: #d4df71;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .14em;
+}
+
+.flash-release-body h2 {
+  margin: 5px 0 0;
+  font-size: clamp(25px, 5vw, 34px);
+  line-height: 1.05;
+  letter-spacing: -.045em;
+}
+
+.flash-release-body > header p {
+  max-width: 520px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.flash-release-features {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 18px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.flash-release-features li {
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid #263129;
+  border-radius: 9px;
+  background: #101713;
+}
+
+.flash-release-features i {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-bottom: 9px;
+  border-radius: 7px;
+  background: rgba(212, 223, 113, .1);
+  color: #d4df71;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.flash-release-features strong,
+.flash-release-features small {
+  display: block;
+}
+
+.flash-release-features strong {
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.flash-release-features small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.flash-daily-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 15px;
+  border: 1px solid rgba(212, 223, 113, .34);
+  border-radius: 11px;
+  background: linear-gradient(120deg, rgba(212, 223, 113, .11), rgba(53, 111, 76, .1));
+}
+
+.flash-daily-card strong,
+.flash-daily-card small {
+  display: block;
+}
+
+.flash-daily-card strong {
+  margin-top: 4px;
+  font-size: 16px;
+}
+
+.flash-daily-card small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.flash-daily-card button,
+.flash-release-body > footer button {
+  min-height: 38px;
+  padding: 0 15px;
+  border: 1px solid #d4df71;
+  border-radius: 8px;
+  background: #d4df71;
+  color: #111508;
+  font-size: 10px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.flash-daily-card button:disabled {
+  border-color: #384139;
+  background: #252d27;
+  color: #78827b;
+  cursor: default;
+}
+
+.flash-release-body > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+}
+
+.flash-release-body > footer a {
+  color: var(--muted);
+  font-size: 9px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.flash-release-body > footer button {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--soft);
+}
+
+@media (max-width: 560px) {
+  .account-strip button,
+  .account-strip a {
+    padding: 0 9px;
+  }
+
+  .account-strip-caller small {
+    display: none;
+  }
+
+  .sports-product > .account-strip {
+    padding-right: 4px;
+  }
+
+  .flash-release-dialog {
+    width: calc(100% - 18px);
+    max-height: calc(100dvh - 18px);
+    border-radius: 13px;
+  }
+
+  .flash-release-visual {
+    height: 190px;
+  }
+
+  .flash-release-body {
+    padding: 0 16px 16px;
+  }
+
+  .flash-release-features {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    margin: 14px 0;
+  }
+
+  .flash-release-features li {
+    display: grid;
+    grid-template-columns: 25px 1fr;
+    gap: 9px;
+    align-items: center;
+    padding: 9px;
+  }
+
+  .flash-release-features i {
+    margin: 0;
+  }
+
+  .flash-daily-card {
+    gap: 10px;
+  }
+}
+
 /* Runners shell */
 .runners-product .mobile-app {
   background: var(--bg);

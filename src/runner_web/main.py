@@ -72,6 +72,7 @@ from runner_web.calls import (
     call_for_user,
     call_stats,
     caller_calls,
+    caller_summary_for_user,
     close_call,
     create_call,
     recent_calls,
@@ -883,10 +884,13 @@ def take_challenge(token: str, kind: str) -> dict[str, Any]:
 
 def page_context(request: Request, session_token: str | None, **extra: Any) -> dict[str, Any]:
     user = current_user(session_token)
+    user_id = str(user["id"]) if user else None
     return {
         "request": request,
         "user": user,
-        "flash_wallet": wallet_for_user(str(user["id"])) if user else None,
+        "flash_wallet": wallet_for_user(user_id) if user_id else None,
+        "caller_summary": caller_summary_for_user(user_id) if user_id else None,
+        "release_announcement_id": "flash-edge-2026-08-28",
         "app_origin": origin_for_request(request),
         "product": product_for_request(request),
         "runners_origin": RUNNERS_ORIGIN,

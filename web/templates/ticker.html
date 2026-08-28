@@ -327,9 +327,10 @@ async function pollFlash(jobId){
 }
 if(commissionButton?.dataset.jobId)pollFlash(commissionButton.dataset.jobId);
 commissionButton?.addEventListener('click',async()=>{
+  if(window.RatiFlash&&!window.RatiFlash.canSpend(100)){commissionStatus.textContent='Claim Flash to continue.';return;}
   commissionButton.disabled=true;setTickerAction(commissionButton,'Daily Flash','Starting…');commissionStatus.textContent='Sending the report to the queue…';
-  try{const response=await fetch(`/api/research/${encodeURIComponent(ticker)}`,{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||result.error||'Could not start Flash');if(Number.isFinite(Number(result.balance)))document.querySelectorAll('[data-flash-balance]').forEach(item=>{item.textContent=result.balance;});if(result.status==='complete'&&result.url){location.href=result.url;return;}setTickerAction(commissionButton,'Daily Flash','Researching…');pollFlash(result.job_id);}
-  catch(error){commissionButton.disabled=false;setTickerAction(commissionButton,'Retry Flash','100 Flash');commissionStatus.textContent=error.message||'Could not start Flash';}
+  try{const response=await fetch(`/api/research/${encodeURIComponent(ticker)}`,{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||result.error||'Could not start Flash');if(Number.isFinite(Number(result.balance)))window.RatiFlash?.updateBalance(result.balance);if(result.status==='complete'&&result.url){location.href=result.url;return;}setTickerAction(commissionButton,'Daily Flash','Researching…');pollFlash(result.job_id);}
+  catch(error){commissionButton.disabled=false;setTickerAction(commissionButton,'Retry Flash','100 Flash');commissionStatus.textContent=window.RatiFlash?.handleInsufficient(error.message,100)?'Claim Flash to continue.':(error.message||'Could not start Flash');}
 });
 const generateComment=document.getElementById('generateComment');
 const commentStatus=document.getElementById('commentStatus');
@@ -359,14 +360,15 @@ function renderComment(comment){
 }
 refreshCommentTimes();
 generateComment?.addEventListener('click',async()=>{
+  if(window.RatiFlash&&!window.RatiFlash.canSpend(10)){commentStatus.textContent='Claim Flash to draft a comment.';return;}
   generateComment.disabled=true;commentStatus.textContent='Flash is drafting your comment…';
   try{
     const response=await fetch(`/api/comments/${encodeURIComponent(ticker)}`,{method:'POST'});
     const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not post');
     commentList.prepend(renderComment(result.comment));commentStatus.textContent=`Posted · ${result.balance} Flash left`;
-    document.querySelectorAll('[data-flash-balance]').forEach(item=>{item.textContent=result.balance;});
+    window.RatiFlash?.updateBalance(result.balance);
     document.getElementById('discussionCount').textContent=result.count;document.getElementById('commentEmpty').hidden=true;
-  }catch(error){commentStatus.textContent=error.message||'Could not post';}finally{generateComment.disabled=false;}
+  }catch(error){commentStatus.textContent=window.RatiFlash?.handleInsufficient(error.message,10)?'Claim Flash to draft a comment.':(error.message||'Could not post');}finally{generateComment.disabled=false;}
 });
 commentList?.addEventListener('click',async event=>{
   const button=event.target.closest('[data-delete-comment]');if(!button)return;button.disabled=true;

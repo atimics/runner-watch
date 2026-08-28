@@ -25,6 +25,7 @@
 <body class="{{ current_product }}-product">
   <a class="skip-link" href="#app-content">Skip to content</a>
   <div class="mobile-app {% block app_class %}{% endblock %}" id="app-content">
+    {% include "_account_strip.html" %}
     {% block content %}{% endblock %}
     {% block bottom_nav %}
     <nav class="tab-bar" aria-label="Main navigation">
@@ -75,6 +76,7 @@
     });
   </script>
   {% endif %}
+  {% include "_flash_release_modal.html" %}
   <script src="/static/ticker-row.js?v={{ static_version }}"></script>
   <script src="/static/desktop-workspace.js?v={{ static_version }}" defer></script>
   {% block scripts %}{% endblock %}

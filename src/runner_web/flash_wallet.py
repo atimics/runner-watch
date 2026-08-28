@@ -59,6 +59,7 @@ def _wallet_payload(row: Any, current: datetime) -> dict[str, Any]:
     claimed_today = str(row["last_claim_on"] or "") == today
     return {
         "balance": int(row["balance"]),
+        "claim_day": today,
         "daily_claim": DAILY_CLAIM_AMOUNT,
         "claimed_today": claimed_today,
         "can_claim": not claimed_today,

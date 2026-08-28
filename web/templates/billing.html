@@ -20,7 +20,7 @@
     {% if user %}
     <header>
       <div><span class="decision-badge buy">WALLET</span><h2>Your Flash</h2></div>
-      <div class="plan-price"><strong id="flashBalance">{{ flash_wallet.balance }}</strong><span>Flash</span></div>
+      <div class="plan-price"><strong id="flashBalance" data-flash-balance>{{ flash_wallet.balance }}</strong><span>Flash</span></div>
     </header>
     <div class="daily-claim">
       <div><strong>Daily claim</strong><small>100 Flash. Missed days do not stack.</small></div>
@@ -74,7 +74,7 @@
 <script nonce="{{ request.state.csp_nonce }}">
 document.getElementById('claimFlash')?.addEventListener('click',async event=>{
   const button=event.currentTarget;const status=document.getElementById('claimStatus');button.disabled=true;status.textContent='Claiming…';
-  try{const response=await fetch('/api/flash/claim',{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not claim Flash');document.getElementById('flashBalance').textContent=result.wallet.balance;button.textContent='Claimed today';status.textContent=result.claimed?'100 Flash added':'Already claimed today';}
+  try{const response=await fetch('/api/flash/claim',{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||'Could not claim Flash');if(!window.RatiFlash?.applyClaim(result)){document.getElementById('flashBalance').textContent=result.wallet.balance;button.textContent='Claimed today';status.textContent=result.claimed?'100 Flash added':'Already claimed today';}}
   catch(error){button.disabled=false;status.textContent=error.message||'Could not claim Flash';}
 });
 </script>
