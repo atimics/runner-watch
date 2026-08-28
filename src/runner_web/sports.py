@@ -25,6 +25,8 @@ from runner_web.flash_wallet import WINNING_CALL_REWARD, credit_flash
 from runner_web.ingestion import record_source_fetch
 from runner_web.odds_api import (
     BOOKMAKER_FRESHNESS,
+    BOOKMAKER_FUTURE_TOLERANCE,
+    BOOKMAKER_MAX_AGE,
     CONSENSUS_SPORTSBOOK,
     MIN_CONSENSUS_BOOKS,
     OddsApiConfig,
@@ -241,15 +243,21 @@ def predict_event(event: dict[str, Any]) -> dict[str, Any]:
         "regular-season",
         "post-season",
         "postseason",
-        "unknown",
     }
+    if event.get("season_type") == "unknown":
+        risks.append(
+            "The competition type is not verified, so this game is not eligible for a signal."
+        )
     if not eligible_season:
         risks.append("Exhibition and preseason records are not used to promote an edge.")
     if home_record and away_record:
         home_rate = (home_record[0] + 8) / (sum(home_record) + 16)
         away_rate = (away_record[0] + 8) / (sum(away_record) + 16)
         probability = 0.5 + (home_rate - away_rate) * 0.65
-        evidence.append(f"Season form: {away['record']} away, {home['record']} home.")
+        evidence.append(
+            f"Overall season records: {away['name']} {away['record']}, "
+            f"{home['name']} {home['record']}."
+        )
         quality = "baseline"
     else:
         probability = 0.5
@@ -984,7 +992,7 @@ def _input_hash(event: dict[str, Any], prediction: dict[str, Any]) -> str:
 
 
 def _apply_cached_moneylines(events: list[dict[str, Any]]) -> int:
-    """Use the latest paid snapshot between scheduled API refreshes."""
+    """Use a recent paid snapshot between scheduled API refreshes."""
 
     applied = 0
     with connection() as database:
@@ -1001,12 +1009,33 @@ def _apply_cached_moneylines(events: list[dict[str, Any]]) -> int:
             ).fetchone()
             if not row:
                 continue
-            book_count_row = database.execute(
-                "SELECT COUNT(DISTINCT sportsbook_key) AS count "
-                "FROM sports_bookmaker_odds WHERE event_id=? AND provider=?",
+            completed = bool(event.get("completed")) or str(event.get("status")) == "post"
+            reference_time = (
+                _parse_time(event["start_time"]) if completed else datetime.now(UTC)
+            )
+            observed_at = _parse_time(row["observed_at"])
+            observed_age = reference_time - observed_at
+            if not (-BOOKMAKER_FUTURE_TOLERANCE <= observed_age <= BOOKMAKER_MAX_AGE):
+                continue
+            bookmaker_rows = database.execute(
+                """
+                SELECT * FROM (
+                    SELECT b.*,ROW_NUMBER() OVER(
+                        PARTITION BY sportsbook_key ORDER BY observed_at DESC,id DESC
+                    ) AS latest_rank
+                    FROM sports_bookmaker_odds b
+                    WHERE event_id=? AND provider=?
+                ) latest WHERE latest_rank=1
+                """,
                 (event["id"], ODDS_PROVIDER),
-            ).fetchone()
-            book_count = int(book_count_row["count"] or 0) if book_count_row else 0
+            ).fetchall()
+            fresh_books = _fresh_bookmaker_items(bookmaker_rows, reference_time)
+            book_count = len(fresh_books)
+            is_consensus = row["sportsbook"] == CONSENSUS_SPORTSBOOK
+            if is_consensus and book_count < MIN_CONSENSUS_BOOKS:
+                continue
+            if not is_consensus and bookmaker_rows and not fresh_books:
+                continue
             event.update(
                 {
                     "odds_provider": ODDS_PROVIDER,
@@ -1018,7 +1047,7 @@ def _apply_cached_moneylines(events: list[dict[str, Any]]) -> int:
                     "spread": row["spread"],
                     "total": row["total"],
                     "market_book_count": book_count,
-                    "market_is_consensus": row["sportsbook"] == CONSENSUS_SPORTSBOOK,
+                    "market_is_consensus": is_consensus,
                     "bookmaker_moneylines": [],
                 }
             )
@@ -1477,15 +1506,20 @@ def _latest_bookmaker_rows(database: Any, event_ids: list[str]) -> list[Any]:
     ).fetchall()
 
 
-def _fresh_bookmaker_items(rows: list[Any]) -> list[dict[str, Any]]:
+def _fresh_bookmaker_items(
+    rows: list[Any], reference_time: datetime | None = None
+) -> list[dict[str, Any]]:
     items = [item for row in rows if (item := _bookmaker_odds_item(row)) is not None]
     timed: list[tuple[dict[str, Any], datetime]] = []
+    reference = (reference_time or datetime.now(UTC)).astimezone(UTC)
     for item in items:
         try:
             updated = _parse_time(item["fresh_at"])
         except (TypeError, ValueError):
             continue
-        timed.append((item, updated))
+        age = reference - updated
+        if -BOOKMAKER_FUTURE_TOLERANCE <= age <= BOOKMAKER_MAX_AGE:
+            timed.append((item, updated))
     if not timed:
         return []
     newest = max(updated for _item, updated in timed)
@@ -1493,7 +1527,9 @@ def _fresh_bookmaker_items(rows: list[Any]) -> list[dict[str, Any]]:
 
 
 def _market_comparison(event: dict[str, Any], rows: list[Any]) -> dict[str, Any]:
-    books = _fresh_bookmaker_items(rows)
+    completed = bool(event.get("completed")) or str(event.get("status")) == "post"
+    reference_time = _parse_time(event["start_time"]) if completed else datetime.now(UTC)
+    books = _fresh_bookmaker_items(rows, reference_time)
     book_count = len(books)
     consensus_home = (
         float(median(book["home_probability"] for book in books))

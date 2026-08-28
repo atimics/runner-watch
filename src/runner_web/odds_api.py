@@ -34,6 +34,9 @@ CONSENSUS_BOOKMAKER_KEY = "consensus"
 CONSENSUS_SPORTSBOOK = "Market consensus"
 MIN_CONSENSUS_BOOKS = 3
 BOOKMAKER_FRESHNESS = timedelta(minutes=20)
+BOOKMAKER_MAX_AGE = timedelta(hours=2)
+BOOKMAKER_FUTURE_TOLERANCE = timedelta(minutes=5)
+EVENT_START_TOLERANCE = timedelta(hours=2)
 
 
 class OddsApiError(RuntimeError):
@@ -262,20 +265,25 @@ def _select_bookmaker(
     return min(candidates, key=rank)
 
 
-def _fresh_moneylines(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    timestamps = [
-        parsed
-        for line in candidates
-        if (parsed := _parse_time(line.get("last_update"))) is not None
-    ]
-    if not timestamps:
-        return candidates
-    newest = max(timestamps)
-    return [
-        line
+def _fresh_moneylines(
+    candidates: list[dict[str, Any]], observed_at: datetime | None = None
+) -> list[dict[str, Any]]:
+    """Return quotes that are recent now and synchronized with one another."""
+
+    reference = (observed_at or datetime.now(UTC)).astimezone(UTC)
+    recent = [
+        (line, updated)
         for line in candidates
         if (updated := _parse_time(line.get("last_update"))) is not None
-        and newest - updated <= BOOKMAKER_FRESHNESS
+        and -BOOKMAKER_FUTURE_TOLERANCE <= reference - updated <= BOOKMAKER_MAX_AGE
+    ]
+    if not recent:
+        return []
+    newest = max(updated for _line, updated in recent)
+    return [
+        line
+        for line, updated in recent
+        if newest - updated <= BOOKMAKER_FRESHNESS
     ]
 
 
@@ -302,7 +310,9 @@ def _consensus_moneyline(candidates: list[dict[str, Any]]) -> dict[str, Any] | N
 
 
 def normalize_moneylines(
-    payload: Any, preferred: tuple[str, ...] = ()
+    payload: Any,
+    preferred: tuple[str, ...] = (),
+    observed_at: datetime | None = None,
 ) -> tuple[dict[str, Any], ...]:
     if not isinstance(payload, list):
         raise OddsApiError("The Odds API odds response had an unexpected shape")
@@ -317,7 +327,7 @@ def normalize_moneylines(
             for bookmaker in event.get("bookmakers") or []
             if (line := _moneyline_from_bookmaker(bookmaker, home_team, away_team)) is not None
         ]
-        fresh = _fresh_moneylines(candidates)
+        fresh = _fresh_moneylines(candidates, observed_at)
         selected = _select_bookmaker(fresh, preferred)
         if not selected:
             continue
@@ -362,7 +372,11 @@ def fetch_moneylines(config: OddsApiConfig, league: str) -> OddsFetchResult:
     try:
         payload, quota = _request_json(url)
         record_quota(quota)
-        moneylines = normalize_moneylines(payload, config.preferred_bookmakers)
+        moneylines = normalize_moneylines(
+            payload,
+            config.preferred_bookmakers,
+            observed_at=datetime.now(UTC),
+        )
         record_source_fetch(
             SourceFetch.success(
                 source=PROVIDER,
@@ -418,14 +432,38 @@ def _team_key(value: Any) -> str:
 def apply_moneylines(
     events: list[dict[str, Any]], moneylines: tuple[dict[str, Any], ...]
 ) -> int:
-    by_teams = {
-        (_team_key(line["home_team"]), _team_key(line["away_team"])): line
-        for line in moneylines
-    }
+    """Attach each provider market to at most one scheduled event."""
+
+    available = list(enumerate(moneylines))
+    used_markets: set[int] = set()
     matched = 0
-    for event in events:
+    for event in sorted(
+        events,
+        key=lambda item: _parse_time(item.get("start_time")) or datetime.max.replace(tzinfo=UTC),
+    ):
         key = (_team_key(event["home"]["name"]), _team_key(event["away"]["name"]))
-        market = by_teams.get(key)
+        event_start = _parse_time(event.get("start_time"))
+        event_external_id = str(event.get("external_id") or "")
+        candidates: list[tuple[timedelta, int, dict[str, Any]]] = []
+        for index, line in available:
+            if index in used_markets:
+                continue
+            line_key = (_team_key(line["home_team"]), _team_key(line["away_team"]))
+            if line_key != key:
+                continue
+            market_start = _parse_time(line.get("start_time"))
+            if event_external_id and event_external_id == str(line.get("external_id") or ""):
+                candidates.append((timedelta(0), index, line))
+            elif event_start is not None and market_start is not None:
+                difference = abs(event_start - market_start)
+                if difference <= EVENT_START_TOLERANCE:
+                    candidates.append((difference, index, line))
+        if not candidates:
+            continue
+        _difference, market_index, market = min(
+            candidates,
+            key=lambda item: (item[0], str(item[2].get("external_id") or "")),
+        )
         if not market:
             continue
         consensus = market.get("consensus")
@@ -450,6 +488,7 @@ def apply_moneylines(
                 "preferred_sportsbook": preferred["sportsbook"],
             }
         )
+        used_markets.add(market_index)
         matched += 1
     return matched
 

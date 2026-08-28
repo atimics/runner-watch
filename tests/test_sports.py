@@ -236,6 +236,21 @@ def test_preseason_game_is_never_promoted_as_an_edge() -> None:
     assert prediction["edge"] is None
 
 
+def test_unknown_season_is_not_eligible_and_records_are_labeled_overall() -> None:
+    raw = sample_event()
+    raw["season"] = {}
+    event = normalize_event("mlb", raw)
+    assert event is not None
+
+    prediction = predict_event(event)
+
+    assert prediction["selection"] == "pass"
+    assert prediction["signal"] == "pass"
+    assert any("competition type is not verified" in risk for risk in prediction["risks"])
+    assert any("Overall season records" in evidence for evidence in prediction["evidence"])
+    assert all(" away," not in evidence for evidence in prediction["evidence"])
+
+
 def test_ai_prediction_cannot_be_created_after_a_game_starts(sports_db) -> None:
     event = normalize_event("mlb", sample_event(completed=True))
     assert event is not None
