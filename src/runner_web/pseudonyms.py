@@ -3,6 +3,7 @@ from __future__ import annotations
 import secrets
 import unicodedata
 from datetime import UTC, datetime
+from hashlib import sha256
 from typing import Any
 
 ADJECTIVES = tuple(
@@ -73,6 +74,145 @@ COMMENT_GLYPHS = tuple(
 )
 _COMMENT_GLYPH_SET = frozenset(COMMENT_GLYPHS)
 _EMOJI_ALIASES = tuple(first + second for first in EMOJIS for second in EMOJIS)
+
+AVATAR_TEMPERAMENTS = tuple(
+    "agile alert brave bright brisk calm canny careful clever cosmic curious daring earnest "
+    "electric exact fearless focused gentle keen lucid nimble patient quiet radiant sharp steady "
+    "swift tranquil vivid warm wary witty".split()
+)
+AVATAR_MATERIALS = tuple(
+    "amber azure bronze carbon ceramic chrome cobalt copper coral crystal diamond ember glass "
+    "granite ivory jade lunar mint moss neon obsidian pearl quartz ruby sapphire silver solar "
+    "steel teal velvet".split()
+)
+AVATAR_FORMS = tuple(
+    "archive beacon cipher circuit comet compass core drone echo engine glimmer guardian lens "
+    "mapper mote node oracle orbit prism pulse relay scout sentinel shard signal spark specter "
+    "vector warden".split()
+)
+
+COMMENT_AVATAR_ABILITIES = (
+    {
+        "id": "catalyst_scout",
+        "label": "Catalyst Scout",
+        "description": "Looks first for dated events and confirmed catalysts.",
+        "prompt": "Prioritize the strongest dated event or confirmed catalyst in the evidence.",
+    },
+    {
+        "id": "risk_sentinel",
+        "label": "Risk Sentinel",
+        "description": "Keeps the downside and invalidation in view.",
+        "prompt": "Prioritize the clearest downside, blocker, or invalidation in the evidence.",
+    },
+    {
+        "id": "filing_sleuth",
+        "label": "Filing Sleuth",
+        "description": "Pulls the useful signal from primary filings.",
+        "prompt": "Prioritize useful facts from the supplied primary filing evidence.",
+    },
+    {
+        "id": "pattern_mapper",
+        "label": "Pattern Mapper",
+        "description": "Reads price structure and momentum together.",
+        "prompt": "Prioritize the supplied price structure, momentum, and signal evidence.",
+    },
+    {
+        "id": "liquidity_reader",
+        "label": "Liquidity Reader",
+        "description": "Watches volume, tradability, and crowded moves.",
+        "prompt": "Prioritize the supplied volume, liquidity, and trade-state evidence.",
+    },
+    {
+        "id": "countervoice",
+        "label": "Countervoice",
+        "description": "Tests the obvious story against its strongest counter-case.",
+        "prompt": "Prioritize the strongest evidence-backed counter-case to the obvious view.",
+    },
+)
+_COMMENT_AVATAR_ABILITY_BY_ID = {
+    str(ability["id"]): ability for ability in COMMENT_AVATAR_ABILITIES
+}
+
+
+def _comment_avatar_name() -> str:
+    return " ".join(
+        (
+            secrets.choice(AVATAR_TEMPERAMENTS).title(),
+            secrets.choice(AVATAR_MATERIALS).title(),
+            secrets.choice(AVATAR_FORMS).title(),
+        )
+    )
+
+
+def comment_avatar_ability(ability_id: str) -> dict[str, str]:
+    ability = _COMMENT_AVATAR_ABILITY_BY_ID.get(ability_id)
+    if ability is None:
+        ability = COMMENT_AVATAR_ABILITIES[0]
+    return {key: str(value) for key, value in ability.items()}
+
+
+def comment_avatar_profile(
+    name: str,
+    seed: str,
+    ability_id: str,
+    level: int = 1,
+) -> dict[str, Any]:
+    """Build the stable public shape of one comment avatar."""
+
+    digest = sha256(seed.encode()).digest()
+    ability = comment_avatar_ability(ability_id)
+    return {
+        "name": name,
+        "ability_id": ability["id"],
+        "ability": ability["label"],
+        "ability_description": ability["description"],
+        "level": max(1, int(level)),
+        "tone": digest[0] % 12,
+        "frame": digest[1] % 6,
+        "eyes": digest[2] % 6,
+        "signal": digest[3] % 6,
+    }
+
+
+def ensure_comment_avatar(database: Any, user_id: str) -> dict[str, Any]:
+    """Assign one durable public AI-style avatar to an account."""
+
+    existing = database.execute(
+        "SELECT name,seed,ability_id,level FROM comment_avatars WHERE user_id=?",
+        (user_id,),
+    ).fetchone()
+    if existing:
+        return comment_avatar_profile(
+            str(existing["name"]),
+            str(existing["seed"]),
+            str(existing["ability_id"]),
+            int(existing["level"]),
+        )
+
+    timestamp = datetime.now(UTC).isoformat()
+    for _attempt in range(200):
+        name = _comment_avatar_name()
+        seed = secrets.token_hex(16)
+        ability = secrets.choice(COMMENT_AVATAR_ABILITIES)
+        database.execute(
+            """
+            INSERT INTO comment_avatars(user_id,name,seed,ability_id,level,created_at)
+            VALUES(?,?,?,?,1,?) ON CONFLICT DO NOTHING
+            """,
+            (user_id, name, seed, ability["id"], timestamp),
+        )
+        assigned = database.execute(
+            "SELECT name,seed,ability_id,level FROM comment_avatars WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+        if assigned:
+            return comment_avatar_profile(
+                str(assigned["name"]),
+                str(assigned["seed"]),
+                str(assigned["ability_id"]),
+                int(assigned["level"]),
+            )
+    raise RuntimeError("The comment avatar name space is full")
 
 
 def migrate_comment_aliases_to_glyphs(database: Any) -> int:

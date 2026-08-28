@@ -10,7 +10,7 @@ Keep this record current whenever a feature, table, provider, region, or retenti
 | --- | --- | --- | --- | --- | --- |
 | Passkey account | Account name, credential ID, public key, device flags | Members | Provide login and account service; contract | Hosting and database provider | Account life; deleted on account deletion |
 | Essential session | Hashed random session token, account ID, dates | Members | Keep a signed-in session; contract and security | Hosting, database, cache | 30 days maximum |
-| Public comment | AI-generated body from public ticker evidence, ticker, internal account link, stable thread glyph avatar | Comment authors | Generate and publish the comment the member requested; contract | Hosting and public readers | Until author deletes it or deletes the account |
+| Public comment | AI-generated body from public ticker evidence, ticker, internal account link, persistent avatar name, random visual seed, research ability, and level | Comment authors | Generate and publish the comment the member requested; contract | Hosting, OpenRouter and routed model for drafting, and public readers | Until author deletes it or deletes the account |
 | Community call | Ticker, server-set price and time, status, automatic random animal name | Call authors | Publish the call without exposing the account name; contract | Hosting and public readers | Until account deletion; animal-name tombstone indefinitely |
 | Sports paper pick | Event, selection, frozen odds and time, result, automatic random animal name | Pick authors | Publish a paper-pick receipt without exposing the account name; contract | Hosting and public readers | Until account deletion; animal-name tombstone indefinitely |
 | Private journal and cases | Ticker, prices, times, thesis, evidence, outcomes | Members | Provide saved private tools; contract | Hosting and database provider | Until member or account deletion |
@@ -18,7 +18,7 @@ Keep this record current whenever a feature, table, provider, region, or retenti
 | Billing | Stripe IDs, plan and subscription state, webhook ID | Paying members | Perform contract and meet accounting duties | Stripe and hosting | Webhook ID up to 400 days; Stripe records under its legal schedule |
 | Abuse protection | IP-derived short-lived rate key and limited error logs | Visitors and members | Security and availability; legitimate interests | Hosting and cache provider | Rate windows minutes; hosted logs 7 days maximum |
 
-The app must not write visitor IDs, page views, dwell time, share events, seen state, notification state, reactions, advertising IDs, or cross-thread identity graphs.
+The app must not write visitor IDs, page views, dwell time, share events, seen state, notification state, reactions, advertising IDs, or inferred identity graphs. A member's comment avatar is the one intentional cross-thread public identity. Do not use it to infer private relationships or reading behaviour.
 
 ## Retention schedule
 

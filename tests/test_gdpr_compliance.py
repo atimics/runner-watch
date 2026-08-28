@@ -9,7 +9,7 @@ from runner_web import db
 from runner_web.caller_ids import ensure_caller_identity
 from runner_web.db import connection, init_db
 from runner_web.privacy import delete_user_data, export_user_data, purge_passive_tracking
-from runner_web.pseudonyms import COMMENT_GLYPHS, ensure_scoped_alias
+from runner_web.pseudonyms import ensure_comment_avatar, ensure_scoped_alias
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -25,7 +25,7 @@ def _seed_user() -> None:
             "INSERT INTO sessions(token_hash,user_id,created_at,expires_at) VALUES(?,?,?,?)",
             ("session-hash", "gdpr-user", timestamp, "2999-01-01T00:00:00+00:00"),
         )
-        ensure_scoped_alias(database, "gdpr-user", "comment:ONE")
+        ensure_comment_avatar(database, "gdpr-user")
         database.execute(
             "INSERT INTO ticker_comments(id,ticker,user_id,body,status,created_at) "
             "VALUES(?,?,?,?,?,?)",
@@ -87,6 +87,8 @@ def test_export_and_delete_cover_account_content_and_leave_anonymous_tombstone(
 
     assert exported["account"]["username"] == "member_gdpr"
     assert exported["comments"][0]["body"] == "Public comment"
+    assert exported["comment_avatar"][0]["ability_id"]
+    assert exported["comment_avatar"][0]["seed"]
     assert exported["positions"][0]["ticker"] == "ONE"
     assert exported["caller_identities"][0]["handle"] == caller["handle"]
     assert exported["community_calls"][0]["public_id"] == "gdpr-public"
@@ -100,6 +102,7 @@ def test_export_and_delete_cover_account_content_and_leave_anonymous_tombstone(
         assert database.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM ticker_comments").fetchone()[0] == 0
+        assert database.execute("SELECT COUNT(*) FROM comment_avatars").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM user_positions").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM community_calls").fetchone()[0] == 0
         tombstone = database.execute(
@@ -150,7 +153,7 @@ def test_passive_tracking_schema_is_removed_and_purge_stays_safe(
     }
 
 
-def test_public_aliases_are_stable_only_inside_one_thread(
+def test_comment_avatar_is_stable_across_threads_while_call_identity_stays_separate(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "gdpr-aliases.db")
@@ -165,25 +168,23 @@ def test_public_aliases_are_stable_only_inside_one_thread(
             "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
             ("alias-two", "member_two", "Member", "active", timestamp),
         )
-        first = ensure_scoped_alias(database, "alias-one", "comment:ONE")
-        repeated = ensure_scoped_alias(database, "alias-one", "comment:ONE")
-        other_thread = ensure_scoped_alias(database, "alias-one", "comment:TWO")
+        first = ensure_comment_avatar(database, "alias-one")
+        repeated = ensure_comment_avatar(database, "alias-one")
         call_identity = ensure_scoped_alias(database, "alias-one", "call:ONE")
-        other_author = ensure_scoped_alias(database, "alias-two", "comment:ONE")
+        other_author = ensure_comment_avatar(database, "alias-two")
 
     assert first == repeated
-    assert first in COMMENT_GLYPHS
-    assert other_thread in COMMENT_GLYPHS
-    assert other_author in COMMENT_GLYPHS
-    assert first != other_author
-    assert call_identity not in COMMENT_GLYPHS
+    assert first["name"] != other_author["name"]
+    assert first["name"] != call_identity
+    assert first["ability_id"]
+    assert first["level"] == 1
 
 
-def test_privacy_notice_explains_the_thread_alias_boundary() -> None:
+def test_privacy_notice_explains_the_persistent_avatar_boundary() -> None:
     notice = (ROOT / "web/templates/privacy.html").read_text()
 
-    assert "Within one thread, the same glyph means the same account." in notice
-    assert "Matching or different glyphs across threads" in notice
+    assert "intentionally links those comments across ticker threads" in notice
+    assert "readers can link those comments together" in notice
     assert "pseudonymity, not anonymity from RATi" in notice
 
 

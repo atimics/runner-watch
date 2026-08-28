@@ -1,4 +1,5 @@
 {% extends "mobile_base.html" %}
+{% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
 {% block title %}{{ detail.ticker }} intel · RATi Runners{% endblock %}
 {% block content %}
 <header class="detail-nav">
@@ -118,10 +119,10 @@
   </section>
 
   <section class="discussion-section" id="discussion">
-    <div class="section-heading"><div><small class="discussion-privacy">Random glyphs · this ticker only</small><h2>Comments</h2></div><b id="discussionCount">{{ comment_count }}</b></div>
+    <div class="section-heading"><div><small class="discussion-privacy">Persistent avatars · public across tickers</small><h2>Comments</h2></div><b id="discussionCount">{{ comment_count }}</b></div>
     {% if user %}
     <div class="comment-form ai-comment-action">
-      <p>Flash writes a short comment from your perspective using this ticker's current evidence.</p>
+      <p>Your {{ comment_avatar.ability }} ability guides a short Flash draft using this ticker's current evidence.</p>
       <div><small id="commentStatus">10 Flash · balance <span data-flash-balance>{{ flash_wallet.balance }}</span></small><button id="generateComment" type="button">Generate and post</button></div>
     </div>
     {% else %}
@@ -130,8 +131,8 @@
     <ol class="comment-list" id="commentList">
       {% for comment in comments %}
       <li data-comment-id="{{ comment.id }}">
-        <span class="comment-avatar" aria-hidden="true">{{ comment.alias }}</span>
-        <div><header><strong class="visually-hidden">Pseudonymous commenter {{ comment.alias }}</strong>{% if comment.is_owner %}<span class="comment-owner">You</span>{% endif %}<small>{% if comment.ai_generated %}Flash drafted · {% endif %}<time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time>{% if comment.is_owner %} · <button type="button" data-delete-comment="{{ comment.id }}">delete</button>{% endif %}</small></header><p>{{ comment.body }}</p></div>
+        {{ render_comment_avatar(comment.avatar) }}
+        <div class="comment-copy"><header><strong>{{ comment.avatar.name }}</strong><span class="comment-ability" title="{{ comment.avatar.ability_description }}">{{ comment.avatar.ability }}</span>{% if comment.is_owner %}<span class="comment-owner">You</span>{% endif %}</header><small class="comment-meta">{% if comment.ai_generated %}Flash drafted · {% endif %}<time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time>{% if comment.is_owner %} · <button type="button" data-delete-comment="{{ comment.id }}">delete</button>{% endif %}</small><p>{{ comment.body }}</p></div>
       </li>
       {% endfor %}
     </ol>

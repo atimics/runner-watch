@@ -132,7 +132,11 @@ from runner_web.outcomes import (
 from runner_web.privacy import delete_user_data, export_user_data
 from runner_web.product_catalog import roadmap_snapshot
 from runner_web.product_policy import BASE_RATES, EVIDENCE_GATE, OPERATIONS
-from runner_web.pseudonyms import ensure_scoped_alias
+from runner_web.pseudonyms import (
+    comment_avatar_ability,
+    comment_avatar_profile,
+    ensure_comment_avatar,
+)
 from runner_web.ranker import (
     FEATURE_SCHEMA_VERSION,
     predict_and_store,
@@ -887,9 +891,14 @@ def take_challenge(token: str, kind: str) -> dict[str, Any]:
 
 def page_context(request: Request, session_token: str | None, **extra: Any) -> dict[str, Any]:
     user = current_user(session_token)
+    comment_avatar = None
+    if user:
+        with connection() as db:
+            comment_avatar = ensure_comment_avatar(db, str(user["id"]))
     return {
         "request": request,
         "user": user,
+        "comment_avatar": comment_avatar,
         "flash_wallet": wallet_for_user(str(user["id"])) if user else None,
         "app_origin": origin_for_request(request),
         "product": product_for_request(request),
@@ -6183,11 +6192,18 @@ def _known_ticker(ticker: str) -> bool:
 def _public_comment(row: Any, current_user_id: str | None = None) -> dict[str, Any]:
     keys = set(row.keys())
     source = str(row["source"] or "user") if "source" in keys else "user"
+    avatar = comment_avatar_profile(
+        str(row["avatar_name"]),
+        str(row["avatar_seed"]),
+        str(row["avatar_ability_id"]),
+        int(row["avatar_level"]),
+    )
     return {
         "id": str(row["id"]),
         "body": str(row["body"]),
         "created_at": str(row["created_at"]),
-        "alias": str(row["alias"]),
+        "alias": avatar["name"],
+        "avatar": avatar,
         "is_owner": bool(current_user_id and str(row["user_id"]) == current_user_id),
         "ai_generated": source == "ai_generated",
         "generation_model": (
@@ -6201,25 +6217,25 @@ def alpha_comments_data(*, limit: int = 50) -> list[dict[str, Any]]:
 
     bounded_limit = min(100, max(1, limit))
     with connection() as db:
-        missing_aliases = db.execute(
+        missing_avatars = db.execute(
             """
-            SELECT DISTINCT c.user_id,c.ticker
+            SELECT DISTINCT c.user_id
             FROM ticker_comments c
-            LEFT JOIN public_aliases p
-              ON p.user_id=c.user_id AND p.scope=('comment:' || c.ticker)
-            WHERE c.status='public' AND p.user_id IS NULL
+            LEFT JOIN comment_avatars a ON a.user_id=c.user_id
+            WHERE c.status='public' AND a.user_id IS NULL
             LIMIT 50
             """
         ).fetchall()
-        for row in missing_aliases:
-            ensure_scoped_alias(db, str(row["user_id"]), f"comment:{row['ticker']}")
+        for row in missing_avatars:
+            ensure_comment_avatar(db, str(row["user_id"]))
         rows = db.execute(
             """
             SELECT c.id,c.ticker,c.user_id,c.body,c.created_at,
-                   c.source,c.generation_model,p.alias
+                   c.source,c.generation_model,
+                   a.name AS avatar_name,a.seed AS avatar_seed,
+                   a.ability_id AS avatar_ability_id,a.level AS avatar_level
             FROM ticker_comments c
-            JOIN public_aliases p
-              ON p.user_id=c.user_id AND p.scope=('comment:' || c.ticker)
+            JOIN comment_avatars a ON a.user_id=c.user_id
             WHERE c.status='public'
             ORDER BY c.created_at DESC,c.id DESC
             LIMIT ?
@@ -6237,25 +6253,25 @@ def comments_for_ticker(
 ) -> list[dict[str, Any]]:
     bounded_limit = min(50, max(1, limit))
     with connection() as db:
-        missing_aliases = db.execute(
+        missing_avatars = db.execute(
             """
             SELECT DISTINCT c.user_id
             FROM ticker_comments c
-            LEFT JOIN public_aliases p
-              ON p.user_id=c.user_id AND p.scope=('comment:' || c.ticker)
-            WHERE c.ticker=? AND c.status='public' AND p.user_id IS NULL
+            LEFT JOIN comment_avatars a ON a.user_id=c.user_id
+            WHERE c.ticker=? AND c.status='public' AND a.user_id IS NULL
             LIMIT 50
             """,
             (ticker,),
         ).fetchall()
-        for row in missing_aliases:
-            ensure_scoped_alias(db, str(row["user_id"]), f"comment:{ticker}")
+        for row in missing_avatars:
+            ensure_comment_avatar(db, str(row["user_id"]))
         rows = db.execute(
             """
-            SELECT c.id,c.user_id,c.body,c.created_at,c.source,c.generation_model,p.alias
+            SELECT c.id,c.user_id,c.body,c.created_at,c.source,c.generation_model,
+                   a.name AS avatar_name,a.seed AS avatar_seed,
+                   a.ability_id AS avatar_ability_id,a.level AS avatar_level
             FROM ticker_comments c
-            JOIN public_aliases p
-              ON p.user_id=c.user_id AND p.scope=('comment:' || c.ticker)
+            JOIN comment_avatars a ON a.user_id=c.user_id
             WHERE c.ticker=? AND c.status='public'
             ORDER BY c.created_at DESC,c.id DESC
             LIMIT ?
@@ -6307,7 +6323,11 @@ def thesis_case_revisions_api(
     raise HTTPException(410, "Private cases were replaced by public Calls.")
 
 
-def _generate_ticker_comment_text(ticker: str) -> tuple[str, str]:
+def _generate_ticker_comment_text(
+    ticker: str,
+    *,
+    avatar_ability_id: str = "catalyst_scout",
+) -> tuple[str, str]:
     if not OPENROUTER_API_KEY:
         raise HTTPException(503, "AI comments are temporarily unavailable.")
     detail = ticker_detail_data(ticker)
@@ -6338,16 +6358,21 @@ def _generate_ticker_comment_text(ticker: str) -> tuple[str, str]:
             for item in detail.get("events", [])[:3]
         ],
     }
+    ability = comment_avatar_ability(avatar_ability_id)
     body = {
         "model": FLASH.model,
         "messages": [
             {
                 "role": "system",
                 "content": (
-                    "Write one short stock comment in first person, as the user speaking. "
+                    "Write one short stock comment in first person, as the human's public "
+                    "avatar speaking. "
                     "Use simple English and only the supplied evidence. Keep it under 240 "
                     "characters. State a view and the key risk. Do not give buy or sell advice. "
-                    "Do not mention AI. Return JSON with one field named comment."
+                    "Do not mention AI. The avatar's lasting research ability is "
+                    f"{ability['label']}: {ability['prompt']} "
+                    "Use that as an emphasis, never as permission to invent facts. "
+                    "Return JSON with one field named comment."
                 ),
             },
             {"role": "user", "content": json.dumps(evidence, separators=(",", ":"))},
@@ -6403,6 +6428,7 @@ async def create_ticker_comment(
     created_at = iso()
     try:
         with connection() as db:
+            avatar = ensure_comment_avatar(db, str(user["id"]))
             spend_flash(
                 db,
                 str(user["id"]),
@@ -6416,9 +6442,9 @@ async def create_ticker_comment(
         body, model = await run_in_threadpool(
             _generate_ticker_comment_text,
             normalized,
+            avatar_ability_id=str(avatar["ability_id"]),
         )
         with connection() as db:
-            alias = ensure_scoped_alias(db, str(user["id"]), f"comment:{normalized}")
             db.execute(
                 """
                 INSERT INTO ticker_comments(
@@ -6438,10 +6464,14 @@ async def create_ticker_comment(
             )
             row = db.execute(
                 """
-                SELECT id,user_id,body,created_at,source,generation_model,? AS alias
-                FROM ticker_comments WHERE id=?
+                SELECT c.id,c.user_id,c.body,c.created_at,c.source,c.generation_model,
+                       a.name AS avatar_name,a.seed AS avatar_seed,
+                       a.ability_id AS avatar_ability_id,a.level AS avatar_level
+                FROM ticker_comments c
+                JOIN comment_avatars a ON a.user_id=c.user_id
+                WHERE c.id=?
                 """,
-                (alias, comment_id),
+                (comment_id,),
             ).fetchone()
             count = db.execute(
                 "SELECT COUNT(*) FROM ticker_comments WHERE ticker=? AND status='public'",
@@ -6939,6 +6969,7 @@ def register_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
             ),
         )
         db.execute("UPDATE users SET status='active' WHERE id=?", (flow["user_id"],))
+        ensure_comment_avatar(db, str(flow["user_id"]))
     create_session(flow["user_id"], response)
     return response
 

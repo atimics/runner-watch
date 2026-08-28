@@ -48,7 +48,7 @@ from runner_web.main import (
     ticker_charts_payload,
     ticker_detail_data,
 )
-from runner_web.pseudonyms import COMMENT_GLYPHS
+from runner_web.pseudonyms import COMMENT_AVATAR_ABILITIES
 
 
 def _test_flash_forecast() -> dict[str, Any]:
@@ -115,8 +115,8 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert "action-card" not in template
     assert template.count("<textarea") == 0
     assert 'id="generateComment"' in template
-    assert "Random glyphs · this ticker only" in template
-    assert 'class="comment-avatar" aria-hidden="true"' in template
+    assert "Persistent avatars · public across tickers" in template
+    assert "render_comment_avatar(comment.avatar)" in template
 
 
 def test_ticker_layout_puts_subtle_actions_after_the_analysis() -> None:
@@ -1605,7 +1605,7 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
     monkeypatch.setattr(
         web_main,
         "_generate_ticker_comment_text",
-        lambda ticker: (
+        lambda ticker, *, avatar_ability_id: (
             "My read is above VWAP, but low volume is the risk.",
             "test/model",
         ),
@@ -1629,8 +1629,12 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
     assert payload["comment"]["ai_generated"] is True
     assert payload["comment"]["generation_model"] == "test/model"
     assert payload["balance"] == 90
-    assert payload["comment"]["alias"] in COMMENT_GLYPHS
-    assert len(payload["comment"]["alias"]) == 1
+    assert payload["comment"]["avatar"]["name"] == payload["comment"]["alias"]
+    assert payload["comment"]["avatar"]["ability_id"] in {
+        ability["id"] for ability in COMMENT_AVATAR_ABILITIES
+    }
+    assert payload["comment"]["avatar"]["level"] == 1
+    assert "seed" not in payload["comment"]["avatar"]
     assert payload["comment"]["alias"] not in {"chartreader", "Chart Reader"}
     assert "username" not in payload["comment"]
     assert "display_name" not in payload["comment"]
@@ -1683,7 +1687,10 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
     )
     monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
 
-    comment, model = web_main._generate_ticker_comment_text("ONE")
+    comment, model = web_main._generate_ticker_comment_text(
+        "ONE",
+        avatar_ability_id="risk_sentinel",
+    )
 
     assert comment == "My read is constructive, but thin volume is the risk."
     assert model == "z-ai/glm-5.3"
@@ -1691,6 +1698,8 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
     assert captured["body"]["max_tokens"] == web_main.OPENROUTER_COMMENT_OUTPUT_TOKENS
     assert captured["body"]["max_tokens"] >= 1_200
     assert "user" not in captured["body"]
+    assert "Risk Sentinel" in captured["body"]["messages"][0]["content"]
+    assert "public name" not in captured["body"]["messages"][0]["content"]
 
 
 def test_radar_orders_events_by_time_not_activity(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

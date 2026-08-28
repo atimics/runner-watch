@@ -670,17 +670,34 @@
     const item = document.createElement('li');
     item.dataset.commentId = comment.id;
 
+    const avatarData = comment.avatar || {};
+    const avatarVariant = (key, maximum) => {
+      const value = Number(avatarData[key]);
+      return Number.isInteger(value) && value >= 0 && value < maximum ? value : 0;
+    };
     const avatar = document.createElement('span');
-    avatar.className = 'comment-avatar';
+    avatar.className = [
+      'comment-avatar',
+      'comment-avatar-ai',
+      `avatar-tone-${avatarVariant('tone', 12)}`,
+      `avatar-frame-${avatarVariant('frame', 6)}`,
+      `avatar-eyes-${avatarVariant('eyes', 6)}`,
+      `avatar-signal-${avatarVariant('signal', 6)}`,
+    ].join(' ');
     avatar.setAttribute('aria-hidden', 'true');
-    avatar.textContent = comment.alias || '◇';
+    avatar.append(document.createElement('i'));
 
     const copy = document.createElement('div');
+    copy.className = 'comment-copy';
     const head = document.createElement('header');
     const author = document.createElement('strong');
-    author.className = 'visually-hidden';
-    author.textContent = `Pseudonymous commenter ${comment.alias || '◇'}`;
+    author.textContent = avatarData.name || comment.alias || 'Unknown Signal';
     head.append(author);
+    const ability = document.createElement('span');
+    ability.className = 'comment-ability';
+    ability.textContent = avatarData.ability || 'Research Lens';
+    if (avatarData.ability_description) ability.title = avatarData.ability_description;
+    head.append(ability);
     if (comment.is_owner) {
       const owner = document.createElement('span');
       owner.className = 'comment-owner';
@@ -688,6 +705,7 @@
       head.append(owner);
     }
     const meta = document.createElement('small');
+    meta.className = 'comment-meta';
     const stamp = document.createElement('time');
     stamp.dateTime = comment.created_at;
     stamp.dataset.commentTime = '';
@@ -706,8 +724,7 @@
 
     const body = document.createElement('p');
     body.textContent = comment.body;
-    head.append(meta);
-    copy.append(head, body);
+    copy.append(head, meta, body);
     item.append(avatar, copy);
     return item;
   }

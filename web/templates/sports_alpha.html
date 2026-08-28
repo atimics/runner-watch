@@ -1,4 +1,5 @@
 {% extends "mobile_base.html" %}
+{% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
 {% block app_class %}workspace-app alpha-app sports-alpha-app{% endblock %}
 {% block title %}Alpha · RATi Sports{% endblock %}
 {% block product_head %}{% include "_sports_styles.html" %}{% endblock %}
@@ -7,7 +8,7 @@
   <section class="desktop-list-pane sports-feed-pane" data-desktop-list>
     <header class="screen-head">
       <div><span class="rati-product">RATi SPORTS</span><h1>Alpha</h1><span class="head-meta"><b>{{ board.active_calls }}</b> open Calls <i></i><span>{{ board.total_calls }} total</span></span></div>
-      {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ user.display_name[:1]|upper }}</button>{% else %}<a class="avatar-button signed-out" href="/login">Log in</a>{% endif %}
+      {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open {{ comment_avatar.name }} profile">{{ render_comment_avatar(comment_avatar) }}</button>{% else %}<a class="avatar-button signed-out" href="/login">Log in</a>{% endif %}
     </header>
 
     <nav class="league-tabs" aria-label="League filter">

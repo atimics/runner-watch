@@ -15,11 +15,12 @@ from runner_web.db import (
     _apply_migrations,
     _migration_028_caller_identities,
     _migration_040_comment_glyph_avatars,
+    _migration_041_persistent_comment_avatars,
     _release_migration_lock,
     connection,
     init_db,
 )
-from runner_web.pseudonyms import COMMENT_GLYPHS
+from runner_web.pseudonyms import COMMENT_AVATAR_ABILITIES, COMMENT_GLYPHS
 
 
 class _LockResult:
@@ -371,6 +372,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "flash_transactions_user_time",
         "research_commissions_public_time",
         "public_aliases_user",
+        "comment_avatars_ability",
         "caller_identities_owner",
         "caller_identities_one_active_per_user",
         "caller_identity_one_free_claim",
@@ -499,6 +501,44 @@ def test_existing_comment_emoji_aliases_become_unique_glyphs(
     assert all(alias in COMMENT_GLYPHS and len(alias) == 1 for alias in comment_aliases)
     call_alias = next(row["alias"] for row in first_pass if row["scope"] == "call:ONE")
     assert call_alias == "🐺🦊"
+    assert [tuple(row) for row in second_pass] == [tuple(row) for row in first_pass]
+
+
+def test_persistent_comment_avatar_migration_covers_active_accounts_and_is_idempotent(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "persistent-comment-avatars.db")
+    init_db()
+    timestamp = "2026-08-28T00:00:00+00:00"
+    with connection() as database:
+        database.executemany(
+            "INSERT INTO users(id,username,display_name,status,created_at) "
+            "VALUES(?,?,?,?,?)",
+            [
+                ("avatar-one", "avatar_one", "One", "active", timestamp),
+                ("avatar-two", "avatar_two", "Two", "active", timestamp),
+                ("avatar-pending", "avatar_pending", "Pending", "pending", timestamp),
+            ],
+        )
+
+        _migration_041_persistent_comment_avatars(database)
+        first_pass = database.execute(
+            "SELECT user_id,name,seed,ability_id,level FROM comment_avatars "
+            "WHERE user_id LIKE 'avatar-%' ORDER BY user_id"
+        ).fetchall()
+        _migration_041_persistent_comment_avatars(database)
+        second_pass = database.execute(
+            "SELECT user_id,name,seed,ability_id,level FROM comment_avatars "
+            "WHERE user_id LIKE 'avatar-%' ORDER BY user_id"
+        ).fetchall()
+
+    assert [row["user_id"] for row in first_pass] == ["avatar-one", "avatar-two"]
+    assert len({row["name"] for row in first_pass}) == 2
+    assert len({row["seed"] for row in first_pass}) == 2
+    assert {row["ability_id"] for row in first_pass} <= {
+        ability["id"] for ability in COMMENT_AVATAR_ABILITIES
+    }
+    assert {row["level"] for row in first_pass} == {1}
     assert [tuple(row) for row in second_pass] == [tuple(row) for row in first_pass]
 
 
