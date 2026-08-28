@@ -13,9 +13,10 @@
       <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time>
     </span>
     {% if event.edge_history %}
+    {% set edge_point_count = event.edge_history.point_count|default(event.edge_history.points|default([])|length) %}
     <svg class="edge-spark radar-spark" viewBox="0 0 92 24" role="img" aria-label="{{ event.edge_history.label }}" preserveAspectRatio="none">
       <line class="edge-zero" x1="1" y1="12" x2="91" y2="12"></line>
-      {% if event.edge_history.points|length > 1 %}<polyline points="{{ event.edge_history.plot_points }}"></polyline>{% else %}<circle cx="46" cy="{{ event.edge_history.dot_y }}" r="2.2"></circle>{% endif %}
+      {% if edge_point_count > 1 %}<polyline points="{{ event.edge_history.plot_points }}"></polyline>{% else %}<circle cx="46" cy="{{ event.edge_history.dot_y }}" r="2.2"></circle>{% endif %}
     </svg>
     {% endif %}
     <span class="radar-value">
