@@ -699,7 +699,7 @@ def trainer_main() -> None:
                     days=max(1, int(os.getenv("RANKER_HISTORICAL_BACKFILL_DAYS", "10"))),
                     cadence_minutes=max(
                         5,
-                        int(os.getenv("RANKER_HISTORICAL_BACKFILL_CADENCE_MINUTES", "30")),
+                        int(os.getenv("RANKER_HISTORICAL_BACKFILL_CADENCE_MINUTES", "15")),
                     ),
                     target_groups=max(
                         RANKER_TRAINING.minimum_groups,
@@ -1069,7 +1069,7 @@ def main() -> None:
     )
     backfill = subparsers.add_parser("backfill-history")
     backfill.add_argument("--days", type=int, default=10)
-    backfill.add_argument("--cadence-minutes", type=int, default=30)
+    backfill.add_argument("--cadence-minutes", type=int, default=15)
     backfill.add_argument(
         "--target-groups",
         type=int,
