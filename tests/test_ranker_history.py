@@ -93,6 +93,7 @@ def test_historical_replay_writes_only_compact_point_in_time_rows(
     init_db()
     replay_at = datetime(2026, 8, 4, 14, 5, tzinfo=UTC)
     _seed_market_bars(replay_at)
+    progress: list[dict[str, object]] = []
 
     result = backfill_historical_training(
         days=2,
@@ -101,10 +102,16 @@ def test_historical_replay_writes_only_compact_point_in_time_rows(
         start_at=replay_at,
         end_at=replay_at,
         near_live_minutes=0,
+        progress=progress.append,
     )
 
     assert result["groups_written"] == 1
     assert result["rows_written"] == 3
+    assert any(
+        event.get("stage") == "loading_5m_bars"
+        and event.get("tickers_loaded") == 3
+        for event in progress
+    )
     with connection() as database:
         rows = database.execute(
             "SELECT * FROM ranker_training_examples ORDER BY ticker"
