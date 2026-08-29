@@ -525,11 +525,6 @@
   border-top: 1px solid var(--line);
 }
 
-.series-games .winner-card {
-  border-left: 3px solid #342d42;
-  background: rgba(14, 12, 21, .94);
-}
-
 .pulse-inspector {
   position: sticky;
   top: 82px;

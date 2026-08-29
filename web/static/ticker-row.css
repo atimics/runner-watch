@@ -232,6 +232,20 @@
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
+.mini-chart .sports-history-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+}
+.mini-chart .sports-history-dot {
+  fill: var(--amber);
+  stroke: #090b0b;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
 .mini-chart.loaded { opacity: .84; }
 .mini-chart.rising { color: var(--green); }
 .mini-chart.falling { color: var(--red); }
