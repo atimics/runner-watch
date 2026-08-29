@@ -13,6 +13,33 @@ PASSIVE_TRACKING_TABLES = (
     "ticker_reactions",
 )
 
+PORTABLE_CONTENT_GROUPS = {
+    "Posts and Calls": (
+        "comments",
+        "community_calls",
+        "sports_picks",
+        "signals",
+        "reports_submitted",
+    ),
+    "Private work": (
+        "watchlist",
+        "positions",
+        "cases",
+        "case_revisions",
+        "case_updates",
+        "case_outcomes",
+    ),
+    "Research": (
+        "research",
+        "research_stages",
+        "flash_forecasts",
+        "sports_ai_forecasts",
+        "flash_forecast_outcomes",
+        "flash_evaluation_events",
+        "flash_report_requests",
+    ),
+}
+
 
 def _iso(value: datetime | None = None) -> str:
     return (value or datetime.now(UTC)).isoformat()
@@ -242,6 +269,20 @@ def export_user_data(user_id: str) -> dict[str, Any]:
         }
 
 
+def user_data_summary(user_id: str) -> dict[str, Any]:
+    """Return small counts for the account data controls."""
+
+    exported = export_user_data(user_id)
+    groups = {
+        label: sum(len(exported.get(key) or []) for key in keys)
+        for label, keys in PORTABLE_CONTENT_GROUPS.items()
+    }
+    return {
+        "item_count": sum(groups.values()),
+        "groups": groups,
+    }
+
+
 def purge_passive_tracking() -> dict[str, int]:
     """Delete passive behavioural profiles; the product no longer writes them."""
 
@@ -284,6 +325,99 @@ def prune_personal_data(at: datetime | None = None) -> dict[str, int]:
     return deleted
 
 
+def _delete_user_content_rows(
+    database: Any,
+    tables: set[str],
+    user_id: str,
+) -> int:
+    deleted = 0
+
+    def delete(table: str, where: str, parameters: tuple[Any, ...]) -> None:
+        nonlocal deleted
+        if table not in tables:
+            return
+        rowcount = database.execute(
+            f"DELETE FROM {table} WHERE {where}", parameters
+        ).rowcount
+        if rowcount and rowcount > 0:
+            deleted += rowcount
+
+    # Remove dependent records before older foreign keys that do not cascade.
+    delete("comment_generation_requests", "user_id=?", (user_id,))
+    delete("flash_report_requests", "user_id=?", (user_id,))
+    delete(
+        "flash_evaluation_events",
+        "forecast_id IN (SELECT f.id FROM flash_forecasts f "
+        "JOIN research_commissions r ON r.id=f.report_id WHERE r.user_id=?)",
+        (user_id,),
+    )
+    delete(
+        "flash_forecast_outcomes",
+        "forecast_id IN (SELECT f.id FROM flash_forecasts f "
+        "JOIN research_commissions r ON r.id=f.report_id WHERE r.user_id=?)",
+        (user_id,),
+    )
+    delete(
+        "flash_forecasts",
+        "report_id IN (SELECT id FROM research_commissions WHERE user_id=?)",
+        (user_id,),
+    )
+    delete(
+        "sports_ai_forecasts",
+        "report_id IN (SELECT id FROM research_commissions WHERE user_id=?)",
+        (user_id,),
+    )
+    delete(
+        "research_stage_runs",
+        "commission_id IN (SELECT id FROM research_commissions WHERE user_id=?)",
+        (user_id,),
+    )
+    delete("research_commissions", "user_id=?", (user_id,))
+    delete(
+        "reports",
+        "user_id=? OR signal_id IN (SELECT id FROM signals WHERE user_id=?)",
+        (user_id, user_id),
+    )
+    delete("signals", "user_id=?", (user_id,))
+    delete(
+        "thesis_case_seen",
+        "user_id=? OR case_id IN (SELECT id FROM thesis_cases WHERE user_id=?)",
+        (user_id, user_id),
+    )
+    for table in (
+        "thesis_case_claims",
+        "thesis_case_outcomes",
+        "thesis_case_updates",
+        "thesis_case_revisions",
+    ):
+        delete(
+            table,
+            "case_id IN (SELECT id FROM thesis_cases WHERE user_id=?)",
+            (user_id,),
+        )
+    delete("thesis_cases", "user_id=?", (user_id,))
+    delete("ticker_comments", "user_id=?", (user_id,))
+    delete("community_calls", "user_id=?", (user_id,))
+    delete("sports_picks", "user_id=?", (user_id,))
+    delete("user_positions", "user_id=?", (user_id,))
+    delete("watches", "user_id=?", (user_id,))
+    return deleted
+
+
+def delete_user_content(user_id: str) -> dict[str, Any]:
+    """Delete portable work while keeping login, identity, wallet, and billing data."""
+
+    with connection() as database:
+        tables = _tables(database)
+        if "users" not in tables:
+            return {"deleted": False, "items_deleted": 0}
+        exists = database.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone()
+        if not exists:
+            return {"deleted": False, "items_deleted": 0}
+        deleted = _delete_user_content_rows(database, tables, user_id)
+    return {"deleted": True, "items_deleted": deleted}
+
+
 def delete_user_data(user_id: str) -> dict[str, Any]:
     """Delete one account and all local data that can identify or describe it."""
 
@@ -295,64 +429,15 @@ def delete_user_data(user_id: str) -> dict[str, Any]:
         if not exists:
             return {"deleted": False}
 
+        _delete_user_content_rows(database, tables, user_id)
+
         def delete(table: str, where: str, parameters: tuple[Any, ...]) -> None:
             if table in tables:
                 database.execute(f"DELETE FROM {table} WHERE {where}", parameters)
 
-        # Remove dependent records before older foreign keys that do not cascade.
-        delete("flash_report_requests", "user_id=?", (user_id,))
-        delete(
-            "flash_evaluation_events",
-            "forecast_id IN (SELECT f.id FROM flash_forecasts f "
-            "JOIN research_commissions r ON r.id=f.report_id WHERE r.user_id=?)",
-            (user_id,),
-        )
-        delete(
-            "flash_forecast_outcomes",
-            "forecast_id IN (SELECT f.id FROM flash_forecasts f "
-            "JOIN research_commissions r ON r.id=f.report_id WHERE r.user_id=?)",
-            (user_id,),
-        )
-        delete(
-            "flash_forecasts",
-            "report_id IN (SELECT id FROM research_commissions WHERE user_id=?)",
-            (user_id,),
-        )
-        delete(
-            "research_stage_runs",
-            "commission_id IN (SELECT id FROM research_commissions WHERE user_id=?)",
-            (user_id,),
-        )
-        delete("research_commissions", "user_id=?", (user_id,))
-        delete(
-            "reports",
-            "user_id=? OR signal_id IN (SELECT id FROM signals WHERE user_id=?)",
-            (user_id, user_id),
-        )
-        delete("signals", "user_id=?", (user_id,))
-        delete(
-            "thesis_case_seen",
-            "user_id=? OR case_id IN (SELECT id FROM thesis_cases WHERE user_id=?)",
-            (user_id, user_id),
-        )
-        for table in (
-            "thesis_case_claims",
-            "thesis_case_outcomes",
-            "thesis_case_updates",
-            "thesis_case_revisions",
-        ):
-            delete(
-                table,
-                "case_id IN (SELECT id FROM thesis_cases WHERE user_id=?)",
-                (user_id,),
-            )
-        delete("thesis_cases", "user_id=?", (user_id,))
-        delete("ticker_comments", "user_id=?", (user_id,))
         delete("comment_avatars", "user_id=?", (user_id,))
         delete("public_aliases", "user_id=?", (user_id,))
         delete("comment_pseudonyms", "user_id=?", (user_id,))
-        delete("community_calls", "user_id=?", (user_id,))
-        delete("sports_picks", "user_id=?", (user_id,))
         if "caller_identities" in tables:
             caller_ids = [
                 str(row["id"])
@@ -374,8 +459,6 @@ def delete_user_data(user_id: str) -> dict[str, Any]:
         delete("caller_identity_claims", "user_id=?", (user_id,))
         delete("flash_transactions", "user_id=?", (user_id,))
         delete("flash_wallets", "user_id=?", (user_id,))
-        delete("user_positions", "user_id=?", (user_id,))
-        delete("watches", "user_id=?", (user_id,))
         delete("sessions", "user_id=?", (user_id,))
         delete("auth_challenges", "user_id=?", (user_id,))
         delete("passkeys", "user_id=?", (user_id,))

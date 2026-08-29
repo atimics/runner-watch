@@ -11,11 +11,114 @@
 
 <main class="account-wrap privacy-wrap">
   <section class="account-intro">
-    <span class="eyebrow">PRIVACY BY LESS DATA</span>
-    <h1>We do not track what you read.</h1>
-    <p>RATi does not use analytics, advertising pixels, visitor IDs, reaction profiles, view logs, or dwell logs. If you publish comments, your lasting public avatar intentionally links those comments across ticker threads.</p>
-    <p>Last updated: 28 August 2026.</p>
+    <span class="eyebrow">YOUR DATA · YOUR CALL</span>
+    <h1>Choose where your data lives.</h1>
+    <p>Keep your working data in the RATi cloud, or save an encrypted vault on this device and remove your saved work from the server. RATi still does not track what you read.</p>
+    <p>Last updated: 29 August 2026.</p>
   </section>
+
+  <section class="plan-card data-home-card" id="dataHome" data-signed-in="{{ 'true' if user else 'false' }}">
+    <header>
+      <div><span class="decision-badge own">DATA HOME</span><h2>Your storage</h2></div>
+      <span class="data-home-lock" aria-hidden="true">◆</span>
+    </header>
+    <div class="storage-choice-grid">
+      <article class="storage-choice active">
+        <span class="storage-state"><i></i>RATi cloud</span>
+        {% if user %}
+        <strong>{{ data_summary.item_count }} saved item{{ '' if data_summary.item_count == 1 else 's' }}</strong>
+        <small>Available after passkey sign-in. Encrypted in transit and at rest.</small>
+        {% else %}
+        <strong>Sign in to sync</strong>
+        <small>Your account data is available on your signed-in devices.</small>
+        {% endif %}
+      </article>
+      <article class="storage-choice" id="localStorageChoice">
+        <span class="storage-state"><i></i>This device</span>
+        <strong id="localVaultLabel">Checking this device…</strong>
+        <small id="localVaultHelp">The local vault is locked with your passphrase.</small>
+      </article>
+    </div>
+
+    {% if user %}
+    <div class="cloud-data-summary" aria-label="Cloud data summary">
+      {% for label, count in data_summary.groups.items() %}
+      <span><strong>{{ count }}</strong>{{ label }}</span>
+      {% endfor %}
+    </div>
+    <div class="data-action-stack">
+      <button class="account-action" id="copyToDevice" type="button">Save encrypted copy on this device</button>
+      <button class="account-action secondary-action" id="moveToDevice" type="button">Move saved data off the cloud</button>
+    </div>
+    <p class="plan-help">Moving first saves and checks an encrypted local vault. Only then does RATi delete saved and published items from the live server. Your login, public avatar, Flash balance, and billing state stay so your account still works.</p>
+    {% else %}
+    <a class="account-action" href="/login?next=/privacy">Log in to manage cloud data</a>
+    {% endif %}
+
+    <div class="local-vault-actions" id="localVaultActions" hidden>
+      <button class="account-action secondary-action" id="openLocalVault" type="button">Open local vault</button>
+      <button class="text-action" id="downloadLocalVault" type="button">Download encrypted vault file</button>
+      <button class="text-action danger-text-action" id="openLocalDelete" type="button">Permanently delete local copy</button>
+    </div>
+    <div class="local-vault-import">
+      <button class="text-action" id="importLocalVault" type="button">Import an encrypted vault file</button>
+      <input id="localVaultFile" type="file" accept=".rati-data,application/json" hidden>
+    </div>
+    <p class="data-vault-status" id="dataVaultStatus" role="status" aria-live="polite"></p>
+  </section>
+
+  <dialog class="account-delete-dialog data-vault-dialog" id="createVaultDialog" aria-labelledby="createVaultTitle">
+    <button class="dialog-close" data-close-dialog type="button" aria-label="Close">×</button>
+    <span class="decision-badge own">ENCRYPTED LOCALLY</span>
+    <h2 id="createVaultTitle">Save a private copy</h2>
+    <p id="createVaultDescription">Choose a passphrase. It never leaves this device, and RATi cannot recover it.</p>
+    <form id="createVaultForm">
+      <label for="vaultPassphrase">Passphrase
+        <input id="vaultPassphrase" type="password" autocomplete="new-password" minlength="12" required>
+      </label>
+      <label for="vaultPassphraseAgain">Repeat passphrase
+        <input id="vaultPassphraseAgain" type="password" autocomplete="new-password" minlength="12" required>
+      </label>
+      <label class="move-data-check" id="moveDataCheck" hidden>
+        <input id="moveDataConfirmed" type="checkbox">
+        <span>I understand that saved and published items will be removed from RATi after the local vault is checked.</span>
+      </label>
+      <button class="account-action" id="createVaultSubmit" type="submit">Save encrypted copy</button>
+      <p class="account-delete-status" id="createVaultStatus" role="status"></p>
+    </form>
+  </dialog>
+
+  <dialog class="account-delete-dialog data-vault-dialog" id="openVaultDialog" aria-labelledby="openVaultTitle">
+    <button class="dialog-close" data-close-dialog type="button" aria-label="Close">×</button>
+    <span class="decision-badge copy">THIS DEVICE</span>
+    <h2 id="openVaultTitle">Open local vault</h2>
+    <form id="openVaultForm">
+      <label for="openVaultPassphrase">Passphrase
+        <input id="openVaultPassphrase" type="password" autocomplete="current-password" required>
+      </label>
+      <button class="account-action" type="submit">Unlock</button>
+      <p class="account-delete-status" id="openVaultStatus" role="status"></p>
+    </form>
+    <div class="vault-preview" id="vaultPreview" hidden>
+      <p id="vaultPreviewMeta"></p>
+      <div id="vaultPreviewGroups"></div>
+      <button class="text-action" id="downloadReadableVault" type="button">Download readable JSON</button>
+      <p class="plan-help">Readable JSON is not encrypted. Keep it somewhere private.</p>
+    </div>
+  </dialog>
+
+  <dialog class="account-delete-dialog data-vault-dialog" id="localDeleteDialog" aria-labelledby="localDeleteTitle">
+    <button class="dialog-close" data-close-dialog type="button" aria-label="Close">×</button>
+    <h2 id="localDeleteTitle">Delete the local vault?</h2>
+    <p>This permanently removes the encrypted copy from this browser. It does not change any cloud data.</p>
+    <form id="localDeleteForm">
+      <label for="localDeleteConfirmation">Type <strong>DELETE LOCAL COPY</strong> to confirm
+        <input id="localDeleteConfirmation" autocomplete="off" required>
+      </label>
+      <button class="account-action danger-action" type="submit">Delete local copy</button>
+      <p class="account-delete-status" id="localDeleteStatus" role="status"></p>
+    </form>
+  </dialog>
 
   <section class="plan-card">
     <h2>Who controls your data</h2>
@@ -27,10 +130,17 @@
     <ul class="feature-list compact">
       <li><i>•</i><span><strong>Account and security</strong><small>Your chosen account name, passkey public-key records, essential session records, and short-lived security challenges. We never receive your fingerprint, face scan, device PIN, or private passkey key.</small></span></li>
       <li><i>•</i><span><strong>Things you save or publish</strong><small>AI-generated ticker comments, public stock Calls, public sports paper picks, private trade-journal entries, cases, research requests, and reports you choose to create. A stock report freezes Flash's forecast, model version, starting price, and later scored result. Sports picks freeze the event, market odds, source time, and result.</small></span></li>
-      <li><i>•</i><span><strong>Persistent public avatars</strong><small>Each account receives one random avatar name, visual seed, and research ability. The same avatar appears on that account's public comments across tickers, so readers can link those comments together. This is pseudonymity, not anonymity from RATi: the server keeps the private account link for deletion and abuse controls, while public pages do not expose the account name. Stock Calls and sports paper picks still use one automatic random animal name.</small></span></li>
+      <li><i>•</i><span><strong>Persistent public avatars</strong><small>Each account receives one random avatar name, visual seed, and research ability. The same avatar intentionally links those comments across ticker threads, so readers can link those comments together. This is pseudonymity, not anonymity from RATi: the server keeps the private account link for deletion and abuse controls, while public pages do not expose the account name. Stock Calls and sports paper picks still use one automatic random animal name.</small></span></li>
       <li><i>•</i><span><strong>Billing</strong><small>Stripe customer and subscription references, plan status, and signed webhook event IDs. Stripe handles card details; RATi does not store them.</small></span></li>
       <li><i>•</i><span><strong>Service security</strong><small>Short-lived rate-limit keys and infrastructure logs may contain an IP address and request details. They are used only to keep the service working and safe.</small></span></li>
     </ul>
+  </section>
+
+  <section class="plan-card">
+    <h2>How storage choices work</h2>
+    <p>The cloud copy lets RATi show and update your saved work after passkey sign-in. Hosting encrypts it in transit and at rest, but RATi can read it to run the features you ask for.</p>
+    <p>A local vault is encrypted inside your browser with AES-GCM and a key made from your passphrase. The passphrase and key are never sent to RATi. Moving data saves the vault, opens it once to check it, and only then removes saved and published items from the live server. Account security, public identity, Flash balance, and billing records remain until you delete the account.</p>
+    <p>Local storage belongs to this browser profile. Clearing browser data or losing the device can erase it, so download the encrypted vault file if you need a second copy. Deleting the local vault cannot be undone.</p>
   </section>
 
   <section class="plan-card">
@@ -58,8 +168,8 @@
     <h2>Your rights</h2>
     <p>Depending on where you live, you may ask to access, correct, erase, restrict, or receive your data, or object to processing. You may complain to your local data-protection authority. We answer verified requests without undue delay and normally within one month.</p>
     {% if user %}
-    <a class="account-action" href="/api/account/export">Download my data</a>
-    <p class="plan-help">The export contains your account and content, but not passkey secrets or session hashes.</p>
+    <a class="account-action secondary-action" href="/api/account/export">Download readable JSON</a>
+    <p class="plan-help">This readable export contains your account and content, but not passkey secrets or session hashes. Use the encrypted vault above for safer storage.</p>
     {% else %}
     <a class="account-action" href="/login?next=/privacy">Log in to export your data</a>
     {% endif %}
@@ -96,6 +206,7 @@
 {% endblock %}
 {% block bottom_nav %}{% endblock %}
 {% block scripts %}
+<script src="/static/data-vault.js?v={{ static_version }}" defer></script>
 {% if user %}
 <script nonce="{{ request.state.csp_nonce }}">
 const accountDeleteDialog = document.getElementById('accountDeleteDialog');
