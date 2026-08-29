@@ -3,13 +3,15 @@ from __future__ import annotations
 import json
 import math
 import tomllib
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 from pytest import MonkeyPatch
 
-from runner_web import db
+from runner_web import database as database_module
+from runner_web import db, ranker, ranker_history
 from runner_web.db import connection, init_db
 from runner_web.ranker import FEATURE_NAMES, ranker_status
 from runner_web.ranker_history import (
@@ -133,6 +135,24 @@ def test_historical_replay_writes_only_compact_point_in_time_rows(
     replay_at = datetime(2026, 8, 4, 14, 5, tzinfo=UTC)
     _seed_market_bars(replay_at)
     progress: list[dict[str, object]] = []
+    real_connection = ranker_history.connection
+    write_attempts = 0
+
+    @contextmanager
+    def flaky_write_connection():
+        nonlocal write_attempts
+        write_attempts += 1
+        if write_attempts == 1:
+            raise RuntimeError("temporary database outage")
+        with real_connection() as database:
+            yield database
+
+    def record_progress(event: dict[str, object]) -> None:
+        progress.append(event)
+        if event.get("point") == 1:
+            monkeypatch.setattr(ranker_history, "connection", flaky_write_connection)
+
+    monkeypatch.setattr(database_module, "sleep", lambda _delay: None)
 
     result = backfill_historical_training(
         days=2,
@@ -141,11 +161,12 @@ def test_historical_replay_writes_only_compact_point_in_time_rows(
         start_at=replay_at,
         end_at=replay_at,
         near_live_minutes=0,
-        progress=progress.append,
+        progress=record_progress,
     )
 
     assert result["groups_written"] == 1
     assert result["rows_written"] == 3
+    assert write_attempts == 2
     assert any(
         event.get("stage") == "loading_5m_bars"
         and event.get("tickers_loaded") == 3
@@ -174,6 +195,37 @@ def test_historical_replay_writes_only_compact_point_in_time_rows(
     assert log_price == round(math.log1p(1.0) * 1_000)
     assert ranker_status()["complete_groups"] == 1
     assert ranker_status()["training_origins"]["historical_replay"]["groups"] == 1
+
+
+def test_trainer_state_retries_a_temporary_database_outage(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "trainer-state.db")
+    init_db()
+    real_connection = ranker.connection
+    attempts = 0
+
+    @contextmanager
+    def flaky_connection():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("temporary database outage")
+        with real_connection() as database:
+            yield database
+
+    monkeypatch.setattr(ranker, "connection", flaky_connection)
+    monkeypatch.setattr(database_module, "sleep", lambda _delay: None)
+
+    ranker._trainer_state("ranker_test_state", {"status": "ok"})
+
+    assert attempts == 2
+    with connection() as database:
+        state = database.execute(
+            "SELECT value FROM worker_state WHERE key=?", ("ranker_test_state",)
+        ).fetchone()
+    assert json.loads(state["value"]) == {"status": "ok"}
 
 
 def test_historical_replay_is_idempotent_and_respects_dry_run(
