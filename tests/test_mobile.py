@@ -379,10 +379,15 @@ def test_ticker_rows_have_no_reader_attention_state() -> None:
 
 
 def test_pulse_ticker_search_uses_native_validation() -> None:
-    pulse_template = (Path(__file__).parents[1] / "web/templates/pulse.html").read_text()
+    root = Path(__file__).parents[1]
+    pulse_template = (root / "web/templates/pulse.html").read_text()
+    account_strip = (root / "web/templates/_account_strip.html").read_text()
 
-    assert 'pattern="[A-Za-z0-9.-]{1,12}"' in pulse_template
-    assert " required " in pulse_template
+    assert 'pattern="[A-Za-z0-9.-]{1,12}"' in account_strip
+    assert " required " in account_strip
+    assert 'id="pulseSearch"' not in pulse_template
+    assert '{% include "_market_clock.html" %}' not in pulse_template
+    assert "Movement is only the first clue." not in pulse_template
 
 
 def test_passkey_signup_needs_no_profile_fields(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

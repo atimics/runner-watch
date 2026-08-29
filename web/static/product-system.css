@@ -72,7 +72,7 @@ textarea {
   outline-offset: 2px;
 }
 
-/* Signed-in account strip */
+/* Top utility strip */
 .account-strip {
   position: relative;
   z-index: 9;
@@ -85,6 +85,51 @@ textarea {
   background: #070a08;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+
+.account-ticker-search {
+  display: grid;
+  flex: 1 1 210px;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  width: min(var(--desktop-rail, 430px), 48%);
+  max-width: 470px;
+  margin-right: auto;
+  border-right: 1px solid var(--line);
+}
+
+.account-ticker-search label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.account-ticker-search input {
+  min-width: 0;
+  height: 32px;
+  padding: 0 11px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 9px;
+  letter-spacing: .01em;
+  text-transform: uppercase;
+}
+
+.account-ticker-search input::placeholder {
+  color: #66716b;
+  text-transform: none;
+}
+
+.account-strip .account-ticker-search button {
+  justify-content: center;
+  min-width: 32px;
+  padding: 0;
+  border-left: 1px solid var(--line);
+  color: var(--accent);
+  font-size: 14px;
 }
 
 .account-strip button,
@@ -372,6 +417,11 @@ html.embedded-pane .account-strip {
 }
 
 @media (max-width: 560px) {
+  .account-ticker-search {
+    flex-basis: 128px;
+    width: auto;
+  }
+
   .account-strip button,
   .account-strip a {
     padding: 0 9px;
@@ -480,52 +530,6 @@ html.embedded-pane .account-strip {
   border-radius: var(--radius-sm);
   background: var(--panel-2);
   box-shadow: none;
-}
-
-.pulse-search {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  margin: 10px 14px 0;
-}
-
-.pulse-search label {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-}
-
-.pulse-search input,
-.pulse-search button {
-  min-height: 40px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  font: inherit;
-}
-
-.pulse-search input {
-  min-width: 0;
-  padding: 0 12px;
-  background: var(--panel);
-  color: var(--text);
-  font-size: 12px;
-  text-transform: uppercase;
-}
-
-.pulse-search input::placeholder {
-  color: var(--muted);
-  text-transform: none;
-}
-
-.pulse-search button {
-  padding: 0 14px;
-  background: color-mix(in srgb, var(--accent) 13%, var(--panel));
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 850;
-  cursor: pointer;
 }
 
 .runners-product .avatar-button.signed-out {

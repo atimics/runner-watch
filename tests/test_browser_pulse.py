@@ -60,9 +60,12 @@ def _rendered_pulse(monkeypatch, payload: dict[str, Any]) -> str:
     monkeypatch.setattr(web_main, "pulse_data", lambda **_kwargs: payload)
     html = web_main.home(_request(), None).body.decode()
     ticker_script = (ROOT / "web/static/ticker-row.js").read_text()
-    kol_styles = (ROOT / "web/static/kol.css").read_text()
     html = html.replace("<head>", '<head><base href="http://app.test/">')
-    html = html.replace("</head>", f"<style>{kol_styles}</style></head>")
+    html = re.sub(
+        r'<link rel="stylesheet" href="/static/([^"?]+)[^"]*">',
+        lambda match: f"<style>{(ROOT / 'web/static' / match.group(1)).read_text()}</style>",
+        html,
+    )
     html = re.sub(
         r'<script src="/static/ticker-row\.js[^\"]*"[^>]*></script>',
         lambda _match: f"<script>{ticker_script}</script>",
@@ -111,6 +114,37 @@ def test_empty_flash_record_has_no_layout_gap(page: Page, monkeypatch) -> None:
     assert page.evaluate(
         "TickerRow.ago(new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString())"
     ) == "3h ago"
+    assert errors == []
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_pulse_header_is_one_compact_stack(page: Page, monkeypatch, width: int) -> None:
+    record = {
+        "label": "Flash 2026.09",
+        "model_label": "GLM 5.3",
+        "hits": 1,
+        "misses": 0,
+        "settled": 1,
+        "hit_rate": 1.0,
+        "headline_rate_visible": False,
+    }
+    page.set_viewport_size({"width": width, "height": 800})
+    html = _rendered_pulse(monkeypatch, _pulse(_row("AAA"), flash_record=record))
+    errors = _load(page, html, [])
+
+    search = page.locator("#pulseSearch")
+    scorecard = page.locator("#kolScoreStrip")
+    assert search.is_visible()
+    assert search.evaluate("element => element.closest('.account-strip') !== null") is True
+    assert page.locator(".pulse-list-column > .pulse-search").count() == 0
+    assert page.locator(".pulse-list-column > .session-clock").count() == 0
+    assert page.locator(".screen-head .head-meta").count() == 0
+    assert scorecard.is_visible()
+    assert scorecard.evaluate("element => element.getBoundingClientRect().height") <= 34
+    assert page.evaluate(
+        "document.querySelector('.account-ticker-search').getBoundingClientRect().left === "
+        "document.querySelector('.account-strip').getBoundingClientRect().left"
+    ) is True
     assert errors == []
 
 

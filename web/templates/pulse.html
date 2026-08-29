@@ -6,19 +6,13 @@
 <div class="desktop-workspace" data-desktop-workspace>
   <section class="desktop-list-pane pulse-list-column" data-desktop-list>
     <header class="screen-head">
-      <div><span class="rati-product">RATi RUNNERS</span><h1>Pulse</h1><span class="head-meta">Movement is only the first clue.</span></div>
+      <div><span class="rati-product">RATi RUNNERS</span><h1>Pulse</h1></div>
       {% if user %}
         <button class="avatar-button" type="button" data-profile aria-label="Open {{ comment_avatar.name }} profile">{{ render_comment_avatar(comment_avatar) }}</button>
       {% else %}
         <a class="avatar-button signed-out" href="/login">Log in</a>
       {% endif %}
     </header>
-    {% include "_market_clock.html" %}
-    <form class="pulse-search" id="pulseSearch" role="search">
-      <label for="pulseTickerSearch">Open a ticker</label>
-      <input id="pulseTickerSearch" name="ticker" type="search" inputmode="latin" autocomplete="off" maxlength="12" pattern="[A-Za-z0-9.-]{1,12}" required title="Enter a ticker using letters, numbers, a dot, or a dash" placeholder="Ticker, for example RKLB" aria-label="Ticker symbol">
-      <button type="submit">View ticker</button>
-    </form>
     {% set flash_record = pulse.flash_record %}
     <a class="kol-score-strip" id="kolScoreStrip" href="/flash/record" aria-label="Open the Flash forecast record"{% if not flash_record %} hidden{% endif %}>
       <span class="kol-avatar" data-kol-avatar aria-hidden="true">⚡</span>
