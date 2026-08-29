@@ -131,7 +131,12 @@ from runner_web.outcomes import (
     refresh_outcomes,
     refresh_scan_outcomes,
 )
-from runner_web.privacy import delete_user_data, export_user_data
+from runner_web.privacy import (
+    delete_user_content,
+    delete_user_data,
+    export_user_data,
+    user_data_summary,
+)
 from runner_web.product_catalog import roadmap_snapshot
 from runner_web.product_policy import BASE_RATES, EVIDENCE_GATE, OPERATIONS
 from runner_web.pseudonyms import (
@@ -1168,6 +1173,10 @@ class AccountDeletePayload(BaseModel):
     confirmation: Literal["DELETE MY ACCOUNT"]
 
 
+class CloudDataDeletePayload(BaseModel):
+    confirmation: Literal["MOVE MY DATA"]
+
+
 class SportsPickPayload(BaseModel):
     selection: Literal["home", "away"]
 
@@ -1265,10 +1274,14 @@ def privacy_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
+    context = page_context(request, runner_session)
+    user = context.get("user")
+    if user:
+        context["data_summary"] = user_data_summary(str(user["id"]))
     return templates.TemplateResponse(
         request=request,
         name="privacy.html",
-        context=page_context(request, runner_session),
+        context=context,
     )
 
 
@@ -1283,6 +1296,29 @@ def account_export_api(
     response.headers["Content-Disposition"] = (
         f'attachment; filename="runner-watch-export-{now().date().isoformat()}.json"'
     )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/account/data/delete-cloud-copy")
+def account_cloud_data_delete_api(
+    payload: CloudDataDeletePayload,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(
+        request,
+        "account-cloud-data-delete",
+        limit=3,
+        seconds=3600,
+        subject=user["id"],
+    )
+    result = delete_user_content(str(user["id"]))
+    if not result["deleted"]:
+        raise HTTPException(404, "Account not found")
+    response = JSONResponse(result)
     response.headers["Cache-Control"] = "no-store"
     return response
 
