@@ -1,6 +1,15 @@
 {% set account_product = current_product|default(product|default('runners')) %}
-{% if user %}
-<nav class="account-strip {{ account_product }}-account-strip" aria-label="Account summary" data-flash-low="{{ 'true' if flash_wallet.balance < flash_wallet.report_cost else 'false' }}">
+{% set show_ticker_search = account_product == 'runners' and active_tab == 'pulse' and request.url.path == '/' %}
+{% if user or show_ticker_search %}
+<nav class="account-strip {{ account_product }}-account-strip" aria-label="{{ 'Runners tools' if show_ticker_search else 'Account summary' }}" data-flash-low="{{ 'true' if user and flash_wallet.balance < flash_wallet.report_cost else 'false' }}">
+  {% if show_ticker_search %}
+  <form class="account-ticker-search" id="pulseSearch" role="search">
+    <label for="pulseTickerSearch">Open a ticker</label>
+    <input id="pulseTickerSearch" name="ticker" type="search" inputmode="latin" autocomplete="off" maxlength="12" pattern="[A-Za-z0-9.-]{1,12}" required title="Enter a ticker using letters, numbers, a dot, or a dash" placeholder="Ticker, e.g. RKLB" aria-label="Ticker symbol">
+    <button type="submit" aria-label="View ticker">→</button>
+  </form>
+  {% endif %}
+  {% if user %}
   <button class="account-strip-flash" type="button" data-flash-trigger aria-label="Open Flash wallet. Current balance: {{ flash_wallet.balance }} Flash">
     <span aria-hidden="true">⚡</span>
     <b data-flash-balance>{{ flash_wallet.balance }}</b>
@@ -13,5 +22,6 @@
     </b>
     <small>{{ caller_summary.wins }}–{{ caller_summary.losses }} record</small>
   </a>
+  {% endif %}
 </nav>
 {% endif %}
