@@ -30,6 +30,7 @@ DEFAULT_DAYS = 10
 DEFAULT_CADENCE_MINUTES = 30
 DEFAULT_NEAR_LIVE_MINUTES = 12
 BAR_COMPLETION_LAG = timedelta(minutes=5)
+LOAD_TICKER_CHUNK_SIZE = 24
 ProgressCallback = Callable[[dict[str, Any]], None]
 
 
@@ -104,32 +105,86 @@ def _select_source(start_at: datetime, end_at: datetime, requested: str) -> str 
     return str(row["source"]) if row else None
 
 
+def _load_interval_frames(
+    source: str,
+    interval: str,
+    start_at: datetime,
+    end_at: datetime,
+    progress: ProgressCallback | None = None,
+) -> dict[str, pd.DataFrame]:
+    if progress:
+        progress(
+            {
+                "phase": "historical_backfill",
+                "stage": f"discovering_{interval}_symbols",
+            }
+        )
+    with connection() as database:
+        ticker_rows = database.execute(
+            """
+            SELECT DISTINCT ticker FROM market_bars
+            WHERE source=? AND interval=? AND bar_time>=? AND bar_time<=?
+            ORDER BY ticker
+            """,
+            (source, interval, start_at.isoformat(), end_at.isoformat()),
+        ).fetchall()
+        tickers = [str(row["ticker"]) for row in ticker_rows]
+        frames: dict[str, pd.DataFrame] = {}
+        rows_loaded = 0
+        for offset in range(0, len(tickers), LOAD_TICKER_CHUNK_SIZE):
+            batch = tickers[offset : offset + LOAD_TICKER_CHUNK_SIZE]
+            placeholders = ",".join("?" for _ in batch)
+            rows = database.execute(
+                f"""
+                SELECT ticker,bar_time,open,high,low,close,volume FROM market_bars
+                WHERE source=? AND ticker IN ({placeholders}) AND interval=?
+                  AND bar_time>=? AND bar_time<=?
+                ORDER BY ticker,bar_time
+                """,  # noqa: S608 - placeholders are generated above
+                (
+                    source,
+                    *batch,
+                    interval,
+                    start_at.isoformat(),
+                    end_at.isoformat(),
+                ),
+            ).fetchall()
+            frames.update(_frames(rows))
+            rows_loaded += len(rows)
+            if progress:
+                progress(
+                    {
+                        "phase": "historical_backfill",
+                        "stage": f"loading_{interval}_bars",
+                        "tickers": len(tickers),
+                        "tickers_loaded": min(offset + len(batch), len(tickers)),
+                        "rows_loaded": rows_loaded,
+                    }
+                )
+    return frames
+
+
 def _load_frames(
     source: str,
     start_at: datetime,
     end_at: datetime,
+    progress: ProgressCallback | None = None,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
-    intraday_start = start_at - timedelta(days=8)
-    intraday_end = end_at + BARRIER_HORIZON + timedelta(minutes=10)
-    daily_start = start_at - timedelta(days=370)
-    with connection() as database:
-        intraday_rows = database.execute(
-            """
-            SELECT ticker,bar_time,open,high,low,close,volume FROM market_bars
-            WHERE source=? AND interval='5m' AND bar_time>=? AND bar_time<=?
-            ORDER BY ticker,bar_time
-            """,
-            (source, intraday_start.isoformat(), intraday_end.isoformat()),
-        ).fetchall()
-        daily_rows = database.execute(
-            """
-            SELECT ticker,bar_time,open,high,low,close,volume FROM market_bars
-            WHERE source=? AND interval='1d' AND bar_time>=? AND bar_time<=?
-            ORDER BY ticker,bar_time
-            """,
-            (source, daily_start.isoformat(), end_at.isoformat()),
-        ).fetchall()
-    return _frames(daily_rows), _frames(intraday_rows)
+    daily_frames = _load_interval_frames(
+        source,
+        "1d",
+        start_at - timedelta(days=370),
+        end_at,
+        progress,
+    )
+    intraday_frames = _load_interval_frames(
+        source,
+        "5m",
+        start_at - timedelta(days=8),
+        end_at + BARRIER_HORIZON + timedelta(minutes=10),
+        progress,
+    )
+    return daily_frames, intraday_frames
 
 
 def _complete_group_times() -> list[datetime]:
@@ -334,7 +389,7 @@ def backfill_historical_training(
             "dry_run": dry_run,
         }
 
-    daily_frames, intraday_frames = _load_frames(selected_source, start, end)
+    daily_frames, intraday_frames = _load_frames(selected_source, start, end, progress)
     points = _replay_times(intraday_frames, start, end, cadence_minutes)
     tolerance = timedelta(minutes=max(0, near_live_minutes))
     settings = ScanSettings(
