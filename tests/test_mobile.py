@@ -1801,6 +1801,7 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
     assert comment == "My read is constructive, but thin volume is the risk."
     assert model == "z-ai/glm-5.3"
     assert captured["body"]["models"] == list(web_main.OPENROUTER_COMMENT_MODELS)
+    assert len(captured["body"]["models"]) <= web_main.OPENROUTER_COMMENT_MODEL_LIMIT
     assert "model" not in captured["body"]
     assert captured["body"]["response_format"] == {"type": "json_object"}
     assert captured["body"]["provider"] == {
