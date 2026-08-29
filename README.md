@@ -248,6 +248,10 @@ Stonks keeps a compact, versioned training record for its learned ranker:
   complete groups and 5,000 labels, then uses at most the latest 320 complete groups
 - the trainer is a separate process, runs at most every six hours, and waits for 16 new groups before
   rebuilding an existing model
+- before the first model, the trainer can replay archived five-minute bars at their original clock
+  times; replayed rows stay in the compact training table and never enter Pulse or public scan history
+- a replay uses only five-minute bars completed before its feature timestamp, requires a valid later barrier label,
+  skips times close to real scans, and records its source and limitations on every compact row
 - the oldest 80% of complete groups train the model, the next 10% calibrates its probabilities, and
   the newest 10% is an untouched test set
 - learned probabilities and expected return are stored with the exact model ID
@@ -267,8 +271,15 @@ Inspect or train it locally:
 
 ```bash
 uv run stonks-ranker status
+uv run stonks-ranker backfill-history --days 10 --target-groups 320 --dry-run
+uv run stonks-ranker backfill-history --days 10 --target-groups 320
 uv run stonks-ranker train --horizon 60m
 ```
+
+Historical replay is a warm start, not a claim that archived symbols form a perfect historical
+universe. The provenance marks possible survivorship bias and marks catalyst and issuer features
+missing instead of filling them with facts learned later. The untouched newest groups remain the
+test set.
 
 Export the same complete candidate groups to the generic `crlplrimes` dataset contract:
 

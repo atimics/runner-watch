@@ -23,6 +23,7 @@ from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 
 WORKER_HEARTBEAT_KEY = "worker_process_heartbeat"
 WORKER_HEARTBEAT_PREFIX = f"{WORKER_HEARTBEAT_KEY}:"
+TRAINER_HEARTBEAT_KEY = "ranker_trainer_heartbeat"
 WORKER_EXPECTED_INSTANCES = max(1, int(os.getenv("WORKER_EXPECTED_INSTANCES", "1")))
 router = APIRouter()
 
@@ -118,6 +119,34 @@ def worker_health(
     }
 
 
+def trainer_health(
+    states: dict[str, dict[str, Any]],
+    *,
+    checked_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Report whether the separate model trainer is alive and making progress."""
+
+    checked_at = checked_at or datetime.now(UTC)
+    heartbeat = states.get(TRAINER_HEARTBEAT_KEY)
+    heartbeat_at = _time(heartbeat.get("updated_at")) if heartbeat else None
+    detail = _heartbeat_detail(heartbeat.get("value")) if heartbeat else {}
+    age = (
+        max(0.0, (checked_at - heartbeat_at).total_seconds())
+        if heartbeat_at is not None
+        else None
+    )
+    fresh = age is not None and age <= OPERATIONS.worker_heartbeat_max_age_seconds
+    reported = str(detail.get("status") or "unknown").lower()
+    status = "ok" if fresh and reported == "ok" else "degraded" if fresh else "stale"
+    return {
+        "status": status,
+        "last_heartbeat_at": heartbeat_at.isoformat() if heartbeat_at else None,
+        "age_seconds": round(age, 1) if age is not None else None,
+        "maximum_age_seconds": OPERATIONS.worker_heartbeat_max_age_seconds,
+        "detail": detail,
+    }
+
+
 def readiness_status(*, checked_at: datetime | None = None) -> dict[str, Any]:
     """Report whether this web process can safely receive user traffic."""
 
@@ -170,16 +199,19 @@ def health_status(*, checked_at: datetime | None = None) -> dict[str, Any]:
             "checked_at": checked_at.isoformat(),
             "database": "unavailable",
             "worker": worker_health({}, checked_at=checked_at),
+            "trainer": trainer_health({}, checked_at=checked_at),
             "latest_scan_at": None,
             "edgar_updated_at": None,
             "scan_error": None,
         }
     workers = worker_health(states, checked_at=checked_at)
+    trainer = trainer_health(states, checked_at=checked_at)
     return {
         "status": "ok" if workers["status"] == "ok" else "degraded",
         "checked_at": checked_at.isoformat(),
         "database": "ok",
         "worker": workers,
+        "trainer": trainer,
         "latest_scan_at": latest_scan,
         "edgar_updated_at": states.get("edgar_last_refresh", {}).get("updated_at"),
         "scan_error": states.get("background_scan_last_error", {}).get("value") or None,
@@ -245,6 +277,7 @@ def runtime_capabilities(
                 or source_problems
                 or policy_blockers
                 or deployment_health["worker"]["status"] != "ok"
+                or deployment_health["trainer"]["status"] != "ok"
             )
             else "ok"
         ),
@@ -288,6 +321,9 @@ def runtime_capabilities(
                 "model_kind": ranker.get("model_kind"),
                 "feature_schema_version": ranker["feature_schema_version"],
                 "barrier_labeled": ranker["barrier_labeled"],
+                "complete_groups": ranker["complete_groups"],
+                "training_origins": ranker["training_origins"],
+                "trainer": deployment_health["trainer"],
                 "training_policy": manifest["ranker_training"],
             },
             "research": {

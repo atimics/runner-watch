@@ -159,6 +159,7 @@ def test_shadow_ranker_trains_predicts_and_exports_crl(
         "timeout",
         "up",
     }
+    assert trained["metrics"]["training_data"]["groups"] == {"live": 8}
     model = load_latest_model()
     assert model is not None
     assert len(model.weights) == len(FEATURE_NAMES)
