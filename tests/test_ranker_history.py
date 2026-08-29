@@ -17,6 +17,8 @@ from runner_web.ranker import FEATURE_NAMES, ranker_status
 from runner_web.ranker_history import (
     DEFAULT_CADENCE_MINUTES,
     ArchivedMarketData,
+    _bar_tuples,
+    _outcome_window,
     _replay_times,
     backfill_historical_training,
 )
@@ -145,6 +147,30 @@ def test_archived_market_data_slices_only_requested_frames() -> None:
     assert list(result.frames) == ["AAA"]
     assert len(result.frames["AAA"]) == 2
     assert len(intraday["AAA"]) == 3
+
+
+def test_outcome_window_reuses_bars_and_keeps_the_full_label_horizon() -> None:
+    replay_at = datetime(2026, 8, 4, 14, 0, tzinfo=UTC)
+    index = pd.date_range(
+        replay_at - timedelta(minutes=5),
+        replay_at + timedelta(minutes=75),
+        freq="5min",
+    )
+    frame = pd.DataFrame(
+        {
+            "High": [1.01] * len(index),
+            "Low": [0.99] * len(index),
+            "Close": [1.0] * len(index),
+        },
+        index=index,
+    )
+    bars = _bar_tuples(frame)
+
+    window = _outcome_window(bars, [bar[0] for bar in bars], replay_at)
+
+    assert window[0][0] == replay_at + timedelta(minutes=5)
+    assert window[-1][0] == replay_at + timedelta(minutes=70)
+    assert len(window) == 14
 
 
 def test_historical_replay_writes_only_compact_point_in_time_rows(
