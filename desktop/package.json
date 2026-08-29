@@ -11,7 +11,7 @@
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env RATI_DESKTOP_DEV_URL=http://127.0.0.1:5173 electron .\"",
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit && node --check src/main/main.cjs && node --check src/preload/preload.cjs && node --check forge.config.cjs",
-    "test": "vitest run",
+    "test": "vitest run && node --test src/main/public-data.test.cjs",
     "package": "pnpm build && electron-forge package",
     "make": "pnpm build && electron-forge make"
   },

@@ -4,6 +4,7 @@ const { randomBytes } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { safePublicDataUrl } = require('./public-data.cjs');
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -191,6 +192,32 @@ ipcMain.handle('desktop:get-runtime', () => ({
   platform: process.platform,
   scannerError,
 }));
+
+ipcMain.handle('desktop:fetch-public', async (_event, value) => {
+  const safe = safePublicDataUrl(value);
+  if (!safe) throw new Error('This public data address is not allowed');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const response = await net.fetch(safe, {
+      credentials: 'omit',
+      headers: { Accept: 'application/json' },
+      redirect: 'error',
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`RATi Runners returned ${response.status}`);
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.toLowerCase().includes('application/json')) {
+      throw new Error('RATi Runners returned an invalid response');
+    }
+    return await response.json();
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('RATi Runners request timed out');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+});
 
 ipcMain.handle('desktop:open-external', async (_event, value) => {
   const safe = safeExternalUrl(value);

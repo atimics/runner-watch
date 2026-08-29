@@ -91,6 +91,9 @@ export class RunnersClient {
   }
 
   private async request<T>(path: string, timeoutMs = 12_000): Promise<T> {
+    if (this.baseUrl === RATi_RUNNERS_URL && window.ratiDesktop) {
+      return window.ratiDesktop.fetchPublic<T>(path);
+    }
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
     try {

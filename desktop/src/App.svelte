@@ -283,6 +283,7 @@
   }
 
   onMount(async () => {
+    view = 'pulse';
     receipts = loadCachedReceipts();
     pulse = readCache<PulseData>('rati.feed.pulse', { rows: [] });
     radar = readCache<RadarData>('rati.feed.radar', { rows: [] });

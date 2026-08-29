@@ -5,6 +5,7 @@ import { RATi_RUNNERS_URL, RunnersClient } from './runners';
 afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
+  delete window.ratiDesktop;
 });
 
 describe('RATi Runners public data', () => {
@@ -34,6 +35,22 @@ describe('RATi Runners public data', () => {
     );
     const init = fetchMock.mock.calls[0][1];
     expect(init?.headers).not.toHaveProperty('Authorization');
+  });
+
+  it('loads public data through the trusted desktop bridge', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    const fetchPublic = vi.fn().mockResolvedValue({ rows: [{ ticker: 'LIVE' }] });
+    window.ratiDesktop = {
+      getRuntime: vi.fn(),
+      fetchPublic,
+      openExternal: vi.fn(),
+    };
+
+    const result = await new RunnersClient().pulse();
+
+    expect(result.rows).toEqual([{ ticker: 'LIVE' }]);
+    expect(fetchPublic).toHaveBeenCalledWith('/api/pulse?offset=0&limit=20');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('stops waiting when the public feed does not respond', async () => {
