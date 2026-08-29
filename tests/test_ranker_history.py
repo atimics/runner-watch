@@ -88,24 +88,29 @@ def _seed_market_bars(replay_at: datetime) -> None:
 
 def test_archived_market_data_slices_only_requested_frames() -> None:
     index = pd.to_datetime(
-        ["2026-08-04T14:00:00Z", "2026-08-04T14:05:00Z"],
+        [
+            "2026-08-04T13:55:00Z",
+            "2026-08-04T14:00:00Z",
+            "2026-08-04T14:05:00Z",
+        ],
         utc=True,
     )
     intraday = {
-        ticker: pd.DataFrame({"Close": [price, price + 0.1]}, index=index)
+        ticker: pd.DataFrame({"Close": [price, price + 0.1, price + 0.2]}, index=index)
         for ticker, price in {"AAA": 1.0, "BBB": 2.0}.items()
     }
     provider = ArchivedMarketData(
         {},
         intraday,
-        intraday_cutoff=datetime(2026, 8, 4, 14, 0, tzinfo=UTC),
+        intraday_start=datetime(2026, 8, 4, 14, 0, tzinfo=UTC),
+        intraday_cutoff=datetime(2026, 8, 4, 14, 5, tzinfo=UTC),
     )
 
     result = provider.intraday(["AAA"])
 
     assert list(result.frames) == ["AAA"]
-    assert len(result.frames["AAA"]) == 1
-    assert len(intraday["AAA"]) == 2
+    assert len(result.frames["AAA"]) == 2
+    assert len(intraday["AAA"]) == 3
 
 
 def test_historical_replay_writes_only_compact_point_in_time_rows(
@@ -150,6 +155,7 @@ def test_historical_replay_writes_only_compact_point_in_time_rows(
     assert provenance["point_in_time_features"] is True
     assert provenance["market_bar_source"] == "yahoo"
     assert provenance["bar_completion_lag_minutes"] == 5
+    assert provenance["cohort_max_symbols"] == 36
 
     aaa = next(row for row in rows if row["ticker"] == "AAA")
     vector = json.loads(aaa["feature_vector_json"])
