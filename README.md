@@ -347,8 +347,8 @@ uv sync --extra dev --python 3.13 --no-editable
 uv run streamlit run app.py
 ```
 
-Open the local address shown in the terminal. Choose **Sample data** and run a scan first.
-Sample mode is fake and lets you test the screen without internet access.
+Open the local address shown in the terminal. Local scans use live market data from the enabled
+free sources; there is no synthetic demo mode.
 
 To run the public web app locally:
 
@@ -357,7 +357,7 @@ APP_ORIGIN=http://127.0.0.1:8080 RP_ID=127.0.0.1 COOKIE_SECURE=0 \
   uv run --no-sync uvicorn runner_web.main:app --host 127.0.0.1 --port 8080
 ```
 
-For real data, choose **Live Yahoo data** and one of these ticker lists:
+The default uses live Yahoo penny-stock discovery. You can also choose one of these ticker lists:
 
 - **Quick starter list:** fast, but it cannot find a runner outside its saved list.
 - **Full US market:** downloads the official Nasdaq Trader symbol directory, runs a daily
@@ -365,12 +365,6 @@ For real data, choose **Live Yahoo data** and one of these ticker lists:
 - **My ticker list:** scans only the symbols you enter.
 
 ## Use the command line
-
-Try the fake data:
-
-```bash
-uv run runner-watch --sample
-```
 
 Scan a custom watchlist:
 

@@ -41,6 +41,26 @@ describe('scanner node addresses', () => {
     );
   });
 
+  it('starts only live scans against the connected sources', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ status: 'complete', source: 'live', rows: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await new NodeClient('http://127.0.0.1:8787', 'private-token').liveScan();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8787/api/v1/scans',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ universe: 'penny', min_price: 0.2, max_price: 5, top_n: 20 }),
+      }),
+    );
+    expect(fetchMock.mock.calls[0][1]?.body).not.toContain('sample');
+  });
+
   it('stops waiting when a scanner does not respond', async () => {
     vi.useFakeTimers();
     vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => new Promise((_resolve, reject) => {

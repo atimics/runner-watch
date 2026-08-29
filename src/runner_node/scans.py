@@ -9,21 +9,26 @@ from pathlib import Path
 from threading import Lock
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from runner_watch.market_data import routed_market_data
 from runner_watch.models import ScanSettings
-from runner_watch.sample_data import SAMPLE_SYMBOLS, SampleMarketData
 from runner_watch.scanner import RunnerScanner
-from runner_watch.universe import broad_us_universe, parse_custom_symbols, starter_universe
+from runner_watch.universe import (
+    broad_us_universe,
+    parse_custom_symbols,
+    penny_runner_universe,
+    starter_universe,
+)
 
 
 class ScanRequest(BaseModel):
-    source: Literal["sample", "live"] = "sample"
-    universe: Literal["starter", "broad", "custom"] = "starter"
+    model_config = ConfigDict(extra="forbid")
+
+    universe: Literal["penny", "starter", "broad", "custom"] = "penny"
     symbols: list[str] = Field(default_factory=list, max_length=500)
-    min_price: float = Field(default=0.5, ge=0)
-    max_price: float = Field(default=50, gt=0)
+    min_price: float = Field(default=0.2, ge=0)
+    max_price: float = Field(default=5, gt=0)
     min_avg_volume: int = Field(default=100_000, ge=0)
     min_avg_dollar_volume: float = Field(default=500_000, ge=0)
     max_symbols: int = Field(default=300, ge=1, le=5_000)
@@ -59,8 +64,24 @@ class ScanStore:
                     )
                     """
                 )
+                stale_ids: list[str] = []
+                for scan_id, payload_json in database.execute(
+                    "SELECT id,payload_json FROM node_scan_receipts"
+                ):
+                    try:
+                        source = json.loads(payload_json).get("source")
+                    except (AttributeError, TypeError, ValueError):
+                        source = None
+                    if source != "live":
+                        stale_ids.append(scan_id)
+                database.executemany(
+                    "DELETE FROM node_scan_receipts WHERE id=?",
+                    ((scan_id,) for scan_id in stale_ids),
+                )
 
     def save(self, payload: dict[str, object]) -> dict[str, object]:
+        if payload.get("source") != "live":
+            raise ValueError("Only live scan receipts can be stored")
         scan_id = f"scan_{secrets.token_urlsafe(12)}"
         value = {"id": scan_id, **payload}
         with self._lock:
@@ -120,18 +141,20 @@ def run_scan(
     provider_keys: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     warnings: list[str] = []
-    if request.source == "sample":
-        provider = SampleMarketData()
-        symbols = SAMPLE_SYMBOLS
+    provider = routed_market_data(provider_keys=provider_keys)
+    if request.universe == "penny":
+        entries, warnings = penny_runner_universe(
+            min_price=request.min_price,
+            max_price=request.max_price,
+        )
+        symbols = [item.symbol for item in entries]
+    elif request.universe == "starter":
+        symbols = [item.symbol for item in starter_universe()]
+    elif request.universe == "broad":
+        entries, warnings = broad_us_universe()
+        symbols = [item.symbol for item in entries]
     else:
-        provider = routed_market_data(provider_keys=provider_keys)
-        if request.universe == "starter":
-            symbols = [item.symbol for item in starter_universe()]
-        elif request.universe == "broad":
-            entries, warnings = broad_us_universe()
-            symbols = [item.symbol for item in entries]
-        else:
-            symbols = parse_custom_symbols(" ".join(request.symbols))
+        symbols = parse_custom_symbols(" ".join(request.symbols))
 
     settings = ScanSettings(
         min_price=request.min_price,
@@ -151,7 +174,7 @@ def run_scan(
             close()
     return {
         "status": "complete",
-        "source": request.source,
+        "source": "live",
         "started_at": started_at.isoformat(),
         "finished_at": result.finished_at.isoformat(),
         "elapsed_seconds": result.elapsed_seconds,

@@ -80,11 +80,13 @@
 
   function loadCachedReceipts(): ScanResult[] {
     const value = readCache<ScanResult[]>('rati.receipts', []);
-    return Array.isArray(value) ? value.slice(0, 20) : [];
+    return Array.isArray(value) ? value.filter((receipt) => receipt.source === 'live').slice(0, 20) : [];
   }
 
   function rememberReceipts(next: ScanResult[]) {
-    receipts = Array.from(new Map(next.map((receipt) => [receipt.id, receipt])).values())
+    receipts = Array.from(new Map(
+      next.filter((receipt) => receipt.source === 'live').map((receipt) => [receipt.id, receipt]),
+    ).values())
       .sort((left, right) => Date.parse(right.finished_at) - Date.parse(left.finished_at))
       .slice(0, 20);
     writeCache('rati.receipts', receipts);
@@ -245,10 +247,10 @@
     }
   }
 
-  async function runSampleScan() {
+  async function runLiveScan() {
     scanning = true;
     try {
-      scan = await client().sampleScan();
+      scan = await client().liveScan();
       rememberReceipts([scan, ...receipts]);
       scannerMessage = `Scan complete: ${scan.rows.length} ranked candidates.`;
     } catch (error) {
@@ -394,11 +396,11 @@
       {:else}<div class="empty-state"><span>ϟ</span><h2>No saved Flash record</h2><p>Connect once to load the public, permanent scorecard.</p></div>{/if}
     {:else if view === 'scanner'}
       <section class="screen-head"><div><span class="eyebrow">{scannerMode.toUpperCase()} ENGINE</span><h1>Scanner</h1><p>Run locally on this device or use RATi Cloud.</p></div><span class:online={node} class="connection-dot">{node ? 'Connected' : 'Disconnected'}</span></section>
-      <section class="scanner-hero"><div><span class="eyebrow">SCANNER LOCATION</span><h2>{scannerMode === 'local' ? 'Private and on-device' : 'Managed by RATi Cloud'}</h2><p>{scannerMode === 'local' ? 'Your keys and scans stay with this scanner. Internet sources are optional.' : 'Connects to runners.rati.chat. No local setup or maintenance.'}</p></div><div class="large-mode-control"><button class:active={scannerMode === 'local'} onclick={() => chooseScannerMode('local')}><b>Local</b><small>This device</small></button><button class:active={scannerMode === 'cloud'} onclick={() => chooseScannerMode('cloud')}><b>Cloud</b><small>runners.rati.chat</small></button></div></section>
+      <section class="scanner-hero"><div><span class="eyebrow">SCANNER LOCATION</span><h2>{scannerMode === 'local' ? 'Private and on-device' : 'Managed by RATi Cloud'}</h2><p>{scannerMode === 'local' ? 'Free internet sources are connected by default. Your optional API keys and scan history stay with this scanner.' : 'Connects to runners.rati.chat. No local setup or maintenance.'}</p></div><div class="large-mode-control"><button class:active={scannerMode === 'local'} onclick={() => chooseScannerMode('local')}><b>Local</b><small>This device</small></button><button class:active={scannerMode === 'cloud'} onclick={() => chooseScannerMode('cloud')}><b>Cloud</b><small>runners.rati.chat</small></button></div></section>
       <section class="connection-panel"><label for="node-url">Scanner address</label><div class="connection-row"><input id="node-url" bind:value={nodeUrl} spellcheck="false" /><button class="primary" onclick={() => refreshScanner()} disabled={connecting}>{connecting ? 'Connecting…' : 'Connect'}</button></div>{#if !isDesktop || scannerMode === 'local'}<label for="node-token">Access token <small>Only needed for a separate self-hosted scanner</small></label><input id="node-token" type="password" bind:value={nodeToken} autocomplete="off" />{/if}<p class="status" aria-live="polite">{scannerMessage}</p></section>
       {#if node}
-        <section class="node-summary"><div><small>Mode</small><strong>{node.mode.replace('_', ' ')}</strong></div><div><small>Scanner</small><strong>{node.scanner_version}</strong></div><div><small>Research</small><strong>{node.capabilities.research.replace('_', ' ')}</strong></div><div><small>Sources</small><strong>{providers.filter((provider) => provider.configured || provider.state === 'ready').length} ready</strong></div></section>
-        <section class="scan-action"><div><span class="eyebrow">RUN NOW</span><h2>Rank the starter universe</h2><p>The first run uses deterministic sample data. Add your own market sources in Settings when you are ready.</p></div><button class="primary" onclick={runSampleScan} disabled={scanning || node.mode === 'cloud'}>{scanning ? 'Scanning…' : node.mode === 'cloud' ? 'Managed by cloud' : 'Run sample scan'}</button></section>
+        <section class="node-summary"><div><small>Mode</small><strong>{node.mode.replace('_', ' ')}</strong></div><div><small>Scanner</small><strong>{node.scanner_version}</strong></div><div><small>Research</small><strong>{node.capabilities.research.replace('_', ' ')}</strong></div><div><small>Sources</small><strong>{providers.filter((provider) => provider.enabled && provider.configured).length} connected</strong></div></section>
+        <section class="scan-action"><div><span class="eyebrow">RUN NOW</span><h2>Scan live market data</h2><p>Yahoo powers the scan without an API key. Other enabled no-key sources are connected automatically; optional paid sources can be added in Settings.</p></div><button class="primary" onclick={runLiveScan} disabled={scanning || node.mode === 'cloud'}>{scanning ? 'Scanning live data…' : node.mode === 'cloud' ? 'Managed by cloud' : 'Run live scan'}</button></section>
       {:else}<section class="offline-library"><span class="eyebrow">SCANNER OFFLINE</span><h2>Your saved work is still here</h2><p>Pulse, Radar, Flash, and saved receipts continue to work. Connect a scanner only when you want a new local run.</p></section>{/if}
       {#if scan || receipts.length}<section class="scan-section"><div class="section-head"><div><span class="eyebrow">RECEIPT LIBRARY</span><h2>{receipts.length} saved scans</h2></div></div>{#if scan}<div class="scan-list">{#each scan.rows as row}<article class="scan-row"><div><strong>{row.ticker}</strong><small>{row.trade_state} · {row.rug_level} risk</small></div><div><b>{row.score.toFixed(1)}</b><small>setup</small></div><div><b>${row.price.toFixed(2)}</b><small>{row.change_pct >= 0 ? '+' : ''}{row.change_pct.toFixed(1)}%</small></div><p>{row.state_reason}</p></article>{/each}</div>{/if}<div class="receipt-grid">{#each receipts as receipt}<button class="receipt-card" onclick={() => scan = receipt}><strong>{receipt.rows.length} candidates</strong><small>{new Date(receipt.finished_at).toLocaleString()} · {receipt.source}</small></button>{/each}</div></section>{/if}
     {:else}

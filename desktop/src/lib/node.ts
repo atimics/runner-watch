@@ -56,7 +56,7 @@ export interface ScanRow {
 export interface ScanResult {
   id: string;
   status: 'complete';
-  source: 'sample' | 'live';
+  source: 'live';
   finished_at: string;
   elapsed_seconds: number;
   rows: ScanRow[];
@@ -162,10 +162,10 @@ export class NodeClient {
     return this.request('/api/v1/scans');
   }
 
-  sampleScan(): Promise<ScanResult> {
+  liveScan(): Promise<ScanResult> {
     return this.request('/api/v1/scans', {
       method: 'POST',
-      body: JSON.stringify({ source: 'sample', universe: 'starter', top_n: 20 }),
+      body: JSON.stringify({ universe: 'penny', min_price: 0.2, max_price: 5, top_n: 20 }),
     });
   }
 

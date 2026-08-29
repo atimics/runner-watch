@@ -1,3 +1,5 @@
+"""Synthetic market frames used only by scanner and ranker tests."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, time, timedelta
@@ -9,13 +11,11 @@ import pandas as pd
 from runner_watch.market_data import DownloadResult, ProgressCallback
 
 EASTERN = ZoneInfo("America/New_York")
-SAMPLE_SYMBOLS = ["SPRK", "VOLT", "NOVA", "PULSE", "LIFT", "CALM", "DUSK", "TIDE"]
+FAKE_SYMBOLS = ["SPRK", "VOLT", "NOVA", "PULSE", "LIFT", "CALM", "DUSK", "TIDE"]
 
 
-class SampleMarketData:
-    """Deterministic market-shaped data for demos and tests."""
-
-    is_sample = True
+class FakeMarketData:
+    """Deterministic market-shaped data that is never packaged with production code."""
 
     def __init__(self, now: datetime | None = None) -> None:
         self.now = (now or datetime.now(UTC)).astimezone(EASTERN)
@@ -41,7 +41,7 @@ class SampleMarketData:
             moves = rng.normal(0.0005, 0.018, len(days)).cumsum()
             close = base * (1 + moves)
             volume = rng.integers(180_000, 2_000_000, len(days))
-            frame = pd.DataFrame(
+            frames[ticker] = pd.DataFrame(
                 {
                     "Open": close * rng.uniform(0.985, 1.01, len(days)),
                     "High": close * rng.uniform(1.01, 1.04, len(days)),
@@ -51,9 +51,8 @@ class SampleMarketData:
                 },
                 index=pd.DatetimeIndex(days).tz_localize(None),
             )
-            frames[ticker] = frame
             if progress:
-                progress(number + 1, len(tickers), "Building sample daily history")
+                progress(number + 1, len(tickers), "Building test daily history")
         return DownloadResult(frames, [], [])
 
     def intraday(
@@ -98,19 +97,20 @@ class SampleMarketData:
                 if day_number == len(days) - 1 and len(volume) >= 4:
                     volume[-4:] *= 2.5
                     close[-4:] *= np.linspace(1, 1.035 + ticker_number * 0.001, 4)
-                block = pd.DataFrame(
-                    {
-                        "Open": close * 0.998,
-                        "High": close * 1.004,
-                        "Low": close * 0.996,
-                        "Close": close,
-                        "Volume": volume.astype(int),
-                    },
-                    index=index,
+                blocks.append(
+                    pd.DataFrame(
+                        {
+                            "Open": close * 0.998,
+                            "High": close * 1.004,
+                            "Low": close * 0.996,
+                            "Close": close,
+                            "Volume": volume.astype(int),
+                        },
+                        index=index,
+                    )
                 )
-                blocks.append(block)
             if blocks:
                 frames[ticker] = pd.concat(blocks)
             if progress:
-                progress(ticker_number + 1, len(tickers), "Building sample intraday history")
+                progress(ticker_number + 1, len(tickers), "Building test intraday history")
         return DownloadResult(frames, [], [])

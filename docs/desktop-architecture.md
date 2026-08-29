@@ -62,6 +62,9 @@ bundled desktop process creates a new token on every launch. A self-hosted scann
 until `RATI_NODE_TOKEN` contains at least 24 characters. Public node and provider capability reads
 remain available so the hosted client can explain what the selected node offers.
 
+Local scan requests always use live providers. Yahoo market data and other enabled no-key sources
+are connected automatically. There is no sample-data request or synthetic provider in production.
+
 Cloud nodes do not accept user-triggered scans through the local endpoint. Their
 managed workers continue to populate the existing shared Pulse and Radar data.
 

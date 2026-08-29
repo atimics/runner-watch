@@ -103,6 +103,8 @@ class NodeService:
                 state = "disabled"
             elif not configured:
                 state = "needs_configuration"
+            elif not credential_names:
+                state = "connected"
             elif reviews == {"approved"}:
                 state = "ready"
             elif "review_required" in reviews:

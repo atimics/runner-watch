@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -11,7 +13,7 @@ from runner_node.config import NodeSettings
 from runner_node.credentials import MemoryCredentialVault
 from runner_node.openrouter import OpenRouterConnections
 from runner_node.research import OpenRouterResearch
-from runner_node.scans import ScanStore
+from runner_node.scans import ScanRequest, ScanStore
 
 
 def _settings(**overrides: object) -> NodeSettings:
@@ -79,29 +81,54 @@ def test_provider_contract_never_exposes_credentials() -> None:
     providers = {provider["id"]: provider for provider in payload["providers"]}
     assert "sec" in providers
     assert "openrouter" in providers
+    assert providers["yahoo"]["state"] == "connected"
+    assert providers["yahoo"]["configuration_kind"] == "none"
     assert "OPENROUTER_API_KEY" not in response.text
     assert "credential_env" not in response.text
 
 
-def test_sample_scan_runs_through_standalone_node() -> None:
-    client, _vault = _client()
+def test_live_scan_runs_through_standalone_node(monkeypatch) -> None:
+    def fake_scan(payload: ScanRequest, _provider_keys: dict[str, str]) -> dict[str, object]:
+        assert payload.top_n == 5
+        assert payload.universe == "penny"
+        assert payload.min_price == 0.2
+        assert payload.max_price == 5
+        return {
+            "status": "complete",
+            "source": "live",
+            "finished_at": "2026-01-01T00:00:00+00:00",
+            "elapsed_seconds": 0.0,
+            "rows": [],
+            "warnings": [],
+        }
 
-    response = client.post("/api/v1/scans", json={"source": "sample", "top_n": 5})
+    client, _vault = _client()
+    monkeypatch.setattr("runner_node.api.run_scan", fake_scan)
+
+    response = client.post("/api/v1/scans", json={"top_n": 5})
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["id"].startswith("scan_")
     assert payload["status"] == "complete"
-    assert payload["source"] == "sample"
-    assert len(payload["rows"]) <= 5
+    assert payload["source"] == "live"
+    assert payload["rows"] == []
     assert client.get(f"/api/v1/scans/{payload['id']}").json() == payload
     assert client.get("/api/v1/scans").json()["receipts"] == [payload]
+
+
+def test_sample_scan_input_is_rejected() -> None:
+    client, _vault = _client()
+
+    response = client.post("/api/v1/scans", json={"source": "sample"})
+
+    assert response.status_code == 422
 
 
 def test_cloud_node_does_not_accept_user_triggered_scans() -> None:
     client, _vault = _client(settings=_settings(mode="cloud", allow_user_openrouter=False))
 
-    response = client.post("/api/v1/scans", json={"source": "sample"})
+    response = client.post("/api/v1/scans", json={})
 
     assert response.status_code == 403
 
@@ -173,7 +200,7 @@ def test_self_hosted_node_rejects_unauthenticated_writes() -> None:
         authenticated=False,
     )
 
-    assert client.post("/api/v1/scans", json={"source": "sample"}).status_code == 401
+    assert client.post("/api/v1/scans", json={}).status_code == 401
     response = client.put(
         "/api/v1/connections/openrouter",
         json={"key": "sk-or-attacker-key-with-enough-characters"},
@@ -204,7 +231,7 @@ def test_scan_receives_vault_backed_provider_keys(monkeypatch) -> None:
         captured.update(provider_keys)
         return {
             "status": "complete",
-            "source": "sample",
+            "source": "live",
             "finished_at": "2026-01-01T00:00:00+00:00",
             "elapsed_seconds": 0.0,
             "rows": [],
@@ -215,7 +242,7 @@ def test_scan_receives_vault_backed_provider_keys(monkeypatch) -> None:
     client, _vault = _client(vault=vault)
     monkeypatch.setattr("runner_node.api.run_scan", fake_scan)
 
-    assert client.post("/api/v1/scans", json={"source": "sample"}).status_code == 200
+    assert client.post("/api/v1/scans", json={}).status_code == 200
     assert captured == {"massive": "vault-massive-key"}
 
 
@@ -247,7 +274,13 @@ def test_scan_store_persists_and_prunes_receipts(tmp_path) -> None:
     database_path = tmp_path / "scanner.sqlite3"
     first = ScanStore(maximum=2, database_path=database_path)
     saved = [
-        first.save({"finished_at": f"2026-01-0{day}T00:00:00+00:00", "rows": []})
+        first.save(
+            {
+                "source": "live",
+                "finished_at": f"2026-01-0{day}T00:00:00+00:00",
+                "rows": [],
+            }
+        )
         for day in range(1, 4)
     ]
 
@@ -255,6 +288,35 @@ def test_scan_store_persists_and_prunes_receipts(tmp_path) -> None:
 
     assert [receipt["id"] for receipt in reopened.list()] == [saved[2]["id"], saved[1]["id"]]
     assert reopened.get(saved[0]["id"]) is None
+
+
+def test_scan_store_removes_legacy_non_live_receipts(tmp_path) -> None:
+    database_path = tmp_path / "scanner.sqlite3"
+    store = ScanStore(database_path=database_path)
+    saved = store.save(
+        {
+            "source": "live",
+            "finished_at": "2026-01-01T00:00:00+00:00",
+            "rows": [],
+        }
+    )
+    legacy = {**saved, "source": "sample"}
+    with sqlite3.connect(database_path) as database:
+        database.execute(
+            "UPDATE node_scan_receipts SET payload_json=? WHERE id=?",
+            (json.dumps(legacy), saved["id"]),
+        )
+
+    reopened = ScanStore(database_path=database_path)
+
+    assert reopened.list() == []
+
+
+def test_scan_store_rejects_non_live_receipts() -> None:
+    store = ScanStore()
+
+    with pytest.raises(ValueError, match="Only live"):
+        store.save({"source": "sample", "rows": []})
 
 
 def test_openrouter_flow_starts_are_rate_limited() -> None:
