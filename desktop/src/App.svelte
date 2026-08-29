@@ -386,5 +386,9 @@
     {/if}
   </main>
 
-  <footer>Desktop {runtime.appVersion} · {runtime.platform} · Node API v{node?.api_version || '—'}</footer>
+  <footer>
+    Desktop {runtime.appVersion} · {runtime.platform} · Node API v{node?.api_version || '—'} ·
+    Copyright © 2026 RATi contributors · AGPL-3.0-only · No warranty ·
+    <button class="footer-link" onclick={() => openExternal('https://github.com/atimics/runner-watch')}>Source</button>
+  </footer>
 </div>

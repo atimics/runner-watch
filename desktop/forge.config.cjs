@@ -6,7 +6,10 @@ module.exports = {
     appBundleId: 'chat.rati.desktop',
     appCategoryType: 'public.app-category.finance',
     executableName: 'RATi',
-    extraResource: [path.join(__dirname, 'resources', 'scanner')],
+    extraResource: [
+      path.join(__dirname, 'resources', 'scanner'),
+      path.join(__dirname, '..', 'LICENSE'),
+    ],
     ignore: [
       /^\/node_modules(?:\/|$)/,
       /^\/out(?:\/|$)/,

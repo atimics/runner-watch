@@ -31,7 +31,7 @@ COPY --from=integer-ranker /ranker/target/release/stonks-integer-ranker \
 RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
 COPY web ./web

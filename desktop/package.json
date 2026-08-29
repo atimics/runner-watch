@@ -6,6 +6,7 @@
   "description": "Open-source desktop client for a local or hosted RATi scanner node.",
   "main": "src/main/main.cjs",
   "author": "RATi",
+  "license": "AGPL-3.0-only",
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env RATI_DESKTOP_DEV_URL=http://127.0.0.1:5173 electron .\"",
     "build": "vite build",

@@ -66,6 +66,7 @@ small { display: block; color: #85958c; font-size: 10px; }
 .offline-library { min-height: 260px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
 .offline-library p { max-width: 580px; color: #93a39a; line-height: 1.6; }
 footer { margin-top: 20px; color: #59675f; font-size: 10px; text-align: center; }
+.footer-link { padding: 0; border: 0; background: transparent; color: #7f9488; font-size: inherit; text-decoration: underline; }
 
 @media (max-width: 900px) {
   .node-summary { grid-template-columns: repeat(2, 1fr); }

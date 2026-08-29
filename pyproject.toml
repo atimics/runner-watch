@@ -3,6 +3,7 @@ name = "runner-watch"
 version = "0.1.0"
 description = "A free-data stock momentum scanner for finding possible market runners early."
 readme = "README.md"
+license = "AGPL-3.0-only"
 requires-python = ">=3.11,<3.14"
 dependencies = [
   "cryptography>=44",

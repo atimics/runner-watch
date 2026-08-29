@@ -28,6 +28,7 @@ const allowedExternalHosts = new Set([
   'fintel.io',
   'the-odds-api.com',
   'disneytermsofuse.com',
+  'github.com',
 ]);
 
 let scannerProcess = null;

@@ -7,6 +7,10 @@ the operating-system vault. RATi AI Cloud builds the same Svelte client at `/des
 it to the managed scanner API. See
 [the desktop and scanner architecture](docs/desktop-architecture.md).
 
+The project is copyright © 2026 RATi contributors and licensed under the
+[GNU Affero General Public License v3.0 only](LICENSE). It comes without warranty. Users of a
+modified hosted version must be offered its corresponding source as required by the license.
+
 RATi is an evidence-first prediction platform. RATi Runners scans low-priced stocks for unusual movement. RATi Sports compares a transparent team-form baseline with timestamped no-vig moneyline odds and keeps public paper-pick receipts.
 It uses free Yahoo Finance data through `yfinance`. It does not need a broker login or a paid API.
 Optional Fintel short and borrow data needs a Fintel API key and the matching account access.
