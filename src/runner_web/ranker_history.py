@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from bisect import bisect_right
 from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
@@ -67,14 +68,11 @@ class ArchivedMarketData:
         frames: dict[str, pd.DataFrame] = {}
         for ticker in tickers:
             frame = self._intraday_frames.get(ticker)
-            if frame is None:
+            if frame is None or frame.empty:
                 continue
-            mask = pd.Series(True, index=frame.index)
-            if self._intraday_start is not None:
-                mask &= frame.index >= self._intraday_start
-            if self._intraday_cutoff is not None:
-                mask &= frame.index <= self._intraday_cutoff
-            frame = frame.loc[mask]
+            start = self._intraday_start or frame.index[0]
+            cutoff = self._intraday_cutoff or frame.index[-1]
+            frame = frame.loc[start:cutoff]
             if not frame.empty:
                 frames[ticker] = frame
         return DownloadResult(frames, [ticker for ticker in tickers if ticker not in frames], [])
@@ -258,10 +256,10 @@ def _session_symbols(frames: dict[str, pd.DataFrame], replay_at: datetime) -> li
 
 
 def _known_on_session(frame: pd.DataFrame, replay_at: datetime) -> bool:
-    known_index = frame.index[frame.index <= replay_at - BAR_COMPLETION_LAG]
+    position = frame.index.searchsorted(replay_at - BAR_COMPLETION_LAG, side="right") - 1
     return bool(
-        len(known_index)
-        and known_index[-1].tz_convert(EASTERN).date()
+        position >= 0
+        and frame.index[position].tz_convert(EASTERN).date()
         == replay_at.astimezone(EASTERN).date()
     )
 
@@ -312,16 +310,30 @@ def _select_replay_symbols(
 
 
 def _bar_tuples(frame: pd.DataFrame) -> list[tuple[datetime, float, float, float]]:
+    if frame.empty:
+        return []
     output: list[tuple[datetime, float, float, float]] = []
-    for stamp, row in frame.iterrows():
+    for stamp, high_raw, low_raw, close_raw in frame[
+        ["High", "Low", "Close"]
+    ].itertuples(index=True, name=None):
         try:
-            high = float(row["High"])
-            low = float(row["Low"])
-            close = float(row["Close"])
+            high = float(high_raw)
+            low = float(low_raw)
+            close = float(close_raw)
         except (TypeError, ValueError):
             continue
         output.append((stamp.to_pydatetime().astimezone(UTC), high, low, close))
     return output
+
+
+def _outcome_window(
+    bars: list[tuple[datetime, float, float, float]],
+    stamps: list[datetime],
+    replay_at: datetime,
+) -> list[tuple[datetime, float, float, float]]:
+    start = bisect_right(stamps, replay_at)
+    finish = bisect_right(stamps, replay_at + BARRIER_HORIZON + timedelta(minutes=10))
+    return bars[start:finish]
 
 
 def _return_at_horizon(
@@ -479,6 +491,8 @@ def backfill_historical_training(
     rows_written = 0
     skipped_near_live = 0
     skipped_incomplete = 0
+    bar_cache: dict[str, list[tuple[datetime, float, float, float]]] = {}
+    bar_stamp_cache: dict[str, list[datetime]] = {}
     for position, replay_at in enumerate(points, start=1):
         if progress:
             progress(
@@ -528,7 +542,18 @@ def backfill_historical_training(
         candidates = scan.all_rows or scan.rows
         labeled: list[dict[str, Any]] = []
         for candidate in candidates:
-            bars = _bar_tuples(intraday_frames.get(candidate.ticker, pd.DataFrame()))
+            bars = bar_cache.get(candidate.ticker)
+            if bars is None:
+                bars = _bar_tuples(
+                    intraday_frames.get(candidate.ticker, pd.DataFrame())
+                )
+                bar_cache[candidate.ticker] = bars
+                bar_stamp_cache[candidate.ticker] = [bar[0] for bar in bars]
+            bars = _outcome_window(
+                bars,
+                bar_stamp_cache[candidate.ticker],
+                replay_at,
+            )
             outcome = barrier_outcome(bars, replay_at, candidate.price)
             if outcome is None:
                 break
