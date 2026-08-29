@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import tomllib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -11,7 +12,17 @@ from pytest import MonkeyPatch
 from runner_web import db
 from runner_web.db import connection, init_db
 from runner_web.ranker import FEATURE_NAMES, ranker_status
-from runner_web.ranker_history import ArchivedMarketData, backfill_historical_training
+from runner_web.ranker_history import (
+    DEFAULT_CADENCE_MINUTES,
+    ArchivedMarketData,
+    backfill_historical_training,
+)
+
+
+def test_default_replay_cadence_can_fill_the_training_window() -> None:
+    assert DEFAULT_CADENCE_MINUTES == 15
+    fly_config = tomllib.loads((Path(__file__).parents[1] / "fly.toml").read_text())
+    assert int(fly_config["env"]["RANKER_HISTORICAL_BACKFILL_CADENCE_MINUTES"]) == 15
 
 
 def _seed_market_bars(replay_at: datetime) -> None:
