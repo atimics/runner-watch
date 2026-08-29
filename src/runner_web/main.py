@@ -244,6 +244,7 @@ _COMMENT_FALLBACK_MODELS = (
     "nvidia/nemotron-3.5-lightning",
     "deepseek/deepseek-v4-flash-0731",
 )
+OPENROUTER_COMMENT_MODEL_LIMIT = 3
 _configured_comment_models = tuple(
     model.strip()
     for model in os.getenv("OPENROUTER_COMMENT_MODELS", "").split(",")
@@ -251,7 +252,7 @@ _configured_comment_models = tuple(
 )
 OPENROUTER_COMMENT_MODELS = tuple(
     dict.fromkeys((FLASH.model, *(_configured_comment_models or _COMMENT_FALLBACK_MODELS)))
-)[:4]
+)[:OPENROUTER_COMMENT_MODEL_LIMIT]
 OPENROUTER_RESEARCH_TIMEOUT_SECONDS = max(
     30, int(os.getenv("OPENROUTER_RESEARCH_TIMEOUT_SECONDS", "300"))
 )
