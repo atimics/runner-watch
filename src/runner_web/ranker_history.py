@@ -41,9 +41,12 @@ class ArchivedMarketData:
         self,
         daily_frames: dict[str, pd.DataFrame],
         intraday_frames: dict[str, pd.DataFrame],
+        *,
+        intraday_cutoff: datetime | None = None,
     ) -> None:
         self._daily_frames = daily_frames
         self._intraday_frames = intraday_frames
+        self._intraday_cutoff = intraday_cutoff
 
     def daily(self, tickers: list[str], progress: Any = None) -> DownloadResult:
         frames = {
@@ -54,11 +57,15 @@ class ArchivedMarketData:
         return DownloadResult(frames, [ticker for ticker in tickers if ticker not in frames], [])
 
     def intraday(self, tickers: list[str], progress: Any = None) -> DownloadResult:
-        frames = {
-            ticker: self._intraday_frames[ticker]
-            for ticker in tickers
-            if ticker in self._intraday_frames and not self._intraday_frames[ticker].empty
-        }
+        frames: dict[str, pd.DataFrame] = {}
+        for ticker in tickers:
+            frame = self._intraday_frames.get(ticker)
+            if frame is None:
+                continue
+            if self._intraday_cutoff is not None:
+                frame = frame.loc[frame.index <= self._intraday_cutoff]
+            if not frame.empty:
+                frames[ticker] = frame
         return DownloadResult(frames, [ticker for ticker in tickers if ticker not in frames], [])
 
 
@@ -236,8 +243,8 @@ def _session_symbols(frames: dict[str, pd.DataFrame], replay_at: datetime) -> li
     feature_cutoff = replay_at - BAR_COMPLETION_LAG
     symbols = []
     for ticker, frame in frames.items():
-        known = frame.loc[frame.index <= feature_cutoff]
-        if not known.empty and known.index[-1].tz_convert(EASTERN).date() == session:
+        known_index = frame.index[frame.index <= feature_cutoff]
+        if len(known_index) and known_index[-1].tz_convert(EASTERN).date() == session:
             symbols.append(ticker)
     return sorted(symbols)
 
@@ -424,13 +431,13 @@ def backfill_historical_training(
         if len(symbols) < 2:
             skipped_incomplete += 1
             continue
-        known_frames = {
-            ticker: intraday_frames[ticker].loc[
-                intraday_frames[ticker].index <= replay_at - BAR_COMPLETION_LAG
-            ]
-            for ticker in symbols
-        }
-        scan = RunnerScanner(ArchivedMarketData(daily_frames, known_frames)).scan(
+        scan = RunnerScanner(
+            ArchivedMarketData(
+                daily_frames,
+                intraday_frames,
+                intraday_cutoff=replay_at - BAR_COMPLETION_LAG,
+            )
+        ).scan(
             symbols,
             settings,
             now=replay_at,
