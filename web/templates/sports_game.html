@@ -1,4 +1,5 @@
 {% extends "mobile_base.html" %}
+{% from "_flash_report_action.html" import flash_report_action %}
 {% block app_class %}detail-app sports-game-app{% endblock %}
 {% block title %}{{ event.away_abbreviation }} at {{ event.home_abbreviation }} · RATi Sports{% endblock %}
 {% block product_head %}{% include "_sports_styles.html" %}{% endblock %}
@@ -98,7 +99,7 @@
   <section class="game-flash game-flash-compact" aria-labelledby="gameFlashTitle">
     <div>
       <span>AI FORECAST · SEPARATE AND SCORED</span>
-      <h2 id="gameFlashTitle">Daily Flash</h2>
+      <h2 id="gameFlashTitle">Flash report</h2>
       {% if latest_commission and not latest_commission.locked and latest_commission.sports_forecast %}
       {% set ai_forecast = latest_commission.sports_forecast %}
       <div class="game-flash-prediction">
@@ -113,18 +114,7 @@
       {% endif %}
     </div>
     <div class="game-flash-action">
-      {% if latest_commission and latest_commission.locked %}
-      <button type="button" disabled><strong>Locked today</strong><small>The first report has a private hour</small></button>
-      {% elif latest_commission and latest_commission.status == 'complete' %}
-      <a href="/research/{{ latest_commission.public_id }}"><strong>Read Flash</strong><small>{{ 'Public report' if latest_commission.visibility == 'public' else 'Private report' }}</small></a>
-      {% elif latest_commission and latest_commission.status == 'running' %}
-      <button id="commissionButton" type="button" data-job-id="{{ latest_commission.public_id }}" disabled><strong>Researching…</strong><small>Building the game report</small></button>
-      {% elif user %}
-      <button id="commissionButton" type="button"><strong>Generate report</strong><small>100 Flash · private 1h</small></button>
-      {% else %}
-      <a href="/login?next={{ sports_path_prefix or '' }}/game/{{ event.id }}"><strong>Log in for Flash</strong><small>100 Flash · private 1h</small></a>
-      {% endif %}
-      <p id="commissionStatus" role="status"></p>
+      {{ flash_report_action(flash_report, 'sports') }}
     </div>
   </section>
 
@@ -350,19 +340,6 @@
     if(response.ok){status.textContent='Paper pick recorded.';document.querySelectorAll('[data-pick]').forEach(item=>{item.disabled=true;});}
     else{button.disabled=false;status.textContent=payload.detail||'Could not record the pick.';}
   }));
-  const commissionButton=document.getElementById('commissionButton');
-  const commissionStatus=document.getElementById('commissionStatus');
-  async function pollFlash(jobId){
-    const response=await fetch(`/api/research/jobs/${encodeURIComponent(jobId)}`);const result=await response.json().catch(()=>({}));
-    if(result.status==='complete'&&result.url){location.href=result.url;return;}
-    if(result.status==='failed'){commissionButton.disabled=false;commissionButton.innerHTML='<strong>Retry Flash</strong><small>100 Flash</small>';commissionStatus.textContent=result.error||'Flash failed. You can retry.';return;}
-    commissionStatus.textContent='Flash is reading this matchup and writing your private report…';setTimeout(()=>pollFlash(jobId),2500);
-  }
-  if(commissionButton?.dataset.jobId)pollFlash(commissionButton.dataset.jobId);
-  commissionButton?.addEventListener('click',async()=>{
-    commissionButton.disabled=true;commissionButton.innerHTML='<strong>Starting…</strong><small>Building the game report</small>';commissionStatus.textContent='Sending the report to the queue…';
-    try{const response=await fetch('/api/sports/games/{{ event.id }}/research',{method:'POST'});const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.detail||result.error||'Could not start Flash');if(Number.isFinite(Number(result.balance)))document.querySelectorAll('[data-flash-balance]').forEach(item=>{item.textContent=result.balance;});if(result.status==='complete'&&result.url){location.href=result.url;return;}commissionButton.innerHTML='<strong>Researching…</strong><small>Building the game report</small>';pollFlash(result.job_id);}
-    catch(error){commissionButton.disabled=false;commissionButton.innerHTML='<strong>Retry Flash</strong><small>100 Flash</small>';commissionStatus.textContent=error.message||'Could not start Flash';}
-  });
 </script>
+<script src="/static/flash-report.js?v={{ static_version }}" defer></script>
 {% endblock %}

@@ -251,6 +251,14 @@ OPENROUTER_RESEARCH_TIMEOUT_SECONDS = max(
     30, int(os.getenv("OPENROUTER_RESEARCH_TIMEOUT_SECONDS", "300"))
 )
 FLASH_GLOBAL_DAILY_LIMIT = max(1, int(os.getenv("FLASH_GLOBAL_DAILY_LIMIT", "50")))
+FLASH_REPORT_FAILURE_STREAK_LIMIT = max(
+    2, int(os.getenv("FLASH_REPORT_FAILURE_STREAK_LIMIT", "3"))
+)
+FLASH_REPORT_FAILURE_WINDOW_MINUTES = max(
+    5, int(os.getenv("FLASH_REPORT_FAILURE_WINDOW_MINUTES", "30"))
+)
+FLASH_REPORT_FAILED_MESSAGE = "Report couldn't be generated. No Flash was charged."
+FLASH_REPORT_UNAVAILABLE_MESSAGE = "Flash reports are unavailable right now."
 COMMENT_MAX_CHARS = 240
 COMMENT_REQUEST_KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
 COMMENT_REQUEST_PENDING_SECONDS = max(90, int(os.getenv("COMMENT_REQUEST_PENDING_SECONDS", "120")))
@@ -957,10 +965,33 @@ def page_context(request: Request, session_token: str | None, **extra: Any) -> d
 
 def _flash_provider_ready(actor: AIKol = FLASH) -> bool:
     if actor.provider == "openrouter":
-        return bool(OPENROUTER_API_KEY)
-    if actor.provider == "openai":
-        return bool(AI_REPORT_API_KEY)
-    return False
+        configured = bool(OPENROUTER_API_KEY)
+    elif actor.provider == "openai":
+        configured = bool(AI_REPORT_API_KEY)
+    else:
+        configured = False
+    if not configured:
+        return False
+
+    since = iso(now() - timedelta(minutes=FLASH_REPORT_FAILURE_WINDOW_MINUTES))
+    try:
+        with connection() as database:
+            rows = database.execute(
+                """
+                SELECT status FROM research_commissions
+                WHERE actor_id=? AND status IN ('complete','failed') AND updated_at>=?
+                ORDER BY updated_at DESC LIMIT ?
+                """,
+                (actor.id, since, FLASH_REPORT_FAILURE_STREAK_LIMIT),
+            ).fetchall()
+    except Exception:
+        # Database readiness is checked elsewhere. Do not hide Flash merely because
+        # this optional circuit-breaker history is not available during startup.
+        return True
+    return not (
+        len(rows) == FLASH_REPORT_FAILURE_STREAK_LIMIT
+        and all(str(row["status"]) == "failed" for row in rows)
+    )
 
 
 async def edgar_worker() -> None:
@@ -1210,6 +1241,9 @@ def billing_page(
             request,
             runner_session,
             transactions=recent_transactions(str(user["id"])) if user else [],
+            flash_reports_available=(
+                _flash_provider_ready() and _flash_daily_capacity_available()
+            ),
         ),
     )
 
@@ -2626,6 +2660,147 @@ def daily_report_for_sports_game(
     return daily_report_for_ticker(_sports_report_key(event_id), viewer_user_id)
 
 
+def _flash_daily_capacity_available(
+    *,
+    actor: AIKol = FLASH,
+    at: datetime | None = None,
+) -> bool:
+    since = iso((at or now()) - timedelta(days=1))
+    try:
+        with connection() as database:
+            count = database.execute(
+                """
+                SELECT COUNT(*) FROM research_commissions
+                WHERE actor_id=? AND created_at>? AND status IN ('running','complete')
+                """,
+                (actor.id, since),
+            ).fetchone()[0]
+    except Exception:
+        return False
+    return int(count) < FLASH_GLOBAL_DAILY_LIMIT
+
+
+def _sports_report_is_open(event: dict[str, Any], *, at: datetime | None = None) -> bool:
+    if str(event.get("status") or "") != "pre":
+        return False
+    raw_start = str(event.get("start_time") or "").replace("Z", "+00:00")
+    try:
+        start_at = datetime.fromisoformat(raw_start)
+    except ValueError:
+        return False
+    if start_at.tzinfo is None:
+        start_at = start_at.replace(tzinfo=UTC)
+    return start_at > (at or now())
+
+
+def _flash_report_action(
+    *,
+    user_id: str | None,
+    latest_report: dict[str, Any] | None,
+    latest_attempt: dict[str, Any] | None,
+    start_url: str,
+    login_url: str,
+    sports_event: dict[str, Any] | None = None,
+    at: datetime | None = None,
+) -> dict[str, Any]:
+    """Return the single user-facing state for a Flash report action."""
+
+    current_time = at or now()
+
+    def action(
+        state: str,
+        label: str,
+        detail: str,
+        *,
+        enabled: bool = False,
+        href: str | None = None,
+        job_id: str | None = None,
+        message: str = "",
+        status_tone: str = "",
+    ) -> dict[str, Any]:
+        return {
+            "state": state,
+            "label": label,
+            "detail": detail,
+            "enabled": enabled,
+            "href": href,
+            "job_id": job_id,
+            "message": message,
+            "status_tone": status_tone,
+            "start_url": start_url,
+        }
+
+    if latest_report:
+        if latest_report.get("locked"):
+            return action("locked", "Report locked", "Private for up to 1h")
+        if latest_report.get("status") == "complete":
+            visibility = str(latest_report.get("visibility") or "private")
+            return action(
+                "complete",
+                "Read report",
+                "Public" if visibility == "public" else "Private",
+                href=f"/research/{latest_report['public_id']}",
+            )
+        if latest_report.get("status") == "running":
+            return action(
+                "running",
+                "Generating report…",
+                "This may take a minute",
+                job_id=str(latest_report.get("public_id") or ""),
+            )
+
+    failed_today = bool(
+        latest_attempt
+        and latest_attempt.get("status") == "failed"
+        and str(latest_attempt.get("report_day") or "") == current_time.date().isoformat()
+    )
+    failure_message = FLASH_REPORT_FAILED_MESSAGE if failed_today else ""
+
+    if sports_event is not None and not _sports_report_is_open(sports_event, at=current_time):
+        return action("closed", "Reports closed", "Game has started")
+    if not _flash_provider_ready():
+        return action(
+            "unavailable",
+            "Report unavailable",
+            "Try again later",
+            message=failure_message,
+            status_tone="error" if failure_message else "",
+        )
+    if not _flash_daily_capacity_available(at=current_time):
+        return action(
+            "unavailable",
+            "Report unavailable",
+            "Daily limit reached",
+            message=failure_message,
+            status_tone="error" if failure_message else "",
+        )
+    if not user_id:
+        return action(
+            "login",
+            "Log in to generate",
+            f"{REPORT_COST} Flash · private 1h",
+            href=login_url,
+        )
+
+    balance = int(wallet_for_user(user_id)["balance"])
+    if balance < REPORT_COST:
+        return action(
+            "insufficient",
+            f"{REPORT_COST} Flash needed",
+            f"Balance {balance}",
+            message=failure_message,
+            status_tone="error" if failure_message else "",
+        )
+    return action(
+        "failed" if failed_today else "available",
+        "Try again" if failed_today else "Generate report",
+        f"{REPORT_COST} Flash · private 1h",
+        enabled=True,
+        message=failure_message,
+        status_tone="error" if failure_message else "",
+    )
+
+
 def _alpha_list_summary(
     ticker: str,
     pulse_lookup: dict[str, dict[str, Any]],
@@ -3801,9 +3976,9 @@ def _create_research_commission(
             if start_at.tzinfo is None:
                 start_at = start_at.replace(tzinfo=UTC)
         except ValueError as exc:
-            raise HTTPException(409, "This game does not have a valid start time.") from exc
+            raise HTTPException(409, "Reports are not available for this game.") from exc
         if evidence.get("status") != "pre" or start_at <= current_time:
-            raise HTTPException(409, "AI predictions are available only before the game starts.")
+            raise HTTPException(409, "Reports close when the game starts.")
     else:
         engagement_count = _community_engagement_count(ticker)
         evidence_key, evidence = _alpha_evidence(ticker, engagement_count)
@@ -3837,12 +4012,12 @@ def _create_research_commission(
             global_count = db.execute(
                 """
                 SELECT COUNT(*) FROM research_commissions
-                WHERE actor_id=? AND created_at>?
+                WHERE actor_id=? AND created_at>? AND status IN ('running','complete')
                 """,
                 (actor.id, since),
             ).fetchone()[0]
             if global_count >= FLASH_GLOBAL_DAILY_LIMIT:
-                raise HTTPException(429, "Flash has reached today's shared report limit.")
+                raise HTTPException(429, FLASH_REPORT_UNAVAILABLE_MESSAGE)
             inserted = db.execute(
                 """
                 INSERT INTO research_commissions(
@@ -4509,29 +4684,40 @@ def latest_commission(user_id: str, ticker: str) -> dict[str, Any] | None:
     return _commission_record(row)
 
 
-def _commission_api_payload(report: dict[str, Any]) -> dict[str, Any]:
+def _commission_api_payload(
+    report: dict[str, Any],
+    user_id: str | None = None,
+) -> dict[str, Any]:
     status = str(report.get("status") or "failed")
     public_id = str(report.get("public_id") or "")
-    return {
+    failed = status == "failed"
+    payload = {
         "ok": status != "failed",
         "ticker": str(report.get("ticker") or ""),
         "job_id": public_id,
         "status": status,
-        "retryable": status == "failed",
+        "retryable": failed and _flash_provider_ready(),
         "url": f"/research/{public_id}" if status == "complete" and public_id else None,
-        "error": str(report.get("error") or "") if status == "failed" else None,
+        "error": FLASH_REPORT_FAILED_MESSAGE if failed else None,
+        "message": FLASH_REPORT_FAILED_MESSAGE if failed else None,
+        "charged": status in {"running", "complete"},
+        "refunded": REPORT_COST if failed else 0,
         "exclusive_until": report.get("exclusive_until"),
     }
+    if user_id:
+        payload["balance"] = wallet_for_user(user_id)["balance"]
+    return payload
 
 
 async def _enqueue_created_research_report(
     report: dict[str, Any],
     user_id: str,
-) -> None:
+) -> dict[str, Any]:
     if redis_configured():
         try:
             await asyncio.to_thread(enqueue_research_job, str(report["id"]))
         except Exception as exc:
+            LOG.warning("Could not enqueue Flash report %s: %s", report.get("id"), exc)
             with connection() as db:
                 db.execute(
                     """
@@ -4547,12 +4733,14 @@ async def _enqueue_created_research_report(
                     kind="report_refund",
                     reference_id=str(report["id"]),
                 )
-            raise HTTPException(
-                503,
-                "The research queue is temporarily unavailable. Please retry.",
-            ) from exc
+                failed_row = db.execute(
+                    "SELECT * FROM research_commissions WHERE id=?",
+                    (report["id"],),
+                ).fetchone()
+            return _commission_record(failed_row) or report
     else:
         await RESEARCH_JOB_QUEUE.put(str(report["id"]))
+    return report
 
 
 def _generate_alpha_report(evidence: dict[str, Any]) -> dict[str, Any]:
@@ -5245,6 +5433,9 @@ def sports_game_page(
     if not event:
         raise HTTPException(404, "Game not found")
     user = current_user(runner_session)
+    user_id = str(user["id"]) if user else None
+    latest_report = daily_report_for_sports_game(event_id, user_id)
+    sports_path_prefix = "" if product_for_request(request) == "sports" else "/sports"
     return templates.TemplateResponse(
         request=request,
         name="sports_game.html",
@@ -5252,12 +5443,20 @@ def sports_game_page(
             request,
             runner_session,
             event=event,
-            latest_commission=daily_report_for_sports_game(
-                event_id,
-                str(user["id"]) if user else None,
+            latest_commission=latest_report,
+            flash_report=_flash_report_action(
+                user_id=user_id,
+                latest_report=latest_report,
+                latest_attempt=latest_commission(user_id, _sports_report_key(event_id))
+                if user_id
+                else None,
+                start_url=f"/api/sports/games/{event_id}/research",
+                login_url=f"/login?next={sports_path_prefix}/game/{event_id}",
+                sports_event=event,
             ),
             active_tab="pulse",
             nav_product="sports",
+            sports_path_prefix=sports_path_prefix,
         ),
     )
 
@@ -5281,10 +5480,9 @@ async def commission_sports_research_api(
         _sports_report_key(event_id),
     )
     if created:
-        await _enqueue_created_research_report(report, str(user["id"]))
-    payload = _commission_api_payload(report)
+        report = await _enqueue_created_research_report(report, str(user["id"]))
+    payload = _commission_api_payload(report, str(user["id"]))
     payload["created"] = created
-    payload["balance"] = wallet_for_user(str(user["id"]))["balance"]
     return JSONResponse(payload, status_code=202 if payload["status"] == "running" else 200)
 
 
@@ -5991,7 +6189,8 @@ def ticker_page(
         )
         comment_count = comment_count_for_ticker(normalized)
         calls = community_calls_for_ticker(normalized, current_price=mark, limit=20)
-        latest_commission = daily_report_for_ticker(normalized, str(user["id"]))
+        latest_report = daily_report_for_ticker(normalized, str(user["id"]))
+        latest_attempt = latest_commission(str(user["id"]), normalized)
     else:
         public_data = _public_ticker_page_data(normalized)
         if not public_data.get("found"):
@@ -6001,7 +6200,9 @@ def ticker_page(
         comment_count = int(public_data["comment_count"])
         active_call = None
         calls = list(public_data["calls"])
-        latest_commission = public_data.get("latest_commission")
+        latest_report = public_data.get("latest_commission")
+        latest_attempt = None
+    user_id = str(user["id"]) if user else None
     return templates.TemplateResponse(
         request=request,
         name="ticker.html",
@@ -6013,7 +6214,14 @@ def ticker_page(
             comment_count=comment_count,
             active_call=active_call,
             calls=calls,
-            latest_commission=latest_commission,
+            latest_commission=latest_report,
+            flash_report=_flash_report_action(
+                user_id=user_id,
+                latest_report=latest_report,
+                latest_attempt=latest_attempt,
+                start_url=f"/api/research/{normalized}",
+                login_url=f"/login?next=/t/{normalized}",
+            ),
             active_tab="pulse",
         ),
     )
@@ -7267,10 +7475,9 @@ async def commission_research_api(
         normalized,
     )
     if created:
-        await _enqueue_created_research_report(report, str(user["id"]))
-    payload = _commission_api_payload(report)
+        report = await _enqueue_created_research_report(report, str(user["id"]))
+    payload = _commission_api_payload(report, str(user["id"]))
     payload["created"] = created
-    payload["balance"] = wallet_for_user(str(user["id"]))["balance"]
     return JSONResponse(payload, status_code=202 if payload["status"] == "running" else 200)
 
 
@@ -7288,7 +7495,7 @@ def research_status_api(
     if not report:
         raise HTTPException(404, "No Flash report found")
     enforce_rate(request, "research-status", limit=180, seconds=600, subject=user["id"])
-    payload = _commission_api_payload(report)
+    payload = _commission_api_payload(report, str(user["id"]))
     if payload["status"] == "complete":
         with ALPHA_DATA_LOCK:
             ALPHA_DATA_CACHE.clear()
@@ -7314,7 +7521,9 @@ def research_job_status_api(
         ).fetchone()
     if not row:
         raise HTTPException(404, "Flash report not found")
-    return JSONResponse(_commission_api_payload(_commission_record(row) or {}))
+    return JSONResponse(
+        _commission_api_payload(_commission_record(row) or {}, str(user["id"]))
+    )
 
 
 @app.post("/api/research/{public_id}/publish")

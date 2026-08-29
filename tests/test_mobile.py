@@ -166,12 +166,15 @@ def test_large_responses_are_compressed() -> None:
 def test_ticker_has_public_call_and_flash_actions() -> None:
     template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
     script = (Path(__file__).parents[1] / "web/static/ticker-detail.js").read_text()
+    action = (
+        Path(__file__).parents[1] / "web/templates/_flash_report_action.html"
+    ).read_text()
 
     assert "Track a thesis" not in template
     assert "thesisDialog" not in template
     assert "thesisForm" not in template
-    assert "Generate today's report" in template
-    assert "commissionButton" in template
+    assert "flash_report_action(flash_report)" in template
+    assert "commissionButton" in action
     assert "Make Call" in template
     assert 'class="ticker-action-row"' in template
     assert template.count('class="ticker-action-slot"') == 2
@@ -677,6 +680,7 @@ def test_ticker_page_does_not_add_a_guest_research_action(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "ticker-page.db")
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "")
     init_db()
     captured_at = datetime.now(UTC).isoformat()
     insert_scan_run("ticker-page-run", captured_at, 1)
@@ -705,8 +709,8 @@ def test_ticker_page_does_not_add_a_guest_research_action(
 
     assert response.status_code == 200
     assert "Ask Flash" not in response.body.decode()
-    assert "Daily Flash" in response.body.decode()
-    assert "Log in · 100 Flash" in response.body.decode()
+    assert "Report unavailable" in response.body.decode()
+    assert "Log in to generate" not in response.body.decode()
     assert "Connect OpenRouter" not in response.body.decode()
 
 
@@ -2344,22 +2348,25 @@ def test_first_daily_flash_report_locks_other_users_for_one_hour(
     assert late_publish["balance"] == 0
 
 
-def test_ticker_commissions_flash_with_no_browser_key() -> None:
+def test_ticker_and_sports_share_one_flash_report_workflow() -> None:
     root = Path(__file__).parents[1]
-    template = (root / "web/templates/ticker.html").read_text()
-    script = (root / "web/static/ticker-detail.js").read_text()
+    ticker_template = (root / "web/templates/ticker.html").read_text()
+    sports_template = (root / "web/templates/sports_game.html").read_text()
+    action_template = (root / "web/templates/_flash_report_action.html").read_text()
+    report_script = (root / "web/static/flash-report.js").read_text()
+    ticker_script = (root / "web/static/ticker-detail.js").read_text()
 
-    assert "Generate today's report" in template
-    assert "Retry Flash" in script
-    assert "100 Flash" in template
-    assert "commissionButton" in template
-    assert "fetch(`/api/research/${encodeURIComponent(ticker)}`" in script
-    assert 'id="tickerPageData" type="application/json"' in template
-    assert 'src="/static/ticker-detail.js?v={{ static_version }}" defer' in template
-    assert "runnerOpenRouter" not in template + script
-    assert "X-OpenRouter-Key" not in template + script
-    assert '<strong>Daily Flash</strong><span>100 Flash · private 1h</span>' in template
-    assert "{{ flash.model }}" not in template
+    assert "flash_report_action(flash_report)" in ticker_template
+    assert "flash_report_action(flash_report, 'sports')" in sports_template
+    assert "/static/flash-report.js" in ticker_template
+    assert "/static/flash-report.js" in sports_template
+    assert "Generate report" in report_script
+    assert "Report couldn't be generated" in report_script
+    assert "data-start-url" in action_template
+    assert "pollFlash" not in ticker_script + sports_template
+    assert "Sending the report to the queue" not in report_script + sports_template
+    assert "OpenRouter" not in action_template + report_script
+    assert "X-OpenRouter-Key" not in action_template + report_script
 
 
 def test_flash_model_label_is_shown_on_research_and_pulse() -> None:
@@ -2671,13 +2678,99 @@ def test_failed_commission_stores_safe_diagnostics_and_is_retryable(
     assert failed is not None
     assert failed["status"] == "failed"
     assert failed["usage"]["failure"]["failure_kind"] == "invalid_json"
-    assert web_main._commission_api_payload(failed)["retryable"] is True
     assert wallet_for_user("failed-user")["balance"] == 100
+    payload = web_main._commission_api_payload(failed, "failed-user")
+    assert payload["retryable"] is True
+    assert payload["error"] == "Report couldn't be generated. No Flash was charged."
+    assert payload["balance"] == 100
+    assert payload["refunded"] == 100
+    assert "malformed" not in json.dumps(payload)
     assert "OPENROUTER_API_KEY" not in json.dumps(failed)
     retry, created = web_main._create_research_commission("failed-user", "EU")
     assert created is True
     assert retry["status"] == "running"
     assert wallet_for_user("failed-user")["balance"] == 0
+
+
+def test_flash_report_circuit_breaker_stops_promising_failed_reports(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "flash-circuit.db")
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "server-test-key")
+    init_db()
+    timestamp = datetime.now(UTC).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("circuit-user", "circuit_user", "Circuit User", "active", timestamp),
+        )
+        for index in range(web_main.FLASH_REPORT_FAILURE_STREAK_LIMIT):
+            database.execute(
+                """
+                INSERT INTO research_commissions(
+                    id,public_id,user_id,ticker,evidence_key,status,requested_model,
+                    actor_id,created_at,updated_at,report_day,error
+                ) VALUES(?,?,?,?,?,'failed',?,?,?,?,?,?)
+                """,
+                (
+                    f"failed-{index}",
+                    f"failed-public-{index}",
+                    "circuit-user",
+                    "FAIL",
+                    f"evidence-{index}",
+                    web_main.FLASH.model,
+                    web_main.FLASH.id,
+                    timestamp,
+                    timestamp,
+                    datetime.now(UTC).date().isoformat(),
+                    "Internal provider detail",
+                ),
+            )
+
+    assert web_main._flash_provider_ready() is False
+    assert web_main._flash_daily_capacity_available() is True
+    report_action = web_main._flash_report_action(
+        user_id="circuit-user",
+        latest_report=None,
+        latest_attempt=web_main.latest_commission("circuit-user", "FAIL"),
+        start_url="/api/research/FAIL",
+        login_url="/login?next=/t/FAIL",
+    )
+    assert report_action["state"] == "unavailable"
+    assert report_action["label"] == "Report unavailable"
+    assert report_action["message"] == "Report couldn't be generated. No Flash was charged."
+    assert "provider" not in json.dumps(report_action).lower()
+
+
+def test_flash_queue_failure_refunds_before_the_response(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "flash-queue.db")
+    init_db()
+    timestamp = datetime.now(UTC).isoformat()
+    insert_filing("queue-one", "ONE", 1.25, 90, timestamp, "P")
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("queue-user", "queue_user", "Queue User", "active", timestamp),
+        )
+    claim_daily_flash("queue-user")
+    report, created = web_main._create_research_commission("queue-user", "ONE")
+    assert created is True
+    assert wallet_for_user("queue-user")["balance"] == 0
+    monkeypatch.setattr(web_main, "redis_configured", lambda: True)
+
+    def fail_enqueue(_report_id: str) -> None:
+        raise RuntimeError("private queue detail")
+
+    monkeypatch.setattr(web_main, "enqueue_research_job", fail_enqueue)
+    failed = asyncio.run(web_main._enqueue_created_research_report(report, "queue-user"))
+    payload = web_main._commission_api_payload(failed, "queue-user")
+
+    assert payload["status"] == "failed"
+    assert payload["balance"] == 100
+    assert payload["message"] == "Report couldn't be generated. No Flash was charged."
+    assert "queue" not in json.dumps(payload).lower()
 
 
 def test_owner_can_publish_report_once_and_earn_flash(

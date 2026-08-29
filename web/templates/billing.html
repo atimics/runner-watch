@@ -37,7 +37,11 @@
   <section class="plan-card">
     <header><div><span class="decision-badge own">SPEND</span><h2>Clear prices</h2></div></header>
     <ul class="feature-list compact flash-price-list">
+      {% if flash_reports_available %}
       <li><i>−</i><span><strong>Generate today's ticker report</strong><small>The first generator gets one private alpha hour.</small></span><b>100</b></li>
+      {% else %}
+      <li><i>−</i><span><strong>Flash reports</strong><small>Unavailable right now. Flash cannot be spent on reports.</small></span><b>—</b></li>
+      {% endif %}
       <li><i>−</i><span><strong>AI-generated ticker comment</strong><small>Written from your perspective using current evidence.</small></span><b>10</b></li>
       <li><i>+</i><span><strong>Publish during your alpha hour</strong><small>Share the daily report early and unlock it for everyone.</small></span><b>50</b></li>
       <li><i>+</i><span><strong>Win a sports Call</strong><small>Reward scales with the frozen odds so favorites earn less than underdogs.</small></span><b>up to {{ sports_call_reward_cap }}</b></li>

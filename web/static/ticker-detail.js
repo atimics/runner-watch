@@ -596,58 +596,6 @@
     }
   });
 
-  const commissionButton = document.getElementById('commissionButton');
-  const commissionStatus = document.getElementById('commissionStatus');
-
-  async function pollFlash(jobId) {
-    const response = await fetch(`/api/research/jobs/${encodeURIComponent(jobId)}`);
-    const result = await response.json().catch(() => ({}));
-    if (result.status === 'complete' && result.url) {
-      location.href = result.url;
-      return;
-    }
-    if (result.status === 'failed') {
-      commissionButton.disabled = false;
-      setTickerAction(commissionButton, 'Retry Flash', '100 Flash');
-      commissionStatus.textContent = result.error || 'Flash failed. You can retry.';
-      return;
-    }
-    commissionStatus.textContent =
-      'Flash is filling its context and writing your private report…';
-    setTimeout(() => pollFlash(jobId), 2500);
-  }
-
-  if (commissionButton?.dataset.jobId) pollFlash(commissionButton.dataset.jobId);
-  commissionButton?.addEventListener('click', async () => {
-    commissionButton.disabled = true;
-    setTickerAction(commissionButton, 'Daily Flash', 'Starting…');
-    commissionStatus.textContent = 'Sending the report to the queue…';
-    try {
-      const response = await fetch(`/api/research/${encodeURIComponent(ticker)}`, {
-        method: 'POST',
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(result.detail || result.error || 'Could not start Flash');
-      }
-      if (Number.isFinite(Number(result.balance))) {
-        document.querySelectorAll('[data-flash-balance]').forEach(item => {
-          item.textContent = result.balance;
-        });
-      }
-      if (result.status === 'complete' && result.url) {
-        location.href = result.url;
-        return;
-      }
-      setTickerAction(commissionButton, 'Daily Flash', 'Researching…');
-      pollFlash(result.job_id);
-    } catch (error) {
-      commissionButton.disabled = false;
-      setTickerAction(commissionButton, 'Retry Flash', '100 Flash');
-      commissionStatus.textContent = error.message || 'Could not start Flash';
-    }
-  });
-
   const generateComment = document.getElementById('generateComment');
   const commentStatus = document.getElementById('commentStatus');
   const commentList = document.getElementById('commentList');

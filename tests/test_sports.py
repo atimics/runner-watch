@@ -350,7 +350,7 @@ def test_ai_prediction_cannot_be_created_after_a_game_starts(sports_db) -> None:
     assert event is not None
     store_events([event])
 
-    with pytest.raises(HTTPException, match="only before the game starts"):
+    with pytest.raises(HTTPException, match="Reports close when the game starts"):
         web_main._create_research_commission(
             "unused-user",
             web_main._sports_report_key(str(event["id"])),
@@ -682,7 +682,8 @@ def test_bovada_odds_show_feed_attribution_and_freeze_on_paper_pick(sports_db) -
     assert observed_at.isoformat()[:16].replace("T", " ").encode() in response.body
 
 
-def test_sports_host_gets_the_sports_product(sports_db) -> None:
+def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "server-test-key")
     event = normalize_event("mlb", sample_event())
     assert event is not None
     store_events([event])
@@ -735,7 +736,7 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     assert b"MARKET GAP" in detail_response.body
     assert b"Season records plus home edge" in detail_response.body
     assert detail_response.body.index(b"SEASON-RECORD BASELINE") < detail_response.body.index(
-        b"Daily Flash"
+        b"Flash report"
     )
     assert b"Team news" in detail_response.body
     assert b"Make a paper pick" in detail_response.body
@@ -1019,7 +1020,10 @@ def test_sports_alpha_builds_team_and_player_win_rate_history(sports_db) -> None
     assert alpha["model"]["receipts"][0]["receipt_id"]
 
 
-def test_game_page_keeps_player_context_and_flash_inside_the_matchup(sports_db) -> None:
+def test_game_page_keeps_player_context_and_flash_inside_the_matchup(
+    sports_db, monkeypatch
+) -> None:
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "server-test-key")
     payload = {
         "boxscore": {
             "players": [
@@ -1094,13 +1098,14 @@ def test_game_page_keeps_player_context_and_flash_inside_the_matchup(sports_db) 
         request(path=f"/game/{upcoming['id']}"),
         None,
     )
-    assert b"Daily Flash" in response.body
+    assert b"Flash report" in response.body
     assert b"Last stored team rosters" in response.body
     assert b"Previous team rosters" in response.body
     assert b"Home Player" in response.body
     assert b"Not confirmed for this game" in response.body
     assert b"team record in" not in response.body
-    assert b"/api/sports/games/mlb:401200003/research" in response.body
+    assert b"Log in to generate" in response.body
+    assert b"/api/sports/games/mlb:401200003/research" not in response.body
 
 
 def test_sports_flash_uses_a_sports_only_contract_and_frozen_numbers(monkeypatch) -> None:
@@ -1320,6 +1325,8 @@ def test_finished_game_seals_the_last_pregame_prediction_and_market(sports_db) -
     assert b"SEALED PREGAME" in response.body
     assert b"Later news and results cannot rewrite it" in response.body
     assert b"Pregame market timeline" in response.body
+    assert b"Reports closed" in response.body
+    assert b'id="commissionButton"' not in response.body
 
 
 def test_sports_alpha_fetches_history_only_for_ranked_players(sports_db) -> None:
