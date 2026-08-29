@@ -4,13 +4,45 @@
 {% block title %}Pulse · RATi Sports{% endblock %}
 {% block product_head %}{% include "_sports_styles.html" %}{% endblock %}
 {% block content %}
-<div class="desktop-workspace" data-desktop-workspace>
+{% macro golf_card(event) -%}
+  <article class="golf-tournament-card">
+    <header>
+      <span class="golf-tournament-mark" aria-hidden="true">PGA</span>
+      <span class="golf-tournament-copy">
+        <small>{{ event.status_detail|upper }}</small>
+        <strong>{{ event.name }}</strong>
+        <span>{% if event.venue %}{{ event.venue }}{% if event.location %} · {{ event.location }}{% endif %}{% else %}PGA Tour{% endif %}</span>
+      </span>
+      <span class="golf-tournament-time"><time data-local-time="{{ event.start_time }}">{{ event.start_time[:10] }}</time><small>{{ event.entrant_count }} players</small></span>
+    </header>
+    {% if event.leaderboard %}
+    <ol class="golf-leaderboard" aria-label="{{ event.name }} leaders">
+      {% for player in event.leaderboard %}
+      <li>
+        <b>{{ player.position_display }}</b>
+        <span><strong>{{ player.player_name }}</strong>{% if player.country %}<small>{{ player.country }}</small>{% endif %}</span>
+        <span class="golf-round">{% if player.round_number %}<small>R{{ player.round_number }}{% if player.through_display %} · {{ player.through_display }}{% endif %}</small>{% endif %}<strong>{{ player.score_display }}</strong></span>
+      </li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <div class="golf-awaiting"><strong>Field not posted yet.</strong><span>The leaderboard will appear when ESPN publishes the tournament field.</span></div>
+    {% endif %}
+    <footer><span>Leaderboard preview</span><a href="{{ event.source_url }}" target="_blank" rel="noopener noreferrer">Open ESPN source <span aria-hidden="true">↗</span></a></footer>
+  </article>
+{%- endmacro %}
+
+<div class="desktop-workspace{% if selected_sport == 'golf' %} golf-only-workspace{% endif %}" data-desktop-workspace>
   <section class="desktop-list-pane sports-feed-pane" data-desktop-list>
     <header class="screen-head">
       <div>
         <span class="rati-product">RATi SPORTS</span>
         <h1>Pulse</h1>
-        <span class="head-meta sports-pulse-summary"><span><b id="sportsPulseCount">{{ pulse.display_count }}</b> matchup{% if pulse.display_count != 1 %}s{% endif %}</span><span>{{ pulse.scanned_count }} checked</span><span id="sportsPulseMaturity">Baseline {{ pulse.model_record.games }}/{{ pulse.model_record.sample.target }} graded</span><span id="sportsPulseStatus">Live</span></span>
+        {% if selected_sport == 'golf' %}
+        <span class="head-meta sports-pulse-summary"><span><b>{{ golf.display_count }}</b> PGA tournament{% if golf.display_count != 1 %}s{% endif %}</span><span>{{ golf.entrant_count }} players tracked</span><span>Live leaderboard</span></span>
+        {% else %}
+        <span class="head-meta sports-pulse-summary"><span><b id="sportsPulseCount">{{ pulse.display_count }}</b> team projection{% if pulse.display_count != 1 %}s{% endif %}</span><span>{{ pulse.scanned_count }} games checked</span><span id="sportsPulseMaturity">Baseline {{ pulse.model_record.games }}/{{ pulse.model_record.sample.target }} graded</span><span id="sportsPulseStatus">Live</span></span>
+        {% endif %}
       </div>
       {% if user %}
         <button class="avatar-button" type="button" data-profile aria-label="Open {{ comment_avatar.name }} profile">{{ render_comment_avatar(comment_avatar) }}</button>
@@ -19,33 +51,67 @@
       {% endif %}
     </header>
 
+    <nav class="league-tabs sports-filter-tabs" aria-label="Sport filter">
+      <a class="{% if selected_sport == 'all' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/?league=all">All</a>
+      {% for sport in sports_nav %}<a class="{% if selected_sport == sport.key %}active{% endif %}" href="{{ sports_path_prefix or '' }}/?league={{ sport.key }}">{{ sport.name }}</a>{% endfor %}
+    </nav>
+
+    {% if show_team %}
     <aside class="sports-record-strip" aria-label="Paper pick record">
       <span><small>PUBLIC CALLS SETTLED</small><strong>{{ pick_stats.settled }}</strong></span>
       <span><small>CALL RECORD</small><strong>{{ pick_stats.wins }}–{{ pick_stats.losses }}–{{ pick_stats.pushes }}</strong></span>
       <span><small>NET RESULT</small><strong class="sports-unit-value {% if pick_stats.units >= 0 %}positive{% else %}negative{% endif %}">{{ '%+.2f'|format(pick_stats.units) }} <i>units</i></strong></span>
       <span><small>RETURN ON CALLS</small><strong>{% if pick_stats.roi_pct is not none %}{{ '%+.1f%%'|format(pick_stats.roi_pct) }}{% else %}Learning{% endif %}</strong></span>
     </aside>
+    {% endif %}
 
-    {% if pulse.source_status != 'success' %}
+    {% if selected_sport == 'golf' and golf.source_status != 'success' %}
+    <aside class="source-warning" id="sportsGolfWarning">
+      <strong>Golf feed: {{ golf.source_status }}</strong>
+      <span>{% if golf.source_error %}{{ golf.source_error }}{% else %}The first PGA refresh is still running.{% endif %}</span>
+    </aside>
+    {% elif show_team and pulse.source_status != 'success' %}
     <aside class="source-warning" id="sportsPulseWarning">
       <strong>Preview feed: {{ pulse.source_status }}</strong>
       <span>{% if pulse.source_error %}{{ pulse.source_error }}{% else %}The first sports refresh is still running.{% endif %}</span>
     </aside>
     {% endif %}
 
+    {% if show_team %}
     <button class="pulse-refresh sports-live-refresh" id="sportsPulseRefresh" type="button" aria-live="polite" hidden>Slate updated</button>
+    {% endif %}
 
+    {% if show_golf %}
+    <section class="golf-pulse-section" aria-labelledby="golfPulseTitle">
+      <header><div><span>GOLF</span><h2 id="golfPulseTitle">PGA Tour</h2></div><small>Current and upcoming tournaments</small></header>
+      <div class="golf-tournament-list">
+        {% for event in golf.events %}
+          {{ golf_card(event) }}
+        {% else %}
+        <div class="sports-empty golf-empty"><strong>No PGA tournament loaded.</strong><p>The next event will appear after the golf feed refreshes.</p></div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    {% if show_team %}
     <main class="list-section sports-list-section" aria-label="Pulse signals">
       <div class="token-list" id="sportsPulseList"></div>
     </main>
+    {% endif %}
 
+    {% if selected_sport == 'golf' %}
+    <p class="sports-source">PGA tournament and leaderboard preview from ESPN · Updated <time data-local-time="{{ golf.updated_at or '' }}">{{ golf.updated_at[:16]|replace('T',' ') if golf.updated_at else 'pending' }} UTC</time></p>
+    {% else %}
     <p class="sports-source">ESPN schedule · season-record baseline · median no-vig market · Updated <time id="sportsPulseUpdated" data-local-time="{{ pulse.updated_at or '' }}">{{ pulse.updated_at[:16]|replace('T',' ') if pulse.updated_at else 'pending' }} UTC</time></p>
+    {% endif %}
   </section>
 
-  {% include "_desktop_panel.html" %}
+  {% if selected_sport != 'golf' %}{% include "_desktop_panel.html" %}{% endif %}
 </div>
 {% endblock %}
 {% block scripts %}
+{% if show_team %}
 <script src="/static/sports-live.js?v={{ static_version }}"></script>
 <script nonce="{{ request.state.csp_nonce }}">
   window.sportsPulseLive = SportsLive.mountPulse({
@@ -53,4 +119,7 @@
     prefix: {{ (sports_path_prefix or '')|tojson }},
   });
 </script>
+{% else %}
+<script nonce="{{ request.state.csp_nonce }}">document.querySelectorAll('[data-local-time]').forEach(node => { const date = new Date(node.dataset.localTime); if (!Number.isNaN(date.valueOf())) node.textContent = date.toLocaleString([], {weekday:'short', month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); });</script>
+{% endif %}
 {% endblock %}
