@@ -1,5 +1,6 @@
 {% extends "mobile_base.html" %}
 {% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
+{% from "_flash_report_action.html" import flash_report_action %}
 {% macro evidence_gate(detail, embedded=false) -%}
 <div class="{{ 'risk-evidence' if embedded else 'evidence-gate' }} gate-{{ detail.evidence_gate.state }}" id="evidenceGate" data-base-class="{{ 'risk-evidence' if embedded else 'evidence-gate' }}">
   <div><span>Evidence</span><strong id="gateSummary">{{ detail.evidence_gate.summary }}</strong><small id="gateCount">{{ detail.evidence_gate.count }}/{{ detail.evidence_gate.threshold }}</small></div>
@@ -149,11 +150,10 @@
   </section>
 
   <section class="discussion-section" id="discussion">
-    <div class="section-heading"><div><small class="discussion-privacy">Persistent avatars · public across tickers</small><h2>Comments</h2></div><b id="discussionCount">{{ comment_count }}</b></div>
+    <div class="section-heading"><h2>Comments</h2><b id="discussionCount">{{ comment_count }}</b></div>
     {% if user %}
     <div class="comment-form ai-comment-action">
-      <p>Your {{ comment_avatar.ability }} ability guides a short Flash draft using this ticker's current evidence.</p>
-      <div><small id="commentStatus">10 Flash · balance <span data-flash-balance>{{ flash_wallet.balance }}</span></small><button id="generateComment" type="button">Generate and post</button></div>
+      <small id="commentStatus">{{ '10 Flash' if comment_generation_enabled else 'Unavailable' }}</small><button id="generateComment" type="button" {% if not comment_generation_enabled %}disabled{% endif %}>Post with Flash</button>
     </div>
     {% else %}
     <a class="comment-login" href="/login?next=/t/{{ detail.ticker }}#discussion">Log in to comment</a>
@@ -162,30 +162,19 @@
       {% for comment in comments %}
       <li data-comment-id="{{ comment.id }}">
         {{ render_comment_avatar(comment.avatar) }}
-        <div class="comment-copy"><header><strong>{{ comment.avatar.name }}</strong><span class="comment-ability" title="{{ comment.avatar.ability_description }}">{{ comment.avatar.ability }}</span>{% if comment.is_owner %}<span class="comment-owner">You</span>{% endif %}</header><small class="comment-meta">{% if comment.ai_generated %}Flash drafted · {% endif %}<time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time>{% if comment.is_owner %} · <button type="button" data-delete-comment="{{ comment.id }}">delete</button>{% endif %}</small><p>{{ comment.body }}</p></div>
+        <div class="comment-copy"><header><strong>{{ comment.avatar.name }}</strong><span class="comment-ability" title="{{ comment.avatar.ability_description }}">{{ comment.avatar.ability }}</span>{% if comment.is_owner %}<span class="comment-owner">You</span>{% endif %}</header><small class="comment-meta"><time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time>{% if comment.is_owner %} · <button type="button" data-delete-comment="{{ comment.id }}">delete</button>{% endif %}</small><p>{{ comment.body }}</p></div>
       </li>
       {% endfor %}
     </ol>
-    <p class="comment-empty" id="commentEmpty" {% if comments %}hidden{% endif %}>No comments yet. Start the read.</p>
+    <p class="comment-empty" id="commentEmpty" {% if comments %}hidden{% endif %}>No comments.</p>
   </section>
     </div>
 
     <aside class="detail-actions" aria-label="Ticker actions">
       <div class="ticker-action-row">
         <section class="ticker-action-slot" aria-labelledby="flashActionTitle">
-          <h2 class="visually-hidden" id="flashActionTitle">Daily Flash</h2>
-          {% if latest_commission and latest_commission.locked %}
-          <button class="ticker-action ticker-action-flash" type="button" disabled><strong>Daily Flash</strong><span>Locked today</span></button>
-          {% elif latest_commission and latest_commission.status == 'complete' %}
-          <a class="ticker-action ticker-action-flash" href="/research/{{ latest_commission.public_id }}"><strong>Read Flash</strong><span>{{ 'Public report' if latest_commission.visibility == 'public' else 'Private report' }}</span></a>
-          {% elif latest_commission and latest_commission.status == 'running' %}
-          <button class="ticker-action ticker-action-flash" id="commissionButton" type="button" data-job-id="{{ latest_commission.public_id }}" disabled><strong>Daily Flash</strong><span>Researching…</span></button>
-          {% elif user %}
-          <button class="ticker-action ticker-action-flash" id="commissionButton" type="button" aria-label="Generate today's report with Daily Flash for 100 Flash. The first generator gets one private hour."><strong>Daily Flash</strong><span>100 Flash · private 1h</span></button>
-          {% else %}
-          <a class="ticker-action ticker-action-flash" href="/login?next=/t/{{ detail.ticker }}"><strong>Daily Flash</strong><span>Log in · 100 Flash</span></a>
-          {% endif %}
-          <p class="ticker-action-status" id="commissionStatus" role="status"></p>
+          <h2 class="visually-hidden" id="flashActionTitle">Flash report</h2>
+          {{ flash_report_action(flash_report) }}
         </section>
 
         <section class="ticker-action-slot" aria-labelledby="callTitle">
@@ -219,5 +208,6 @@
   "calls": {{ calls|tojson }}
 }
 </script>
+<script src="/static/flash-report.js?v={{ static_version }}" defer></script>
 <script src="/static/ticker-detail.js?v={{ static_version }}" defer></script>
 {% endblock %}

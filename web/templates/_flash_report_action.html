@@ -1,0 +1,16 @@
+{% macro flash_report_action(report, variant='ticker') -%}
+{% set action_class = 'ticker-action ticker-action-flash' if variant == 'ticker' else 'flash-report-button' %}
+{% if report.href %}
+<a class="{{ action_class }}" data-flash-report-state="{{ report.state }}" href="{{ report.href }}"><strong>{{ report.label }}</strong><span>{{ report.detail }}</span></a>
+{% else %}
+<button
+  class="{{ action_class }}"
+  type="button"
+  data-flash-report-state="{{ report.state }}"
+  {% if report.enabled or report.job_id %}id="commissionButton" data-flash-report data-start-url="{{ report.start_url }}" data-ready-label="{{ report.label }}" data-ready-detail="{{ report.detail }}"{% endif %}
+  {% if report.job_id %}data-job-id="{{ report.job_id }}"{% endif %}
+  {% if not report.enabled %}disabled{% endif %}
+><strong>{{ report.label }}</strong><span>{{ report.detail }}</span></button>
+{% endif %}
+<p class="{{ 'ticker-action-status ' if variant == 'ticker' else '' }}flash-report-status" id="commissionStatus" role="status"{% if report.status_tone %} data-tone="{{ report.status_tone }}"{% endif %}>{{ report.message }}</p>
+{%- endmacro %}

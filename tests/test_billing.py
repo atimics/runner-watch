@@ -59,7 +59,8 @@ def create_user(user_id: str = "wallet-user") -> None:
         )
 
 
-def test_billing_page_is_now_a_public_flash_wallet() -> None:
+def test_billing_page_is_now_a_public_flash_wallet(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "")
     response = billing_page(page_request("/billing"), None)
     html = response.body.decode()
 
@@ -67,7 +68,9 @@ def test_billing_page_is_now_a_public_flash_wallet() -> None:
     assert "There is no Pro subscription" in html
     assert "Claim 100 Flash" not in html
     assert "Log in to claim" in html
-    assert "Generate today's ticker report" in html
+    assert "Flash reports" in html
+    assert "Flash cannot be spent on reports" in html
+    assert "Generate today's ticker report" not in html
     assert "AI-generated ticker comment" in html
     assert "Win a sports Call" in html
     assert "Close a profitable stock Call" in html
