@@ -10,7 +10,8 @@ the chart and primary-source evidence, **Radar** for fresh market and evidence c
 for public Calls. Signed-in users can spend Flash credits on private research and AI-written ticker
 comments. Pulse paginates as the user scrolls. Radar is shared and does not build a reading profile.
 
-RATi Sports currently covers MLB, NFL, NBA, and NHL schedules. A background worker stores event
+RATi Sports now highlights Golf, NBA, and MLB. Golf shows current and upcoming PGA tournaments with
+the latest normalized leaderboard. The team-game engine continues to cover MLB, NFL, NBA, and NHL schedules. A background worker stores event
 state, season records, moneyline snapshots, source times, and a versioned baseline prediction. The
 model compares team form plus a small home advantage with the market price after removing the
 bookmaker margin. It does not promote preseason or exhibition games. Signed-in users can publish

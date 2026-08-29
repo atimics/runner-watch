@@ -219,6 +219,14 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             "SELECT name FROM sqlite_master WHERE type='table' "
             "AND name='sports_ai_forecasts'"
         ).fetchone()
+        sports_golf_event_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='sports_golf_events'"
+        ).fetchone()
+        sports_golf_leaderboard_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='sports_golf_leaderboard'"
+        ).fetchone()
         flash = database.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
         commission_columns = {
             row["name"]
@@ -301,6 +309,8 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "observed_at",
     } <= sports_bookmaker_columns
     assert sports_ai_forecast_table is not None
+    assert sports_golf_event_table is not None
+    assert sports_golf_leaderboard_table is not None
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_provider"] == "openrouter"

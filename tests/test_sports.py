@@ -27,9 +27,11 @@ from runner_web.sports import (
     collect_stored_player_appearances,
     create_sports_pick,
     fetch_league_history_chunk,
+    golf_slate,
     implied_probability,
     no_vig_probabilities,
     normalize_event,
+    normalize_golf_event,
     normalize_news_articles,
     normalize_player_appearances,
     predict_event,
@@ -44,6 +46,7 @@ from runner_web.sports import (
     sports_radar,
     sports_slate,
     store_events,
+    store_golf_events,
     store_news_articles,
     store_player_appearances,
     validate_sports_ai_forecast,
@@ -128,6 +131,72 @@ def sample_event(*, completed: bool = False) -> dict[str, object]:
     }
 
 
+def sample_golf_event() -> dict[str, object]:
+    current = datetime.now(UTC)
+    holes = [{"value": 4, "displayValue": "E", "period": hole} for hole in range(1, 19)]
+    return {
+        "id": "401811964",
+        "name": "TOUR Championship",
+        "date": (current - timedelta(days=1)).isoformat(),
+        "endDate": (current + timedelta(days=2)).isoformat(),
+        "status": {
+            "type": {"state": "in", "completed": False, "shortDetail": "Round 2"}
+        },
+        "competitions": [
+            {
+                "venue": {
+                    "fullName": "East Lake Golf Club",
+                    "address": {"city": "Atlanta", "state": "GA"},
+                },
+                "competitors": [
+                    {
+                        "id": "5076021",
+                        "order": 1,
+                        "score": "-10",
+                        "athlete": {
+                            "id": "5076021",
+                            "displayName": "Ryan Gerard",
+                            "flag": {"alt": "USA"},
+                        },
+                        "linescores": [
+                            {
+                                "period": 1,
+                                "value": 65,
+                                "displayValue": "-5",
+                                "linescores": holes,
+                            },
+                            {
+                                "period": 2,
+                                "value": 65,
+                                "displayValue": "-5",
+                                "linescores": holes,
+                            },
+                        ],
+                    },
+                    {
+                        "id": "4364873",
+                        "order": 2,
+                        "score": "-8",
+                        "athlete": {
+                            "id": "4364873",
+                            "displayName": "Viktor Hovland",
+                            "flag": {"alt": "Norway"},
+                        },
+                        "linescores": [
+                            {
+                                "period": 2,
+                                "value": 67,
+                                "displayValue": "-3",
+                                "linescores": holes,
+                            }
+                        ],
+                    },
+                ],
+            }
+        ],
+    }
+
+
 @pytest.fixture
 def sports_db(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "sports.db")
@@ -152,6 +221,31 @@ def test_scoreboard_event_becomes_a_source_bound_prediction() -> None:
     assert prediction["home_probability"] > prediction["away_probability"]
     assert prediction["evidence"]
     assert prediction["risks"]
+
+
+def test_golf_tournament_becomes_a_ranked_pga_leaderboard(sports_db) -> None:
+    event = normalize_golf_event(sample_golf_event())
+
+    assert event is not None
+    assert event["id"] == "golf:401811964"
+    assert event["name"] == "TOUR Championship"
+    assert event["status"] == "in"
+    assert event["leaderboard"][0]["player_name"] == "Ryan Gerard"
+    assert event["leaderboard"][0]["score_display"] == "-10"
+    assert event["leaderboard"][0]["round_number"] == 2
+    assert event["leaderboard"][0]["through_display"] == "F"
+
+    stored = store_golf_events([event])
+    slate = golf_slate()
+
+    assert stored == {"events": 1, "entrants": 2}
+    assert slate["display_count"] == 1
+    assert slate["entrant_count"] == 2
+    assert slate["events"][0]["venue"] == "East Lake Golf Club"
+    assert [player["player_name"] for player in slate["events"][0]["leaderboard"]] == [
+        "Ryan Gerard",
+        "Viktor Hovland",
+    ]
 
 
 def test_sports_ai_forecast_contract_is_a_separate_winner_probability() -> None:
@@ -592,6 +686,9 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     event = normalize_event("mlb", sample_event())
     assert event is not None
     store_events([event])
+    golf_event = normalize_golf_event(sample_golf_event())
+    assert golf_event is not None
+    store_golf_events([golf_event])
     sports_request = request()
     assert product_for_request(sports_request) == "sports"
     response = home(sports_request, None)
@@ -615,6 +712,19 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     assert b'id="sportsAnnouncement"' not in response.body
     assert b"localStorage.getItem(announcementKey)" not in response.body
     assert b'id="sportsPulseRefresh"' in response.body
+    assert b'href="/?league=golf">Golf</a>' in response.body
+    assert b'href="/?league=nba">NBA</a>' in response.body
+    assert b'href="/?league=mlb">MLB</a>' in response.body
+    assert b"TOUR Championship" in response.body
+    assert b"Ryan Gerard" in response.body
+
+    golf_response = home(sports_request, None, league="golf")
+    assert golf_response.status_code == 200
+    assert b"PGA Tour" in golf_response.body
+    assert b"East Lake Golf Club" in golf_response.body
+    assert b'class="sports-record-strip"' not in golf_response.body
+    assert b'class="desktop-detail-panel"' not in golf_response.body
+    assert b'id="sportsPulseRefresh"' not in golf_response.body
 
     detail = sports_event(event["id"])
     assert detail is not None

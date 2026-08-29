@@ -82,6 +82,231 @@ body.sports-product {
   color: var(--accent);
 }
 
+.sports-product .sports-filter-tabs {
+  border-top: 1px solid var(--line);
+}
+
+.golf-pulse-section {
+  padding: 18px 16px 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.golf-pulse-section > header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.golf-pulse-section > header span,
+.golf-pulse-section > header small {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.golf-pulse-section > header span {
+  color: var(--accent);
+}
+
+.golf-pulse-section > header h2 {
+  margin: 3px 0 0;
+  font-size: 20px;
+}
+
+.golf-tournament-list {
+  display: grid;
+  gap: 10px;
+}
+
+.golf-tournament-card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 7%, var(--panel)), var(--panel));
+}
+
+.golf-tournament-card > header {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.golf-tournament-mark {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 46%, var(--line));
+  border-radius: 50%;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .04em;
+}
+
+.golf-tournament-copy,
+.golf-tournament-copy > *,
+.golf-tournament-time > * {
+  display: block;
+  min-width: 0;
+}
+
+.golf-tournament-copy small,
+.golf-tournament-time small,
+.golf-leaderboard small {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .06em;
+}
+
+.golf-tournament-copy > strong {
+  margin: 3px 0;
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.golf-tournament-copy > span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.golf-tournament-time {
+  color: var(--text);
+  font-size: 9px;
+  text-align: right;
+}
+
+.golf-tournament-time small {
+  margin-top: 4px;
+}
+
+.golf-leaderboard {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.golf-leaderboard li {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  min-height: 42px;
+  padding: 0 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 74%, transparent);
+}
+
+.golf-leaderboard li > b {
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.golf-leaderboard li > span,
+.golf-leaderboard li strong,
+.golf-leaderboard li small {
+  display: block;
+}
+
+.golf-leaderboard li > span > strong {
+  font-size: 10px;
+}
+
+.golf-leaderboard li > span > small {
+  margin-top: 2px;
+}
+
+.golf-round {
+  text-align: right;
+}
+
+.golf-round > strong {
+  margin-top: 2px;
+  color: var(--positive);
+  font-size: 12px;
+}
+
+.golf-tournament-card > footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.golf-tournament-card > footer a {
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.golf-awaiting {
+  padding: 22px 14px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.golf-awaiting strong,
+.golf-awaiting span {
+  display: block;
+  font-size: 10px;
+}
+
+.golf-awaiting span {
+  margin-top: 5px;
+  font-size: 9px;
+}
+
+.golf-empty {
+  min-height: 160px;
+}
+
+@media (min-width: 900px) {
+  .golf-only-workspace {
+    display: block;
+    overflow-y: auto;
+  }
+
+  .golf-only-workspace .desktop-list-pane {
+    width: min(760px, 100%);
+    height: 100%;
+    margin: 0 auto;
+    border-inline: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 560px) {
+  .golf-pulse-section > header > small {
+    display: none;
+  }
+
+  .golf-tournament-card > header {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .golf-tournament-mark {
+    width: 40px;
+    height: 40px;
+  }
+
+  .golf-tournament-time {
+    grid-column: 2;
+    text-align: left;
+  }
+}
+
 .source-warning {
   display: flex;
   justify-content: space-between;
