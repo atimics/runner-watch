@@ -160,9 +160,13 @@ def test_ranker_prediction_becomes_one_immutable_flash_call(
     assert ticker_detail is not None
     assert pulse_row["kol_calls"][0]["emoji"] == "⚡"
     assert pulse_row["directional_thesis"]["direction"] == "up"
-    assert pulse_row["directional_thesis"]["horizon"] == "next 60m"
+    assert pulse_row["directional_thesis"]["horizon"] == "60m"
+    assert pulse_row["directional_thesis"]["status_label"] == "Live model"
+    assert len(pulse_row["directional_thesis"]["distribution"]) == 3
     assert ticker_detail["kol_calls"][0]["id"] == calls[0]["id"]
     assert ticker_detail["directional_thesis"]["direction"] == "up"
+    assert ticker_detail["directional_thesis"]["model_id"] == "model-one"
+    assert ticker_detail["directional_thesis"]["evidence_at"] == captured_at.isoformat()
     with connection() as database:
         events = database.execute(
             "SELECT event_type FROM kol_call_events WHERE call_id=?",

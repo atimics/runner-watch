@@ -365,7 +365,7 @@ STATIC_VERSION = _static_version()
 
 
 def _shared_request_cache_name(scope: str) -> str:
-    version = {"pulse": "v4", "alpha": "v3", "public-screen": "v2"}.get(scope, "v1")
+    version = {"pulse": "v5", "alpha": "v3", "public-screen": "v3"}.get(scope, "v1")
     return f"{runner_db.database_identity()}:{scope}:{version}"
 
 
@@ -1813,27 +1813,91 @@ def _ranker_directional_thesis(prediction: dict[str, Any] | None) -> dict[str, A
             return None
         probabilities[outcome] = probability
 
-    directional_margin = probabilities["up"] - probabilities["down"]
-    if probabilities["timeout"] >= max(probabilities["up"], probabilities["down"]):
+    total_probability = sum(probabilities.values())
+    if not 0.98 <= total_probability <= 1.02:
+        return None
+    probabilities = {
+        outcome: probability / total_probability for outcome, probability in probabilities.items()
+    }
+
+    try:
+        expected_return_pct = float(prediction.get("expected_return_pct"))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(expected_return_pct):
+        return None
+
+    ranked_outcome = "up" if expected_return_pct > 0 else "down"
+    directional_margin = probabilities[ranked_outcome] - probabilities["timeout"]
+    if expected_return_pct == 0 or directional_margin < 0.05:
         outcome = "timeout"
-    elif directional_margin >= 0.05:
-        outcome = "up"
-    elif directional_margin <= -0.05:
-        outcome = "down"
     else:
-        outcome = "timeout"
+        outcome = ranked_outcome
+
+    ordered_outcomes = ("down", "timeout", "up")
+    raw_percentages = [probabilities[key] * 100 for key in ordered_outcomes]
+    display_percentages = [math.floor(value) for value in raw_percentages]
+    remaining = 100 - sum(display_percentages)
+    fractions = sorted(
+        range(len(ordered_outcomes)),
+        key=lambda index: (raw_percentages[index] - display_percentages[index], -index),
+        reverse=True,
+    )
+    for index in fractions[:remaining]:
+        display_percentages[index] += 1
+
+    outcome_copy = {
+        "down": ("−4% first", "Down barrier"),
+        "timeout": ("No barrier", "Neither barrier"),
+        "up": ("+8% first", "Up barrier"),
+    }
+    distribution = [
+        {
+            "key": key,
+            "label": outcome_copy[key][0],
+            "accessible_label": outcome_copy[key][1],
+            "probability": round(probabilities[key], 6),
+            "probability_pct": display_percentages[index],
+        }
+        for index, key in enumerate(ordered_outcomes)
+    ]
 
     direction = "flat" if outcome == "timeout" else outcome
-    labels = {"up": "Upside", "down": "Downside", "timeout": "No clear edge"}
+    labels = {
+        "up": "Upside setup",
+        "down": "Downside pressure",
+        "timeout": "No edge",
+    }
     arrows = {"up": "↑", "down": "↓", "timeout": "↔"}
+    model_status = str(prediction.get("model_status") or "shadow").lower()
+    status_label = "Live model" if model_status == "active" else "Shadow model"
+    evidence_at = str(prediction.get("created_at") or "") or None
+    model_id = str(prediction.get("model_id") or "unversioned")
+    accessible_distribution = "; ".join(
+        f"{item['probability_pct']} percent {item['label']}" for item in distribution
+    )
     return {
         "direction": direction,
         "label": labels[outcome],
         "arrow": arrows[outcome],
         "probability": round(probabilities[outcome], 4),
-        "probability_pct": round(probabilities[outcome] * 100),
-        "horizon": "next 60m",
-        "contract": "+8% before -4% within 60m",
+        "probability_pct": display_percentages[ordered_outcomes.index(outcome)],
+        "probability_up": round(probabilities["up"], 6),
+        "probability_down": round(probabilities["down"], 6),
+        "probability_timeout": round(probabilities["timeout"], 6),
+        "distribution": distribution,
+        "expected_return_pct": round(expected_return_pct, 4),
+        "horizon": "60m",
+        "horizon_label": "60 minutes",
+        "contract": "+8% before −4% within 60 minutes",
+        "model_id": model_id,
+        "model_status": model_status,
+        "status_label": status_label,
+        "evidence_at": evidence_at,
+        "accessible_description": (
+            f"Directional thesis: {labels[outcome]}, 60 minutes. "
+            f"{accessible_distribution}. {status_label}, model {model_id}."
+        ),
     }
 
 
@@ -2001,9 +2065,11 @@ def _pulse_data_uncached() -> dict[str, Any]:
         prediction_rows = (
             db.execute(
                 """
-                SELECT p.* FROM ranker_predictions p
+                SELECT p.*,m.status AS model_status FROM ranker_predictions p
                 JOIN scan_snapshots s ON s.id=p.snapshot_id
-                WHERE s.scan_run_id=? ORDER BY p.created_at DESC
+                JOIN ranker_models m ON m.id=p.model_id
+                WHERE s.scan_run_id=? AND m.status IN ('shadow','active')
+                ORDER BY p.created_at DESC
                 """,
                 (latest_run["id"],),
             ).fetchall()
@@ -2152,6 +2218,10 @@ def _pulse_data_uncached() -> dict[str, Any]:
             "score": pulse_score,
             "custom_score": pulse_score,
             "runner_probability": prediction.get("probability_up") if prediction else None,
+            "runner_probability_down": (prediction.get("probability_down") if prediction else None),
+            "runner_probability_timeout": (
+                prediction.get("probability_timeout") if prediction else None
+            ),
             "directional_thesis": directional_thesis,
             "expected_return_pct": (prediction.get("expected_return_pct") if prediction else None),
             "call_count": call_count,
@@ -5287,11 +5357,13 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
         prediction = (
             db.execute(
                 """
-                SELECT probability_up,probability_down,probability_timeout,
-                       expected_return_pct,created_at
-                FROM ranker_predictions
-                WHERE snapshot_id=?
-                ORDER BY created_at DESC LIMIT 1
+                SELECT p.probability_up,p.probability_down,p.probability_timeout,
+                       p.expected_return_pct,p.created_at,p.model_id,
+                       m.status AS model_status
+                FROM ranker_predictions p
+                JOIN ranker_models m ON m.id=p.model_id
+                WHERE p.snapshot_id=? AND m.status IN ('shadow','active')
+                ORDER BY p.created_at DESC LIMIT 1
                 """,
                 (snapshot["id"],),
             ).fetchone()

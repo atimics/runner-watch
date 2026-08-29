@@ -149,6 +149,16 @@ def test_shadow_ranker_trains_predicts_and_exports_crl(
     assert trained["integer_only"] is True
     assert trained["metrics"]["validation"]["groups"] == 1.0
     assert trained["metrics"]["test"]["groups"] == 1.0
+    assert set(trained["metrics"]["validation"]["brier_ppm"]) == {
+        "down",
+        "timeout",
+        "up",
+    }
+    assert set(trained["metrics"]["validation"]["expected_calibration_error_ppm"]) == {
+        "down",
+        "timeout",
+        "up",
+    }
     model = load_latest_model()
     assert model is not None
     assert len(model.weights) == len(FEATURE_NAMES)

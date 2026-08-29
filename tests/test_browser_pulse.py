@@ -121,18 +121,31 @@ def test_pulse_renders_the_forward_thesis_as_a_tiny_separate_cue(
         **_row("AAA"),
         "directional_thesis": {
             "direction": "down",
-            "label": "Downside",
+            "label": "Downside pressure",
             "arrow": "↓",
-            "horizon": "next 60m",
+            "horizon": "60m",
         },
     }
     html = _rendered_pulse(monkeypatch, _pulse(row))
     errors = _load(page, html, [])
 
     cue = page.locator('[data-ticker-row="AAA"] .ticker-thesis')
-    assert cue.text_content() == "↓"
+    assert cue.text_content() == "↓DOWNSIDE PRESSURE · 60M"
     assert cue.get_attribute("class") == "ticker-thesis ticker-thesis-down"
-    assert "Model thesis: Downside, next 60m" in page.locator(
+    assert cue.evaluate("element => element.closest('.catalyst') !== null") is True
+    assert "Directional thesis: Downside pressure, 60m" in page.locator(
+        '[data-ticker-row="AAA"]'
+    ).get_attribute("aria-label")
+    assert errors == []
+
+
+def test_pulse_labels_an_unavailable_market_model_as_learning(page: Page, monkeypatch) -> None:
+    html = _rendered_pulse(monkeypatch, _pulse({**_row("AAA"), "source": "market"}))
+    errors = _load(page, html, [])
+
+    cue = page.locator('[data-ticker-row="AAA"] .ticker-thesis-learning')
+    assert cue.text_content() == "—MODEL LEARNING"
+    assert "Directional thesis: model learning" in page.locator(
         '[data-ticker-row="AAA"]'
     ).get_attribute("aria-label")
     assert errors == []

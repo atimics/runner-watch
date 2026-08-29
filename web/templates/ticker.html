@@ -25,8 +25,8 @@
         <div class="asset-ticker"><h1>{{ detail.ticker }}</h1><span>{{ detail.exchange }}</span></div>
         <p>{{ detail.company }}</p>
         {% if detail.directional_thesis %}
-        <p class="ticker-thesis-line thesis-{{ detail.directional_thesis.direction }}" aria-label="Model thesis: {{ detail.directional_thesis.label }}, {{ detail.directional_thesis.horizon }}, {{ detail.directional_thesis.probability_pct }} percent outcome probability" title="Contract: {{ detail.directional_thesis.contract }}">
-          <span>MODEL THESIS</span><b aria-hidden="true">{{ detail.directional_thesis.arrow }}</b><strong>{{ detail.directional_thesis.label }}</strong><small>· {{ detail.directional_thesis.horizon }}</small>
+        <p class="ticker-thesis-line thesis-{{ detail.directional_thesis.direction }}" aria-label="{{ detail.directional_thesis.accessible_description }}" title="Contract: {{ detail.directional_thesis.contract }}">
+          <span>MODEL PATH</span><b aria-hidden="true">{{ detail.directional_thesis.arrow }}</b><strong>{{ detail.directional_thesis.label }}</strong><small>· {{ detail.directional_thesis.horizon }}</small>
         </p>
         {% endif %}
       </div>
@@ -59,6 +59,25 @@
     </div>
 
     <div class="detail-analysis">
+      {% if detail.directional_thesis %}
+      <section class="model-path-card model-path-{{ detail.directional_thesis.direction }}" aria-label="{{ detail.directional_thesis.accessible_description }}">
+        <header class="model-path-head">
+          <div><span>MODEL PATH · {{ detail.directional_thesis.horizon|upper }}</span><strong><b aria-hidden="true">{{ detail.directional_thesis.arrow }}</b> {{ detail.directional_thesis.label }}</strong></div>
+          <small>{{ detail.directional_thesis.status_label|upper }}</small>
+        </header>
+        <div class="model-path-band" aria-hidden="true">
+          {% for outcome in detail.directional_thesis.distribution %}<i class="model-path-segment path-{{ outcome.key }}" style="--model-path-weight: {{ outcome.probability_pct }}"></i>{% endfor %}
+        </div>
+        <div class="model-path-outcomes">
+          {% for outcome in detail.directional_thesis.distribution %}<div class="path-{{ outcome.key }}"><b>{{ outcome.probability_pct }}%</b><span>{{ outcome.label }}</span></div>{% endfor %}
+        </div>
+        <p>Chance of touching either barrier first in the next {{ detail.directional_thesis.horizon_label }}. “No barrier” means neither was reached.</p>
+        <footer>
+          <span title="Model {{ detail.directional_thesis.model_id }}">{{ detail.directional_thesis.status_label }} · {{ detail.directional_thesis.model_id }}</span>
+          {% if detail.directional_thesis.evidence_at %}<time datetime="{{ detail.directional_thesis.evidence_at }}">Evidence {{ detail.directional_thesis.evidence_at[:16]|replace('T', ' ') }} UTC</time>{% endif %}
+        </footer>
+      </section>
+      {% endif %}
       <section class="why-section">
     <div class="section-heading"><div><h2>Why it moved</h2></div>{% if detail.current.source == 'market' and detail.current.score %}<b>{{ '%.0f'|format(detail.current.score) }} score</b>{% elif detail.current.source == 'sec' %}<b>new filing</b>{% endif %}</div>
     {% if detail.current.source == 'market' %}
