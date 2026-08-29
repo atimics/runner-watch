@@ -31,7 +31,9 @@ def _request() -> Request:
     return request
 
 
-def _rendered_ticker() -> str:
+def _rendered_ticker(
+    *, signed_in: bool = False, comment_generation_enabled: bool = True
+) -> str:
     thesis = web_main._ranker_directional_thesis(
         {
             "probability_down": 0.15,
@@ -85,6 +87,26 @@ def _rendered_ticker() -> str:
             "baseline_summary": "Building the same-time baseline.",
         },
     }
+    signed_in_context = {}
+    if signed_in:
+        signed_in_context = {
+            "user": {"id": "browser-user"},
+            "comment_avatar": web_main.comment_avatar_profile(
+                "Quiet Signal", "browser-seed", "filing_sleuth"
+            ),
+            "flash_wallet": {
+                "balance": 150,
+                "can_claim": False,
+                "claim_day": "2026-08-28",
+                "report_cost": 100,
+            },
+            "caller_summary": {
+                "average_return_pct": None,
+                "wins": 0,
+                "losses": 0,
+            },
+            "comment_generation_enabled": comment_generation_enabled,
+        }
     response = web_main.templates.TemplateResponse(
         request=_request(),
         name="ticker.html",
@@ -109,6 +131,7 @@ def _rendered_ticker() -> str:
                 "start_url": "/api/research/TEST",
             },
             active_tab="pulse",
+            **signed_in_context,
         ),
     )
     html = response.body.decode()
@@ -141,6 +164,32 @@ def test_model_path_receipt_stays_compact_and_keeps_risk_separate(page: Page) ->
     assert card.bounding_box()["height"] < 170
     assert risk.bounding_box()["y"] > card.bounding_box()["y"] + card.bounding_box()["height"]
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
+
+
+def test_flash_comment_action_is_one_compact_row_without_explainer_copy(
+    page: Page,
+) -> None:
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.set_content(_rendered_ticker(signed_in=True), wait_until="domcontentloaded")
+
+    discussion = page.locator(".discussion-section")
+    action = discussion.locator(".ai-comment-action")
+    assert action.is_visible()
+    assert action.locator("p").count() == 0
+    assert action.locator("#commentStatus").text_content() == "10 Flash"
+    assert action.locator("#generateComment").text_content() == "Post with Flash"
+    assert action.bounding_box()["height"] <= 46
+    copy = discussion.inner_text()
+    assert "Persistent avatars" not in copy
+    assert "ability guides" not in copy
+    assert "Start the read" not in copy
+
+    page.set_content(
+        _rendered_ticker(signed_in=True, comment_generation_enabled=False),
+        wait_until="domcontentloaded",
+    )
+    assert page.locator("#generateComment").is_disabled()
+    assert page.locator("#commentStatus").text_content() == "Unavailable"
 
 
 def test_failed_flash_report_restores_balance_without_internal_error_or_layout_jump(

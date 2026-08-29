@@ -684,9 +684,6 @@
     stamp.dataset.commentTime = '';
     stamp.textContent = relativeCommentTime(comment.created_at);
     meta.append(stamp);
-    if (comment.ai_generated) {
-      meta.prepend(document.createTextNode('Flash drafted · '));
-    }
     if (comment.is_owner) {
       const remove = document.createElement('button');
       remove.type = 'button';
@@ -704,9 +701,10 @@
 
   refreshCommentTimes();
   generateComment?.addEventListener('click', async () => {
+    if (window.RatiFlash?.canSpend && !window.RatiFlash.canSpend(10)) return;
     if (!pendingCommentRequestId) rememberCommentRequest(newCommentRequestId());
     generateComment.disabled = true;
-    commentStatus.textContent = 'Flash is drafting your comment…';
+    commentStatus.textContent = 'Posting…';
     try {
       const response = await fetch(`/api/comments/${encodeURIComponent(ticker)}`, {
         method: 'POST',
@@ -717,19 +715,22 @@
       try {
         result = JSON.parse(responseText);
       } catch (_) {
-        throw new Error('Could not confirm whether the comment posted. Try again.');
+        throw new Error('Could not confirm the post.');
       }
       if (!response.ok) {
-        const error = new Error(result.detail || 'Could not post');
+        const error = new Error('Could not post.');
         error.retryable = result.retryable === true;
         if (!error.retryable) rememberCommentRequest(null);
+        if (response.status === 402) {
+          window.RatiFlash?.handleInsufficient?.(result.detail, 10);
+        }
         throw error;
       }
       const alreadyShown = Array.from(commentList.children).some(
         item => item.dataset.commentId === String(result.comment.id)
       );
       if (!alreadyShown) commentList.prepend(renderComment(result.comment));
-      commentStatus.textContent = `Posted · ${result.balance} Flash left`;
+      commentStatus.textContent = 'Posted';
       document.querySelectorAll('[data-flash-balance]').forEach(item => {
         item.textContent = result.balance;
       });
@@ -737,7 +738,7 @@
       document.getElementById('commentEmpty').hidden = true;
       rememberCommentRequest(null);
     } catch (error) {
-      commentStatus.textContent = error.message || 'Could not post';
+      commentStatus.textContent = error.message || 'Could not post.';
     } finally {
       generateComment.disabled = false;
     }
@@ -753,13 +754,13 @@
         { method: 'DELETE' }
       );
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.detail || 'Could not delete');
+      if (!response.ok) throw new Error('Could not delete.');
       button.closest('li')?.remove();
       const count = document.getElementById('discussionCount');
       count.textContent = Math.max(0, Number(count.textContent || 0) - 1);
       document.getElementById('commentEmpty').hidden = Boolean(commentList.children.length);
     } catch (error) {
-      commentStatus.textContent = error.message || 'Could not delete';
+      commentStatus.textContent = error.message || 'Could not delete.';
       button.disabled = false;
     }
   });

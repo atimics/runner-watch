@@ -6222,6 +6222,7 @@ def ticker_page(
                 start_url=f"/api/research/{normalized}",
                 login_url=f"/login?next=/t/{normalized}",
             ),
+            comment_generation_enabled=_flash_provider_ready(),
             active_tab="pulse",
         ),
     )
@@ -7004,7 +7005,7 @@ def _generate_ticker_comment_text(
     *,
     avatar_ability_id: str = "catalyst_scout",
 ) -> tuple[str, str]:
-    if not OPENROUTER_API_KEY:
+    if not _flash_provider_ready():
         raise HTTPException(503, "AI comments are temporarily unavailable.")
     detail = ticker_detail_data(ticker)
     if not detail:

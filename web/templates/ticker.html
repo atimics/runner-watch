@@ -150,11 +150,10 @@
   </section>
 
   <section class="discussion-section" id="discussion">
-    <div class="section-heading"><div><small class="discussion-privacy">Persistent avatars · public across tickers</small><h2>Comments</h2></div><b id="discussionCount">{{ comment_count }}</b></div>
+    <div class="section-heading"><h2>Comments</h2><b id="discussionCount">{{ comment_count }}</b></div>
     {% if user %}
     <div class="comment-form ai-comment-action">
-      <p>Your {{ comment_avatar.ability }} ability guides a short Flash draft using this ticker's current evidence.</p>
-      <div><small id="commentStatus">10 Flash · balance <span data-flash-balance>{{ flash_wallet.balance }}</span></small><button id="generateComment" type="button">Generate and post</button></div>
+      <small id="commentStatus">{{ '10 Flash' if comment_generation_enabled else 'Unavailable' }}</small><button id="generateComment" type="button" {% if not comment_generation_enabled %}disabled{% endif %}>Post with Flash</button>
     </div>
     {% else %}
     <a class="comment-login" href="/login?next=/t/{{ detail.ticker }}#discussion">Log in to comment</a>
@@ -163,11 +162,11 @@
       {% for comment in comments %}
       <li data-comment-id="{{ comment.id }}">
         {{ render_comment_avatar(comment.avatar) }}
-        <div class="comment-copy"><header><strong>{{ comment.avatar.name }}</strong><span class="comment-ability" title="{{ comment.avatar.ability_description }}">{{ comment.avatar.ability }}</span>{% if comment.is_owner %}<span class="comment-owner">You</span>{% endif %}</header><small class="comment-meta">{% if comment.ai_generated %}Flash drafted · {% endif %}<time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time>{% if comment.is_owner %} · <button type="button" data-delete-comment="{{ comment.id }}">delete</button>{% endif %}</small><p>{{ comment.body }}</p></div>
+        <div class="comment-copy"><header><strong>{{ comment.avatar.name }}</strong><span class="comment-ability" title="{{ comment.avatar.ability_description }}">{{ comment.avatar.ability }}</span>{% if comment.is_owner %}<span class="comment-owner">You</span>{% endif %}</header><small class="comment-meta"><time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time>{% if comment.is_owner %} · <button type="button" data-delete-comment="{{ comment.id }}">delete</button>{% endif %}</small><p>{{ comment.body }}</p></div>
       </li>
       {% endfor %}
     </ol>
-    <p class="comment-empty" id="commentEmpty" {% if comments %}hidden{% endif %}>No comments yet. Start the read.</p>
+    <p class="comment-empty" id="commentEmpty" {% if comments %}hidden{% endif %}>No comments.</p>
   </section>
     </div>
 

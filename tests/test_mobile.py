@@ -181,7 +181,14 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert "action-card" not in template
     assert template.count("<textarea") == 0
     assert 'id="generateComment"' in template
-    assert "Persistent avatars · public across tickers" in template
+    assert "Post with Flash" in template
+    assert "Persistent avatars · public across tickers" not in template
+    assert "ability guides a short Flash draft" not in template
+    assert "Start the read" not in template
+    assert "Flash drafted" not in template
+    assert "Flash is drafting" not in script
+    assert "comment_generation_enabled" in template
+    assert "window.RatiFlash?.canSpend" in script
     assert "render_comment_avatar(comment.avatar)" in template
     assert "'Idempotency-Key': pendingCommentRequestId" in script
     assert "sessionStorage.setItem(pendingCommentStorageKey" in script
