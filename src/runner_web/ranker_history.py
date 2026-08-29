@@ -34,6 +34,8 @@ BAR_COMPLETION_LAG = timedelta(minutes=5)
 LOAD_TICKER_CHUNK_SIZE = 24
 REPLAY_MAX_SYMBOLS = 36
 REPLAY_INTRADAY_LOOKBACK = timedelta(days=8)
+REPLAY_SESSION_START = time(9, 35)
+REPLAY_SESSION_END = time(15, 50)
 ProgressCallback = Callable[[dict[str, Any]], None]
 
 
@@ -237,8 +239,8 @@ def _replay_times(
         sessions.update(stamp.tz_convert(EASTERN).date() for stamp in frame.index)
     replay_times: list[datetime] = []
     for session in sorted(sessions):
-        point = datetime.combine(session, time(4, 5), tzinfo=EASTERN)
-        final = datetime.combine(session, time(19, 5), tzinfo=EASTERN)
+        point = datetime.combine(session, REPLAY_SESSION_START, tzinfo=EASTERN)
+        final = datetime.combine(session, REPLAY_SESSION_END, tzinfo=EASTERN)
         while point <= final:
             point_utc = point.astimezone(UTC)
             if start_at <= point_utc <= end_at:
@@ -363,6 +365,7 @@ def _write_group(
             "universe": "symbols_with_archived_intraday_bars",
             "cohort_max_symbols": REPLAY_MAX_SYMBOLS,
             "cohort_selection": "point_in_time_daily_liquidity_with_crash_reserve",
+            "replay_session": "regular_market_hours",
             "point_in_time_features": True,
             "limitations": [
                 "historical_symbol_availability_may_have_survivorship_bias",
