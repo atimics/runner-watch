@@ -7,9 +7,11 @@ from pytest import MonkeyPatch
 from runner_web import db, operations
 from runner_web.db import connection, init_db
 from runner_web.operations import (
+    TRAINER_HEARTBEAT_KEY,
     WORKER_HEARTBEAT_KEY,
     health_status,
     readiness_status,
+    trainer_health,
     worker_heartbeat_key,
 )
 
@@ -171,3 +173,21 @@ def test_readiness_does_not_depend_on_worker_heartbeat(
     assert result["status"] == "ok"
     assert result["database"] == "ok"
     assert result["schema_version"] >= result["minimum_schema_version"]
+
+
+def test_trainer_health_reports_running_and_stopped_states() -> None:
+    checked_at = datetime(2026, 8, 29, 4, tzinfo=UTC)
+    missing = trainer_health({}, checked_at=checked_at)
+    assert missing["status"] == "stale"
+
+    running = trainer_health(
+        {
+            TRAINER_HEARTBEAT_KEY: {
+                "value": json.dumps({"status": "ok", "phase": "historical_backfill"}),
+                "updated_at": (checked_at - timedelta(seconds=30)).isoformat(),
+            }
+        },
+        checked_at=checked_at,
+    )
+    assert running["status"] == "ok"
+    assert running["detail"]["phase"] == "historical_backfill"

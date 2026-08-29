@@ -2372,6 +2372,27 @@ def _migration_042_comment_generation_requests(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_043_ranker_training_provenance(db: DatabaseConnection) -> None:
+    """Identify replayed ranker rows without mixing them into public scan history."""
+
+    _ensure_column(
+        db,
+        "ranker_training_examples",
+        "training_origin TEXT NOT NULL DEFAULT 'live'",
+    )
+    _ensure_column(
+        db,
+        "ranker_training_examples",
+        "provenance_json TEXT NOT NULL DEFAULT '{}'",
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ranker_training_examples_origin_time
+        ON ranker_training_examples(training_origin,captured_at DESC)
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2422,6 +2443,7 @@ MIGRATIONS = (
     Migration(40, "comment_glyph_avatars", _migration_040_comment_glyph_avatars),
     Migration(41, "persistent_comment_avatars", _migration_041_persistent_comment_avatars),
     Migration(42, "comment_generation_requests", _migration_042_comment_generation_requests),
+    Migration(43, "ranker_training_provenance", _migration_043_ranker_training_provenance),
 )
 
 

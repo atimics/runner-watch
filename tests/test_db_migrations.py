@@ -245,6 +245,12 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         snapshot_columns = {
             row["name"] for row in database.execute("PRAGMA table_info(scan_snapshots)").fetchall()
         }
+        ranker_training_columns = {
+            row["name"]
+            for row in database.execute(
+                "PRAGMA table_info(ranker_training_examples)"
+            ).fetchall()
+        }
         case_columns = {
             row["name"] for row in database.execute("PRAGMA table_info(thesis_cases)").fetchall()
         }
@@ -346,6 +352,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "short_data_url",
         "short_data_collected_at",
     } <= snapshot_columns
+    assert {"training_origin", "provenance_json"} <= ranker_training_columns
     assert {"source_kind", "source_comment_id", "horizon_minutes"} <= case_columns
     assert "source_comment_id" in case_revision_columns
     assert "caller_identity_id" in signal_columns

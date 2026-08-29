@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -408,6 +408,7 @@ def _load_groups(
                 "score": int(row["baseline_score_milli"]) / FEATURE_SCALE,
                 "outcome": str(row["barrier_label"]),
                 "outcome_return": int(row["outcome_return_bp"] or 0) / RETURN_SCALE,
+                "training_origin": str(row.get("training_origin") or "live"),
             }
         )
     complete: list[list[dict[str, Any]]] = []
@@ -542,6 +543,16 @@ def train_shadow_ranker(
     )
     artifact = response["artifact"]
     metrics = response["metrics"]
+    origin_groups = Counter(
+        str(group[0].get("training_origin") or "live") for group in groups if group
+    )
+    origin_rows = Counter(
+        str(row.get("training_origin") or "live") for group in groups for row in group
+    )
+    metrics["training_data"] = {
+        "groups": dict(sorted(origin_groups.items())),
+        "rows": dict(sorted(origin_rows.items())),
+    }
     if not _valid_artifact(artifact):
         raise RuntimeError("The integer ranker returned an incompatible artifact.")
     identity = hashlib.sha256(
@@ -661,14 +672,69 @@ def trainer_main() -> None:
         300,
         int(os.getenv("RANKER_TRAIN_INTERVAL_SECONDS", RANKER_TRAINING.interval_seconds)),
     )
+    heartbeat_seconds = max(10, int(os.getenv("RANKER_TRAIN_HEARTBEAT_SECONDS", "30")))
+    historical_backfill_enabled = os.getenv(
+        "RANKER_HISTORICAL_BACKFILL_ENABLED", "0"
+    ).lower() in {"1", "true", "yes"}
     while True:
+        started_at = datetime.now(UTC)
+        last_error = ""
         try:
+            _trainer_state(
+                "ranker_trainer_heartbeat",
+                {"status": "ok", "phase": "training", "started_at": started_at.isoformat()},
+            )
+            if historical_backfill_enabled:
+                from runner_web.ranker_history import backfill_historical_training
+
+                _backfill_recent_training_examples(RANKER_TRAINING.maximum_groups)
+
+                def historical_progress(value: dict[str, Any]) -> None:
+                    _trainer_state(
+                        "ranker_trainer_heartbeat",
+                        {"status": "ok", **value},
+                    )
+
+                historical_result = backfill_historical_training(
+                    days=max(1, int(os.getenv("RANKER_HISTORICAL_BACKFILL_DAYS", "10"))),
+                    cadence_minutes=max(
+                        5,
+                        int(os.getenv("RANKER_HISTORICAL_BACKFILL_CADENCE_MINUTES", "30")),
+                    ),
+                    target_groups=max(
+                        RANKER_TRAINING.minimum_groups,
+                        int(
+                            os.getenv(
+                                "RANKER_HISTORICAL_BACKFILL_TARGET_GROUPS",
+                                str(RANKER_TRAINING.maximum_groups),
+                            )
+                        ),
+                    ),
+                    source=os.getenv("RANKER_HISTORICAL_BACKFILL_SOURCE", "yahoo"),
+                    progress=historical_progress,
+                )
+                _trainer_state("ranker_historical_backfill_last_result", historical_result)
             result = train_shadow_ranker_if_due()
             _trainer_state("ranker_trainer_last_result", result)
             _trainer_state("ranker_trainer_last_error", "")
         except Exception as exc:
-            _trainer_state("ranker_trainer_last_error", str(exc)[:1000])
-        time.sleep(interval)
+            last_error = str(exc)[:1000]
+            _trainer_state("ranker_trainer_last_error", last_error)
+        next_run_at = datetime.now(UTC).timestamp() + interval
+        while True:
+            remaining = next_run_at - datetime.now(UTC).timestamp()
+            if remaining <= 0:
+                break
+            _trainer_state(
+                "ranker_trainer_heartbeat",
+                {
+                    "status": "degraded" if last_error else "ok",
+                    "phase": "waiting",
+                    "next_run_at": datetime.fromtimestamp(next_run_at, UTC).isoformat(),
+                    "last_error": last_error or None,
+                },
+            )
+            time.sleep(min(heartbeat_seconds, remaining))
 
 
 def _valid_artifact(artifact: Any) -> bool:
@@ -816,9 +882,30 @@ def ranker_status() -> dict[str, Any]:
               (SELECT COUNT(*) FROM scan_outcomes WHERE barrier_label='up') AS barrier_up,
               (SELECT COUNT(*) FROM scan_outcomes WHERE barrier_label='down') AS barrier_down,
               (SELECT COUNT(*) FROM scan_outcomes WHERE barrier_label='timeout')
-                  AS barrier_timeout
-            """
+                  AS barrier_timeout,
+              (SELECT COUNT(*) FROM ranker_training_examples)
+                  AS training_examples,
+              (SELECT COUNT(*) FROM ranker_training_examples
+                  WHERE training_origin='historical_replay') AS historical_examples,
+              (SELECT COUNT(*) FROM (
+                  SELECT scan_run_id FROM ranker_training_examples
+                  WHERE feature_schema_version=?
+                    AND barrier_label IN ('down','timeout','up')
+                  GROUP BY scan_run_id
+                  HAVING COUNT(*)=MAX(expected_candidates) AND COUNT(*)>=2
+              )) AS complete_groups
+            """,
+            (FEATURE_SCHEMA_VERSION,),
         ).fetchone()
+        origins = database.execute(
+            """
+            SELECT training_origin,COUNT(*) AS rows,COUNT(DISTINCT scan_run_id) AS groups
+            FROM ranker_training_examples
+            WHERE feature_schema_version=? AND barrier_label IN ('down','timeout','up')
+            GROUP BY training_origin ORDER BY training_origin
+            """,
+            (FEATURE_SCHEMA_VERSION,),
+        ).fetchall()
     model = load_latest_model()
     return {
         **dict(counts),
@@ -826,6 +913,13 @@ def ranker_status() -> dict[str, Any]:
         "integer_only": True,
         "model_kind": MODEL_KIND,
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "training_origins": {
+            str(row["training_origin"]): {
+                "groups": int(row["groups"]),
+                "rows": int(row["rows"]),
+            }
+            for row in origins
+        },
         "model": (
             {
                 "id": model.id,
@@ -973,6 +1067,16 @@ def main() -> None:
         type=int,
         default=RANKER_TRAINING.maximum_groups,
     )
+    backfill = subparsers.add_parser("backfill-history")
+    backfill.add_argument("--days", type=int, default=10)
+    backfill.add_argument("--cadence-minutes", type=int, default=30)
+    backfill.add_argument(
+        "--target-groups",
+        type=int,
+        default=RANKER_TRAINING.maximum_groups,
+    )
+    backfill.add_argument("--source", default="yahoo")
+    backfill.add_argument("--dry-run", action="store_true")
     arguments = parser.parse_args()
     init_db()
     if arguments.command == "status":
@@ -985,11 +1089,21 @@ def main() -> None:
             maximum_groups=arguments.max_groups,
             epochs=arguments.epochs,
         )
-    else:
+    elif arguments.command == "export-crl":
         result = export_crl_dataset(
             arguments.path,
             arguments.horizon,
             arguments.max_groups,
+        )
+    else:
+        from runner_web.ranker_history import backfill_historical_training
+
+        result = backfill_historical_training(
+            days=arguments.days,
+            cadence_minutes=arguments.cadence_minutes,
+            target_groups=arguments.target_groups,
+            source=arguments.source,
+            dry_run=arguments.dry_run,
         )
     print(json.dumps(result, indent=2, sort_keys=True))
 
