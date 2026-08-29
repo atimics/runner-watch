@@ -9,6 +9,10 @@
     {% set pick_odds = quote[prediction.selection ~ '_odds'] if quote else none %}
     {% set pick_open_odds = quote[prediction.selection ~ '_open_odds'] if quote and (prediction.selection ~ '_open_odds') in quote else none %}
   {% endif %}
+  {% set away_model_pct = prediction.away_probability * 100 %}
+  {% set home_model_pct = prediction.home_probability * 100 %}
+  {% set away_market_pct = prediction.away_market_probability * 100 if prediction.away_market_probability is not none else none %}
+  {% set home_market_pct = prediction.home_market_probability * 100 if prediction.home_market_probability is not none else none %}
   <section class="decision-hero decision-board {{ prediction.signal|replace(' ','-') }}">
     <div class="decision-kicker">
       <strong>SEASON-RECORD BASELINE</strong>
@@ -38,6 +42,28 @@
         {% endif %}
       </div>
     </div>
+    <section class="probability-comparison" aria-labelledby="probabilityComparisonTitle">
+      <header>
+        <strong id="probabilityComparisonTitle">Model vs no-vig market</strong>
+        <span><i class="model-key"></i>Model <i class="market-key"></i>Market</span>
+      </header>
+      {% for side, code, name, model_pct, market_pct in [
+        ('away', event.away_abbreviation, event.away_team_name, away_model_pct, away_market_pct),
+        ('home', event.home_abbreviation, event.home_team_name, home_model_pct, home_market_pct)
+      ] %}
+      <div class="probability-row{% if prediction.selection == side %} value-side{% endif %}">
+        <span class="probability-team"><b>{{ code }}</b><small>{{ name }}</small></span>
+        <svg viewBox="0 0 100 12" preserveAspectRatio="none" aria-hidden="true">
+          <line class="probability-track" x1="0" y1="6" x2="100" y2="6"></line>
+          <line class="probability-midpoint" x1="50" y1="1" x2="50" y2="11"></line>
+          {% if market_pct is not none %}<line class="probability-gap" x1="{{ '%.1f'|format(market_pct) }}" y1="6" x2="{{ '%.1f'|format(model_pct) }}" y2="6"></line>{% endif %}
+          {% if market_pct is not none %}<line class="probability-market" x1="{{ '%.1f'|format(market_pct) }}" y1="2" x2="{{ '%.1f'|format(market_pct) }}" y2="10"></line>{% endif %}
+          <line class="probability-model" x1="{{ '%.1f'|format(model_pct) }}" y1="1" x2="{{ '%.1f'|format(model_pct) }}" y2="11"></line>
+        </svg>
+        <span class="probability-values"><b>{{ '%.1f'|format(model_pct) }}%</b><small>{% if market_pct is not none %}{{ '%.1f'|format(market_pct) }}%{% else %}—{% endif %}</small></span>
+      </div>
+      {% endfor %}
+    </section>
     <p class="decision-summary"><strong>{{ 'Experimental' if sample.remaining else 'Reviewable' }} · {{ model_record.games }}/{{ sample.target }} graded.</strong> Season records plus home edge; roster and news are context only.</p>
     {% if event.edge_history %}
     <div class="decision-movement">

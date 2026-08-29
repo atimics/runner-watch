@@ -169,6 +169,18 @@ def _rendered_pulse(monkeypatch, payload: dict[str, Any]) -> str:
         "_public_sports_pulse_data",
         lambda *_args, **_kwargs: {"pulse": payload, "pick_stats": pick_stats},
     )
+    monkeypatch.setattr(
+        web_main,
+        "_public_golf_data",
+        lambda: {
+            "events": [],
+            "display_count": 0,
+            "entrant_count": 0,
+            "source_status": "success",
+            "source_error": "",
+            "updated_at": None,
+        },
+    )
     return _inline_static_assets(web_main.home(_request(), None).body.decode())
 
 
@@ -360,6 +372,7 @@ def test_sports_pulse_uses_the_exact_ticker_row_contract(
     assert "PROJECTED" in copy
     assert "58%" in copy
     assert "Value HME +7.8pp" in copy
+    assert "MODEL41.8%MARKET34.0%" in copy
     assert "vs HME · MLB" in copy
     assert row.get_attribute("class") == "token-row ticker-row sports-pulse-row"
     assert row.locator(".coin").count() == 1
@@ -371,7 +384,8 @@ def test_sports_pulse_uses_the_exact_ticker_row_contract(
     assert page.locator(".model-favorite").count() == 0
     assert row.get_attribute("aria-label") == (
         "AWY Club is projected to beat HME Club with a 58 percent win chance; "
-        "value side HME with a +7.8 percentage-point model edge"
+        "value side HME with a +7.8 percentage-point model edge, model 41.8 percent "
+        "versus market 34.0 percent"
     )
     assert page.evaluate(
         """() => {
@@ -393,7 +407,7 @@ def test_sports_pulse_uses_the_exact_ticker_row_contract(
         }"""
     ) == {
         "display": "grid",
-        "minHeight": "78px",
+        "minHeight": "94px",
         "padding": "9px 8px",
         "radius": "0px",
         "coinWidth": "42px",
@@ -423,7 +437,8 @@ def test_sports_pulse_calls_a_close_projection_a_slight_edge(
     assert "Value AWY +2.6pp" in row.text_content()
     assert row.get_attribute("aria-label") == (
         "AWY Club has a slight model edge over HME Club with a 51 percent win chance; "
-        "value side AWY with a +2.6 percentage-point model edge"
+        "value side AWY with a +2.6 percentage-point model edge, model 58.2 percent "
+        "versus market 55.6 percent"
     )
     assert errors == []
 

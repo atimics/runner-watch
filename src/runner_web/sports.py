@@ -2425,6 +2425,33 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
     return output
 
 
+def _golf_display_status(event: dict[str, Any], current: datetime) -> str:
+    """Describe the tournament state from the strongest evidence we have."""
+
+    state = str(event.get("status") or "").lower()
+    detail = str(event.get("status_detail") or "").strip()
+    leaders = event.get("leaderboard") or []
+    rounds = [int(player["round_number"]) for player in leaders if player.get("round_number")]
+    if state == "post" or event.get("completed"):
+        return "Final"
+    if state == "in":
+        return detail if detail and detail.lower() != "scheduled" else "In progress"
+    if rounds:
+        round_number = max(rounds)
+        complete = all(
+            str(player.get("through_display") or "").upper() == "F"
+            for player in leaders
+            if player.get("round_number") == round_number
+        )
+        return f"Round {round_number} {'complete' if complete else 'in progress'}"
+    try:
+        if _parse_time(event.get("start_time")) > current:
+            return "Scheduled"
+    except (TypeError, ValueError):
+        pass
+    return "Awaiting update"
+
+
 def golf_slate(limit: int = 6, leaderboard_limit: int = 10) -> dict[str, Any]:
     """Return current and upcoming PGA tournaments with a compact leaderboard."""
 
@@ -2463,6 +2490,7 @@ def golf_slate(limit: int = 6, leaderboard_limit: int = 10) -> dict[str, Any]:
             ).fetchall()
             event["leaderboard"] = [dict(player) for player in leaders]
             event["leader"] = event["leaderboard"][0] if event["leaderboard"] else None
+            event["display_status"] = _golf_display_status(event, current)
             events.append(event)
         last_run = database.execute(
             """
