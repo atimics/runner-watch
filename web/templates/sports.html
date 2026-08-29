@@ -4,43 +4,13 @@
 {% block title %}Pulse · RATi Sports{% endblock %}
 {% block product_head %}{% include "_sports_styles.html" %}{% endblock %}
 {% block content %}
-{% macro pulse_card(event, compact=false) -%}
-  {% set prediction = event.prediction %}
-  {% set value_agrees = event.model_winner_abbreviation == event.signal_abbreviation %}
-  <a class="game-card winner-card team-projection-card{% if compact %} winner-card-compact{% endif %}" href="{{ sports_path_prefix or '' }}/game/{{ event.id }}" aria-label="{{ event.model_winner_team_name }} {{ event.model_winner_aria_action }} {{ event.model_winner_opponent_team_name }} with a {{ '%.0f'|format(event.model_winner_probability_pct) }} percent win chance; value side {{ event.signal_abbreviation }} with a {{ '%+.1f'|format(prediction.edge_pct) }} percentage-point model edge">
-    <span class="winner-coin winner-coin-{{ event.model_winner_coin_tone }}" aria-hidden="true"><b>{{ event.model_winner_abbreviation }}</b><i></i></span>
-    <span class="matchup-copy team-projection-copy">
-      <span class="team-projection-line"><strong>{{ event.model_winner_abbreviation }}</strong><small>{{ event.model_winner_label }}</small></span>
-      <span class="team-projection-name">{{ event.model_winner_team_name }}</span>
-      <span class="winner-context">
-        vs {{ event.model_winner_opponent_abbreviation }} · {{ event.league|upper }} · <time data-local-time="{{ event.start_time }}">{{ event.start_time[:16]|replace('T',' ') }} UTC</time>
-      </span>
-    </span>
-    <span class="winner-quote">
-      <small>WIN CHANCE</small>
-      <strong>{{ '%.0f'|format(event.model_winner_probability_pct) }}%</strong>
-      <span class="winner-edge">Projected {{ event.model_winner_projected_score_display }}–{{ event.model_winner_opponent_projected_score_display }}</span>
-      <em class="value-note{% if value_agrees %} agrees{% endif %}">Value{% if value_agrees %} agrees{% endif %}: {{ event.signal_abbreviation }} {{ '%+.1f'|format(prediction.edge_pct) }} pp</em>
-      {% if event.bovada_divergence_material %}<span class="bovada-outlier">Bovada differs by {{ '%.1f'|format(event.bovada_divergence_pct) }} points</span>{% endif %}
-      {% if event.edge_history %}
-      <svg class="edge-spark" viewBox="0 0 92 24" role="img" aria-label="{{ event.edge_history.label }}">
-        <line class="edge-zero" x1="2" y1="12" x2="90" y2="12"></line>
-        <polyline points="{{ event.edge_history.plot_points }}"></polyline>
-        <circle cx="{{ event.edge_history.dot_x }}" cy="{{ event.edge_history.dot_y }}" r="2"></circle>
-      </svg>
-      {% endif %}
-    </span>
-    <span class="game-chevron" aria-hidden="true">›</span>
-  </a>
-{%- endmacro %}
-
 <div class="desktop-workspace" data-desktop-workspace>
   <section class="desktop-list-pane sports-feed-pane" data-desktop-list>
     <header class="screen-head">
       <div>
         <span class="rati-product">RATi SPORTS</span>
         <h1>Pulse</h1>
-        <span class="head-meta sports-pulse-summary"><span><b id="sportsPulseCount">{{ pulse.display_count }}</b> team projection{% if pulse.display_count != 1 %}s{% endif %}</span><span>{{ pulse.scanned_count }} games checked</span><span id="sportsPulseMaturity">Baseline {{ pulse.model_record.games }}/{{ pulse.model_record.sample.target }} graded</span><span id="sportsPulseStatus">Live</span></span>
+        <span class="head-meta sports-pulse-summary"><span><b id="sportsPulseCount">{{ pulse.display_count }}</b> matchup{% if pulse.display_count != 1 %}s{% endif %}</span><span>{{ pulse.scanned_count }} checked</span><span id="sportsPulseMaturity">Baseline {{ pulse.model_record.games }}/{{ pulse.model_record.sample.target }} graded</span><span id="sportsPulseStatus">Live</span></span>
       </div>
       {% if user %}
         <button class="avatar-button" type="button" data-profile aria-label="Open {{ comment_avatar.name }} profile">{{ render_comment_avatar(comment_avatar) }}</button>
@@ -66,19 +36,7 @@
     <button class="pulse-refresh sports-live-refresh" id="sportsPulseRefresh" type="button" aria-live="polite" hidden>Slate updated</button>
 
     <main class="list-section sports-list-section" aria-label="Pulse signals">
-      <div class="game-list pulse-winners" id="sportsPulseList">
-        {% for event in pulse.events %}
-          {{ pulse_card(event) }}
-          {% if event.series_more_count %}
-          <details class="series-cluster">
-            <summary><span>{{ event.away_abbreviation }}–{{ event.home_abbreviation }} series</span><b>+{{ event.series_more_count }} more game{% if event.series_more_count != 1 %}s{% endif %}</b></summary>
-            <div class="series-games">{% for related in event.series_more %}{{ pulse_card(related, true) }}{% endfor %}</div>
-          </details>
-          {% endif %}
-        {% else %}
-        <div class="sports-empty"><strong>No team projections right now.</strong><p>Pulse stays quiet until a game clears the model-versus-market threshold.</p></div>
-        {% endfor %}
-      </div>
+      <div class="token-list" id="sportsPulseList"></div>
     </main>
 
     <p class="sports-source">ESPN schedule · season-record baseline · median no-vig market · Updated <time id="sportsPulseUpdated" data-local-time="{{ pulse.updated_at or '' }}">{{ pulse.updated_at[:16]|replace('T',' ') if pulse.updated_at else 'pending' }} UTC</time></p>

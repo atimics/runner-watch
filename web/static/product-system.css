@@ -548,19 +548,19 @@ html.embedded-pane .account-strip {
   box-shadow: none;
 }
 
-.runners-product .ticker-row {
+:is(.runners-product, .sports-product) .ticker-row {
   min-height: 78px;
   padding: 9px 8px;
   border-color: #202921;
 }
 
-.runners-product .ticker-row::before {
+:is(.runners-product, .sports-product) .ticker-row::before {
   background: rgba(120, 208, 149, .055);
   box-shadow: inset 2px 0 rgba(120, 208, 149, .7);
 }
 
-.runners-product .ticker-row .ticker-line strong,
-.runners-product .quote,
+:is(.runners-product, .sports-product) .ticker-row .ticker-line strong,
+:is(.runners-product, .sports-product) .ticker-row .quote,
 .runners-product .price-block,
 .runners-product .market-metrics strong,
 .runners-product .risk-grid b,
@@ -575,15 +575,15 @@ html.embedded-pane .account-strip {
   font-variant-numeric: tabular-nums;
 }
 
-.runners-product .ticker-row .company-name {
+:is(.runners-product, .sports-product) .ticker-row .company-name {
   color: var(--muted);
 }
 
-.runners-product .ticker-row .catalyst {
+:is(.runners-product, .sports-product) .ticker-row .catalyst {
   color: #b5bdb8;
 }
 
-.runners-product .ticker-row .ticker-age {
+:is(.runners-product, .sports-product) .ticker-row .ticker-age {
   color: var(--muted);
 }
 

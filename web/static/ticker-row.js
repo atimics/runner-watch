@@ -76,6 +76,51 @@
     ];
   }
 
+  function renderShell({
+    href,
+    ariaLabel,
+    coinTone = 0,
+    coinLabel,
+    headline,
+    headlineMeta = '',
+    age = '',
+    company,
+    detailMarkup = '',
+    catalyst,
+    catalystTone = '',
+    catalystMarkup = '',
+    quoteValue,
+    chartMarkup,
+    quoteMarkup,
+    quoteTone = 'flat',
+    updated = false,
+    dataTicker = '',
+    dataSportsGame = '',
+  }) {
+    const rowClass = `${updated ? ' is-updated' : ''}${dataSportsGame ? ' sports-pulse-row' : ''}`;
+    const rowData = dataTicker
+      ? ` data-ticker-row="${esc(dataTicker)}"`
+      : dataSportsGame
+        ? ` data-sports-pulse-row="${esc(dataSportsGame)}"`
+        : '';
+    const safeCatalystTone = ['gap', 'risk'].includes(catalystTone) ? ` ${catalystTone}` : '';
+    const safeQuoteTone = ['up', 'down', 'flat'].includes(quoteTone) ? quoteTone : 'flat';
+    return `<a class="token-row ticker-row${rowClass}" href="${esc(href)}"${rowData} aria-label="${esc(ariaLabel)}">
+      <span class="coin coin-${Number(coinTone) || 0}"><b>${esc(coinLabel)}</b><i></i></span>
+      <span class="token-copy">
+        <span class="ticker-line"><strong>${esc(headline)}</strong>${headlineMeta}<small class="ticker-age">${esc(age)}</small></span>
+        <span class="company-name">${esc(company)}</span>
+        ${detailMarkup}
+        <span class="catalyst${safeCatalystTone}">${esc(catalyst)}${catalystMarkup}</span>
+      </span>
+      <span class="quote">
+        <strong>${esc(quoteValue)}</strong>
+        ${chartMarkup}
+        <small class="${safeQuoteTone}">${quoteMarkup}</small>
+      </span>
+    </a>`;
+  }
+
   function render(row, options = {}) {
     const change = number(row.change_pct);
     const changeClass = change === null ? 'flat' : change >= 0 ? 'up' : 'down';
@@ -118,20 +163,26 @@
     const trackPrompt = row.needs_thesis
       ? '<span class="case-track-prompt">Comment once to make this view personal</span>'
       : '';
-    return `<a class="token-row ticker-row${updateClass}" href="/t/${encodeURIComponent(row.ticker)}" data-ticker-row="${esc(row.ticker)}" aria-label="${esc(label)}">
-      <span class="coin coin-${Number(row.coin_tone) || 0}"><b>${esc(row.coin_label || String(row.ticker).slice(0, 2))}</b><i></i></span>
-      <span class="token-copy">
-        <span class="ticker-line"><strong>${esc(row.ticker)}</strong>${badge}<small class="ticker-age">${esc(age)}</small></span>
-        <span class="company-name">${esc(company)}</span>
-        ${caseSource}${thesis}${caseSocial}${trackPrompt}
-        <span class="catalyst${catalystTone}">${esc(row.pulse_label || 'No recent event')}${events}${thesisCueMarkup}${safety}</span>
-      </span>
-      <span class="quote">
-        <strong>${esc(money(row.price))}</strong>
-        <svg class="mini-chart" data-ticker="${esc(row.ticker)}" viewBox="0 0 64 18" preserveAspectRatio="none" aria-hidden="true"><path class="chart-placeholder" d="M1 12 L13 10 L25 13 L39 8 L51 10 L63 7"/></svg>
-        <small class="${changeClass}"><span class="quote-period">Today</span> ${esc(percent(row.change_pct))}</small>
-      </span>
-    </a>`;
+    return renderShell({
+      href: `/t/${encodeURIComponent(row.ticker)}`,
+      ariaLabel: label,
+      coinTone: row.coin_tone,
+      coinLabel: row.coin_label || String(row.ticker).slice(0, 2),
+      headline: row.ticker,
+      headlineMeta: badge,
+      age,
+      company,
+      detailMarkup: `${caseSource}${thesis}${caseSocial}${trackPrompt}`,
+      catalyst: row.pulse_label || 'No recent event',
+      catalystTone: catalystTone.trim(),
+      catalystMarkup: `${events}${thesisCueMarkup}${safety}`,
+      quoteValue: money(row.price),
+      chartMarkup: `<svg class="mini-chart" data-ticker="${esc(row.ticker)}" viewBox="0 0 64 18" preserveAspectRatio="none" aria-hidden="true"><path class="chart-placeholder" d="M1 12 L13 10 L25 13 L39 8 L51 10 L63 7"/></svg>`,
+      quoteMarkup: `<span class="quote-period">Today</span> ${esc(percent(row.change_pct))}`,
+      quoteTone: changeClass,
+      updated: Boolean(updateClass),
+      dataTicker: row.ticker,
+    });
   }
 
   function drawMiniChart(svg, points, annotations = []) {
@@ -195,5 +246,5 @@
     } catch (_) {}
   }
 
-  window.TickerRow = Object.freeze({ago, loadCharts, paintCharts, render});
+  window.TickerRow = Object.freeze({ago, loadCharts, paintCharts, render, renderShell});
 })();
