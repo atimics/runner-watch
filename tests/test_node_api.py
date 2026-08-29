@@ -120,7 +120,8 @@ def test_openrouter_pkce_exchange_keeps_key_out_of_api() -> None:
 
     status = client.get("/api/v1/connections/openrouter").json()
     assert status["status"] == "connected"
-    assert status["key_fingerprint"]
+    assert status["connection_method"] == "stored"
+    assert "key_fingerprint" not in status
     assert "super-secret" not in str(status)
     assert (
         client.get(f"/api/v1/connections/openrouter/flows/{flow['flow_id']}").json()["status"]

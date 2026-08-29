@@ -170,7 +170,7 @@
           <span class="eyebrow">OPTIONAL AI</span>
           <h2>OpenRouter</h2>
           <p>{openrouter.status === 'connected'
-            ? `Connected · ${openrouter.key_fingerprint || openrouter.connection_method}`
+            ? `Connected · ${openrouter.connection_method}`
             : 'Connect with OAuth PKCE. The desktop renderer never receives the generated key.'}</p>
           <div class="button-row">
             {#if openrouter.status === 'connected'}

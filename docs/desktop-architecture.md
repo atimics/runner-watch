@@ -56,8 +56,8 @@ managed workers continue to populate the existing shared Pulse and Radar data.
 
 The recommended local connection uses OpenRouter OAuth with an S256 PKCE challenge. The scanner
 creates the verifier, receives the loopback callback, exchanges the one-use code, and writes the
-resulting key to the credential vault. The Svelte renderer sees only connection state and a short
-key fingerprint. Environment variables remain available for headless deployments, and direct key
+resulting key to the credential vault. The Svelte renderer sees only connection state and method.
+Environment variables remain available for headless deployments, and direct key
 entry remains an advanced fallback.
 
 Disconnecting removes the local credential. It does not revoke an environment-managed credential

@@ -37,7 +37,6 @@ export interface OpenRouterConnection {
   provider: 'openrouter';
   credential_owner?: string;
   connection_method?: string;
-  key_fingerprint?: string;
   activity_url?: string;
   settings_url?: string;
 }

@@ -146,15 +146,13 @@ class OpenRouterConnections:
         environment_managed = bool(__import__("os").getenv(environment_name, "").strip())
         if not key:
             return {"status": "disconnected", "provider": "openrouter"}
-        digest = hashlib.sha256(key.encode()).hexdigest()
         return {
             "status": "connected",
             "provider": "openrouter",
             "credential_owner": "operator" if environment_managed else "user",
             "connection_method": "environment" if environment_managed else "stored",
-            "key_fingerprint": digest[:12],
-            "activity_url": f"https://openrouter.ai/logs?api_key_hash={digest}",
-            "settings_url": f"https://openrouter.ai/keys/{digest}",
+            "activity_url": "https://openrouter.ai/activity",
+            "settings_url": "https://openrouter.ai/settings/keys",
         }
 
     def disconnect(self) -> dict[str, Any]:
