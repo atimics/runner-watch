@@ -112,13 +112,7 @@ def _rendered_ticker() -> str:
         )
     )
     html = html.replace("</head>", f"<style>{styles}</style></head>")
-    html = re.sub(r'<link rel="stylesheet"[^>]*>', "", html)
-    return re.sub(
-        r"<script[^>]*>.*?</script>",
-        "",
-        html,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
+    return re.sub(r'<link rel="stylesheet"[^>]*>', "", html)
 
 
 def test_model_path_receipt_stays_compact_and_keeps_risk_separate(page: Page) -> None:
