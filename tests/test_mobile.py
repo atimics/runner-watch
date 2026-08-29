@@ -60,16 +60,18 @@ def _test_flash_forecast() -> dict[str, Any]:
 
 
 @pytest.mark.parametrize(
-    ("probabilities", "direction", "label", "arrow"),
+    ("probabilities", "expected_return", "direction", "label", "arrow"),
     [
-        ((0.62, 0.18, 0.20), "up", "Upside", "↑"),
-        ((0.19, 0.58, 0.23), "down", "Downside", "↓"),
-        ((0.34, 0.32, 0.34), "flat", "No clear edge", "↔"),
-        ((0.39, 0.36, 0.25), "flat", "No clear edge", "↔"),
+        ((0.62, 0.18, 0.20), 2.4, "up", "Upside setup", "↑"),
+        ((0.19, 0.58, 0.23), -1.1, "down", "Downside pressure", "↓"),
+        ((0.34, 0.32, 0.34), 1.3, "flat", "No edge", "↔"),
+        ((0.35, 0.31, 0.34), 1.7, "flat", "No edge", "↔"),
+        ((0.40, 0.48, 0.12), 1.3, "up", "Upside setup", "↑"),
     ],
 )
 def test_ranker_directional_thesis_uses_the_three_way_contract(
     probabilities: tuple[float, float, float],
+    expected_return: float,
     direction: str,
     label: str,
     arrow: str,
@@ -81,6 +83,10 @@ def test_ranker_directional_thesis_uses_the_three_way_contract(
             "probability_up": up,
             "probability_down": down,
             "probability_timeout": timeout,
+            "expected_return_pct": expected_return,
+            "model_id": "ranker-test",
+            "model_status": "shadow",
+            "created_at": "2026-08-28T18:00:00+00:00",
         }
     )
 
@@ -88,8 +94,31 @@ def test_ranker_directional_thesis_uses_the_three_way_contract(
     assert thesis["direction"] == direction
     assert thesis["label"] == label
     assert thesis["arrow"] == arrow
-    assert thesis["horizon"] == "next 60m"
-    assert thesis["contract"] == "+8% before -4% within 60m"
+    assert thesis["horizon"] == "60m"
+    assert thesis["contract"] == "+8% before −4% within 60 minutes"
+    assert thesis["status_label"] == "Shadow model"
+    assert thesis["model_id"] == "ranker-test"
+    assert [item["key"] for item in thesis["distribution"]] == [
+        "down",
+        "timeout",
+        "up",
+    ]
+    assert sum(item["probability_pct"] for item in thesis["distribution"]) == 100
+
+
+def test_ticker_model_path_is_compact_explicit_and_separate_from_risk() -> None:
+    root = Path(__file__).parents[1]
+    template = (root / "web/templates/ticker.html").read_text()
+    styles = (root / "web/static/ticker-row.css").read_text()
+
+    assert 'class="model-path-card model-path-' in template
+    assert "MODEL PATH ·" in template
+    assert "detail.directional_thesis.distribution" in template
+    assert "No barrier” means neither was reached" in template
+    assert template.index('class="model-path-card') < template.index('class="risk-decision')
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in styles
+    assert ".model-path-segment.path-down { background: var(--red); }" in styles
+    assert ".model-path-segment.path-up { background: var(--green); }" in styles
 
 
 def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:

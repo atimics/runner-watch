@@ -499,24 +499,32 @@ fn evaluate(artifact: &IntegerArtifact, groups: &[Vec<NormalizedTrainingRow>]) -
 
     let row_count = probability_rows.len().max(1) as i128;
     let mut log_loss = 0_i128;
-    let mut brier = 0_i128;
-    let mut bins = [(0_i64, 0_i128, 0_i64); 10];
+    let mut brier = [0_i128; 3];
+    let mut bins = [[(0_i64, 0_i128, 0_i64); 10]; 3];
     for (probability, outcome) in probability_rows {
         log_loss += i128::from(negative_log_micros(probability[outcome]));
-        let target_up = if outcome == 2 { PROBABILITY_SCALE } else { 0 };
-        let difference = i128::from(probability[2] - target_up);
-        brier += difference * difference;
-        let bin = ((probability[2] * 10 / PROBABILITY_SCALE).clamp(0, 9)) as usize;
-        bins[bin].0 += 1;
-        bins[bin].1 += i128::from(probability[2]);
-        bins[bin].2 += i64::from(outcome == 2);
+        for class_index in 0..3 {
+            let target = if outcome == class_index {
+                PROBABILITY_SCALE
+            } else {
+                0
+            };
+            let difference = i128::from(probability[class_index] - target);
+            brier[class_index] += difference * difference;
+            let bin = ((probability[class_index] * 10 / PROBABILITY_SCALE).clamp(0, 9)) as usize;
+            bins[class_index][bin].0 += 1;
+            bins[class_index][bin].1 += i128::from(probability[class_index]);
+            bins[class_index][bin].2 += i64::from(outcome == class_index);
+        }
     }
-    let ece_numerator: i128 = bins
-        .iter()
-        .map(|(_, probability_sum, actual_up)| {
-            (*probability_sum - i128::from(*actual_up) * i128::from(PROBABILITY_SCALE)).abs()
-        })
-        .sum();
+    let ece_numerator = bins.map(|class_bins| {
+        class_bins
+            .iter()
+            .map(|(_, probability_sum, actual_count)| {
+                (*probability_sum - i128::from(*actual_count) * i128::from(PROBABILITY_SCALE)).abs()
+            })
+            .sum::<i128>()
+    });
     let group_count = groups.len().max(1) as i128;
     json!({
         "groups": groups.len(),
@@ -528,8 +536,18 @@ fn evaluate(artifact: &IntegerArtifact, groups: &[Vec<NormalizedTrainingRow>]) -
         "mean_selected_return_bp": selected_returns / i128::from(selected_return_count.max(1)),
         "baseline_mean_selected_return_bp": baseline_returns / i128::from(selected_return_count.max(1)),
         "multiclass_log_loss_micros": log_loss / row_count,
-        "up_brier_ppm": brier / (row_count * i128::from(PROBABILITY_SCALE)),
-        "up_expected_calibration_error_ppm": ece_numerator / row_count,
+        "brier_ppm": {
+            "down": brier[0] / (row_count * i128::from(PROBABILITY_SCALE)),
+            "timeout": brier[1] / (row_count * i128::from(PROBABILITY_SCALE)),
+            "up": brier[2] / (row_count * i128::from(PROBABILITY_SCALE)),
+        },
+        "expected_calibration_error_ppm": {
+            "down": ece_numerator[0] / row_count,
+            "timeout": ece_numerator[1] / row_count,
+            "up": ece_numerator[2] / row_count,
+        },
+        "up_brier_ppm": brier[2] / (row_count * i128::from(PROBABILITY_SCALE)),
+        "up_expected_calibration_error_ppm": ece_numerator[2] / row_count,
     })
 }
 

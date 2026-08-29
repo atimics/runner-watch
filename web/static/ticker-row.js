@@ -58,13 +58,20 @@
   function thesisCue(row) {
     const thesis = row.directional_thesis;
     const direction = String(thesis?.direction || '').toLowerCase();
-    if (!['up', 'down', 'flat'].includes(direction)) return ['', ''];
+    if (!['up', 'down', 'flat'].includes(direction)) {
+      if (row.source !== 'market' && row.section !== 'scored') return ['', ''];
+      const description = 'Directional thesis: model learning';
+      return [
+        `<small class="ticker-thesis ticker-thesis-learning" title="${description}" aria-hidden="true"><b>—</b><span>MODEL LEARNING</span></small>`,
+        description,
+      ];
+    }
     const arrows = {up: '↑', down: '↓', flat: '↔'};
-    const label = String(thesis.label || (direction === 'flat' ? 'No clear edge' : direction));
-    const horizon = String(thesis.horizon || 'next 60m');
-    const description = `Model thesis: ${label}, ${horizon}`;
+    const label = String(thesis.label || (direction === 'flat' ? 'No edge' : direction));
+    const horizon = String(thesis.horizon || '60m');
+    const description = `Directional thesis: ${label}, ${horizon}`;
     return [
-      `<small class="ticker-thesis ticker-thesis-${direction}" title="${esc(description)}" aria-hidden="true">${arrows[direction]}</small>`,
+      `<small class="ticker-thesis ticker-thesis-${direction}" title="${esc(description)}" aria-hidden="true"><b>${arrows[direction]}</b><span>${esc(label.toUpperCase())} · ${esc(horizon.toUpperCase())}</span></small>`,
       description,
     ];
   }
@@ -114,10 +121,10 @@
     return `<a class="token-row ticker-row${updateClass}" href="/t/${encodeURIComponent(row.ticker)}" data-ticker-row="${esc(row.ticker)}" aria-label="${esc(label)}">
       <span class="coin coin-${Number(row.coin_tone) || 0}"><b>${esc(row.coin_label || String(row.ticker).slice(0, 2))}</b><i></i></span>
       <span class="token-copy">
-        <span class="ticker-line"><strong>${esc(row.ticker)}</strong>${badge}${thesisCueMarkup}<small class="ticker-age">${esc(age)}</small></span>
+        <span class="ticker-line"><strong>${esc(row.ticker)}</strong>${badge}<small class="ticker-age">${esc(age)}</small></span>
         <span class="company-name">${esc(company)}</span>
         ${caseSource}${thesis}${caseSocial}${trackPrompt}
-        <span class="catalyst${catalystTone}">${esc(row.pulse_label || 'No recent event')}${events}${safety}</span>
+        <span class="catalyst${catalystTone}">${esc(row.pulse_label || 'No recent event')}${events}${thesisCueMarkup}${safety}</span>
       </span>
       <span class="quote">
         <strong>${esc(money(row.price))}</strong>
