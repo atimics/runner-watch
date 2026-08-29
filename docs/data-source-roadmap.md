@@ -1,6 +1,6 @@
 # Data source ingestion roadmap
 
-Last reviewed: 2026-08-26
+Last reviewed: 2026-08-29
 
 ## Goal
 
@@ -31,11 +31,32 @@ already exists.
 | 8 | [FRED observations API](https://fred.stlouisfed.org/docs/api/fred/series_observations.html) | VIX close, policy rates, Treasury yields, credit spreads, and other regime inputs | Free API key; cadence depends on the series | Add daily market-regime features to every scan group | Use ALFRED vintage dates for backtests when a series can be revised. This is context, not a live stock catalyst. |
 | 9 | [SEC fails-to-deliver files](https://www.sec.gov/data-research/sec-markets-data/fails-deliver-data) | Settlement date, symbol, failed share balance, and reference price | Free ZIP files; published twice a month with a material delay | Add a slow historical crowding and settlement-risk feature | Fails are cumulative balances, can come from long or short sales, and are not proof of naked shorting. Keep this source out of live alerts. |
 | 10 | [USAspending API](https://api.usaspending.gov/docs/endpoints) | Federal awards and award changes without an API key | Public API; ingest by award update date | Add verified government-contract evidence | Recipient names and subsidiaries are hard to map to public issuers. Start with a small reviewed issuer map. |
+| 11 | [openFDA drug shortages](https://open.fda.gov/apis/drug/drugshortages/) and [enforcement reports](https://open.fda.gov/apis/drug/enforcement/) | Shortage status and dates, company names, recall class, affected products, and recall status | Public API and full downloads; shortages update daily and enforcement reports update weekly; a free key raises the request allowance | Add supply and recall risk for reviewed drug-company links | A product event is not automatically material to the public company. Keep old versions because FDA can revise existing records. |
+| 12 | [NIH RePORTER API](https://api.reporter.nih.gov/) | Federal research awards, project dates, funding, principal investigators, organization IDs, and publications | Public JSON API; award records follow agency reporting cycles | Add source-backed grant awards and research-program context for biotech issuers | A grant to a researcher, hospital, or university is not an issuer award. Match the funded organization ID, not only keywords. |
+| 13 | [GLEIF LEI API](https://www.gleif.org/en/lei-data/gleif-api) | Legal names, former names, addresses, parent relationships, and mapped identifiers such as ISIN | Free public API with no registration; Golden Copy and delta files update three times daily | Improve issuer, sponsor, recipient, and subsidiary matching before more event feeds are added | LEI coverage is not universal and an ISIN still needs a reviewed ticker mapping. Treat fuzzy name matches as proposals, not facts. |
+| 14 | [FINRA OTC transparency](https://www.finra.org/filing-reporting/otc-transparency) | Delayed weekly or monthly ATS and non-ATS trade counts and share volume by security | Public delayed aggregates and file downloads | Add off-exchange activity context beside volume and short data | This is trade activity, not short volume and not proof of hidden buying. Automated or commercial use needs a specific terms review; attribution is required where allowed. |
+| 15 | [SEC Form 13F](https://www.sec.gov/data-research/sec-markets-data/form-13f-data-sets) and [Form N-PORT](https://www.sec.gov/data-research/sec-markets-data/form-n-port-data-sets) data sets | Reported institutional and fund holdings, position value, shares, and filing identifiers | Free quarterly ZIP bundles built from filed structured data; amendments remain possible | Add slow ownership context and test whether reported fund interest helps longer-horizon research | Holdings are delayed, may omit positions, and are not a live flow signal. Resolve CUSIP, FIGI, or LEI to the issuer as of the report date. |
+| 16 | [SAM.gov contract opportunities API](https://open.gsa.gov/api/get-opportunities-public-api/) | Solicitation, award, and sole-source notices with agency, dates, NAICS codes, and place of performance | Public search and API; the API needs a free registered-user key and updates active notices daily | Find early federal-contract context before an award appears in USAspending | An opportunity is not an award and often names products rather than issuers. Keep opportunity and award events separate. |
+| 17 | [Federal Register API](https://www.federalregister.gov/developers/documentation/api/v1) | Agency rules, notices, public-inspection dates, document numbers, and source links | Public API with no key; documents cover 1994 onward | Add reviewed agency actions for sectors such as biotech, energy, mining, and defense | Broad keyword searches create noise. Require an agency filter and a reviewed issuer or product link before publishing. |
+| 18 | [CFTC Commitments of Traders](https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm) | Weekly open interest split by trader class for equity index, rate, energy, metal, and other futures | Free weekly files and public reporting API; normally released Friday at 3:30 p.m. ET for Tuesday positions | Add slow risk-regime context for the whole market or sector | This is futures positioning, not stock-level evidence. Preserve report and release dates and never attach it to one issuer. |
 
-“Free” does not always mean “free to redistribute in a public app.” Before any vendor data is shown
-to users, record the plan, terms URL, allowed storage period, display rights, attribution, and
-termination rules in a small source registry. Government sources still need their access rules and
-request limits followed.
+“Free” means that a useful public or free-tier path exists; it does not mean unrestricted use or
+free redistribution in a public app. Before any data is shown to users, record the exact endpoint,
+account tier, terms URL, request limit, allowed storage period, display rights, attribution, and
+termination rules in the source registry. Government sources still need their access rules and
+request limits followed. Vendor free tiers must also have a paid-exit plan so a limit change cannot
+silently break Pulse.
+
+### Free access summary
+
+- **No account or key:** SEC data sets, ClinicalTrials.gov, FDA downloads, USAspending, GLEIF,
+  Federal Register, and CFTC files have a useful public path without sign-up.
+- **Free key or account:** Alpaca's IEX tier, FRED, the higher openFDA allowance, FINRA query APIs,
+  and SAM.gov automation need a free credential or account. Limits and display rights still vary.
+- **Terms-gated public files:** Nasdaq halt and FINRA OTC data can be viewed without paying, but
+  public-product use must wait for a written terms decision.
+- **Paid exit:** full-market SIP quotes and dependable licensed news still need a paid plan if the
+  free path cannot meet coverage, freshness, or display-rights gates.
 
 ## Roadmap
 
@@ -59,6 +80,8 @@ Status: built and tested on 2026-08-24.
   and when Runner Watch collected it.
 - Add stable entity links for CIK, ticker, exchange, and outside IDs. Store a confidence score and
   mapping method for sponsor or recipient name matches.
+- Use GLEIF names, parent links, and mapped identifiers to suggest entity links. A reviewer must
+  still approve fuzzy matches and ticker mappings.
 - Add fixture-based parser tests, deduplication tests, and stale-source alerts before a collector is
   scheduled.
 
@@ -125,6 +148,10 @@ kept as fallback or replaced.
   phase, primary completion, results posting, and study dates.
 - Poll Drugs@FDA each weekday and create approval or application-action events only after a
   high-confidence sponsor-to-issuer match.
+- Add openFDA shortage and enforcement changes as separate risk events. Keep old record versions
+  because the source can revise earlier records.
+- Add NIH RePORTER awards only when the funded organization ID maps to the issuer. Do not publish
+  keyword-only matches to a researcher, hospital, or university.
 - Show the source link and state whether an event is a trial update or an FDA action.
 
 Quality gate: at least 95% precision on a reviewed set of 100 proposed issuer links; low-confidence
@@ -138,6 +165,9 @@ was previously known.
 - Add FRED daily observations for a small fixed list such as VIX close, the effective federal funds
   rate, the 2-year Treasury yield, and a high-yield spread.
 - Backfill SEC fails-to-deliver data for research, but do not use it in live alerts.
+- Test FINRA OTC activity beside normal volume, short interest, and short-sale volume. Keep all four
+  measures separate in storage and labels.
+- Test CFTC futures positioning only as weekly market or sector context.
 - Save the vintage or collection time used by each training group.
 
 Quality gate: feature values reproduce the original source for a 30-symbol sample; labels clearly
@@ -146,6 +176,9 @@ show each dataset's age; backtests use only values that were public at the scan 
 ### Phase 6 — Lower-priority event sources (after the core proves value)
 
 - Pilot USAspending for a small reviewed list of defense, energy, and health issuers.
+- Pair SAM.gov notices with later USAspending awards, but never label a solicitation as revenue.
+- Pilot Federal Register notices only for reviewed agency, issuer, and product links.
+- Test SEC 13F and N-PORT holdings as delayed research context, not current institutional flow.
 - Consider paid exchange corporate-action data only if Alpaca coverage is not good enough.
 - Expand social sentiment only after price, halt, filing, and news provenance is reliable.
 

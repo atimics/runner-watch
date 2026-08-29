@@ -10,8 +10,10 @@ flowchart LR
         Yahoo[Yahoo universe and bars]
         Nasdaq[Nasdaq trading halts]
         Vendor[Quote and news vendor]
-        Events[ClinicalTrials.gov, FDA, FINRA]
-        Macro[FRED and other market context]
+        Events[ClinicalTrials.gov, FDA, NIH, FINRA]
+        Identity[GLEIF legal entities and ownership]
+        Public[SEC holdings, contracts, agency notices]
+        Macro[FRED, CFTC, and other market context]
     end
 
     Registry[Source registry<br/>terms, credentials, cadence, display rules]
@@ -27,6 +29,7 @@ flowchart LR
     Product[Product use<br/>ticker evidence, safety state, runner score]
 
     Sources --> Registry --> Collect --> Batch
+    Identity --> Link
     Batch --> Raw
     Batch --> Normal
     Raw --> Health
@@ -88,6 +91,13 @@ normalization layer without changing these three product routes.
 | 5 | FINRA | Dedicated crowding facts or `market_events` | Short interest and daily short-sale volume | Keep the two measures clearly separate |
 | 5 | FRED and ALFRED | `macro_observations` | Rates, volatility, yields, and credit regime | Preserve publication vintages |
 | 5+ | SEC fails to deliver and USAspending | Research events and facts | Slow crowding and contract evidence | Research only until mapping quality passes |
+| 5+ | openFDA shortages and enforcement reports | `entity_links`, `market_events` | Drug supply and recall risk | Material event plus reviewed issuer match only |
+| 5+ | NIH RePORTER | `entity_links`, `market_events` | Grant awards and research-program context | Match the funded organization, not a keyword |
+| 5+ | GLEIF | `entity_links` | Legal names, parent links, and mapped identifiers | Use as mapping evidence; fuzzy matches stay in review |
+| 5+ | FINRA OTC transparency | Dedicated crowding facts | Delayed off-exchange activity | Keep separate from short volume and short interest |
+| 6 | SEC 13F and N-PORT | Dedicated ownership facts | Delayed institutional and fund holdings | Research only; never describe as live flow |
+| 6 | SAM.gov and Federal Register | `entity_links`, `market_events` | Contract notices and agency actions | Reviewed entity or product links only |
+| 6 | CFTC Commitments of Traders | `macro_observations` | Weekly market and sector positioning | Market context only; preserve the release date |
 
 ## Rules at each stage
 
@@ -112,3 +122,5 @@ normalization layer without changing these three product routes.
 2. Run a small licensed quote pilot into `security_quotes` and measure coverage for ten sessions.
 3. Add entity-link review tools before ingesting biotech, FDA, or contract data at scale.
 4. Build the source-backed biotech calendar only after the issuer-link precision gate passes.
+5. Pilot the added free sources in this order: GLEIF mapping, openFDA and NIH events, FINRA OTC
+   context, then the slower ownership, contract, agency, and futures-regime feeds.
