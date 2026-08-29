@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import runpy
 import sqlite3
 import sys
@@ -121,6 +122,17 @@ def test_live_screen_sweep_defaults_to_one_second(monkeypatch: MonkeyPatch) -> N
     monkeypatch.setattr(sys, "argv", [str(script)])
 
     assert namespace["parse_args"]().slow_ms == 1_000
+
+
+def test_privacy_screen_heading_matches_the_template() -> None:
+    root = Path(__file__).resolve().parents[1]
+    namespace = runpy.run_path(str(root / "scripts" / "test-live-screens"))
+    privacy_screen = next(screen for screen in namespace["SCREENS"] if screen.key == "privacy")
+    privacy_template = (root / "web" / "templates" / "privacy.html").read_text()
+    heading = re.search(r"<h1>([^<]+)</h1>", privacy_template)
+
+    assert heading is not None
+    assert re.fullmatch(privacy_screen.heading, heading.group(1))
 
 
 def test_public_screen_data_reuses_warmed_payload(

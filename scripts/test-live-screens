@@ -91,7 +91,7 @@ SCREENS = (
         "Account · Privacy",
         "runners",
         "/privacy",
-        r"^We do not track what you read\.$",
+        r"^Choose where your data lives\.$",
     ),
 )
 DYNAMIC_KEYS = frozenset(screen.dynamic_key for screen in SCREENS if screen.dynamic_key)
