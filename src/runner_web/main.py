@@ -2476,10 +2476,15 @@ def pulse_data(
 
 PUBLIC_PULSE_ROW_FIELDS = (
     "ticker",
+    "custom_rank",
+    "score",
+    "setup_score",
     "company",
     "name",
     "price",
     "change_pct",
+    "momentum_15m_pct",
+    "relative_volume",
     "section",
     "trade_state",
     "stage",

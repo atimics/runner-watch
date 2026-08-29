@@ -235,6 +235,9 @@ def test_golf_tournament_becomes_a_ranked_pga_leaderboard(sports_db) -> None:
     assert event["leaderboard"][0]["round_number"] == 2
     assert event["leaderboard"][0]["through_display"] == "F"
 
+    event["status"] = "pre"
+    event["status_detail"] = "Scheduled"
+
     stored = store_golf_events([event])
     slate = golf_slate()
 
@@ -242,6 +245,7 @@ def test_golf_tournament_becomes_a_ranked_pga_leaderboard(sports_db) -> None:
     assert slate["display_count"] == 1
     assert slate["entrant_count"] == 2
     assert slate["events"][0]["venue"] == "East Lake Golf Club"
+    assert slate["events"][0]["display_status"] == "Round 2 complete"
     assert [player["player_name"] for player in slate["events"][0]["leaderboard"]] == [
         "Ryan Gerard",
         "Viktor Hovland",
@@ -734,6 +738,8 @@ def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
     assert b'class="decision-team"' in detail_response.body
     assert b"BASELINE WINNER" in detail_response.body
     assert b"MARKET GAP" in detail_response.body
+    assert b"Model vs no-vig market" in detail_response.body
+    assert detail_response.body.count(b'class="probability-row') == 2
     assert b"Season records plus home edge" in detail_response.body
     assert detail_response.body.index(b"SEASON-RECORD BASELINE") < detail_response.body.index(
         b"Flash report"

@@ -504,6 +504,10 @@ html.embedded-pane .account-strip {
   border-color: #202921;
 }
 
+.runners-product .ticker-row:has(.ticker-comparison) {
+  min-height: 94px;
+}
+
 :is(.runners-product, .sports-product) .ticker-row::before {
   background: rgba(120, 208, 149, .055);
   box-shadow: inset 2px 0 rgba(120, 208, 149, .7);

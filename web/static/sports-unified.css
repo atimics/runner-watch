@@ -4,6 +4,90 @@
   border-bottom-color: var(--line);
 }
 
+/* Probability comparison: one scale, direct labels, no decorative cards. */
+.probability-comparison {
+  margin-top: 14px;
+  padding: 14px 0 4px;
+  border-top: 1px solid rgba(255, 255, 255, .1);
+}
+.probability-comparison > header,
+.probability-row {
+  display: grid;
+  grid-template-columns: minmax(116px, .8fr) minmax(150px, 2fr) 88px;
+  gap: 12px;
+  align-items: center;
+}
+.probability-comparison > header { margin-bottom: 8px; }
+.probability-comparison > header strong {
+  grid-column: 1 / 3;
+  font-size: 11px;
+  font-weight: 800;
+}
+.probability-comparison > header span {
+  color: var(--muted);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+  font-size: 9px;
+}
+.probability-comparison > header i { width: 9px; height: 2px; display: inline-block; background: var(--green); }
+.probability-comparison > header i.market-key { background: #d0c7db; }
+.probability-row {
+  min-height: 38px;
+  border-top: 1px solid rgba(255, 255, 255, .055);
+}
+.probability-row.value-side { color: var(--decision-accent); }
+.probability-team,
+.probability-values { min-width: 0; }
+.probability-team b,
+.probability-team small,
+.probability-values b,
+.probability-values small { display: block; }
+.probability-team b { font-size: 11px; }
+.probability-team small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.probability-row svg { display: block; width: 100%; height: 18px; overflow: visible; }
+.probability-track { stroke: #3a403d; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.probability-midpoint { stroke: #626a66; stroke-width: .6; stroke-dasharray: 1 2; vector-effect: non-scaling-stroke; }
+.probability-gap { stroke: var(--decision-accent); stroke-width: 3; opacity: .38; vector-effect: non-scaling-stroke; }
+.probability-model { stroke: var(--green); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+.probability-market { stroke: #d0c7db; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.probability-values { text-align: right; font-variant-numeric: tabular-nums; }
+.probability-values b { color: var(--green); font-size: 11px; }
+.probability-values small { color: #d0c7db; font-size: 9px; }
+.sports-probability-pair {
+  display: flex;
+  gap: 12px;
+  margin: 3px 0 4px;
+  font-variant-numeric: tabular-nums;
+}
+.sports-probability-pair span { display: flex; gap: 4px; align-items: baseline; }
+.sports-probability-pair small { color: var(--muted); font-size: 9px; font-weight: 800; }
+.sports-probability-pair b { color: var(--soft); font-size: 10px; }
+.sports-probability-pair span:first-child b { color: var(--green); }
+.sports-product .sports-pulse-row:has(.sports-probability-pair) { min-height: 94px; }
+.decision-model-call > div > small,
+.decision-score small,
+.decision-score span,
+.decision-value-call > small,
+.value-numbers small,
+.value-numbers i { font-size: 9px; }
+.decision-board .decision-movement { display: grid; grid-template-columns: minmax(120px, auto) minmax(0, 1fr); }
+.decision-board .decision-movement .edge-spark { width: 100%; max-width: none; }
+
+@media (max-width: 560px) {
+  .probability-comparison > header,
+  .probability-row { grid-template-columns: 76px minmax(100px, 1fr) 62px; gap: 8px; }
+  .probability-team small { display: none; }
+  .decision-board .decision-movement { grid-template-columns: 1fr; }
+}
+
 .sports-pulse-summary {
   display: flex;
   flex-wrap: wrap;
@@ -35,7 +119,7 @@
 .sports-product .screen-head .rati-product {
   display: block;
   margin-bottom: 3px;
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 900;
   letter-spacing: .14em;
 }
@@ -81,7 +165,7 @@
 .sports-record-strip small {
   min-height: 18px;
   color: var(--muted);
-  font-size: 7px;
+  font-size: 9px;
   font-weight: 850;
   letter-spacing: .1em;
   line-height: 1.25;

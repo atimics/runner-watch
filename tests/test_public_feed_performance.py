@@ -72,6 +72,11 @@ def test_runner_public_feed_omits_detail_only_fields(monkeypatch) -> None:
         "company": "One Corp",
         "price": 1.25,
         "change_pct": 9.5,
+        "custom_rank": 1,
+        "score": 72.4,
+        "setup_score": 61.2,
+        "relative_volume": 3.1,
+        "momentum_15m_pct": -2.4,
         "section": "scored",
         "trade_state": "EARLY",
         "coin_tone": 2,
@@ -102,6 +107,11 @@ def test_runner_public_feed_omits_detail_only_fields(monkeypatch) -> None:
     assert public_row["ticker"] == "ONE"
     assert public_row["pulse_label"] == "Form 4 · CEO buy"
     assert public_row["case_thesis"] == "Management buying supports the case."
+    assert public_row["custom_rank"] == 1
+    assert public_row["score"] == 72.4
+    assert public_row["setup_score"] == 61.2
+    assert public_row["relative_volume"] == 3.1
+    assert public_row["momentum_15m_pct"] == -2.4
     assert "issuer_risk_json" not in public_row
     assert "score_components" not in public_row
     assert "kol_calls" not in public_row

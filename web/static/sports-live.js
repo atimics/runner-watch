@@ -50,6 +50,16 @@
     });
   }
 
+  function freshness(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.valueOf())) return 'Update pending';
+    const seconds = Math.max(0, (Date.now() - date.getTime()) / 1000);
+    if (seconds < 90) return 'Updated now';
+    if (seconds < 5400) return `Updated ${Math.round(seconds / 60)}m ago`;
+    if (seconds < 129600) return `Updated ${Math.round(seconds / 3600)}h ago`;
+    return `Updated ${date.toLocaleDateString([], {month: 'short', day: 'numeric'})}`;
+  }
+
   function formatLocalTimes(root = document) {
     root.querySelectorAll('[data-local-time]').forEach(node => {
       node.textContent = localTime(node.dataset.localTime);
@@ -100,7 +110,13 @@
     const projectionLabel = event.model_winner_label || (slightEdge ? 'SLIGHT EDGE' : 'PROJECTED');
     const ariaAction = event.model_winner_aria_action
       || (slightEdge ? 'has a slight model edge over' : 'is projected to beat');
-    const label = `${event.model_winner_team_name || model} ${ariaAction} ${opponentName} with a ${number(event.model_winner_probability_pct)} percent win chance; value side ${signal} with a ${signed(prediction.edge_pct)} percentage-point model edge`;
+    const comparisonLabel = Number.isFinite(Number(event.model_probability_pct))
+      ? `, model ${number(event.model_probability_pct, 1)} percent versus market ${Number.isFinite(Number(event.market_probability_pct)) ? number(event.market_probability_pct, 1) : 'unavailable'} percent`
+      : '';
+    const label = `${event.model_winner_team_name || model} ${ariaAction} ${opponentName} with a ${number(event.model_winner_probability_pct)} percent win chance; value side ${signal} with a ${signed(prediction.edge_pct)} percentage-point model edge${comparisonLabel}`;
+    const comparison = Number.isFinite(Number(event.model_probability_pct))
+      ? `<span class="sports-probability-pair" aria-hidden="true"><span><small>MODEL</small><b>${number(event.model_probability_pct, 1)}%</b></span><span><small>MARKET</small><b>${Number.isFinite(Number(event.market_probability_pct)) ? `${number(event.market_probability_pct, 1)}%` : '—'}</b></span></span>`
+      : '';
     return TickerRow.renderShell({
       href: gameHref(prefix, event.id),
       ariaLabel: label,
@@ -110,6 +126,7 @@
       headlineMeta: `<small class="ticker-badge ticker-badge-update">${escapeHtml(projectionLabel)}</small>`,
       age: shortGameTime(event.start_time),
       company: event.model_winner_team_name || model,
+      detailMarkup: comparison,
       catalyst: `vs ${opponentAbbreviation} · ${String(event.league || '').toUpperCase()}`,
       catalystTone: 'gap',
       quoteValue: `${number(event.model_winner_probability_pct)}%`,
@@ -205,8 +222,9 @@
       list.innerHTML = renderPulseEvents(current.events || [], prefix);
       count.textContent = current.display_count ?? (current.events || []).length;
       if (maturity && current.model_record) {
-        maturity.textContent = `Baseline ${current.model_record.games}/${current.model_record.sample?.target ?? '—'} graded`;
+        maturity.textContent = `Baseline ${current.model_record.games} graded · target ${current.model_record.sample?.target ?? '—'}`;
       }
+      if (status) status.textContent = freshness(current.updated_at);
       if (updated) {
         updated.dataset.localTime = current.updated_at || '';
         updated.textContent = localTime(current.updated_at);
@@ -230,7 +248,7 @@
         const response = await fetch(queryEndpoint('/api/sports/pulse'));
         if (!response.ok) throw new Error('Sports Pulse refresh failed');
         const next = await response.json();
-        status.textContent = 'Live';
+        status.textContent = freshness(next.updated_at);
         if (!payloadChanged(current, next)) {
           current = {...current, ...next};
           pending = null;
@@ -243,7 +261,7 @@
         refresh.textContent = newCount === 1 ? '1 new matchup' : (newCount > 1 ? `${newCount} new matchups` : 'Slate updated');
         refresh.hidden = false;
       } catch (_) {
-        status.textContent = 'Offline';
+        status.textContent = 'Refresh failed';
       } finally {
         polling = false;
       }
@@ -269,6 +287,7 @@
     function render() {
       list.innerHTML = renderRadarEvents(current.events || [], prefix);
       count.textContent = current.display_count ?? (current.events || []).length;
+      if (status) status.textContent = freshness(current.updated_at);
       restorePanelSelection(list);
     }
 
@@ -287,7 +306,7 @@
         const response = await fetch(queryEndpoint('/api/sports/radar'));
         if (!response.ok) throw new Error('Sports Radar refresh failed');
         const next = await response.json();
-        status.textContent = 'Live';
+        status.textContent = freshness(next.updated_at);
         if (!payloadChanged(current, next)) {
           pending = null;
           refresh.hidden = true;
@@ -299,12 +318,13 @@
         refresh.textContent = newCount === 1 ? '1 new event' : (newCount > 1 ? `${newCount} new events` : 'Radar updated');
         refresh.hidden = false;
       } catch (_) {
-        status.textContent = 'Offline';
+        status.textContent = 'Refresh failed';
       } finally {
         polling = false;
       }
     }
 
+    render();
     formatLocalTimes();
     const timer = setInterval(poll, POLL_INTERVAL);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });

@@ -9,7 +9,7 @@
     <header>
       <span class="golf-tournament-mark" aria-hidden="true">PGA</span>
       <span class="golf-tournament-copy">
-        <small>{{ event.status_detail|upper }}</small>
+        <small>{{ event.display_status|default(event.status_detail)|upper }}</small>
         <strong>{{ event.name }}</strong>
         <span>{% if event.venue %}{{ event.venue }}{% if event.location %} · {{ event.location }}{% endif %}{% else %}PGA Tour{% endif %}</span>
       </span>
@@ -39,9 +39,9 @@
         <span class="rati-product">RATi SPORTS</span>
         <h1>Pulse</h1>
         {% if selected_sport == 'golf' %}
-        <span class="head-meta sports-pulse-summary"><span><b>{{ golf.display_count }}</b> PGA tournament{% if golf.display_count != 1 %}s{% endif %}</span><span>{{ golf.entrant_count }} players tracked</span><span>Live leaderboard</span></span>
+        <span class="head-meta sports-pulse-summary"><span><b>{{ golf.display_count }}</b> PGA tournament{% if golf.display_count != 1 %}s{% endif %}</span><span>{{ golf.entrant_count }} players tracked</span><span>Current leaderboard</span></span>
         {% else %}
-        <span class="head-meta sports-pulse-summary"><span><b id="sportsPulseCount">{{ pulse.display_count }}</b> team projection{% if pulse.display_count != 1 %}s{% endif %}</span><span>{{ pulse.scanned_count }} games checked</span><span id="sportsPulseMaturity">Baseline {{ pulse.model_record.games }}/{{ pulse.model_record.sample.target }} graded</span><span id="sportsPulseStatus">Live</span></span>
+        <span class="head-meta sports-pulse-summary"><span><b id="sportsPulseCount">{{ pulse.display_count }}</b> team projection{% if pulse.display_count != 1 %}s{% endif %}</span><span>{{ pulse.scanned_count }} games checked</span><span id="sportsPulseMaturity">Baseline {{ pulse.model_record.games }} graded · target {{ pulse.model_record.sample.target }}</span><span id="sportsPulseStatus">Update pending</span></span>
         {% endif %}
       </div>
       {% if user %}
@@ -81,6 +81,12 @@
     <button class="pulse-refresh sports-live-refresh" id="sportsPulseRefresh" type="button" aria-live="polite" hidden>Slate updated</button>
     {% endif %}
 
+    {% if show_team %}
+    <main class="list-section sports-list-section" aria-label="Pulse signals">
+      <div class="token-list" id="sportsPulseList"></div>
+    </main>
+    {% endif %}
+
     {% if show_golf %}
     <section class="golf-pulse-section" aria-labelledby="golfPulseTitle">
       <header><div><span>GOLF</span><h2 id="golfPulseTitle">PGA Tour</h2></div><small>Current and upcoming tournaments</small></header>
@@ -92,12 +98,6 @@
         {% endfor %}
       </div>
     </section>
-    {% endif %}
-
-    {% if show_team %}
-    <main class="list-section sports-list-section" aria-label="Pulse signals">
-      <div class="token-list" id="sportsPulseList"></div>
-    </main>
     {% endif %}
 
     {% if selected_sport == 'golf' %}

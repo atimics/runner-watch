@@ -256,6 +256,17 @@ body {
 .ai-report-card footer a { color: var(--green); font-size: 8px; }
 
 .alpha-ranking, .alpha-contenders { margin-top: 10px; border-top: 1px solid var(--line); }
+.alpha-ranking-basis {
+  min-height: 38px;
+  padding: 8px 5px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.alpha-ranking-basis strong { font-size: 11px; }
+.alpha-ranking-basis span { color: var(--muted); font-size: 9px; text-align: right; }
 .alpha-rank-row { min-height: 66px; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 7px; align-items: center; border-bottom: 1px solid var(--line); }
 .alpha-rank-row > a { min-width: 0; display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 9px; align-items: center; }
 .alpha-rank-row .coin { width: 36px; height: 36px; }
