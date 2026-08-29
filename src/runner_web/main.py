@@ -176,7 +176,10 @@ from runner_web.sports import (
     LEAGUES as SPORTS_LEAGUES,
 )
 from runner_web.sports import (
+    PUBLIC_SPORT_KEYS,
+    PUBLIC_SPORTS,
     create_sports_pick,
+    golf_slate,
     record_sports_ai_forecast,
     refresh_sports,
     sports_alpha,
@@ -4865,6 +4868,17 @@ def _public_sports_pulse_data(
     }
 
 
+def _public_golf_data(limit: int = 6) -> dict[str, Any]:
+    result_limit = max(1, min(limit, 20))
+    cached = _public_screen_data(
+        "sports-golf",
+        "pga",
+        lambda: {"golf": golf_slate(limit=20, leaderboard_limit=10)},
+    )["golf"]
+    events = list(cached.get("events") or [])[:result_limit]
+    return {**cached, "events": events, "display_count": len(events)}
+
+
 def _public_sports_radar_data(league: str = "all", limit: int = 40) -> dict[str, Any]:
     selected_league = league if league in SPORTS_LEAGUES else "all"
     result_limit = max(1, min(limit, 100))
@@ -4888,9 +4902,15 @@ def sports_home_response(
     league: str = "all",
     view: str = "signals",
 ) -> HTMLResponse:
-    selected_league = league if league in SPORTS_LEAGUES else "all"
+    selected_sport = league if league in PUBLIC_SPORT_KEYS else "all"
+    selected_league = selected_sport if selected_sport in SPORTS_LEAGUES else "all"
     sports_path_prefix = "" if product_for_request(request) == "sports" else "/sports"
-    public_data = _public_sports_pulse_data(selected_league, view)
+    public_data = (
+        _public_sports_pulse_data(selected_league, view)
+        if selected_sport != "golf"
+        else {"pulse": {}, "pick_stats": {}}
+    )
+    golf = _public_golf_data() if selected_sport in {"all", "golf"} else None
     return templates.TemplateResponse(
         request=request,
         name="sports.html",
@@ -4898,7 +4918,12 @@ def sports_home_response(
             request,
             runner_session,
             pulse=public_data["pulse"],
+            golf=golf,
             pick_stats=public_data["pick_stats"],
+            selected_sport=selected_sport,
+            sports_nav=PUBLIC_SPORTS,
+            show_golf=selected_sport in {"all", "golf"},
+            show_team=selected_sport != "golf",
             active_tab="pulse",
             nav_product="sports",
             sports_path_prefix=sports_path_prefix,
@@ -5152,6 +5177,12 @@ def sports_pulse_api(
         request,
         _public_sports_pulse_data(league, view, limit)["pulse"],
     )
+
+
+@app.get("/api/sports/golf")
+def sports_golf_api(request: Request, limit: int = 6) -> Response:
+    enforce_rate(request, "sports-golf", limit=120, seconds=60)
+    return _conditional_json_response(request, _public_golf_data(limit))
 
 
 @app.get("/api/sports/radar")

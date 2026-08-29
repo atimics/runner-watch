@@ -550,6 +550,7 @@ def test_sports_refresh_uses_one_paid_moneyline_call_per_due_league(
         lambda _events: {"events": 0, "players": 0, "errors": 0},
     )
     monkeypatch.setattr(sports, "fetch_league_news", lambda *_args: [])
+    monkeypatch.setattr(sports, "fetch_golf", lambda *_args: [])
 
     result = sports.refresh_sports(now)
 
@@ -561,6 +562,7 @@ def test_sports_refresh_uses_one_paid_moneyline_call_per_due_league(
         "nba": 1,
         "nhl": 1,
     }
+    assert result["golf"] == {"events": 0, "entrants": 0, "error": None}
     with connection() as database:
         providers = database.execute(
             "SELECT provider,COUNT(*) AS count FROM sports_odds_snapshots GROUP BY provider"

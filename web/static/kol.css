@@ -1,32 +1,38 @@
 .kol-score-strip {
-  min-height: 58px;
+  min-height: 32px;
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
-  gap: 9px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 7px;
   align-items: center;
-  padding: 9px 20px;
+  padding: 5px 14px;
   border-bottom: 1px solid var(--line);
-  background: linear-gradient(90deg, rgba(245, 198, 107, .08), transparent);
+  background: linear-gradient(90deg, rgba(245, 198, 107, .055), transparent);
   color: inherit;
   text-decoration: none;
 }
 
 .kol-score-strip[hidden] { display: none; }
-.kol-score-strip > span:nth-child(2) { min-width: 0; }
-.kol-score-strip strong, .kol-score-strip small { display: block; }
-.kol-score-strip strong { font-size: 11px; }
-.kol-score-strip small { margin-top: 2px; color: var(--muted); font-size: 9px; }
-.kol-score-strip > b { font-size: 12px; }
+.kol-score-strip > span:nth-child(2) {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 6px;
+}
+.kol-score-strip strong,
+.kol-score-strip small { min-width: 0; }
+.kol-score-strip strong { display: flex; align-items: baseline; gap: 5px; font-size: 9px; white-space: nowrap; }
+.kol-score-strip small { overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.kol-score-strip > b { color: var(--soft); font-size: 8px; white-space: nowrap; }
 
 .kol-avatar {
-  width: 32px;
-  height: 32px;
+  width: auto;
+  height: auto;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(245, 198, 107, .3);
-  border-radius: 50%;
-  background: rgba(245, 198, 107, .1);
-  font-size: 17px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 11px;
 }
 
 .research-author a { color: var(--green); text-decoration: none; }

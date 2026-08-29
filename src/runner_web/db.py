@@ -2393,6 +2393,54 @@ def _migration_043_ranker_training_provenance(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_044_golf_leaderboards(db: DatabaseConnection) -> None:
+    """Store PGA tournaments separately from two-team sports matchups."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS sports_golf_events (
+            id TEXT PRIMARY KEY,
+            provider TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            tour TEXT NOT NULL,
+            name TEXT NOT NULL,
+            start_time TEXT NOT NULL,
+            end_time TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('pre','in','post')),
+            status_detail TEXT NOT NULL,
+            completed INTEGER NOT NULL DEFAULT 0,
+            venue TEXT NOT NULL DEFAULT '',
+            location TEXT NOT NULL DEFAULT '',
+            source_url TEXT NOT NULL,
+            first_collected_at TEXT NOT NULL,
+            last_collected_at TEXT NOT NULL,
+            UNIQUE(provider,tour,external_id)
+        );
+        CREATE INDEX IF NOT EXISTS sports_golf_events_time
+            ON sports_golf_events(start_time,end_time,status);
+
+        CREATE TABLE IF NOT EXISTS sports_golf_leaderboard (
+            event_id TEXT NOT NULL
+                REFERENCES sports_golf_events(id) ON DELETE CASCADE,
+            player_id TEXT NOT NULL,
+            player_name TEXT NOT NULL,
+            country TEXT NOT NULL DEFAULT '',
+            position INTEGER,
+            position_display TEXT NOT NULL,
+            score REAL,
+            score_display TEXT NOT NULL,
+            through_display TEXT NOT NULL DEFAULT '',
+            round_number INTEGER,
+            round_display TEXT NOT NULL DEFAULT '',
+            collected_at TEXT NOT NULL,
+            PRIMARY KEY(event_id,player_id)
+        );
+        CREATE INDEX IF NOT EXISTS sports_golf_leaderboard_rank
+            ON sports_golf_leaderboard(event_id,position,player_name);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2444,6 +2492,7 @@ MIGRATIONS = (
     Migration(41, "persistent_comment_avatars", _migration_041_persistent_comment_avatars),
     Migration(42, "comment_generation_requests", _migration_042_comment_generation_requests),
     Migration(43, "ranker_training_provenance", _migration_043_ranker_training_provenance),
+    Migration(44, "golf_leaderboards", _migration_044_golf_leaderboards),
 )
 
 
