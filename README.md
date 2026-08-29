@@ -1,5 +1,11 @@
 # RATi Runners and RATi Sports
 
+RATi also includes an open-source scanner node and desktop client. Run `rati-scanner` to expose the
+versioned local API, then start the Svelte/Electron client in `desktop/`. Packaged desktop builds
+bundle the scanner and store user-authorized provider credentials outside the renderer. RATi AI
+Cloud runs the same scanner and app in managed mode. See
+[the desktop and scanner architecture](docs/desktop-architecture.md).
+
 RATi is an evidence-first prediction platform. RATi Runners scans low-priced stocks for unusual movement. RATi Sports compares a transparent team-form baseline with timestamped no-vig moneyline odds and keeps public paper-pick receipts.
 It uses free Yahoo Finance data through `yfinance`. It does not need a broker login or a paid API.
 Optional Fintel short and borrow data needs a Fintel API key and the matching account access.

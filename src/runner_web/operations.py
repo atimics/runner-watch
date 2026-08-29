@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from runner_node.runtime import NODE_SERVICE
 from runner_web.ai_kol import FLASH
 from runner_web.db import MIGRATIONS, connection
 from runner_web.flash_wallet import (
@@ -328,7 +329,9 @@ def runtime_capabilities(
             },
             "research": {
                 "openai_available": bool(os.getenv("OPENAI_API_KEY", "")),
-                "openrouter_available": bool(os.getenv("OPENROUTER_API_KEY", "")),
+                "openrouter_available": (
+                    NODE_SERVICE.openrouter.status()["status"] == "connected"
+                ),
                 "provider": FLASH.provider,
                 "flash_model": FLASH.model,
                 "credential_location": "server",
