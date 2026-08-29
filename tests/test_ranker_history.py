@@ -5,12 +5,13 @@ import math
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pandas as pd
 from pytest import MonkeyPatch
 
 from runner_web import db
 from runner_web.db import connection, init_db
 from runner_web.ranker import FEATURE_NAMES, ranker_status
-from runner_web.ranker_history import backfill_historical_training
+from runner_web.ranker_history import ArchivedMarketData, backfill_historical_training
 
 
 def _seed_market_bars(replay_at: datetime) -> None:
@@ -83,6 +84,28 @@ def _seed_market_bars(replay_at: datetime) -> None:
             """,
             rows,
         )
+
+
+def test_archived_market_data_slices_only_requested_frames() -> None:
+    index = pd.to_datetime(
+        ["2026-08-04T14:00:00Z", "2026-08-04T14:05:00Z"],
+        utc=True,
+    )
+    intraday = {
+        ticker: pd.DataFrame({"Close": [price, price + 0.1]}, index=index)
+        for ticker, price in {"AAA": 1.0, "BBB": 2.0}.items()
+    }
+    provider = ArchivedMarketData(
+        {},
+        intraday,
+        intraday_cutoff=datetime(2026, 8, 4, 14, 0, tzinfo=UTC),
+    )
+
+    result = provider.intraday(["AAA"])
+
+    assert list(result.frames) == ["AAA"]
+    assert len(result.frames["AAA"]) == 1
+    assert len(intraday["AAA"]) == 2
 
 
 def test_historical_replay_writes_only_compact_point_in_time_rows(
