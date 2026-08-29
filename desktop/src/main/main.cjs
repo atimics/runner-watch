@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, net, protocol, session, shell } = require('electron');
 const { spawn } = require('node:child_process');
+const { randomBytes } = require('node:crypto');
 const fs = require('node:fs');
-const http = require('node:http');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -32,6 +32,8 @@ const allowedExternalHosts = new Set([
 
 let scannerProcess = null;
 let scannerUrl = process.env.RATI_NODE_URL || 'http://127.0.0.1:8787';
+let scannerToken = process.env.RATI_NODE_TOKEN || '';
+let scannerError = '';
 
 function safeExternalUrl(value) {
   try {
@@ -42,39 +44,80 @@ function safeExternalUrl(value) {
   }
 }
 
-function freeLoopbackPort() {
-  return new Promise((resolve, reject) => {
-    const server = http.createServer();
-    server.unref();
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : 8787;
-      server.close((error) => (error ? reject(error) : resolve(port)));
-    });
-  });
-}
-
 async function startBundledScanner() {
   if (!app.isPackaged || process.env.RATI_NODE_URL) return;
   const executable = process.platform === 'win32' ? 'rati-scanner.exe' : 'rati-scanner';
   const scannerPath = path.join(process.resourcesPath, 'scanner', executable);
-  if (!fs.existsSync(scannerPath)) return;
-  const port = await freeLoopbackPort();
-  scannerUrl = `http://127.0.0.1:${port}`;
+  if (!fs.existsSync(scannerPath)) {
+    scannerUrl = '';
+    scannerError = 'The bundled scanner was not found.';
+    return;
+  }
+  scannerToken = randomBytes(32).toString('base64url');
   scannerProcess = spawn(scannerPath, [], {
     env: {
       ...process.env,
       DATABASE_PATH: path.join(app.getPath('userData'), 'rati-scanner.db'),
+      RATI_NODE_TOKEN: scannerToken,
       RATI_NODE_HOST: '127.0.0.1',
       RATI_NODE_MODE: 'local',
-      RATI_NODE_PORT: String(port),
+      RATI_NODE_PORT: '0',
     },
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
-  scannerProcess.once('exit', () => {
-    scannerProcess = null;
+  await new Promise((resolve) => {
+    let settled = false;
+    let stdout = '';
+    let stderr = '';
+    const finish = (error = '') => {
+      if (error) {
+        scannerError = error;
+        scannerUrl = '';
+      }
+      if (!settled) {
+        settled = true;
+        clearTimeout(timeout);
+        resolve();
+      }
+    };
+    const timeout = setTimeout(() => {
+      if (scannerProcess && !scannerProcess.killed) scannerProcess.kill();
+      finish('The local scanner did not start within 60 seconds.');
+    }, 60_000);
+    scannerProcess.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+      const lines = stdout.split(/\r?\n/);
+      stdout = lines.pop() || '';
+      for (const line of lines) {
+        try {
+          const event = JSON.parse(line);
+          if (event.event === 'ready' && typeof event.url === 'string') {
+            scannerUrl = event.url;
+            scannerError = '';
+            finish();
+          }
+        } catch {
+          // Ignore non-protocol output from native dependencies.
+        }
+      }
+    });
+    scannerProcess.stderr.on('data', (chunk) => {
+      stderr = `${stderr}${chunk.toString()}`.slice(-2_000);
+    });
+    scannerProcess.on('error', (error) => {
+      finish(`The local scanner could not start: ${error.message}`);
+      scannerProcess = null;
+    });
+    scannerProcess.once('exit', (code) => {
+      if (!settled) {
+        const detail = stderr.trim().split(/\r?\n/).pop();
+        finish(detail || `The local scanner exited during startup (${code ?? 'unknown'}).`);
+      } else if (code && !app.isQuitting) {
+        scannerError = `The local scanner stopped unexpectedly (${code}).`;
+      }
+      scannerProcess = null;
+    });
   });
 }
 
@@ -114,7 +157,14 @@ function createWindow() {
     return { action: 'deny' };
   });
   window.webContents.on('will-navigate', (event, url) => {
-    const allowed = url.startsWith('rati-app://app') || url.startsWith('http://127.0.0.1:5173');
+    let allowed = false;
+    try {
+      const destination = new URL(url);
+      allowed = (destination.protocol === 'rati-app:' && destination.hostname === 'app')
+        || destination.origin === 'http://127.0.0.1:5173';
+    } catch {
+      allowed = false;
+    }
     if (!allowed) event.preventDefault();
   });
   const devUrl = process.env.RATI_DESKTOP_DEV_URL;
@@ -124,7 +174,9 @@ function createWindow() {
 ipcMain.handle('desktop:get-runtime', () => ({
   appVersion: app.getVersion(),
   nodeUrl: scannerUrl,
+  nodeToken: scannerToken,
   platform: process.platform,
+  scannerError,
 }));
 
 ipcMain.handle('desktop:open-external', async (_event, value) => {
@@ -147,6 +199,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('before-quit', () => {
+  app.isQuitting = true;
   if (scannerProcess && !scannerProcess.killed) scannerProcess.kill();
 });
 

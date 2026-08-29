@@ -633,6 +633,13 @@ app.include_router(create_node_router(NODE_SERVICE))
 templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
 templates.env.globals["static_version"] = STATIC_VERSION
 app.mount("/static", StaticFiles(directory=str(ROOT / "web" / "static")), name="static")
+DESKTOP_RENDERER_ROOT = ROOT / "desktop" / "dist" / "renderer"
+if DESKTOP_RENDERER_ROOT.is_dir():
+    app.mount(
+        "/desktop",
+        StaticFiles(directory=str(DESKTOP_RENDERER_ROOT), html=True),
+        name="desktop",
+    )
 
 
 def now() -> datetime:
@@ -8170,7 +8177,7 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
             "scanned": None,
             "short_data": {
                 "source": "fintel",
-                "configured": short_data_configured(),
+                "configured": short_data_configured(NODE_SERVICE.vault.get("fintel")),
                 "covered": short_covered,
                 "requested": len(cached_rows),
                 "refreshed": 0,
@@ -8213,6 +8220,7 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
         [item.ticker for item in all_rows],
         refresh_tickers=[item.ticker for item in result.rows],
         fetch_recorder=record_source_fetch,
+        api_key=NODE_SERVICE.vault.get("fintel"),
     )
     scan_warnings = [*universe_warnings, *result.warnings, *short_result.warnings]
     with connection() as db:

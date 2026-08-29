@@ -63,10 +63,20 @@ export interface ScanResult {
   warnings: string[];
 }
 
+export interface ResearchResult {
+  status: 'complete';
+  provider: 'openrouter';
+  model: string;
+  answer: string;
+  symbols: string[];
+  generated_at: string;
+}
+
 export class NodeClient {
   readonly baseUrl: string;
+  readonly token: string;
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, token = '') {
     const parsed = new URL(baseUrl);
     const loopbackHttp = parsed.protocol === 'http:'
       && (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost');
@@ -74,18 +84,34 @@ export class NodeClient {
       throw new Error('Remote scanner connections must use HTTPS');
     }
     this.baseUrl = parsed.href.replace(/\/$/, '');
+    this.token = token.trim();
   }
 
-  private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      ...init,
-      headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as { detail?: string };
-      throw new Error(body.detail || `Scanner returned ${response.status}`);
+  private async request<T>(path: string, init?: RequestInit, timeoutMs = 12_000): Promise<T> {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(`${this.baseUrl}${path}`, {
+        ...init,
+        credentials: 'same-origin',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+          ...(init?.headers || {}),
+        },
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as { detail?: string };
+        throw new Error(body.detail || `Scanner returned ${response.status}`);
+      }
+      return response.json() as Promise<T>;
+    } catch (error) {
+      if (controller.signal.aborted) throw new Error('Scanner request timed out');
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
     }
-    return response.json() as Promise<T>;
   }
 
   node(): Promise<NodeStatus> {
@@ -112,11 +138,42 @@ export class NodeClient {
     return this.request('/api/v1/connections/openrouter', { method: 'DELETE' });
   }
 
+  connectOpenRouterKey(key: string): Promise<OpenRouterConnection> {
+    return this.request('/api/v1/connections/openrouter', {
+      method: 'PUT',
+      body: JSON.stringify({ key }),
+    });
+  }
+
+  connectProvider(provider: string, key: string): Promise<{ provider: string; status: string }> {
+    return this.request(`/api/v1/connections/${encodeURIComponent(provider)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ key }),
+    });
+  }
+
+  disconnectProvider(provider: string): Promise<{ provider: string; status: string }> {
+    return this.request(`/api/v1/connections/${encodeURIComponent(provider)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  scans(): Promise<{ receipts: ScanResult[] }> {
+    return this.request('/api/v1/scans');
+  }
+
   sampleScan(): Promise<ScanResult> {
     return this.request('/api/v1/scans', {
       method: 'POST',
       body: JSON.stringify({ source: 'sample', universe: 'starter', top_n: 20 }),
     });
+  }
+
+  research(prompt: string): Promise<ResearchResult> {
+    return this.request('/api/v1/research', {
+      method: 'POST',
+      body: JSON.stringify({ prompt }),
+    }, 60_000);
   }
 }
 

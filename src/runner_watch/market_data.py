@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
@@ -468,6 +468,7 @@ def routed_market_data(
     batch_size: int = 60,
     timeout: float = 15.0,
     fetch_recorder: SourceFetchRecorder | None = None,
+    provider_keys: Mapping[str, str] | None = None,
 ) -> RoutedMarketData:
     yahoo = YahooBarAdapter(
         YahooMarketData(
@@ -478,7 +479,10 @@ def routed_market_data(
     )
     daily = ProviderRegistry()
     intraday = ProviderRegistry()
-    massive = massive_bar_adapter(fetch_recorder=fetch_recorder)
+    massive = massive_bar_adapter(
+        fetch_recorder=fetch_recorder,
+        api_key=(provider_keys or {}).get("massive"),
+    )
     if massive is not None:
         daily.register(massive)
         daily.register(yahoo)

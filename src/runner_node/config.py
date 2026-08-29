@@ -19,6 +19,8 @@ class NodeSettings:
     allowed_origins: tuple[str, ...]
     allow_user_openrouter: bool
     credential_backend: str
+    auth_token: str | None = None
+    database_path: str | None = None
 
     @classmethod
     def from_environment(cls) -> NodeSettings:
@@ -36,6 +38,11 @@ class NodeSettings:
             "RATI_ALLOW_USER_OPENROUTER", allow_default
         ).strip().lower() not in {"0", "false", "no", "off"}
         backend_default = "environment" if mode == "cloud" else "keyring"
+        auth_token = os.getenv("RATI_NODE_TOKEN", "").strip() or None
+        if mode == "self_hosted" and (auth_token is None or len(auth_token) < 24):
+            raise ValueError(
+                "RATI_NODE_TOKEN must contain at least 24 characters in self_hosted mode"
+            )
         return cls(
             mode=mode,
             node_id=os.getenv("RATI_NODE_ID", f"{mode}-{socket.gethostname()}").strip(),
@@ -48,4 +55,6 @@ class NodeSettings:
             credential_backend=os.getenv("RATI_CREDENTIAL_BACKEND", backend_default)
             .strip()
             .lower(),
+            auth_token=auth_token,
+            database_path=os.getenv("DATABASE_PATH", "").strip() or None,
         )

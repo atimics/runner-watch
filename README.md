@@ -2,8 +2,9 @@
 
 RATi also includes an open-source scanner node and desktop client. Run `rati-scanner` to expose the
 versioned local API, then start the Svelte/Electron client in `desktop/`. Packaged desktop builds
-bundle the scanner and store user-authorized provider credentials outside the renderer. RATi AI
-Cloud runs the same scanner and app in managed mode. See
+bundle the scanner, persist receipts in SQLite, and store user-authorized provider credentials in
+the operating-system vault. RATi AI Cloud builds the same Svelte client at `/desktop/` and connects
+it to the managed scanner API. See
 [the desktop and scanner architecture](docs/desktop-architecture.md).
 
 RATi is an evidence-first prediction platform. RATi Runners scans low-priced stocks for unusual movement. RATi Sports compares a transparent team-form baseline with timestamped no-vig moneyline odds and keeps public paper-pick receipts.

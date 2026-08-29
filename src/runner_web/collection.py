@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 import pandas as pd
 
+from runner_node.runtime import NODE_SERVICE
 from runner_watch.ingestion import SourceFetch
 from runner_watch.market_data import RoutedMarketData, routed_market_data
 from runner_web.ingestion import record_source_fetch
@@ -60,4 +61,5 @@ def recording_market_data(batch_size: int = 60, timeout: float = 15.0) -> Routed
         batch_size=batch_size,
         timeout=timeout,
         fetch_recorder=record_source_fetch,
+        provider_keys={"massive": NODE_SERVICE.vault.get("massive") or ""},
     )

@@ -20,10 +20,10 @@ FINTEL_SECURITY_ROOT = "https://fintel.io/ss/us"
 Transport = Callable[[str, dict[str, str], float], Any]
 
 
-def short_data_configured() -> bool:
+def short_data_configured(api_key: str | None = None) -> bool:
     enabled = os.getenv("FINTEL_SHORT_DATA_ENABLED", "true").strip().lower()
     return enabled not in {"0", "false", "no", "off"} and bool(
-        os.getenv("FINTEL_API_KEY", "").strip()
+        (api_key or os.getenv("FINTEL_API_KEY", "")).strip()
     )
 
 
@@ -455,18 +455,19 @@ def short_data_for_scan(
     as_of: datetime | None = None,
     client: FintelShortDataClient | None = None,
     fetch_recorder: SourceFetchRecorder | None = None,
+    api_key: str | None = None,
 ) -> ShortDataScanResult:
     """Return cached positioning data and refresh the displayed scan rows."""
 
     checked_at = (as_of or datetime.now(UTC)).astimezone(UTC)
     unique = list(dict.fromkeys(ticker.strip().upper() for ticker in tickers if ticker.strip()))
     cached = load_cached_short_data(unique)
-    api_key = os.getenv("FINTEL_API_KEY", "").strip()
+    resolved_api_key = (api_key or os.getenv("FINTEL_API_KEY", "")).strip()
     source_enabled = (
         os.getenv("FINTEL_SHORT_DATA_ENABLED", "true").strip().lower()
         not in {"0", "false", "no", "off"}
     )
-    configured = source_enabled and (client is not None or bool(api_key))
+    configured = source_enabled and (client is not None or bool(resolved_api_key))
     if not configured:
         return ShortDataScanResult(
             rows=cached,
@@ -499,7 +500,7 @@ def short_data_for_scan(
         )
 
     active_client = client or FintelShortDataClient(
-        api_key,
+        resolved_api_key,
         timeout=max(1.0, float(os.getenv("FINTEL_SHORT_DATA_TIMEOUT_SECONDS", "5"))),
         max_workers=max(1, int(os.getenv("FINTEL_SHORT_DATA_WORKERS", "6"))),
         fetch_recorder=fetch_recorder,

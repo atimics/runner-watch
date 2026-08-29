@@ -13,6 +13,7 @@ from datetime import UTC, date, datetime, timedelta
 from statistics import median
 from typing import Any
 
+from runner_node.runtime import NODE_SERVICE
 from runner_watch.ingestion import SourceFetch
 from runner_web import db as runner_db
 from runner_web.ai_kol import (
@@ -1587,7 +1588,7 @@ def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
     golf_counts = {"events": 0, "entrants": 0}
     golf_error: str | None = None
     try:
-        odds_config = OddsApiConfig.from_env()
+        odds_config = OddsApiConfig.from_env(NODE_SERVICE.vault.get("the-odds-api"))
     except (TypeError, ValueError) as exc:
         odds_config = OddsApiConfig(api_key="", enabled=False)
         quota_error = str(exc)[:240]

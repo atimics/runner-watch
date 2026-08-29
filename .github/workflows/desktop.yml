@@ -8,6 +8,7 @@ on:
       - "desktop/**"
       - "scripts/rati_scanner_entry.py"
       - "scripts/stage_desktop_scanner.py"
+      - "scripts/smoke_desktop_scanner.py"
       - "src/runner_node/**"
       - "src/runner_watch/**"
       - "src/runner_web/source_catalog.py"
@@ -20,6 +21,7 @@ on:
       - "desktop/**"
       - "scripts/rati_scanner_entry.py"
       - "scripts/stage_desktop_scanner.py"
+      - "scripts/smoke_desktop_scanner.py"
       - "src/runner_node/**"
       - "src/runner_watch/**"
       - "src/runner_web/source_catalog.py"
@@ -74,6 +76,8 @@ jobs:
             --collect-all keyring \
             scripts/rati_scanner_entry.py
           uv run python scripts/stage_desktop_scanner.py
+      - name: Smoke test packaged scanner
+        run: uv run python scripts/smoke_desktop_scanner.py
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
         with:
           version: 10.19.0

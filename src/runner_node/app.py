@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import socket
 
 import uvicorn
 from fastapi import FastAPI
@@ -39,13 +41,29 @@ app = create_app()
 
 
 def main() -> None:
-    uvicorn.run(
+    host = os.getenv("RATI_NODE_HOST", "127.0.0.1")
+    port = int(os.getenv("RATI_NODE_PORT", "8787"))
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    listener = socket.socket(family, socket.SOCK_STREAM)
+    if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    else:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind((host, port))
+    listener.listen(2_048)
+    actual_port = int(listener.getsockname()[1])
+    print(
+        json.dumps({"event": "ready", "url": f"http://{host}:{actual_port}"}),
+        flush=True,
+    )
+    config = uvicorn.Config(
         "runner_node.app:app",
-        host=os.getenv("RATI_NODE_HOST", "127.0.0.1"),
-        port=int(os.getenv("RATI_NODE_PORT", "8787")),
+        host=host,
+        port=actual_port,
         reload=False,
         access_log=False,
     )
+    uvicorn.Server(config).run(sockets=[listener])
 
 
 if __name__ == "__main__":

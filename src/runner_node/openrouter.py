@@ -8,6 +8,7 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -18,6 +19,11 @@ from runner_node.credentials import PROVIDER_ENVIRONMENTS, CredentialVault
 AUTH_URL = "https://openrouter.ai/auth"
 EXCHANGE_URL = "https://openrouter.ai/api/v1/auth/keys"
 FLOW_LIFETIME = timedelta(minutes=10)
+FLOW_STATUS_LIFETIME = timedelta(minutes=15)
+FLOW_START_WINDOW = timedelta(minutes=1)
+MAX_PENDING_FLOWS = 20
+MAX_FLOW_STATUSES = 100
+MAX_FLOW_STARTS_PER_WINDOW = 12
 
 ExchangeCode = Callable[[str, str], dict[str, Any]]
 
@@ -70,14 +76,34 @@ class OpenRouterConnections:
         self.exchange_code = exchange_code
         self._flows: dict[str, PendingFlow] = {}
         self._flow_status: dict[str, dict[str, Any]] = {}
+        self._flow_status_expires: dict[str, datetime] = {}
+        self._flow_starts: deque[datetime] = deque()
         self._lock = threading.Lock()
 
     def _purge(self) -> None:
         current = datetime.now(UTC)
+        while self._flow_starts and self._flow_starts[0] <= current - FLOW_START_WINDOW:
+            self._flow_starts.popleft()
+        stale_statuses = [
+            flow_id
+            for flow_id, expires_at in self._flow_status_expires.items()
+            if expires_at <= current
+        ]
+        for flow_id in stale_statuses:
+            self._flow_status.pop(flow_id, None)
+            self._flow_status_expires.pop(flow_id, None)
         expired = [flow_id for flow_id, flow in self._flows.items() if flow.expires_at <= current]
         for flow_id in expired:
             self._flows.pop(flow_id, None)
             self._flow_status[flow_id] = {"status": "expired"}
+            self._flow_status_expires[flow_id] = current + FLOW_STATUS_LIFETIME
+        self._trim_statuses()
+
+    def _trim_statuses(self) -> None:
+        while len(self._flow_status) > MAX_FLOW_STATUSES:
+            flow_id = next(iter(self._flow_status))
+            self._flow_status.pop(flow_id, None)
+            self._flow_status_expires.pop(flow_id, None)
 
     def begin(self, callback_origin: str) -> dict[str, Any]:
         flow_id = secrets.token_urlsafe(24)
@@ -88,8 +114,18 @@ class OpenRouterConnections:
         flow = PendingFlow(flow_id, verifier, callback_url, expires_at)
         with self._lock:
             self._purge()
+            if len(self._flow_starts) >= MAX_FLOW_STARTS_PER_WINDOW:
+                raise RuntimeError("Too many OpenRouter connection attempts; wait a minute")
+            self._flow_starts.append(datetime.now(UTC))
+            while len(self._flows) >= MAX_PENDING_FLOWS:
+                oldest = next(iter(self._flows))
+                self._flows.pop(oldest, None)
+                self._flow_status[oldest] = {"status": "expired"}
+                self._flow_status_expires[oldest] = datetime.now(UTC) + FLOW_STATUS_LIFETIME
             self._flows[flow_id] = flow
             self._flow_status[flow_id] = {"status": "pending"}
+            self._flow_status_expires[flow_id] = expires_at + FLOW_STATUS_LIFETIME
+            self._trim_statuses()
         query = urllib.parse.urlencode(
             {
                 "callback_url": callback_url,
@@ -127,10 +163,14 @@ class OpenRouterConnections:
         except Exception as exc:
             with self._lock:
                 self._flow_status[flow_id] = {"status": "failed", "detail": str(exc)[:240]}
+                self._flow_status_expires[flow_id] = datetime.now(UTC) + FLOW_STATUS_LIFETIME
+                self._trim_statuses()
             raise
         status = {"status": "connected", "connection": self.status()}
         with self._lock:
             self._flow_status[flow_id] = status
+            self._flow_status_expires[flow_id] = datetime.now(UTC) + FLOW_STATUS_LIFETIME
+            self._trim_statuses()
         return status
 
     def connect_key(self, key: str) -> dict[str, Any]:

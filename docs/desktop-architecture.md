@@ -25,31 +25,40 @@ The app connects to exactly one node URL at a time.
 
 | Mode | Node | Storage | Provider credentials |
 | --- | --- | --- | --- |
-| Desktop | Bundled local scanner | Local storage; SQLite is the persistence target | OS credential vault or environment |
-| Self-hosted | Standalone scanner | SQLite or Postgres | OS vault, environment, or secret manager |
+| Desktop | Bundled local scanner | SQLite receipts plus a small renderer cache | OS credential vault or environment |
+| Self-hosted | Standalone scanner | SQLite receipts | OS vault, environment, or secret manager |
 | RATi AI Cloud | Managed scanner roles | Postgres and Redis | RATi-managed secrets |
 
-When no node is connected, the app is in Library mode. It may show cached or imported receipts,
+When no node is connected, the app is in Library mode. It shows locally cached receipts,
 but it cannot label data as live or create new scans, research, Calls, picks, or alerts.
 
 ## Node API v1
 
-The first vertical slice keeps scan receipts in a bounded in-memory store and provides:
+The scanner keeps a bounded receipt history in SQLite when `DATABASE_PATH` is set. It provides:
 
 ```text
 GET    /api/v1/node
 GET    /api/v1/providers
+GET    /api/v1/scans
 POST   /api/v1/scans
 GET    /api/v1/scans/{scan_id}
+POST   /api/v1/research
 GET    /api/v1/connections/openrouter
 POST   /api/v1/connections/openrouter/start
 GET    /api/v1/connections/openrouter/flows/{flow_id}
 GET    /api/v1/connections/openrouter/callback/{flow_id}
 PUT    /api/v1/connections/openrouter
 DELETE /api/v1/connections/openrouter
+PUT    /api/v1/connections/{provider}
+DELETE /api/v1/connections/{provider}
 ```
 
-Cloud nodes do not accept user-triggered scans through the unauthenticated local endpoint. Their
+Scan receipts, research, OAuth flow control, and credential changes require a bearer token. The
+bundled desktop process creates a new token on every launch. A self-hosted scanner refuses to start
+until `RATI_NODE_TOKEN` contains at least 24 characters. Public node and provider capability reads
+remain available so the hosted client can explain what the selected node offers.
+
+Cloud nodes do not accept user-triggered scans through the local endpoint. Their
 managed workers continue to populate the existing shared Pulse and Radar data.
 
 ## OpenRouter
@@ -57,8 +66,13 @@ managed workers continue to populate the existing shared Pulse and Radar data.
 The recommended local connection uses OpenRouter OAuth with an S256 PKCE challenge. The scanner
 creates the verifier, receives the loopback callback, exchanges the one-use code, and writes the
 resulting key to the credential vault. The Svelte renderer sees only connection state and method.
-Environment variables remain available for headless deployments, and direct key
-entry remains an advanced fallback.
+Environment variables remain available for headless deployments, and users may paste their own key
+as a direct fallback. Once connected, the standalone `/api/v1/research` route uses that same
+node-owned key; the renderer never receives a stored key back from the API.
+
+Massive, Fintel, and The Odds API keys use the same write-only credential contract. Provider
+factories accept injected vault credentials as well as operator-managed environment variables. Free
+sources require no setup and appear automatically from the shared source catalog.
 
 Disconnecting removes the local credential. It does not revoke an environment-managed credential
 or delete the key from the user's OpenRouter account; the app links to OpenRouter's key settings
@@ -72,12 +86,15 @@ for account-side management.
 - Packaged assets use the secure `rati-app` protocol instead of `file://`.
 - Navigation and permission requests are denied by default.
 - Remote node URLs require HTTPS; loopback development nodes may use HTTP.
-- The bundled scanner binds to `127.0.0.1` on a random port.
+- The bundled scanner binds its own exclusive `127.0.0.1` random port and announces it to Electron.
+- Local API writes require a fresh per-launch bearer token.
+- Self-hosted API writes require an operator-configured bearer token.
 
 ## Native builds
 
 The desktop workflow builds the Python scanner as a per-platform executable, stages it as an
-Electron resource, runs Svelte checks and tests, then creates:
+Electron resource, launches that frozen executable and checks its API, runs Svelte checks and tests,
+then creates:
 
 - a Debian package on Linux;
 - a DMG and ZIP on macOS;
@@ -86,11 +103,16 @@ Electron resource, runs Svelte checks and tests, then creates:
 Artifacts are retained for 14 days. Release signing and notarization should be added before public
 distribution; pull request artifacts are intentionally unsigned.
 
+## Hosted app
+
+The production container builds the same Svelte renderer used by Electron and serves it at
+`/desktop/`. It connects to the managed Node API on the same origin. The existing Jinja screens stay
+available while product areas move into the shared client; they are no longer the only hosted UI.
+
 ## Next slices
 
-1. Persist scan runs and expose Pulse, Radar, ticker, and chart read models through `/api/v1`.
-2. Move local provider settings behind write-only credential endpoints.
-3. Add authenticated cloud node sessions and optional local-to-cloud artifact sync.
-4. Move Calls, picks, research receipts, and exports to the shared API.
-5. Add the Rust ranker binary to the packaged scanner resources.
-6. Replace the hosted Jinja screens with the same Svelte build after feature parity.
+1. Expose Pulse, Radar, ticker, and chart read models through `/api/v1`.
+2. Add authenticated cloud node sessions and optional local-to-cloud artifact sync.
+3. Move Calls, picks, research receipts, and exports to the shared API.
+4. Add the Rust ranker binary to the packaged scanner resources.
+5. Promote the hosted Svelte client to the primary navigation after feature parity.

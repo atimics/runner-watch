@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { normalizeNodeUrl } from './node';
+import { NodeClient, normalizeNodeUrl } from './node';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 describe('scanner node addresses', () => {
   it('accepts local HTTP scanner nodes', () => {
@@ -16,5 +21,35 @@ describe('scanner node addresses', () => {
     expect(() => normalizeNodeUrl('ftp://127.0.0.1:8787')).toThrow(
       'Remote scanner connections must use HTTPS',
     );
+  });
+
+  it('sends the scanner token without putting it in the URL', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ api_version: '1' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await new NodeClient('https://scanner.example.com', 'private-token').node();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://scanner.example.com/api/v1/node',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer private-token' }),
+      }),
+    );
+  });
+
+  it('stops waiting when a scanner does not respond', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+    }));
+
+    const request = new NodeClient('https://scanner.example.com').node();
+    const expectation = expect(request).rejects.toThrow('Scanner request timed out');
+    await vi.advanceTimersByTimeAsync(12_000);
+    await expectation;
   });
 });

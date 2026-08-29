@@ -3,7 +3,9 @@
 interface RatiDesktopRuntime {
   appVersion: string;
   nodeUrl: string;
+  nodeToken: string;
   platform: string;
+  scannerError: string;
 }
 
 interface RatiDesktopBridge {

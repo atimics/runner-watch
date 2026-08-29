@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from urllib.parse import parse_qs, urlparse
 
+import pytest
 from fastapi.testclient import TestClient
 
 from runner_node.api import NodeService
@@ -9,6 +10,8 @@ from runner_node.app import create_app
 from runner_node.config import NodeSettings
 from runner_node.credentials import MemoryCredentialVault
 from runner_node.openrouter import OpenRouterConnections
+from runner_node.research import OpenRouterResearch
+from runner_node.scans import ScanStore
 
 
 def _settings(**overrides: object) -> NodeSettings:
@@ -19,6 +22,8 @@ def _settings(**overrides: object) -> NodeSettings:
         "allowed_origins": ("rati-app://app",),
         "allow_user_openrouter": True,
         "credential_backend": "memory",
+        "auth_token": "test-node-token-with-24-characters",
+        "database_path": None,
         **overrides,
     }
     return NodeSettings(**values)  # type: ignore[arg-type]
@@ -29,6 +34,8 @@ def _client(
     settings: NodeSettings | None = None,
     vault: MemoryCredentialVault | None = None,
     exchange_code: object | None = None,
+    research: OpenRouterResearch | None = None,
+    authenticated: bool = True,
 ) -> tuple[TestClient, MemoryCredentialVault]:
     settings = settings or _settings()
     vault = vault or MemoryCredentialVault()
@@ -36,8 +43,16 @@ def _client(
         vault,
         exchange_code=exchange_code or (lambda _code, _verifier: {"key": "sk-or-test-key"}),
     )
-    service = NodeService(settings=settings, vault=vault, openrouter=openrouter)
-    return TestClient(create_app(settings=settings, service=service)), vault
+    service = NodeService(
+        settings=settings,
+        vault=vault,
+        openrouter=openrouter,
+        research=research,
+    )
+    client = TestClient(create_app(settings=settings, service=service))
+    if authenticated and settings.auth_token:
+        client.headers["Authorization"] = f"Bearer {settings.auth_token}"
+    return client, vault
 
 
 def test_node_contract_reports_mode_and_capabilities() -> None:
@@ -80,6 +95,7 @@ def test_sample_scan_runs_through_standalone_node() -> None:
     assert payload["source"] == "sample"
     assert len(payload["rows"]) <= 5
     assert client.get(f"/api/v1/scans/{payload['id']}").json() == payload
+    assert client.get("/api/v1/scans").json()["receipts"] == [payload]
 
 
 def test_cloud_node_does_not_accept_user_triggered_scans() -> None:
@@ -149,3 +165,112 @@ def test_desktop_origin_receives_node_cors_headers() -> None:
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "rati-app://app"
+
+
+def test_self_hosted_node_rejects_unauthenticated_writes() -> None:
+    client, vault = _client(
+        settings=_settings(mode="self_hosted"),
+        authenticated=False,
+    )
+
+    assert client.post("/api/v1/scans", json={"source": "sample"}).status_code == 401
+    response = client.put(
+        "/api/v1/connections/openrouter",
+        json={"key": "sk-or-attacker-key-with-enough-characters"},
+    )
+    assert response.status_code == 401
+    assert vault.get("openrouter") is None
+
+
+def test_provider_key_is_stored_without_being_returned() -> None:
+    client, vault = _client()
+
+    response = client.put(
+        "/api/v1/connections/massive",
+        json={"key": "massive-secret-key"},
+    )
+
+    assert response.json() == {"provider": "massive", "status": "connected"}
+    assert vault.get("massive") == "massive-secret-key"
+    assert "massive-secret-key" not in response.text
+    providers = {row["id"]: row for row in client.get("/api/v1/providers").json()["providers"]}
+    assert providers["massive"]["configured"] is True
+
+
+def test_scan_receives_vault_backed_provider_keys(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_scan(_payload: object, provider_keys: dict[str, str]) -> dict[str, object]:
+        captured.update(provider_keys)
+        return {
+            "status": "complete",
+            "source": "sample",
+            "finished_at": "2026-01-01T00:00:00+00:00",
+            "elapsed_seconds": 0.0,
+            "rows": [],
+            "warnings": [],
+        }
+
+    vault = MemoryCredentialVault({"massive": "vault-massive-key"})
+    client, _vault = _client(vault=vault)
+    monkeypatch.setattr("runner_node.api.run_scan", fake_scan)
+
+    assert client.post("/api/v1/scans", json={"source": "sample"}).status_code == 200
+    assert captured == {"massive": "vault-massive-key"}
+
+
+def test_openrouter_credential_powers_node_research() -> None:
+    captured: dict[str, object] = {}
+
+    def transport(key: str, payload: dict[str, object]) -> dict[str, object]:
+        captured.update(key=key, payload=payload)
+        return {
+            "model": "test/research-model",
+            "choices": [{"message": {"content": "Evidence first."}}],
+        }
+
+    vault = MemoryCredentialVault({"openrouter": "sk-or-research-key-with-enough-characters"})
+    client, _vault = _client(
+        vault=vault,
+        research=OpenRouterResearch(transport),
+    )
+
+    response = client.post("/api/v1/research", json={"prompt": "Review ACME"})
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "Evidence first."
+    assert captured["key"] == "sk-or-research-key-with-enough-characters"
+    assert response.json()["model"] == "test/research-model"
+
+
+def test_scan_store_persists_and_prunes_receipts(tmp_path) -> None:
+    database_path = tmp_path / "scanner.sqlite3"
+    first = ScanStore(maximum=2, database_path=database_path)
+    saved = [
+        first.save({"finished_at": f"2026-01-0{day}T00:00:00+00:00", "rows": []})
+        for day in range(1, 4)
+    ]
+
+    reopened = ScanStore(maximum=2, database_path=database_path)
+
+    assert [receipt["id"] for receipt in reopened.list()] == [saved[2]["id"], saved[1]["id"]]
+    assert reopened.get(saved[0]["id"]) is None
+
+
+def test_openrouter_flow_starts_are_rate_limited() -> None:
+    client, _vault = _client()
+
+    for _attempt in range(12):
+        assert client.post("/api/v1/connections/openrouter/start").status_code == 200
+
+    response = client.post("/api/v1/connections/openrouter/start")
+    assert response.status_code == 429
+    assert "Too many" in response.json()["detail"]
+
+
+def test_self_hosted_mode_requires_a_long_token(monkeypatch) -> None:
+    monkeypatch.setenv("RATI_NODE_MODE", "self_hosted")
+    monkeypatch.delenv("RATI_NODE_TOKEN", raising=False)
+
+    with pytest.raises(ValueError, match="RATI_NODE_TOKEN"):
+        NodeSettings.from_environment()

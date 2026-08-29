@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
 import secrets
+import sqlite3
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from pathlib import Path
 from threading import Lock
 from typing import Literal
 
@@ -36,34 +40,91 @@ class ScanRequest(BaseModel):
 
 
 class ScanStore:
-    """Bounded in-memory result store for the first standalone scanner API."""
+    """Bounded receipt store, persisted to SQLite when a path is configured."""
 
-    def __init__(self, maximum: int = 20) -> None:
+    def __init__(self, maximum: int = 20, database_path: str | Path | None = None) -> None:
         self.maximum = maximum
         self._lock = Lock()
         self._scans: dict[str, dict[str, object]] = {}
+        self.database_path = Path(database_path).expanduser() if database_path else None
+        if self.database_path is not None:
+            self.database_path.parent.mkdir(parents=True, exist_ok=True)
+            with sqlite3.connect(self.database_path) as database:
+                database.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS node_scan_receipts (
+                        id TEXT PRIMARY KEY,
+                        finished_at TEXT NOT NULL,
+                        payload_json TEXT NOT NULL
+                    )
+                    """
+                )
 
     def save(self, payload: dict[str, object]) -> dict[str, object]:
         scan_id = f"scan_{secrets.token_urlsafe(12)}"
         value = {"id": scan_id, **payload}
         with self._lock:
-            self._scans[scan_id] = value
-            while len(self._scans) > self.maximum:
-                self._scans.pop(next(iter(self._scans)))
+            if self.database_path is None:
+                self._scans[scan_id] = value
+                while len(self._scans) > self.maximum:
+                    self._scans.pop(next(iter(self._scans)))
+            else:
+                with sqlite3.connect(self.database_path) as database:
+                    database.execute(
+                        "INSERT INTO node_scan_receipts(id,finished_at,payload_json) VALUES(?,?,?)",
+                        (
+                            scan_id,
+                            str(value.get("finished_at") or datetime.now(UTC).isoformat()),
+                            json.dumps(value, separators=(",", ":")),
+                        ),
+                    )
+                    database.execute(
+                        """
+                        DELETE FROM node_scan_receipts
+                        WHERE id NOT IN (
+                            SELECT id FROM node_scan_receipts
+                            ORDER BY finished_at DESC, id DESC LIMIT ?
+                        )
+                        """,
+                        (self.maximum,),
+                    )
         return value
 
     def get(self, scan_id: str) -> dict[str, object] | None:
         with self._lock:
-            return self._scans.get(scan_id)
+            if self.database_path is None:
+                return self._scans.get(scan_id)
+            with sqlite3.connect(self.database_path) as database:
+                row = database.execute(
+                    "SELECT payload_json FROM node_scan_receipts WHERE id=?", (scan_id,)
+                ).fetchone()
+            return json.loads(row[0]) if row else None
+
+    def list(self) -> list[dict[str, object]]:
+        with self._lock:
+            if self.database_path is None:
+                return list(reversed(list(self._scans.values())))
+            with sqlite3.connect(self.database_path) as database:
+                rows = database.execute(
+                    """
+                    SELECT payload_json FROM node_scan_receipts
+                    ORDER BY finished_at DESC, id DESC LIMIT ?
+                    """,
+                    (self.maximum,),
+                ).fetchall()
+            return [json.loads(row[0]) for row in rows]
 
 
-def run_scan(request: ScanRequest) -> dict[str, object]:
+def run_scan(
+    request: ScanRequest,
+    provider_keys: Mapping[str, str] | None = None,
+) -> dict[str, object]:
     warnings: list[str] = []
     if request.source == "sample":
         provider = SampleMarketData()
         symbols = SAMPLE_SYMBOLS
     else:
-        provider = routed_market_data()
+        provider = routed_market_data(provider_keys=provider_keys)
         if request.universe == "starter":
             symbols = [item.symbol for item in starter_universe()]
         elif request.universe == "broad":

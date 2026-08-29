@@ -1,5 +1,14 @@
 FROM ghcr.io/astral-sh/uv:0.12.3 AS uv
 
+FROM node:24-bookworm-slim AS desktop-renderer
+
+RUN npm install --global pnpm@10.19.0
+WORKDIR /desktop
+COPY desktop/package.json desktop/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile --ignore-scripts
+COPY desktop ./
+RUN pnpm build
+
 FROM rust:1.88-slim-bookworm AS integer-ranker
 
 WORKDIR /ranker
@@ -26,6 +35,7 @@ COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
 COPY web ./web
+COPY --from=desktop-renderer /desktop/dist/renderer ./desktop/dist/renderer
 RUN uv sync --locked --no-dev --no-editable
 
 ENV PATH="/app/.venv/bin:$PATH" \

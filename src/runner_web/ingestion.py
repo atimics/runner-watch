@@ -18,8 +18,8 @@ from runner_watch.ingestion import (
     SourceBatch,
     SourceFetch,
 )
+from runner_watch.source_catalog import SourcePolicy
 from runner_web.db import connection
-from runner_web.source_catalog import SourcePolicy
 
 TERMINAL_ITEM_STATUSES = {"processed", "ignored", "rejected"}
 
