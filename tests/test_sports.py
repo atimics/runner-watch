@@ -597,19 +597,16 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     response = home(sports_request, None)
     assert response.status_code == 200
     assert b"RATi Sports" in response.body
-    assert b'class="game-card winner-card team-projection-card"' in response.body
-    assert b'class="winner-coin winner-coin-' in response.body
-    assert b'class="team-projection-name">Home Club</span>' in response.body
+    assert b'class="token-list" id="sportsPulseList"' in response.body
+    assert b'class="game-card winner-card' not in response.body
+    assert b'/static/ticker-row.js' in response.body
+    assert b'/static/sports-live.js' in response.body
     assert b"Away Club" in response.body
     assert b"Home Club" in response.body
-    assert b"value side" in response.body
     assert b"ESTIMATED SCORE" not in response.body
     assert b"PROJECTED" in response.body
-    assert b"WIN CHANCE" in response.body
-    assert b"Value agrees: HOM" in response.body
-    assert b"team projection" in response.body
+    assert b"matchup" in response.body
     assert b"checked" in response.body
-    assert b'class="edge-spark"' in response.body
     assert b"PROJECTED WINNER" not in response.body
     assert b"Full slate" not in response.body
     assert b'class="sports-hero"' not in response.body

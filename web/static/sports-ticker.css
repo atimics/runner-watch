@@ -1,36 +1,4 @@
-.pulse-winners {
-  display: block;
-  margin-top: 18px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: rgba(19, 17, 29, .72);
-}
-
-.winner-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 116px 12px;
-  gap: 13px;
-  align-items: center;
-  min-height: 108px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--line);
-  background: linear-gradient(90deg, rgba(26, 23, 37, .92), rgba(17, 15, 25, .92));
-  transition: background .16s;
-}
-
-.winner-card.team-projection-card {
-  grid-template-columns: 50px minmax(0, 1fr) 116px 12px;
-  min-height: 96px;
-}
-
-.winner-card:last-child {
-  border-bottom: 0;
-}
-
-.winner-card:hover {
-  background: linear-gradient(90deg, rgba(35, 30, 49, .98), rgba(20, 17, 29, .96));
-}
+/* Sports Pulse rows intentionally use the shared ticker-row.css contract. */
 
 .winner-coin {
   position: relative;
@@ -70,200 +38,11 @@
   transform: rotate(-20deg);
 }
 
-.winner-coin-0 {
-  background: linear-gradient(145deg, #75dcff, #1670be);
-}
-
-.winner-coin-1 {
-  background: linear-gradient(145deg, #ffb661, #c54322);
-}
-
-.winner-coin-2 {
-  background: linear-gradient(145deg, #b99aff, #6231ac);
-}
-
-.winner-coin-3 {
-  background: linear-gradient(145deg, #78e9a5, #158251);
-}
-
-.winner-coin-4 {
-  background: linear-gradient(145deg, #ff8bad, #ab2854);
-}
-
-.matchup-copy,
-.matchup-team,
-.winner-context,
-.winner-quote,
-.winner-quote strong,
-.winner-quote small,
-.winner-quote em {
-  min-width: 0;
-}
-
-.matchup-copy,
-.winner-context,
-.winner-quote strong,
-.winner-quote small,
-.winner-quote em {
-  display: block;
-}
-
-.matchup-copy {
-  overflow: hidden;
-}
-
-.team-projection-line {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-}
-
-.team-projection-line strong {
-  font-size: 15px;
-  font-weight: 900;
-  letter-spacing: .02em;
-}
-
-.team-projection-line small {
-  color: var(--green);
-  font-size: 7px;
-  font-weight: 900;
-  letter-spacing: .08em;
-}
-
-.team-projection-name {
-  display: block;
-  margin-top: 1px;
-  overflow: hidden;
-  color: var(--soft);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.team-projection-copy .winner-context {
-  margin-top: 6px;
-}
-
-.matchup-team {
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: baseline;
-  color: var(--soft);
-}
-
-.matchup-team + .matchup-team {
-  margin-top: 7px;
-}
-
-.matchup-team strong {
-  font-size: 13px;
-  font-weight: 900;
-  letter-spacing: .03em;
-}
-
-.matchup-team span {
-  overflow: hidden;
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.matchup-team.is-value strong,
-.matchup-team.is-value span {
-  color: var(--green);
-}
-
-.matchup-value {
-  padding: 2px 4px;
-  border: 1px solid color-mix(in srgb, var(--green) 35%, transparent);
-  border-radius: 4px;
-  color: var(--green);
-  font-size: 6px;
-  font-weight: 900;
-  letter-spacing: .08em;
-}
-
-.matchup-team b {
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-.winner-context {
-  margin-top: 9px;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 9px;
-  font-weight: 750;
-  letter-spacing: .04em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.winner-context time {
-  color: inherit;
-}
-
-.winner-quote {
-  align-self: stretch;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: right;
-}
-
-.winner-quote strong {
-  font-size: 15px;
-  font-variant-numeric: tabular-nums;
-}
-
-.winner-edge,
-.bovada-outlier {
-  display: block;
-  margin-top: 3px;
-  color: var(--soft);
-  font-size: 8px;
-  line-height: 1.35;
-}
-
-.bovada-outlier {
-  color: var(--accent);
-}
-
-.winner-quote small {
-  margin-top: 1px;
-  color: var(--muted);
-  font-size: 7px;
-  font-weight: 850;
-  letter-spacing: .1em;
-}
-
-.winner-quote em {
-  margin-top: 6px;
-  overflow: hidden;
-  font-size: 8px;
-  font-style: normal;
-  font-weight: 900;
-  letter-spacing: .06em;
-  text-overflow: ellipsis;
-  white-space: normal;
-  color: var(--muted);
-}
-
-.winner-quote em.watch {
-  color: var(--green);
-}
-
-.winner-quote em.lean {
-  color: #f8ca76;
-}
-
-.winner-quote .value-note.agrees {
-  color: var(--green);
-}
+.winner-coin-0 { background: linear-gradient(145deg, #75dcff, #1670be); }
+.winner-coin-1 { background: linear-gradient(145deg, #ffb661, #c54322); }
+.winner-coin-2 { background: linear-gradient(145deg, #b99aff, #6231ac); }
+.winner-coin-3 { background: linear-gradient(145deg, #78e9a5, #158251); }
+.winner-coin-4 { background: linear-gradient(145deg, #ff8bad, #ab2854); }
 
 .edge-spark {
   display: block;
@@ -288,17 +67,7 @@
   vector-effect: non-scaling-stroke;
 }
 
-.winner-quote:has(em.lean) .edge-spark polyline {
-  stroke: #f8ca76;
-}
-
-.edge-spark circle {
-  fill: var(--green);
-}
-
-.winner-quote:has(em.lean) .edge-spark circle {
-  fill: #f8ca76;
-}
+.edge-spark circle { fill: var(--green); }
 
 .game-chevron {
   display: flex;
@@ -315,104 +84,19 @@
   font-weight: 800;
 }
 
-.winner-card:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
 @media (max-width: 700px) {
-  .pulse-winners {
-    margin-top: 12px;
-  }
-
-  .winner-card {
-    grid-template-columns: minmax(0, 1fr) 82px 10px;
-    gap: 9px;
-    min-height: 104px;
-    padding: 10px;
-  }
-
-  .winner-card.team-projection-card {
-    grid-template-columns: 44px minmax(0, 1fr) 82px 10px;
-    min-height: 94px;
-  }
-
   .winner-coin {
     width: 44px;
     height: 44px;
   }
 
-  .winner-coin::after {
-    inset: 4px;
-  }
-
-  .winner-coin i {
-    width: 23px;
-  }
-
-  .matchup-team {
-    grid-template-columns: 35px minmax(0, 1fr) auto;
-    gap: 5px;
-  }
-
-  .matchup-team strong,
-  .matchup-team b {
-    font-size: 12px;
-  }
-
-  .matchup-team span {
-    font-size: 10px;
-  }
-
-  .winner-context {
-    font-size: 9px;
-  }
-
-  .winner-quote strong {
-    font-size: 13px;
-  }
-
-  .winner-quote em {
-    font-size: 8px;
-  }
-
-  .team-projection-line strong {
-    font-size: 14px;
-  }
-
-  .team-projection-name {
-    font-size: 10px;
-  }
+  .winner-coin::after { inset: 4px; }
+  .winner-coin i { width: 23px; }
 
   .edge-spark {
     width: 72px;
     height: 19px;
   }
 
-  .game-chevron {
-    font-size: 18px;
-  }
-}
-
-@media (max-width: 370px) {
-  .winner-card {
-    grid-template-columns: minmax(0, 1fr) 76px 8px;
-    gap: 7px;
-    padding-right: 8px;
-    padding-left: 8px;
-  }
-
-  .winner-card.team-projection-card {
-    grid-template-columns: 40px minmax(0, 1fr) 76px 8px;
-  }
-
-  .winner-coin {
-    width: 40px;
-    height: 40px;
-  }
-
-  .matchup-team {
-    grid-template-columns: 32px minmax(0, 1fr) auto;
-    gap: 4px;
-  }
+  .game-chevron { font-size: 18px; }
 }

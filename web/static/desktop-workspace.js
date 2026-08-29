@@ -78,6 +78,7 @@
     }
 
     desktop.addEventListener('change', initialize);
+    list.addEventListener('desktop-rows-rendered', initialize);
     initialize();
   });
 })();

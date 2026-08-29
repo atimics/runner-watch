@@ -103,10 +103,9 @@
 }
 
 .sports-list-section {
-  padding-top: 10px;
+  padding-top: 5px;
 }
 
-.sports-list-section .pulse-winners,
 .sports-list-section .radar-list {
   margin: 0;
   border: 0;
@@ -114,48 +113,12 @@
   background: transparent;
 }
 
-.sports-product .winner-card,
 .sports-product .radar-card {
   background: var(--panel);
 }
 
-.sports-product .winner-card:hover,
 .sports-product .radar-card:hover {
   background: var(--panel-2);
-}
-
-.sports-product .winner-card {
-  grid-template-columns: minmax(0, 1fr) 136px 32px;
-  gap: 9px;
-  min-height: 98px;
-  padding: 11px 12px;
-}
-
-.sports-product .winner-coin {
-  width: 44px;
-  height: 44px;
-}
-
-.sports-product .matchup-team {
-  grid-template-columns: 35px minmax(0, 1fr) auto;
-  gap: 5px;
-}
-
-.sports-product .winner-quote strong {
-  font-size: 15px;
-}
-
-.sports-product .winner-quote {
-  text-align: left;
-}
-
-.sports-product .winner-edge {
-  color: var(--soft);
-  font-size: 9px;
-}
-
-.sports-product .winner-quote .edge-spark {
-  width: 70px;
 }
 
 .sports-product .series-cluster {
@@ -271,38 +234,6 @@ html.embedded-pane .sports-detail-body {
 }
 
 @media (max-width: 700px) {
-  .sports-product .winner-card {
-    grid-template-columns: minmax(0, 1fr) 10px;
-  }
-
-  .sports-product .winner-quote {
-    grid-column: 1;
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 3px 8px;
-    justify-content: start;
-    text-align: left;
-  }
-
-  .sports-product .winner-quote small,
-  .sports-product .winner-quote .edge-spark {
-    display: none;
-  }
-
-  .sports-product .winner-quote em,
-  .sports-product .winner-quote .bovada-outlier {
-    grid-column: 1 / -1;
-  }
-
-  .sports-product .winner-quote em {
-    margin: 0;
-  }
-
-  .sports-product .winner-card .game-chevron {
-    grid-column: 2;
-    grid-row: 1 / span 2;
-  }
-
   .sports-product .radar-card {
     grid-template-columns: 42px minmax(0, 1fr) 58px 10px;
   }
@@ -333,35 +264,5 @@ html.embedded-pane .sports-detail-body {
   .sports-product .alpha-sample-note {
     grid-template-columns: 1fr;
     gap: 9px;
-  }
-}
-
-@container (max-width: 520px) {
-  .sports-product .winner-card {
-    grid-template-columns: minmax(0, 1fr) 28px;
-  }
-
-  .sports-product .winner-quote {
-    grid-column: 1;
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 3px 8px;
-    justify-content: start;
-    text-align: left;
-  }
-
-  .sports-product .winner-quote small,
-  .sports-product .winner-quote .edge-spark {
-    display: none;
-  }
-
-  .sports-product .winner-quote em,
-  .sports-product .winner-quote .bovada-outlier {
-    grid-column: 1 / -1;
-  }
-
-  .sports-product .winner-card .game-chevron {
-    grid-column: 2;
-    grid-row: 1 / span 2;
   }
 }

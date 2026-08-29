@@ -40,6 +40,16 @@
     });
   }
 
+  function shortGameTime(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.valueOf())) return value ? String(value) : 'pending';
+    return date.toLocaleString([], {
+      weekday: 'short',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  }
+
   function formatLocalTimes(root = document) {
     root.querySelectorAll('[data-local-time]').forEach(node => {
       node.textContent = localTime(node.dataset.localTime);
@@ -58,15 +68,27 @@
     </svg>`;
   }
 
+  function pulseHistorySvg(history) {
+    if (!history) {
+      return '<svg class="mini-chart unavailable" viewBox="0 0 64 18" preserveAspectRatio="none" aria-hidden="true"><path class="chart-placeholder" d="M1 12 L13 10 L25 13 L39 8 L51 10 L63 7"></path></svg>';
+    }
+    const points = escapeHtml(history.plot_points || '');
+    const dotX = escapeHtml(history.dot_x ?? 90);
+    const dotY = escapeHtml(history.dot_y ?? 12);
+    return `<svg class="mini-chart loaded rising" viewBox="0 0 92 24" preserveAspectRatio="none" aria-hidden="true">
+      ${points ? `<polyline class="sports-history-line" points="${points}"></polyline>` : ''}
+      <circle class="sports-history-dot" cx="${dotX}" cy="${dotY}" r="2.4"></circle>
+    </svg>`;
+  }
+
   function gameHref(prefix, id) {
     return `${prefix || ''}/game/${encodeURIComponent(String(id || ''))}`;
   }
 
-  function pulseCard(event, prefix, compact = false) {
+  function pulseCard(event, prefix) {
     const prediction = event.prediction || {};
     const signal = event.signal_abbreviation || '';
     const model = event.model_winner_abbreviation || '';
-    const valueAgrees = model === signal;
     const opponentAbbreviation = event.model_winner_opponent_abbreviation
       || (event.model_winner_side === 'home' ? event.away_abbreviation : event.home_abbreviation)
       || '';
@@ -78,41 +100,35 @@
     const projectionLabel = event.model_winner_label || (slightEdge ? 'SLIGHT EDGE' : 'PROJECTED');
     const ariaAction = event.model_winner_aria_action
       || (slightEdge ? 'has a slight model edge over' : 'is projected to beat');
-    const projectedScore = event.model_winner_projected_score_display != null
-      && event.model_winner_opponent_projected_score_display != null
-      ? `Projected ${escapeHtml(event.model_winner_projected_score_display)}–${escapeHtml(event.model_winner_opponent_projected_score_display)}`
-      : 'Projected score building';
-    const divergence = event.bovada_divergence_material
-      ? `<span class="bovada-outlier">Bovada differs by ${number(event.bovada_divergence_pct, 1)} points</span>`
-      : '';
     const label = `${event.model_winner_team_name || model} ${ariaAction} ${opponentName} with a ${number(event.model_winner_probability_pct)} percent win chance; value side ${signal} with a ${signed(prediction.edge_pct)} percentage-point model edge`;
-    return `<a class="game-card winner-card team-projection-card${compact ? ' winner-card-compact' : ''}" href="${gameHref(prefix, event.id)}" aria-label="${escapeHtml(label)}">
-      <span class="winner-coin winner-coin-${safeToken(event.model_winner_coin_tone, '0')}" aria-hidden="true"><b>${escapeHtml(model)}</b><i></i></span>
-      <span class="matchup-copy team-projection-copy">
-        <span class="team-projection-line"><strong>${escapeHtml(model)}</strong><small>${escapeHtml(projectionLabel)}</small></span>
-        <span class="team-projection-name">${escapeHtml(event.model_winner_team_name || model)}</span>
-        <span class="winner-context">vs ${escapeHtml(opponentAbbreviation)} · ${escapeHtml(String(event.league || '').toUpperCase())} · <time data-local-time="${escapeHtml(event.start_time)}">${escapeHtml(localTime(event.start_time))}</time></span>
-      </span>
-      <span class="winner-quote">
-        <small>WIN CHANCE</small><strong>${number(event.model_winner_probability_pct)}%</strong>
-        <span class="winner-edge">${projectedScore}</span>
-        <em class="value-note${valueAgrees ? ' agrees' : ''}">Value${valueAgrees ? ' agrees' : ''}: ${escapeHtml(signal)} ${signed(prediction.edge_pct)} pp</em>
-        ${divergence}
-        ${historySvg(event.edge_history)}
-      </span>
-      <span class="game-chevron" aria-hidden="true">›</span>
-    </a>`;
+    return TickerRow.renderShell({
+      href: gameHref(prefix, event.id),
+      ariaLabel: label,
+      coinTone: event.model_winner_coin_tone,
+      coinLabel: model,
+      headline: model,
+      headlineMeta: `<small class="ticker-badge ticker-badge-update">${escapeHtml(projectionLabel)}</small>`,
+      age: shortGameTime(event.start_time),
+      company: event.model_winner_team_name || model,
+      catalyst: `vs ${opponentAbbreviation} · ${String(event.league || '').toUpperCase()}`,
+      catalystTone: 'gap',
+      quoteValue: `${number(event.model_winner_probability_pct)}%`,
+      chartMarkup: pulseHistorySvg(event.edge_history),
+      quoteMarkup: `<span class="quote-period">Value</span> ${escapeHtml(signal)} ${signed(prediction.edge_pct)}pp`,
+      quoteTone: 'up',
+      dataSportsGame: event.id,
+    });
   }
 
   function renderPulseEvents(events, prefix) {
     if (!events.length) {
-      return '<div class="sports-empty"><strong>No team projections right now.</strong><p>Pulse stays quiet until a game clears the model-versus-market threshold.</p></div>';
+      return '<div class="sports-empty"><strong>No matchups right now.</strong><p>Pulse stays quiet until a game clears the model-versus-market threshold.</p></div>';
     }
     return events.map(event => {
       const related = event.series_more || [];
       const cluster = related.length ? `<details class="series-cluster">
         <summary><span>${escapeHtml(event.away_abbreviation)}–${escapeHtml(event.home_abbreviation)} series</span><b>+${related.length} more game${related.length === 1 ? '' : 's'}</b></summary>
-        <div class="series-games">${related.map(item => pulseCard(item, prefix, true)).join('')}</div>
+        <div class="series-games">${related.map(item => pulseCard(item, prefix)).join('')}</div>
       </details>` : '';
       return `${pulseCard(event, prefix)}${cluster}`;
     }).join('');
@@ -196,6 +212,7 @@
         updated.textContent = localTime(current.updated_at);
       }
       restorePanelSelection(list);
+      list.dispatchEvent(new Event('desktop-rows-rendered'));
     }
 
     refresh.addEventListener('click', () => {
@@ -223,7 +240,7 @@
         const currentIds = new Set((current.events || []).map(eventKey));
         const newCount = (next.events || []).filter(event => !currentIds.has(eventKey(event))).length;
         pending = next;
-        refresh.textContent = newCount === 1 ? '1 new team projection' : (newCount > 1 ? `${newCount} new team projections` : 'Slate updated');
+        refresh.textContent = newCount === 1 ? '1 new matchup' : (newCount > 1 ? `${newCount} new matchups` : 'Slate updated');
         refresh.hidden = false;
       } catch (_) {
         status.textContent = 'Offline';
@@ -232,6 +249,7 @@
       }
     }
 
+    render();
     formatLocalTimes();
     const timer = setInterval(poll, POLL_INTERVAL);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });

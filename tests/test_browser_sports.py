@@ -135,12 +135,18 @@ def _inline_static_assets(html: str) -> str:
 
     scripts = {
         "desktop-workspace.js": (ROOT / "web/static/desktop-workspace.js").read_text(),
+        "ticker-row.js": (ROOT / "web/static/ticker-row.js").read_text(),
         "sports-live.js": (ROOT / "web/static/sports-live.js").read_text(),
     }
 
     def script(match: re.Match[str]) -> str:
-        source = scripts.get(match.group(1))
-        return f"<script>{source}</script>" if source else ""
+        filename = match.group(1)
+        source = scripts.get(filename)
+        if not source:
+            return ""
+        if filename == "desktop-workspace.js":
+            return f'<script>addEventListener("DOMContentLoaded", () => {{ {source} }});</script>'
+        return f"<script>{source}</script>"
 
     return re.sub(
         r'<script src="/static/([^"?]+)[^"]*"[^>]*></script>',
@@ -226,7 +232,7 @@ def test_sports_pulse_applies_updates_without_reloading_or_losing_detail(
 
     refresh = page.locator("#sportsPulseRefresh")
     assert refresh.is_visible()
-    assert refresh.text_content() == "1 new team projection"
+    assert refresh.text_content() == "1 new matchup"
     assert frame.get_attribute("src") == original_detail
     assert page.locator('a[href="/game/new-game"]').count() == 0
 
@@ -335,7 +341,7 @@ def test_sports_pulse_respects_shared_responsive_breakpoints(
     assert errors == []
 
 
-def test_sports_pulse_leads_with_the_projected_team_and_keeps_value_separate(
+def test_sports_pulse_uses_the_exact_ticker_row_contract(
     page: Page, monkeypatch
 ) -> None:
     event = {
@@ -349,20 +355,52 @@ def test_sports_pulse_leads_with_the_projected_team_and_keeps_value_separate(
     page.set_viewport_size({"width": 390, "height": 800})
     errors = _load(page, _rendered_pulse(monkeypatch, _pulse(event)), [])
 
-    card = page.locator(".winner-card")
-    copy = card.text_content()
+    row = page.locator('[data-sports-pulse-row="split-decision"]')
+    copy = row.text_content()
     assert "PROJECTED" in copy
-    assert "WIN CHANCE" in copy
     assert "58%" in copy
-    assert "Value: HME +7.8 pp" in copy
-    assert card.locator(".winner-coin").count() == 1
-    assert card.locator(".team-projection-line strong").text_content() == "AWY"
-    assert card.locator(".team-projection-name").text_content() == "AWY Club"
+    assert "Value HME +7.8pp" in copy
+    assert "vs HME · MLB" in copy
+    assert row.get_attribute("class") == "token-row ticker-row sports-pulse-row"
+    assert row.locator(".coin").count() == 1
+    assert row.locator(".ticker-line strong").text_content() == "AWY"
+    assert row.locator(".company-name").text_content() == "AWY Club"
+    assert row.locator(".mini-chart.loaded").count() == 1
+    assert page.locator(".winner-card").count() == 0
+    assert page.locator(".winner-quote").count() == 0
     assert page.locator(".model-favorite").count() == 0
-    assert card.get_attribute("aria-label") == (
+    assert row.get_attribute("aria-label") == (
         "AWY Club is projected to beat HME Club with a 58 percent win chance; "
         "value side HME with a +7.8 percentage-point model edge"
     )
+    assert page.evaluate(
+        """() => {
+          const row = document.querySelector('[data-sports-pulse-row="split-decision"]');
+          const coin = row.querySelector('.coin');
+          const chart = row.querySelector('.mini-chart');
+          const quote = row.querySelector('.quote');
+          const style = getComputedStyle(row);
+          return {
+            display: style.display,
+            minHeight: style.minHeight,
+            padding: style.padding,
+            radius: style.borderRadius,
+            coinWidth: getComputedStyle(coin).width,
+            chartWidth: getComputedStyle(chart).width,
+            chartHeight: getComputedStyle(chart).height,
+            quoteAlign: getComputedStyle(quote).textAlign,
+          };
+        }"""
+    ) == {
+        "display": "grid",
+        "minHeight": "78px",
+        "padding": "9px 8px",
+        "radius": "0px",
+        "coinWidth": "42px",
+        "chartWidth": "64px",
+        "chartHeight": "18px",
+        "quoteAlign": "right",
+    }
     assert errors == []
 
 
@@ -379,10 +417,11 @@ def test_sports_pulse_calls_a_close_projection_a_slight_edge(
     page.set_viewport_size({"width": 390, "height": 800})
     errors = _load(page, _rendered_pulse(monkeypatch, _pulse(event)), [])
 
-    card = page.locator(".winner-card")
-    assert "SLIGHT EDGE" in card.text_content()
-    assert "51%" in card.text_content()
-    assert card.get_attribute("aria-label") == (
+    row = page.locator('[data-sports-pulse-row="close-game"]')
+    assert "SLIGHT EDGE" in row.text_content()
+    assert "51%" in row.text_content()
+    assert "Value AWY +2.6pp" in row.text_content()
+    assert row.get_attribute("aria-label") == (
         "AWY Club has a slight model edge over HME Club with a 51 percent win chance; "
         "value side AWY with a +2.6 percentage-point model edge"
     )
