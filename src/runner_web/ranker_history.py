@@ -12,6 +12,7 @@ import pandas as pd
 from runner_watch.market_data import DownloadResult
 from runner_watch.models import DailyProfile, ScanSettings
 from runner_watch.scanner import RunnerScanner, build_daily_profile
+from runner_web.database import retry_database_operation
 from runner_web.db import connection
 from runner_web.outcomes import BARRIER_HORIZON, barrier_outcome, return_pct
 from runner_web.product_policy import RANKER_TRAINING
@@ -344,6 +345,7 @@ def _group_id(source: str, replay_at: datetime) -> str:
     return f"history-{identity}"
 
 
+@retry_database_operation
 def _write_group(
     source: str,
     replay_at: datetime,

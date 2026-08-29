@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from runner_web.database import retry_database_operation
 from runner_web.db import connection, init_db
 from runner_web.product_policy import RANKER_TRAINING
 
@@ -651,6 +652,7 @@ def train_shadow_ranker_if_due(
     return train_shadow_ranker(horizon, maximum_groups=maximum_groups)
 
 
+@retry_database_operation
 def _trainer_state(key: str, value: Any) -> None:
     timestamp = _iso()
     encoded = value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))
