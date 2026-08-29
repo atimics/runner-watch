@@ -1,5 +1,5 @@
 const { app, BrowserWindow, ipcMain, net, protocol, session, shell } = require('electron');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const { randomBytes } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -35,6 +35,18 @@ let scannerProcess = null;
 let scannerUrl = process.env.RATI_NODE_URL || 'http://127.0.0.1:8787';
 let scannerToken = process.env.RATI_NODE_TOKEN || '';
 let scannerError = '';
+
+function stopBundledScanner() {
+  if (!scannerProcess || scannerProcess.killed) return;
+  if (process.platform === 'win32' && scannerProcess.pid) {
+    spawnSync('taskkill', ['/pid', String(scannerProcess.pid), '/T', '/F'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+  } else {
+    scannerProcess.kill();
+  }
+}
 
 function safeExternalUrl(value) {
   try {
@@ -83,7 +95,7 @@ async function startBundledScanner() {
       }
     };
     const timeout = setTimeout(() => {
-      if (scannerProcess && !scannerProcess.killed) scannerProcess.kill();
+      stopBundledScanner();
       finish('The local scanner did not start within 60 seconds.');
     }, 60_000);
     scannerProcess.stdout.on('data', (chunk) => {
@@ -143,7 +155,7 @@ function createWindow() {
     minHeight: 640,
     backgroundColor: '#07110d',
     show: false,
-    title: 'RATi',
+    title: 'RATi Runners',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -201,7 +213,7 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   app.isQuitting = true;
-  if (scannerProcess && !scannerProcess.killed) scannerProcess.kill();
+  stopBundledScanner();
 });
 
 app.on('window-all-closed', () => {

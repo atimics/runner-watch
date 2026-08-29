@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Open-source desktop client for a local or hosted RATi scanner node.",
+  "description": "RATi Runners desktop app for Pulse, Radar, Flash, and local or cloud scanning.",
   "main": "src/main/main.cjs",
   "author": "RATi",
   "license": "AGPL-3.0-only",

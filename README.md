@@ -1,10 +1,9 @@
 # RATi Runners and RATi Sports
 
-RATi also includes an open-source scanner node and desktop client. Run `rati-scanner` to expose the
-versioned local API, then start the Svelte/Electron client in `desktop/`. Packaged desktop builds
-bundle the scanner, persist receipts in SQLite, and store user-authorized provider credentials in
-the operating-system vault. RATi AI Cloud builds the same Svelte client at `/desktop/` and connects
-it to the managed scanner API. See
+RATi Runners also ships as an open-source Svelte/Electron desktop app. Pulse, Radar, and Flash are
+the main product screens. Scanner can switch between the bundled local engine and RATi Cloud at
+`runners.rati.chat`. Local mode persists receipts in SQLite and stores user-authorized provider
+credentials in the operating-system vault. The same client and scanner can be self-hosted. See
 [the desktop and scanner architecture](docs/desktop-architecture.md).
 
 The project is copyright © 2026 RATi contributors and licensed under the

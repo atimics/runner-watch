@@ -1,13 +1,14 @@
-# RATi desktop and scanner architecture
+# RATi Runners desktop and scanner architecture
 
 RATi has one open-source product engine and one open-source client. RATi AI Cloud runs the same
 scanner and client in managed mode; it is not a second scoring implementation.
 
 ```text
-RATi App -> RATi Node API -> RATi Scanner -> providers and local storage
-                                  |
-                                  +-> optional OpenRouter connection
-                                  +-> optional RATi AI Cloud services
+RATi Runners -> public Pulse / Radar / Flash APIs at runners.rati.chat
+       |
+       +-> selected Scanner API -> local or cloud scanner -> providers and storage
+                                                    |
+                                                    +-> optional OpenRouter
 ```
 
 ## Packages
@@ -15,13 +16,15 @@ RATi App -> RATi Node API -> RATi Scanner -> providers and local storage
 - `runner_watch` remains the provider-neutral scanner and scoring core.
 - `runner_node` owns the versioned Node API, provider discovery, scanner execution, and user
   connections. `rati-scanner` starts it as a loopback service by default.
-- `desktop` is the Svelte and Electron client. It contains no scanning or provider logic.
+- `desktop` is the RATi Runners Svelte and Electron client. Pulse, Radar, and Flash are its main
+  navigation. It contains no scanning or provider logic.
 - `runner_web` remains the hosted product while its rendered screens move to the shared Node API.
   It exposes the same Node router during the migration.
 
 ## Connection modes
 
-The app connects to exactly one node URL at a time.
+The public product feed comes from `runners.rati.chat` and is cached for offline reading. Scanner
+work connects to exactly one node URL at a time.
 
 | Mode | Node | Storage | Provider credentials |
 | --- | --- | --- | --- |
@@ -29,8 +32,9 @@ The app connects to exactly one node URL at a time.
 | Self-hosted | Standalone scanner | SQLite receipts | OS vault, environment, or secret manager |
 | RATi AI Cloud | Managed scanner roles | Postgres and Redis | RATi-managed secrets |
 
-When no node is connected, the app is in Library mode. It shows locally cached receipts,
-but it cannot label data as live or create new scans, research, Calls, picks, or alerts.
+When no scanner is connected, Pulse, Radar, Flash, and locally cached receipts still work. The app
+cannot create new scans or AI research until a scanner is connected. When the public service is
+unreachable, the three product screens clearly show their latest cached data as offline.
 
 ## Node API v1
 
@@ -106,13 +110,12 @@ distribution; pull request artifacts are intentionally unsigned.
 ## Hosted app
 
 The production container builds the same Svelte renderer used by Electron and serves it at
-`/desktop/`. It connects to the managed Node API on the same origin. The existing Jinja screens stay
-available while product areas move into the shared client; they are no longer the only hosted UI.
+`/desktop/`. Cloud Scanner points to `https://runners.rati.chat`; Local points to the bundled or
+self-hosted node. Existing Jinja screens and their public read APIs stay available during migration.
 
 ## Next slices
 
-1. Expose Pulse, Radar, ticker, and chart read models through `/api/v1`.
-2. Add authenticated cloud node sessions and optional local-to-cloud artifact sync.
-3. Move Calls, picks, research receipts, and exports to the shared API.
-4. Add the Rust ranker binary to the packaged scanner resources.
-5. Promote the hosted Svelte client to the primary navigation after feature parity.
+1. Add authenticated cloud scanner sessions and optional local-to-cloud artifact sync.
+2. Move ticker detail, Calls, picks, research receipts, and exports into the shared client.
+3. Add the Rust ranker binary to the packaged scanner resources.
+4. Add signing, notarization, and automatic updates for public desktop releases.

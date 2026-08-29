@@ -24,9 +24,10 @@ def _lines(stream: object, output: queue.Queue[str]) -> None:
         output.put(str(line).strip())
 
 
-def _discard(stream: object) -> None:
-    for _line in stream:  # type: ignore[union-attr]
-        pass
+def _capture(stream: object, output: list[str]) -> None:
+    for line in stream:  # type: ignore[union-attr]
+        output.append(str(line).strip())
+        del output[:-100]
 
 
 def _get(url: str, token: str = "") -> dict[str, object]:
@@ -45,7 +46,10 @@ def main() -> None:
         raise SystemExit(f"Scanner binary was not found at {binary}")
 
     token = "ci-scanner-token-with-at-least-24-characters"
-    with tempfile.TemporaryDirectory(prefix="rati-scanner-smoke-") as directory:
+    with tempfile.TemporaryDirectory(
+        prefix="rati-scanner-smoke-",
+        ignore_cleanup_errors=sys.platform == "win32",
+    ) as directory:
         environment = {
             **os.environ,
             "DATABASE_PATH": str(Path(directory) / "receipts.sqlite3"),
@@ -65,8 +69,13 @@ def main() -> None:
         output: queue.Queue[str] = queue.Queue()
         assert process.stdout is not None
         threading.Thread(target=_lines, args=(process.stdout, output), daemon=True).start()
+        errors: list[str] = []
         assert process.stderr is not None
-        threading.Thread(target=_discard, args=(process.stderr,), daemon=True).start()
+        threading.Thread(
+            target=_capture,
+            args=(process.stderr, errors),
+            daemon=True,
+        ).start()
         try:
             deadline = time.monotonic() + 90
             scanner_url = ""
@@ -83,8 +92,10 @@ def main() -> None:
                     scanner_url = str(event.get("url") or "")
                     break
             if not scanner_url:
+                detail = "\n".join(errors[-20:]) or "No stderr output"
                 raise SystemExit(
-                    f"Scanner did not announce readiness (exit={process.poll()})"
+                    "Scanner did not announce readiness "
+                    f"(exit={process.poll()})\n{detail}"
                 )
 
             while time.monotonic() < deadline:
@@ -98,7 +109,14 @@ def main() -> None:
                     time.sleep(0.25)
             raise SystemExit("Scanner API did not become healthy before the timeout")
         finally:
-            process.terminate()
+            if sys.platform == "win32":
+                subprocess.run(  # noqa: S603
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    check=False,
+                    capture_output=True,
+                )
+            else:
+                process.terminate()
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:

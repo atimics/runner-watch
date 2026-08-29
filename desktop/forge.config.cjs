@@ -3,9 +3,9 @@ const path = require('node:path');
 module.exports = {
   packagerConfig: {
     asar: true,
-    appBundleId: 'chat.rati.desktop',
+    appBundleId: 'chat.rati.runners',
     appCategoryType: 'public.app-category.finance',
-    executableName: 'RATi',
+    executableName: process.platform === 'darwin' ? 'RATi Runners' : 'rati-runners',
     extraResource: [
       path.join(__dirname, 'resources', 'scanner'),
       path.join(__dirname, '..', 'LICENSE'),
@@ -16,18 +16,18 @@ module.exports = {
       /^\/resources(?:\/|$)/,
       /^\/\.scanner-(?:build|dist|spec)(?:\/|$)/,
     ],
-    name: 'RATi',
+    name: 'RATi Runners',
   },
   makers: [
     {
       name: '@electron-forge/maker-squirrel',
-      config: { name: 'rati_desktop', setupExe: 'RATi-Setup.exe' },
+      config: { name: 'rati_runners', setupExe: 'RATi-Runners-Setup.exe' },
     },
     { name: '@electron-forge/maker-zip', platforms: ['darwin'] },
     { name: '@electron-forge/maker-dmg', config: { format: 'ULFO' } },
     {
       name: '@electron-forge/maker-deb',
-      config: { options: { bin: 'RATi' } },
+      config: { options: { bin: 'rati-runners' } },
     },
   ],
 };
