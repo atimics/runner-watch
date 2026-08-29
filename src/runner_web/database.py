@@ -3,10 +3,33 @@ from __future__ import annotations
 import re
 import sqlite3
 import threading
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
+from functools import wraps
 from pathlib import Path
-from typing import Any
+from time import sleep
+from typing import Any, ParamSpec, TypeVar
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+DATABASE_RETRY_DELAYS = (1, 2, 4, 8, 16)
+
+
+def retry_database_operation(function: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Retry an idempotent database operation through a short outage."""
+
+    @wraps(function)
+    def retrying(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        for attempt in range(len(DATABASE_RETRY_DELAYS) + 1):
+            try:
+                return function(*args, **kwargs)
+            except Exception:
+                if attempt >= len(DATABASE_RETRY_DELAYS):
+                    raise
+                sleep(DATABASE_RETRY_DELAYS[attempt])
+        raise AssertionError("database retry loop must return or raise")
+
+    return retrying
 
 
 class ResultRow:

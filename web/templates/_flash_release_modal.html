@@ -7,34 +7,33 @@
   data-can-claim="{{ 'true' if flash_wallet.can_claim else 'false' }}"
   data-claim-day="{{ flash_wallet.claim_day }}"
   aria-labelledby="flashReleaseTitle"
+  aria-describedby="flashReleaseIntro"
 >
-  <div class="flash-release-visual">
-    <img src="/static/flash-daily-release.webp?v={{ static_version }}" alt="">
-    <span>RELEASE · EDGE AT A GLANCE</span>
+  <div class="flash-release-heading">
+    <span id="flashReleaseKicker">RELEASE NOTES</span>
     <button type="button" data-flash-modal-close aria-label="Close announcement">×</button>
   </div>
   <div class="flash-release-body">
     <header>
-      <span id="flashReleaseKicker">NEW THIS RELEASE</span>
-      <h2 id="flashReleaseTitle">Your edge, one glance away.</h2>
-      <p id="flashReleaseIntro">Flash balance, Caller PnL, and your record now stay close while you move through RATi.</p>
+      <h2 id="flashReleaseTitle">Top bar update</h2>
+      <p id="flashReleaseIntro">Flash balance and Caller PnL are now in the top bar.</p>
     </header>
     <ul class="flash-release-features">
-      <li><i aria-hidden="true">⚡</i><span><strong>Flash is always visible</strong><small>Tap your balance to claim or review the wallet.</small></span></li>
-      <li><i aria-hidden="true">↗</i><span><strong>Caller PnL in the top bar</strong><small>See your average closed-Call return and record.</small></span></li>
-      <li><i aria-hidden="true">＋</i><span><strong>10× PnL rewards</strong><small>Close a profitable stock Call and earn 10× its PnL in Flash.</small></span></li>
+      <li><strong>Flash balance</strong><small>Open the wallet or claim 100 daily Flash.</small></li>
+      <li><strong>Caller PnL</strong><small>Average closed-Call return and record.</small></li>
+      <li><strong>Rewards</strong><small>Profitable stock Calls earn 10× their return in Flash.</small></li>
     </ul>
     <section class="flash-daily-card" aria-labelledby="flashDailyTitle">
       <div>
-        <span>DAILY DROP</span>
-        <strong id="flashDailyTitle">{{ 'Claim 100 Flash' if flash_wallet.can_claim else 'Claimed today' }}</strong>
-        <small id="flashClaimStatus">{{ 'Ready now · missed days do not stack' if flash_wallet.can_claim else 'Your next drop opens at 00:00 UTC' }}</small>
+        <span>DAILY FLASH</span>
+        <strong id="flashDailyTitle">{{ '100 Flash available' if flash_wallet.can_claim else 'Claimed today' }}</strong>
+        <small id="flashClaimStatus">Resets at 00:00 UTC</small>
       </div>
-      <button id="flashModalClaim" type="button" {% if not flash_wallet.can_claim %}disabled{% endif %}>{{ 'Claim now' if flash_wallet.can_claim else 'Claimed' }}</button>
+      <button id="flashModalClaim" type="button" {% if not flash_wallet.can_claim %}disabled{% endif %}>{{ 'Claim' if flash_wallet.can_claim else 'Claimed' }}</button>
     </section>
     <footer>
-      <a href="/billing" data-flash-modal-close>Open Flash wallet</a>
-      <button type="button" data-flash-modal-close>Continue</button>
+      <a href="/billing" data-flash-modal-close>Wallet</a>
+      <button type="button" data-flash-modal-close>Close</button>
     </footer>
   </div>
 </dialog>
@@ -74,17 +73,17 @@
     document.querySelectorAll('[data-flash-trigger]').forEach(item => item.setAttribute('aria-label', `Open Flash wallet. Current balance: ${next} Flash`));
   }
   function setReleaseCopy() {
-    releaseKicker.textContent = 'NEW THIS RELEASE';
-    releaseTitle.textContent = 'Your edge, one glance away.';
-    releaseIntro.textContent = 'Flash balance, Caller PnL, and your record now stay close while you move through RATi.';
+    releaseKicker.textContent = 'RELEASE NOTES';
+    releaseTitle.textContent = 'Top bar update';
+    releaseIntro.textContent = 'Flash balance and Caller PnL are now in the top bar.';
   }
   function setLowBalanceCopy(required) {
     const shortfall = Math.max(0, Number(required || 0) - balance);
-    releaseKicker.textContent = 'LOW FLASH BALANCE';
-    releaseTitle.textContent = shortfall ? `You need ${shortfall} more Flash.` : 'Add Flash before you retry.';
+    releaseKicker.textContent = 'NOT ENOUGH FLASH';
+    releaseTitle.textContent = shortfall ? `Need ${shortfall} more Flash` : 'Add Flash to continue';
     releaseIntro.textContent = canClaim
-      ? 'Your daily drop is ready. Claim it here, then retry the Flash action.'
-      : 'You already claimed today. Earn more by publishing a report early or winning a sports Call.';
+      ? 'Claim 100 Flash below, then try again.'
+      : 'Daily Flash has already been claimed.';
   }
   function open(options = {}) {
     if (options.lowBalance) setLowBalanceCopy(options.required);
@@ -103,7 +102,7 @@
     canClaim = false;
     dialog.dataset.canClaim = 'false';
     claimTitle.textContent = result.claimed ? '100 Flash added' : 'Claimed today';
-    claimStatus.textContent = result.claimed ? 'Your balance is ready to use.' : 'Your next drop opens at 00:00 UTC.';
+    claimStatus.textContent = result.claimed ? 'Balance updated.' : 'Resets at 00:00 UTC.';
     claimButton.disabled = true;
     claimButton.textContent = 'Claimed';
     const pageClaimButton = document.getElementById('claimFlash');
@@ -141,7 +140,7 @@
   claimButton?.addEventListener('click', async () => {
     claimButton.disabled = true;
     claimButton.textContent = 'Claiming…';
-    claimStatus.textContent = 'Adding your daily Flash…';
+    claimStatus.textContent = 'Claiming…';
     try {
       const response = await fetch('/api/flash/claim', {method: 'POST'});
       const result = await response.json().catch(() => ({}));
