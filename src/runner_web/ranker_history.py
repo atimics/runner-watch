@@ -10,8 +10,8 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from runner_watch.market_data import DownloadResult
-from runner_watch.models import ScanSettings
-from runner_watch.scanner import RunnerScanner
+from runner_watch.models import DailyProfile, ScanSettings
+from runner_watch.scanner import RunnerScanner, build_daily_profile
 from runner_web.db import connection
 from runner_web.outcomes import BARRIER_HORIZON, barrier_outcome, return_pct
 from runner_web.product_policy import RANKER_TRAINING
@@ -31,6 +31,8 @@ DEFAULT_CADENCE_MINUTES = 30
 DEFAULT_NEAR_LIVE_MINUTES = 12
 BAR_COMPLETION_LAG = timedelta(minutes=5)
 LOAD_TICKER_CHUNK_SIZE = 24
+REPLAY_MAX_SYMBOLS = 36
+REPLAY_INTRADAY_LOOKBACK = timedelta(days=8)
 ProgressCallback = Callable[[dict[str, Any]], None]
 
 
@@ -42,10 +44,12 @@ class ArchivedMarketData:
         daily_frames: dict[str, pd.DataFrame],
         intraday_frames: dict[str, pd.DataFrame],
         *,
+        intraday_start: datetime | None = None,
         intraday_cutoff: datetime | None = None,
     ) -> None:
         self._daily_frames = daily_frames
         self._intraday_frames = intraday_frames
+        self._intraday_start = intraday_start
         self._intraday_cutoff = intraday_cutoff
 
     def daily(self, tickers: list[str], progress: Any = None) -> DownloadResult:
@@ -62,8 +66,12 @@ class ArchivedMarketData:
             frame = self._intraday_frames.get(ticker)
             if frame is None:
                 continue
+            mask = pd.Series(True, index=frame.index)
+            if self._intraday_start is not None:
+                mask &= frame.index >= self._intraday_start
             if self._intraday_cutoff is not None:
-                frame = frame.loc[frame.index <= self._intraday_cutoff]
+                mask &= frame.index <= self._intraday_cutoff
+            frame = frame.loc[mask]
             if not frame.empty:
                 frames[ticker] = frame
         return DownloadResult(frames, [ticker for ticker in tickers if ticker not in frames], [])
@@ -239,14 +247,65 @@ def _replay_times(
 
 
 def _session_symbols(frames: dict[str, pd.DataFrame], replay_at: datetime) -> list[str]:
-    session = replay_at.astimezone(EASTERN).date()
-    feature_cutoff = replay_at - BAR_COMPLETION_LAG
-    symbols = []
-    for ticker, frame in frames.items():
-        known_index = frame.index[frame.index <= feature_cutoff]
-        if len(known_index) and known_index[-1].tz_convert(EASTERN).date() == session:
-            symbols.append(ticker)
-    return sorted(symbols)
+    return sorted(
+        ticker
+        for ticker, frame in frames.items()
+        if _known_on_session(frame, replay_at)
+    )
+
+
+def _known_on_session(frame: pd.DataFrame, replay_at: datetime) -> bool:
+    known_index = frame.index[frame.index <= replay_at - BAR_COMPLETION_LAG]
+    return bool(
+        len(known_index)
+        and known_index[-1].tz_convert(EASTERN).date()
+        == replay_at.astimezone(EASTERN).date()
+    )
+
+
+def _select_replay_symbols(
+    daily_frames: dict[str, pd.DataFrame],
+    symbols: list[str],
+    settings: ScanSettings,
+    replay_at: datetime,
+) -> list[str]:
+    profiles: list[DailyProfile] = []
+    for ticker in symbols:
+        frame = daily_frames.get(ticker)
+        if frame is None:
+            continue
+        profile = build_daily_profile(ticker, frame, replay_at)
+        if profile is None:
+            continue
+        if not settings.min_price <= profile.previous_close <= settings.max_price:
+            continue
+        if profile.average_volume < settings.min_avg_volume:
+            continue
+        if profile.average_dollar_volume < settings.min_avg_dollar_volume:
+            continue
+        profiles.append(profile)
+    profiles.sort(
+        key=lambda item: (item.average_volume, item.average_dollar_volume),
+        reverse=True,
+    )
+    if len(profiles) <= settings.max_symbols:
+        return [profile.ticker for profile in profiles]
+    crash_profiles = [
+        profile
+        for profile in profiles
+        if max(
+            (1 - profile.previous_close / profile.high_90d) * 100,
+            (1 - profile.previous_close / profile.high_52w) * 100,
+        )
+        >= settings.crash_drawdown_pct
+    ]
+    reserve = min(len(crash_profiles), max(1, settings.max_symbols // 3))
+    selected = crash_profiles[:reserve]
+    selected_tickers = {profile.ticker for profile in selected}
+    selected.extend(
+        profile for profile in profiles if profile.ticker not in selected_tickers
+    )
+    return [profile.ticker for profile in selected[: settings.max_symbols]]
 
 
 def _bar_tuples(frame: pd.DataFrame) -> list[tuple[datetime, float, float, float]]:
@@ -300,6 +359,8 @@ def _write_group(
             "cadence_minutes": cadence_minutes,
             "bar_completion_lag_minutes": int(BAR_COMPLETION_LAG.total_seconds() / 60),
             "universe": "symbols_with_archived_intraday_bars",
+            "cohort_max_symbols": REPLAY_MAX_SYMBOLS,
+            "cohort_selection": "point_in_time_daily_liquidity_with_crash_reserve",
             "point_in_time_features": True,
             "limitations": [
                 "historical_symbol_availability_may_have_survivorship_bias",
@@ -404,10 +465,11 @@ def backfill_historical_training(
         max_price=5.00,
         min_avg_volume=100_000,
         min_avg_dollar_volume=250_000,
-        max_symbols=240,
-        top_n=40,
+        max_symbols=REPLAY_MAX_SYMBOLS,
+        top_n=REPLAY_MAX_SYMBOLS,
         crash_only=False,
     )
+    session_selections: dict[date, list[str]] = {}
     groups_written = 0
     rows_written = 0
     skipped_near_live = 0
@@ -427,7 +489,22 @@ def backfill_historical_training(
         if any(abs(replay_at - existing) <= tolerance for existing in existing_times):
             skipped_near_live += 1
             continue
-        symbols = _session_symbols(intraday_frames, replay_at)
+        session = replay_at.astimezone(EASTERN).date()
+        if session not in session_selections:
+            selection_at = datetime.combine(session, time(19, 5), tzinfo=EASTERN).astimezone(
+                UTC
+            )
+            session_selections[session] = _select_replay_symbols(
+                daily_frames,
+                _session_symbols(intraday_frames, selection_at),
+                settings,
+                replay_at,
+            )
+        symbols = [
+            ticker
+            for ticker in session_selections[session]
+            if _known_on_session(intraday_frames[ticker], replay_at)
+        ]
         if len(symbols) < 2:
             skipped_incomplete += 1
             continue
@@ -435,6 +512,7 @@ def backfill_historical_training(
             ArchivedMarketData(
                 daily_frames,
                 intraday_frames,
+                intraday_start=replay_at - REPLAY_INTRADAY_LOOKBACK,
                 intraday_cutoff=replay_at - BAR_COMPLETION_LAG,
             )
         ).scan(
@@ -495,6 +573,7 @@ def backfill_historical_training(
         "skipped_near_live": skipped_near_live,
         "skipped_incomplete": skipped_incomplete,
         "target_groups": target_groups,
+        "cohort_max_symbols": REPLAY_MAX_SYMBOLS,
         "dry_run": dry_run,
         "limitations": [
             "historical_symbol_availability_may_have_survivorship_bias",
