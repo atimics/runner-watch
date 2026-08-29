@@ -17,6 +17,7 @@ from runner_web.ranker import FEATURE_NAMES, ranker_status
 from runner_web.ranker_history import (
     DEFAULT_CADENCE_MINUTES,
     ArchivedMarketData,
+    _replay_times,
     backfill_historical_training,
 )
 
@@ -25,6 +26,26 @@ def test_default_replay_cadence_can_fill_the_training_window() -> None:
     assert DEFAULT_CADENCE_MINUTES == 15
     fly_config = tomllib.loads((Path(__file__).parents[1] / "fly.toml").read_text())
     assert int(fly_config["env"]["RANKER_HISTORICAL_BACKFILL_CADENCE_MINUTES"]) == 15
+
+
+def test_replay_times_only_cover_regular_market_hours() -> None:
+    frames = {
+        "AAA": pd.DataFrame(
+            index=pd.to_datetime(["2026-08-19T13:30:00Z"], utc=True)
+        )
+    }
+
+    points = _replay_times(
+        frames,
+        datetime(2026, 8, 19, tzinfo=UTC),
+        datetime(2026, 8, 20, tzinfo=UTC),
+        15,
+    )
+    local_times = [point.astimezone(ranker_history.EASTERN).time() for point in points]
+
+    assert len(points) == 26
+    assert local_times[0].isoformat() == "09:35:00"
+    assert local_times[-1].isoformat() == "15:50:00"
 
 
 def _seed_market_bars(replay_at: datetime) -> None:
