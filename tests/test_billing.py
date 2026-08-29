@@ -170,8 +170,12 @@ def test_signed_in_pages_show_flash_pnl_and_the_release_claim_modal(
     assert "+10.0%" in html
     assert "1–0 record" in html
     assert 'id="flashReleaseDialog"' in html
-    assert "/static/flash-daily-release.webp" in html
-    assert "Claim 100 Flash" in html
+    assert "RELEASE NOTES" in html
+    assert "Top bar update" in html
+    assert "Flash balance and Caller PnL are now in the top bar." in html
+    assert "/static/flash-daily-release.webp" not in html
+    assert "Your edge, one glance away." not in html
+    assert "100 Flash available" in html
     assert "window.RatiFlash" in html
 
 
