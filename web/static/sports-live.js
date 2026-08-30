@@ -137,8 +137,14 @@
     });
   }
 
-  function renderPulseEvents(events, prefix) {
+  function renderPulseEvents(events, prefix, emptyState = null) {
     if (!events.length) {
+      if (emptyState?.kind === 'season-break') {
+        const nextTip = localTime(emptyState.next_start_time, {
+          year: 'numeric',
+        });
+        return `<div class="sports-empty sports-season-break"><strong>${escapeHtml(emptyState.title || 'Season break')}</strong><p>${escapeHtml(emptyState.detail || '')}</p><small>Next tipoff · ${escapeHtml(nextTip)}</small></div>`;
+      }
       return '<div class="sports-empty"><strong>No matchups right now.</strong><p>Pulse stays quiet until a game clears the model-versus-market threshold.</p></div>';
     }
     return events.map(event => {
@@ -183,7 +189,13 @@
   }
 
   function payloadChanged(current, next) {
-    return JSON.stringify(current?.events || []) !== JSON.stringify(next?.events || []);
+    return JSON.stringify({
+      events: current?.events || [],
+      emptyState: current?.empty_state || null,
+    }) !== JSON.stringify({
+      events: next?.events || [],
+      emptyState: next?.empty_state || null,
+    });
   }
 
   function restorePanelSelection(list) {
@@ -219,9 +231,11 @@
     if (!list || !refresh) return null;
 
     function render() {
-      list.innerHTML = renderPulseEvents(current.events || [], prefix);
+      list.innerHTML = renderPulseEvents(current.events || [], prefix, current.empty_state);
       count.textContent = current.display_count ?? (current.events || []).length;
-      if (maturity && current.model_record) {
+      if (maturity && current.empty_state?.status_label) {
+        maturity.textContent = current.empty_state.status_label;
+      } else if (maturity && current.model_record) {
         maturity.textContent = `Baseline ${current.model_record.games} graded · target ${current.model_record.sample?.target ?? '—'}`;
       }
       if (status) status.textContent = freshness(current.updated_at);

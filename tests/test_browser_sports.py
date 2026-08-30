@@ -590,6 +590,39 @@ def test_sports_pulse_calls_a_close_projection_a_slight_edge(
     assert errors == []
 
 
+def test_nba_pulse_renders_a_clear_between_seasons_state(page: Page, monkeypatch) -> None:
+    pulse = {
+        **_pulse(),
+        "league": "nba",
+        "scanned_count": 12,
+        "empty_state": {
+            "kind": "season-break",
+            "title": "NBA is between seasons.",
+            "detail": (
+                "The next scheduled game is MIA at TOR. Pulse will wait for regular-season "
+                "records and fresh market consensus before publishing a projection."
+            ),
+            "next_start_time": "2026-10-03T23:00:00+00:00",
+            "status_label": "Next NBA game scheduled",
+        },
+    }
+    page.set_viewport_size({"width": 390, "height": 800})
+    errors = _load(page, _rendered_pulse(monkeypatch, _pulse()), [pulse])
+
+    page.evaluate("window.sportsPulseLive.poll()")
+    refresh = page.locator("#sportsPulseRefresh")
+    assert refresh.is_visible()
+    refresh.click()
+
+    empty = page.locator(".sports-season-break")
+    assert empty.is_visible()
+    assert "NBA is between seasons." in empty.text_content()
+    assert "MIA at TOR" in empty.text_content()
+    assert "Next tipoff" in empty.text_content()
+    assert page.locator("#sportsPulseMaturity").text_content() == "Next NBA game scheduled"
+    assert errors == []
+
+
 def test_sports_alpha_opens_its_leader_in_the_shared_detail_pane(page: Page, monkeypatch) -> None:
     board = {
         "rows": [
