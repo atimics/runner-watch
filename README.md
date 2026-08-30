@@ -99,6 +99,14 @@ The SEC listener declares its user agent and stays below the SEC's published req
 The delayed outcome labels preserve what was known at filing time, giving future ranking models
 clean examples without rewriting history after a move is already known.
 
+## Distributed intelligence contracts
+
+The first local-first swarm contracts are executable and documented. A signed NodeManifest binds a
+node key to its endpoints and capabilities, SignedClaim carries short-lived untrusted scanner
+observations, and AlphaPack defines signed peer/topic/policy configuration without executable code.
+All three share one canonical byte format, node identity, protocol version, and domain-separated
+Ed25519 signing profile. See [the swarm protocol overview](docs/swarm-protocol.md).
+
 ## Source ingestion
 
 All collectors use one ingestion pipe. Every source fetch writes a durable run record with its
