@@ -99,13 +99,30 @@ The SEC listener declares its user agent and stays below the SEC's published req
 The delayed outcome labels preserve what was known at filing time, giving future ranking models
 clean examples without rewriting history after a move is already known.
 
-## Distributed intelligence contracts
+## Distributed intelligence
 
-The first local-first swarm contracts are executable and documented. A signed NodeManifest binds a
-node key to its endpoints and capabilities, SignedClaim carries short-lived untrusted scanner
-observations, and AlphaPack defines signed peer/topic/policy configuration without executable code.
-All three share one canonical byte format, node identity, protocol version, and domain-separated
-Ed25519 signing profile. See [the swarm protocol overview](docs/swarm-protocol.md).
+RATi can run alone or join a small, chosen scanner swarm. Solo mode is the default and makes no
+swarm network requests. Attached mode publishes a signed node manifest, connects to configured
+HTTPS seed nodes, receives signed scanner claims, and can publish a bounded set of local scan
+results when `SWARM_PUBLISH_SCANS=true`.
+
+Discovery is intentionally narrow today. A node can use manual seeds from `SWARM_BOOTSTRAP_URLS`
+and bootstrap peers from a locally installed, signed Alpha Pack. Matrix, Farcaster, social
+adapters, gossip, DHT discovery, NAT traversal, relays, blockchain consensus, and order exchange
+are not implemented. Alpha Packs carry signed membership and policy settings, not executable code
+or proof that a peer is trustworthy.
+
+Published scan claims contain signed scores and hashed evidence references. They do not copy raw
+provider rows into the swarm. Received claims stay in a separate peer store and can only become
+supporting context after local evidence, reputation, and risk checks. They cannot place a trade or
+bypass a local veto.
+
+On Fly, attached machines must use the same `SWARM_NODE_PRIVATE_KEY` secret so one public node does
+not present several identities. The current peer and trust stores are local SQLite files, and the
+connected-peer view lives in each process. Run one public attached replica for now, or add shared
+state before scaling that identity across replicas. See [running the swarm](docs/swarm-runtime.md)
+for setup, deployment limits, and every environment setting. The signed object formats are in the
+[swarm protocol overview](docs/swarm-protocol.md).
 
 ## Source ingestion
 
