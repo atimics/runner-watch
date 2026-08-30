@@ -1,4 +1,16 @@
-# RATi Runners and RATi Sports
+# RATi Swarm, RATi Runners, and RATi Sports
+
+RATi Swarm is the open-source Svelte/Electron desktop app. Pulse, Radar, and Flash are its main
+screens. Scanner can switch between the bundled local engine and RATi Cloud at
+`runners.rati.chat`. Local mode persists receipts in SQLite and stores user-authorized provider
+credentials in the operating-system vault. Local mode shows only local scanner results; Cloud mode
+is the only mode that requests or displays hosted Pulse, Radar, or Flash data. The same client and
+scanner can be self-hosted. See
+[the desktop and scanner architecture](docs/desktop-architecture.md).
+
+The project is copyright © 2026 RATi contributors and licensed under the
+[GNU Affero General Public License v3.0 only](LICENSE). It comes without warranty. Users of a
+modified hosted version must be offered its corresponding source as required by the license.
 
 RATi is an evidence-first prediction platform. RATi Runners scans low-priced stocks for unusual movement. RATi Sports compares a transparent team-form baseline with timestamped no-vig moneyline odds and keeps public paper-pick receipts.
 It uses free Yahoo Finance data through `yfinance`. It does not need a broker login or a paid API.
@@ -376,8 +388,8 @@ uv sync --extra dev --python 3.13 --no-editable
 uv run streamlit run app.py
 ```
 
-Open the local address shown in the terminal. Choose **Sample data** and run a scan first.
-Sample mode is fake and lets you test the screen without internet access.
+Open the local address shown in the terminal. Local scans use live market data from the enabled
+free sources; there is no synthetic demo mode.
 
 To run the public web app locally:
 
@@ -386,7 +398,7 @@ APP_ORIGIN=http://127.0.0.1:8080 RP_ID=127.0.0.1 COOKIE_SECURE=0 \
   uv run --no-sync uvicorn runner_web.main:app --host 127.0.0.1 --port 8080
 ```
 
-For real data, choose **Live Yahoo data** and one of these ticker lists:
+The default uses live Yahoo penny-stock discovery. You can also choose one of these ticker lists:
 
 - **Quick starter list:** fast, but it cannot find a runner outside its saved list.
 - **Full US market:** downloads the official Nasdaq Trader symbol directory, runs a daily
@@ -394,12 +406,6 @@ For real data, choose **Live Yahoo data** and one of these ticker lists:
 - **My ticker list:** scans only the symbols you enter.
 
 ## Use the command line
-
-Try the fake data:
-
-```bash
-uv run runner-watch --sample
-```
 
 Scan a custom watchlist:
 

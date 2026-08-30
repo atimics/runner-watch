@@ -12,6 +12,14 @@ __pycache__/
 /runners.csv
 /data/
 /build/
+/desktop/dist/
+/desktop/.scanner-build/
+/desktop/.scanner-dist/
+/desktop/.scanner-spec/
+/desktop/node_modules/
+/desktop/out/
+/desktop/resources/scanner/*
+!/desktop/resources/scanner/.gitkeep
 /target/
 **/target/
 *.db

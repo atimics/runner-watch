@@ -8,6 +8,8 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from runner_node.runtime import NODE_SERVICE
+from runner_watch.source_catalog import DEFAULT_SOURCE_POLICIES
 from runner_web.ai_kol import FLASH
 from runner_web.db import MIGRATIONS, connection
 from runner_web.flash_wallet import (
@@ -19,7 +21,6 @@ from runner_web.flash_wallet import (
 from runner_web.ingestion import ingestion_status
 from runner_web.product_policy import OPERATIONS, policy_manifest
 from runner_web.ranker import ranker_status
-from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 
 WORKER_HEARTBEAT_KEY = "worker_process_heartbeat"
 WORKER_HEARTBEAT_PREFIX = f"{WORKER_HEARTBEAT_KEY}:"
@@ -328,7 +329,9 @@ def runtime_capabilities(
             },
             "research": {
                 "openai_available": bool(os.getenv("OPENAI_API_KEY", "")),
-                "openrouter_available": bool(os.getenv("OPENROUTER_API_KEY", "")),
+                "openrouter_available": (
+                    NODE_SERVICE.openrouter.status()["status"] == "connected"
+                ),
                 "provider": FLASH.provider,
                 "flash_model": FLASH.model,
                 "credential_location": "server",

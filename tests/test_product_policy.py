@@ -1,11 +1,11 @@
 from dataclasses import replace
 
+from runner_watch.source_catalog import DEFAULT_SOURCE_POLICIES
 from runner_web.product_policy import (
     PRODUCT_POLICY_VERSION,
     RANKER_TRAINING,
     policy_manifest,
 )
-from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 
 
 def test_policy_manifest_is_machine_readable_and_reports_source_review_drift() -> None:

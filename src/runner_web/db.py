@@ -12,6 +12,7 @@ from hashlib import sha256
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
+from runner_watch.source_catalog import DEFAULT_SOURCE_POLICIES
 from runner_web.ai_kol import (
     DEFAULT_FLASH_MODEL,
     FLASH,
@@ -32,7 +33,6 @@ from runner_web.pseudonyms import (
     ensure_scoped_alias,
     migrate_comment_aliases_to_glyphs,
 )
-from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "data/runner-watch.db"))
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()

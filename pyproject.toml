@@ -3,11 +3,13 @@ name = "runner-watch"
 version = "0.1.0"
 description = "A free-data stock momentum scanner for finding possible market runners early."
 readme = "README.md"
+license = "AGPL-3.0-only"
 requires-python = ">=3.11,<3.14"
 dependencies = [
   "cryptography>=44",
   "fastapi>=0.116",
   "jinja2>=3.1",
+  "keyring>=25.6",
   "numpy>=2.0",
   "pandas>=2.2",
   "pillow>=11.0",
@@ -23,11 +25,15 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "httpx2>=2.12",
   "pip-audit>=2.9",
   "pytest>=8.0",
   "pytest-cov>=6.0",
   "pytest-playwright>=0.7",
   "ruff>=0.9",
+]
+desktop = [
+  "pyinstaller>=6.15",
 ]
 
 [project.scripts]
@@ -38,6 +44,7 @@ stonks-migrate-sqlite = "runner_web.migrate_sqlite:main"
 stonks-worker = "runner_web.main:worker_main"
 stonks-trainer = "runner_web.ranker:trainer_main"
 stonks-massive-backfill = "runner_watch.massive_data:main"
+rati-scanner = "runner_node.app:main"
 stonks-edge = "runner_web.edge_connector:main"
 
 [build-system]
@@ -53,6 +60,7 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = [
   "--cov=runner_watch",
+  "--cov=runner_node",
   "--cov=runner_web",
   "--cov=runner_swarm",
   "--cov-branch",

@@ -27,6 +27,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from fastapi import Cookie, FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -50,6 +51,8 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
+from runner_node.api import create_node_router
+from runner_node.runtime import NODE_SERVICE
 from runner_watch.chart_features import analyze_market_structure, clean_ohlcv
 from runner_watch.massive_data import refresh_massive_backfill
 from runner_watch.models import ScanSettings
@@ -623,12 +626,33 @@ def worker_main() -> None:
     asyncio.run(run_worker())
 
 
+def _openrouter_api_key() -> str:
+    """Use an operator secret first, then a user-authorized scanner credential."""
+
+    return OPENROUTER_API_KEY or NODE_SERVICE.vault.get("openrouter") or ""
+
+
 app = FastAPI(title="RATi", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=1_000, compresslevel=5)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(NODE_SERVICE.settings.allowed_origins),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+)
 app.include_router(operations_router)
+app.include_router(create_node_router(NODE_SERVICE))
 templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
 templates.env.globals["static_version"] = STATIC_VERSION
 app.mount("/static", StaticFiles(directory=str(ROOT / "web" / "static")), name="static")
+DESKTOP_RENDERER_ROOT = ROOT / "desktop" / "dist" / "renderer"
+if DESKTOP_RENDERER_ROOT.is_dir():
+    app.mount(
+        "/desktop",
+        StaticFiles(directory=str(DESKTOP_RENDERER_ROOT), html=True),
+        name="desktop",
+    )
 
 
 def now() -> datetime:
@@ -978,7 +1002,7 @@ def page_context(request: Request, session_token: str | None, **extra: Any) -> d
 
 def _flash_provider_ready(actor: AIKol = FLASH) -> bool:
     if actor.provider == "openrouter":
-        configured = bool(OPENROUTER_API_KEY)
+        configured = bool(_openrouter_api_key())
     elif actor.provider == "openai":
         configured = bool(AI_REPORT_API_KEY)
     else:
@@ -4982,14 +5006,15 @@ def _run_research_commission(
                 provider_result=provider_result,
             )
         elif route_kind == "managed":
-            if actor.provider != "openrouter" or not OPENROUTER_API_KEY:
+            openrouter_key = _openrouter_api_key()
+            if actor.provider != "openrouter" or not openrouter_key:
                 raise ReportGenerationFailure(
                     503,
                     "Flash research is temporarily unavailable.",
                     {"phase": "provider_configuration", "provider": actor.provider},
                 )
             generated = _generate_openrouter_report(
-                OPENROUTER_API_KEY, research_context, user_id, actor=actor
+                openrouter_key, research_context, user_id, actor=actor
             )
         else:
             raise ReportGenerationFailure(
@@ -7770,11 +7795,12 @@ def _openrouter_route_diagnostics(payload: Any) -> dict[str, Any]:
 
 def _request_openrouter_comment(body: dict[str, Any], models: tuple[str, ...]) -> Any:
     request_body = {**body, "models": list(models)}
+    openrouter_key = _openrouter_api_key()
     api_request = urllib.request.Request(
         "https://openrouter.ai/api/v1/chat/completions",
         data=json.dumps(request_body).encode(),
         headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Authorization": f"Bearer {openrouter_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": APP_ORIGIN,
             "X-OpenRouter-Title": "Runner Watch",
@@ -8029,7 +8055,7 @@ async def create_ticker_comment(
         ).fetchone()
     if existing_request is not None:
         return _replay_comment_request(existing_request, normalized, user_id)
-    if not OPENROUTER_API_KEY:
+    if not _openrouter_api_key():
         raise HTTPException(503, "AI comments are temporarily unavailable.")
     await run_in_threadpool(
         enforce_rate,
@@ -8978,7 +9004,7 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
             "scanned": None,
             "short_data": {
                 "source": "fintel",
-                "configured": short_data_configured(),
+                "configured": short_data_configured(NODE_SERVICE.vault.get("fintel")),
                 "covered": short_covered,
                 "requested": len(cached_rows),
                 "refreshed": 0,
@@ -9021,6 +9047,7 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
         [item.ticker for item in all_rows],
         refresh_tickers=[item.ticker for item in result.rows],
         fetch_recorder=record_source_fetch,
+        api_key=NODE_SERVICE.vault.get("fintel"),
     )
     scan_warnings = [*universe_warnings, *result.warnings, *short_result.warnings]
     with connection() as db:
