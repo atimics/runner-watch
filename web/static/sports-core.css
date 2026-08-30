@@ -345,6 +345,15 @@ body.sports-product {
   font-size: 12px;
 }
 
+.sports-season-break small {
+  margin-top: 12px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
 .sports-source {
   margin: 20px 16px calc(78px + env(safe-area-inset-bottom));
   color: var(--muted);
