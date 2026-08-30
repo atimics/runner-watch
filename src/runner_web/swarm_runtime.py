@@ -22,13 +22,24 @@ def open_swarm_runtime(
 
 
 async def maintain_swarm_runtime(runtime: AttachedSwarmRuntime) -> None:
-    """Renew discovery state and retry configured seeds until process shutdown."""
+    """Renew discovery independently from slower bootstrap network work."""
 
-    while True:
-        try:
-            runtime.renew_manifest()
+    async def renew_manifest() -> None:
+        interval = max(15, runtime.config.manifest_ttl_seconds // 3)
+        while True:
+            try:
+                runtime.renew_manifest()
+            except Exception:
+                LOG.exception("Swarm manifest renewal failed")
+            await asyncio.sleep(interval)
+
+    async def refresh_bootstraps() -> None:
+        while True:
             if runtime.config.bootstrap_urls:
-                await asyncio.to_thread(runtime.refresh_bootstraps)
-        except Exception:
-            LOG.exception("Swarm bootstrap refresh failed")
-        await asyncio.sleep(runtime.config.bootstrap_interval_seconds)
+                try:
+                    await asyncio.to_thread(runtime.refresh_bootstraps)
+                except Exception:
+                    LOG.exception("Swarm bootstrap refresh failed")
+            await asyncio.sleep(runtime.config.bootstrap_interval_seconds)
+
+    await asyncio.gather(renew_manifest(), refresh_bootstraps())

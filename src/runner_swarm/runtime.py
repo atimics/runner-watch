@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import json
+import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import APIRouter
 
 from runner_swarm.config import SwarmRuntimeConfig
-from runner_swarm.identity import load_or_create_node_key
+from runner_swarm.identity import load_or_create_node_key, private_key_from_text
 from runner_swarm.node_manifest import (
     NodeEndpoint,
     NodeManifest,
@@ -18,8 +22,22 @@ from runner_swarm.node_manifest import (
     sign_node_manifest,
 )
 from runner_swarm.peer_store import IngestOutcome, PeerClaimStore, PeerStoreLimits
-from runner_swarm.protocol import node_id_from_public_key, public_key_text
-from runner_swarm.signed_claim import SignedClaimV1
+from runner_swarm.protocol import (
+    canonical_json_bytes,
+    content_id,
+    node_id_from_public_key,
+    normalize_utc,
+    public_key_text,
+)
+from runner_swarm.signed_claim import (
+    EvidenceReferenceV1,
+    RiskLevel,
+    RiskVetoV1,
+    RunnerObservationV1,
+    SignedClaimV1,
+    SourceVersionV1,
+    TradeState,
+)
 from runner_swarm.transport import (
     ClaimExchangeReceipt,
     PeerClaimRejected,
@@ -42,7 +60,11 @@ class SwarmNodeIdentity:
 
     @classmethod
     def load(cls, config: SwarmRuntimeConfig) -> SwarmNodeIdentity:
-        private_key = load_or_create_node_key(config.key_path)
+        private_key = (
+            private_key_from_text(config.node_private_key_text)
+            if config.node_private_key_text is not None
+            else load_or_create_node_key(config.key_path)
+        )
         public_key = public_key_text(private_key)
         return cls(
             private_key=private_key,
@@ -96,6 +118,52 @@ class BootstrapResult:
     @property
     def connected(self) -> bool:
         return self.peer_node_id is not None and self.error is None
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimPublishSummary:
+    """Bounded result for one local scan fan-out."""
+
+    rows_seen: int
+    claims_built: int
+    deliveries_succeeded: int
+    deliveries_failed: int
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "rows_seen": self.rows_seen,
+            "claims_built": self.claims_built,
+            "deliveries_succeeded": self.deliveries_succeeded,
+            "deliveries_failed": self.deliveries_failed,
+        }
+
+
+def _row_time(value: object, fallback: datetime) -> datetime:
+    if not value:
+        return fallback
+    if isinstance(value, datetime):
+        return normalize_utc(value, field_name="scan captured_at")
+    text = str(value).strip().replace("Z", "+00:00")
+    return normalize_utc(datetime.fromisoformat(text), field_name="scan captured_at")
+
+
+def _score_milli(value: object) -> int:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("scan score must be finite")
+    return max(0, min(100_000, round(number * 1_000)))
+
+
+def _signals(value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = ()
+    if not isinstance(value, (list, tuple)):
+        return ()
+    cleaned = (str(item).strip()[:120] for item in value if item is not None and str(item).strip())
+    return tuple(dict.fromkeys(cleaned))[:32]
 
 
 class AttachedSwarmRuntime:
@@ -211,6 +279,127 @@ class AttachedSwarmRuntime:
             expected_peer_node_id=expected_peer_node_id,
             at=at,
             allow_private_addresses=self.config.allow_private_bootstrap,
+        )
+
+    def build_scan_claim(
+        self,
+        row: Mapping[str, Any],
+        *,
+        at: datetime | None = None,
+    ) -> SignedClaimV1:
+        """Turn one local scanner row into a signed, provider-safe observation."""
+
+        issued_at = normalize_utc(at or datetime.now(UTC), field_name="claim issued_at")
+        observed_at = _row_time(row.get("captured_at"), issued_at)
+        ticker = str(row.get("ticker") or "").strip().upper()
+        if not ticker:
+            raise ValueError("scan row ticker cannot be empty")
+        snapshot_id = str(row.get("id") or "").strip()
+        if not snapshot_id:
+            raise ValueError("scan row id cannot be empty")
+        scoring_version = str(row.get("scoring_version") or self.config.software_version).strip()
+        if not scoring_version:
+            raise ValueError("scan scoring version cannot be empty")
+
+        evidence_receipt = {
+            "captured_at": observed_at.isoformat(),
+            "scoring_version": scoring_version,
+            "snapshot_id": snapshot_id,
+            "ticker": ticker,
+        }
+        evidence_id = content_id(canonical_json_bytes(evidence_receipt))
+        evidence = EvidenceReferenceV1(
+            evidence_id=evidence_id,
+            family="market",
+            source="runner-watch.scan",
+            observed_at=observed_at,
+            locator=f"runner-watch:snapshot:{snapshot_id}"[:512],
+        )
+        hard_veto = bool(row.get("hard_veto"))
+        reason = str(row.get("state_reason") or "Local scanner state is available.").strip()[:280]
+        vetoes = (
+            (
+                RiskVetoV1(
+                    code="local.hard_veto",
+                    reason=reason,
+                    evidence_ids=(evidence_id,),
+                ),
+            )
+            if hard_veto
+            else ()
+        )
+        rug_score = row.get("rug_score")
+        claim = RunnerObservationV1(
+            issuer_node_id=self.identity.node_id,
+            issuer_public_key=self.identity.public_key,
+            issued_at=issued_at,
+            expires_at=issued_at + timedelta(seconds=self.config.claim_ttl_seconds),
+            instrument=f"US:{ticker}",
+            observed_at=observed_at,
+            scanner_version=self.config.software_version,
+            schema_version=self.config.claim_schema_versions[0],
+            source_versions=(
+                SourceVersionV1(
+                    family="market",
+                    source="runner-watch.scan",
+                    version=scoring_version[:64],
+                ),
+            ),
+            setup_score_milli=_score_milli(row.get("setup_score", row.get("score"))),
+            rug_score_milli=_score_milli(rug_score) if rug_score is not None else None,
+            rug_level=RiskLevel(str(row.get("rug_level") or "UNKNOWN").upper()),
+            trade_state=TradeState(str(row.get("trade_state") or "WATCH").upper()),
+            state_reason=reason,
+            signals=_signals(row.get("signals_json", row.get("signals"))),
+            risk_vetoes=vetoes,
+            evidence=(evidence,),
+        )
+        return SignedClaimV1.sign(claim, self.identity.private_key)
+
+    def publish_scan_rows(
+        self,
+        rows: Sequence[Mapping[str, Any]],
+        *,
+        at: datetime | None = None,
+    ) -> ClaimPublishSummary:
+        """Sign top scanner rows and fan them out to currently negotiated peers."""
+
+        selected = tuple(rows[: self.config.max_claims_per_scan])
+        claims: list[SignedClaimV1] = []
+        failed = 0
+        for row in selected:
+            try:
+                claims.append(self.build_scan_claim(row, at=at))
+            except (TypeError, ValueError):
+                failed += 1
+
+        succeeded = 0
+        for peer in self.last_bootstrap_results:
+            if not peer.connected:
+                continue
+            topic = next(
+                (topic for topic in self.config.topics if topic in peer.accepted_topics),
+                None,
+            )
+            if topic is None:
+                continue
+            for signed_claim in claims:
+                try:
+                    self.send_claim(
+                        peer.origin,
+                        signed_claim,
+                        topic,
+                        expected_peer_node_id=peer.peer_node_id,
+                        at=at,
+                    )
+                    succeeded += 1
+                except (OSError, ValueError):
+                    failed += 1
+        return ClaimPublishSummary(
+            rows_seen=len(rows),
+            claims_built=len(claims),
+            deliveries_succeeded=succeeded,
+            deliveries_failed=failed,
         )
 
     def close(self) -> None:

@@ -258,9 +258,7 @@ OPENROUTER_RESEARCH_TIMEOUT_SECONDS = max(
     30, int(os.getenv("OPENROUTER_RESEARCH_TIMEOUT_SECONDS", "300"))
 )
 FLASH_GLOBAL_DAILY_LIMIT = max(1, int(os.getenv("FLASH_GLOBAL_DAILY_LIMIT", "50")))
-FLASH_REPORT_FAILURE_STREAK_LIMIT = max(
-    2, int(os.getenv("FLASH_REPORT_FAILURE_STREAK_LIMIT", "3"))
-)
+FLASH_REPORT_FAILURE_STREAK_LIMIT = max(2, int(os.getenv("FLASH_REPORT_FAILURE_STREAK_LIMIT", "3")))
 FLASH_REPORT_FAILURE_WINDOW_MINUTES = max(
     5, int(os.getenv("FLASH_REPORT_FAILURE_WINDOW_MINUTES", "30"))
 )
@@ -587,13 +585,13 @@ async def lifespan(application: FastAPI):
         tasks.extend(worker_tasks)
     if PROCESS_ROLE in {"all", "web"}:
         tasks.append(asyncio.create_task(request_cache_warmer()))
-        if SWARM_RUNTIME is not None:
-            tasks.append(
-                asyncio.create_task(
-                    maintain_swarm_runtime(SWARM_RUNTIME),
-                    name="swarm-bootstrap",
-                )
+    if SWARM_RUNTIME is not None:
+        tasks.append(
+            asyncio.create_task(
+                maintain_swarm_runtime(SWARM_RUNTIME),
+                name="swarm-maintenance",
             )
+        )
     application.state.worker_tasks = worker_tasks
     try:
         yield
@@ -614,12 +612,21 @@ async def run_worker() -> None:
     if not redis_configured():
         _fail_orphaned_research_jobs()
     tasks = _start_worker_tasks()
+    if SWARM_RUNTIME is not None:
+        tasks.append(
+            asyncio.create_task(
+                maintain_swarm_runtime(SWARM_RUNTIME),
+                name="swarm-maintenance",
+            )
+        )
     try:
         await asyncio.gather(*tasks)
     finally:
         await _stop_tasks(tasks)
         delete_worker_state(worker_heartbeat_key(WORKER_INSTANCE_ID))
         release_research_worker(WORKER_INSTANCE_ID)
+        if SWARM_RUNTIME is not None:
+            SWARM_RUNTIME.close()
 
 
 def worker_main() -> None:
@@ -629,12 +636,8 @@ def worker_main() -> None:
 app = FastAPI(title="RATi", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=1_000, compresslevel=5)
 app.include_router(operations_router)
-SWARM_RUNTIME = (
-    open_swarm_runtime()
-    if PROCESS_ROLE in {"all", "web"}
-    else None
-)
-if SWARM_RUNTIME is not None:
+SWARM_RUNTIME = open_swarm_runtime()
+if SWARM_RUNTIME is not None and PROCESS_ROLE in {"all", "web"}:
     app.include_router(SWARM_RUNTIME.router)
 templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
 templates.env.globals["static_version"] = STATIC_VERSION
@@ -1088,6 +1091,19 @@ async def scan_collection_worker() -> None:
                 result = await run_in_threadpool(run_scan, "penny")
                 worker_state("background_scan_last_run", str(result.get("scan_run_id") or "cached"))
                 worker_state("background_scan_last_error", "")
+                if SWARM_RUNTIME is not None and SWARM_RUNTIME.config.publish_scan_claims:
+                    try:
+                        published = await run_in_threadpool(
+                            SWARM_RUNTIME.publish_scan_rows,
+                            result.get("rows") or [],
+                        )
+                        worker_state(
+                            "swarm_scan_last_publish",
+                            json.dumps(published.as_dict(), separators=(",", ":")),
+                        )
+                        worker_state("swarm_scan_last_error", "")
+                    except Exception as exc:
+                        worker_state("swarm_scan_last_error", str(exc)[:500])
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -1272,9 +1288,7 @@ def billing_page(
             request,
             runner_session,
             transactions=recent_transactions(str(user["id"])) if user else [],
-            flash_reports_available=(
-                _flash_provider_ready() and _flash_daily_capacity_available()
-            ),
+            flash_reports_available=(_flash_provider_ready() and _flash_daily_capacity_available()),
         ),
     )
 
@@ -2070,8 +2084,7 @@ def _external_event_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
         _nonnegative_event_count(event["payload"].get("mention_count")) for event in social
     )
     engagement_count = sum(
-        _nonnegative_event_count(event["payload"].get("engagement_count"))
-        for event in social
+        _nonnegative_event_count(event["payload"].get("engagement_count")) for event in social
     )
     news_boost = min(6.0, 1.5 * math.sqrt(len(news)))
     social_boost = min(
@@ -2592,18 +2605,14 @@ def _commission_record(
             selection = str(sports_forecast.get("selection") or "pass")
             teams = evidence.get("teams") or {}
             selected_team = teams.get(selection) or {}
-            sports_forecast["selected_team"] = str(
-                selected_team.get("name") or "No prediction"
-            )
+            sports_forecast["selected_team"] = str(selected_team.get("name") or "No prediction")
             sports_forecast["selected_abbreviation"] = str(
                 selected_team.get("abbreviation") or "PASS"
             )
             sports_forecast["selected_probability"] = sports_forecast.get(
                 f"{selection}_probability"
             )
-            baseline_selection = str(
-                (evidence.get("prediction") or {}).get("selection") or "pass"
-            )
+            baseline_selection = str((evidence.get("prediction") or {}).get("selection") or "pass")
             sports_forecast["baseline_selection"] = baseline_selection
             sports_forecast["agrees_with_baseline"] = selection == baseline_selection
             report["sports_forecast"] = sports_forecast
@@ -2628,9 +2637,7 @@ def _commission_record(
         summary = summary or _ticker_summary(report["ticker"])
         report["company"] = summary["company"] if summary else report["ticker"]
         report["coin_label"] = summary["coin_label"] if summary else report["ticker"][:2]
-        report["coin_tone"] = (
-            summary["coin_tone"] if summary else _coin_tone(report["ticker"])
-        )
+        report["coin_tone"] = summary["coin_tone"] if summary else _coin_tone(report["ticker"])
         report["subject_type"] = "ticker"
         report["asset_href"] = f"/t/{report['ticker']}"
         report["back_href"] = "/community"
@@ -3517,9 +3524,7 @@ def _sports_report_numeric_claims_are_frozen(
         for value in reported_percentages
     ):
         return False
-    reported_odds = [
-        int(value) for value in re.findall(r"(?<!\w)([+-]\d{3,4})(?!\w)", copy)
-    ]
+    reported_odds = [int(value) for value in re.findall(r"(?<!\w)([+-]\d{3,4})(?!\w)", copy)]
     return all(value in allowed_odds for value in reported_odds)
 
 
@@ -3885,9 +3890,7 @@ def _generate_openrouter_report(
             )
         )
         diagnostics["missing_fields"] = sorted(
-            field
-            for field in required_fields
-            if field not in raw_report
+            field for field in required_fields if field not in raw_report
         )
         raise ReportGenerationFailure(
             502,
@@ -4448,9 +4451,7 @@ def _run_research_commission(
             )
         research_mode = "one_shot_system_context"
         trade_state = str(evidence.get("trade_state") or "").upper()
-        if not is_sports and (
-            bool(evidence.get("hard_veto")) or trade_state in {"AVOID", "EXIT"}
-        ):
+        if not is_sports and (bool(evidence.get("hard_veto")) or trade_state in {"AVOID", "EXIT"}):
             reason = str(evidence.get("state_reason") or "The deterministic risk gate fired.")
             override = f"Risk override: {trade_state or 'AVOID'}. {reason}".strip()
             report["headline"] = f"{trade_state or 'AVOID'} · {report['headline']}"[:180]
@@ -5053,9 +5054,7 @@ def _compact_edge_history(history: Any) -> dict[str, Any] | None:
 def _compact_sports_event(event: dict[str, Any], *, radar: bool) -> dict[str, Any]:
     fields = SPORTS_RADAR_EVENT_FIELDS if radar else SPORTS_PULSE_EVENT_FIELDS
     compact = {
-        field: event[field]
-        for field in fields
-        if field in event and event[field] is not None
+        field: event[field] for field in fields if field in event and event[field] is not None
     }
     history = _compact_edge_history(event.get("edge_history"))
     if history:
@@ -5239,8 +5238,7 @@ def _sports_alpha_shared_cache_name(league: str, limit: int) -> str:
 
 def _invalidate_sports_alpha_data() -> None:
     shared_keys = {
-        _sports_alpha_shared_cache_name(league, 24)
-        for league in ("all", *SPORTS_LEAGUES)
+        _sports_alpha_shared_cache_name(league, 24) for league in ("all", *SPORTS_LEAGUES)
     }
     with SPORTS_ALPHA_DATA_CONDITION:
         for _identity, league, limit in SPORTS_ALPHA_DATA_CACHE:
@@ -5517,9 +5515,7 @@ def sports_game_page(
             event=event,
             comments=comments,
             comment_count=(
-                sports_comment_count(event_id)
-                if user_id
-                else int(public_data["comment_count"])
+                sports_comment_count(event_id) if user_id else int(public_data["comment_count"])
             ),
             latest_commission=latest_report,
             flash_report=_flash_report_action(
@@ -6319,9 +6315,7 @@ def ticker_page(
         )
         current_price = detail.get("current", {}).get("price")
         mark = float(current_price) if current_price is not None else None
-        active_call = active_call_for_user(
-            str(user["id"]), normalized, current_price=mark
-        )
+        active_call = active_call_for_user(str(user["id"]), normalized, current_price=mark)
         comment_count = comment_count_for_ticker(normalized)
         calls = community_calls_for_ticker(normalized, current_price=mark, limit=20)
         latest_report = daily_report_for_ticker(normalized, str(user["id"]))
@@ -6683,9 +6677,7 @@ def _radar_base_data_uncached() -> list[dict[str, Any]]:
                 "event_at": event["event_at"],
                 "attention_score": score,
                 "filing_url": event.get("source_url"),
-                "external_social_mentions": _nonnegative_event_count(
-                    payload.get("mention_count")
-                ),
+                "external_social_mentions": _nonnegative_event_count(payload.get("mention_count")),
                 "external_social_engagement": _nonnegative_event_count(
                     payload.get("engagement_count")
                 ),
@@ -7730,9 +7722,7 @@ def research_job_status_api(
         ).fetchone()
     if not row:
         raise HTTPException(404, "Flash report not found")
-    return JSONResponse(
-        _commission_api_payload(_commission_record(row) or {}, str(user["id"]))
-    )
+    return JSONResponse(_commission_api_payload(_commission_record(row) or {}, str(user["id"])))
 
 
 @app.post("/api/research/{public_id}/publish")
@@ -7804,9 +7794,7 @@ def research_report_page(
 ) -> HTMLResponse:
     user = current_user(runner_session)
     report = (
-        get_commission(public_id)
-        if user
-        else _public_research_report_data(public_id).get("report")
+        get_commission(public_id) if user else _public_research_report_data(public_id).get("report")
     )
     is_owner = bool(user and report and str(report["user_id"]) == str(user["id"]))
     if not report or (str(report.get("visibility") or "private") != "public" and not is_owner):
@@ -7842,7 +7830,9 @@ def research_report_card(
         f"{str(actor.get('display_name') or 'AI').upper()} · {model_label.upper()} "
         f"{'SPORTS' if is_sports else 'RESEARCH'}"
         if actor
-        else "RATi SPORTS" if is_sports else "RUNNER WATCH RESEARCH"
+        else "RATi SPORTS"
+        if is_sports
+        else "RUNNER WATCH RESEARCH"
     )
     ladder_label = f"#{actor.get('ladder_position')} · " if actor else ""
     image = Image.new("RGB", (1200, 630), "#090b0b")

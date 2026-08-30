@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -96,15 +96,22 @@ class SwarmRuntimeConfig:
 
     mode: SwarmMode
     key_path: Path
+    node_private_key_text: str | None = field(repr=False)
     peer_store_path: Path
+    local_trust_store_path: Path
+    alpha_pack_path: Path | None
     public_url: str | None
     bootstrap_urls: tuple[str, ...]
     topics: tuple[str, ...]
+    claim_schema_versions: tuple[str, ...]
     software_version: str
     manifest_ttl_seconds: int
+    claim_ttl_seconds: int
+    max_claims_per_scan: int
     peer_rate_limit_per_minute: int
     bootstrap_interval_seconds: int
     allow_private_bootstrap: bool
+    publish_scan_claims: bool
 
     @property
     def attached(self) -> bool:
@@ -133,13 +140,33 @@ class SwarmRuntimeConfig:
         if not software_version:
             raise ValueError("SWARM_SOFTWARE_VERSION cannot be empty")
 
+        alpha_pack_text = source.get("SWARM_ALPHA_PACK_PATH", "").strip()
+        node_private_key_text = source.get("SWARM_NODE_PRIVATE_KEY", "").strip() or None
+        if mode == SwarmMode.ATTACHED and source.get("FLY_APP_NAME") and not node_private_key_text:
+            raise ValueError(
+                "SWARM_NODE_PRIVATE_KEY is required for attached mode on multi-machine Fly apps"
+            )
+        claim_schema_versions = _csv(
+            source,
+            "SWARM_CLAIM_SCHEMA_VERSIONS",
+            "runner-v1",
+        )
+        if not claim_schema_versions or len(claim_schema_versions) > 32:
+            raise ValueError("SWARM_CLAIM_SCHEMA_VERSIONS must contain between 1 and 32 values")
+
         return cls(
             mode=mode,
             key_path=Path(source.get("SWARM_KEY_PATH", "data/swarm/node.key")),
+            node_private_key_text=node_private_key_text,
             peer_store_path=Path(source.get("SWARM_PEER_STORE_PATH", "data/swarm/peer-claims.db")),
+            local_trust_store_path=Path(
+                source.get("SWARM_LOCAL_TRUST_STORE_PATH", "data/swarm/local-trust.db")
+            ),
+            alpha_pack_path=Path(alpha_pack_text) if alpha_pack_text else None,
             public_url=public_url,
             bootstrap_urls=_bootstrap_urls(source),
             topics=_topics(source),
+            claim_schema_versions=claim_schema_versions,
             software_version=software_version,
             manifest_ttl_seconds=_bounded_int(
                 source,
@@ -147,6 +174,20 @@ class SwarmRuntimeConfig:
                 86_400,
                 minimum=60,
                 maximum=604_800,
+            ),
+            claim_ttl_seconds=_bounded_int(
+                source,
+                "SWARM_CLAIM_TTL_SECONDS",
+                900,
+                minimum=60,
+                maximum=86_400,
+            ),
+            max_claims_per_scan=_bounded_int(
+                source,
+                "SWARM_MAX_CLAIMS_PER_SCAN",
+                10,
+                minimum=1,
+                maximum=100,
             ),
             peer_rate_limit_per_minute=_bounded_int(
                 source,
@@ -163,4 +204,5 @@ class SwarmRuntimeConfig:
                 maximum=86_400,
             ),
             allow_private_bootstrap=_enabled(source, "SWARM_ALLOW_PRIVATE_BOOTSTRAP"),
+            publish_scan_claims=_enabled(source, "SWARM_PUBLISH_SCANS"),
         )
