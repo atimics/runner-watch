@@ -23,8 +23,10 @@ RATi Swarm -> public Pulse / Radar / Flash APIs -> RATi Cloud at runners.rati.ch
 
 ## Connection modes
 
-The public product feed comes from `runners.rati.chat` and is cached for offline reading. Scanner
-work connects to exactly one node URL at a time.
+The Local/Cloud selector controls both the scanner and every visible data screen. Local mode never
+requests, reads from cache, or renders the hosted product feed. Its Pulse and Radar screens use the
+latest local scan receipt, and Flash shows local scan history. Cloud mode alone requests Pulse,
+Radar, and Flash from `runners.rati.chat`. Scanner work connects to exactly one node URL at a time.
 
 | Mode | Node | Storage | Provider credentials |
 | --- | --- | --- | --- |
@@ -32,9 +34,10 @@ work connects to exactly one node URL at a time.
 | Self-hosted | Standalone scanner | SQLite receipts | OS vault, environment, or secret manager |
 | RATi AI Cloud | Managed scanner roles | Postgres and Redis | RATi-managed secrets |
 
-When no scanner is connected, Pulse, Radar, Flash, and locally cached receipts still work. The app
-cannot create new scans or AI research until a scanner is connected. When the public service is
-unreachable, the three product screens clearly show their latest cached data as offline.
+When no local scanner is connected, saved local receipts still populate Local Pulse, Radar, and
+Flash, but the app cannot create new scans, ticker pulls, or AI research. When Cloud is selected and
+the hosted service is unreachable, its three product screens clearly show their latest cloud cache
+as offline. The two caches are never mixed in the interface.
 
 ## Node API v1
 

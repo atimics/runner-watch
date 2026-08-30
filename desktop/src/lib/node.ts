@@ -57,8 +57,12 @@ export interface ScanResult {
   id: string;
   status: 'complete';
   source: 'live';
+  started_at?: string;
   finished_at: string;
   elapsed_seconds: number;
+  requested_symbols?: number;
+  liquid_symbols?: number;
+  scanned_symbols?: number;
   rows: ScanRow[];
   warnings: string[];
 }
@@ -219,7 +223,7 @@ export class NodeClient {
     return this.request('/api/v1/scans', {
       method: 'POST',
       body: JSON.stringify({ universe: 'penny', min_price: 0.2, max_price: 5, top_n: 20 }),
-    });
+    }, 180_000);
   }
 
   ticker(ticker: string): Promise<TickerDetail> {

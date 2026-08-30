@@ -3,7 +3,9 @@
 RATi Swarm is the open-source Svelte/Electron desktop app. Pulse, Radar, and Flash are its main
 screens. Scanner can switch between the bundled local engine and RATi Cloud at
 `runners.rati.chat`. Local mode persists receipts in SQLite and stores user-authorized provider
-credentials in the operating-system vault. The same client and scanner can be self-hosted. See
+credentials in the operating-system vault. Local mode shows only local scanner results; Cloud mode
+is the only mode that requests or displays hosted Pulse, Radar, or Flash data. The same client and
+scanner can be self-hosted. See
 [the desktop and scanner architecture](docs/desktop-architecture.md).
 
 The project is copyright © 2026 RATi contributors and licensed under the
