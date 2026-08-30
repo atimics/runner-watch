@@ -13,6 +13,7 @@ flowchart LR
         Events[ClinicalTrials.gov, FDA, NIH, FINRA]
         Identity[GLEIF legal entities and ownership]
         Public[SEC holdings, contracts, agency notices]
+        Legal[PACER, OALJ, RECAP, enforcement, sanctions, and exclusions]
         Macro[FRED, CFTC, and other market context]
     end
 
@@ -24,17 +25,20 @@ flowchart LR
     Normal[(Normalized data<br/>bars, quotes, events, facts, links, macro values)]
     Health[Ingestion health<br/>healthy, stale, idle, failed, disabled]
     Link[Issuer and ticker linking<br/>confidence and valid dates]
+    Review[Person and legal-case review<br/>identity, role, relevance, materiality]
     Features[Derived evidence<br/>spread, halt state, dilution, catalysts, regime]
     Shadow[Shadow validation<br/>coverage, delay, revisions, model effect]
     Product[Product use<br/>ticker evidence, safety state, runner score]
 
     Sources --> Registry --> Collect --> Batch
     Identity --> Link
+    Legal --> Review
     Batch --> Raw
     Batch --> Normal
     Raw --> Health
     Normal --> Health
     Normal --> Link --> Features
+    Link --> Review --> Features
     Normal --> Features
     Features --> Shadow --> Product
 ```
@@ -50,6 +54,14 @@ flowchart LR
 | Yahoo price bars | Ticker data frames plus fetch run | `market_bars` | Momentum, volume, and price features | Live, display review required |
 | Nasdaq trading halts | Raw RSS plus versioned halt events | `market_events` | Halt evidence, safety penalty, and hard veto | Built and connected; approval blocked by terms review |
 | Fintel short and borrow | Normalized API responses | `short_data_cache` and frozen scan facts | Dated crowding evidence | Optional licensed integration |
+| SEC reporting people | Form 4 reporting-owner CIK plus named beneficial owners | `filing_people` and `filing_person_issuer_links` | Build a private, reviewable person-to-ticker map | Built; every person and issuer link starts pending |
+| PACER Case Locator | Party-search index metadata plus billed fetch audit | `legal_case_candidates` | Private legal-case review context | Parser and review queue built; live access disabled |
+| DOL OALJ | Public decision metadata and official links | `legal_case_candidates` | Private labor-case review context | Parser built; collector waits for an approved access method |
+| CourtListener RECAP | Federal docket and filing metadata already in RECAP | `legal_case_candidates` | Lower-cost first pass before PACER | Registered pilot; collector not yet connected |
+| OFAC SDN | Official XML snapshot with names, aliases, record IDs, and programs | `legal_case_candidates` plus source hash | Private sanctions match review | Opt-in daily collector built; disabled by default |
+| SAM.gov exclusions | Exact-name API response with exclusion type, agency, UEI, and dates | `legal_case_candidates` plus fetch audit | Private federal-exclusion review | Opt-in, key-backed collector built with a five-person default daily budget |
+| HHS-OIG LEIE | Official current CSV with public IDs, exclusion type, and dates | `legal_case_candidates` plus source hash | Private healthcare-exclusion review | Opt-in daily collector built; disabled by default |
+| Other free official archives | Normalized records from GovInfo, SEC, DOJ, FTC, PCAOB, OCC, FDIC, FINRA, EPA, OSHA, NLRB, FDA, USITC, CFPB, CMS, FEC, and USAspending | `legal_case_candidates` and ingestion audit | Private official-record review | Registered reviewed-import contract; source-specific automation stays disabled until its supported access path is confirmed |
 
 The Nasdaq worker is enabled only when `NASDAQ_TRADE_HALTS_ENABLED=true`. It polls once per minute
 from 4:00 a.m. to 8:00 p.m. Eastern on weekdays. An active halt blocks the normal trade decision,
@@ -96,8 +108,9 @@ normalization layer without changing these three product routes.
 | 5+ | GLEIF | `entity_links` | Legal names, parent links, and mapped identifiers | Use as mapping evidence; fuzzy matches stay in review |
 | 5+ | FINRA OTC transparency | Dedicated crowding facts | Delayed off-exchange activity | Keep separate from short volume and short interest |
 | 6 | SEC 13F and N-PORT | Dedicated ownership facts | Delayed institutional and fund holdings | Research only; never describe as live flow |
-| 6 | SAM.gov and Federal Register | `entity_links`, `market_events` | Contract notices and agency actions | Reviewed entity or product links only |
+| 6 | Federal Register | `entity_links`, `market_events` | Contract notices and agency actions | Reviewed entity or product links only |
 | 6 | CFTC Commitments of Traders | `macro_observations` | Weekly market and sector positioning | Market context only; preserve the release date |
+| 6 | PACER, DOL OALJ, CourtListener RECAP, and free official archives | `filing_people`, `filing_person_issuer_links`, `legal_case_candidates` | Reviewed legal and regulatory context tied to SEC-listed people | Approve identity, issuer link, record relevance, and materiality separately; no score effect |
 
 ## Rules at each stage
 
@@ -116,6 +129,11 @@ normalization layer without changing these three product routes.
 8. **Promote:** add a source to the product only after its quality and legal gates pass. Safety
    states such as trading halts can change wording or suppress alerts without becoming score boosts.
 
+Legal and regulatory records add one stricter rule: a shared name never creates a ticker risk fact.
+The SEC person, issuer relationship, outside subject, role, and record relevance must each be
+reviewed. Being named in a filing, case, complaint, sanction search result, inspection, payment, or
+award is not evidence of misconduct.
+
 ## Next build order
 
 1. Complete the Nasdaq terms review and decide whether the connected halt path can be public.
@@ -124,3 +142,6 @@ normalization layer without changing these three product routes.
 4. Build the source-backed biotech calendar only after the issuer-link precision gate passes.
 5. Pilot the added free sources in this order: GLEIF mapping, openFDA and NIH events, FINRA OTC
    context, then the slower ownership, contract, agency, and futures-regime feeds.
+6. Run the legal-risk shadow pilot: review SEC people, enable OFAC/HHS snapshots, add a small SAM
+   key budget, search RECAP first, use tightly budgeted PACER only for gaps, and add DOL OALJ after
+   its collection method is approved.
