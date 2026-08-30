@@ -6,6 +6,8 @@
 {% block content %}
 {% set odds = event.odds %}
 {% set quote = event.paper_odds %}
+{% set frozen_quote = event.odds %}
+{% set game_state = event.view_state %}
 {% set market = event.market_comparison %}
 {% set prediction = event.prediction %}
 {% set receipt = event.receipt %}
@@ -26,23 +28,35 @@
       <div>
         <small>{{ event.away_abbreviation }} · {{ event.away_record or 'No record' }}</small>
         <strong>{{ event.away_team_name }}</strong>
-        <span>{% if event.completed %}{{ event.away_score|int }}{% elif quote and quote.away_odds is not none %}{{ '%+d'|format(quote.away_odds) }}{% else %}—{% endif %}</span>
+        <span>{% if game_state.started %}{% if game_state.score_available %}{{ event.away_score|int }}{% else %}—{% endif %}{% elif quote and quote.away_odds is not none %}{{ '%+d'|format(quote.away_odds) }}{% else %}—{% endif %}</span>
       </div>
       <i>at</i>
       <div>
         <small>{{ event.home_abbreviation }} · {{ event.home_record or 'No record' }}</small>
         <strong>{{ event.home_team_name }}</strong>
-        <span>{% if event.completed %}{{ event.home_score|int }}{% elif quote and quote.home_odds is not none %}{{ '%+d'|format(quote.home_odds) }}{% else %}—{% endif %}</span>
+        <span>{% if game_state.started %}{% if game_state.score_available %}{{ event.home_score|int }}{% else %}—{% endif %}{% elif quote and quote.home_odds is not none %}{{ '%+d'|format(quote.home_odds) }}{% else %}—{% endif %}</span>
       </div>
     </div>
-    {% if quote %}
+    {% if game_state.started %}
+    <div class="match-strip-source match-strip-state">
+      <strong>{{ game_state.label }}</strong>
+      <span>{{ game_state.detail }}</span>
+    </div>
+    {% elif quote %}
     <div class="match-strip-source">
       <span>{{ quote.source_label }} moneyline</span>
       <span>Updated <time data-local-time="{{ quote.fresh_at or quote.observed_at }}">{{ (quote.fresh_at or quote.observed_at)[:16]|replace('T',' ') }} UTC</time></span>
     </div>
+    {% else %}
+    <div class="match-strip-source match-strip-state">
+      <strong>{{ game_state.label }}</strong>
+      <span>{{ game_state.detail }} · Current line unavailable</span>
+    </div>
     {% endif %}
   </header>
 
+  <div class="game-detail-grid">
+  <div class="game-detail-primary">
   {% include "_sports_game_decision.html" %}
 
   {% if market and market.books %}
@@ -117,6 +131,8 @@
       {{ flash_report_action(flash_report, 'sports') }}
     </div>
   </section>
+  </div>
+  <aside class="game-detail-evidence" aria-label="Game evidence and records">
 
   {% set game_context = event.context %}
   <details class="game-disclosure">
@@ -149,7 +165,7 @@
         </a>
         {% if previous.recap %}
         <a class="series-recap" href="{{ previous.recap.source_url }}" rel="nofollow noreferrer">
-          <small>GAME RECAP · {{ previous.recap.source_name }} · <time data-local-time="{{ previous.recap.published_at }}">{{ previous.recap.published_at[:16]|replace('T',' ') }} UTC</time></small>
+          <small>RELATED NEWS · {{ previous.recap.source_name }} · <time data-local-time="{{ previous.recap.published_at }}">{{ previous.recap.published_at[:16]|replace('T',' ') }} UTC</time></small>
           <strong>{{ previous.recap.headline }}</strong>
           <i aria-hidden="true">↗</i>
         </a>
@@ -284,18 +300,26 @@
 
   <section class="paper-pick">
     <span>PUBLIC RECEIPT</span>
-    <h2>Make a paper pick</h2>
-    <p>Freeze the current{% if quote %} {{ quote.source_label }}{% endif %} line. Wins earn up to {{ sports_call_reward_cap }} Flash. No real bet.</p>
+    {% if game_state.pick_state == 'closed' %}
+      <h2>Paper picks closed</h2>
+      <p>The pregame window has closed. Existing paper picks and their frozen lines remain public.</p>
+      <strong>No new picks can be added.</strong>
+    {% elif game_state.pick_state == 'unavailable' %}
+      <h2>Paper picks unavailable</h2>
+      <p>A fresh complete moneyline is required before a paper pick can be recorded.</p>
+      <strong>Waiting for a verified line.</strong>
+    {% else %}
+      <h2>Make a paper pick</h2>
+      <p>Freeze the current {{ quote.source_label }} line. Wins earn up to {{ sports_call_reward_cap }} Flash. No real bet.</p>
     {% if not user %}
       <a href="/login">Log in to make a paper pick</a>
-    {% elif event.status != 'pre' or not quote %}
-      <strong>Picks are closed for this game.</strong>
     {% else %}
       <div class="pick-buttons">
         <button type="button" data-pick="away">{{ event.away_abbreviation }} {% if quote.away_odds is not none %}{{ '%+d'|format(quote.away_odds) }}{% endif %}</button>
         <button type="button" data-pick="home">{{ event.home_abbreviation }} {% if quote.home_odds is not none %}{{ '%+d'|format(quote.home_odds) }}{% endif %}</button>
       </div>
       <small id="pickStatus"></small>
+    {% endif %}
     {% endif %}
   </section>
 
@@ -311,10 +335,10 @@
   </details>
 
   <details class="game-disclosure">
-    <summary><span><b>MARKET HISTORY</b><strong>Pregame moneyline timeline</strong></span><small>{{ event.odds_history|length }} snapshot{% if event.odds_history|length != 1 %}s{% endif %}</small><i aria-hidden="true">+</i></summary>
+    <summary><span><b>MARKET HISTORY</b><strong>Pregame moneyline record</strong></span><small>{{ event.odds_history|length }} snapshot{% if event.odds_history|length != 1 %}s{% endif %}</small><i aria-hidden="true">+</i></summary>
     <div class="game-disclosure-body">
   <section class="odds-receipt">
-    <h3>Pregame market timeline</h3>
+    <h3>Pregame moneyline record</h3>
     {% for item in event.odds_history %}
       <div><time data-local-time="{{ item.observed_at }}">{{ item.observed_at[:16]|replace('T',' ') }} UTC</time><span>{{ event.away_abbreviation }} {{ '%+d'|format(item.away_odds) if item.away_odds is not none else '—' }}</span><span>{{ event.home_abbreviation }} {{ '%+d'|format(item.home_odds) if item.home_odds is not none else '—' }}</span><small>{% if loop.first %}OPEN · {% elif loop.last %}{{ receipt.market_label|upper if receipt else 'LATEST' }} · {% endif %}{{ item.source_label }}</small></div>
     {% else %}<p>No moneyline snapshots are available.</p>{% endfor %}
@@ -322,6 +346,8 @@
     </div>
   </details>
   <a class="source-link" href="{{ event.source_url }}" rel="nofollow noreferrer">View game source ↗</a>
+  </aside>
+  </div>
 </article>
 </main>
 {% endblock %}

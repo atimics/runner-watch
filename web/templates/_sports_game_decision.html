@@ -6,8 +6,8 @@
     {% set pick_code = event[prediction.selection ~ '_abbreviation'] %}
     {% set pick_probability = prediction[prediction.selection ~ '_probability'] %}
     {% set pick_market = prediction[prediction.selection ~ '_market_probability'] %}
-    {% set pick_odds = quote[prediction.selection ~ '_odds'] if quote else none %}
-    {% set pick_open_odds = quote[prediction.selection ~ '_open_odds'] if quote and (prediction.selection ~ '_open_odds') in quote else none %}
+    {% set pick_odds = frozen_quote[prediction.selection ~ '_odds'] if frozen_quote else none %}
+    {% set pick_open_odds = frozen_quote[prediction.selection ~ '_open_odds'] if frozen_quote and (prediction.selection ~ '_open_odds') in frozen_quote else none %}
   {% endif %}
   {% set away_model_pct = prediction.away_probability * 100 %}
   {% set home_model_pct = prediction.home_probability * 100 %}
@@ -37,7 +37,7 @@
           <p>{{ pick_name }} is {{ '%.1f'|format(pick_probability * 100) }}% in the baseline versus {{ '%.1f'|format(pick_market * 100) if pick_market is not none else '—' }}% in the no-vig market.</p>
           <div class="value-numbers">
             <span><small>GAP</small><b>{{ '%+.1f'|format(prediction.edge_pct) }} pp</b></span>
-            <span><small>BOVADA</small><b>{% if pick_odds is not none %}{{ '%+d'|format(pick_odds) }}{% else %}—{% endif %}</b>{% if pick_open_odds is not none %}<i>Open {{ '%+d'|format(pick_open_odds) }}</i>{% endif %}</span>
+            <span><small>CAPTURED LINE</small><b>{% if pick_odds is not none %}{{ '%+d'|format(pick_odds) }}{% else %}—{% endif %}</b><i>{% if frozen_quote %}{{ frozen_quote.sportsbook }}{% else %}No complete line{% endif %}{% if pick_open_odds is not none %} · opened {{ '%+d'|format(pick_open_odds) }}{% endif %}</i></span>
           </div>
         {% endif %}
       </div>
@@ -68,10 +68,13 @@
     {% if event.edge_history %}
     <div class="decision-movement">
       <span>{{ event.edge_history.label }}</span>
-      <svg class="edge-spark" viewBox="0 0 92 24" role="img" aria-label="{{ event.edge_history.label }}" preserveAspectRatio="none">
-        <line class="edge-zero" x1="1" y1="12" x2="91" y2="12"></line>
-        {% if event.edge_history.points|length > 1 %}<polyline points="{{ event.edge_history.plot_points }}"></polyline>{% else %}<circle cx="46" cy="{{ event.edge_history.dot_y }}" r="2.2"></circle>{% endif %}
-      </svg>
+      <div class="edge-chart">
+        <svg class="edge-spark" viewBox="0 0 92 24" role="img" aria-label="{{ event.edge_history.label }}" preserveAspectRatio="none">
+          <line class="edge-zero" x1="1" y1="12" x2="91" y2="12"></line>
+          {% if event.edge_history.points|length > 1 %}<polyline points="{{ event.edge_history.plot_points }}"></polyline>{% else %}<circle cx="46" cy="{{ event.edge_history.dot_y }}" r="2.2"></circle>{% endif %}
+        </svg>
+        <small><span>START {{ '%+.1f'|format(event.edge_history.start_pct) }} pp</span><span>CURRENT {{ '%+.1f'|format(event.edge_history.current_pct) }} pp</span></small>
+      </div>
     </div>
     {% endif %}
   </section>

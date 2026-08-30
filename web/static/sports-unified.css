@@ -79,7 +79,18 @@
 .value-numbers small,
 .value-numbers i { font-size: 9px; }
 .decision-board .decision-movement { display: grid; grid-template-columns: minmax(120px, auto) minmax(0, 1fr); }
+.decision-board .decision-movement .edge-chart,
 .decision-board .decision-movement .edge-spark { width: 100%; max-width: none; }
+.decision-board .decision-movement .edge-chart small {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  letter-spacing: .04em;
+}
 
 @media (max-width: 560px) {
   .probability-comparison > header,
@@ -245,6 +256,58 @@
   max-width: none;
 }
 
+.game-detail-grid,
+.game-detail-primary,
+.game-detail-evidence {
+  min-width: 0;
+}
+
+.match-strip-state strong {
+  color: var(--green);
+  letter-spacing: .08em;
+}
+
+/* Keep evidence labels readable; 7px labels hid the provenance they described. */
+.sports-game-app :is(
+  .match-strip-teams small,
+  .match-strip-source,
+  .market-compare > header span,
+  .market-compare > header small,
+  .market-summary small,
+  .market-summary span,
+  .market-books > div:first-child,
+  .game-flash > div > span,
+  .game-flash-prediction small,
+  .game-flash-prediction em,
+  .series-context > header span,
+  .series-badges b,
+  .series-badges small,
+  .previous-meeting-meta span,
+  .previous-meeting-meta small,
+  .previous-score i,
+  .series-recap small,
+  .recent-form-grid > section > header span,
+  .team-rest,
+  .form-games time,
+  .context-note,
+  .matchup-players > header span,
+  .matchup-players > header > small,
+  .matchup-player-grid > section > header span,
+  .matchup-player-grid article small,
+  .matchup-player-grid article > p,
+  .prediction-receipt > header span,
+  .receipt-seal small,
+  .receipt-meta-grid small,
+  .receipt-probabilities small,
+  .receipt-outcome small,
+  .game-disclosure > summary b,
+  .game-disclosure > summary small,
+  .odds-receipt small,
+  .odds-receipt time
+) {
+  font-size: 9px;
+}
+
 .sports-game-app .sports-source {
   margin-bottom: 20px;
 }
@@ -308,8 +371,24 @@ html.embedded-pane .sports-detail-body {
     margin-bottom: 30px;
   }
 
-  .sports-product .sports-game-app {
-    max-width: 560px;
+  html:not(.embedded-pane) .sports-product .sports-game-app {
+    width: calc(100% - 48px);
+    max-width: 1120px;
+  }
+
+  html:not(.embedded-pane) .sports-game-app .tab-bar {
+    width: min(1120px, calc(100% - 48px));
+  }
+
+  html:not(.embedded-pane) .game-detail-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.12fr) minmax(360px, .88fr);
+    gap: 14px;
+    align-items: start;
+  }
+
+  html:not(.embedded-pane) .game-detail-primary .market-books {
+    overflow-x: auto;
   }
 
   html.embedded-pane .sports-game-app {
