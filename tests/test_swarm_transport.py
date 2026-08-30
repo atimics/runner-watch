@@ -228,6 +228,48 @@ def test_default_inbox_filters_replayed_claims(swarm_pair) -> None:
     assert len(inbox.snapshot()) == 1
 
 
+def test_local_manifest_can_renew_after_expiry_but_old_signature_is_still_checked() -> None:
+    local_key = _key(21)
+    current = _manifest(local_key, capability="claims.receive")
+    clock = {"now": NOW}
+    transport = SwarmTransport(current, clock=lambda: clock["now"])
+    renewal_time = current.manifest.expires_at + timedelta(seconds=1)
+    replacement = sign_node_manifest(
+        current.manifest.model_copy(
+            update={
+                "issued_at": renewal_time,
+                "expires_at": renewal_time + timedelta(hours=1),
+            }
+        ),
+        local_key,
+    )
+
+    clock["now"] = renewal_time
+    transport.replace_local_manifest(replacement)
+
+    assert transport.signed_manifest == replacement
+    assert transport.local_manifest().node_id == current.manifest.node_id
+
+    transport.signed_manifest = current.model_copy(update={"signature": "A" * 86})
+    with pytest.raises(ValueError, match="signature is invalid"):
+        transport.replace_local_manifest(replacement)
+
+    other_key = _key(22)
+    other = _manifest(other_key, capability="claims.receive")
+    wrong_identity = sign_node_manifest(
+        other.manifest.model_copy(
+            update={
+                "issued_at": renewal_time,
+                "expires_at": renewal_time + timedelta(hours=1),
+            }
+        ),
+        other_key,
+    )
+    transport.signed_manifest = current
+    with pytest.raises(ValueError, match="cannot change the local node identity"):
+        transport.replace_local_manifest(wrong_identity)
+
+
 def _run(coroutine):
     import asyncio
 

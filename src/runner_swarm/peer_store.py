@@ -285,6 +285,20 @@ class PeerClaimStore:
                     database.commit()
                     return IngestResult(IngestOutcome.BANNED, signed_claim.claim_id, None)
 
+                if not self._take_rate_slot_locked(database, issuer, normalized_topic, checked_at):
+                    self._audit_locked(
+                        database,
+                        at=checked_at,
+                        action="ingest",
+                        outcome=IngestOutcome.RATE_LIMITED,
+                        issuer=issuer,
+                        topic=normalized_topic,
+                        claim_id=signed_claim.claim_id,
+                    )
+                    self._bound_audit_locked(database)
+                    database.commit()
+                    return IngestResult(IngestOutcome.RATE_LIMITED, signed_claim.claim_id, None)
+
                 duplicate = database.execute(
                     "SELECT state FROM peer_claims WHERE claim_id = ?",
                     (signed_claim.claim_id,),
@@ -303,20 +317,6 @@ class PeerClaimStore:
                     self._bound_audit_locked(database)
                     database.commit()
                     return IngestResult(IngestOutcome.DUPLICATE, signed_claim.claim_id, state)
-
-                if not self._take_rate_slot_locked(database, issuer, normalized_topic, checked_at):
-                    self._audit_locked(
-                        database,
-                        at=checked_at,
-                        action="ingest",
-                        outcome=IngestOutcome.RATE_LIMITED,
-                        issuer=issuer,
-                        topic=normalized_topic,
-                        claim_id=signed_claim.claim_id,
-                    )
-                    self._bound_audit_locked(database)
-                    database.commit()
-                    return IngestResult(IngestOutcome.RATE_LIMITED, signed_claim.claim_id, None)
 
                 instrument = claim.instrument if isinstance(claim, RunnerObservationV1) else None
                 relation = (

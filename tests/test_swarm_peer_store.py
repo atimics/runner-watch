@@ -217,6 +217,32 @@ def test_rate_limit_is_per_verified_peer_and_topic(tmp_path: Path) -> None:
     assert other_topic.outcome == IngestOutcome.ACCEPTED
 
 
+def test_duplicate_delivery_attempts_consume_peer_topic_rate_limit(tmp_path: Path) -> None:
+    key = Ed25519PrivateKey.generate()
+    limits = PeerStoreLimits(claims_per_window=2, rate_window=timedelta(minutes=1))
+    first = signed_observation(key)
+    second = signed_observation(
+        key,
+        issued_at=NOW + timedelta(seconds=1),
+        instrument="NASDAQ:TWO",
+    )
+
+    with PeerClaimStore(tmp_path / "peer.sqlite3", limits=limits) as store:
+        outcomes = [
+            store.ingest(first, topic="alpha", received_at=NOW).outcome,
+            store.ingest(first, topic="alpha", received_at=NOW + timedelta(seconds=1)).outcome,
+            store.ingest(first, topic="alpha", received_at=NOW + timedelta(seconds=2)).outcome,
+            store.ingest(second, topic="alpha", received_at=NOW + timedelta(seconds=3)).outcome,
+        ]
+
+    assert outcomes == [
+        IngestOutcome.ACCEPTED,
+        IngestOutcome.DUPLICATE,
+        IngestOutcome.RATE_LIMITED,
+        IngestOutcome.RATE_LIMITED,
+    ]
+
+
 def test_bans_and_local_revocation_never_erase_audit_history(tmp_path: Path) -> None:
     key = Ed25519PrivateKey.generate()
     node_id = node_id_from_public_key(encode_public_key(key.public_key()))
