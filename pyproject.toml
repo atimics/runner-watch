@@ -45,6 +45,7 @@ stonks-worker = "runner_web.main:worker_main"
 stonks-trainer = "runner_web.ranker:trainer_main"
 stonks-massive-backfill = "runner_watch.massive_data:main"
 rati-scanner = "runner_node.app:main"
+stonks-edge = "runner_web.edge_connector:main"
 
 [build-system]
 requires = ["setuptools>=69"]
@@ -61,6 +62,7 @@ addopts = [
   "--cov=runner_watch",
   "--cov=runner_node",
   "--cov=runner_web",
+  "--cov=runner_swarm",
   "--cov-branch",
   "--cov-report=term-missing:skip-covered",
   "-m=not browser",

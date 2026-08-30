@@ -354,6 +354,7 @@ def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
     game = (templates_dir / "sports_game.html").read_text()
     live_script = (root / "web/static/sports-live.js").read_text()
     core_styles = (root / "web/static/sports-core.css").read_text()
+    unified_styles = (root / "web/static/sports-unified.css").read_text()
 
     for template in sports_templates:
         assert '{% extends "mobile_base.html" %}' in template
@@ -365,6 +366,10 @@ def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
     assert '{% extends "mobile_base.html" %}' in game
     assert 'class="detail-nav sports-detail-nav"' in game
     assert 'class="detail-body sports-detail-body"' in game
+    assert 'class="game-detail-grid game-detail-flow"' in game
+    assert "html:not(.embedded-pane) .game-detail-grid" in unified_styles
+    assert ".game-detail-grid.game-detail-flow" in unified_styles
+    assert "max-width: 1120px" in unified_styles
     assert not (templates_dir / "sports_base.html").exists()
     assert "location.reload" not in "\n".join([*sports_templates, game, live_script])
     assert "setInterval(poll, POLL_INTERVAL)" in live_script
@@ -1801,6 +1806,7 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
     assert comment == "My read is constructive, but thin volume is the risk."
     assert model == "z-ai/glm-5.3"
     assert captured["body"]["models"] == list(web_main.OPENROUTER_COMMENT_MODELS)
+    assert len(captured["body"]["models"]) <= web_main.OPENROUTER_COMMENT_MODEL_LIMIT
     assert "model" not in captured["body"]
     assert captured["body"]["response_format"] == {"type": "json_object"}
     assert captured["body"]["provider"] == {

@@ -9,7 +9,7 @@
   {% set leader = board.rows[0] %}
   {% set leader_href = leader.href if leader.href is defined else '/t/' ~ leader.ticker %}
   <article class="alpha-leader">
-    <div class="wolf-mark"><span>🐺</span><b>#1 most called</b></div>
+    <div class="wolf-mark"><span>🐺</span><b>#1 by open Calls</b></div>
     <a class="alpha-leader-asset" href="{{ leader_href }}" data-desktop-default>
       <span class="coin coin-{{ leader.coin_tone }}"><b>{{ leader.coin_label }}</b><i></i></span>
       <span><strong>{{ leader.ticker }}</strong><small>{{ leader.company }}</small></span>
@@ -26,12 +26,13 @@
 
   {% if board.rows|length > 1 %}
   <section class="alpha-ranking" aria-label="Alpha ranking">
+    <header class="alpha-ranking-basis"><strong>Ranking</strong><span>Open Calls first · total Calls break ties</span></header>
     {% for item in board.rows[1:] %}
     {% set item_href = item.href if item.href is defined else '/t/' ~ item.ticker %}
     <article class="alpha-rank-row">
       <span class="rank-number">{{ item.rank }}</span>
       <a href="{{ item_href }}"><span class="coin coin-{{ item.coin_tone }}"><b>{{ item.coin_label }}</b><i></i></span><span><strong>{{ item.ticker }}</strong><small>{{ item.pulse_label }}</small></span></a>
-      <div class="call-count"><b>{{ item.active_calls }}</b><small>open Calls</small></div>
+      <div class="call-count"><b>{{ item.active_calls }}</b><small>open Calls · {{ item.total_calls }} total</small></div>
     </article>
     {% endfor %}
   </section>

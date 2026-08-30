@@ -125,6 +125,10 @@ from runner_web.kol import (
     refresh_kol_calls,
 )
 from runner_web.live_screens import public_dynamic_screen_paths
+from runner_web.llm_routing import (
+    connector_token_hash,
+    route_for_user,
+)
 from runner_web.market_clock import market_clock
 from runner_web.operations import router as operations_router
 from runner_web.operations import runtime_capabilities as runtime_capabilities
@@ -134,7 +138,12 @@ from runner_web.outcomes import (
     refresh_outcomes,
     refresh_scan_outcomes,
 )
-from runner_web.privacy import delete_user_data, export_user_data
+from runner_web.privacy import (
+    delete_user_content,
+    delete_user_data,
+    export_user_data,
+    user_data_summary,
+)
 from runner_web.product_catalog import roadmap_snapshot
 from runner_web.product_policy import BASE_RATES, EVIDENCE_GATE, OPERATIONS
 from runner_web.pseudonyms import (
@@ -242,6 +251,7 @@ _COMMENT_FALLBACK_MODELS = (
     "nvidia/nemotron-3.5-lightning",
     "deepseek/deepseek-v4-flash-0731",
 )
+OPENROUTER_COMMENT_MODEL_LIMIT = 3
 _configured_comment_models = tuple(
     model.strip()
     for model in os.getenv("OPENROUTER_COMMENT_MODELS", "").split(",")
@@ -249,10 +259,11 @@ _configured_comment_models = tuple(
 )
 OPENROUTER_COMMENT_MODELS = tuple(
     dict.fromkeys((FLASH.model, *(_configured_comment_models or _COMMENT_FALLBACK_MODELS)))
-)[:4]
+)[:OPENROUTER_COMMENT_MODEL_LIMIT]
 OPENROUTER_RESEARCH_TIMEOUT_SECONDS = max(
     30, int(os.getenv("OPENROUTER_RESEARCH_TIMEOUT_SECONDS", "300"))
 )
+EDGE_JOB_LEASE_MINUTES = 10
 FLASH_GLOBAL_DAILY_LIMIT = max(1, int(os.getenv("FLASH_GLOBAL_DAILY_LIMIT", "50")))
 FLASH_REPORT_FAILURE_STREAK_LIMIT = max(
     2, int(os.getenv("FLASH_REPORT_FAILURE_STREAK_LIMIT", "3"))
@@ -579,6 +590,7 @@ async def lifespan(application: FastAPI):
     if PROCESS_ROLE in {"all", "worker"}:
         if not redis_configured():
             _fail_orphaned_research_jobs()
+        _recover_completed_edge_reports()
         worker_tasks = _start_worker_tasks()
         tasks.extend(worker_tasks)
     if PROCESS_ROLE in {"all", "web"}:
@@ -600,6 +612,7 @@ async def run_worker() -> None:
     init_db()
     if not redis_configured():
         _fail_orphaned_research_jobs()
+    _recover_completed_edge_reports()
     tasks = _start_worker_tasks()
     try:
         await asyncio.gather(*tasks)
@@ -1018,6 +1031,15 @@ def _flash_provider_ready(actor: AIKol = FLASH) -> bool:
     )
 
 
+def _require_research_route(user_id: str, *, actor: AIKol = FLASH) -> None:
+    with connection() as database:
+        route = route_for_user(database, user_id, managed_model=actor.model)
+    if not route.available:
+        raise HTTPException(503, route.unavailable_reason or "Your model route is not available.")
+    if route.kind == "managed" and not _flash_provider_ready(actor):
+        raise HTTPException(503, "Flash research is temporarily unavailable.")
+
+
 async def edgar_worker() -> None:
     while True:
         try:
@@ -1192,8 +1214,35 @@ class AccountDeletePayload(BaseModel):
     confirmation: Literal["DELETE MY ACCOUNT"]
 
 
+class CloudDataDeletePayload(BaseModel):
+    confirmation: Literal["MOVE MY DATA"]
+
+
 class SportsPickPayload(BaseModel):
     selection: Literal["home", "away"]
+
+
+class SportsCommentPayload(BaseModel):
+    body: str = Field(min_length=1, max_length=500)
+
+
+class LLMRoutePayload(BaseModel):
+    policy: Literal["managed", "prefer_customer", "customer_only"]
+    route_kind: Literal["managed", "edge"]
+    model: str = Field(default="", max_length=160)
+    connector_id: str | None = Field(default=None, max_length=80)
+
+
+class EdgeConnectorPayload(BaseModel):
+    name: str = Field(default="Local model", min_length=1, max_length=80)
+
+
+class EdgeJobCompletePayload(BaseModel):
+    response: dict[str, Any]
+
+
+class EdgeJobFailPayload(BaseModel):
+    error: str = Field(min_length=1, max_length=500)
 
 
 def _public_flash_record_data() -> dict[str, Any]:
@@ -1289,11 +1338,443 @@ def privacy_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
+    context = page_context(request, runner_session)
+    user = context.get("user")
+    if user:
+        context["data_summary"] = user_data_summary(str(user["id"]))
     return templates.TemplateResponse(
         request=request,
         name="privacy.html",
-        context=page_context(request, runner_session),
+        context=context,
     )
+
+
+def _llm_settings_data(user_id: str) -> dict[str, Any]:
+    with connection() as database:
+        row = database.execute(
+            "SELECT * FROM user_llm_routes WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+        connectors = database.execute(
+            """
+            SELECT id,name,status,last_seen_at,created_at,updated_at
+            FROM llm_edge_connectors
+            WHERE user_id=? ORDER BY created_at DESC
+            """,
+            (user_id,),
+        ).fetchall()
+    route = (
+        {
+            "policy": str(row["policy"]),
+            "route_kind": str(row["route_kind"]),
+            "model": str(row["model"] or ""),
+            "connector_id": str(row["connector_id"] or "") or None,
+            "last_error": str(row["last_error"] or "") or None,
+        }
+        if row
+        else {
+            "policy": "managed",
+            "route_kind": "managed",
+            "model": "",
+            "connector_id": None,
+            "last_error": None,
+        }
+    )
+    return {"route": route, "connectors": [dict(connector) for connector in connectors]}
+
+
+@app.get("/settings/models", response_class=HTMLResponse)
+def model_settings_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> Response:
+    user = current_user(runner_session)
+    if not user:
+        return RedirectResponse("/login?next=/settings/models", status_code=303)
+    return templates.TemplateResponse(
+        request=request,
+        name="model_settings.html",
+        context=page_context(
+            request,
+            runner_session,
+            llm_settings=_llm_settings_data(str(user["id"])),
+        ),
+    )
+
+
+@app.get("/api/account/llm-route")
+def account_llm_route_api(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    user = require_user(runner_session)
+    enforce_rate(request, "llm-route-read", limit=60, seconds=60, subject=user["id"])
+    response = JSONResponse(_llm_settings_data(str(user["id"])))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.put("/api/account/llm-route")
+def update_account_llm_route_api(
+    payload: LLMRoutePayload,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    user_id = str(user["id"])
+    enforce_rate(request, "llm-route-write", limit=20, seconds=3600, subject=user_id)
+    model = payload.model.strip()
+    connector_id = payload.connector_id if payload.route_kind == "edge" else None
+    if payload.policy == "managed":
+        if payload.route_kind != "managed":
+            raise HTTPException(400, "Managed routing cannot use a local connector.")
+        model = ""
+    else:
+        if payload.route_kind != "edge":
+            raise HTTPException(400, "Choose a local connector for your model policy.")
+        if not model:
+            raise HTTPException(400, "Enter the model ID loaded by LM Studio or Unsloth.")
+        if not connector_id:
+            raise HTTPException(400, "Create and choose a local connector.")
+    timestamp = iso()
+    with connection() as database:
+        if connector_id:
+            connector = database.execute(
+                """
+                SELECT id FROM llm_edge_connectors
+                WHERE id=? AND user_id=? AND status='active'
+                """,
+                (connector_id, user_id),
+            ).fetchone()
+            if not connector:
+                raise HTTPException(404, "Local connector not found.")
+        database.execute(
+            """
+            INSERT INTO user_llm_routes(
+                user_id,policy,route_kind,model,connector_id,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                policy=excluded.policy,route_kind=excluded.route_kind,
+                model=excluded.model,connector_id=excluded.connector_id,
+                last_error=NULL,updated_at=excluded.updated_at
+            """,
+            (
+                user_id,
+                payload.policy,
+                payload.route_kind,
+                model,
+                connector_id,
+                timestamp,
+                timestamp,
+            ),
+        )
+    response = JSONResponse(_llm_settings_data(user_id))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/account/llm-connectors")
+def create_llm_connector_api(
+    payload: EdgeConnectorPayload,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    user_id = str(user["id"])
+    enforce_rate(request, "llm-connector-create", limit=5, seconds=3600, subject=user_id)
+    connector_name = payload.name.strip()
+    if not connector_name:
+        raise HTTPException(400, "Enter a connector name.")
+    connector_id = str(uuid.uuid4())
+    token = f"rati_edge_{secrets.token_urlsafe(32)}"
+    timestamp = iso()
+    with connection() as database:
+        active_count = database.execute(
+            """
+            SELECT COUNT(*) FROM llm_edge_connectors
+            WHERE user_id=? AND status='active'
+            """,
+            (user_id,),
+        ).fetchone()[0]
+        if int(active_count) >= 5:
+            raise HTTPException(409, "Revoke an old connector before creating another one.")
+        database.execute(
+            """
+            INSERT INTO llm_edge_connectors(
+                id,user_id,name,token_hash,status,created_at,updated_at
+            ) VALUES(?,?,?,?,'active',?,?)
+            """,
+            (
+                connector_id,
+                user_id,
+                connector_name,
+                connector_token_hash(token),
+                timestamp,
+                timestamp,
+            ),
+        )
+    response = JSONResponse(
+        {
+            "connector": {
+                "id": connector_id,
+                "name": connector_name,
+                "status": "active",
+                "last_seen_at": None,
+            },
+            "token": token,
+            "token_notice": "This token is shown once. Keep it private.",
+        },
+        status_code=201,
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.delete("/api/account/llm-connectors/{connector_id}")
+def revoke_llm_connector_api(
+    connector_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    user_id = str(user["id"])
+    enforce_rate(request, "llm-connector-revoke", limit=10, seconds=3600, subject=user_id)
+    timestamp = iso()
+    with connection() as database:
+        connector = database.execute(
+            """
+            SELECT id FROM llm_edge_connectors
+            WHERE id=? AND user_id=? AND status='active'
+            """,
+            (connector_id, user_id),
+        ).fetchone()
+        if not connector:
+            raise HTTPException(404, "Active local connector not found.")
+        jobs = database.execute(
+            """
+            SELECT commission_id FROM llm_edge_jobs
+            WHERE connector_id=? AND status IN ('pending','claimed')
+            """,
+            (connector_id,),
+        ).fetchall()
+        database.execute(
+            """
+            UPDATE llm_edge_jobs
+            SET status='failed',error=?,completed_at=?,updated_at=?
+            WHERE connector_id=? AND status IN ('pending','claimed')
+            """,
+            ("The local connector was revoked.", timestamp, timestamp, connector_id),
+        )
+        database.execute(
+            """
+            UPDATE user_llm_routes
+            SET policy='managed',route_kind='managed',model='',connector_id=NULL,
+                last_error=NULL,updated_at=?
+            WHERE user_id=? AND connector_id=?
+            """,
+            (timestamp, user_id, connector_id),
+        )
+        database.execute(
+            """
+            UPDATE llm_edge_connectors SET status='revoked',updated_at=?
+            WHERE id=?
+            """,
+            (timestamp, connector_id),
+        )
+    for job in jobs:
+        try:
+            _run_research_commission(str(job["commission_id"]))
+        except Exception:
+            pass
+    response = JSONResponse(_llm_settings_data(user_id))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _edge_connector_for_request(request: Request) -> dict[str, Any]:
+    enforce_rate(request, "edge-auth", limit=180, seconds=60)
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(401, "Missing connector token.")
+    timestamp = iso()
+    with connection() as database:
+        row = database.execute(
+            """
+            SELECT * FROM llm_edge_connectors
+            WHERE token_hash=? AND status='active'
+            """,
+            (connector_token_hash(token),),
+        ).fetchone()
+        if not row:
+            raise HTTPException(401, "Invalid connector token.")
+        database.execute(
+            "UPDATE llm_edge_connectors SET last_seen_at=?,updated_at=? WHERE id=?",
+            (timestamp, timestamp, row["id"]),
+        )
+    return dict(row)
+
+
+@app.post("/api/llm/edge/jobs/claim")
+def claim_edge_job_api(request: Request) -> JSONResponse:
+    connector = _edge_connector_for_request(request)
+    connector_id = str(connector["id"])
+    enforce_rate(request, "edge-job-claim", limit=120, seconds=60, subject=connector_id)
+    current_time = now()
+    timestamp = iso(current_time)
+    lease_expires_at = iso(current_time + timedelta(minutes=EDGE_JOB_LEASE_MINUTES))
+    with connection() as database:
+        row = database.execute(
+            """
+            SELECT * FROM llm_edge_jobs
+            WHERE connector_id=? AND (
+                status='pending' OR (status='claimed' AND lease_expires_at<=?)
+            )
+            ORDER BY created_at LIMIT 1
+            """,
+            (connector_id, timestamp),
+        ).fetchone()
+        if not row:
+            return JSONResponse({"job": None})
+        claimed = database.execute(
+            """
+            UPDATE llm_edge_jobs
+            SET status='claimed',claimed_at=?,lease_expires_at=?,updated_at=?
+            WHERE id=? AND connector_id=? AND (
+                status='pending' OR (status='claimed' AND lease_expires_at<=?)
+            )
+            """,
+            (
+                timestamp,
+                lease_expires_at,
+                timestamp,
+                row["id"],
+                connector_id,
+                timestamp,
+            ),
+        )
+        if claimed.rowcount != 1:
+            return JSONResponse({"job": None})
+    response = JSONResponse(
+        {
+            "job": {
+                "id": str(row["id"]),
+                "model": str(row["model"]),
+                "request": _json_container(row["request_json"], {}),
+                "request_fingerprint": str(row["request_fingerprint"]),
+                "lease_expires_at": lease_expires_at,
+            }
+        }
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/llm/edge/jobs/{job_id}/heartbeat")
+def heartbeat_edge_job_api(job_id: str, request: Request) -> JSONResponse:
+    connector = _edge_connector_for_request(request)
+    connector_id = str(connector["id"])
+    enforce_rate(request, "edge-job-heartbeat", limit=120, seconds=60, subject=connector_id)
+    current_time = now()
+    with connection() as database:
+        updated = database.execute(
+            """
+            UPDATE llm_edge_jobs SET lease_expires_at=?,updated_at=?
+            WHERE id=? AND connector_id=? AND status='claimed'
+            """,
+            (
+                iso(current_time + timedelta(minutes=EDGE_JOB_LEASE_MINUTES)),
+                iso(current_time),
+                job_id,
+                connector_id,
+            ),
+        )
+    if updated.rowcount != 1:
+        raise HTTPException(404, "Claimed local model job not found.")
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/llm/edge/jobs/{job_id}/complete")
+async def complete_edge_job_api(
+    job_id: str,
+    payload: EdgeJobCompletePayload,
+    request: Request,
+) -> JSONResponse:
+    connector = _edge_connector_for_request(request)
+    connector_id = str(connector["id"])
+    enforce_rate(request, "edge-job-complete", limit=60, seconds=60, subject=connector_id)
+    response_json = json.dumps(payload.response, separators=(",", ":"))
+    if len(response_json.encode()) > 8 * 1024 * 1024:
+        raise HTTPException(413, "Local model response is too large.")
+    timestamp = iso()
+    with connection() as database:
+        row = database.execute(
+            """
+            SELECT commission_id FROM llm_edge_jobs
+            WHERE id=? AND connector_id=? AND status='claimed'
+            """,
+            (job_id, connector_id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Claimed local model job not found.")
+        database.execute(
+            """
+            UPDATE llm_edge_jobs
+            SET status='complete',response_json=?,completed_at=?,updated_at=?
+            WHERE id=?
+            """,
+            (response_json, timestamp, timestamp, job_id),
+        )
+    try:
+        report = await run_in_threadpool(_run_research_commission, str(row["commission_id"]))
+    except Exception as exc:
+        LOG.warning("Local model report %s was rejected: %s", job_id, type(exc).__name__)
+        raise HTTPException(
+            422, "The local model response did not match the report contract."
+        ) from exc
+    return JSONResponse(
+        {
+            "ok": True,
+            "report": _commission_api_payload(report, str(connector["user_id"])),
+        }
+    )
+
+
+@app.post("/api/llm/edge/jobs/{job_id}/fail")
+async def fail_edge_job_api(
+    job_id: str,
+    payload: EdgeJobFailPayload,
+    request: Request,
+) -> JSONResponse:
+    connector = _edge_connector_for_request(request)
+    connector_id = str(connector["id"])
+    enforce_rate(request, "edge-job-fail", limit=60, seconds=60, subject=connector_id)
+    timestamp = iso()
+    with connection() as database:
+        row = database.execute(
+            """
+            SELECT commission_id FROM llm_edge_jobs
+            WHERE id=? AND connector_id=? AND status='claimed'
+            """,
+            (job_id, connector_id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Claimed local model job not found.")
+        database.execute(
+            """
+            UPDATE llm_edge_jobs
+            SET status='failed',error=?,completed_at=?,updated_at=? WHERE id=?
+            """,
+            (payload.error[:500], timestamp, timestamp, job_id),
+        )
+    try:
+        await run_in_threadpool(_run_research_commission, str(row["commission_id"]))
+    except Exception:
+        pass
+    return JSONResponse({"ok": True})
 
 
 @app.get("/api/account/export")
@@ -1307,6 +1788,29 @@ def account_export_api(
     response.headers["Content-Disposition"] = (
         f'attachment; filename="runner-watch-export-{now().date().isoformat()}.json"'
     )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/account/data/delete-cloud-copy")
+def account_cloud_data_delete_api(
+    payload: CloudDataDeletePayload,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(
+        request,
+        "account-cloud-data-delete",
+        limit=3,
+        seconds=3600,
+        subject=user["id"],
+    )
+    result = delete_user_content(str(user["id"]))
+    if not result["deleted"]:
+        raise HTTPException(404, "Account not found")
+    response = JSONResponse(result)
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -2463,10 +2967,15 @@ def pulse_data(
 
 PUBLIC_PULSE_ROW_FIELDS = (
     "ticker",
+    "custom_rank",
+    "score",
+    "setup_score",
     "company",
     "name",
     "price",
     "change_pct",
+    "momentum_15m_pct",
+    "relative_volume",
     "section",
     "trade_state",
     "stage",
@@ -2539,6 +3048,7 @@ def _commission_record(
     except (TypeError, ValueError):
         report["usage"] = {}
     report["actor"] = _json_container(report.get("actor_snapshot_json"), {})
+    report["inference_route"] = _json_container(report.get("inference_route_json"), {})
     if not report["actor"] and report.get("actor_id") == FLASH.id:
         report["actor"] = actor_snapshot()
     report["subject_key"] = str(report["ticker"])
@@ -2631,7 +3141,7 @@ def _release_expired_daily_reports(database: Any, *, at: datetime | None = None)
             updated_at=?
         WHERE status='complete' AND report_day IS NOT NULL
             AND visibility<>'public' AND exclusive_until IS NOT NULL
-            AND exclusive_until<=?
+            AND exclusive_until<=? AND customer_inference=0
         """,
         (timestamp, timestamp),
     )
@@ -2651,10 +3161,14 @@ def daily_report_for_ticker(
             """
             SELECT * FROM research_commissions
             WHERE ticker=? AND actor_id=? AND report_day=?
+                AND (
+                    inference_scope='managed'
+                    OR (? IS NOT NULL AND user_id=? AND customer_inference=1)
+                )
                 AND status IN ('running','complete')
-            ORDER BY created_at DESC LIMIT 1
+            ORDER BY customer_inference DESC,created_at DESC LIMIT 1
             """,
-            (ticker, FLASH.id, report_day),
+            (ticker, FLASH.id, report_day, viewer_user_id, viewer_user_id),
         ).fetchone()
         forecast_row = (
             database.execute(
@@ -2696,6 +3210,7 @@ def _flash_daily_capacity_available(
                 """
                 SELECT COUNT(*) FROM research_commissions
                 WHERE actor_id=? AND created_at>? AND status IN ('running','complete')
+                    AND inference_scope='managed'
                 """,
                 (actor.id, since),
             ).fetchone()[0]
@@ -3585,7 +4100,11 @@ def _generate_openrouter_report(
     user_id: str,
     *,
     actor: AIKol = FLASH,
-) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    model: str | None = None,
+    customer_route: bool = False,
+    prepare_only: bool = False,
+    provider_result: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], str, dict[str, Any]] | dict[str, Any]:
     is_sports = evidence.get("subject_type") == "sports_game"
     request_payload = {
         "actor": actor_snapshot(actor),
@@ -3698,7 +4217,7 @@ def _generate_openrouter_report(
             or {}
         )
     body = {
-        "model": actor.model,
+        "model": model or actor.model,
         "messages": [
             {
                 "role": "system",
@@ -3735,48 +4254,62 @@ def _generate_openrouter_report(
         "reasoning_effort": "high",
         "max_tokens": OPENROUTER_RESEARCH_OUTPUT_TOKENS,
     }
-    api_request = urllib.request.Request(
-        "https://openrouter.ai/api/v1/chat/completions",
-        data=json.dumps(body).encode(),
-        headers={
-            "Authorization": f"Bearer {openrouter_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": APP_ORIGIN,
-            "X-OpenRouter-Title": "Runner Watch",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(
-            api_request, timeout=OPENROUTER_RESEARCH_TIMEOUT_SECONDS
-        ) as response:  # noqa: S310
-            result = json.load(response)
-    except urllib.error.HTTPError as exc:
-        if exc.code in {401, 403}:
-            message = "OpenRouter rejected the server key."
-        elif exc.code == 402:
-            message = "The server's OpenRouter account needs credits."
-        elif exc.code == 429:
-            message = "OpenRouter is busy. Try again in a moment."
-        else:
-            message = "OpenRouter could not complete this report."
+    if customer_route:
+        for key in ("plugins", "provider", "reasoning_effort"):
+            body.pop(key, None)
+    if prepare_only:
+        return body
+    if customer_route and provider_result is None:
         raise ReportGenerationFailure(
-            exc.code if exc.code < 500 else 502,
-            message,
-            {"phase": "provider_http", "http_status": exc.code},
-        ) from exc
-    except (TimeoutError, urllib.error.URLError) as exc:
-        raise ReportGenerationFailure(
-            504,
-            "Flash took too long to answer. Retry Flash.",
-            {"phase": "provider_timeout"},
-        ) from exc
-    except (TypeError, ValueError) as exc:
-        raise ReportGenerationFailure(
-            502,
-            "OpenRouter returned an unreadable response. Retry Flash.",
-            {"phase": "provider_envelope", "failure_kind": "invalid_json"},
-        ) from exc
+            503,
+            "The local model connector has not returned this report.",
+            {"phase": "edge_result_missing", "provider": "customer_edge"},
+        )
+    if provider_result is not None:
+        result = provider_result
+    else:
+        api_request = urllib.request.Request(
+            "https://openrouter.ai/api/v1/chat/completions",
+            data=json.dumps(body).encode(),
+            headers={
+                "Authorization": f"Bearer {openrouter_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": APP_ORIGIN,
+                "X-OpenRouter-Title": "Runner Watch",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(
+                api_request, timeout=OPENROUTER_RESEARCH_TIMEOUT_SECONDS
+            ) as response:  # noqa: S310
+                result = json.load(response)
+        except urllib.error.HTTPError as exc:
+            if exc.code in {401, 403}:
+                message = "OpenRouter rejected the server key."
+            elif exc.code == 402:
+                message = "The server's OpenRouter account needs credits."
+            elif exc.code == 429:
+                message = "OpenRouter is busy. Try again in a moment."
+            else:
+                message = "OpenRouter could not complete this report."
+            raise ReportGenerationFailure(
+                exc.code if exc.code < 500 else 502,
+                message,
+                {"phase": "provider_http", "http_status": exc.code},
+            ) from exc
+        except (TimeoutError, urllib.error.URLError) as exc:
+            raise ReportGenerationFailure(
+                504,
+                "Flash took too long to answer. Retry Flash.",
+                {"phase": "provider_timeout"},
+            ) from exc
+        except (TypeError, ValueError) as exc:
+            raise ReportGenerationFailure(
+                502,
+                "OpenRouter returned an unreadable response. Retry Flash.",
+                {"phase": "provider_envelope", "failure_kind": "invalid_json"},
+            ) from exc
     choice: Any = None
     message: Any = None
     content: Any = None
@@ -3929,7 +4462,7 @@ def _generate_openrouter_report(
         ),
         "normalized_fields": normalized_fields,
     }
-    return report, str(result.get("model") or actor.model), usage
+    return report, str(result.get("model") or model or actor.model), usage
 
 
 def _fallback_people_from_evidence(evidence: dict[str, Any]) -> list[dict[str, Any]]:
@@ -4011,15 +4544,25 @@ def _create_research_commission(
     flash_version = flash_version_snapshot(actor)
     try:
         with connection() as db:
+            inference_route = route_for_user(db, user_id, managed_model=actor.model)
+            if not inference_route.available:
+                raise HTTPException(
+                    503,
+                    inference_route.unavailable_reason or "Your model route is not available.",
+                )
+            inference_scope = (
+                f"customer:{user_id}" if inference_route.customer_inference else "managed"
+            )
+            route_snapshot = inference_route.snapshot()
             _release_expired_daily_reports(db, at=current_time)
             existing = db.execute(
                 """
                 SELECT * FROM research_commissions
-                WHERE ticker=? AND actor_id=? AND report_day=?
+                WHERE ticker=? AND actor_id=? AND report_day=? AND inference_scope=?
                     AND status IN ('running','complete')
                 ORDER BY created_at DESC LIMIT 1
                 """,
-                (ticker, actor.id, report_day),
+                (ticker, actor.id, report_day, inference_scope),
             ).fetchone()
             if existing:
                 report = _commission_record(existing) or {}
@@ -4037,10 +4580,11 @@ def _create_research_commission(
                 """
                 SELECT COUNT(*) FROM research_commissions
                 WHERE actor_id=? AND created_at>? AND status IN ('running','complete')
+                    AND inference_scope='managed'
                 """,
                 (actor.id, since),
             ).fetchone()[0]
-            if global_count >= FLASH_GLOBAL_DAILY_LIMIT:
+            if not inference_route.customer_inference and global_count >= FLASH_GLOBAL_DAILY_LIMIT:
                 raise HTTPException(429, FLASH_REPORT_UNAVAILABLE_MESSAGE)
             inserted = db.execute(
                 """
@@ -4048,8 +4592,8 @@ def _create_research_commission(
                     id,public_id,user_id,ticker,evidence_key,status,requested_model,
                     actor_id,actor_snapshot_json,case_id,trigger,evidence_snapshot_json,
                     evidence_as_of,created_at,updated_at,report_day,exclusive_until,
-                    flash_version_id
-                ) VALUES(?,?,?,?,?,'running',?,?,?,?,?,?,?,?,?,?,?,?)
+                    flash_version_id,inference_scope,inference_route_json,customer_inference
+                ) VALUES(?,?,?,?,?,'running',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT DO NOTHING
                 """,
                 (
@@ -4058,7 +4602,7 @@ def _create_research_commission(
                     user_id,
                     ticker,
                     evidence_key,
-                    actor.model,
+                    inference_route.model,
                     actor.id,
                     json.dumps(actor_snapshot(actor), separators=(",", ":")),
                     case_id,
@@ -4068,19 +4612,22 @@ def _create_research_commission(
                     timestamp,
                     timestamp,
                     report_day,
-                    exclusive_until,
+                    None if inference_route.customer_inference else exclusive_until,
                     flash_version["id"],
+                    inference_scope,
+                    json.dumps(route_snapshot, separators=(",", ":")),
+                    int(inference_route.customer_inference),
                 ),
             )
             if inserted.rowcount == 0:
                 existing = db.execute(
                     """
                     SELECT * FROM research_commissions
-                    WHERE ticker=? AND actor_id=? AND report_day=?
+                    WHERE ticker=? AND actor_id=? AND report_day=? AND inference_scope=?
                         AND status IN ('running','complete')
                     ORDER BY created_at DESC LIMIT 1
                     """,
-                    (ticker, actor.id, report_day),
+                    (ticker, actor.id, report_day, inference_scope),
                 ).fetchone()
                 if existing:
                     report = _commission_record(existing) or {}
@@ -4334,6 +4881,8 @@ def _run_research_commission(
         user_id = str(row["user_id"])
         evidence = _json_container(row["evidence_snapshot_json"], {})
         evidence_as_of = str(row["evidence_as_of"] or row["created_at"])
+        inference_route = _json_container(row["inference_route_json"], {})
+        customer_inference = bool(row["customer_inference"])
     if not evidence:
         if ticker.startswith("sports:"):
             _, evidence = sports_flash_evidence(ticker.removeprefix("sports:"))
@@ -4388,17 +4937,95 @@ def _run_research_commission(
                 model=actor.model,
                 as_of=evidence_as_of,
             )
-        openrouter_key = _openrouter_api_key()
-        if actor.provider != "openrouter" or not openrouter_key:
+        route_kind = str(inference_route.get("kind") or "managed")
+        requested_model = str(inference_route.get("model") or actor.model)
+        if route_kind == "edge":
+            connector_id = str(inference_route.get("connector_id") or "")
+            if not connector_id:
+                raise ReportGenerationFailure(
+                    503,
+                    "Start your local model connector before requesting a report.",
+                    {"phase": "edge_configuration"},
+                )
+            with connection() as db:
+                edge_job = db.execute(
+                    "SELECT * FROM llm_edge_jobs WHERE commission_id=?",
+                    (report_id,),
+                ).fetchone()
+                if not edge_job:
+                    prepared = _generate_openrouter_report(
+                        "",
+                        research_context,
+                        user_id,
+                        actor=actor,
+                        model=requested_model,
+                        customer_route=True,
+                        prepare_only=True,
+                    )
+                    if not isinstance(prepared, dict):
+                        raise RuntimeError("Could not prepare local model request")
+                    request_json = json.dumps(prepared, separators=(",", ":"))
+                    timestamp = iso()
+                    db.execute(
+                        """
+                        INSERT INTO llm_edge_jobs(
+                            id,commission_id,user_id,connector_id,status,model,request_json,
+                            request_fingerprint,created_at,updated_at
+                        ) VALUES(?,?,?,?,'pending',?,?,?,?,?)
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            report_id,
+                            user_id,
+                            connector_id,
+                            requested_model,
+                            request_json,
+                            hashlib.sha256(request_json.encode()).hexdigest(),
+                            timestamp,
+                            timestamp,
+                        ),
+                    )
+                    return commission
+            edge_status = str(edge_job["status"])
+            if edge_status in {"pending", "claimed"}:
+                return commission
+            if edge_status == "failed":
+                raise ReportGenerationFailure(
+                    502,
+                    str(edge_job["error"] or "The local model could not complete the report."),
+                    {"phase": "edge_model"},
+                )
+            provider_result = _json_container(edge_job["response_json"], {})
+            generated = _generate_openrouter_report(
+                "",
+                research_context,
+                user_id,
+                actor=actor,
+                model=requested_model,
+                customer_route=True,
+                provider_result=provider_result,
+            )
+        elif route_kind == "managed":
+            openrouter_key = _openrouter_api_key()
+            if actor.provider != "openrouter" or not openrouter_key:
+                raise ReportGenerationFailure(
+                    503,
+                    "Flash research is temporarily unavailable.",
+                    {"phase": "provider_configuration", "provider": actor.provider},
+                )
+            generated = _generate_openrouter_report(
+                openrouter_key, research_context, user_id, actor=actor
+            )
+        else:
             raise ReportGenerationFailure(
                 503,
-                "Flash research is temporarily unavailable.",
-                {"phase": "provider_configuration", "provider": actor.provider},
+                "This model route is not supported.",
+                {"phase": "route_configuration", "route_kind": route_kind},
             )
-        report, model, usage = _generate_openrouter_report(
-            openrouter_key, research_context, user_id, actor=actor
-        )
-        if not resolved_model_allowed(model, actor):
+        if not isinstance(generated, tuple):
+            raise RuntimeError("The model did not return a report")
+        report, model, usage = generated
+        if not customer_inference and not resolved_model_allowed(model, actor):
             raise ReportGenerationFailure(
                 502,
                 "Flash's model assignment changed during this report. Retry Flash.",
@@ -4460,6 +5087,7 @@ def _run_research_commission(
             **usage,
             "research_mode": research_mode,
             "context": research_context.get("context_stats", {}),
+            "inference_route": inference_route,
             **({"sports_forecast": sports_forecast} if sports_forecast else {}),
         }
         case_effect = str(report.get("case_effect") or "") or None
@@ -4512,7 +5140,7 @@ def _run_research_commission(
             ).fetchone()
             if not completed_row:
                 raise RuntimeError("Completed Flash report disappeared")
-            if not is_sports:
+            if not customer_inference and not is_sports:
                 record_flash_forecast(
                     db,
                     dict(completed_row),
@@ -4522,7 +5150,7 @@ def _run_research_commission(
                     actor=actor,
                     at=completed_at,
                 )
-            else:
+            elif not customer_inference:
                 record_sports_ai_forecast(
                     db,
                     report_id=report_id,
@@ -4590,17 +5218,28 @@ def _fail_orphaned_research_jobs() -> None:
     timestamp = iso()
     with connection() as db:
         rows = db.execute(
-            "SELECT id,user_id FROM research_commissions WHERE status='running'"
-        ).fetchall()
-        db.execute(
             """
-            UPDATE research_commissions
-            SET status='failed',error=?,updated_at=?
-            WHERE status='running'
-            """,
-            ("The server restarted before Flash finished. Please retry.", timestamp),
-        )
+            SELECT id,user_id FROM research_commissions AS commission
+            WHERE status='running' AND NOT EXISTS (
+                SELECT 1 FROM llm_edge_jobs AS edge_job
+                WHERE edge_job.commission_id=commission.id
+                    AND edge_job.status IN ('pending','claimed','complete')
+            )
+            """
+        ).fetchall()
         for row in rows:
+            db.execute(
+                """
+                UPDATE research_commissions
+                SET status='failed',error=?,updated_at=?
+                WHERE id=? AND status='running'
+                """,
+                (
+                    "The server restarted before Flash finished. Please retry.",
+                    timestamp,
+                    row["id"],
+                ),
+            )
             credit_flash(
                 db,
                 str(row["user_id"]),
@@ -4608,6 +5247,30 @@ def _fail_orphaned_research_jobs() -> None:
                 kind="report_refund",
                 reference_id=str(row["id"]),
             )
+
+
+def _recover_completed_edge_reports() -> None:
+    """Finish local-model responses saved just before a process stopped."""
+
+    with connection() as db:
+        report_ids = [
+            str(row["commission_id"])
+            for row in db.execute(
+                """
+                SELECT edge_job.commission_id
+                FROM llm_edge_jobs AS edge_job
+                JOIN research_commissions AS commission
+                    ON commission.id=edge_job.commission_id
+                WHERE edge_job.status='complete' AND commission.status='running'
+                ORDER BY edge_job.completed_at
+                """
+            ).fetchall()
+        ]
+    for report_id in report_ids:
+        try:
+            _run_research_commission(report_id)
+        except Exception:
+            LOG.exception("Could not recover completed local model report: %s", report_id)
 
 
 async def research_job_worker() -> None:
@@ -4688,10 +5351,18 @@ def get_commission(public_id: str) -> dict[str, Any] | None:
 
 
 def _public_research_report_data(public_id: str) -> dict[str, Any]:
+    def public_report() -> dict[str, Any]:
+        report = get_commission(public_id)
+        if not report or str(report.get("visibility") or "private") != "public":
+            return {"report": None}
+        if bool(report.get("customer_inference")):
+            return {"report": None}
+        return {"report": report}
+
     return _public_screen_data(
         "research",
         public_id,
-        lambda: {"report": get_commission(public_id)},
+        public_report,
     )
 
 
@@ -5452,13 +6123,29 @@ def sports_game_page(
     public_data = _public_screen_data(
         "sports-game",
         event_id,
-        lambda: {"event": sports_event(event_id)},
+        lambda: {
+            "event": sports_event(event_id),
+            "comments": comments_for_sports_event(event_id),
+            "comment_count": sports_comment_count(event_id),
+        },
     )
     event = public_data.get("event")
     if not event:
         raise HTTPException(404, "Game not found")
     user = current_user(runner_session)
     user_id = str(user["id"]) if user else None
+    cached_comments = public_data.get("comments")
+    comments = (
+        comments_for_sports_event(event_id, current_user_id=user_id)
+        if user_id or cached_comments is None
+        else list(cached_comments)
+    )
+    cached_comment_count = public_data.get("comment_count")
+    comment_count = (
+        sports_comment_count(event_id)
+        if user_id or cached_comment_count is None
+        else int(cached_comment_count)
+    )
     latest_report = daily_report_for_sports_game(event_id, user_id)
     sports_path_prefix = "" if product_for_request(request) == "sports" else "/sports"
     return templates.TemplateResponse(
@@ -5468,6 +6155,8 @@ def sports_game_page(
             request,
             runner_session,
             event=event,
+            comments=comments,
+            comment_count=comment_count,
             latest_commission=latest_report,
             flash_report=_flash_report_action(
                 user_id=user_id,
@@ -5497,8 +6186,7 @@ async def commission_sports_research_api(
     enforce_rate(request, "commission-sports-research", limit=20, seconds=3600, subject=user["id"])
     if not sports_event(event_id):
         raise HTTPException(404, "Game not found")
-    if not _flash_provider_ready():
-        raise HTTPException(503, "Flash research is temporarily unavailable.")
+    _require_research_route(str(user["id"]))
     report, created = await run_in_threadpool(
         _create_research_commission,
         str(user["id"]),
@@ -5509,6 +6197,63 @@ async def commission_sports_research_api(
     payload = _commission_api_payload(report, str(user["id"]))
     payload["created"] = created
     return JSONResponse(payload, status_code=202 if payload["status"] == "running" else 200)
+
+
+@app.post("/api/sports/games/{event_id}/comments")
+def create_sports_comment_api(
+    event_id: str,
+    payload: SportsCommentPayload,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    user_id = str(user["id"])
+    enforce_rate(request, "sports-comment", limit=20, seconds=3600, subject=user_id)
+    if not sports_event(event_id):
+        raise HTTPException(404, "Game not found")
+    body = " ".join(payload.body.split())
+    if not body:
+        raise HTTPException(422, "Write a comment first.")
+    comment_id = str(uuid.uuid4())
+    with connection() as db:
+        ensure_comment_avatar(db, user_id)
+        db.execute(
+            """
+            INSERT INTO sports_comments(
+                id,event_id,user_id,body,status,created_at,source
+            ) VALUES(?,?,?,?,?,?,?)
+            """,
+            (comment_id, event_id, user_id, body, "public", iso(), "user"),
+        )
+    _invalidate_public_screen_data("sports-game", event_id)
+    return JSONResponse(
+        _sports_comment_response_payload(comment_id, event_id, user_id),
+        status_code=201,
+    )
+
+
+@app.delete("/api/sports/comments/{comment_id}")
+def delete_sports_comment_api(
+    comment_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    user_id = str(user["id"])
+    enforce_rate(request, "delete-sports-comment", limit=30, seconds=3600, subject=user_id)
+    with connection() as db:
+        row = db.execute(
+            "SELECT event_id FROM sports_comments WHERE id=? AND user_id=?",
+            (comment_id, user_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "Comment not found")
+        event_id = str(row["event_id"])
+        db.execute("DELETE FROM sports_comments WHERE id=?", (comment_id,))
+    _invalidate_public_screen_data("sports-game", event_id)
+    return JSONResponse({"deleted": True, "id": comment_id})
 
 
 @app.post("/api/picks/{event_id}")
@@ -6899,6 +7644,79 @@ def comment_count_for_ticker(ticker: str) -> int:
     return int(count)
 
 
+def comments_for_sports_event(
+    event_id: str,
+    *,
+    limit: int = 50,
+    current_user_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return the newest public comments for one game thread."""
+
+    bounded_limit = min(50, max(1, limit))
+    with connection() as db:
+        missing_avatars = db.execute(
+            """
+            SELECT DISTINCT c.user_id
+            FROM sports_comments c
+            LEFT JOIN comment_avatars a ON a.user_id=c.user_id
+            WHERE c.event_id=? AND c.status='public' AND a.user_id IS NULL
+            LIMIT 50
+            """,
+            (event_id,),
+        ).fetchall()
+        for row in missing_avatars:
+            ensure_comment_avatar(db, str(row["user_id"]))
+        rows = db.execute(
+            """
+            SELECT c.id,c.user_id,c.body,c.created_at,c.source,c.generation_model,
+                   a.name AS avatar_name,a.seed AS avatar_seed,
+                   a.ability_id AS avatar_ability_id,a.level AS avatar_level
+            FROM sports_comments c
+            JOIN comment_avatars a ON a.user_id=c.user_id
+            WHERE c.event_id=? AND c.status='public'
+            ORDER BY c.created_at DESC,c.id DESC
+            LIMIT ?
+            """,
+            (event_id, bounded_limit),
+        ).fetchall()
+    return [_public_comment(row, current_user_id) for row in rows]
+
+
+def sports_comment_count(event_id: str) -> int:
+    with connection() as db:
+        count = db.execute(
+            "SELECT COUNT(*) FROM sports_comments WHERE event_id=? AND status='public'",
+            (event_id,),
+        ).fetchone()[0]
+    return int(count)
+
+
+def _sports_comment_response_payload(
+    comment_id: str,
+    event_id: str,
+    user_id: str,
+) -> dict[str, Any]:
+    with connection() as db:
+        row = db.execute(
+            """
+            SELECT c.id,c.user_id,c.body,c.created_at,c.source,c.generation_model,
+                   a.name AS avatar_name,a.seed AS avatar_seed,
+                   a.ability_id AS avatar_ability_id,a.level AS avatar_level
+            FROM sports_comments c
+            JOIN comment_avatars a ON a.user_id=c.user_id
+            WHERE c.id=?
+            """,
+            (comment_id,),
+        ).fetchone()
+        count = db.execute(
+            "SELECT COUNT(*) FROM sports_comments WHERE event_id=? AND status='public'",
+            (event_id,),
+        ).fetchone()[0]
+    if row is None:
+        raise HTTPException(410, "This comment was already removed.")
+    return {"comment": _public_comment(row, user_id), "count": int(count)}
+
+
 @app.get("/api/cases")
 def thesis_cases_api(
     request: Request,
@@ -7494,8 +8312,7 @@ async def commission_research_api(
     normalized = _clean_ticker(ticker)
     if not _known_ticker(normalized):
         raise HTTPException(404, "Ticker not found")
-    if not _flash_provider_ready():
-        raise HTTPException(503, "Flash research is temporarily unavailable.")
+    _require_research_route(str(user["id"]))
     report, created = await run_in_threadpool(
         _create_research_commission,
         user["id"],
@@ -7575,6 +8392,8 @@ def publish_research_report_api(
         ).fetchone()
         if not row:
             raise HTTPException(404, "Research report not found")
+        if bool(row["customer_inference"]):
+            raise HTTPException(409, "Reports from your own model stay private.")
         newly_published = str(row["visibility"] or "private") != "public"
         exclusive_until = str(row["exclusive_until"] or "")
         early_publish = newly_published and (not exclusive_until or exclusive_until > timestamp)
@@ -7655,14 +8474,22 @@ def research_report_card(
         raise HTTPException(404, "Research report not found")
     actor = report.get("actor") or {}
     is_sports = report.get("subject_type") == "sports_game"
-    model_label = str(actor.get("model_label") or report.get("model") or report["requested_model"])
+    customer_inference = bool(report.get("customer_inference"))
+    model_label = str(
+        (None if customer_inference else actor.get("model_label"))
+        or report.get("model")
+        or report["requested_model"]
+    )
     card_label = (
+        f"YOUR MODEL · {model_label.upper()} · PRIVATE"
+        if customer_inference
+        else
         f"{str(actor.get('display_name') or 'AI').upper()} · {model_label.upper()} "
         f"{'SPORTS' if is_sports else 'RESEARCH'}"
         if actor
         else "RATi SPORTS" if is_sports else "RUNNER WATCH RESEARCH"
     )
-    ladder_label = f"#{actor.get('ladder_position')} · " if actor else ""
+    ladder_label = f"#{actor.get('ladder_position')} · " if actor and not customer_inference else ""
     image = Image.new("RGB", (1200, 630), "#090b0b")
     draw = ImageDraw.Draw(image)
     draw.rounded_rectangle(

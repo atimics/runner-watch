@@ -458,6 +458,9 @@ def test_multi_book_consensus_drives_model_and_bovada_drives_paper_pick(
     assert comparison["bovada"]["divergence_team"] == "AWY"
     assert comparison["bovada"]["comparison_book_count"] == 4
     assert "Fresh market consensus: 5 sportsbooks." in detail["prediction"]["evidence"]
+    assert detail["odds_history"][0]["source_label"] == (
+        "No-vig consensus via The Odds API"
+    )
 
     response = sports_game_page(
         str(event["id"]),
@@ -469,6 +472,8 @@ def test_multi_book_consensus_drives_model_and_bovada_drives_paper_pick(
     assert b"BOVADA DIVERGENCE" in response.body
     assert b"BEST DISPLAYED PRICE" in response.body
     assert b"Pricing differences are not picks" in response.body
+    assert b"CAPTURED LINE" in response.body
+    assert b"No-vig consensus via The Odds API" in response.body
 
     pick = sports.create_sports_pick("multi-user", str(event["id"]), "home")
     assert pick["sportsbook"] == "Bovada"

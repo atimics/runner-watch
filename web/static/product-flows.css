@@ -98,9 +98,9 @@
 .public-call-row strong { font-size: 11px; }
 .public-call-row small { margin-top: 3px; color: #7f8b85; font-size: 8px; }
 .call-pnl { min-width: 62px; text-align: right; }
-.call-count { min-width: 54px; text-align: right; }
+.call-count { min-width: 88px; text-align: right; }
 .call-count b, .call-count small { display: block; }
-.call-count small { color: #7f8b85; font-size: 8px; }
+.call-count small { color: #7f8b85; font-size: 9px; white-space: nowrap; }
 
 .caller-page { padding: 74px 16px 24px; }
 .caller-head { padding: 18px 0; display: flex; gap: 12px; align-items: center; }

@@ -8,7 +8,13 @@ from pytest import MonkeyPatch
 from runner_web import db
 from runner_web.caller_ids import ensure_caller_identity
 from runner_web.db import connection, init_db
-from runner_web.privacy import delete_user_data, export_user_data, purge_passive_tracking
+from runner_web.privacy import (
+    delete_user_content,
+    delete_user_data,
+    export_user_data,
+    purge_passive_tracking,
+    user_data_summary,
+)
 from runner_web.pseudonyms import ensure_comment_avatar, ensure_scoped_alias
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +38,43 @@ def _seed_user() -> None:
             ("comment-one", "ONE", "gdpr-user", "Public comment", "public", timestamp),
         )
         database.execute(
+            "INSERT INTO sports_events("
+            "id,provider,external_id,league,name,start_time,status,status_detail,"
+            "home_team_id,home_team_name,home_abbreviation,away_team_id,away_team_name,"
+            "away_abbreviation,source_url,first_collected_at,last_collected_at) "
+            "VALUES(?,?,?,?,?,?,'pre','Scheduled',?,?,?,?,?,?,?,?,?)",
+            (
+                "mlb:privacy-game",
+                "test",
+                "privacy-game",
+                "mlb",
+                "Away at Home",
+                timestamp,
+                "home",
+                "Home",
+                "HOM",
+                "away",
+                "Away",
+                "AWY",
+                "https://example.test/game",
+                timestamp,
+                timestamp,
+            ),
+        )
+        database.execute(
+            "INSERT INTO sports_comments(id,event_id,user_id,body,status,created_at,source) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (
+                "sports-comment-one",
+                "mlb:privacy-game",
+                "gdpr-user",
+                "Sports comment",
+                "public",
+                timestamp,
+                "user",
+            ),
+        )
+        database.execute(
             "INSERT INTO user_positions("
             "id,user_id,ticker,entry_price,entry_at,status,created_at,updated_at) "
             "VALUES(?,?,?,?,?,'active',?,?)",
@@ -50,6 +93,7 @@ def test_public_app_has_a_complete_privacy_surface() -> None:
     assert 'max_age=365 * 24 * 3600' not in main_source
     assert '@app.get("/privacy"' in main_source
     assert '@app.get("/api/account/export"' in main_source
+    assert '@app.post("/api/account/data/delete-cloud-copy"' in main_source
     assert '@app.post("/api/account/delete"' in main_source
     assert 'href="/privacy"' in templates
     for required_copy in (
@@ -62,6 +106,26 @@ def test_public_app_has_a_complete_privacy_surface() -> None:
         "privacy@cenetex.com",
     ):
         assert required_copy in privacy_notice
+
+
+def test_local_vault_checks_encryption_before_cloud_deletion() -> None:
+    source = (ROOT / "web/static/data-vault.js").read_text()
+    privacy_notice = (ROOT / "web/templates/privacy.html").read_text()
+
+    for required in (
+        "AES-GCM",
+        "PBKDF2",
+        "indexedDB",
+        "DELETE LOCAL COPY",
+        "50 * 1024 * 1024",
+    ):
+        assert required in source
+    assert source.index("const checked = await decryptVault") < source.index(
+        "fetch('/api/account/data/delete-cloud-copy'"
+    )
+    assert "innerHTML" not in source
+    assert "Move saved data off the cloud" in privacy_notice
+    assert "passphrase and key are never sent to RATi" in privacy_notice
 
 
 def test_export_and_delete_cover_account_content_and_leave_anonymous_tombstone(
@@ -87,6 +151,7 @@ def test_export_and_delete_cover_account_content_and_leave_anonymous_tombstone(
 
     assert exported["account"]["username"] == "member_gdpr"
     assert exported["comments"][0]["body"] == "Public comment"
+    assert exported["sports_comments"][0]["body"] == "Sports comment"
     assert exported["comment_avatar"][0]["ability_id"]
     assert exported["comment_avatar"][0]["seed"]
     assert exported["positions"][0]["ticker"] == "ONE"
@@ -102,6 +167,7 @@ def test_export_and_delete_cover_account_content_and_leave_anonymous_tombstone(
         assert database.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM ticker_comments").fetchone()[0] == 0
+        assert database.execute("SELECT COUNT(*) FROM sports_comments").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM comment_avatars").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM user_positions").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM community_calls").fetchone()[0] == 0
@@ -118,6 +184,62 @@ def test_export_and_delete_cover_account_content_and_leave_anonymous_tombstone(
             "payment_reference": None,
             "claimed_at": None,
         }
+
+
+def test_move_to_device_deletes_content_but_keeps_the_working_account(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "local-vault-move.db")
+    init_db()
+    _seed_user()
+    caller = ensure_caller_identity("gdpr-user")
+    timestamp = datetime.now(UTC).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO community_calls("
+            "id,public_id,user_id,caller_identity_id,ticker,entry_price,entry_at,"
+            "status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'active',?,?)",
+            (
+                "move-call",
+                "move-public",
+                "gdpr-user",
+                caller["id"],
+                "ONE",
+                1.0,
+                timestamp,
+                timestamp,
+                timestamp,
+            ),
+        )
+        database.execute(
+            "INSERT INTO flash_wallets(user_id,balance,created_at,updated_at) "
+            "VALUES(?,?,?,?)",
+            ("gdpr-user", 250, timestamp, timestamp),
+        )
+
+    summary = user_data_summary("gdpr-user")
+    assert summary == {
+        "item_count": 4,
+        "groups": {"Posts and Calls": 3, "Private work": 1, "Research": 0},
+    }
+
+    result = delete_user_content("gdpr-user")
+
+    assert result["deleted"] is True
+    assert result["items_deleted"] >= 3
+    with connection() as database:
+        assert database.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
+        assert database.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1
+        assert database.execute("SELECT COUNT(*) FROM comment_avatars").fetchone()[0] == 1
+        assert database.execute("SELECT COUNT(*) FROM flash_wallets").fetchone()[0] == 1
+        assert database.execute("SELECT COUNT(*) FROM ticker_comments").fetchone()[0] == 0
+        assert database.execute("SELECT COUNT(*) FROM sports_comments").fetchone()[0] == 0
+        assert database.execute("SELECT COUNT(*) FROM user_positions").fetchone()[0] == 0
+        assert database.execute("SELECT COUNT(*) FROM community_calls").fetchone()[0] == 0
+        identity = database.execute(
+            "SELECT user_id,status FROM caller_identities WHERE id=?", (caller["id"],)
+        ).fetchone()
+        assert dict(identity) == {"user_id": "gdpr-user", "status": "active"}
 
 
 def test_passive_tracking_schema_is_removed_and_purge_stays_safe(
@@ -183,7 +305,7 @@ def test_comment_avatar_is_stable_across_threads_while_call_identity_stays_separ
 def test_privacy_notice_explains_the_persistent_avatar_boundary() -> None:
     notice = (ROOT / "web/templates/privacy.html").read_text()
 
-    assert "intentionally links those comments across ticker threads" in notice
+    assert "intentionally links comments across ticker and sports threads" in notice
     assert "readers can link those comments together" in notice
     assert "pseudonymity, not anonymity from RATi" in notice
 

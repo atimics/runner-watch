@@ -559,3 +559,82 @@
   .game-disclosure>summary{grid-template-columns:minmax(0,1fr) 16px;gap:9px;min-height:54px;padding:9px 12px}
   .game-disclosure>summary small{display:none}
 }
+
+/* Game threads keep the matchup and baseline up front, then fold all reference data once. */
+.sports-game-app .match-strip{
+  border-width:0 0 1px;
+  border-radius:0;
+  background:transparent;
+}
+.sports-game-app .decision-hero{
+  margin-top:0;
+  padding:20px;
+  border-width:0 0 1px;
+  border-radius:0;
+  background:transparent;
+}
+.sports-game-app .decision-model-call,
+.sports-game-app .decision-value-call{
+  border:0;
+  border-radius:0;
+  background:transparent;
+}
+.sports-game-app .decision-model-call{padding:8px 12px 8px 0}
+.sports-game-app .decision-value-call{padding:8px 0 8px 18px;border-left:1px solid var(--line)}
+.sports-game-app .value-numbers>span{padding:8px 0;border:0;border-radius:0}
+.sports-game-app .probability-comparison{border-right:0;border-left:0;border-radius:0;background:transparent}
+
+.sports-discussion{
+  margin-top:0;
+  padding:20px;
+  border-top:0;
+  border-bottom:1px solid var(--line);
+}
+.sports-comment-form{margin-bottom:8px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.sports-comment-form label{display:block;margin-bottom:7px;color:var(--soft);font-size:10px;font-weight:800}
+.sports-comment-form textarea{display:block;width:100%;min-height:70px;resize:vertical;padding:0;border:0;outline:0;background:transparent;color:var(--text);font:inherit;font-size:11px;line-height:1.5}
+.sports-comment-form textarea::placeholder{color:var(--muted)}
+.sports-comment-form>div{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:9px;border-top:1px solid var(--line)}
+.sports-comment-form small{color:var(--muted);font-size:8px}
+.sports-comment-form button{min-height:32px;padding:0 13px;border:1px solid color-mix(in srgb,var(--accent) 40%,var(--line));border-radius:8px;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent);font-size:9px;font-weight:850;cursor:pointer}
+.sports-comment-form button:disabled{cursor:default;opacity:.55}
+.sports-discussion .comment-list li:last-child{border-bottom:0}
+
+.game-actions{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--line)}
+.game-actions>.paper-pick,.game-actions>.game-flash{min-width:0;margin:0;padding:18px 20px;border:0;border-radius:0;background:transparent}
+.game-actions>.paper-pick{border-right:1px solid var(--line)}
+.game-actions>.paper-pick h2,.game-actions>.game-flash h2{margin:4px 0 6px;font-size:16px}
+.game-actions>.paper-pick>span,.game-actions>.game-flash>div>span{font-size:7px}
+.game-actions>.paper-pick>strong{display:block;margin-top:12px;color:var(--muted);font-size:10px}
+.game-actions>.paper-pick>a{margin-top:10px;padding:8px 10px;background:var(--accent);color:#07110b}
+.game-actions>.game-flash{display:block}
+.game-actions .game-flash-action{margin-top:12px}
+.game-actions .game-flash-action>a,.game-actions .game-flash-action>button{min-height:42px}
+
+.game-notebook{border-bottom:1px solid var(--line)}
+.game-notebook>summary{display:flex;align-items:center;justify-content:space-between;min-height:68px;padding:14px 20px;cursor:pointer;list-style:none}
+.game-notebook>summary::-webkit-details-marker{display:none}
+.game-notebook>summary span,.game-notebook>summary b,.game-notebook>summary strong,.game-notebook>summary small{display:block}
+.game-notebook>summary b{color:var(--accent);font-size:7px;letter-spacing:.12em}
+.game-notebook>summary strong{margin-top:3px;font-size:14px}
+.game-notebook>summary small{margin-top:3px;color:var(--muted);font-size:8px}
+.game-notebook>summary>i{color:var(--muted);font-size:20px;font-style:normal;transition:transform .15s}
+.game-notebook[open]>summary>i{transform:rotate(45deg)}
+.game-notebook-body{padding:0 20px 18px;border-top:1px solid var(--line)}
+.game-notebook-body>.game-disclosure{margin-top:0;border-width:0 0 1px;border-radius:0;background:transparent}
+.game-notebook-body>.game-disclosure>summary{padding-right:0;padding-left:0}
+.game-notebook-body>.game-disclosure-body{margin:0 -20px}
+.sports-game-app .source-link{display:block;margin:16px 20px 0;color:var(--muted);font-size:9px;text-align:center}
+
+@media(max-width:700px){
+  .sports-game-app .decision-hero{padding:16px 14px}
+  .sports-game-app .decision-model-call{padding:8px 0}
+  .sports-game-app .decision-value-call{padding:14px 0 0;border-top:1px solid var(--line);border-left:0}
+  .sports-discussion{padding:18px 14px}
+  .game-actions{grid-template-columns:1fr}
+  .game-actions>.paper-pick,.game-actions>.game-flash{padding:16px 14px}
+  .game-actions>.paper-pick{border-right:0;border-bottom:1px solid var(--line)}
+  .game-notebook>summary{padding-right:14px;padding-left:14px}
+  .game-notebook-body{padding-right:14px;padding-left:14px}
+  .game-notebook-body>.game-disclosure-body{margin-right:-14px;margin-left:-14px}
+}
