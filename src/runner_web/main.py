@@ -3255,7 +3255,7 @@ def daily_report_for_ticker(
             WHERE ticker=? AND actor_id=? AND report_day=?
                 AND (
                     inference_scope='managed'
-                    OR (? IS NOT NULL AND user_id=? AND customer_inference=1)
+                    OR (CAST(? AS TEXT) IS NOT NULL AND user_id=? AND customer_inference=1)
                 )
                 AND status IN ('running','complete')
             ORDER BY customer_inference DESC,created_at DESC LIMIT 1

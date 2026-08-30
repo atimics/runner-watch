@@ -69,8 +69,15 @@ def test_public_daily_report_query_does_not_send_an_untyped_null_to_postgres(
     assert web_main.daily_report_for_ticker("TBLA") is None
     statement, parameters = database.queries[-1]
     assert "? IS NOT NULL" not in statement
+    assert "CAST(? AS TEXT) IS NOT NULL" in statement
     assert "inference_scope='managed'" in statement
-    assert parameters == ("TBLA", web_main.FLASH.id, "2026-08-30")
+    assert parameters == (
+        "TBLA",
+        web_main.FLASH.id,
+        "2026-08-30",
+        None,
+        None,
+    )
 
 
 def test_sqlite_backend_rows_support_names_and_positions(tmp_path: Path) -> None:
