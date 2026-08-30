@@ -1,4 +1,5 @@
 {% extends "mobile_base.html" %}
+{% from "_flash_comments.html" import flash_comments %}
 {% from "_flash_report_action.html" import flash_report_action %}
 {% block app_class %}detail-app sports-game-app{% endblock %}
 {% block title %}{{ event.away_abbreviation }} at {{ event.home_abbreviation }} · RATi Sports{% endblock %}
@@ -107,6 +108,8 @@
       </div>
     </section>
   </section>
+
+  {{ flash_comments('game', event.id, comments, comment_count, user, comment_generation_enabled, '/login?next=' ~ (sports_path_prefix or '') ~ '/game/' ~ event.id ~ '#discussion') }}
 
   <details class="game-notebook">
     <summary><span><b>MORE</b><strong>Game details</strong><small>Market, form, rosters, news and receipts</small></span><i aria-hidden="true">+</i></summary>
@@ -374,4 +377,5 @@
   }));
 </script>
 <script src="/static/flash-report.js?v={{ static_version }}" defer></script>
+<script src="/static/flash-comments.js?v={{ static_version }}" defer></script>
 {% endblock %}

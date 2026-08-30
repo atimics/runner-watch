@@ -33,7 +33,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, Field
-from starlette.background import BackgroundTask
 from starlette.middleware.gzip import GZipMiddleware
 from webauthn import (
     base64url_to_bytes,
@@ -6131,13 +6130,22 @@ def sports_game_page(
     public_data = _public_screen_data(
         "sports-game",
         event_id,
-        lambda: {"event": sports_event(event_id)},
+        lambda: {
+            "event": sports_event(event_id),
+            "comments": comments_for_subject("sports_game", event_id),
+            "comment_count": comment_count_for_subject("sports_game", event_id),
+        },
     )
     event = public_data.get("event")
     if not event:
         raise HTTPException(404, "Game not found")
     user = current_user(runner_session)
     user_id = str(user["id"]) if user else None
+    comments = (
+        comments_for_subject("sports_game", event_id, current_user_id=user_id)
+        if user_id
+        else list(public_data["comments"])
+    )
     latest_report = daily_report_for_sports_game(event_id, user_id)
     sports_path_prefix = "" if product_for_request(request) == "sports" else "/sports"
     return templates.TemplateResponse(
@@ -6147,6 +6155,9 @@ def sports_game_page(
             request,
             runner_session,
             event=event,
+            comments=comments,
+            comment_count=int(public_data["comment_count"]),
+            comment_generation_enabled=_flash_provider_ready(),
             latest_commission=latest_report,
             flash_report=_flash_report_action(
                 user_id=user_id,
@@ -7509,7 +7520,7 @@ def alpha_comments_data(*, limit: int = 50) -> list[dict[str, Any]]:
             SELECT DISTINCT c.user_id
             FROM ticker_comments c
             LEFT JOIN comment_avatars a ON a.user_id=c.user_id
-            WHERE c.status='public' AND a.user_id IS NULL
+            WHERE c.subject_kind='stock' AND c.status='public' AND a.user_id IS NULL
             LIMIT 50
             """
         ).fetchall()
@@ -7523,7 +7534,7 @@ def alpha_comments_data(*, limit: int = 50) -> list[dict[str, Any]]:
                    a.ability_id AS avatar_ability_id,a.level AS avatar_level
             FROM ticker_comments c
             JOIN comment_avatars a ON a.user_id=c.user_id
-            WHERE c.status='public'
+            WHERE c.subject_kind='stock' AND c.status='public'
             ORDER BY c.created_at DESC,c.id DESC
             LIMIT ?
             """,
@@ -7532,8 +7543,9 @@ def alpha_comments_data(*, limit: int = 50) -> list[dict[str, Any]]:
     return [{**_public_comment(row), "ticker": str(row["ticker"])} for row in rows]
 
 
-def comments_for_ticker(
-    ticker: str,
+def comments_for_subject(
+    subject_kind: str,
+    subject_key: str,
     *,
     limit: int = 50,
     current_user_id: str | None = None,
@@ -7545,10 +7557,11 @@ def comments_for_ticker(
             SELECT DISTINCT c.user_id
             FROM ticker_comments c
             LEFT JOIN comment_avatars a ON a.user_id=c.user_id
-            WHERE c.ticker=? AND c.status='public' AND a.user_id IS NULL
+            WHERE c.subject_kind=? AND c.subject_key=?
+              AND c.status='public' AND a.user_id IS NULL
             LIMIT 50
             """,
-            (ticker,),
+            (subject_kind, subject_key),
         ).fetchall()
         for row in missing_avatars:
             ensure_comment_avatar(db, str(row["user_id"]))
@@ -7559,22 +7572,41 @@ def comments_for_ticker(
                    a.ability_id AS avatar_ability_id,a.level AS avatar_level
             FROM ticker_comments c
             JOIN comment_avatars a ON a.user_id=c.user_id
-            WHERE c.ticker=? AND c.status='public'
+            WHERE c.subject_kind=? AND c.subject_key=? AND c.status='public'
             ORDER BY c.created_at DESC,c.id DESC
             LIMIT ?
             """,
-            (ticker, bounded_limit),
+            (subject_kind, subject_key, bounded_limit),
         ).fetchall()
     return [_public_comment(row, current_user_id) for row in rows]
 
 
-def comment_count_for_ticker(ticker: str) -> int:
+def comment_count_for_subject(subject_kind: str, subject_key: str) -> int:
     with connection() as db:
         count = db.execute(
-            "SELECT COUNT(*) FROM ticker_comments WHERE ticker=? AND status='public'",
-            (ticker,),
+            "SELECT COUNT(*) FROM ticker_comments "
+            "WHERE subject_kind=? AND subject_key=? AND status='public'",
+            (subject_kind, subject_key),
         ).fetchone()[0]
     return int(count)
+
+
+def comments_for_ticker(
+    ticker: str,
+    *,
+    limit: int = 50,
+    current_user_id: str | None = None,
+) -> list[dict[str, Any]]:
+    return comments_for_subject(
+        "stock",
+        ticker,
+        limit=limit,
+        current_user_id=current_user_id,
+    )
+
+
+def comment_count_for_ticker(ticker: str) -> int:
+    return comment_count_for_subject("stock", ticker)
 
 
 @app.get("/api/cases")
@@ -7704,49 +7736,22 @@ def _comment_from_openrouter_result(result: Any) -> tuple[str, str]:
     return comment, str(result.get("model") or FLASH.model)[:160]
 
 
-def _generate_ticker_comment_text(
-    ticker: str,
+def _generate_comment_from_evidence(
+    evidence: dict[str, Any],
     *,
-    avatar_ability_id: str = "catalyst_scout",
+    subject_label: str,
+    avatar_ability_id: str,
 ) -> tuple[str, str]:
     if not _flash_provider_ready():
         raise HTTPException(503, "AI comments are temporarily unavailable.")
-    detail = ticker_detail_data(ticker)
-    if not detail:
-        raise HTTPException(404, "Ticker not found")
-    current = detail.get("current") or {}
-    evidence = {
-        "ticker": ticker,
-        "company": detail.get("company"),
-        "price": current.get("price"),
-        "change_pct": current.get("change_pct"),
-        "trade_state": current.get("trade_state"),
-        "rug_level": current.get("rug_level"),
-        "rug_score": current.get("rug_score"),
-        "signals": list(current.get("signals") or [])[:6],
-        "risks": list(current.get("risks") or [])[:6],
-        "evidence_gate": {
-            "summary": detail.get("evidence_gate", {}).get("summary"),
-            "checks": list(detail.get("evidence_gate", {}).get("checks") or [])[:6],
-            "blockers": list(detail.get("evidence_gate", {}).get("blockers") or [])[:6],
-        },
-        "filings": [
-            {
-                "form": item.get("form"),
-                "filed_at": item.get("filed_at"),
-                "text": item.get("evidence_text"),
-            }
-            for item in detail.get("events", [])[:3]
-        ],
-    }
     ability = comment_avatar_ability(avatar_ability_id)
     body = {
         "messages": [
             {
                 "role": "system",
                 "content": (
-                    "Write one short stock comment in first person, as the human's public "
-                    "avatar speaking. "
+                    f"Write one short {subject_label} comment in first person, as the "
+                    "human's public avatar speaking. "
                     "Use simple English and only the supplied evidence. Keep it under 240 "
                     "characters. State a view and the key risk. Do not give buy or sell advice. "
                     "Do not mention AI. The avatar's lasting research ability is "
@@ -7797,6 +7802,95 @@ def _generate_ticker_comment_text(
             ) from retry_error
 
 
+def _generate_ticker_comment_text(
+    ticker: str,
+    *,
+    avatar_ability_id: str = "catalyst_scout",
+) -> tuple[str, str]:
+    detail = ticker_detail_data(ticker)
+    if not detail:
+        raise HTTPException(404, "Ticker not found")
+    current = detail.get("current") or {}
+    evidence = {
+        "ticker": ticker,
+        "company": detail.get("company"),
+        "price": current.get("price"),
+        "change_pct": current.get("change_pct"),
+        "trade_state": current.get("trade_state"),
+        "rug_level": current.get("rug_level"),
+        "rug_score": current.get("rug_score"),
+        "signals": list(current.get("signals") or [])[:6],
+        "risks": list(current.get("risks") or [])[:6],
+        "evidence_gate": {
+            "summary": detail.get("evidence_gate", {}).get("summary"),
+            "checks": list(detail.get("evidence_gate", {}).get("checks") or [])[:6],
+            "blockers": list(detail.get("evidence_gate", {}).get("blockers") or [])[:6],
+        },
+        "filings": [
+            {
+                "form": item.get("form"),
+                "filed_at": item.get("filed_at"),
+                "text": item.get("evidence_text"),
+            }
+            for item in detail.get("events", [])[:3]
+        ],
+    }
+    return _generate_comment_from_evidence(
+        evidence,
+        subject_label="stock",
+        avatar_ability_id=avatar_ability_id,
+    )
+
+
+def _generate_sports_comment_text(
+    event_id: str,
+    *,
+    avatar_ability_id: str = "catalyst_scout",
+) -> tuple[str, str]:
+    event = sports_event(event_id)
+    if not event:
+        raise HTTPException(404, "Game not found")
+    prediction = dict(event.get("prediction") or {})
+    odds = dict(event.get("odds") or {})
+    evidence = {
+        "event_id": event_id,
+        "league": event.get("league"),
+        "matchup": f"{event.get('away_team_name')} at {event.get('home_team_name')}",
+        "start_time": event.get("start_time"),
+        "status": event.get("status"),
+        "prediction": {
+            "selection": prediction.get("selection"),
+            "signal": prediction.get("signal"),
+            "quality": prediction.get("quality"),
+            "home_probability": prediction.get("home_probability"),
+            "away_probability": prediction.get("away_probability"),
+            "edge_pct": prediction.get("edge_pct"),
+            "evidence": list(prediction.get("evidence") or [])[:6],
+            "risks": list(prediction.get("risks") or [])[:6],
+        },
+        "odds": {
+            "sportsbook": odds.get("sportsbook"),
+            "home": odds.get("home_odds"),
+            "away": odds.get("away_odds"),
+            "observed_at": odds.get("observed_at"),
+        },
+        "recent_form": list((event.get("context") or {}).get("recent_form") or [])[:2],
+        "news": [
+            {
+                "headline": item.get("headline"),
+                "summary": item.get("summary"),
+                "published_at": item.get("published_at"),
+            }
+            for item in list(event.get("news") or [])[:3]
+        ],
+    }
+    return _generate_comment_from_evidence(
+        evidence,
+        subject_label="sports matchup",
+        avatar_ability_id=avatar_ability_id,
+    )
+
+
 def _comment_request_key_hash(request: Request) -> str:
     value = request.headers.get("idempotency-key", "").strip() or str(uuid.uuid4())
     if not COMMENT_REQUEST_KEY_RE.fullmatch(value):
@@ -7816,7 +7910,12 @@ def _comment_request_is_stale(row: Any) -> bool:
     )
 
 
-def _comment_response_payload(comment_id: str, ticker: str, user_id: str) -> dict[str, Any]:
+def _comment_response_payload(
+    comment_id: str,
+    subject_kind: str,
+    subject_key: str,
+    user_id: str,
+) -> dict[str, Any]:
     with connection() as db:
         row = db.execute(
             """
@@ -7830,8 +7929,9 @@ def _comment_response_payload(comment_id: str, ticker: str, user_id: str) -> dic
             (comment_id,),
         ).fetchone()
         count = db.execute(
-            "SELECT COUNT(*) FROM ticker_comments WHERE ticker=? AND status='public'",
-            (ticker,),
+            "SELECT COUNT(*) FROM ticker_comments "
+            "WHERE subject_kind=? AND subject_key=? AND status='public'",
+            (subject_kind, subject_key),
         ).fetchone()[0]
     if row is None:
         raise HTTPException(410, "This comment was already removed.")
@@ -7842,9 +7942,17 @@ def _comment_response_payload(comment_id: str, ticker: str, user_id: str) -> dic
     }
 
 
-def _replay_comment_request(row: Any, ticker: str, user_id: str) -> JSONResponse:
-    if str(row["ticker"]) != ticker:
-        raise HTTPException(409, "This comment request key was used for another ticker.")
+def _replay_comment_request(
+    row: Any,
+    subject_kind: str,
+    subject_key: str,
+    user_id: str,
+) -> JSONResponse:
+    if (
+        str(row["subject_kind"]) != subject_kind
+        or str(row["subject_key"]) != subject_key
+    ):
+        raise HTTPException(409, "This comment request key was used for another subject.")
     status = str(row["status"])
     if status == "pending" and _comment_request_is_stale(row):
         expired = False
@@ -7876,7 +7984,12 @@ def _replay_comment_request(row: Any, ticker: str, user_id: str) -> JSONResponse
             raise HTTPException(504, expired_detail)
         status = str(row["status"])
     if status == "completed":
-        payload = _comment_response_payload(str(row["comment_id"]), ticker, user_id)
+        payload = _comment_response_payload(
+            str(row["comment_id"]),
+            subject_kind,
+            subject_key,
+            user_id,
+        )
         return JSONResponse(payload)
     if status == "failed":
         raise HTTPException(
@@ -7892,17 +8005,31 @@ def _replay_comment_request(row: Any, ticker: str, user_id: str) -> JSONResponse
     )
 
 
-@app.post("/api/comments/{ticker}")
-async def create_ticker_comment(
-    ticker: str,
+def _invalidate_comment_subject(subject_kind: str, subject_key: str) -> None:
+    if subject_kind == "sports_game":
+        _invalidate_public_screen_data("sports-game", subject_key)
+        _invalidate_sports_alpha_data()
+        return
+    _invalidate_public_screen_data("ticker", subject_key)
+    with PULSE_DATA_LOCK:
+        PULSE_DATA_CACHE.clear()
+    with ALPHA_DATA_LOCK:
+        ALPHA_DATA_CACHE.clear()
+    shared_cache_delete(
+        _shared_request_cache_name("pulse"),
+        _shared_request_cache_name("alpha"),
+    )
+
+
+async def _create_subject_comment(
+    subject_kind: str,
+    subject_key: str,
+    generator: Callable[..., tuple[str, str]],
     request: Request,
-    runner_session: str | None = Cookie(default=None),
+    runner_session: str | None,
 ) -> JSONResponse:
     require_origin(request)
     user = require_user(runner_session)
-    normalized = _clean_ticker(ticker)
-    if not _known_ticker(normalized):
-        raise HTTPException(404, "Ticker not found")
     user_id = str(user["id"])
     request_key_hash = _comment_request_key_hash(request)
     with connection() as db:
@@ -7914,13 +8041,18 @@ async def create_ticker_comment(
             (user_id, request_key_hash),
         ).fetchone()
     if existing_request is not None:
-        return _replay_comment_request(existing_request, normalized, user_id)
+        return _replay_comment_request(
+            existing_request,
+            subject_kind,
+            subject_key,
+            user_id,
+        )
     if not _openrouter_api_key():
         raise HTTPException(503, "AI comments are temporarily unavailable.")
     await run_in_threadpool(
         enforce_rate,
         request,
-        "ticker-comment",
+        "subject-comment",
         limit=20,
         seconds=3600,
         subject=user_id,
@@ -7934,14 +8066,17 @@ async def create_ticker_comment(
             inserted = db.execute(
                 """
                 INSERT INTO comment_generation_requests(
-                    id,user_id,idempotency_key_hash,ticker,status,created_at,updated_at
-                ) VALUES(?,?,?,?,?,?,?) ON CONFLICT DO NOTHING
+                    id,user_id,idempotency_key_hash,ticker,subject_kind,subject_key,
+                    status,created_at,updated_at
+                ) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING
                 """,
                 (
                     request_id,
                     user_id,
                     request_key_hash,
-                    normalized,
+                    subject_key,
+                    subject_kind,
+                    subject_key,
                     "pending",
                     created_at,
                     created_at,
@@ -7967,13 +8102,18 @@ async def create_ticker_comment(
     except InsufficientFlashError as exc:
         raise HTTPException(402, str(exc)) from exc
     if existing_request is not None:
-        return _replay_comment_request(existing_request, normalized, user_id)
+        return _replay_comment_request(
+            existing_request,
+            subject_kind,
+            subject_key,
+            user_id,
+        )
     if avatar is None:
         raise HTTPException(409, "Could not start this comment request. Please try again.")
     try:
         body, model = await run_in_threadpool(
-            _generate_ticker_comment_text,
-            normalized,
+            generator,
+            subject_key,
             avatar_ability_id=str(avatar["ability_id"]),
         )
         completed_at = iso()
@@ -7990,12 +8130,15 @@ async def create_ticker_comment(
             db.execute(
                 """
                 INSERT INTO ticker_comments(
-                    id,ticker,user_id,body,status,created_at,source,generation_model
-                ) VALUES(?,?,?,?,?,?,?,?)
+                    id,ticker,subject_kind,subject_key,user_id,body,status,created_at,
+                    source,generation_model
+                ) VALUES(?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     request_id,
-                    normalized,
+                    subject_key,
+                    subject_kind,
+                    subject_key,
                     user_id,
                     body,
                     "public",
@@ -8037,18 +8180,51 @@ async def create_ticker_comment(
                     reference_id=request_id,
                 )
         raise HTTPException(error_status, error_detail) from exc
-    with PULSE_DATA_LOCK:
-        PULSE_DATA_CACHE.clear()
-    with ALPHA_DATA_LOCK:
-        ALPHA_DATA_CACHE.clear()
+    _invalidate_comment_subject(subject_kind, subject_key)
     return JSONResponse(
-        _comment_response_payload(request_id, normalized, user_id),
-        status_code=201,
-        background=BackgroundTask(
-            shared_cache_delete,
-            _shared_request_cache_name("pulse"),
-            _shared_request_cache_name("alpha"),
+        _comment_response_payload(
+            request_id,
+            subject_kind,
+            subject_key,
+            user_id,
         ),
+        status_code=201,
+    )
+
+
+@app.post("/api/comments/stock/{ticker}")
+@app.post("/api/comments/{ticker}")
+async def create_ticker_comment(
+    ticker: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    normalized = _clean_ticker(ticker)
+    if not _known_ticker(normalized):
+        raise HTTPException(404, "Ticker not found")
+    return await _create_subject_comment(
+        "stock",
+        normalized,
+        _generate_ticker_comment_text,
+        request,
+        runner_session,
+    )
+
+
+@app.post("/api/comments/game/{event_id}")
+async def create_sports_comment(
+    event_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    if not sports_event(event_id):
+        raise HTTPException(404, "Game not found")
+    return await _create_subject_comment(
+        "sports_game",
+        event_id,
+        _generate_sports_comment_text,
+        request,
+        runner_session,
     )
 
 
@@ -8063,20 +8239,13 @@ def delete_ticker_comment(
     enforce_rate(request, "delete-comment", limit=30, seconds=3600, subject=user["id"])
     with connection() as db:
         row = db.execute(
-            "SELECT 1 FROM ticker_comments WHERE id=? AND user_id=?",
+            "SELECT subject_kind,subject_key FROM ticker_comments WHERE id=? AND user_id=?",
             (comment_id, user["id"]),
         ).fetchone()
         if not row:
             raise HTTPException(404, "Comment not found")
         db.execute("DELETE FROM ticker_comments WHERE id=?", (comment_id,))
-    with PULSE_DATA_LOCK:
-        PULSE_DATA_CACHE.clear()
-    with ALPHA_DATA_LOCK:
-        ALPHA_DATA_CACHE.clear()
-    shared_cache_delete(
-        _shared_request_cache_name("pulse"),
-        _shared_request_cache_name("alpha"),
-    )
+    _invalidate_comment_subject(str(row["subject_kind"]), str(row["subject_key"]))
     return JSONResponse({"deleted": True, "id": comment_id})
 
 
