@@ -66,14 +66,10 @@ from runner_web.billing import (
     delete_customer,
     process_webhook_event,
 )
-from runner_web.caller_ids import (
-    ensure_caller_identity,
-    ensure_caller_identity_with_database,
-)
+from runner_web.caller_ids import ensure_caller_identity
 from runner_web.calls import (
     active_call_for_user,
     call_for_user,
-    call_stats,
     caller_calls,
     caller_summary_for_user,
     close_call,
@@ -304,31 +300,11 @@ BACKGROUND_SCAN_INTERVAL_SECONDS = max(
     120, int(os.getenv("BACKGROUND_SCAN_INTERVAL_SECONDS", "180"))
 )
 PULSE_CACHE_TTL_SECONDS = max(5.0, float(os.getenv("PULSE_CACHE_TTL_SECONDS", "60")))
-PULSE_DATA_LOCK = threading.Lock()
-PULSE_DATA_CONDITION = threading.Condition(PULSE_DATA_LOCK)
-PULSE_DATA_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
-PULSE_DATA_REFRESHING: set[str] = set()
 RADAR_CACHE_TTL_SECONDS = max(5.0, float(os.getenv("RADAR_CACHE_TTL_SECONDS", "60")))
-RADAR_SHARED_CACHE_TTL_SECONDS = max(
-    int(RADAR_CACHE_TTL_SECONDS),
-    int(os.getenv("RADAR_SHARED_CACHE_TTL_SECONDS", "900")),
-)
-RADAR_DATA_LOCK = threading.Lock()
-RADAR_DATA_CONDITION = threading.Condition(RADAR_DATA_LOCK)
-RADAR_DATA_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
-RADAR_DATA_REFRESHING: set[str] = set()
 ALPHA_CACHE_TTL_SECONDS = max(5.0, float(os.getenv("ALPHA_CACHE_TTL_SECONDS", "60")))
-ALPHA_DATA_LOCK = threading.Lock()
-ALPHA_DATA_CONDITION = threading.Condition(ALPHA_DATA_LOCK)
-ALPHA_DATA_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
-ALPHA_DATA_REFRESHING: set[str] = set()
 SPORTS_ALPHA_CACHE_TTL_SECONDS = max(
     30.0, float(os.getenv("SPORTS_ALPHA_CACHE_TTL_SECONDS", "300"))
 )
-SPORTS_ALPHA_DATA_LOCK = threading.Lock()
-SPORTS_ALPHA_DATA_CONDITION = threading.Condition(SPORTS_ALPHA_DATA_LOCK)
-SPORTS_ALPHA_DATA_CACHE: dict[tuple[str, str, int], tuple[float, dict[str, Any]]] = {}
-SPORTS_ALPHA_DATA_REFRESHING: set[tuple[str, str, int]] = set()
 PUBLIC_SCREEN_CACHE_TTL_SECONDS = max(
     30.0, float(os.getenv("PUBLIC_SCREEN_CACHE_TTL_SECONDS", "60"))
 )
@@ -425,19 +401,25 @@ def _invalidate_public_screen_data(scope: str, identity: str) -> None:
     shared_cache_delete(shared_key)
 
 
+def _invalidate_runners_feeds(*scopes: str) -> None:
+    for scope in scopes:
+        _invalidate_public_screen_data(f"runners-{scope}", "public")
+
+
 def _refresh_public_screen_data(
     local_key: str,
     shared_key: str,
     builder: Callable[[], dict[str, Any]],
+    ttl_seconds: float,
 ) -> None:
     try:
         payload = builder()
         with PUBLIC_SCREEN_DATA_CONDITION:
             PUBLIC_SCREEN_DATA_CACHE[local_key] = (
-                time.monotonic() + PUBLIC_SCREEN_CACHE_TTL_SECONDS,
+                time.monotonic() + ttl_seconds,
                 payload,
             )
-        shared_cache_set(shared_key, payload, int(PUBLIC_SCREEN_CACHE_TTL_SECONDS))
+        shared_cache_set(shared_key, payload, int(ttl_seconds))
     except Exception:
         LOG.exception("Public screen cache refresh failed")
     finally:
@@ -450,6 +432,8 @@ def _public_screen_data(
     scope: str,
     identity: str,
     builder: Callable[[], dict[str, Any]],
+    *,
+    ttl_seconds: float = PUBLIC_SCREEN_CACHE_TTL_SECONDS,
 ) -> dict[str, Any]:
     local_key, shared_key = _public_screen_cache_keys(scope, identity)
     current = time.monotonic()
@@ -462,7 +446,7 @@ def _public_screen_data(
                 PUBLIC_SCREEN_DATA_REFRESHING.add(local_key)
                 threading.Thread(
                     target=_refresh_public_screen_data,
-                    args=(local_key, shared_key, builder),
+                    args=(local_key, shared_key, builder, ttl_seconds),
                     daemon=True,
                     name=f"public-screen-cache-{scope}",
                 ).start()
@@ -472,7 +456,7 @@ def _public_screen_data(
     if isinstance(shared, dict):
         with PUBLIC_SCREEN_DATA_CONDITION:
             PUBLIC_SCREEN_DATA_CACHE[local_key] = (
-                time.monotonic() + PUBLIC_SCREEN_CACHE_TTL_SECONDS,
+                time.monotonic() + ttl_seconds,
                 shared,
             )
         return shared
@@ -504,10 +488,10 @@ def _public_screen_data(
                 )
                 PUBLIC_SCREEN_DATA_CACHE.pop(oldest_key, None)
             PUBLIC_SCREEN_DATA_CACHE[local_key] = (
-                time.monotonic() + PUBLIC_SCREEN_CACHE_TTL_SECONDS,
+                time.monotonic() + ttl_seconds,
                 payload,
             )
-        shared_cache_set(shared_key, payload, int(PUBLIC_SCREEN_CACHE_TTL_SECONDS))
+        shared_cache_set(shared_key, payload, int(ttl_seconds))
         return payload
     finally:
         with PUBLIC_SCREEN_DATA_CONDITION:
@@ -1058,9 +1042,7 @@ async def outcome_worker() -> None:
             await run_in_threadpool(refresh_scan_outcomes)
             flash_results = await run_in_threadpool(refresh_flash_forecasts)
             if any(flash_results.get(key) for key in ("resolved", "voided", "reviewed")):
-                with PULSE_DATA_LOCK:
-                    PULSE_DATA_CACHE.clear()
-                shared_cache_delete(_shared_request_cache_name("pulse"))
+                _invalidate_runners_feeds("pulse")
             await run_in_threadpool(prune_storage)
         except asyncio.CancelledError:
             raise
@@ -1151,7 +1133,7 @@ async def sports_ingestion_worker() -> None:
 
 
 def _is_panel_path(path: str) -> bool:
-    return path.startswith(("/t/", "/research/", "/s/", "/game/", "/sports/game/"))
+    return path.startswith(("/t/", "/research/", "/game/", "/sports/game/"))
 
 
 @app.middleware("http")
@@ -1195,18 +1177,6 @@ async def security_headers(request: Request, call_next: Any) -> Response:
 class PasskeyFinish(BaseModel):
     flow_token: str
     credential: dict[str, Any]
-
-
-class PublishSignal(BaseModel):
-    snapshot_id: str
-    thesis: str = Field(min_length=8, max_length=500)
-    horizon: str = Field(pattern="^(intraday|swing|watch)$")
-    invalidation: str = Field(min_length=3, max_length=240)
-    disclosure: str = Field(min_length=3, max_length=240)
-
-
-class ReportSignal(BaseModel):
-    reason: str = Field(min_length=3, max_length=240)
 
 
 class AccountDeletePayload(BaseModel):
@@ -1938,25 +1908,136 @@ def my_calls_page(
     return RedirectResponse(f"/u/{identity['handle']}", status_code=303)
 
 
-def _public_caller_page_data(caller_handle: str) -> dict[str, Any]:
-    def build() -> dict[str, Any]:
-        calls = caller_calls(caller_handle)
-        if calls is None:
-            return {"found": False}
-        tickers = list(dict.fromkeys(str(item["ticker"]) for item in calls))
-        summaries = _radar_market_summaries(tickers)
-        marks = {
-            ticker: float(summary["price"]) if summary.get("price") is not None else None
-            for ticker, summary in summaries.items()
-        }
-        marked_calls = caller_calls(caller_handle, current_prices=marks) or []
-        return {
-            "found": True,
-            "calls": marked_calls,
-            "stats": call_stats(marked_calls),
-        }
+def _sports_calls_for_caller(caller_handle: str) -> list[dict[str, Any]] | None:
+    with connection() as database:
+        identity = database.execute(
+            "SELECT id FROM caller_identities WHERE handle=? AND status='active'",
+            (caller_handle,),
+        ).fetchone()
+        if not identity:
+            return None
+        rows = database.execute(
+            """
+            SELECT p.*,e.league,e.away_team_name,e.home_team_name,
+                   e.away_abbreviation,e.home_abbreviation,
+                   COALESCE(ft.amount,0) AS flash_reward
+            FROM sports_picks p
+            JOIN sports_events e ON e.id=p.event_id
+            LEFT JOIN flash_transactions ft
+              ON ft.user_id=p.user_id AND ft.kind='sports_call_win'
+             AND ft.reference_id=p.id
+            WHERE p.caller_identity_id=?
+            ORDER BY p.updated_at DESC,p.id DESC LIMIT 500
+            """,
+            (identity["id"],),
+        ).fetchall()
+    output: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        selection = str(item["selection"])
+        abbreviation = str(item[f"{selection}_abbreviation"])
+        odds = int(item["american_odds"])
+        result = str(item.get("result") or "")
+        output.append(
+            {
+                "kind": "sports",
+                "product_label": "Sports",
+                "subject": abbreviation,
+                "company": (
+                    f"{item['away_team_name']} at {item['home_team_name']} · "
+                    f"{str(item['league']).upper()}"
+                ),
+                "href": f"{SPORTS_ORIGIN}/game/{item['event_id']}",
+                "status": str(item["status"]),
+                "entry_label": f"{odds:+d}",
+                "result_label": result.upper() if result else "OPEN",
+                "result_tone": "up" if result == "win" else "down" if result == "loss" else "",
+                "reward_label": (
+                    f"+{int(item['flash_reward'])} Flash"
+                    if int(item.get("flash_reward") or 0) > 0
+                    else None
+                ),
+                "created_at": str(item["created_at"]),
+                "updated_at": str(item["updated_at"]),
+                "won": result == "win",
+                "lost": result == "loss",
+                "open": str(item["status"]) == "open",
+            }
+        )
+    return output
 
-    return _public_screen_data("caller", caller_handle, build)
+
+def _unified_caller_page_data(caller_handle: str) -> dict[str, Any]:
+    stock_calls = caller_calls(caller_handle)
+    sports_calls = _sports_calls_for_caller(caller_handle)
+    if stock_calls is None and sports_calls is None:
+        return {"found": False}
+    tickers = list(dict.fromkeys(str(item["ticker"]) for item in stock_calls or []))
+    summaries = _radar_market_summaries(tickers)
+    marks = {
+        ticker: float(summary["price"]) if summary.get("price") is not None else None
+        for ticker, summary in summaries.items()
+    }
+    marked_stock = caller_calls(caller_handle, current_prices=marks) or []
+    stock_items = [
+        {
+            "kind": "stock",
+            "product_label": "Runners",
+            "subject": str(call["ticker"]),
+            "company": "Stock Call",
+            "href": f"{RUNNERS_ORIGIN}/t/{call['ticker']}",
+            "status": str(call["status"]),
+            "entry_label": (
+                f"${float(call['entry_price']):.4f}"
+                if float(call["entry_price"]) < 1
+                else f"${float(call['entry_price']):.2f}"
+            ),
+            "result_label": (
+                f"{float(call['return_pct']):+.1f}%"
+                if call.get("return_pct") is not None
+                else "OPEN"
+            ),
+            "result_tone": (
+                "up"
+                if call.get("return_pct") is not None and float(call["return_pct"]) >= 0
+                else "down"
+                if call.get("return_pct") is not None
+                else ""
+            ),
+            "reward_label": call.get("reward_label"),
+            "created_at": str(call["created_at"]),
+            "updated_at": str(call["updated_at"]),
+            "won": call["status"] == "closed" and float(call.get("return_pct") or 0) > 0,
+            "lost": call["status"] == "closed" and float(call.get("return_pct") or 0) < 0,
+            "open": call["status"] == "active",
+        }
+        for call in marked_stock
+    ]
+    calls = sorted(
+        [*stock_items, *(sports_calls or [])],
+        key=lambda item: (str(item["updated_at"]), str(item["subject"])),
+        reverse=True,
+    )
+    return {
+        "found": True,
+        "calls": calls,
+        "stats": {
+            "total": len(calls),
+            "open": sum(bool(item["open"]) for item in calls),
+            "settled": sum(not bool(item["open"]) for item in calls),
+            "wins": sum(bool(item["won"]) for item in calls),
+            "losses": sum(bool(item["lost"]) for item in calls),
+            "subjects": len({(str(item["kind"]), str(item["subject"])) for item in calls}),
+        },
+    }
+
+
+def _public_caller_page_data(caller_handle: str) -> dict[str, Any]:
+    return _public_screen_data(
+        "caller",
+        caller_handle,
+        lambda: _unified_caller_page_data(caller_handle),
+    )
 
 
 @app.get("/u/{caller_handle}", response_class=HTMLResponse)
@@ -1965,24 +2046,15 @@ def caller_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    if runner_session:
-        calls = caller_calls(caller_handle)
-        if calls is None:
-            raise HTTPException(404, "Caller not found")
-        tickers = list(dict.fromkeys(str(item["ticker"]) for item in calls))
-        summaries = _radar_market_summaries(tickers)
-        marks = {
-            ticker: float(summary["price"]) if summary.get("price") is not None else None
-            for ticker, summary in summaries.items()
-        }
-        marked_calls = caller_calls(caller_handle, current_prices=marks) or []
-        stats = call_stats(marked_calls)
-    else:
-        public_data = _public_caller_page_data(caller_handle)
-        if not public_data.get("found"):
-            raise HTTPException(404, "Caller not found")
-        marked_calls = list(public_data["calls"])
-        stats = dict(public_data["stats"])
+    public_data = (
+        _unified_caller_page_data(caller_handle)
+        if runner_session
+        else _public_caller_page_data(caller_handle)
+    )
+    if not public_data.get("found"):
+        raise HTTPException(404, "Caller not found")
+    marked_calls = list(public_data["calls"])
+    stats = dict(public_data["stats"])
     return templates.TemplateResponse(
         request=request,
         name="user_calls.html",
@@ -2645,7 +2717,8 @@ def _pulse_data_uncached() -> dict[str, Any]:
         comment_rows = db.execute(
             """
             SELECT ticker,COUNT(*) AS comment_count
-            FROM ticker_comments WHERE status='public' GROUP BY ticker
+            FROM ticker_comments
+            WHERE subject_kind='stock' AND status='public' GROUP BY ticker
             """
         ).fetchall()
         market_event_rows = db.execute(
@@ -2870,75 +2943,13 @@ def _pulse_data_uncached() -> dict[str, Any]:
     }
 
 
-def _refresh_pulse_base(cache_key: str) -> None:
-    try:
-        payload = _pulse_data_uncached()
-        with PULSE_DATA_LOCK:
-            PULSE_DATA_CACHE[cache_key] = (time.monotonic(), payload)
-        shared_cache_set(
-            _shared_request_cache_name("pulse"),
-            payload,
-            int(PULSE_CACHE_TTL_SECONDS),
-        )
-    except Exception:
-        LOG.exception("Pulse cache refresh failed")
-    finally:
-        with PULSE_DATA_CONDITION:
-            PULSE_DATA_REFRESHING.discard(cache_key)
-            PULSE_DATA_CONDITION.notify_all()
-
-
 def _pulse_base_data() -> dict[str, Any]:
-    cache_key = runner_db.database_identity()
-    current = time.monotonic()
-    with PULSE_DATA_LOCK:
-        cached = PULSE_DATA_CACHE.get(cache_key)
-        if cached and current - cached[0] < PULSE_CACHE_TTL_SECONDS:
-            return cached[1]
-        if cached:
-            if cache_key not in PULSE_DATA_REFRESHING:
-                PULSE_DATA_REFRESHING.add(cache_key)
-                threading.Thread(
-                    target=_refresh_pulse_base,
-                    args=(cache_key,),
-                    daemon=True,
-                    name="pulse-cache-refresh",
-                ).start()
-            return cached[1]
-    shared = shared_cache_get(_shared_request_cache_name("pulse"))
-    if isinstance(shared, dict):
-        with PULSE_DATA_LOCK:
-            PULSE_DATA_CACHE[cache_key] = (time.monotonic(), shared)
-        return shared
-    with PULSE_DATA_CONDITION:
-        cached = PULSE_DATA_CACHE.get(cache_key)
-        if cached:
-            return cached[1]
-        if cache_key in PULSE_DATA_REFRESHING:
-            PULSE_DATA_CONDITION.wait_for(
-                lambda: cache_key in PULSE_DATA_CACHE or cache_key not in PULSE_DATA_REFRESHING,
-                timeout=CACHE_BUILD_WAIT_SECONDS,
-            )
-            cached = PULSE_DATA_CACHE.get(cache_key)
-            if cached:
-                return cached[1]
-        PULSE_DATA_REFRESHING.add(cache_key)
-    try:
-        payload = _pulse_data_uncached()
-        with PULSE_DATA_CONDITION:
-            if cache_key not in PULSE_DATA_CACHE and len(PULSE_DATA_CACHE) >= 8:
-                PULSE_DATA_CACHE.clear()
-            PULSE_DATA_CACHE[cache_key] = (time.monotonic(), payload)
-        shared_cache_set(
-            _shared_request_cache_name("pulse"),
-            payload,
-            int(PULSE_CACHE_TTL_SECONDS),
-        )
-        return payload
-    finally:
-        with PULSE_DATA_CONDITION:
-            PULSE_DATA_REFRESHING.discard(cache_key)
-            PULSE_DATA_CONDITION.notify_all()
+    return _public_screen_data(
+        "runners-pulse",
+        "public",
+        _pulse_data_uncached,
+        ttl_seconds=PULSE_CACHE_TTL_SECONDS,
+    )
 
 
 def pulse_data(
@@ -2997,16 +3008,18 @@ PUBLIC_PULSE_ROW_FIELDS = (
 
 def _public_pulse_data(*, offset: int = 0, limit: int = 50) -> dict[str, Any]:
     payload = pulse_data(offset=offset, limit=limit)
+    items = [
+        {
+            field: row[field]
+            for field in PUBLIC_PULSE_ROW_FIELDS
+            if field in row and row[field] is not None
+        }
+        for row in payload["rows"]
+    ]
     return {
         **payload,
-        "rows": [
-            {
-                field: row[field]
-                for field in PUBLIC_PULSE_ROW_FIELDS
-                if field in row and row[field] is not None
-            }
-            for row in payload["rows"]
-        ],
+        "items": items,
+        "rows": items,
     }
 
 
@@ -3393,7 +3406,8 @@ def _alpha_base_data_uncached() -> dict[str, Any]:
         comment_rows = db.execute(
             """
             SELECT ticker,COUNT(*) AS comment_count,MAX(created_at) AS latest_activity
-            FROM ticker_comments WHERE status='public' GROUP BY ticker
+            FROM ticker_comments
+            WHERE subject_kind='stock' AND status='public' GROUP BY ticker
             """
         ).fetchall()
     pulse = pulse_data(limit=50)
@@ -3470,85 +3484,13 @@ def _alpha_base_data_uncached() -> dict[str, Any]:
     }
 
 
-def _refresh_alpha_base(cache_key: str) -> None:
-    try:
-        payload = _alpha_base_data_uncached()
-        with ALPHA_DATA_LOCK:
-            ALPHA_DATA_CACHE[cache_key] = (
-                time.monotonic() + ALPHA_CACHE_TTL_SECONDS,
-                payload,
-            )
-        shared_cache_set(
-            _shared_request_cache_name("alpha"),
-            payload,
-            int(ALPHA_CACHE_TTL_SECONDS),
-        )
-    except Exception:
-        LOG.exception("Alpha cache refresh failed")
-    finally:
-        with ALPHA_DATA_CONDITION:
-            ALPHA_DATA_REFRESHING.discard(cache_key)
-            ALPHA_DATA_CONDITION.notify_all()
-
-
 def _alpha_base_data() -> dict[str, Any]:
-    cache_key = runner_db.database_identity()
-    current = time.monotonic()
-    with ALPHA_DATA_LOCK:
-        cached = ALPHA_DATA_CACHE.get(cache_key)
-        if cached and current < cached[0]:
-            return cached[1]
-        if cached:
-            if cache_key not in ALPHA_DATA_REFRESHING:
-                ALPHA_DATA_REFRESHING.add(cache_key)
-                threading.Thread(
-                    target=_refresh_alpha_base,
-                    args=(cache_key,),
-                    daemon=True,
-                    name="alpha-cache-refresh",
-                ).start()
-            return cached[1]
-    shared = shared_cache_get(_shared_request_cache_name("alpha"))
-    if isinstance(shared, dict):
-        with ALPHA_DATA_LOCK:
-            ALPHA_DATA_CACHE[cache_key] = (
-                time.monotonic() + ALPHA_CACHE_TTL_SECONDS,
-                shared,
-            )
-        return shared
-    with ALPHA_DATA_CONDITION:
-        cached = ALPHA_DATA_CACHE.get(cache_key)
-        if cached:
-            return cached[1]
-        if cache_key in ALPHA_DATA_REFRESHING:
-            ALPHA_DATA_CONDITION.wait_for(
-                lambda: cache_key in ALPHA_DATA_CACHE or cache_key not in ALPHA_DATA_REFRESHING,
-                timeout=CACHE_BUILD_WAIT_SECONDS,
-            )
-            cached = ALPHA_DATA_CACHE.get(cache_key)
-            if cached:
-                return cached[1]
-        ALPHA_DATA_REFRESHING.add(cache_key)
-    try:
-        payload = _alpha_base_data_uncached()
-        with ALPHA_DATA_CONDITION:
-            if len(ALPHA_DATA_CACHE) >= 8 and cache_key not in ALPHA_DATA_CACHE:
-                oldest_key = min(ALPHA_DATA_CACHE, key=lambda key: ALPHA_DATA_CACHE[key][0])
-                ALPHA_DATA_CACHE.pop(oldest_key, None)
-            ALPHA_DATA_CACHE[cache_key] = (
-                time.monotonic() + ALPHA_CACHE_TTL_SECONDS,
-                payload,
-            )
-        shared_cache_set(
-            _shared_request_cache_name("alpha"),
-            payload,
-            int(ALPHA_CACHE_TTL_SECONDS),
-        )
-        return payload
-    finally:
-        with ALPHA_DATA_CONDITION:
-            ALPHA_DATA_REFRESHING.discard(cache_key)
-            ALPHA_DATA_CONDITION.notify_all()
+    return _public_screen_data(
+        "runners-alpha",
+        "public",
+        _alpha_base_data_uncached,
+        ttl_seconds=ALPHA_CACHE_TTL_SECONDS,
+    )
 
 
 def alpha_board_data() -> dict[str, Any]:
@@ -3562,7 +3504,8 @@ def _community_engagement_count(ticker: str) -> int:
             (ticker,),
         ).fetchone()[0]
         comment_count = db.execute(
-            "SELECT COUNT(*) FROM ticker_comments WHERE ticker=? AND status='public'",
+            "SELECT COUNT(*) FROM ticker_comments "
+            "WHERE subject_kind='stock' AND ticker=? AND status='public'",
             (ticker,),
         ).fetchone()[0]
     return int(call_count) + (int(comment_count) * 2)
@@ -5172,12 +5115,7 @@ def _run_research_commission(
             row = db.execute(
                 "SELECT * FROM research_commissions WHERE id=?", (report_id,)
             ).fetchone()
-        with ALPHA_DATA_LOCK:
-            ALPHA_DATA_CACHE.clear()
-        with PULSE_DATA_LOCK:
-            PULSE_DATA_CACHE.clear()
-        shared_cache_delete(_shared_request_cache_name("alpha"))
-        shared_cache_delete(_shared_request_cache_name("pulse"))
+        _invalidate_runners_feeds("alpha", "pulse")
         return _commission_record(row) or {}
     except Exception as exc:
         detail = exc.detail if isinstance(exc, HTTPException) else "Report generation failed."
@@ -5714,13 +5652,15 @@ def _compact_sports_event(event: dict[str, Any], *, radar: bool) -> dict[str, An
 
 
 def _compact_sports_feed(payload: dict[str, Any], *, radar: bool) -> dict[str, Any]:
+    items = [
+        _compact_sports_event(event, radar=radar)
+        for event in payload.get("events") or []
+        if isinstance(event, dict)
+    ]
     compact = {
         **payload,
-        "events": [
-            _compact_sports_event(event, radar=radar)
-            for event in payload.get("events") or []
-            if isinstance(event, dict)
-        ],
+        "items": items,
+        "events": items,
     }
     if not radar:
         record = payload.get("model_record") or {}
@@ -5795,7 +5735,7 @@ def sports_home_response(
 ) -> HTMLResponse:
     selected_sport = league if league in PUBLIC_SPORT_KEYS else "all"
     selected_league = selected_sport if selected_sport in SPORTS_LEAGUES else "all"
-    sports_path_prefix = "" if product_for_request(request) == "sports" else "/sports"
+    sports_path_prefix = ""
     public_data = (
         _public_sports_pulse_data(selected_league, view)
         if selected_sport != "golf"
@@ -5832,8 +5772,9 @@ def sports_home(
     runner_session: str | None = Cookie(default=None),
     league: str = "all",
     view: str = "signals",
-) -> HTMLResponse:
-    return sports_home_response(request, runner_session, league, view)
+) -> RedirectResponse:
+    query = f"?league={league}&view={view}"
+    return RedirectResponse(f"{SPORTS_ORIGIN}/{query}", status_code=307)
 
 
 def sports_radar_response(
@@ -5842,7 +5783,7 @@ def sports_radar_response(
     league: str = "all",
 ) -> HTMLResponse:
     selected_league = league if league in SPORTS_LEAGUES else "all"
-    sports_path_prefix = "" if product_for_request(request) == "sports" else "/sports"
+    sports_path_prefix = ""
     public_data = _public_sports_radar_data(selected_league)
     return templates.TemplateResponse(
         request=request,
@@ -5869,121 +5810,31 @@ def sports_radar_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
     league: str = "all",
-) -> HTMLResponse:
-    return sports_radar_response(request, runner_session, league)
-
-
-def _sports_alpha_shared_cache_name(league: str, limit: int) -> str:
-    return f"{_shared_request_cache_name('sports-alpha')}:{league}:{limit}"
+) -> RedirectResponse:
+    suffix = f"?league={league}" if league in SPORTS_LEAGUES else ""
+    return RedirectResponse(f"{SPORTS_ORIGIN}/radar{suffix}", status_code=307)
 
 
 def _invalidate_sports_alpha_data() -> None:
-    shared_keys = {
-        _sports_alpha_shared_cache_name(league, 24)
-        for league in ("all", *SPORTS_LEAGUES)
-    }
-    with SPORTS_ALPHA_DATA_CONDITION:
-        for _identity, league, limit in SPORTS_ALPHA_DATA_CACHE:
-            shared_keys.add(_sports_alpha_shared_cache_name(league, limit))
-        SPORTS_ALPHA_DATA_CACHE.clear()
-    for shared_key in shared_keys:
-        shared_cache_delete(shared_key)
-
-
-def _refresh_sports_alpha_data(
-    cache_key: tuple[str, str, int],
-    league: str,
-    limit: int,
-) -> None:
-    try:
-        payload = sports_alpha_board(league, limit)
-        with SPORTS_ALPHA_DATA_LOCK:
-            SPORTS_ALPHA_DATA_CACHE[cache_key] = (
-                time.monotonic() + SPORTS_ALPHA_CACHE_TTL_SECONDS,
-                payload,
-            )
-        shared_cache_set(
-            _sports_alpha_shared_cache_name(league, limit),
-            payload,
-            int(SPORTS_ALPHA_CACHE_TTL_SECONDS),
-        )
-    except Exception:
-        LOG.exception("Sports Alpha cache refresh failed")
-    finally:
-        with SPORTS_ALPHA_DATA_CONDITION:
-            SPORTS_ALPHA_DATA_REFRESHING.discard(cache_key)
-            SPORTS_ALPHA_DATA_CONDITION.notify_all()
+    for league in ("all", *SPORTS_LEAGUES):
+        _invalidate_public_screen_data("sports-alpha", league)
 
 
 def _sports_alpha_data(league: str = "all", limit: int = 24) -> dict[str, Any]:
     selected_league = league if league in SPORTS_LEAGUES else "all"
     result_limit = max(1, min(limit, 100))
-    cache_key = (runner_db.database_identity(), selected_league, result_limit)
-    current = time.monotonic()
-    with SPORTS_ALPHA_DATA_LOCK:
-        cached = SPORTS_ALPHA_DATA_CACHE.get(cache_key)
-        if cached and current < cached[0]:
-            return cached[1]
-        if cached:
-            if cache_key not in SPORTS_ALPHA_DATA_REFRESHING:
-                SPORTS_ALPHA_DATA_REFRESHING.add(cache_key)
-                threading.Thread(
-                    target=_refresh_sports_alpha_data,
-                    args=(cache_key, selected_league, result_limit),
-                    daemon=True,
-                    name="sports-alpha-cache-refresh",
-                ).start()
-            return cached[1]
-
-    shared = shared_cache_get(_sports_alpha_shared_cache_name(selected_league, result_limit))
-    if isinstance(shared, dict):
-        with SPORTS_ALPHA_DATA_LOCK:
-            SPORTS_ALPHA_DATA_CACHE[cache_key] = (
-                time.monotonic() + SPORTS_ALPHA_CACHE_TTL_SECONDS,
-                shared,
-            )
-        return shared
-
-    with SPORTS_ALPHA_DATA_CONDITION:
-        cached = SPORTS_ALPHA_DATA_CACHE.get(cache_key)
-        if cached:
-            return cached[1]
-        if cache_key in SPORTS_ALPHA_DATA_REFRESHING:
-            SPORTS_ALPHA_DATA_CONDITION.wait_for(
-                lambda: (
-                    cache_key in SPORTS_ALPHA_DATA_CACHE
-                    or cache_key not in SPORTS_ALPHA_DATA_REFRESHING
-                ),
-                timeout=CACHE_BUILD_WAIT_SECONDS,
-            )
-            cached = SPORTS_ALPHA_DATA_CACHE.get(cache_key)
-            if cached:
-                return cached[1]
-        SPORTS_ALPHA_DATA_REFRESHING.add(cache_key)
-
-    try:
-        payload = sports_alpha_board(selected_league, result_limit)
-        with SPORTS_ALPHA_DATA_CONDITION:
-            if len(SPORTS_ALPHA_DATA_CACHE) >= 32 and cache_key not in SPORTS_ALPHA_DATA_CACHE:
-                oldest_key = min(
-                    SPORTS_ALPHA_DATA_CACHE,
-                    key=lambda key: SPORTS_ALPHA_DATA_CACHE[key][0],
-                )
-                SPORTS_ALPHA_DATA_CACHE.pop(oldest_key, None)
-            SPORTS_ALPHA_DATA_CACHE[cache_key] = (
-                time.monotonic() + SPORTS_ALPHA_CACHE_TTL_SECONDS,
-                payload,
-            )
-        shared_cache_set(
-            _sports_alpha_shared_cache_name(selected_league, result_limit),
-            payload,
-            int(SPORTS_ALPHA_CACHE_TTL_SECONDS),
-        )
-        return payload
-    finally:
-        with SPORTS_ALPHA_DATA_CONDITION:
-            SPORTS_ALPHA_DATA_REFRESHING.discard(cache_key)
-            SPORTS_ALPHA_DATA_CONDITION.notify_all()
+    base = _public_screen_data(
+        "sports-alpha",
+        selected_league,
+        lambda: sports_alpha_board(selected_league, 100),
+        ttl_seconds=SPORTS_ALPHA_CACHE_TTL_SECONDS,
+    )
+    return {
+        **base,
+        "rows": list(base.get("rows") or [])[:result_limit],
+        "calls": list(base.get("calls") or [])[:result_limit],
+        "contenders": list(base.get("contenders") or [])[:result_limit],
+    }
 
 
 def sports_alpha_response(
@@ -5992,7 +5843,7 @@ def sports_alpha_response(
     league: str = "all",
 ) -> HTMLResponse:
     selected_league = league if league in SPORTS_LEAGUES else "all"
-    sports_path_prefix = "" if product_for_request(request) == "sports" else "/sports"
+    sports_path_prefix = ""
     return templates.TemplateResponse(
         request=request,
         name="sports_alpha.html",
@@ -6024,13 +5875,27 @@ def alpha_page(
     return community(request, runner_session)
 
 
+@app.get("/api/alpha")
+def alpha_api(
+    request: Request,
+    league: str = "all",
+    limit: int = 24,
+) -> Response:
+    if product_for_request(request) == "sports":
+        enforce_rate(request, "sports-alpha", limit=120, seconds=60)
+        return _conditional_json_response(request, _sports_alpha_data(league, limit))
+    enforce_rate(request, "alpha", limit=120, seconds=60)
+    return _conditional_json_response(request, alpha_board_data())
+
+
 @app.get("/sports/alpha", response_class=HTMLResponse)
 def sports_alpha_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
     league: str = "all",
-) -> HTMLResponse:
-    return sports_alpha_response(request, runner_session, league)
+) -> RedirectResponse:
+    suffix = f"?league={league}" if league in SPORTS_LEAGUES else ""
+    return RedirectResponse(f"{SPORTS_ORIGIN}/alpha{suffix}", status_code=307)
 
 
 @app.get("/receipts", response_class=HTMLResponse)
@@ -6053,7 +5918,7 @@ def sports_receipts_legacy_page(
     league: str = "all",
 ) -> RedirectResponse:
     suffix = f"?league={league}" if league in SPORTS_LEAGUES else ""
-    return RedirectResponse(f"/sports/alpha{suffix}", status_code=307)
+    return RedirectResponse(f"{SPORTS_ORIGIN}/alpha{suffix}", status_code=307)
 
 
 @app.get("/api/sports/pulse")
@@ -6062,11 +5927,11 @@ def sports_pulse_api(
     league: str = "all",
     view: str = "signals",
     limit: int = 30,
-) -> Response:
-    enforce_rate(request, "sports-pulse", limit=120, seconds=60)
-    return _conditional_json_response(
-        request,
-        _public_sports_pulse_data(league, view, limit)["pulse"],
+) -> RedirectResponse:
+    origin = "" if product_for_request(request) == "sports" else SPORTS_ORIGIN
+    return RedirectResponse(
+        f"{origin}/api/pulse?league={league}&view={view}&limit={limit}",
+        status_code=307,
     )
 
 
@@ -6081,11 +5946,11 @@ def sports_radar_api(
     request: Request,
     league: str = "all",
     limit: int = 40,
-) -> Response:
-    enforce_rate(request, "sports-radar", limit=120, seconds=60)
-    return _conditional_json_response(
-        request,
-        _public_sports_radar_data(league, limit)["radar"],
+) -> RedirectResponse:
+    origin = "" if product_for_request(request) == "sports" else SPORTS_ORIGIN
+    return RedirectResponse(
+        f"{origin}/api/radar?league={league}&limit={limit}",
+        status_code=307,
     )
 
 
@@ -6094,9 +5959,12 @@ def sports_alpha_api(
     request: Request,
     league: str = "all",
     limit: int = 24,
-) -> Response:
-    enforce_rate(request, "sports-alpha", limit=120, seconds=60)
-    return _conditional_json_response(request, _sports_alpha_data(league, limit))
+) -> RedirectResponse:
+    origin = "" if product_for_request(request) == "sports" else SPORTS_ORIGIN
+    return RedirectResponse(
+        f"{origin}/api/alpha?league={league}&limit={limit}",
+        status_code=307,
+    )
 
 
 @app.get("/api/sports/stats")
@@ -6120,13 +5988,19 @@ def sports_slate_api(
     return JSONResponse(sports_slate(league, limit))
 
 
-@app.get("/game/{event_id}", response_class=HTMLResponse)
 @app.get("/sports/game/{event_id}", response_class=HTMLResponse)
+def sports_game_legacy_page(event_id: str) -> RedirectResponse:
+    return RedirectResponse(f"{SPORTS_ORIGIN}/game/{event_id}", status_code=307)
+
+
+@app.get("/game/{event_id}", response_class=HTMLResponse)
 def sports_game_page(
     event_id: str,
     request: Request,
     runner_session: str | None = Cookie(default=None),
-) -> HTMLResponse:
+) -> Response:
+    if product_for_request(request) != "sports" and SPORTS_ORIGIN != APP_ORIGIN:
+        return RedirectResponse(f"{SPORTS_ORIGIN}/game/{event_id}", status_code=307)
     public_data = _public_screen_data(
         "sports-game",
         event_id,
@@ -6144,10 +6018,10 @@ def sports_game_page(
     comments = (
         comments_for_subject("sports_game", event_id, current_user_id=user_id)
         if user_id
-        else list(public_data["comments"])
+        else list(public_data.get("comments") or [])
     )
     latest_report = daily_report_for_sports_game(event_id, user_id)
-    sports_path_prefix = "" if product_for_request(request) == "sports" else "/sports"
+    sports_path_prefix = ""
     return templates.TemplateResponse(
         request=request,
         name="sports_game.html",
@@ -6156,7 +6030,7 @@ def sports_game_page(
             runner_session,
             event=event,
             comments=comments,
-            comment_count=int(public_data["comment_count"]),
+            comment_count=int(public_data.get("comment_count") or 0),
             comment_generation_enabled=_flash_provider_ready(),
             latest_commission=latest_report,
             flash_report=_flash_report_action(
@@ -6165,7 +6039,7 @@ def sports_game_page(
                 latest_attempt=latest_commission(user_id, _sports_report_key(event_id))
                 if user_id
                 else None,
-                start_url=f"/api/sports/games/{event_id}/research",
+                start_url=f"/api/research/game/{event_id}",
                 login_url=f"/login?next={sports_path_prefix}/game/{event_id}",
                 sports_event=event,
             ),
@@ -6176,6 +6050,7 @@ def sports_game_page(
     )
 
 
+@app.post("/api/research/game/{event_id}")
 @app.post("/api/sports/games/{event_id}/research")
 async def commission_sports_research_api(
     event_id: str,
@@ -6200,6 +6075,7 @@ async def commission_sports_research_api(
     return JSONResponse(payload, status_code=202 if payload["status"] == "running" else 200)
 
 
+@app.post("/api/calls/game/{event_id}")
 @app.post("/api/picks/{event_id}")
 @app.post("/api/sports/picks/{event_id}")
 def create_sports_pick_api(
@@ -6221,6 +6097,8 @@ def create_sports_pick_api(
         raise HTTPException(409, str(exc)) from exc
     _invalidate_public_screen_data("sports-game", event_id)
     _invalidate_sports_alpha_data()
+    if pick.get("caller_handle"):
+        _invalidate_public_screen_data("caller", str(pick["caller_handle"]))
     return JSONResponse(pick, status_code=201)
 
 
@@ -6228,8 +6106,16 @@ def create_sports_pick_api(
 def pulse_api(
     request: Request,
     offset: int = 0,
-    limit: int = 20,
+    limit: int = 30,
+    league: str = "all",
+    view: str = "signals",
 ) -> Response:
+    if product_for_request(request) == "sports":
+        enforce_rate(request, "sports-pulse", limit=120, seconds=60)
+        return _conditional_json_response(
+            request,
+            _public_sports_pulse_data(league, view, limit)["pulse"],
+        )
     enforce_rate(request, "pulse", limit=180, seconds=60)
     return _conditional_json_response(
         request,
@@ -6933,7 +6819,7 @@ def ticker_page(
                 user_id=user_id,
                 latest_report=latest_report,
                 latest_attempt=latest_attempt,
-                start_url=f"/api/research/{normalized}",
+                start_url=f"/api/research/stock/{normalized}",
                 login_url=f"/login?next=/t/{normalized}",
             ),
             comment_generation_enabled=_flash_provider_ready(),
@@ -7095,7 +6981,8 @@ def _radar_social_summaries(tickers: list[str]) -> dict[str, dict[str, Any]]:
                    COUNT(DISTINCT user_id) AS participant_count,
                    MAX(created_at) AS latest_comment_at
             FROM ticker_comments
-            WHERE ticker IN ({placeholders}) AND status='public' AND created_at>=?
+            WHERE subject_kind='stock' AND ticker IN ({placeholders})
+              AND status='public' AND created_at>=?
             GROUP BY ticker
             """,  # noqa: S608 - placeholders are generated above
             (*requested, cutoff),
@@ -7292,85 +7179,14 @@ def _radar_base_data_uncached() -> list[dict[str, Any]]:
     return output[:20]
 
 
-def _refresh_radar_base(cache_key: str) -> None:
-    try:
-        output = _radar_base_data_uncached()
-        with RADAR_DATA_LOCK:
-            RADAR_DATA_CACHE[cache_key] = (
-                time.monotonic() + RADAR_CACHE_TTL_SECONDS,
-                output,
-            )
-        shared_cache_set(
-            _shared_request_cache_name("radar"),
-            output,
-            RADAR_SHARED_CACHE_TTL_SECONDS,
-        )
-    except Exception:
-        LOG.exception("Radar cache refresh failed")
-    finally:
-        with RADAR_DATA_CONDITION:
-            RADAR_DATA_REFRESHING.discard(cache_key)
-            RADAR_DATA_CONDITION.notify_all()
-
-
 def _radar_base_data() -> list[dict[str, Any]]:
-    cache_key = runner_db.database_identity()
-    current = time.monotonic()
-    with RADAR_DATA_LOCK:
-        cached = RADAR_DATA_CACHE.get(cache_key)
-        if cached and current < cached[0]:
-            return cached[1]
-        if cached:
-            if cache_key not in RADAR_DATA_REFRESHING:
-                RADAR_DATA_REFRESHING.add(cache_key)
-                threading.Thread(
-                    target=_refresh_radar_base,
-                    args=(cache_key,),
-                    daemon=True,
-                    name="radar-cache-refresh",
-                ).start()
-            return cached[1]
-    shared = shared_cache_get(_shared_request_cache_name("radar"))
-    if isinstance(shared, list):
-        with RADAR_DATA_LOCK:
-            RADAR_DATA_CACHE[cache_key] = (
-                time.monotonic() + RADAR_CACHE_TTL_SECONDS,
-                shared,
-            )
-        return shared
-    with RADAR_DATA_CONDITION:
-        cached = RADAR_DATA_CACHE.get(cache_key)
-        if cached:
-            return cached[1]
-        if cache_key in RADAR_DATA_REFRESHING:
-            RADAR_DATA_CONDITION.wait_for(
-                lambda: cache_key in RADAR_DATA_CACHE or cache_key not in RADAR_DATA_REFRESHING,
-                timeout=CACHE_BUILD_WAIT_SECONDS,
-            )
-            cached = RADAR_DATA_CACHE.get(cache_key)
-            if cached:
-                return cached[1]
-        RADAR_DATA_REFRESHING.add(cache_key)
-    try:
-        output = _radar_base_data_uncached()
-        with RADAR_DATA_CONDITION:
-            if len(RADAR_DATA_CACHE) >= 8 and cache_key not in RADAR_DATA_CACHE:
-                oldest_key = min(RADAR_DATA_CACHE, key=lambda key: RADAR_DATA_CACHE[key][0])
-                RADAR_DATA_CACHE.pop(oldest_key, None)
-            RADAR_DATA_CACHE[cache_key] = (
-                time.monotonic() + RADAR_CACHE_TTL_SECONDS,
-                output,
-            )
-        shared_cache_set(
-            _shared_request_cache_name("radar"),
-            output,
-            RADAR_SHARED_CACHE_TTL_SECONDS,
-        )
-        return output
-    finally:
-        with RADAR_DATA_CONDITION:
-            RADAR_DATA_REFRESHING.discard(cache_key)
-            RADAR_DATA_CONDITION.notify_all()
+    payload = _public_screen_data(
+        "runners-radar",
+        "public",
+        lambda: {"items": _radar_base_data_uncached()},
+        ttl_seconds=RADAR_CACHE_TTL_SECONDS,
+    )
+    return list(payload["items"])
 
 
 def radar_data() -> list[dict[str, Any]]:
@@ -7407,7 +7223,6 @@ async def request_cache_warmer() -> None:
     dynamic_builders: dict[str, Callable[[str], dict[str, Any]]] = {
         "ticker": _public_ticker_page_data,
         "caller": _public_caller_page_data,
-        "signal": _public_signal_page_data,
         "research": _public_research_report_data,
         "sports_game": lambda event_id: _public_screen_data(
             "sports-game",
@@ -7457,9 +7272,18 @@ def radar_page(
 @app.get("/api/radar")
 def radar_api(
     request: Request,
-) -> JSONResponse:
+    league: str = "all",
+    limit: int = 40,
+) -> Response:
+    if product_for_request(request) == "sports":
+        enforce_rate(request, "sports-radar", limit=120, seconds=60)
+        return _conditional_json_response(
+            request,
+            _public_sports_radar_data(league, limit)["radar"],
+        )
     enforce_rate(request, "radar", limit=120, seconds=60)
-    return JSONResponse({"rows": radar_data(), "updated_at": iso()})
+    items = radar_data()
+    return JSONResponse({"items": items, "rows": items, "updated_at": iso()})
 
 
 @app.get("/api/radar/charts")
@@ -8011,14 +7835,7 @@ def _invalidate_comment_subject(subject_kind: str, subject_key: str) -> None:
         _invalidate_sports_alpha_data()
         return
     _invalidate_public_screen_data("ticker", subject_key)
-    with PULSE_DATA_LOCK:
-        PULSE_DATA_CACHE.clear()
-    with ALPHA_DATA_LOCK:
-        ALPHA_DATA_CACHE.clear()
-    shared_cache_delete(
-        _shared_request_cache_name("pulse"),
-        _shared_request_cache_name("alpha"),
-    )
+    _invalidate_runners_feeds("pulse", "alpha")
 
 
 async def _create_subject_comment(
@@ -8260,6 +8077,7 @@ def _current_call_mark(ticker: str) -> tuple[float, str]:
     return float(current), observed_at
 
 
+@app.post("/api/calls/stock/{ticker}")
 @app.post("/api/calls/{ticker}")
 async def create_community_call(
     ticker: str,
@@ -8280,17 +8098,13 @@ async def create_community_call(
         entry_price=entry_price,
         entry_at=entry_at,
     )
-    with PULSE_DATA_LOCK:
-        PULSE_DATA_CACHE.clear()
-    with ALPHA_DATA_LOCK:
-        ALPHA_DATA_CACHE.clear()
-    shared_cache_delete(
-        _shared_request_cache_name("pulse"),
-        _shared_request_cache_name("alpha"),
-    )
+    _invalidate_runners_feeds("pulse", "alpha")
+    if call.get("caller_handle"):
+        _invalidate_public_screen_data("caller", str(call["caller_handle"]))
     return JSONResponse({"call": call}, status_code=201)
 
 
+@app.post("/api/calls/stock/{public_id}/close")
 @app.post("/api/calls/{public_id}/close")
 async def close_community_call(
     public_id: str,
@@ -8316,9 +8130,9 @@ async def close_community_call(
         raise HTTPException(400, str(exc)) from exc
     if not call:
         raise HTTPException(409, "Call was already closed")
-    with ALPHA_DATA_LOCK:
-        ALPHA_DATA_CACHE.clear()
-    shared_cache_delete(_shared_request_cache_name("alpha"))
+    _invalidate_runners_feeds("alpha")
+    if call.get("caller_handle"):
+        _invalidate_public_screen_data("caller", str(call["caller_handle"]))
     wallet = wallet_for_user(str(user["id"]))
     return JSONResponse(
         {
@@ -8329,6 +8143,7 @@ async def close_community_call(
     )
 
 
+@app.post("/api/research/stock/{ticker}")
 @app.post("/api/research/{ticker}")
 async def commission_research_api(
     ticker: str,
@@ -8354,6 +8169,7 @@ async def commission_research_api(
     return JSONResponse(payload, status_code=202 if payload["status"] == "running" else 200)
 
 
+@app.get("/api/research/stock/{ticker}")
 @app.get("/api/research/{ticker}")
 def research_status_api(
     ticker: str,
@@ -8370,9 +8186,7 @@ def research_status_api(
     enforce_rate(request, "research-status", limit=180, seconds=600, subject=user["id"])
     payload = _commission_api_payload(report, str(user["id"]))
     if payload["status"] == "complete":
-        with ALPHA_DATA_LOCK:
-            ALPHA_DATA_CACHE.clear()
-        shared_cache_delete(_shared_request_cache_name("alpha"))
+        _invalidate_runners_feeds("alpha")
     return JSONResponse(
         payload,
         status_code=200,
@@ -9355,116 +9169,18 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
 
 
 @app.post("/api/signals")
-def publish_signal(
-    payload: PublishSignal,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "publish", limit=8, seconds=3600, subject=user["id"])
-    with connection() as db:
-        identity = ensure_caller_identity_with_database(db, str(user["id"]))
-        recent_count = db.execute(
-            "SELECT COUNT(*) FROM signals WHERE user_id=? AND created_at>?",
-            (user["id"], iso(now() - timedelta(hours=1))),
-        ).fetchone()[0]
-        if recent_count >= 8:
-            raise HTTPException(429, "Publishing limit reached. Try again later.")
-        snapshot = db.execute(
-            "SELECT * FROM scan_snapshots WHERE id=? AND captured_at>?",
-            (payload.snapshot_id, iso(now() - timedelta(hours=2))),
-        ).fetchone()
-        if not snapshot:
-            raise HTTPException(400, "That scan is too old. Run a fresh scan.")
-        if bool(snapshot["hard_veto"]) or str(snapshot["trade_state"] or "").upper() in {
-            "AVOID",
-            "EXIT",
-        }:
-            raise HTTPException(
-                400,
-                "Rug risk blocks publishing this row as alpha. Share the risk evidence instead.",
-            )
-        signal_id = str(uuid.uuid4())
-        public_id = secrets.token_urlsafe(6).replace("-", "").replace("_", "")[:8]
-        db.execute(
-            """
-            INSERT INTO signals(
-                id,public_id,snapshot_id,user_id,caller_identity_id,thesis,horizon,
-                invalidation,disclosure,status,created_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                signal_id,
-                public_id,
-                payload.snapshot_id,
-                user["id"],
-                identity["id"],
-                payload.thesis.strip(),
-                payload.horizon,
-                payload.invalidation.strip(),
-                payload.disclosure.strip(),
-                "public",
-                iso(),
-            ),
-        )
-    return JSONResponse({"ok": True, "url": f"/s/{public_id}"})
+def publish_signal() -> None:
+    """Retired: public text posts were replaced by structured Calls."""
 
-
-def get_signal(public_id: str) -> dict[str, Any] | None:
-    with connection() as db:
-        row = db.execute(
-            """
-            SELECT sig.id AS signal_id,sig.public_id,sig.caller_identity_id,
-                   sig.thesis,sig.horizon,sig.invalidation,sig.disclosure,
-                   sig.created_at,ci.handle AS caller_handle,
-                   s.*,o.barrier_label,o.return_60m_pct,
-                   o.max_favorable_pct,o.max_adverse_pct
-            FROM signals sig
-            JOIN caller_identities ci ON ci.id=sig.caller_identity_id
-            JOIN scan_snapshots s ON s.id=sig.snapshot_id
-            LEFT JOIN scan_outcomes o ON o.snapshot_id=s.id
-            WHERE sig.public_id=? AND sig.status='public' AND ci.status='active'
-            """,
-            (public_id,),
-        ).fetchone()
-    signal = row_dict(row)
-    if signal:
-        signal["coin_tone"] = _coin_tone(signal["ticker"])
-    return signal
-
-
-def _public_signal_page_data(public_id: str) -> dict[str, Any]:
-    def build() -> dict[str, Any]:
-        signal = get_signal(public_id)
-        if not signal:
-            return {"signal": None}
-        return {
-            "signal": {
-                **signal,
-                "signals": json.loads(signal["signals_json"]),
-                "risks": json.loads(signal["risks_json"]),
-            }
-        }
-
-    return _public_screen_data("signal", public_id, build)
+    raise HTTPException(410, "Public Signals were replaced by Calls.")
 
 
 @app.get("/s/{public_id}", response_class=HTMLResponse)
 def signal_page(
     public_id: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> HTMLResponse:
-    public_data = _public_signal_page_data(public_id)
-    signal = public_data.get("signal")
-    if not signal:
-        raise HTTPException(404, "Signal not found")
-    return templates.TemplateResponse(
-        request=request,
-        name="signal.html",
-        context=page_context(request, runner_session, signal=signal),
-    )
+) -> RedirectResponse:
+    _ = public_id
+    return RedirectResponse(f"{RUNNERS_ORIGIN}/community", status_code=308)
 
 
 def font(size: int, bold: bool = False) -> ImageFont.ImageFont:
@@ -9476,73 +9192,12 @@ def font(size: int, bold: bool = False) -> ImageFont.ImageFont:
 
 
 @app.get("/s/{public_id}/card.png")
-def signal_card(public_id: str) -> Response:
-    signal = get_signal(public_id)
-    if not signal:
-        raise HTTPException(404, "Signal not found")
-    image = Image.new("RGB", (1200, 630), "#07110d")
-    draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle(
-        (55, 55, 1145, 575), radius=32, fill="#102019", outline="#4ade80", width=3
-    )
-    draw.text((95, 90), "RUNNER WATCH", fill="#86efac", font=font(34, True))
-    draw.text((95, 165), f"${signal['ticker']}", fill="white", font=font(88, True))
-    change = f"{signal['change_pct']:+.1f}%"
-    draw.text((95, 275), change, fill="#4ade80", font=font(64, True))
-    draw.text(
-        (420, 185),
-        (
-            f"{signal.get('trade_state') or 'WATCH'}  ·  "
-            f"SETUP {float(signal.get('setup_score') or signal['score']):.0f}  ·  "
-            f"RUG {float(signal.get('rug_score') or 0):.0f}"
-        ),
-        fill="#d1fae5",
-        font=font(30, True),
-    )
-    thesis = signal["thesis"][:100]
-    if len(signal["thesis"]) > 100:
-        thesis += "…"
-    draw.multiline_text((420, 255), thesis, fill="#ecfdf5", font=font(30), spacing=12)
-    draw.text(
-        (95, 505),
-        f"{signal['caller_handle']}  ·  delayed market data",
-        fill="#9ca3af",
-        font=font(25),
-    )
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG", optimize=True)
-    return Response(
-        buffer.getvalue(),
-        media_type="image/png",
-        headers={"Cache-Control": "public,max-age=300"},
-    )
+def signal_card(public_id: str) -> None:
+    _ = public_id
+    raise HTTPException(410, "Public Signals were replaced by Calls.")
 
 
 @app.post("/api/signals/{public_id}/report")
-def report_signal(
-    public_id: str,
-    payload: ReportSignal,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "report", limit=20, seconds=3600, subject=user["id"])
-    signal = get_signal(public_id)
-    if not signal:
-        raise HTTPException(404, "Signal not found")
-    with connection() as db:
-        db.execute(
-            """
-            INSERT OR IGNORE INTO reports(id,signal_id,user_id,reason,created_at)
-            VALUES(?,?,?,?,?)
-            """,
-            (str(uuid.uuid4()), signal["signal_id"], user["id"], payload.reason.strip(), iso()),
-        )
-        reports = db.execute(
-            "SELECT COUNT(*) FROM reports WHERE signal_id=?", (signal["signal_id"],)
-        ).fetchone()[0]
-        under_review = reports >= 3
-        if under_review:
-            db.execute("UPDATE signals SET status='review' WHERE id=?", (signal["signal_id"],))
-    return JSONResponse({"ok": True, "under_review": under_review})
+def report_signal(public_id: str) -> None:
+    _ = public_id
+    raise HTTPException(410, "Public Signals were replaced by Calls.")

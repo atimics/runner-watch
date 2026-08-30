@@ -22,7 +22,6 @@ from runner_web.flash_wallet import claim_daily_flash, wallet_for_user
 from runner_web.ingestion import record_source_batch
 from runner_web.main import (
     APP_ORIGIN,
-    PublishSignal,
     _chart_annotations,
     _commission_research,
     _evidence_gate,
@@ -37,7 +36,6 @@ from runner_web.main import (
     comments_for_ticker,
     create_ticker_comment,
     get_commission,
-    get_signal,
     prune_storage,
     publish_signal,
     pulse_data,
@@ -134,7 +132,9 @@ def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
     assert "exposureQueue" not in pulse_template
     assert "body:JSON.stringify({entries})" not in pulse_template
     assert "1 new event" in radar_template
-    assert "pendingUpdateTickers" in radar_template
+    assert "RatiLiveList.mount" in pulse_template
+    assert "RatiLiveList.mount" in radar_template
+    assert "pendingUpdateTickers" not in radar_template
 
 
 def test_pulse_does_not_render_an_empty_scorecard_spacer() -> None:
@@ -146,7 +146,7 @@ def test_pulse_does_not_render_an_empty_scorecard_spacer() -> None:
     assert "{% if not flash_record %} hidden{% endif %}" in pulse_template
     assert ".kol-score-strip[hidden] { display: none; }" in kol_styles
     assert "function renderKolScorecard()" in pulse_template
-    assert "pulse.flash_record = nextPulse.flash_record || null;" in pulse_template
+    assert "pulse.flash_record = next.flash_record || null;" in pulse_template
 
 
 def test_pulse_refresh_handles_missing_markers_stale_updates_and_page_failures() -> None:
@@ -154,7 +154,8 @@ def test_pulse_refresh_handles_missing_markers_stale_updates_and_page_failures()
 
     assert "function tickerKey(row)" in pulse_template
     assert "flatMap(row => [tickerKey(row), entryKey(row)])" in pulse_template
-    assert "pendingPulse = null;\n        refreshButton.hidden = true;" in pulse_template
+    assert "RatiLiveList.mount" in pulse_template
+    assert "pendingPulse" not in pulse_template
     assert "function scheduleLoadMoreRetry()" in pulse_template
     assert "catch (_) {\n    scheduleLoadMoreRetry();" in pulse_template
 
@@ -166,6 +167,12 @@ def test_large_responses_are_compressed() -> None:
 def test_ticker_has_public_call_and_flash_actions() -> None:
     template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
     script = (Path(__file__).parents[1] / "web/static/ticker-detail.js").read_text()
+    comments = (
+        Path(__file__).parents[1] / "web/templates/_flash_comments.html"
+    ).read_text()
+    comment_script = (
+        Path(__file__).parents[1] / "web/static/flash-comments.js"
+    ).read_text()
     action = (
         Path(__file__).parents[1] / "web/templates/_flash_report_action.html"
     ).read_text()
@@ -180,19 +187,20 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert template.count('class="ticker-action-slot"') == 2
     assert "action-card" not in template
     assert template.count("<textarea") == 0
-    assert 'id="generateComment"' in template
-    assert "Post with Flash" in template
+    assert "flash_comments('stock', detail.ticker" in template
+    assert 'id="generateComment"' in comments
+    assert "Post with Flash" in comments
     assert "Persistent avatars · public across tickers" not in template
     assert "ability guides a short Flash draft" not in template
     assert "Start the read" not in template
     assert "Flash drafted" not in template
     assert "Flash is drafting" not in script
     assert "comment_generation_enabled" in template
-    assert "window.RatiFlash?.canSpend" in script
-    assert "render_comment_avatar(comment.avatar)" in template
-    assert "'Idempotency-Key': pendingCommentRequestId" in script
-    assert "sessionStorage.setItem(pendingCommentStorageKey" in script
-    assert "item.dataset.commentId === String(result.comment.id)" in script
+    assert "window.RatiFlash?.canSpend" in comment_script
+    assert "render_comment_avatar(comment.avatar)" in comments
+    assert "'Idempotency-Key': pending" in comment_script
+    assert "sessionStorage.setItem(storageKey" in comment_script
+    assert "item.dataset.commentId === String(result.comment.id)" in comment_script
 
 
 def test_ticker_layout_puts_subtle_actions_after_the_analysis() -> None:
@@ -334,7 +342,6 @@ def test_desktop_panel_security_allows_only_supported_detail_pages() -> None:
     for path in (
         "/t/WRAP",
         "/research/report-1",
-        "/s/signal-1",
         "/game/mlb:401816699",
         "/sports/game/mlb:401816699",
     ):
@@ -353,8 +360,7 @@ def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
     ]
     game = (templates_dir / "sports_game.html").read_text()
     live_script = (root / "web/static/sports-live.js").read_text()
-    core_styles = (root / "web/static/sports-core.css").read_text()
-    unified_styles = (root / "web/static/sports-unified.css").read_text()
+    product_styles = (root / "web/static/sports-product.css").read_text()
 
     for template in sports_templates:
         assert '{% extends "mobile_base.html" %}' in template
@@ -367,14 +373,16 @@ def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
     assert 'class="detail-nav sports-detail-nav"' in game
     assert 'class="detail-body sports-detail-body"' in game
     assert 'class="game-detail-grid game-detail-flow"' in game
-    assert "html:not(.embedded-pane) .game-detail-grid" in unified_styles
-    assert ".game-detail-grid.game-detail-flow" in unified_styles
-    assert "max-width: 1120px" in unified_styles
+    assert "html:not(.embedded-pane) .game-detail-grid" in product_styles
+    assert ".game-detail-grid.game-detail-flow" in product_styles
+    assert "max-width: 1120px" in product_styles
     assert not (templates_dir / "sports_base.html").exists()
     assert "location.reload" not in "\n".join([*sports_templates, game, live_script])
-    assert "setInterval(poll, POLL_INTERVAL)" in live_script
-    assert "body.sports-product" in core_styles
-    assert not core_styles.startswith(":root")
+    assert "RatiLiveList.mount" in live_script
+    assert "setInterval(poll" not in live_script
+    assert "body.sports-product" in product_styles
+    assert not product_styles.startswith(":root")
+    assert (templates_dir / "_sports_styles.html").read_text().count("stylesheet") == 1
 
 
 def test_ticker_rows_have_no_reader_attention_state() -> None:
@@ -637,55 +645,12 @@ def test_storage_prune_removes_old_raw_snapshots_but_keeps_public_receipts(
     assert runs == {"old-public-run"}
 
 
-def test_public_calls_get_an_automatic_identity_not_the_account_name(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "caller-signals.db")
-    init_db()
-    captured_at = datetime.now(UTC).isoformat()
-    with connection() as database:
-        database.execute(
-            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
-            ("signal-user", "secret_account", "Secret Account", "active", captured_at),
-        )
-    insert_scan_run("signal-run", captured_at, 1)
-    insert_scored_snapshot(
-        "signal-snapshot", "signal-run", "CALL", 60, 1, captured_at
-    )
-    monkeypatch.setattr(
-        web_main,
-        "require_user",
-        lambda session: {"id": "signal-user", "username": "secret_account"},
-    )
-    request = Request(
-        {
-            "type": "http",
-            "method": "POST",
-            "path": "/api/signals",
-            "headers": [(b"origin", APP_ORIGIN.encode())],
-            "client": ("127.0.0.1", 4200),
-        }
-    )
+def test_human_written_public_signals_are_retired() -> None:
+    with pytest.raises(HTTPException) as error:
+        publish_signal()
 
-    payload = PublishSignal(
-        snapshot_id="signal-snapshot",
-        thesis="A source-bound public call.",
-        horizon="intraday",
-        invalidation="Price loses support.",
-        disclosure="No position.",
-    )
-    response = publish_signal(payload, request, None)
-    signal = get_signal(json.loads(response.body)["url"].removeprefix("/s/"))
-
-    assert signal is not None
-    assert "-" in signal["caller_handle"]
-    assert "username" not in signal
-    assert "display_name" not in signal
-    templates_root = Path(__file__).parents[1] / "web/templates"
-    assert "signal.username" not in (templates_root / "signal.html").read_text()
-    assert "signal.username" not in (templates_root / "home.html").read_text()
-
-    assert get_signal(str(signal["public_id"])) is not None
+    assert error.value.status_code == 410
+    assert error.value.detail == "Public Signals were replaced by Calls."
 
 
 def test_ticker_page_does_not_add_a_guest_research_action(
@@ -763,7 +728,7 @@ def test_pulse_reuses_the_shared_base_payload(
     captured_at = datetime.now(UTC).isoformat()
     insert_scan_run("cached-run", captured_at, 1)
     insert_scored_snapshot("cached-one", "cached-run", "ONE", 42, 1, captured_at)
-    web_main.PULSE_DATA_CACHE.clear()
+    web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
     original = web_main._pulse_data_uncached
     calls = 0
 
@@ -794,8 +759,8 @@ def test_pulse_coalesces_concurrent_first_build(
         1,
         captured_at,
     )
-    web_main.PULSE_DATA_CACHE.clear()
-    web_main.PULSE_DATA_REFRESHING.clear()
+    web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
+    web_main.PUBLIC_SCREEN_DATA_REFRESHING.clear()
     original = web_main._pulse_data_uncached
     started = threading.Event()
     release = threading.Event()
@@ -888,7 +853,7 @@ def test_radar_reuses_the_shared_base_payload(
     insert_scored_snapshot(
         "radar-cache-snapshot", "radar-cache-run", "ONE", 60, 1, captured_at
     )
-    web_main.RADAR_DATA_CACHE.clear()
+    web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
     original = web_main._radar_base_data_uncached
     calls = 0
 
@@ -932,7 +897,7 @@ def test_alpha_reuses_shared_public_call_data(
                 captured_at, captured_at, captured_at,
             ),
         )
-    web_main.ALPHA_DATA_CACHE.clear()
+    web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
     original = web_main._alpha_base_data_uncached
     calls = 0
 
@@ -1115,7 +1080,7 @@ def test_negative_social_counts_do_not_break_pulse_or_radar(
             ),
         )
     )
-    web_main.RADAR_DATA_CACHE.clear()
+    web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
 
     pulse = pulse_data()["rows"][0]
     radar = radar_data()[0]

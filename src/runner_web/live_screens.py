@@ -36,17 +36,6 @@ def public_dynamic_screen_paths(database: Any) -> dict[str, str | None]:
         LIMIT 1
         """,
     )
-    signal = _latest_value(
-        database,
-        """
-        SELECT s.public_id
-        FROM signals s
-        JOIN caller_identities ci ON ci.id=s.caller_identity_id
-        WHERE s.status='public' AND ci.status='active'
-        ORDER BY s.created_at DESC
-        LIMIT 1
-        """,
-    )
     research = _latest_value(
         database,
         """
@@ -73,7 +62,6 @@ def public_dynamic_screen_paths(database: Any) -> dict[str, str | None]:
     return {
         "ticker": f"/t/{quote(ticker, safe='.-')}" if ticker else None,
         "caller": f"/u/{quote(caller, safe='-')}" if caller else None,
-        "signal": f"/s/{quote(signal, safe='')}" if signal else None,
         "research": f"/research/{quote(research, safe='')}" if research else None,
         "sports_game": f"/game/{quote(game, safe=':-')}" if game else None,
     }

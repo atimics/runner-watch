@@ -614,10 +614,10 @@ def test_started_game_closes_picks_before_offering_login(sports_db) -> None:
     )
     assert b"Game started" in response.body
     assert b"Score pending from ESPN" in response.body
-    assert b"Paper picks closed" in response.body
+    assert b"Calls closed" in response.body
     assert b"No new picks can be added" in response.body
-    assert b"Make a paper pick" not in response.body
-    assert b"Log in to make a paper pick" not in response.body
+    assert b"Make a Call" not in response.body
+    assert b"Log in to make a Call" not in response.body
 
 
 def test_pick_api_invalidates_game_and_alpha_caches(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -816,11 +816,11 @@ def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
     assert b"Game thread" not in detail_response.body
     assert b"<textarea" not in detail_response.body
     assert b'/static/sports-comments.js' not in detail_response.body
-    assert b"Make a paper pick" in detail_response.body
+    assert b"Make a Call" in detail_response.body
     assert b"Wins earn up to" in detail_response.body
     assert b'class="game-notebook"' in detail_response.body
     assert detail_response.body.index(b"SEASON-RECORD BASELINE") < detail_response.body.index(
-        b"Make a paper pick"
+        b"Make a Call"
     ) < detail_response.body.index(
         b"Flash report"
     ) < detail_response.body.index(b"Game details")
@@ -830,8 +830,8 @@ def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
         request(host="localhost", path=f"/sports/game/{event['id']}"),
         None,
     )
-    expected_return = f'href="/login?next=/sports/game/{event["id"]}"'.encode()
-    assert expected_return in path_response.body
+    assert path_response.status_code == 307
+    assert path_response.headers["location"] == f"{web_main.SPORTS_ORIGIN}/game/{event['id']}"
 
 
 def test_game_page_handles_winner_without_market_gap(sports_db) -> None:
@@ -1576,7 +1576,7 @@ def test_sports_host_uses_the_sports_shell_for_alpha(sports_db) -> None:
     assert b"Four prediction slots" not in alpha_response.body
     assert b"Rankings stay hidden" in alpha_response.body
     assert b"3 of 20 public Calls recorded" in alpha_response.body
-    assert b"Call activity" in alpha_response.body
+    assert b"Activity is building" in alpha_response.body
     assert b'<span class="alpha-rank">1</span>' not in alpha_response.body
     assert b"open Calls" in alpha_response.body
     assert b'href="/alpha"' in alpha_response.body
@@ -1608,8 +1608,8 @@ def test_game_pages_reuse_the_cached_model_record(sports_db, monkeypatch) -> Non
 
 
 def test_sports_alpha_page_reuses_warmed_result(sports_db, monkeypatch) -> None:
-    web_main.SPORTS_ALPHA_DATA_CACHE.clear()
-    web_main.SPORTS_ALPHA_DATA_REFRESHING.clear()
+    web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
+    web_main.PUBLIC_SCREEN_DATA_REFRESHING.clear()
     monkeypatch.setattr(web_main, "shared_cache_get", lambda _name: None)
     monkeypatch.setattr(web_main, "shared_cache_set", lambda *_args: None)
     original = web_main.sports_alpha_board

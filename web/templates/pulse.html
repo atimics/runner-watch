@@ -55,9 +55,7 @@ const chartsUrl = '/api/pulse/charts';
 let loadingMore = false;
 let loadMoreRetryTimer = null;
 let moreVisible = false;
-let polling = false;
 let pollCount = 0;
-let pendingPulse = null;
 const tickerSearch = document.getElementById('pulseSearch');
 
 tickerSearch.addEventListener('submit', event => {
@@ -163,58 +161,46 @@ new IntersectionObserver(entries => {
   if (moreVisible) loadMore();
 }, {rootMargin: '240px'}).observe(more);
 
-refreshButton.addEventListener('click', () => {
-  if (!pendingPulse) return;
-  pulse = {
-    ...pendingPulse,
-    rows: mergeUniqueTickers(pendingPulse.rows || [], pulse.rows || []),
-    next_offset: Math.max(pendingPulse.next_offset || 0, pulse.next_offset || 0),
-    has_more: pendingPulse.has_more || pulse.has_more,
-  };
-  pendingPulse = null;
-  refreshButton.hidden = true;
-  render();
-  TickerRow.loadCharts(chartsUrl);
-});
-
-async function pollForUpdates() {
-  if (polling || document.hidden) return;
-  polling = true;
-  try {
-    const response = await fetch('/api/pulse?offset=0&limit=20');
-    if (response.ok) {
-      const nextPulse = await response.json();
-      const currentEntries = new Set(
-        (pulse.rows || []).flatMap(row => [tickerKey(row), entryKey(row)]).filter(Boolean),
-      );
-      const newCount = (nextPulse.rows || []).filter(row => !currentEntries.has(entryKey(row))).length;
-      pulse.flash_record = nextPulse.flash_record || null;
-      renderKolScorecard();
-      if (newCount) {
-        pendingPulse = nextPulse;
-        refreshButton.textContent = newCount === 1 ? '1 new ticker' : `${newCount} new tickers`;
-        refreshButton.hidden = false;
-      } else {
-        pendingPulse = null;
-        refreshButton.hidden = true;
-      }
-      pollCount += 1;
-      if (pollCount % 6 === 0) TickerRow.loadCharts(chartsUrl);
-    }
-  } catch (_) {
-    // Keep the current feed when a background refresh fails.
-  } finally {
-    polling = false;
-  }
+function newPulseCount(current, next) {
+  const currentEntries = new Set(
+    (current.rows || []).flatMap(row => [tickerKey(row), entryKey(row)]).filter(Boolean),
+  );
+  return (next.rows || []).filter(row => !currentEntries.has(entryKey(row))).length;
 }
 
-render();
+RatiLiveList.mount({
+  refreshButton,
+  getCurrent: () => pulse,
+  setCurrent: value => { pulse = value; },
+  fetchNext: async () => {
+    const response = await fetch('/api/pulse?offset=0&limit=20');
+    if (!response.ok) throw new Error('Pulse refresh failed');
+    return response.json();
+  },
+  changed: (current, next) => newPulseCount(current, next) > 0,
+  changeCount: newPulseCount,
+  label: count => count === 1 ? '1 new ticker' : `${count} new tickers`,
+  apply: (current, next) => ({
+    ...next,
+    rows: mergeUniqueTickers(next.rows || [], current.rows || []),
+    next_offset: Math.max(next.next_offset || 0, current.next_offset || 0),
+    has_more: next.has_more || current.has_more,
+  }),
+  render,
+  afterApply: () => TickerRow.loadCharts(chartsUrl),
+  onPoll: next => {
+    pulse.flash_record = next.flash_record || null;
+    pulse.updated_at = next.updated_at || pulse.updated_at;
+    renderKolScorecard();
+    renderPulseContext();
+    pollCount += 1;
+    if (pollCount % 6 === 0) TickerRow.loadCharts(chartsUrl);
+  },
+  onNoChange: (_next, current) => current,
+});
 TickerRow.loadCharts(chartsUrl);
-setInterval(pollForUpdates, 30000);
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) return;
-  if (moreVisible) loadMore();
-  pollForUpdates();
+  if (!document.hidden && moreVisible) loadMore();
 });
 </script>
 {% endblock %}

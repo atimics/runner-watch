@@ -154,7 +154,7 @@ def test_sports_feed_cache_is_shared_across_view_and_limit(monkeypatch) -> None:
     built: list[tuple[str, str, int]] = []
     cache: dict[tuple[str, str], dict[str, Any]] = {}
 
-    def screen_data(scope: str, identity: str, builder):
+    def screen_data(scope: str, identity: str, builder, **_kwargs):
         key = (scope, identity)
         if key not in cache:
             cache[key] = builder()

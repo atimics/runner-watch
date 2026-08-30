@@ -555,7 +555,7 @@
     setTickerAction(button, 'Make Call', 'Stamping quote…');
     if (callStatus) callStatus.textContent = '';
     try {
-      const response = await fetch(`/api/calls/${encodeURIComponent(ticker)}`, {
+      const response = await fetch(`/api/calls/stock/${encodeURIComponent(ticker)}`, {
         method: 'POST',
       });
       const result = await response.json().catch(() => ({}));
@@ -574,7 +574,7 @@
     setTickerAction(button, 'Close Call', 'Stamping exit…');
     try {
       const response = await fetch(
-        `/api/calls/${encodeURIComponent(button.dataset.callId)}/close`,
+        `/api/calls/stock/${encodeURIComponent(button.dataset.callId)}/close`,
         { method: 'POST' }
       );
       const result = await response.json().catch(() => ({}));

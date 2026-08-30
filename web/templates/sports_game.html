@@ -64,18 +64,18 @@
     <section class="paper-pick">
       <span>PUBLIC RECEIPT</span>
       {% if game_state.pick_state == 'closed' %}
-        <h2>Paper picks closed</h2>
-        <p>The pregame window has closed. Existing paper picks and their frozen lines remain public.</p>
+        <h2>Calls closed</h2>
+        <p>The pregame window has closed. Existing Calls and their frozen lines remain public.</p>
         <strong>No new picks can be added.</strong>
       {% elif game_state.pick_state == 'unavailable' %}
-        <h2>Paper picks unavailable</h2>
-        <p>A fresh complete moneyline is required before a paper pick can be recorded.</p>
+        <h2>Calls unavailable</h2>
+        <p>A fresh complete moneyline is required before a Call can be recorded.</p>
         <strong>Waiting for a verified line.</strong>
       {% else %}
-        <h2>Make a paper pick</h2>
+        <h2>Make a Call</h2>
         <p>Freeze the current {{ quote.source_label }} line. Wins earn up to {{ sports_call_reward_cap }} Flash. No real bet.</p>
         {% if not user %}
-        <a href="/login">Log in to make a paper pick</a>
+        <a href="/login">Log in to make a Call</a>
         {% else %}
         <div class="pick-buttons">
           <button type="button" data-pick="away">{{ event.away_abbreviation }} {% if quote.away_odds is not none %}{{ '%+d'|format(quote.away_odds) }}{% endif %}</button>
@@ -331,7 +331,7 @@
   {% endif %}
 
   <details class="game-disclosure">
-    <summary><span><b>PUBLIC CALLS</b><strong>Paper picks</strong></span><small>{{ event.picks|length }} recorded</small><i aria-hidden="true">+</i></summary>
+    <summary><span><b>PUBLIC CALLS</b><strong>Calls</strong></span><small>{{ event.picks|length }} recorded</small><i aria-hidden="true">+</i></summary>
     <div class="game-disclosure-body">
   <section class="public-picks">
     {% for pick in event.picks %}
@@ -370,9 +370,9 @@
   });
   document.querySelectorAll('[data-pick]').forEach(button=>button.addEventListener('click',async()=>{
     const status=document.getElementById('pickStatus');button.disabled=true;status.textContent='Freezing the receipt…';
-    const response=await fetch('/api/picks/{{ event.id }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({selection:button.dataset.pick})});
+    const response=await fetch('/api/calls/game/{{ event.id }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({selection:button.dataset.pick})});
     const payload=await response.json();
-    if(response.ok){status.textContent='Paper pick recorded.';document.querySelectorAll('[data-pick]').forEach(item=>{item.disabled=true;});}
+    if(response.ok){status.textContent='Call recorded.';document.querySelectorAll('[data-pick]').forEach(item=>{item.disabled=true;});}
     else{button.disabled=false;status.textContent=payload.detail||'Could not record the pick.';}
   }));
 </script>
