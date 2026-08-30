@@ -296,6 +296,8 @@ def _rendered_game_detail() -> str:
             },
             "sports_path_prefix": "",
             "sports_call_reward_cap": 10,
+            "comments": [],
+            "comment_count": 0,
             "active_tab": "pulse",
             "nav_product": "sports",
             "user": None,
@@ -434,7 +436,7 @@ def test_sports_detail_panel_stays_dark_while_a_game_loads(
     assert errors == []
 
 
-def test_game_detail_uses_desktop_width_and_closes_started_actions(page: Page) -> None:
+def test_game_detail_prioritizes_thread_and_closes_started_actions(page: Page) -> None:
     html = _rendered_game_detail()
     page.set_viewport_size({"width": 1280, "height": 800})
     page.route(
@@ -446,18 +448,20 @@ def test_game_detail_uses_desktop_width_and_closes_started_actions(page: Page) -
     app = page.locator(".sports-game-app")
     grid = page.locator(".game-detail-grid")
     assert app.evaluate("node => Math.round(node.getBoundingClientRect().width)") == 1120
-    assert grid.evaluate("node => getComputedStyle(node).display") == "grid"
-    assert page.locator(".game-detail-primary").bounding_box()["x"] < (
-        page.locator(".game-detail-evidence").bounding_box()["x"]
-    )
+    assert grid.evaluate("node => getComputedStyle(node).display") == "block"
+    assert grid.evaluate("node => Math.round(node.getBoundingClientRect().width)") == 860
     assert page.locator(".probability-row").count() == 2
     assert page.locator(".decision-movement .edge-spark").bounding_box()["width"] > 200
+    assert page.get_by_role("heading", name="Game thread").is_visible()
     assert page.get_by_role("heading", name="Paper picks closed").is_visible()
     assert page.get_by_text("Score pending from ESPN").is_visible()
     assert page.get_by_text("Log in to make a paper pick").count() == 0
     assert page.locator(".game-disclosure > summary b").first.evaluate(
         "node => getComputedStyle(node).fontSize"
     ) == "9px"
+    assert page.locator("#discussion").bounding_box()["y"] < page.locator(
+        ".game-notebook"
+    ).bounding_box()["y"]
 
     page.set_viewport_size({"width": 390, "height": 800})
     assert grid.evaluate("node => getComputedStyle(node).display") == "block"
@@ -623,3 +627,81 @@ def test_sports_alpha_opens_its_leader_in_the_shared_detail_pane(page: Page, mon
         "class"
     ).endswith("desktop-panel-selected")
     assert errors == []
+
+
+def test_sports_game_thread_posts_and_removes_a_comment(page: Page) -> None:
+    posted: list[dict[str, str]] = []
+
+    def create_comment(route: Route) -> None:
+        posted.append(route.request.post_data_json)
+        route.fulfill(
+            status=201,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "comment": {
+                        "id": "comment-1",
+                        "body": posted[-1]["body"],
+                        "created_at": "2026-08-30T18:00:00+00:00",
+                        "alias": "Signal Moth",
+                        "is_owner": True,
+                        "avatar": {
+                            "name": "Signal Moth",
+                            "ability": "Form Reader",
+                            "ability_description": "Checks recent form.",
+                            "tone": 1,
+                            "frame": 2,
+                            "eyes": 3,
+                            "signal": 4,
+                        },
+                    },
+                    "count": 1,
+                }
+            ),
+        )
+
+    page.route("**/api/sports/games/**/comments", create_comment)
+    page.route(
+        "**/api/sports/comments/comment-1",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"deleted": True, "id": "comment-1"}),
+        ),
+    )
+    script = (ROOT / "web/static/sports-comments.js").read_text()
+    html = f"""
+    <!doctype html><html><body>
+      <section data-sports-comments data-event-id="mlb:game-1">
+        <b id="discussionCount">0</b>
+        <form id="sportsCommentForm"><textarea id="sportsCommentBody"></textarea>
+          <small id="sportsCommentStatus"></small><button type="submit">Post comment</button>
+        </form>
+        <ol id="commentList"></ol><p id="commentEmpty">No comments.</p>
+      </section>
+      <script>{script}</script>
+    </body></html>
+    """
+    page.route(
+        "http://comments.test/",
+        lambda route: route.fulfill(status=200, content_type="text/html", body=html),
+    )
+    page.goto("http://comments.test/", wait_until="domcontentloaded")
+
+    page.locator("#sportsCommentBody").fill("Bullpen depth decides this one.")
+    page.get_by_role("button", name="Post comment").click()
+
+    page.locator("#commentList li").wait_for()
+    assert posted == [{"body": "Bullpen depth decides this one."}]
+    assert page.locator("#discussionCount").text_content() == "1"
+    assert page.locator("#commentList li").text_content().endswith(
+        "Bullpen depth decides this one."
+    )
+    assert page.locator("#commentEmpty").is_hidden()
+
+    page.get_by_role("button", name="delete").click()
+
+    page.locator("#commentList li").wait_for(state="detached")
+    assert page.locator("#commentList li").count() == 0
+    assert page.locator("#discussionCount").text_content() == "0"
+    assert page.locator("#commentEmpty").is_visible()

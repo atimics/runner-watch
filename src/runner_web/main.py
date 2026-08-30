@@ -1182,6 +1182,10 @@ class SportsPickPayload(BaseModel):
     selection: Literal["home", "away"]
 
 
+class SportsCommentPayload(BaseModel):
+    body: str = Field(min_length=1, max_length=500)
+
+
 def _public_flash_record_data() -> dict[str, Any]:
     def build() -> dict[str, Any]:
         with connection() as database:
@@ -5469,13 +5473,22 @@ def sports_game_page(
     public_data = _public_screen_data(
         "sports-game",
         event_id,
-        lambda: {"event": sports_event(event_id)},
+        lambda: {
+            "event": sports_event(event_id),
+            "comments": comments_for_sports_event(event_id),
+            "comment_count": sports_comment_count(event_id),
+        },
     )
     event = public_data.get("event")
     if not event:
         raise HTTPException(404, "Game not found")
     user = current_user(runner_session)
     user_id = str(user["id"]) if user else None
+    comments = (
+        comments_for_sports_event(event_id, current_user_id=user_id)
+        if user_id
+        else list(public_data["comments"])
+    )
     latest_report = daily_report_for_sports_game(event_id, user_id)
     sports_path_prefix = "" if product_for_request(request) == "sports" else "/sports"
     return templates.TemplateResponse(
@@ -5485,6 +5498,12 @@ def sports_game_page(
             request,
             runner_session,
             event=event,
+            comments=comments,
+            comment_count=(
+                sports_comment_count(event_id)
+                if user_id
+                else int(public_data["comment_count"])
+            ),
             latest_commission=latest_report,
             flash_report=_flash_report_action(
                 user_id=user_id,
@@ -5526,6 +5545,63 @@ async def commission_sports_research_api(
     payload = _commission_api_payload(report, str(user["id"]))
     payload["created"] = created
     return JSONResponse(payload, status_code=202 if payload["status"] == "running" else 200)
+
+
+@app.post("/api/sports/games/{event_id}/comments")
+def create_sports_comment_api(
+    event_id: str,
+    payload: SportsCommentPayload,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    user_id = str(user["id"])
+    enforce_rate(request, "sports-comment", limit=20, seconds=3600, subject=user_id)
+    if not sports_event(event_id):
+        raise HTTPException(404, "Game not found")
+    body = " ".join(payload.body.split())
+    if not body:
+        raise HTTPException(422, "Write a comment first.")
+    comment_id = str(uuid.uuid4())
+    with connection() as db:
+        ensure_comment_avatar(db, user_id)
+        db.execute(
+            """
+            INSERT INTO sports_comments(
+                id,event_id,user_id,body,status,created_at,source
+            ) VALUES(?,?,?,?,?,?,?)
+            """,
+            (comment_id, event_id, user_id, body, "public", iso(), "user"),
+        )
+    _invalidate_public_screen_data("sports-game", event_id)
+    return JSONResponse(
+        _sports_comment_response_payload(comment_id, event_id, user_id),
+        status_code=201,
+    )
+
+
+@app.delete("/api/sports/comments/{comment_id}")
+def delete_sports_comment_api(
+    comment_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    user_id = str(user["id"])
+    enforce_rate(request, "delete-sports-comment", limit=30, seconds=3600, subject=user_id)
+    with connection() as db:
+        row = db.execute(
+            "SELECT event_id FROM sports_comments WHERE id=? AND user_id=?",
+            (comment_id, user_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "Comment not found")
+        event_id = str(row["event_id"])
+        db.execute("DELETE FROM sports_comments WHERE id=?", (comment_id,))
+    _invalidate_public_screen_data("sports-game", event_id)
+    return JSONResponse({"deleted": True, "id": comment_id})
 
 
 @app.post("/api/picks/{event_id}")
@@ -6914,6 +6990,79 @@ def comment_count_for_ticker(ticker: str) -> int:
             (ticker,),
         ).fetchone()[0]
     return int(count)
+
+
+def comments_for_sports_event(
+    event_id: str,
+    *,
+    limit: int = 50,
+    current_user_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return the newest public comments for one game thread."""
+
+    bounded_limit = min(50, max(1, limit))
+    with connection() as db:
+        missing_avatars = db.execute(
+            """
+            SELECT DISTINCT c.user_id
+            FROM sports_comments c
+            LEFT JOIN comment_avatars a ON a.user_id=c.user_id
+            WHERE c.event_id=? AND c.status='public' AND a.user_id IS NULL
+            LIMIT 50
+            """,
+            (event_id,),
+        ).fetchall()
+        for row in missing_avatars:
+            ensure_comment_avatar(db, str(row["user_id"]))
+        rows = db.execute(
+            """
+            SELECT c.id,c.user_id,c.body,c.created_at,c.source,c.generation_model,
+                   a.name AS avatar_name,a.seed AS avatar_seed,
+                   a.ability_id AS avatar_ability_id,a.level AS avatar_level
+            FROM sports_comments c
+            JOIN comment_avatars a ON a.user_id=c.user_id
+            WHERE c.event_id=? AND c.status='public'
+            ORDER BY c.created_at DESC,c.id DESC
+            LIMIT ?
+            """,
+            (event_id, bounded_limit),
+        ).fetchall()
+    return [_public_comment(row, current_user_id) for row in rows]
+
+
+def sports_comment_count(event_id: str) -> int:
+    with connection() as db:
+        count = db.execute(
+            "SELECT COUNT(*) FROM sports_comments WHERE event_id=? AND status='public'",
+            (event_id,),
+        ).fetchone()[0]
+    return int(count)
+
+
+def _sports_comment_response_payload(
+    comment_id: str,
+    event_id: str,
+    user_id: str,
+) -> dict[str, Any]:
+    with connection() as db:
+        row = db.execute(
+            """
+            SELECT c.id,c.user_id,c.body,c.created_at,c.source,c.generation_model,
+                   a.name AS avatar_name,a.seed AS avatar_seed,
+                   a.ability_id AS avatar_ability_id,a.level AS avatar_level
+            FROM sports_comments c
+            JOIN comment_avatars a ON a.user_id=c.user_id
+            WHERE c.id=?
+            """,
+            (comment_id,),
+        ).fetchone()
+        count = db.execute(
+            "SELECT COUNT(*) FROM sports_comments WHERE event_id=? AND status='public'",
+            (event_id,),
+        ).fetchone()[0]
+    if row is None:
+        raise HTTPException(410, "This comment was already removed.")
+    return {"comment": _public_comment(row, user_id), "count": int(count)}
 
 
 @app.get("/api/cases")

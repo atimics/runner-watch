@@ -181,6 +181,9 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             "SELECT name FROM sqlite_master "
             "WHERE type='table' AND name='comment_generation_requests'"
         ).fetchone()
+        sports_comment_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='sports_comments'"
+        ).fetchone()
         flash_wallet_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='flash_wallets'"
         ).fetchone()
@@ -241,6 +244,10 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
                 "PRAGMA table_info(comment_generation_requests)"
             ).fetchall()
         }
+        sports_comment_columns = {
+            row["name"]
+            for row in database.execute("PRAGMA table_info(sports_comments)").fetchall()
+        }
         indexes = {
             row["name"]
             for row in database.execute(
@@ -291,6 +298,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert community_call_table is not None
     assert flash_request_table is not None
     assert comment_generation_request_table is not None
+    assert sports_comment_table is not None
     assert flash_wallet_table is not None
     assert flash_transaction_table is not None
     assert pulse_entries_table is not None
@@ -343,6 +351,16 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "created_at",
         "updated_at",
     } <= comment_generation_request_columns
+    assert {
+        "id",
+        "event_id",
+        "user_id",
+        "body",
+        "status",
+        "created_at",
+        "source",
+        "generation_model",
+    } <= sports_comment_columns
     assert "actor_snapshot_json" in call_columns
     assert {
         "opening_range_position",
@@ -414,6 +432,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "public_aliases_user",
         "comment_avatars_ability",
         "comment_generation_requests_status_time",
+        "sports_comments_event_time",
         "caller_identities_owner",
         "caller_identities_one_active_per_user",
         "caller_identity_one_free_claim",

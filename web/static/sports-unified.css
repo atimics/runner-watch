@@ -391,6 +391,13 @@ html.embedded-pane .sports-detail-body {
     overflow-x: auto;
   }
 
+  html:not(.embedded-pane) .game-detail-grid.game-detail-flow {
+    display: block;
+    max-width: 860px;
+    margin-right: auto;
+    margin-left: auto;
+  }
+
   html.embedded-pane .sports-game-app {
     max-width: none;
   }
