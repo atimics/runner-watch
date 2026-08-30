@@ -51,9 +51,7 @@ def _peer_exchange(at: datetime, *, sequence: int = 0) -> ClaimExchangeRequest:
         software_version="1.0.0",
         capabilities=(VersionedDeclaration(name="claims.publish", version="1.0.0"),),
         endpoints=(NodeEndpoint(transport="https", address="https://peer.example/swarm/v1"),),
-        schema_versions=(
-            VersionedDeclaration(name="rati.signed_claim", version="1.0.0"),
-        ),
+        schema_versions=(VersionedDeclaration(name="rati.signed_claim", version="1.0.0"),),
         supported_topics=(topic,),
     )
     observed_at = at + timedelta(seconds=sequence)
@@ -66,9 +64,7 @@ def _peer_exchange(at: datetime, *, sequence: int = 0) -> ClaimExchangeRequest:
         observed_at=observed_at,
         scanner_version="market_risk_v3",
         schema_version="runner-v1",
-        source_versions=(
-            SourceVersionV1(family="market", source="example.bars", version="1"),
-        ),
+        source_versions=(SourceVersionV1(family="market", source="example.bars", version="1"),),
         setup_score_milli=71_000 + sequence,
         rug_score_milli=20_000,
         rug_level="LOW",
@@ -126,9 +122,7 @@ def test_live_transport_enforces_local_peer_bans(tmp_path: Path) -> None:
 def test_manifest_can_renew_without_changing_node_identity(tmp_path: Path) -> None:
     runtime = AttachedSwarmRuntime.open(_config(tmp_path))
     original = runtime.transport.signed_manifest
-    replacement = runtime.renew_manifest(
-        at=original.manifest.issued_at + timedelta(seconds=1)
-    )
+    replacement = runtime.renew_manifest(at=original.manifest.issued_at + timedelta(seconds=1))
 
     assert replacement.manifest.node_id == original.manifest.node_id
     assert replacement.content_id != original.content_id

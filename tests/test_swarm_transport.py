@@ -68,9 +68,7 @@ def _manifest(
         software_version="0.1.0",
         capabilities=(VersionedDeclaration(name=capability, version="1.0.0"),),
         endpoints=(NodeEndpoint(transport="https", address="https://scanner.example/swarm"),),
-        schema_versions=(
-            VersionedDeclaration(name="rati.signed_claim", version=schema_version),
-        ),
+        schema_versions=(VersionedDeclaration(name="rati.signed_claim", version=schema_version),),
         supported_topics=topics,
     )
     return sign_node_manifest(manifest, key)
@@ -132,9 +130,7 @@ def _router(local_manifest, **router_kwargs):
 
 def _endpoint(router, path: str, method: str):
     return next(
-        route.endpoint
-        for route in router.routes
-        if route.path == path and method in route.methods
+        route.endpoint for route in router.routes if route.path == path and method in route.methods
     )
 
 
@@ -185,9 +181,7 @@ def test_topic_and_schema_negotiation_uses_verified_manifest_intersection(swarm_
     body = json.loads(response.body)
     assert body["accepted_topics"] == [TOPIC]
     assert body["rejected_topics"] == [OTHER_TOPIC]
-    assert body["compatible_claim_schemas"] == [
-        {"name": "rati.signed_claim", "version": "1.2.0"}
-    ]
+    assert body["compatible_claim_schemas"] == [{"name": "rati.signed_claim", "version": "1.2.0"}]
     assert body["require_local_risk_gate"] is True
 
 

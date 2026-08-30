@@ -44,8 +44,6 @@ def test_attached_runtime_accepts_bounded_https_bootstraps() -> None:
         ("SWARM_ALLOW_PRIVATE_BOOTSTRAP", "maybe", "true or false"),
     ],
 )
-def test_runtime_rejects_unsafe_or_invalid_environment(
-    name: str, value: str, message: str
-) -> None:
+def test_runtime_rejects_unsafe_or_invalid_environment(name: str, value: str, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         SwarmRuntimeConfig.from_env({name: value})

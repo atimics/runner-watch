@@ -109,12 +109,10 @@ class PeerNegotiationResponse(SwarmModel):
     peer_node_id: Annotated[str, Field(pattern=NODE_ID_PATTERN.pattern)]
     accepted_topics: Annotated[tuple[str, ...], Field(max_length=64)]
     rejected_topics: Annotated[tuple[str, ...], Field(max_length=64)]
-    compatible_claim_schemas: Annotated[
-        tuple[VersionedDeclaration, ...], Field(max_length=32)
-    ]
-    max_claim_exchange_bytes: Annotated[
-        int, Field(ge=1, le=MAX_CLAIM_EXCHANGE_BYTES)
-    ] = MAX_CLAIM_EXCHANGE_BYTES
+    compatible_claim_schemas: Annotated[tuple[VersionedDeclaration, ...], Field(max_length=32)]
+    max_claim_exchange_bytes: Annotated[int, Field(ge=1, le=MAX_CLAIM_EXCHANGE_BYTES)] = (
+        MAX_CLAIM_EXCHANGE_BYTES
+    )
     require_local_risk_gate: Literal[True] = True
 
     @field_validator("accepted_topics", "rejected_topics")
@@ -213,10 +211,9 @@ def _compatible_declarations(
         if name is not None and local_item.name != name:
             continue
         for peer_item in peer:
-            if (
-                peer_item.name == local_item.name
-                and _declaration_major(peer_item.version) == _declaration_major(local_item.version)
-            ):
+            if peer_item.name == local_item.name and _declaration_major(
+                peer_item.version
+            ) == _declaration_major(local_item.version):
                 # Report the local implementation. A shared major version means the
                 # peers can negotiate minor details without pretending they are equal.
                 compatible[(local_item.name, local_item.version)] = local_item
@@ -259,10 +256,7 @@ class SwarmTransport:
 
         current = self.local_manifest()
         replacement = verify_signed_node_manifest(signed_manifest, at=self._clock())
-        if (
-            replacement.node_id != current.node_id
-            or replacement.public_key != current.public_key
-        ):
+        if replacement.node_id != current.node_id or replacement.public_key != current.public_key:
             raise ValueError("A manifest renewal cannot change the local node identity")
         if not _has_capability(replacement, "claims.receive"):
             raise ValueError("The replacement manifest must advertise claims.receive version 1")

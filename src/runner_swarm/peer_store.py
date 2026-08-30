@@ -304,9 +304,7 @@ class PeerClaimStore:
                     database.commit()
                     return IngestResult(IngestOutcome.DUPLICATE, signed_claim.claim_id, state)
 
-                if not self._take_rate_slot_locked(
-                    database, issuer, normalized_topic, checked_at
-                ):
+                if not self._take_rate_slot_locked(database, issuer, normalized_topic, checked_at):
                     self._audit_locked(
                         database,
                         at=checked_at,
@@ -421,9 +419,7 @@ class PeerClaimStore:
             raise PeerStoreError(f"Peer claim read failed: {error}") from error
         return tuple(self._stored_claim(row) for row in rows)
 
-    def get_claim(
-        self, claim_id: str, *, at: datetime | None = None
-    ) -> StoredPeerClaim | None:
+    def get_claim(self, claim_id: str, *, at: datetime | None = None) -> StoredPeerClaim | None:
         claim_id = _claim_id(claim_id)
         checked_at = _utc(at)
         try:
@@ -566,9 +562,11 @@ class PeerClaimStore:
             raise ValueError("audit limit is outside the configured bound")
         try:
             with self._lock:
-                rows = self._connect().execute(
-                    "SELECT * FROM peer_audit_events ORDER BY id DESC LIMIT ?", (limit,)
-                ).fetchall()
+                rows = (
+                    self._connect()
+                    .execute("SELECT * FROM peer_audit_events ORDER BY id DESC LIMIT ?", (limit,))
+                    .fetchall()
+                )
         except sqlite3.Error as error:
             raise PeerStoreError(f"Peer audit read failed: {error}") from error
         return tuple(
@@ -643,9 +641,7 @@ class PeerClaimStore:
         return True
 
     @staticmethod
-    def _is_banned_locked(
-        database: sqlite3.Connection, issuer: str, checked_at: datetime
-    ) -> bool:
+    def _is_banned_locked(database: sqlite3.Connection, issuer: str, checked_at: datetime) -> bool:
         row = database.execute(
             "SELECT 1 FROM peer_bans WHERE issuer_node_id = ? "
             "AND (expires_at IS NULL OR expires_at > ?)",
@@ -653,9 +649,7 @@ class PeerClaimStore:
         ).fetchone()
         return row is not None
 
-    def _refresh_states_locked(
-        self, database: sqlite3.Connection, checked_at: datetime
-    ) -> None:
+    def _refresh_states_locked(self, database: sqlite3.Connection, checked_at: datetime) -> None:
         rows = database.execute(
             "SELECT claim_id, issuer_node_id, kind, instrument, issued_at, expires_at, "
             "relation_claim_id, state FROM peer_claims"
@@ -666,11 +660,7 @@ class PeerClaimStore:
         }
         now_text = _timestamp(checked_at)
 
-        usable_relations = [
-            row
-            for row in rows
-            if str(row["claim_id"]) not in revoked
-        ]
+        usable_relations = [row for row in rows if str(row["claim_id"]) not in revoked]
         retractions: dict[str, set[str]] = {}
         superseders: dict[str, list[sqlite3.Row]] = {}
         for row in usable_relations:
@@ -709,9 +699,7 @@ class PeerClaimStore:
                     (state, now_text, claim_id),
                 )
 
-    def _prune_locked(
-        self, database: sqlite3.Connection, checked_at: datetime
-    ) -> PruneResult:
+    def _prune_locked(self, database: sqlite3.Connection, checked_at: datetime) -> PruneResult:
         self._refresh_states_locked(database, checked_at)
         cutoff = _timestamp(checked_at - self.limits.inactive_retention)
         claims = database.execute(
@@ -736,9 +724,7 @@ class PeerClaimStore:
             "DELETE FROM peer_rate_windows WHERE window_start < ?",
             (_timestamp(current_window),),
         ).rowcount
-        window_count = int(
-            database.execute("SELECT COUNT(*) FROM peer_rate_windows").fetchone()[0]
-        )
+        window_count = int(database.execute("SELECT COUNT(*) FROM peer_rate_windows").fetchone()[0])
         window_overflow = max(0, window_count - self.limits.max_rate_windows)
         if window_overflow:
             rate_windows += database.execute(

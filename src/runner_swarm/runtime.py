@@ -74,9 +74,7 @@ def build_signed_runtime_manifest(
             VersionedDeclaration(name="claims.receive", version="1.0.0"),
             VersionedDeclaration(name="discovery.manifest", version="1.0.0"),
         ),
-        endpoints=(
-            NodeEndpoint(transport="https", address=f"{config.public_url}/swarm/v1"),
-        ),
+        endpoints=(NodeEndpoint(transport="https", address=f"{config.public_url}/swarm/v1"),),
         schema_versions=(
             VersionedDeclaration(name="rati.alpha_pack", version="1.0.0"),
             VersionedDeclaration(name="rati.signed_claim", version="1.0.0"),

@@ -136,9 +136,7 @@ class SwarmRuntimeConfig:
         return cls(
             mode=mode,
             key_path=Path(source.get("SWARM_KEY_PATH", "data/swarm/node.key")),
-            peer_store_path=Path(
-                source.get("SWARM_PEER_STORE_PATH", "data/swarm/peer-claims.db")
-            ),
+            peer_store_path=Path(source.get("SWARM_PEER_STORE_PATH", "data/swarm/peer-claims.db")),
             public_url=public_url,
             bootstrap_urls=_bootstrap_urls(source),
             topics=_topics(source),

@@ -46,9 +46,7 @@ def signed_observation(
         observed_at=issued_at,
         scanner_version="scanner-v1",
         schema_version="runner-v1",
-        source_versions=(
-            SourceVersionV1(family="market", source="example.bars", version="v1"),
-        ),
+        source_versions=(SourceVersionV1(family="market", source="example.bars", version="v1"),),
         setup_score_milli=72_000,
         trade_state=TradeState.WATCH,
         state_reason="Peer observation for store tests.",
@@ -102,8 +100,7 @@ def test_store_keeps_peer_claims_in_a_dedicated_database(tmp_path: Path) -> None
 
     with sqlite3.connect(path) as database:
         tables = {
-            row[0]
-            for row in database.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            row[0] for row in database.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
     assert "peer_claims" in tables
     assert "evidence_claims" not in tables
@@ -210,9 +207,7 @@ def test_rate_limit_is_per_verified_peer_and_topic(tmp_path: Path) -> None:
             store.ingest(claim, topic="alpha", received_at=NOW + timedelta(seconds=index)).outcome
             for index, claim in enumerate(claims)
         ]
-        other_topic = store.ingest(
-            claims[2], topic="risk", received_at=NOW + timedelta(seconds=2)
-        )
+        other_topic = store.ingest(claims[2], topic="risk", received_at=NOW + timedelta(seconds=2))
 
     assert outcomes == [
         IngestOutcome.ACCEPTED,
