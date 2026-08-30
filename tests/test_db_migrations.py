@@ -230,6 +230,15 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             "SELECT name FROM sqlite_master WHERE type='table' "
             "AND name='sports_golf_leaderboard'"
         ).fetchone()
+        llm_route_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='user_llm_routes'"
+        ).fetchone()
+        edge_connector_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='llm_edge_connectors'"
+        ).fetchone()
+        edge_job_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='llm_edge_jobs'"
+        ).fetchone()
         flash = database.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
         commission_columns = {
             row["name"]
@@ -319,6 +328,9 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert sports_ai_forecast_table is not None
     assert sports_golf_event_table is not None
     assert sports_golf_leaderboard_table is not None
+    assert llm_route_table is not None
+    assert edge_connector_table is not None
+    assert edge_job_table is not None
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_provider"] == "openrouter"
@@ -338,6 +350,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "citations_json",
     } <= commission_columns
     assert {"visibility", "published_at", "report_day", "exclusive_until"} <= commission_columns
+    assert {"inference_scope", "inference_route_json", "customer_inference"} <= commission_columns
     assert {"source", "generation_model"} <= comment_columns
     assert {
         "id",
@@ -439,7 +452,8 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "caller_identity_claims_owner",
         "community_calls_caller_time",
         "signals_caller_identity",
-        "research_commissions_daily_actor",
+        "research_commissions_daily_managed",
+        "research_commissions_daily_customer",
         "research_commissions_daily_visibility",
         "pulse_entries_ticker_time",
         "pulse_entries_time",
@@ -448,6 +462,9 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "market_bars_collected",
         "sports_bookmaker_odds_event_book_time",
         "sports_bookmaker_odds_event_source_time",
+        "llm_edge_connectors_user",
+        "llm_edge_jobs_claim",
+        "llm_edge_jobs_commission",
     } <= indexes
 
 

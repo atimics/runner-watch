@@ -2462,6 +2462,83 @@ def _migration_045_sports_comments(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_046_customer_llm_routing(db: DatabaseConnection) -> None:
+    """Store private customer model routes and durable outbound edge work."""
+
+    for definition in (
+        "inference_scope TEXT NOT NULL DEFAULT 'managed'",
+        "inference_route_json TEXT NOT NULL DEFAULT '{}'",
+        "customer_inference INTEGER NOT NULL DEFAULT 0",
+    ):
+        _ensure_column(db, "research_commissions", definition)
+    db.executescript(
+        """
+        DROP INDEX IF EXISTS research_commissions_daily_actor;
+        CREATE UNIQUE INDEX IF NOT EXISTS research_commissions_daily_managed
+            ON research_commissions(ticker,actor_id,report_day)
+            WHERE report_day IS NOT NULL AND status IN ('running','complete')
+                AND inference_scope='managed';
+        CREATE UNIQUE INDEX IF NOT EXISTS research_commissions_daily_customer
+            ON research_commissions(user_id,ticker,actor_id,report_day)
+            WHERE report_day IS NOT NULL AND status IN ('running','complete')
+                AND inference_scope<>'managed';
+
+        CREATE TABLE IF NOT EXISTS llm_edge_connectors (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'active'
+                CHECK(status IN ('active','revoked')),
+            last_seen_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS llm_edge_connectors_user
+            ON llm_edge_connectors(user_id,status,updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS user_llm_routes (
+            user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            policy TEXT NOT NULL DEFAULT 'managed'
+                CHECK(policy IN ('managed','prefer_customer','customer_only')),
+            route_kind TEXT NOT NULL DEFAULT 'managed'
+                CHECK(route_kind IN ('managed','edge')),
+            model TEXT NOT NULL DEFAULT '',
+            connector_id TEXT REFERENCES llm_edge_connectors(id) ON DELETE SET NULL,
+            last_checked_at TEXT,
+            last_error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS llm_edge_jobs (
+            id TEXT PRIMARY KEY,
+            commission_id TEXT NOT NULL UNIQUE
+                REFERENCES research_commissions(id) ON DELETE CASCADE,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            connector_id TEXT NOT NULL
+                REFERENCES llm_edge_connectors(id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK(status IN ('pending','claimed','complete','failed')),
+            model TEXT NOT NULL,
+            request_json TEXT NOT NULL,
+            request_fingerprint TEXT NOT NULL,
+            response_json TEXT,
+            claimed_at TEXT,
+            lease_expires_at TEXT,
+            completed_at TEXT,
+            error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS llm_edge_jobs_claim
+            ON llm_edge_jobs(connector_id,status,created_at);
+        CREATE INDEX IF NOT EXISTS llm_edge_jobs_commission
+            ON llm_edge_jobs(commission_id,status);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2515,6 +2592,7 @@ MIGRATIONS = (
     Migration(43, "ranker_training_provenance", _migration_043_ranker_training_provenance),
     Migration(44, "golf_leaderboards", _migration_044_golf_leaderboards),
     Migration(45, "sports_comments", _migration_045_sports_comments),
+    Migration(46, "customer_llm_routing", _migration_046_customer_llm_routing),
 )
 
 

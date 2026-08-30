@@ -38,6 +38,7 @@ stonks-migrate-sqlite = "runner_web.migrate_sqlite:main"
 stonks-worker = "runner_web.main:worker_main"
 stonks-trainer = "runner_web.ranker:trainer_main"
 stonks-massive-backfill = "runner_watch.massive_data:main"
+stonks-edge = "runner_web.edge_connector:main"
 
 [build-system]
 requires = ["setuptools>=69"]

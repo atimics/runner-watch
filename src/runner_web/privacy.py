@@ -38,6 +38,9 @@ PORTABLE_CONTENT_GROUPS = {
         "flash_forecast_outcomes",
         "flash_evaluation_events",
         "flash_report_requests",
+        "model_routes",
+        "model_connectors",
+        "model_jobs",
     ),
 }
 
@@ -137,6 +140,14 @@ def export_user_data(user_id: str) -> dict[str, Any]:
 
         flash_forecasts = related("flash_forecasts", "report_id", commission_ids)
         forecast_ids = [str(row["id"]) for row in flash_forecasts]
+        model_connectors = _rows(
+            database,
+            tables,
+            "llm_edge_connectors",
+            "user_id=?",
+            (user_id,),
+            order_by="created_at",
+        )
 
         return {
             "exported_at": _iso(),
@@ -271,6 +282,44 @@ def export_user_data(user_id: str) -> dict[str, Any]:
                 database,
                 tables,
                 "flash_report_requests",
+                "user_id=?",
+                (user_id,),
+                order_by="created_at",
+            ),
+            "model_routes": [
+                {
+                    key: row.get(key)
+                    for key in (
+                        "policy",
+                        "route_kind",
+                        "model",
+                        "connector_id",
+                        "last_checked_at",
+                        "last_error",
+                        "created_at",
+                        "updated_at",
+                    )
+                }
+                for row in _rows(database, tables, "user_llm_routes", "user_id=?", (user_id,))
+            ],
+            "model_connectors": [
+                {
+                    key: row.get(key)
+                    for key in (
+                        "id",
+                        "name",
+                        "status",
+                        "last_seen_at",
+                        "created_at",
+                        "updated_at",
+                    )
+                }
+                for row in model_connectors
+            ],
+            "model_jobs": _rows(
+                database,
+                tables,
+                "llm_edge_jobs",
                 "user_id=?",
                 (user_id,),
                 order_by="created_at",

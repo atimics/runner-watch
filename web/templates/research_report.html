@@ -30,7 +30,7 @@
 <header class="detail-nav">
   <a href="{{ report.back_href }}" aria-label="Back to {{ 'game' if report.subject_type == 'sports_game' else 'Alpha' }}">‹</a>
   <strong>Research</strong>
-  <button type="button" id="shareReport" aria-label="Share this report">↗</button>
+  {% if not report.customer_inference %}<button type="button" id="shareReport" aria-label="Share this report">↗</button>{% else %}<span></span>{% endif %}
 </header>
 
 <main class="research-report">
@@ -40,8 +40,12 @@
   </a>
   {% if report.actor %}
   <section class="research-author">
-    <span class="kol-avatar">{{ report.actor.emoji }}</span>
+    <span class="kol-avatar">{{ '◆' if report.customer_inference else report.actor.emoji }}</span>
+    {% if report.customer_inference %}
+    <span><strong>Your model <span class="flash-model-label">{{ report.model or report.requested_model }}</span></strong><small>Private · self-reported model identity</small></span>
+    {% else %}
     <span><strong>{{ report.actor.display_name }} <span class="flash-model-label">{{ report.actor.model }}</span></strong><small>#{{ report.actor.ladder_position }} of {{ report.actor.ladder_size }}{% if report.subject_type == 'ticker' %} · <a href="/flash/record">forecast record</a>{% endif %}</small></span>
+    {% endif %}
   </section>
   {% endif %}
   <aside class="ai-report-disclaimer" role="note" aria-label="About this AI report">
@@ -51,6 +55,7 @@
     {% else %}
     <p>May be incomplete or wrong. Not financial advice.</p>
     {% endif %}
+    {% if report.customer_inference %}<p>This private draft came from your connector. It is not part of Flash's public record.</p>{% endif %}
     {% if report.citations or report.sources %}<a href="#report-sources">Sources ↓</a>{% endif %}
   </aside>
   <h1>{{ report.headline }}</h1>
@@ -145,6 +150,10 @@
   {% endif %}
   {% if is_owner %}
   <section class="research-section report-publish">
+    {% if report.customer_inference %}
+    <h2>Private local-model report</h2>
+    <p>This report stays in your account. It cannot be published and does not affect Flash's scorecard.</p>
+    {% else %}
     {% if report.visibility == 'public' %}
     <h2>Published</h2>
     <p>This daily report is open for everyone to read.</p>
@@ -154,14 +163,15 @@
     <button id="publishReport" type="button">Publish now · +50 Flash</button>
     <small id="publishStatus">Current balance: {{ flash_wallet.balance }} Flash</small>
     {% endif %}
+    {% endif %}
   </section>
   {% endif %}
-  <div class="research-meta">{% if report.actor %}{{ report.actor.display_name }} · {{ report.actor.model }}{% else %}{{ report.model or report.requested_model }}{% endif %} · {{ report.completed_at[:16]|replace('T', ' ') }} UTC{% if report.usage.context %} · {{ report.usage.context.included_sections }} evidence sections{% endif %}</div>
+  <div class="research-meta">{% if report.customer_inference %}Your model · {{ report.model or report.requested_model }}{% elif report.actor %}{{ report.actor.display_name }} · {{ report.actor.model }}{% else %}{{ report.model or report.requested_model }}{% endif %} · {{ report.completed_at[:16]|replace('T', ' ') }} UTC{% if report.usage.context %} · {{ report.usage.context.included_sections }} evidence sections{% endif %}</div>
 </main>
 {% endblock %}
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
-document.getElementById('shareReport').addEventListener('click',async event=>{
+document.getElementById('shareReport')?.addEventListener('click',async event=>{
   const share={title:{{ (report.ticker ~ ' · ' ~ report.headline)|tojson }},text:{{ report.summary|tojson }},url:location.href};
   try{if(navigator.share)await navigator.share(share);else{await navigator.clipboard.writeText(location.href);event.currentTarget.textContent='✓';}}catch(_){}
 });
