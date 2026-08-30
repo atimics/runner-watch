@@ -751,40 +751,20 @@ def _wilson_interval(successes: int, total: int) -> list[float] | None:
 
 def _version_scorecard(
     version: dict[str, Any],
-    forecasts: list[dict[str, Any]],
-    attempts: list[dict[str, Any]],
+    summary: dict[str, Any],
+    attempts: dict[str, Any],
+    median_signed_move: float | None,
 ) -> dict[str, Any]:
-    resolved = [row for row in forecasts if row.get("outcome_status") == "resolved"]
-    hits = sum(row.get("classification") == "hit" for row in resolved)
-    misses = len(resolved) - hits
-    pending = sum(row.get("outcome_status") == "pending" for row in forecasts)
-    no_calls = sum(row.get("outcome_status") == "no_call" for row in forecasts)
-    voids = sum(row.get("outcome_status") == "void" for row in forecasts)
-    under_review = sum(row.get("outcome_status") == "under_review" for row in forecasts)
-    eligible = [row for row in forecasts if row.get("eligibility") == "eligible"]
-    directional = [row for row in eligible if row.get("direction") in {"up", "down"}]
-    clear = [
-        row
-        for row in resolved
-        if row.get("return_pct") is not None and abs(float(row["return_pct"])) > MINIMUM_MOVE_PCT
-    ]
-    brier = None
-    if clear:
-        brier = sum(
-            (float(row["probability_up"]) - float(float(row["return_pct"]) > 0)) ** 2
-            for row in clear
-        ) / len(clear)
-    trading_days = {
-        str(row.get("target_session_date"))
-        for row in resolved
-        if row.get("target_session_date")
-    }
-    tickers = {str(row["ticker"]) for row in resolved}
-    settled = len(resolved)
+    settled = int(summary.get("settled") or 0)
+    hits = int(summary.get("hits") or 0)
+    distinct_tickers = int(summary.get("distinct_tickers") or 0)
+    distinct_days = int(summary.get("distinct_trading_days") or 0)
+    eligible = int(summary.get("eligible") or 0)
+    directional = int(summary.get("directional") or 0)
     comparable = (
         settled >= COMPARABLE_SAMPLE
-        and len(tickers) >= COMPARABLE_TICKERS
-        and len(trading_days) >= COMPARABLE_DAYS
+        and distinct_tickers >= COMPARABLE_TICKERS
+        and distinct_days >= COMPARABLE_DAYS
     )
     if version["status"] == "retired":
         state = "retired"
@@ -794,22 +774,10 @@ def _version_scorecard(
         state = "early"
     else:
         state = "building"
-    completed_attempts = sum(row.get("status") == "complete" for row in attempts)
-    failed_attempts = sum(row.get("status") == "failed" for row in attempts)
+    completed_attempts = int(attempts.get("completed") or 0)
+    failed_attempts = int(attempts.get("failed") or 0)
     finished_attempts = completed_attempts + failed_attempts
-    signed_moves = sorted(
-        float(row["signed_move_pct"])
-        for row in resolved
-        if row.get("signed_move_pct") is not None
-    )
-    median_signed_move = None
-    if signed_moves:
-        middle = len(signed_moves) // 2
-        median_signed_move = (
-            signed_moves[middle]
-            if len(signed_moves) % 2
-            else (signed_moves[middle - 1] + signed_moves[middle]) / 2
-        )
+    brier = summary.get("brier_score")
     return {
         "id": version["id"],
         "label": version["public_label"],
@@ -825,22 +793,22 @@ def _version_scorecard(
         "output_schema_version": version["output_schema_version"],
         "contract_version": version["forecast_contract_version"],
         "hits": hits,
-        "misses": misses,
-        "pending": pending,
-        "no_calls": no_calls,
-        "voids": voids,
-        "under_review": under_review,
+        "misses": settled - hits,
+        "pending": int(summary.get("pending") or 0),
+        "no_calls": int(summary.get("no_calls") or 0),
+        "voids": int(summary.get("voids") or 0),
+        "under_review": int(summary.get("under_review") or 0),
         "settled": settled,
         "hit_rate": round(hits / settled, 4) if settled else None,
         "hit_rate_interval_95": _wilson_interval(hits, settled),
         "headline_rate_visible": settled >= HEADLINE_SAMPLE,
-        "distinct_tickers": len(tickers),
-        "distinct_trading_days": len(trading_days),
-        "forecast_coverage": round(len(directional) / len(eligible), 4) if eligible else None,
+        "distinct_tickers": distinct_tickers,
+        "distinct_trading_days": distinct_days,
+        "forecast_coverage": round(directional / eligible, 4) if eligible else None,
         "median_signed_move_pct": (
-            round(median_signed_move, 4) if median_signed_move is not None else None
+            round(float(median_signed_move), 4) if median_signed_move is not None else None
         ),
-        "brier_score": round(brier, 4) if brier is not None else None,
+        "brier_score": round(float(brier), 4) if brier is not None else None,
         "reports_completed": completed_attempts,
         "reports_failed": failed_attempts,
         "completion_rate": (
@@ -937,10 +905,96 @@ def flash_record(*, recent_limit: int = 50) -> dict[str, Any]:
                 """
             ).fetchall()
         ]
-        forecasts = [
+        summaries = {
+            str(row["version_id"]): dict(row)
+            for row in database.execute(
+                """
+                SELECT f.version_id,
+                       SUM(CASE WHEN o.status='resolved' THEN 1 ELSE 0 END) AS settled,
+                       SUM(CASE WHEN o.status='resolved' AND o.classification='hit'
+                                THEN 1 ELSE 0 END) AS hits,
+                       SUM(CASE WHEN o.status='pending' THEN 1 ELSE 0 END) AS pending,
+                       SUM(CASE WHEN o.status='no_call' THEN 1 ELSE 0 END) AS no_calls,
+                       SUM(CASE WHEN o.status='void' THEN 1 ELSE 0 END) AS voids,
+                       SUM(CASE WHEN o.status='under_review' THEN 1 ELSE 0 END)
+                           AS under_review,
+                       SUM(CASE WHEN f.eligibility='eligible' THEN 1 ELSE 0 END) AS eligible,
+                       SUM(CASE WHEN f.eligibility='eligible' AND f.direction IN ('up','down')
+                                THEN 1 ELSE 0 END) AS directional,
+                       COUNT(DISTINCT CASE WHEN o.status='resolved' THEN f.ticker END)
+                           AS distinct_tickers,
+                       COUNT(DISTINCT CASE WHEN o.status='resolved'
+                                           THEN f.target_session_date END)
+                           AS distinct_trading_days,
+                       AVG(CASE WHEN o.status='resolved' AND o.return_pct IS NOT NULL
+                                     AND (o.return_pct>? OR o.return_pct<?)
+                                THEN (f.probability_up-
+                                      CASE WHEN o.return_pct>0 THEN 1.0 ELSE 0.0 END) *
+                                     (f.probability_up-
+                                      CASE WHEN o.return_pct>0 THEN 1.0 ELSE 0.0 END)
+                           END) AS brier_score
+                FROM flash_forecasts f
+                JOIN research_commissions r ON r.id=f.report_id
+                JOIN flash_forecast_outcomes o ON o.forecast_id=f.id
+                WHERE r.status='complete'
+                GROUP BY f.version_id
+                """,
+                (MINIMUM_MOVE_PCT, -MINIMUM_MOVE_PCT),
+            ).fetchall()
+        }
+        medians = {
+            str(row["version_id"]): float(row["median_signed_move"])
+            for row in database.execute(
+                """
+                WITH ranked AS (
+                    SELECT f.version_id,o.signed_move_pct,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY f.version_id ORDER BY o.signed_move_pct
+                           ) AS position,
+                           COUNT(*) OVER (PARTITION BY f.version_id) AS total
+                    FROM flash_forecasts f
+                    JOIN research_commissions r ON r.id=f.report_id
+                    JOIN flash_forecast_outcomes o ON o.forecast_id=f.id
+                    WHERE r.status='complete' AND o.status='resolved'
+                      AND o.signed_move_pct IS NOT NULL
+                )
+                SELECT version_id,AVG(signed_move_pct) AS median_signed_move
+                FROM ranked
+                WHERE position*2 IN (total,total+1,total+2)
+                GROUP BY version_id
+                """
+            ).fetchall()
+        }
+        attempt_summaries = {
+            str(row["flash_version_id"]): dict(row)
+            for row in database.execute(
+                """
+                SELECT flash_version_id,
+                       SUM(CASE WHEN status='complete' THEN 1 ELSE 0 END) AS completed,
+                       SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed
+                FROM research_commissions
+                WHERE flash_version_id IS NOT NULL
+                GROUP BY flash_version_id
+                """
+            ).fetchall()
+        }
+        public_rows = [
             dict(row)
             for row in database.execute(
                 """
+                WITH recent AS (
+                    SELECT f.id
+                    FROM flash_forecasts f
+                    JOIN research_commissions r ON r.id=f.report_id
+                    WHERE r.status='complete' AND (
+                        r.visibility='public' OR (
+                            r.report_day IS NOT NULL AND r.exclusive_until IS NOT NULL
+                            AND r.exclusive_until<=?
+                        )
+                    )
+                    ORDER BY f.created_at DESC
+                    LIMIT ?
+                )
                 SELECT f.*,r.public_id AS report_public_id,r.visibility,
                        v.public_label AS version_label,
                        o.status AS outcome_status,o.classification,o.miss_reason,o.end_price,
@@ -948,40 +1002,26 @@ def flash_record(*, recent_limit: int = 50) -> dict[str, Any]:
                        (SELECT COUNT(*) FROM flash_evaluation_events e
                         WHERE e.forecast_id=f.id AND e.event_type='corrected')
                            AS correction_count
-                FROM flash_forecasts f
+                FROM recent selected
+                JOIN flash_forecasts f ON f.id=selected.id
                 JOIN research_commissions r ON r.id=f.report_id
                 JOIN flash_versions v ON v.id=f.version_id
                 JOIN flash_forecast_outcomes o ON o.forecast_id=f.id
-                WHERE r.status='complete'
                 ORDER BY f.created_at DESC
-                """
+                """,
+                (_iso(), limit),
             ).fetchall()
         ]
-        attempts = [
-            dict(row)
-            for row in database.execute(
-                """
-                SELECT flash_version_id,status FROM research_commissions
-                WHERE flash_version_id IS NOT NULL
-                """
-            ).fetchall()
-        ]
-    by_version: dict[str, list[dict[str, Any]]] = {}
-    for row in forecasts:
-        by_version.setdefault(str(row["version_id"]), []).append(row)
-    attempts_by_version: dict[str, list[dict[str, Any]]] = {}
-    for row in attempts:
-        attempts_by_version.setdefault(str(row["flash_version_id"]), []).append(row)
     scorecards = [
         _version_scorecard(
             version,
-            by_version.get(str(version["id"]), []),
-            attempts_by_version.get(str(version["id"]), []),
+            summaries.get(str(version["id"]), {}),
+            attempt_summaries.get(str(version["id"]), {}),
+            medians.get(str(version["id"])),
         )
         for version in versions
     ]
     current = next((row for row in scorecards if row["status"] == "active"), None)
-    public_rows = [row for row in forecasts if row.get("visibility") == "public"][:limit]
     return {
         "contract": {
             "id": flash_version_snapshot()["forecast_contract_version"],
