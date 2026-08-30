@@ -1,8 +1,9 @@
 # RATi swarm protocol v1
 
 RATi swarm v1 defines three signed objects that let the same trader run alone, attach to the
-default cloud swarm, or join an alpha pack. These contracts do not implement networking and do
-not make remote claims trusted.
+default cloud swarm, or join an alpha pack. The contract modules do not make remote claims trusted.
+The optional HTTPS transport in `docs/swarm-transport.md` publishes and exchanges them while
+preserving that boundary.
 
 ## Object chain
 
@@ -66,3 +67,4 @@ The detailed contracts are in:
 - `docs/swarm-node-manifest.md`
 - `docs/swarm-signed-claim.md`
 - `docs/swarm-alpha-pack.md`
+- `docs/swarm-transport.md`
