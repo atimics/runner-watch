@@ -66,6 +66,16 @@ class PeerExchangeError(ValueError):
     """A peer message failed identity, compatibility, or signature checks."""
 
 
+class PeerClaimRejected(PeerExchangeError):
+    """Local peer policy rejected an otherwise transport-valid claim."""
+
+    def __init__(self, message: str, *, status_code: int) -> None:
+        if status_code not in {403, 429}:
+            raise ValueError("Peer claim rejection status must be 403 or 429")
+        super().__init__(message)
+        self.status_code = status_code
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -244,6 +254,20 @@ class SwarmTransport:
     def local_manifest(self) -> NodeManifest:
         return verify_signed_node_manifest(self.signed_manifest, at=self._clock())
 
+    def replace_local_manifest(self, signed_manifest: SignedNodeManifest) -> None:
+        """Renew the local manifest without changing this runtime's node identity."""
+
+        current = self.local_manifest()
+        replacement = verify_signed_node_manifest(signed_manifest, at=self._clock())
+        if (
+            replacement.node_id != current.node_id
+            or replacement.public_key != current.public_key
+        ):
+            raise ValueError("A manifest renewal cannot change the local node identity")
+        if not _has_capability(replacement, "claims.receive"):
+            raise ValueError("The replacement manifest must advertise claims.receive version 1")
+        self.signed_manifest = signed_manifest
+
     def negotiate(self, request: PeerNegotiationRequest) -> PeerNegotiationResponse:
         local = self.local_manifest()
         try:
@@ -386,7 +410,7 @@ def create_swarm_router(
         manifest = transport.local_manifest()
         seconds_left = max(0, int((manifest.expires_at - clock()).total_seconds()))
         return Response(
-            content=signed_manifest.to_wire_bytes(),
+            content=transport.signed_manifest.to_wire_bytes(),
             media_type=MANIFEST_MEDIA_TYPE,
             headers={
                 "Cache-Control": f"public, max-age={min(seconds_left, 300)}",
@@ -410,6 +434,8 @@ def create_swarm_router(
         try:
             exchange = ClaimExchangeRequest.model_validate_json(body)
             receipt = await transport.accept_claim(exchange)
+        except PeerClaimRejected as error:
+            raise HTTPException(status_code=error.status_code, detail=str(error)) from error
         except (ValueError, TypeError) as error:
             raise HTTPException(status_code=400, detail="Invalid peer claim") from error
         return _json_response(receipt, status_code=202)
@@ -874,6 +900,7 @@ __all__ = [
     "MAX_NEGOTIATION_BYTES",
     "NEGOTIATION_PATH",
     "PeerClaimInbox",
+    "PeerClaimRejected",
     "PeerExchangeError",
     "PeerNegotiationRequest",
     "PeerNegotiationResponse",

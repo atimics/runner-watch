@@ -197,6 +197,7 @@ from runner_web.sports import (
     sports_slate,
     validate_sports_ai_forecast,
 )
+from runner_web.swarm_runtime import maintain_swarm_runtime, open_swarm_runtime
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
 
 LOG = logging.getLogger(__name__)
@@ -586,6 +587,13 @@ async def lifespan(application: FastAPI):
         tasks.extend(worker_tasks)
     if PROCESS_ROLE in {"all", "web"}:
         tasks.append(asyncio.create_task(request_cache_warmer()))
+        if SWARM_RUNTIME is not None:
+            tasks.append(
+                asyncio.create_task(
+                    maintain_swarm_runtime(SWARM_RUNTIME),
+                    name="swarm-bootstrap",
+                )
+            )
     application.state.worker_tasks = worker_tasks
     try:
         yield
@@ -594,6 +602,8 @@ async def lifespan(application: FastAPI):
         if worker_tasks:
             delete_worker_state(worker_heartbeat_key(WORKER_INSTANCE_ID))
             release_research_worker(WORKER_INSTANCE_ID)
+        if SWARM_RUNTIME is not None:
+            SWARM_RUNTIME.close()
 
 
 async def run_worker() -> None:
@@ -619,6 +629,13 @@ def worker_main() -> None:
 app = FastAPI(title="RATi", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=1_000, compresslevel=5)
 app.include_router(operations_router)
+SWARM_RUNTIME = (
+    open_swarm_runtime()
+    if PROCESS_ROLE in {"all", "web"}
+    else None
+)
+if SWARM_RUNTIME is not None:
+    app.include_router(SWARM_RUNTIME.router)
 templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
 templates.env.globals["static_version"] = STATIC_VERSION
 app.mount("/static", StaticFiles(directory=str(ROOT / "web" / "static")), name="static")
