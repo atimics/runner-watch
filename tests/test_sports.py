@@ -909,6 +909,29 @@ def test_game_page_handles_winner_without_market_gap(sports_db) -> None:
     assert b"A complete fresh market is not available" in response.body
 
 
+def test_game_page_tolerates_cache_entries_created_before_comments(
+    sports_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    detail = sports_event(str(event["id"]))
+    assert detail is not None
+    monkeypatch.setattr(
+        web_main,
+        "_public_screen_data",
+        lambda *_args, **_kwargs: {"event": detail},
+    )
+
+    response = sports_game_page(
+        str(event["id"]), request(path=f"/game/{event['id']}"), None
+    )
+
+    assert response.status_code == 200
+    assert b"Game thread" in response.body
+    assert b"No comments yet. Start the game thread." in response.body
+
+
 def test_slate_builds_fixed_side_edge_history(sports_db) -> None:
     first_raw = sample_event()
     first = normalize_event("mlb", first_raw)

@@ -5484,10 +5484,17 @@ def sports_game_page(
         raise HTTPException(404, "Game not found")
     user = current_user(runner_session)
     user_id = str(user["id"]) if user else None
+    cached_comments = public_data.get("comments")
     comments = (
         comments_for_sports_event(event_id, current_user_id=user_id)
-        if user_id
-        else list(public_data["comments"])
+        if user_id or cached_comments is None
+        else list(cached_comments)
+    )
+    cached_comment_count = public_data.get("comment_count")
+    comment_count = (
+        sports_comment_count(event_id)
+        if user_id or cached_comment_count is None
+        else int(cached_comment_count)
     )
     latest_report = daily_report_for_sports_game(event_id, user_id)
     sports_path_prefix = "" if product_for_request(request) == "sports" else "/sports"
@@ -5499,11 +5506,7 @@ def sports_game_page(
             runner_session,
             event=event,
             comments=comments,
-            comment_count=(
-                sports_comment_count(event_id)
-                if user_id
-                else int(public_data["comment_count"])
-            ),
+            comment_count=comment_count,
             latest_commission=latest_report,
             flash_report=_flash_report_action(
                 user_id=user_id,
