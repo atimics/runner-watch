@@ -391,6 +391,13 @@ html.embedded-pane .sports-detail-body {
     overflow-x: auto;
   }
 
+  html:not(.embedded-pane) .game-detail-grid.game-detail-flow {
+    display: block;
+    max-width: 860px;
+    margin-right: auto;
+    margin-left: auto;
+  }
+
   html.embedded-pane .sports-game-app {
     max-width: none;
   }
@@ -484,7 +491,8 @@ body.sports-product .alpha-sample-note {
   .sports-empty-action,
   .sports-update-button,
   .paper-pick > a,
-  .pick-buttons button
+  .pick-buttons button,
+  .sports-comment-form button
 ) {
   border-radius: var(--sports-chrome-radius);
 }
@@ -506,6 +514,8 @@ body.sports-product .alpha-sample-note {
   .match-news,
   .model-maturity,
   .game-disclosure,
+  .game-notebook,
+  .sports-comment-form,
   .paper-pick,
   .public-picks,
   .odds-receipt
@@ -514,11 +524,8 @@ body.sports-product .alpha-sample-note {
   box-shadow: none;
 }
 
-.sports-game-app :is(.match-strip, .decision-board) {
-  background: var(--panel);
-}
-
-.sports-game-app .decision-board {
+.sports-game-app :is(.match-strip, .decision-board, .game-flash, .sports-comment-form) {
+  background: transparent;
   background-image: none;
 }
 
@@ -534,12 +541,7 @@ body.sports-product .alpha-sample-note {
   background: transparent;
 }
 
-.sports-game-app .decision-model-call {
-  padding: 18px 18px 18px 0;
-}
-
 .sports-game-app .decision-value-call {
-  padding: 18px 0 18px 18px;
   border-left: 1px solid var(--sports-rule);
 }
 
@@ -561,31 +563,12 @@ body.sports-product .alpha-sample-note {
 }
 
 .sports-game-app .game-flash {
-  border-left: 2px solid var(--violet);
-  background: color-mix(in srgb, var(--violet) 7%, var(--panel));
+  border-left: 0;
+  background: transparent;
 }
 
 .sports-game-app :is(.game-flash-action > a, .game-flash-action > button) {
   background: transparent;
-}
-
-.sports-game-app .game-detail-evidence {
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  background: var(--panel);
-}
-
-.sports-game-app .game-detail-evidence > :is(.game-disclosure, .paper-pick) {
-  margin-top: 0;
-  border: 0;
-  border-bottom: 1px solid var(--sports-rule);
-  background: transparent;
-}
-
-.sports-game-app .game-detail-evidence > .source-link {
-  margin: 0;
-  padding: 16px;
 }
 
 .sports-game-app .game-disclosure-body > :is(
@@ -604,11 +587,6 @@ body.sports-product .alpha-sample-note {
 @media (max-width: 700px) {
   .sports-game-app .decision-columns {
     border-bottom: 0;
-  }
-
-  .sports-game-app .decision-model-call,
-  .sports-game-app .decision-value-call {
-    padding: 16px 0;
   }
 
   .sports-game-app .decision-value-call {

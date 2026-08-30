@@ -296,6 +296,8 @@ def _rendered_game_detail() -> str:
             },
             "sports_path_prefix": "",
             "sports_call_reward_cap": 10,
+            "comments": [],
+            "comment_count": 0,
             "active_tab": "pulse",
             "nav_product": "sports",
             "user": None,
@@ -440,7 +442,7 @@ def test_sports_detail_panel_stays_dark_while_a_game_loads(
     assert errors == []
 
 
-def test_game_detail_uses_desktop_width_and_closes_started_actions(page: Page) -> None:
+def test_game_detail_prioritizes_thread_and_closes_started_actions(page: Page) -> None:
     html = _rendered_game_detail()
     page.set_viewport_size({"width": 1280, "height": 800})
     page.route(
@@ -452,12 +454,11 @@ def test_game_detail_uses_desktop_width_and_closes_started_actions(page: Page) -
     app = page.locator(".sports-game-app")
     grid = page.locator(".game-detail-grid")
     assert app.evaluate("node => Math.round(node.getBoundingClientRect().width)") == 1120
-    assert grid.evaluate("node => getComputedStyle(node).display") == "grid"
-    assert page.locator(".game-detail-primary").bounding_box()["x"] < (
-        page.locator(".game-detail-evidence").bounding_box()["x"]
-    )
+    assert grid.evaluate("node => getComputedStyle(node).display") == "block"
+    assert grid.evaluate("node => Math.round(node.getBoundingClientRect().width)") == 860
     assert page.locator(".probability-row").count() == 2
     assert page.locator(".decision-movement .edge-spark").bounding_box()["width"] > 200
+    assert page.get_by_role("heading", name="Game thread").is_visible()
     assert page.get_by_role("heading", name="Paper picks closed").is_visible()
     assert page.get_by_text("Score pending from ESPN").is_visible()
     assert page.get_by_text("Log in to make a paper pick").count() == 0
@@ -473,9 +474,10 @@ def test_game_detail_uses_desktop_width_and_closes_started_actions(page: Page) -
             modelCallRadius: style('.decision-model-call').borderRadius,
             valueCallRule: style('.decision-value-call').borderLeftWidth,
             metricRadius: style('.value-numbers > span').borderRadius,
-            evidenceRadius: style('.game-detail-evidence').borderRadius,
-            evidenceItemMargin: style('.game-detail-evidence > .game-disclosure').marginTop,
-            evidenceItemRadius: style('.game-detail-evidence > .game-disclosure').borderRadius,
+            notebookRadius: style('.game-notebook').borderRadius,
+            notebookItemRadius: style('.game-notebook .game-disclosure').borderRadius,
+            actionRadius: style('.game-actions > .paper-pick').borderRadius,
+            flashRadius: style('.game-actions > .game-flash').borderRadius,
           };
         }"""
     ) == {
@@ -484,10 +486,14 @@ def test_game_detail_uses_desktop_width_and_closes_started_actions(page: Page) -
         "modelCallRadius": "0px",
         "valueCallRule": "1px",
         "metricRadius": "0px",
-        "evidenceRadius": "0px",
-        "evidenceItemMargin": "0px",
-        "evidenceItemRadius": "0px",
+        "notebookRadius": "0px",
+        "notebookItemRadius": "0px",
+        "actionRadius": "0px",
+        "flashRadius": "0px",
     }
+    assert page.locator("#discussion").bounding_box()["y"] < page.locator(
+        ".game-notebook"
+    ).bounding_box()["y"]
 
     page.set_viewport_size({"width": 390, "height": 800})
     assert grid.evaluate("node => getComputedStyle(node).display") == "block"
@@ -629,6 +635,39 @@ def test_sports_pulse_calls_a_close_projection_a_slight_edge(
     assert errors == []
 
 
+def test_nba_pulse_renders_a_clear_between_seasons_state(page: Page, monkeypatch) -> None:
+    pulse = {
+        **_pulse(),
+        "league": "nba",
+        "scanned_count": 12,
+        "empty_state": {
+            "kind": "season-break",
+            "title": "NBA is between seasons.",
+            "detail": (
+                "The next scheduled game is MIA at TOR. Pulse will wait for regular-season "
+                "records and fresh market consensus before publishing a projection."
+            ),
+            "next_start_time": "2026-10-03T23:00:00+00:00",
+            "status_label": "Next NBA game scheduled",
+        },
+    }
+    page.set_viewport_size({"width": 390, "height": 800})
+    errors = _load(page, _rendered_pulse(monkeypatch, _pulse()), [pulse])
+
+    page.evaluate("window.sportsPulseLive.poll()")
+    refresh = page.locator("#sportsPulseRefresh")
+    assert refresh.is_visible()
+    refresh.click()
+
+    empty = page.locator(".sports-season-break")
+    assert empty.is_visible()
+    assert "NBA is between seasons." in empty.text_content()
+    assert "MIA at TOR" in empty.text_content()
+    assert "Next tipoff" in empty.text_content()
+    assert page.locator("#sportsPulseMaturity").text_content() == "Next NBA game scheduled"
+    assert errors == []
+
+
 def test_sports_alpha_opens_its_leader_in_the_shared_detail_pane(page: Page, monkeypatch) -> None:
     board = {
         "rows": [
@@ -666,3 +705,81 @@ def test_sports_alpha_opens_its_leader_in_the_shared_detail_pane(page: Page, mon
         "class"
     ).endswith("desktop-panel-selected")
     assert errors == []
+
+
+def test_sports_game_thread_posts_and_removes_a_comment(page: Page) -> None:
+    posted: list[dict[str, str]] = []
+
+    def create_comment(route: Route) -> None:
+        posted.append(route.request.post_data_json)
+        route.fulfill(
+            status=201,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "comment": {
+                        "id": "comment-1",
+                        "body": posted[-1]["body"],
+                        "created_at": "2026-08-30T18:00:00+00:00",
+                        "alias": "Signal Moth",
+                        "is_owner": True,
+                        "avatar": {
+                            "name": "Signal Moth",
+                            "ability": "Form Reader",
+                            "ability_description": "Checks recent form.",
+                            "tone": 1,
+                            "frame": 2,
+                            "eyes": 3,
+                            "signal": 4,
+                        },
+                    },
+                    "count": 1,
+                }
+            ),
+        )
+
+    page.route("**/api/sports/games/**/comments", create_comment)
+    page.route(
+        "**/api/sports/comments/comment-1",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"deleted": True, "id": "comment-1"}),
+        ),
+    )
+    script = (ROOT / "web/static/sports-comments.js").read_text()
+    html = f"""
+    <!doctype html><html><body>
+      <section data-sports-comments data-event-id="mlb:game-1">
+        <b id="discussionCount">0</b>
+        <form id="sportsCommentForm"><textarea id="sportsCommentBody"></textarea>
+          <small id="sportsCommentStatus"></small><button type="submit">Post comment</button>
+        </form>
+        <ol id="commentList"></ol><p id="commentEmpty">No comments.</p>
+      </section>
+      <script>{script}</script>
+    </body></html>
+    """
+    page.route(
+        "http://comments.test/",
+        lambda route: route.fulfill(status=200, content_type="text/html", body=html),
+    )
+    page.goto("http://comments.test/", wait_until="domcontentloaded")
+
+    page.locator("#sportsCommentBody").fill("Bullpen depth decides this one.")
+    page.get_by_role("button", name="Post comment").click()
+
+    page.locator("#commentList li").wait_for()
+    assert posted == [{"body": "Bullpen depth decides this one."}]
+    assert page.locator("#discussionCount").text_content() == "1"
+    assert page.locator("#commentList li").text_content().endswith(
+        "Bullpen depth decides this one."
+    )
+    assert page.locator("#commentEmpty").is_hidden()
+
+    page.get_by_role("button", name="delete").click()
+
+    page.locator("#commentList li").wait_for(state="detached")
+    assert page.locator("#commentList li").count() == 0
+    assert page.locator("#discussionCount").text_content() == "0"
+    assert page.locator("#commentEmpty").is_visible()
