@@ -261,11 +261,15 @@ def parse_submission_filings(
             if acceptance:
                 try:
                     parsed = datetime.fromisoformat(acceptance.replace("Z", "+00:00"))
+                except ValueError:
+                    try:
+                        parsed = datetime.strptime(acceptance, "%Y%m%d%H%M%S").replace(tzinfo=UTC)
+                    except ValueError:
+                        parsed = None
+                if parsed is not None:
                     if parsed.tzinfo is None:
                         parsed = parsed.replace(tzinfo=UTC)
                     filed_at = parsed.astimezone(UTC).isoformat()
-                except ValueError:
-                    pass
             primary_document = str(row.get("primaryDocument") or "").strip()
             try:
                 filing_url = _filing_url(cik, accession, primary_document)
@@ -661,7 +665,6 @@ def main() -> None:
         if db.DATABASE_URL:
             parser.error("--database-path cannot be combined with DATABASE_URL")
         db.DATABASE_PATH = arguments.database_path
-    db.init_db()
     user_agent = arguments.user_agent
     if not user_agent:
         import os
@@ -685,6 +688,8 @@ def main() -> None:
         timeout=arguments.timeout,
     )
     print(_canonical_json(asdict(result)))
+    if result.errors:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
