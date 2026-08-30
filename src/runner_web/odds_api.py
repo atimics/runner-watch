@@ -59,7 +59,7 @@ class OddsApiConfig:
     retry_seconds: int = 1_800
 
     @classmethod
-    def from_env(cls) -> OddsApiConfig:
+    def from_env(cls, api_key: str | None = None) -> OddsApiConfig:
         enabled = os.getenv("ODDS_API_ENABLED", "true").strip().lower() not in {
             "0",
             "false",
@@ -77,7 +77,7 @@ class OddsApiConfig:
         if working_limit + reserve > 500:
             raise ValueError("The Odds API working limit plus reserve cannot exceed 500")
         return cls(
-            api_key=os.getenv("ODDS_API_KEY", "").strip(),
+            api_key=(api_key or os.getenv("ODDS_API_KEY", "")).strip(),
             enabled=enabled,
             region=region,
             bookmakers=bookmakers,

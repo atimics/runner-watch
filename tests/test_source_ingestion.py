@@ -14,10 +14,10 @@ from runner_watch.ingestion import (
     SourceBatch,
     SourceFetch,
 )
+from runner_watch.source_catalog import SourcePolicy
 from runner_web import db
 from runner_web.db import connection, init_db
 from runner_web.ingestion import ingestion_status, record_source_batch, register_source
-from runner_web.source_catalog import SourcePolicy
 
 
 def _fetch(started_at: datetime, finished_at: datetime) -> SourceFetch:

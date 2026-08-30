@@ -13,3 +13,10 @@ __pycache__
 data
 output
 tmp
+desktop/node_modules
+desktop/dist
+desktop/out
+desktop/.scanner-build
+desktop/.scanner-dist
+desktop/.scanner-spec
+desktop/resources/scanner/*

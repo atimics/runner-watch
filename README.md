@@ -1,4 +1,16 @@
-# RATi Runners and RATi Sports
+# RATi Swarm, RATi Runners, and RATi Sports
+
+RATi Swarm is the open-source Svelte/Electron desktop app. Pulse, Radar, and Flash are its main
+screens. Scanner can switch between the bundled local engine and RATi Cloud at
+`runners.rati.chat`. Local mode persists receipts in SQLite and stores user-authorized provider
+credentials in the operating-system vault. Local mode shows only local scanner results; Cloud mode
+is the only mode that requests or displays hosted Pulse, Radar, or Flash data. The same client and
+scanner can be self-hosted. See
+[the desktop and scanner architecture](docs/desktop-architecture.md).
+
+The project is copyright © 2026 RATi contributors and licensed under the
+[GNU Affero General Public License v3.0 only](LICENSE). It comes without warranty. Users of a
+modified hosted version must be offered its corresponding source as required by the license.
 
 RATi is an evidence-first prediction platform. RATi Runners scans low-priced stocks for unusual movement. RATi Sports compares a transparent team-form baseline with timestamped no-vig moneyline odds and keeps public paper-pick receipts.
 It uses free Yahoo Finance data through `yfinance`. It does not need a broker login or a paid API.
@@ -219,14 +231,45 @@ alpha window. Other users cannot generate a duplicate during that lock. The owne
 report early to make it public immediately and earn 50 Flash. Otherwise, the completed report opens
 automatically when the hour ends. Failed reports refund the 100 Flash charge and release the daily
 lock. Each user can explicitly claim 100 Flash once per UTC day; missed claims do not accrue. The
-server uses its own provider key. The worker queue contains only a report ID, and the user does not
-provide or store a model-provider key.
+managed route uses the server's provider key. The user does not provide or store a cloud
+model-provider key.
 
 The report starts with an opinionated thesis, then explains who the company is, who the named people
 or entities are, why each one appears in a filing, what the filings mean, what supports the thesis,
 what could rug it, and what remains unknown. Source text is explicitly treated as evidence rather
 than instructions. Model-selected citations are checked against the supplied source URLs. A hard
 deterministic `AVOID` or `EXIT` state overrides the generated wording.
+
+### Local models
+
+Signed-in users can choose an AI route at `/settings/models`:
+
+- **RATi managed** always uses the approved cloud model.
+- **Prefer my model** uses an active local connector, with an explicit managed fallback when the
+  connector is unavailable.
+- **My model only** fails closed when the connector is unavailable. It never silently sends that
+  report to cloud AI.
+
+The local connector works with OpenAI-compatible chat servers. LM Studio normally listens at
+`http://127.0.0.1:1234/v1`. Unsloth models can use the same contract when served through vLLM,
+SGLang, or another OpenAI-compatible runtime. Create a connector in model settings, copy its token,
+start the local model server, then run:
+
+```bash
+RATI_EDGE_TOKEN="the-token-shown-once" \
+  uv run stonks-edge --local-base-url http://127.0.0.1:1234/v1
+```
+
+The connector polls RATi over an outbound HTTPS connection. RATi never opens a connection to the
+customer's computer. A claimed job includes that report's frozen evidence and portable chat
+request. The optional `LOCAL_LLM_API_KEY` is used only between the connector and the local server;
+it is never sent to RATi.
+
+RATi still validates the returned JSON and applies its deterministic risk override. Customer-model
+reports are marked as self-reported, stay private, cannot be published, and do not enter Flash's
+stock or sports scorecards. Durable edge jobs survive a normal web-worker restart. Direct
+server-to-customer model URLs are intentionally not supported in this release because they need a
+separate data-sharing consent and network-isolation design.
 
 ## Flash wallet
 
@@ -362,8 +405,8 @@ uv sync --extra dev --python 3.13 --no-editable
 uv run streamlit run app.py
 ```
 
-Open the local address shown in the terminal. Choose **Sample data** and run a scan first.
-Sample mode is fake and lets you test the screen without internet access.
+Open the local address shown in the terminal. Local scans use live market data from the enabled
+free sources; there is no synthetic demo mode.
 
 To run the public web app locally:
 
@@ -372,7 +415,7 @@ APP_ORIGIN=http://127.0.0.1:8080 RP_ID=127.0.0.1 COOKIE_SECURE=0 \
   uv run --no-sync uvicorn runner_web.main:app --host 127.0.0.1 --port 8080
 ```
 
-For real data, choose **Live Yahoo data** and one of these ticker lists:
+The default uses live Yahoo penny-stock discovery. You can also choose one of these ticker lists:
 
 - **Quick starter list:** fast, but it cannot find a runner outside its saved list.
 - **Full US market:** downloads the official Nasdaq Trader symbol directory, runs a daily
@@ -380,12 +423,6 @@ For real data, choose **Live Yahoo data** and one of these ticker lists:
 - **My ticker list:** scans only the symbols you enter.
 
 ## Use the command line
-
-Try the fake data:
-
-```bash
-uv run runner-watch --sample
-```
 
 Scan a custom watchlist:
 

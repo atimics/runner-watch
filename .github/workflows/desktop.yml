@@ -1,0 +1,108 @@
+name: Desktop Builds
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/desktop.yml"
+      - "desktop/**"
+      - "scripts/rati_scanner_entry.py"
+      - "scripts/stage_desktop_scanner.py"
+      - "scripts/smoke_desktop_scanner.py"
+      - "src/runner_node/**"
+      - "src/runner_watch/**"
+      - "src/runner_web/source_catalog.py"
+      - "pyproject.toml"
+      - "uv.lock"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/desktop.yml"
+      - "desktop/**"
+      - "scripts/rati_scanner_entry.py"
+      - "scripts/stage_desktop_scanner.py"
+      - "scripts/smoke_desktop_scanner.py"
+      - "src/runner_node/**"
+      - "src/runner_watch/**"
+      - "src/runner_web/source_catalog.py"
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            artifact: rati-swarm-linux
+          - name: macOS
+            os: macos-latest
+            artifact: rati-swarm-macos
+          - name: Windows
+            os: windows-latest
+            artifact: rati-swarm-windows
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y fakeroot
+      - name: Build scanner sidecar
+        run: |
+          uv sync --locked --extra desktop
+          uv run pyinstaller --noconfirm --clean --onefile --name rati-scanner \
+            --distpath desktop/.scanner-dist \
+            --workpath desktop/.scanner-build \
+            --specpath desktop/.scanner-spec \
+            --collect-all keyring \
+            scripts/rati_scanner_entry.py
+          uv run python scripts/stage_desktop_scanner.py
+      - name: Smoke test packaged scanner
+        run: uv run python scripts/smoke_desktop_scanner.py
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 10.19.0
+          run_install: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile
+      - name: Check desktop client
+        working-directory: desktop
+        run: |
+          pnpm check
+          pnpm test
+      - name: Build native package
+        working-directory: desktop
+        run: pnpm make
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: desktop/out/make/**
+          if-no-files-found: error
+          retention-days: 14

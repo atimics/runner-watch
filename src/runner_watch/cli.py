@@ -8,20 +8,27 @@ from pathlib import Path
 
 from runner_watch.market_data import routed_market_data
 from runner_watch.models import ScanResult, ScanSettings
-from runner_watch.sample_data import SAMPLE_SYMBOLS, SampleMarketData
 from runner_watch.scanner import RunnerScanner
-from runner_watch.universe import broad_us_universe, parse_custom_symbols, starter_universe
+from runner_watch.universe import (
+    broad_us_universe,
+    parse_custom_symbols,
+    penny_runner_universe,
+    starter_universe,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="runner-watch", description="Scan stocks for unusual volume and momentum."
     )
-    parser.add_argument("--sample", action="store_true", help="Use fake demo data.")
-    parser.add_argument("--universe", choices=["starter", "broad", "custom"], default="starter")
+    parser.add_argument(
+        "--universe",
+        choices=["penny", "starter", "broad", "custom"],
+        default="penny",
+    )
     parser.add_argument("--symbols", default="", help="Comma- or space-separated custom symbols.")
-    parser.add_argument("--min-price", type=float, default=0.50)
-    parser.add_argument("--max-price", type=float, default=50.0)
+    parser.add_argument("--min-price", type=float, default=0.20)
+    parser.add_argument("--max-price", type=float, default=5.0)
     parser.add_argument("--min-volume", type=int, default=100_000)
     parser.add_argument("--min-dollar-volume", type=float, default=500_000)
     parser.add_argument("--scan-cap", type=int, default=300)
@@ -105,18 +112,20 @@ def _render(result: ScanResult, output_format: str) -> str:
 def main() -> int:
     args = _parser().parse_args()
     warnings: list[str] = []
-    if args.sample:
-        provider = SampleMarketData()
-        symbols = SAMPLE_SYMBOLS
+    provider = routed_market_data()
+    if args.universe == "penny":
+        entries, warnings = penny_runner_universe(
+            min_price=args.min_price,
+            max_price=args.max_price,
+        )
+        symbols = [item.symbol for item in entries]
+    elif args.universe == "starter":
+        symbols = [item.symbol for item in starter_universe()]
+    elif args.universe == "broad":
+        entries, warnings = broad_us_universe()
+        symbols = [item.symbol for item in entries]
     else:
-        provider = routed_market_data()
-        if args.universe == "starter":
-            symbols = [item.symbol for item in starter_universe()]
-        elif args.universe == "broad":
-            entries, warnings = broad_us_universe()
-            symbols = [item.symbol for item in entries]
-        else:
-            symbols = parse_custom_symbols(args.symbols)
+        symbols = parse_custom_symbols(args.symbols)
 
     settings = ScanSettings(
         min_price=args.min_price,

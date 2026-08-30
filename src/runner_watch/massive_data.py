@@ -78,8 +78,8 @@ def massive_api_key() -> str:
     return os.getenv("MASSIVE_API_KEY", "").strip()
 
 
-def massive_enabled() -> bool:
-    if not massive_api_key():
+def massive_enabled(api_key: str | None = None) -> bool:
+    if not (api_key or massive_api_key()):
         return False
     flag = os.getenv("MASSIVE_ENABLED", "true").strip().lower()
     return flag not in {"0", "false", "no", "off"}
@@ -664,12 +664,14 @@ class MassiveBarAdapter:
 
 
 def massive_bar_adapter(
-    *, fetch_recorder: SourceFetchRecorder | None = None
+    *,
+    fetch_recorder: SourceFetchRecorder | None = None,
+    api_key: str | None = None,
 ) -> MassiveBarAdapter | None:
-    """Build the Massive adapter from the environment, or None when disabled."""
-    if not massive_enabled():
+    """Build the Massive adapter from an injected key or the environment."""
+    key = (api_key or massive_api_key()).strip()
+    if not massive_enabled(key):
         return None
-    key = massive_api_key()
     if not key:
         return None
     cache = MassiveDailyCache(massive_cache_path())
