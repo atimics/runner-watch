@@ -17,7 +17,7 @@ sys.path.insert(0, str(SEC_QWEN_SOURCE))
 
 from sec_qwen.benchmarks import release_metrics  # noqa: E402
 from sec_qwen.completion import build_completion  # noqa: E402
-from sec_qwen.config import load_config, validate_corpus  # noqa: E402
+from sec_qwen.config import load_config, load_examples, validate_corpus  # noqa: E402
 from sec_qwen.evaluation import score_predictions  # noqa: E402
 
 
@@ -251,6 +251,20 @@ directory = "output"
         "sec_field_exact_rate": 0.5,
         "sec_json_valid_rate": 2 / 3,
     }
+
+
+def test_qwen_loader_accepts_deterministic_v2_examples(tmp_path: Path) -> None:
+    path = tmp_path / "v2.jsonl"
+    example = {
+        "schema": "stonks.sec_chat_example.v2",
+        "messages": [
+            {"role": "system", "content": "Use evidence."},
+            {"role": "user", "content": "Classify."},
+            {"role": "assistant", "content": '{"form":"10-K"}'},
+        ],
+    }
+    _write_jsonl(path, [example])
+    assert load_examples(path) == [example]
 
 
 def test_feral_release_gate_and_ilxyr_completion(tmp_path: Path) -> None:

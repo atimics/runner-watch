@@ -201,7 +201,10 @@ def load_examples(path: Path) -> list[dict[str, Any]]:
             if not line.strip():
                 continue
             example = json.loads(line)
-            if example.get("schema") != "stonks.sec_chat_example.v1":
+            if example.get("schema") not in {
+                "stonks.sec_chat_example.v1",
+                "stonks.sec_chat_example.v2",
+            }:
                 raise ValueError(f"{path}:{line_number} has an unsupported schema")
             messages = example.get("messages")
             if not isinstance(messages, list) or [item.get("role") for item in messages] != [

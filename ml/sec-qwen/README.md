@@ -23,9 +23,9 @@ Run the same image locally, in SageMaker, Azure ML, or as a Kubernetes Job:
 sec-qwen validate config.toml
 sec-qwen train config.toml
 sec-qwen evaluate config.toml \
-  --adapter artifacts/sec-qwen-v1/adapter \
+  --adapter artifacts/feral-7b-sec-v2/adapter \
   --split test-future.jsonl \
-  --predictions artifacts/sec-qwen-v1/test-future.predictions.jsonl
+  --predictions artifacts/feral-7b-sec-v2/test-future.predictions.jsonl
 ```
 
 `evaluate` prints one strict `{"metrics": {...}}` object with JSON validity, field exactness, and
