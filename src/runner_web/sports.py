@@ -68,7 +68,13 @@ MODEL_SCORECARD_TARGET = 250
 LEAGUES = {
     "mlb": {"sport": "baseball", "path": "mlb", "name": "MLB", "home_edge": 0.035},
     "nfl": {"sport": "football", "path": "nfl", "name": "NFL", "home_edge": 0.055},
-    "nba": {"sport": "basketball", "path": "nba", "name": "NBA", "home_edge": 0.060},
+    "nba": {
+        "sport": "basketball",
+        "path": "nba",
+        "name": "NBA",
+        "home_edge": 0.060,
+        "preview_days": 45,
+    },
     "nhl": {"sport": "hockey", "path": "nhl", "name": "NHL", "home_edge": 0.040},
 }
 PUBLIC_SPORTS = (
@@ -594,10 +600,19 @@ def _fetch_league_range(
 
 def fetch_league(league: str, at: datetime | None = None) -> list[dict[str, Any]]:
     current = at or datetime.now(UTC)
-    return _fetch_league_range(
+    events = _fetch_league_range(
         league,
         current.date() - timedelta(days=1),
         current.date() + timedelta(days=3),
+        feed=FEED,
+    )
+    preview_days = int(LEAGUES[league].get("preview_days", 3))
+    if events or preview_days <= 3:
+        return events
+    return _fetch_league_range(
+        league,
+        current.date() + timedelta(days=4),
+        current.date() + timedelta(days=preview_days),
         feed=FEED,
     )
 
@@ -2516,9 +2531,10 @@ def golf_slate(limit: int = 6, leaderboard_limit: int = 10) -> dict[str, Any]:
 
 def sports_slate(league: str = "all", limit: int = 80) -> dict[str, Any]:
     current = datetime.now(UTC)
+    preview_days = int(LEAGUES.get(league, {}).get("preview_days", 4))
     parameters: list[Any] = [
         _iso(current - timedelta(hours=12)),
-        _iso(current + timedelta(days=4)),
+        _iso(current + timedelta(days=preview_days)),
     ]
     league_filter = ""
     if league in LEAGUES:
@@ -2604,6 +2620,36 @@ def sports_pulse(league: str = "all", view: str = "signals", limit: int = 30) ->
         )
     )
     grouped = _group_sports_series(signals)
+    empty_state = None
+    season_break_cutoff = datetime.now(UTC) + timedelta(days=4)
+    has_nearby_event = any(
+        (start_time := _optional_time(event.get("start_time"))) is not None
+        and start_time <= season_break_cutoff
+        for event in available
+    )
+    next_event = next(
+        (
+            event
+            for event in available
+            if event.get("status") == "pre"
+            and (start_time := _optional_time(event.get("start_time"))) is not None
+            and start_time > season_break_cutoff
+        ),
+        None,
+    )
+    if league == "nba" and not signals and not has_nearby_event and next_event:
+        empty_state = {
+            "kind": "season-break",
+            "title": "NBA is between seasons.",
+            "detail": (
+                "The next scheduled game is "
+                f"{next_event.get('away_abbreviation')} at "
+                f"{next_event.get('home_abbreviation')}. Pulse will wait for regular-season "
+                "records and fresh market consensus before publishing a projection."
+            ),
+            "next_start_time": str(next_event.get("start_time") or ""),
+            "status_label": "Next NBA game scheduled",
+        }
 
     shown = grouped[: max(1, min(limit, 100))]
     return {
@@ -2615,6 +2661,7 @@ def sports_pulse(league: str = "all", view: str = "signals", limit: int = 30) ->
         "display_count": len(shown),
         "scanned_count": len(available),
         "hidden_count": max(0, len(available) - len(signals)),
+        "empty_state": empty_state,
     }
 
 
