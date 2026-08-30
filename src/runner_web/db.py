@@ -2580,6 +2580,87 @@ def _migration_048_shared_comment_subjects(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_049_legal_identity_review(db: DatabaseConnection) -> None:
+    """Stage filing people and legal cases behind explicit identity review."""
+
+    _ensure_column(db, "sec_filings", "actor_cik INTEGER")
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS filing_people (
+            id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            normalized_name TEXT NOT NULL,
+            sec_person_cik INTEGER,
+            entity_type TEXT NOT NULL DEFAULT 'person_candidate',
+            review_status TEXT NOT NULL DEFAULT 'pending'
+                CHECK(review_status IN ('pending','approved','rejected')),
+            review_note TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS filing_people_name
+            ON filing_people(normalized_name,review_status);
+        CREATE INDEX IF NOT EXISTS filing_people_sec_cik
+            ON filing_people(sec_person_cik) WHERE sec_person_cik IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS filing_person_issuer_links (
+            person_id TEXT NOT NULL REFERENCES filing_people(id) ON DELETE CASCADE,
+            ticker TEXT NOT NULL,
+            issuer_cik INTEGER NOT NULL,
+            source_accession TEXT NOT NULL REFERENCES sec_filings(accession) ON DELETE CASCADE,
+            filing_role TEXT NOT NULL,
+            confidence REAL NOT NULL CHECK(confidence>=0 AND confidence<=1),
+            review_status TEXT NOT NULL DEFAULT 'pending'
+                CHECK(review_status IN ('pending','approved','rejected')),
+            review_note TEXT,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            PRIMARY KEY(person_id,ticker,source_accession)
+        );
+        CREATE INDEX IF NOT EXISTS filing_person_links_ticker
+            ON filing_person_issuer_links(ticker,review_status,confidence DESC);
+        CREATE TABLE IF NOT EXISTS legal_case_candidates (
+            id TEXT PRIMARY KEY,
+            source TEXT NOT NULL,
+            feed TEXT NOT NULL,
+            external_case_id TEXT NOT NULL,
+            person_id TEXT NOT NULL REFERENCES filing_people(id) ON DELETE CASCADE,
+            ticker TEXT NOT NULL,
+            issuer_cik INTEGER NOT NULL,
+            case_number TEXT NOT NULL,
+            case_title TEXT NOT NULL,
+            court TEXT,
+            jurisdiction_type TEXT,
+            party_name TEXT NOT NULL,
+            party_role TEXT,
+            case_type TEXT,
+            nature_of_suit TEXT,
+            filed_at TEXT,
+            closed_at TEXT,
+            case_status TEXT,
+            source_url TEXT NOT NULL,
+            name_match_confidence REAL NOT NULL
+                CHECK(name_match_confidence>=0 AND name_match_confidence<=1),
+            match_method TEXT NOT NULL,
+            review_status TEXT NOT NULL DEFAULT 'pending'
+                CHECK(review_status IN ('pending','approved','rejected')),
+            risk_label TEXT NOT NULL DEFAULT 'unknown'
+                CHECK(risk_label IN ('unknown','watch','material')),
+            review_note TEXT,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            first_run_id TEXT NOT NULL REFERENCES ingestion_runs(id),
+            last_run_id TEXT NOT NULL REFERENCES ingestion_runs(id),
+            first_collected_at TEXT NOT NULL,
+            last_collected_at TEXT NOT NULL,
+            UNIQUE(source,feed,external_case_id,person_id,ticker)
+        );
+        CREATE INDEX IF NOT EXISTS legal_case_candidates_review
+            ON legal_case_candidates(review_status,last_collected_at DESC);
+        CREATE INDEX IF NOT EXISTS legal_case_candidates_ticker
+            ON legal_case_candidates(ticker,review_status,risk_label,filed_at DESC);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2636,6 +2717,7 @@ MIGRATIONS = (
     Migration(46, "customer_llm_routing", _migration_046_customer_llm_routing),
     Migration(47, "scorecard_and_release_indexes", _migration_047_scorecard_and_release_indexes),
     Migration(48, "shared_comment_subjects", _migration_048_shared_comment_subjects),
+    Migration(49, "legal_identity_review", _migration_049_legal_identity_review),
 )
 
 

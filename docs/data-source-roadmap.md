@@ -1,17 +1,18 @@
 # Data source ingestion roadmap
 
-Last reviewed: 2026-08-29
+Last reviewed: 2026-08-30
 
 ## Goal
 
 Runner Watch already collects Yahoo price bars, the Nasdaq Trader symbol directory, SEC filings,
 SEC Company Facts, and optional Fintel short and borrow facts. The Nasdaq halt path is built and
 connected, but its public-use review still blocks approval. The next sources should answer three
-questions that the app cannot answer well today:
+four questions that the app cannot answer well today:
 
 1. Is the current quote tradable, or is the spread too wide?
 2. Is there a real catalyst outside an SEC filing?
 3. Is the move crowded, and what market regime is it happening in?
+4. Do reviewed people linked to the issuer appear in relevant labor or federal court records?
 
 The best next additions are a licensed quote pilot, reviewed biotech catalyst links, and licensed
 news and corporate actions. They cover the largest remaining gaps and fit the ingestion system that
@@ -39,6 +40,9 @@ already exists.
 | 16 | [SAM.gov contract opportunities API](https://open.gsa.gov/api/get-opportunities-public-api/) | Solicitation, award, and sole-source notices with agency, dates, NAICS codes, and place of performance | Public search and API; the API needs a free registered-user key and updates active notices daily | Find early federal-contract context before an award appears in USAspending | An opportunity is not an award and often names products rather than issuers. Keep opportunity and award events separate. |
 | 17 | [Federal Register API](https://www.federalregister.gov/developers/documentation/api/v1) | Agency rules, notices, public-inspection dates, document numbers, and source links | Public API with no key; documents cover 1994 onward | Add reviewed agency actions for sectors such as biotech, energy, mining, and defense | Broad keyword searches create noise. Require an agency filter and a reviewed issuer or product link before publishing. |
 | 18 | [CFTC Commitments of Traders](https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm) | Weekly open interest split by trader class for equity index, rate, energy, metal, and other futures | Free weekly files and public reporting API; normally released Friday at 3:30 p.m. ET for Tuesday positions | Add slow risk-regime context for the whole market or sector | This is futures positioning, not stock-level evidence. Preserve report and release dates and never attach it to one issuer. |
+| 19 | [CourtListener RECAP](https://www.courtlistener.com/help/api/) | Searchable federal docket and filing metadata already present in the public RECAP archive | API account and plan rules apply; coverage is broad but incomplete because RECAP is not a complete copy of PACER | Use as the low-cost first pass for reviewed people and issuers | Missing RECAP results do not mean no case exists. A name match is only a review candidate. |
+| 20 | [PACER Case Locator API](https://pacer.uscourts.gov/file-case/developer-resources) | Nationwide federal case and party index with court, case number, filing dates, title, and party fields | PACER account and authentication token required; searches are billable by result page and automation must not disrupt the service | Fill gaps after RECAP for a small, approved person watchlist | The PCL API is an index, not a full docket feed. Set a hard page budget. Never equate being a party with wrongdoing or material issuer risk. |
+| 21 | [DOL OALJ adjudicatory decisions](https://www.dol.gov/agencies/oalj/topics/information/DECISIONS) | Labor-related ALJ decisions, orders, case numbers, program areas, parties, and public docket links | Public search tools exist, but no supported public collection API is documented; start with a reviewed metadata export or written access decision | Find reviewed whistleblower, wage, safety, OFCCP, and other labor-case context | Do not scrape an undocumented application at scale. Many matters are routine, dismissed, appealed, or unrelated to an issuer. Preserve disposition and role. |
 
 “Free” means that a useful public or free-tier path exists; it does not mean unrestricted use or
 free redistribution in a public app. Before any data is shown to users, record the exact endpoint,
@@ -50,13 +54,16 @@ silently break Pulse.
 ### Free access summary
 
 - **No account or key:** SEC data sets, ClinicalTrials.gov, FDA downloads, USAspending, GLEIF,
-  Federal Register, and CFTC files have a useful public path without sign-up.
+  Federal Register, CFTC files, and DOL OALJ public decisions have a useful public path without
+  sign-up. OALJ automation still needs an approved collection method.
 - **Free key or account:** Alpaca's IEX tier, FRED, the higher openFDA allowance, FINRA query APIs,
-  and SAM.gov automation need a free credential or account. Limits and display rights still vary.
+  SAM.gov automation, and a CourtListener pilot need a credential or account. Limits and display
+  rights still vary.
 - **Terms-gated public files:** Nasdaq halt and FINRA OTC data can be viewed without paying, but
   public-product use must wait for a written terms decision.
-- **Paid exit:** full-market SIP quotes and dependable licensed news still need a paid plan if the
-  free path cannot meet coverage, freshness, or display-rights gates.
+- **Paid or metered access:** full-market SIP quotes and dependable licensed news still need a paid
+  plan if the free path cannot meet coverage, freshness, or display-rights gates. PACER searches
+  are metered even when quarterly fees may later be waived.
 
 ## Roadmap
 
@@ -66,8 +73,12 @@ move to the public score only after its quality gate passes.
 Current build status: the shared layer and normalized tables are complete. The Nasdaq halt parser,
 raw archive, deduplication, worker, stale-feed health, evidence label, safety penalty, and hard veto
 are connected. The feed remains unapproved until its terms review is complete. SEC Company Facts,
-issuer facts, dilution evidence, and point-in-time ranker features are also built. `/roadmap` is the
-source of truth for product decisions; this document keeps the detailed data-source work.
+issuer facts, dilution evidence, and point-in-time ranker features are also built. SEC reporting
+owner CIKs, private person/issuer review records, and private legal-case candidates are now built.
+OFAC SDN, SAM.gov exclusions, and HHS LEIE have opt-in official collectors. Another 18 free
+archives are registered behind the same private reviewed-import contract. All legal-risk collectors
+remain disabled by default. `/roadmap` is the source of truth for product decisions; this document
+keeps the detailed data-source work.
 
 ### Phase 0 — Source rules and shared data model (2–3 days)
 
@@ -173,7 +184,45 @@ was previously known.
 Quality gate: feature values reproduce the original source for a 30-symbol sample; labels clearly
 show each dataset's age; backtests use only values that were public at the scan time.
 
-### Phase 6 — Lower-priority event sources (after the core proves value)
+### Phase 6 — Reviewed people and legal cases (1–2 weeks for a pilot)
+
+Status: the private review schema, SEC reporting-owner CIK capture, PACER/OALJ parsers,
+point-in-time research-context route, and reviewed official-archive importer are built. OFAC SDN,
+SAM.gov exclusions, and HHS LEIE have scheduled opt-in collectors. No collector or public product
+effect is enabled by default.
+
+- Stage names from SEC ownership filings. Prefer the SEC reporting-owner CIK from Form 4 over a
+  name-only identity. Keep funds, trusts, and other organizations separate from people.
+- Require a reviewer to approve both the person identity and the person-to-issuer relationship
+  before any legal search can run.
+- Search CourtListener RECAP first. Use PACER PCL only for approved gaps, one immediate page at a
+  time, with a daily billable-page cap and a client code for cost attribution.
+- Use DOL OALJ decisions only through a documented, approved collection path. Store case number,
+  party role, program area, decision date, disposition, and the official source link.
+- Pull OFAC SDN and HHS LEIE as official bulk snapshots, but retain only the source hash and the
+  minimal matched fields rather than the full personal-data files. Query SAM.gov only for approved
+  people, using a small daily request budget and never writing the API key to the audit trail.
+- Normalize GovInfo, SEC/DOJ/FTC/PCAOB/OCC/FDIC/FINRA enforcement, EPA/OSHA/NLRB/FDA/USITC
+  records, and CFPB complaints through one official-record contract. Search-only archives enter
+  through reviewed imports until a supported API or bulk route is confirmed.
+- Keep evidence type explicit. A complaint, inspection, recall, contribution, payment, or award is
+  not a final legal finding. Every imported record starts with `risk_label='unknown'`.
+- Send every name or case hit to a private review queue. Exact names are not enough: verify middle
+  name or initial, role, location, dates, SEC identity, and the case document.
+- Keep identity approval separate from materiality. A reviewed match remains `unknown` until a
+  reviewer explicitly labels it `watch` or `material` with a note.
+- Never describe a complaint, party listing, open case, settlement, dismissal, or appeal as proof
+  of wrongdoing. Sealed, expunged, corrected, or misidentified records must be removed from product
+  context promptly.
+- Do not change the runner score in this phase. Reviewed cases may enter private research context
+  with source and review provenance only.
+
+Quality gate: 100 sampled person links and 100 sampled case or official-record hits have documented
+identity and role decisions; false-positive identity rate is below 1%; every billable PACER request
+has a recorded page count; zero pending or rejected matches appear in research output; no API key
+appears in ingestion locators, metadata, or archived source documents.
+
+### Phase 7 — Lower-priority event sources (after the core proves value)
 
 - Pilot USAspending for a small reviewed list of defense, energy, and health issuers.
 - Pair SAM.gov notices with later USAspending awards, but never label a solicitation as revenue.
