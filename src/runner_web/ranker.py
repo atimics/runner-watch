@@ -21,7 +21,7 @@ from runner_web.db import connection, init_db
 from runner_web.product_policy import RANKER_TRAINING
 
 FEATURE_SCHEMA_VERSION = "stonks.ranker_features.v4"
-MODEL_KIND = "integer_multiclass_logistic_barrier_v5"
+MODEL_KIND = "integer_multiclass_logistic_barrier_v6"
 ARTIFACT_SCHEMA = "stonks.integer_ranker.v1"
 HORIZONS = {"60m"}
 _configured_horizon = os.getenv("RANKER_HORIZON", "60m")
@@ -561,6 +561,7 @@ def train_shadow_ranker(
             {
                 "artifact": artifact,
                 "horizon": horizon,
+                "model_kind": MODEL_KIND,
                 "training_end": groups[-1][0]["run_captured_at"],
             },
             sort_keys=True,
