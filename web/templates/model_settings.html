@@ -1,0 +1,187 @@
+{% extends "mobile_base.html" %}
+{% block app_class %}account-page model-settings-page{% endblock %}
+{% block title %}AI model · RATi{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/account-pages.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+<header class="detail-nav account-nav">
+  <a href="/" aria-label="Back to Pulse">‹</a>
+  <strong>AI model</strong>
+  <span></span>
+</header>
+
+<main class="account-wrap">
+  <section class="account-intro">
+    <span class="eyebrow">YOUR MODEL · YOUR CHOICE</span>
+    <h1>Run research in the cloud or on your computer.</h1>
+    <p>A local connector works with OpenAI-compatible servers such as LM Studio, vLLM, SGLang, and Unsloth deployments. Local reports stay private and do not enter Flash's public record.</p>
+  </section>
+
+  <section class="plan-card model-route-card">
+    <h2>Routing policy</h2>
+    <form id="modelRouteForm">
+      <label class="model-choice">
+        <input type="radio" name="policy" value="managed">
+        <span><strong>RATi managed</strong><small>Use RATi's approved cloud model.</small></span>
+      </label>
+      <label class="model-choice">
+        <input type="radio" name="policy" value="prefer_customer">
+        <span><strong>Prefer my model</strong><small>Use your local model when its connector is ready. Otherwise use RATi managed.</small></span>
+      </label>
+      <label class="model-choice">
+        <input type="radio" name="policy" value="customer_only">
+        <span><strong>My model only</strong><small>Fail closed if your connector is offline. RATi will not silently send the job to cloud AI.</small></span>
+      </label>
+
+      <div class="local-model-fields" id="localModelFields">
+        <label for="connectorSelect">Connector
+          <select id="connectorSelect"></select>
+        </label>
+        <label for="modelId">Model ID
+          <input id="modelId" maxlength="160" placeholder="qwen3.5-27b" autocomplete="off">
+        </label>
+        <p class="plan-help">Use the exact model ID shown by your local server. A 27B model is a good high-quality target when the computer has enough memory.</p>
+      </div>
+      <button class="account-action" type="submit">Save routing</button>
+      <p class="account-delete-status" id="routeStatus" role="status"></p>
+    </form>
+  </section>
+
+  <section class="plan-card">
+    <h2>Local connector</h2>
+    <p>The connector makes an outbound connection to RATi, picks up only your queued jobs, and sends them to the model server on your computer. Your local model key never leaves your computer.</p>
+    <div class="connector-list" id="connectorList"></div>
+    <form id="connectorForm" class="connector-form">
+      <label for="connectorName">Connector name
+        <input id="connectorName" value="My computer" maxlength="80" required>
+      </label>
+      <button class="account-action secondary-action" type="submit">Create connector</button>
+    </form>
+    <div class="connector-token" id="connectorToken" hidden>
+      <strong>Copy this token now</strong>
+      <p>It is shown once. Keep it private.</p>
+      <code id="connectorTokenValue"></code>
+      <p>Then run:</p>
+      <code id="connectorCommand"></code>
+    </div>
+    <p class="account-delete-status" id="connectorStatus" role="status"></p>
+  </section>
+
+  <section class="plan-card">
+    <h2>Trust boundary</h2>
+    <ul class="feature-list compact">
+      <li><i>•</i><span><strong>RATi owns the evidence</strong><small>The deterministic risk checks still run in RATi.</small></span></li>
+      <li><i>•</i><span><strong>Your model writes the draft</strong><small>The response must pass the same report contract before it is saved.</small></span></li>
+      <li><i>•</i><span><strong>Private by design</strong><small>Customer-model reports cannot be published and do not affect Flash scorecards.</small></span></li>
+    </ul>
+  </section>
+</main>
+{% endblock %}
+{% block bottom_nav %}{% endblock %}
+{% block scripts %}
+<script nonce="{{ request.state.csp_nonce }}">
+  const settings = {{ llm_settings|tojson }};
+  const form = document.getElementById('modelRouteForm');
+  const connectorSelect = document.getElementById('connectorSelect');
+  const modelId = document.getElementById('modelId');
+  const localFields = document.getElementById('localModelFields');
+  const routeStatus = document.getElementById('routeStatus');
+  const connectorList = document.getElementById('connectorList');
+
+  function selectedPolicy() {
+    return form.elements.policy.value;
+  }
+
+  function showLocalFields() {
+    localFields.hidden = selectedPolicy() === 'managed';
+  }
+
+  function renderConnectors(connectors) {
+    connectorSelect.innerHTML = '';
+    connectorList.innerHTML = '';
+    const active = connectors.filter(item => item.status === 'active');
+    if (!active.length) {
+      connectorSelect.innerHTML = '<option value="">Create a connector below</option>';
+      connectorList.innerHTML = '<p class="plan-help">No local connectors yet.</p>';
+      return;
+    }
+    active.forEach(connector => {
+      const option = document.createElement('option');
+      option.value = connector.id;
+      option.textContent = connector.name;
+      connectorSelect.append(option);
+      const item = document.createElement('div');
+      item.className = 'connector-row';
+      const state = connector.last_seen_at ? `Last seen ${connector.last_seen_at}` : 'Not connected yet';
+      item.innerHTML = `<strong></strong><small></small>`;
+      item.querySelector('strong').textContent = connector.name;
+      item.querySelector('small').textContent = state;
+      const revoke = document.createElement('button');
+      revoke.type = 'button';
+      revoke.className = 'text-action danger-text-action';
+      revoke.textContent = 'Revoke';
+      revoke.addEventListener('click', async () => {
+        if (!confirm(`Revoke ${connector.name}? Waiting local jobs will fail and be refunded.`)) return;
+        const response = await fetch(`/api/account/llm-connectors/${connector.id}`, {method: 'DELETE'});
+        const result = await response.json();
+        if (!response.ok) {
+          document.getElementById('connectorStatus').textContent = result.detail || 'Could not revoke connector.';
+          return;
+        }
+        settings.connectors = result.connectors;
+        renderConnectors(settings.connectors);
+        document.getElementById('connectorStatus').textContent = 'Connector revoked.';
+      });
+      item.append(revoke);
+      connectorList.append(item);
+    });
+  }
+
+  document.querySelector(`[name="policy"][value="${settings.route.policy}"]`).checked = true;
+  modelId.value = settings.route.model || '';
+  renderConnectors(settings.connectors);
+  connectorSelect.value = settings.route.connector_id || '';
+  showLocalFields();
+  form.elements.policy.forEach(input => input.addEventListener('change', showLocalFields));
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    routeStatus.textContent = 'Saving…';
+    const policy = selectedPolicy();
+    const response = await fetch('/api/account/llm-route', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        policy,
+        route_kind: policy === 'managed' ? 'managed' : 'edge',
+        model: modelId.value.trim(),
+        connector_id: connectorSelect.value || null,
+      }),
+    });
+    const result = await response.json();
+    routeStatus.textContent = response.ok ? 'Routing saved.' : (result.detail || 'Could not save routing.');
+  });
+
+  document.getElementById('connectorForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    const status = document.getElementById('connectorStatus');
+    status.textContent = 'Creating…';
+    const response = await fetch('/api/account/llm-connectors', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: document.getElementById('connectorName').value.trim()}),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      status.textContent = result.detail || 'Could not create connector.';
+      return;
+    }
+    settings.connectors.unshift(result.connector);
+    renderConnectors(settings.connectors);
+    connectorSelect.value = result.connector.id;
+    document.getElementById('connectorToken').hidden = false;
+    document.getElementById('connectorTokenValue').textContent = result.token;
+    document.getElementById('connectorCommand').textContent = `RATI_EDGE_TOKEN=${result.token} stonks-edge --local-base-url http://127.0.0.1:1234/v1`;
+    status.textContent = 'Connector created. Copy the token before leaving this page.';
+  });
+</script>
+{% endblock %}

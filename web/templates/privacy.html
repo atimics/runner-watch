@@ -14,7 +14,7 @@
     <span class="eyebrow">YOUR DATA · YOUR CALL</span>
     <h1>Choose where your data lives.</h1>
     <p>Keep your working data in the RATi cloud, or save an encrypted vault on this device and remove your saved work from the server. RATi still does not track what you read.</p>
-    <p>Last updated: 29 August 2026.</p>
+    <p>Last updated: 30 August 2026.</p>
   </section>
 
   <section class="plan-card data-home-card" id="dataHome" data-signed-in="{{ 'true' if user else 'false' }}">
@@ -132,6 +132,7 @@
       <li><i>•</i><span><strong>Things you save or publish</strong><small>AI-generated ticker comments, comments you write on sports games, public stock Calls, public sports paper picks, private trade-journal entries, cases, research requests, and reports you choose to create. A stock report freezes Flash's forecast, model version, starting price, and later scored result. Sports picks freeze the event, market odds, source time, and result.</small></span></li>
       <li><i>•</i><span><strong>Persistent public avatars</strong><small>Each account receives one random avatar name, visual seed, and research ability. The same avatar intentionally links comments across ticker and sports threads, so readers can link those comments together. This is pseudonymity, not anonymity from RATi: the server keeps the private account link for deletion and abuse controls, while public pages do not expose the account name. Stock Calls and sports paper picks still use one automatic random animal name.</small></span></li>
       <li><i>•</i><span><strong>Billing</strong><small>Stripe customer and subscription references, plan status, and signed webhook event IDs. Stripe handles card details; RATi does not store them.</small></span></li>
+      <li><i>•</i><span><strong>Local model routing</strong><small>Your routing policy, local model ID, connector name, one-way connector token hash, job status, and the report request and response needed to complete work you asked for. RATi never stores the optional key used by your local model server.</small></span></li>
       <li><i>•</i><span><strong>Service security</strong><small>Short-lived rate-limit keys and infrastructure logs may contain an IP address and request details. They are used only to keep the service working and safe.</small></span></li>
     </ul>
   </section>
@@ -151,6 +152,7 @@
   <section class="plan-card">
     <h2>Service providers and transfers</h2>
     <p>Fly.io hosts the app and production data in San Jose, United States. Stripe processes payments. OpenRouter and the selected model provider process the evidence included in a research request or AI-drafted comment. Comment requests include the avatar's research ability, but not its public name, account name, or a RATi user fingerprint. OpenRouter requests require zero-data-retention routing.</p>
+    <p>If you choose a local model, your authenticated connector downloads the frozen evidence for your queued report and sends it to the model server you control. RATi does not contact that local server. Reports made by a customer model stay private and do not enter Flash's public performance record.</p>
     <p>These providers may process data outside the EEA, UK, or Switzerland. RATi must keep processor terms and an approved transfer safeguard, such as Standard Contractual Clauses, on file before serving people in those regions.</p>
   </section>
 
