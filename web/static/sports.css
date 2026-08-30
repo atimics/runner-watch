@@ -560,7 +560,7 @@
   .game-disclosure>summary small{display:none}
 }
 
-/* Game threads keep the matchup and baseline up front, then fold all reference data once. */
+/* Keep the matchup and baseline up front, then fold all reference data once. */
 .sports-game-app .match-strip{
   border-width:0 0 1px;
   border-radius:0;
@@ -583,22 +583,6 @@
 .sports-game-app .decision-value-call{padding:8px 0 8px 18px;border-left:1px solid var(--line)}
 .sports-game-app .value-numbers>span{padding:8px 0;border:0;border-radius:0}
 .sports-game-app .probability-comparison{border-right:0;border-left:0;border-radius:0;background:transparent}
-
-.sports-discussion{
-  margin-top:0;
-  padding:20px;
-  border-top:0;
-  border-bottom:1px solid var(--line);
-}
-.sports-comment-form{margin-bottom:8px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
-.sports-comment-form label{display:block;margin-bottom:7px;color:var(--soft);font-size:10px;font-weight:800}
-.sports-comment-form textarea{display:block;width:100%;min-height:70px;resize:vertical;padding:0;border:0;outline:0;background:transparent;color:var(--text);font:inherit;font-size:11px;line-height:1.5}
-.sports-comment-form textarea::placeholder{color:var(--muted)}
-.sports-comment-form>div{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:9px;border-top:1px solid var(--line)}
-.sports-comment-form small{color:var(--muted);font-size:8px}
-.sports-comment-form button{min-height:32px;padding:0 13px;border:1px solid color-mix(in srgb,var(--accent) 40%,var(--line));border-radius:8px;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent);font-size:9px;font-weight:850;cursor:pointer}
-.sports-comment-form button:disabled{cursor:default;opacity:.55}
-.sports-discussion .comment-list li:last-child{border-bottom:0}
 
 .game-actions{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--line)}
 .game-actions>.paper-pick,.game-actions>.game-flash{min-width:0;margin:0;padding:18px 20px;border:0;border-radius:0;background:transparent}
@@ -630,7 +614,6 @@
   .sports-game-app .decision-hero{padding:16px 14px}
   .sports-game-app .decision-model-call{padding:8px 0}
   .sports-game-app .decision-value-call{padding:14px 0 0;border-top:1px solid var(--line);border-left:0}
-  .sports-discussion{padding:18px 14px}
   .game-actions{grid-template-columns:1fr}
   .game-actions>.paper-pick,.game-actions>.game-flash{padding:16px 14px}
   .game-actions>.paper-pick{border-right:0;border-bottom:1px solid var(--line)}

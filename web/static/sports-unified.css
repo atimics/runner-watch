@@ -491,8 +491,7 @@ body.sports-product .alpha-sample-note {
   .sports-empty-action,
   .sports-update-button,
   .paper-pick > a,
-  .pick-buttons button,
-  .sports-comment-form button
+  .pick-buttons button
 ) {
   border-radius: var(--sports-chrome-radius);
 }
@@ -515,7 +514,6 @@ body.sports-product .alpha-sample-note {
   .model-maturity,
   .game-disclosure,
   .game-notebook,
-  .sports-comment-form,
   .paper-pick,
   .public-picks,
   .odds-receipt
@@ -524,7 +522,7 @@ body.sports-product .alpha-sample-note {
   box-shadow: none;
 }
 
-.sports-game-app :is(.match-strip, .decision-board, .game-flash, .sports-comment-form) {
+.sports-game-app :is(.match-strip, .decision-board, .game-flash) {
   background: transparent;
   background-image: none;
 }

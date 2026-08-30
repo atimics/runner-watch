@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pytest import MonkeyPatch
 
 from runner_web import database as database_module
 from runner_web import db
+from runner_web import main as web_main
 from runner_web.database import initialize_sqlite, open_database, postgres_statement
 
 
@@ -33,6 +37,40 @@ def test_postgres_statement_converts_placeholders_and_sqlite_types() -> None:
     assert postgres_statement(
         "INSERT INTO x(id,note) VALUES(:id,':keep') RETURNING id::text"
     ) == "INSERT INTO x(id,note) VALUES(%(id)s,':keep') RETURNING id::text"
+
+
+def test_public_daily_report_query_does_not_send_an_untyped_null_to_postgres(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class EmptyResult:
+        @staticmethod
+        def fetchone() -> None:
+            return None
+
+    class RecordingDatabase:
+        def __init__(self) -> None:
+            self.queries: list[tuple[str, tuple[Any, ...]]] = []
+
+        def execute(self, statement: str, parameters: tuple[Any, ...]) -> EmptyResult:
+            self.queries.append((statement, parameters))
+            return EmptyResult()
+
+    database = RecordingDatabase()
+    current_time = datetime(2026, 8, 30, 18, 0, tzinfo=UTC)
+
+    @contextmanager
+    def recording_connection():
+        yield database
+
+    monkeypatch.setattr(web_main, "connection", recording_connection)
+    monkeypatch.setattr(web_main, "_release_expired_daily_reports", lambda _database: 0)
+    monkeypatch.setattr(web_main, "now", lambda: current_time)
+
+    assert web_main.daily_report_for_ticker("TBLA") is None
+    statement, parameters = database.queries[-1]
+    assert "? IS NOT NULL" not in statement
+    assert "inference_scope='managed'" in statement
+    assert parameters == ("TBLA", web_main.FLASH.id, "2026-08-30")
 
 
 def test_sqlite_backend_rows_support_names_and_positions(tmp_path: Path) -> None:

@@ -1,4 +1,5 @@
 from dataclasses import replace
+from pathlib import Path
 
 from runner_watch.source_catalog import DEFAULT_SOURCE_POLICIES
 from runner_web.product_policy import (
@@ -6,6 +7,8 @@ from runner_web.product_policy import (
     RANKER_TRAINING,
     policy_manifest,
 )
+
+ROOT = Path(__file__).parents[1]
 
 
 def test_policy_manifest_is_machine_readable_and_reports_source_review_drift() -> None:
@@ -45,3 +48,16 @@ def test_policy_manifest_is_machine_readable_and_reports_source_review_drift() -
         }
     ]
     assert RANKER_TRAINING.minimum_rows == 5_000
+
+
+def test_sports_does_not_accept_or_publish_human_written_comments() -> None:
+    template = (ROOT / "web/templates/sports_game.html").read_text()
+    application = (ROOT / "src/runner_web/main.py").read_text()
+
+    assert "<textarea" not in template
+    assert "sportsCommentForm" not in template
+    assert "data-sports-comments" not in template
+    assert "/api/sports/games/{event_id}/comments" not in application
+    assert "/api/sports/comments/{comment_id}" not in application
+    assert "SportsCommentPayload" not in application
+    assert not (ROOT / "web/static/sports-comments.js").exists()
