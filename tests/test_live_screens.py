@@ -24,9 +24,6 @@ def _manifest_database() -> sqlite3.Connection:
         CREATE TABLE scan_snapshots(ticker TEXT, captured_at TEXT);
         CREATE TABLE caller_identities(id TEXT, handle TEXT, status TEXT);
         CREATE TABLE community_calls(caller_identity_id TEXT, updated_at TEXT);
-        CREATE TABLE signals(
-            public_id TEXT, caller_identity_id TEXT, status TEXT, created_at TEXT
-        );
         CREATE TABLE research_commissions(
             public_id TEXT, status TEXT, visibility TEXT, published_at TEXT,
             completed_at TEXT, created_at TEXT
@@ -47,12 +44,6 @@ def test_public_dynamic_screen_paths_uses_latest_safe_public_records() -> None:
             INSERT INTO caller_identities VALUES ('caller-2', 'retired-ibis', 'tombstoned');
             INSERT INTO community_calls VALUES ('caller-1', '2026-01-01T00:00:00Z');
             INSERT INTO community_calls VALUES ('caller-2', '2026-01-02T00:00:00Z');
-            INSERT INTO signals VALUES (
-                'public/id', 'caller-1', 'public', '2026-01-01T00:00:00Z'
-            );
-            INSERT INTO signals VALUES (
-                'hidden', 'caller-1', 'removed', '2026-01-02T00:00:00Z'
-            );
             INSERT INTO research_commissions VALUES (
                 'public-report', 'complete', 'public', '2026-01-01T00:00:00Z', NULL,
                 '2026-01-01T00:00:00Z'
@@ -69,7 +60,6 @@ def test_public_dynamic_screen_paths_uses_latest_safe_public_records() -> None:
         assert public_dynamic_screen_paths(database) == {
             "ticker": "/t/NEW.A",
             "caller": "/u/steady-ibis",
-            "signal": "/s/public%2Fid",
             "research": "/research/public-report",
             "sports_game": "/game/mlb:next",
         }
@@ -80,7 +70,6 @@ def test_public_dynamic_screen_paths_reports_missing_fixtures() -> None:
         assert public_dynamic_screen_paths(database) == {
             "ticker": None,
             "caller": None,
-            "signal": None,
             "research": None,
             "sports_game": None,
         }
@@ -109,7 +98,6 @@ def test_live_screen_manifest_returns_only_public_path_keys(
     assert set(payload["dynamic"]) == {
         "ticker",
         "caller",
-        "signal",
         "research",
         "sports_game",
     }

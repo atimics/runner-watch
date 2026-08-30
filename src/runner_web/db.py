@@ -2558,6 +2558,28 @@ def _migration_047_scorecard_and_release_indexes(db: DatabaseConnection) -> None
     )
 
 
+def _migration_048_shared_comment_subjects(db: DatabaseConnection) -> None:
+    """Let the paid AI comment pipeline serve stocks and sports games."""
+
+    for table in ("ticker_comments", "comment_generation_requests"):
+        _ensure_column(
+            db,
+            table,
+            "subject_kind TEXT NOT NULL DEFAULT 'stock' "
+            "CHECK(subject_kind IN ('stock','sports_game'))",
+        )
+        _ensure_column(db, table, "subject_key TEXT NOT NULL DEFAULT ''")
+        db.execute(f"UPDATE {table} SET subject_key=ticker WHERE subject_key='' ")
+    db.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS ticker_comments_subject_time
+            ON ticker_comments(subject_kind,subject_key,status,created_at DESC);
+        CREATE INDEX IF NOT EXISTS comment_generation_requests_subject_time
+            ON comment_generation_requests(subject_kind,subject_key,status,updated_at DESC);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2613,6 +2635,7 @@ MIGRATIONS = (
     Migration(45, "sports_comments", _migration_045_sports_comments),
     Migration(46, "customer_llm_routing", _migration_046_customer_llm_routing),
     Migration(47, "scorecard_and_release_indexes", _migration_047_scorecard_and_release_indexes),
+    Migration(48, "shared_comment_subjects", _migration_048_shared_comment_subjects),
 )
 
 
