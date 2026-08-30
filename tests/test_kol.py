@@ -233,6 +233,55 @@ def test_fixed_outcome_closes_call_and_updates_scorecard(
     assert scorecard["paper_pnl"] == 75.0
 
 
+def test_scorecard_keeps_ordered_max_drawdown(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "kol-drawdown.db")
+    init_db()
+    captured_at = datetime(2026, 8, 25, 15, tzinfo=UTC)
+    _seed_prediction(
+        "run-win",
+        "snapshot-win",
+        "GAIN",
+        captured_at,
+        probability_up=0.75,
+        expected_return_pct=3.0,
+    )
+    _seed_prediction(
+        "run-loss",
+        "snapshot-loss",
+        "LOSS",
+        captured_at + timedelta(minutes=5),
+        probability_up=0.7,
+        expected_return_pct=2.0,
+    )
+    publish_calls_for_scan("run-win", "model-one")
+    publish_calls_for_scan("run-loss", "model-one")
+    with connection() as database:
+        database.execute(
+            """
+            UPDATE kol_calls
+            SET status='won',net_return_pct=10,paper_pnl=100,
+                benchmark_label='up',exit_at=?
+            WHERE ticker='GAIN'
+            """,
+            ((captured_at + timedelta(minutes=20)).isoformat(),),
+        )
+        database.execute(
+            """
+            UPDATE kol_calls
+            SET status='lost',net_return_pct=-15,paper_pnl=-150,
+                benchmark_label='down',exit_at=?
+            WHERE ticker='LOSS'
+            """,
+            ((captured_at + timedelta(minutes=25)).isoformat(),),
+        )
+
+    scorecard = predictor_scorecards()[0]
+
+    assert scorecard["calls"] == 2
+    assert scorecard["paper_pnl"] == -50.0
+    assert scorecard["max_drawdown"] == 150.0
+
+
 def test_archived_bar_closes_a_live_run_before_the_slower_outcome_job(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:

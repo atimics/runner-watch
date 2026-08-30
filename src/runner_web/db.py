@@ -2539,6 +2539,25 @@ def _migration_046_customer_llm_routing(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_047_scorecard_and_release_indexes(db: DatabaseConnection) -> None:
+    """Keep release and scorecard scans on their narrow lookup paths."""
+
+    db.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS research_commissions_release_due
+            ON research_commissions(exclusive_until)
+            WHERE status='complete' AND report_day IS NOT NULL
+              AND visibility<>'public' AND exclusive_until IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS research_commissions_flash_version_status
+            ON research_commissions(flash_version_id,status)
+            WHERE flash_version_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS kol_calls_predictor_exit_resolved
+            ON kol_calls(predictor_id,exit_at,id)
+            WHERE net_return_pct IS NOT NULL;
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2593,6 +2612,7 @@ MIGRATIONS = (
     Migration(44, "golf_leaderboards", _migration_044_golf_leaderboards),
     Migration(45, "sports_comments", _migration_045_sports_comments),
     Migration(46, "customer_llm_routing", _migration_046_customer_llm_routing),
+    Migration(47, "scorecard_and_release_indexes", _migration_047_scorecard_and_release_indexes),
 )
 
 

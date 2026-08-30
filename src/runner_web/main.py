@@ -138,6 +138,7 @@ from runner_web.outcomes import (
     refresh_outcomes,
     refresh_scan_outcomes,
 )
+from runner_web.performance import record_cache, record_route
 from runner_web.privacy import (
     delete_user_content,
     delete_user_data,
@@ -431,6 +432,7 @@ def _refresh_public_screen_data(
     shared_key: str,
     builder: Callable[[], dict[str, Any]],
 ) -> None:
+    started = time.perf_counter()
     try:
         payload = builder()
         with PUBLIC_SCREEN_DATA_CONDITION:
@@ -442,6 +444,11 @@ def _refresh_public_screen_data(
     except Exception:
         LOG.exception("Public screen cache refresh failed")
     finally:
+        record_cache(
+            "public-screen-refresh",
+            "build",
+            duration_ms=(time.perf_counter() - started) * 1000,
+        )
         with PUBLIC_SCREEN_DATA_CONDITION:
             PUBLIC_SCREEN_DATA_REFRESHING.discard(local_key)
             PUBLIC_SCREEN_DATA_CONDITION.notify_all()
@@ -457,8 +464,10 @@ def _public_screen_data(
     with PUBLIC_SCREEN_DATA_CONDITION:
         cached = PUBLIC_SCREEN_DATA_CACHE.get(local_key)
         if cached and current < cached[0]:
+            record_cache(scope, "hit")
             return cached[1]
         if cached:
+            record_cache(scope, "stale")
             if local_key not in PUBLIC_SCREEN_DATA_REFRESHING:
                 PUBLIC_SCREEN_DATA_REFRESHING.add(local_key)
                 threading.Thread(
@@ -471,6 +480,7 @@ def _public_screen_data(
 
     shared = shared_cache_get(shared_key)
     if isinstance(shared, dict):
+        record_cache(scope, "shared")
         with PUBLIC_SCREEN_DATA_CONDITION:
             PUBLIC_SCREEN_DATA_CACHE[local_key] = (
                 time.monotonic() + PUBLIC_SCREEN_CACHE_TTL_SECONDS,
@@ -483,6 +493,7 @@ def _public_screen_data(
         if cached:
             return cached[1]
         if local_key in PUBLIC_SCREEN_DATA_REFRESHING:
+            record_cache(scope, "wait")
             PUBLIC_SCREEN_DATA_CONDITION.wait_for(
                 lambda: (
                     local_key in PUBLIC_SCREEN_DATA_CACHE
@@ -492,9 +503,12 @@ def _public_screen_data(
             )
             cached = PUBLIC_SCREEN_DATA_CACHE.get(local_key)
             if cached:
+                record_cache(scope, "hit")
                 return cached[1]
         PUBLIC_SCREEN_DATA_REFRESHING.add(local_key)
 
+    started = time.perf_counter()
+    record_cache(scope, "miss")
     try:
         payload = builder()
         with PUBLIC_SCREEN_DATA_CONDITION:
@@ -509,6 +523,7 @@ def _public_screen_data(
                 payload,
             )
         shared_cache_set(shared_key, payload, int(PUBLIC_SCREEN_CACHE_TTL_SECONDS))
+        record_cache(scope, "build", duration_ms=(time.perf_counter() - started) * 1000)
         return payload
     finally:
         with PUBLIC_SCREEN_DATA_CONDITION:
@@ -526,6 +541,7 @@ def _start_worker_tasks() -> list[asyncio.Task[Any]]:
         asyncio.create_task(scan_collection_worker(), name="scan-collection"),
         asyncio.create_task(massive_backfill_worker(), name="massive-backfill"),
         asyncio.create_task(research_job_worker(), name="research-jobs"),
+        asyncio.create_task(report_release_worker(), name="report-release"),
     ]
     if SPORTS_INGESTION_ENABLED:
         workers.append(asyncio.create_task(sports_ingestion_worker(), name="sports-ingestion"))
@@ -972,8 +988,17 @@ def take_challenge(token: str, kind: str) -> dict[str, Any]:
     return dict(row)
 
 
-def page_context(request: Request, session_token: str | None, **extra: Any) -> dict[str, Any]:
-    user = current_user(session_token)
+_UNRESOLVED_USER = object()
+
+
+def page_context(
+    request: Request,
+    session_token: str | None,
+    *,
+    resolved_user: Any = _UNRESOLVED_USER,
+    **extra: Any,
+) -> dict[str, Any]:
+    user = current_user(session_token) if resolved_user is _UNRESOLVED_USER else resolved_user
     user_id = str(user["id"]) if user else None
     comment_avatar = None
     if user_id:
@@ -1181,6 +1206,9 @@ async def security_headers(request: Request, call_next: Any) -> Response:
     if request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     elapsed_ms = (time.perf_counter() - started) * 1000
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", request.url.path)
+    record_route(request.method, route_path, elapsed_ms)
     response.headers["Server-Timing"] = f"app;dur={elapsed_ms:.1f}"
     if elapsed_ms >= 500:
         LOG.info(
@@ -1246,12 +1274,7 @@ class EdgeJobFailPayload(BaseModel):
 
 
 def _public_flash_record_data() -> dict[str, Any]:
-    def build() -> dict[str, Any]:
-        with connection() as database:
-            _release_expired_daily_reports(database)
-        return flash_record()
-
-    return _public_screen_data("flash-record", "public", build)
+    return _public_screen_data("flash-record", "public", flash_record)
 
 
 @app.get("/api/kols")
@@ -1272,7 +1295,6 @@ def live_screen_manifest(request: Request) -> JSONResponse:
 
     enforce_rate(request, "screen-manifest", limit=30, seconds=60)
     with connection() as database:
-        _release_expired_daily_reports(database)
         dynamic = public_dynamic_screen_paths(database)
     return JSONResponse({"dynamic": dynamic})
 
@@ -1313,6 +1335,7 @@ def billing_page(
         context=page_context(
             request,
             runner_session,
+            resolved_user=user,
             transactions=recent_transactions(str(user["id"])) if user else [],
             flash_reports_available=(
                 _flash_provider_ready() and _flash_daily_capacity_available()
@@ -3024,6 +3047,28 @@ def _report_record(row: Any) -> dict[str, Any] | None:
     return report
 
 
+def _apply_effective_report_visibility(report: dict[str, Any]) -> dict[str, Any]:
+    """Treat an elapsed private window as public without writing during a GET."""
+
+    if (
+        report.get("status") != "complete"
+        or not report.get("report_day")
+        or report.get("visibility") == "public"
+        or not report.get("exclusive_until")
+    ):
+        return report
+    try:
+        exclusive_until = datetime.fromisoformat(str(report["exclusive_until"]))
+        if exclusive_until.tzinfo is None:
+            exclusive_until = exclusive_until.replace(tzinfo=UTC)
+    except (TypeError, ValueError):
+        return report
+    if exclusive_until <= now():
+        report["visibility"] = "public"
+        report["published_at"] = report.get("published_at") or report["exclusive_until"]
+    return report
+
+
 def _commission_record(
     row: Any,
     summary: dict[str, Any] | None = None,
@@ -3109,7 +3154,7 @@ def _commission_record(
         report["profile_heading"] = "Company"
         report["risk_heading"] = "What could rug it"
         report["sports_forecast"] = None
-    return report
+    return _apply_effective_report_visibility(report)
 
 
 def _attach_sports_forecast_result(
@@ -3148,6 +3193,46 @@ def _release_expired_daily_reports(database: Any, *, at: datetime | None = None)
     return updated.rowcount
 
 
+def _release_expired_reports_once() -> int:
+    released_at = now()
+    timestamp = iso(released_at)
+    with connection() as database:
+        rows = database.execute(
+            """
+            SELECT public_id,ticker FROM research_commissions
+            WHERE status='complete' AND report_day IS NOT NULL
+                AND visibility<>'public' AND exclusive_until IS NOT NULL
+                AND exclusive_until<=?
+            """,
+            (timestamp,),
+        ).fetchall()
+        released = _release_expired_daily_reports(database, at=released_at)
+    if rows:
+        _invalidate_public_screen_data("flash-record", "public")
+        for row in rows:
+            public_id = str(row["public_id"])
+            ticker = str(row["ticker"])
+            _invalidate_public_screen_data("research", public_id)
+            _invalidate_public_screen_data("ticker", ticker)
+            if ticker.startswith("sports:"):
+                _invalidate_public_screen_data("sports-game", ticker.removeprefix("sports:"))
+    return released
+
+
+async def report_release_worker() -> None:
+    """Materialize elapsed report locks away from latency-sensitive requests."""
+
+    await asyncio.sleep(15)
+    while True:
+        try:
+            await run_in_threadpool(_release_expired_reports_once)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOG.exception("Expired report release failed")
+        await asyncio.sleep(30)
+
+
 def daily_report_for_ticker(
     ticker: str,
     viewer_user_id: str | None = None,
@@ -3156,7 +3241,6 @@ def daily_report_for_ticker(
 
     report_day = now().date().isoformat()
     with connection() as database:
-        _release_expired_daily_reports(database)
         row = database.execute(
             """
             SELECT * FROM research_commissions
@@ -5328,7 +5412,6 @@ async def research_job_worker() -> None:
 
 def get_commission(public_id: str) -> dict[str, Any] | None:
     with connection() as db:
-        _release_expired_daily_reports(db)
         row = db.execute(
             """
             SELECT * FROM research_commissions
@@ -5368,7 +5451,6 @@ def _public_research_report_data(public_id: str) -> dict[str, Any]:
 
 def latest_commission(user_id: str, ticker: str) -> dict[str, Any] | None:
     with connection() as db:
-        _release_expired_daily_reports(db)
         row = db.execute(
             """
             SELECT * FROM research_commissions
@@ -6154,6 +6236,7 @@ def sports_game_page(
         context=page_context(
             request,
             runner_session,
+            resolved_user=user,
             event=event,
             comments=comments,
             comment_count=comment_count,
@@ -6888,7 +6971,7 @@ def ticker_charts_payload(tickers: list[str]) -> dict[str, Any]:
             CHART_PAYLOAD_CONDITION.notify_all()
 
 
-def ticker_chart_detail_payload(ticker: str) -> dict[str, Any]:
+def _ticker_chart_detail_payload_uncached(ticker: str) -> dict[str, Any]:
     frame, freshness = _stored_chart_frame(ticker)
     structure = analyze_market_structure(frame)
     return {
@@ -6909,6 +6992,14 @@ def ticker_chart_detail_payload(ticker: str) -> dict[str, Any]:
     }
 
 
+def ticker_chart_detail_payload(ticker: str) -> dict[str, Any]:
+    return _public_screen_data(
+        "ticker-chart",
+        ticker,
+        lambda: _ticker_chart_detail_payload_uncached(ticker),
+    )
+
+
 def ticker_charts_data(tickers: list[str]) -> dict[str, list[dict[str, Any]]]:
     return ticker_charts_payload(tickers)["charts"]
 
@@ -6917,9 +7008,19 @@ def ticker_chart_data(ticker: str) -> list[dict[str, Any]]:
     return ticker_charts_data([ticker]).get(ticker, [])
 
 
+def _public_ticker_detail_data(ticker: str) -> dict[str, Any] | None:
+    payload = _public_screen_data(
+        "ticker-detail",
+        ticker,
+        lambda: {"detail": ticker_detail_data(ticker)},
+    )
+    detail = payload.get("detail")
+    return dict(detail) if isinstance(detail, dict) else None
+
+
 def _public_ticker_page_data(ticker: str) -> dict[str, Any]:
     def build() -> dict[str, Any]:
-        detail = ticker_detail_data(ticker)
+        detail = _public_ticker_detail_data(ticker)
         if detail is None:
             return {"found": False}
         current_price = detail.get("current", {}).get("price")
@@ -6945,7 +7046,7 @@ def ticker_page(
     normalized = _clean_ticker(ticker)
     user = current_user(runner_session)
     if user:
-        detail = ticker_detail_data(normalized)
+        detail = _public_ticker_detail_data(normalized)
         if detail is None:
             raise HTTPException(404, "Ticker not found")
         comments = comments_for_ticker(
@@ -6979,6 +7080,7 @@ def ticker_page(
         context=page_context(
             request,
             runner_session,
+            resolved_user=user,
             detail=detail,
             comments=comments,
             comment_count=comment_count,
@@ -7012,27 +7114,20 @@ async def ticker_chart_api(ticker: str, request: Request) -> JSONResponse:
 async def ticker_pressure_api(ticker: str, request: Request) -> JSONResponse:
     enforce_rate(request, "ticker-pressure", limit=60, seconds=60)
     normalized = _clean_ticker(ticker)
-    if not _ticker_exists(normalized):
+    detail = await run_in_threadpool(_public_ticker_detail_data, normalized)
+    if detail is None:
         raise HTTPException(404, "Ticker not found")
-    await run_in_threadpool(ticker_chart_data, normalized)
-    pressure = await run_in_threadpool(_market_trade_pressure, normalized)
-    detail = ticker_detail_data(normalized)
-    gate = (
-        _evidence_gate(
-            detail["current"],
-            detail["events"],
-            pressure,
-            external_context=detail["external_context"],
-            base_rates=detail["base_rates"],
-        )
-        if detail
-        else None
+    return JSONResponse(
+        {
+            "ticker": normalized,
+            "pressure": detail["trade_pressure"],
+            "evidence_gate": detail["evidence_gate"],
+        }
     )
-    return JSONResponse({"ticker": normalized, "pressure": pressure, "evidence_gate": gate})
 
 
 def _ticker_summary(ticker: str) -> dict[str, Any] | None:
-    detail = ticker_detail_data(ticker)
+    detail = _public_ticker_detail_data(ticker)
     if not detail:
         return None
     external = detail["external_context"]
@@ -8454,6 +8549,7 @@ def research_report_page(
         context=page_context(
             request,
             runner_session,
+            resolved_user=user,
             report=report,
             is_owner=is_owner,
             active_tab="alpha",
@@ -8577,7 +8673,8 @@ def signup_page() -> RedirectResponse:
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, runner_session: str | None = Cookie(default=None)) -> HTMLResponse:
-    if current_user(runner_session):
+    user = current_user(runner_session)
+    if user:
         return RedirectResponse("/", 303)
     return templates.TemplateResponse(
         request=request,
@@ -8585,6 +8682,7 @@ def login_page(request: Request, runner_session: str | None = Cookie(default=Non
         context=page_context(
             request,
             runner_session,
+            resolved_user=None,
             next_path=safe_next_path(
                 request.query_params.get("next") if "query_string" in request.scope else None
             ),
@@ -8730,7 +8828,7 @@ def add_passkey_page(
     return templates.TemplateResponse(
         request=request,
         name="passkey_add.html",
-        context=page_context(request, runner_session),
+        context=page_context(request, runner_session, resolved_user=user),
     )
 
 

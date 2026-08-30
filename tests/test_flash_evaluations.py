@@ -182,6 +182,8 @@ def test_fixed_contract_scores_hits_misses_and_no_calls(flash_db: Path) -> None:
     assert record["current_version"]["headline_rate_visible"] is False
     assert record["current_version"]["forecast_coverage"] == 0.6667
     assert record["current_version"]["brier_score"] == 0.26
+    assert record["current_version"]["median_signed_move_pct"] == 0.0
+    assert len(record["recent_results"]) == 3
     assert refresh_flash_forecasts(
         datetime(2026, 8, 25, 22, 0, tzinfo=UTC), fetch_market_data=False
     )["resolved"] == 0
