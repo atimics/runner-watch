@@ -1,6 +1,6 @@
 # RATi Swarm, RATi Runners, and RATi Sports
 
-RATi Swarm is the open-source Svelte/Electron desktop app. Pulse, Radar, and Flash are its main
+RATi Swarm is the open-source Svelte/Tauri desktop app. Pulse, Radar, and Flash are its main
 screens. Scanner can switch between the bundled local engine and RATi Cloud at
 `runners.rati.chat`. Local mode persists receipts in SQLite and stores user-authorized provider
 credentials in the operating-system vault. Local mode shows only local scanner results; Cloud mode

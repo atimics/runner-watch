@@ -432,6 +432,12 @@
     return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
   }
 
+  function currentViewLabel(): string {
+    if (view === 'settings') return 'Connections';
+    if (view === 'ticker') return selectedTicker?.ticker || 'Ticker';
+    return navItems.find((item) => item.id === view)?.label || 'RATi Swarm';
+  }
+
   onMount(async () => {
     view = 'pulse';
     receipts = loadCachedReceipts();
@@ -477,25 +483,34 @@
 <svelte:head><title>RATi Swarm</title></svelte:head>
 
 <div class="app-shell">
-  <header class="app-header">
+  <aside class="app-sidebar">
     <button class="brand" onclick={() => view = 'pulse'} aria-label="Open Pulse">
       <span class="brand-mark">R</span><span><b>RATi</b><small>SWARM</small></span>
     </button>
-    <nav aria-label="Main navigation">
+    <nav class="app-nav" aria-label="Main navigation">
+      <small>Workspace</small>
       {#each navItems as item}
         <button class:active={view === item.id} onclick={() => view = item.id}><span>{item.icon}</span>{item.label}</button>
       {/each}
     </nav>
-    <div class="header-actions">
+    <div class="sidebar-actions">
+      <small>Scanner</small>
       <div class="mode-control" aria-label="Scanner location">
         <button class:active={scannerMode === 'local'} onclick={() => chooseScannerMode('local')}>Local</button>
         <button class="cloud-choice" class:active={scannerMode === 'cloud'} onclick={() => chooseScannerMode('cloud')}>Cloud</button>
       </div>
-      <button class:active={view === 'settings'} class="settings-button" onclick={() => view = 'settings'} aria-label="Open settings">⚙</button>
+      <button class:active={view === 'settings'} class="settings-button" onclick={() => view = 'settings'} aria-label="Open settings"><span>⚙</span> Connections</button>
+      <div class:online={node} class="sidebar-status"><i></i><span>{node ? 'Scanner ready' : connecting ? 'Connecting' : 'Scanner offline'}</span></div>
     </div>
-  </header>
+  </aside>
 
-  <main>
+  <section class="app-workspace">
+    <header class="app-toolbar">
+      <div><small>RATi workspace</small><strong>{currentViewLabel()}</strong></div>
+      <div class="toolbar-state"><span>{scannerMode === 'local' ? 'On this device' : 'RATi Cloud'}</span><i class:online={node}></i></div>
+    </header>
+
+    <main>
     {#if view === 'pulse'}
       {#if scannerMode === 'local'}
         <section class="screen-head local-feed-head">
@@ -654,7 +669,8 @@
         <section class:cloud-panel={node.mode === 'cloud'} class="providers-section"><div class="section-head"><div><span class="eyebrow">SOURCE REGISTRY</span><h2>Data sources</h2></div><small>{providers.length} connections</small></div><div class="provider-grid">{#each providers as provider}<article class="provider-card"><div><strong>{provider.title}</strong><span class:ready={provider.state === 'ready' || provider.state === 'connected'}>{provider.state.replace('_', ' ')}</span></div><p>{provider.feeds.map((feed) => feed.title).join(' · ')}</p>{#if provider.feeds[0]?.terms_url}<button class="text-button" onclick={() => openExternal(provider.feeds[0].terms_url!)}>Source terms ↗</button>{/if}{#if node.mode !== 'cloud' && provider.configuration_kind === 'api_key'}{#if provider.configured}<button onclick={() => disconnectProvider(provider)}>Disconnect</button>{:else}<div class="key-entry"><input type="password" value={providerKeys[provider.id] || ''} oninput={(event) => providerKeys = { ...providerKeys, [provider.id]: event.currentTarget.value }} autocomplete="off" placeholder={`${provider.title} API key`} aria-label={`${provider.title} API key`} /><button onclick={() => connectProvider(provider)} disabled={(providerKeys[provider.id] || '').trim().length < 8}>Save key</button></div>{/if}{/if}</article>{/each}</div></section>
       {:else}<section class="offline-library"><span class="eyebrow">SCANNER OFFLINE</span><h2>Connect a scanner first</h2><p>Choose Local or Cloud above, then open Scanner to connect.</p></section>{/if}
     {/if}
-  </main>
+    </main>
 
-  <footer>RATi Swarm {runtime.appVersion} · {runtime.platform} · Scanner API v{node?.api_version || '—'} · Copyright © 2026 RATi contributors · AGPL-3.0-only · <button class="footer-link" onclick={() => openExternal('https://github.com/atimics/runner-watch')}>Source</button></footer>
+    <footer>RATi Swarm {runtime.appVersion} · {runtime.platform} · Scanner API v{node?.api_version || '—'} · Copyright © 2026 RATi contributors · AGPL-3.0-only · <button class="footer-link" onclick={() => openExternal('https://github.com/atimics/runner-watch')}>Source</button></footer>
+  </section>
 </div>

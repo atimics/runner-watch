@@ -16,8 +16,9 @@ RATi Swarm -> public Pulse / Radar / Flash APIs -> RATi Cloud at runners.rati.ch
 - `runner_watch` remains the provider-neutral scanner and scoring core.
 - `runner_node` owns the versioned Node API, provider discovery, scanner execution, and user
   connections. `rati-scanner` starts it as a loopback service by default.
-- `desktop` is the RATi Swarm Svelte and Electron client. Pulse, Radar, and Flash are its main
-  navigation. It contains no scanning or provider logic.
+- `desktop` is the RATi Swarm Svelte and Tauri 2 client. Pulse, Radar, and Flash are its main
+  navigation. A small Rust host owns the native window, approved network calls, and scanner process;
+  it contains no scanning or provider logic.
 - `runner_web` remains the hosted product while its rendered screens move to the shared Node API.
   It exposes the same Node router during the migration.
 
@@ -93,38 +94,42 @@ for account-side management.
 
 ## Desktop security
 
-- The renderer is sandboxed and has no Node.js access.
-- Context isolation is enabled.
-- The preload bridge exposes only runtime details and approved external links.
-- Packaged assets use the secure `rati-app` protocol instead of `file://`.
-- Navigation and permission requests are denied by default.
+- The renderer runs in the operating system webview and has no Node.js access.
+- A narrow Tauri command bridge exposes runtime details, approved public reads, and approved links.
+- Tauri capabilities grant the main window only the core permissions it needs.
+- Navigation stays inside the packaged app; external links are checked in Rust before opening.
 - Remote node URLs require HTTPS; loopback development nodes may use HTTP.
-- The bundled scanner binds its own exclusive `127.0.0.1` random port and announces it to Electron.
+- Public reads are limited to the RATi Runners host and a fixed list of API paths.
+- The bundled scanner binds its own exclusive `127.0.0.1` random port and announces it to Tauri.
 - Local API writes require a fresh per-launch bearer token.
 - Self-hosted API writes require an operator-configured bearer token.
 
 ## Native builds
 
-The desktop workflow builds the Python scanner as a per-platform executable, stages it as an
-Electron resource, launches that frozen executable and checks its API, runs Svelte checks and tests,
-then creates:
+The desktop workflow builds the Python scanner as a per-platform sidecar, stages it with the Tauri
+application, launches that frozen executable and checks its API, runs Svelte and Rust checks and
+tests, then creates:
 
-- a Debian package on Linux;
-- a DMG and ZIP on macOS;
-- a Squirrel installer on Windows.
+- Debian and AppImage packages on Linux;
+- an app bundle and DMG on macOS;
+- MSI and NSIS installers on Windows.
+
+The native window appears immediately. The Rust host starts the Python sidecar in the background,
+and the renderer reports its starting, ready, or failed state without blocking the rest of the app.
+The scanner and scoring kernel remain Python so the client migration does not create a second engine.
 
 Artifacts are retained for 14 days. Release signing and notarization should be added before public
 distribution; pull request artifacts are intentionally unsigned.
 
 ## Hosted app
 
-The production container builds the same Svelte renderer used by Electron and serves it at
+The production container builds the same Svelte renderer used by Tauri and serves it at
 `/desktop/`. Cloud Scanner points to `https://runners.rati.chat`; Local points to the bundled or
 self-hosted node. Existing Jinja screens and their public read APIs stay available during migration.
 
 ## Next slices
 
 1. Add authenticated cloud scanner sessions and optional local-to-cloud artifact sync.
-2. Move ticker detail, Calls, picks, research receipts, and exports into the shared client.
-3. Add the Rust ranker binary to the packaged scanner resources.
+2. Move Calls, picks, research receipts, and exports into the shared client.
+3. Profile real scanner workloads before moving any proven hot path to a native helper.
 4. Add signing, notarization, and automatic updates for public desktop releases.
