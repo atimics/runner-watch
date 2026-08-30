@@ -2297,7 +2297,16 @@ def test_first_daily_flash_report_locks_other_users_for_one_hour(
             (completed_at, completed_at, expired_at, first["id"]),
         )
 
+    release_reports = web_main._release_expired_daily_reports
+    monkeypatch.setattr(
+        web_main,
+        "_release_expired_daily_reports",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("daily report reads must not run a release update")
+        ),
+    )
     shared = web_main.daily_report_for_ticker("ONE", "other")
+    monkeypatch.setattr(web_main, "_release_expired_daily_reports", release_reports)
     same_report, created = web_main._create_research_commission("other", "ONE")
 
     assert shared is not None
