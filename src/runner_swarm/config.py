@@ -1,4 +1,4 @@
-"""Environment-backed configuration shared by local and cloud swarm runtimes."""
+"""Environment-backed configuration shared by local and hosted swarm runtimes."""
 
 from __future__ import annotations
 

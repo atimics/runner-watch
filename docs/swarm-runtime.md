@@ -7,7 +7,7 @@ extra context. They are never trade commands.
 ## Choose a mode
 
 `SWARM_MODE=solo` is the default. In solo mode the app does not open the swarm routes, discover
-peers, receive peer claims, or publish scan claims. Normal local and cloud scanner work continues.
+peers, receive peer claims, or publish scan claims. Normal local and hosted scanner work continues.
 
 `SWARM_MODE=attached` starts the HTTPS swarm runtime. An attached web process serves:
 

@@ -146,14 +146,14 @@
   box-shadow: 0 0 9px rgba(87, 227, 137, .7);
 }
 
-.cloud-data-summary {
+.swarm-data-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin: 12px 0 16px;
   border: 1px solid #242c28;
 }
 
-.cloud-data-summary span {
+.swarm-data-summary span {
   min-width: 0;
   padding: 10px;
   border-right: 1px solid #242c28;
@@ -162,11 +162,11 @@
   text-align: center;
 }
 
-.cloud-data-summary span:last-child {
+.swarm-data-summary span:last-child {
   border-right: 0;
 }
 
-.cloud-data-summary strong {
+.swarm-data-summary strong {
   display: block;
   margin-bottom: 2px;
   color: var(--text);

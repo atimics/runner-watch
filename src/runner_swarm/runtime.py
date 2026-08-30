@@ -1,4 +1,4 @@
-"""Runtime assembly shared by solo, cloud, and alpha-pack trader nodes."""
+"""Runtime assembly shared by solo, attached, and alpha-pack trader nodes."""
 
 from __future__ import annotations
 

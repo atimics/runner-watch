@@ -13,8 +13,8 @@
   <section class="account-intro">
     <span class="eyebrow">YOUR DATA · YOUR CALL</span>
     <h1>Choose where your data lives.</h1>
-    <p>Keep your working data in the RATi cloud, or save an encrypted vault on this device and remove your saved work from the server. RATi still does not track what you read.</p>
-    <p>Last updated: 29 August 2026.</p>
+    <p>Keep your working data in the RATi Swarm, or save an encrypted vault on this device and remove your saved work from the server. RATi still does not track what you read.</p>
+    <p>Last updated: 30 August 2026.</p>
   </section>
 
   <section class="plan-card data-home-card" id="dataHome" data-signed-in="{{ 'true' if user else 'false' }}">
@@ -24,7 +24,7 @@
     </header>
     <div class="storage-choice-grid">
       <article class="storage-choice active">
-        <span class="storage-state"><i></i>RATi cloud</span>
+        <span class="storage-state"><i></i>RATi Swarm</span>
         {% if user %}
         <strong>{{ data_summary.item_count }} saved item{{ '' if data_summary.item_count == 1 else 's' }}</strong>
         <small>Available after passkey sign-in. Encrypted in transit and at rest.</small>
@@ -41,18 +41,18 @@
     </div>
 
     {% if user %}
-    <div class="cloud-data-summary" aria-label="Cloud data summary">
+    <div class="swarm-data-summary" aria-label="Swarm data summary">
       {% for label, count in data_summary.groups.items() %}
       <span><strong>{{ count }}</strong>{{ label }}</span>
       {% endfor %}
     </div>
     <div class="data-action-stack">
       <button class="account-action" id="copyToDevice" type="button">Save encrypted copy on this device</button>
-      <button class="account-action secondary-action" id="moveToDevice" type="button">Move saved data off the cloud</button>
+      <button class="account-action secondary-action" id="moveToDevice" type="button">Move saved data off the Swarm</button>
     </div>
     <p class="plan-help">Moving first saves and checks an encrypted local vault. Only then does RATi delete saved and published items from the live server. Your login, public avatar, Flash balance, and billing state stay so your account still works.</p>
     {% else %}
-    <a class="account-action" href="/login?next=/privacy">Log in to manage cloud data</a>
+    <a class="account-action" href="/login?next=/privacy">Log in to manage Swarm data</a>
     {% endif %}
 
     <div class="local-vault-actions" id="localVaultActions" hidden>
@@ -110,7 +110,7 @@
   <dialog class="account-delete-dialog data-vault-dialog" id="localDeleteDialog" aria-labelledby="localDeleteTitle">
     <button class="dialog-close" data-close-dialog type="button" aria-label="Close">×</button>
     <h2 id="localDeleteTitle">Delete the local vault?</h2>
-    <p>This permanently removes the encrypted copy from this browser. It does not change any cloud data.</p>
+    <p>This permanently removes the encrypted copy from this browser. It does not change any Swarm data.</p>
     <form id="localDeleteForm">
       <label for="localDeleteConfirmation">Type <strong>DELETE LOCAL COPY</strong> to confirm
         <input id="localDeleteConfirmation" autocomplete="off" required>
@@ -138,7 +138,7 @@
 
   <section class="plan-card">
     <h2>How storage choices work</h2>
-    <p>The cloud copy lets RATi show and update your saved work after passkey sign-in. Hosting encrypts it in transit and at rest, but RATi can read it to run the features you ask for.</p>
+    <p>The Swarm copy lets RATi show and update your saved work after passkey sign-in. Hosting encrypts it in transit and at rest, but RATi can read it to run the features you ask for.</p>
     <p>A local vault is encrypted inside your browser with AES-GCM and a key made from your passphrase. The passphrase and key are never sent to RATi. Moving data saves the vault, opens it once to check it, and only then removes saved and published items from the live server. Account security, public identity, Flash balance, and billing records remain until you delete the account.</p>
     <p>Local storage belongs to this browser profile. Clearing browser data or losing the device can erase it, so download the encrypted vault file if you need a second copy. Deleting the local vault cannot be undone.</p>
   </section>
