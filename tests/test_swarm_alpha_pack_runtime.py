@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -31,6 +32,7 @@ from runner_swarm.remote_policy import RemoteClaimUse
 from runner_swarm.reputation import OutcomeVerdict
 from runner_swarm.runtime import (
     AttachedSwarmRuntime,
+    BootstrapResult,
     apply_alpha_pack_policy,
     load_signed_alpha_pack,
 )
@@ -357,21 +359,29 @@ def test_runtime_rejects_bootstrap_manifest_substitution(
     runtime.close()
 
 
-def test_runtime_revalidates_pack_file_before_refresh(tmp_path: Path) -> None:
+def test_runtime_revalidates_pack_file_before_refresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     now = datetime.now(UTC).replace(microsecond=0)
     owner_key = Ed25519PrivateKey.generate()
     peer_key = Ed25519PrivateKey.generate()
     pack_path = tmp_path / "runtime-pack.json"
-    _write_pack(
-        pack_path,
-        _signed_pack(
-            owner_key,
-            peers=(_peer(peer_key),),
-            issued_at=now - timedelta(hours=1),
-            expires_at=now + timedelta(days=1),
+    active_pack = _signed_pack(
+        owner_key,
+        peers=(_peer(peer_key),),
+        issued_at=now - timedelta(hours=1),
+        expires_at=now + timedelta(days=1),
+    )
+    _write_pack(pack_path, active_pack)
+    runtime = AttachedSwarmRuntime.open(_config(tmp_path, alpha_pack_path=pack_path), at=now)
+    runtime.last_bootstrap_results = (
+        BootstrapResult(
+            origin="https://bootstrap.example",
+            peer_node_id=node_id_from_public_key(peer_key),
+            accepted_topics=(TOPIC,),
         ),
     )
-    runtime = AttachedSwarmRuntime.open(_config(tmp_path, alpha_pack_path=pack_path), at=now)
     _write_pack(
         pack_path,
         _signed_pack(
@@ -386,6 +396,31 @@ def test_runtime_revalidates_pack_file_before_refresh(tmp_path: Path) -> None:
 
     with pytest.raises(AlphaPackError, match="not active"):
         runtime.refresh_bootstraps(at=now + timedelta(minutes=1))
+    assert runtime.last_bootstrap_results == ()
+
+    with pytest.raises(AlphaPackError, match="runtime is disabled"):
+        runtime.renew_manifest(at=now + timedelta(minutes=2))
+
+    _write_pack(pack_path, active_pack)
+    monkeypatch.setattr(
+        swarm_runtime_module,
+        "fetch_signed_manifest",
+        lambda *_args, **_kwargs: _manifest(
+            peer_key,
+            now + timedelta(minutes=3),
+            "https://bootstrap.example",
+        ),
+    )
+    monkeypatch.setattr(
+        swarm_runtime_module,
+        "negotiate_with_peer",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            local_node_id=node_id_from_public_key(peer_key),
+            accepted_topics=(TOPIC,),
+        ),
+    )
+    recovered = runtime.refresh_bootstraps(at=now + timedelta(minutes=3))
+    assert recovered[0].connected is True
 
     runtime.close()
 
@@ -416,6 +451,15 @@ def test_runtime_uses_pack_policy_and_persists_context_only_trust(tmp_path: Path
     evidence_id = signed_claim.claim.evidence[0].evidence_id
 
     runtime = AttachedSwarmRuntime.open(config, at=now)
+    not_stored = runtime.assess_peer_claim(
+        signed_claim,
+        local_risk_allows=True,
+        verified_evidence_ids=(evidence_id,),
+        at=now,
+    )
+    assert "claim_not_active_in_peer_store" in not_stored.reasons
+
+    runtime.peer_store.ingest(signed_claim, topic=TOPIC, received_at=now)
     runtime.record_peer_outcome(
         signed_claim,
         verdict=OutcomeVerdict.CONFIRMED,
@@ -434,6 +478,64 @@ def test_runtime_uses_pack_policy_and_persists_context_only_trust(tmp_path: Path
     assert assessment.context_weight_ppm > 0
     assert assessment.can_execute_trade is False
     assert assessment.trade_command is None
+
+    runtime.peer_store.ban_peer(
+        signed_claim.claim.issuer_node_id,
+        reason="Local operator block.",
+        at=now + timedelta(minutes=2),
+    )
+    banned = runtime.assess_peer_claim(
+        signed_claim,
+        local_risk_allows=True,
+        verified_evidence_ids=(evidence_id,),
+        at=now + timedelta(minutes=2),
+    )
+    assert banned.use == RemoteClaimUse.REJECTED
+    assert "peer_is_locally_banned" in banned.reasons
+
+    runtime.peer_store.unban_peer(
+        signed_claim.claim.issuer_node_id,
+        at=now + timedelta(minutes=3),
+    )
+    runtime.peer_store.revoke_claim(
+        signed_claim.claim_id,
+        reason="Local claim revocation.",
+        at=now + timedelta(minutes=3),
+    )
+    revoked = runtime.assess_peer_claim(
+        signed_claim,
+        local_risk_allows=True,
+        verified_evidence_ids=(evidence_id,),
+        at=now + timedelta(minutes=3),
+    )
+    assert revoked.use == RemoteClaimUse.REJECTED
+    assert "claim_not_active_in_peer_store" in revoked.reasons
+
+    runtime.peer_store.restore_claim(
+        signed_claim.claim_id,
+        at=now + timedelta(minutes=4),
+    )
+    replacement_claim = signed_claim.claim.model_copy(
+        update={
+            "issued_at": now + timedelta(minutes=4),
+            "expires_at": now + timedelta(hours=1),
+            "supersedes_claim_id": signed_claim.claim_id,
+        }
+    )
+    replacement = SignedClaimV1.sign(replacement_claim, peer_key)
+    runtime.peer_store.ingest(
+        replacement,
+        topic=TOPIC,
+        received_at=now + timedelta(minutes=4),
+    )
+    superseded = runtime.assess_peer_claim(
+        signed_claim,
+        local_risk_allows=True,
+        verified_evidence_ids=(evidence_id,),
+        at=now + timedelta(minutes=4),
+    )
+    assert superseded.use == RemoteClaimUse.REJECTED
+    assert "claim_not_active_in_peer_store" in superseded.reasons
     runtime.close()
 
     restored = AttachedSwarmRuntime.open(config, at=now + timedelta(minutes=2))
@@ -518,3 +620,64 @@ def test_runtime_key_rotation_decisions_are_durable_and_explicit(tmp_path: Path)
         rotation.old_identity.node_id
     )
     restored.close()
+
+
+def test_accepted_rotation_updates_alpha_pack_bootstrap_pin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime.now(UTC).replace(microsecond=0)
+    owner_key = Ed25519PrivateKey.generate()
+    old_key = Ed25519PrivateKey.generate()
+    new_key = Ed25519PrivateKey.generate()
+    pack_path = tmp_path / "runtime-pack.json"
+    _write_pack(
+        pack_path,
+        _signed_pack(
+            owner_key,
+            peers=(_peer(old_key),),
+            issued_at=now - timedelta(hours=1),
+            expires_at=now + timedelta(days=1),
+        ),
+    )
+    runtime = AttachedSwarmRuntime.open(_config(tmp_path, alpha_pack_path=pack_path), at=now)
+    rotation = KeyRotationV1(
+        old_identity=_identity(old_key, "Old peer"),
+        new_identity=_identity(new_key, "New peer"),
+        sequence=1,
+        issued_at=now,
+        effective_at=now + timedelta(minutes=1),
+        expires_at=now + timedelta(days=1),
+        reason="Routine rotation.",
+    )
+    runtime.accept_peer_key_rotation(
+        SignedKeyRotationV1.sign(rotation, old_key, new_key),
+        decided_at=now + timedelta(minutes=2),
+        reason="Confirmed through a separate local channel.",
+    )
+    monkeypatch.setattr(
+        swarm_runtime_module,
+        "fetch_signed_manifest",
+        lambda *_args, **_kwargs: _manifest(
+            new_key,
+            now + timedelta(minutes=2),
+            "https://bootstrap.example",
+        ),
+    )
+    expected_ids: list[str | None] = []
+
+    def negotiate(*_args: object, **kwargs: object) -> SimpleNamespace:
+        expected_ids.append(kwargs.get("expected_peer_node_id"))  # type: ignore[arg-type]
+        return SimpleNamespace(
+            local_node_id=node_id_from_public_key(new_key),
+            accepted_topics=(TOPIC,),
+        )
+
+    monkeypatch.setattr(swarm_runtime_module, "negotiate_with_peer", negotiate)
+
+    results = runtime.refresh_bootstraps(at=now + timedelta(minutes=2))
+
+    assert results[0].connected is True
+    assert results[0].peer_node_id == node_id_from_public_key(new_key)
+    assert expected_ids == [node_id_from_public_key(new_key)]
+    runtime.close()

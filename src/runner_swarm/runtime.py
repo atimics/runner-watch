@@ -33,7 +33,7 @@ from runner_swarm.node_manifest import (
     VersionedDeclaration,
     sign_node_manifest,
 )
-from runner_swarm.peer_store import IngestOutcome, PeerClaimStore, PeerStoreLimits
+from runner_swarm.peer_store import ClaimState, IngestOutcome, PeerClaimStore, PeerStoreLimits
 from runner_swarm.protocol import (
     PROTOCOL_VERSION,
     canonical_json_bytes,
@@ -389,6 +389,7 @@ class AttachedSwarmRuntime:
         )
         self.signed_alpha_pack = self.alpha_pack_policy.signed_pack
         self._bootstrap_peer_ids = dict(self.alpha_pack_policy.bootstrap_peer_ids)
+        self._alpha_pack_revalidation_error: str | None = None
         self.router: APIRouter = create_swarm_router(
             signed_manifest,
             receive_claim=self.receive_peer_claim,
@@ -514,6 +515,19 @@ class AttachedSwarmRuntime:
 
         extra_reasons: list[str] = []
         claim = signed_claim.claim
+        stored_claim = self.peer_store.get_claim(signed_claim.claim_id, at=at)
+        if (
+            stored_claim is None
+            or stored_claim.state != ClaimState.ACTIVE
+            or stored_claim.signed_claim != signed_claim
+        ):
+            extra_reasons.append("claim_not_active_in_peer_store")
+        resolved_issuer = self.local_trust_store.resolve_node_id(claim.issuer_node_id)
+        if self.peer_store.is_banned(claim.issuer_node_id, at=at) or (
+            resolved_issuer != claim.issuer_node_id
+            and self.peer_store.is_banned(resolved_issuer, at=at)
+        ):
+            extra_reasons.append("peer_is_locally_banned")
         if isinstance(claim, RunnerObservationV1) and claim.schema_version not in getattr(
             self.config,
             "claim_schema_versions",
@@ -603,15 +617,29 @@ class AttachedSwarmRuntime:
     ) -> None:
         if self.signed_alpha_pack is None:
             return
-        self.signed_alpha_pack.verify(at=at)
-        if not reload_file:
-            return
-        alpha_pack_path = getattr(self.config, "alpha_pack_path", None)
-        if alpha_pack_path is None:
-            raise AlphaPackError("Attached alpha pack path is no longer configured")
-        refreshed = load_signed_alpha_pack(alpha_pack_path, at=at)
-        if refreshed.content_id != self.signed_alpha_pack.content_id:
-            raise AlphaPackError("Alpha pack changed; restart the runtime to apply the new policy")
+        if self._alpha_pack_revalidation_error is not None and not reload_file:
+            raise AlphaPackError(self._alpha_pack_revalidation_error)
+        try:
+            self.signed_alpha_pack.verify(at=at)
+            if not reload_file:
+                return
+            alpha_pack_path = getattr(self.config, "alpha_pack_path", None)
+            if alpha_pack_path is None:
+                raise AlphaPackError("Attached alpha pack path is no longer configured")
+            refreshed = load_signed_alpha_pack(alpha_pack_path, at=at)
+            if refreshed.content_id != self.signed_alpha_pack.content_id:
+                raise AlphaPackError(
+                    "Alpha pack changed; restart the runtime to apply the new policy"
+                )
+            self._alpha_pack_revalidation_error = None
+        except (OSError, ValueError) as error:
+            if reload_file:
+                self.last_bootstrap_results = ()
+                self._alpha_pack_revalidation_error = (
+                    "Alpha pack runtime is disabled after revalidation failed: "
+                    f"{type(error).__name__}: {error}"
+                )[:320]
+            raise
 
     def refresh_bootstraps(self, *, at: datetime | None = None) -> tuple[BootstrapResult, ...]:
         """Discover and negotiate every configured seed without trusting membership."""
@@ -625,7 +653,12 @@ class AttachedSwarmRuntime:
                     at=at,
                     allow_private_addresses=self.config.allow_private_bootstrap,
                 )
-                expected_pack_node_id = self._bootstrap_peer_ids.get(origin)
+                original_pack_node_id = self._bootstrap_peer_ids.get(origin)
+                expected_pack_node_id = (
+                    self.local_trust_store.resolve_node_id(original_pack_node_id)
+                    if original_pack_node_id is not None
+                    else None
+                )
                 if (
                     expected_pack_node_id is not None
                     and peer_manifest.manifest.node_id != expected_pack_node_id
