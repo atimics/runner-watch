@@ -60,11 +60,17 @@ def _pulse(
 def _rendered_pulse(monkeypatch, payload: dict[str, Any]) -> str:
     monkeypatch.setattr(web_main, "pulse_data", lambda **_kwargs: payload)
     html = web_main.home(_request(), None).body.decode()
+    live_list_script = (ROOT / "web/static/live-list.js").read_text()
     ticker_script = (ROOT / "web/static/ticker-row.js").read_text()
     html = html.replace("<head>", '<head><base href="http://app.test/">')
     html = re.sub(
         r'<link rel="stylesheet" href="/static/([^"?]+)[^"]*">',
         lambda match: f"<style>{(ROOT / 'web/static' / match.group(1)).read_text()}</style>",
+        html,
+    )
+    html = re.sub(
+        r'<script src="/static/live-list\.js[^\"]*"[^>]*></script>',
+        lambda _match: f"<script>{live_list_script}</script>",
         html,
     )
     html = re.sub(
@@ -219,11 +225,11 @@ def test_refresh_executes_missing_markers_and_clears_stale_alerts(page: Page, mo
     html = _rendered_pulse(monkeypatch, initial)
     errors = _load(page, html, [newer, settled])
 
-    page.evaluate("pollForUpdates()")
+    page.evaluate("window.pulseLive.poll()")
     assert page.locator("#pulseRefresh").is_visible()
     assert page.locator("#pulseRefresh").text_content() == "1 new ticker"
 
-    page.evaluate("pollForUpdates()")
+    page.evaluate("window.pulseLive.poll()")
     assert page.locator("#pulseRefresh").is_hidden()
     assert errors == []
 
@@ -247,7 +253,7 @@ def test_refresh_updates_flash_record_and_merges_new_ticker(page: Page, monkeypa
     html = _rendered_pulse(monkeypatch, initial)
     errors = _load(page, html, [newer])
 
-    page.evaluate("pollForUpdates()")
+    page.evaluate("window.pulseLive.poll()")
     assert page.locator("#kolScoreStrip").is_visible()
     assert "12 hits · 8 misses · 50% hit" in page.locator("[data-kol-stats]").text_content()
     assert page.locator("[data-kol-pnl]").text_content() == "View record ›"

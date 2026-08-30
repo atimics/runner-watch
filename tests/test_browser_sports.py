@@ -135,6 +135,7 @@ def _inline_static_assets(html: str) -> str:
 
     scripts = {
         "desktop-workspace.js": (ROOT / "web/static/desktop-workspace.js").read_text(),
+        "live-list.js": (ROOT / "web/static/live-list.js").read_text(),
         "ticker-row.js": (ROOT / "web/static/ticker-row.js").read_text(),
         "sports-live.js": (ROOT / "web/static/sports-live.js").read_text(),
     }
@@ -322,13 +323,13 @@ def _load(
         payload = poll_payloads.pop(0) if poll_payloads else _pulse()
         route.fulfill(status=200, content_type="application/json", body=json.dumps(payload))
 
-    page.route("**/api/sports/pulse*", pulse_response)
+    page.route("**/api/pulse*", pulse_response)
 
     def radar_response(route: Route) -> None:
         payload = radar_payloads.pop(0) if radar_payloads else _radar()
         route.fulfill(status=200, content_type="application/json", body=json.dumps(payload))
 
-    page.route("**/api/sports/radar*", radar_response)
+    page.route("**/api/radar*", radar_response)
     page.route(
         "**/game/**",
         lambda route: route.fulfill(
@@ -459,9 +460,9 @@ def test_game_detail_prioritizes_actions_and_closes_started_actions(page: Page) 
     assert page.locator(".probability-row").count() == 2
     assert page.locator(".decision-movement .edge-spark").bounding_box()["width"] > 200
     assert page.get_by_role("heading", name="Game thread").count() == 0
-    assert page.get_by_role("heading", name="Paper picks closed").is_visible()
+    assert page.get_by_role("heading", name="Calls closed").is_visible()
     assert page.get_by_text("Score pending from ESPN").is_visible()
-    assert page.get_by_text("Log in to make a paper pick").count() == 0
+    assert page.get_by_text("Log in to make a Call").count() == 0
     assert page.locator(".game-disclosure > summary b").first.evaluate(
         "node => getComputedStyle(node).fontSize"
     ) == "9px"

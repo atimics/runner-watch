@@ -168,7 +168,7 @@ function newPulseCount(current, next) {
   return (next.rows || []).filter(row => !currentEntries.has(entryKey(row))).length;
 }
 
-RatiLiveList.mount({
+window.pulseLive = RatiLiveList.mount({
   refreshButton,
   getCurrent: () => pulse,
   setCurrent: value => { pulse = value; },

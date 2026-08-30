@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 from contextlib import contextmanager
@@ -13,9 +14,15 @@ from runner_web import db
 from runner_web import main as web_main
 from runner_web import sports as sports_module
 from runner_web.db import connection, init_db
-from runner_web.flash_wallet import SPORTS_CALL_REWARD_CAP, sports_call_reward, wallet_for_user
+from runner_web.flash_wallet import (
+    SPORTS_CALL_REWARD_CAP,
+    claim_daily_flash,
+    sports_call_reward,
+    wallet_for_user,
+)
 from runner_web.main import (
     alpha_page,
+    create_sports_comment,
     home,
     origin_for_request,
     product_for_request,
@@ -618,6 +625,59 @@ def test_started_game_closes_picks_before_offering_login(sports_db) -> None:
     assert b"No new picks can be added" in response.body
     assert b"Make a Call" not in response.body
     assert b"Log in to make a Call" not in response.body
+
+
+def test_sports_comments_use_the_shared_flash_funded_generator(
+    sports_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    user_id = "sports-comment-user"
+    created_at = datetime.now(UTC).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            (user_id, "sports_comment", "Sports Comment", "active", created_at),
+        )
+    claim_daily_flash(user_id)
+    monkeypatch.setattr(web_main, "require_origin", lambda _request: None)
+    monkeypatch.setattr(web_main, "require_user", lambda _session: {"id": user_id})
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "sports-comment-test-key")
+    monkeypatch.setattr(
+        web_main,
+        "_generate_sports_comment_text",
+        lambda _event_id, *, avatar_ability_id: (
+            f"The {avatar_ability_id} read favors the verified matchup edge.",
+            "test/sports-comment-model",
+        ),
+    )
+    comment_request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": f"/api/comments/game/{event['id']}",
+            "headers": [(b"idempotency-key", b"sports-comment-request-0001")],
+            "client": ("127.0.0.1", 4300),
+        }
+    )
+
+    response = asyncio.run(create_sports_comment(str(event["id"]), comment_request, None))
+    payload = json.loads(response.body)
+
+    assert response.status_code == 201
+    assert payload["comment"]["ai_generated"] is True
+    assert payload["comment"]["generation_model"] == "test/sports-comment-model"
+    assert payload["balance"] == 90
+    with connection() as database:
+        row = database.execute(
+            "SELECT subject_kind,subject_key,source FROM ticker_comments"
+        ).fetchone()
+    assert dict(row) == {
+        "subject_kind": "sports_game",
+        "subject_key": event["id"],
+        "source": "ai_generated",
+    }
 
 
 def test_pick_api_invalidates_game_and_alpha_caches(monkeypatch: pytest.MonkeyPatch) -> None:
