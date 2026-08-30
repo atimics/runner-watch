@@ -394,6 +394,12 @@ def test_sports_radar_applies_changes_without_reloading_or_losing_detail(
 
     assert "+4.4pp" in page.locator(".radar-value").text_content()
     assert frame.get_attribute("src") == original_detail
+    assert page.locator(".radar-mark").first.evaluate(
+        "node => ({"
+        "radius: getComputedStyle(node).borderRadius, "
+        "rightRule: getComputedStyle(node).borderRightWidth"
+        "})"
+    ) == {"radius": "0px", "rightRule": "1px"}
     assert errors == []
 
 
@@ -458,10 +464,41 @@ def test_game_detail_uses_desktop_width_and_closes_started_actions(page: Page) -
     assert page.locator(".game-disclosure > summary b").first.evaluate(
         "node => getComputedStyle(node).fontSize"
     ) == "9px"
+    assert page.evaluate(
+        """() => {
+          const style = selector => getComputedStyle(document.querySelector(selector));
+          return {
+            stripRadius: style('.match-strip').borderRadius,
+            boardRadius: style('.decision-board').borderRadius,
+            modelCallRadius: style('.decision-model-call').borderRadius,
+            valueCallRule: style('.decision-value-call').borderLeftWidth,
+            metricRadius: style('.value-numbers > span').borderRadius,
+            evidenceRadius: style('.game-detail-evidence').borderRadius,
+            evidenceItemMargin: style('.game-detail-evidence > .game-disclosure').marginTop,
+            evidenceItemRadius: style('.game-detail-evidence > .game-disclosure').borderRadius,
+          };
+        }"""
+    ) == {
+        "stripRadius": "0px",
+        "boardRadius": "0px",
+        "modelCallRadius": "0px",
+        "valueCallRule": "1px",
+        "metricRadius": "0px",
+        "evidenceRadius": "0px",
+        "evidenceItemMargin": "0px",
+        "evidenceItemRadius": "0px",
+    }
 
     page.set_viewport_size({"width": 390, "height": 800})
     assert grid.evaluate("node => getComputedStyle(node).display") == "block"
     assert app.evaluate("node => Math.round(node.getBoundingClientRect().width)") == 390
+    assert page.locator(".decision-value-call").evaluate(
+        "node => ({"
+        "left: getComputedStyle(node).borderLeftWidth, "
+        "top: getComputedStyle(node).borderTopWidth"
+        "})"
+    ) == {"left": "0px", "top": "1px"}
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
 @pytest.mark.parametrize("width", [390, 900, 1280])
@@ -488,6 +525,12 @@ def test_sports_pulse_respects_shared_responsive_breakpoints(
         assert link_box["y"] >= navigation_box["y"]
         assert link_box["y"] + link_box["height"] <= navigation_box["y"] + navigation_box["height"]
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    assert page.locator(".sports-record-strip").evaluate(
+        "node => getComputedStyle(node).borderRadius"
+    ) == "0px"
+    assert page.locator(".league-tabs a").first.evaluate(
+        "node => getComputedStyle(node).borderRadius"
+    ) == "2px"
     if width < 900:
         assert page.locator(".desktop-detail-panel").is_hidden()
     else:
