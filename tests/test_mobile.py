@@ -366,8 +366,9 @@ def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
     assert '{% extends "mobile_base.html" %}' in game
     assert 'class="detail-nav sports-detail-nav"' in game
     assert 'class="detail-body sports-detail-body"' in game
-    assert 'class="game-detail-grid"' in game
+    assert 'class="game-detail-grid game-detail-flow"' in game
     assert "html:not(.embedded-pane) .game-detail-grid" in unified_styles
+    assert ".game-detail-grid.game-detail-flow" in unified_styles
     assert "max-width: 1120px" in unified_styles
     assert not (templates_dir / "sports_base.html").exists()
     assert "location.reload" not in "\n".join([*sports_templates, game, live_script])

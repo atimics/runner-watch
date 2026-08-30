@@ -41,7 +41,7 @@
         {% if selected_sport == 'golf' %}
         <span class="head-meta sports-pulse-summary"><span><b>{{ golf.display_count }}</b> PGA tournament{% if golf.display_count != 1 %}s{% endif %}</span><span>{{ golf.entrant_count }} players tracked</span><span>Current leaderboard</span></span>
         {% else %}
-        <span class="head-meta sports-pulse-summary"><span><b id="sportsPulseCount">{{ pulse.display_count }}</b> team projection{% if pulse.display_count != 1 %}s{% endif %}</span><span>{{ pulse.scanned_count }} games checked</span><span id="sportsPulseMaturity">Baseline {{ pulse.model_record.games }} graded · target {{ pulse.model_record.sample.target }}</span><span id="sportsPulseStatus">Update pending</span></span>
+        <span class="head-meta sports-pulse-summary"><span><b id="sportsPulseCount">{{ pulse.display_count }}</b> team projection{% if pulse.display_count != 1 %}s{% endif %}</span><span>{{ pulse.scanned_count }} games checked</span><span id="sportsPulseMaturity">{% if pulse.empty_state %}{{ pulse.empty_state.status_label }}{% else %}Baseline {{ pulse.model_record.games }} graded · target {{ pulse.model_record.sample.target }}{% endif %}</span><span id="sportsPulseStatus">Update pending</span></span>
         {% endif %}
       </div>
       {% if user %}

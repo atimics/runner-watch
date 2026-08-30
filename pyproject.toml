@@ -53,6 +53,7 @@ testpaths = ["tests"]
 addopts = [
   "--cov=runner_watch",
   "--cov=runner_web",
+  "--cov=runner_swarm",
   "--cov-branch",
   "--cov-report=term-missing:skip-covered",
   "-m=not browser",

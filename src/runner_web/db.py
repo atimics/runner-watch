@@ -2441,6 +2441,27 @@ def _migration_044_golf_leaderboards(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_045_sports_comments(db: DatabaseConnection) -> None:
+    """Store public, human-written game-thread comments."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS sports_comments (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL REFERENCES sports_events(id) ON DELETE CASCADE,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            body TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'public' CHECK(status IN ('public','hidden')),
+            created_at TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'user',
+            generation_model TEXT
+        );
+        CREATE INDEX IF NOT EXISTS sports_comments_event_time
+            ON sports_comments(event_id,status,created_at DESC);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2493,6 +2514,7 @@ MIGRATIONS = (
     Migration(42, "comment_generation_requests", _migration_042_comment_generation_requests),
     Migration(43, "ranker_training_provenance", _migration_043_ranker_training_provenance),
     Migration(44, "golf_leaderboards", _migration_044_golf_leaderboards),
+    Migration(45, "sports_comments", _migration_045_sports_comments),
 )
 
 

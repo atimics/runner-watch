@@ -26,6 +26,7 @@ from runner_web.main import (
 from runner_web.sports import (
     collect_stored_player_appearances,
     create_sports_pick,
+    fetch_league,
     fetch_league_history_chunk,
     golf_slate,
     implied_probability,
@@ -209,6 +210,39 @@ def test_moneyline_probabilities_remove_the_vig() -> None:
     home, away = no_vig_probabilities(-110, -110)
     assert home == pytest.approx(0.5)
     assert away == pytest.approx(0.5)
+
+
+def test_nba_fetch_discovers_the_next_scheduled_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, Any, Any, str]] = []
+
+    def fake_range(league, start, end, *, feed):
+        calls.append((league, start, end, feed))
+        return []
+
+    monkeypatch.setattr(sports_module, "_fetch_league_range", fake_range)
+    current = datetime(2026, 8, 30, 12, tzinfo=UTC)
+
+    fetch_league("nba", current)
+    fetch_league("mlb", current)
+
+    assert calls[0][2] == current.date() + timedelta(days=3)
+    assert calls[1][1] == current.date() + timedelta(days=4)
+    assert calls[1][2] == current.date() + timedelta(days=45)
+    assert calls[2][2] == current.date() + timedelta(days=3)
+
+    calls.clear()
+    nearby = [{"id": "nba:nearby"}]
+
+    def fake_nearby(league, start, end, *, feed):
+        calls.append((league, start, end, feed))
+        return nearby
+
+    monkeypatch.setattr(sports_module, "_fetch_league_range", fake_nearby)
+
+    assert fetch_league("nba", current) == nearby
+    assert len(calls) == 1
 
 
 def test_scoreboard_event_becomes_a_source_bound_prediction() -> None:
@@ -618,6 +652,60 @@ def test_pick_api_invalidates_game_and_alpha_caches(monkeypatch: pytest.MonkeyPa
     assert invalidated == [("sports-game", "event-1"), ("sports-alpha",)]
 
 
+def test_game_thread_comments_can_be_posted_and_removed(
+    sports_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) "
+            "VALUES('thread-user','thread_member','Thread Member','active',?)",
+            (datetime.now(UTC).isoformat(),),
+        )
+
+    invalidated: list[tuple[str, str]] = []
+    monkeypatch.setattr(web_main, "require_origin", lambda _request: None)
+    monkeypatch.setattr(web_main, "require_user", lambda _session: {"id": "thread-user"})
+    monkeypatch.setattr(web_main, "enforce_rate", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        web_main,
+        "_invalidate_public_screen_data",
+        lambda scope, identity: invalidated.append((scope, identity)),
+    )
+
+    created = web_main.create_sports_comment_api(
+        str(event["id"]),
+        web_main.SportsCommentPayload(body="  Bullpen depth decides this one.  "),
+        request(path=f"/api/sports/games/{event['id']}/comments"),
+        "session-token",
+    )
+    payload = json.loads(created.body)
+
+    assert created.status_code == 201
+    assert payload["comment"]["body"] == "Bullpen depth decides this one."
+    assert payload["comment"]["is_owner"] is True
+    assert payload["count"] == 1
+    assert web_main.sports_comment_count(str(event["id"])) == 1
+    assert web_main.comments_for_sports_event(
+        str(event["id"]), current_user_id="thread-user"
+    )[0]["is_owner"] is True
+
+    deleted = web_main.delete_sports_comment_api(
+        payload["comment"]["id"],
+        request(path=f"/api/sports/comments/{payload['comment']['id']}"),
+        "session-token",
+    )
+
+    assert deleted.status_code == 200
+    assert web_main.sports_comment_count(str(event["id"])) == 0
+    assert invalidated == [
+        ("sports-game", str(event["id"])),
+        ("sports-game", str(event["id"])),
+    ]
+
+
 def test_sports_alpha_counts_calls_beyond_the_feed_limit(sports_db) -> None:
     event = normalize_event("mlb", sample_event())
     assert event is not None
@@ -779,8 +867,17 @@ def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
         b"Flash report"
     )
     assert b"Team news" in detail_response.body
+    assert b"Game thread" in detail_response.body
+    assert b"No comments yet. Start the game thread." in detail_response.body
+    assert b'/static/sports-comments.js' in detail_response.body
     assert b"Make a paper pick" in detail_response.body
     assert b"Wins earn up to" in detail_response.body
+    assert b'class="game-notebook"' in detail_response.body
+    assert detail_response.body.index(b"SEASON-RECORD BASELINE") < detail_response.body.index(
+        b"Game thread"
+    ) < detail_response.body.index(b"Make a paper pick") < detail_response.body.index(
+        b"Flash report"
+    ) < detail_response.body.index(b"Game details")
 
     path_response = sports_game_page(
         event["id"],
@@ -921,6 +1018,34 @@ def test_sports_pulse_hides_passes_and_radar_keeps_real_moves(sports_db) -> None
     radar = sports_radar()
     assert radar["events"][0]["id"] == promoted["id"]
     assert radar["events"][0]["radar_kind"] == "market"
+
+
+def test_nba_pulse_explains_the_offseason_without_promoting_preseason(
+    sports_db,
+) -> None:
+    raw = sample_event()
+    raw["id"] = "401902644"
+    raw["date"] = (datetime.now(UTC) + timedelta(days=30)).isoformat()
+    raw["season"] = {"year": 2027, "type": 1, "slug": "preseason"}
+    event = normalize_event("nba", raw)
+    assert event is not None
+    store_events([event])
+
+    pulse = sports_pulse("nba")
+
+    assert pulse["events"] == []
+    assert pulse["scanned_count"] == 1
+    assert pulse["hidden_count"] == 1
+    assert pulse["empty_state"] == {
+        "kind": "season-break",
+        "title": "NBA is between seasons.",
+        "detail": (
+            "The next scheduled game is AWY at HOM. Pulse will wait for regular-season "
+            "records and fresh market consensus before publishing a projection."
+        ),
+        "next_start_time": event["start_time"].isoformat(),
+        "status_label": "Next NBA game scheduled",
+    }
 
 
 def test_pulse_separates_model_favorite_from_value_edge(sports_db) -> None:

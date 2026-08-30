@@ -16,6 +16,7 @@ PASSIVE_TRACKING_TABLES = (
 PORTABLE_CONTENT_GROUPS = {
     "Posts and Calls": (
         "comments",
+        "sports_comments",
         "community_calls",
         "sports_picks",
         "signals",
@@ -152,6 +153,14 @@ def export_user_data(user_id: str) -> dict[str, Any]:
                 database,
                 tables,
                 "ticker_comments",
+                "user_id=?",
+                (user_id,),
+                order_by="created_at",
+            ),
+            "sports_comments": _rows(
+                database,
+                tables,
+                "sports_comments",
                 "user_id=?",
                 (user_id,),
                 order_by="created_at",
@@ -397,6 +406,7 @@ def _delete_user_content_rows(
         )
     delete("thesis_cases", "user_id=?", (user_id,))
     delete("ticker_comments", "user_id=?", (user_id,))
+    delete("sports_comments", "user_id=?", (user_id,))
     delete("community_calls", "user_id=?", (user_id,))
     delete("sports_picks", "user_id=?", (user_id,))
     delete("user_positions", "user_id=?", (user_id,))
