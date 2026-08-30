@@ -445,6 +445,11 @@ class AttachedSwarmRuntime:
         """Persist a verified claim as peer context, never as provider evidence."""
 
         self._revalidate_alpha_pack(at=received.received_at)
+        if self._peer_is_banned(
+            received.signed_claim.claim.issuer_node_id,
+            at=received.received_at,
+        ):
+            raise PeerClaimRejected("Peer is locally banned", status_code=403)
         result = self.peer_store.ingest(
             received.signed_claim,
             topic=received.topic,
@@ -522,11 +527,7 @@ class AttachedSwarmRuntime:
             or stored_claim.signed_claim != signed_claim
         ):
             extra_reasons.append("claim_not_active_in_peer_store")
-        resolved_issuer = self.local_trust_store.resolve_node_id(claim.issuer_node_id)
-        if self.peer_store.is_banned(claim.issuer_node_id, at=at) or (
-            resolved_issuer != claim.issuer_node_id
-            and self.peer_store.is_banned(resolved_issuer, at=at)
-        ):
+        if self._peer_is_banned(claim.issuer_node_id, at=at):
             extra_reasons.append("peer_is_locally_banned")
         if isinstance(claim, RunnerObservationV1) and claim.schema_version not in getattr(
             self.config,
@@ -593,6 +594,14 @@ class AttachedSwarmRuntime:
     def resolve_peer_node_id(self, node_id: str) -> str:
         return self.local_trust_store.resolve_node_id(node_id)
 
+    def _peer_is_banned(self, node_id: str, *, at: datetime | None) -> bool:
+        """Apply a local ban to every identity in an accepted rotation chain."""
+
+        return any(
+            self.peer_store.is_banned(candidate, at=at)
+            for candidate in self.local_trust_store.continuity_node_ids(node_id)
+        )
+
     def _reputation_policy(self) -> ReputationPolicy | None:
         if self.signed_alpha_pack is None:
             return None
@@ -653,6 +662,8 @@ class AttachedSwarmRuntime:
                     at=at,
                     allow_private_addresses=self.config.allow_private_bootstrap,
                 )
+                if self._peer_is_banned(peer_manifest.manifest.node_id, at=at):
+                    raise ValueError("Bootstrap peer is locally banned")
                 original_pack_node_id = self._bootstrap_peer_ids.get(origin)
                 expected_pack_node_id = (
                     self.local_trust_store.resolve_node_id(original_pack_node_id)

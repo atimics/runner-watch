@@ -175,6 +175,14 @@ def test_registry_supports_chains_and_rejects_forks_and_cycles() -> None:
     assert registry.resolve(first.rotation.old_identity.node_id) == (
         second.rotation.new_identity.node_id
     )
+    chain_ids = {
+        node_id_from_public_key(first_key),
+        node_id_from_public_key(second_key),
+        node_id_from_public_key(third_key),
+    }
+    assert registry.continuity_node_ids(node_id_from_public_key(third_key)) == tuple(
+        sorted(chain_ids)
+    )
 
     fork = _rotation(first_key, fork_key, sequence=2)
     with pytest.raises(KeyRotationError, match="already has"):

@@ -297,6 +297,35 @@ class LocalKeyRotationRegistry:
     def is_continuation(self, original_node_id: str, presented_node_id: str) -> bool:
         return self.resolve(original_node_id) == self.resolve(presented_node_id)
 
+    def continuity_node_ids(self, node_id: str) -> tuple[str, ...]:
+        """Return every identity connected by currently accepted rotations."""
+
+        active_forward = {
+            decision.old_node_id: decision.new_node_id
+            for decision in self._latest.values()
+            if decision.status == RotationDecisionStatus.ACCEPTED
+        }
+        current = node_id
+        seen_forward: set[str] = set()
+        while current in active_forward:
+            if current in seen_forward:
+                raise KeyRotationError("Local key rotation mappings contain a cycle")
+            seen_forward.add(current)
+            current = active_forward[current]
+
+        predecessors: dict[str, set[str]] = {}
+        for old_node_id, new_node_id in active_forward.items():
+            predecessors.setdefault(new_node_id, set()).add(old_node_id)
+        continuity = {current}
+        pending = [current]
+        while pending:
+            descendant = pending.pop()
+            for predecessor in predecessors.get(descendant, ()):
+                if predecessor not in continuity:
+                    continuity.add(predecessor)
+                    pending.append(predecessor)
+        return tuple(sorted(continuity))
+
     def _active_decision_for_old(self, old_node_id: str) -> LocalRotationDecision | None:
         candidates = (
             decision

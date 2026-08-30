@@ -254,6 +254,9 @@ class LocalTrustStore:
     def is_continuation(self, original_node_id: str, presented_node_id: str) -> bool:
         return self.rotation_registry().is_continuation(original_node_id, presented_node_id)
 
+    def continuity_node_ids(self, node_id: str) -> tuple[str, ...]:
+        return self.rotation_registry().continuity_node_ids(node_id)
+
     def _initialize(self) -> None:
         with self._connection:
             self._connection.executescript(

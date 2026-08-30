@@ -42,6 +42,7 @@ from runner_swarm.signed_claim import (
     SignedClaimV1,
     SourceVersionV1,
 )
+from runner_swarm.transport import PeerClaimRejected, ReceivedPeerClaim
 
 NOW = datetime(2026, 8, 30, 18, tzinfo=UTC)
 TOPIC = "markets/equities/us/runners"
@@ -680,4 +681,83 @@ def test_accepted_rotation_updates_alpha_pack_bootstrap_pin(
     assert results[0].connected is True
     assert results[0].peer_node_id == node_id_from_public_key(new_key)
     assert expected_ids == [node_id_from_public_key(new_key)]
+    runtime.close()
+
+
+def test_predecessor_ban_blocks_accepted_replacement_identity(tmp_path: Path) -> None:
+    now = datetime.now(UTC).replace(microsecond=0)
+    owner_key = Ed25519PrivateKey.generate()
+    old_key = Ed25519PrivateKey.generate()
+    new_key = Ed25519PrivateKey.generate()
+    pack_path = tmp_path / "runtime-pack.json"
+    _write_pack(
+        pack_path,
+        _signed_pack(
+            owner_key,
+            peers=(_peer(old_key, roles=("approved",), endpoints=()),),
+            issued_at=now - timedelta(hours=1),
+            expires_at=now + timedelta(days=1),
+            trust_policy=LocalTrustPolicy(
+                minimum_scored_outcomes=1,
+                minimum_reputation_ppm=100_000,
+                maximum_peer_claim_weight_ppm=200_000,
+            ),
+        ),
+    )
+    runtime = AttachedSwarmRuntime.open(_config(tmp_path, alpha_pack_path=pack_path), at=now)
+    rotation = KeyRotationV1(
+        old_identity=_identity(old_key, "Old peer"),
+        new_identity=_identity(new_key, "New peer"),
+        sequence=1,
+        issued_at=now,
+        effective_at=now + timedelta(minutes=1),
+        expires_at=now + timedelta(days=1),
+        reason="Routine rotation.",
+    )
+    runtime.accept_peer_key_rotation(
+        SignedKeyRotationV1.sign(rotation, old_key, new_key),
+        decided_at=now + timedelta(minutes=2),
+        reason="Confirmed through a separate local channel.",
+    )
+    runtime.peer_store.ban_peer(
+        rotation.old_identity.node_id,
+        reason="Ban must follow accepted continuity.",
+        at=now + timedelta(minutes=2),
+    )
+    replacement_claim = _observation(new_key, now + timedelta(minutes=2))
+    received = ReceivedPeerClaim(
+        topic=TOPIC,
+        peer_manifest=_manifest(
+            new_key,
+            now + timedelta(minutes=2),
+            "https://bootstrap.example",
+        ).manifest,
+        signed_claim=replacement_claim,
+        received_at=now + timedelta(minutes=2),
+    )
+
+    with pytest.raises(PeerClaimRejected, match="locally banned") as rejected:
+        runtime.receive_peer_claim(received)
+    assert rejected.value.status_code == 403
+
+    runtime.peer_store.ingest(
+        replacement_claim,
+        topic=TOPIC,
+        received_at=now + timedelta(minutes=2),
+    )
+    runtime.record_peer_outcome(
+        replacement_claim,
+        verdict=OutcomeVerdict.CONFIRMED,
+        measured_at=now + timedelta(minutes=3),
+        verified_claim_source_families=("market",),
+        verification_source_families=("local-market",),
+    )
+    assessed = runtime.assess_peer_claim(
+        replacement_claim,
+        local_risk_allows=True,
+        verified_evidence_ids=(replacement_claim.claim.evidence[0].evidence_id,),
+        at=now + timedelta(minutes=3),
+    )
+    assert assessed.use == RemoteClaimUse.REJECTED
+    assert "peer_is_locally_banned" in assessed.reasons
     runtime.close()
