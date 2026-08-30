@@ -1,25 +1,25 @@
 {
   "schema": "ilxyr.experiment.v1",
-  "id": "feral-7b.sec-analysis.v1",
-  "title": "FERAL-7B SEC analysis release gate",
-  "hypothesis": "A frozen SEC LoRA improves sealed FinQA accuracy by at least eight percentage points without increasing confident unsupported answers.",
-  "rationale": "Train an open Qwen financial analyst on point-in-time SEC evidence while keeping release decisions replayable and outside the model.",
+  "id": "feral-7b.sec-analysis.v2",
+  "title": "FERAL-7B deterministic SEC multitask release gate",
+  "hypothesis": "A frozen, accession-safe SEC multitask LoRA improves sealed FinQA accuracy by at least eight percentage points without increasing confident unsupported answers.",
+  "rationale": "Train an open Qwen financial analyst on deterministic point-in-time filing, evidence-span, and XBRL tasks while keeping release decisions replayable and outside the model.",
   "proposer": {
     "id": "human://rati/feral-7b-owner",
     "kind": "human"
   },
   "lineage": {
-    "hypothesis": "feral-7b.hypothesis.v1",
-    "mathematical_foundation": "feral-7b.release-gate.v1",
-    "engineering_review": "feral-7b.security-review.v1",
-    "experiment_design": "feral-7b.experiment-design.v1"
+    "hypothesis": "feral-7b.hypothesis.v2",
+    "mathematical_foundation": "feral-7b.release-gate.v2",
+    "engineering_review": "feral-7b.security-review.v2",
+    "experiment_design": "feral-7b.experiment-design.v2"
   },
   "baseline": "weight://huggingface/Qwen/Qwen2.5-7B-Instruct@a09a35458c702b33eeacc393d103063234e8bc28",
   "datasets": [
-    "dataset://stonks/sec-filings-qwen/v1"
+    "dataset://stonks/feral-7b-sec/v2"
   ],
   "dataset_bindings": {
-    "dataset://stonks/sec-filings-qwen/v1": "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    "dataset://stonks/feral-7b-sec/v2": "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "models": [
     "weight://huggingface/Qwen/Qwen2.5-7B-Instruct@a09a35458c702b33eeacc393d103063234e8bc28"
@@ -105,13 +105,13 @@
     "level": "deterministic_replay",
     "scope": {
       "seeds": [17],
-      "eval_set": "dataset://stonks/sec-filings-qwen/v1",
+      "eval_set": "dataset://stonks/feral-7b-sec/v2",
       "coverage": 1.0
     },
     "provenance": {
       "artifact_hashes": [],
-      "model_lineage": "model://feral/feral-7b/v1",
-      "checker": "checker://stonks/sec-qwen-release/v1"
+      "model_lineage": "model://feral/feral-7b/v2",
+      "checker": "checker://stonks/sec-qwen-release/v2"
     }
   },
   "expected_outputs": [

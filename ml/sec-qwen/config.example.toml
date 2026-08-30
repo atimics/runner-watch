@@ -7,7 +7,7 @@ torch_dtype = "bfloat16"
 attn_implementation = "sdpa"
 
 [dataset]
-corpus_manifest = "../../../exports/sec-qwen-v1/corpus-release.json"
+corpus_manifest = "../../../exports/feral-7b-sec-v2/corpus-release.json"
 train_file = "train.jsonl"
 validation_file = "validation.jsonl"
 evaluation_files = ["test-future.jsonl", "test-unseen-issuer.jsonl"]
@@ -28,4 +28,4 @@ bf16 = true
 max_new_tokens = 512
 
 [output]
-directory = "../../../artifacts/sec-qwen-v1"
+directory = "../../../artifacts/feral-7b-sec-v2"
