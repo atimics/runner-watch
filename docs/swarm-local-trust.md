@@ -67,6 +67,12 @@ uses the same pure scoring function. Reopening the database produces the same sc
 operator accepted a key rotation, scoring the replacement identity includes outcomes from its
 accepted predecessors. Rejecting or revoking that mapping immediately stops the transfer.
 
+`AttachedSwarmRuntime` exposes this boundary through `record_peer_outcome`, `peer_reputation`, and
+`assess_peer_claim`. It also exposes explicit `accept_peer_key_rotation`,
+`reject_peer_key_rotation`, `revoke_peer_key_rotation`, and `resolve_peer_node_id` methods. These
+delegate to the dedicated database selected by `SWARM_LOCAL_TRUST_STORE_PATH`; they do not write to
+the trader's provider-data tables. An assessment result remains hard-coded as non-executable.
+
 Outcome storage is bounded by both a per-peer and total record limit. The default limits are 10,000
 outcomes per peer and 100,000 total. When a limit is exceeded, the oldest measurement time and claim
 ID are removed first, making retention deterministic. Rotation history has a separate 10,000
