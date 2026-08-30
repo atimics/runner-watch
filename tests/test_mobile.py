@@ -193,6 +193,8 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert "'Idempotency-Key': pendingCommentRequestId" in script
     assert "sessionStorage.setItem(pendingCommentStorageKey" in script
     assert "item.dataset.commentId === String(result.comment.id)" in script
+    assert "const commentRecoveryDelays = [500, 1500, 3000, 5000]" in script
+    assert "Still posting. Tap again." in script
 
 
 def test_ticker_layout_puts_subtle_actions_after_the_analysis() -> None:

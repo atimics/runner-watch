@@ -600,6 +600,7 @@
   const commentStatus = document.getElementById('commentStatus');
   const commentList = document.getElementById('commentList');
   const pendingCommentStorageKey = `pending-comment:${ticker}`;
+  const commentRecoveryDelays = [500, 1500, 3000, 5000];
   let pendingCommentRequestId = null;
   try {
     pendingCommentRequestId = sessionStorage.getItem(pendingCommentStorageKey);
@@ -620,6 +621,29 @@
       else sessionStorage.removeItem(pendingCommentStorageKey);
     } catch (_) {
       // Keep the in-memory value when storage is unavailable.
+    }
+  }
+
+  function waitForComment(delay) {
+    return new Promise(resolve => window.setTimeout(resolve, delay));
+  }
+
+  async function postPendingComment() {
+    try {
+      const response = await fetch(`/api/comments/${encodeURIComponent(ticker)}`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': pendingCommentRequestId },
+      });
+      const responseText = await response.text();
+      let result = null;
+      try {
+        result = JSON.parse(responseText);
+      } catch (_) {
+        // A proxy timeout can be HTML even when the idempotent request is still running.
+      }
+      return { response, result };
+    } catch (_) {
+      return { response: null, result: null };
     }
   }
 
@@ -706,17 +730,19 @@
     generateComment.disabled = true;
     commentStatus.textContent = 'Posting…';
     try {
-      const response = await fetch(`/api/comments/${encodeURIComponent(ticker)}`, {
-        method: 'POST',
-        headers: { 'Idempotency-Key': pendingCommentRequestId },
-      });
-      const responseText = await response.text();
+      let recoveryAttempt = 0;
+      let response;
       let result;
-      try {
-        result = JSON.parse(responseText);
-      } catch (_) {
-        throw new Error('Could not confirm the post.');
+      while (true) {
+        ({ response, result } = await postPendingComment());
+        const shouldRecover = !response || !result || result.retryable === true;
+        if (!shouldRecover || recoveryAttempt >= commentRecoveryDelays.length) break;
+        commentStatus.textContent = 'Still posting…';
+        await waitForComment(commentRecoveryDelays[recoveryAttempt]);
+        recoveryAttempt += 1;
       }
+      if (!response || !result) throw new Error('Still posting. Tap again.');
+      if (result.retryable === true) throw new Error('Still posting. Tap again.');
       if (!response.ok) {
         const error = new Error('Could not post.');
         error.retryable = result.retryable === true;

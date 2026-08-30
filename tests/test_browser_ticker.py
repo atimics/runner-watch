@@ -32,7 +32,10 @@ def _request() -> Request:
 
 
 def _rendered_ticker(
-    *, signed_in: bool = False, comment_generation_enabled: bool = True
+    *,
+    signed_in: bool = False,
+    comment_generation_enabled: bool = True,
+    inline_script: bool = False,
 ) -> str:
     thesis = web_main._ranker_directional_thesis(
         {
@@ -107,11 +110,12 @@ def _rendered_ticker(
             },
             "comment_generation_enabled": comment_generation_enabled,
         }
+    request = _request()
     response = web_main.templates.TemplateResponse(
-        request=_request(),
+        request=request,
         name="ticker.html",
         context=web_main.page_context(
-            _request(),
+            request,
             None,
             detail=detail,
             comments=[],
@@ -146,7 +150,15 @@ def _rendered_ticker(
             "product-system.css",
         )
     )
+    html = html.replace("<head>", '<head><base href="http://app.test/">')
     html = html.replace("</head>", f"<style>{styles}</style></head>")
+    if inline_script:
+        ticker_script = (ROOT / "web/static/ticker-detail.js").read_text()
+        html = re.sub(
+            r'<script src="/static/ticker-detail\.js[^\"]*"[^>]*></script>',
+            lambda _match: f"<script>{ticker_script}</script>",
+            html,
+        )
     return re.sub(r'<link rel="stylesheet"[^>]*>', "", html)
 
 
@@ -260,3 +272,73 @@ def test_failed_flash_report_restores_balance_without_internal_error_or_layout_j
     )
     assert "OpenRouter" not in page.locator("body").inner_text()
     assert page.locator(".flash-shell").bounding_box()["height"] == initial_height
+
+
+def test_comment_recovers_from_proxy_timeout_without_another_click(page: Page) -> None:
+    request_keys: list[str] = []
+
+    def comment_response(route: Route) -> None:
+        request_keys.append(route.request.headers["idempotency-key"])
+        if len(request_keys) == 1:
+            route.fulfill(status=502, content_type="text/html", body="Gateway timeout")
+        elif len(request_keys) == 2:
+            route.fulfill(
+                status=409,
+                content_type="application/json",
+                body=json.dumps({"detail": "Still drafting", "retryable": True}),
+            )
+        else:
+            route.fulfill(
+                status=201,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "comment": {
+                            "id": "comment-1",
+                            "avatar": {
+                                "name": "Tape Reader",
+                                "ability": "Liquidity Reader",
+                                "tone": 0,
+                                "frame": 0,
+                                "eyes": 0,
+                                "signal": 0,
+                            },
+                            "created_at": "2026-08-28T18:00:00+00:00",
+                            "body": "Volume is improving, but the spread is still the risk.",
+                            "ai_generated": True,
+                            "is_owner": True,
+                        },
+                        "count": 1,
+                        "balance": 90,
+                    }
+                ),
+            )
+
+    page.route("**/api/comments/TEST", comment_response)
+    page.route(
+        "**/api/t/TEST/chart",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body='{"points":[],"annotations":[]}',
+        ),
+    )
+    page.route(
+        "**/api/t/TEST/pressure",
+        lambda route: route.fulfill(status=404, content_type="application/json", body="{}"),
+    )
+    page.set_content(
+        _rendered_ticker(signed_in=True, inline_script=True),
+        wait_until="domcontentloaded",
+    )
+
+    page.locator("#generateComment").click()
+    page.wait_for_function(
+        "document.querySelector('#commentStatus').textContent.startsWith('Posted')"
+    )
+
+    assert len(request_keys) == 3
+    assert len(set(request_keys)) == 1
+    assert page.locator("#commentList > li").count() == 1
+    assert page.locator("#commentStatus").text_content() == "Posted"
+    assert page.locator("#discussionCount").text_content() == "1"
