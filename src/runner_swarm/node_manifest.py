@@ -2,35 +2,41 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
-import hashlib
-import hmac
-import json
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Self
 from urllib.parse import urlsplit
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
 )
 from pydantic import (
-    BaseModel,
-    ConfigDict,
     Field,
-    field_serializer,
     field_validator,
     model_validator,
 )
 
-MANIFEST_TYPE = "rati.node-manifest"
-PROTOCOL_VERSION = "1"
-SIGNATURE_DOMAIN = b"RATI-SWARM\x00node-manifest\x00v1\x00"
+from runner_swarm.protocol import (
+    CONTENT_ID_PATTERN,
+    NODE_ID_PATTERN,
+    PROTOCOL_VERSION,
+    SIGNATURE_ALGORITHM,
+    SwarmModel,
+    canonical_json_bytes,
+    content_id,
+    decode_base64url,
+    encode_base64url,
+    node_id_from_public_key,
+    normalize_utc,
+    public_key_text,
+    signature_domain,
+)
+
+MANIFEST_TYPE = "rati.node_manifest"
 MAX_MANIFEST_BYTES = 16_384
+MAX_SIGNED_MANIFEST_BYTES = 20_480
 MAX_MANIFEST_LIFETIME = timedelta(days=7)
 DEFAULT_CLOCK_SKEW = timedelta(minutes=5)
 
@@ -40,58 +46,17 @@ _VERSION_PATTERN = re.compile(
     r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
-_SHA256_ID_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
-_B64URL_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class ManifestVerificationError(ValueError):
     """Raised when a signed manifest cannot be trusted."""
 
 
-class _ProtocolModel(BaseModel):
-    model_config = ConfigDict(
-        frozen=True,
-        extra="forbid",
-        strict=True,
-        allow_inf_nan=False,
-    )
-
-
-def _canonical_json(model: BaseModel) -> bytes:
-    return json.dumps(
-        model.model_dump(mode="json"),
-        ensure_ascii=False,
-        allow_nan=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-
-
 def _to_utc(value: datetime, *, field_name: str) -> datetime:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError(f"{field_name} must include a timezone")
-    normalized = value.astimezone(UTC)
+    normalized = normalize_utc(value, field_name=field_name)
     if normalized.microsecond:
         raise ValueError(f"{field_name} must use whole seconds")
     return normalized
-
-
-def _encode_base64url(value: bytes) -> str:
-    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
-
-
-def _decode_base64url(value: str, *, field_name: str, expected_bytes: int) -> bytes:
-    if not _B64URL_PATTERN.fullmatch(value):
-        raise ValueError(f"{field_name} must be unpadded URL-safe base64")
-    try:
-        decoded = base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True)
-    except (binascii.Error, ValueError) as exc:
-        raise ValueError(f"{field_name} must be valid URL-safe base64") from exc
-    if len(decoded) != expected_bytes:
-        raise ValueError(f"{field_name} must encode exactly {expected_bytes} bytes")
-    if not hmac.compare_digest(_encode_base64url(decoded), value):
-        raise ValueError(f"{field_name} must use canonical unpadded URL-safe base64")
-    return decoded
 
 
 def _validate_name(value: str, *, field_name: str) -> str:
@@ -116,27 +81,10 @@ def _validate_version(value: str, *, field_name: str) -> str:
 def public_key_base64(public_key: Ed25519PublicKey) -> str:
     """Return a public key as canonical unpadded URL-safe base64."""
 
-    raw_key = public_key.public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw,
-    )
-    return _encode_base64url(raw_key)
+    return public_key_text(public_key)
 
 
-def node_id_from_public_key(public_key: Ed25519PublicKey | str) -> str:
-    """Derive the stable node identity from its raw Ed25519 public key."""
-
-    if isinstance(public_key, str):
-        raw_key = _decode_base64url(public_key, field_name="public_key", expected_bytes=32)
-    else:
-        raw_key = public_key.public_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PublicFormat.Raw,
-        )
-    return f"sha256:{hashlib.sha256(raw_key).hexdigest()}"
-
-
-class VersionedDeclaration(_ProtocolModel):
+class VersionedDeclaration(SwarmModel):
     """A named capability or payload schema and its semantic version."""
 
     name: str = Field(min_length=1, max_length=64)
@@ -153,7 +101,7 @@ class VersionedDeclaration(_ProtocolModel):
         return _validate_version(value, field_name="declaration version")
 
 
-class NodeEndpoint(_ProtocolModel):
+class NodeEndpoint(SwarmModel):
     """One public transport address advertised by a node."""
 
     transport: Literal["https", "wss", "libp2p"]
@@ -186,12 +134,12 @@ class NodeEndpoint(_ProtocolModel):
         return self
 
 
-class NodeManifest(_ProtocolModel):
+class NodeManifest(SwarmModel):
     """Unsigned discovery content whose canonical bytes are signed by its node."""
 
-    message_type: Literal["rati.node-manifest"] = MANIFEST_TYPE
+    message_type: Literal["rati.node_manifest"] = MANIFEST_TYPE
     protocol_version: Literal["1"] = PROTOCOL_VERSION
-    node_id: str = Field(min_length=71, max_length=71)
+    node_id: str = Field(min_length=74, max_length=74)
     public_key: str = Field(min_length=43, max_length=43)
     issued_at: datetime
     expires_at: datetime
@@ -208,21 +156,17 @@ class NodeManifest(_ProtocolModel):
         field_name = getattr(info, "field_name", "timestamp")
         return _to_utc(value, field_name=field_name)
 
-    @field_serializer("issued_at", "expires_at", when_used="json")
-    def serialize_timestamps(self, value: datetime) -> str:
-        return value.isoformat(timespec="seconds").replace("+00:00", "Z")
-
     @field_validator("node_id")
     @classmethod
     def validate_node_id(cls, value: str) -> str:
-        if not _SHA256_ID_PATTERN.fullmatch(value):
-            raise ValueError("node_id must be a lowercase sha256 identity")
+        if not NODE_ID_PATTERN.fullmatch(value):
+            raise ValueError("node_id must use the rati-node:<sha256> format")
         return value
 
     @field_validator("public_key")
     @classmethod
     def validate_public_key(cls, value: str) -> str:
-        _decode_base64url(value, field_name="public_key", expected_bytes=32)
+        decode_base64url(value, label="public_key", expected_bytes=32)
         return value
 
     @field_validator("software_name")
@@ -273,44 +217,63 @@ class NodeManifest(_ProtocolModel):
             raise ValueError("expires_at must be later than issued_at")
         if self.expires_at - self.issued_at > MAX_MANIFEST_LIFETIME:
             raise ValueError("A node manifest cannot be valid for more than 7 days")
-        if len(_canonical_json(self)) > MAX_MANIFEST_BYTES:
+        if len(canonical_json_bytes(self)) > MAX_MANIFEST_BYTES:
             raise ValueError(f"A node manifest cannot exceed {MAX_MANIFEST_BYTES} bytes")
         return self
 
     def canonical_bytes(self) -> bytes:
         """Return the stable JSON bytes used for hashing and signing."""
 
-        return _canonical_json(self)
+        return canonical_json_bytes(self)
 
     @property
-    def content_hash(self) -> str:
-        return f"sha256:{hashlib.sha256(self.canonical_bytes()).hexdigest()}"
+    def content_id(self) -> str:
+        return content_id(self.canonical_bytes())
 
 
-class SignedNodeManifest(_ProtocolModel):
+class SignedNodeManifest(SwarmModel):
     """Wire envelope for a node manifest, its content ID, and its signature."""
 
     manifest: NodeManifest
-    content_hash: str = Field(min_length=71, max_length=71)
+    content_id: str = Field(min_length=71, max_length=71)
+    signature_algorithm: Literal["ed25519"] = SIGNATURE_ALGORITHM
     signature: str = Field(min_length=86, max_length=86)
 
-    @field_validator("content_hash")
+    @field_validator("content_id")
     @classmethod
-    def validate_content_hash(cls, value: str) -> str:
-        if not _SHA256_ID_PATTERN.fullmatch(value):
-            raise ValueError("content_hash must be a lowercase sha256 identity")
+    def validate_content_id(cls, value: str) -> str:
+        if not CONTENT_ID_PATTERN.fullmatch(value):
+            raise ValueError("content_id must use the sha256:<hex> format")
         return value
 
     @field_validator("signature")
     @classmethod
     def validate_signature(cls, value: str) -> str:
-        _decode_base64url(value, field_name="signature", expected_bytes=64)
+        decode_base64url(value, label="signature", expected_bytes=64)
         return value
 
     def canonical_bytes(self) -> bytes:
         """Return compact, sorted JSON suitable for publication or exchange."""
 
-        return _canonical_json(self)
+        return canonical_json_bytes(self)
+
+    def to_wire_bytes(self) -> bytes:
+        wire_bytes = self.canonical_bytes()
+        if len(wire_bytes) > MAX_SIGNED_MANIFEST_BYTES:
+            raise ValueError("Signed node manifest is too large")
+        return wire_bytes
+
+    @classmethod
+    def from_wire_bytes(cls, wire_bytes: bytes) -> SignedNodeManifest:
+        if len(wire_bytes) > MAX_SIGNED_MANIFEST_BYTES:
+            raise ValueError("Signed node manifest is too large")
+        try:
+            value = cls.model_validate_json(wire_bytes)
+        except UnicodeDecodeError as error:
+            raise ValueError("Signed node manifest must be UTF-8 JSON") from error
+        if value.to_wire_bytes() != wire_bytes:
+            raise ValueError("Signed node manifest JSON is not in canonical wire form")
+        return value
 
 
 def sign_node_manifest(
@@ -319,13 +282,13 @@ def sign_node_manifest(
     """Sign a manifest with the private key belonging to its advertised identity."""
 
     signer_public_key = public_key_base64(private_key.public_key())
-    if not hmac.compare_digest(signer_public_key, manifest.public_key):
+    if signer_public_key != manifest.public_key:
         raise ValueError("The private key does not belong to the manifest public_key")
-    signature = private_key.sign(SIGNATURE_DOMAIN + manifest.canonical_bytes())
+    signature = private_key.sign(signature_domain(MANIFEST_TYPE) + manifest.canonical_bytes())
     return SignedNodeManifest(
         manifest=manifest,
-        content_hash=manifest.content_hash,
-        signature=_encode_base64url(signature),
+        content_id=manifest.content_id,
+        signature=encode_base64url(signature),
     )
 
 
@@ -342,20 +305,18 @@ def verify_signed_node_manifest(
     checked_at = _to_utc(at or datetime.now(UTC), field_name="at")
     manifest = signed.manifest
 
-    if not hmac.compare_digest(signed.content_hash, manifest.content_hash):
-        raise ManifestVerificationError("Manifest content hash does not match its payload")
+    if signed.content_id != manifest.content_id:
+        raise ManifestVerificationError("Manifest content ID does not match its payload")
     if manifest.issued_at > checked_at + clock_skew:
         raise ManifestVerificationError("Manifest was issued too far in the future")
     if manifest.expires_at <= checked_at:
         raise ManifestVerificationError("Manifest has expired")
 
-    public_key_bytes = _decode_base64url(
-        manifest.public_key, field_name="public_key", expected_bytes=32
-    )
-    signature = _decode_base64url(signed.signature, field_name="signature", expected_bytes=64)
+    public_key_bytes = decode_base64url(manifest.public_key, label="public_key", expected_bytes=32)
+    signature = decode_base64url(signed.signature, label="signature", expected_bytes=64)
     public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
     try:
-        public_key.verify(signature, SIGNATURE_DOMAIN + manifest.canonical_bytes())
+        public_key.verify(signature, signature_domain(MANIFEST_TYPE) + manifest.canonical_bytes())
     except InvalidSignature as exc:
         raise ManifestVerificationError("Manifest signature is invalid") from exc
     return manifest

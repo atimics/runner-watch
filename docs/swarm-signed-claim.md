@@ -22,9 +22,9 @@ A wire message has three fields:
 }
 ```
 
-The claim includes the issuer's raw 32-byte Ed25519 public key as unpadded, URL-safe base64. A
-receiver can therefore verify it without an account registry. Node manifests may give that key a
-friendly name, but they are not needed for cryptographic verification.
+The claim includes the issuer's `rati-node:<sha256>` ID and raw 32-byte Ed25519 public key as
+unpadded, URL-safe base64. The ID must match the key, so a receiver can verify it without an
+account registry and connect it to the same identity in a NodeManifest or AlphaPack.
 
 The content ID is `sha256:` followed by the SHA-256 digest of the canonical claim bytes. It is the
 identity of this exact signed statement. It is not an identity for a symbol, setup, or evidence
@@ -38,12 +38,13 @@ Canonical JSON is UTF-8 with:
 - no optional whitespace
 - non-ASCII text kept as UTF-8
 - UTC timestamps written with six fractional digits and a trailing `Z`
-- finite JSON numbers only
+- portable safe-range integers only; floating-point values are forbidden
 
 An Ed25519 signature covers:
 
 ```text
-"RATI_SIGNED_CLAIM" || 0x00 || "v1" || 0x00 || canonical_claim_json
+"RATI-SWARM" || 0x00 || "rati.signed_claim" || 0x00 || "1" || 0x00
+|| canonical_claim_json
 ```
 
 The prefix separates these signatures from other RATi message types and future versions. The wire
@@ -57,7 +58,7 @@ representation.
 - the instrument and observation, issue, and expiry times
 - scanner and schema versions
 - the versions of source adapters used
-- setup score, rug score and rug level
+- setup score and rug score in thousandths, plus rug level
 - trade state and its plain-language reason
 - bounded signal labels and risk vetoes
 - one to 32 evidence references

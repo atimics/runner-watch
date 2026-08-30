@@ -2,27 +2,38 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import json
 import re
 import unicodedata
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
 )
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
+
+from runner_swarm.protocol import (
+    CONTENT_ID_PATTERN,
+    PROTOCOL_VERSION,
+    SIGNATURE_ALGORITHM,
+    NodeIdentity,
+    SwarmModel,
+    canonical_json_bytes,
+    content_id,
+    decode_base64url,
+    encode_base64url,
+    normalize_utc,
+    public_key_text,
+    signature_domain,
+)
 
 MESSAGE_TYPE = "rati.alpha_pack"
-PROTOCOL_VERSION = "1.0"
-SIGNATURE_DOMAIN = b"RATI\x00alpha-pack\x00v1\x00"
 MAX_PACK_BYTES = 256 * 1024
+MAX_SIGNED_PACK_BYTES = MAX_PACK_BYTES + 4096
+MAX_PACK_LIFETIME = timedelta(days=366)
 MAX_PEERS = 128
 MAX_TOPICS = 256
 MAX_ENDPOINTS_PER_PEER = 8
@@ -30,8 +41,6 @@ MAX_RECIPIENT_KEYS = 256
 
 _PACK_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{2,63}$")
 _TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$")
-_CONTENT_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
-_NODE_ID = re.compile(r"^rati-node:[0-9a-f]{64}$")
 
 ShortText = Annotated[str, Field(min_length=1, max_length=128)]
 VersionToken = Annotated[str, Field(min_length=1, max_length=128)]
@@ -56,14 +65,12 @@ class PackStatus(StrEnum):
     REVOKED = "revoked"
 
 
-class FrozenModel(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
+class FrozenModel(SwarmModel):
+    """Backward-compatible local name for the shared protocol model."""
 
 
 def _utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        raise ValueError("Timestamps must include a timezone")
-    return value.astimezone(UTC)
+    return normalize_utc(value)
 
 
 def _clean(value: str) -> str:
@@ -75,78 +82,6 @@ def _clean_nonempty(value: str, *, label: str) -> str:
     if not value:
         raise ValueError(f"{label} cannot be empty")
     return value
-
-
-def _decode_base64(value: str, *, length: int, label: str) -> bytes:
-    if not value or "=" in value:
-        raise ValueError(f"{label} must be URL-safe base64 without padding")
-    try:
-        raw = base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True)
-    except (ValueError, TypeError) as error:
-        raise ValueError(f"{label} must be URL-safe base64 without padding") from error
-    if len(raw) != length:
-        raise ValueError(f"{label} must encode exactly {length} bytes")
-    if _encode_base64(raw) != value:
-        raise ValueError(f"{label} must use canonical URL-safe base64 without padding")
-    return raw
-
-
-def _encode_base64(value: bytes) -> str:
-    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
-
-
-def public_key_text(key: Ed25519PublicKey | Ed25519PrivateKey) -> str:
-    """Return a canonical, portable Ed25519 public key."""
-
-    if isinstance(key, Ed25519PrivateKey):
-        key = key.public_key()
-    raw = key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-    return _encode_base64(raw)
-
-
-def node_id_from_public_key(public_key: str) -> str:
-    """Derive the stable node identity bound to an Ed25519 public key."""
-
-    raw = _decode_base64(public_key, length=32, label="public_key")
-    return f"rati-node:{hashlib.sha256(raw).hexdigest()}"
-
-
-def canonical_json_bytes(value: BaseModel | dict[str, Any]) -> bytes:
-    """Serialize a model using the pack protocol's deterministic JSON profile."""
-
-    payload = value.model_dump(mode="json") if isinstance(value, BaseModel) else value
-    return json.dumps(
-        payload,
-        ensure_ascii=False,
-        allow_nan=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-
-
-class NodeIdentity(FrozenModel):
-    node_id: str
-    signing_public_key: str
-    display_name: ShortText | None = None
-
-    @field_validator("signing_public_key")
-    @classmethod
-    def validate_public_key(cls, value: str) -> str:
-        _decode_base64(value, length=32, label="signing_public_key")
-        return value
-
-    @field_validator("display_name")
-    @classmethod
-    def normalize_display_name(cls, value: str | None) -> str | None:
-        return _clean_nonempty(value, label="display_name") if value is not None else None
-
-    @model_validator(mode="after")
-    def bind_node_id_to_key(self) -> NodeIdentity:
-        if not _NODE_ID.fullmatch(self.node_id):
-            raise ValueError("node_id must use the rati-node:<sha256> format")
-        if self.node_id != node_id_from_public_key(self.signing_public_key):
-            raise ValueError("node_id does not match signing_public_key")
-        return self
 
 
 class PeerReference(NodeIdentity):
@@ -190,16 +125,16 @@ class LocalTrustPolicy(FrozenModel):
     """Owner recommendations; every receiving node may use stricter local rules."""
 
     membership_grants_trust: Literal[False] = False
-    initial_peer_weight: Annotated[float, Field(ge=0.0, le=0.25)] = 0.0
-    minimum_reputation_score: Annotated[float, Field(ge=0.0, le=1.0)] = 0.6
+    initial_peer_weight_ppm: Annotated[int, Field(ge=0, le=250_000)] = 0
+    minimum_reputation_ppm: Annotated[int, Field(ge=0, le=1_000_000)] = 600_000
     minimum_scored_outcomes: Annotated[int, Field(ge=0, le=100_000)] = 20
-    maximum_peer_claim_weight: Annotated[float, Field(gt=0.0, le=1.0)] = 0.25
+    maximum_peer_claim_weight_ppm: Annotated[int, Field(gt=0, le=1_000_000)] = 250_000
     require_local_risk_gate: Literal[True] = True
 
     @model_validator(mode="after")
     def validate_weights(self) -> LocalTrustPolicy:
-        if self.initial_peer_weight > self.maximum_peer_claim_weight:
-            raise ValueError("initial_peer_weight cannot exceed maximum_peer_claim_weight")
+        if self.initial_peer_weight_ppm > self.maximum_peer_claim_weight_ppm:
+            raise ValueError("initial_peer_weight_ppm cannot exceed maximum_peer_claim_weight_ppm")
         return self
 
 
@@ -260,7 +195,7 @@ class PrivatePackEncryption(FrozenModel):
 
 class AlphaPack(FrozenModel):
     message_type: Literal["rati.alpha_pack"] = MESSAGE_TYPE
-    protocol_version: Literal["1.0"] = PROTOCOL_VERSION
+    protocol_version: Literal["1"] = PROTOCOL_VERSION
     pack_id: str
     pack_version: Annotated[int, Field(ge=1, le=2_147_483_647)]
     name: ShortText
@@ -306,7 +241,7 @@ class AlphaPack(FrozenModel):
     @field_validator("supersedes_content_id")
     @classmethod
     def validate_supersedes_id(cls, value: str | None) -> str | None:
-        if value is not None and not _CONTENT_ID.fullmatch(value):
+        if value is not None and not CONTENT_ID_PATTERN.fullmatch(value):
             raise ValueError("supersedes_content_id must be a sha256 content ID")
         return value
 
@@ -355,6 +290,8 @@ class AlphaPack(FrozenModel):
             raise ValueError("Peer node IDs must be unique")
         if self.expires_at <= self.issued_at:
             raise ValueError("expires_at must be later than issued_at")
+        if self.expires_at - self.issued_at > MAX_PACK_LIFETIME:
+            raise ValueError("An alpha pack cannot be valid for more than 366 days")
         if self.status == PackStatus.REVOKED and self.revoked_at is None:
             raise ValueError("A revoked pack requires revoked_at")
         if self.status == PackStatus.ACTIVE and self.revoked_at is not None:
@@ -375,7 +312,7 @@ class AlphaPack(FrozenModel):
 
     @property
     def content_id(self) -> str:
-        return f"sha256:{hashlib.sha256(self.canonical_bytes).hexdigest()}"
+        return content_id(self.canonical_bytes)
 
     def is_active(self, at: datetime | None = None) -> bool:
         at = _utc(at or datetime.now(UTC))
@@ -389,20 +326,20 @@ class AlphaPack(FrozenModel):
 class SignedAlphaPack(FrozenModel):
     pack: AlphaPack
     content_id: str
-    signature_algorithm: Literal["ed25519"] = "ed25519"
+    signature_algorithm: Literal["ed25519"] = SIGNATURE_ALGORITHM
     signature: str
 
     @field_validator("content_id")
     @classmethod
     def validate_content_id(cls, value: str) -> str:
-        if not _CONTENT_ID.fullmatch(value):
+        if not CONTENT_ID_PATTERN.fullmatch(value):
             raise ValueError("content_id must use the sha256:<hex> format")
         return value
 
     @field_validator("signature")
     @classmethod
     def validate_signature_encoding(cls, value: str) -> str:
-        _decode_base64(value, length=64, label="signature")
+        decode_base64url(value, expected_bytes=64, label="signature")
         return value
 
     @property
@@ -415,16 +352,16 @@ class SignedAlphaPack(FrozenModel):
         if self.content_id != self.pack.content_id:
             raise AlphaPackError("Alpha pack content ID does not match its content")
         public_key = Ed25519PublicKey.from_public_bytes(
-            _decode_base64(
-                self.pack.owner.signing_public_key,
-                length=32,
-                label="owner signing_public_key",
+            decode_base64url(
+                self.pack.owner.public_key,
+                expected_bytes=32,
+                label="owner public_key",
             )
         )
         try:
             public_key.verify(
-                _decode_base64(self.signature, length=64, label="signature"),
-                SIGNATURE_DOMAIN + self.pack.canonical_bytes,
+                decode_base64url(self.signature, expected_bytes=64, label="signature"),
+                signature_domain(MESSAGE_TYPE) + self.pack.canonical_bytes,
             )
         except InvalidSignature as error:
             raise AlphaPackError("Alpha pack signature is invalid") from error
@@ -433,19 +370,33 @@ class SignedAlphaPack(FrozenModel):
 
     @classmethod
     def from_json(cls, data: bytes | str) -> SignedAlphaPack:
-        if len(data.encode("utf-8") if isinstance(data, str) else data) > MAX_PACK_BYTES + 4096:
+        wire_bytes = data.encode("utf-8") if isinstance(data, str) else data
+        return cls.from_wire_bytes(wire_bytes)
+
+    def to_wire_bytes(self) -> bytes:
+        wire_bytes = self.canonical_bytes
+        if len(wire_bytes) > MAX_SIGNED_PACK_BYTES:
             raise AlphaPackError("Signed alpha pack exceeds the safe input size")
-        return cls.model_validate_json(data)
+        return wire_bytes
+
+    @classmethod
+    def from_wire_bytes(cls, wire_bytes: bytes) -> SignedAlphaPack:
+        if len(wire_bytes) > MAX_SIGNED_PACK_BYTES:
+            raise AlphaPackError("Signed alpha pack exceeds the safe input size")
+        value = cls.model_validate_json(wire_bytes)
+        if value.to_wire_bytes() != wire_bytes:
+            raise AlphaPackError("Signed alpha pack JSON is not in canonical wire form")
+        return value
 
 
 def sign_alpha_pack(pack: AlphaPack, private_key: Ed25519PrivateKey) -> SignedAlphaPack:
     """Sign an alpha pack with the private key bound to its owner identity."""
 
-    if public_key_text(private_key) != pack.owner.signing_public_key:
+    if public_key_text(private_key) != pack.owner.public_key:
         raise AlphaPackError("Signing key does not match alpha pack owner")
-    signature = private_key.sign(SIGNATURE_DOMAIN + pack.canonical_bytes)
+    signature = private_key.sign(signature_domain(MESSAGE_TYPE) + pack.canonical_bytes)
     return SignedAlphaPack(
         pack=pack,
         content_id=pack.content_id,
-        signature=_encode_base64(signature),
+        signature=encode_base64url(signature),
     )

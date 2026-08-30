@@ -1,26 +1,35 @@
 from __future__ import annotations
 
-import base64
-import binascii
-import hashlib
-import json
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Literal, Self
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
     Ed25519PublicKey,
 )
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+from pydantic import Field, TypeAdapter, field_validator, model_validator
 
-MESSAGE_TYPE = "rati.peer-intelligence.signed-claim"
-PROTOCOL_VERSION = 1
-SIGNATURE_PREFIX = b"RATI_SIGNED_CLAIM\x00v1\x00"
+from runner_swarm.protocol import (
+    NODE_ID_PATTERN,
+    PROTOCOL_VERSION,
+    SIGNATURE_ALGORITHM,
+    SwarmModel,
+    canonical_json_bytes,
+    content_id,
+    decode_base64url,
+    encode_base64url,
+    node_id_from_public_key,
+    normalize_utc,
+    public_key_text,
+    signature_domain,
+)
+
+MESSAGE_TYPE = "rati.signed_claim"
 
 MAX_CLOCK_SKEW = timedelta(minutes=5)
+MAX_OBSERVATION_AGE = timedelta(hours=24)
 MAX_OBSERVATION_TTL = timedelta(hours=24)
 MAX_RETRACTION_TTL = timedelta(days=7)
 MAX_CLAIM_BYTES = 24 * 1024
@@ -63,63 +72,14 @@ class RiskSeverity(StrEnum):
     HARD = "hard"
 
 
-class SwarmModel(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
-
-
 def _utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        raise ValueError("Claim timestamps must include a timezone")
-    return value.astimezone(UTC)
-
-
-def _canonical_value(value: Any) -> Any:
-    if isinstance(value, datetime):
-        return value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
-    if isinstance(value, dict):
-        return {key: _canonical_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_canonical_value(item) for item in value]
-    if isinstance(value, StrEnum):
-        return value.value
-    return value
-
-
-def _canonical_json(value: BaseModel) -> bytes:
-    document = _canonical_value(value.model_dump(mode="python"))
-    return json.dumps(
-        document,
-        allow_nan=False,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-
-
-def _b64url_encode(value: bytes) -> str:
-    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
-
-
-def _b64url_decode(value: str, *, expected_bytes: int, label: str) -> bytes:
-    try:
-        raw = base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True)
-    except (binascii.Error, ValueError) as error:
-        raise ValueError(f"{label} must be unpadded URL-safe base64") from error
-    if len(raw) != expected_bytes or _b64url_encode(raw) != value:
-        raise ValueError(
-            f"{label} must be canonical unpadded URL-safe base64 for {expected_bytes} bytes"
-        )
-    return raw
+    return normalize_utc(value, field_name="claim timestamp")
 
 
 def encode_public_key(public_key: Ed25519PublicKey) -> str:
     """Return the registry-free wire identity for an Ed25519 public key."""
 
-    raw = public_key.public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw,
-    )
-    return _b64url_encode(raw)
+    return public_key_text(public_key)
 
 
 class EvidenceReferenceV1(SwarmModel):
@@ -154,12 +114,13 @@ class RiskVetoV1(SwarmModel):
     def unique_evidence_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if len(set(value)) != len(value):
             raise ValueError("A risk veto cannot repeat an evidence ID")
-        return value
+        return tuple(sorted(value))
 
 
 class ClaimContentV1(SwarmModel):
-    message_type: Literal["rati.peer-intelligence.signed-claim"] = MESSAGE_TYPE
-    protocol_version: Literal[1] = PROTOCOL_VERSION
+    message_type: Literal["rati.signed_claim"] = MESSAGE_TYPE
+    protocol_version: Literal["1"] = PROTOCOL_VERSION
+    issuer_node_id: Annotated[str, Field(min_length=74, max_length=74)]
     issuer_public_key: Annotated[str, Field(min_length=43, max_length=43)]
     issued_at: datetime
     expires_at: datetime
@@ -167,7 +128,14 @@ class ClaimContentV1(SwarmModel):
     @field_validator("issuer_public_key")
     @classmethod
     def validate_public_key(cls, value: str) -> str:
-        _b64url_decode(value, expected_bytes=32, label="issuer_public_key")
+        decode_base64url(value, expected_bytes=32, label="issuer_public_key")
+        return value
+
+    @field_validator("issuer_node_id")
+    @classmethod
+    def validate_node_id(cls, value: str) -> str:
+        if not NODE_ID_PATTERN.fullmatch(value):
+            raise ValueError("issuer_node_id must use the rati-node:<sha256> format")
         return value
 
     @field_validator("issued_at", "expires_at")
@@ -179,6 +147,8 @@ class ClaimContentV1(SwarmModel):
     def validate_expiry_order(self) -> Self:
         if self.expires_at <= self.issued_at:
             raise ValueError("expires_at must be after issued_at")
+        if self.issuer_node_id != node_id_from_public_key(self.issuer_public_key):
+            raise ValueError("issuer_node_id does not match issuer_public_key")
         return self
 
 
@@ -189,8 +159,8 @@ class RunnerObservationV1(ClaimContentV1):
     scanner_version: Annotated[str, Field(min_length=1, max_length=64)]
     schema_version: Annotated[str, Field(min_length=1, max_length=64)]
     source_versions: Annotated[tuple[SourceVersionV1, ...], Field(min_length=1, max_length=32)]
-    setup_score: Annotated[float, Field(ge=0, le=100)]
-    rug_score: Annotated[float, Field(ge=0, le=100)] | None = None
+    setup_score_milli: Annotated[int, Field(ge=0, le=100_000)]
+    rug_score_milli: Annotated[int, Field(ge=0, le=100_000)] | None = None
     rug_level: RiskLevel = RiskLevel.UNKNOWN
     trade_state: TradeState
     state_reason: Annotated[str, Field(min_length=1, max_length=280)]
@@ -212,7 +182,26 @@ class RunnerObservationV1(ClaimContentV1):
     def unique_signals(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if len(set(value)) != len(value):
             raise ValueError("A runner observation cannot repeat a signal")
-        return value
+        return tuple(sorted(value))
+
+    @field_validator("source_versions")
+    @classmethod
+    def sort_source_versions(
+        cls, value: tuple[SourceVersionV1, ...]
+    ) -> tuple[SourceVersionV1, ...]:
+        return tuple(sorted(value, key=lambda item: (item.family, item.source, item.version)))
+
+    @field_validator("evidence")
+    @classmethod
+    def sort_evidence(
+        cls, value: tuple[EvidenceReferenceV1, ...]
+    ) -> tuple[EvidenceReferenceV1, ...]:
+        return tuple(sorted(value, key=lambda item: item.evidence_id))
+
+    @field_validator("risk_vetoes")
+    @classmethod
+    def sort_risk_vetoes(cls, value: tuple[RiskVetoV1, ...]) -> tuple[RiskVetoV1, ...]:
+        return tuple(sorted(value, key=lambda item: item.code))
 
     @model_validator(mode="after")
     def validate_observation(self) -> Self:
@@ -220,6 +209,10 @@ class RunnerObservationV1(ClaimContentV1):
             raise ValueError("A runner observation cannot live longer than 24 hours")
         if self.observed_at > self.issued_at + MAX_CLOCK_SKEW:
             raise ValueError("observed_at is too far after issued_at")
+        if self.observed_at < self.issued_at - MAX_OBSERVATION_AGE:
+            raise ValueError("observed_at cannot be more than 24 hours before issued_at")
+        if self.observed_at >= self.expires_at:
+            raise ValueError("observed_at must be earlier than expires_at")
 
         evidence_ids = [item.evidence_id for item in self.evidence]
         if len(set(evidence_ids)) != len(evidence_ids):
@@ -241,6 +234,8 @@ class RunnerObservationV1(ClaimContentV1):
         }
         if missing:
             raise ValueError("Risk vetoes must reference evidence included in the claim")
+        if any(item.observed_at > self.issued_at + MAX_CLOCK_SKEW for item in self.evidence):
+            raise ValueError("Evidence cannot be observed too far after issued_at")
         return self
 
     @property
@@ -269,19 +264,20 @@ class SignedClaimV1(SwarmModel):
 
     claim: ClaimPayloadV1
     claim_id: ClaimId
+    signature_algorithm: Literal["ed25519"] = SIGNATURE_ALGORITHM
     signature: Annotated[str, Field(min_length=86, max_length=86)]
 
     @field_validator("signature")
     @classmethod
     def validate_signature_encoding(cls, value: str) -> str:
-        _b64url_decode(value, expected_bytes=64, label="signature")
+        decode_base64url(value, expected_bytes=64, label="signature")
         return value
 
     @model_validator(mode="after")
     def validate_size(self) -> Self:
         if len(self.claim_bytes()) > MAX_CLAIM_BYTES:
             raise ValueError("Claim content is too large")
-        if len(_canonical_json(self)) > MAX_WIRE_BYTES:
+        if len(canonical_json_bytes(self)) > MAX_WIRE_BYTES:
             raise ValueError("Signed claim is too large")
         return self
 
@@ -295,15 +291,15 @@ class SignedClaimV1(SwarmModel):
         expected_public_key = encode_public_key(private_key.public_key())
         if claim.issuer_public_key != expected_public_key:
             raise ValueError("The private key does not match issuer_public_key")
-        claim_bytes = _canonical_json(claim)
+        claim_bytes = canonical_json_bytes(claim)
         if len(claim_bytes) > MAX_CLAIM_BYTES:
             raise ValueError("Claim content is too large")
         claim_id = _claim_id(claim_bytes)
-        signature = private_key.sign(SIGNATURE_PREFIX + claim_bytes)
+        signature = private_key.sign(signature_domain(MESSAGE_TYPE) + claim_bytes)
         return cls(
             claim=claim,
             claim_id=claim_id,
-            signature=_b64url_encode(signature),
+            signature=encode_base64url(signature),
         )
 
     @classmethod
@@ -320,13 +316,13 @@ class SignedClaimV1(SwarmModel):
         return value
 
     def claim_bytes(self) -> bytes:
-        return _canonical_json(self.claim)
+        return canonical_json_bytes(self.claim)
 
     def expected_claim_id(self) -> str:
         return _claim_id(self.claim_bytes())
 
     def to_wire_bytes(self) -> bytes:
-        wire_bytes = _canonical_json(self)
+        wire_bytes = canonical_json_bytes(self)
         if len(wire_bytes) > MAX_WIRE_BYTES:
             raise ValueError("Signed claim is too large")
         return wire_bytes
@@ -349,14 +345,17 @@ class SignedClaimV1(SwarmModel):
         if self.claim_id != self.expected_claim_id():
             raise ClaimVerificationError("claim_id does not match the claim content")
         try:
-            public_key_bytes = _b64url_decode(
+            public_key_bytes = decode_base64url(
                 self.claim.issuer_public_key,
                 expected_bytes=32,
                 label="issuer_public_key",
             )
             public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
-            signature = _b64url_decode(self.signature, expected_bytes=64, label="signature")
-            public_key.verify(signature, SIGNATURE_PREFIX + self.claim_bytes())
+            signature = decode_base64url(self.signature, expected_bytes=64, label="signature")
+            public_key.verify(
+                signature,
+                signature_domain(MESSAGE_TYPE) + self.claim_bytes(),
+            )
         except (InvalidSignature, ValueError) as error:
             raise ClaimVerificationError("Ed25519 signature verification failed") from error
 
@@ -391,8 +390,11 @@ class SignedClaimV1(SwarmModel):
         return (
             self.claim.supersedes_claim_id == other.claim_id
             and self.claim.issuer_public_key == other.claim.issuer_public_key
+            and isinstance(other.claim, RunnerObservationV1)
+            and self.claim.instrument == other.claim.instrument
+            and self.claim.issued_at > other.claim.issued_at
         )
 
 
 def _claim_id(claim_bytes: bytes) -> str:
-    return f"sha256:{hashlib.sha256(claim_bytes).hexdigest()}"
+    return content_id(claim_bytes)

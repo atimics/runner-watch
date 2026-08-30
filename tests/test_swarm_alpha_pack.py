@@ -19,10 +19,9 @@ from runner_swarm.alpha_pack import (
     PeerReference,
     PrivatePackEncryption,
     SignedAlphaPack,
-    node_id_from_public_key,
-    public_key_text,
     sign_alpha_pack,
 )
+from runner_swarm.protocol import node_id_from_public_key, public_key_text
 
 NOW = datetime(2026, 8, 29, 18, tzinfo=UTC)
 
@@ -31,7 +30,7 @@ def identity(key: Ed25519PrivateKey, name: str = "Pack owner") -> NodeIdentity:
     public_key = public_key_text(key)
     return NodeIdentity(
         node_id=node_id_from_public_key(public_key),
-        signing_public_key=public_key,
+        public_key=public_key,
         display_name=name,
     )
 
@@ -145,12 +144,22 @@ def test_expired_and_revoked_packs_are_not_active() -> None:
     revoked.verify(at=NOW + timedelta(hours=2), require_active=False)
 
 
+def test_pack_lifetime_is_bounded() -> None:
+    key = Ed25519PrivateKey.generate()
+
+    with pytest.raises(ValidationError, match="more than 366 days"):
+        make_pack(key, expires_at=NOW + timedelta(days=367))
+
+
 def test_trust_policy_never_turns_membership_into_trust() -> None:
     with pytest.raises(ValidationError, match="membership_grants_trust"):
         LocalTrustPolicy(membership_grants_trust=True)
 
     with pytest.raises(ValidationError, match="cannot exceed"):
-        LocalTrustPolicy(initial_peer_weight=0.2, maximum_peer_claim_weight=0.1)
+        LocalTrustPolicy(
+            initial_peer_weight_ppm=200_000,
+            maximum_peer_claim_weight_ppm=100_000,
+        )
 
 
 @pytest.mark.parametrize(

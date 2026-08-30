@@ -13,10 +13,11 @@ The wire envelope is `SignedAlphaPack`:
 - `signature_algorithm`: `ed25519`.
 - `signature`: URL-safe base64 without padding.
 
-Canonical JSON is UTF-8, has sorted object keys, uses compact separators, preserves Unicode, and
-rejects non-finite numbers. The signature input is the fixed domain prefix
-`RATI\0alpha-pack\0v1\0` followed by the canonical pack bytes. The prefix prevents a valid pack
-signature from being reused as another RATi message type or protocol version.
+The shared swarm canonical JSON profile is compact UTF-8 with sorted keys, NFC-normalized text,
+UTC timestamps with six fractional digits and `Z`, portable safe-range integers, and no floating
+point values. The signature input is `RATI-SWARM\0rati.alpha_pack\01\0` followed by the canonical
+pack bytes. The prefix prevents a valid pack signature from being reused as another RATi message
+type or protocol version.
 
 Ed25519 public keys and signatures use canonical URL-safe base64 without padding. A node ID is
 `rati-node:` plus the lowercase SHA-256 hex digest of its 32-byte public key.
@@ -27,6 +28,7 @@ Identity and lifecycle fields include the fixed message and protocol versions, s
 increasing `pack_version`, owner identity, issue and expiry times, active or revoked status,
 optional revocation time, and an optional previous content ID that this version supersedes. A new
 version should name the prior signed artifact in `supersedes_content_id`; it does not mutate it.
+One signed version can remain active for at most 366 days before it must be renewed.
 
 The membership section contains peer identities and their roles:
 
@@ -35,8 +37,9 @@ The membership section contains peer identities and their roles:
 - A peer can have both roles, but its node ID appears only once.
 
 Neither role grants trust. `LocalTrustPolicy.membership_grants_trust` is fixed to `false`, new-peer
-weight is tightly limited, and `require_local_risk_gate` is fixed to `true`. Outcome history and
-local policy decide how much influence a claim receives.
+weight is tightly limited, and `require_local_risk_gate` is fixed to `true`. Trust weights are
+encoded as integer parts per million. Outcome history and local policy decide how much influence
+a claim receives.
 
 Topics and claim/schema version allowlists define compatibility. Evidence policy sets minimum
 receipt and independent-source counts, digest requirements, maximum evidence age, and permanently
@@ -57,16 +60,15 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from runner_swarm.alpha_pack import (
     AlphaPack,
     NodeIdentity,
-    node_id_from_public_key,
-    public_key_text,
     sign_alpha_pack,
 )
+from runner_swarm.protocol import node_id_from_public_key, public_key_text
 
 key = Ed25519PrivateKey.generate()
 public_key = public_key_text(key)
 owner = NodeIdentity(
     node_id=node_id_from_public_key(public_key),
-    signing_public_key=public_key,
+    public_key=public_key,
 )
 now = datetime.now(UTC)
 pack = AlphaPack(
@@ -78,14 +80,14 @@ pack = AlphaPack(
     issued_at=now,
     expires_at=now + timedelta(days=30),
     topics=["market.biotech", "sec.filings"],
-    allowed_claim_versions=["1.0"],
+    allowed_claim_versions=["1"],
     allowed_schema_versions=["runner-snapshot/1"],
 )
 signed = sign_alpha_pack(pack, key)
-wire_bytes = signed.canonical_bytes
+wire_bytes = signed.to_wire_bytes()
 
 # A receiver parses first, then verifies identity, signature, and activity.
-received = type(signed).from_json(wire_bytes)
+received = type(signed).from_wire_bytes(wire_bytes)
 received.verify()
 ```
 

@@ -55,8 +55,8 @@ def _manifest(
             NodeEndpoint(transport="https", address="https://seed.example.com/swarm"),
         ),
         schema_versions=(
-            VersionedDeclaration(name="rati.signed-claim", version="1.0.0"),
-            VersionedDeclaration(name="rati.alpha-pack", version="1.0.0"),
+            VersionedDeclaration(name="rati.signed_claim", version="1.0.0"),
+            VersionedDeclaration(name="rati.alpha_pack", version="1.0.0"),
         ),
         supported_topics=("markets/equities/us/runners", "markets/equities/us/risk"),
     )
@@ -69,20 +69,20 @@ def test_signed_manifest_round_trip_and_verification() -> None:
     restored = SignedNodeManifest.model_validate_json(wire_bytes)
 
     assert verify_signed_node_manifest(restored, at=NOW) == signed.manifest
-    assert restored.content_hash.startswith("sha256:")
+    assert restored.content_id.startswith("sha256:")
     assert "=" not in restored.manifest.public_key
     assert "=" not in restored.signature
 
 
-@pytest.mark.parametrize("tampered_field", ["payload", "content_hash", "signature"])
+@pytest.mark.parametrize("tampered_field", ["payload", "content_id", "signature"])
 def test_verification_rejects_tampering(tampered_field: str) -> None:
     signed = sign_node_manifest(_manifest(), _private_key())
     wire = signed.model_dump(mode="json")
 
     if tampered_field == "payload":
         wire["manifest"]["supported_topics"] = ["markets/equities/us/halts"]
-    elif tampered_field == "content_hash":
-        wire["content_hash"] = "sha256:" + "0" * 64
+    elif tampered_field == "content_id":
+        wire["content_id"] = "sha256:" + "0" * 64
     else:
         raw_signature = bytearray(
             base64.urlsafe_b64decode(wire["signature"] + "=" * (-len(wire["signature"]) % 4))
@@ -139,7 +139,7 @@ def test_invalid_software_and_schema_versions_are_rejected(version: str) -> None
         NodeManifest.model_validate(data)
 
     with pytest.raises(ValidationError):
-        VersionedDeclaration(name="rati.signed-claim", version=version)
+        VersionedDeclaration(name="rati.signed_claim", version=version)
 
 
 def test_invalid_protocol_version_is_rejected() -> None:
@@ -160,7 +160,7 @@ def test_canonical_bytes_are_deterministic_across_declaration_order() -> None:
     reordered = NodeManifest.model_validate(data)
 
     assert reordered.canonical_bytes() == original.canonical_bytes()
-    assert reordered.content_hash == original.content_hash
+    assert reordered.content_id == original.content_id
     assert b" " not in original.canonical_bytes()
     assert b"\n" not in original.canonical_bytes()
 

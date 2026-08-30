@@ -12,14 +12,15 @@ Pydantic models with strict input handling and rejects unknown fields.
 The outer `SignedNodeManifest` contains:
 
 - `manifest`: the discovery payload described below.
-- `content_hash`: `sha256:` followed by the lowercase SHA-256 digest of the canonical
+- `content_id`: `sha256:` followed by the lowercase SHA-256 digest of the canonical
   manifest bytes.
 - `signature`: the Ed25519 signature as URL-safe base64 without padding.
 
 The manifest contains:
 
-- A fixed `message_type` of `rati.node-manifest` and `protocol_version` of `1`.
-- `node_id`, calculated as `sha256:<hex>` over the raw 32-byte Ed25519 public key.
+- A fixed `message_type` of `rati.node_manifest` and `protocol_version` of `1`.
+- `node_id`, calculated as `rati-node:<hex>` over the SHA-256 digest of the raw 32-byte
+  Ed25519 public key.
 - The public key as URL-safe base64 without padding.
 - Whole-second UTC `issued_at` and `expires_at` timestamps.
 - The lowercase software name and its semantic version.
@@ -27,14 +28,14 @@ The manifest contains:
 - Public HTTPS, WSS, or libp2p endpoints.
 - Lowercase, namespaced topics that the node can exchange.
 
-Set-like fields are sorted before serialization. Canonical JSON is UTF-8, has sorted
-object keys, and uses compact separators with no extra whitespace. A manifest cannot
-exceed 16 KiB or remain valid for more than seven days.
+Set-like fields are sorted before serialization. The shared swarm canonical JSON profile is
+compact UTF-8 with sorted keys, normalized text, and UTC timestamps rendered with six fractional
+digits and `Z`. A manifest cannot exceed 16 KiB or remain valid for more than seven days.
 
 The signature input is:
 
 ```text
-"RATI-SWARM\\0node-manifest\\0v1\\0" || canonical_manifest_json
+"RATI-SWARM\\0rati.node_manifest\\01\\0" || canonical_manifest_json
 ```
 
 The fixed prefix prevents a valid NodeManifest signature from being reused as a
@@ -73,13 +74,15 @@ manifest = NodeManifest(
         NodeEndpoint(transport="https", address="https://node.example/swarm"),
     ),
     schema_versions=(
-        VersionedDeclaration(name="rati.signed-claim", version="1.0.0"),
+        VersionedDeclaration(name="rati.signed_claim", version="1.0.0"),
     ),
     supported_topics=("markets/equities/us/runners",),
 )
 
 wire_record = sign_node_manifest(manifest, private_key)
-verified_manifest = verify_signed_node_manifest(wire_record)
+wire_bytes = wire_record.to_wire_bytes()
+received = type(wire_record).from_wire_bytes(wire_bytes)
+verified_manifest = verify_signed_node_manifest(received)
 ```
 
 Persist the private key in the operating system's secret store. Do not include it in
