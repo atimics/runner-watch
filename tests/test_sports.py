@@ -235,6 +235,9 @@ def test_golf_tournament_becomes_a_ranked_pga_leaderboard(sports_db) -> None:
     assert event["leaderboard"][0]["round_number"] == 2
     assert event["leaderboard"][0]["through_display"] == "F"
 
+    event["status"] = "pre"
+    event["status_detail"] = "Scheduled"
+
     stored = store_golf_events([event])
     slate = golf_slate()
 
@@ -242,6 +245,7 @@ def test_golf_tournament_becomes_a_ranked_pga_leaderboard(sports_db) -> None:
     assert slate["display_count"] == 1
     assert slate["entrant_count"] == 2
     assert slate["events"][0]["venue"] == "East Lake Golf Club"
+    assert slate["events"][0]["display_status"] == "Round 2 complete"
     assert [player["player_name"] for player in slate["events"][0]["leaderboard"]] == [
         "Ryan Gerard",
         "Viktor Hovland",
@@ -470,7 +474,8 @@ def test_event_linked_recap_stays_with_previous_game_and_builds_series_context(
         None,
     )
     assert b"Back-to-back rematch" in response.body
-    assert b"GAME RECAP" in response.body
+    assert b"RELATED NEWS" in response.body
+    assert b"GAME RECAP" not in response.body
     assert b"Game 2 of 2" in response.body
     assert b"timeZoneName:'short'" in response.body
 
@@ -546,6 +551,39 @@ def test_paper_pick_rejects_an_old_moneyline(sports_db) -> None:
     assert detail["paper_odds"] is None
     with pytest.raises(ValueError, match="fresh moneyline"):
         create_sports_pick("stale-user", str(event["id"]), "home")
+
+
+def test_started_game_closes_picks_before_offering_login(sports_db) -> None:
+    raw = sample_event()
+    raw["date"] = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    for competitor in raw["competitions"][0]["competitors"]:
+        competitor["score"] = ""
+    event = normalize_event("mlb", raw)
+    assert event is not None
+    store_events([event])
+
+    detail = sports_event(str(event["id"]))
+    assert detail is not None
+    assert detail["view_state"] == {
+        "label": "Game started",
+        "detail": "Score pending from ESPN",
+        "started": True,
+        "score_available": False,
+        "pick_state": "closed",
+        "picks_open": False,
+    }
+
+    response = sports_game_page(
+        str(event["id"]),
+        request(path=f"/game/{event['id']}"),
+        None,
+    )
+    assert b"Game started" in response.body
+    assert b"Score pending from ESPN" in response.body
+    assert b"Paper picks closed" in response.body
+    assert b"No new picks can be added" in response.body
+    assert b"Make a paper pick" not in response.body
+    assert b"Log in to make a paper pick" not in response.body
 
 
 def test_pick_api_invalidates_game_and_alpha_caches(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -734,6 +772,8 @@ def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
     assert b'class="decision-team"' in detail_response.body
     assert b"BASELINE WINNER" in detail_response.body
     assert b"MARKET GAP" in detail_response.body
+    assert b"Model vs no-vig market" in detail_response.body
+    assert detail_response.body.count(b'class="probability-row') == 2
     assert b"Season records plus home edge" in detail_response.body
     assert detail_response.body.index(b"SEASON-RECORD BASELINE") < detail_response.body.index(
         b"Flash report"
@@ -1324,7 +1364,7 @@ def test_finished_game_seals_the_last_pregame_prediction_and_market(sports_db) -
     )
     assert b"SEALED PREGAME" in response.body
     assert b"Later news and results cannot rewrite it" in response.body
-    assert b"Pregame market timeline" in response.body
+    assert b"Pregame moneyline record" in response.body
     assert b"Reports closed" in response.body
     assert b'id="commissionButton"' not in response.body
 

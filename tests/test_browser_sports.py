@@ -169,6 +169,18 @@ def _rendered_pulse(monkeypatch, payload: dict[str, Any]) -> str:
         "_public_sports_pulse_data",
         lambda *_args, **_kwargs: {"pulse": payload, "pick_stats": pick_stats},
     )
+    monkeypatch.setattr(
+        web_main,
+        "_public_golf_data",
+        lambda: {
+            "events": [],
+            "display_count": 0,
+            "entrant_count": 0,
+            "source_status": "success",
+            "source_error": "",
+            "updated_at": None,
+        },
+    )
     return _inline_static_assets(web_main.home(_request(), None).body.decode())
 
 
@@ -179,6 +191,119 @@ def _rendered_radar(monkeypatch, payload: dict[str, Any]) -> str:
         lambda *_args, **_kwargs: {"radar": payload},
     )
     response = web_main.sports_radar_response(_request("/radar"), None)
+    return _inline_static_assets(response.body.decode())
+
+
+def _rendered_game_detail() -> str:
+    event = {
+        "id": "closed-game",
+        "league": "mlb",
+        "start_time": "2026-08-29T18:20:00+00:00",
+        "status": "pre",
+        "status_detail": "11:20 AM",
+        "completed": False,
+        "venue": "Wrigley Field",
+        "location": "Chicago, IL",
+        "away_abbreviation": "CIN",
+        "away_team_name": "Cincinnati Reds",
+        "away_record": "68-66",
+        "away_score": None,
+        "home_abbreviation": "CHC",
+        "home_team_name": "Chicago Cubs",
+        "home_record": "76-58",
+        "home_score": None,
+        "source_url": "https://example.test/game",
+        "paper_odds": None,
+        "odds": {
+            "away_odds": 186,
+            "home_odds": -186,
+            "sportsbook": "Market consensus",
+            "source_label": "No-vig consensus via The Odds API",
+            "observed_at": "2026-08-29T18:15:00+00:00",
+        },
+        "market_comparison": {"books": []},
+        "prediction": {
+            "selection": "away",
+            "signal": "watch",
+            "edge_pct": 6.4,
+            "away_probability": 0.413,
+            "home_probability": 0.587,
+            "away_market_probability": 0.35,
+            "home_market_probability": 0.65,
+            "model_version": "sports-baseline-v1",
+        },
+        "receipt": None,
+        "model_record": {
+            "games": 24,
+            "sample": {"label": "24 of 100 graded", "target": 100, "remaining": 76},
+        },
+        "model_winner_coin_tone": 0,
+        "model_winner_abbreviation": "CHC",
+        "model_winner_detail_label": "BASELINE WINNER",
+        "model_winner_team_name": "Chicago Cubs",
+        "model_winner_probability_pct": 58.7,
+        "edge_history": {
+            "label": "CIN model edge grew 1.4 points; now +6.4 percentage points",
+            "points": [1, 2, 3, 4],
+            "plot_points": "2,14 31,12 61,10 90,7",
+            "dot_y": 7,
+            "start_pct": 5.0,
+            "current_pct": 6.4,
+        },
+        "context": {
+            "headline": "Recent team form",
+            "back_to_back": False,
+            "series_game_count": 1,
+            "previous_meeting": None,
+            "head_to_head": {"meetings": 0},
+            "recent_form": [],
+        },
+        "matchup_players": [],
+        "news": [],
+        "picks": [],
+        "odds_history": [
+            {
+                "observed_at": "2026-08-29T18:15:00+00:00",
+                "away_odds": 186,
+                "home_odds": -186,
+                "source_label": "No-vig consensus via The Odds API",
+            }
+        ],
+        "view_state": {
+            "label": "Game started",
+            "detail": "Score pending from ESPN",
+            "started": True,
+            "score_available": False,
+            "pick_state": "closed",
+            "picks_open": False,
+        },
+    }
+    response = web_main.templates.TemplateResponse(
+        request=_request("/game/closed-game"),
+        name="sports_game.html",
+        context={
+            "event": event,
+            "latest_commission": None,
+            "flash_report": {
+                "href": None,
+                "state": "closed",
+                "label": "Reports closed",
+                "detail": "Game has started",
+                "enabled": False,
+                "job_id": None,
+                "message": "",
+                "status_tone": None,
+            },
+            "sports_path_prefix": "",
+            "sports_call_reward_cap": 10,
+            "active_tab": "pulse",
+            "nav_product": "sports",
+            "user": None,
+            "static_version": "test",
+            "runners_origin": "https://rati.chat",
+            "sports_origin": "https://sports.rati.chat",
+        },
+    )
     return _inline_static_assets(response.body.decode())
 
 
@@ -309,6 +434,36 @@ def test_sports_detail_panel_stays_dark_while_a_game_loads(
     assert errors == []
 
 
+def test_game_detail_uses_desktop_width_and_closes_started_actions(page: Page) -> None:
+    html = _rendered_game_detail()
+    page.set_viewport_size({"width": 1280, "height": 800})
+    page.route(
+        "http://app.test/",
+        lambda route: route.fulfill(status=200, content_type="text/html", body=html),
+    )
+    page.goto("http://app.test/", wait_until="domcontentloaded")
+
+    app = page.locator(".sports-game-app")
+    grid = page.locator(".game-detail-grid")
+    assert app.evaluate("node => Math.round(node.getBoundingClientRect().width)") == 1120
+    assert grid.evaluate("node => getComputedStyle(node).display") == "grid"
+    assert page.locator(".game-detail-primary").bounding_box()["x"] < (
+        page.locator(".game-detail-evidence").bounding_box()["x"]
+    )
+    assert page.locator(".probability-row").count() == 2
+    assert page.locator(".decision-movement .edge-spark").bounding_box()["width"] > 200
+    assert page.get_by_role("heading", name="Paper picks closed").is_visible()
+    assert page.get_by_text("Score pending from ESPN").is_visible()
+    assert page.get_by_text("Log in to make a paper pick").count() == 0
+    assert page.locator(".game-disclosure > summary b").first.evaluate(
+        "node => getComputedStyle(node).fontSize"
+    ) == "9px"
+
+    page.set_viewport_size({"width": 390, "height": 800})
+    assert grid.evaluate("node => getComputedStyle(node).display") == "block"
+    assert app.evaluate("node => Math.round(node.getBoundingClientRect().width)") == 390
+
+
 @pytest.mark.parametrize("width", [390, 900, 1280])
 def test_sports_pulse_respects_shared_responsive_breakpoints(
     page: Page, monkeypatch, width: int
@@ -360,6 +515,7 @@ def test_sports_pulse_uses_the_exact_ticker_row_contract(
     assert "PROJECTED" in copy
     assert "58%" in copy
     assert "Value HME +7.8pp" in copy
+    assert "MODEL41.8%MARKET34.0%" in copy
     assert "vs HME · MLB" in copy
     assert row.get_attribute("class") == "token-row ticker-row sports-pulse-row"
     assert row.locator(".coin").count() == 1
@@ -371,7 +527,8 @@ def test_sports_pulse_uses_the_exact_ticker_row_contract(
     assert page.locator(".model-favorite").count() == 0
     assert row.get_attribute("aria-label") == (
         "AWY Club is projected to beat HME Club with a 58 percent win chance; "
-        "value side HME with a +7.8 percentage-point model edge"
+        "value side HME with a +7.8 percentage-point model edge, model 41.8 percent "
+        "versus market 34.0 percent"
     )
     assert page.evaluate(
         """() => {
@@ -393,7 +550,7 @@ def test_sports_pulse_uses_the_exact_ticker_row_contract(
         }"""
     ) == {
         "display": "grid",
-        "minHeight": "78px",
+        "minHeight": "94px",
         "padding": "9px 8px",
         "radius": "0px",
         "coinWidth": "42px",
@@ -423,7 +580,8 @@ def test_sports_pulse_calls_a_close_projection_a_slight_edge(
     assert "Value AWY +2.6pp" in row.text_content()
     assert row.get_attribute("aria-label") == (
         "AWY Club has a slight model edge over HME Club with a 51 percent win chance; "
-        "value side AWY with a +2.6 percentage-point model edge"
+        "value side AWY with a +2.6 percentage-point model edge, model 58.2 percent "
+        "versus market 55.6 percent"
     )
     assert errors == []
 

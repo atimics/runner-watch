@@ -31,7 +31,8 @@ def test_general_interface_keeps_its_editorial_edge() -> None:
     assert "risk-evidence" in ticker
     assert "astrology for the tape" in ticker_script
     assert "Evidence review, not a trade alert." not in ticker
-    assert "#1 most called" in community
+    assert "#1 by open Calls" in community
+    assert "Open Calls first · total Calls break ties" in community
     assert "🐺" in community
     assert '<span class="tab-icon alpha-icon" aria-hidden="true"></span>' in navigation
 
