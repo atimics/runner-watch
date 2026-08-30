@@ -436,3 +436,161 @@ html.embedded-pane .sports-detail-body {
     gap: 9px;
   }
 }
+
+/* Structural chrome: one frame, ruled sections, and no card-inside-card layers. */
+body.sports-product {
+  --sports-chrome-radius: 2px;
+  --sports-rule: color-mix(in srgb, var(--line) 86%, transparent);
+}
+
+body.sports-product :is(
+  .sports-record-strip,
+  .golf-tournament-card,
+  .radar-list,
+  .performance-ranking,
+  .receipt-archive,
+  .sports-alpha-board,
+  .sports-call-feed,
+  .source-warning,
+  .sports-empty
+) {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+body.sports-product :is(
+  .golf-tournament-card,
+  .sports-alpha-board,
+  .sports-call-feed,
+  .receipt-archive
+) {
+  background: var(--panel);
+}
+
+body.sports-product .alpha-sample-note {
+  border: 0;
+  border-top: 1px solid rgba(245, 198, 107, .28);
+  border-bottom: 1px solid rgba(245, 198, 107, .28);
+  border-radius: 0;
+  background: transparent;
+}
+
+.sports-product .radar-mark {
+  width: 42px;
+  height: 40px;
+  padding: 6px 8px 0 0;
+  border: 0;
+  border-right: 1px solid var(--sports-rule);
+  border-radius: 0;
+  background: transparent;
+}
+
+.sports-product :is(
+  .league-tabs a,
+  .avatar-button.signed-out,
+  .sports-empty-action,
+  .sports-update-button,
+  .paper-pick > a,
+  .pick-buttons button,
+  .sports-comment-form button
+) {
+  border-radius: var(--sports-chrome-radius);
+}
+
+.sports-game-app :is(
+  .match-strip,
+  .decision-hero,
+  .market-compare,
+  .game-flash,
+  .game-flash-action > a,
+  .game-flash-action > button,
+  .series-context,
+  .previous-score,
+  .recent-form-grid > section,
+  .matchup-players,
+  .matchup-player-grid > section,
+  .prediction-receipt,
+  .receipt-seal,
+  .match-news,
+  .model-maturity,
+  .game-disclosure,
+  .game-notebook,
+  .sports-comment-form,
+  .paper-pick,
+  .public-picks,
+  .odds-receipt
+) {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.sports-game-app :is(.match-strip, .decision-board, .game-flash, .sports-comment-form) {
+  background: transparent;
+  background-image: none;
+}
+
+.sports-game-app .decision-columns {
+  gap: 0;
+  border-top: 1px solid var(--sports-rule);
+  border-bottom: 1px solid var(--sports-rule);
+}
+
+.sports-game-app :is(.decision-model-call, .decision-value-call) {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.sports-game-app .decision-value-call {
+  border-left: 1px solid var(--sports-rule);
+}
+
+.sports-game-app .value-numbers {
+  gap: 0;
+  border-top: 1px solid var(--sports-rule);
+}
+
+.sports-game-app .value-numbers > span {
+  padding: 10px 0 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.sports-game-app .value-numbers > span + span {
+  margin-left: 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--sports-rule);
+}
+
+.sports-game-app .game-flash {
+  border-left: 0;
+  background: transparent;
+}
+
+.sports-game-app :is(.game-flash-action > a, .game-flash-action > button) {
+  background: transparent;
+}
+
+.sports-game-app .game-disclosure-body > :is(
+  .market-compare,
+  .series-context,
+  .matchup-players,
+  .prediction-receipt,
+  .match-news,
+  .public-picks,
+  .odds-receipt
+) {
+  background: transparent;
+  background-image: none;
+}
+
+@media (max-width: 700px) {
+  .sports-game-app .decision-columns {
+    border-bottom: 0;
+  }
+
+  .sports-game-app .decision-value-call {
+    border-top: 1px solid var(--sports-rule);
+    border-left: 0;
+  }
+}
