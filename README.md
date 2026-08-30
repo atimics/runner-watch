@@ -350,7 +350,8 @@ reports only that the web process is running. `/health` and its `/ready` alias c
 and minimum schema without depending on the worker. `/health/details` also requires a recent
 healthy worker heartbeat. Fly routes traffic using the backward-compatible `/health` endpoint,
 while the detailed endpoint lets external monitoring detect a dead or partly failed worker without
-taking healthy web machines offline.
+taking healthy web machines offline. `/health/performance` reports bounded route-latency samples,
+cache activity, database-pool waits, and process peak memory without exposing request data.
 
 ## Legacy model evaluations
 

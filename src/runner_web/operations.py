@@ -19,6 +19,7 @@ from runner_web.flash_wallet import (
     REPORT_EXCLUSIVE_HOURS,
 )
 from runner_web.ingestion import ingestion_status
+from runner_web.performance import performance_snapshot
 from runner_web.product_policy import OPERATIONS, policy_manifest
 from runner_web.ranker import ranker_status
 
@@ -372,6 +373,11 @@ def readiness_api() -> JSONResponse:
 def health_api() -> JSONResponse:
     payload = health_status()
     return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
+
+
+@router.get("/health/performance")
+def performance_api() -> dict[str, Any]:
+    return performance_snapshot()
 
 
 @router.get("/api/ranker/status")
