@@ -254,7 +254,14 @@ class SwarmTransport:
     def replace_local_manifest(self, signed_manifest: SignedNodeManifest) -> None:
         """Renew the local manifest without changing this runtime's node identity."""
 
-        current = self.local_manifest()
+        # A renewal can arrive just after the previous manifest expires. Verify the
+        # stored manifest at its own issue time so its content hash, signature, and
+        # advertised identity are still authenticated without requiring it to remain
+        # current. The replacement itself must be valid now.
+        current = verify_signed_node_manifest(
+            self.signed_manifest,
+            at=self.signed_manifest.manifest.issued_at,
+        )
         replacement = verify_signed_node_manifest(signed_manifest, at=self._clock())
         if replacement.node_id != current.node_id or replacement.public_key != current.public_key:
             raise ValueError("A manifest renewal cannot change the local node identity")
