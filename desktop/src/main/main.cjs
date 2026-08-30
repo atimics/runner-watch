@@ -13,6 +13,9 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
+// Keep local scanner receipts and connection settings across the RATi Swarm rename.
+app.setPath('userData', path.join(app.getPath('appData'), 'rati-desktop'));
+
 const allowedExternalHosts = new Set([
   'openrouter.ai',
   'rati.chat',
@@ -26,6 +29,7 @@ const allowedExternalHosts = new Set([
   'bsky.social',
   'massive.com',
   'www.nasdaqtrader.com',
+  'www.nasdaq.com',
   'fintel.io',
   'the-odds-api.com',
   'disneytermsofuse.com',
@@ -156,7 +160,7 @@ function createWindow() {
     minHeight: 640,
     backgroundColor: '#07110d',
     show: false,
-    title: 'RATi Runners',
+    title: 'RATi Swarm',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -205,14 +209,14 @@ ipcMain.handle('desktop:fetch-public', async (_event, value) => {
       redirect: 'error',
       signal: controller.signal,
     });
-    if (!response.ok) throw new Error(`RATi Runners returned ${response.status}`);
+    if (!response.ok) throw new Error(`RATi Cloud returned ${response.status}`);
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.toLowerCase().includes('application/json')) {
-      throw new Error('RATi Runners returned an invalid response');
+      throw new Error('RATi Cloud returned an invalid response');
     }
     return await response.json();
   } catch (error) {
-    if (controller.signal.aborted) throw new Error('RATi Runners request timed out');
+    if (controller.signal.aborted) throw new Error('RATi Cloud request timed out');
     throw error;
   } finally {
     clearTimeout(timeout);

@@ -1,10 +1,10 @@
-# RATi Runners desktop and scanner architecture
+# RATi Swarm desktop and scanner architecture
 
 RATi has one open-source product engine and one open-source client. RATi AI Cloud runs the same
 scanner and client in managed mode; it is not a second scoring implementation.
 
 ```text
-RATi Runners -> public Pulse / Radar / Flash APIs at runners.rati.chat
+RATi Swarm -> public Pulse / Radar / Flash APIs -> RATi Cloud at runners.rati.chat
        |
        +-> selected Scanner API -> local or cloud scanner -> providers and storage
                                                     |
@@ -16,7 +16,7 @@ RATi Runners -> public Pulse / Radar / Flash APIs at runners.rati.chat
 - `runner_watch` remains the provider-neutral scanner and scoring core.
 - `runner_node` owns the versioned Node API, provider discovery, scanner execution, and user
   connections. `rati-scanner` starts it as a loopback service by default.
-- `desktop` is the RATi Runners Svelte and Electron client. Pulse, Radar, and Flash are its main
+- `desktop` is the RATi Swarm Svelte and Electron client. Pulse, Radar, and Flash are its main
   navigation. It contains no scanning or provider logic.
 - `runner_web` remains the hosted product while its rendered screens move to the shared Node API.
   It exposes the same Node router during the migration.
@@ -43,6 +43,7 @@ The scanner keeps a bounded receipt history in SQLite when `DATABASE_PATH` is se
 ```text
 GET    /api/v1/node
 GET    /api/v1/providers
+GET    /api/v1/tickers/{ticker}
 GET    /api/v1/scans
 POST   /api/v1/scans
 GET    /api/v1/scans/{scan_id}
@@ -63,7 +64,9 @@ until `RATI_NODE_TOKEN` contains at least 24 characters. Public node and provide
 remain available so the hosted client can explain what the selected node offers.
 
 Local scan requests always use live providers. Yahoo market data and other enabled no-key sources
-are connected automatically. There is no sample-data request or synthetic provider in production.
+are connected automatically. Local ticker pages pull current daily and five-minute bars through
+the same scanner and show their provider provenance. There is no sample-data request, synthetic
+provider, or invented volume in production.
 
 Cloud nodes do not accept user-triggered scans through the local endpoint. Their
 managed workers continue to populate the existing shared Pulse and Radar data.

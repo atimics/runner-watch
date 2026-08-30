@@ -17,6 +17,7 @@ from runner_node.credentials import CredentialVault, credential_vault
 from runner_node.openrouter import OpenRouterConnections
 from runner_node.research import OpenRouterResearch, ResearchRequest
 from runner_node.scans import ScanRequest, ScanStore, run_scan
+from runner_node.tickers import load_ticker_detail
 from runner_watch.source_catalog import DEFAULT_SOURCE_POLICIES
 
 
@@ -175,6 +176,7 @@ class NodeService:
             "links": {
                 "providers": "/api/v1/providers",
                 "scans": "/api/v1/scans",
+                "tickers": "/api/v1/tickers/{ticker}",
                 "research": "/api/v1/research",
                 "openrouter": "/api/v1/connections/openrouter",
             },
@@ -215,6 +217,21 @@ def create_node_router(service: NodeService | None = None) -> APIRouter:
         if result is None:
             raise HTTPException(404, "Scan not found")
         return result
+
+    @router.get("/tickers/{ticker}", dependencies=protected)
+    async def ticker(ticker: str) -> dict[str, object]:
+        if service.settings.mode == "cloud":
+            raise HTTPException(403, "Use the RATi Cloud ticker page with a cloud scanner")
+        try:
+            return await run_in_threadpool(
+                load_ticker_detail,
+                ticker,
+                service.provider_credentials(),
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     @router.get("/connections/openrouter")
     def openrouter_status() -> dict[str, Any]:

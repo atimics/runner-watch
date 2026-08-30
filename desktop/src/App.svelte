@@ -8,6 +8,8 @@
     type ProviderStatus,
     type ResearchResult,
     type ScanResult,
+    type TickerBar,
+    type TickerDetail,
   } from './lib/node';
   import {
     RATi_RUNNERS_URL,
@@ -18,7 +20,7 @@
     type RunnerRow,
   } from './lib/runners';
 
-  type View = 'pulse' | 'radar' | 'flash' | 'scanner' | 'settings';
+  type View = 'pulse' | 'radar' | 'flash' | 'scanner' | 'settings' | 'ticker';
   type ScannerMode = 'local' | 'cloud';
 
   let view: View = 'pulse';
@@ -49,6 +51,12 @@
   let feedLoading = true;
   let feedMessage = 'Connecting to the RATi network…';
   let feedUpdatedAt = '';
+  let selectedTicker: RunnerRow | null = null;
+  let tickerDetail: TickerDetail | null = null;
+  let tickerBackView: View = 'pulse';
+  let tickerChart: 'intraday' | 'daily' = 'intraday';
+  let tickerLoading = false;
+  let tickerError = '';
 
   const navItems: { id: View; label: string; icon: string }[] = [
     { id: 'pulse', label: 'Pulse', icon: '◉' },
@@ -282,6 +290,62 @@
     return value <= 1 ? `${Math.round(value * 100)}% confidence` : `${Math.round(value)}% confidence`;
   }
 
+  async function openTicker(row: RunnerRow, backView: View = view) {
+    if (scannerMode === 'cloud') {
+      await openRunner(`/t/${encodeURIComponent(row.ticker)}`);
+      return;
+    }
+    selectedTicker = row;
+    tickerBackView = ['pulse', 'radar', 'scanner'].includes(backView) ? backView : 'pulse';
+    tickerDetail = null;
+    tickerChart = 'intraday';
+    tickerError = '';
+    tickerLoading = true;
+    view = 'ticker';
+    try {
+      if (!node || node.mode === 'cloud') {
+        throw new Error('The local scanner is not connected. Open Scanner and reconnect it.');
+      }
+      tickerDetail = await client().ticker(row.ticker);
+      if (tickerDetail.charts.intraday.length < 2 && tickerDetail.charts.daily.length > 1) {
+        tickerChart = 'daily';
+      }
+    } catch (error) {
+      tickerError = error instanceof Error ? error.message : 'Could not load this ticker locally';
+    } finally {
+      tickerLoading = false;
+    }
+  }
+
+  function chartPoints(bars: TickerBar[]): string {
+    const usable = bars.filter((bar) => Number.isFinite(bar.close));
+    if (usable.length < 2) return '';
+    const values = usable.map((bar) => bar.close);
+    const minimum = Math.min(...values);
+    const maximum = Math.max(...values);
+    const spread = Math.max(maximum - minimum, maximum * 0.005, 0.01);
+    return usable.map((bar, index) => {
+      const x = 20 + (index / (usable.length - 1)) * 960;
+      const y = 225 - ((bar.close - minimum) / spread) * 190;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+  }
+
+  function chartRange(bars: TickerBar[]): string {
+    if (!bars.length) return 'No bars returned';
+    const values = bars.map((bar) => bar.close);
+    return `$${Math.min(...values).toFixed(2)} – $${Math.max(...values).toFixed(2)}`;
+  }
+
+  function selectedChartBars(): TickerBar[] {
+    return tickerDetail?.charts[tickerChart] || [];
+  }
+
+  function compactNumber(value?: number | null): string {
+    if (value == null || !Number.isFinite(value)) return '—';
+    return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+  }
+
   onMount(async () => {
     view = 'pulse';
     receipts = loadCachedReceipts();
@@ -320,12 +384,12 @@
   });
 </script>
 
-<svelte:head><title>RATi Runners</title></svelte:head>
+<svelte:head><title>RATi Swarm</title></svelte:head>
 
 <div class="app-shell">
   <header class="app-header">
     <button class="brand" onclick={() => view = 'pulse'} aria-label="Open Pulse">
-      <span class="brand-mark">R</span><span><b>RATi</b><small>RUNNERS</small></span>
+      <span class="brand-mark">R</span><span><b>RATi</b><small>SWARM</small></span>
     </button>
     <nav aria-label="Main navigation">
       {#each navItems as item}
@@ -335,7 +399,7 @@
     <div class="header-actions">
       <div class="mode-control" aria-label="Scanner location">
         <button class:active={scannerMode === 'local'} onclick={() => chooseScannerMode('local')}>Local</button>
-        <button class:active={scannerMode === 'cloud'} onclick={() => chooseScannerMode('cloud')}>Cloud</button>
+        <button class="cloud-choice" class:active={scannerMode === 'cloud'} onclick={() => chooseScannerMode('cloud')}>Cloud</button>
       </div>
       <button class:active={view === 'settings'} class="settings-button" onclick={() => view = 'settings'} aria-label="Open settings">⚙</button>
     </div>
@@ -343,12 +407,12 @@
 
   <main>
     {#if view === 'pulse'}
-      <section class="screen-head">
-        <div><span class="eyebrow">RATi RUNNERS</span><h1>Pulse</h1><p>Verified movement across the market.</p></div>
-        <div class="live-state"><i></i><span>{feedMessage}</span>{#if feedUpdatedAt}<small>Updated {feedUpdatedAt}</small>{/if}</div>
+      <section class="screen-head cloud-feed-head">
+        <div><span class="eyebrow">RATi CLOUD FEED</span><h1>Pulse</h1><p>Cloud discovery. Open a ticker to analyze it on your local scanner.</p></div>
+        <div class="live-state cloud-state"><i></i><span>{feedMessage}</span>{#if feedUpdatedAt}<small>Updated {feedUpdatedAt}</small>{/if}</div>
       </section>
       {#if pulse.flash_record}
-        <button class="flash-strip" onclick={() => view = 'flash'}>
+        <button class="flash-strip cloud-strip" onclick={() => view = 'flash'}>
           <span class="flash-avatar">ϟ</span><span><b>{pulse.flash_record.label}</b><small>{pulse.flash_record.model_label} · permanent scorecard</small></span>
           <strong>{pulse.flash_record.headline_rate_visible && pulse.flash_record.hit_rate != null ? `${Math.round(pulse.flash_record.hit_rate * 100)}% hit` : `${pulse.flash_record.settled} settled`}</strong>
           <span>{pulse.flash_record.hits} hits · {pulse.flash_record.misses} misses <b>View record ›</b></span>
@@ -356,7 +420,7 @@
       {/if}
       <section class="runner-list" aria-busy={feedLoading}>
         {#each pulse.rows as row}
-          <button class="runner-row" onclick={() => openRunner(`/t/${encodeURIComponent(row.ticker)}`)}>
+          <button class="runner-row cloud-row" onclick={() => openTicker(row, 'pulse')}>
             <span class="ticker-badge">{row.coin_label || row.ticker.slice(0, 3)}</span>
             <span class="runner-name"><strong>{row.ticker}</strong><small>{row.company || row.name || 'Market runner'}</small></span>
             <span class="runner-thesis"><b>{row.pulse_label || row.trade_state || 'Moving'}</b><small>{row.directional_thesis || row.case_thesis || row.case_source_name || 'Fresh verified movement'}</small></span>
@@ -368,10 +432,10 @@
         {/each}
       </section>
     {:else if view === 'radar'}
-      <section class="screen-head"><div><span class="eyebrow">EVENT WATCH</span><h1>Radar</h1><p>{radar.rows.length} recent events from Pulse.</p></div><div class="live-state"><i></i><span>{feedMessage}</span></div></section>
+      <section class="screen-head cloud-feed-head"><div><span class="eyebrow">RATi CLOUD EVENT WATCH</span><h1>Radar</h1><p>{radar.rows.length} recent cloud events. Ticker analysis stays local in Local mode.</p></div><div class="live-state cloud-state"><i></i><span>{feedMessage}</span></div></section>
       <section class="runner-list radar-list" aria-busy={feedLoading}>
         {#each radar.rows as row}
-          <button class:updated={row.has_update} class="runner-row" onclick={() => openRunner(`/t/${encodeURIComponent(row.ticker)}`)}>
+          <button class:updated={row.has_update} class="runner-row cloud-row" onclick={() => openTicker(row, 'radar')}>
             <span class="radar-sweep"></span><span class="runner-name"><strong>{row.ticker}</strong><small>{row.company || row.name || 'Market runner'}</small></span>
             <span class="runner-thesis"><b>{row.pulse_label || 'New event'}</b><small>{row.directional_thesis || row.case_thesis || row.case_source_name || 'Fresh public evidence'}</small></span>
             <span class="event-count"><b>{row.event_count || 1}</b><small>events</small></span>
@@ -380,42 +444,72 @@
         {:else}<div class="empty-state"><span>⌁</span><h2>Radar is quiet</h2><p>Fresh news, filings, and market alerts will appear here.</p></div>{/each}
       </section>
     {:else if view === 'flash'}
-      <section class="screen-head flash-heading"><div><span class="eyebrow">FLASH ϟ</span><h1>Forecast record</h1><p>Frozen calls. Later prices. No rewrites.</p></div><button onclick={() => openRunner('/flash/record')}>Open public record ↗</button></section>
+      <section class="screen-head flash-heading cloud-feed-head"><div><span class="eyebrow">RATi CLOUD · FLASH ϟ</span><h1>Forecast record</h1><p>Cloud model record. Frozen calls. Later prices. No rewrites.</p></div><button class="cloud-button" onclick={() => openRunner('/flash/record')}>Open cloud record ↗</button></section>
       {#if flash?.current_version}
-        <section class="record-hero">
+        <section class="record-hero cloud-record">
           <div><span class="flash-avatar">ϟ</span><p><strong>{flash.current_version.label}</strong><small>{flash.current_version.model_label} · {flash.current_version.state.replace('_', ' ')}</small></p></div>
           <b>{flash.current_version.headline_rate_visible && flash.current_version.hit_rate != null ? `${Math.round(flash.current_version.hit_rate * 100)}%` : flash.current_version.settled}<small>{flash.current_version.headline_rate_visible ? 'hit rate' : 'settled'}</small></b>
           <p>{flash.current_version.hits} hits · {flash.current_version.misses} misses · {flash.current_version.no_calls} no calls · {flash.current_version.pending} pending</p><p>{flash.current_version.distinct_tickers} tickers · {flash.current_version.distinct_trading_days || 0} trading days</p>
         </section>
-        <section class="record-grid">
-          <article class="method-card"><span class="eyebrow">THE CONTRACT</span><h2>One fixed finish line</h2><p>An up or down call is judged at the next regular-session close. It is a hit only after a move larger than {flash.contract.minimum_move_pct.toFixed(1)}% in Flash's direction.</p><small>The headline rate appears after {flash.contract.headline_sample} settled forecasts.</small></article>
-          <article class="version-card"><span class="eyebrow">VERSIONS</span><h2>Permanent scorecards</h2>{#each flash.versions as version}<div><span><b>{version.label}</b><small>{version.model_label} · {version.state}</small></span><strong>{version.settled} settled</strong></div>{/each}</article>
+        <section class="record-grid cloud-record-grid">
+          <article class="method-card"><span class="eyebrow">CLOUD CONTRACT</span><h2>One fixed finish line</h2><p>An up or down call is judged at the next regular-session close. It is a hit only after a move larger than {flash.contract.minimum_move_pct.toFixed(1)}% in Flash's direction.</p><small>The headline rate appears after {flash.contract.headline_sample} settled forecasts.</small></article>
+          <article class="version-card"><span class="eyebrow">CLOUD VERSIONS</span><h2>Permanent scorecards</h2>{#each flash.versions as version}<div><span><b>{version.label}</b><small>{version.model_label} · {version.state}</small></span><strong>{version.settled} settled</strong></div>{/each}</article>
         </section>
-        <section class="ledger"><div class="section-head"><div><span class="eyebrow">RECEIPTS</span><h2>Latest public results</h2></div></div>
+        <section class="ledger cloud-ledger"><div class="section-head"><div><span class="eyebrow">CLOUD RECEIPTS</span><h2>Latest public results</h2></div></div>
           {#each flash.recent_results as result}<button onclick={() => openRunner(result.report_url)}><strong>{result.ticker}</strong><span>{result.direction.replace('_', ' ')} · {Math.round(result.probability_up * 100)}% up</span><b class:hit={result.classification === 'hit'} class:miss={result.classification === 'miss'}>{(result.classification || result.status).replace('_', ' ')}</b><small>{result.return_pct != null ? `${result.return_pct >= 0 ? '+' : ''}${result.return_pct.toFixed(1)}% · ` : ''}{result.version_label}</small></button>{:else}<p class="empty-copy">No public forecast receipts yet.</p>{/each}
         </section>
       {:else}<div class="empty-state"><span>ϟ</span><h2>No saved Flash record</h2><p>Connect once to load the public, permanent scorecard.</p></div>{/if}
+    {:else if view === 'ticker'}
+      <section class="ticker-local-head">
+        <button class="back-button" onclick={() => view = tickerBackView}>← Back to {tickerBackView}</button>
+        <span class="local-badge">Local scanner</span>
+      </section>
+      {#if tickerLoading}
+        <section class="ticker-loading"><span class="local-orbit">⌁</span><h1>{selectedTicker?.ticker || 'Ticker'}</h1><p>Pulling fresh daily and five-minute bars through your local scanner…</p></section>
+      {:else if tickerError}
+        <section class="offline-library ticker-error"><span class="eyebrow">LOCAL TICKER</span><h2>{selectedTicker?.ticker || 'Ticker'} could not load</h2><p>{tickerError}</p><button onclick={() => view = 'scanner'}>Open Scanner</button></section>
+      {:else if tickerDetail}
+        <section class="ticker-hero">
+          <div><span class="eyebrow">LOCAL TICKER ANALYSIS</span><h1>{tickerDetail.ticker}</h1><p>{selectedTicker?.company || selectedTicker?.name || 'Live market data from your scanner'}</p></div>
+          <div class="ticker-quote"><strong>${tickerDetail.quote.price.toFixed(2)}</strong><b class:positive={Number(tickerDetail.quote.change_pct || 0) >= 0}>{tickerDetail.quote.change_pct == null ? '—' : `${tickerDetail.quote.change_pct >= 0 ? '+' : ''}${tickerDetail.quote.change_pct.toFixed(2)}%`}</b><small>{tickerDetail.quote.session} · {new Date(tickerDetail.quote.quote_time).toLocaleString()}</small></div>
+        </section>
+        {#if selectedTicker?.pulse_label}
+          <section class="cloud-context"><span class="cloud-badge">RATi Cloud context</span><strong>{selectedTicker.pulse_label}</strong><p>{selectedTicker.directional_thesis || selectedTicker.case_thesis || 'This discovery context came from runners.rati.chat. The chart and scanner verdict below were pulled locally.'}</p></section>
+        {/if}
+        <section class="ticker-chart-card">
+          <div class="section-head"><div><span class="eyebrow">LOCAL PRICE BARS</span><h2>{tickerChart === 'intraday' ? 'Five-minute chart' : 'Daily chart'}</h2></div><div class="chart-controls"><button class:active={tickerChart === 'intraday'} onclick={() => tickerChart = 'intraday'}>5 minute</button><button class:active={tickerChart === 'daily'} onclick={() => tickerChart = 'daily'}>Daily</button></div></div>
+          {#if selectedChartBars().length > 1}
+            <svg class="price-chart" viewBox="0 0 1000 250" role="img" aria-label={`${tickerDetail.ticker} ${tickerChart} price chart`}><line x1="20" y1="225" x2="980" y2="225"></line><line x1="20" y1="35" x2="980" y2="35"></line><polyline points={chartPoints(selectedChartBars())}></polyline></svg>
+            <div class="chart-caption"><span>{new Date(selectedChartBars()[0].timestamp).toLocaleString()}</span><b>{chartRange(selectedChartBars())} · {selectedChartBars().length} real bars</b><span>{new Date(selectedChartBars()[selectedChartBars().length - 1].timestamp).toLocaleString()}</span></div>
+          {:else}<p class="empty-copy">The provider did not return enough bars for this chart.</p>{/if}
+        </section>
+        {#if tickerDetail.analysis}
+          <section class="ticker-metrics"><div><small>Trade state</small><strong>{tickerDetail.analysis.trade_state}</strong></div><div><small>Setup score</small><strong>{tickerDetail.analysis.score.toFixed(1)}</strong></div><div><small>Rug risk</small><strong>{tickerDetail.analysis.rug_level} · {tickerDetail.analysis.rug_score.toFixed(0)}</strong></div><div><small>Relative volume</small><strong>{tickerDetail.analysis.relative_volume == null ? '—' : `${tickerDetail.analysis.relative_volume.toFixed(1)}×`}</strong></div><div><small>Dollar volume</small><strong>{compactNumber(tickerDetail.analysis.dollar_volume)}</strong></div><div><small>VWAP position</small><strong>{tickerDetail.analysis.vwap_position_pct >= 0 ? '+' : ''}{tickerDetail.analysis.vwap_position_pct.toFixed(1)}%</strong></div></section>
+          <section class="ticker-evidence-grid"><article><span class="eyebrow">LOCAL VERDICT</span><h2>{tickerDetail.analysis.state_reason}</h2><p>5m momentum {tickerDetail.analysis.momentum_5m_pct >= 0 ? '+' : ''}{tickerDetail.analysis.momentum_5m_pct.toFixed(1)}% · breakout {tickerDetail.analysis.breakout_pct >= 0 ? '+' : ''}{tickerDetail.analysis.breakout_pct.toFixed(1)}%</p></article><article><span class="eyebrow">SIGNALS</span>{#each tickerDetail.analysis.signals as signal}<p class="evidence-line positive-line">+ {signal}</p>{:else}<p class="empty-copy">No positive scanner signals.</p>{/each}</article><article><span class="eyebrow">RISKS</span>{#each tickerDetail.analysis.risks as risk}<p class="evidence-line risk-line">! {risk}</p>{:else}<p class="empty-copy">No additional scanner risks.</p>{/each}</article></section>
+        {/if}
+        <section class="data-pulls"><div class="section-head"><div><span class="eyebrow">LOCAL DATA PULLS</span><h2>What this scanner fetched</h2></div><small>{new Date(tickerDetail.fetched_at).toLocaleString()}</small></div>{#each tickerDetail.pulls as pull}<article><span class:failed={pull.status === 'failed'} class="pull-status">{pull.status}</span><div><strong>{pull.label}</strong><small>{pull.provider} · {pull.feed}</small></div><b>{pull.bars} bars</b><small>{pull.delayed == null ? 'Freshness unknown' : pull.delayed ? 'Delayed source' : 'Live source'}{pull.fallback_used ? ' · fallback used' : ''}</small></article>{/each}{#each tickerDetail.warnings as warning}<p class="pull-warning">{warning}</p>{/each}</section>
+      {/if}
     {:else if view === 'scanner'}
-      <section class="screen-head"><div><span class="eyebrow">{scannerMode.toUpperCase()} ENGINE</span><h1>Scanner</h1><p>Run locally on this device or use RATi Cloud.</p></div><span class:online={node} class="connection-dot">{node ? 'Connected' : 'Disconnected'}</span></section>
-      <section class="scanner-hero"><div><span class="eyebrow">SCANNER LOCATION</span><h2>{scannerMode === 'local' ? 'Private and on-device' : 'Managed by RATi Cloud'}</h2><p>{scannerMode === 'local' ? 'Free internet sources are connected by default. Your optional API keys and scan history stay with this scanner.' : 'Connects to runners.rati.chat. No local setup or maintenance.'}</p></div><div class="large-mode-control"><button class:active={scannerMode === 'local'} onclick={() => chooseScannerMode('local')}><b>Local</b><small>This device</small></button><button class:active={scannerMode === 'cloud'} onclick={() => chooseScannerMode('cloud')}><b>Cloud</b><small>runners.rati.chat</small></button></div></section>
-      <section class="connection-panel"><label for="node-url">Scanner address</label><div class="connection-row"><input id="node-url" bind:value={nodeUrl} spellcheck="false" /><button class="primary" onclick={() => refreshScanner()} disabled={connecting}>{connecting ? 'Connecting…' : 'Connect'}</button></div>{#if !isDesktop || scannerMode === 'local'}<label for="node-token">Access token <small>Only needed for a separate self-hosted scanner</small></label><input id="node-token" type="password" bind:value={nodeToken} autocomplete="off" />{/if}<p class="status" aria-live="polite">{scannerMessage}</p></section>
+      <section class:cloud-feed-head={scannerMode === 'cloud'} class="screen-head"><div><span class="eyebrow">{scannerMode.toUpperCase()} ENGINE</span><h1>Scanner</h1><p>Run locally on this device or use RATi Cloud.</p></div><span class:cloud-state={scannerMode === 'cloud'} class:online={node} class="connection-dot">{node ? 'Connected' : 'Disconnected'}</span></section>
+      <section class:cloud-panel={scannerMode === 'cloud'} class="scanner-hero"><div><span class="eyebrow">SCANNER LOCATION</span><h2>{scannerMode === 'local' ? 'Private and on-device' : 'Managed by RATi Cloud'}</h2><p>{scannerMode === 'local' ? 'Free internet sources are connected by default. Your optional API keys and scan history stay with this scanner.' : 'Connects to runners.rati.chat. No local setup or maintenance.'}</p></div><div class="large-mode-control"><button class:active={scannerMode === 'local'} onclick={() => chooseScannerMode('local')}><b>Local</b><small>This device</small></button><button class="cloud-choice" class:active={scannerMode === 'cloud'} onclick={() => chooseScannerMode('cloud')}><b>Cloud</b><small>runners.rati.chat</small></button></div></section>
+      <section class:cloud-panel={scannerMode === 'cloud'} class="connection-panel"><label for="node-url">Scanner address</label><div class="connection-row"><input id="node-url" bind:value={nodeUrl} spellcheck="false" /><button class:cloud-button={scannerMode === 'cloud'} class="primary" onclick={() => refreshScanner()} disabled={connecting}>{connecting ? 'Connecting…' : 'Connect'}</button></div>{#if !isDesktop || scannerMode === 'local'}<label for="node-token">Access token <small>Only needed for a separate self-hosted scanner</small></label><input id="node-token" type="password" bind:value={nodeToken} autocomplete="off" />{/if}<p class="status" aria-live="polite">{scannerMessage}</p></section>
       {#if node}
-        <section class="node-summary"><div><small>Mode</small><strong>{node.mode.replace('_', ' ')}</strong></div><div><small>Scanner</small><strong>{node.scanner_version}</strong></div><div><small>Research</small><strong>{node.capabilities.research.replace('_', ' ')}</strong></div><div><small>Sources</small><strong>{providers.filter((provider) => provider.enabled && provider.configured).length} connected</strong></div></section>
-        <section class="scan-action"><div><span class="eyebrow">RUN NOW</span><h2>Scan live market data</h2><p>Yahoo powers the scan without an API key. Other enabled no-key sources are connected automatically; optional paid sources can be added in Settings.</p></div><button class="primary" onclick={runLiveScan} disabled={scanning || node.mode === 'cloud'}>{scanning ? 'Scanning live data…' : node.mode === 'cloud' ? 'Managed by cloud' : 'Run live scan'}</button></section>
+        <section class:cloud-panel={node.mode === 'cloud'} class="node-summary"><div><small>Mode</small><strong>{node.mode.replace('_', ' ')}</strong></div><div><small>Scanner</small><strong>{node.scanner_version}</strong></div><div><small>Research</small><strong>{node.capabilities.research.replace('_', ' ')}</strong></div><div><small>Sources</small><strong>{providers.filter((provider) => provider.enabled && provider.configured).length} connected</strong></div></section>
+        <section class:cloud-panel={node.mode === 'cloud'} class="scan-action"><div><span class="eyebrow">RUN NOW</span><h2>Scan live market data</h2><p>Yahoo powers the scan without an API key. Other enabled no-key sources are connected automatically; optional paid sources can be added in Settings.</p></div><button class:cloud-button={node.mode === 'cloud'} class="primary" onclick={runLiveScan} disabled={scanning || node.mode === 'cloud'}>{scanning ? 'Scanning live data…' : node.mode === 'cloud' ? 'Managed by cloud' : 'Run live scan'}</button></section>
       {:else}<section class="offline-library"><span class="eyebrow">SCANNER OFFLINE</span><h2>Your saved work is still here</h2><p>Pulse, Radar, Flash, and saved receipts continue to work. Connect a scanner only when you want a new local run.</p></section>{/if}
-      {#if scan || receipts.length}<section class="scan-section"><div class="section-head"><div><span class="eyebrow">RECEIPT LIBRARY</span><h2>{receipts.length} saved scans</h2></div></div>{#if scan}<div class="scan-list">{#each scan.rows as row}<article class="scan-row"><div><strong>{row.ticker}</strong><small>{row.trade_state} · {row.rug_level} risk</small></div><div><b>{row.score.toFixed(1)}</b><small>setup</small></div><div><b>${row.price.toFixed(2)}</b><small>{row.change_pct >= 0 ? '+' : ''}{row.change_pct.toFixed(1)}%</small></div><p>{row.state_reason}</p></article>{/each}</div>{/if}<div class="receipt-grid">{#each receipts as receipt}<button class="receipt-card" onclick={() => scan = receipt}><strong>{receipt.rows.length} candidates</strong><small>{new Date(receipt.finished_at).toLocaleString()} · {receipt.source}</small></button>{/each}</div></section>{/if}
+      {#if scan || receipts.length}<section class="scan-section"><div class="section-head"><div><span class="eyebrow">RECEIPT LIBRARY</span><h2>{receipts.length} saved scans</h2></div></div>{#if scan}<div class="scan-list">{#each scan.rows as row}<button class="scan-row" onclick={() => openTicker(row, 'scanner')}><div><strong>{row.ticker}</strong><small>{row.trade_state} · {row.rug_level} risk</small></div><div><b>{row.score.toFixed(1)}</b><small>setup</small></div><div><b>${row.price.toFixed(2)}</b><small>{row.change_pct >= 0 ? '+' : ''}{row.change_pct.toFixed(1)}%</small></div><p>{row.state_reason}</p></button>{/each}</div>{/if}<div class="receipt-grid">{#each receipts as receipt}<button class="receipt-card" onclick={() => scan = receipt}><strong>{receipt.rows.length} candidates</strong><small>{new Date(receipt.finished_at).toLocaleString()} · {receipt.source}</small></button>{/each}</div></section>{/if}
     {:else}
-      <section class="screen-head"><div><span class="eyebrow">SCANNER SETTINGS</span><h1>Connections</h1><p>Add your own keys to the selected scanner.</p></div><span class:online={node} class="connection-dot">{scannerMode} · {node ? 'connected' : 'offline'}</span></section>
+      <section class:cloud-feed-head={scannerMode === 'cloud'} class="screen-head"><div><span class="eyebrow">SCANNER SETTINGS</span><h1>Connections</h1><p>Add your own keys to the selected scanner.</p></div><span class:cloud-state={scannerMode === 'cloud'} class:online={node} class="connection-dot">{scannerMode} · {node ? 'connected' : 'offline'}</span></section>
       {#if node}
         <section class="workspace-grid">
           <article class="card action-card"><span class="eyebrow">OPTIONAL AI</span><h2>OpenRouter</h2><p>{openrouter.status === 'connected' ? `Connected · ${openrouter.connection_method}` : 'Connect with OAuth PKCE or paste your own key.'}</p><div class="button-row">{#if node.mode === 'cloud'}<span>Managed by RATi Cloud</span>{:else if openrouter.status === 'connected'}{#if openrouter.activity_url}<button onclick={() => openExternal(openrouter.activity_url!)}>View usage</button>{/if}<button onclick={disconnectOpenRouter}>Disconnect</button>{:else}<button class="primary" onclick={connectOpenRouter}>Connect OpenRouter</button>{/if}</div>{#if node.mode !== 'cloud' && openrouter.status !== 'connected'}<div class="key-entry"><input type="password" bind:value={openrouterKey} autocomplete="off" placeholder="Or paste an sk-or- API key" aria-label="OpenRouter API key" /><button onclick={connectOpenRouterKey} disabled={openrouterKey.trim().length < 24}>Save key</button></div>{/if}</article>
           <article class="card"><span class="eyebrow">WHAT EACH MODE ADDS</span><h2>Local or Cloud</h2><p><b>Local</b> runs the open-source scanner on this device with your keys. <b>Cloud</b> runs the same app and scanner as a managed service at runners.rati.chat.</p></article>
         </section>
         {#if openrouter.status === 'connected' && node.mode !== 'cloud'}<section class="research-section"><div class="section-head"><div><span class="eyebrow">OPTIONAL AI</span><h2>Research</h2></div></div><textarea bind:value={researchPrompt} maxlength="6000" placeholder="What should RATi research?"></textarea><button class="primary" onclick={runResearch} disabled={researching || researchPrompt.trim().length < 3}>{researching ? 'Researching…' : 'Run research'}</button>{#if research}<article class="research-answer"><small>{research.model} · {new Date(research.generated_at).toLocaleString()}</small><p>{research.answer}</p></article>{/if}</section>{/if}
-        <section class="providers-section"><div class="section-head"><div><span class="eyebrow">SOURCE REGISTRY</span><h2>Data sources</h2></div><small>{providers.length} connections</small></div><div class="provider-grid">{#each providers as provider}<article class="provider-card"><div><strong>{provider.title}</strong><span class:ready={provider.state === 'ready' || provider.state === 'connected'}>{provider.state.replace('_', ' ')}</span></div><p>{provider.feeds.map((feed) => feed.title).join(' · ')}</p>{#if provider.feeds[0]?.terms_url}<button class="text-button" onclick={() => openExternal(provider.feeds[0].terms_url!)}>Source terms ↗</button>{/if}{#if node.mode !== 'cloud' && provider.configuration_kind === 'api_key'}{#if provider.configured}<button onclick={() => disconnectProvider(provider)}>Disconnect</button>{:else}<div class="key-entry"><input type="password" value={providerKeys[provider.id] || ''} oninput={(event) => providerKeys = { ...providerKeys, [provider.id]: event.currentTarget.value }} autocomplete="off" placeholder={`${provider.title} API key`} aria-label={`${provider.title} API key`} /><button onclick={() => connectProvider(provider)} disabled={(providerKeys[provider.id] || '').trim().length < 8}>Save key</button></div>{/if}{/if}</article>{/each}</div></section>
+        <section class:cloud-panel={node.mode === 'cloud'} class="providers-section"><div class="section-head"><div><span class="eyebrow">SOURCE REGISTRY</span><h2>Data sources</h2></div><small>{providers.length} connections</small></div><div class="provider-grid">{#each providers as provider}<article class="provider-card"><div><strong>{provider.title}</strong><span class:ready={provider.state === 'ready' || provider.state === 'connected'}>{provider.state.replace('_', ' ')}</span></div><p>{provider.feeds.map((feed) => feed.title).join(' · ')}</p>{#if provider.feeds[0]?.terms_url}<button class="text-button" onclick={() => openExternal(provider.feeds[0].terms_url!)}>Source terms ↗</button>{/if}{#if node.mode !== 'cloud' && provider.configuration_kind === 'api_key'}{#if provider.configured}<button onclick={() => disconnectProvider(provider)}>Disconnect</button>{:else}<div class="key-entry"><input type="password" value={providerKeys[provider.id] || ''} oninput={(event) => providerKeys = { ...providerKeys, [provider.id]: event.currentTarget.value }} autocomplete="off" placeholder={`${provider.title} API key`} aria-label={`${provider.title} API key`} /><button onclick={() => connectProvider(provider)} disabled={(providerKeys[provider.id] || '').trim().length < 8}>Save key</button></div>{/if}{/if}</article>{/each}</div></section>
       {:else}<section class="offline-library"><span class="eyebrow">SCANNER OFFLINE</span><h2>Connect a scanner first</h2><p>Choose Local or Cloud above, then open Scanner to connect.</p></section>{/if}
     {/if}
   </main>
 
-  <footer>RATi Runners {runtime.appVersion} · {runtime.platform} · Scanner API v{node?.api_version || '—'} · Copyright © 2026 RATi contributors · AGPL-3.0-only · <button class="footer-link" onclick={() => openExternal('https://github.com/atimics/runner-watch')}>Source</button></footer>
+  <footer>RATi Swarm {runtime.appVersion} · {runtime.platform} · Scanner API v{node?.api_version || '—'} · Copyright © 2026 RATi contributors · AGPL-3.0-only · <button class="footer-link" onclick={() => openExternal('https://github.com/atimics/runner-watch')}>Source</button></footer>
 </div>

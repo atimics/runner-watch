@@ -45,13 +45,13 @@ jobs:
         include:
           - name: Linux
             os: ubuntu-latest
-            artifact: rati-desktop-linux
+            artifact: rati-swarm-linux
           - name: macOS
             os: macos-latest
-            artifact: rati-desktop-macos
+            artifact: rati-swarm-macos
           - name: Windows
             os: windows-latest
-            artifact: rati-desktop-windows
+            artifact: rati-swarm-windows
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     defaults:

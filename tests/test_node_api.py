@@ -125,6 +125,43 @@ def test_sample_scan_input_is_rejected() -> None:
     assert response.status_code == 422
 
 
+def test_local_ticker_detail_uses_scanner_provider_keys(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_detail(ticker: str, provider_keys: dict[str, str]) -> dict[str, object]:
+        captured.update(ticker=ticker, provider_keys=provider_keys)
+        return {
+            "ticker": ticker,
+            "source": "local_scanner",
+            "quote": {"price": 1.23},
+            "analysis": None,
+            "charts": {"daily": [], "intraday": []},
+            "pulls": [],
+            "warnings": [],
+        }
+
+    vault = MemoryCredentialVault({"massive": "vault-massive-key"})
+    client, _vault = _client(vault=vault)
+    monkeypatch.setattr("runner_node.api.load_ticker_detail", fake_detail)
+
+    response = client.get("/api/v1/tickers/AAPL")
+
+    assert response.status_code == 200
+    assert response.json()["source"] == "local_scanner"
+    assert captured == {
+        "ticker": "AAPL",
+        "provider_keys": {"massive": "vault-massive-key"},
+    }
+
+
+def test_cloud_node_rejects_local_ticker_detail() -> None:
+    client, _vault = _client(settings=_settings(mode="cloud", allow_user_openrouter=False))
+
+    response = client.get("/api/v1/tickers/AAPL")
+
+    assert response.status_code == 403
+
+
 def test_cloud_node_does_not_accept_user_triggered_scans() -> None:
     client, _vault = _client(settings=_settings(mode="cloud", allow_user_openrouter=False))
 

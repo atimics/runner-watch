@@ -1,9 +1,9 @@
 {
-  "name": "rati-desktop",
+  "name": "rati-swarm",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "RATi Runners desktop app for Pulse, Radar, Flash, and local or cloud scanning.",
+  "description": "RATi Swarm desktop app for Pulse, Radar, Flash, and local or cloud scanning.",
   "main": "src/main/main.cjs",
   "author": "RATi",
   "license": "AGPL-3.0-only",

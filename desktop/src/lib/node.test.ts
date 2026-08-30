@@ -61,6 +61,24 @@ describe('scanner node addresses', () => {
     expect(fetchMock.mock.calls[0][1]?.body).not.toContain('sample');
   });
 
+  it('loads ticker detail from the selected scanner', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ ticker: 'BRK-B', source: 'local_scanner' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await new NodeClient('http://127.0.0.1:8787', 'private-token').ticker('BRK.B');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8787/api/v1/tickers/BRK.B',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer private-token' }),
+      }),
+    );
+  });
+
   it('stops waiting when a scanner does not respond', async () => {
     vi.useFakeTimers();
     vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => new Promise((_resolve, reject) => {

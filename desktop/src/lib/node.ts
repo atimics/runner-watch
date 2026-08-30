@@ -63,6 +63,59 @@ export interface ScanResult {
   warnings: string[];
 }
 
+export interface TickerBar {
+  timestamp: string;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number;
+  volume: number | null;
+}
+
+export interface TickerPull {
+  label: string;
+  provider: string;
+  feed: string;
+  status: 'connected' | 'failed';
+  bars: number;
+  delayed: boolean | null;
+  observed_at: string | null;
+  collected_at: string | null;
+  fallback_used: boolean;
+  attempted_providers: string[];
+}
+
+export interface TickerAnalysis extends ScanRow {
+  signals: string[];
+  risks: string[];
+  quote_time: string;
+  session: string;
+  momentum_5m_pct: number;
+  momentum_15m_pct: number;
+  breakout_pct: number;
+  vwap_position_pct: number;
+  pullback_from_high_pct: number;
+  dollar_volume: number;
+  average_dollar_volume: number;
+  stale_minutes: number;
+}
+
+export interface TickerDetail {
+  ticker: string;
+  source: 'local_scanner';
+  fetched_at: string;
+  quote: {
+    price: number;
+    change_pct: number | null;
+    quote_time: string;
+    session: string;
+  };
+  analysis: TickerAnalysis | null;
+  charts: { intraday: TickerBar[]; daily: TickerBar[] };
+  pulls: TickerPull[];
+  warnings: string[];
+}
+
 export interface ResearchResult {
   status: 'complete';
   provider: 'openrouter';
@@ -167,6 +220,10 @@ export class NodeClient {
       method: 'POST',
       body: JSON.stringify({ universe: 'penny', min_price: 0.2, max_price: 5, top_n: 20 }),
     });
+  }
+
+  ticker(ticker: string): Promise<TickerDetail> {
+    return this.request(`/api/v1/tickers/${encodeURIComponent(ticker)}`, undefined, 30_000);
   }
 
   research(prompt: string): Promise<ResearchResult> {
