@@ -111,6 +111,11 @@ The SEC listener declares its user agent and stays below the SEC's published req
 The delayed outcome labels preserve what was known at filing time, giving future ranking models
 clean examples without rewriting history after a move is already known.
 
+Runner Watch can also export archived filing text and point-in-time issuer facts as a deterministic
+Qwen chat corpus. Its time and unseen-issuer test splits stay sealed, and the generated ilXyr corpus
+manifest freezes every file hash. The LoRA training image records the exact model revision, config,
+seed, dependencies, and adapter digest. See the [SEC Qwen training guide](docs/sec-qwen-training.md).
+
 ## Distributed intelligence contracts
 
 The first local-first swarm contracts are executable and documented. A signed NodeManifest binds a

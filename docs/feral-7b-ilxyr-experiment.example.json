@@ -1,0 +1,124 @@
+{
+  "schema": "ilxyr.experiment.v1",
+  "id": "feral-7b.sec-analysis.v1",
+  "title": "FERAL-7B SEC analysis release gate",
+  "hypothesis": "A frozen SEC LoRA improves sealed FinQA accuracy by at least eight percentage points without increasing confident unsupported answers.",
+  "rationale": "Train an open Qwen financial analyst on point-in-time SEC evidence while keeping release decisions replayable and outside the model.",
+  "proposer": {
+    "id": "human://rati/feral-7b-owner",
+    "kind": "human"
+  },
+  "lineage": {
+    "hypothesis": "feral-7b.hypothesis.v1",
+    "mathematical_foundation": "feral-7b.release-gate.v1",
+    "engineering_review": "feral-7b.security-review.v1",
+    "experiment_design": "feral-7b.experiment-design.v1"
+  },
+  "baseline": "weight://huggingface/Qwen/Qwen2.5-7B-Instruct@a09a35458c702b33eeacc393d103063234e8bc28",
+  "datasets": [
+    "dataset://stonks/sec-filings-qwen/v1"
+  ],
+  "dataset_bindings": {
+    "dataset://stonks/sec-filings-qwen/v1": "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "models": [
+    "weight://huggingface/Qwen/Qwen2.5-7B-Instruct@a09a35458c702b33eeacc393d103063234e8bc28"
+  ],
+  "metrics": [
+    {
+      "name": "feral_release_gate",
+      "unit": "boolean",
+      "description": "One only when every preregistered quality and safety threshold passes."
+    },
+    {
+      "name": "finqa_accuracy_delta_pp",
+      "unit": "percentage_points",
+      "description": "Candidate FinQA exact accuracy minus the frozen Qwen baseline on identical sealed IDs."
+    },
+    {
+      "name": "confident_hallucination_rate_delta_pp",
+      "unit": "percentage_points",
+      "description": "Candidate minus baseline rate of unsupported answers at confidence 0.8 or higher."
+    },
+    {
+      "name": "sec_field_exact_rate",
+      "unit": "ratio",
+      "description": "Exact structured SEC fields on the sealed future split."
+    }
+  ],
+  "seeds": [17],
+  "outcome_contract": {
+    "primary_metric": "feral_release_gate",
+    "success_outcome": "release_candidate",
+    "outcomes": [
+      {
+        "id": "release_candidate",
+        "description": "All quality and safety thresholds pass.",
+        "predicate": {
+          "kind": "metric",
+          "metric": "feral_release_gate",
+          "operator": "gte",
+          "threshold": 0.5
+        }
+      },
+      {
+        "id": "hold",
+        "description": "At least one quality or safety threshold fails.",
+        "predicate": {
+          "kind": "metric",
+          "metric": "feral_release_gate",
+          "operator": "lt",
+          "threshold": 0.5
+        }
+      },
+      {
+        "id": "execution_failure",
+        "description": "The cloud training or evaluation process failed.",
+        "predicate": {
+          "kind": "execution_failure"
+        }
+      }
+    ]
+  },
+  "execution": {
+    "executor": "oci-job",
+    "program": "oci://ghcr.io/atimics/feral-7b@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "args": [
+      "train",
+      "/inputs/config.toml"
+    ],
+    "timeout_seconds": 172800,
+    "max_cost_credits": 480,
+    "network": "denied"
+  },
+  "funding": {
+    "required_compute_credits": 480,
+    "minimum_forecasters": 2,
+    "minimum_total_stake": 10
+  },
+  "security": {
+    "weight_class": "public",
+    "code_policy": "approved_image_only",
+    "export_policy": "artifacts"
+  },
+  "evidence_authority": {
+    "level": "deterministic_replay",
+    "scope": {
+      "seeds": [17],
+      "eval_set": "dataset://stonks/sec-filings-qwen/v1",
+      "coverage": 1.0
+    },
+    "provenance": {
+      "artifact_hashes": [],
+      "model_lineage": "model://feral/feral-7b/v1",
+      "checker": "checker://stonks/sec-qwen-release/v1"
+    }
+  },
+  "expected_outputs": [
+    "metrics.feral_release_gate",
+    "metrics.finqa_accuracy_delta_pp",
+    "metrics.confident_hallucination_rate_delta_pp",
+    "metrics.sec_field_exact_rate",
+    "artifacts.adapter"
+  ]
+}
