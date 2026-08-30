@@ -584,6 +584,60 @@ def test_pick_api_invalidates_game_and_alpha_caches(monkeypatch: pytest.MonkeyPa
     assert invalidated == [("sports-game", "event-1"), ("sports-alpha",)]
 
 
+def test_game_thread_comments_can_be_posted_and_removed(
+    sports_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) "
+            "VALUES('thread-user','thread_member','Thread Member','active',?)",
+            (datetime.now(UTC).isoformat(),),
+        )
+
+    invalidated: list[tuple[str, str]] = []
+    monkeypatch.setattr(web_main, "require_origin", lambda _request: None)
+    monkeypatch.setattr(web_main, "require_user", lambda _session: {"id": "thread-user"})
+    monkeypatch.setattr(web_main, "enforce_rate", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        web_main,
+        "_invalidate_public_screen_data",
+        lambda scope, identity: invalidated.append((scope, identity)),
+    )
+
+    created = web_main.create_sports_comment_api(
+        str(event["id"]),
+        web_main.SportsCommentPayload(body="  Bullpen depth decides this one.  "),
+        request(path=f"/api/sports/games/{event['id']}/comments"),
+        "session-token",
+    )
+    payload = json.loads(created.body)
+
+    assert created.status_code == 201
+    assert payload["comment"]["body"] == "Bullpen depth decides this one."
+    assert payload["comment"]["is_owner"] is True
+    assert payload["count"] == 1
+    assert web_main.sports_comment_count(str(event["id"])) == 1
+    assert web_main.comments_for_sports_event(
+        str(event["id"]), current_user_id="thread-user"
+    )[0]["is_owner"] is True
+
+    deleted = web_main.delete_sports_comment_api(
+        payload["comment"]["id"],
+        request(path=f"/api/sports/comments/{payload['comment']['id']}"),
+        "session-token",
+    )
+
+    assert deleted.status_code == 200
+    assert web_main.sports_comment_count(str(event["id"])) == 0
+    assert invalidated == [
+        ("sports-game", str(event["id"])),
+        ("sports-game", str(event["id"])),
+    ]
+
+
 def test_sports_alpha_counts_calls_beyond_the_feed_limit(sports_db) -> None:
     event = normalize_event("mlb", sample_event())
     assert event is not None
@@ -745,8 +799,17 @@ def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
         b"Flash report"
     )
     assert b"Team news" in detail_response.body
+    assert b"Game thread" in detail_response.body
+    assert b"No comments yet. Start the game thread." in detail_response.body
+    assert b'/static/sports-comments.js' in detail_response.body
     assert b"Make a paper pick" in detail_response.body
     assert b"Wins earn up to" in detail_response.body
+    assert b'class="game-notebook"' in detail_response.body
+    assert detail_response.body.index(b"SEASON-RECORD BASELINE") < detail_response.body.index(
+        b"Game thread"
+    ) < detail_response.body.index(b"Make a paper pick") < detail_response.body.index(
+        b"Flash report"
+    ) < detail_response.body.index(b"Game details")
 
     path_response = sports_game_page(
         event["id"],

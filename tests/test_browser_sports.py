@@ -480,3 +480,81 @@ def test_sports_alpha_opens_its_leader_in_the_shared_detail_pane(page: Page, mon
         "class"
     ).endswith("desktop-panel-selected")
     assert errors == []
+
+
+def test_sports_game_thread_posts_and_removes_a_comment(page: Page) -> None:
+    posted: list[dict[str, str]] = []
+
+    def create_comment(route: Route) -> None:
+        posted.append(route.request.post_data_json)
+        route.fulfill(
+            status=201,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "comment": {
+                        "id": "comment-1",
+                        "body": posted[-1]["body"],
+                        "created_at": "2026-08-30T18:00:00+00:00",
+                        "alias": "Signal Moth",
+                        "is_owner": True,
+                        "avatar": {
+                            "name": "Signal Moth",
+                            "ability": "Form Reader",
+                            "ability_description": "Checks recent form.",
+                            "tone": 1,
+                            "frame": 2,
+                            "eyes": 3,
+                            "signal": 4,
+                        },
+                    },
+                    "count": 1,
+                }
+            ),
+        )
+
+    page.route("**/api/sports/games/**/comments", create_comment)
+    page.route(
+        "**/api/sports/comments/comment-1",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"deleted": True, "id": "comment-1"}),
+        ),
+    )
+    script = (ROOT / "web/static/sports-comments.js").read_text()
+    html = f"""
+    <!doctype html><html><body>
+      <section data-sports-comments data-event-id="mlb:game-1">
+        <b id="discussionCount">0</b>
+        <form id="sportsCommentForm"><textarea id="sportsCommentBody"></textarea>
+          <small id="sportsCommentStatus"></small><button type="submit">Post comment</button>
+        </form>
+        <ol id="commentList"></ol><p id="commentEmpty">No comments.</p>
+      </section>
+      <script>{script}</script>
+    </body></html>
+    """
+    page.route(
+        "http://comments.test/",
+        lambda route: route.fulfill(status=200, content_type="text/html", body=html),
+    )
+    page.goto("http://comments.test/", wait_until="domcontentloaded")
+
+    page.locator("#sportsCommentBody").fill("Bullpen depth decides this one.")
+    page.get_by_role("button", name="Post comment").click()
+
+    page.locator("#commentList li").wait_for()
+    assert posted == [{"body": "Bullpen depth decides this one."}]
+    assert page.locator("#discussionCount").text_content() == "1"
+    assert page.locator("#commentList li").text_content().endswith(
+        "Bullpen depth decides this one."
+    )
+    assert page.locator("#commentEmpty").is_hidden()
+
+    page.get_by_role("button", name="delete").click()
+
+    page.locator("#commentList li").wait_for(state="detached")
+    assert page.locator("#commentList li").count() == 0
+    assert page.locator("#discussionCount").text_content() == "0"
+    assert page.locator("#commentEmpty").is_visible()

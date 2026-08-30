@@ -38,6 +38,43 @@ def _seed_user() -> None:
             ("comment-one", "ONE", "gdpr-user", "Public comment", "public", timestamp),
         )
         database.execute(
+            "INSERT INTO sports_events("
+            "id,provider,external_id,league,name,start_time,status,status_detail,"
+            "home_team_id,home_team_name,home_abbreviation,away_team_id,away_team_name,"
+            "away_abbreviation,source_url,first_collected_at,last_collected_at) "
+            "VALUES(?,?,?,?,?,?,'pre','Scheduled',?,?,?,?,?,?,?,?,?)",
+            (
+                "mlb:privacy-game",
+                "test",
+                "privacy-game",
+                "mlb",
+                "Away at Home",
+                timestamp,
+                "home",
+                "Home",
+                "HOM",
+                "away",
+                "Away",
+                "AWY",
+                "https://example.test/game",
+                timestamp,
+                timestamp,
+            ),
+        )
+        database.execute(
+            "INSERT INTO sports_comments(id,event_id,user_id,body,status,created_at,source) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (
+                "sports-comment-one",
+                "mlb:privacy-game",
+                "gdpr-user",
+                "Sports comment",
+                "public",
+                timestamp,
+                "user",
+            ),
+        )
+        database.execute(
             "INSERT INTO user_positions("
             "id,user_id,ticker,entry_price,entry_at,status,created_at,updated_at) "
             "VALUES(?,?,?,?,?,'active',?,?)",
@@ -114,6 +151,7 @@ def test_export_and_delete_cover_account_content_and_leave_anonymous_tombstone(
 
     assert exported["account"]["username"] == "member_gdpr"
     assert exported["comments"][0]["body"] == "Public comment"
+    assert exported["sports_comments"][0]["body"] == "Sports comment"
     assert exported["comment_avatar"][0]["ability_id"]
     assert exported["comment_avatar"][0]["seed"]
     assert exported["positions"][0]["ticker"] == "ONE"
@@ -129,6 +167,7 @@ def test_export_and_delete_cover_account_content_and_leave_anonymous_tombstone(
         assert database.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM ticker_comments").fetchone()[0] == 0
+        assert database.execute("SELECT COUNT(*) FROM sports_comments").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM comment_avatars").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM user_positions").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM community_calls").fetchone()[0] == 0
@@ -180,8 +219,8 @@ def test_move_to_device_deletes_content_but_keeps_the_working_account(
 
     summary = user_data_summary("gdpr-user")
     assert summary == {
-        "item_count": 3,
-        "groups": {"Posts and Calls": 2, "Private work": 1, "Research": 0},
+        "item_count": 4,
+        "groups": {"Posts and Calls": 3, "Private work": 1, "Research": 0},
     }
 
     result = delete_user_content("gdpr-user")
@@ -194,6 +233,7 @@ def test_move_to_device_deletes_content_but_keeps_the_working_account(
         assert database.execute("SELECT COUNT(*) FROM comment_avatars").fetchone()[0] == 1
         assert database.execute("SELECT COUNT(*) FROM flash_wallets").fetchone()[0] == 1
         assert database.execute("SELECT COUNT(*) FROM ticker_comments").fetchone()[0] == 0
+        assert database.execute("SELECT COUNT(*) FROM sports_comments").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM user_positions").fetchone()[0] == 0
         assert database.execute("SELECT COUNT(*) FROM community_calls").fetchone()[0] == 0
         identity = database.execute(
@@ -265,7 +305,7 @@ def test_comment_avatar_is_stable_across_threads_while_call_identity_stays_separ
 def test_privacy_notice_explains_the_persistent_avatar_boundary() -> None:
     notice = (ROOT / "web/templates/privacy.html").read_text()
 
-    assert "intentionally links those comments across ticker threads" in notice
+    assert "intentionally links comments across ticker and sports threads" in notice
     assert "readers can link those comments together" in notice
     assert "pseudonymity, not anonymity from RATi" in notice
 

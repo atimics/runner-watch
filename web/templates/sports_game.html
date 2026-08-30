@@ -45,6 +45,73 @@
 
   {% include "_sports_game_decision.html" %}
 
+  <section class="discussion-section sports-discussion" id="discussion" data-sports-comments data-event-id="{{ event.id }}">
+    <div class="section-heading"><h2>Game thread</h2><b id="discussionCount">{{ comment_count }}</b></div>
+    {% if user %}
+    <form class="sports-comment-form" id="sportsCommentForm">
+      <label for="sportsCommentBody">Add your take</label>
+      <textarea id="sportsCommentBody" name="body" maxlength="500" rows="3" placeholder="What matters in this matchup?"></textarea>
+      <div><small id="sportsCommentStatus" role="status">500 characters left</small><button type="submit">Post comment</button></div>
+    </form>
+    {% else %}
+    <a class="comment-login" href="/login?next={{ sports_path_prefix or '' }}/game/{{ event.id }}#discussion">Log in to comment</a>
+    {% endif %}
+    <ol class="comment-list" id="commentList">
+      {% for comment in comments %}
+      <li data-comment-id="{{ comment.id }}">
+        {{ render_comment_avatar(comment.avatar) }}
+        <div class="comment-copy"><header><strong>{{ comment.avatar.name }}</strong><span class="comment-ability" title="{{ comment.avatar.ability_description }}">{{ comment.avatar.ability }}</span>{% if comment.is_owner %}<span class="comment-owner">You</span>{% endif %}</header><small class="comment-meta"><time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time>{% if comment.is_owner %} · <button type="button" data-delete-comment="{{ comment.id }}">delete</button>{% endif %}</small><p>{{ comment.body }}</p></div>
+      </li>
+      {% endfor %}
+    </ol>
+    <p class="comment-empty" id="commentEmpty" {% if comments %}hidden{% endif %}>No comments yet. Start the game thread.</p>
+  </section>
+
+  <section class="game-actions" aria-label="Game actions">
+    <section class="paper-pick">
+      <span>PUBLIC RECEIPT</span>
+      <h2>Make a paper pick</h2>
+      <p>Freeze the current{% if quote %} {{ quote.source_label }}{% endif %} line. Wins earn up to {{ sports_call_reward_cap }} Flash. No real bet.</p>
+      {% if not user %}
+        <a href="/login">Log in to make a paper pick</a>
+      {% elif event.status != 'pre' or not quote %}
+        <strong>Picks are closed for this game.</strong>
+      {% else %}
+        <div class="pick-buttons">
+          <button type="button" data-pick="away">{{ event.away_abbreviation }} {% if quote.away_odds is not none %}{{ '%+d'|format(quote.away_odds) }}{% endif %}</button>
+          <button type="button" data-pick="home">{{ event.home_abbreviation }} {% if quote.home_odds is not none %}{{ '%+d'|format(quote.home_odds) }}{% endif %}</button>
+        </div>
+        <small id="pickStatus"></small>
+      {% endif %}
+    </section>
+
+    <section class="game-flash game-flash-compact" aria-labelledby="gameFlashTitle">
+      <div>
+        <span>OPTIONAL FLASH REPORT</span>
+        <h2 id="gameFlashTitle">Flash report</h2>
+        {% if latest_commission and not latest_commission.locked and latest_commission.sports_forecast %}
+        {% set ai_forecast = latest_commission.sports_forecast %}
+        <div class="game-flash-prediction">
+          <small>SEPARATE AI FORECAST · #{{ latest_commission.actor.ladder_position }} OF {{ latest_commission.actor.ladder_size }}</small>
+          {% if ai_forecast.selection == 'pass' %}
+          <strong>PASS</strong><b>No winner call</b>
+          {% else %}
+          <strong>{{ ai_forecast.selected_abbreviation }} {{ '%.0f'|format(ai_forecast.selected_probability * 100) }}%</strong><b>{{ ai_forecast.selected_team }}</b>
+          {% endif %}
+          <em>{{ 'Agrees with' if ai_forecast.agrees_with_baseline else 'Differs from' }} {{ prediction.model_version }} · {{ latest_commission.actor.model_label }}</em>
+        </div>
+        {% endif %}
+      </div>
+      <div class="game-flash-action">
+        {{ flash_report_action(flash_report, 'sports') }}
+      </div>
+    </section>
+  </section>
+
+  <details class="game-notebook">
+    <summary><span><b>MORE</b><strong>Game details</strong><small>Market, form, rosters, news and receipts</small></span><i aria-hidden="true">+</i></summary>
+    <div class="game-notebook-body">
+
   {% if market and market.books %}
   <details class="game-disclosure">
     <summary><span><b>MARKET</b><strong>Consensus and Bovada</strong></span><small>{{ market.book_count }} fresh books{% if market.bovada and market.bovada.divergence_pct is not none %} · {{ market.bovada.divergence_team }} {{ '%+.1f'|format(market.bovada.divergence_pct) }} pp at Bovada{% endif %}</small><i aria-hidden="true">+</i></summary>
@@ -95,28 +162,6 @@
     </div>
   </details>
   {% endif %}
-
-  <section class="game-flash game-flash-compact" aria-labelledby="gameFlashTitle">
-    <div>
-      <span>AI FORECAST · SEPARATE AND SCORED</span>
-      <h2 id="gameFlashTitle">Flash report</h2>
-      {% if latest_commission and not latest_commission.locked and latest_commission.sports_forecast %}
-      {% set ai_forecast = latest_commission.sports_forecast %}
-      <div class="game-flash-prediction">
-        <small>SEPARATE AI FORECAST · #{{ latest_commission.actor.ladder_position }} OF {{ latest_commission.actor.ladder_size }}</small>
-        {% if ai_forecast.selection == 'pass' %}
-        <strong>PASS</strong><b>No winner call</b>
-        {% else %}
-        <strong>{{ ai_forecast.selected_abbreviation }} {{ '%.0f'|format(ai_forecast.selected_probability * 100) }}%</strong><b>{{ ai_forecast.selected_team }}</b>
-        {% endif %}
-        <em>{{ 'Agrees with' if ai_forecast.agrees_with_baseline else 'Differs from' }} {{ prediction.model_version }} · {{ latest_commission.actor.model_label }}</em>
-      </div>
-      {% endif %}
-    </div>
-    <div class="game-flash-action">
-      {{ flash_report_action(flash_report, 'sports') }}
-    </div>
-  </section>
 
   {% set game_context = event.context %}
   <details class="game-disclosure">
@@ -282,23 +327,6 @@
 
   {% endif %}
 
-  <section class="paper-pick">
-    <span>PUBLIC RECEIPT</span>
-    <h2>Make a paper pick</h2>
-    <p>Freeze the current{% if quote %} {{ quote.source_label }}{% endif %} line. Wins earn up to {{ sports_call_reward_cap }} Flash. No real bet.</p>
-    {% if not user %}
-      <a href="/login">Log in to make a paper pick</a>
-    {% elif event.status != 'pre' or not quote %}
-      <strong>Picks are closed for this game.</strong>
-    {% else %}
-      <div class="pick-buttons">
-        <button type="button" data-pick="away">{{ event.away_abbreviation }} {% if quote.away_odds is not none %}{{ '%+d'|format(quote.away_odds) }}{% endif %}</button>
-        <button type="button" data-pick="home">{{ event.home_abbreviation }} {% if quote.home_odds is not none %}{{ '%+d'|format(quote.home_odds) }}{% endif %}</button>
-      </div>
-      <small id="pickStatus"></small>
-    {% endif %}
-  </section>
-
   <details class="game-disclosure">
     <summary><span><b>PUBLIC CALLS</b><strong>Paper picks</strong></span><small>{{ event.picks|length }} recorded</small><i aria-hidden="true">+</i></summary>
     <div class="game-disclosure-body">
@@ -321,6 +349,8 @@
   </section>
     </div>
   </details>
+    </div>
+  </details>
   <a class="source-link" href="{{ event.source_url }}" rel="nofollow noreferrer">View game source ↗</a>
 </article>
 </main>
@@ -341,5 +371,6 @@
     else{button.disabled=false;status.textContent=payload.detail||'Could not record the pick.';}
   }));
 </script>
+<script src="/static/sports-comments.js?v={{ static_version }}" defer></script>
 <script src="/static/flash-report.js?v={{ static_version }}" defer></script>
 {% endblock %}
