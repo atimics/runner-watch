@@ -306,6 +306,8 @@ Stonks keeps a compact, versioned training record for its learned ranker:
   skips times close to real scans, and records its source and limitations on every compact row
 - the oldest 80% of complete groups train the model, the next 10% calibrates its probabilities, and
   the newest 10% is an untouched test set
+- training keeps the checkpoint with the lowest validation loss and stops after eight validation
+  checks without improvement, instead of keeping an overfit final epoch
 - learned probabilities and expected return are stored with the exact model ID
 - the web worker collects a penny-stock scan every 30 minutes on weekdays from 4 a.m. to 8 p.m. ET
 
