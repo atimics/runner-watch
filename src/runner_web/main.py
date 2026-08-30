@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 from datetime import time as clock_time
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -5843,8 +5843,8 @@ def sports_home(
     league: str = "all",
     view: str = "signals",
 ) -> RedirectResponse:
-    query = f"?league={league}&view={view}"
-    return RedirectResponse(f"{SPORTS_ORIGIN}/{query}", status_code=307)
+    _ = request, runner_session, league, view
+    return RedirectResponse(f"{SPORTS_ORIGIN}/", status_code=307)
 
 
 def sports_radar_response(
@@ -5881,8 +5881,8 @@ def sports_radar_page(
     runner_session: str | None = Cookie(default=None),
     league: str = "all",
 ) -> RedirectResponse:
-    suffix = f"?league={league}" if league in SPORTS_LEAGUES else ""
-    return RedirectResponse(f"{SPORTS_ORIGIN}/radar{suffix}", status_code=307)
+    _ = request, runner_session, league
+    return RedirectResponse(f"{SPORTS_ORIGIN}/radar", status_code=307)
 
 
 def _invalidate_sports_alpha_data() -> None:
@@ -5964,8 +5964,8 @@ def sports_alpha_page(
     runner_session: str | None = Cookie(default=None),
     league: str = "all",
 ) -> RedirectResponse:
-    suffix = f"?league={league}" if league in SPORTS_LEAGUES else ""
-    return RedirectResponse(f"{SPORTS_ORIGIN}/alpha{suffix}", status_code=307)
+    _ = request, runner_session, league
+    return RedirectResponse(f"{SPORTS_ORIGIN}/alpha", status_code=307)
 
 
 @app.get("/receipts", response_class=HTMLResponse)
@@ -5974,11 +5974,10 @@ def sports_receipts_page(
     runner_session: str | None = Cookie(default=None),
     league: str = "all",
 ) -> Response:
+    _ = runner_session, league
     if product_for_request(request) == "sports":
-        suffix = f"?league={league}" if league in SPORTS_LEAGUES else ""
-        return RedirectResponse(f"/alpha{suffix}", status_code=307)
-    suffix = f"?league={league}" if league in SPORTS_LEAGUES else ""
-    return RedirectResponse(f"{SPORTS_ORIGIN}/alpha{suffix}", status_code=307)
+        return RedirectResponse("/alpha", status_code=307)
+    return RedirectResponse(f"{SPORTS_ORIGIN}/alpha", status_code=307)
 
 
 @app.get("/sports/receipts", response_class=HTMLResponse)
@@ -5987,8 +5986,8 @@ def sports_receipts_legacy_page(
     runner_session: str | None = Cookie(default=None),
     league: str = "all",
 ) -> RedirectResponse:
-    suffix = f"?league={league}" if league in SPORTS_LEAGUES else ""
-    return RedirectResponse(f"{SPORTS_ORIGIN}/alpha{suffix}", status_code=307)
+    _ = request, runner_session, league
+    return RedirectResponse(f"{SPORTS_ORIGIN}/alpha", status_code=307)
 
 
 @app.get("/api/sports/pulse")
@@ -5997,11 +5996,11 @@ def sports_pulse_api(
     league: str = "all",
     view: str = "signals",
     limit: int = 30,
-) -> RedirectResponse:
-    origin = "" if product_for_request(request) == "sports" else SPORTS_ORIGIN
-    return RedirectResponse(
-        f"{origin}/api/pulse?league={league}&view={view}&limit={limit}",
-        status_code=307,
+) -> Response:
+    enforce_rate(request, "sports-pulse", limit=120, seconds=60)
+    return _conditional_json_response(
+        request,
+        _public_sports_pulse_data(league, view, limit)["pulse"],
     )
 
 
@@ -6016,11 +6015,11 @@ def sports_radar_api(
     request: Request,
     league: str = "all",
     limit: int = 40,
-) -> RedirectResponse:
-    origin = "" if product_for_request(request) == "sports" else SPORTS_ORIGIN
-    return RedirectResponse(
-        f"{origin}/api/radar?league={league}&limit={limit}",
-        status_code=307,
+) -> Response:
+    enforce_rate(request, "sports-radar", limit=120, seconds=60)
+    return _conditional_json_response(
+        request,
+        _public_sports_radar_data(league, limit)["radar"],
     )
 
 
@@ -6029,12 +6028,9 @@ def sports_alpha_api(
     request: Request,
     league: str = "all",
     limit: int = 24,
-) -> RedirectResponse:
-    origin = "" if product_for_request(request) == "sports" else SPORTS_ORIGIN
-    return RedirectResponse(
-        f"{origin}/api/alpha?league={league}&limit={limit}",
-        status_code=307,
-    )
+) -> Response:
+    enforce_rate(request, "sports-alpha", limit=120, seconds=60)
+    return _conditional_json_response(request, _sports_alpha_data(league, limit))
 
 
 @app.get("/api/sports/stats")
@@ -6060,7 +6056,15 @@ def sports_slate_api(
 
 @app.get("/sports/game/{event_id}", response_class=HTMLResponse)
 def sports_game_legacy_page(event_id: str) -> RedirectResponse:
-    return RedirectResponse(f"{SPORTS_ORIGIN}/game/{event_id}", status_code=307)
+    return RedirectResponse(_sports_game_location(event_id), status_code=307)
+
+
+def _sports_game_location(event_id: str) -> str:
+    event = sports_event(event_id)
+    if not event:
+        raise HTTPException(404, "Game not found")
+    canonical_id = quote(str(event["id"]), safe=":")
+    return f"{SPORTS_ORIGIN}/game/{canonical_id}"
 
 
 @app.get("/game/{event_id}", response_class=HTMLResponse)
@@ -6070,7 +6074,7 @@ def sports_game_page(
     runner_session: str | None = Cookie(default=None),
 ) -> Response:
     if product_for_request(request) != "sports" and SPORTS_ORIGIN != APP_ORIGIN:
-        return RedirectResponse(f"{SPORTS_ORIGIN}/game/{event_id}", status_code=307)
+        return RedirectResponse(_sports_game_location(event_id), status_code=307)
     public_data = _public_screen_data(
         "sports-game",
         event_id,

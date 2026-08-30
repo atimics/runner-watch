@@ -27,7 +27,15 @@ from runner_web.main import (
     origin_for_request,
     product_for_request,
     radar_page,
+    sports_alpha_api,
+    sports_alpha_page,
+    sports_game_legacy_page,
     sports_game_page,
+    sports_home,
+    sports_pulse_api,
+    sports_radar_api,
+    sports_radar_page,
+    sports_receipts_legacy_page,
     sports_receipts_page,
 )
 from runner_web.sports import (
@@ -892,6 +900,44 @@ def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
     )
     assert path_response.status_code == 307
     assert path_response.headers["location"] == f"{web_main.SPORTS_ORIGIN}/game/{event['id']}"
+
+
+def test_legacy_sports_routes_cannot_redirect_to_user_input(sports_db) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    runners_request = request(host="runners.rati.chat")
+    untrusted = "//untrusted.example/%2f.."
+
+    page_redirects = (
+        (sports_home(runners_request, None, league=untrusted, view=untrusted), "/"),
+        (sports_radar_page(runners_request, None, league=untrusted), "/radar"),
+        (sports_alpha_page(runners_request, None, league=untrusted), "/alpha"),
+        (
+            sports_receipts_legacy_page(runners_request, None, league=untrusted),
+            "/alpha",
+        ),
+    )
+    for response, path in page_redirects:
+        assert response.status_code == 307
+        assert response.headers["location"] == f"{web_main.SPORTS_ORIGIN}{path}"
+        assert "untrusted.example" not in response.headers["location"]
+
+    legacy_api_responses = (
+        sports_pulse_api(runners_request, league=untrusted, view=untrusted, limit=1),
+        sports_radar_api(runners_request, league=untrusted, limit=1),
+        sports_alpha_api(runners_request, league=untrusted, limit=1),
+    )
+    assert all(response.status_code == 200 for response in legacy_api_responses)
+    assert all("location" not in response.headers for response in legacy_api_responses)
+
+    game_redirect = sports_game_legacy_page(str(event["id"]))
+    assert game_redirect.headers["location"] == (
+        f"{web_main.SPORTS_ORIGIN}/game/{event['id']}"
+    )
+    with pytest.raises(HTTPException) as error:
+        sports_game_legacy_page("//untrusted.example")
+    assert error.value.status_code == 404
 
 
 def test_game_page_handles_winner_without_market_gap(sports_db) -> None:
