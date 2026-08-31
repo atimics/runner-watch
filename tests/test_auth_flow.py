@@ -118,7 +118,7 @@ def test_required_edge_and_invite_configuration_fail_closed(monkeypatch: MonkeyP
     web_main.validate_runtime_configuration()
 
 
-def test_one_time_registration_invite_cannot_be_reused(
+def test_one_time_registration_invite_can_retry_until_registration_finishes(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -132,6 +132,18 @@ def test_one_time_registration_invite_cannot_be_reused(
         RegisterOptionsPayload(invite_code="single-use-invite-code"),
     )
     assert response.status_code == 200
+    first_user_id = json.loads(response.body)["options"]["user"]["id"]
+
+    retry = register_options(
+        request("POST", "/api/auth/register/options"),
+        RegisterOptionsPayload(invite_code="single-use-invite-code"),
+    )
+
+    assert retry.status_code == 200
+    assert json.loads(retry.body)["options"]["user"]["id"] == first_user_id
+    with connection() as database:
+        assert database.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
+        database.execute("UPDATE users SET status='active'")
 
     with pytest.raises(HTTPException) as reused:
         register_options(

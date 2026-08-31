@@ -6875,6 +6875,7 @@ def research_report_page(
 @app.get("/research/{public_id}/card.png")
 def research_report_card(
     public_id: str,
+    request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> Response:
     report = get_commission(public_id)
@@ -6882,6 +6883,13 @@ def research_report_card(
     is_owner = bool(user and report and str(report["user_id"]) == str(user["id"]))
     if not report or (str(report.get("visibility") or "private") != "public" and not is_owner):
         raise HTTPException(404, "Research report not found")
+    enforce_rate(
+        request,
+        "research-card",
+        limit=30,
+        seconds=60,
+        subject=str(user["id"]) if is_owner and user else None,
+    )
     actor = report.get("actor") or {}
     is_sports = report.get("subject_type") == "sports_game"
     model_label = str(actor.get("model_label") or report.get("model") or report["requested_model"])
@@ -7029,16 +7037,36 @@ def register_options(
             """,
             (iso(now() - timedelta(minutes=15)),),
         )
-        inserted = db.execute(
-            """
-            INSERT INTO users(
-                id,username,display_name,status,created_at,registration_invite_hash
-            ) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING
-            """,
-            (user_id, username, display_name, "pending", iso(), invite_hash),
-        )
-        if inserted.rowcount != 1:
-            raise HTTPException(403, "Invite code is invalid or has already been used.")
+        pending_invite = None
+        if invite_hash:
+            pending_invite = db.execute(
+                """
+                SELECT id,username,display_name,status FROM users
+                WHERE registration_invite_hash=?
+                """,
+                (invite_hash,),
+            ).fetchone()
+        if pending_invite:
+            if str(pending_invite["status"]) != "pending":
+                raise HTTPException(403, "Invite code is invalid or has already been used.")
+            user_id = str(pending_invite["id"])
+            username = str(pending_invite["username"])
+            display_name = str(pending_invite["display_name"])
+            db.execute(
+                "DELETE FROM auth_challenges WHERE kind='register' AND user_id=?",
+                (user_id,),
+            )
+        else:
+            inserted = db.execute(
+                """
+                INSERT INTO users(
+                    id,username,display_name,status,created_at,registration_invite_hash
+                ) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING
+                """,
+                (user_id, username, display_name, "pending", iso(), invite_hash),
+            )
+            if inserted.rowcount != 1:
+                raise HTTPException(403, "Invite code is invalid or has already been used.")
     options = generate_registration_options(
         rp_id=rp_id_for_request(request),
         rp_name="RATi",
@@ -7946,7 +7974,8 @@ def font(size: int, bold: bool = False) -> ImageFont.ImageFont:
 
 
 @app.get("/s/{public_id}/card.png")
-def signal_card(public_id: str) -> Response:
+def signal_card(public_id: str, request: Request) -> Response:
+    enforce_rate(request, "signal-card", limit=30, seconds=60)
     signal = get_signal(public_id)
     if not signal:
         raise HTTPException(404, "Signal not found")
