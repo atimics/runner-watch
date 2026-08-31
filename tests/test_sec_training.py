@@ -276,6 +276,121 @@ def test_qwen_loader_accepts_deterministic_v2_examples(tmp_path: Path) -> None:
     assert load_examples(path) == [example]
 
 
+def test_qwen_config_verifies_braid_release_and_unwraps_examples(
+    tmp_path: Path,
+) -> None:
+    corpus = tmp_path / "braid-corpus"
+    data = corpus / "data"
+    data.mkdir(parents=True)
+    example = {
+        "schema": "stonks.sec_chat_example.v2",
+        "id": "sec:1:classification:0",
+        "task": "filing_classification",
+        "messages": [
+            {"role": "system", "content": "Use evidence."},
+            {"role": "user", "content": "Classify."},
+            {"role": "assistant", "content": '{"form":"10-K"}'},
+        ],
+    }
+    braid_row = {
+        "id": "feral-train-braid-id",
+        "text": "Use evidence. Classify. 10-K.",
+        "language": "en",
+        "domain": "sec",
+        "split": "train",
+        "metadata": example,
+        "provenance": {"sourceId": "feral-train"},
+        "contentHash": "a" * 64,
+        "quality": {},
+        "selectionRank": 0,
+    }
+    for name in ("train.jsonl", "validation.jsonl"):
+        _write_jsonl(data / name, [braid_row])
+    release_digest = "b" * 64
+    release_id = f"feral-7b-sec-v1-{release_digest}"
+    artifacts = [
+        {
+            "path": f"data/{name}",
+            "sha256": hashlib.sha256((data / name).read_bytes()).hexdigest(),
+            "bytes": (data / name).stat().st_size,
+        }
+        for name in ("train.jsonl", "validation.jsonl")
+    ]
+    manifest_path = corpus / "release.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "braid.release/v2",
+                "releaseId": release_id,
+                "status": "RELEASED",
+                "digests": {"release": release_digest},
+                "artifacts": artifacts,
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    config_path = tmp_path / "braid.toml"
+    config_path.write_text(
+        f'''
+schema = "stonks.sec_qwen_training.v1"
+[model]
+model_id = "Qwen/Qwen2.5-7B-Instruct"
+revision = "{'e' * 40}"
+[dataset]
+provider = "braid"
+corpus_manifest = "braid-corpus/release.json"
+release_id = "{release_id}"
+manifest_sha256 = "{manifest_sha256}"
+train_file = "data/train.jsonl"
+validation_file = "data/validation.jsonl"
+evaluation_files = []
+[training]
+target_modules = ["q_proj"]
+[output]
+directory = "output"
+'''.strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+    assert config.dataset.provider == "braid"
+    assert validate_corpus(config)["id"] == release_id
+    assert load_examples(data / "train.jsonl") == [example]
+
+    (data / "train.jsonl").write_text("tampered\n", encoding="utf-8")
+    with raises(ValueError, match="hash does not match"):
+        validate_corpus(config)
+
+
+def test_qwen_braid_config_requires_pinned_release(tmp_path: Path) -> None:
+    config_path = tmp_path / "braid.toml"
+    config_path.write_text(
+        f'''
+schema = "stonks.sec_qwen_training.v1"
+[model]
+model_id = "Qwen/Qwen2.5-7B-Instruct"
+revision = "{'f' * 40}"
+[dataset]
+provider = "braid"
+corpus_manifest = "release.json"
+train_file = "data/train.jsonl"
+validation_file = "data/validation.jsonl"
+evaluation_files = []
+[training]
+target_modules = ["q_proj"]
+[output]
+directory = "output"
+'''.strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with raises(ValueError, match="release_id is required"):
+        load_config(config_path)
+
+
 def test_qwen_profile_uses_exact_template_tokens_and_builds_budget(tmp_path: Path) -> None:
     corpus = tmp_path / "profile-corpus"
     corpus.mkdir()

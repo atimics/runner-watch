@@ -18,7 +18,10 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class DatasetConfig:
+    provider: str
     corpus_manifest: Path
+    release_id: str | None
+    manifest_sha256: str | None
     train_file: str
     validation_file: str
     evaluation_files: tuple[str, ...]
@@ -81,7 +84,15 @@ def load_config(path: Path) -> Config:
     )
     _only_keys(
         dataset,
-        {"corpus_manifest", "train_file", "validation_file", "evaluation_files"},
+        {
+            "provider",
+            "corpus_manifest",
+            "release_id",
+            "manifest_sha256",
+            "train_file",
+            "validation_file",
+            "evaluation_files",
+        },
         "dataset",
     )
     _only_keys(
@@ -115,6 +126,18 @@ def load_config(path: Path) -> Config:
         raise ValueError("model.revision must be a full lowercase Git commit SHA")
     base = source_path.parent
     corpus_manifest = (base / str(dataset.get("corpus_manifest") or "")).resolve()
+    dataset_provider = str(dataset.get("provider") or "ilxyr")
+    if dataset_provider not in {"ilxyr", "braid"}:
+        raise ValueError("dataset.provider must be ilxyr or braid")
+    release_id = str(dataset.get("release_id") or "") or None
+    manifest_sha256 = str(dataset.get("manifest_sha256") or "") or None
+    if dataset_provider == "braid":
+        if not release_id:
+            raise ValueError("dataset.release_id is required for a Braid corpus")
+        if manifest_sha256 is None or not _sha256_digest(manifest_sha256):
+            raise ValueError(
+                "dataset.manifest_sha256 must be a lowercase SHA-256 digest for a Braid corpus"
+            )
     output_directory = (base / str(output.get("directory") or "")).resolve()
     evaluation_files = tuple(str(value) for value in dataset.get("evaluation_files") or ())
     target_modules = tuple(str(value) for value in training.get("target_modules") or ())
@@ -133,7 +156,10 @@ def load_config(path: Path) -> Config:
             ),
         ),
         dataset=DatasetConfig(
+            provider=dataset_provider,
             corpus_manifest=corpus_manifest,
+            release_id=release_id,
+            manifest_sha256=manifest_sha256,
             train_file=str(dataset.get("train_file") or "train.jsonl"),
             validation_file=str(dataset.get("validation_file") or "validation.jsonl"),
             evaluation_files=evaluation_files,
@@ -179,12 +205,26 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _sha256_digest(value: str) -> bool:
+    return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
+
+
 def validate_corpus(config: Config) -> dict[str, Any]:
     manifest = json.loads(config.dataset.corpus_manifest.read_text(encoding="utf-8"))
-    if manifest.get("schema") != "ilxyr.corpus_release.v1":
-        raise ValueError("corpus manifest schema must be ilxyr.corpus_release.v1")
+    actual_manifest_sha256 = sha256_file(config.dataset.corpus_manifest)
+    if (
+        config.dataset.manifest_sha256 is not None
+        and actual_manifest_sha256 != config.dataset.manifest_sha256
+    ):
+        raise ValueError("corpus manifest hash does not match config")
+    if config.dataset.provider == "braid":
+        manifest = _validate_braid_manifest(config, manifest)
+        declared = {str(item["path"]): item for item in manifest.get("artifacts") or []}
+    else:
+        if manifest.get("schema") != "ilxyr.corpus_release.v1":
+            raise ValueError("corpus manifest schema must be ilxyr.corpus_release.v1")
+        declared = {str(item["path"]): item for item in manifest.get("files") or []}
     corpus_directory = config.dataset.corpus_manifest.parent
-    declared = {str(item["path"]): item for item in manifest.get("files") or []}
     required = {
         config.dataset.train_file,
         config.dataset.validation_file,
@@ -194,14 +234,54 @@ def validate_corpus(config: Config) -> dict[str, Any]:
     if missing:
         raise ValueError(f"corpus manifest does not declare: {', '.join(missing)}")
     for name, item in declared.items():
-        path = corpus_directory / name
+        path = (corpus_directory / name).resolve()
+        try:
+            path.relative_to(corpus_directory.resolve())
+        except ValueError as error:
+            raise ValueError(f"corpus file escapes the release directory: {name}") from error
         if not path.is_file():
             raise ValueError(f"corpus file is missing: {name}")
         if sha256_file(path) != item.get("sha256"):
             raise ValueError(f"corpus file hash does not match manifest: {name}")
-        if path.stat().st_size != item.get("size_bytes"):
+        declared_size = (
+            item.get("bytes")
+            if config.dataset.provider == "braid"
+            else item.get("size_bytes")
+        )
+        if path.stat().st_size != declared_size:
             raise ValueError(f"corpus file size does not match manifest: {name}")
     return manifest
+
+
+def _validate_braid_manifest(config: Config, manifest: dict[str, Any]) -> dict[str, Any]:
+    if manifest.get("schemaVersion") != "braid.release/v2":
+        raise ValueError("Braid corpus manifest schema must be braid.release/v2")
+    if manifest.get("status") != "RELEASED":
+        raise ValueError("Braid corpus must have RELEASED status")
+    release_id = str(manifest.get("releaseId") or "")
+    if release_id != config.dataset.release_id:
+        raise ValueError("Braid release ID does not match config")
+    release_digest = str((manifest.get("digests") or {}).get("release") or "")
+    if not _sha256_digest(release_digest) or not release_id.endswith(f"-{release_digest}"):
+        raise ValueError("Braid release ID is not bound to its release digest")
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        raise ValueError("Braid corpus manifest does not declare artifacts")
+    paths: set[str] = set()
+    for item in artifacts:
+        if not isinstance(item, dict):
+            raise ValueError("Braid corpus manifest contains an invalid artifact")
+        if not isinstance(item.get("path"), str) or not _sha256_digest(
+            str(item.get("sha256") or "")
+        ):
+            raise ValueError("Braid corpus manifest contains an invalid artifact binding")
+        if not isinstance(item.get("bytes"), int) or int(item["bytes"]) < 0:
+            raise ValueError("Braid corpus manifest contains an invalid artifact size")
+        artifact_path = str(item["path"])
+        if artifact_path in paths:
+            raise ValueError("Braid corpus manifest contains a duplicate artifact path")
+        paths.add(artifact_path)
+    return {**manifest, "id": release_id}
 
 
 def load_examples(path: Path) -> list[dict[str, Any]]:
@@ -210,7 +290,8 @@ def load_examples(path: Path) -> list[dict[str, Any]]:
         for line_number, line in enumerate(stream, 1):
             if not line.strip():
                 continue
-            example = json.loads(line)
+            row = json.loads(line)
+            example = _unwrap_example(row, path, line_number)
             if example.get("schema") not in {
                 "stonks.sec_chat_example.v1",
                 "stonks.sec_chat_example.v2",
@@ -228,3 +309,25 @@ def load_examples(path: Path) -> list[dict[str, Any]]:
             json.loads(str(messages[-1].get("content") or ""))
             examples.append(example)
     return examples
+
+
+def _unwrap_example(row: Any, path: Path, line_number: int) -> dict[str, Any]:
+    if not isinstance(row, dict):
+        raise ValueError(f"{path}:{line_number} must contain a JSON object")
+    if row.get("schema") in {
+        "stonks.sec_chat_example.v1",
+        "stonks.sec_chat_example.v2",
+    }:
+        return row
+    metadata = row.get("metadata")
+    if (
+        isinstance(metadata, dict)
+        and isinstance(row.get("provenance"), dict)
+        and isinstance(row.get("contentHash"), str)
+        and metadata.get("schema")
+        in {"stonks.sec_chat_example.v1", "stonks.sec_chat_example.v2"}
+    ):
+        example = dict(metadata)
+        example.setdefault("id", row.get("id"))
+        return example
+    return row
