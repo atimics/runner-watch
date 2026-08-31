@@ -156,6 +156,8 @@ def train(config: Config) -> dict[str, Any]:
         bf16=config.training.bf16,
         fp16=False,
         gradient_checkpointing=config.training.gradient_checkpointing,
+        dataloader_num_workers=config.training.dataloader_num_workers,
+        dataloader_persistent_workers=config.training.dataloader_num_workers > 0,
         report_to="none",
         seed=config.training.seed,
         data_seed=config.training.seed,

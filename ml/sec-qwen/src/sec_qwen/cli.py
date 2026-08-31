@@ -8,6 +8,7 @@ from sec_qwen.benchmarks import release_metrics
 from sec_qwen.completion import build_completion
 from sec_qwen.config import load_config, validate_corpus
 from sec_qwen.evaluation import evaluate_model, score_predictions
+from sec_qwen.profiling import profile_corpus, write_profile
 from sec_qwen.training import train
 
 
@@ -27,6 +28,12 @@ def main() -> None:
     validate_parser.add_argument("config", type=Path)
     train_parser = commands.add_parser("train")
     train_parser.add_argument("config", type=Path)
+    profile_parser = commands.add_parser("profile")
+    profile_parser.add_argument("config", type=Path)
+    profile_parser.add_argument("--tokens-per-gpu-hour", type=float)
+    profile_parser.add_argument("--gpu-hour-price", type=float)
+    profile_parser.add_argument("--overhead-fraction", type=float, default=0.25)
+    profile_parser.add_argument("--output", type=Path)
     evaluate_parser = commands.add_parser("evaluate")
     evaluate_parser.add_argument("config", type=Path)
     evaluate_parser.add_argument("--adapter", type=Path, required=True)
@@ -89,6 +96,16 @@ def main() -> None:
     if arguments.command == "validate":
         manifest = validate_corpus(config)
         print(_json({"corpus_id": manifest["id"], "valid": True}))
+    elif arguments.command == "profile":
+        profile = profile_corpus(
+            config,
+            tokens_per_gpu_hour=arguments.tokens_per_gpu_hour,
+            gpu_hour_price=arguments.gpu_hour_price,
+            overhead_fraction=arguments.overhead_fraction,
+        )
+        if arguments.output:
+            write_profile(arguments.output, profile)
+        print(_json(profile))
     elif arguments.command == "train":
         print(_json(train(config)))
     elif arguments.command == "evaluate":

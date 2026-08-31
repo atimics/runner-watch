@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import json
 import time
 import urllib.error
@@ -22,7 +23,7 @@ from runner_watch.edgar import (
 )
 from runner_watch.ingestion import SourceFetch
 from runner_web import db
-from runner_web.ingestion import mark_source_item, record_source_fetch, source_item_is_terminal
+from runner_web.ingestion import mark_source_item, record_source_fetch
 from runner_web.sec_facts import refresh_company_facts
 
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
@@ -69,6 +70,7 @@ class BackfillResult:
     issuers_completed: int = 0
     issuers_skipped: int = 0
     submission_files_fetched: int = 0
+    archived_responses_reused: int = 0
     filings_selected: int = 0
     filings_inserted: int = 0
     filings_skipped: int = 0
@@ -340,12 +342,70 @@ def _document_already_archived(url: str) -> bool:
         )
 
 
+def _archived_body(url: str) -> bytes | None:
+    with db.connection() as database:
+        row = database.execute(
+            """
+            SELECT content,content_encoding,content_hash FROM source_documents
+            WHERE source='sec' AND source_url=?
+            ORDER BY last_collected_at DESC,content_hash DESC LIMIT 1
+            """,
+            (url,),
+        ).fetchone()
+    if row is None:
+        return None
+    body = bytes(row["content"])
+    if row["content_encoding"] == "gzip":
+        try:
+            body = gzip.decompress(body)
+        except (OSError, EOFError):
+            return None
+    if hashlib.sha256(body).hexdigest() != str(row["content_hash"]):
+        return None
+    return body
+
+
+def _fetch_or_reuse(
+    download: Download,
+    url: str,
+    *,
+    feed: str,
+    timeout: float,
+    metadata: dict[str, Any],
+) -> tuple[bytes, bool]:
+    archived = _archived_body(url)
+    if archived is not None:
+        return archived, True
+    return (
+        _fetch_and_archive(
+            download,
+            url,
+            feed=feed,
+            timeout=timeout,
+            metadata=metadata,
+        ),
+        False,
+    )
+
+
 def _filing_already_stored(accession: str) -> bool:
     with db.connection() as database:
         return (
             database.execute("SELECT 1 FROM sec_filings WHERE accession=?", (accession,)).fetchone()
             is not None
         )
+
+
+def _backfill_state(state_key: str) -> str | None:
+    with db.connection() as database:
+        row = database.execute(
+            """
+            SELECT status FROM source_item_state
+            WHERE source='sec' AND feed='training_backfill' AND item_key=?
+            """,
+            (state_key,),
+        ).fetchone()
+    return str(row["status"]) if row else None
 
 
 def _parse_document(
@@ -498,39 +558,56 @@ def backfill_sec_corpus(
     result = BackfillResult(issuers_selected=len(issuers))
     for issuer in issuers:
         cik = int(issuer["cik"])
-        state_key = f"{cik}:{start_date.isoformat()}:{end_date.isoformat()}:{','.join(forms)}"
-        if source_item_is_terminal("sec", "training_backfill", state_key):
+        filing_scope = max_filings_per_issuer if max_filings_per_issuer is not None else "all"
+        state_key = (
+            f"{cik}:{start_date.isoformat()}:{end_date.isoformat()}:{','.join(forms)}:"
+            f"filings={filing_scope}:facts={int(include_company_facts)}"
+        )
+        existing_state = _backfill_state(state_key)
+        if existing_state == "processed":
             result.issuers_skipped += 1
             continue
         errors: list[str] = []
         truncated = False
         main_url = SUBMISSIONS_URL.format(cik=cik)
         try:
-            main_body = _fetch_and_archive(
-                download,
-                main_url,
-                feed="submissions",
-                timeout=timeout,
-                metadata={"cik": cik, "kind": "recent"},
-            )
+            if existing_state is None:
+                main_body = _fetch_and_archive(
+                    download,
+                    main_url,
+                    feed="submissions",
+                    timeout=timeout,
+                    metadata={"cik": cik, "kind": "recent"},
+                )
+                main_reused = False
+            else:
+                main_body, main_reused = _fetch_or_reuse(
+                    download,
+                    main_url,
+                    feed="submissions",
+                    timeout=timeout,
+                    metadata={"cik": cik, "kind": "recent"},
+                )
+            result.archived_responses_reused += int(main_reused)
             main_payload = json.loads(main_body)
             if not isinstance(main_payload, dict):
                 raise ValueError("SEC submissions response is not an object")
             payloads = [main_payload]
-            result.submission_files_fetched += 1
+            result.submission_files_fetched += int(not main_reused)
             for name in _historical_file_names(main_payload, start_date):
                 history_url = urljoin(SUBMISSIONS_BASE, name)
-                history_body = _fetch_and_archive(
+                history_body, history_reused = _fetch_or_reuse(
                     download,
                     history_url,
                     feed="submissions_history",
                     timeout=timeout,
                     metadata={"cik": cik, "kind": "history", "name": name},
                 )
+                result.archived_responses_reused += int(history_reused)
                 history_payload = json.loads(history_body)
                 if isinstance(history_payload, dict):
                     payloads.append(history_payload)
-                    result.submission_files_fetched += 1
+                    result.submission_files_fetched += int(not history_reused)
             filings = parse_submission_filings(
                 payloads,
                 cik=cik,
@@ -552,19 +629,8 @@ def backfill_sec_corpus(
                     result.filings_skipped += 1
                     continue
                 try:
-                    if _document_already_archived(filing.filing_url):
-                        with db.connection() as database:
-                            row = database.execute(
-                                """
-                                SELECT content,content_encoding FROM source_documents
-                                WHERE source_url=? ORDER BY first_collected_at LIMIT 1
-                                """,
-                                (filing.filing_url,),
-                            ).fetchone()
-                        body = bytes(row["content"]) if row else b""
-                        if row and row["content_encoding"] == "gzip":
-                            body = gzip.decompress(body)
-                    else:
+                    body = _archived_body(filing.filing_url)
+                    if body is None:
                         body = _fetch_and_archive(
                             download,
                             filing.filing_url,
@@ -577,6 +643,8 @@ def backfill_sec_corpus(
                             },
                         )
                         result.documents_fetched += 1
+                    else:
+                        result.archived_responses_reused += 1
                     ownership, beneficial = _parse_document(filing, body)
                     if _insert_filing(filing, ownership, beneficial):
                         result.filings_inserted += 1

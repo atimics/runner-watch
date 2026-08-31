@@ -362,9 +362,26 @@ def _filing_examples(
         for key in ("accession", "cik", "ticker", "company", "form", "filed_at", "filing_url")
     }
     chunk_sources = [_source(chunk) for chunk in chunks]
+    classification_evidence = {
+        key: filing.get(key)
+        for key in (
+            "actor",
+            "actor_title",
+            "transaction_codes",
+            "transaction_shares",
+            "transaction_price",
+            "transaction_value",
+            "post_transaction_shares",
+            "stake_change_pct",
+            "is_10b5_1",
+            "direct_ownership",
+            "beneficial_ownership_pct",
+        )
+        if filing.get(key) is not None
+    }
     preview = [
         {"source": _source(chunk), "text": chunk.text}
-        for chunk in chunks[:2]
+        for chunk in chunks[:1]
     ]
     examples = [
         _example(
@@ -382,7 +399,10 @@ def _filing_examples(
             filing,
             task="filing_classification",
             suffix="0",
-            evidence={"filing": filing_identity, "document_chunks": preview},
+            evidence={
+                "filing": filing_identity,
+                "deterministic_parser_evidence": classification_evidence,
+            },
             answer={
                 "form": filing["form"],
                 "filing_kind": filing["kind"],
@@ -390,7 +410,7 @@ def _filing_examples(
                 "score": float(filing["score"]),
             },
             instruction="Classify this filing using only the supplied SEC evidence.",
-            sources=chunk_sources[:2],
+            sources=[],
         ),
     ]
     for chunk in chunks:
@@ -420,12 +440,20 @@ def _filing_examples(
             )
         )
     for index, comparison in enumerate(_fact_comparisons(facts)):
+        comparison_facts = [
+            fact
+            for fact in facts
+            if fact["concept"] == comparison["concept"]
+            and fact["unit"] == comparison["unit"]
+            and fact["period_end"]
+            in {comparison["prior_period_end"], comparison["current_period_end"]}
+        ][:2]
         examples.append(
             _example(
                 filing,
                 task="fact_comparison",
                 suffix=str(index),
-                evidence={"filing": filing_identity, "facts": facts},
+                evidence={"filing": filing_identity, "facts": comparison_facts},
                 answer=comparison,
                 instruction="Compare the two latest distinct periods for the requested concept.",
                 sources=[],
@@ -447,12 +475,28 @@ def _filing_examples(
         None,
     )
     if missing:
+        fact_inventory = sorted(
+            {
+                (
+                    str(fact["concept"]),
+                    str(fact["unit"]),
+                    str(fact["accession"]),
+                )
+                for fact in facts
+            }
+        )
         examples.append(
             _example(
                 filing,
                 task="insufficient_evidence",
                 suffix=missing,
-                evidence={"filing": filing_identity, "issuer_facts": facts},
+                evidence={
+                    "filing": filing_identity,
+                    "available_fact_inventory": [
+                        {"concept": concept, "unit": unit, "accession": accession}
+                        for concept, unit, accession in fact_inventory
+                    ],
+                },
                 answer={"concept": missing, "status": "insufficient_evidence", "value": None},
                 instruction=f"Return the supported value for {missing}, or mark it insufficient.",
                 sources=[],
