@@ -175,6 +175,10 @@ Each prepared suite has a sidecar manifest with the exact source revision, file 
 example count. Citation-support treats malformed or missing confidence as fully confident and
 therefore fails closed.
 
+The FinQA suite freezes each public-test question with its checked-in `qa.model_input` retriever
+evidence. This measures financial reasoning on the official retrieved context; it is not a claim
+about end-to-end document retrieval accuracy.
+
 ## Budget guardrail
 
 Use `sec-qwen profile` to size the run. It uses the exact pinned tokenizer and chat template, reports

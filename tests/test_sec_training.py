@@ -441,7 +441,11 @@ def test_prepare_finqa_freezes_source_and_output_digests(tmp_path: Path) -> None
                     "pre_text": ["Revenue was 10."],
                     "post_text": ["Costs were 4."],
                     "table_ori": [["metric", "value"], ["revenue", "10"]],
-                    "qa": {"question": "What is revenue?", "answer": "10"},
+                    "qa": {
+                        "question": "What is revenue?",
+                        "answer": "10",
+                        "model_input": [["table_1", "revenue | 10"]],
+                    },
                 }
             ]
         ),
@@ -452,7 +456,9 @@ def test_prepare_finqa_freezes_source_and_output_digests(tmp_path: Path) -> None
     rows = _read_jsonl(output)
     assert rows[0]["task"] == "finqa"
     assert rows[0]["answer"] == "10"
+    assert "retrieved_evidence" in rows[0]["messages"][1]["content"]
     assert manifest["examples"] == 1
+    assert manifest["source"]["context_policy"] == "finqa-model-input-v1"
     assert manifest["file"]["sha256"] == hashlib.sha256(output.read_bytes()).hexdigest()
     assert _read_suite(output, "finqa") == rows
 

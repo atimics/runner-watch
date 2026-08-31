@@ -65,9 +65,7 @@ def prepare_finqa(
             continue
         evidence = {
             "question": qa.get("question"),
-            "table": item.get("table_ori") or item.get("table"),
-            "pre_text": item.get("pre_text"),
-            "post_text": item.get("post_text"),
+            "retrieved_evidence": qa.get("model_input"),
         }
         rows.append(
             {
@@ -96,6 +94,7 @@ def prepare_finqa(
             "revision": source_revision,
             "path": str(source_path.name),
             "sha256": sha256_file(source_path),
+            "context_policy": "finqa-model-input-v1",
         },
     )
 
