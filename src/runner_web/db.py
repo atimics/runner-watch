@@ -2348,6 +2348,22 @@ def _migration_041_persistent_comment_avatars(db: DatabaseConnection) -> None:
         ensure_comment_avatar(db, str(row["id"]))
 
 
+def _migration_042_security_controls(db: DatabaseConnection) -> None:
+    """Track fresh authentication and consume registration invite codes once."""
+
+    _ensure_column(db, "sessions", "authenticated_at TEXT")
+    _ensure_column(db, "users", "registration_invite_hash TEXT")
+    db.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS sessions_user_authenticated
+            ON sessions(user_id,authenticated_at DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS users_registration_invite
+            ON users(registration_invite_hash)
+            WHERE registration_invite_hash IS NOT NULL;
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2397,6 +2413,7 @@ MIGRATIONS = (
     Migration(39, "sports_ai_forecasts", _migration_039_sports_ai_forecasts),
     Migration(40, "comment_glyph_avatars", _migration_040_comment_glyph_avatars),
     Migration(41, "persistent_comment_avatars", _migration_041_persistent_comment_avatars),
+    Migration(42, "security_controls", _migration_042_security_controls),
 )
 
 

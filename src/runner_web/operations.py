@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from runner_web.ai_kol import FLASH
@@ -24,7 +25,19 @@ from runner_web.source_catalog import DEFAULT_SOURCE_POLICIES
 WORKER_HEARTBEAT_KEY = "worker_process_heartbeat"
 WORKER_HEARTBEAT_PREFIX = f"{WORKER_HEARTBEAT_KEY}:"
 WORKER_EXPECTED_INSTANCES = max(1, int(os.getenv("WORKER_EXPECTED_INSTANCES", "1")))
+OPERATIONS_TOKEN = os.getenv("OPERATIONS_TOKEN", "").strip()
 router = APIRouter()
+
+
+def require_operations_access(request: Request) -> None:
+    scheme, _, supplied = request.headers.get("authorization", "").partition(" ")
+    if (
+        not OPERATIONS_TOKEN
+        or scheme.lower() != "bearer"
+        or not supplied
+        or not secrets.compare_digest(supplied, OPERATIONS_TOKEN)
+    ):
+        raise HTTPException(404, "Not found")
 
 
 def worker_heartbeat_key(instance_id: str) -> str:
@@ -182,7 +195,7 @@ def health_status(*, checked_at: datetime | None = None) -> dict[str, Any]:
         "worker": workers,
         "latest_scan_at": latest_scan,
         "edgar_updated_at": states.get("edgar_last_refresh", {}).get("updated_at"),
-        "scan_error": states.get("background_scan_last_error", {}).get("value") or None,
+        "scan_error": bool(states.get("background_scan_last_error", {}).get("value")),
     }
 
 
@@ -326,25 +339,31 @@ def liveness_api() -> dict[str, str]:
 @router.get("/ready")
 def readiness_api() -> JSONResponse:
     payload = readiness_status()
-    return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
+    return JSONResponse(
+        {"status": payload["status"]},
+        status_code=200 if payload["status"] == "ok" else 503,
+    )
 
 
 @router.get("/health/details")
-def health_api() -> JSONResponse:
+def health_api(_access: None = Depends(require_operations_access)) -> JSONResponse:
     payload = health_status()
     return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
 
 
 @router.get("/api/ranker/status")
-def ranker_status_api() -> dict[str, Any]:
+def ranker_status_api(_access: None = Depends(require_operations_access)) -> dict[str, Any]:
     return ranker_status()
 
 
 @router.get("/api/ingestion/status")
-def ingestion_status_api() -> dict[str, Any]:
+def ingestion_status_api(_access: None = Depends(require_operations_access)) -> dict[str, Any]:
     return ingestion_status()
 
 
 @router.get("/api/capabilities")
-def capabilities_api(request: Request) -> dict[str, Any]:
+def capabilities_api(
+    request: Request,
+    _access: None = Depends(require_operations_access),
+) -> dict[str, Any]:
     return runtime_capabilities(getattr(request.app.state, "worker_tasks", []))

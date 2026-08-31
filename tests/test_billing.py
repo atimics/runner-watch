@@ -329,6 +329,7 @@ def test_account_deletion_runs_stripe_before_local_erasure(
     calls: list[str] = []
     monkeypatch.setattr(web_main, "require_origin", lambda request: None)
     monkeypatch.setattr(web_main, "enforce_rate", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_main, "require_recent_auth", lambda session: calls.append("reauth"))
     monkeypatch.setattr(
         web_main,
         "require_user",
@@ -351,7 +352,7 @@ def test_account_deletion_runs_stripe_before_local_erasure(
         "delete-session",
     )
 
-    assert calls == ["stripe", "local"]
+    assert calls == ["reauth", "stripe", "local"]
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
 
@@ -362,6 +363,7 @@ def test_account_deletion_keeps_local_data_when_stripe_fails(
     local_called = False
     monkeypatch.setattr(web_main, "require_origin", lambda request: None)
     monkeypatch.setattr(web_main, "enforce_rate", lambda *args, **kwargs: None)
+    monkeypatch.setattr(web_main, "require_recent_auth", lambda session: None)
     monkeypatch.setattr(
         web_main,
         "require_user",

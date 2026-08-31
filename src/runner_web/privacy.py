@@ -109,10 +109,12 @@ def export_user_data(user_id: str) -> dict[str, Any]:
 
         flash_forecasts = related("flash_forecasts", "report_id", commission_ids)
         forecast_ids = [str(row["id"]) for row in flash_forecasts]
+        public_account = dict(account_rows[0])
+        public_account.pop("registration_invite_hash", None)
 
         return {
             "exported_at": _iso(),
-            "account": account_rows[0],
+            "account": public_account,
             "passkeys": _public_passkeys(passkeys),
             "sessions": [
                 {

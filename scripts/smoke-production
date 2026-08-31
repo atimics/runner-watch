@@ -24,7 +24,7 @@ check_endpoint() {
 
 check_endpoint /live
 check_endpoint /ready
-check_endpoint /health/details
+check_endpoint /health
 check_endpoint /
 check_endpoint /login
 check_endpoint /radar

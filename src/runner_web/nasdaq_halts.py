@@ -9,12 +9,14 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from runner_watch.ingestion import MarketEvent, SourceBatch, SourceFetch
+from runner_watch.xml_security import read_limited, safe_xml_fromstring
 from runner_web.ingestion import record_source_batch, record_source_fetch
 
 TRADE_HALT_URL = "https://www.nasdaqtrader.com/rss.aspx?feed=tradehalts"
 TRADE_HALT_PAGE = "https://www.nasdaqtrader.com/Trader.aspx?id=TradeHaltRSS"
 USER_AGENT = "RunnerWatch/0.2 https://stonks.rati.foundation"
 EASTERN = ZoneInfo("America/New_York")
+MAX_TRADE_HALT_RESPONSE_BYTES = 2 * 1024 * 1024
 Download = Callable[[str, float], tuple[bytes, str | None]]
 
 
@@ -59,7 +61,7 @@ def _published_at(value: str) -> datetime | None:
 def parse_trade_halts(body: bytes) -> tuple[MarketEvent, ...]:
     """Parse the Nasdaq RSS response without depending on its namespace prefix."""
 
-    root = ET.fromstring(body)
+    root = safe_xml_fromstring(body, max_bytes=MAX_TRADE_HALT_RESPONSE_BYTES)
     events: list[MarketEvent] = []
     for item in (element for element in root.iter() if _local_name(element.tag) == "item"):
         values = _fields(item)
@@ -113,7 +115,7 @@ def _download(url: str, timeout: float) -> tuple[bytes, str | None]:
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
         content_type = response.headers.get_content_type()
-        return response.read(), content_type
+        return read_limited(response, max_bytes=MAX_TRADE_HALT_RESPONSE_BYTES), content_type
 
 
 def refresh_trade_halts(

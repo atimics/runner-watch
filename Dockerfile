@@ -1,13 +1,13 @@
-FROM ghcr.io/astral-sh/uv:0.12.3 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.3@sha256:2d890623d310b57771ce840f0da5eed5fc6d657da05ffaa45d82797b53fa3abc AS uv
 
-FROM rust:1.88-slim-bookworm AS integer-ranker
+FROM rust:1.88-slim-bookworm@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89 AS integer-ranker
 
 WORKDIR /ranker
 COPY rust/stonks-ranker/Cargo.toml rust/stonks-ranker/Cargo.lock ./
 COPY rust/stonks-ranker/src ./src
 RUN cargo test --locked && cargo build --locked --release
 
-FROM python:3.13-slim AS base
+FROM python:3.13-slim@sha256:7ce4b6dfe35e55397b7cda544f8a13f191b7ae28dc5aad71fe664dbc9bc2623f AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -20,18 +20,22 @@ COPY --from=integer-ranker /ranker/target/release/stonks-integer-ranker \
     /usr/local/bin/stonks-integer-ranker
 
 RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system runner \
+    && useradd --system --gid runner --home-dir /app --no-create-home runner
 
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
 COPY web ./web
 RUN uv sync --locked --no-dev --no-editable
+RUN chown -R runner:runner /app
 
 ENV PATH="/app/.venv/bin:$PATH" \
     STONKS_INTEGER_RANKER_BIN="/usr/local/bin/stonks-integer-ranker"
 
 EXPOSE 8080
+USER runner
 
 FROM base AS test
 COPY scripts ./scripts
