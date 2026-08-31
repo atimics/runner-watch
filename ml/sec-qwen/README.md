@@ -1,8 +1,19 @@
 # SEC Qwen training image
 
-This package trains the FERAL-7B LoRA adapter on a frozen Runner Watch SEC corpus. It accepts only a full
-Hugging Face revision and verifies every corpus file against the ilXyr release manifest before it
-loads a model.
+This package trains the FERAL-7B LoRA adapter on a frozen SEC corpus. It accepts only a full
+Hugging Face revision and verifies every corpus file against either an ilXyr release manifest or a
+content-addressed Braid `braid.release/v2` manifest before it loads a model.
+
+For new FERAL runs, use Braid. Copy `config.braid.example.toml`, replace the pending release ID and
+manifest digest with the accepted Braid release values, and point `corpus_manifest` at its
+`release.json`. Validation fails closed if the manifest hash, release identity, release status, or
+any declared artifact differs. Braid rows must keep the original `stonks.sec_chat_example.v1` or
+`v2` object in the row's `metadata`; Braid's `text` field remains available for quality and
+deduplication checks. Training consumes only the preserved chat messages from the verified release.
+
+The Braid release should expose `data/train.jsonl` and `data/validation.jsonl`. Keep future and
+unseen-issuer tests in the frozen ilXyr evaluation release rather than placing them in a training
+configuration. Accepting a Braid release does not authorize training.
 
 Use a pinned GPU base image. The Dockerfile intentionally has no mutable default:
 
