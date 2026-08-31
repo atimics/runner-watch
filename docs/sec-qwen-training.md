@@ -88,9 +88,36 @@ corpus.
 
 ## Freeze and materialize in ilXyr
 
-Register `corpus-release.json` with the ilXyr corpus service. Copy the listed files to versioned S3
-or Azure storage, read them back, verify every hash, and record the materialization receipt. In the
-experiment, put the dataset handle in `datasets` and its exact corpus artifact ref in
+Publish the frozen release through the authenticated ilXyr corpus service. The command verifies
+every local file against `corpus-release.json` before it sends anything. The token is read only
+from the environment. The receipt records the artifact ref returned by ilXyr and explicitly keeps
+training unauthorized:
+
+```bash
+export ILXYR_CORPUS_TOKEN='replace-with-a-random-secret-of-at-least-32-bytes'
+stonks-sec-publish-ilxyr exports/feral-7b-sec-v2 \
+  --service-url http://127.0.0.1:8787 \
+  --receipt artifacts/feral-7b-sec-v2/ilxyr-publication.json
+```
+
+Copy the listed files to versioned S3 or Azure storage, read them back, verify every hash, and build
+an `ilxyr.corpus_materialization.v1` receipt with the registered corpus ref. A second idempotent
+publication records it:
+
+```bash
+stonks-sec-publish-ilxyr exports/feral-7b-sec-v2 \
+  --service-url http://127.0.0.1:8787 \
+  --materialization artifacts/feral-7b-sec-v2/s3-materialization.json \
+  --receipt artifacts/feral-7b-sec-v2/ilxyr-publication.json
+```
+
+To create an updated read-only registry projection at the same time, pass the current ilXyr
+registry as `--registry-template` and a separate `--registry-output`. Only the corpus, its two
+lifecycle stages, their resolved missing requirements, and the matching source head change. The
+project stays blocked; the command does not add a dispatch, budget, baseline, adapter, or training
+claim.
+
+In the experiment, put the dataset handle in `datasets` and its exact corpus artifact ref in
 `dataset_bindings`.
 
 `feral-7b-ilxyr-experiment.example.json` is the matching v2 experiment card. Replace its corpus and
