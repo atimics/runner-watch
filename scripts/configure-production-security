@@ -22,7 +22,7 @@ fail() {
     exit 1
 }
 
-for command_name in openssl npx flyctl gh; do
+for command_name in openssl npx flyctl; do
     command -v "$command_name" >/dev/null 2>&1 || fail "$command_name is required"
 done
 if [ "$secret_store" = "keychain" ]; then
@@ -113,12 +113,8 @@ if ! printf 'EDGE_PROXY_SECRET=%s\nOPERATIONS_TOKEN=%s\nREGISTRATION_INVITE_CODE
     fail "Fly staging failed; recover with the values you saved before changing Cloudflare again"
 fi
 
-echo "Setting OPERATIONS_TOKEN for the GitHub production workflow..."
-printf '%s' "$operations_token" | gh secret set OPERATIONS_TOKEN
-
 echo
-echo "Security secrets are configured in Cloudflare, Fly, and GitHub."
-echo "No Fly application deployment was started."
+echo "Security secrets are configured. No Fly application deployment was started."
 echo "Next, deploy the Worker code, verify both public hosts, and only then deploy Fly."
 if [ "$secret_store" = "keychain" ]; then
     echo "Retrieve a value locally with:"

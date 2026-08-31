@@ -93,11 +93,8 @@ jobs:
             | xargs --no-run-if-empty flyctl machine start
 
           for _attempt in {1..12}; do
-            details="$(curl --fail --silent --show-error --location --max-time 20 \
-              --header "Authorization: Bearer ${OPERATIONS_TOKEN}" \
-              https://runners.rati.chat/health/details 2>/dev/null || true)"
-            if jq -e '.worker.status == "ok" and .trainer.status == "ok"' \
-              <<<"$details" >/dev/null 2>&1; then
+            if flyctl ssh console --app runner-watch-ratimics --process-group web \
+              --command "python -m runner_web.deployment_check" --quiet; then
               exit 0
             fi
             sleep 5
@@ -106,7 +103,6 @@ jobs:
           exit 1
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          OPERATIONS_TOKEN: ${{ secrets.OPERATIONS_TOKEN }}
       - name: Verify production
         id: smoke
         if: steps.deploy.outcome == 'success' && steps.processes.outcome == 'success'
