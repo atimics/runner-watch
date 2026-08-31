@@ -60,7 +60,7 @@ def evaluate_model(
         "revision": config.model.revision,
         "trust_remote_code": False,
         "torch_dtype": config.model.torch_dtype,
-        "device_map": "auto",
+        "device_map": "mps" if torch.backends.mps.is_available() else "auto",
     }
     if config.model.attn_implementation:
         model_kwargs["attn_implementation"] = config.model.attn_implementation
