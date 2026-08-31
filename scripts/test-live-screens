@@ -297,7 +297,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--workers",
         type=int,
-        default=int(os.getenv("LIVE_SCREEN_WORKERS", "3")),
+        default=int(os.getenv("LIVE_SCREEN_WORKERS", "1")),
     )
     parser.add_argument(
         "--browser-channel",
