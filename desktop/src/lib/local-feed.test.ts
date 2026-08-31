@@ -5,9 +5,9 @@ import {
   LOCAL_SCAN_MAX_AGE_MS,
   latestLocalScan,
   localRadarRows,
-  localRunnerRow,
   localScanNeedsRefresh,
-  shouldFetchCloudFeeds,
+  sourceColor,
+  sourcedRows,
 } from './local-feed';
 
 function receipt(id: string, finishedAt: string): ScanResult {
@@ -32,11 +32,6 @@ function receipt(id: string, finishedAt: string): ScanResult {
 }
 
 describe('local scanner feed', () => {
-  it('never treats Local mode as permission to fetch cloud feeds', () => {
-    expect(shouldFetchCloudFeeds('local')).toBe(false);
-    expect(shouldFetchCloudFeeds('cloud')).toBe(true);
-  });
-
   it('selects the newest local receipt and refreshes stale data', () => {
     const old = receipt('old', '2026-08-30T10:00:00Z');
     const fresh = receipt('fresh', '2026-08-30T10:10:00Z');
@@ -47,12 +42,19 @@ describe('local scanner feed', () => {
     expect(localScanNeedsRefresh(fresh, now + LOCAL_SCAN_MAX_AGE_MS + 1)).toBe(true);
   });
 
-  it('builds local ticker rows without cloud labels and ranks Radar by activity', () => {
+  it('combines the newest receipt from each scanner source', () => {
     const value = receipt('scan', '2026-08-30T10:10:00Z');
-    const row = localRunnerRow(value.rows[0]);
+    const remote = { ...receipt('remote', '2026-08-30T10:11:00Z'), source_id: 'remote:one', source_name: 'Desk node' };
 
-    expect(row.source).toBe('local_scanner');
-    expect(row.pulse_label).toBeUndefined();
+    expect(sourcedRows([value, remote]).map((item) => item.source_name).sort()).toEqual([
+      'Built-in scanner', 'Built-in scanner', 'Desk node', 'Desk node',
+    ]);
     expect(localRadarRows(value).map((item) => item.ticker)).toEqual(['FAST', 'SLOW']);
+  });
+
+  it('uses fixed identity colors for built-in and RATi sources', () => {
+    expect(sourceColor('built-in-scanner')).toBe('#60e594');
+    expect(sourceColor('rati-cloud')).toBe('#a78bfa');
+    expect(sourceColor('remote:one')).toBe(sourceColor('remote:one'));
   });
 });
