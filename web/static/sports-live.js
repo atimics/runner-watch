@@ -27,6 +27,7 @@
   }
 
   function localTime(value, options = {}) {
+    if (value === null || value === undefined || String(value).trim() === '') return 'pending';
     const date = new Date(value);
     if (Number.isNaN(date.valueOf())) return value ? String(value) : 'pending';
     return date.toLocaleString([], {
@@ -41,6 +42,7 @@
   }
 
   function shortGameTime(value) {
+    if (value === null || value === undefined || String(value).trim() === '') return 'pending';
     const date = new Date(value);
     if (Number.isNaN(date.valueOf())) return value ? String(value) : 'pending';
     return date.toLocaleString([], {
@@ -51,6 +53,9 @@
   }
 
   function freshness(value) {
+    if (value === null || value === undefined || String(value).trim() === '') {
+      return 'Update pending';
+    }
     const date = new Date(value);
     if (Number.isNaN(date.valueOf())) return 'Update pending';
     const seconds = Math.max(0, (Date.now() - date.getTime()) / 1000);
@@ -220,8 +225,6 @@
 
   function mountPulse({initial, prefix = ''}) {
     let current = initial;
-    let pending = null;
-    let polling = false;
     const list = document.getElementById('sportsPulseList');
     const refresh = document.getElementById('sportsPulseRefresh');
     const count = document.getElementById('sportsPulseCount');
@@ -230,7 +233,8 @@
     const updated = document.getElementById('sportsPulseUpdated');
     if (!list || !refresh) return null;
 
-    function render() {
+    function render(next = current) {
+      current = next;
       list.innerHTML = renderPulseEvents(current.events || [], prefix, current.empty_state);
       count.textContent = current.display_count ?? (current.events || []).length;
       if (maturity && current.empty_state?.status_label) {
@@ -247,102 +251,74 @@
       list.dispatchEvent(new Event('desktop-rows-rendered'));
     }
 
-    refresh.addEventListener('click', () => {
-      if (!pending) return;
-      current = pending;
-      pending = null;
-      refresh.hidden = true;
-      render();
-    });
-
-    async function poll() {
-      if (polling || document.hidden) return;
-      polling = true;
-      try {
-        const response = await fetch(queryEndpoint('/api/sports/pulse'));
+    const controller = RatiLiveList.mount({
+      refreshButton: refresh,
+      interval: POLL_INTERVAL,
+      getCurrent: () => current,
+      setCurrent: value => { current = value; },
+      fetchNext: async () => {
+        const response = await fetch(queryEndpoint('/api/pulse'));
         if (!response.ok) throw new Error('Sports Pulse refresh failed');
-        const next = await response.json();
-        status.textContent = freshness(next.updated_at);
-        if (!payloadChanged(current, next)) {
-          current = {...current, ...next};
-          pending = null;
-          refresh.hidden = true;
-          return;
-        }
-        const currentIds = new Set((current.events || []).map(eventKey));
-        const newCount = (next.events || []).filter(event => !currentIds.has(eventKey(event))).length;
-        pending = next;
-        refresh.textContent = newCount === 1 ? '1 new matchup' : (newCount > 1 ? `${newCount} new matchups` : 'Slate updated');
-        refresh.hidden = false;
-      } catch (_) {
-        status.textContent = 'Refresh failed';
-      } finally {
-        polling = false;
-      }
-    }
-
-    render();
+        return response.json();
+      },
+      changed: payloadChanged,
+      changeCount: (value, next) => {
+        const currentIds = new Set((value.events || []).map(eventKey));
+        return (next.events || []).filter(event => !currentIds.has(eventKey(event))).length;
+      },
+      label: count => count === 1
+        ? '1 new matchup'
+        : (count > 1 ? `${count} new matchups` : 'Slate updated'),
+      render,
+      onPoll: next => { if (status) status.textContent = freshness(next.updated_at); },
+      onNoChange: (next, value) => ({...value, ...next}),
+      onError: () => { if (status) status.textContent = 'Refresh failed'; },
+    });
     formatLocalTimes();
-    const timer = setInterval(poll, POLL_INTERVAL);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
-    return {poll, applyPending: () => refresh.click(), stop: () => clearInterval(timer)};
+    return controller;
   }
 
   function mountRadar({initial, prefix = ''}) {
     let current = initial;
-    let pending = null;
-    let polling = false;
     const list = document.getElementById('sportsRadarList');
     const refresh = document.getElementById('sportsRadarRefresh');
     const count = document.getElementById('sportsRadarCount');
     const status = document.getElementById('sportsRadarStatus');
     if (!list || !refresh) return null;
 
-    function render() {
+    function render(next = current) {
+      current = next;
       list.innerHTML = renderRadarEvents(current.events || [], prefix);
       count.textContent = current.display_count ?? (current.events || []).length;
       if (status) status.textContent = freshness(current.updated_at);
       restorePanelSelection(list);
     }
 
-    refresh.addEventListener('click', () => {
-      if (!pending) return;
-      current = pending;
-      pending = null;
-      refresh.hidden = true;
-      render();
-    });
-
-    async function poll() {
-      if (polling || document.hidden) return;
-      polling = true;
-      try {
-        const response = await fetch(queryEndpoint('/api/sports/radar'));
+    const controller = RatiLiveList.mount({
+      refreshButton: refresh,
+      interval: POLL_INTERVAL,
+      getCurrent: () => current,
+      setCurrent: value => { current = value; },
+      fetchNext: async () => {
+        const response = await fetch(queryEndpoint('/api/radar'));
         if (!response.ok) throw new Error('Sports Radar refresh failed');
-        const next = await response.json();
-        status.textContent = freshness(next.updated_at);
-        if (!payloadChanged(current, next)) {
-          pending = null;
-          refresh.hidden = true;
-          return;
-        }
-        const currentIds = new Set((current.events || []).map(eventKey));
-        const newCount = (next.events || []).filter(event => !currentIds.has(eventKey(event))).length;
-        pending = next;
-        refresh.textContent = newCount === 1 ? '1 new event' : (newCount > 1 ? `${newCount} new events` : 'Radar updated');
-        refresh.hidden = false;
-      } catch (_) {
-        status.textContent = 'Refresh failed';
-      } finally {
-        polling = false;
-      }
-    }
-
-    render();
+        return response.json();
+      },
+      changed: payloadChanged,
+      changeCount: (value, next) => {
+        const currentIds = new Set((value.events || []).map(eventKey));
+        return (next.events || []).filter(event => !currentIds.has(eventKey(event))).length;
+      },
+      label: count => count === 1
+        ? '1 new event'
+        : (count > 1 ? `${count} new events` : 'Radar updated'),
+      render,
+      onPoll: next => { if (status) status.textContent = freshness(next.updated_at); },
+      onNoChange: (next, value) => ({...value, ...next}),
+      onError: () => { if (status) status.textContent = 'Refresh failed'; },
+    });
     formatLocalTimes();
-    const timer = setInterval(poll, POLL_INTERVAL);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
-    return {poll, applyPending: () => refresh.click(), stop: () => clearInterval(timer)};
+    return controller;
   }
 
   window.SportsLive = {formatLocalTimes, mountPulse, mountRadar};

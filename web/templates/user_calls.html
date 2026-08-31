@@ -1,32 +1,32 @@
 {% extends "mobile_base.html" %}
-{% block title %}{{ caller }} Calls · RATi Runners{% endblock %}
+{% block title %}{{ caller }} Calls · RATi{% endblock %}
 {% block content %}
 <header class="detail-nav">
-  <a href="/community" aria-label="Back to Alpha">‹</a>
+  <a href="/alpha" aria-label="Back to Alpha">‹</a>
   <strong>Caller</strong>
   <span></span>
 </header>
 <main class="caller-page">
   <section class="caller-head">
     <span class="comment-avatar">{{ caller[-2:] }}</span>
-    <div><h1>{{ caller }}</h1><p>Public Calls. Entry and exit marks are server stamped.</p></div>
+    <div><h1>{{ caller }}</h1><p>Public Calls across Runners and Sports. Every entry is server stamped.</p></div>
   </section>
 
   <section class="caller-stats" aria-label="Call performance">
     <div><strong>{{ stats.open }}</strong><span>Open</span></div>
-    <div><strong>{{ stats.closed }}</strong><span>Closed</span></div>
+    <div><strong>{{ stats.settled }}</strong><span>Settled</span></div>
     <div><strong>{{ stats.wins }}–{{ stats.losses }}</strong><span>W–L</span></div>
-    <div><strong>{% if stats.average_return_pct is not none %}{{ '+' if stats.average_return_pct >= 0 else '' }}{{ '%.1f'|format(stats.average_return_pct) }}%{% else %}—{% endif %}</strong><span>Avg PnL</span></div>
+    <div><strong>{{ stats.total }}</strong><span>Total</span></div>
   </section>
 
   <section class="public-call-feed">
-    <div class="alpha-section-head"><h2>Calls</h2><span>{{ stats.tickers }} tickers</span></div>
+    <div class="alpha-section-head"><h2>Calls</h2><span>{{ stats.subjects }} subjects</span></div>
     {% if calls %}
       {% for call in calls %}
       <article class="public-call-row">
-        <a class="call-ticker" href="/t/{{ call.ticker }}"><strong>{{ call.ticker }}</strong><small>{{ call.status }} · {{ call.entry_at[:10] }}</small></a>
-        <span class="call-prices"><small>Entry</small><b>${{ '%.4f'|format(call.entry_price) if call.entry_price < 1 else ('%.2f'|format(call.entry_price)) }}</b></span>
-        <span class="call-pnl">{% if call.return_pct is not none %}<b class="{{ 'up' if call.return_pct >= 0 else 'down' }}">{{ '+' if call.return_pct >= 0 else '' }}{{ '%.1f'|format(call.return_pct) }}%</b><small>{% if call.reward_label %}{{ call.reward_label }}{% elif call.mark_price is not none %}${{ '%.4f'|format(call.mark_price) if call.mark_price < 1 else ('%.2f'|format(call.mark_price)) }}{% endif %}</small>{% else %}<b>—</b><small>no mark</small>{% endif %}</span>
+        <a class="call-ticker" href="{{ call.href }}"><strong>{{ call.subject }}</strong><small>{{ call.product_label }} · {{ call.company }} · {{ call.created_at[:10] }}</small></a>
+        <span class="call-prices"><small>Entry</small><b>{{ call.entry_label }}</b></span>
+        <span class="call-pnl"><b class="{{ call.result_tone }}">{{ call.result_label }}</b><small>{{ call.reward_label or call.status }}</small></span>
       </article>
       {% endfor %}
     {% else %}

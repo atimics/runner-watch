@@ -2539,6 +2539,175 @@ def _migration_046_customer_llm_routing(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_047_scorecard_and_release_indexes(db: DatabaseConnection) -> None:
+    """Keep release and scorecard scans on their narrow lookup paths."""
+
+    db.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS research_commissions_release_due
+            ON research_commissions(exclusive_until)
+            WHERE status='complete' AND report_day IS NOT NULL
+              AND visibility<>'public' AND exclusive_until IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS research_commissions_flash_version_status
+            ON research_commissions(flash_version_id,status)
+            WHERE flash_version_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS kol_calls_predictor_exit_resolved
+            ON kol_calls(predictor_id,exit_at,id)
+            WHERE net_return_pct IS NOT NULL;
+        """
+    )
+
+
+def _migration_048_shared_comment_subjects(db: DatabaseConnection) -> None:
+    """Let the paid AI comment pipeline serve stocks and sports games."""
+
+    for table in ("ticker_comments", "comment_generation_requests"):
+        _ensure_column(
+            db,
+            table,
+            "subject_kind TEXT NOT NULL DEFAULT 'stock' "
+            "CHECK(subject_kind IN ('stock','sports_game'))",
+        )
+        _ensure_column(db, table, "subject_key TEXT NOT NULL DEFAULT ''")
+        db.execute(f"UPDATE {table} SET subject_key=ticker WHERE subject_key='' ")
+    db.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS ticker_comments_subject_time
+            ON ticker_comments(subject_kind,subject_key,status,created_at DESC);
+        CREATE INDEX IF NOT EXISTS comment_generation_requests_subject_time
+            ON comment_generation_requests(subject_kind,subject_key,status,updated_at DESC);
+        """
+    )
+
+
+def _migration_049_legal_identity_review(db: DatabaseConnection) -> None:
+    """Stage filing people and legal cases behind explicit identity review."""
+
+    _ensure_column(db, "sec_filings", "actor_cik INTEGER")
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS filing_people (
+            id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            normalized_name TEXT NOT NULL,
+            sec_person_cik INTEGER,
+            entity_type TEXT NOT NULL DEFAULT 'person_candidate',
+            review_status TEXT NOT NULL DEFAULT 'pending'
+                CHECK(review_status IN ('pending','approved','rejected')),
+            review_note TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS filing_people_name
+            ON filing_people(normalized_name,review_status);
+        CREATE INDEX IF NOT EXISTS filing_people_sec_cik
+            ON filing_people(sec_person_cik) WHERE sec_person_cik IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS filing_person_issuer_links (
+            person_id TEXT NOT NULL REFERENCES filing_people(id) ON DELETE CASCADE,
+            ticker TEXT NOT NULL,
+            issuer_cik INTEGER NOT NULL,
+            source_accession TEXT NOT NULL REFERENCES sec_filings(accession) ON DELETE CASCADE,
+            filing_role TEXT NOT NULL,
+            confidence REAL NOT NULL CHECK(confidence>=0 AND confidence<=1),
+            review_status TEXT NOT NULL DEFAULT 'pending'
+                CHECK(review_status IN ('pending','approved','rejected')),
+            review_note TEXT,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            PRIMARY KEY(person_id,ticker,source_accession)
+        );
+        CREATE INDEX IF NOT EXISTS filing_person_links_ticker
+            ON filing_person_issuer_links(ticker,review_status,confidence DESC);
+        CREATE TABLE IF NOT EXISTS legal_case_candidates (
+            id TEXT PRIMARY KEY,
+            source TEXT NOT NULL,
+            feed TEXT NOT NULL,
+            external_case_id TEXT NOT NULL,
+            person_id TEXT NOT NULL REFERENCES filing_people(id) ON DELETE CASCADE,
+            ticker TEXT NOT NULL,
+            issuer_cik INTEGER NOT NULL,
+            case_number TEXT NOT NULL,
+            case_title TEXT NOT NULL,
+            court TEXT,
+            jurisdiction_type TEXT,
+            party_name TEXT NOT NULL,
+            party_role TEXT,
+            case_type TEXT,
+            nature_of_suit TEXT,
+            filed_at TEXT,
+            closed_at TEXT,
+            case_status TEXT,
+            source_url TEXT NOT NULL,
+            name_match_confidence REAL NOT NULL
+                CHECK(name_match_confidence>=0 AND name_match_confidence<=1),
+            match_method TEXT NOT NULL,
+            review_status TEXT NOT NULL DEFAULT 'pending'
+                CHECK(review_status IN ('pending','approved','rejected')),
+            risk_label TEXT NOT NULL DEFAULT 'unknown'
+                CHECK(risk_label IN ('unknown','watch','material')),
+            review_note TEXT,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            first_run_id TEXT NOT NULL REFERENCES ingestion_runs(id),
+            last_run_id TEXT NOT NULL REFERENCES ingestion_runs(id),
+            first_collected_at TEXT NOT NULL,
+            last_collected_at TEXT NOT NULL,
+            UNIQUE(source,feed,external_case_id,person_id,ticker)
+        );
+        CREATE INDEX IF NOT EXISTS legal_case_candidates_review
+            ON legal_case_candidates(review_status,last_collected_at DESC);
+        CREATE INDEX IF NOT EXISTS legal_case_candidates_ticker
+            ON legal_case_candidates(ticker,review_status,risk_label,filed_at DESC);
+        """
+    )
+
+
+def _migration_050_market_session_reports(db: DatabaseConnection) -> None:
+    """Freeze one pre-market briefing and one post-market recap per trading day."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS market_session_reports (
+            id TEXT PRIMARY KEY,
+            report_day TEXT NOT NULL,
+            report_type TEXT NOT NULL
+                CHECK(report_type IN ('pre_market','post_market')),
+            source_scan_run_id TEXT NOT NULL,
+            comparison_scan_run_id TEXT,
+            as_of TEXT NOT NULL,
+            headline TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            metrics_json TEXT NOT NULL DEFAULT '{}',
+            leaders_json TEXT NOT NULL DEFAULT '[]',
+            turns_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(report_day,report_type)
+        );
+        CREATE INDEX IF NOT EXISTS market_session_reports_day
+            ON market_session_reports(report_day DESC,report_type);
+        """
+    )
+
+
+def _migration_051_public_source_policy_gate(db: DatabaseConnection) -> None:
+    create_view = (
+        "CREATE OR REPLACE VIEW" if db.backend == "postgres" else "CREATE VIEW IF NOT EXISTS"
+    )
+    db.execute(
+        f"""
+        {create_view} public_market_events AS
+        SELECT events.*
+        FROM market_events events
+        JOIN ingestion_runs runs ON runs.id=events.last_run_id
+        JOIN source_registry registry
+          ON registry.source=runs.source AND registry.feed=runs.feed
+        WHERE registry.enabled=1
+          AND registry.review_status='approved'
+          AND registry.display_policy!='internal_review_only'
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2593,6 +2762,11 @@ MIGRATIONS = (
     Migration(44, "golf_leaderboards", _migration_044_golf_leaderboards),
     Migration(45, "sports_comments", _migration_045_sports_comments),
     Migration(46, "customer_llm_routing", _migration_046_customer_llm_routing),
+    Migration(47, "scorecard_and_release_indexes", _migration_047_scorecard_and_release_indexes),
+    Migration(48, "shared_comment_subjects", _migration_048_shared_comment_subjects),
+    Migration(49, "legal_identity_review", _migration_049_legal_identity_review),
+    Migration(50, "market_session_reports", _migration_050_market_session_reports),
+    Migration(51, "public_source_policy_gate", _migration_051_public_source_policy_gate),
 )
 
 

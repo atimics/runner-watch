@@ -14,6 +14,33 @@ from runner_web.operations import (
     trainer_health,
     worker_heartbeat_key,
 )
+from runner_web.performance import (
+    performance_snapshot,
+    record_cache,
+    record_database_wait,
+    record_route,
+    reset_performance_metrics,
+)
+
+
+def test_performance_snapshot_reports_bounded_runtime_metrics() -> None:
+    reset_performance_metrics()
+    for duration in range(600):
+        record_route("GET", "/api/t/{ticker}/chart", float(duration))
+    record_cache("ticker-chart", "miss")
+    record_cache("ticker-chart", "build", duration_ms=42.5)
+    record_database_wait(3.25)
+
+    snapshot = performance_snapshot()
+
+    route = snapshot["routes"]["GET /api/t/{ticker}/chart"]
+    assert route["requests"] == 600
+    assert route["samples"] == 512
+    assert route["p95_ms"] > route["p50_ms"]
+    assert snapshot["caches"]["ticker-chart"]["miss"] == 1
+    assert snapshot["caches"]["ticker-chart"]["build_ms"] == 42.5
+    assert snapshot["database_pool_wait"]["p95_ms"] == 3.25
+    assert snapshot["process"]["maximum_rss_mb"] > 0
 
 
 def test_health_requires_a_fresh_worker_heartbeat(

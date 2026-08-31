@@ -16,6 +16,7 @@ from runner_watch.scanner import RunnerScanner
 from runner_web.collection import recording_market_data
 from runner_web.db import connection
 from runner_web.ingestion import mark_source_item, record_source_fetch, source_item_is_terminal
+from runner_web.legal_risk import sync_filing_people
 from runner_web.sec_facts import refresh_company_facts
 
 LOG = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ INTERESTING_FORMS = (
     "20-F",
     "40-F",
 )
-PARSER_VERSION = "4"
+PARSER_VERSION = "5"
 
 
 def iso(value: datetime | None = None) -> str:
@@ -179,6 +180,7 @@ def _prepare_event(
         "filed_at": filing.filed_at,
         "filing_url": filing.filing_url,
         "actor": ownership.owner_name if ownership else None,
+        "actor_cik": ownership.owner_cik if ownership else None,
         "actor_title": ownership.owner_title if ownership else None,
         "transaction_codes": ",".join(ownership.codes) if ownership else "",
         "transaction_shares": (ownership.purchase_shares if is_purchase else ownership.sale_shares)
@@ -330,7 +332,7 @@ def refresh_edgar() -> dict[str, Any]:
                 """
                 INSERT OR IGNORE INTO sec_filings(
                     accession,cik,ticker,company,form,kind,sentiment,score,title,filed_at,
-                    filing_url,actor,actor_title,transaction_codes,transaction_shares,
+                    filing_url,actor,actor_cik,actor_title,transaction_codes,transaction_shares,
                     transaction_price,transaction_value,price,change_pct,relative_volume,
                     market_score,created_at,updated_at,parser_version,
                     post_transaction_shares,stake_change_pct,is_10b5_1,
@@ -339,7 +341,7 @@ def refresh_edgar() -> dict[str, Any]:
                     reporting_person_types
                 ) VALUES(
                     :accession,:cik,:ticker,:company,:form,:kind,:sentiment,:score,:title,
-                    :filed_at,:filing_url,:actor,:actor_title,:transaction_codes,
+                    :filed_at,:filing_url,:actor,:actor_cik,:actor_title,:transaction_codes,
                     :transaction_shares,:transaction_price,:transaction_value,:price,
                     :change_pct,:relative_volume,:market_score,:created_at,:updated_at,
                     :parser_version,:post_transaction_shares,:stake_change_pct,
@@ -384,6 +386,8 @@ def refresh_edgar() -> dict[str, Any]:
             parser_version=PARSER_VERSION,
         )
 
+    people_result = sync_filing_people()
+
     fact_result: dict[str, Any] = {"facts": 0}
     fact_cik = _companyfacts_candidate(new_events)
     if fact_cik is not None:
@@ -402,6 +406,7 @@ def refresh_edgar() -> dict[str, Any]:
         "feed_filings": len(filings),
         "new_events": len(new_events),
         "issuer_facts": int(fact_result.get("facts") or 0),
+        "filing_people_staged": int(people_result.get("people_staged") or 0),
         "refreshed_at": timestamp,
     }
 

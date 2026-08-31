@@ -1,0 +1,33 @@
+{
+  "schema": "feral.baseline_result.v1",
+  "task": "finqa",
+  "status": "complete",
+  "completed_at": "2026-08-31T16:41:58Z",
+  "model": {
+    "id": "Qwen/Qwen2.5-7B-Instruct",
+    "revision": "a09a35458c702b33eeacc393d103063234e8bc28",
+    "adapter": null
+  },
+  "dataset": {
+    "path": "evaluation/finqa-retrieved.jsonl",
+    "sha256": "b295064693c44f81685018f79d59570e81382fc447c188b2cb3438b9f19f45d4",
+    "manifest_path": "evaluation/finqa-retrieved.manifest.json",
+    "manifest_sha256": "5b718ca6c934af0cffc16985d135a5ee3e29aae4dee45153d786ea269251595c",
+    "examples": 1147,
+    "source_repository": "https://github.com/czyssrs/FinQA",
+    "source_revision": "0f16e2867befa6840783e58be38c9efb9229d742",
+    "context_policy": "finqa-model-input-v1"
+  },
+  "evaluation": {
+    "device": "apple_mps",
+    "batch_size": 1,
+    "max_new_tokens": 32,
+    "config_sha256": "60750e1182be5c5872e33364c311d06e194e40be74c0fe22ae9bc3050b8eaa16",
+    "predictions_path": "evaluation/baseline-finqa-retrieved.jsonl",
+    "predictions_sha256": "4ade8a32e3b6d1c42dc49bf28826d65cf33f748dc1deec8eccc7399f2ad9f5c1",
+    "metrics": {
+      "finqa_accuracy": 0.14646904969485613
+    }
+  },
+  "training_authorized": false
+}

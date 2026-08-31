@@ -598,67 +598,100 @@ def calls_for_ticker(ticker: str, limit: int = 20) -> list[dict[str, Any]]:
 def predictor_scorecards(*, include_hidden: bool = False) -> list[dict[str, Any]]:
     with connection() as db:
         predictors = db.execute(
-            "SELECT * FROM kol_predictors "
-            + ("" if include_hidden else "WHERE visible=1 ")
-            + "ORDER BY CASE status WHEN 'champion' THEN 0 ELSE 1 END,created_at"
+            """
+            WITH totals AS (
+                SELECT predictor_id,COUNT(*) AS calls,
+                       SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS active_calls,
+                       SUM(CASE WHEN benchmark_label='up' THEN 1 ELSE 0 END) AS wins,
+                       SUM(CASE WHEN benchmark_label='down' THEN 1 ELSE 0 END) AS stops,
+                       SUM(CASE WHEN benchmark_label='timeout' THEN 1 ELSE 0 END) AS timeouts,
+                       SUM(CASE WHEN status='abandoned' THEN 1 ELSE 0 END) AS abandons,
+                       SUM(CASE WHEN benchmark_label IS NOT NULL THEN 1 ELSE 0 END)
+                           AS benchmarked_calls,
+                       AVG(CASE WHEN net_return_pct IS NOT NULL THEN net_return_pct END)
+                           AS average_net_return_pct,
+                       SUM(COALESCE(paper_pnl,0.0)) AS total_paper_pnl,
+                       AVG(CASE WHEN benchmark_label IS NOT NULL
+                                THEN (confidence-
+                                      CASE WHEN benchmark_label='up' THEN 1.0 ELSE 0.0 END) *
+                                     (confidence-
+                                      CASE WHEN benchmark_label='up' THEN 1.0 ELSE 0.0 END)
+                           END) AS brier_score
+                FROM kol_calls
+                GROUP BY predictor_id
+            ), resolved AS (
+                SELECT predictor_id,exit_at,id,
+                       SUM(COALESCE(paper_pnl,0.0)) OVER (
+                           PARTITION BY predictor_id ORDER BY exit_at,id
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                       ) AS equity
+                FROM kol_calls
+                WHERE net_return_pct IS NOT NULL
+            ), peaks AS (
+                SELECT predictor_id,equity,
+                       MAX(equity) OVER (
+                           PARTITION BY predictor_id ORDER BY exit_at,id
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                       ) AS running_peak
+                FROM resolved
+            ), drawdowns AS (
+                SELECT predictor_id,
+                       MAX((CASE WHEN running_peak>0 THEN running_peak ELSE 0 END)-equity)
+                           AS max_drawdown
+                FROM peaks
+                GROUP BY predictor_id
+            )
+            SELECT p.*,COALESCE(t.calls,0) AS score_calls,
+                   COALESCE(t.active_calls,0) AS score_active_calls,
+                   COALESCE(t.wins,0) AS score_wins,
+                   COALESCE(t.stops,0) AS score_stops,
+                   COALESCE(t.timeouts,0) AS score_timeouts,
+                   COALESCE(t.abandons,0) AS score_abandons,
+                   COALESCE(t.benchmarked_calls,0) AS score_benchmarked_calls,
+                   t.average_net_return_pct,t.total_paper_pnl,t.brier_score,
+                   COALESCE(d.max_drawdown,0.0) AS score_max_drawdown
+            FROM kol_predictors p
+            LEFT JOIN totals t ON t.predictor_id=p.id
+            LEFT JOIN drawdowns d ON d.predictor_id=p.id
+            """
+            + ("" if include_hidden else "WHERE p.visible=1 ")
+            + "ORDER BY CASE p.status WHEN 'champion' THEN 0 ELSE 1 END,p.created_at"
         ).fetchall()
-        calls = [dict(row) for row in db.execute("SELECT * FROM kol_calls ORDER BY exit_at,id")]
 
-    by_predictor: dict[str, list[dict[str, Any]]] = {}
-    for call in calls:
-        by_predictor.setdefault(str(call["predictor_id"]), []).append(call)
     scorecards: list[dict[str, Any]] = []
     for raw in predictors:
         predictor = dict(raw)
         predictor["inference_model_label"] = model_display_name(
             str(predictor.get("inference_model") or "")
         )
-        rows = by_predictor.get(str(predictor["id"]), [])
-        resolved = [row for row in rows if row.get("net_return_pct") is not None]
-        benchmarked = [row for row in rows if row.get("benchmark_label") is not None]
-        equity = 0.0
-        peak = 0.0
-        max_drawdown = 0.0
-        for row in resolved:
-            equity += float(row.get("paper_pnl") or 0.0)
-            peak = max(peak, equity)
-            max_drawdown = max(max_drawdown, peak - equity)
-        brier = None
-        if benchmarked:
-            brier = sum(
-                (float(row["confidence"]) - float(row["benchmark_label"] == "up")) ** 2
-                for row in benchmarked
-            ) / len(benchmarked)
+        calls = int(predictor.pop("score_calls") or 0)
+        active_calls = int(predictor.pop("score_active_calls") or 0)
+        wins = int(predictor.pop("score_wins") or 0)
+        stops = int(predictor.pop("score_stops") or 0)
+        timeouts = int(predictor.pop("score_timeouts") or 0)
+        abandons = int(predictor.pop("score_abandons") or 0)
+        benchmarked_calls = int(predictor.pop("score_benchmarked_calls") or 0)
+        average_return = predictor.pop("average_net_return_pct")
+        paper_pnl = float(predictor.pop("total_paper_pnl") or 0.0)
+        brier = predictor.pop("brier_score")
+        max_drawdown = float(predictor.pop("score_max_drawdown") or 0.0)
         scorecards.append(
             {
                 **predictor,
-                "calls": len(rows),
-                "active_calls": sum(row["status"] == "active" for row in rows),
-                "wins": sum(row["benchmark_label"] == "up" for row in benchmarked),
-                "stops": sum(row["benchmark_label"] == "down" for row in benchmarked),
-                "timeouts": sum(row["benchmark_label"] == "timeout" for row in benchmarked),
-                "abandons": sum(row["status"] == "abandoned" for row in rows),
-                "benchmarked_calls": len(benchmarked),
-                "hit_rate": (
-                    round(
-                        sum(row["benchmark_label"] == "up" for row in benchmarked)
-                        / len(benchmarked),
-                        4,
-                    )
-                    if benchmarked
-                    else None
-                ),
+                "calls": calls,
+                "active_calls": active_calls,
+                "wins": wins,
+                "stops": stops,
+                "timeouts": timeouts,
+                "abandons": abandons,
+                "benchmarked_calls": benchmarked_calls,
+                "hit_rate": round(wins / benchmarked_calls, 4) if benchmarked_calls else None,
                 "average_net_return_pct": (
-                    round(
-                        sum(float(row["net_return_pct"]) for row in resolved) / len(resolved),
-                        4,
-                    )
-                    if resolved
-                    else None
+                    round(float(average_return), 4) if average_return is not None else None
                 ),
-                "paper_pnl": round(sum(float(row.get("paper_pnl") or 0.0) for row in rows), 2),
+                "paper_pnl": round(paper_pnl, 2),
                 "max_drawdown": round(max_drawdown, 2),
-                "brier_score": round(brier, 4) if brier is not None else None,
+                "brier_score": round(float(brier), 4) if brier is not None else None,
             }
         )
     return scorecards
