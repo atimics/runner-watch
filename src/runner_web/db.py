@@ -2690,9 +2690,12 @@ def _migration_050_market_session_reports(db: DatabaseConnection) -> None:
 
 
 def _migration_051_public_source_policy_gate(db: DatabaseConnection) -> None:
-    db.executescript(
-        """
-        CREATE VIEW IF NOT EXISTS public_market_events AS
+    create_view = (
+        "CREATE OR REPLACE VIEW" if db.backend == "postgres" else "CREATE VIEW IF NOT EXISTS"
+    )
+    db.execute(
+        f"""
+        {create_view} public_market_events AS
         SELECT events.*
         FROM market_events events
         JOIN ingestion_runs runs ON runs.id=events.last_run_id
@@ -2700,7 +2703,7 @@ def _migration_051_public_source_policy_gate(db: DatabaseConnection) -> None:
           ON registry.source=runs.source AND registry.feed=runs.feed
         WHERE registry.enabled=1
           AND registry.review_status='approved'
-          AND registry.display_policy!='internal_review_only';
+          AND registry.display_policy!='internal_review_only'
         """
     )
 
