@@ -1,20 +1,17 @@
-use std::collections::HashSet;
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use reqwest::header::{ACCEPT, CONTENT_TYPE};
-use reqwest::{redirect::Policy, Client, Url};
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Manager, RunEvent, State};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
+use url::Url;
 use uuid::Uuid;
 
-const RUNNERS_ORIGIN: &str = "https://runners.rati.chat";
 const SCANNER_STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 const EXTERNAL_HOSTS: &[&str] = &[
     "openrouter.ai",
@@ -62,20 +59,13 @@ struct ScannerRuntime {
 
 struct DesktopState {
     scanner: Mutex<ScannerRuntime>,
-    http: Client,
     quitting: AtomicBool,
 }
 
 impl DesktopState {
     fn new() -> Self {
-        let http = Client::builder()
-            .timeout(Duration::from_secs(12))
-            .redirect(Policy::none())
-            .build()
-            .expect("RATi HTTP client should be valid");
         Self {
             scanner: Mutex::new(ScannerRuntime::default()),
-            http,
             quitting: AtomicBool::new(false),
         }
     }
@@ -122,35 +112,6 @@ fn desktop_runtime(app: AppHandle, state: State<'_, DesktopState>) -> RuntimePay
 }
 
 #[tauri::command]
-async fn fetch_public(state: State<'_, DesktopState>, path: String) -> Result<Value, String> {
-    let url = safe_public_data_url(&path)
-        .ok_or_else(|| "This public data address is not allowed".to_string())?;
-    let response = state
-        .http
-        .get(url)
-        .header(ACCEPT, "application/json")
-        .send()
-        .await
-        .map_err(|error| format!("RATi Runners request failed: {error}"))?;
-    if !response.status().is_success() {
-        return Err(format!("RATi Runners returned {}", response.status()));
-    }
-    let content_type = response
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if !content_type.contains("application/json") {
-        return Err("RATi Runners returned an invalid response".to_string());
-    }
-    response
-        .json::<Value>()
-        .await
-        .map_err(|error| format!("RATi Runners returned invalid JSON: {error}"))
-}
-
-#[tauri::command]
 fn open_external(app: AppHandle, url: String) -> Result<bool, String> {
     let safe = safe_external_url(&url)
         .ok_or_else(|| "This external address is not allowed".to_string())?;
@@ -180,38 +141,6 @@ fn is_https_host(url: &Url, allowed_hosts: &[&str]) -> bool {
 fn safe_external_url(value: &str) -> Option<Url> {
     let url = Url::parse(value).ok()?;
     is_https_host(&url, EXTERNAL_HOSTS).then_some(url)
-}
-
-fn safe_public_data_url(value: &str) -> Option<Url> {
-    let base = Url::parse(RUNNERS_ORIGIN).ok()?;
-    let url = base.join(value).ok()?;
-    if !is_https_host(&url, &["runners.rati.chat"]) || url.fragment().is_some() {
-        return None;
-    }
-    match url.path() {
-        "/api/radar" | "/api/flash/record" if url.query().is_none() => Some(url),
-        "/api/pulse" if valid_pulse_query(&url) => Some(url),
-        _ => None,
-    }
-}
-
-fn valid_pulse_query(url: &Url) -> bool {
-    let mut seen = HashSet::new();
-    for (key, value) in url.query_pairs() {
-        if !seen.insert(key.to_string()) {
-            return false;
-        }
-        let parsed = match value.parse::<u32>() {
-            Ok(parsed) => parsed,
-            Err(_) => return false,
-        };
-        match key.as_ref() {
-            "offset" if parsed <= 10_000 => {}
-            "limit" if (1..=100).contains(&parsed) => {}
-            _ => return false,
-        }
-    }
-    true
 }
 
 fn initialize_scanner(app: AppHandle) {
@@ -410,11 +339,7 @@ pub fn run() {
         .manage(DesktopState::new())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![
-            desktop_runtime,
-            fetch_public,
-            open_external
-        ])
+        .invoke_handler(tauri::generate_handler![desktop_runtime, open_external])
         .setup(|app| {
             initialize_scanner(app.handle().clone());
             Ok(())
@@ -433,23 +358,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{safe_external_url, safe_public_data_url};
-
-    #[test]
-    fn public_data_allows_only_bounded_feed_routes() {
-        assert_eq!(
-            safe_public_data_url("/api/pulse?offset=0&limit=20")
-                .expect("pulse URL")
-                .as_str(),
-            "https://runners.rati.chat/api/pulse?offset=0&limit=20"
-        );
-        assert!(safe_public_data_url("/api/radar").is_some());
-        assert!(safe_public_data_url("/api/flash/record").is_some());
-        assert!(safe_public_data_url("https://example.com/api/pulse").is_none());
-        assert!(safe_public_data_url("/api/radar?debug=1").is_none());
-        assert!(safe_public_data_url("/api/pulse?limit=1000").is_none());
-        assert!(safe_public_data_url("/api/pulse?limit=20&limit=21").is_none());
-    }
+    use super::safe_external_url;
 
     #[test]
     fn external_urls_require_an_allowlisted_https_host() {

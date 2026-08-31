@@ -11,7 +11,6 @@ export interface RatiDesktopRuntime {
 
 export interface RatiDesktopBridge {
   getRuntime(): Promise<RatiDesktopRuntime>;
-  fetchPublic<T>(path: string): Promise<T>;
   openExternal(url: string): Promise<boolean>;
 }
 

@@ -16,7 +16,7 @@ from runner_watch.provider_contracts import ProviderProvenance
 
 
 def _frame(*, daily: bool) -> pd.DataFrame:
-    now = datetime.now(UTC)
+    now = datetime(2026, 8, 28, 19, 55, tzinfo=UTC)
     if daily:
         index = pd.date_range(end=now - timedelta(days=1), periods=30, freq="D")
     else:

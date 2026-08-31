@@ -32,7 +32,7 @@
     "targets": "all",
     "category": "Finance",
     "shortDescription": "Evidence-first market runner scanner",
-    "longDescription": "RATi Swarm runs a private local scanner or connects to RATi Cloud.",
+    "longDescription": "RATi Swarm combines built-in, RATi, and user-configured scanner sources in one local workspace.",
     "externalBin": [
       "binaries/rati-scanner"
     ],

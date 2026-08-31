@@ -30,7 +30,6 @@ export function installDesktopBridge(): void {
   if (!isTauri()) return;
   const bridge: RatiDesktopBridge = {
     getRuntime,
-    fetchPublic: <T>(path: string) => invoke<T>('fetch_public', { path }),
     openExternal: (url: string) => invoke<boolean>('open_external', { url }),
   };
   window.ratiDesktop = bridge;

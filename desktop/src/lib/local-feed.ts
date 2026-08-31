@@ -1,7 +1,44 @@
 import type { ScanResult, ScanRow } from './node';
-import type { RunnerRow } from './runners';
 
 export const LOCAL_SCAN_MAX_AGE_MS = 15 * 60 * 1000;
+
+export interface SourcedScanRow extends ScanRow {
+  source_id: string;
+  source_name: string;
+  source_color: string;
+}
+
+const SOURCE_COLORS = [
+  '#38bdf8', '#f59e0b', '#f472b6', '#22d3ee', '#fb7185', '#a3e635', '#f97316', '#2dd4bf',
+];
+
+export function sourceColor(sourceId: string): string {
+  if (sourceId === 'rati-cloud') return '#a78bfa';
+  if (sourceId === 'built-in-scanner') return '#60e594';
+  let hash = 0;
+  for (const character of sourceId) hash = ((hash * 31) + character.charCodeAt(0)) >>> 0;
+  return SOURCE_COLORS[hash % SOURCE_COLORS.length];
+}
+
+export function sourcedRows(receipts: ScanResult[]): SourcedScanRow[] {
+  const newestBySource = new Map<string, ScanResult>();
+  for (const receipt of [...receipts].sort(
+    (left, right) => Date.parse(right.finished_at) - Date.parse(left.finished_at),
+  )) {
+    const sourceId = receipt.source_id || 'built-in-scanner';
+    if (!newestBySource.has(sourceId)) newestBySource.set(sourceId, receipt);
+  }
+  const rows = [...newestBySource.values()].flatMap((receipt) => {
+    const sourceId = receipt.source_id || 'built-in-scanner';
+    return receipt.rows.map((row) => ({
+      ...row,
+      source_id: sourceId,
+      source_name: receipt.source_name || 'Built-in scanner',
+      source_color: sourceColor(sourceId),
+    }));
+  });
+  return rows.sort((left, right) => right.score - left.score);
+}
 
 export function latestLocalScan(
   selected: ScanResult | null,
@@ -32,19 +69,6 @@ export function localRadarRows(receipt: ScanResult | null): ScanRow[] {
   });
 }
 
-export function localRunnerRow(row: ScanRow): RunnerRow {
-  return {
-    ticker: row.ticker,
-    price: row.price,
-    change_pct: row.change_pct,
-    trade_state: row.trade_state,
-    source: 'local_scanner',
-    rug_score: row.rug_score,
-    rug_level: row.rug_level,
-    directional_thesis: row.state_reason,
-  };
-}
-
-export function shouldFetchCloudFeeds(mode: 'local' | 'cloud'): boolean {
-  return mode === 'cloud';
+export function sourceLabel(receipt: ScanResult): string {
+  return receipt.source_name || 'Built-in scanner';
 }

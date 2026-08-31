@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "RATi Swarm desktop app for Pulse, Radar, Flash, and local or cloud scanning.",
+  "description": "Local source workspace for built-in, RATi, and user-configured scanners.",
   "author": "RATi",
   "license": "AGPL-3.0-only",
   "scripts": {

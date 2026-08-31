@@ -1,56 +1,64 @@
-# RATi Swarm desktop and scanner architecture
+# RATi Swarm desktop and source architecture
 
-RATi has one open-source product engine and one open-source client. RATi AI Cloud runs the same
-scanner and client in managed mode; it is not a second scoring implementation.
+RATi Swarm is a local workspace that combines scanner and market-data sources. The built-in
+scanner is one source. RATi is another source that can be enabled for free. Users can add any
+compatible remote scanner, and each remote scanner remains an independent source.
 
 ```text
-RATi Swarm -> public Pulse / Radar / Flash APIs -> RATi Cloud at runners.rati.chat
+RATi Swarm desktop
        |
-       +-> selected Scanner API -> local or cloud scanner -> providers and storage
-                                                    |
-                                                    +-> optional OpenRouter
+       +-> local source hub and credential vault
+               |
+               +-> built-in scanner
+               +-> RATi source (optional, preconfigured)
+               +-> remote scanner A (optional URL and token)
+               +-> remote scanner B (optional URL and token)
+               +-> Yahoo, SEC, Nasdaq, and other no-key sources
+               +-> Massive, Fintel, and other optional key sources
 ```
+
+Pulse and Radar use the newest receipt from every enabled scanner source. RATi items have a purple
+source marker, built-in scanner items have a green marker, and added scanners receive stable colors.
+Receipts keep the producing source attached so results are not presented as if they came from one
+global feed.
 
 ## Packages
 
-- `runner_watch` remains the provider-neutral scanner and scoring core.
-- `runner_node` owns the versioned Node API, provider discovery, scanner execution, and user
-  connections. `rati-scanner` starts it as a loopback service by default.
-- `desktop` is the RATi Swarm Svelte and Tauri 2 client. Pulse, Radar, and Flash are its main
-  navigation. A small Rust host owns the native window, approved network calls, and scanner process;
-  it contains no scanning or provider logic.
-- `runner_web` remains the hosted product while its rendered screens move to the shared Node API.
-  It exposes the same Node router during the migration.
+- `runner_watch` is the provider-neutral scanner and scoring core.
+- `runner_node` owns the local source hub, source registry, scanner execution, credential storage,
+  and versioned API. `rati-scanner` starts it as a loopback service by default.
+- `desktop` is the Svelte and Tauri 2 client. A small Rust host owns the native window and bundled
+  scanner process; it contains no scoring or provider logic.
+- `runner_web` remains the separately deployed website.
 
-## Connection modes
+## Source types
 
-The Local/Cloud selector controls both the scanner and every visible data screen. Local mode never
-requests, reads from cache, or renders the hosted product feed. Its Pulse and Radar screens use the
-latest local scan receipt, and Flash shows local scan history. Cloud mode alone requests Pulse,
-Radar, and Flash from `runners.rati.chat`. Scanner work connects to exactly one node URL at a time.
-
-| Mode | Node | Storage | Provider credentials |
+| Source | Default | Setup | Result color |
 | --- | --- | --- | --- |
-| Desktop | Bundled local scanner | SQLite receipts plus a small renderer cache | OS credential vault or environment |
-| Self-hosted | Standalone scanner | SQLite receipts | OS vault, environment, or secret manager |
-| RATi AI Cloud | Managed scanner roles | Postgres and Redis | RATi-managed secrets |
+| Built-in scanner | Enabled | None | Green |
+| RATi | Available | One enable button | Purple |
+| Compatible remote scanner | User-added | HTTPS origin and optional token | Stable source color |
+| Included market-data source | Enabled when approved | None | Source color |
+| Optional provider | Available | API key | Source color |
 
-When no local scanner is connected, saved local receipts still populate Local Pulse, Radar, and
-Flash, but the app cannot create new scans, ticker pulls, or AI research. When Cloud is selected and
-the hosted service is unreachable, its three product screens clearly show their latest cloud cache
-as offline. The two caches are never mixed in the interface.
+The bundled scanner persists its own receipts in SQLite. RATi and remote receipts are read through
+the local source hub and stay labelled with their source. Remote tokens and optional provider keys
+are write-only from the renderer's point of view and are stored in the operating-system credential
+vault.
 
-## Node API v1
-
-The scanner keeps a bounded receipt history in SQLite when `DATABASE_PATH` is set. It provides:
+## Source API v1
 
 ```text
 GET    /api/v1/node
 GET    /api/v1/providers
+GET    /api/v1/source-scans
 GET    /api/v1/tickers/{ticker}
 GET    /api/v1/scans
 POST   /api/v1/scans
 GET    /api/v1/scans/{scan_id}
+PUT    /api/v1/sources/rati-cloud
+POST   /api/v1/connections/scanners
+DELETE /api/v1/connections/scanners/{scanner_id}
 POST   /api/v1/research
 GET    /api/v1/connections/openrouter
 POST   /api/v1/connections/openrouter/start
@@ -62,74 +70,36 @@ PUT    /api/v1/connections/{provider}
 DELETE /api/v1/connections/{provider}
 ```
 
-Scan receipts, research, OAuth flow control, and credential changes require a bearer token. The
-bundled desktop process creates a new token on every launch. A self-hosted scanner refuses to start
-until `RATI_NODE_TOKEN` contains at least 24 characters. Public node and provider capability reads
-remain available so the hosted client can explain what the selected node offers.
+Source reads, scan receipts, research, OAuth flow control, and credential changes require the local
+hub bearer token. The bundled desktop process creates a new token on every launch. A self-hosted
+hub refuses to start until `RATI_NODE_TOKEN` contains at least 24 characters.
 
-Local scan requests always use live providers. Yahoo market data and other enabled no-key sources
-are connected automatically. Local ticker pages pull current daily and five-minute bars through
-the same scanner and show their provider provenance. There is no sample-data request, synthetic
-provider, or invented volume in production.
+Remote scanner origins must use HTTPS. Loopback scanners may use HTTP. The source client refuses
+redirects so it cannot forward a scanner token to another host, bounds response sizes, and validates
+receipt shapes before they enter the workspace.
 
-Cloud nodes do not accept user-triggered scans through the local endpoint. Their
-managed workers continue to populate the existing shared Pulse and Radar data.
+## Free and optional data
 
-## OpenRouter
+The built-in scanner uses Yahoo market bars without an API key and falls back between configured
+providers through the shared provider registry. SEC uses the app's built-in contact identity.
+Other approved no-key sources appear ready automatically.
 
-The recommended local connection uses OpenRouter OAuth with an S256 PKCE challenge. The scanner
-creates the verifier, receives the loopback callback, exchanges the one-use code, and writes the
-resulting key to the credential vault. The Svelte renderer sees only connection state and method.
-Environment variables remain available for headless deployments, and users may paste their own key
-as a direct fallback. Once connected, the standalone `/api/v1/research` route uses that same
-node-owned key; the renderer never receives a stored key back from the API.
-
-Massive, Fintel, and The Odds API keys use the same write-only credential contract. Provider
-factories accept injected vault credentials as well as operator-managed environment variables. Free
-sources require no setup and appear automatically from the shared source catalog.
-
-Disconnecting removes the local credential. It does not revoke an environment-managed credential
-or delete the key from the user's OpenRouter account; the app links to OpenRouter's key settings
-for account-side management.
+Massive, Fintel, and The Odds API are optional. Their cards accept a key directly and never return
+the stored value to the renderer. OpenRouter uses the same write-only rule and also supports its
+OAuth PKCE flow.
 
 ## Desktop security
 
-- The renderer runs in the operating system webview and has no Node.js access.
-- A narrow Tauri command bridge exposes runtime details, approved public reads, and approved links.
-- Tauri capabilities grant the main window only the core permissions it needs.
-- Navigation stays inside the packaged app; external links are checked in Rust before opening.
-- Remote node URLs require HTTPS; loopback development nodes may use HTTP.
-- Public reads are limited to the RATi Runners host and a fixed list of API paths.
-- The bundled scanner binds its own exclusive `127.0.0.1` random port and announces it to Tauri.
-- Local API writes require a fresh per-launch bearer token.
-- Self-hosted API writes require an operator-configured bearer token.
+- The renderer runs in the operating-system webview and has no Node.js access.
+- A narrow Tauri bridge exposes runtime details and approved external links.
+- The bundled scanner binds an exclusive random loopback port and announces it to Tauri.
+- Local API access requires a fresh per-launch bearer token.
+- Remote scanner tokens and provider keys stay in the operating-system credential vault.
+- Navigation stays inside the packaged app; Rust checks external links before opening them.
 
 ## Native builds
 
-The desktop workflow builds the Python scanner as a per-platform sidecar, stages it with the Tauri
-application, launches that frozen executable and checks its API, runs Svelte and Rust checks and
-tests, then creates:
-
-- Debian and AppImage packages on Linux;
-- an app bundle and DMG on macOS;
-- MSI and NSIS installers on Windows.
-
-The native window appears immediately. The Rust host starts the Python sidecar in the background,
-and the renderer reports its starting, ready, or failed state without blocking the rest of the app.
-The scanner and scoring kernel remain Python so the client migration does not create a second engine.
-
-Artifacts are retained for 14 days. Release signing and notarization should be added before public
-distribution; pull request artifacts are intentionally unsigned.
-
-## Hosted app
-
-The production container builds the same Svelte renderer used by Tauri and serves it at
-`/desktop/`. Cloud Scanner points to `https://runners.rati.chat`; Local points to the bundled or
-self-hosted node. Existing Jinja screens and their public read APIs stay available during migration.
-
-## Next slices
-
-1. Add authenticated cloud scanner sessions and optional local-to-cloud artifact sync.
-2. Move Calls, picks, research receipts, and exports into the shared client.
-3. Profile real scanner workloads before moving any proven hot path to a native helper.
-4. Add signing, notarization, and automatic updates for public desktop releases.
+The desktop workflow freezes the Python source hub as a per-platform sidecar, stages it with the
+Tauri application, checks its API, runs Svelte and Rust checks and tests, and creates Linux, macOS,
+and Windows packages. The scanner and scoring kernel remain Python; Rust owns only the native shell
+and process lifecycle.
