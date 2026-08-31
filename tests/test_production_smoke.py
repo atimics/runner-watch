@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import stat
+import subprocess
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -23,3 +25,18 @@ def test_production_smoke_only_checks_real_routes() -> None:
 
     assert checked_endpoints
     assert all(urlsplit(endpoint).path in app_routes for endpoint in checked_endpoints)
+
+
+def test_security_bootstrap_uses_secret_stores_without_deploying_fly() -> None:
+    script_path = Path(__file__).parents[1] / "scripts/configure-production-security"
+    script = script_path.read_text()
+
+    subprocess.run(["sh", "-n", str(script_path)], check=True)
+    assert script_path.stat().st_mode & stat.S_IXUSR
+    assert "openssl rand -hex 32" in script
+    assert "wrangler secret put EDGE_PROXY_SECRET" in script
+    assert "flyctl secrets import" in script
+    assert "--stage" in script
+    assert "flyctl deploy" not in script
+    assert "wrangler deploy" not in script
+    assert "Cloudflare already has EDGE_PROXY_SECRET" in script
