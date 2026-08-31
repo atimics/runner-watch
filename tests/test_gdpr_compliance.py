@@ -354,7 +354,13 @@ def test_runtime_container_is_non_root_and_uses_immutable_base_images() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text()
 
     assert "USER runner" in dockerfile
-    assert dockerfile.count("@sha256:") == 3
+    external_stages = [
+        line
+        for line in dockerfile.splitlines()
+        if line.startswith("FROM ") and "FROM base " not in line
+    ]
+    assert len(external_stages) == 4
+    assert all("@sha256:" in line for line in external_stages)
 
 
 def test_compliance_runbook_covers_operations_not_just_ui() -> None:

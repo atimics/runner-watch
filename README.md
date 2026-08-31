@@ -536,23 +536,26 @@ Configure production in this order so the origin is never enabled before the edg
 3. Stage `EDGE_PROXY_SECRET`, `OPERATIONS_TOKEN`, and the comma-separated
    `REGISTRATION_INVITE_CODES` on the `runner-watch-ratimics` Fly app. Staging avoids an early
    restart.
-4. Deploy the Cloudflare Worker and verify both public hosts still reach `/health`.
-5. Deploy Fly. The committed `REQUIRE_EDGE_PROXY_SECRET=1` and `REGISTRATION_MODE=invite` settings
+4. Store `OPERATIONS_TOKEN` as an encrypted GitHub Actions secret so the production deploy can run
+   its authenticated health check.
+5. Deploy the Cloudflare Worker and verify both public hosts still reach `/health`.
+6. Deploy Fly. The committed `REQUIRE_EDGE_PROXY_SECRET=1` and `REGISTRATION_MODE=invite` settings
    then activate together with the staged secrets.
 
-The one-time bootstrap script automates steps 1–3 with Wrangler and Fly CLI:
+The one-time bootstrap script automates steps 1–4 with Wrangler, Fly CLI, and GitHub CLI:
 
 ```bash
 npx wrangler login
 flyctl auth login
+gh auth login
 ./scripts/configure-production-security
 ```
 
-It requires an interactive terminal, checks both platforms before changing anything, generates five
+It requires an interactive terminal, checks the platforms before changing anything, generates five
 invite codes by default, displays the generated values once for password-manager storage, configures
-the Cloudflare secret, and stages the Fly secrets without deploying Fly. Set `INVITE_COUNT=10` to
-generate ten codes. The script refuses to overwrite an existing edge secret because rotation needs
-a separate coordinated procedure.
+the Cloudflare and GitHub secrets, and stages the Fly secrets without deploying Fly. Set
+`INVITE_COUNT=10` to generate ten codes. The script refuses to overwrite an existing edge secret
+because rotation needs a separate coordinated procedure.
 
 On macOS, use Keychain mode to keep the generated values out of terminal output:
 

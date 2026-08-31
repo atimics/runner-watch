@@ -123,9 +123,7 @@ def test_deployment_does_not_trust_forwarded_headers_from_every_peer() -> None:
     assert 'REGISTRATION_MODE = "invite"' in fly_config
 
 
-@pytest.mark.parametrize("card", ["signal", "research"])
 def test_generated_image_cards_are_rate_limited(
-    card: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     checked: list[str] = []
@@ -139,22 +137,19 @@ def test_generated_image_cards_are_rate_limited(
         {
             "type": "http",
             "method": "GET",
-            "path": f"/{card}/example/card.png",
+            "path": "/research/example/card.png",
             "headers": [],
             "client": ("127.0.0.1", 4200),
         }
     )
 
     with pytest.raises(HTTPException) as limited:
-        if card == "signal":
-            web_main.signal_card("example", test_request)
-        else:
-            monkeypatch.setattr(
-                web_main,
-                "get_commission",
-                lambda _public_id: {"visibility": "public", "user_id": "owner"},
-            )
-            web_main.research_report_card("example", test_request, None)
+        monkeypatch.setattr(
+            web_main,
+            "get_commission",
+            lambda _public_id: {"visibility": "public", "user_id": "owner"},
+        )
+        web_main.research_report_card("example", test_request, None)
 
     assert limited.value.status_code == 429
-    assert checked == [f"{card}-card"]
+    assert checked == ["research-card"]

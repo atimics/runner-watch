@@ -79,9 +79,17 @@ def test_security_bootstrap_uses_secret_stores_without_deploying_fly() -> None:
     assert "wrangler secret put EDGE_PROXY_SECRET" in script
     assert "flyctl secrets import" in script
     assert "--stage" in script
+    assert "gh secret set OPERATIONS_TOKEN" in script
     assert "flyctl deploy" not in script
     assert "wrangler deploy" not in script
     assert "Cloudflare already has EDGE_PROXY_SECRET" in script
     assert "--keychain" in script
     assert "security add-generic-password" in script
     assert "security find-generic-password" in script
+
+
+def test_deploy_health_check_uses_operations_token() -> None:
+    workflow = (Path(__file__).parents[1] / ".github/workflows/fly.yml").read_text()
+
+    assert 'Authorization: Bearer ${OPERATIONS_TOKEN}' in workflow
+    assert "OPERATIONS_TOKEN: ${{ secrets.OPERATIONS_TOKEN }}" in workflow

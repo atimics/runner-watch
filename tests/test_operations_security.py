@@ -8,6 +8,7 @@ from starlette.requests import Request
 
 from runner_web import db, operations
 from runner_web.db import connection, init_db
+from runner_web.main import app
 
 
 def request(token: str = "") -> Request:
@@ -27,6 +28,34 @@ def test_detailed_operations_require_a_bearer_token(monkeypatch: MonkeyPatch) ->
     assert wrong.value.status_code == 404
 
     operations.require_operations_access(request("operator-secret"))
+
+
+def test_every_private_operations_route_requires_the_bearer_token() -> None:
+    private_paths = {
+        "/health/details",
+        "/health/performance",
+        "/api/ranker/status",
+        "/api/ingestion/status",
+        "/api/capabilities",
+    }
+    protected_paths = {
+        route.path
+        for route in operations.router.routes
+        if any(
+            dependency.call is operations.require_operations_access
+            for dependency in route.dependant.dependencies
+        )
+    }
+
+    assert private_paths <= protected_paths
+
+    intelligence_route = next(
+        route for route in app.routes if getattr(route, "path", None) == "/api/intelligence"
+    )
+    assert any(
+        dependency.call is operations.require_operations_access
+        for dependency in intelligence_route.dependant.dependencies
+    )
 
 
 def test_public_readiness_response_is_minimal(monkeypatch: MonkeyPatch) -> None:

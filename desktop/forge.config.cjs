@@ -24,7 +24,6 @@ module.exports = {
       config: { name: 'rati_swarm', setupExe: 'RATi-Swarm-Setup.exe' },
     },
     { name: '@electron-forge/maker-zip', platforms: ['darwin'] },
-    { name: '@electron-forge/maker-dmg', config: { format: 'ULFO' } },
     {
       name: '@electron-forge/maker-deb',
       config: { options: { bin: 'rati-swarm' } },

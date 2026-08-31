@@ -110,7 +110,7 @@ Electron resource, launches that frozen executable and checks its API, runs Svel
 then creates:
 
 - a Debian package on Linux;
-- a DMG and ZIP on macOS;
+- a ZIP on macOS;
 - a Squirrel installer on Windows.
 
 Artifacts are retained for 14 days. Release signing and notarization should be added before public
