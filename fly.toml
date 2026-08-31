@@ -30,6 +30,8 @@ kill_timeout = 30
   PROCESS_ROLE = "web"
   REQUIRE_DATABASE_URL = "1"
   REQUIRE_RATE_LIMIT_HASH_KEY = "1"
+  REQUIRE_EDGE_PROXY_SECRET = "1"
+  REGISTRATION_MODE = "invite"
   # Migrations are additive so the saved image can still start during rollback.
   ALLOW_NEWER_DATABASE_SCHEMA = "1"
   # Fly Postgres uses the encrypted private 6PN and does not accept direct TLS.

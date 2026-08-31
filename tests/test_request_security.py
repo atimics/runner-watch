@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -108,6 +109,7 @@ def test_deployment_does_not_trust_forwarded_headers_from_every_peer() -> None:
     dockerfile = (root / "Dockerfile").read_text()
     fly_config = (root / "fly.toml").read_text()
     worker = (root / "cloudflare-router/src/index.js").read_text()
+    worker_config = json.loads((root / "cloudflare-router/wrangler.jsonc").read_text())
 
     assert "target.origin !== location.origin" in template
     assert "const nextPath = safeNextPath(requestedNext);" in template
@@ -116,6 +118,9 @@ def test_deployment_does_not_trust_forwarded_headers_from_every_peer() -> None:
     assert 'headers.set("X-Rati-Client-IP"' in worker
     assert 'headers.set("X-Rati-Edge-Secret"' in worker
     assert "env.EDGE_PROXY_SECRET" in worker
+    assert worker_config["secrets"]["required"] == ["EDGE_PROXY_SECRET"]
+    assert 'REQUIRE_EDGE_PROXY_SECRET = "1"' in fly_config
+    assert 'REGISTRATION_MODE = "invite"' in fly_config
 
 
 @pytest.mark.parametrize("card", ["signal", "research"])
