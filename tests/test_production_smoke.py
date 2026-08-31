@@ -40,3 +40,6 @@ def test_security_bootstrap_uses_secret_stores_without_deploying_fly() -> None:
     assert "flyctl deploy" not in script
     assert "wrangler deploy" not in script
     assert "Cloudflare already has EDGE_PROXY_SECRET" in script
+    assert "--keychain" in script
+    assert "security add-generic-password" in script
+    assert "security find-generic-password" in script
