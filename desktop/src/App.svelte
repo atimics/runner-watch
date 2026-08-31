@@ -346,7 +346,7 @@
   function currentViewLabel(): string {
     if (view === 'settings') return 'Sources';
     if (view === 'ticker') return selectedTicker?.ticker || 'Ticker';
-    return navItems.find((item) => item.id === view)?.label || 'RATi Swarm';
+    return navItems.find((item) => item.id === view)?.label || 'RATi Runners';
   }
 
   onMount(async () => {
@@ -371,11 +371,11 @@
   });
 </script>
 
-<svelte:head><title>RATi Swarm</title></svelte:head>
+<svelte:head><title>RATi Runners</title></svelte:head>
 
 <div class="app-shell">
   <aside class="app-sidebar">
-    <button class="brand" onclick={() => view = 'pulse'} aria-label="Open Pulse"><span class="brand-mark">R</span><span><b>RATi</b><small>SWARM</small></span></button>
+    <button class="brand" onclick={() => view = 'pulse'} aria-label="Open Pulse"><span class="brand-mark">R</span><span class="brand-copy"><small>RATi</small><b>RUNNERS</b></span></button>
     <nav class="app-nav" aria-label="Main navigation"><small>Workspace</small>{#each navItems as item}<button class:active={view === item.id} onclick={() => view = item.id}><span>{item.icon}</span>{item.label}</button>{/each}</nav>
     <div class="sidebar-actions">
       <small>Sources</small>
@@ -420,6 +420,6 @@
         {#if openrouter.status === 'connected'}<section class="research-section"><div class="section-head"><div><span class="eyebrow">OPTIONAL AI</span><h2>Research</h2></div></div><textarea bind:value={researchPrompt} maxlength="6000" placeholder="What should RATi research?"></textarea><button class="primary" onclick={runResearch} disabled={researching || researchPrompt.trim().length < 3}>{researching ? 'Researching…' : 'Run research'}</button>{#if research}<article class="research-answer"><small>{research.model}</small><p>{research.answer}</p></article>{/if}</section>{/if}
       {/if}
     </main>
-    <footer>RATi Swarm {runtime.appVersion} · {runtime.platform} · Source API v{node?.api_version || '—'} · AGPL-3.0-only · <button class="footer-link" onclick={() => openExternal('https://github.com/atimics/runner-watch')}>Source</button></footer>
+    <footer>RATi Runners {runtime.appVersion} · {runtime.platform} · Source API v{node?.api_version || '—'} · AGPL-3.0-only · <button class="footer-link" onclick={() => openExternal('https://github.com/atimics/runner-watch')}>Source</button></footer>
   </section>
 </div>

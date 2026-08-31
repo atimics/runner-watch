@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "RATi Swarm",
+  "productName": "RATi Runners",
   "version": "0.1.0",
   "identifier": "chat.rati.swarm",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "RATi Swarm",
+        "title": "RATi Runners",
         "width": 1280,
         "height": 820,
         "minWidth": 900,
@@ -32,7 +32,7 @@
     "targets": "all",
     "category": "Finance",
     "shortDescription": "Evidence-first market runner scanner",
-    "longDescription": "RATi Swarm combines built-in, RATi, and user-configured scanner sources in one local workspace.",
+    "longDescription": "RATi Runners combines built-in, RATi, and user-configured scanner sources in one local workspace.",
     "externalBin": [
       "binaries/rati-scanner"
     ],

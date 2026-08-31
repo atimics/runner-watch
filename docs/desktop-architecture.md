@@ -1,11 +1,11 @@
-# RATi Swarm desktop and source architecture
+# RATi Runners desktop and source architecture
 
-RATi Swarm is a local workspace that combines scanner and market-data sources. The built-in
+RATi Runners is a local workspace that combines scanner and market-data sources. The built-in
 scanner is one source. RATi is another source that can be enabled for free. Users can add any
 compatible remote scanner, and each remote scanner remains an independent source.
 
 ```text
-RATi Swarm desktop
+RATi Runners desktop
        |
        +-> local source hub and credential vault
                |

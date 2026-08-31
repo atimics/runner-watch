@@ -345,7 +345,7 @@ pub fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building RATi Swarm")
+        .expect("error while building RATi Runners")
         .run(|app, event| {
             if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
                 app.state::<DesktopState>()

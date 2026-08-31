@@ -1,6 +1,6 @@
-# RATi Swarm, RATi Runners, and RATi Sports
+# RATi Runners and RATi Sports
 
-RATi Swarm is the open-source Svelte/Tauri desktop app. Pulse, Radar, Receipts, Scan, and Sources
+RATi Runners is the open-source Svelte/Tauri desktop app. Pulse, Radar, Receipts, Scan, and Sources
 are its main screens. It runs a local source hub: the bundled scanner works immediately, RATi can
 be enabled as a free source, and any compatible remote scanner can be added by URL. Yahoo and the
 other included no-key sources need no setup. Optional provider keys and remote scanner tokens are
