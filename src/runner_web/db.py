@@ -2661,6 +2661,34 @@ def _migration_049_legal_identity_review(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_050_market_session_reports(db: DatabaseConnection) -> None:
+    """Freeze one pre-market briefing and one post-market recap per trading day."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS market_session_reports (
+            id TEXT PRIMARY KEY,
+            report_day TEXT NOT NULL,
+            report_type TEXT NOT NULL
+                CHECK(report_type IN ('pre_market','post_market')),
+            source_scan_run_id TEXT NOT NULL,
+            comparison_scan_run_id TEXT,
+            as_of TEXT NOT NULL,
+            headline TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            metrics_json TEXT NOT NULL DEFAULT '{}',
+            leaders_json TEXT NOT NULL DEFAULT '[]',
+            turns_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(report_day,report_type)
+        );
+        CREATE INDEX IF NOT EXISTS market_session_reports_day
+            ON market_session_reports(report_day DESC,report_type);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2718,6 +2746,7 @@ MIGRATIONS = (
     Migration(47, "scorecard_and_release_indexes", _migration_047_scorecard_and_release_indexes),
     Migration(48, "shared_comment_subjects", _migration_048_shared_comment_subjects),
     Migration(49, "legal_identity_review", _migration_049_legal_identity_review),
+    Migration(50, "market_session_reports", _migration_050_market_session_reports),
 )
 
 

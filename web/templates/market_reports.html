@@ -1,0 +1,89 @@
+{% extends "mobile_base.html" %}
+{% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
+{% block app_class %}market-reports-app{% endblock %}
+{% block title %}Market turns · RATi Runners{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/market-reports.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+<header class="screen-head market-reports-head">
+  <div><span class="rati-product">RATi RUNNERS</span><h1>Market turns</h1></div>
+  {% if user %}
+    <button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ render_comment_avatar(comment_avatar) }}</button>
+  {% else %}
+    <a class="avatar-button signed-out" href="/login">Log in</a>
+  {% endif %}
+</header>
+
+<section class="market-cycle" aria-label="Report schedule">
+  <div><span>Before the bell</span><strong>9:00 ET</strong><small>What is moving and what carries risk</small></div>
+  <i aria-hidden="true">→</i>
+  <div><span>After the bell</span><strong>4:15 ET</strong><small>What held, joined, or dropped off</small></div>
+</section>
+
+<main class="market-report-list">
+  <header class="market-report-list-head">
+    <div><span>NEXT TURN</span><strong>{{ market_reports.schedule.next_label }}</strong></div>
+    <time datetime="{{ market_reports.schedule.next_at }}">{{ market_reports.schedule.schedule_note }}</time>
+  </header>
+
+  {% if market_reports.reports %}
+    {% for report in market_reports.reports %}
+    <article class="market-report-card report-{{ report.report_type }}"{% if market_reports.featured and report.id == market_reports.featured.id %} data-featured{% endif %}>
+      <header>
+        <div><span>{{ report.label }}</span><time datetime="{{ report.as_of }}">{{ report.report_day }} · {{ report.as_of_label }}</time></div>
+        {% if market_reports.featured and report.id == market_reports.featured.id %}<b>Current turn</b>{% endif %}
+      </header>
+      <h2>{{ report.headline }}</h2>
+      <p>{{ report.summary }}</p>
+
+      <div class="market-report-metrics">
+        {% for metric in report.metric_cards %}
+        <div><strong>{{ metric.value }}</strong><span>{{ metric.label }}</span></div>
+        {% endfor %}
+      </div>
+
+      <section class="market-report-leaders">
+        <h3>{{ 'Closing board' if report.report_type == 'post_market' else 'Watch board' }}</h3>
+        <ol>
+          {% for leader in report.leaders[:5] %}
+          <li>
+            <a href="/t/{{ leader.ticker }}"><b>{{ leader.ticker }}</b><span>#{{ leader.rank }} · score {{ '%.0f'|format(leader.score) }}</span></a>
+            <div>
+              {% if leader.change_pct is not none %}<strong class="{{ 'up' if leader.change_pct > 0 else 'down' if leader.change_pct < 0 else 'flat' }}">{{ '%+.1f'|format(leader.change_pct) }}%</strong>{% endif %}
+              <small>{% if leader.relative_volume is not none %}{{ '%.1f'|format(leader.relative_volume) }}× RVOL{% else %}RVOL —{% endif %}</small>
+            </div>
+          </li>
+          {% endfor %}
+        </ol>
+      </section>
+
+      {% if report.turns %}
+      <section class="market-report-turns">
+        <h3>Since the opening scan</h3>
+        <div>
+          {% for turn in report.turns[:8] %}
+          <span class="turn-{{ turn.status }}">
+            <b>{{ turn.ticker }}</b>
+            <small>
+              {% if turn.status == 'joined' %}joined at #{{ turn.close_rank }}
+              {% elif turn.status == 'dropped' %}dropped from #{{ turn.open_rank }}
+              {% else %}#{{ turn.open_rank }} → #{{ turn.close_rank }}{% if turn.checkpoint_return_pct is not none %} · {{ '%+.1f'|format(turn.checkpoint_return_pct) }}%{% endif %}
+              {% endif %}
+            </small>
+          </span>
+          {% endfor %}
+        </div>
+      </section>
+      {% endif %}
+
+      <footer>Frozen from scanner checkpoints · Research only</footer>
+    </article>
+    {% endfor %}
+  {% else %}
+    <section class="market-report-empty">
+      <span aria-hidden="true">◷</span>
+      <strong>The first turn is not ready yet</strong>
+      <p>The worker will freeze a pre-market briefing after the 9:00 ET scan.</p>
+    </section>
+  {% endif %}
+</main>
+{% endblock %}

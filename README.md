@@ -254,6 +254,19 @@ stock or sports scorecards. Durable edge jobs survive a normal web-worker restar
 server-to-customer model URLs are intentionally not supported in this release because they need a
 separate data-sharing consent and network-isolation design.
 
+## Market turns
+
+RATi freezes two public market reports on weekdays instead of treating every scan as an unrelated
+real-time update. The **pre-market briefing** is due at 9:00 a.m. Eastern and uses the latest saved
+scan from 4:00–9:15 a.m. The **post-market recap** is due at 4:15 p.m. Eastern and compares the first
+regular-hours scan with a close checkpoint from 3:30–4:20 p.m.
+
+Each report keeps its source scan IDs, timestamp, breadth, leaders, risk count, and board changes.
+Reports are written once per market day, survive worker restarts, and are available at `/reports`
+and `/api/market-reports`. If the required scan is missing, the worker waits rather than publishing
+a report from stale or unrelated data. Exchange holidays and exceptional early closes still follow
+the scanner's current availability rules.
+
 ## Flash wallet
 
 `/billing` is now the Flash wallet. It has no subscription or Pro gate. A user starts at zero and
