@@ -16,6 +16,8 @@ const MAX_LOGIT: i64 = 32 * WEIGHT_SCALE;
 const MAX_NORMALIZED_FEATURE: i64 = 16 * NORMALIZED_SCALE;
 const LEARNING_RATE_MICROS: i64 = 60_000;
 const L2_MICROS: i64 = 3_000;
+const VALIDATION_CHECK_INTERVAL: usize = 10;
+const EARLY_STOPPING_PATIENCE: usize = 8;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct IntegerArtifact {
@@ -85,6 +87,16 @@ struct NormalizedTrainingRow {
     baseline_score_milli: i64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct TrainingControl {
+    requested_epochs: usize,
+    trained_epochs: usize,
+    best_epoch: usize,
+    validation_checks: usize,
+    validation_log_loss_micros: i64,
+    stopped_early: bool,
+}
+
 pub fn execute(request: Request) -> Result<Value, String> {
     match request {
         Request::Train {
@@ -141,7 +153,12 @@ fn train(
         timeout_return_bp: median_timeout_return(&normalized_train),
     };
 
-    fit(&mut artifact, &normalized_train, epochs.max(1));
+    let training_control = fit(
+        &mut artifact,
+        &normalized_train,
+        &normalized_validation,
+        epochs.max(1),
+    );
     artifact.temperature_milli = calibrate_temperature(&artifact, &normalized_validation);
 
     let train_metrics = evaluate(&artifact, &normalized_train);
@@ -160,6 +177,7 @@ fn train(
         "feature_names": artifact.feature_names,
         "target": "hit_plus_8_before_minus_4_within_60_minutes",
         "class_names": ["down", "timeout", "up"],
+        "training_control": training_control,
         "temperature_milli": artifact.temperature_milli,
         "timeout_return_bp": artifact.timeout_return_bp,
         "split": "oldest_80_percent_train_next_10_percent_validation_newest_10_percent_test",
@@ -252,78 +270,121 @@ fn normalize_features(features: &[i64], means: &[i64], scales: &[i64]) -> Vec<i6
         .collect()
 }
 
-fn fit(artifact: &mut IntegerArtifact, groups: &[Vec<NormalizedTrainingRow>], epochs: usize) {
+fn fit(
+    artifact: &mut IntegerArtifact,
+    groups: &[Vec<NormalizedTrainingRow>],
+    validation_groups: &[Vec<NormalizedTrainingRow>],
+    epochs: usize,
+) -> TrainingControl {
+    let requested_epochs = epochs.max(1);
+    let mut best_artifact = artifact.clone();
+    let mut best_epoch = 0;
+    let mut best_loss = multiclass_log_loss(artifact, validation_groups, TEMPERATURE_SCALE);
+    let mut trained_epochs = 0;
+    let mut validation_checks = 0;
+    let mut checks_without_improvement = 0;
+
+    for epoch in 0..requested_epochs {
+        fit_epoch(artifact, groups, epoch);
+        trained_epochs = epoch + 1;
+        if trained_epochs % VALIDATION_CHECK_INTERVAL != 0 && trained_epochs != requested_epochs {
+            continue;
+        }
+        validation_checks += 1;
+        let loss = multiclass_log_loss(artifact, validation_groups, TEMPERATURE_SCALE);
+        if loss < best_loss {
+            best_loss = loss;
+            best_epoch = trained_epochs;
+            best_artifact = artifact.clone();
+            checks_without_improvement = 0;
+        } else {
+            checks_without_improvement += 1;
+        }
+        if checks_without_improvement >= EARLY_STOPPING_PATIENCE {
+            break;
+        }
+    }
+
+    *artifact = best_artifact;
+    TrainingControl {
+        requested_epochs,
+        trained_epochs,
+        best_epoch,
+        validation_checks,
+        validation_log_loss_micros: best_loss,
+        stopped_early: trained_epochs < requested_epochs,
+    }
+}
+
+fn fit_epoch(artifact: &mut IntegerArtifact, groups: &[Vec<NormalizedTrainingRow>], epoch: usize) {
     let feature_count = artifact.weights.len();
     let group_count = groups.len() as i128;
-    for epoch in 0..epochs {
-        let mut weight_gradient = vec![[0_i128; 3]; feature_count];
-        let mut bias_gradient = [0_i128; 3];
-        for group in groups {
-            let mut group_weight_gradient = vec![[0_i128; 3]; feature_count];
-            let mut group_bias_gradient = [0_i128; 3];
-            for row in group {
-                let probabilities = probabilities(artifact, &row.features, TEMPERATURE_SCALE);
-                for class in 0..3 {
-                    let target = if row.outcome == class {
-                        PROBABILITY_SCALE
-                    } else {
-                        0
-                    };
-                    let difference = i128::from(probabilities[class] - target);
-                    group_bias_gradient[class] += difference;
-                    for (feature_index, feature) in row.features.iter().enumerate() {
-                        group_weight_gradient[feature_index][class] +=
-                            i128::from(*feature) * difference;
-                    }
-                }
-            }
-            let group_size = group.len() as i128;
+    let mut weight_gradient = vec![[0_i128; 3]; feature_count];
+    let mut bias_gradient = [0_i128; 3];
+    for group in groups {
+        let mut group_weight_gradient = vec![[0_i128; 3]; feature_count];
+        let mut group_bias_gradient = [0_i128; 3];
+        for row in group {
+            let probabilities = probabilities(artifact, &row.features, TEMPERATURE_SCALE);
             for class in 0..3 {
-                bias_gradient[class] += group_bias_gradient[class] / group_size;
-            }
-            for feature_index in 0..feature_count {
-                for class in 0..3 {
-                    weight_gradient[feature_index][class] +=
-                        group_weight_gradient[feature_index][class] / group_size;
+                let target = if row.outcome == class {
+                    PROBABILITY_SCALE
+                } else {
+                    0
+                };
+                let difference = i128::from(probabilities[class] - target);
+                group_bias_gradient[class] += difference;
+                for (feature_index, feature) in row.features.iter().enumerate() {
+                    group_weight_gradient[feature_index][class] +=
+                        i128::from(*feature) * difference;
                 }
             }
         }
-
-        let step_micros = i128::from(LEARNING_RATE_MICROS) * 250 / (250 + epoch as i128);
-        let weight_denominator = i128::from(1_000_000)
-            * group_count
-            * i128::from(NORMALIZED_SCALE)
-            * i128::from(PROBABILITY_SCALE);
-        let bias_denominator = i128::from(1_000_000) * group_count * i128::from(PROBABILITY_SCALE);
-        let weight_clip =
-            10 * group_count * i128::from(NORMALIZED_SCALE) * i128::from(PROBABILITY_SCALE);
-        let bias_clip = 10 * group_count * i128::from(PROBABILITY_SCALE);
-
-        for (weight_row, gradient_row) in artifact.weights.iter_mut().zip(&weight_gradient) {
-            for (weight, raw_gradient) in weight_row.iter_mut().zip(gradient_row) {
-                let gradient = (*raw_gradient).clamp(-weight_clip, weight_clip);
-                let update = rounded_div(
-                    step_micros * i128::from(WEIGHT_SCALE) * gradient,
-                    weight_denominator,
-                );
-                let l2_update = rounded_div(
-                    step_micros * i128::from(L2_MICROS) * i128::from(*weight),
-                    1_000_000_i128 * 1_000_000_i128,
-                );
-                *weight = (i128::from(*weight) - update - l2_update)
-                    .clamp(i128::from(-MAX_LOGIT), i128::from(MAX_LOGIT))
-                    as i64;
+        let group_size = group.len() as i128;
+        for class in 0..3 {
+            bias_gradient[class] += group_bias_gradient[class] / group_size;
+        }
+        for feature_index in 0..feature_count {
+            for class in 0..3 {
+                weight_gradient[feature_index][class] +=
+                    group_weight_gradient[feature_index][class] / group_size;
             }
         }
-        for (bias, raw_gradient) in artifact.bias.iter_mut().zip(&bias_gradient) {
-            let gradient = (*raw_gradient).clamp(-bias_clip, bias_clip);
+    }
+
+    let step_micros = i128::from(LEARNING_RATE_MICROS) * 250 / (250 + epoch as i128);
+    let weight_denominator = i128::from(1_000_000)
+        * group_count
+        * i128::from(NORMALIZED_SCALE)
+        * i128::from(PROBABILITY_SCALE);
+    let bias_denominator = i128::from(1_000_000) * group_count * i128::from(PROBABILITY_SCALE);
+    let weight_clip =
+        10 * group_count * i128::from(NORMALIZED_SCALE) * i128::from(PROBABILITY_SCALE);
+    let bias_clip = 10 * group_count * i128::from(PROBABILITY_SCALE);
+
+    for (weight_row, gradient_row) in artifact.weights.iter_mut().zip(&weight_gradient) {
+        for (weight, raw_gradient) in weight_row.iter_mut().zip(gradient_row) {
+            let gradient = (*raw_gradient).clamp(-weight_clip, weight_clip);
             let update = rounded_div(
                 step_micros * i128::from(WEIGHT_SCALE) * gradient,
-                bias_denominator,
+                weight_denominator,
             );
-            *bias = (i128::from(*bias) - update)
+            let l2_update = rounded_div(
+                step_micros * i128::from(L2_MICROS) * i128::from(*weight),
+                1_000_000_i128 * 1_000_000_i128,
+            );
+            *weight = (i128::from(*weight) - update - l2_update)
                 .clamp(i128::from(-MAX_LOGIT), i128::from(MAX_LOGIT)) as i64;
         }
+    }
+    for (bias, raw_gradient) in artifact.bias.iter_mut().zip(&bias_gradient) {
+        let gradient = (*raw_gradient).clamp(-bias_clip, bias_clip);
+        let update = rounded_div(
+            step_micros * i128::from(WEIGHT_SCALE) * gradient,
+            bias_denominator,
+        );
+        *bias = (i128::from(*bias) - update).clamp(i128::from(-MAX_LOGIT), i128::from(MAX_LOGIT))
+            as i64;
     }
 }
 
@@ -423,6 +484,21 @@ fn negative_log_micros(probability: i64) -> i64 {
     }
     let log_scaled_micros = 2 * series / 1_000;
     powers * LN_2_MICROS - log_scaled_micros as i64
+}
+
+fn multiclass_log_loss(
+    artifact: &IntegerArtifact,
+    groups: &[Vec<NormalizedTrainingRow>],
+    temperature_milli: i64,
+) -> i64 {
+    let mut loss = 0_i128;
+    let mut rows = 0_i128;
+    for row in groups.iter().flatten() {
+        let probability = probabilities(artifact, &row.features, temperature_milli)[row.outcome];
+        loss += i128::from(negative_log_micros(probability));
+        rows += 1;
+    }
+    rounded_div(loss, rows.max(1)) as i64
 }
 
 fn expected_return_bp(probabilities: [i64; 3], timeout_return_bp: i64) -> i64 {
@@ -729,6 +805,34 @@ mod tests {
         )
         .unwrap();
         assert!(predictions[1].probability_up_ppm > predictions[0].probability_up_ppm);
+    }
+
+    #[test]
+    fn training_stops_and_restores_the_best_validation_checkpoint() {
+        let groups: Vec<Vec<TrainingRow>> = (0..12)
+            .map(|group| {
+                let outcomes = if group < 10 { [0, 1, 2] } else { [2, 1, 0] };
+                (-1_i64..=1)
+                    .enumerate()
+                    .map(|(candidate, feature)| TrainingRow {
+                        ticker: format!("T{candidate}"),
+                        features: vec![feature * FEATURE_SCALE],
+                        outcome: outcomes[candidate],
+                        outcome_return_bp: [-400, 0, 800][candidate],
+                        baseline_score_milli: (3 - candidate as i64) * FEATURE_SCALE,
+                    })
+                    .collect()
+            })
+            .collect();
+
+        let result = train(vec!["x".into()], groups, 500).unwrap();
+        let control = &result["metrics"]["training_control"];
+        let trained_epochs = control["trained_epochs"].as_u64().unwrap();
+        let best_epoch = control["best_epoch"].as_u64().unwrap();
+
+        assert_eq!(control["stopped_early"], true);
+        assert!(best_epoch < trained_epochs);
+        assert!(trained_epochs < 500);
     }
 
     #[test]

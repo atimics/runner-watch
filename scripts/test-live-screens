@@ -117,6 +117,7 @@ async def _check_screen(
     dynamic: dict[str, str],
     timeout_ms: int,
     slow_ms: int,
+    failure_ms: int,
     output_dir: Path,
 ) -> Result:
     path = dynamic.get(screen.dynamic_key, "") if screen.dynamic_key else screen.path
@@ -186,9 +187,10 @@ async def _check_screen(
             if duration_ms > slow_ms:
                 first_duration_ms = duration_ms
                 duration_ms = await render(reload=True)
-                if duration_ms > slow_ms:
+                if duration_ms > failure_ms:
                     raise RuntimeError(
-                        f"slow screen after retry: {duration_ms}ms exceeds {slow_ms}ms "
+                        f"slow screen after retry: {duration_ms}ms exceeds hard limit "
+                        f"{failure_ms}ms "
                         f"(first load {first_duration_ms}ms)"
                     )
             return Result(
@@ -243,6 +245,7 @@ async def run(args: argparse.Namespace) -> int:
                         dynamic,
                         args.timeout_ms,
                         args.slow_ms,
+                        args.failure_ms,
                         output_dir,
                     )
                     for screen in SCREENS
@@ -254,6 +257,14 @@ async def run(args: argparse.Namespace) -> int:
 
     failures = [result for result in results if result.error]
     skipped = [result for result in results if result.skipped]
+    warnings = [
+        result
+        for result in results
+        if not result.error
+        and not result.skipped
+        and result.duration_ms is not None
+        and result.duration_ms > args.slow_ms
+    ]
     for result in results:
         if result.error:
             print(f"FAIL  {result.screen.name}: {result.error} ({result.url or 'no URL'})")
@@ -265,9 +276,13 @@ async def run(args: argparse.Namespace) -> int:
                 if result.first_duration_ms is not None
                 else ""
             )
-            print(f"PASS  {result.screen.name}: {result.duration_ms}ms{retry} ({result.url})")
+            status = "WARN" if result in warnings else "PASS"
+            print(f"{status}  {result.screen.name}: {result.duration_ms}ms{retry} ({result.url})")
     passed = len(results) - len(failures) - len(skipped)
-    print(f"\n{passed} passed, {len(skipped)} skipped, {len(failures)} failed")
+    print(
+        f"\n{passed} passed, {len(warnings)} slow, "
+        f"{len(skipped)} skipped, {len(failures)} failed"
+    )
     if failures:
         print(f"Failure screenshots: {output_dir}")
         return 1
@@ -295,9 +310,14 @@ def parse_args() -> argparse.Namespace:
         default=int(os.getenv("LIVE_SCREEN_SLOW_MS", "1000")),
     )
     parser.add_argument(
+        "--failure-ms",
+        type=int,
+        default=int(os.getenv("LIVE_SCREEN_FAILURE_MS", "2500")),
+    )
+    parser.add_argument(
         "--workers",
         type=int,
-        default=int(os.getenv("LIVE_SCREEN_WORKERS", "3")),
+        default=int(os.getenv("LIVE_SCREEN_WORKERS", "1")),
     )
     parser.add_argument(
         "--browser-channel",

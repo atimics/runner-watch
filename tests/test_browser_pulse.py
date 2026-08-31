@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,17 @@ def _pulse(
 
 def _rendered_pulse(monkeypatch, payload: dict[str, Any]) -> str:
     monkeypatch.setattr(web_main, "pulse_data", lambda **_kwargs: payload)
+    monkeypatch.setattr(
+        web_main,
+        "market_reports_overview",
+        lambda **_kwargs: {
+            "featured": None,
+            "schedule": {
+                "next_label": "Pre-market briefing",
+                "schedule_note": "Weekdays · 9:00 ET and 4:15 ET",
+            },
+        },
+    )
     html = web_main.home(_request(), None).body.decode()
     live_list_script = (ROOT / "web/static/live-list.js").read_text()
     ticker_script = (ROOT / "web/static/ticker-row.js").read_text()
@@ -118,9 +130,36 @@ def test_empty_flash_record_has_no_layout_gap(page: Page, monkeypatch) -> None:
     assert scorecard.is_hidden()
     assert scorecard.evaluate("element => element.getBoundingClientRect().height") == 0
     assert "Session +4.2%" in page.locator('[data-ticker-row="AAA"] .quote').text_content()
+    assert page.locator(".market-turn-strip").is_visible()
+    assert page.locator(".market-turn-strip strong").text_content() == "Pre-market briefing"
     assert page.evaluate(
         "TickerRow.ago(new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString())"
     ) == "3h ago"
+    assert errors == []
+
+
+def test_market_row_age_uses_quote_time_not_scan_entry_time(page: Page, monkeypatch) -> None:
+    entered_at = datetime.now(UTC).isoformat()
+    quote_time = (datetime.now(UTC) - timedelta(hours=3)).isoformat()
+    row = {
+        **_row("OLD", entered_at),
+        "section": "scored",
+        "source": "market",
+        "quote_time": quote_time,
+    }
+    html = _rendered_pulse(monkeypatch, _pulse(row))
+    errors = _load(page, html, [])
+
+    rendered_age = page.evaluate(
+        """row => {
+          const holder = document.createElement('div');
+          holder.innerHTML = TickerRow.render(row);
+          return holder.querySelector('.ticker-age').textContent;
+        }""",
+        row,
+    )
+
+    assert rendered_age == "3h ago"
     assert errors == []
 
 

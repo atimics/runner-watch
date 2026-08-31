@@ -41,6 +41,7 @@ from runner_web.main import (
     pulse_data,
     radar_data,
     register_options,
+    scan_collection_allowed,
     templates,
     ticker_chart_detail_payload,
     ticker_charts_payload,
@@ -55,6 +56,18 @@ def _test_flash_forecast() -> dict[str, Any]:
         "probability_up": 0.5,
         "reason": "The frozen evidence does not support a directional call.",
     }
+
+
+def _approve_test_source(source: str, feed: str) -> None:
+    with connection() as database:
+        database.execute(
+            """
+            UPDATE source_registry
+            SET review_status='approved',display_policy='source_link_with_attribution',enabled=1
+            WHERE source=? AND feed=?
+            """,
+            (source, feed),
+        )
 
 
 @pytest.mark.parametrize(
@@ -544,6 +557,7 @@ def insert_scored_snapshot(
     captured_at: str,
     *,
     price: float = 1.25,
+    quote_time: str | None = None,
 ) -> None:
     with connection() as database:
         database.execute(
@@ -569,7 +583,7 @@ def insert_scored_snapshot(
                 4.0,
                 0.8,
                 800_000,
-                captured_at,
+                quote_time or captured_at,
                 '["Volume acceleration"]',
                 "[]",
                 captured_at,
@@ -578,6 +592,23 @@ def insert_scored_snapshot(
             ),
         )
         _record_pulse_entries_for_run(database, run_id, captured_at)
+
+
+@pytest.mark.parametrize(
+    ("timestamp", "allowed"),
+    [
+        (datetime(2026, 8, 31, 7, 59, tzinfo=UTC), False),
+        (datetime(2026, 8, 31, 8, 0, tzinfo=UTC), True),
+        (datetime(2026, 8, 31, 23, 59, tzinfo=UTC), True),
+        (datetime(2026, 9, 1, 0, 0, tzinfo=UTC), False),
+        (datetime(2026, 8, 30, 14, 0, tzinfo=UTC), False),
+    ],
+)
+def test_scan_collection_only_runs_during_the_weekday_market_window(
+    timestamp: datetime,
+    allowed: bool,
+) -> None:
+    assert scan_collection_allowed(timestamp) is allowed
 
 
 def test_storage_prune_removes_old_raw_snapshots_but_keeps_public_receipts(
@@ -718,6 +749,31 @@ def test_pulse_only_lists_tickers_from_the_latest_scored_scan(
     assert result["rows"][0]["event_count"] == 1
     assert result["rows"][0]["section"] == "scored"
     assert "EVENT" not in {row["ticker"] for row in result["rows"]}
+
+
+def test_pulse_freshness_uses_the_market_quote_time(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "quote-freshness.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    quote_time = (datetime.now(UTC) - timedelta(hours=53)).isoformat()
+    insert_scan_run("quote-run", captured_at, 1)
+    insert_scored_snapshot(
+        "quote-snapshot",
+        "quote-run",
+        "OLD",
+        42,
+        1,
+        captured_at,
+        quote_time=quote_time,
+    )
+
+    result = pulse_data()
+
+    assert result["updated_at"] == quote_time
+    assert result["market_updated_at"] == quote_time
+    assert result["rows"][0]["quote_time"] == quote_time
 
 
 def test_pulse_reuses_the_shared_base_payload(
@@ -1010,6 +1066,7 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
             ),
         )
     )
+    _approve_test_source("test_discovery", "mixed")
 
     pulse = pulse_data()["rows"][0]
     radar = radar_data()[0]
@@ -1080,6 +1137,7 @@ def test_negative_social_counts_do_not_break_pulse_or_radar(
             ),
         )
     )
+    _approve_test_source("test_discovery", "social")
     web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
 
     pulse = pulse_data()["rows"][0]
@@ -1325,6 +1383,7 @@ def test_stored_halt_must_be_recently_confirmed(tmp_path: Path, monkeypatch: Mon
             ),
         )
     )
+    _approve_test_source("test_halts", "trade_halts")
     with connection() as database:
         database.execute(
             "UPDATE market_events SET last_collected_at=? WHERE ticker='STALE'",
@@ -1375,6 +1434,7 @@ def test_market_risk_context_ignores_news_payloads(
             ),
         )
     )
+    _approve_test_source("test_risk_events", "events")
 
     with connection() as database:
         context = _stored_market_risk_contexts(database, ["RISK"])["RISK"]
@@ -2022,6 +2082,7 @@ def test_chart_annotations_keep_the_real_pulse_entry_and_detected_events(
             ),
         )
     )
+    _approve_test_source("test_media", "social")
 
     entry = _pulse_entry_markers(["ONE"])["ONE"]
     annotations = _chart_annotations(["ONE"])["ONE"]

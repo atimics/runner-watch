@@ -52,6 +52,7 @@ from webauthn.helpers.structs import (
 
 from runner_node.api import create_node_router
 from runner_node.runtime import NODE_SERVICE
+from runner_watch import __version__ as APP_VERSION
 from runner_watch.chart_features import analyze_market_structure, clean_ohlcv
 from runner_watch.massive_data import refresh_massive_backfill
 from runner_watch.models import ScanSettings
@@ -125,6 +126,7 @@ from runner_web.llm_routing import (
     route_for_user,
 )
 from runner_web.market_clock import market_clock
+from runner_web.market_reports import market_reports_overview, refresh_market_reports
 from runner_web.operations import router as operations_router
 from runner_web.operations import runtime_capabilities as runtime_capabilities
 from runner_web.operations import worker_heartbeat_key
@@ -226,6 +228,11 @@ AI_REPORT_MODEL = os.getenv("AI_REPORT_MODEL", "gpt-5.6-terra")
 AI_REPORT_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 RATE_LIMIT_HASH_KEY_VALUE = os.getenv("RATE_LIMIT_HASH_KEY", "").strip()
+APP_BUILD_SHA = re.sub(
+    r"[^A-Za-z0-9._-]",
+    "-",
+    os.getenv("APP_BUILD_SHA", "dev").strip() or "dev",
+)[:64]
 
 
 def _rate_limit_hash_key(value: str) -> bytes:
@@ -522,6 +529,7 @@ def _start_worker_tasks() -> list[asyncio.Task[Any]]:
         asyncio.create_task(apewisdom_source_worker(), name="apewisdom"),
         asyncio.create_task(outcome_worker(), name="outcomes"),
         asyncio.create_task(scan_collection_worker(), name="scan-collection"),
+        asyncio.create_task(market_report_worker(), name="market-reports"),
         asyncio.create_task(massive_backfill_worker(), name="massive-backfill"),
         asyncio.create_task(research_job_worker(), name="research-jobs"),
         asyncio.create_task(report_release_worker(), name="report-release"),
@@ -652,6 +660,17 @@ if DESKTOP_RENDERER_ROOT.is_dir():
         StaticFiles(directory=str(DESKTOP_RENDERER_ROOT), html=True),
         name="desktop",
     )
+
+
+@app.get("/api/version")
+def version_api() -> dict[str, str]:
+    """Identify the running application and static-asset builds."""
+
+    return {
+        "version": APP_VERSION,
+        "build_sha": APP_BUILD_SHA,
+        "static_version": STATIC_VERSION,
+    }
 
 
 def now() -> datetime:
@@ -1104,15 +1123,18 @@ async def kol_worker() -> None:
         await asyncio.sleep(60)
 
 
+def scan_collection_allowed(value: datetime) -> bool:
+    """Return whether a live market scan may be collected at this time."""
+
+    eastern_now = value.astimezone(EASTERN)
+    local_time = eastern_now.time().replace(tzinfo=None)
+    return eastern_now.weekday() < 5 and clock_time(4) <= local_time < clock_time(20)
+
+
 async def scan_collection_worker() -> None:
     await asyncio.sleep(15)
     while True:
-        eastern_now = now().astimezone(EASTERN)
-        market_window = clock_time(4) <= eastern_now.time().replace(tzinfo=None) < clock_time(20)
-        with connection() as db:
-            has_saved_scan = db.execute("SELECT 1 FROM scan_runs LIMIT 1").fetchone() is not None
-        should_scan = (eastern_now.weekday() < 5 and market_window) or not has_saved_scan
-        if should_scan:
+        if scan_collection_allowed(now()):
             try:
                 result = await run_in_threadpool(run_scan, "penny")
                 worker_state("background_scan_last_run", str(result.get("scan_run_id") or "cached"))
@@ -1122,6 +1144,25 @@ async def scan_collection_worker() -> None:
             except Exception as exc:
                 worker_state("background_scan_last_error", str(exc)[:500])
         await asyncio.sleep(BACKGROUND_SCAN_INTERVAL_SECONDS)
+
+
+async def market_report_worker() -> None:
+    await asyncio.sleep(25)
+    while True:
+        try:
+            result = await run_in_threadpool(refresh_market_reports)
+            worker_state("market_reports_last_refresh", json.dumps(result, separators=(",", ":")))
+            worker_state("market_reports_last_error", "")
+            awaiting_scan = any(
+                item.get("status") == "awaiting_scan" for item in result.get("results", [])
+            )
+            delay = 60 if awaiting_scan else 300
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            worker_state("market_reports_last_error", str(exc)[:500])
+            delay = 60
+        await asyncio.sleep(delay)
 
 
 async def massive_backfill_worker() -> None:
@@ -1170,6 +1211,8 @@ async def security_headers(request: Request, call_next: Any) -> Response:
     if "runner_visitor" in request.cookies:
         response.delete_cookie("runner_visitor", path="/")
     response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-RATi-Build"] = APP_BUILD_SHA
+    response.headers["X-RATi-Assets"] = STATIC_VERSION
     panel_path = _is_panel_path(request.url.path)
     frame_ancestors = "'self'" if panel_path else "'none'"
     response.headers["X-Frame-Options"] = "SAMEORIGIN" if panel_path else "DENY"
@@ -1895,6 +1938,31 @@ def roadmap_api(request: Request) -> dict[str, Any]:
 def api_market_clock(request: Request) -> dict[str, Any]:
     enforce_rate(request, "market-clock", limit=120, seconds=60)
     return market_clock()
+
+
+@app.get("/reports", response_class=HTMLResponse)
+def market_reports_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> Response:
+    if product_for_request(request) == "sports":
+        return RedirectResponse(f"{RUNNERS_ORIGIN}/reports", status_code=307)
+    return templates.TemplateResponse(
+        request=request,
+        name="market_reports.html",
+        context=page_context(
+            request,
+            runner_session,
+            market_reports=market_reports_overview(history_limit=14),
+            active_tab="pulse",
+        ),
+    )
+
+
+@app.get("/api/market-reports")
+def market_reports_api(request: Request) -> Response:
+    enforce_rate(request, "market-reports", limit=120, seconds=60)
+    return _conditional_json_response(request, market_reports_overview(history_limit=14))
 
 
 @app.get("/community", response_class=HTMLResponse)
@@ -2747,7 +2815,7 @@ def _pulse_data_uncached() -> dict[str, Any]:
         market_event_rows = db.execute(
             """
             SELECT source,ticker,event_type,status,event_at,source_url,payload_json
-            FROM market_events
+            FROM public_market_events
             WHERE event_at>? ORDER BY event_at DESC,last_collected_at DESC
             """,
             (event_cutoff,),
@@ -2948,7 +3016,10 @@ def _pulse_data_uncached() -> dict[str, Any]:
     for custom_rank, runner in enumerate(runner_rows, start=1):
         runner["custom_rank"] = custom_rank
     _attach_pulse_entries(runner_rows)
-    market_updated_at = str(latest_run["captured_at"]) if latest_run else None
+    quote_times = [str(row["quote_time"]) for row in market_rows if row["quote_time"]]
+    market_updated_at = max(quote_times) if quote_times else None
+    if market_updated_at is None and latest_run:
+        market_updated_at = str(latest_run["captured_at"])
     return {
         "rows": runner_rows,
         "stats": {
@@ -5637,6 +5708,7 @@ def home(
             request,
             runner_session,
             pulse=_public_pulse_data(limit=20),
+            market_reports=market_reports_overview(history_limit=0),
             active_tab="pulse",
         ),
     )
@@ -6221,7 +6293,7 @@ def _ticker_exists(ticker: str) -> bool:
                 SELECT 1 FROM sec_companies WHERE ticker=?
                 UNION SELECT 1 FROM sec_filings WHERE ticker=?
                 UNION SELECT 1 FROM scan_snapshots WHERE ticker=?
-                UNION SELECT 1 FROM market_events WHERE ticker=? LIMIT 1
+                UNION SELECT 1 FROM public_market_events WHERE ticker=? LIMIT 1
                 """,
                 (ticker, ticker, ticker, ticker),
             ).fetchone()
@@ -6277,7 +6349,7 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
         external_rows = db.execute(
             """
             SELECT source,ticker,event_type,status,event_at,source_url,payload_json
-            FROM market_events WHERE ticker=? AND event_at>?
+            FROM public_market_events WHERE ticker=? AND event_at>?
             ORDER BY event_at DESC,last_collected_at DESC LIMIT 30
             """,
             (ticker, iso(now() - timedelta(days=3))),
@@ -6540,7 +6612,7 @@ def _chart_annotations(tickers: list[str]) -> dict[str, list[dict[str, Any]]]:
         market_rows = db.execute(
             f"""
             SELECT source,ticker,event_type,status,event_at,source_url,payload_json
-            FROM market_events
+            FROM public_market_events
             WHERE ticker IN ({placeholders}) AND event_at>=?
             ORDER BY event_at
             """,
@@ -7147,7 +7219,7 @@ def _radar_base_data_uncached() -> list[dict[str, Any]]:
                            PARTITION BY m.ticker
                            ORDER BY m.event_at DESC,m.last_collected_at DESC
                        ) AS radar_position
-                FROM market_events m
+                FROM public_market_events m
                 WHERE m.event_at>? AND COALESCE(m.ticker,'')!=''
             )
             SELECT * FROM ranked WHERE radar_position=1
@@ -8803,7 +8875,7 @@ def _stored_market_risk_contexts(database: Any, tickers: list[str]) -> dict[str,
     rows = database.execute(
         f"""
         SELECT ticker,event_type,status,event_at,last_collected_at,payload_json
-        FROM market_events
+        FROM public_market_events
         WHERE ticker IN ({placeholders}) AND event_at>?
               AND event_type IN (
                   'trading_halt','reverse_split','corporate_action','security_action'
