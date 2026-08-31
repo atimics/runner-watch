@@ -103,18 +103,20 @@ def test_live_screen_manifest_returns_only_public_path_keys(
     }
 
 
-def test_live_screen_sweep_defaults_to_one_worker_and_one_second(
+def test_live_screen_sweep_defaults_to_one_worker_with_a_retry_and_hard_limit(
     monkeypatch: MonkeyPatch,
 ) -> None:
     script = Path(__file__).resolve().parents[1] / "scripts" / "test-live-screens"
     namespace = runpy.run_path(str(script))
     monkeypatch.delenv("LIVE_SCREEN_SLOW_MS", raising=False)
+    monkeypatch.delenv("LIVE_SCREEN_FAILURE_MS", raising=False)
     monkeypatch.delenv("LIVE_SCREEN_WORKERS", raising=False)
     monkeypatch.setattr(sys, "argv", [str(script)])
 
     args = namespace["parse_args"]()
 
     assert args.slow_ms == 1_000
+    assert args.failure_ms == 2_500
     assert args.workers == 1
 
 
