@@ -24,6 +24,7 @@
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "44.0.0",
+    "glob": "7.2.3",
     "jsdom": "30.0.1",
     "svelte": "5.57.0",
     "svelte-check": "4.7.6",

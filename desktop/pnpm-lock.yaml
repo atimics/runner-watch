@@ -36,6 +36,9 @@ importers:
       electron:
         specifier: 44.0.0
         version: 44.0.0
+      glob:
+        specifier: 7.2.3
+        version: 7.2.3
       jsdom:
         specifier: 30.0.1
         version: 30.0.1
@@ -2073,8 +2076,7 @@ snapshots:
 
   axobject-query@4.1.0: {}
 
-  balanced-match@1.0.2:
-    optional: true
+  balanced-match@1.0.2: {}
 
   balanced-match@4.0.4: {}
 
@@ -2088,7 +2090,6 @@ snapshots:
     dependencies:
       balanced-match: 1.0.2
       concat-map: 0.0.1
-    optional: true
 
   brace-expansion@5.0.9:
     dependencies:
@@ -2163,8 +2164,7 @@ snapshots:
 
   commander@9.5.0: {}
 
-  concat-map@0.0.1:
-    optional: true
+  concat-map@0.0.1: {}
 
   concurrently@9.2.4:
     dependencies:
@@ -2375,8 +2375,7 @@ snapshots:
       universalify: 2.0.1
     optional: true
 
-  fs.realpath@1.0.0:
-    optional: true
+  fs.realpath@1.0.0: {}
 
   fsevents@2.3.3:
     optional: true
@@ -2433,7 +2432,6 @@ snapshots:
       minimatch: 3.1.5
       once: 1.4.0
       path-is-absolute: 1.0.1
-    optional: true
 
   gopd@1.2.0: {}
 
@@ -2468,10 +2466,8 @@ snapshots:
     dependencies:
       once: 1.4.0
       wrappy: 1.0.2
-    optional: true
 
-  inherits@2.0.4:
-    optional: true
+  inherits@2.0.4: {}
 
   is-fullwidth-code-point@3.0.0: {}
 
@@ -2640,7 +2636,6 @@ snapshots:
   minimatch@3.1.5:
     dependencies:
       brace-expansion: 1.1.18
-    optional: true
 
   minimist@1.2.8: {}
 
@@ -2691,7 +2686,6 @@ snapshots:
   once@1.4.0:
     dependencies:
       wrappy: 1.0.2
-    optional: true
 
   onetime@5.1.2:
     dependencies:
@@ -2706,8 +2700,7 @@ snapshots:
     dependencies:
       entities: 8.0.0
 
-  path-is-absolute@1.0.1:
-    optional: true
+  path-is-absolute@1.0.1: {}
 
   path-key@3.1.1: {}
 
@@ -3111,8 +3104,7 @@ snapshots:
       string-width: 5.1.2
       strip-ansi: 7.2.0
 
-  wrappy@1.0.2:
-    optional: true
+  wrappy@1.0.2: {}
 
   xml-name-validator@5.0.0: {}
 
