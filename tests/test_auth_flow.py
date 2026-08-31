@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -11,10 +12,13 @@ from runner_web import main as web_main
 from runner_web.db import connection, init_db
 from runner_web.main import (
     APP_ORIGIN,
+    RegisterOptionsPayload,
     login_page,
     register_options,
+    require_recent_auth,
     save_challenge,
     take_challenge,
+    token_hash,
 )
 
 
@@ -94,3 +98,84 @@ def test_rate_limit_key_accepts_long_operator_secrets() -> None:
 
     assert len(first) == 32
     assert first == second
+
+
+def test_required_edge_and_invite_configuration_fail_closed(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(web_main, "PROCESS_ROLE", "all")
+    monkeypatch.setattr(web_main, "REQUIRE_EDGE_PROXY_SECRET", True)
+    monkeypatch.setattr(web_main, "EDGE_PROXY_SECRET_VALUE", "short")
+
+    with pytest.raises(RuntimeError, match="EDGE_PROXY_SECRET"):
+        web_main.validate_runtime_configuration()
+
+    monkeypatch.setattr(web_main, "EDGE_PROXY_SECRET_VALUE", "e" * 32)
+    monkeypatch.setattr(web_main, "REGISTRATION_MODE", "invite")
+    monkeypatch.setattr(web_main, "REGISTRATION_INVITE_CODES", ())
+    with pytest.raises(RuntimeError, match="REGISTRATION_INVITE_CODES"):
+        web_main.validate_runtime_configuration()
+
+    monkeypatch.setattr(web_main, "REGISTRATION_INVITE_CODES", ("invite-code-with-enough-entropy",))
+    web_main.validate_runtime_configuration()
+
+
+def test_one_time_registration_invite_cannot_be_reused(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "invite.db")
+    monkeypatch.setattr(web_main, "REGISTRATION_MODE", "invite")
+    monkeypatch.setattr(web_main, "REGISTRATION_INVITE_CODES", ("single-use-invite-code",))
+    init_db()
+
+    response = register_options(
+        request("POST", "/api/auth/register/options"),
+        RegisterOptionsPayload(invite_code="single-use-invite-code"),
+    )
+    assert response.status_code == 200
+
+    with pytest.raises(HTTPException) as reused:
+        register_options(
+            request("POST", "/api/auth/register/options"),
+            RegisterOptionsPayload(invite_code="single-use-invite-code"),
+        )
+    assert reused.value.status_code == 403
+
+
+def test_sensitive_actions_require_recent_passkey_authentication(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "recent-auth.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    raw_token = "recent-auth-session"
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("recent-user", "recent_user", "Recent User", "active", timestamp.isoformat()),
+        )
+        database.execute(
+            """
+            INSERT INTO sessions(
+                token_hash,user_id,created_at,expires_at,authenticated_at
+            ) VALUES(?,?,?,?,?)
+            """,
+            (
+                token_hash(raw_token),
+                "recent-user",
+                timestamp.isoformat(),
+                (timestamp + timedelta(days=1)).isoformat(),
+                None,
+            ),
+        )
+
+    with pytest.raises(HTTPException) as stale:
+        require_recent_auth(raw_token)
+    assert stale.value.status_code == 403
+
+    with connection() as database:
+        database.execute(
+            "UPDATE sessions SET authenticated_at=? WHERE token_hash=?",
+            (timestamp.isoformat(), token_hash(raw_token)),
+        )
+    require_recent_auth(raw_token)

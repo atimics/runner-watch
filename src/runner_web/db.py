@@ -2708,6 +2708,22 @@ def _migration_051_public_source_policy_gate(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_052_security_controls(db: DatabaseConnection) -> None:
+    """Track fresh authentication and consume registration invite codes once."""
+
+    _ensure_column(db, "sessions", "authenticated_at TEXT")
+    _ensure_column(db, "users", "registration_invite_hash TEXT")
+    db.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS sessions_user_authenticated
+            ON sessions(user_id,authenticated_at DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS users_registration_invite
+            ON users(registration_invite_hash)
+            WHERE registration_invite_hash IS NOT NULL;
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2767,6 +2783,7 @@ MIGRATIONS = (
     Migration(49, "legal_identity_review", _migration_049_legal_identity_review),
     Migration(50, "market_session_reports", _migration_050_market_session_reports),
     Migration(51, "public_source_policy_gate", _migration_051_public_source_policy_gate),
+    Migration(52, "security_controls", _migration_052_security_controls),
 )
 
 

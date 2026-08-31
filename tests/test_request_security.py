@@ -3,7 +3,11 @@ from pathlib import Path
 import pytest
 from starlette.requests import Request
 
-from runner_web.request_security import request_client_ip, safe_next_path
+from runner_web.request_security import (
+    edge_proxy_authenticated,
+    request_client_ip,
+    safe_next_path,
+)
 
 
 def test_client_ip_uses_fly_header_only_when_enabled() -> None:
@@ -36,6 +40,54 @@ def test_invalid_fly_client_ip_falls_back_to_direct_peer() -> None:
     assert request_client_ip(request, trust_fly_client_ip=True) == "172.16.0.5"
 
 
+def test_authenticated_edge_client_ip_takes_priority_over_proxy_ip() -> None:
+    request = Request(
+        {
+            "type": "http",
+            "headers": [
+                (b"fly-client-ip", b"198.51.100.20"),
+                (b"x-rati-client-ip", b"203.0.113.8"),
+                (b"x-rati-edge-secret", b"edge-secret"),
+            ],
+            "client": ("172.16.0.5", 4200),
+        }
+    )
+
+    assert edge_proxy_authenticated(request, edge_proxy_secret="edge-secret") is True
+    assert (
+        request_client_ip(
+            request,
+            trust_fly_client_ip=True,
+            edge_proxy_secret="edge-secret",
+        )
+        == "203.0.113.8"
+    )
+
+
+def test_spoofed_edge_client_ip_is_ignored_without_the_shared_secret() -> None:
+    request = Request(
+        {
+            "type": "http",
+            "headers": [
+                (b"fly-client-ip", b"198.51.100.20"),
+                (b"x-rati-client-ip", b"203.0.113.8"),
+                (b"x-rati-edge-secret", b"wrong-secret"),
+            ],
+            "client": ("172.16.0.5", 4200),
+        }
+    )
+
+    assert edge_proxy_authenticated(request, edge_proxy_secret="edge-secret") is False
+    assert (
+        request_client_ip(
+            request,
+            trust_fly_client_ip=True,
+            edge_proxy_secret="edge-secret",
+        )
+        == "198.51.100.20"
+    )
+
+
 @pytest.mark.parametrize(
     "value",
     ["https://evil.example/", "//evil.example/", "/\\evil.example/", "/\nevil"],
@@ -53,8 +105,12 @@ def test_deployment_does_not_trust_forwarded_headers_from_every_peer() -> None:
     template = (root / "web/templates/auth.html").read_text()
     dockerfile = (root / "Dockerfile").read_text()
     fly_config = (root / "fly.toml").read_text()
+    worker = (root / "cloudflare-router/src/index.js").read_text()
 
     assert "target.origin !== location.origin" in template
     assert "const nextPath = safeNextPath(requestedNext);" in template
     assert "--forwarded-allow-ips" not in dockerfile
     assert "--forwarded-allow-ips" not in fly_config
+    assert 'headers.set("X-Rati-Client-IP"' in worker
+    assert 'headers.set("X-Rati-Edge-Secret"' in worker
+    assert "env.EDGE_PROXY_SECRET" in worker

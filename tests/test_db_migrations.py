@@ -188,6 +188,9 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         user_columns = {
             row["name"] for row in database.execute("PRAGMA table_info(users)").fetchall()
         }
+        session_columns = {
+            row["name"] for row in database.execute("PRAGMA table_info(sessions)").fetchall()
+        }
         community_call_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='community_calls'"
         ).fetchone()
@@ -422,7 +425,9 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "stripe_current_period_end",
         "stripe_cancel_at_period_end",
         "billing_updated_at",
+        "registration_invite_hash",
     } <= user_columns
+    assert "authenticated_at" in session_columns
     assert {
         "market_events_event_time",
         "market_events_ticker_event_time",
@@ -463,6 +468,8 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "comment_avatars_ability",
         "comment_generation_requests_status_time",
         "sports_comments_event_time",
+        "sessions_user_authenticated",
+        "users_registration_invite",
         "caller_identities_owner",
         "caller_identities_one_active_per_user",
         "caller_identity_one_free_claim",
