@@ -27,6 +27,7 @@
   }
 
   function localTime(value, options = {}) {
+    if (value === null || value === undefined || String(value).trim() === '') return 'pending';
     const date = new Date(value);
     if (Number.isNaN(date.valueOf())) return value ? String(value) : 'pending';
     return date.toLocaleString([], {
@@ -41,6 +42,7 @@
   }
 
   function shortGameTime(value) {
+    if (value === null || value === undefined || String(value).trim() === '') return 'pending';
     const date = new Date(value);
     if (Number.isNaN(date.valueOf())) return value ? String(value) : 'pending';
     return date.toLocaleString([], {
@@ -51,6 +53,9 @@
   }
 
   function freshness(value) {
+    if (value === null || value === undefined || String(value).trim() === '') {
+      return 'Update pending';
+    }
     const date = new Date(value);
     if (Number.isNaN(date.valueOf())) return 'Update pending';
     const seconds = Math.max(0, (Date.now() - date.getTime()) / 1000);

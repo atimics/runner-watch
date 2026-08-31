@@ -374,6 +374,16 @@ def test_sports_pulse_applies_updates_without_reloading_or_losing_detail(
     assert errors == []
 
 
+def test_sports_pulse_keeps_missing_update_time_pending(page: Page, monkeypatch) -> None:
+    pulse = _pulse()
+    pulse["updated_at"] = None
+    errors = _load(page, _rendered_pulse(monkeypatch, pulse), [])
+
+    assert page.locator("#sportsPulseStatus").text_content() == "Update pending"
+    assert page.locator("#sportsPulseUpdated").text_content() == "pending"
+    assert errors == []
+
+
 def test_sports_radar_applies_changes_without_reloading_or_losing_detail(
     page: Page, monkeypatch
 ) -> None:
