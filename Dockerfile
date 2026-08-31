@@ -52,6 +52,7 @@ USER runner
 FROM base AS test
 COPY scripts ./scripts
 COPY tests ./tests
+COPY cloudflare-router ./cloudflare-router
 COPY docs/privacy-operations.md ./docs/privacy-operations.md
 COPY .github/workflows/fly.yml ./.github/workflows/fly.yml
 COPY app.py compose.local.yml fly.toml Dockerfile ./
