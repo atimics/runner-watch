@@ -18,9 +18,11 @@ RUN cargo test --locked && cargo build --locked --release
 
 FROM python:3.13-slim AS base
 
+ARG APP_BUILD_SHA=dev
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    APP_BUILD_SHA=${APP_BUILD_SHA}
 
 WORKDIR /app
 
@@ -47,7 +49,8 @@ FROM base AS test
 COPY scripts ./scripts
 COPY tests ./tests
 COPY docs/privacy-operations.md ./docs/privacy-operations.md
-COPY fly.toml Dockerfile ./
+COPY .github/workflows/fly.yml ./.github/workflows/fly.yml
+COPY app.py compose.local.yml fly.toml Dockerfile ./
 RUN uv sync --locked --extra dev --no-editable
 RUN uv run --no-sync pytest -q && uv run --no-sync ruff check src tests
 CMD ["uv", "run", "--no-sync", "pytest", "-q"]

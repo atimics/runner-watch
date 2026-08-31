@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -134,6 +135,31 @@ def test_empty_flash_record_has_no_layout_gap(page: Page, monkeypatch) -> None:
     assert page.evaluate(
         "TickerRow.ago(new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString())"
     ) == "3h ago"
+    assert errors == []
+
+
+def test_market_row_age_uses_quote_time_not_scan_entry_time(page: Page, monkeypatch) -> None:
+    entered_at = datetime.now(UTC).isoformat()
+    quote_time = (datetime.now(UTC) - timedelta(hours=3)).isoformat()
+    row = {
+        **_row("OLD", entered_at),
+        "section": "scored",
+        "source": "market",
+        "quote_time": quote_time,
+    }
+    html = _rendered_pulse(monkeypatch, _pulse(row))
+    errors = _load(page, html, [])
+
+    rendered_age = page.evaluate(
+        """row => {
+          const holder = document.createElement('div');
+          holder.innerHTML = TickerRow.render(row);
+          return holder.querySelector('.ticker-age').textContent;
+        }""",
+        row,
+    )
+
+    assert rendered_age == "3h ago"
     assert errors == []
 
 

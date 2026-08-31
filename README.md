@@ -398,26 +398,57 @@ from AI calls. Scorecards are available at `/api/kols`, and ticker call history 
 These model evaluations are separate from user-created public Calls. User Calls live in
 `community_calls`; private Flash research lives in `research_commissions`.
 
-## Start the dashboard
+## Run RATi locally
 
-This project uses Python 3.11–3.13. With [uv](https://docs.astral.sh/uv/) installed:
+This project uses Python 3.11–3.13. The FastAPI app is the canonical local version of the online
+RATi product. It has the same pages, APIs, evidence gates, accounts, Calls, Flash, and Sports.
+
+For a quick single-process setup with SQLite:
 
 ```bash
 uv sync --extra dev --python 3.13 --no-editable
-uv run streamlit run app.py
-```
-
-Open the local address shown in the terminal. Local scans use live market data from the enabled
-free sources; there is no synthetic demo mode.
-
-To run the public web app locally:
-
-```bash
-APP_ORIGIN=http://127.0.0.1:8080 RP_ID=127.0.0.1 COOKIE_SECURE=0 \
+APP_ORIGIN=http://127.0.0.1:8080 \
+RUNNERS_ORIGIN=http://127.0.0.1:8080 \
+SPORTS_ORIGIN=http://127.0.0.1:8080 \
+RP_ID=127.0.0.1 COOKIE_SECURE=0 \
   uv run --no-sync uvicorn runner_web.main:app --host 127.0.0.1 --port 8080
 ```
 
-The default uses live Yahoo penny-stock discovery. You can also choose one of these ticker lists:
+Open `http://127.0.0.1:8080`. This mode is easy to debug, but its web and background work share one
+process.
+
+For production-like local testing, use Docker Compose:
+
+```bash
+docker compose -f compose.local.yml up --build
+```
+
+This starts the same split web, collection worker, ranker trainer, migration, PostgreSQL, and Redis
+roles used online. Set `SEC_USER_AGENT` to your own contact value before testing SEC collection.
+The local database is saved in a Docker volume. Stop the services with:
+
+```bash
+docker compose -f compose.local.yml down
+```
+
+Live market scans run only on weekdays from 4:00 a.m. to 8:00 p.m. New York time. Outside that
+window, the app shows the last saved market quotes and their true age; a new database may have an
+empty Pulse until the next collection window. `/api/version` reports the running application,
+commit, and static-asset versions. Production checks reject a deployment whose commit does not
+match the commit that the workflow built.
+
+### Scanner Lab
+
+`app.py` is a separate Streamlit scanner workbench. It is useful for testing the basic market
+ranking rules and custom ticker lists. It is not a local copy of the online product: it does not
+include the online evidence, risk, account, community, Flash, or Sports systems. Its optional
+sample mode creates fake prices and labels them as sample data.
+
+```bash
+uv run streamlit run app.py
+```
+
+The Scanner Lab can use one of these ticker lists:
 
 - **Quick starter list:** fast, but it cannot find a runner outside its saved list.
 - **Full US market:** downloads the official Nasdaq Trader symbol directory, runs a daily

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from fastapi.responses import JSONResponse
+from starlette.requests import Request
+
+from runner_web import main as web_main
 from runner_web.main import app
 
 
@@ -23,3 +28,40 @@ def test_production_smoke_only_checks_real_routes() -> None:
 
     assert checked_endpoints
     assert all(urlsplit(endpoint).path in app_routes for endpoint in checked_endpoints)
+    assert "/api/version" in checked_endpoints
+    assert "EXPECTED_BUILD_SHA" in script
+
+
+def test_version_endpoint_identifies_code_and_assets() -> None:
+    assert web_main.version_api() == {
+        "version": "0.1.0",
+        "build_sha": web_main.APP_BUILD_SHA,
+        "static_version": web_main.STATIC_VERSION,
+    }
+
+    dockerfile = (Path(__file__).parents[1] / "Dockerfile").read_text()
+    workflow = (Path(__file__).parents[1] / ".github/workflows/fly.yml").read_text()
+    assert "ARG APP_BUILD_SHA=dev" in dockerfile
+    assert '--build-arg APP_BUILD_SHA="${{ github.sha }}"' in workflow
+
+
+def test_every_response_identifies_its_build() -> None:
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/live",
+            "headers": [],
+            "scheme": "http",
+            "server": ("testserver", 80),
+            "client": ("127.0.0.1", 1000),
+        }
+    )
+
+    async def call_next(_request: Request) -> JSONResponse:
+        return JSONResponse({"status": "ok"})
+
+    response = asyncio.run(web_main.security_headers(request, call_next))
+
+    assert response.headers["X-RATi-Build"] == web_main.APP_BUILD_SHA
+    assert response.headers["X-RATi-Assets"] == web_main.STATIC_VERSION

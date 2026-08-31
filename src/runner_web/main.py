@@ -52,6 +52,7 @@ from webauthn.helpers.structs import (
 
 from runner_node.api import create_node_router
 from runner_node.runtime import NODE_SERVICE
+from runner_watch import __version__ as APP_VERSION
 from runner_watch.chart_features import analyze_market_structure, clean_ohlcv
 from runner_watch.massive_data import refresh_massive_backfill
 from runner_watch.models import ScanSettings
@@ -227,6 +228,11 @@ AI_REPORT_MODEL = os.getenv("AI_REPORT_MODEL", "gpt-5.6-terra")
 AI_REPORT_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 RATE_LIMIT_HASH_KEY_VALUE = os.getenv("RATE_LIMIT_HASH_KEY", "").strip()
+APP_BUILD_SHA = re.sub(
+    r"[^A-Za-z0-9._-]",
+    "-",
+    os.getenv("APP_BUILD_SHA", "dev").strip() or "dev",
+)[:64]
 
 
 def _rate_limit_hash_key(value: str) -> bytes:
@@ -654,6 +660,17 @@ if DESKTOP_RENDERER_ROOT.is_dir():
         StaticFiles(directory=str(DESKTOP_RENDERER_ROOT), html=True),
         name="desktop",
     )
+
+
+@app.get("/api/version")
+def version_api() -> dict[str, str]:
+    """Identify the running application and static-asset builds."""
+
+    return {
+        "version": APP_VERSION,
+        "build_sha": APP_BUILD_SHA,
+        "static_version": STATIC_VERSION,
+    }
 
 
 def now() -> datetime:
@@ -1106,15 +1123,18 @@ async def kol_worker() -> None:
         await asyncio.sleep(60)
 
 
+def scan_collection_allowed(value: datetime) -> bool:
+    """Return whether a live market scan may be collected at this time."""
+
+    eastern_now = value.astimezone(EASTERN)
+    local_time = eastern_now.time().replace(tzinfo=None)
+    return eastern_now.weekday() < 5 and clock_time(4) <= local_time < clock_time(20)
+
+
 async def scan_collection_worker() -> None:
     await asyncio.sleep(15)
     while True:
-        eastern_now = now().astimezone(EASTERN)
-        market_window = clock_time(4) <= eastern_now.time().replace(tzinfo=None) < clock_time(20)
-        with connection() as db:
-            has_saved_scan = db.execute("SELECT 1 FROM scan_runs LIMIT 1").fetchone() is not None
-        should_scan = (eastern_now.weekday() < 5 and market_window) or not has_saved_scan
-        if should_scan:
+        if scan_collection_allowed(now()):
             try:
                 result = await run_in_threadpool(run_scan, "penny")
                 worker_state("background_scan_last_run", str(result.get("scan_run_id") or "cached"))
@@ -1191,6 +1211,8 @@ async def security_headers(request: Request, call_next: Any) -> Response:
     if "runner_visitor" in request.cookies:
         response.delete_cookie("runner_visitor", path="/")
     response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-RATi-Build"] = APP_BUILD_SHA
+    response.headers["X-RATi-Assets"] = STATIC_VERSION
     panel_path = _is_panel_path(request.url.path)
     frame_ancestors = "'self'" if panel_path else "'none'"
     response.headers["X-Frame-Options"] = "SAMEORIGIN" if panel_path else "DENY"
@@ -2994,7 +3016,10 @@ def _pulse_data_uncached() -> dict[str, Any]:
     for custom_rank, runner in enumerate(runner_rows, start=1):
         runner["custom_rank"] = custom_rank
     _attach_pulse_entries(runner_rows)
-    market_updated_at = str(latest_run["captured_at"]) if latest_run else None
+    quote_times = [str(row["quote_time"]) for row in market_rows if row["quote_time"]]
+    market_updated_at = max(quote_times) if quote_times else None
+    if market_updated_at is None and latest_run:
+        market_updated_at = str(latest_run["captured_at"])
     return {
         "rows": runner_rows,
         "stats": {
