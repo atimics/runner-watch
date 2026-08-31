@@ -538,8 +538,9 @@ uv run ruff check .
 
 The production browser sweep checks all 16 Runners, Sports, and account screen routes. It runs the
 screens one at a time so the monitor does not create its own load spike. It uses current public
-ticker, caller, research, and game records, fails screens slower than one second, and saves a
-screenshot for each failure. A dynamic screen with no public record is called out.
+ticker, caller, research, and game records. It retries and warns about screens slower than one
+second, fails screens that remain slower than 2.5 seconds, and saves a screenshot for each failure.
+A dynamic screen with no public record is called out.
 
 ```bash
 scripts/test-live-screens
