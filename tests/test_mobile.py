@@ -41,6 +41,7 @@ from runner_web.main import (
     pulse_data,
     radar_data,
     register_options,
+    scan_collection_allowed,
     templates,
     ticker_chart_detail_payload,
     ticker_charts_payload,
@@ -556,6 +557,7 @@ def insert_scored_snapshot(
     captured_at: str,
     *,
     price: float = 1.25,
+    quote_time: str | None = None,
 ) -> None:
     with connection() as database:
         database.execute(
@@ -581,7 +583,7 @@ def insert_scored_snapshot(
                 4.0,
                 0.8,
                 800_000,
-                captured_at,
+                quote_time or captured_at,
                 '["Volume acceleration"]',
                 "[]",
                 captured_at,
@@ -590,6 +592,23 @@ def insert_scored_snapshot(
             ),
         )
         _record_pulse_entries_for_run(database, run_id, captured_at)
+
+
+@pytest.mark.parametrize(
+    ("timestamp", "allowed"),
+    [
+        (datetime(2026, 8, 31, 7, 59, tzinfo=UTC), False),
+        (datetime(2026, 8, 31, 8, 0, tzinfo=UTC), True),
+        (datetime(2026, 8, 31, 23, 59, tzinfo=UTC), True),
+        (datetime(2026, 9, 1, 0, 0, tzinfo=UTC), False),
+        (datetime(2026, 8, 30, 14, 0, tzinfo=UTC), False),
+    ],
+)
+def test_scan_collection_only_runs_during_the_weekday_market_window(
+    timestamp: datetime,
+    allowed: bool,
+) -> None:
+    assert scan_collection_allowed(timestamp) is allowed
 
 
 def test_storage_prune_removes_old_raw_snapshots_but_keeps_public_receipts(
@@ -730,6 +749,31 @@ def test_pulse_only_lists_tickers_from_the_latest_scored_scan(
     assert result["rows"][0]["event_count"] == 1
     assert result["rows"][0]["section"] == "scored"
     assert "EVENT" not in {row["ticker"] for row in result["rows"]}
+
+
+def test_pulse_freshness_uses_the_market_quote_time(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "quote-freshness.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    quote_time = (datetime.now(UTC) - timedelta(hours=53)).isoformat()
+    insert_scan_run("quote-run", captured_at, 1)
+    insert_scored_snapshot(
+        "quote-snapshot",
+        "quote-run",
+        "OLD",
+        42,
+        1,
+        captured_at,
+        quote_time=quote_time,
+    )
+
+    result = pulse_data()
+
+    assert result["updated_at"] == quote_time
+    assert result["market_updated_at"] == quote_time
+    assert result["rows"][0]["quote_time"] == quote_time
 
 
 def test_pulse_reuses_the_shared_base_payload(

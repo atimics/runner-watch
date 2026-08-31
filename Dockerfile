@@ -18,9 +18,11 @@ RUN cargo test --locked && cargo build --locked --release
 
 FROM python:3.13-slim AS base
 
+ARG APP_BUILD_SHA=dev
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    APP_BUILD_SHA=${APP_BUILD_SHA}
 
 WORKDIR /app
 
