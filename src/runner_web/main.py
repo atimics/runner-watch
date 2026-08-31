@@ -2793,7 +2793,7 @@ def _pulse_data_uncached() -> dict[str, Any]:
         market_event_rows = db.execute(
             """
             SELECT source,ticker,event_type,status,event_at,source_url,payload_json
-            FROM market_events
+            FROM public_market_events
             WHERE event_at>? ORDER BY event_at DESC,last_collected_at DESC
             """,
             (event_cutoff,),
@@ -6268,7 +6268,7 @@ def _ticker_exists(ticker: str) -> bool:
                 SELECT 1 FROM sec_companies WHERE ticker=?
                 UNION SELECT 1 FROM sec_filings WHERE ticker=?
                 UNION SELECT 1 FROM scan_snapshots WHERE ticker=?
-                UNION SELECT 1 FROM market_events WHERE ticker=? LIMIT 1
+                UNION SELECT 1 FROM public_market_events WHERE ticker=? LIMIT 1
                 """,
                 (ticker, ticker, ticker, ticker),
             ).fetchone()
@@ -6324,7 +6324,7 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
         external_rows = db.execute(
             """
             SELECT source,ticker,event_type,status,event_at,source_url,payload_json
-            FROM market_events WHERE ticker=? AND event_at>?
+            FROM public_market_events WHERE ticker=? AND event_at>?
             ORDER BY event_at DESC,last_collected_at DESC LIMIT 30
             """,
             (ticker, iso(now() - timedelta(days=3))),
@@ -6587,7 +6587,7 @@ def _chart_annotations(tickers: list[str]) -> dict[str, list[dict[str, Any]]]:
         market_rows = db.execute(
             f"""
             SELECT source,ticker,event_type,status,event_at,source_url,payload_json
-            FROM market_events
+            FROM public_market_events
             WHERE ticker IN ({placeholders}) AND event_at>=?
             ORDER BY event_at
             """,
@@ -7194,7 +7194,7 @@ def _radar_base_data_uncached() -> list[dict[str, Any]]:
                            PARTITION BY m.ticker
                            ORDER BY m.event_at DESC,m.last_collected_at DESC
                        ) AS radar_position
-                FROM market_events m
+                FROM public_market_events m
                 WHERE m.event_at>? AND COALESCE(m.ticker,'')!=''
             )
             SELECT * FROM ranked WHERE radar_position=1
@@ -8850,7 +8850,7 @@ def _stored_market_risk_contexts(database: Any, tickers: list[str]) -> dict[str,
     rows = database.execute(
         f"""
         SELECT ticker,event_type,status,event_at,last_collected_at,payload_json
-        FROM market_events
+        FROM public_market_events
         WHERE ticker IN ({placeholders}) AND event_at>?
               AND event_type IN (
                   'trading_halt','reverse_split','corporate_action','security_action'

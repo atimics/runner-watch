@@ -127,6 +127,19 @@ def test_source_batch_records_raw_and_normalized_rows_atomically(
             "SELECT review_status,display_policy FROM source_registry "
             "WHERE source='example' AND feed='mixed'"
         ).fetchone()
+        hidden_events = database.execute(
+            "SELECT COUNT(*) FROM public_market_events"
+        ).fetchone()[0]
+        database.execute(
+            """
+            UPDATE source_registry
+            SET review_status='approved',display_policy='source_link_with_attribution'
+            WHERE source='example' AND feed='mixed'
+            """
+        )
+        approved_events = database.execute(
+            "SELECT COUNT(*) FROM public_market_events"
+        ).fetchone()[0]
     assert counts == {
         "ingestion_runs": 2,
         "source_documents": 1,
@@ -138,6 +151,8 @@ def test_source_batch_records_raw_and_normalized_rows_atomically(
     }
     assert tuple(quote) == ("PEN", first_run, second_run)
     assert tuple(policy) == ("review_required", "review_required")
+    assert hidden_events == 0
+    assert approved_events == 2
 
 
 def test_bad_normalized_record_rolls_back_projection_but_keeps_failed_run(

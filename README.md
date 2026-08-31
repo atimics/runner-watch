@@ -130,7 +130,10 @@ visible for diagnosis.
 The source registry records owner, terms, credentials, cadence, stale limits, storage, display, and
 attribution rules. Use `/api/ingestion/status` to see healthy, stale, idle, pending, failed, and
 disabled feeds. The tables do not replace the app's normal read tables; they provide one audit path
-behind them.
+behind them. Public stock features read external events through `public_market_events`. That view
+only exposes enabled feeds whose source review is approved and whose display policy allows public
+use. Proof-of-concept events remain available for internal review but cannot change Pulse, Radar,
+ticker pages, risk vetoes, charts, or Flash evidence.
 
 Market providers now sit behind canonical typed contracts and an explicit provider registry. The
 scanner still receives its normal data frames, but each routed result carries provider, as-of time,
@@ -156,9 +159,9 @@ together, and HTTP 429 responses are retried with backoff.
 
 The Nasdaq Trader halt collector archives the RSS response and stores versioned halt state once a
 minute during the extended US session. It is off by default while the feed terms are reviewed. Set
-`NASDAQ_TRADE_HALTS_ENABLED=true` to opt in. An active halt is a hard risk veto. The production
-configuration currently opts in, so `/api/capabilities` reports a blocking policy warning until the
-catalog review state is explicitly approved.
+`NASDAQ_TRADE_HALTS_ENABLED=true` to opt in to internal collection. Halt events cannot affect the
+public product until the catalog is promoted to approved public display. After that policy change,
+an active halt becomes a hard risk veto.
 
 The scanner can also show exchange-reported short interest, short float, days to cover, borrow fee,
 and shares available. Set `FINTEL_API_KEY` to enable Fintel's documented API. The app refreshes only

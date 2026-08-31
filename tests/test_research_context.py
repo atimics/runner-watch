@@ -91,6 +91,14 @@ def test_one_shot_context_includes_filings_people_and_social_reports(
             ),
         )
     )
+    with connection() as database:
+        database.execute(
+            """
+            UPDATE source_registry
+            SET review_status='approved',display_policy='source_link_with_attribution'
+            WHERE source='test_social' AND feed='reports'
+            """
+        )
     primary = {
         "ticker": "ONE",
         "company": "One Company",

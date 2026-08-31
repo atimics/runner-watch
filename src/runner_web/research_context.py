@@ -159,7 +159,7 @@ def build_research_context(
         ).fetchall()
         event_rows = database.execute(
             """
-            SELECT * FROM market_events
+            SELECT * FROM public_market_events
             WHERE ticker=? AND event_at>=? AND event_at<=?
             ORDER BY event_at DESC,last_collected_at DESC LIMIT 600
             """,
@@ -167,7 +167,7 @@ def build_research_context(
         ).fetchall()
         related_document_rows = database.execute(
             """
-            SELECT d.* FROM market_events e
+            SELECT d.* FROM public_market_events e
             JOIN ingestion_runs r ON r.id=e.last_run_id
             JOIN source_documents d
               ON d.source_url=r.locator AND d.content_hash=r.content_hash

@@ -2689,6 +2689,22 @@ def _migration_050_market_session_reports(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_051_public_source_policy_gate(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        CREATE VIEW IF NOT EXISTS public_market_events AS
+        SELECT events.*
+        FROM market_events events
+        JOIN ingestion_runs runs ON runs.id=events.last_run_id
+        JOIN source_registry registry
+          ON registry.source=runs.source AND registry.feed=runs.feed
+        WHERE registry.enabled=1
+          AND registry.review_status='approved'
+          AND registry.display_policy!='internal_review_only';
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2747,6 +2763,7 @@ MIGRATIONS = (
     Migration(48, "shared_comment_subjects", _migration_048_shared_comment_subjects),
     Migration(49, "legal_identity_review", _migration_049_legal_identity_review),
     Migration(50, "market_session_reports", _migration_050_market_session_reports),
+    Migration(51, "public_source_policy_gate", _migration_051_public_source_policy_gate),
 )
 
 

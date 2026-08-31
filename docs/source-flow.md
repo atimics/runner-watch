@@ -26,6 +26,7 @@ flowchart LR
     Health[Ingestion health<br/>healthy, stale, idle, failed, disabled]
     Link[Issuer and ticker linking<br/>confidence and valid dates]
     Review[Person and legal-case review<br/>identity, role, relevance, materiality]
+    EventGate[Public event policy gate<br/>enabled, approved, display allowed]
     Features[Derived evidence<br/>spread, halt state, dilution, catalysts, regime]
     Shadow[Shadow validation<br/>coverage, delay, revisions, model effect]
     Product[Product use<br/>ticker evidence, safety state, runner score]
@@ -39,7 +40,7 @@ flowchart LR
     Normal --> Health
     Normal --> Link --> Features
     Link --> Review --> Features
-    Normal --> Features
+    Normal --> EventGate --> Features
     Features --> Shadow --> Product
 ```
 
@@ -52,7 +53,7 @@ flowchart LR
 | SEC Company Facts | Raw JSON plus point-in-time facts | `issuer_facts` | Share growth, cash runway, current ratio, and debt-to-cash risk | Live |
 | Yahoo universe | Screener rows plus fetch run | `ingestion_items` | Choose the scan universe | Live, display review required |
 | Yahoo price bars | Ticker data frames plus fetch run | `market_bars` | Momentum, volume, and price features | Live, display review required |
-| Nasdaq trading halts | Raw RSS plus versioned halt events | `market_events` | Halt evidence, safety penalty, and hard veto | Built and connected; approval blocked by terms review |
+| Nasdaq trading halts | Raw RSS plus versioned halt events | `market_events` | Internal review until approval; then halt evidence, safety penalty, and hard veto | Built and connected; public effects blocked by terms review |
 | Fintel short and borrow | Normalized API responses | `short_data_cache` and frozen scan facts | Dated crowding evidence | Optional licensed integration |
 | SEC reporting people | Form 4 reporting-owner CIK plus named beneficial owners | `filing_people` and `filing_person_issuer_links` | Build a private, reviewable person-to-ticker map | Built; every person and issuer link starts pending |
 | PACER Case Locator | Party-search index metadata plus billed fetch audit | `legal_case_candidates` | Private legal-case review context | Parser and review queue built; live access disabled |
@@ -64,25 +65,27 @@ flowchart LR
 | Other free official archives | Normalized records from GovInfo, SEC, DOJ, FTC, PCAOB, OCC, FDIC, FINRA, EPA, OSHA, NLRB, FDA, USITC, CFPB, CMS, FEC, and USAspending | `legal_case_candidates` and ingestion audit | Private official-record review | Registered reviewed-import contract; source-specific automation stays disabled until its supported access path is confirmed |
 
 The Nasdaq worker is enabled only when `NASDAQ_TRADE_HALTS_ENABLED=true`. It polls once per minute
-from 4:00 a.m. to 8:00 p.m. Eastern on weekdays. An active halt blocks the normal trade decision,
-but the source still raises a policy warning until its public-use review is approved.
+from 4:00 a.m. to 8:00 p.m. Eastern on weekdays. The saved event stays internal until the source's
+catalog policy is promoted to approved public display. That promotion makes an active halt block
+the normal trade decision.
 
 ## Product routing during the POC
 
 - **Pulse** starts with the newest saved Yahoo scanner run. Its score shows separate market, SEC,
-  news-search, public-social, public-Call, and safety components.
-- **Radar** automatically publishes recent SEC filings, strongly matched Yahoo news, meaningful
-  Reddit mention growth from ApeWisdom, and normalized market events. It groups repeated events by
-  ticker, keeps the newest state, and links back to the original source.
+  approved-news, approved-social, public-Call, and approved-safety components.
+- **Radar** publishes recent SEC filings and approved normalized market events. Proof-of-concept
+  Yahoo news, ApeWisdom, Bluesky, GDELT, and Nasdaq halt events stay out of the public view until
+  their source policy is approved.
 - **Alpha** is the social view. Active public Calls determine the order; market and event data
-  provide context but do not change the Call ranking. Yahoo coverage and Reddit mention counts are
-  shown as outside context, separate from public Calls. Flash reports do not enter this feed or
-  change its ranking, even when an owner chooses to publish one.
+  provide context but do not change the Call ranking. Only approved outside events may appear as
+  context. Flash reports do not enter this feed or change its ranking, even when an owner chooses
+  to publish one.
 
 The discovery worker rotates across 30 symbols: 10 current Pulse leaders, up to 10 Alpha Call
 leaders, then the next Pulse names as a flex group. One symbol is searched every 30 seconds, so the
 full set is normally refreshed about every 15 minutes. Yahoo news search and ApeWisdom's public
-Reddit trend API need no API key. Only article metadata and aggregate mention/upvote counts are
+Reddit trend API need no API key, but their collected results remain internal pilots. Only article
+metadata and aggregate mention/upvote counts are
 stored; article bodies and social post text are not stored. A Reddit trend is ignored unless it has
 at least five mentions and either three new mentions or twenty total mentions. GDELT and Bluesky
 adapters remain available but are disabled by default because their public endpoints were not
