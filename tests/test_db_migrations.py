@@ -16,6 +16,7 @@ from runner_web.db import (
     _migration_028_caller_identities,
     _migration_040_comment_glyph_avatars,
     _migration_041_persistent_comment_avatars,
+    _migration_051_public_source_policy_gate,
     _release_migration_lock,
     connection,
     init_db,
@@ -88,6 +89,22 @@ def test_postgres_commits_each_migration_before_releasing_lock(
     _apply_migrations(Database())  # type: ignore[arg-type]
 
     assert events == ["apply", "record", "commit", "unlock"]
+
+
+def test_public_source_view_uses_postgres_supported_create_syntax() -> None:
+    statements: list[str] = []
+
+    class Database:
+        backend = "postgres"
+
+        def execute(self, statement: str) -> None:
+            statements.append(statement)
+
+    _migration_051_public_source_policy_gate(Database())  # type: ignore[arg-type]
+
+    assert len(statements) == 1
+    assert "CREATE OR REPLACE VIEW public_market_events AS" in statements[0]
+    assert "IF NOT EXISTS" not in statements[0]
 
 
 def test_newer_additive_schema_is_only_allowed_for_rollback_compatibility(
