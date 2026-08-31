@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 from sec_qwen.benchmarks import confident_hallucination_rate, finqa_accuracy
 from sec_qwen.config import Config, load_examples, sha256_file, validate_corpus
+
+NUMBER_RE = re.compile(r"[-+]?\$?\d[\d,]*(?:\.\d+)?%?")
 
 
 def _canonical_json(value: Any) -> str:
@@ -155,6 +158,15 @@ def _read_suite(path: Path, task: str) -> list[dict[str, Any]]:
     return rows
 
 
+def _finqa_prediction(raw: str, parsed: Any) -> Any:
+    if isinstance(parsed, dict) and "answer" in parsed:
+        return parsed["answer"]
+    if isinstance(parsed, (int, float, str)):
+        return parsed
+    numbers = NUMBER_RE.findall(raw)
+    return numbers[-1] if numbers else raw.strip()
+
+
 def evaluate_benchmark(
     config: Config,
     *,
@@ -226,7 +238,7 @@ def evaluate_benchmark(
             except (TypeError, ValueError, json.JSONDecodeError):
                 parsed = None
             if task == "finqa":
-                value = parsed.get("answer") if isinstance(parsed, dict) else prediction.strip()
+                value = _finqa_prediction(prediction, parsed)
                 output_rows.append(
                     {"id": row["id"], "prediction": value, "answer": row["answer"]}
                 )

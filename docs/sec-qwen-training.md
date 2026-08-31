@@ -177,7 +177,9 @@ therefore fails closed.
 
 The FinQA suite freezes each public-test question with its checked-in `qa.model_input` retriever
 evidence. This measures financial reasoning on the official retrieved context; it is not a claim
-about end-to-end document retrieval accuracy.
+about end-to-end document retrieval accuracy. Scoring accepts the requested JSON `answer`, a plain
+scalar, or the final numeric value in a textual answer before applying the frozen FinQA
+normalization.
 
 ## Budget guardrail
 
