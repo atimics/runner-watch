@@ -7,12 +7,13 @@ import re
 import time
 import urllib.error
 import urllib.request
-import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
+
+from defusedxml import ElementTree as DefusedElementTree
 
 from runner_watch.ingestion import SourceFetch, SourceFetchRecorder
 from runner_watch.xml_security import read_limited, safe_xml_fromstring
@@ -203,7 +204,7 @@ class EdgarClient:
                 text = self.get_text(f"{directory_url}/{name}")
                 if "<ownershipDocument" in text:
                     return parse_ownership_xml(text)
-            except (OSError, ValueError, ET.ParseError):
+            except (OSError, ValueError, DefusedElementTree.ParseError):
                 continue
         return None
 
@@ -225,7 +226,7 @@ class EdgarClient:
                 )
                 if summary is not None:
                     return summary
-            except (OSError, ValueError, ET.ParseError):
+            except (OSError, ValueError, DefusedElementTree.ParseError):
                 continue
         return None
 
@@ -335,7 +336,7 @@ def primary_filing_document_names(
     return text_files[:1]
 
 
-def _number(node: ET.Element, path: str) -> float:
+def _number(node: Any, path: str) -> float:
     text = node.findtext(path, default="").strip()
     try:
         value = float(text)
@@ -437,7 +438,7 @@ def parse_ownership_xml(text: str) -> OwnershipSummary:
     )
 
 
-def _local_tag(node: ET.Element) -> str:
+def _local_tag(node: Any) -> str:
     return node.tag.rsplit("}", 1)[-1].lower()
 
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
 from typing import Any
 
 from defusedxml import ElementTree as DefusedElementTree
@@ -25,7 +24,7 @@ def safe_xml_fromstring(
     payload: str | bytes,
     *,
     max_bytes: int = MAX_XML_BYTES,
-) -> ET.Element:
+) -> Any:
     size = len(payload) if isinstance(payload, bytes) else len(payload.encode("utf-8"))
     if size > max_bytes:
         raise PayloadTooLargeError(f"XML response exceeds the {max_bytes}-byte limit")

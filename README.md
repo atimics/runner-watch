@@ -357,19 +357,21 @@ Export the same complete candidate groups to the generic `crlplrimes` dataset co
 uv run stonks-ranker export-crl data/stonks-crl-60m.csv --horizon 60m
 ```
 
-The status API is available at `/api/ranker/status`. Bars are retained for 60 days, full scan
+The status API is available at `/api/ranker/status` to callers that present the operations bearer
+token. Bars are retained for 60 days, full scan
 snapshots for 150 days, compact training examples for one year, and raw source documents for one
 year. Long-term raw archives should live in object storage.
 
 `/api/capabilities` combines live source, worker, model, evidence-gate, base-rate, training, and
-promotion policy without exposing credential names or values. It also reports enabled sources that
-have not passed review. Clients can use it instead of hardcoding deployment behavior. `/live`
-reports only that the web process is running. `/health` and its `/ready` alias check the database
-and minimum schema without depending on the worker. `/health/details` also requires a recent
-healthy worker heartbeat. Fly routes traffic using the backward-compatible `/health` endpoint,
-while the detailed endpoint lets external monitoring detect a dead or partly failed worker without
-taking healthy web machines offline. `/health/performance` reports bounded route-latency samples,
-cache activity, database-pool waits, and process peak memory without exposing request data.
+promotion policy. It, `/api/ranker/status`, `/api/intelligence`, `/health/details`, and
+`/health/performance` require
+`Authorization: Bearer $OPERATIONS_TOKEN`; when the token is missing or wrong they look like an
+unknown route. `/live` reports only that the web process is running. `/health` and its `/ready`
+alias return only a status while checking the database and minimum schema. Fly routes traffic using
+`/health`, while authenticated monitoring can use `/health/details` to detect a dead or partly
+failed worker without taking healthy web machines offline. Authenticated monitoring can use
+`/health/performance` for bounded route-latency samples, cache activity, database-pool waits, and
+process peak memory without exposing request data.
 
 ## Legacy model evaluations
 
@@ -506,7 +508,11 @@ research jobs between web and worker processes.
 `cloudflare-router/` is the small edge router for `runners.rati.chat` and
 `sports.rati.chat`. Both public products share the same Fly deployment. The
 router passes the original public host through so branding, passkeys, and
-origin checks stay correct.
+origin checks stay correct. It also replaces the client-address headers and authenticates each
+request to the origin with a shared `EDGE_PROXY_SECRET`. Set the same random secret, at least 32
+characters long, in Cloudflare and Fly before setting `REQUIRE_EDGE_PROXY_SECRET=1`. With that
+switch on, public routes fail closed when a request bypasses the edge; health checks and the legacy
+direct hostname remain available for operations.
 
 List charts send only time and price, use response compression, and cache their complete response
 for one minute.
@@ -515,6 +521,12 @@ Set one shared `RATE_LIMIT_HASH_KEY` so rate-limit keys contain neither raw IP a
 IDs. Production sets `REQUIRE_RATE_LIMIT_HASH_KEY=1`, so a missing shared key stops startup instead
 of silently weakening limits across machines. The old SQLite volume must be retired after the
 migration check; it is not a standing backup.
+
+Set a separate random `OPERATIONS_TOKEN` for detailed health and internal status APIs. For a closed
+beta, set `REGISTRATION_MODE=invite` and provide comma-separated, high-entropy, one-time codes in
+`REGISTRATION_INVITE_CODES`. A completed account permanently consumes its code. Configure secrets
+through the platform secret stores, never in this repository. Local development keeps open
+registration and does not require the edge secret unless those switches are set explicitly.
 
 The low-cost layout is about $25–$27 per month at light traffic: about $6.40 for PostgreSQL, $6.64
 for both web machines, $11.84 for the worker and trainer, and usage-based Redis at $0.20 per 100,000

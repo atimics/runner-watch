@@ -1,8 +1,10 @@
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 from starlette.requests import Request
 
+from runner_web import main as web_main
 from runner_web.request_security import (
     edge_proxy_authenticated,
     request_client_ip,
@@ -114,3 +116,40 @@ def test_deployment_does_not_trust_forwarded_headers_from_every_peer() -> None:
     assert 'headers.set("X-Rati-Client-IP"' in worker
     assert 'headers.set("X-Rati-Edge-Secret"' in worker
     assert "env.EDGE_PROXY_SECRET" in worker
+
+
+@pytest.mark.parametrize("card", ["signal", "research"])
+def test_generated_image_cards_are_rate_limited(
+    card: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checked: list[str] = []
+
+    def reject(_request: Request, scope: str, **_kwargs: object) -> None:
+        checked.append(scope)
+        raise HTTPException(429, "Too many requests")
+
+    monkeypatch.setattr(web_main, "enforce_rate", reject)
+    test_request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": f"/{card}/example/card.png",
+            "headers": [],
+            "client": ("127.0.0.1", 4200),
+        }
+    )
+
+    with pytest.raises(HTTPException) as limited:
+        if card == "signal":
+            web_main.signal_card("example", test_request)
+        else:
+            monkeypatch.setattr(
+                web_main,
+                "get_commission",
+                lambda _public_id: {"visibility": "public", "user_id": "owner"},
+            )
+            web_main.research_report_card("example", test_request, None)
+
+    assert limited.value.status_code == 429
+    assert checked == [f"{card}-card"]
