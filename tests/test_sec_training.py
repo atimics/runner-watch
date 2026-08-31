@@ -16,6 +16,7 @@ SEC_QWEN_SOURCE = Path(__file__).resolve().parents[1] / "ml" / "sec-qwen" / "src
 sys.path.insert(0, str(SEC_QWEN_SOURCE))
 
 from sec_qwen.baseline import (  # noqa: E402
+    _existing_predictions,
     _finqa_prediction,
     _read_suite,
     prepare_citation_support,
@@ -468,6 +469,9 @@ def test_prepare_finqa_freezes_source_and_output_digests(tmp_path: Path) -> None
     assert _read_suite(output, "finqa") == rows
     assert _finqa_prediction("Revenue increased by $94 million.", None) == "$94"
     assert _finqa_prediction('{"answer":"14%"}', {"answer": "14%"}) == "14%"
+    partial = tmp_path / "partial.jsonl"
+    _write_jsonl(partial, [{"id": "report-1", "prediction": "10", "answer": "10"}])
+    assert len(_existing_predictions(partial, ["report-1", "report-2"])) == 1
 
 
 def test_prepare_citation_support_uses_only_sealed_insufficient_cases(tmp_path: Path) -> None:

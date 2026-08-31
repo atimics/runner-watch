@@ -167,6 +167,23 @@ def _finqa_prediction(raw: str, parsed: Any) -> Any:
     return numbers[-1] if numbers else raw.strip()
 
 
+def _existing_predictions(path: Path, expected_ids: list[str]) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    with path.open(encoding="utf-8") as stream:
+        rows = [json.loads(line) for line in stream if line.strip()]
+    ids = [str(row.get("id") or "") for row in rows]
+    if ids != expected_ids[: len(ids)]:
+        raise ValueError("existing benchmark predictions are not an exact dataset prefix")
+    return rows
+
+
+def _benchmark_metrics(task: str, rows: list[dict[str, Any]]) -> dict[str, float]:
+    if task == "finqa":
+        return {"finqa_accuracy": finqa_accuracy(rows)}
+    return {"confident_hallucination_rate": confident_hallucination_rate(rows)}
+
+
 def evaluate_benchmark(
     config: Config,
     *,
@@ -175,12 +192,19 @@ def evaluate_benchmark(
     predictions_path: Path,
     adapter_directory: Path | None = None,
 ) -> dict[str, float]:
-    import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-
     if task not in {"finqa", "citation_support"}:
         raise ValueError("task must be finqa or citation_support")
     rows = _read_suite(dataset_path, task)
+    predictions_path.parent.mkdir(parents=True, exist_ok=True)
+    output_rows = _existing_predictions(
+        predictions_path, [str(row["id"]) for row in rows]
+    )
+    if len(output_rows) == len(rows):
+        return _benchmark_metrics(task, output_rows)
+
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
     tokenizer = AutoTokenizer.from_pretrained(
         config.model.model_id,
         revision=config.model.revision,
@@ -205,61 +229,62 @@ def evaluate_benchmark(
 
         model = PeftModel.from_pretrained(base_model, adapter_directory, is_trainable=False)
     model.eval()
-    output_rows: list[dict[str, Any]] = []
     batch_size = config.training.evaluation_batch_size
-    for start in range(0, len(rows), batch_size):
-        batch = rows[start : start + batch_size]
-        prompts = [
-            tokenizer.apply_chat_template(
-                row["messages"], tokenize=False, add_generation_prompt=True
+    mode = "a" if output_rows else "w"
+    with predictions_path.open(mode, encoding="utf-8", newline="\n") as stream:
+        for start in range(len(output_rows), len(rows), batch_size):
+            batch = rows[start : start + batch_size]
+            prompts = [
+                tokenizer.apply_chat_template(
+                    row["messages"], tokenize=False, add_generation_prompt=True
+                )
+                for row in batch
+            ]
+            inputs = tokenizer(
+                prompts,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=config.training.max_seq_length,
+            ).to(model.device)
+            with torch.inference_mode():
+                generated = model.generate(
+                    **inputs,
+                    do_sample=False,
+                    max_new_tokens=config.training.max_new_tokens,
+                    pad_token_id=tokenizer.eos_token_id,
+                )
+            predictions = tokenizer.batch_decode(
+                generated[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True
             )
-            for row in batch
-        ]
-        inputs = tokenizer(
-            prompts,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=config.training.max_seq_length,
-        ).to(model.device)
-        with torch.inference_mode():
-            generated = model.generate(
-                **inputs,
-                do_sample=False,
-                max_new_tokens=config.training.max_new_tokens,
-                pad_token_id=tokenizer.eos_token_id,
-            )
-        predictions = tokenizer.batch_decode(
-            generated[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True
-        )
-        for row, prediction in zip(batch, predictions, strict=True):
-            try:
-                parsed = json.loads(prediction.strip())
-            except (TypeError, ValueError, json.JSONDecodeError):
-                parsed = None
-            if task == "finqa":
-                value = _finqa_prediction(prediction, parsed)
-                output_rows.append(
-                    {"id": row["id"], "prediction": value, "answer": row["answer"]}
-                )
-            else:
-                expected = row["expected"]
-                supported = bool(
-                    isinstance(parsed, dict)
-                    and parsed.get("concept") == expected["concept"]
-                    and parsed.get("status") == expected["status"]
-                    and parsed.get("value") is None
-                )
-                confidence = parsed.get("confidence") if isinstance(parsed, dict) else None
-                if not isinstance(confidence, (int, float)) or not 0 <= float(confidence) <= 1:
-                    confidence = 1.0
-                output_rows.append(
-                    {"id": row["id"], "supported": supported, "confidence": confidence}
-                )
-    predictions_path.parent.mkdir(parents=True, exist_ok=True)
-    with predictions_path.open("w", encoding="utf-8", newline="\n") as stream:
-        for row in output_rows:
-            stream.write(_canonical_json(row) + "\n")
-    if task == "finqa":
-        return {"finqa_accuracy": finqa_accuracy(output_rows)}
-    return {"confident_hallucination_rate": confident_hallucination_rate(output_rows)}
+            for row, prediction in zip(batch, predictions, strict=True):
+                try:
+                    parsed = json.loads(prediction.strip())
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    parsed = None
+                if task == "finqa":
+                    result = {
+                        "id": row["id"],
+                        "prediction": _finqa_prediction(prediction, parsed),
+                        "answer": row["answer"],
+                    }
+                else:
+                    expected = row["expected"]
+                    supported = bool(
+                        isinstance(parsed, dict)
+                        and parsed.get("concept") == expected["concept"]
+                        and parsed.get("status") == expected["status"]
+                        and parsed.get("value") is None
+                    )
+                    confidence = parsed.get("confidence") if isinstance(parsed, dict) else None
+                    if not isinstance(confidence, (int, float)) or not 0 <= float(confidence) <= 1:
+                        confidence = 1.0
+                    result = {
+                        "id": row["id"],
+                        "supported": supported,
+                        "confidence": confidence,
+                    }
+                output_rows.append(result)
+                stream.write(_canonical_json(result) + "\n")
+            stream.flush()
+    return _benchmark_metrics(task, output_rows)

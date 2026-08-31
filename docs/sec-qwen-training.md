@@ -181,6 +181,9 @@ about end-to-end document retrieval accuracy. Scoring accepts the requested JSON
 scalar, or the final numeric value in a textual answer before applying the frozen FinQA
 normalization.
 
+Benchmark prediction files are resumable. Each completed batch is appended and flushed, and a
+restart accepts only an exact ID prefix of the frozen suite before continuing.
+
 ## Budget guardrail
 
 Use `sec-qwen profile` to size the run. It uses the exact pinned tokenizer and chat template, reports
