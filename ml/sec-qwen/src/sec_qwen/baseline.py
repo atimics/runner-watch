@@ -143,8 +143,12 @@ def prepare_citation_support(config: Config, output: Path) -> dict[str, Any]:
 
 
 def _read_suite(path: Path, task: str) -> list[dict[str, Any]]:
-    rows = load_examples(path)
-    if not rows or any(row.get("task") != task for row in rows):
+    with path.open(encoding="utf-8") as stream:
+        rows = [json.loads(line) for line in stream if line.strip()]
+    if not rows or any(
+        row.get("schema") != "stonks.sec_qwen_benchmark.v1" or row.get("task") != task
+        for row in rows
+    ):
         raise ValueError(f"benchmark does not contain only {task} rows")
     ids = [str(row.get("id") or "") for row in rows]
     if not all(ids) or len(ids) != len(set(ids)):

@@ -15,7 +15,7 @@ from runner_web.sec_training import SPLIT_FILES, export_sec_training_corpus
 SEC_QWEN_SOURCE = Path(__file__).resolve().parents[1] / "ml" / "sec-qwen" / "src"
 sys.path.insert(0, str(SEC_QWEN_SOURCE))
 
-from sec_qwen.baseline import prepare_citation_support, prepare_finqa  # noqa: E402
+from sec_qwen.baseline import _read_suite, prepare_citation_support, prepare_finqa  # noqa: E402
 from sec_qwen.benchmarks import release_metrics  # noqa: E402
 from sec_qwen.completion import build_completion  # noqa: E402
 from sec_qwen.config import load_config, load_examples, validate_corpus  # noqa: E402
@@ -454,6 +454,7 @@ def test_prepare_finqa_freezes_source_and_output_digests(tmp_path: Path) -> None
     assert rows[0]["answer"] == "10"
     assert manifest["examples"] == 1
     assert manifest["file"]["sha256"] == hashlib.sha256(output.read_bytes()).hexdigest()
+    assert _read_suite(output, "finqa") == rows
 
 
 def test_prepare_citation_support_uses_only_sealed_insufficient_cases(tmp_path: Path) -> None:
