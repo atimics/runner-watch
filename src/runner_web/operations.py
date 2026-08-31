@@ -4,6 +4,7 @@ import json
 import os
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -27,6 +28,9 @@ WORKER_HEARTBEAT_KEY = "worker_process_heartbeat"
 WORKER_HEARTBEAT_PREFIX = f"{WORKER_HEARTBEAT_KEY}:"
 TRAINER_HEARTBEAT_KEY = "ranker_trainer_heartbeat"
 WORKER_EXPECTED_INSTANCES = max(1, int(os.getenv("WORKER_EXPECTED_INSTANCES", "1")))
+SPORTS_HOST = (
+    urlparse(os.getenv("SPORTS_ORIGIN", "https://sports.rati.chat")).hostname or ""
+).lower()
 router = APIRouter()
 
 
@@ -222,32 +226,50 @@ def health_status(*, checked_at: datetime | None = None) -> dict[str, Any]:
 
 def runtime_capabilities(
     worker_tasks: list[Any] | None = None,
+    *,
+    product: str = "runners",
 ) -> dict[str, Any]:
     """Describe the deployment from live state and the shared product policy."""
 
     ingestion = ingestion_status()
     source_rows = ingestion["sources"]
-    sources = {
-        f"{row['source']}:{row['feed']}": {
+    policy_by_key = {
+        (policy.source, policy.feed): policy for policy in DEFAULT_SOURCE_POLICIES
+    }
+    sources: dict[str, dict[str, Any]] = {}
+    for row in source_rows:
+        policy = policy_by_key.get((str(row["source"]), str(row["feed"])))
+        source_product = policy.product if policy else "runners"
+        display_policy = str(row["display_policy"])
+        sources[f"{row['source']}:{row['feed']}"] = {
             "title": row["title"],
             "enabled": bool(row["enabled"]),
             "state": row["health"],
             "last_success_at": row.get("last_success_at"),
             "age_seconds": row.get("age_seconds"),
             "review_status": row["review_status"],
+            "product": source_product,
+            "public_effects": display_policy != "internal_review_only",
         }
-        for row in source_rows
-    }
 
     def feature(*keys: str) -> dict[str, Any]:
-        matched = [sources[key] for key in keys if key in sources]
-        live = [row for row in matched if row["enabled"] and row["state"] == "healthy"]
-        enabled = [row for row in matched if row["enabled"]]
+        matched = [
+            sources[key]
+            for key in keys
+            if key in sources and sources[key]["product"] == product
+        ]
+        public = [row for row in matched if row["enabled"] and row["public_effects"]]
+        live = [row for row in public if row["state"] == "healthy"]
+        internal = [
+            row for row in matched if row["enabled"] and not row["public_effects"]
+        ]
         state = (
             "healthy"
             if live
             else "degraded"
-            if enabled
+            if public
+            else "internal_only"
+            if internal
             else "disabled"
             if matched
             else "unavailable"
@@ -259,19 +281,45 @@ def runtime_capabilities(
     tasks = worker_tasks or []
     failed_workers = sum(task.done() for task in tasks)
     source_problems = sum(
-        row["enabled"] and row["health"] in {"failed", "stale"}
-        for row in source_rows
+        row["enabled"]
+        and row["public_effects"]
+        and row["product"] == product
+        and row["state"] in {"failed", "stale"}
+        for row in sources.values()
     )
     deployment_health = health_status()
-    manifest = policy_manifest(DEFAULT_SOURCE_POLICIES)
+    manifest = policy_manifest(DEFAULT_SOURCE_POLICIES, product=product)
     policy_warnings = manifest["source_policy_warnings"]
     policy_blockers = [
         warning for warning in policy_warnings if warning["severity"] == "blocking"
     ]
     evidence_gate = manifest["evidence_gate"]
     base_rates = manifest["market_base_rates"]
+    product_features = (
+        {
+            "sports_schedule": feature("espn:sports_scoreboard_preview"),
+            "sports_results": feature("espn:sports_boxscore_preview"),
+            "sports_news": feature("espn:sports_news_preview"),
+            "sports_odds": feature("the-odds-api:sports_moneyline_odds"),
+        }
+        if product == "sports"
+        else {
+            "sec_filings": feature("sec:current_filings"),
+            "issuer_facts": feature("sec:company_facts"),
+            "market_bars": feature("yahoo:market_bars"),
+            "news": feature("yahoo:news_search", "gdelt:news_search"),
+            "public_social": feature(
+                "apewisdom:reddit_trends", "bluesky:social_search"
+            ),
+            "trading_halts": feature("nasdaq_trader:trade_halts"),
+            "short_positioning": feature(
+                "fintel:short_interest", "fintel:borrow_rate"
+            ),
+        }
+    )
     return {
         "checked_at": ingestion["checked_at"],
+        "product": product,
         "status": (
             "degraded"
             if (
@@ -286,17 +334,7 @@ def runtime_capabilities(
         "policy_version": manifest["version"],
         "policy_warnings": policy_warnings,
         "features": {
-            "sec_filings": feature("sec:current_filings"),
-            "issuer_facts": feature("sec:company_facts"),
-            "market_bars": feature("yahoo:market_bars"),
-            "news": feature("yahoo:news_search", "gdelt:news_search"),
-            "public_social": feature(
-                "apewisdom:reddit_trends", "bluesky:social_search"
-            ),
-            "trading_halts": feature("nasdaq_trader:trade_halts"),
-            "short_positioning": feature(
-                "fintel:short_interest", "fintel:borrow_rate"
-            ),
+            **product_features,
             "billing": {
                 "state": "disabled",
                 "provider": "none",
@@ -392,4 +430,9 @@ def ingestion_status_api() -> dict[str, Any]:
 
 @router.get("/api/capabilities")
 def capabilities_api(request: Request) -> dict[str, Any]:
-    return runtime_capabilities(getattr(request.app.state, "worker_tasks", []))
+    request_host = (request.url.hostname or "").lower()
+    product = "sports" if request_host == SPORTS_HOST else "runners"
+    return runtime_capabilities(
+        getattr(request.app.state, "worker_tasks", []),
+        product=product,
+    )

@@ -19,6 +19,7 @@ def test_runtime_capabilities_reports_live_modes_without_secrets(
 
     result = runtime_capabilities()
 
+    assert result["product"] == "runners"
     assert result["analysis"]["evidence_gate"] == {
         "mode": "independent_families",
         "version": 2,
@@ -27,7 +28,7 @@ def test_runtime_capabilities_reports_live_modes_without_secrets(
         "families": ["market", "primary", "news", "crowd"],
     }
     assert result["analysis"]["market_base_rates"]["minimum_samples"] == 20
-    assert result["policy_version"] == "stonks.product-policy.v1"
+    assert result["policy_version"] == "stonks.product-policy.v2"
     assert result["analysis"]["ranker"]["training_policy"]["minimum_groups"] == 160
     assert result["analysis"]["research"]["promotion_policy"]["promotion_cases"] == 50
     assert result["analysis"]["research"]["provider"] == "openrouter"
@@ -54,3 +55,5 @@ def test_runtime_capabilities_reports_live_modes_without_secrets(
     )
     assert "sec:current_filings" in result["sources"]
     assert "credential_env" not in result["sources"]["sec:current_filings"]
+    assert result["features"]["news"]["state"] == "internal_only"
+    assert result["features"]["public_social"]["state"] == "internal_only"

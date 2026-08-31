@@ -15,9 +15,11 @@ from runner_node.tickers import (
 from runner_watch.market_data import DownloadResult
 from runner_watch.provider_contracts import ProviderProvenance
 
+TEST_MARKET_TIME = datetime(2026, 8, 28, 19, 0, tzinfo=UTC)
+
 
 def _frame(*, daily: bool) -> pd.DataFrame:
-    now = datetime.now(UTC)
+    now = TEST_MARKET_TIME
     if daily:
         index = pd.date_range(end=now - timedelta(days=1), periods=30, freq="D")
     else:
@@ -39,7 +41,7 @@ def _frame(*, daily: bool) -> pd.DataFrame:
 
 
 def _result(symbol: str, *, daily: bool, provider: str = "yahoo") -> DownloadResult:
-    now = datetime.now(UTC)
+    now = TEST_MARKET_TIME
     return DownloadResult(
         frames={symbol: _frame(daily=daily)},
         failed=[],

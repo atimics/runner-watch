@@ -30,6 +30,7 @@ class SourcePolicy:
     attribution: str | None
     review_status: str = "approved"
     enabled: bool = True
+    product: str = "runners"
 
 
 DEFAULT_SOURCE_POLICIES = (
@@ -158,7 +159,7 @@ DEFAULT_SOURCE_POLICIES = (
         stale_after_seconds=2_700,
         schedule="always",
         storage_policy="normalized_metadata_only",
-        display_policy="review_required",
+        display_policy="internal_review_only",
         attribution="Yahoo Finance",
         review_status="poc_only",
         enabled=(
@@ -177,7 +178,7 @@ DEFAULT_SOURCE_POLICIES = (
         stale_after_seconds=2_700,
         schedule="always",
         storage_policy="normalized_aggregates_only",
-        display_policy="source_link_with_attribution",
+        display_policy="internal_review_only",
         attribution="ApeWisdom / Reddit",
         review_status="poc_only",
         enabled=(
@@ -196,7 +197,7 @@ DEFAULT_SOURCE_POLICIES = (
         stale_after_seconds=2_700,
         schedule="always",
         storage_policy="normalized_metadata_only",
-        display_policy="source_link_with_attribution",
+        display_policy="internal_review_only",
         attribution="GDELT",
         review_status="poc_only",
         enabled=(
@@ -214,7 +215,7 @@ DEFAULT_SOURCE_POLICIES = (
         stale_after_seconds=2_700,
         schedule="always",
         storage_policy="normalized_aggregates_only",
-        display_policy="source_link_with_attribution",
+        display_policy="internal_review_only",
         attribution="Bluesky",
         review_status="poc_only",
         enabled=(
@@ -251,7 +252,7 @@ DEFAULT_SOURCE_POLICIES = (
         stale_after_seconds=180,
         schedule="us_extended_weekdays",
         storage_policy="archive_raw_and_normalized",
-        display_policy="source_link_with_attribution",
+        display_policy="internal_review_only",
         attribution="Nasdaq Trader",
         review_status="poc_only",
         enabled=_enabled("NASDAQ_TRADE_HALTS_ENABLED"),
@@ -271,6 +272,7 @@ DEFAULT_SOURCE_POLICIES = (
         attribution="U.S. Department of Labor OALJ",
         review_status="poc_only",
         enabled=_enabled("DOL_OALJ_LEGAL_RISK_ENABLED"),
+        product="internal",
     ),
     SourcePolicy(
         source="pacer",
@@ -291,6 +293,7 @@ DEFAULT_SOURCE_POLICIES = (
             and bool(os.getenv("PACER_USERNAME", "").strip())
             and bool(os.getenv("PACER_PASSWORD", "").strip())
         ),
+        product="internal",
     ),
     SourcePolicy(
         source="courtlistener",
@@ -310,6 +313,7 @@ DEFAULT_SOURCE_POLICIES = (
             _enabled("COURTLISTENER_LEGAL_RISK_ENABLED")
             and bool(os.getenv("COURTLISTENER_API_TOKEN", "").strip())
         ),
+        product="internal",
     ),
     SourcePolicy(
         source="fintel",
@@ -364,6 +368,7 @@ DEFAULT_SOURCE_POLICIES = (
         attribution="ESPN",
         review_status="poc_only",
         enabled=_enabled_by_default("SPORTS_INGESTION_ENABLED"),
+        product="sports",
     ),
     SourcePolicy(
         source="espn",
@@ -380,6 +385,7 @@ DEFAULT_SOURCE_POLICIES = (
         attribution="ESPN",
         review_status="poc_only",
         enabled=_enabled_by_default("SPORTS_INGESTION_ENABLED"),
+        product="sports",
     ),
     SourcePolicy(
         source="the-odds-api",
@@ -397,6 +403,7 @@ DEFAULT_SOURCE_POLICIES = (
         enabled=(
             _enabled_by_default("ODDS_API_ENABLED") and bool(os.getenv("ODDS_API_KEY", "").strip())
         ),
+        product="sports",
     ),
     SourcePolicy(
         source="espn",
@@ -413,6 +420,7 @@ DEFAULT_SOURCE_POLICIES = (
         attribution="ESPN",
         review_status="poc_only",
         enabled=_enabled_by_default("SPORTS_INGESTION_ENABLED"),
+        product="sports",
     ),
     SourcePolicy(
         source="espn",
@@ -429,6 +437,7 @@ DEFAULT_SOURCE_POLICIES = (
         attribution="ESPN",
         review_status="poc_only",
         enabled=_enabled_by_default("SPORTS_INGESTION_ENABLED"),
+        product="sports",
     ),
 )
 
@@ -465,6 +474,7 @@ def _free_risk_policy(
             and _enabled(enabled_env)
             and credential_ready
         ),
+        product="internal",
     )
 
 

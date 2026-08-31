@@ -57,6 +57,18 @@ def _test_flash_forecast() -> dict[str, Any]:
     }
 
 
+def _approve_test_source(source: str, feed: str) -> None:
+    with connection() as database:
+        database.execute(
+            """
+            UPDATE source_registry
+            SET review_status='approved',display_policy='source_link_with_attribution',enabled=1
+            WHERE source=? AND feed=?
+            """,
+            (source, feed),
+        )
+
+
 @pytest.mark.parametrize(
     ("probabilities", "expected_return", "direction", "label", "arrow"),
     [
@@ -1010,6 +1022,7 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
             ),
         )
     )
+    _approve_test_source("test_discovery", "mixed")
 
     pulse = pulse_data()["rows"][0]
     radar = radar_data()[0]
@@ -1080,6 +1093,7 @@ def test_negative_social_counts_do_not_break_pulse_or_radar(
             ),
         )
     )
+    _approve_test_source("test_discovery", "social")
     web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
 
     pulse = pulse_data()["rows"][0]
@@ -1325,6 +1339,7 @@ def test_stored_halt_must_be_recently_confirmed(tmp_path: Path, monkeypatch: Mon
             ),
         )
     )
+    _approve_test_source("test_halts", "trade_halts")
     with connection() as database:
         database.execute(
             "UPDATE market_events SET last_collected_at=? WHERE ticker='STALE'",
@@ -1375,6 +1390,7 @@ def test_market_risk_context_ignores_news_payloads(
             ),
         )
     )
+    _approve_test_source("test_risk_events", "events")
 
     with connection() as database:
         context = _stored_market_risk_contexts(database, ["RISK"])["RISK"]
@@ -2022,6 +2038,7 @@ def test_chart_annotations_keep_the_real_pulse_entry_and_detected_events(
             ),
         )
     )
+    _approve_test_source("test_media", "social")
 
     entry = _pulse_entry_markers(["ONE"])["ONE"]
     annotations = _chart_annotations(["ONE"])["ONE"]

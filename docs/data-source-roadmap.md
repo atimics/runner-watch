@@ -72,7 +72,8 @@ move to the public score only after its quality gate passes.
 
 Current build status: the shared layer and normalized tables are complete. The Nasdaq halt parser,
 raw archive, deduplication, worker, stale-feed health, evidence label, safety penalty, and hard veto
-are connected. The feed remains unapproved until its terms review is complete. SEC Company Facts,
+are connected for internal review. The public event gate prevents the halt evidence, penalty, and
+veto from affecting users until the feed's terms review is approved. SEC Company Facts,
 issuer facts, dilution evidence, and point-in-time ranker features are also built. SEC reporting
 owner CIKs, private person/issuer review records, and private legal-case candidates are now built.
 OFAC SDN, SAM.gov exclusions, and HHS LEIE have opt-in official collectors. Another 18 free
