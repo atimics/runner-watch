@@ -126,25 +126,41 @@ def test_backfill_archives_historical_filings_and_resumes(
         end_date=date(2024, 12, 31),
         download=download,
         ciks=(1001,),
+        max_documents=1,
         include_company_facts=False,
         timeout=5,
     )
-    assert result.issuers_completed == 1
+    assert result.issuers_completed == 0
     assert result.submission_files_fetched == 2
     assert result.filings_selected == 2
-    assert result.filings_inserted == 2
-    assert result.documents_fetched == 2
+    assert result.filings_inserted == 1
+    assert result.documents_fetched == 1
     with connection() as database:
-        assert database.execute("SELECT COUNT(*) FROM sec_filings").fetchone()[0] == 2
+        assert database.execute("SELECT COUNT(*) FROM sec_filings").fetchone()[0] == 1
         assert database.execute(
             "SELECT COUNT(*) FROM source_documents WHERE source='sec'"
-        ).fetchone()[0] == 4
+        ).fetchone()[0] == 3
         assert database.execute(
             "SELECT COUNT(*) FROM sec_filings WHERE market_score IS NOT NULL"
         ).fetchone()[0] == 0
 
-    calls_before_resume = list(calls)
+    calls_before_resume = len(calls)
     resumed = backfill_sec_corpus(
+        start_date=date(2023, 1, 1),
+        end_date=date(2024, 12, 31),
+        download=download,
+        ciks=(1001,),
+        max_documents=1,
+        include_company_facts=False,
+        timeout=5,
+    )
+    assert resumed.issuers_completed == 1
+    assert resumed.submission_files_fetched == 0
+    assert resumed.archived_responses_reused == 2
+    assert resumed.filings_inserted == 1
+    assert resumed.filings_skipped == 1
+    assert calls[calls_before_resume:] == [annual_url]
+    final = backfill_sec_corpus(
         start_date=date(2023, 1, 1),
         end_date=date(2024, 12, 31),
         download=download,
@@ -152,8 +168,21 @@ def test_backfill_archives_historical_filings_and_resumes(
         include_company_facts=False,
         timeout=5,
     )
-    assert resumed.issuers_skipped == 1
-    assert calls == calls_before_resume
+    assert final.issuers_skipped == 1
+    calls_before_new_scope = len(calls)
+    new_scope = backfill_sec_corpus(
+        start_date=date(2023, 1, 1),
+        end_date=date(2024, 12, 31),
+        download=download,
+        ciks=(1001,),
+        max_filings_per_issuer=1,
+        include_company_facts=False,
+        timeout=5,
+    )
+    assert new_scope.issuers_completed == 1
+    assert new_scope.submission_files_fetched == 1
+    assert new_scope.archived_responses_reused == 1
+    assert calls[calls_before_new_scope:] == [recent_url]
 
 
 def test_sec_client_requires_contact_and_rejects_non_sec_urls() -> None:
@@ -318,6 +347,30 @@ def test_v2_export_is_deterministic_multitask_and_accession_safe(
     assert len(citation["source_sha256"]) == 64
     assert len(citation["chunk_sha256"]) == 64
     assert citation["normalized_char_end"] > citation["normalized_char_start"]
+    structured = next(
+        row for row in all_examples if row["task"] == "sec_filing_structured_analysis"
+    )
+    structured_evidence = json.loads(structured["messages"][1]["content"].split("\nEVIDENCE\n")[1])
+    assert len(structured_evidence["document_chunks"]) <= 1
+    classification = next(
+        row for row in all_examples if row["task"] == "filing_classification"
+    )
+    classification_evidence = json.loads(
+        classification["messages"][1]["content"].split("\nEVIDENCE\n")[1]
+    )
+    assert "document_chunks" not in classification_evidence
+    assert classification["source"]["evidence"] == []
+    comparison = next(row for row in all_examples if row["task"] == "fact_comparison")
+    comparison_evidence = json.loads(
+        comparison["messages"][1]["content"].split("\nEVIDENCE\n")[1]
+    )
+    assert len(comparison_evidence["facts"]) == 2
+    insufficient = next(row for row in all_examples if row["task"] == "insufficient_evidence")
+    insufficient_evidence = json.loads(
+        insufficient["messages"][1]["content"].split("\nEVIDENCE\n")[1]
+    )
+    assert "issuer_facts" not in insufficient_evidence
+    assert insufficient_evidence["available_fact_inventory"]
     summary = json.loads((tmp_path / "first" / "dataset-summary.json").read_text())
     assert summary["filings"] == 12
     assert summary["examples"] > summary["filings"]

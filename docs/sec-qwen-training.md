@@ -41,9 +41,11 @@ for a smaller named set.
 
 Every response goes through the existing immutable source archive. A content hash, source URL,
 collection run, and per-item state are stored. A completed issuer/date/form range is skipped on the
-next run. Failed or deliberately bounded work stays pending and is safe to resume. The real client
-accepts SEC HTTPS hosts only, retries temporary errors, respects `Retry-After`, and defaults to two
-requests per second. `--max-documents 1 --issuer-limit 1 --skip-company-facts` is a safe smoke run.
+next run. Failed or deliberately bounded work stays pending and is safe to resume. A resume reuses
+verified submissions, historical shards, and filing documents from the archive before making a
+network request. The real client accepts SEC HTTPS hosts only, retries temporary errors, respects
+`Retry-After`, and defaults to two requests per second. `--max-documents 1 --issuer-limit 1
+--skip-company-facts` is a safe smoke run.
 
 The SEC currently publishes a ten-request-per-second fair-access ceiling. Keep the default lower
 rate, run one backfill process at a time, and do not bypass an SEC block. Filing exhibits can have
@@ -67,6 +69,12 @@ issuer, eight semantic chunks and 20 total examples per accession, 240,000 sourc
 document, and four archived documents. Filings are balanced across form families before the issuer
 cap is applied. Adjust caps in a new frozen experiment instead of silently changing an existing
 corpus.
+
+V2 avoids repeating evidence that does not teach a task. Classification uses filing identity,
+structured analysis gets one representative chunk, comparisons get only the two facts being
+compared, and insufficient-evidence examples get a compact fact inventory. Evidence-navigation
+examples still contain the exact semantic chunk. This keeps citation behavior while reducing paid
+token passes.
 
 The split policy first holds out whole issuers by a stable CIK hash. It then splits the remaining
 accessions by filing-time groups into train, validation, and future test data. All chunks and tasks
@@ -99,6 +107,10 @@ starting an expensive job:
 cd ml/sec-qwen
 uv sync --frozen
 sec-qwen validate config.toml
+sec-qwen profile config.toml \
+  --tokens-per-gpu-hour MEASURED_CALIBRATION_THROUGHPUT \
+  --gpu-hour-price CURRENT_PROVIDER_PRICE \
+  --output ../../../artifacts/feral-7b-sec-v2/profile.json
 sec-qwen train config.toml
 sec-qwen evaluate config.toml \
   --adapter ../../../artifacts/feral-7b-sec-v2/adapter \
@@ -108,18 +120,24 @@ sec-qwen evaluate config.toml \
 
 ## Budget guardrail
 
-Use `estimated_training_tokens` from `dataset-summary.json`, not the number of filings, to size the
-run. Two epochs process roughly twice that many tokens. Benchmark 1% of the frozen train split on
-the exact image and GPU, then calculate:
+Use `sec-qwen profile` to size the run. It uses the exact pinned tokenizer and chat template, reports
+tokens by task and split, identifies truncation or examples with no trainable answer, calculates
+optimizer steps, and can turn a measured throughput and current GPU price into a cost ceiling.
+Benchmark 1% of the frozen train split on the exact image and GPU, then pass that measured
+tokens-per-GPU-hour value to the profiler.
 
 ```text
 estimated GPU hours = full token passes / measured tokens per GPU hour
 budget = estimated GPU hours * provider GPU-hour price * 1.25
 ```
 
-The extra 25% covers evaluation, checkpoint upload, and normal startup variance. Record both the
-calculated limit and the provider quote in ilXyr before dispatch. Stop if corpus hashes, image
-digest, token count, hardware, or provider price differ from the approved run.
+The profiler's default extra 25% covers evaluation, checkpoint upload, and normal startup variance.
+Record the generated profile, calculated limit, and provider quote in ilXyr before dispatch. Stop if
+corpus hashes, image digest, token count, hardware, or provider price differ from the approved run.
+
+The example config uses four deterministic data-loader workers and evaluates two prompts per batch.
+Lower either value if the chosen executor has limited CPU or GPU memory. Both values are part of the
+hashed training config, so a performance change cannot silently alter a replay.
 
 Run evaluation separately on `test-future.jsonl` and `test-unseen-issuer.jsonl`. The command prints
 exactly three metrics under a `metrics` object:

@@ -26,6 +26,8 @@ target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj"
 gradient_checkpointing = true
 bf16 = true
 max_new_tokens = 512
+dataloader_num_workers = 4
+evaluation_batch_size = 2
 
 [output]
 directory = "../../../artifacts/feral-7b-sec-v2"

@@ -54,6 +54,9 @@ def evaluate_model(
         revision=config.model.revision,
         trust_remote_code=False,
     )
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"
     model_kwargs: dict[str, Any] = {
         "revision": config.model.revision,
         "trust_remote_code": False,
@@ -66,13 +69,24 @@ def evaluate_model(
     model = PeftModel.from_pretrained(base_model, adapter_directory, is_trainable=False)
     model.eval()
     rows = []
-    for example in examples:
-        prompt = tokenizer.apply_chat_template(
-            example["messages"][:-1],
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    batch_size = config.training.evaluation_batch_size
+    for start in range(0, len(examples), batch_size):
+        batch = examples[start : start + batch_size]
+        prompts = [
+            tokenizer.apply_chat_template(
+                example["messages"][:-1],
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            for example in batch
+        ]
+        inputs = tokenizer(
+            prompts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=config.training.max_seq_length,
+        ).to(model.device)
         with torch.inference_mode():
             generated = model.generate(
                 **inputs,
@@ -80,16 +94,17 @@ def evaluate_model(
                 max_new_tokens=config.training.max_new_tokens,
                 pad_token_id=tokenizer.eos_token_id,
             )
-        prediction = tokenizer.decode(
-            generated[0, inputs["input_ids"].shape[1] :],
+        predictions = tokenizer.batch_decode(
+            generated[:, inputs["input_ids"].shape[1] :],
             skip_special_tokens=True,
-        ).strip()
-        rows.append(
+        )
+        rows.extend(
             {
                 "id": example["id"],
-                "prediction": prediction,
+                "prediction": prediction.strip(),
                 "target": example["messages"][-1]["content"],
             }
+            for example, prediction in zip(batch, predictions, strict=True)
         )
     predictions_path.parent.mkdir(parents=True, exist_ok=True)
     with predictions_path.open("w", encoding="utf-8", newline="\n") as stream:

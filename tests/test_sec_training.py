@@ -19,6 +19,7 @@ from sec_qwen.benchmarks import release_metrics  # noqa: E402
 from sec_qwen.completion import build_completion  # noqa: E402
 from sec_qwen.config import load_config, load_examples, validate_corpus  # noqa: E402
 from sec_qwen.evaluation import score_predictions  # noqa: E402
+from sec_qwen.profiling import profile_corpus  # noqa: E402
 
 
 def _insert_filing(
@@ -265,6 +266,104 @@ def test_qwen_loader_accepts_deterministic_v2_examples(tmp_path: Path) -> None:
     }
     _write_jsonl(path, [example])
     assert load_examples(path) == [example]
+
+
+def test_qwen_profile_uses_exact_template_tokens_and_builds_budget(tmp_path: Path) -> None:
+    corpus = tmp_path / "profile-corpus"
+    corpus.mkdir()
+    example = {
+        "schema": "stonks.sec_chat_example.v2",
+        "id": "sec:1:classification:0",
+        "task": "filing_classification",
+        "messages": [
+            {"role": "system", "content": "Use evidence."},
+            {"role": "user", "content": "Classify."},
+            {"role": "assistant", "content": '{"form":"10-K"}'},
+        ],
+    }
+    files = []
+    for name, rows in {
+        "train.jsonl": [example],
+        "validation.jsonl": [example],
+        "test-future.jsonl": [],
+        "test-unseen-issuer.jsonl": [],
+    }.items():
+        path = corpus / name
+        _write_jsonl(path, rows)
+        files.append(
+            {
+                "path": name,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "size_bytes": path.stat().st_size,
+            }
+        )
+    manifest = corpus / "corpus-release.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "ilxyr.corpus_release.v1",
+                "id": "dataset://profile",
+                "files": files,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "profile.toml"
+    config_path.write_text(
+        f"""
+schema = "stonks.sec_qwen_training.v1"
+[model]
+model_id = "Qwen/Qwen2.5-7B-Instruct"
+revision = "{'d' * 40}"
+[dataset]
+corpus_manifest = "profile-corpus/corpus-release.json"
+train_file = "train.jsonl"
+validation_file = "validation.jsonl"
+evaluation_files = ["test-future.jsonl", "test-unseen-issuer.jsonl"]
+[training]
+epochs = 2
+max_seq_length = 256
+gradient_accumulation_steps = 2
+target_modules = ["q_proj"]
+dataloader_num_workers = 4
+evaluation_batch_size = 2
+[output]
+directory = "output"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class CharacterTokenizer:
+        def apply_chat_template(
+            self,
+            messages: list[dict[str, str]],
+            *,
+            tokenize: bool,
+            add_generation_prompt: bool,
+        ) -> str:
+            assert not tokenize
+            content = "|".join(message["content"] for message in messages)
+            return content + ("|" if add_generation_prompt else "")
+
+        def __call__(self, text: str, *, add_special_tokens: bool) -> dict[str, list[int]]:
+            assert not add_special_tokens
+            return {"input_ids": list(text.encode())}
+
+    config = load_config(config_path)
+    profile = profile_corpus(
+        config,
+        tokenizer=CharacterTokenizer(),
+        tokens_per_gpu_hour=1_000,
+        gpu_hour_price=4.0,
+    )
+    assert profile["splits"]["train.jsonl"]["examples"] == 1
+    assert profile["splits"]["train.jsonl"]["supervised_tokens"] > 0
+    assert profile["splits"]["train.jsonl"]["task_tokens"] == {
+        "filing_classification": profile["splits"]["train.jsonl"]["effective_tokens"]
+    }
+    assert profile["training"]["optimizer_steps"] == 1
+    assert profile["budget"]["recommended_cost_limit"] > 0
 
 
 def test_feral_release_gate_and_ilxyr_completion(tmp_path: Path) -> None:
