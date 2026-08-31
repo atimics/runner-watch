@@ -15,11 +15,13 @@ from runner_web.sec_training import SPLIT_FILES, export_sec_training_corpus
 SEC_QWEN_SOURCE = Path(__file__).resolve().parents[1] / "ml" / "sec-qwen" / "src"
 sys.path.insert(0, str(SEC_QWEN_SOURCE))
 
+from sec_qwen.baseline import prepare_citation_support, prepare_finqa  # noqa: E402
 from sec_qwen.benchmarks import release_metrics  # noqa: E402
 from sec_qwen.completion import build_completion  # noqa: E402
 from sec_qwen.config import load_config, load_examples, validate_corpus  # noqa: E402
 from sec_qwen.evaluation import score_predictions  # noqa: E402
 from sec_qwen.profiling import profile_corpus  # noqa: E402
+from sec_qwen.training import _calibration_sample  # noqa: E402
 
 
 def _insert_filing(
@@ -419,3 +421,111 @@ def test_feral_release_gate_and_ilxyr_completion(tmp_path: Path) -> None:
     assert completion["schema"] == "ilxyr.oci_job_completion.v1"
     assert completion["metrics"] == metrics
     assert completion["artifacts"][0]["sha256"] == hashlib.sha256(b"adapter").hexdigest()
+
+
+def test_calibration_sample_is_stable_and_uses_one_percent_ceiling() -> None:
+    examples = [{"id": f"example-{index}"} for index in range(101)]
+    first = _calibration_sample(examples, 0.01)
+    second = _calibration_sample(list(reversed(examples)), 0.01)
+    assert first == second
+    assert len(first) == 2
+
+
+def test_prepare_finqa_freezes_source_and_output_digests(tmp_path: Path) -> None:
+    source = tmp_path / "test.json"
+    source.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "report-1",
+                    "pre_text": ["Revenue was 10."],
+                    "post_text": ["Costs were 4."],
+                    "table_ori": [["metric", "value"], ["revenue", "10"]],
+                    "qa": {"question": "What is revenue?", "answer": "10"},
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "finqa.jsonl"
+    manifest = prepare_finqa(source, output, source_revision="f" * 40)
+    rows = _read_jsonl(output)
+    assert rows[0]["task"] == "finqa"
+    assert rows[0]["answer"] == "10"
+    assert manifest["examples"] == 1
+    assert manifest["file"]["sha256"] == hashlib.sha256(output.read_bytes()).hexdigest()
+
+
+def test_prepare_citation_support_uses_only_sealed_insufficient_cases(tmp_path: Path) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    insufficient = {
+        "schema": "stonks.sec_chat_example.v2",
+        "id": "sec:1:insufficient:cash",
+        "task": "insufficient_evidence",
+        "messages": [
+            {"role": "system", "content": "Use evidence."},
+            {"role": "user", "content": "Return cash or mark it insufficient."},
+            {
+                "role": "assistant",
+                "content": '{"concept":"cash","status":"insufficient_evidence","value":null}',
+            },
+        ],
+    }
+    files = []
+    for name, rows in {
+        "train.jsonl": [],
+        "validation.jsonl": [],
+        "test-future.jsonl": [insufficient],
+        "test-unseen-issuer.jsonl": [],
+    }.items():
+        path = corpus / name
+        _write_jsonl(path, rows)
+        files.append(
+            {
+                "path": name,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "size_bytes": path.stat().st_size,
+            }
+        )
+    manifest_path = corpus / "corpus-release.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema": "ilxyr.corpus_release.v1",
+                "id": "dataset://citation-test",
+                "files": files,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        f'''
+schema = "stonks.sec_qwen_training.v1"
+[model]
+model_id = "Qwen/Qwen2.5-7B-Instruct"
+revision = "{'a' * 40}"
+[dataset]
+corpus_manifest = "corpus/corpus-release.json"
+train_file = "train.jsonl"
+validation_file = "validation.jsonl"
+evaluation_files = ["test-future.jsonl", "test-unseen-issuer.jsonl"]
+[training]
+target_modules = ["q_proj"]
+[output]
+directory = "output"
+'''.strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "citation.jsonl"
+    result = prepare_citation_support(load_config(config_path), output)
+    rows = _read_jsonl(output)
+    assert result["examples"] == 1
+    assert rows[0]["expected"] == {
+        "concept": "cash",
+        "status": "insufficient_evidence",
+        "value": None,
+    }
+    assert "confidence" in rows[0]["messages"][0]["content"]

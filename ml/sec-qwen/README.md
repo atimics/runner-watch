@@ -25,12 +25,28 @@ sec-qwen profile config.toml \
   --tokens-per-gpu-hour MEASURED_CALIBRATION_THROUGHPUT \
   --gpu-hour-price CURRENT_PROVIDER_PRICE \
   --output artifacts/feral-7b-sec-v2/profile.json
+sec-qwen calibrate config.toml \
+  --sample-fraction 0.01 \
+  --output artifacts/feral-7b-sec-v2/calibration
 sec-qwen train config.toml
 sec-qwen evaluate config.toml \
   --adapter artifacts/feral-7b-sec-v2/adapter \
   --split test-future.jsonl \
   --predictions artifacts/feral-7b-sec-v2/test-future.predictions.jsonl
 ```
+
+`calibrate` deterministically selects one percent of training examples by example-ID hash, runs the
+real LoRA training path without saving an adapter, and records measured effective-token throughput.
+Its receipt keeps `training_authorized` false. Use the same image and GPU planned for the full run
+before turning that throughput into a provider cost limit.
+
+Omit `--adapter` to measure the pinned base-model baseline on the same frozen split. The command
+uses the identical tokenizer, prompt construction, batching, generation settings, and scorer for
+base and candidate runs.
+
+Use `prepare-finqa`, `prepare-citation-support`, and `benchmark-evaluate` to freeze and run the
+FinQA and confident-unsupported-answer baselines described in the repository training guide. The
+prepared suites include digest-bearing manifests and use identical IDs for base and candidate runs.
 
 `evaluate` prints one strict `{"metrics": {...}}` object with JSON validity, field exactness, and
 whole-example exactness. `train` writes a deterministic `adapter.tar`, its SHA-256, the exact model

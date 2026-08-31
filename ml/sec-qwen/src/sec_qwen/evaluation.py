@@ -37,12 +37,11 @@ def score_predictions(rows: list[dict[str, Any]]) -> dict[str, float]:
 def evaluate_model(
     config: Config,
     *,
-    adapter_directory: Path,
+    adapter_directory: Path | None,
     split_file: str,
     predictions_path: Path,
 ) -> dict[str, float]:
     import torch
-    from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     corpus_directory = config.dataset.corpus_manifest.parent
@@ -66,7 +65,12 @@ def evaluate_model(
     if config.model.attn_implementation:
         model_kwargs["attn_implementation"] = config.model.attn_implementation
     base_model = AutoModelForCausalLM.from_pretrained(config.model.model_id, **model_kwargs)
-    model = PeftModel.from_pretrained(base_model, adapter_directory, is_trainable=False)
+    if adapter_directory is None:
+        model = base_model
+    else:
+        from peft import PeftModel
+
+        model = PeftModel.from_pretrained(base_model, adapter_directory, is_trainable=False)
     model.eval()
     rows = []
     batch_size = config.training.evaluation_batch_size

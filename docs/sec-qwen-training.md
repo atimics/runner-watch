@@ -145,6 +145,36 @@ sec-qwen evaluate config.toml \
   --predictions ../../../artifacts/feral-7b-sec-v2/test-future.predictions.jsonl
 ```
 
+For the genesis SEC baseline, run the same `evaluate` command without `--adapter`. This keeps the
+base and candidate prompts, batching, generation settings, and exact-field scorer identical.
+
+Freeze the public FinQA test set from an exact upstream revision, then build deterministic
+citation-support cases from the corpus's sealed evaluation splits:
+
+```bash
+sec-qwen prepare-finqa /path/to/FinQA/dataset/test.json finqa.jsonl \
+  --source-revision FULL_40_CHARACTER_FINQA_COMMIT
+sec-qwen prepare-citation-support config.toml citation-support.jsonl
+```
+
+Run both base-model baselines without `--adapter`; add the candidate adapter later while keeping the
+same dataset files and prediction IDs:
+
+```bash
+sec-qwen benchmark-evaluate config.toml \
+  --dataset finqa.jsonl \
+  --task finqa \
+  --predictions baseline-finqa.jsonl
+sec-qwen benchmark-evaluate config.toml \
+  --dataset citation-support.jsonl \
+  --task citation_support \
+  --predictions baseline-citation-support.jsonl
+```
+
+Each prepared suite has a sidecar manifest with the exact source revision, file digest, size, and
+example count. Citation-support treats malformed or missing confidence as fully confident and
+therefore fails closed.
+
 ## Budget guardrail
 
 Use `sec-qwen profile` to size the run. It uses the exact pinned tokenizer and chat template, reports
@@ -152,6 +182,15 @@ tokens by task and split, identifies truncation or examples with no trainable an
 optimizer steps, and can turn a measured throughput and current GPU price into a cost ceiling.
 Benchmark 1% of the frozen train split on the exact image and GPU, then pass that measured
 tokens-per-GPU-hour value to the profiler.
+
+```bash
+sec-qwen calibrate config.toml \
+  --sample-fraction 0.01 \
+  --output ../../../artifacts/feral-7b-sec-v2/calibration
+```
+
+The calibration uses a deterministic example-ID hash sample, runs the real LoRA path, saves no
+adapter, and emits a receipt with `training_authorized` set to false.
 
 ```text
 estimated GPU hours = full token passes / measured tokens per GPU hour
