@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.metadata
 import json
+import math
 import os
 import random
 import tarfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +35,30 @@ def _deterministic_tar(source: Path, destination: Path) -> None:
                 archive.addfile(info, stream)
 
 
-def train(config: Config) -> dict[str, Any]:
+def _calibration_sample(
+    examples: list[dict[str, Any]], sample_fraction: float
+) -> list[dict[str, Any]]:
+    if not 0 < sample_fraction <= 1:
+        raise ValueError("sample_fraction must be greater than zero and at most one")
+    if sample_fraction == 1:
+        return examples
+    selected = max(1, math.ceil(len(examples) * sample_fraction))
+    return sorted(
+        examples,
+        key=lambda example: (
+            hashlib.sha256(str(example["id"]).encode()).hexdigest(),
+            str(example["id"]),
+        ),
+    )[:selected]
+
+
+def train(
+    config: Config,
+    *,
+    sample_fraction: float = 1.0,
+    calibration: bool = False,
+    output_directory: Path | None = None,
+) -> dict[str, Any]:
     import torch
     from peft import LoraConfig, get_peft_model
     from torch.utils.data import Dataset
@@ -45,7 +71,7 @@ def train(config: Config) -> dict[str, Any]:
     )
 
     manifest = validate_corpus(config)
-    output = config.output_directory
+    output = output_directory or config.output_directory
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"output directory is not empty: {output}")
     output.mkdir(parents=True, exist_ok=True)
@@ -55,10 +81,13 @@ def train(config: Config) -> dict[str, Any]:
     torch.use_deterministic_algorithms(True, warn_only=True)
 
     corpus_directory = config.dataset.corpus_manifest.parent
-    train_examples = load_examples(corpus_directory / config.dataset.train_file)
+    all_train_examples = load_examples(corpus_directory / config.dataset.train_file)
     validation_examples = load_examples(corpus_directory / config.dataset.validation_file)
-    if not train_examples:
+    if not all_train_examples:
         raise ValueError("training split must not be empty")
+    train_examples = _calibration_sample(all_train_examples, sample_fraction)
+    if calibration:
+        validation_examples = []
     tokenizer = AutoTokenizer.from_pretrained(
         config.model.model_id,
         revision=config.model.revision,
@@ -151,7 +180,7 @@ def train(config: Config) -> dict[str, Any]:
         gradient_accumulation_steps=config.training.gradient_accumulation_steps,
         learning_rate=config.training.learning_rate,
         logging_steps=1,
-        save_strategy="epoch",
+        save_strategy="no" if calibration else "epoch",
         eval_strategy="epoch" if validation_examples else "no",
         bf16=config.training.bf16,
         fp16=False,
@@ -170,7 +199,52 @@ def train(config: Config) -> dict[str, Any]:
         eval_dataset=ChatDataset(validation_examples) if validation_examples else None,
         data_collator=collate,
     )
+    started_at = time.perf_counter()
     train_result = trainer.train()
+    runtime_seconds = time.perf_counter() - started_at
+    if calibration:
+        effective_tokens = 0
+        for example in train_examples:
+            token_ids = tokenizer.apply_chat_template(
+                example["messages"], tokenize=True, add_generation_prompt=False
+            )
+            effective_tokens += min(len(token_ids), config.training.max_seq_length)
+        token_passes = effective_tokens * config.training.epochs
+        device = (
+            torch.cuda.get_device_name(0)
+            if torch.cuda.is_available()
+            else "mps"
+            if torch.backends.mps.is_available()
+            else "cpu"
+        )
+        report = {
+            "schema": "stonks.sec_qwen_calibration.v1",
+            "model": {"id": config.model.model_id, "revision": config.model.revision},
+            "corpus": {
+                "id": manifest["id"],
+                "manifest_sha256": sha256_file(config.dataset.corpus_manifest),
+            },
+            "config_sha256": sha256_file(config.source_path),
+            "sample": {
+                "fraction": sample_fraction,
+                "population_examples": len(all_train_examples),
+                "selected_examples": len(train_examples),
+                "selection": "lowest-sha256-example-id-v1",
+                "ids_sha256": hashlib.sha256(
+                    "\n".join(str(example["id"]) for example in train_examples).encode()
+                ).hexdigest(),
+            },
+            "measurement": {
+                "device": device,
+                "runtime_seconds": round(runtime_seconds, 4),
+                "effective_token_passes": round(token_passes),
+                "tokens_per_device_hour": round(token_passes / runtime_seconds * 3600, 2),
+            },
+            "artifact": None,
+            "training_authorized": False,
+        }
+        _write_json(output / "calibration.json", report)
+        return report
     adapter_directory = output / "adapter"
     model.save_pretrained(adapter_directory, safe_serialization=True)
     tokenizer.save_pretrained(adapter_directory)

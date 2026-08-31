@@ -4,6 +4,11 @@ import argparse
 import json
 from pathlib import Path
 
+from sec_qwen.baseline import (
+    evaluate_benchmark,
+    prepare_citation_support,
+    prepare_finqa,
+)
 from sec_qwen.benchmarks import release_metrics
 from sec_qwen.completion import build_completion
 from sec_qwen.config import load_config, validate_corpus
@@ -28,6 +33,10 @@ def main() -> None:
     validate_parser.add_argument("config", type=Path)
     train_parser = commands.add_parser("train")
     train_parser.add_argument("config", type=Path)
+    calibration_parser = commands.add_parser("calibrate")
+    calibration_parser.add_argument("config", type=Path)
+    calibration_parser.add_argument("--sample-fraction", type=float, default=0.01)
+    calibration_parser.add_argument("--output", type=Path, required=True)
     profile_parser = commands.add_parser("profile")
     profile_parser.add_argument("config", type=Path)
     profile_parser.add_argument("--tokens-per-gpu-hour", type=float)
@@ -36,7 +45,7 @@ def main() -> None:
     profile_parser.add_argument("--output", type=Path)
     evaluate_parser = commands.add_parser("evaluate")
     evaluate_parser.add_argument("config", type=Path)
-    evaluate_parser.add_argument("--adapter", type=Path, required=True)
+    evaluate_parser.add_argument("--adapter", type=Path)
     evaluate_parser.add_argument("--split", required=True)
     evaluate_parser.add_argument("--predictions", type=Path, required=True)
     score_parser = commands.add_parser("score")
@@ -49,6 +58,20 @@ def main() -> None:
     release_parser.add_argument("--baseline-hallucination", type=Path, required=True)
     release_parser.add_argument("--finqa-margin-pp", type=float, default=8.0)
     release_parser.add_argument("--minimum-sec-field-exact-rate", type=float, default=0.70)
+    finqa_parser = commands.add_parser("prepare-finqa")
+    finqa_parser.add_argument("source", type=Path)
+    finqa_parser.add_argument("output", type=Path)
+    finqa_parser.add_argument("--source-revision", required=True)
+    finqa_parser.add_argument("--limit", type=int)
+    citation_parser = commands.add_parser("prepare-citation-support")
+    citation_parser.add_argument("config", type=Path)
+    citation_parser.add_argument("output", type=Path)
+    benchmark_parser = commands.add_parser("benchmark-evaluate")
+    benchmark_parser.add_argument("config", type=Path)
+    benchmark_parser.add_argument("--dataset", type=Path, required=True)
+    benchmark_parser.add_argument("--task", choices=("finqa", "citation_support"), required=True)
+    benchmark_parser.add_argument("--predictions", type=Path, required=True)
+    benchmark_parser.add_argument("--adapter", type=Path)
     completion_parser = commands.add_parser("completion")
     completion_parser.add_argument("--dispatch-ref", required=True)
     completion_parser.add_argument("--executor-id", required=True)
@@ -92,7 +115,37 @@ def main() -> None:
         )
         print(_json(completion))
         return
+    if arguments.command == "prepare-finqa":
+        print(
+            _json(
+                prepare_finqa(
+                    arguments.source,
+                    arguments.output,
+                    source_revision=arguments.source_revision,
+                    limit=arguments.limit,
+                )
+            )
+        )
+        return
     config = load_config(arguments.config)
+    if arguments.command == "prepare-citation-support":
+        print(_json(prepare_citation_support(config, arguments.output)))
+        return
+    if arguments.command == "benchmark-evaluate":
+        print(
+            _json(
+                {
+                    "metrics": evaluate_benchmark(
+                        config,
+                        dataset_path=arguments.dataset,
+                        task=arguments.task,
+                        predictions_path=arguments.predictions,
+                        adapter_directory=arguments.adapter,
+                    )
+                }
+            )
+        )
+        return
     if arguments.command == "validate":
         manifest = validate_corpus(config)
         print(_json({"corpus_id": manifest["id"], "valid": True}))
@@ -108,6 +161,17 @@ def main() -> None:
         print(_json(profile))
     elif arguments.command == "train":
         print(_json(train(config)))
+    elif arguments.command == "calibrate":
+        print(
+            _json(
+                train(
+                    config,
+                    sample_fraction=arguments.sample_fraction,
+                    calibration=True,
+                    output_directory=arguments.output,
+                )
+            )
+        )
     elif arguments.command == "evaluate":
         metrics = evaluate_model(
             config,
