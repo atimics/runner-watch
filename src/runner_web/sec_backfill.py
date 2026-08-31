@@ -76,11 +76,23 @@ class BackfillResult:
     filings_skipped: int = 0
     documents_fetched: int = 0
     facts_loaded: int = 0
+    facts_unavailable: int = 0
     errors: int = 0
 
 
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _http_error_status(error: BaseException) -> int | None:
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, urllib.error.HTTPError):
+            return int(current.code)
+        current = current.__cause__ or current.__context__
+    return None
 
 
 def _informative_user_agent(value: str) -> bool:
@@ -682,8 +694,11 @@ def backfill_sec_corpus(
                     fact_result = refresh_company_facts(cik, timeout=timeout, download=download)
                     result.facts_loaded += int(fact_result["facts"])
                 except Exception as exc:
-                    result.errors += 1
-                    errors.append(f"company facts: {exc}")
+                    if _http_error_status(exc) == 404:
+                        result.facts_unavailable += 1
+                    else:
+                        result.errors += 1
+                        errors.append(f"company facts: {exc}")
         except Exception as exc:
             result.errors += 1
             errors.append(str(exc))

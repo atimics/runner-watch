@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import urllib.error
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -183,6 +184,67 @@ def test_backfill_archives_historical_filings_and_resumes(
     assert new_scope.submission_files_fetched == 1
     assert new_scope.archived_responses_reused == 1
     assert calls[calls_before_new_scope:] == [recent_url]
+
+
+def test_backfill_completes_when_optional_company_facts_are_not_available(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "missing-facts.db")
+    init_db()
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO sec_companies(cik,ticker,name,exchange,refreshed_at)
+            VALUES(1001,'EXM','Example Corp','Nasdaq','2024-01-01')
+            """
+        )
+
+    recent_url = SUBMISSIONS_URL.format(cik=1001)
+    history_url = SUBMISSIONS_BASE + "CIK0000001001-submissions-001.json"
+    annual_url = (
+        "https://www.sec.gov/Archives/edgar/data/1001/000000100124000002/annual.htm"
+    )
+    current_url = (
+        "https://www.sec.gov/Archives/edgar/data/1001/000000100123000001/current.htm"
+    )
+    payloads = {
+        recent_url: _json_bytes(_submissions()),
+        history_url: _json_bytes(_history()),
+        annual_url: b"<html><p>Annual evidence.</p></html>",
+        current_url: b"<html><p>Current evidence.</p></html>",
+    }
+
+    def download(url: str, timeout: float) -> tuple[bytes, str | None]:
+        return payloads[url], "application/json" if url.endswith(".json") else "text/html"
+
+    def missing_facts(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        missing = urllib.error.HTTPError(
+            "https://data.sec.gov/api/xbrl/companyfacts/CIK0000001001.json",
+            404,
+            "Not Found",
+            None,
+            None,
+        )
+        raise RuntimeError("SEC company facts failed") from missing
+
+    monkeypatch.setattr("runner_web.sec_backfill.refresh_company_facts", missing_facts)
+    result = backfill_sec_corpus(
+        start_date=date(2023, 1, 1),
+        end_date=date(2024, 12, 31),
+        download=download,
+        ciks=(1001,),
+        timeout=5,
+    )
+
+    assert result.errors == 0
+    assert result.issuers_completed == 1
+    assert result.facts_unavailable == 1
+    with connection() as database:
+        state = database.execute(
+            "SELECT status,error FROM source_item_state "
+            "WHERE source='sec' AND feed='training_backfill'"
+        ).fetchone()
+    assert tuple(state) == ("processed", None)
 
 
 def test_sec_client_requires_contact_and_rejects_non_sec_urls() -> None:
