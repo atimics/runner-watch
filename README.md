@@ -554,6 +554,15 @@ the Cloudflare secret, and stages the Fly secrets without deploying Fly. Set `IN
 generate ten codes. The script refuses to overwrite an existing edge secret because rotation needs
 a separate coordinated procedure.
 
+On macOS, use Keychain mode to keep the generated values out of terminal output:
+
+```bash
+./scripts/configure-production-security --keychain
+```
+
+This stores three entries under the `runner-watch production` service before uploading anything.
+Retrieve a value later through Keychain Access or with `security find-generic-password` locally.
+
 The low-cost layout is about $25–$27 per month at light traffic: about $6.40 for PostgreSQL, $6.64
 for both web machines, $11.84 for the worker and trainer, and usage-based Redis at $0.20 per 100,000
 commands. Network, snapshot, and Redis use can add a small amount. A Fly-managed PostgreSQL node
