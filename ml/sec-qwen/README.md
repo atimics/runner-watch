@@ -10,6 +10,8 @@ manifest digest with the accepted Braid release values, and point `corpus_manife
 any declared artifact differs. Braid rows must keep the original `stonks.sec_chat_example.v1` or
 `v2` object in the row's `metadata`; Braid's `text` field remains available for quality and
 deduplication checks. Training consumes only the preserved chat messages from the verified release.
+The logical dataset handle is `dataset://braid/feral-7b-sec/v1`; ilXyr binds that handle to the
+exact imported Braid release artifact before it can admit an experiment.
 
 The Braid release should expose `data/train.jsonl` and `data/validation.jsonl`. Keep future and
 unseen-issuer tests in the frozen ilXyr evaluation release rather than placing them in a training
@@ -27,6 +29,12 @@ docker build ml/sec-qwen \
 
 The build stores that exact model snapshot inside the image. The running image forces Hugging Face
 and Transformers offline, so an ilXyr job with denied network access cannot drift to new weights.
+
+The `FERAL-7B training image` workflow provides the controlled publication path. It runs contract
+checks on pull requests, but the large image build is manual. A manual run requires a digest-pinned
+GPU base image and defaults to not pushing. Publishing to GHCR must be selected explicitly. The
+workflow reports the resulting image digest; use that complete `ghcr.io/...@sha256:...` identity in
+the ilXyr experiment. Building or publishing the image does not authorize a training job.
 
 Run the same image locally, in SageMaker, Azure ML, or as a Kubernetes Job:
 
