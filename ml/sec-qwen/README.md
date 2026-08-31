@@ -21,11 +21,15 @@ Run the same image locally, in SageMaker, Azure ML, or as a Kubernetes Job:
 
 ```bash
 sec-qwen validate config.toml
+sec-qwen profile config.toml \
+  --tokens-per-gpu-hour MEASURED_CALIBRATION_THROUGHPUT \
+  --gpu-hour-price CURRENT_PROVIDER_PRICE \
+  --output artifacts/feral-7b-sec-v2/profile.json
 sec-qwen train config.toml
 sec-qwen evaluate config.toml \
-  --adapter artifacts/sec-qwen-v1/adapter \
+  --adapter artifacts/feral-7b-sec-v2/adapter \
   --split test-future.jsonl \
-  --predictions artifacts/sec-qwen-v1/test-future.predictions.jsonl
+  --predictions artifacts/feral-7b-sec-v2/test-future.predictions.jsonl
 ```
 
 `evaluate` prints one strict `{"metrics": {...}}` object with JSON validity, field exactness, and
@@ -34,6 +38,11 @@ revision, corpus manifest hash, config hash, seed, and dependency versions. A cl
 that tar to versioned object storage and puts its URI and provider version into the ilXyr OCI
 completion record. Use `sec-qwen completion` to build the provider-neutral completion JSON after
 the upload; ilXyr still requires the configured executor to sign the completed run digest.
+
+`profile` loads only the pinned tokenizer. It reports exact effective and supervised tokens,
+truncation, tokens by task, optimizer steps, and an optional cost ceiling before model weights are
+loaded. The example uses four data-loader workers and batched greedy evaluation; these settings stay
+inside the hashed config for replay.
 
 The release gate mirrors the FERAL-7B experiment card: improve FinQA by at least 8 percentage
 points, do not increase confident hallucinations, and retain at least 70% exact SEC fields. Supply

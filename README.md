@@ -114,7 +114,9 @@ clean examples without rewriting history after a move is already known.
 Runner Watch can also export archived filing text and point-in-time issuer facts as a deterministic
 Qwen chat corpus. Its time and unseen-issuer test splits stay sealed, and the generated ilXyr corpus
 manifest freezes every file hash. The LoRA training image records the exact model revision, config,
-seed, dependencies, and adapter digest. See the [SEC Qwen training guide](docs/sec-qwen-training.md).
+seed, dependencies, and adapter digest. Corpus v2 also includes a resumable three-year SEC
+backfill and deterministic semantic, XBRL, comparison, and insufficient-evidence tasks. See the
+[SEC Qwen training guide](docs/sec-qwen-training.md).
 
 ## Distributed intelligence contracts
 

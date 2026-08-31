@@ -39,6 +39,8 @@ class TrainingConfig:
     gradient_checkpointing: bool
     bf16: bool
     max_new_tokens: int
+    dataloader_num_workers: int
+    evaluation_batch_size: int
 
 
 @dataclass(frozen=True)
@@ -98,6 +100,8 @@ def load_config(path: Path) -> Config:
             "gradient_checkpointing",
             "bf16",
             "max_new_tokens",
+            "dataloader_num_workers",
+            "evaluation_batch_size",
         },
         "training",
     )
@@ -148,6 +152,8 @@ def load_config(path: Path) -> Config:
             gradient_checkpointing=bool(training.get("gradient_checkpointing", True)),
             bf16=bool(training.get("bf16", True)),
             max_new_tokens=int(training.get("max_new_tokens", 512)),
+            dataloader_num_workers=int(training.get("dataloader_num_workers", 0)),
+            evaluation_batch_size=int(training.get("evaluation_batch_size", 1)),
         ),
         output_directory=output_directory,
         source_path=source_path,
@@ -158,6 +164,10 @@ def load_config(path: Path) -> Config:
         raise ValueError("training epochs and learning_rate must be positive")
     if not 0 <= config.training.lora_dropout < 1:
         raise ValueError("training.lora_dropout must be between 0 and 1")
+    if config.training.dataloader_num_workers < 0:
+        raise ValueError("training.dataloader_num_workers must not be negative")
+    if config.training.evaluation_batch_size < 1:
+        raise ValueError("training.evaluation_batch_size must be positive")
     return config
 
 
@@ -201,7 +211,10 @@ def load_examples(path: Path) -> list[dict[str, Any]]:
             if not line.strip():
                 continue
             example = json.loads(line)
-            if example.get("schema") != "stonks.sec_chat_example.v1":
+            if example.get("schema") not in {
+                "stonks.sec_chat_example.v1",
+                "stonks.sec_chat_example.v2",
+            }:
                 raise ValueError(f"{path}:{line_number} has an unsupported schema")
             messages = example.get("messages")
             if not isinstance(messages, list) or [item.get("role") for item in messages] != [
