@@ -1,8 +1,9 @@
 # SEC Qwen training
 
-Runner Watch can backfill and export its archived SEC evidence as a frozen chat corpus, then train
-the FERAL-7B Qwen LoRA adapter in a digest-pinned container. ilXyr remains the control plane for
-corpus identity, cloud job state, budgets, and signed evidence.
+Runner Watch supplies the FERAL-7B Qwen LoRA trainer and digest-pinned container. The active
+Season 00 corpus comes from Braid, and ilXyr owns the experiment, corpus identity, admission,
+cloud job state, budgets, evaluation, and signed evidence. Runner Watch's older SEC backfill and
+export remain available only to reproduce the legacy development prototype.
 
 ## What the model learns
 
@@ -18,7 +19,9 @@ teacher model writes labels. Facts filed after the accession are excluded, as ar
 returns. The adapter is an SEC reader, not a replacement for deterministic rug gates or the Rust
 price ranker.
 
-## Historical backfill
+## Legacy historical backfill
+
+This path is not a Season 00 corpus source. Do not run it to replace or extend a Braid release.
 
 Set an SEC user agent that names the application and gives a contact URL or email. Backfill the
 current Runner universe after applying database migrations:
@@ -51,7 +54,10 @@ The SEC currently publishes a ten-request-per-second fair-access ceiling. Keep t
 rate, run one backfill process at a time, and do not bypass an SEC block. Filing exhibits can have
 rights that differ from US government material; review rights before redistributing archived bytes.
 
-## Export
+## Legacy export
+
+This exporter reproduces the old development corpus. Its `dataset://stonks/...` identity is not
+accepted by the active FERAL experiment.
 
 Export the deterministic v2 corpus from SQLite or PostgreSQL:
 
@@ -88,34 +94,24 @@ corpus.
 
 ## Freeze and materialize in ilXyr
 
-Publish the frozen release through the authenticated ilXyr corpus service. The command verifies
-every local file against `corpus-release.json` before it sends anything. The token is read only
-from the environment. The receipt records the artifact ref returned by ilXyr and explicitly keeps
-training unauthorized:
+Verify and accept the Braid release outside Runner Watch. It must be a closed
+`braid.release/v2` directory in `RELEASED` state with `data/train.jsonl` and
+`data/validation.jsonl`. Copy ilXyr's `examples/corpus/feral-7b-braid-import.json`, then replace
+the expected Braid release ID, raw `release.json` SHA-256, exact Braid revision, and reviewed
+rights. Register it in the ilXyr workspace:
 
 ```bash
-export ILXYR_CORPUS_TOKEN='replace-with-a-random-secret-of-at-least-32-bytes'
-stonks-sec-publish-ilxyr exports/feral-7b-sec-v2 \
-  --service-url http://127.0.0.1:8787 \
-  --receipt artifacts/feral-7b-sec-v2/ilxyr-publication.json
+ilxyr braid-corpus-register \
+  /path/to/ilxyr-workspace \
+  /path/to/braid-release/release.json \
+  /path/to/feral-7b-braid-import.json
 ```
 
-Copy the listed files to versioned S3 or Azure storage, read them back, verify every hash, and build
-an `ilxyr.corpus_materialization.v1` receipt with the registered corpus ref. A second idempotent
-publication records it:
-
-```bash
-stonks-sec-publish-ilxyr exports/feral-7b-sec-v2 \
-  --service-url http://127.0.0.1:8787 \
-  --materialization artifacts/feral-7b-sec-v2/s3-materialization.json \
-  --receipt artifacts/feral-7b-sec-v2/ilxyr-publication.json
-```
-
-To create an updated read-only registry projection at the same time, pass the current ilXyr
-registry as `--registry-template` and a separate `--registry-output`. Only the corpus, its two
-lifecycle stages, their resolved missing requirements, and the matching source head change. The
-project stays blocked; the command does not add a dispatch, budget, baseline, adapter, or training
-claim.
+The import records every Braid artifact plus the raw `release.json` in one immutable ilXyr corpus
+artifact. Copy that exact inventory to versioned S3 or Azure storage, read it back, verify every
+hash and size, and record an `ilxyr.corpus_materialization.v1` receipt. The project remains
+blocked: corpus registration and materialization do not add a dispatch, budget, adapter, or
+training claim.
 
 In the experiment, put the dataset handle in `datasets` and its exact corpus artifact ref in
 `dataset_bindings`.
@@ -127,8 +123,8 @@ referenced lineage records before compiling the experiment.
 ## Train and evaluate
 
 The package in `ml/sec-qwen` has an exact dependency lock and requires a pinned base image. Copy
-`config.example.toml`, keep the model's full 40-character Hugging Face revision, and validate before
-starting an expensive job:
+`config.braid.example.toml`, keep the model's full 40-character Hugging Face revision, and validate
+before starting an expensive job:
 
 ```bash
 cd ml/sec-qwen
