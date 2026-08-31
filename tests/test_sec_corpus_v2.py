@@ -238,6 +238,7 @@ def test_backfill_completes_when_optional_company_facts_are_not_available(
 
     assert result.errors == 0
     assert result.issuers_completed == 1
+    assert result.facts_unavailable == 1
     with connection() as database:
         state = database.execute(
             "SELECT status,error FROM source_item_state "

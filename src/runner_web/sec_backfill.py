@@ -76,6 +76,7 @@ class BackfillResult:
     filings_skipped: int = 0
     documents_fetched: int = 0
     facts_loaded: int = 0
+    facts_unavailable: int = 0
     errors: int = 0
 
 
@@ -693,7 +694,9 @@ def backfill_sec_corpus(
                     fact_result = refresh_company_facts(cik, timeout=timeout, download=download)
                     result.facts_loaded += int(fact_result["facts"])
                 except Exception as exc:
-                    if _http_error_status(exc) != 404:
+                    if _http_error_status(exc) == 404:
+                        result.facts_unavailable += 1
+                    else:
                         result.errors += 1
                         errors.append(f"company facts: {exc}")
         except Exception as exc:
