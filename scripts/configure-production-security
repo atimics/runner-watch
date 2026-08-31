@@ -1,0 +1,82 @@
+#!/bin/sh
+set -eu
+
+project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+fly_app=${FLY_APP:-runner-watch-ratimics}
+wrangler_config=${WRANGLER_CONFIG:-$project_root/cloudflare-router/wrangler.jsonc}
+invite_count=${INVITE_COUNT:-5}
+
+fail() {
+    echo "Security setup stopped: $*" >&2
+    exit 1
+}
+
+for command_name in openssl npx flyctl; do
+    command -v "$command_name" >/dev/null 2>&1 || fail "$command_name is required"
+done
+
+case "$invite_count" in
+    ''|*[!0-9]*) fail "INVITE_COUNT must be a number from 1 to 50" ;;
+esac
+[ "$invite_count" -ge 1 ] && [ "$invite_count" -le 50 ] \
+    || fail "INVITE_COUNT must be a number from 1 to 50"
+[ -f "$wrangler_config" ] || fail "Wrangler config not found: $wrangler_config"
+[ -t 0 ] && [ -t 1 ] || fail "run this script directly from an interactive terminal"
+
+echo "Checking for an existing edge secret..."
+cloudflare_secrets=$(npx wrangler secret list --config "$wrangler_config")
+fly_secrets=$(flyctl secrets list --app "$fly_app")
+if printf '%s\n' "$cloudflare_secrets" | grep -q 'EDGE_PROXY_SECRET'; then
+    fail "Cloudflare already has EDGE_PROXY_SECRET; do not use the bootstrap script for rotation"
+fi
+if printf '%s\n' "$fly_secrets" | grep -q 'EDGE_PROXY_SECRET'; then
+    fail "Fly already has EDGE_PROXY_SECRET; do not use the bootstrap script for rotation"
+fi
+
+edge_proxy_secret=$(openssl rand -hex 32)
+operations_token=$(openssl rand -hex 32)
+invite_codes=""
+invite_number=1
+while [ "$invite_number" -le "$invite_count" ]; do
+    invite_code=$(openssl rand -hex 24)
+    if [ -z "$invite_codes" ]; then
+        invite_codes=$invite_code
+    else
+        invite_codes=$invite_codes,$invite_code
+    fi
+    invite_number=$((invite_number + 1))
+done
+
+cleanup() {
+    unset edge_proxy_secret operations_token invite_code invite_codes
+}
+trap cleanup 0
+
+cat >/dev/tty <<EOF
+
+Save these values in your password manager before continuing.
+They will not be shown again by Cloudflare or Fly.
+
+EDGE_PROXY_SECRET=$edge_proxy_secret
+OPERATIONS_TOKEN=$operations_token
+REGISTRATION_INVITE_CODES=$invite_codes
+
+EOF
+printf 'Type yes after you have saved all three values: ' >/dev/tty
+IFS= read -r confirmed </dev/tty
+[ "$confirmed" = "yes" ] || fail "confirmation was not exactly yes"
+
+echo "Setting EDGE_PROXY_SECRET on the Cloudflare Worker..."
+printf '%s' "$edge_proxy_secret" \
+    | npx wrangler secret put EDGE_PROXY_SECRET --config "$wrangler_config"
+
+echo "Staging the matching secrets on Fly without restarting the app..."
+if ! printf 'EDGE_PROXY_SECRET=%s\nOPERATIONS_TOKEN=%s\nREGISTRATION_INVITE_CODES=%s\n' \
+    "$edge_proxy_secret" "$operations_token" "$invite_codes" \
+    | flyctl secrets import --app "$fly_app" --stage; then
+    fail "Fly staging failed; recover with the values you saved before changing Cloudflare again"
+fi
+
+echo
+echo "Security secrets are configured. No Fly application deployment was started."
+echo "Next, deploy the Worker code, verify both public hosts, and only then deploy Fly."

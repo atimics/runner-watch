@@ -540,6 +540,20 @@ Configure production in this order so the origin is never enabled before the edg
 5. Deploy Fly. The committed `REQUIRE_EDGE_PROXY_SECRET=1` and `REGISTRATION_MODE=invite` settings
    then activate together with the staged secrets.
 
+The one-time bootstrap script automates steps 1–3 with Wrangler and Fly CLI:
+
+```bash
+npx wrangler login
+flyctl auth login
+./scripts/configure-production-security
+```
+
+It requires an interactive terminal, checks both platforms before changing anything, generates five
+invite codes by default, displays the generated values once for password-manager storage, configures
+the Cloudflare secret, and stages the Fly secrets without deploying Fly. Set `INVITE_COUNT=10` to
+generate ten codes. The script refuses to overwrite an existing edge secret because rotation needs
+a separate coordinated procedure.
+
 The low-cost layout is about $25–$27 per month at light traffic: about $6.40 for PostgreSQL, $6.64
 for both web machines, $11.84 for the worker and trainer, and usage-based Redis at $0.20 per 100,000
 commands. Network, snapshot, and Redis use can add a small amount. A Fly-managed PostgreSQL node
