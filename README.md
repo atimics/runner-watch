@@ -528,6 +528,18 @@ beta, set `REGISTRATION_MODE=invite` and provide comma-separated, high-entropy, 
 through the platform secret stores, never in this repository. Local development keeps open
 registration and does not require the edge secret unless those switches are set explicitly.
 
+Configure production in this order so the origin is never enabled before the edge is ready:
+
+1. Generate separate random values for `EDGE_PROXY_SECRET` and `OPERATIONS_TOKEN`, plus one random
+   value per registration invite. Keep the values in a password manager.
+2. Store `EDGE_PROXY_SECRET` as an encrypted secret on the `rati-products-router` Cloudflare Worker.
+3. Stage `EDGE_PROXY_SECRET`, `OPERATIONS_TOKEN`, and the comma-separated
+   `REGISTRATION_INVITE_CODES` on the `runner-watch-ratimics` Fly app. Staging avoids an early
+   restart.
+4. Deploy the Cloudflare Worker and verify both public hosts still reach `/health`.
+5. Deploy Fly. The committed `REQUIRE_EDGE_PROXY_SECRET=1` and `REGISTRATION_MODE=invite` settings
+   then activate together with the staged secrets.
+
 The low-cost layout is about $25–$27 per month at light traffic: about $6.40 for PostgreSQL, $6.64
 for both web machines, $11.84 for the worker and trainer, and usage-based Redis at $0.20 per 100,000
 commands. Network, snapshot, and Redis use can add a small amount. A Fly-managed PostgreSQL node
