@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
@@ -20,7 +21,11 @@ def _frame(*, daily: bool) -> pd.DataFrame:
     if daily:
         index = pd.date_range(end=now - timedelta(days=1), periods=30, freq="D")
     else:
-        index = pd.date_range(end=now - timedelta(minutes=5), periods=40, freq="5min")
+        market_day = now.astimezone(ZoneInfo("America/New_York")) - timedelta(days=1)
+        while market_day.weekday() >= 5:
+            market_day -= timedelta(days=1)
+        market_close = market_day.replace(hour=15, minute=55, second=0, microsecond=0)
+        index = pd.date_range(end=market_close, periods=40, freq="5min")
     return pd.DataFrame(
         {
             "Open": [1 + number * 0.01 for number in range(len(index))],

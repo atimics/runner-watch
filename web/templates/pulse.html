@@ -2,6 +2,7 @@
 {% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
 {% block app_class %}workspace-app pulse-app{% endblock %}
 {% block title %}Pulse · RATi Runners{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/market-reports.css?v={{ static_version }}">{% endblock %}
 {% block content %}
 <div class="desktop-workspace" data-desktop-workspace>
   <section class="desktop-list-pane pulse-list-column" data-desktop-list>
@@ -28,6 +29,13 @@
         </small>
       </span>
       <b data-kol-pnl>{% if flash_record %}View record ›{% endif %}</b>
+    </a>
+    {% set market_turn = market_reports.featured %}
+    <a class="market-turn-strip" href="/reports" aria-label="Open market reports">
+      <span>{{ market_turn.label if market_turn else 'Market turns' }}</span>
+      <strong>{{ market_turn.headline if market_turn else market_reports.schedule.next_label }}</strong>
+      <small>{{ market_turn.summary if market_turn else market_reports.schedule.schedule_note }}</small>
+      <b aria-hidden="true">›</b>
     </a>
     <div class="pulse-context" aria-label="Pulse ranking and chart context">
       <span>Ranked by Pulse score</span>

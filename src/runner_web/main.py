@@ -125,6 +125,7 @@ from runner_web.llm_routing import (
     route_for_user,
 )
 from runner_web.market_clock import market_clock
+from runner_web.market_reports import market_reports_overview, refresh_market_reports
 from runner_web.operations import router as operations_router
 from runner_web.operations import runtime_capabilities as runtime_capabilities
 from runner_web.operations import worker_heartbeat_key
@@ -522,6 +523,7 @@ def _start_worker_tasks() -> list[asyncio.Task[Any]]:
         asyncio.create_task(apewisdom_source_worker(), name="apewisdom"),
         asyncio.create_task(outcome_worker(), name="outcomes"),
         asyncio.create_task(scan_collection_worker(), name="scan-collection"),
+        asyncio.create_task(market_report_worker(), name="market-reports"),
         asyncio.create_task(massive_backfill_worker(), name="massive-backfill"),
         asyncio.create_task(research_job_worker(), name="research-jobs"),
         asyncio.create_task(report_release_worker(), name="report-release"),
@@ -1122,6 +1124,25 @@ async def scan_collection_worker() -> None:
             except Exception as exc:
                 worker_state("background_scan_last_error", str(exc)[:500])
         await asyncio.sleep(BACKGROUND_SCAN_INTERVAL_SECONDS)
+
+
+async def market_report_worker() -> None:
+    await asyncio.sleep(25)
+    while True:
+        try:
+            result = await run_in_threadpool(refresh_market_reports)
+            worker_state("market_reports_last_refresh", json.dumps(result, separators=(",", ":")))
+            worker_state("market_reports_last_error", "")
+            awaiting_scan = any(
+                item.get("status") == "awaiting_scan" for item in result.get("results", [])
+            )
+            delay = 60 if awaiting_scan else 300
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            worker_state("market_reports_last_error", str(exc)[:500])
+            delay = 60
+        await asyncio.sleep(delay)
 
 
 async def massive_backfill_worker() -> None:
@@ -1895,6 +1916,31 @@ def roadmap_api(request: Request) -> dict[str, Any]:
 def api_market_clock(request: Request) -> dict[str, Any]:
     enforce_rate(request, "market-clock", limit=120, seconds=60)
     return market_clock()
+
+
+@app.get("/reports", response_class=HTMLResponse)
+def market_reports_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> Response:
+    if product_for_request(request) == "sports":
+        return RedirectResponse(f"{RUNNERS_ORIGIN}/reports", status_code=307)
+    return templates.TemplateResponse(
+        request=request,
+        name="market_reports.html",
+        context=page_context(
+            request,
+            runner_session,
+            market_reports=market_reports_overview(history_limit=14),
+            active_tab="pulse",
+        ),
+    )
+
+
+@app.get("/api/market-reports")
+def market_reports_api(request: Request) -> Response:
+    enforce_rate(request, "market-reports", limit=120, seconds=60)
+    return _conditional_json_response(request, market_reports_overview(history_limit=14))
 
 
 @app.get("/community", response_class=HTMLResponse)
@@ -5637,6 +5683,7 @@ def home(
             request,
             runner_session,
             pulse=_public_pulse_data(limit=20),
+            market_reports=market_reports_overview(history_limit=0),
             active_tab="pulse",
         ),
     )
