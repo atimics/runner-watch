@@ -8,6 +8,7 @@ attn_implementation = "sdpa"
 
 [dataset]
 provider = "braid"
+dataset_id = "dataset://braid/feral-7b-sec/v1"
 corpus_manifest = "../../../braid-releases/feral-7b-sec/v1/release.json"
 release_id = "replace-with-braid-release-id"
 manifest_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"

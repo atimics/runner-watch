@@ -7,6 +7,7 @@ torch_dtype = "bfloat16"
 attn_implementation = "sdpa"
 
 [dataset]
+dataset_id = "dataset://stonks/feral-7b-sec/v2"
 corpus_manifest = "../../../exports/feral-7b-sec-v2/corpus-release.json"
 train_file = "train.jsonl"
 validation_file = "validation.jsonl"
