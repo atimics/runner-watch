@@ -1,11 +1,10 @@
-# RATi Swarm, RATi Runners, and RATi Sports
+# RATi Runners and RATi Sports
 
-RATi Swarm is the open-source Svelte/Electron desktop app. Pulse, Radar, and Flash are its main
-screens. Scanner can switch between the bundled local engine and RATi Cloud at
-`runners.rati.chat`. Local mode persists receipts in SQLite and stores user-authorized provider
-credentials in the operating-system vault. Local mode shows only local scanner results; Cloud mode
-is the only mode that requests or displays hosted Pulse, Radar, or Flash data. The same client and
-scanner can be self-hosted. See
+RATi Runners is the open-source Svelte/Tauri desktop app. Pulse, Radar, Receipts, Scan, and Sources
+are its main screens. It runs a local source hub: the bundled scanner works immediately, RATi can
+be enabled as a free source, and any compatible remote scanner can be added by URL. Yahoo and the
+other included no-key sources need no setup. Optional provider keys and remote scanner tokens are
+stored in the operating-system credential vault. See
 [the desktop and scanner architecture](docs/desktop-architecture.md).
 
 The project is copyright © 2026 RATi contributors and licensed under the
@@ -110,6 +109,13 @@ market-wide scan. The worker:
 The SEC listener declares its user agent and stays below the SEC's published request-rate limit.
 The delayed outcome labels preserve what was known at filing time, giving future ranking models
 clean examples without rewriting history after a move is already known.
+
+Runner Watch can also export archived filing text and point-in-time issuer facts as a deterministic
+Qwen chat corpus. Its time and unseen-issuer test splits stay sealed, and the generated ilXyr corpus
+manifest freezes every file hash. The LoRA training image records the exact model revision, config,
+seed, dependencies, and adapter digest. Corpus v2 also includes a resumable three-year SEC
+backfill and deterministic semantic, XBRL, comparison, and insufficient-evidence tasks. See the
+[SEC Qwen training guide](docs/sec-qwen-training.md).
 
 ## Distributed intelligence contracts
 

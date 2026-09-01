@@ -46,12 +46,15 @@ jobs:
           - name: Linux
             os: ubuntu-latest
             artifact: rati-swarm-linux
+            bundles: deb,appimage
           - name: macOS
             os: macos-latest
             artifact: rati-swarm-macos
+            bundles: app,dmg
           - name: Windows
             os: windows-latest
             artifact: rati-swarm-windows
+            bundles: msi,nsis
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     defaults:
@@ -63,9 +66,20 @@ jobs:
         with:
           python-version: "3.13"
           enable-cache: true
-      - name: Install Linux packaging tools
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Install Linux desktop libraries
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y fakeroot
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            fakeroot \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libwebkit2gtk-4.1-dev \
+            patchelf
       - name: Build scanner sidecar
         run: |
           uv sync --locked --extra desktop
@@ -75,9 +89,10 @@ jobs:
             --specpath desktop/.scanner-spec \
             --collect-all keyring \
             scripts/rati_scanner_entry.py
-          uv run python scripts/stage_desktop_scanner.py
       - name: Smoke test packaged scanner
         run: uv run python scripts/smoke_desktop_scanner.py
+      - name: Stage Tauri scanner sidecar
+        run: uv run python scripts/stage_desktop_scanner.py
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
         with:
           version: 10.19.0
@@ -100,12 +115,10 @@ jobs:
           pnpm test
       - name: Build native package
         working-directory: desktop
-        run: pnpm make
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: pnpm tauri build --bundles "${{ matrix.bundles }}"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ${{ matrix.artifact }}
-          path: desktop/out/make/**
+          path: desktop/src-tauri/target/release/bundle/**
           if-no-files-found: error
           retention-days: 14
