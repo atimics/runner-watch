@@ -124,10 +124,18 @@ def test_deployment_does_not_trust_forwarded_headers_from_every_peer() -> None:
     assert 'REQUIRE_EDGE_PROXY_SECRET = "1"' in fly_config
     assert 'REGISTRATION_MODE = "invite"' in fly_config
     assert "wrangler@4.127.1 deploy" in deploy_workflow
-    assert "https://runners.rati.chat" in deploy_workflow
-    assert "https://sports.rati.chat" in deploy_workflow
-    assert "https://runners.rati.chat" in uptime_workflow
-    assert "https://sports.rati.chat" in uptime_workflow
+    deploy_lines = deploy_workflow.splitlines()
+    uptime_lines = uptime_workflow.splitlines()
+    deploy_commands = (
+        "          scripts/smoke-production https://runners.rati.chat",
+        "          scripts/smoke-production https://sports.rati.chat",
+    )
+    uptime_commands = (
+        "      - run: scripts/smoke-production https://runners.rati.chat",
+        "      - run: scripts/smoke-production https://sports.rati.chat",
+    )
+    assert all(deploy_lines.count(command) == 1 for command in deploy_commands)
+    assert all(uptime_lines.count(command) == 1 for command in uptime_commands)
 
 
 def test_generated_image_cards_are_rate_limited(
