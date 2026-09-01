@@ -74,10 +74,13 @@ def request(
     path: str = "/",
     *,
     forwarded_host: str | None = None,
+    edge_secret: str | None = None,
 ) -> Request:
     headers = [(b"host", host.encode())]
     if forwarded_host:
         headers.append((b"x-forwarded-host", forwarded_host.encode()))
+    if edge_secret:
+        headers.append((b"x-rati-edge-secret", edge_secret.encode()))
     return Request(
         {
             "type": "http",
@@ -1736,10 +1739,20 @@ def test_sports_alpha_page_reuses_warmed_result(sports_db, monkeypatch) -> None:
     assert calls == 1
 
 
-def test_cloudflare_forwarded_host_selects_the_public_product() -> None:
+def test_cloudflare_forwarded_host_selects_the_public_product(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(web_main, "EDGE_PROXY_SECRET_VALUE", "test-edge-secret")
+    spoofed_request = request(
+        host="runner-watch-ratimics.fly.dev",
+        forwarded_host="sports.rati.chat",
+    )
+    assert product_for_request(spoofed_request) == "runners"
+
     sports_request = request(
         host="runner-watch-ratimics.fly.dev",
         forwarded_host="sports.rati.chat",
+        edge_secret="test-edge-secret",
     )
     assert product_for_request(sports_request) == "sports"
     assert origin_for_request(sports_request) == "https://sports.rati.chat"
@@ -1747,5 +1760,6 @@ def test_cloudflare_forwarded_host_selects_the_public_product() -> None:
     unknown_request = request(
         host="runner-watch-ratimics.fly.dev",
         forwarded_host="not-rati.example",
+        edge_secret="test-edge-secret",
     )
     assert product_for_request(unknown_request) == "runners"

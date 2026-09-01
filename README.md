@@ -117,13 +117,30 @@ seed, dependencies, and adapter digest. Corpus v2 also includes a resumable thre
 backfill and deterministic semantic, XBRL, comparison, and insufficient-evidence tasks. See the
 [SEC Qwen training guide](docs/sec-qwen-training.md).
 
-## Distributed intelligence contracts
+## Distributed intelligence
 
-The first local-first swarm contracts are executable and documented. A signed NodeManifest binds a
-node key to its endpoints and capabilities, SignedClaim carries short-lived untrusted scanner
-observations, and AlphaPack defines signed peer/topic/policy configuration without executable code.
-All three share one canonical byte format, node identity, protocol version, and domain-separated
-Ed25519 signing profile. See [the swarm protocol overview](docs/swarm-protocol.md).
+RATi can run alone or join a small, chosen scanner swarm. Solo mode is the default and makes no
+swarm network requests. Attached mode publishes a signed node manifest, connects to configured
+HTTPS seed nodes, receives signed scanner claims, and can publish a bounded set of local scan
+results when `SWARM_PUBLISH_SCANS=true`.
+
+Discovery is intentionally narrow today. A node can use manual seeds from `SWARM_BOOTSTRAP_URLS`
+and bootstrap peers from a locally installed, signed Alpha Pack. Matrix, Farcaster, social
+adapters, gossip, DHT discovery, NAT traversal, relays, blockchain consensus, and order exchange
+are not implemented. Alpha Packs carry signed membership and policy settings, not executable code
+or proof that a peer is trustworthy.
+
+Published scan claims contain signed scores and hashed evidence references. They do not copy raw
+provider rows into the swarm. Received claims stay in a separate peer store and can only become
+supporting context after local evidence, reputation, and risk checks. They cannot place a trade or
+bypass a local veto.
+
+On Fly, attached machines must use the same `SWARM_NODE_PRIVATE_KEY` secret so one public node does
+not present several identities. The current peer and trust stores are local SQLite files, and the
+connected-peer view lives in each process. Run one public attached replica for now, or add shared
+state before scaling that identity across replicas. See [running the swarm](docs/swarm-runtime.md)
+for setup, deployment limits, and every environment setting. The signed object formats are in the
+[swarm protocol overview](docs/swarm-protocol.md).
 
 ## Source ingestion
 
@@ -363,19 +380,21 @@ Export the same complete candidate groups to the generic `crlplrimes` dataset co
 uv run stonks-ranker export-crl data/stonks-crl-60m.csv --horizon 60m
 ```
 
-The status API is available at `/api/ranker/status`. Bars are retained for 60 days, full scan
+The status API is available at `/api/ranker/status` to callers that present the operations bearer
+token. Bars are retained for 60 days, full scan
 snapshots for 150 days, compact training examples for one year, and raw source documents for one
 year. Long-term raw archives should live in object storage.
 
 `/api/capabilities` combines live source, worker, model, evidence-gate, base-rate, training, and
-promotion policy without exposing credential names or values. It also reports enabled sources that
-have not passed review. Clients can use it instead of hardcoding deployment behavior. `/live`
-reports only that the web process is running. `/health` and its `/ready` alias check the database
-and minimum schema without depending on the worker. `/health/details` also requires a recent
-healthy worker heartbeat. Fly routes traffic using the backward-compatible `/health` endpoint,
-while the detailed endpoint lets external monitoring detect a dead or partly failed worker without
-taking healthy web machines offline. `/health/performance` reports bounded route-latency samples,
-cache activity, database-pool waits, and process peak memory without exposing request data.
+promotion policy. It, `/api/ranker/status`, `/api/intelligence`, `/health/details`, and
+`/health/performance` require
+`Authorization: Bearer $OPERATIONS_TOKEN`; when the token is missing or wrong they look like an
+unknown route. `/live` reports only that the web process is running. `/health` and its `/ready`
+alias return only a status while checking the database and minimum schema. Fly routes traffic using
+`/health`, while authenticated monitoring can use `/health/details` to detect a dead or partly
+failed worker without taking healthy web machines offline. Authenticated monitoring can use
+`/health/performance` for bounded route-latency samples, cache activity, database-pool waits, and
+process peak memory without exposing request data.
 
 ## Legacy model evaluations
 
@@ -512,7 +531,11 @@ research jobs between web and worker processes.
 `cloudflare-router/` is the small edge router for `runners.rati.chat` and
 `sports.rati.chat`. Both public products share the same Fly deployment. The
 router passes the original public host through so branding, passkeys, and
-origin checks stay correct.
+origin checks stay correct. It also replaces the client-address headers and authenticates each
+request to the origin with a shared `EDGE_PROXY_SECRET`. Set the same random secret, at least 32
+characters long, in Cloudflare and Fly before setting `REQUIRE_EDGE_PROXY_SECRET=1`. With that
+switch on, public routes fail closed when a request bypasses the edge; health checks and the legacy
+direct hostname remain available for operations.
 
 List charts send only time and price, use response compression, and cache their complete response
 for one minute.
@@ -521,6 +544,47 @@ Set one shared `RATE_LIMIT_HASH_KEY` so rate-limit keys contain neither raw IP a
 IDs. Production sets `REQUIRE_RATE_LIMIT_HASH_KEY=1`, so a missing shared key stops startup instead
 of silently weakening limits across machines. The old SQLite volume must be retired after the
 migration check; it is not a standing backup.
+
+Set a separate random `OPERATIONS_TOKEN` for detailed health and internal status APIs. For a closed
+beta, set `REGISTRATION_MODE=invite` and provide comma-separated, high-entropy, one-time codes in
+`REGISTRATION_INVITE_CODES`. A completed account permanently consumes its code. Configure secrets
+through the platform secret stores, never in this repository. Local development keeps open
+registration and does not require the edge secret unless those switches are set explicitly.
+
+Configure production in this order so the origin is never enabled before the edge is ready:
+
+1. Generate separate random values for `EDGE_PROXY_SECRET` and `OPERATIONS_TOKEN`, plus one random
+   value per registration invite. Keep the values in a password manager.
+2. Store `EDGE_PROXY_SECRET` as an encrypted secret on the `rati-products-router` Cloudflare Worker.
+3. Stage `EDGE_PROXY_SECRET`, `OPERATIONS_TOKEN`, and the comma-separated
+   `REGISTRATION_INVITE_CODES` on the `runner-watch-ratimics` Fly app. Staging avoids an early
+   restart.
+4. Deploy the Cloudflare Worker and verify both public hosts still reach `/health`.
+5. Deploy Fly. The committed `REQUIRE_EDGE_PROXY_SECRET=1` and `REGISTRATION_MODE=invite` settings
+   then activate together with the staged secrets.
+
+The one-time bootstrap script automates steps 1–3 with Wrangler and Fly CLI:
+
+```bash
+npx wrangler login
+flyctl auth login
+./scripts/configure-production-security
+```
+
+It requires an interactive terminal, checks the platforms before changing anything, generates five
+invite codes by default, displays the generated values once for password-manager storage, configures
+the Cloudflare secret, and stages the Fly secrets without deploying Fly. Set `INVITE_COUNT=10` to
+generate ten codes. The script refuses to overwrite an existing edge secret because rotation needs
+a separate coordinated procedure.
+
+On macOS, use Keychain mode to keep the generated values out of terminal output:
+
+```bash
+./scripts/configure-production-security --keychain
+```
+
+This stores three entries under the `runner-watch production` service before uploading anything.
+Retrieve a value later through Keychain Access or with `security find-generic-password` locally.
 
 The low-cost layout is about $25–$27 per month at light traffic: about $6.40 for PostgreSQL, $6.64
 for both web machines, $11.84 for the worker and trainer, and usage-based Redis at $0.20 per 100,000

@@ -19,6 +19,7 @@ class ModelConfig:
 @dataclass(frozen=True)
 class DatasetConfig:
     provider: str
+    dataset_id: str
     corpus_manifest: Path
     release_id: str | None
     manifest_sha256: str | None
@@ -86,6 +87,7 @@ def load_config(path: Path) -> Config:
         dataset,
         {
             "provider",
+            "dataset_id",
             "corpus_manifest",
             "release_id",
             "manifest_sha256",
@@ -130,6 +132,11 @@ def load_config(path: Path) -> Config:
     if dataset_provider not in {"ilxyr", "braid"}:
         raise ValueError("dataset.provider must be ilxyr or braid")
     release_id = str(dataset.get("release_id") or "") or None
+    dataset_id = str(dataset.get("dataset_id") or "")
+    if not dataset_id.startswith("dataset://") or any(
+        character.isspace() for character in dataset_id
+    ):
+        raise ValueError("dataset.dataset_id must be a non-whitespace dataset:// handle")
     manifest_sha256 = str(dataset.get("manifest_sha256") or "") or None
     if dataset_provider == "braid":
         if not release_id:
@@ -157,6 +164,7 @@ def load_config(path: Path) -> Config:
         ),
         dataset=DatasetConfig(
             provider=dataset_provider,
+            dataset_id=dataset_id,
             corpus_manifest=corpus_manifest,
             release_id=release_id,
             manifest_sha256=manifest_sha256,
@@ -223,6 +231,8 @@ def validate_corpus(config: Config) -> dict[str, Any]:
     else:
         if manifest.get("schema") != "ilxyr.corpus_release.v1":
             raise ValueError("corpus manifest schema must be ilxyr.corpus_release.v1")
+        if manifest.get("id") != config.dataset.dataset_id:
+            raise ValueError("corpus dataset ID does not match config")
         declared = {str(item["path"]): item for item in manifest.get("files") or []}
     corpus_directory = config.dataset.corpus_manifest.parent
     required = {
@@ -281,7 +291,7 @@ def _validate_braid_manifest(config: Config, manifest: dict[str, Any]) -> dict[s
         if artifact_path in paths:
             raise ValueError("Braid corpus manifest contains a duplicate artifact path")
         paths.add(artifact_path)
-    return {**manifest, "id": release_id}
+    return {**manifest, "id": config.dataset.dataset_id, "release_id": release_id}
 
 
 def load_examples(path: Path) -> list[dict[str, Any]]:

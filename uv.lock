@@ -1951,6 +1951,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
+    { name = "defusedxml" },
     { name = "fastapi" },
     { name = "jinja2" },
     { name = "keyring" },
@@ -1984,6 +1985,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cryptography", specifier = ">=44" },
+    { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "fastapi", specifier = ">=0.116" },
     { name = "httpx2", marker = "extra == 'dev'", specifier = ">=2.12" },
     { name = "jinja2", specifier = ">=3.1" },

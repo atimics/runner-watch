@@ -2,6 +2,7 @@
   'use strict';
 
   const COST = 10;
+  const RECOVERY_DELAYS = [500, 1500, 3000, 5000];
 
   function requestId() {
     if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -16,6 +17,10 @@
     if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
     if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
     return new Date(value).toLocaleDateString([], {month: 'short', day: 'numeric'});
+  }
+
+  function wait(delay) {
+    return new Promise(resolve => window.setTimeout(resolve, delay));
   }
 
   function renderComment(comment) {
@@ -90,6 +95,20 @@
       } catch (_) {}
     };
 
+    const postPending = async () => {
+      try {
+        const response = await fetch(thread.dataset.commentEndpoint, {
+          method: 'POST', headers: {'Idempotency-Key': pending},
+        });
+        const responseText = await response.text();
+        let result = null;
+        try { result = JSON.parse(responseText); } catch (_) {}
+        return {response, result};
+      } catch (_) {
+        return {response: null, result: null};
+      }
+    };
+
     thread.querySelectorAll('[data-comment-time]').forEach(item => {
       item.textContent = relativeTime(item.dateTime);
     });
@@ -100,10 +119,20 @@
       generate.disabled = true;
       status.textContent = 'Posting…';
       try {
-        const response = await fetch(thread.dataset.commentEndpoint, {
-          method: 'POST', headers: {'Idempotency-Key': pending},
-        });
-        const result = await response.json().catch(() => ({}));
+        let recoveryAttempt = 0;
+        let response;
+        let result;
+        while (true) {
+          ({response, result} = await postPending());
+          const shouldRecover = !response || !result || result.retryable === true;
+          if (!shouldRecover || recoveryAttempt >= RECOVERY_DELAYS.length) break;
+          status.textContent = 'Still posting…';
+          await wait(RECOVERY_DELAYS[recoveryAttempt]);
+          recoveryAttempt += 1;
+        }
+        if (!response || !result || result.retryable === true) {
+          throw new Error('Still posting. Tap again.');
+        }
         if (!response.ok) {
           if (!result.retryable) remember(null);
           if (response.status === 402) {

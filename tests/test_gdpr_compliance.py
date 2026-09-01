@@ -108,7 +108,7 @@ def test_public_app_has_a_complete_privacy_surface() -> None:
         assert required_copy in privacy_notice
 
 
-def test_local_vault_checks_encryption_before_cloud_deletion() -> None:
+def test_local_vault_checks_encryption_before_swarm_deletion() -> None:
     source = (ROOT / "web/static/data-vault.js").read_text()
     privacy_notice = (ROOT / "web/templates/privacy.html").read_text()
 
@@ -124,7 +124,9 @@ def test_local_vault_checks_encryption_before_cloud_deletion() -> None:
         "fetch('/api/account/data/delete-cloud-copy'"
     )
     assert "innerHTML" not in source
-    assert "Move saved data off the cloud" in privacy_notice
+    assert "RATi Swarm" in privacy_notice
+    assert "Move saved data off the Swarm" in privacy_notice
+    assert "cloud" not in privacy_notice.lower()
     assert "passphrase and key are never sent to RATi" in privacy_notice
 
 
@@ -159,6 +161,7 @@ def test_export_and_delete_cover_account_content_and_leave_anonymous_tombstone(
     assert exported["community_calls"][0]["public_id"] == "gdpr-public"
     assert exported["passkeys"] == []
     assert "token_hash" not in str(exported)
+    assert "registration_invite_hash" not in exported["account"]
 
     deleted = delete_user_data("gdpr-user")
 
@@ -342,9 +345,24 @@ def test_openrouter_request_has_no_user_fingerprint() -> None:
     assert '"user": hashlib.sha256(user_id.encode()).hexdigest()[:32]' not in source
 
 
-def test_production_does_not_write_web_access_logs() -> None:
+def test_production_uses_privacy_safe_application_access_logs() -> None:
     assert "--no-access-log" in (ROOT / "fly.toml").read_text()
     assert '"--no-access-log"' in (ROOT / "Dockerfile").read_text()
+    source = (ROOT / "src/runner_web/main.py").read_text()
+    assert "request_complete method=%s path=%s status=%s duration_ms=%.1f" in source
+
+
+def test_runtime_container_is_non_root_and_uses_immutable_base_images() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text()
+
+    assert "USER runner" in dockerfile
+    external_stages = [
+        line
+        for line in dockerfile.splitlines()
+        if line.startswith("FROM ") and "FROM base " not in line
+    ]
+    assert len(external_stages) == 4
+    assert all("@sha256:" in line for line in external_stages)
 
 
 def test_compliance_runbook_covers_operations_not_just_ui() -> None:

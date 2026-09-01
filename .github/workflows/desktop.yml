@@ -105,6 +105,9 @@ jobs:
       - name: Install desktop dependencies
         working-directory: desktop
         run: pnpm install --frozen-lockfile
+      - name: Audit desktop dependencies
+        working-directory: desktop
+        run: pnpm audit --audit-level low
       - name: Check desktop client
         working-directory: desktop
         run: |

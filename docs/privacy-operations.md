@@ -22,10 +22,10 @@ The app must not write visitor IDs, page views, dwell time, share events, seen s
 
 ## Member storage choices
 
-- **RATi cloud:** saved work remains in the live application database so it is available after passkey sign-in. Infrastructure encryption protects it in transit and at rest. This is not end-to-end encryption: the application can read the data to provide requested features.
+- **RATi Swarm:** saved work remains in the live application database so it is available after passkey sign-in. Infrastructure encryption protects it in transit and at rest. This is not end-to-end encryption: the application can read the data to provide requested features.
 - **Encrypted local vault:** the browser downloads the authenticated export, encrypts it with AES-256-GCM, and derives the key from the member's passphrase with PBKDF2-HMAC-SHA-256 and a random salt. The passphrase and key never reach RATi. The encrypted payload is kept in IndexedDB and can also be downloaded as a `.rati-data` file.
-- **Move off cloud:** the browser must persist the vault, read it back, decrypt it, and match its export time before requesting server deletion. The server then deletes saved and published content while retaining the minimum account, passkey, public-identity, Flash-wallet, and billing state needed to keep the account working. Deleted content can remain in expiring backups for the published backup window.
-- **Permanent local deletion:** the member must type `DELETE LOCAL COPY` before the browser deletes its IndexedDB vault. This action does not change the cloud copy. Clearing browser storage or losing the device can also remove the vault, so the interface offers an encrypted file download.
+- **Move off Swarm:** the browser must persist the vault, read it back, decrypt it, and match its export time before requesting server deletion. The server then deletes saved and published content while retaining the minimum account, passkey, public-identity, Flash-wallet, and billing state needed to keep the account working. Deleted content can remain in expiring backups for the published backup window.
+- **Permanent local deletion:** the member must type `DELETE LOCAL COPY` before the browser deletes its IndexedDB vault. This action does not change the Swarm copy. Clearing browser storage or losing the device can also remove the vault, so the interface offers an encrypted file download.
 
 Do not call the local vault a sync system. Normal product screens do not silently read it, and RATi cannot recover a lost passphrase. Imported vault files are treated as untrusted input, bounded to 50 MB, structurally validated, and rendered with text-only DOM operations after decryption.
 
@@ -71,12 +71,25 @@ The present Fly `sjc` region is San Jose, United States. Before serving people i
 
 ## Security controls
 
-- Passkeys with user verification; no passwords or biometric templates on the server.
+- Passkeys with user verification; no passwords or biometric templates on the server. Adding a
+  passkey or deleting an account requires a passkey check from the last five minutes.
 - Random sessions stored only as hashes; Secure, HTTP-only, SameSite=Lax cookies in production.
+  Adding a passkey rotates the current session and revokes every other session for that account.
 - TLS for public traffic, PostgreSQL and Redis; fail startup in production if database or cache transport is not encrypted.
+- Authenticate Cloudflare-to-origin requests with `EDGE_PROXY_SECRET`, replace untrusted client-IP
+  headers at the edge, and enable `REQUIRE_EDGE_PROXY_SECRET=1` only after both sides share the
+  secret. Keep the health routes and documented legacy hostname available for operations.
 - Hash rate-limit subjects before writing short-lived Redis keys. Set the same secret `RATE_LIMIT_HASH_KEY` on every web machine so the limit remains shared without storing an IP address or account ID in the key.
-- Origin checks on state-changing browser requests, content security policy, HSTS, frame restrictions, and bounded rate limits.
+- Use one-time, high-entropy registration codes for a closed beta by setting
+  `REGISTRATION_MODE=invite` and storing `REGISTRATION_INVITE_CODES` only in the platform secret
+  store. Never send an invite code to logs or a data export.
+- Origin checks on state-changing browser requests, content security policy, HSTS, frame
+  restrictions, and bounded rate limits, including generated image endpoints.
+- Require `Authorization: Bearer $OPERATIONS_TOKEN` for detailed health, capability, ingestion,
+  ranker, and intelligence endpoints. Public health responses contain only a status.
 - No request-body, cookie, credential, research-evidence, export, or deletion logging.
+- Parse external XML with entity expansion disabled, enforce response and document size limits, and
+  expose only a boolean when an upstream worker error exists.
 - Least-privilege production access, multi-factor authentication for infrastructure and processors, separate production credentials, secret rotation, and a reviewed access list each quarter.
 - Daily backups with a 30-day maximum, restore tests, deletion replay, and encryption in transit and at rest.
 - Dependency, container, and secret scanning in CI; patch critical issues promptly.

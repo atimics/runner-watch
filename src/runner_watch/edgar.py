@@ -7,14 +7,16 @@ import re
 import time
 import urllib.error
 import urllib.request
-import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
+from defusedxml import ElementTree as DefusedElementTree
+
 from runner_watch.ingestion import SourceFetch, SourceFetchRecorder
+from runner_watch.xml_security import read_limited, safe_xml_fromstring
 
 SEC_BASE = "https://www.sec.gov"
 COMPANY_MAP_URL = f"{SEC_BASE}/files/company_tickers_exchange.json"
@@ -28,6 +30,7 @@ SEC_USER_AGENT = os.getenv(
 ATOM = {"atom": "http://www.w3.org/2005/Atom"}
 ACCESSION_RE = re.compile(r"accession-number=([0-9-]+)")
 TITLE_CIK_RE = re.compile(r"\((\d{6,10})\)\s+\((Issuer|Filer|Subject|Reporting)\)")
+MAX_SEC_RESPONSE_BYTES = 20 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,7 +133,7 @@ class EdgarClient:
                 time.sleep(wait)
             try:
                 with urllib.request.urlopen(request, timeout=35) as response:  # noqa: S310
-                    body = response.read()
+                    body = read_limited(response, max_bytes=MAX_SEC_RESPONSE_BYTES)
                 self._last_request = time.monotonic()
                 stripped = body.lstrip()
                 content_type = (
@@ -201,7 +204,7 @@ class EdgarClient:
                 text = self.get_text(f"{directory_url}/{name}")
                 if "<ownershipDocument" in text:
                     return parse_ownership_xml(text)
-            except (OSError, ValueError, ET.ParseError):
+            except (OSError, ValueError, DefusedElementTree.ParseError):
                 continue
         return None
 
@@ -223,7 +226,7 @@ class EdgarClient:
                 )
                 if summary is not None:
                     return summary
-            except (OSError, ValueError, ET.ParseError):
+            except (OSError, ValueError, DefusedElementTree.ParseError):
                 continue
         return None
 
@@ -267,7 +270,7 @@ def parse_company_map(payload: dict[str, Any]) -> list[EdgarCompany]:
 
 
 def parse_latest_filings(text: str) -> list[EdgarFiling]:
-    root = ET.fromstring(text)
+    root = safe_xml_fromstring(text)
     selected: dict[str, EdgarFiling] = {}
     role_priority = {"Issuer": 3, "Filer": 2, "Subject": 1, "Reporting": 0}
     for entry in root.findall("atom:entry", ATOM):
@@ -333,7 +336,7 @@ def primary_filing_document_names(
     return text_files[:1]
 
 
-def _number(node: ET.Element, path: str) -> float:
+def _number(node: Any, path: str) -> float:
     text = node.findtext(path, default="").strip()
     try:
         value = float(text)
@@ -343,7 +346,7 @@ def _number(node: ET.Element, path: str) -> float:
 
 
 def parse_ownership_xml(text: str) -> OwnershipSummary:
-    root = ET.fromstring(text)
+    root = safe_xml_fromstring(text)
     issuer_cik = int(root.findtext("./issuer/issuerCik", default="0"))
     ticker = root.findtext("./issuer/issuerTradingSymbol", default="").strip().upper()
     owner_name = root.findtext(
@@ -435,7 +438,7 @@ def parse_ownership_xml(text: str) -> OwnershipSummary:
     )
 
 
-def _local_tag(node: ET.Element) -> str:
+def _local_tag(node: Any) -> str:
     return node.tag.rsplit("}", 1)[-1].lower()
 
 
@@ -460,7 +463,7 @@ def parse_beneficial_ownership_xml(text: str) -> BeneficialOwnershipSummary | No
     names and accepts the common variants instead of assuming one namespace.
     """
 
-    root = ET.fromstring(text)
+    root = safe_xml_fromstring(text)
     values: dict[str, list[str]] = {}
     for node in root.iter():
         clean = " ".join("".join(node.itertext()).split()) if len(node) == 0 else ""

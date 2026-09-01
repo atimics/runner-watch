@@ -25,7 +25,7 @@ from urllib.parse import quote, unquote, urlparse
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-from fastapi import Cookie, FastAPI, HTTPException, Request
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -46,6 +46,7 @@ from webauthn.helpers.structs import (
     AttestationConveyancePreference,
     AuthenticatorAttachment,
     AuthenticatorSelectionCriteria,
+    PublicKeyCredentialDescriptor,
     ResidentKeyRequirement,
     UserVerificationRequirement,
 )
@@ -127,9 +128,9 @@ from runner_web.llm_routing import (
 )
 from runner_web.market_clock import market_clock
 from runner_web.market_reports import market_reports_overview, refresh_market_reports
+from runner_web.operations import require_operations_access, worker_heartbeat_key
 from runner_web.operations import router as operations_router
 from runner_web.operations import runtime_capabilities as runtime_capabilities
-from runner_web.operations import worker_heartbeat_key
 from runner_web.outcomes import (
     record_outcome_error,
     refresh_outcomes,
@@ -154,7 +155,11 @@ from runner_web.ranker import (
     predict_and_store,
     store_training_examples,
 )
-from runner_web.request_security import request_client_ip, safe_next_path
+from runner_web.request_security import (
+    edge_proxy_authenticated,
+    request_client_ip,
+    safe_next_path,
+)
 from runner_web.research_context import build_research_context
 from runner_web.research_pipeline import PIPELINE_VERSION, run_verified_pipeline
 from runner_web.shared_state import (
@@ -202,6 +207,7 @@ from runner_web.sports import (
     sports_slate,
     validate_sports_ai_forecast,
 )
+from runner_web.swarm_runtime import maintain_swarm_runtime, open_swarm_runtime
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
 
 LOG = logging.getLogger(__name__)
@@ -215,6 +221,12 @@ LEGACY_RP_ID = os.getenv("LEGACY_RP_ID", "stonks.rati.foundation")
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0") == "1"
 COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "").strip() or None
 TRUST_FLY_CLIENT_IP = os.getenv("TRUST_FLY_CLIENT_IP", "0") == "1"
+EDGE_PROXY_SECRET_VALUE = os.getenv("EDGE_PROXY_SECRET", "").strip()
+REQUIRE_EDGE_PROXY_SECRET = os.getenv("REQUIRE_EDGE_PROXY_SECRET", "0") == "1"
+REGISTRATION_MODE = os.getenv("REGISTRATION_MODE", "open").strip().lower()
+REGISTRATION_INVITE_CODES = tuple(
+    code.strip() for code in os.getenv("REGISTRATION_INVITE_CODES", "").split(",") if code.strip()
+)
 PROCESS_ROLE = os.getenv("PROCESS_ROLE", "all").strip().lower()
 WORKER_INSTANCE_ID = (
     os.getenv("WORKER_INSTANCE_ID", "").strip()
@@ -276,6 +288,7 @@ FLASH_REPORT_FAILURE_WINDOW_MINUTES = max(
 )
 FLASH_REPORT_FAILED_MESSAGE = "Report couldn't be generated. No Flash was charged."
 FLASH_REPORT_UNAVAILABLE_MESSAGE = "Flash reports are unavailable right now."
+RECENT_AUTH_SECONDS = 5 * 60
 COMMENT_MAX_CHARS = 240
 COMMENT_REQUEST_KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
 COMMENT_REQUEST_PENDING_SECONDS = max(90, int(os.getenv("COMMENT_REQUEST_PENDING_SECONDS", "120")))
@@ -582,10 +595,24 @@ async def _stop_tasks(tasks: list[asyncio.Task[Any]]) -> None:
 def validate_runtime_configuration() -> None:
     if PROCESS_ROLE not in {"all", "web", "worker"}:
         raise RuntimeError("PROCESS_ROLE must be all, web, or worker")
+    if REGISTRATION_MODE not in {"open", "invite"}:
+        raise RuntimeError("REGISTRATION_MODE must be open or invite")
     if PROCESS_ROLE != "all" and not redis_configured():
         raise RuntimeError("REDIS_URL is required for split web and worker processes")
     if REQUIRE_RATE_LIMIT_HASH_KEY and not RATE_LIMIT_HASH_KEY_VALUE:
         raise RuntimeError("RATE_LIMIT_HASH_KEY is required when REQUIRE_RATE_LIMIT_HASH_KEY=1")
+    if PROCESS_ROLE in {"all", "web"}:
+        if REQUIRE_EDGE_PROXY_SECRET and len(EDGE_PROXY_SECRET_VALUE) < 32:
+            raise RuntimeError(
+                "EDGE_PROXY_SECRET must contain at least 32 characters when required"
+            )
+        if REGISTRATION_MODE == "invite" and (
+            not REGISTRATION_INVITE_CODES
+            or any(len(code) < 16 for code in REGISTRATION_INVITE_CODES)
+        ):
+            raise RuntimeError(
+                "REGISTRATION_INVITE_CODES must contain one-time codes of at least 16 characters"
+            )
 
 
 @asynccontextmanager
@@ -602,6 +629,13 @@ async def lifespan(application: FastAPI):
         tasks.extend(worker_tasks)
     if PROCESS_ROLE in {"all", "web"}:
         tasks.append(asyncio.create_task(request_cache_warmer()))
+    if SWARM_RUNTIME is not None:
+        tasks.append(
+            asyncio.create_task(
+                maintain_swarm_runtime(SWARM_RUNTIME),
+                name="swarm-maintenance",
+            )
+        )
     application.state.worker_tasks = worker_tasks
     try:
         yield
@@ -610,6 +644,8 @@ async def lifespan(application: FastAPI):
         if worker_tasks:
             delete_worker_state(worker_heartbeat_key(WORKER_INSTANCE_ID))
             release_research_worker(WORKER_INSTANCE_ID)
+        if SWARM_RUNTIME is not None:
+            SWARM_RUNTIME.close()
 
 
 async def run_worker() -> None:
@@ -621,12 +657,21 @@ async def run_worker() -> None:
         _fail_orphaned_research_jobs()
     _recover_completed_edge_reports()
     tasks = _start_worker_tasks()
+    if SWARM_RUNTIME is not None:
+        tasks.append(
+            asyncio.create_task(
+                maintain_swarm_runtime(SWARM_RUNTIME),
+                name="swarm-maintenance",
+            )
+        )
     try:
         await asyncio.gather(*tasks)
     finally:
         await _stop_tasks(tasks)
         delete_worker_state(worker_heartbeat_key(WORKER_INSTANCE_ID))
         release_research_worker(WORKER_INSTANCE_ID)
+        if SWARM_RUNTIME is not None:
+            SWARM_RUNTIME.close()
 
 
 def worker_main() -> None:
@@ -649,6 +694,9 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 app.include_router(operations_router)
+SWARM_RUNTIME = open_swarm_runtime()
+if SWARM_RUNTIME is not None and PROCESS_ROLE in {"all", "web"}:
+    app.include_router(SWARM_RUNTIME.router)
 app.include_router(create_node_router(NODE_SERVICE))
 templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
 templates.env.globals["static_version"] = STATIC_VERSION
@@ -836,9 +884,15 @@ def _origin_host(origin: str) -> str:
     return (urlparse(origin).hostname or "").lower()
 
 
+def _edge_proxy_authenticated(request: Request) -> bool:
+    return edge_proxy_authenticated(request, edge_proxy_secret=EDGE_PROXY_SECRET_VALUE)
+
+
 def _request_host(request: Request) -> str:
     """Return a known public host, including the Cloudflare edge host."""
     direct_host = (request.url.hostname or "").lower()
+    if not _edge_proxy_authenticated(request):
+        return direct_host
     forwarded_host = request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip()
     forwarded_host = forwarded_host.split(":", 1)[0].lower()
     known_hosts = {
@@ -876,7 +930,11 @@ def require_origin(request: Request) -> None:
 
 
 def _request_client_ip(request: Request) -> str:
-    return request_client_ip(request, trust_fly_client_ip=TRUST_FLY_CLIENT_IP)
+    return request_client_ip(
+        request,
+        trust_fly_client_ip=TRUST_FLY_CLIENT_IP,
+        edge_proxy_secret=EDGE_PROXY_SECRET_VALUE,
+    )
 
 
 def enforce_rate(
@@ -896,6 +954,7 @@ def enforce_rate(
     key = f"{scope}:{private_subject}"
     shared_allowed = rate_limit_allowed(key, limit, seconds)
     if shared_allowed is False:
+        LOG.warning("rate_limit_denied scope=%s subject=%s", scope, private_subject)
         raise HTTPException(429, "Too many requests. Please wait and try again.")
     if shared_allowed is True:
         return
@@ -903,6 +962,7 @@ def enforce_rate(
     with RATE_LIMIT_LOCK:
         recent = [stamp for stamp in RATE_LIMITS.get(key, []) if stamp > cutoff]
         if len(recent) >= limit:
+            LOG.warning("rate_limit_denied scope=%s subject=%s", scope, private_subject)
             raise HTTPException(429, "Too many requests. Please wait and try again.")
         recent.append(now())
         RATE_LIMITS[key] = recent
@@ -935,18 +995,58 @@ def require_user(session_token: str | None) -> dict[str, Any]:
     return user
 
 
-def create_session(user_id: str, response: JSONResponse) -> None:
+def require_recent_auth(session_token: str | None) -> None:
+    if not session_token:
+        raise HTTPException(401, "Passkey login required")
+    cutoff = iso(now() - timedelta(seconds=RECENT_AUTH_SECONDS))
+    with connection() as db:
+        recent = db.execute(
+            """
+            SELECT 1 FROM sessions
+            WHERE token_hash=? AND expires_at>? AND authenticated_at>=?
+            """,
+            (token_hash(session_token), iso(), cutoff),
+        ).fetchone()
+    if not recent:
+        raise HTTPException(403, "Fresh passkey verification required.")
+
+
+def mark_session_authenticated(session_token: str, user_id: str) -> None:
+    with connection() as db:
+        updated = db.execute(
+            """
+            UPDATE sessions SET authenticated_at=?
+            WHERE token_hash=? AND user_id=? AND expires_at>?
+            """,
+            (iso(), token_hash(session_token), user_id, iso()),
+        )
+    if updated.rowcount != 1:
+        raise HTTPException(401, "Passkey login required")
+
+
+def create_session(
+    user_id: str,
+    response: JSONResponse,
+    *,
+    revoke_existing: bool = False,
+) -> None:
     raw_token = secrets.token_urlsafe(32)
     created = now()
     with connection() as db:
         db.execute("DELETE FROM sessions WHERE expires_at<=?", (iso(created),))
+        if revoke_existing:
+            db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
         db.execute(
-            "INSERT INTO sessions(token_hash,user_id,created_at,expires_at) VALUES(?,?,?,?)",
+            """
+            INSERT INTO sessions(token_hash,user_id,created_at,expires_at,authenticated_at)
+            VALUES(?,?,?,?,?)
+            """,
             (
                 token_hash(raw_token),
                 user_id,
                 iso(created),
                 iso(created + timedelta(days=30)),
+                iso(created),
             ),
         )
     response.set_cookie(
@@ -1017,6 +1117,7 @@ def page_context(
         "product": product_for_request(request),
         "runners_origin": RUNNERS_ORIGIN,
         "sports_origin": SPORTS_ORIGIN,
+        "registration_invite_required": REGISTRATION_MODE == "invite",
         "sports_path_prefix": "" if product_for_request(request) == "sports" else "/sports",
         "market_clock": market_clock(),
         "flash": actor_snapshot(),
@@ -1139,6 +1240,19 @@ async def scan_collection_worker() -> None:
                 result = await run_in_threadpool(run_scan, "penny")
                 worker_state("background_scan_last_run", str(result.get("scan_run_id") or "cached"))
                 worker_state("background_scan_last_error", "")
+                if SWARM_RUNTIME is not None and SWARM_RUNTIME.config.publish_scan_claims:
+                    try:
+                        published = await run_in_threadpool(
+                            SWARM_RUNTIME.publish_scan_rows,
+                            result.get("rows") or [],
+                        )
+                        worker_state(
+                            "swarm_scan_last_publish",
+                            json.dumps(published.as_dict(), separators=(",", ":")),
+                        )
+                        worker_state("swarm_scan_last_error", "")
+                    except Exception as exc:
+                        worker_state("swarm_scan_last_error", str(exc)[:500])
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -1207,7 +1321,18 @@ async def security_headers(request: Request, call_next: Any) -> Response:
     started = time.perf_counter()
     nonce = secrets.token_urlsafe(16)
     request.state.csp_nonce = nonce
-    response = await call_next(request)
+    direct_host = (request.url.hostname or "").lower()
+    public_health_path = request.url.path in {"/live", "/health", "/ready"}
+    legacy_direct_request = direct_host == _origin_host(LEGACY_ORIGIN)
+    if (
+        REQUIRE_EDGE_PROXY_SECRET
+        and not public_health_path
+        and not legacy_direct_request
+        and not _edge_proxy_authenticated(request)
+    ):
+        response = JSONResponse({"detail": "Not found"}, status_code=404)
+    else:
+        response = await call_next(request)
     if "runner_visitor" in request.cookies:
         response.delete_cookie("runner_visitor", path="/")
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -1234,20 +1359,36 @@ async def security_headers(request: Request, call_next: Any) -> Response:
     route_path = getattr(route, "path", request.url.path)
     record_route(request.method, route_path, elapsed_ms)
     response.headers["Server-Timing"] = f"app;dur={elapsed_ms:.1f}"
-    if elapsed_ms >= 500:
-        LOG.info(
-            "slow_request method=%s path=%s status=%s duration_ms=%.1f",
-            request.method,
-            request.url.path,
-            response.status_code,
-            elapsed_ms,
-        )
+    LOG.log(
+        logging.WARNING if response.status_code >= 400 else logging.INFO,
+        "request_complete method=%s path=%s status=%s duration_ms=%.1f",
+        request.method,
+        request.url.path,
+        response.status_code,
+        elapsed_ms,
+    )
     return response
 
 
 class PasskeyFinish(BaseModel):
     flow_token: str
     credential: dict[str, Any]
+
+
+class RegisterOptionsPayload(BaseModel):
+    invite_code: str = Field(default="", max_length=200)
+
+
+class PublishSignal(BaseModel):
+    snapshot_id: str
+    thesis: str = Field(min_length=8, max_length=500)
+    horizon: str = Field(pattern="^(intraday|swing|watch)$")
+    invalidation: str = Field(min_length=3, max_length=240)
+    disclosure: str = Field(min_length=3, max_length=240)
+
+
+class ReportSignal(BaseModel):
+    reason: str = Field(min_length=3, max_length=240)
 
 
 class AccountDeletePayload(BaseModel):
@@ -1854,6 +1995,7 @@ def account_delete_api(
 ) -> JSONResponse:
     require_origin(request)
     user = require_user(runner_session)
+    require_recent_auth(runner_session)
     enforce_rate(request, "account-delete", limit=3, seconds=3600, subject=user["id"])
     try:
         delete_customer(user)
@@ -8468,6 +8610,7 @@ def research_report_page(
 @app.get("/research/{public_id}/card.png")
 def research_report_card(
     public_id: str,
+    request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> Response:
     report = get_commission(public_id)
@@ -8475,6 +8618,13 @@ def research_report_card(
     is_owner = bool(user and report and str(report["user_id"]) == str(user["id"]))
     if not report or (str(report.get("visibility") or "private") != "public" and not is_owner):
         raise HTTPException(404, "Research report not found")
+    enforce_rate(
+        request,
+        "research-card",
+        limit=30,
+        seconds=60,
+        subject=str(user["id"]) if is_owner and user else None,
+    )
     actor = report.get("actor") or {}
     is_sports = report.get("subject_type") == "sports_game"
     customer_inference = bool(report.get("customer_inference"))
@@ -8562,7 +8712,7 @@ def intelligence_page() -> RedirectResponse:
 
 
 @app.get("/api/intelligence")
-def intelligence_api() -> JSONResponse:
+def intelligence_api(_access: None = Depends(require_operations_access)) -> JSONResponse:
     return JSONResponse(intelligence_data())
 
 
@@ -8597,10 +8747,29 @@ def login_page(request: Request, runner_session: str | None = Cookie(default=Non
     )
 
 
+def _invite_hash(value: str) -> str:
+    return hashlib.sha256(f"rati-registration-v1:{value.strip()}".encode()).hexdigest()
+
+
+def _validated_registration_invite(value: str) -> str | None:
+    if REGISTRATION_MODE == "open":
+        return None
+    supplied_hash = _invite_hash(value)
+    allowed_hashes = (_invite_hash(code) for code in REGISTRATION_INVITE_CODES)
+    if not any(secrets.compare_digest(supplied_hash, allowed) for allowed in allowed_hashes):
+        raise HTTPException(403, "Invite code is invalid or has already been used.")
+    return supplied_hash
+
+
 @app.post("/api/auth/register/options")
-def register_options(request: Request) -> JSONResponse:
+def register_options(
+    request: Request,
+    payload: RegisterOptionsPayload | None = None,
+) -> JSONResponse:
     require_origin(request)
     enforce_rate(request, "register-options", limit=8, seconds=600)
+    enforce_rate(request, "register-options-daily", limit=12, seconds=86400)
+    invite_hash = _validated_registration_invite((payload or RegisterOptionsPayload()).invite_code)
     user_id = str(uuid.uuid4())
     username = f"member_{user_id.replace('-', '')[:16]}"
     display_name = "Member"
@@ -8613,10 +8782,36 @@ def register_options(request: Request) -> JSONResponse:
             """,
             (iso(now() - timedelta(minutes=15)),),
         )
-        db.execute(
-            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
-            (user_id, username, display_name, "pending", iso()),
-        )
+        pending_invite = None
+        if invite_hash:
+            pending_invite = db.execute(
+                """
+                SELECT id,username,display_name,status FROM users
+                WHERE registration_invite_hash=?
+                """,
+                (invite_hash,),
+            ).fetchone()
+        if pending_invite:
+            if str(pending_invite["status"]) != "pending":
+                raise HTTPException(403, "Invite code is invalid or has already been used.")
+            user_id = str(pending_invite["id"])
+            username = str(pending_invite["username"])
+            display_name = str(pending_invite["display_name"])
+            db.execute(
+                "DELETE FROM auth_challenges WHERE kind='register' AND user_id=?",
+                (user_id,),
+            )
+        else:
+            inserted = db.execute(
+                """
+                INSERT INTO users(
+                    id,username,display_name,status,created_at,registration_invite_hash
+                ) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING
+                """,
+                (user_id, username, display_name, "pending", iso(), invite_hash),
+            )
+            if inserted.rowcount != 1:
+                raise HTTPException(403, "Invite code is invalid or has already been used.")
     options = generate_registration_options(
         rp_id=rp_id_for_request(request),
         rp_name="RATi",
@@ -8739,6 +8934,75 @@ def add_passkey_page(
     )
 
 
+@app.post("/api/auth/reauth/options")
+def reauth_options(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "reauth-options", limit=8, seconds=600, subject=user["id"])
+    with connection() as db:
+        credential_rows = db.execute(
+            "SELECT credential_id FROM passkeys WHERE user_id=? ORDER BY created_at",
+            (user["id"],),
+        ).fetchall()
+    if not credential_rows:
+        raise HTTPException(409, "This account has no passkey available for verification.")
+    options = generate_authentication_options(
+        rp_id=rp_id_for_request(request),
+        timeout=60_000,
+        allow_credentials=[
+            PublicKeyCredentialDescriptor(id=bytes(row["credential_id"]))
+            for row in credential_rows
+        ],
+        user_verification=UserVerificationRequirement.REQUIRED,
+    )
+    flow_token = save_challenge("reauth", options.challenge, user["id"])
+    return JSONResponse({"flow_token": flow_token, "options": json.loads(options_to_json(options))})
+
+
+@app.post("/api/auth/reauth/verify")
+def reauth_verify(
+    payload: PasskeyFinish,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "reauth-verify", limit=10, seconds=600, subject=user["id"])
+    flow = take_challenge(payload.flow_token, "reauth")
+    if flow["user_id"] != user["id"]:
+        raise HTTPException(403, "Passkey request does not match this account.")
+    credential_id = base64url_to_bytes(payload.credential.get("id", ""))
+    with connection() as db:
+        passkey = db.execute(
+            "SELECT * FROM passkeys WHERE credential_id=? AND user_id=?",
+            (credential_id, user["id"]),
+        ).fetchone()
+    if not passkey:
+        raise HTTPException(403, "Use a passkey that is already registered to this account.")
+    try:
+        verification = verify_authentication_response(
+            credential=payload.credential,
+            expected_challenge=flow["challenge"],
+            expected_rp_id=rp_id_for_request(request),
+            expected_origin=origin_for_request(request),
+            credential_public_key=passkey["public_key"],
+            credential_current_sign_count=passkey["sign_count"],
+            require_user_verification=True,
+        )
+    except Exception as exc:
+        raise HTTPException(400, f"Passkey verification failed: {exc}") from exc
+    with connection() as db:
+        db.execute(
+            "UPDATE passkeys SET sign_count=?,last_used_at=? WHERE credential_id=?",
+            (verification.new_sign_count, iso(), credential_id),
+        )
+    mark_session_authenticated(str(runner_session), str(user["id"]))
+    return JSONResponse({"ok": True})
+
+
 @app.post("/api/auth/passkey/options")
 def add_passkey_options(
     request: Request,
@@ -8746,6 +9010,7 @@ def add_passkey_options(
 ) -> JSONResponse:
     require_origin(request)
     user = require_user(runner_session)
+    require_recent_auth(runner_session)
     enforce_rate(request, "add-passkey", limit=6, seconds=600, subject=user["id"])
     options = generate_registration_options(
         rp_id=rp_id_for_request(request),
@@ -8772,6 +9037,7 @@ def add_passkey_verify(
 ) -> JSONResponse:
     require_origin(request)
     user = require_user(runner_session)
+    require_recent_auth(runner_session)
     enforce_rate(request, "add-passkey-verify", limit=8, seconds=600, subject=user["id"])
     flow = take_challenge(payload.flow_token, "add_passkey")
     if flow["user_id"] != user["id"]:
@@ -8806,7 +9072,9 @@ def add_passkey_verify(
                 iso(),
             ),
         )
-    return JSONResponse({"ok": True, "redirect": "/"})
+    response = JSONResponse({"ok": True, "redirect": "/"})
+    create_session(str(user["id"]), response, revoke_existing=True)
+    return response
 
 
 @app.post("/api/auth/logout")

@@ -302,7 +302,9 @@ def verify_signed_node_manifest(
 
     if clock_skew < timedelta(0):
         raise ValueError("clock_skew cannot be negative")
-    checked_at = _to_utc(at or datetime.now(UTC), field_name="at")
+    # Manifest fields use whole seconds on the wire. The receiver's wall clock
+    # normally has sub-second precision and must not be rejected for that.
+    checked_at = normalize_utc(at or datetime.now(UTC), field_name="at")
     manifest = signed.manifest
 
     if signed.content_id != manifest.content_id:

@@ -213,7 +213,7 @@
     byId('moveDataCheck').hidden = !moving;
     byId('moveDataConfirmed').required = moving;
     byId('moveDataConfirmed').checked = false;
-    byId('createVaultSubmit').textContent = moving ? 'Save, check, then remove cloud copy' : 'Save encrypted copy';
+    byId('createVaultSubmit').textContent = moving ? 'Save, check, then remove Swarm copy' : 'Save encrypted copy';
     byId('createVaultStatus').textContent = '';
     createDialog.showModal();
     byId('vaultPassphrase').focus();
@@ -240,7 +240,7 @@
       return;
     }
     if (moving && !byId('moveDataConfirmed').checked) {
-      formStatus.textContent = 'Confirm that the cloud copy can be removed.';
+      formStatus.textContent = 'Confirm that the Swarm copy can be removed.';
       return;
     }
 
@@ -260,11 +260,11 @@
       const savedVault = await getVault();
       const checked = await decryptVault(savedVault, passphrase);
       if (checked.exported_at !== exported.exported_at) {
-        throw new Error('The saved vault could not be checked. Cloud data was not changed.');
+        throw new Error('The saved vault could not be checked. Swarm data was not changed.');
       }
 
       if (moving) {
-        formStatus.textContent = 'Local vault checked. Removing the cloud copy…';
+        formStatus.textContent = 'Local vault checked. Removing the Swarm copy…';
         const deleteResponse = await fetch('/api/account/data/delete-cloud-copy', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
@@ -272,10 +272,10 @@
         });
         const result = await deleteResponse.json().catch(() => ({}));
         if (!deleteResponse.ok) {
-          throw new Error(result.detail || 'The local vault is safe, but the cloud copy was not removed.');
+          throw new Error(result.detail || 'The local vault is safe, but the Swarm copy was not removed.');
         }
         await saveVault({...savedVault, source: 'moved', cloud_deleted_at: new Date().toISOString()});
-        sessionStorage.setItem(NOTICE_KEY, 'Your checked vault is on this device. Saved cloud items were removed.');
+        sessionStorage.setItem(NOTICE_KEY, 'Your checked vault is on this device. Saved Swarm items were removed.');
         location.reload();
         return;
       }

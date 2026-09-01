@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from runner_node.runtime import NODE_SERVICE
@@ -31,7 +32,19 @@ WORKER_EXPECTED_INSTANCES = max(1, int(os.getenv("WORKER_EXPECTED_INSTANCES", "1
 SPORTS_HOST = (
     urlparse(os.getenv("SPORTS_ORIGIN", "https://sports.rati.chat")).hostname or ""
 ).lower()
+OPERATIONS_TOKEN = os.getenv("OPERATIONS_TOKEN", "").strip()
 router = APIRouter()
+
+
+def require_operations_access(request: Request) -> None:
+    scheme, _, supplied = request.headers.get("authorization", "").partition(" ")
+    if (
+        not OPERATIONS_TOKEN
+        or scheme.lower() != "bearer"
+        or not supplied
+        or not secrets.compare_digest(supplied, OPERATIONS_TOKEN)
+    ):
+        raise HTTPException(404, "Not found")
 
 
 def worker_heartbeat_key(instance_id: str) -> str:
@@ -220,7 +233,7 @@ def health_status(*, checked_at: datetime | None = None) -> dict[str, Any]:
         "trainer": trainer,
         "latest_scan_at": latest_scan,
         "edgar_updated_at": states.get("edgar_last_refresh", {}).get("updated_at"),
-        "scan_error": states.get("background_scan_last_error", {}).get("value") or None,
+        "scan_error": bool(states.get("background_scan_last_error", {}).get("value")),
     }
 
 
@@ -404,32 +417,38 @@ def liveness_api() -> dict[str, str]:
 @router.get("/ready")
 def readiness_api() -> JSONResponse:
     payload = readiness_status()
-    return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
+    return JSONResponse(
+        {"status": payload["status"]},
+        status_code=200 if payload["status"] == "ok" else 503,
+    )
 
 
 @router.get("/health/details")
-def health_api() -> JSONResponse:
+def health_api(_access: None = Depends(require_operations_access)) -> JSONResponse:
     payload = health_status()
     return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
 
 
 @router.get("/health/performance")
-def performance_api() -> dict[str, Any]:
+def performance_api(_access: None = Depends(require_operations_access)) -> dict[str, Any]:
     return performance_snapshot()
 
 
 @router.get("/api/ranker/status")
-def ranker_status_api() -> dict[str, Any]:
+def ranker_status_api(_access: None = Depends(require_operations_access)) -> dict[str, Any]:
     return ranker_status()
 
 
 @router.get("/api/ingestion/status")
-def ingestion_status_api() -> dict[str, Any]:
+def ingestion_status_api(_access: None = Depends(require_operations_access)) -> dict[str, Any]:
     return ingestion_status()
 
 
 @router.get("/api/capabilities")
-def capabilities_api(request: Request) -> dict[str, Any]:
+def capabilities_api(
+    request: Request,
+    _access: None = Depends(require_operations_access),
+) -> dict[str, Any]:
     request_host = (request.url.hostname or "").lower()
     product = "sports" if request_host == SPORTS_HOST else "runners"
     return runtime_capabilities(
