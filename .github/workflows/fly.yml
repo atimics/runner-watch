@@ -34,7 +34,7 @@ jobs:
       - run: uv run ruff check src tests
       - run: uv run pip-audit --local --skip-editable --progress-spinner off --timeout 10 --vulnerability-service osv
       - run: uv run pytest -q --cov-fail-under=68
-      - run: uv run pytest -q tests/test_browser_pulse.py -o addopts=
+      - run: uv run pytest -q tests/test_browser_pulse.py tests/test_browser_ticker.py -o addopts=
       - run: docker compose -f compose.local.yml config --quiet
       - run: docker build --target test --tag runner-watch:test .
 
