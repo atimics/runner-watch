@@ -8,6 +8,11 @@ afterEach(() => {
 });
 
 describe('scanner node addresses', () => {
+  it('explains missing and invalid scanner addresses', () => {
+    expect(() => normalizeNodeUrl('')).toThrow('Scanner address is unavailable');
+    expect(() => normalizeNodeUrl('not an address')).toThrow('Enter a valid scanner address');
+  });
+
   it('accepts local HTTP scanner nodes', () => {
     expect(normalizeNodeUrl('http://127.0.0.1:8787/')).toBe('http://127.0.0.1:8787');
     expect(normalizeNodeUrl('http://localhost:9000')).toBe('http://localhost:9000');

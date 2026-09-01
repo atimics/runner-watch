@@ -1,13 +1,9 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, isTauri } from '@tauri-apps/api/core';
 
 import type { RatiDesktopBridge, RatiDesktopRuntime } from '../env';
 
 const STARTUP_POLL_MS = 150;
 const STARTUP_TIMEOUT_MS = 60_000;
-
-function isTauri(): boolean {
-  return '__TAURI_INTERNALS__' in window;
-}
 
 async function getRuntime(): Promise<RatiDesktopRuntime> {
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
