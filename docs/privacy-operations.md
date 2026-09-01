@@ -22,10 +22,10 @@ The app must not write visitor IDs, page views, dwell time, share events, seen s
 
 ## Member storage choices
 
-- **RATi cloud:** saved work remains in the live application database so it is available after passkey sign-in. Infrastructure encryption protects it in transit and at rest. This is not end-to-end encryption: the application can read the data to provide requested features.
+- **RATi Swarm:** saved work remains in the live application database so it is available after passkey sign-in. Infrastructure encryption protects it in transit and at rest. This is not end-to-end encryption: the application can read the data to provide requested features.
 - **Encrypted local vault:** the browser downloads the authenticated export, encrypts it with AES-256-GCM, and derives the key from the member's passphrase with PBKDF2-HMAC-SHA-256 and a random salt. The passphrase and key never reach RATi. The encrypted payload is kept in IndexedDB and can also be downloaded as a `.rati-data` file.
-- **Move off cloud:** the browser must persist the vault, read it back, decrypt it, and match its export time before requesting server deletion. The server then deletes saved and published content while retaining the minimum account, passkey, public-identity, Flash-wallet, and billing state needed to keep the account working. Deleted content can remain in expiring backups for the published backup window.
-- **Permanent local deletion:** the member must type `DELETE LOCAL COPY` before the browser deletes its IndexedDB vault. This action does not change the cloud copy. Clearing browser storage or losing the device can also remove the vault, so the interface offers an encrypted file download.
+- **Move off Swarm:** the browser must persist the vault, read it back, decrypt it, and match its export time before requesting server deletion. The server then deletes saved and published content while retaining the minimum account, passkey, public-identity, Flash-wallet, and billing state needed to keep the account working. Deleted content can remain in expiring backups for the published backup window.
+- **Permanent local deletion:** the member must type `DELETE LOCAL COPY` before the browser deletes its IndexedDB vault. This action does not change the Swarm copy. Clearing browser storage or losing the device can also remove the vault, so the interface offers an encrypted file download.
 
 Do not call the local vault a sync system. Normal product screens do not silently read it, and RATi cannot recover a lost passphrase. Imported vault files are treated as untrusted input, bounded to 50 MB, structurally validated, and rendered with text-only DOM operations after decryption.
 
