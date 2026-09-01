@@ -29,11 +29,36 @@ WORKER_HEARTBEAT_KEY = "worker_process_heartbeat"
 WORKER_HEARTBEAT_PREFIX = f"{WORKER_HEARTBEAT_KEY}:"
 TRAINER_HEARTBEAT_KEY = "ranker_trainer_heartbeat"
 WORKER_EXPECTED_INSTANCES = max(1, int(os.getenv("WORKER_EXPECTED_INSTANCES", "1")))
+BASE_REQUIRED_WORKER_NAMES = frozenset(
+    {
+        "edgar",
+        "trading-halts",
+        "house-disclosures",
+        "discovery-sources",
+        "apewisdom",
+        "outcomes",
+        "scan-collection",
+        "market-reports",
+        "massive-backfill",
+        "research-jobs",
+        "report-release",
+        "case-monitor",
+        "kol",
+    }
+)
 SPORTS_HOST = (
     urlparse(os.getenv("SPORTS_ORIGIN", "https://sports.rati.chat")).hostname or ""
 ).lower()
 OPERATIONS_TOKEN = os.getenv("OPERATIONS_TOKEN", "").strip()
 router = APIRouter()
+
+
+def required_worker_names(*, sports_ingestion_enabled: bool) -> frozenset[str]:
+    """Return the worker contract independently from the tasks that were started."""
+
+    if sports_ingestion_enabled:
+        return BASE_REQUIRED_WORKER_NAMES | {"sports-ingestion"}
+    return BASE_REQUIRED_WORKER_NAMES
 
 
 def require_operations_access(request: Request) -> None:
@@ -94,6 +119,12 @@ def worker_health(
             continue
         instance_detail = _heartbeat_detail(heartbeat.get("value"))
         reported_status = str(instance_detail.get("status", "unknown")).lower()
+        required = {str(name) for name in instance_detail.get("required_workers", [])}
+        running = {str(name) for name in instance_detail.get("running_workers", [])}
+        missing = sorted(required - running)
+        if missing:
+            reported_status = "degraded"
+            instance_detail["missing_workers"] = missing
         fresh = age <= OPERATIONS.worker_heartbeat_max_age_seconds
         instances.append(
             {

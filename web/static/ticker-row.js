@@ -8,6 +8,10 @@
     return node.innerHTML;
   }
 
+  function attr(value) {
+    return esc(value).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
   function number(value) {
     if (value === null || value === undefined || value === '') return null;
     const parsed = Number(value);
@@ -67,7 +71,7 @@
     const horizon = String(thesis.horizon || '60m');
     const description = `Directional thesis: ${label}, ${horizon}`;
     return [
-      `<small class="ticker-thesis ticker-thesis-${direction}" title="${esc(description)}" aria-hidden="true"><b>${arrows[direction]}</b><span>${esc(label.toUpperCase())} · ${esc(horizon.toUpperCase())}</span></small>`,
+      `<small class="ticker-thesis ticker-thesis-${direction}" title="${attr(description)}" aria-hidden="true"><b>${arrows[direction]}</b><span>${esc(label.toUpperCase())} · ${esc(horizon.toUpperCase())}</span></small>`,
       description,
     ];
   }
@@ -112,13 +116,13 @@
   }) {
     const rowClass = `${updated ? ' is-updated' : ''}${dataSportsGame ? ' sports-pulse-row' : ''}`;
     const rowData = dataTicker
-      ? ` data-ticker-row="${esc(dataTicker)}"`
+      ? ` data-ticker-row="${attr(dataTicker)}"`
       : dataSportsGame
-        ? ` data-sports-pulse-row="${esc(dataSportsGame)}"`
+        ? ` data-sports-pulse-row="${attr(dataSportsGame)}"`
         : '';
     const safeCatalystTone = ['gap', 'risk'].includes(catalystTone) ? ` ${catalystTone}` : '';
     const safeQuoteTone = ['up', 'down', 'flat'].includes(quoteTone) ? quoteTone : 'flat';
-    return `<a class="token-row ticker-row${rowClass}" href="${esc(href)}"${rowData} aria-label="${esc(ariaLabel)}">
+    return `<a class="token-row ticker-row${rowClass}" href="${attr(href)}"${rowData} aria-label="${attr(ariaLabel)}">
       <span class="coin coin-${Number(coinTone) || 0}"><b>${esc(coinLabel)}</b><i></i></span>
       <span class="token-copy">
         <span class="ticker-line"><strong>${esc(headline)}</strong>${headlineMeta}<small class="ticker-age">${esc(age)}</small></span>
@@ -155,7 +159,7 @@
     const tradeState = String(row.trade_state || '').toUpperCase();
     let safety = '';
     if (rugValue !== null && ['high', 'critical'].includes(rugLevel)) {
-      safety = `<span class="rug-count rug-${esc(rugLevel)}">HIGH RISK</span>`;
+      safety = `<span class="rug-count rug-${attr(rugLevel)}">HIGH RISK</span>`;
     } else if (row.section === 'scored' && rugValue === null) {
       safety = '<span class="rug-count rug-unknown">RISK UNKNOWN</span>';
     }
@@ -197,7 +201,7 @@
       catalystTone: catalystTone.trim(),
       catalystMarkup: `${events}${thesisCueMarkup}${safety}`,
       quoteValue: money(row.price),
-      chartMarkup: `<svg class="mini-chart" data-ticker="${esc(row.ticker)}" viewBox="0 0 64 18" preserveAspectRatio="none" aria-hidden="true"><path class="chart-placeholder" d="M1 12 L13 10 L25 13 L39 8 L51 10 L63 7"/></svg>`,
+      chartMarkup: `<svg class="mini-chart" data-ticker="${attr(row.ticker)}" viewBox="0 0 64 18" preserveAspectRatio="none" aria-hidden="true"><path class="chart-placeholder" d="M1 12 L13 10 L25 13 L39 8 L51 10 L63 7"/></svg>`,
       quoteMarkup: `<span class="quote-period">Session</span> ${esc(percent(row.change_pct))}`,
       quoteTone: changeClass,
       updated: Boolean(updateClass),

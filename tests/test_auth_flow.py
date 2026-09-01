@@ -36,6 +36,27 @@ def request(method: str, path: str) -> Request:
     return result
 
 
+def hosted_request(method: str, path: str, origin: str) -> Request:
+    host = origin.removeprefix("https://")
+    result = Request(
+        {
+            "type": "http",
+            "method": method,
+            "path": path,
+            "headers": [
+                (b"host", host.encode()),
+                (b"origin", origin.encode()),
+            ],
+            "scheme": "https",
+            "server": (host, 443),
+            "client": ("127.0.0.42", 4210),
+            "query_string": b"",
+        }
+    )
+    result.state.csp_nonce = "test"
+    return result
+
+
 def test_new_user_flow_leads_with_passkey_creation() -> None:
     response = login_page(request("GET", "/login"), None)
     html = response.body.decode()
@@ -60,6 +81,58 @@ def test_new_passkey_is_created_on_the_current_device(
     assert selection["authenticatorAttachment"] == "platform"
     assert selection["residentKey"] == "required"
     assert selection["userVerification"] == "required"
+
+
+def test_legacy_passkey_migration_publishes_related_origins(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(web_main, "RUNNERS_ORIGIN", "https://runners.rati.chat")
+    monkeypatch.setattr(web_main, "SPORTS_ORIGIN", "https://sports.rati.chat")
+
+    response = web_main.webauthn_related_origins()
+
+    assert json.loads(response.body) == {
+        "origins": ["https://runners.rati.chat", "https://sports.rati.chat"]
+    }
+
+
+def test_new_host_can_start_a_legacy_rp_login(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "legacy-login.db")
+    monkeypatch.setattr(web_main, "RUNNERS_ORIGIN", "https://runners.rati.chat")
+    monkeypatch.setattr(web_main, "SPORTS_ORIGIN", "https://sports.rati.chat")
+    monkeypatch.setattr(web_main, "LEGACY_RP_ID", "stonks.rati.foundation")
+    monkeypatch.setattr(web_main, "RP_ID", "rati.chat")
+    monkeypatch.setattr(web_main, "enforce_rate", lambda *_args, **_kwargs: None)
+    init_db()
+
+    response = web_main.legacy_login_options(
+        hosted_request(
+            "POST",
+            "/api/auth/login/legacy/options",
+            "https://runners.rati.chat",
+        )
+    )
+    payload = json.loads(response.body)
+
+    assert payload["options"]["rpId"] == "stonks.rati.foundation"
+    with connection() as database:
+        challenge = database.execute(
+            "SELECT kind FROM auth_challenges WHERE token=?",
+            (payload["flow_token"],),
+        ).fetchone()
+    assert challenge["kind"] == "login_legacy"
+
+
+def test_login_and_passkey_pages_expose_the_account_migration() -> None:
+    auth = (Path(__file__).parents[1] / "web/templates/auth.html").read_text()
+    passkey = (Path(__file__).parents[1] / "web/templates/passkey_add.html").read_text()
+
+    assert "Use a passkey from the old site" in auth
+    assert "/api/auth/login/legacy" in auth
+    assert "if (!migratingLegacyPasskey)" in passkey
+    assert "keeps your account and history" in passkey
 
 
 def test_passkey_challenge_can_only_be_consumed_once(

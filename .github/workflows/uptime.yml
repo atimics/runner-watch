@@ -23,7 +23,8 @@ jobs:
         with:
           python-version: "3.13"
           enable-cache: true
-      - run: scripts/smoke-production https://stonks.rati.foundation
+      - run: scripts/smoke-production https://runners.rati.chat
+      - run: scripts/smoke-production https://sports.rati.chat
       - name: Render every production screen
         run: scripts/test-live-screens
       - name: Save failure screenshots

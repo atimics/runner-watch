@@ -718,3 +718,25 @@ def test_flash_keeps_its_identity_when_its_model_assignment_changes(
         ("flash-2026-09-b", "retired", "z-ai/glm-5.3"),
         ("flash-future-model", "active", "future/model"),
     ]
+
+
+def test_sports_market_migration_keeps_source_and_state_times(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "sports-market-columns.db")
+    init_db()
+
+    with connection() as database:
+        odds_columns = {
+            row["name"]
+            for row in database.execute(
+                "PRAGMA table_info(sports_odds_snapshots)"
+            ).fetchall()
+        }
+        prediction_columns = {
+            row["name"]
+            for row in database.execute("PRAGMA table_info(sports_predictions)").fetchall()
+        }
+
+    assert {"source_observed_at", "market_state_hash"} <= odds_columns
+    assert "input_state_hash" in prediction_columns

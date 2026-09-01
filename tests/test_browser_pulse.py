@@ -163,6 +163,34 @@ def test_market_row_age_uses_quote_time_not_scan_entry_time(page: Page, monkeypa
     assert errors == []
 
 
+def test_ticker_row_escapes_external_text_in_html_attributes(page: Page, monkeypatch) -> None:
+    row = {
+        **_row("SAFE"),
+        "company": 'Acme" autofocus data-injected="yes',
+    }
+    html = _rendered_pulse(monkeypatch, _pulse(row))
+    errors = _load(page, html, [])
+
+    rendered = page.evaluate(
+        """row => {
+          const holder = document.createElement('div');
+          holder.innerHTML = TickerRow.render(row);
+          const link = holder.querySelector('a');
+          return {
+            label: link.getAttribute('aria-label'),
+            injected: link.hasAttribute('data-injected'),
+            links: holder.querySelectorAll('a').length,
+          };
+        }""",
+        row,
+    )
+
+    assert 'Acme" autofocus data-injected="yes' in rendered["label"]
+    assert rendered["injected"] is False
+    assert rendered["links"] == 1
+    assert errors == []
+
+
 @pytest.mark.parametrize("width", [390, 1280])
 def test_pulse_header_is_one_compact_stack(page: Page, monkeypatch, width: int) -> None:
     record = {

@@ -3,9 +3,6 @@
   "name": "rati-products-router",
   "main": "src/index.js",
   "compatibility_date": "2026-08-26",
-  "secrets": {
-    "required": ["EDGE_PROXY_SECRET"]
-  },
   "routes": [
     {
       "pattern": "runners.rati.chat/*",

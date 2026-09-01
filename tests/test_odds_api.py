@@ -406,12 +406,14 @@ def test_api_odds_keep_provider_and_opening_snapshot(sports_db: None) -> None:
     assert row["sportsbook"] == "Preferred Book"
     assert row["home_open_odds"] == -130
     assert row["away_open_odds"] == 115
+    assert row["source_observed_at"] == (observed_at - timedelta(minutes=2)).isoformat()
     assert bookmaker_count == 2
 
     clear_event_odds([event])
     assert _apply_cached_moneylines([event]) == 1
     assert event["odds_provider"] == "the-odds-api"
     assert event["home_odds"] == -130
+    assert event["odds_source_updated_at"] == row["source_observed_at"]
 
 
 def test_multi_book_consensus_drives_model_and_bovada_drives_paper_pick(
@@ -478,7 +480,8 @@ def test_multi_book_consensus_drives_model_and_bovada_drives_paper_pick(
     pick = sports.create_sports_pick("multi-user", str(event["id"]), "home")
     assert pick["sportsbook"] == "Bovada"
     assert pick["american_odds"] == 110
-    assert pick["odds_observed_at"] == observed_at.isoformat()
+    bovada = next(book for book in payload[0]["bookmakers"] if book["key"] == "bovada")
+    assert pick["odds_observed_at"] == bovada["last_update"]
 
 
 def test_consensus_line_keeps_paper_picks_available_without_bovada(

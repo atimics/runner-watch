@@ -18,6 +18,9 @@
     {% endif %}
     <button class="auth-submit" id="createButton">Create passkey</button>
     <button class="auth-secondary" id="loginButton">Log in with passkey</button>
+    {% if legacy_passkey_migration_available %}
+    <button class="auth-secondary" id="legacyLoginButton">Use a passkey from the old site</button>
+    {% endif %}
     <div id="authStatus" class="status" aria-live="polite"></div>
   </section>
 </main>
@@ -28,6 +31,7 @@
 const statusBox = document.getElementById('authStatus');
 const createButton = document.getElementById('createButton');
 const loginButton = document.getElementById('loginButton');
+const legacyLoginButton = document.getElementById('legacyLoginButton');
 const requestedNext = {{ next_path | tojson }};
 const inviteCode = document.getElementById('inviteCode');
 function safeNextPath(value) {
@@ -92,8 +96,13 @@ async function api(url, body) {
 async function runPasskey(action) {
   createButton.disabled = true;
   loginButton.disabled = true;
+  if (legacyLoginButton) legacyLoginButton.disabled = true;
   statusBox.className = 'status';
-  statusBox.textContent = action === 'register' ? 'Creating passkey…' : 'Choose a passkey…';
+  statusBox.textContent = action === 'register'
+    ? 'Creating passkey…'
+    : action === 'legacy'
+      ? 'Choose your old-site passkey…'
+      : 'Choose a passkey…';
   try {
     if (!window.PublicKeyCredential) throw new Error('This browser does not support passkeys.');
     let start, credential;
@@ -104,10 +113,11 @@ async function runPasskey(action) {
       const done = await api('/api/auth/register/verify', {flow_token: start.flow_token, credential: serialize(credential)});
       location.href = welcomePath(nextPath || done.redirect);
     } else {
-      start = await api('/api/auth/login/options');
+      const loginPath = action === 'legacy' ? '/api/auth/login/legacy' : '/api/auth/login';
+      start = await api(`${loginPath}/options`);
       credential = await navigator.credentials.get({publicKey: prepareGet(start.options)});
-      const done = await api('/api/auth/login/verify', {flow_token: start.flow_token, credential: serialize(credential)});
-      location.href = welcomePath(nextPath || done.redirect);
+      const done = await api(`${loginPath}/verify`, {flow_token: start.flow_token, credential: serialize(credential)});
+      location.href = action === 'legacy' ? done.redirect : welcomePath(nextPath || done.redirect);
     }
   } catch (error) {
     statusBox.className = 'status error';
@@ -116,9 +126,11 @@ async function runPasskey(action) {
       : (error.message || String(error));
     createButton.disabled = false;
     loginButton.disabled = false;
+    if (legacyLoginButton) legacyLoginButton.disabled = false;
   }
 }
 createButton.addEventListener('click', () => runPasskey('register'));
 loginButton.addEventListener('click', () => runPasskey('login'));
+if (legacyLoginButton) legacyLoginButton.addEventListener('click', () => runPasskey('legacy'));
 </script>
 {% endblock %}

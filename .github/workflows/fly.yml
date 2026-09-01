@@ -32,6 +32,7 @@ jobs:
       - run: cargo test --locked --manifest-path rust/stonks-ranker/Cargo.toml
       - run: cargo build --locked --manifest-path rust/stonks-ranker/Cargo.toml
       - run: uv run ruff check src tests
+      - run: node --check cloudflare-router/src/index.js
       - run: uv run pip-audit --local --skip-editable --progress-spinner off --timeout 10 --vulnerability-service osv
       - run: uv run pytest -q --cov-fail-under=68
       - run: uv run pytest -q tests/test_browser_pulse.py tests/test_browser_ticker.py -o addopts=
@@ -70,9 +71,19 @@ jobs:
           --image-label "${{ github.sha }}"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      - name: Deploy public edge router
+        id: edge
+        if: steps.deploy.outcome == 'success'
+        continue-on-error: true
+        run: >-
+          npx --yes wrangler@4.127.1 deploy
+          --config cloudflare-router/wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - name: Keep background processes running
         id: processes
-        if: steps.deploy.outcome == 'success'
+        if: steps.deploy.outcome == 'success' && steps.edge.outcome == 'success'
         continue-on-error: true
         run: |
           flyctl scale count web=2 worker=1 trainer=1 --yes
@@ -107,9 +118,11 @@ jobs:
         id: smoke
         if: steps.deploy.outcome == 'success' && steps.processes.outcome == 'success'
         continue-on-error: true
-        run: >-
-          EXPECTED_BUILD_SHA="${{ github.sha }}"
-          scripts/smoke-production https://stonks.rati.foundation
+        run: |
+          scripts/smoke-production https://runners.rati.chat
+          scripts/smoke-production https://sports.rati.chat
+        env:
+          EXPECTED_BUILD_SHA: ${{ github.sha }}
       - name: Render every production screen
         id: screens
         if: steps.deploy.outcome == 'success' && steps.smoke.outcome == 'success'
@@ -123,10 +136,10 @@ jobs:
           path: test-results/live-screens
           if-no-files-found: ignore
       - name: Roll back failed release
-        if: always() && (steps.deploy.outcome == 'failure' || steps.processes.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.screens.outcome == 'failure')
+        if: always() && (steps.deploy.outcome == 'failure' || steps.edge.outcome == 'failure' || steps.processes.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.screens.outcome == 'failure')
         run: flyctl deploy --remote-only --image "${{ steps.rollback.outputs.image }}" --strategy rolling --skip-release-command
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       - name: Report failed release
-        if: always() && (steps.deploy.outcome == 'failure' || steps.processes.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.screens.outcome == 'failure')
+        if: always() && (steps.deploy.outcome == 'failure' || steps.edge.outcome == 'failure' || steps.processes.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.screens.outcome == 'failure')
         run: exit 1

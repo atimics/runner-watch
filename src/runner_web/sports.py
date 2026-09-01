@@ -1199,7 +1199,7 @@ def _apply_cached_moneylines(events: list[dict[str, Any]]) -> int:
             reference_time = (
                 _parse_time(event["start_time"]) if completed else datetime.now(UTC)
             )
-            observed_at = _parse_time(row["observed_at"])
+            observed_at = _parse_time(row["source_observed_at"] or row["observed_at"])
             observed_age = reference_time - observed_at
             if not (-BOOKMAKER_FUTURE_TOLERANCE <= observed_age <= BOOKMAKER_MAX_AGE):
                 continue
@@ -1235,6 +1235,9 @@ def _apply_cached_moneylines(events: list[dict[str, Any]]) -> int:
                     "market_book_count": book_count,
                     "market_is_consensus": is_consensus,
                     "bookmaker_moneylines": [],
+                    "odds_source_updated_at": str(
+                        row["source_observed_at"] or row["observed_at"]
+                    ),
                 }
             )
             applied += 1
@@ -1425,7 +1428,7 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                     else:
                         home_open_odds = event.get("home_odds")
                         away_open_odds = event.get("away_odds")
-                odds_hash = hashlib.sha256(
+                market_state_hash = hashlib.sha256(
                     _json(
                         {
                             "sportsbook": event["sportsbook"],
@@ -1438,58 +1441,135 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                         }
                     ).encode()
                 ).hexdigest()
+                source_observed_at = str(event.get("odds_source_updated_at") or timestamp)
+                previous_market = database.execute(
+                    """
+                    SELECT id,market_state_hash,snapshot_hash,source_observed_at
+                    FROM sports_odds_snapshots
+                    WHERE event_id=? AND provider=? AND market='moneyline'
+                    ORDER BY observed_at DESC,id DESC LIMIT 1
+                    """,
+                    (event["id"], odds_provider),
+                ).fetchone()
+                previous_state = (
+                    str(previous_market["market_state_hash"] or previous_market["snapshot_hash"])
+                    if previous_market
+                    else None
+                )
+                if previous_state == market_state_hash and previous_market:
+                    previous_source = _parse_time(
+                        previous_market["source_observed_at"] or timestamp
+                    )
+                    current_source = _parse_time(source_observed_at)
+                    if current_source > previous_source:
+                        database.execute(
+                            """
+                            UPDATE sports_odds_snapshots SET source_observed_at=? WHERE id=?
+                            """,
+                            (source_observed_at, previous_market["id"]),
+                        )
+                else:
+                    snapshot_hash = hashlib.sha256(
+                        _json(
+                            {
+                                "market_state_hash": market_state_hash,
+                                "source_observed_at": source_observed_at,
+                                "collected_at": timestamp,
+                                "previous_snapshot_id": (
+                                    str(previous_market["id"])
+                                    if previous_market
+                                    else None
+                                ),
+                            }
+                        ).encode()
+                    ).hexdigest()
+                    database.execute(
+                        """
+                        INSERT INTO sports_odds_snapshots(
+                            id,event_id,provider,sportsbook,market,home_odds,away_odds,
+                            home_open_odds,away_open_odds,spread,total,snapshot_hash,
+                            source_observed_at,market_state_hash,observed_at
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            event["id"],
+                            odds_provider,
+                            event["sportsbook"],
+                            "moneyline",
+                            event["home_odds"],
+                            event["away_odds"],
+                            home_open_odds,
+                            away_open_odds,
+                            event["spread"],
+                            event["total"],
+                            snapshot_hash,
+                            source_observed_at,
+                            market_state_hash,
+                            timestamp,
+                        ),
+                    )
+            _store_bookmaker_moneylines(database, event, timestamp)
+            prediction = predict_event(event)
+            input_state_hash = _input_hash(event, prediction)
+            previous_prediction = database.execute(
+                """
+                SELECT id,input_state_hash,input_hash FROM sports_predictions
+                WHERE event_id=? AND model_version=?
+                ORDER BY observed_at DESC,id DESC LIMIT 1
+                """,
+                (event["id"], prediction["model_version"]),
+            ).fetchone()
+            previous_input_state = (
+                str(
+                    previous_prediction["input_state_hash"]
+                    or previous_prediction["input_hash"]
+                )
+                if previous_prediction
+                else None
+            )
+            if previous_input_state != input_state_hash:
+                input_hash = hashlib.sha256(
+                    _json(
+                        {
+                            "input_state_hash": input_state_hash,
+                            "observed_at": timestamp,
+                            "previous_prediction_id": (
+                                str(previous_prediction["id"])
+                                if previous_prediction
+                                else None
+                            ),
+                        }
+                    ).encode()
+                ).hexdigest()
                 database.execute(
                     """
-                    INSERT INTO sports_odds_snapshots(
-                        id,event_id,provider,sportsbook,market,home_odds,away_odds,
-                        home_open_odds,away_open_odds,spread,total,snapshot_hash,observed_at
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING
+                    INSERT INTO sports_predictions(
+                        id,event_id,model_version,input_hash,input_state_hash,
+                        selection,home_probability,away_probability,
+                        home_market_probability,away_market_probability,
+                        edge,signal,quality,evidence_json,risks_json,observed_at
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING
                     """,
                     (
                         str(uuid.uuid4()),
                         event["id"],
-                        odds_provider,
-                        event["sportsbook"],
-                        "moneyline",
-                        event["home_odds"],
-                        event["away_odds"],
-                        home_open_odds,
-                        away_open_odds,
-                        event["spread"],
-                        event["total"],
-                        odds_hash,
+                        prediction["model_version"],
+                        input_hash,
+                        input_state_hash,
+                        prediction["selection"],
+                        prediction["home_probability"],
+                        prediction["away_probability"],
+                        prediction["home_market_probability"],
+                        prediction["away_market_probability"],
+                        prediction["edge"],
+                        prediction["signal"],
+                        prediction["quality"],
+                        _json(prediction["evidence"]),
+                        _json(prediction["risks"]),
                         timestamp,
                     ),
                 )
-            _store_bookmaker_moneylines(database, event, timestamp)
-            prediction = predict_event(event)
-            input_hash = _input_hash(event, prediction)
-            database.execute(
-                """
-                INSERT INTO sports_predictions(
-                    id,event_id,model_version,input_hash,selection,home_probability,
-                    away_probability,home_market_probability,away_market_probability,
-                    edge,signal,quality,evidence_json,risks_json,observed_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING
-                """,
-                (
-                    str(uuid.uuid4()),
-                    event["id"],
-                    prediction["model_version"],
-                    input_hash,
-                    prediction["selection"],
-                    prediction["home_probability"],
-                    prediction["away_probability"],
-                    prediction["home_market_probability"],
-                    prediction["away_market_probability"],
-                    prediction["edge"],
-                    prediction["signal"],
-                    prediction["quality"],
-                    _json(prediction["evidence"]),
-                    _json(prediction["risks"]),
-                    timestamp,
-                ),
-            )
     if events:
         _clear_model_record_cache()
     return len(events)
@@ -1502,14 +1582,45 @@ def settle_picks() -> int:
     with connection() as database:
         rows = database.execute(
             """
-            SELECT p.*,e.home_score,e.away_score,e.completed
+            SELECT p.*,e.home_score,e.away_score,e.completed,e.status AS event_status,
+                   e.status_detail AS event_status_detail
             FROM sports_picks p JOIN sports_events e ON e.id=p.event_id
-            WHERE p.status='open' AND e.completed=1
+            WHERE p.status='open' AND (
+                e.completed=1 OR lower(e.status)='post' OR
+                lower(e.status) IN ('cancelled','canceled','abandoned','no contest') OR
+                lower(e.status_detail) LIKE '%cancelled%' OR
+                lower(e.status_detail) LIKE '%canceled%' OR
+                lower(e.status_detail) LIKE '%abandoned%' OR
+                lower(e.status_detail) LIKE '%no contest%'
+            )
             """
         ).fetchall()
         for row in rows:
             home_score = _number(row["home_score"])
             away_score = _number(row["away_score"])
+            status = str(row["event_status"] or "").lower()
+            status_detail = str(row["event_status_detail"] or "").lower()
+            explicitly_void = any(
+                marker in f"{status} {status_detail}"
+                for marker in ("cancelled", "canceled", "abandoned", "no contest")
+            )
+            terminal_without_result = status == "post" and (
+                not bool(row["completed"])
+                or home_score is None
+                or away_score is None
+            )
+            if explicitly_void or terminal_without_result:
+                changed = database.execute(
+                    """
+                    UPDATE sports_picks SET status='void',result='void',return_units=0,
+                        settled_at=?,updated_at=? WHERE id=? AND status='open'
+                    """,
+                    (timestamp, timestamp, row["id"]),
+                )
+                settled += max(changed.rowcount, 0)
+                continue
+            if not bool(row["completed"]):
+                continue
             if home_score is None or away_score is None:
                 continue
             if home_score == away_score:
@@ -1740,6 +1851,7 @@ def _odds_item(row: Any) -> dict[str, Any] | None:
         item["source_label"] = f"{sportsbook} via The Odds API"
     else:
         item["source_label"] = sportsbook or provider or "Unknown source"
+    item["fresh_at"] = str(item.get("source_observed_at") or item.get("observed_at") or "")
     return item
 
 
@@ -4146,13 +4258,14 @@ def create_sports_pick(
         prediction = _latest_prediction(database, event_id)
         pick_id = str(uuid.uuid4())
         public_id = secrets.token_urlsafe(9).replace("-", "").replace("_", "")[:12]
-        database.execute(
+        inserted = database.execute(
             """
             INSERT INTO sports_picks(
                 id,public_id,user_id,caller_identity_id,event_id,market,selection,
                 line,american_odds,sportsbook,odds_observed_at,prediction_id,status,
                 created_at,updated_at
             ) VALUES(?,?,?,?,?,'moneyline',?,?,?, ?,?,?, 'open',?,?)
+            ON CONFLICT(user_id,event_id,market) DO NOTHING
             """,
             (
                 pick_id,
@@ -4164,12 +4277,24 @@ def create_sports_pick(
                 None,
                 int(american_odds),
                 odds.get("sportsbook") or "Unknown",
-                odds["observed_at"],
+                odds.get("fresh_at") or odds["observed_at"],
                 prediction.get("id") if prediction else None,
                 timestamp,
                 timestamp,
             ),
         )
+        if inserted.rowcount != 1:
+            concurrent = database.execute(
+                """
+                SELECT p.*,ci.handle AS caller_handle FROM sports_picks p
+                JOIN caller_identities ci ON ci.id=p.caller_identity_id
+                WHERE p.user_id=? AND p.event_id=? AND p.market='moneyline'
+                """,
+                (user_id, event_id),
+            ).fetchone()
+            if concurrent:
+                return dict(concurrent)
+            raise RuntimeError("The existing sports Call could not be loaded")
         row = database.execute(
             """
             SELECT p.*,ci.handle AS caller_handle FROM sports_picks p

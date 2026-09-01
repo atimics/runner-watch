@@ -6,10 +6,10 @@
 <main class="mobile-auth-wrap">
   <section class="mobile-auth-card">
     <span class="passkey-icon"><i></i></span>
-    <span class="eyebrow">BACKUP</span>
-    <h1>Add another passkey</h1>
-    <p>Add one on another device or password manager.</p>
-    <button class="auth-submit" id="authButton">Add backup passkey</button>
+    <span class="eyebrow">{% if migrating_legacy_passkey %}MOVE ACCOUNT{% else %}BACKUP{% endif %}</span>
+    <h1>{% if migrating_legacy_passkey %}Create your new passkey{% else %}Add another passkey{% endif %}</h1>
+    <p>{% if migrating_legacy_passkey %}This keeps your account and history on the new RATi address.{% else %}Add one on another device or password manager.{% endif %}</p>
+    <button class="auth-submit" id="authButton">{% if migrating_legacy_passkey %}Create new passkey{% else %}Add backup passkey{% endif %}</button>
     <div id="authStatus" class="status" aria-live="polite"></div>
   </section>
 </main>
@@ -19,6 +19,7 @@
 <script nonce="{{ request.state.csp_nonce }}">
 const statusBox = document.getElementById('authStatus');
 const button = document.getElementById('authButton');
+const migratingLegacyPasskey = {{ migrating_legacy_passkey | tojson }};
 function b64bytes(value) {
   const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4);
   return Uint8Array.from(atob(padded), character => character.charCodeAt(0));
@@ -71,18 +72,24 @@ async function api(url, body) {
 }
 button.addEventListener('click', async () => {
   button.disabled = true;
-  statusBox.textContent = 'Confirm your existing passkey…';
+  statusBox.textContent = migratingLegacyPasskey
+    ? 'Create a passkey for the new RATi address…'
+    : 'Confirm your existing passkey…';
   try {
     if (!window.PublicKeyCredential) throw new Error('This browser does not support passkeys.');
-    const reauth = await api('/api/auth/reauth/options');
-    const existing = await navigator.credentials.get({publicKey: prepareGet(reauth.options)});
-    await api('/api/auth/reauth/verify', {flow_token: reauth.flow_token, credential: serialize(existing)});
+    if (!migratingLegacyPasskey) {
+      const reauth = await api('/api/auth/reauth/options');
+      const existing = await navigator.credentials.get({publicKey: prepareGet(reauth.options)});
+      await api('/api/auth/reauth/verify', {flow_token: reauth.flow_token, credential: serialize(existing)});
+    }
     statusBox.textContent = 'Create your new passkey…';
     const start = await api('/api/auth/passkey/options');
     const credential = await navigator.credentials.create({publicKey: prepareCreate(start.options)});
     await api('/api/auth/passkey/verify', {flow_token: start.flow_token, credential: serialize(credential)});
     statusBox.className = 'status success';
-    statusBox.textContent = 'Backup passkey added. Other sessions were signed out.';
+    statusBox.textContent = migratingLegacyPasskey
+      ? 'Account moved. Your history is ready on the new RATi address.'
+      : 'Backup passkey added. Other sessions were signed out.';
     button.textContent = 'Done';
     button.onclick = () => location.href = '/';
   } catch (error) {

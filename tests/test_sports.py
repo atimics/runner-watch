@@ -586,6 +586,143 @@ def test_paper_pick_freezes_odds_and_settles(sports_db) -> None:
     assert settled_board["calls"][0]["reward_label"] == f"+{expected_reward} Flash"
 
 
+def test_odds_and_predictions_preserve_a_b_a_market_reversals(sports_db) -> None:
+    observed_at = datetime.now(UTC)
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+
+    store_events([event], observed_at=observed_at)
+    event["home_odds"] = -170
+    event["away_odds"] = 145
+    store_events([event], observed_at=observed_at + timedelta(minutes=1))
+    event["home_odds"] = -130
+    event["away_odds"] = 115
+    store_events([event], observed_at=observed_at + timedelta(minutes=2))
+    store_events([event], observed_at=observed_at + timedelta(minutes=3))
+
+    with connection() as database:
+        odds = database.execute(
+            """
+            SELECT home_odds,away_odds FROM sports_odds_snapshots
+            WHERE event_id=? ORDER BY observed_at,id
+            """,
+            (event["id"],),
+        ).fetchall()
+        predictions = database.execute(
+            """
+            SELECT input_hash,input_state_hash FROM sports_predictions
+            WHERE event_id=? ORDER BY observed_at,id
+            """,
+            (event["id"],),
+        ).fetchall()
+
+    assert [(row["home_odds"], row["away_odds"]) for row in odds] == [
+        (-130, 115),
+        (-170, 145),
+        (-130, 115),
+    ]
+    assert len(predictions) == 3
+    assert predictions[0]["input_state_hash"] == predictions[2]["input_state_hash"]
+    assert predictions[0]["input_hash"] != predictions[2]["input_hash"]
+
+
+def test_canceled_game_voids_an_open_pick(sports_db) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) "
+            "VALUES('void-user','void_member','Void Member','active',?)",
+            (datetime.now(UTC).isoformat(),),
+        )
+    pick = create_sports_pick("void-user", str(event["id"]), "home")
+
+    canceled_raw = sample_event()
+    canceled_raw["status"]["type"] = {
+        "state": "post",
+        "completed": False,
+        "shortDetail": "Canceled",
+    }
+    canceled = normalize_event("mlb", canceled_raw)
+    assert canceled is not None
+    store_events([canceled])
+
+    assert settle_picks() == 1
+    with connection() as database:
+        stored = database.execute(
+            "SELECT status,result,return_units FROM sports_picks WHERE id=?",
+            (pick["id"],),
+        ).fetchone()
+    assert (stored["status"], stored["result"], stored["return_units"]) == (
+        "void",
+        "void",
+        0.0,
+    )
+
+
+def test_concurrent_pick_conflict_returns_the_stored_pick(monkeypatch) -> None:
+    existing = {
+        "id": "existing-pick",
+        "user_id": "race-user",
+        "event_id": "mlb:race",
+        "market": "moneyline",
+        "selection": "home",
+        "caller_handle": "steady-otter",
+    }
+
+    class Result:
+        def __init__(self, row=None, rowcount: int = -1) -> None:
+            self.row = row
+            self.rowcount = rowcount
+
+        def fetchone(self):
+            return self.row
+
+    class Database:
+        def execute(self, statement, _parameters=()):
+            if "JOIN caller_identities" in statement:
+                return Result(existing)
+            if "SELECT * FROM sports_picks" in statement:
+                return Result(None)
+            if "SELECT * FROM sports_events" in statement:
+                return Result({"id": "mlb:race", "status": "pre"})
+            if "INSERT INTO sports_picks" in statement:
+                return Result(rowcount=0)
+            raise AssertionError(statement)
+
+    @contextmanager
+    def fake_connection():
+        yield Database()
+
+    monkeypatch.setattr(sports_module, "connection", fake_connection)
+    monkeypatch.setattr(sports_module, "_latest_bookmaker_rows", lambda *_args: [])
+    monkeypatch.setattr(sports_module, "_market_comparison", lambda *_args: {})
+    monkeypatch.setattr(
+        sports_module,
+        "_latest_odds",
+        lambda *_args: {"home_odds": -130, "away_odds": 115},
+    )
+    monkeypatch.setattr(
+        sports_module,
+        "_paper_moneyline",
+        lambda *_args, **_kwargs: {
+            "home_odds": -130,
+            "away_odds": 115,
+            "sportsbook": "Test Book",
+            "observed_at": datetime.now(UTC).isoformat(),
+        },
+    )
+    monkeypatch.setattr(
+        sports_module,
+        "ensure_caller_identity_with_database",
+        lambda *_args: {"id": "caller", "handle": "steady-otter"},
+    )
+    monkeypatch.setattr(sports_module, "_latest_prediction", lambda *_args: None)
+
+    result = create_sports_pick("race-user", "mlb:race", "home")
+
+    assert result == existing
 def test_paper_pick_rejects_an_old_moneyline(sports_db) -> None:
     event = normalize_event("mlb", sample_event())
     assert event is not None

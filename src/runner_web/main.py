@@ -128,7 +128,11 @@ from runner_web.llm_routing import (
 )
 from runner_web.market_clock import market_clock
 from runner_web.market_reports import market_reports_overview, refresh_market_reports
-from runner_web.operations import require_operations_access, worker_heartbeat_key
+from runner_web.operations import (
+    require_operations_access,
+    required_worker_names,
+    worker_heartbeat_key,
+)
 from runner_web.operations import router as operations_router
 from runner_web.operations import runtime_capabilities as runtime_capabilities
 from runner_web.outcomes import (
@@ -548,6 +552,8 @@ def _start_worker_tasks() -> list[asyncio.Task[Any]]:
         asyncio.create_task(massive_backfill_worker(), name="massive-backfill"),
         asyncio.create_task(research_job_worker(), name="research-jobs"),
         asyncio.create_task(report_release_worker(), name="report-release"),
+        asyncio.create_task(case_monitor_worker(), name="case-monitor"),
+        asyncio.create_task(kol_worker(), name="kol"),
     ]
     if SPORTS_INGESTION_ENABLED:
         workers.append(asyncio.create_task(sports_ingestion_worker(), name="sports-ingestion"))
@@ -558,20 +564,28 @@ def _start_worker_tasks() -> list[asyncio.Task[Any]]:
     return [*workers, heartbeat]
 
 
+def _worker_heartbeat_detail(workers: list[asyncio.Task[Any]]) -> dict[str, Any]:
+    required = required_worker_names(sports_ingestion_enabled=SPORTS_INGESTION_ENABLED)
+    running = {task.get_name() for task in workers if not task.done()}
+    stopped = {task.get_name() for task in workers if task.done()}
+    missing = required - running
+    failed = sorted((stopped & required) | missing)
+    return {
+        "status": "degraded" if failed else "ok",
+        "workers_running": len(running & required),
+        "workers_expected": len(required),
+        "running_workers": sorted(running & required),
+        "required_workers": sorted(required),
+        "missing_workers": sorted(missing),
+        "failed_workers": failed,
+    }
+
+
 async def worker_process_heartbeat(workers: list[asyncio.Task[Any]]) -> None:
     while True:
-        failed = [task.get_name() for task in workers if task.done()]
         worker_state(
             worker_heartbeat_key(WORKER_INSTANCE_ID),
-            json.dumps(
-                {
-                    "status": "degraded" if failed else "ok",
-                    "workers_running": sum(not task.done() for task in workers),
-                    "workers_expected": len(workers),
-                    "failed_workers": failed,
-                },
-                separators=(",", ":"),
-            ),
+            json.dumps(_worker_heartbeat_detail(workers), separators=(",", ":")),
         )
         research_worker = next(
             (task for task in workers if task.get_name() == "research-jobs"), None
@@ -729,6 +743,17 @@ def now() -> datetime:
 
 def iso(value: datetime | None = None) -> str:
     return (value or now()).isoformat()
+
+
+def _recent_observation(value: Any, *, maximum_age: timedelta) -> bool:
+    try:
+        observed_at = datetime.fromisoformat(str(value or ""))
+    except ValueError:
+        return False
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=UTC)
+    age = now() - observed_at.astimezone(UTC)
+    return -timedelta(minutes=5) <= age <= maximum_age
 
 
 def worker_state(key: str, value: str) -> None:
@@ -923,6 +948,16 @@ def origin_for_request(request: Request) -> str:
 def rp_id_for_request(request: Request) -> str:
     host = _request_host(request)
     return LEGACY_RP_ID if host == _origin_host(LEGACY_ORIGIN) else RP_ID
+
+
+def legacy_passkey_migration_available(request: Request) -> bool:
+    host = _request_host(request)
+    new_hosts = {
+        _origin_host(origin)
+        for origin in (RUNNERS_ORIGIN, SPORTS_ORIGIN)
+        if origin.startswith("https://")
+    }
+    return LEGACY_RP_ID != RP_ID and host in new_hosts
 
 
 def require_origin(request: Request) -> None:
@@ -1120,6 +1155,7 @@ def page_context(
         "runners_origin": RUNNERS_ORIGIN,
         "sports_origin": SPORTS_ORIGIN,
         "registration_invite_required": REGISTRATION_MODE == "invite",
+        "legacy_passkey_migration_available": legacy_passkey_migration_available(request),
         "sports_path_prefix": "" if product_for_request(request) == "sports" else "/sports",
         "market_clock": market_clock(),
         "flash": actor_snapshot(),
@@ -6572,7 +6608,9 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
             base_rates=base_rates,
         ),
         "can_publish": bool(
-            snapshot is not None and str(snapshot["captured_at"]) > iso(now() - timedelta(hours=2))
+            snapshot is not None
+            and _recent_observation(snapshot["captured_at"], maximum_age=timedelta(hours=2))
+            and _recent_observation(snapshot["quote_time"], maximum_age=timedelta(hours=2))
         ),
     }
 
@@ -8373,10 +8411,21 @@ def _current_call_mark(ticker: str) -> tuple[float, str]:
     """Return the server's current market mark and its observed time."""
 
     detail = ticker_detail_data(ticker)
-    current = detail.get("current", {}).get("price") if detail else None
+    if not detail or not detail.get("can_publish"):
+        raise HTTPException(
+            409,
+            "A market price observed within the last two hours is required to make a Call.",
+        )
+    current_detail = detail.get("current", {})
+    observed_at = str(current_detail.get("quote_time") or current_detail.get("event_at") or "")
+    if not _recent_observation(observed_at, maximum_age=timedelta(hours=2)):
+        raise HTTPException(
+            409,
+            "A market price observed within the last two hours is required to make a Call.",
+        )
+    current = current_detail.get("price")
     if current is None or float(current) <= 0:
         raise HTTPException(409, "A current market price is required to make a Call.")
-    observed_at = str(detail.get("current", {}).get("event_at") or iso())
     return float(current), observed_at
 
 
@@ -8749,6 +8798,23 @@ def login_page(request: Request, runner_session: str | None = Cookie(default=Non
     )
 
 
+@app.get("/.well-known/webauthn")
+def webauthn_related_origins() -> JSONResponse:
+    """Allow legacy passkeys to be used once on the replacement product origins."""
+
+    origins = list(
+        dict.fromkeys(
+            origin
+            for origin in (RUNNERS_ORIGIN, SPORTS_ORIGIN)
+            if origin.startswith("https://")
+        )
+    )
+    return JSONResponse(
+        {"origins": origins},
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
 def _invite_hash(value: str) -> str:
     return hashlib.sha256(f"rati-registration-v1:{value.strip()}".encode()).hexdigest()
 
@@ -8921,6 +8987,63 @@ def login_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
     return response
 
 
+@app.post("/api/auth/login/legacy/options")
+def legacy_login_options(request: Request) -> JSONResponse:
+    """Start a Related Origins login for an account created on the old host."""
+
+    require_origin(request)
+    if not legacy_passkey_migration_available(request):
+        raise HTTPException(404, "Legacy passkey migration is not available here.")
+    enforce_rate(request, "legacy-login-options", limit=10, seconds=600)
+    options = generate_authentication_options(
+        rp_id=LEGACY_RP_ID,
+        timeout=60_000,
+        user_verification=UserVerificationRequirement.REQUIRED,
+    )
+    flow_token = save_challenge("login_legacy", options.challenge)
+    return JSONResponse({"flow_token": flow_token, "options": json.loads(options_to_json(options))})
+
+
+@app.post("/api/auth/login/legacy/verify")
+def legacy_login_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
+    """Link a verified legacy credential to a fresh session on the new host."""
+
+    require_origin(request)
+    if not legacy_passkey_migration_available(request):
+        raise HTTPException(404, "Legacy passkey migration is not available here.")
+    enforce_rate(request, "legacy-login-verify", limit=12, seconds=600)
+    flow = take_challenge(payload.flow_token, "login_legacy")
+    credential_id = base64url_to_bytes(payload.credential.get("id", ""))
+    with connection() as db:
+        passkey = db.execute(
+            "SELECT * FROM passkeys WHERE credential_id=?", (credential_id,)
+        ).fetchone()
+    if not passkey:
+        raise HTTPException(404, "This passkey is not registered on the old site.")
+    try:
+        verification = verify_authentication_response(
+            credential=payload.credential,
+            expected_challenge=flow["challenge"],
+            expected_rp_id=LEGACY_RP_ID,
+            expected_origin=origin_for_request(request),
+            credential_public_key=passkey["public_key"],
+            credential_current_sign_count=passkey["sign_count"],
+            require_user_verification=True,
+        )
+    except Exception as exc:
+        raise HTTPException(400, f"Legacy passkey login failed: {exc}") from exc
+    with connection() as db:
+        db.execute(
+            "UPDATE passkeys SET sign_count=?,last_used_at=? WHERE credential_id=?",
+            (verification.new_sign_count, iso(), credential_id),
+        )
+    response = JSONResponse(
+        {"ok": True, "redirect": "/settings/passkey?migrate=1"}
+    )
+    create_session(passkey["user_id"], response)
+    return response
+
+
 @app.get("/settings/passkey", response_class=HTMLResponse)
 def add_passkey_page(
     request: Request,
@@ -8932,7 +9055,12 @@ def add_passkey_page(
     return templates.TemplateResponse(
         request=request,
         name="passkey_add.html",
-        context=page_context(request, runner_session, resolved_user=user),
+        context=page_context(
+            request,
+            runner_session,
+            resolved_user=user,
+            migrating_legacy_passkey=request.query_params.get("migrate") == "1",
+        ),
     )
 
 
