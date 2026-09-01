@@ -27,13 +27,24 @@
     }
 
     function markSelected(url) {
+      let selectedLink = null;
       list.querySelectorAll('a.desktop-panel-selected').forEach(link => link.classList.remove('desktop-panel-selected'));
       list.querySelectorAll('a[href]').forEach(link => {
         const candidate = panelUrl(link.href);
         if (candidate && candidate.pathname === url.pathname && candidate.hash === url.hash) {
           link.classList.add('desktop-panel-selected');
+          selectedLink = link;
         }
       });
+      if (selectedLink) {
+        requestAnimationFrame(() => {
+          const rowBounds = selectedLink.getBoundingClientRect();
+          const listBounds = list.getBoundingClientRect();
+          if (rowBounds.top < listBounds.top || rowBounds.bottom > listBounds.bottom) {
+            selectedLink.scrollIntoView({block: 'nearest'});
+          }
+        });
+      }
     }
 
     function openPanel(url) {

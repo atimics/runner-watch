@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import Page
+from playwright.sync_api import Page, Route
 from starlette.requests import Request
 
 from runner_web import main as web_main
@@ -30,7 +31,9 @@ def _request() -> Request:
     return request
 
 
-def _rendered_ticker() -> str:
+def _rendered_ticker(
+    *, signed_in: bool = False, comment_generation_enabled: bool = True
+) -> str:
     thesis = web_main._ranker_directional_thesis(
         {
             "probability_down": 0.15,
@@ -84,6 +87,26 @@ def _rendered_ticker() -> str:
             "baseline_summary": "Building the same-time baseline.",
         },
     }
+    signed_in_context = {}
+    if signed_in:
+        signed_in_context = {
+            "user": {"id": "browser-user"},
+            "comment_avatar": web_main.comment_avatar_profile(
+                "Quiet Signal", "browser-seed", "filing_sleuth"
+            ),
+            "flash_wallet": {
+                "balance": 150,
+                "can_claim": False,
+                "claim_day": "2026-08-28",
+                "report_cost": 100,
+            },
+            "caller_summary": {
+                "average_return_pct": None,
+                "wins": 0,
+                "losses": 0,
+            },
+            "comment_generation_enabled": comment_generation_enabled,
+        }
     response = web_main.templates.TemplateResponse(
         request=_request(),
         name="ticker.html",
@@ -96,7 +119,19 @@ def _rendered_ticker() -> str:
             active_call=None,
             calls=[],
             latest_commission=None,
+            flash_report={
+                "state": "unavailable",
+                "label": "Report unavailable",
+                "detail": "Try again later",
+                "enabled": False,
+                "href": None,
+                "job_id": None,
+                "message": "",
+                "status_tone": "",
+                "start_url": "/api/research/TEST",
+            },
             active_tab="pulse",
+            **signed_in_context,
         ),
     )
     html = response.body.decode()
@@ -129,3 +164,99 @@ def test_model_path_receipt_stays_compact_and_keeps_risk_separate(page: Page) ->
     assert card.bounding_box()["height"] < 170
     assert risk.bounding_box()["y"] > card.bounding_box()["y"] + card.bounding_box()["height"]
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
+
+
+def test_flash_comment_action_is_one_compact_row_without_explainer_copy(
+    page: Page,
+) -> None:
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.set_content(_rendered_ticker(signed_in=True), wait_until="domcontentloaded")
+
+    discussion = page.locator(".discussion-section")
+    action = discussion.locator(".ai-comment-action")
+    assert action.is_visible()
+    assert action.locator("p").count() == 0
+    assert action.locator("#commentStatus").text_content() == "10 Flash"
+    assert action.locator("#generateComment").text_content() == "Post with Flash"
+    assert action.bounding_box()["height"] <= 46
+    copy = discussion.inner_text()
+    assert "Persistent avatars" not in copy
+    assert "ability guides" not in copy
+    assert "Start the read" not in copy
+
+    page.set_content(
+        _rendered_ticker(signed_in=True, comment_generation_enabled=False),
+        wait_until="domcontentloaded",
+    )
+    assert page.locator("#generateComment").is_disabled()
+    assert page.locator("#commentStatus").text_content() == "Unavailable"
+
+
+def test_failed_flash_report_restores_balance_without_internal_error_or_layout_jump(
+    page: Page,
+) -> None:
+    action = {
+        "state": "available",
+        "label": "Generate report",
+        "detail": "100 Flash · private 1h",
+        "enabled": True,
+        "href": None,
+        "job_id": None,
+        "message": "",
+        "status_tone": "",
+        "start_url": "/api/research/TEST",
+    }
+    control = str(
+        web_main.templates.env.get_template("_flash_report_action.html").module
+        .flash_report_action(action)
+    )
+    styles = (ROOT / "web/static/desktop-split.css").read_text()
+    script = (ROOT / "web/static/flash-report.js").read_text()
+    html = f"""
+    <!doctype html><html><head><base href="http://app.test/"><style>
+    :root{{--green:#57e389}} body{{margin:20px;background:#090b0b;color:#edf2ef}}
+    .flash-shell{{width:210px}} {styles}
+    </style></head><body>
+    <b data-flash-balance>100</b><div class="flash-shell">{control}</div>
+    <script>{script}</script></body></html>
+    """
+
+    def start_report(route: Route) -> None:
+        route.fulfill(
+            status=202,
+            content_type="application/json",
+            body=json.dumps({"status": "running", "job_id": "job-one", "balance": 0}),
+        )
+
+    def failed_report(route: Route) -> None:
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "status": "failed",
+                    "retryable": True,
+                    "balance": 100,
+                    "error": "OpenRouter returned a report without a usable thesis.",
+                }
+            ),
+        )
+
+    page.route("**/api/research/TEST", start_report)
+    page.route("**/api/research/jobs/job-one", failed_report)
+    page.set_content(html, wait_until="domcontentloaded")
+    initial_height = page.locator(".flash-shell").bounding_box()["height"]
+
+    page.locator("#commissionButton").click()
+    page.locator("#commissionStatus").wait_for(state="visible")
+    page.wait_for_function(
+        "document.querySelector('#commissionStatus').textContent.includes('No Flash was charged')"
+    )
+
+    assert page.locator("[data-flash-balance]").text_content() == "100"
+    assert page.locator("#commissionButton strong").text_content() == "Try again"
+    assert page.locator("#commissionStatus").text_content() == (
+        "Report couldn't be generated. No Flash was charged."
+    )
+    assert "OpenRouter" not in page.locator("body").inner_text()
+    assert page.locator(".flash-shell").bounding_box()["height"] == initial_height

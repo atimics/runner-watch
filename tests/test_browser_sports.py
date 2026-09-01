@@ -135,6 +135,7 @@ def _inline_static_assets(html: str) -> str:
 
     scripts = {
         "desktop-workspace.js": (ROOT / "web/static/desktop-workspace.js").read_text(),
+        "live-list.js": (ROOT / "web/static/live-list.js").read_text(),
         "ticker-row.js": (ROOT / "web/static/ticker-row.js").read_text(),
         "sports-live.js": (ROOT / "web/static/sports-live.js").read_text(),
     }
@@ -169,6 +170,18 @@ def _rendered_pulse(monkeypatch, payload: dict[str, Any]) -> str:
         "_public_sports_pulse_data",
         lambda *_args, **_kwargs: {"pulse": payload, "pick_stats": pick_stats},
     )
+    monkeypatch.setattr(
+        web_main,
+        "_public_golf_data",
+        lambda: {
+            "events": [],
+            "display_count": 0,
+            "entrant_count": 0,
+            "source_status": "success",
+            "source_error": "",
+            "updated_at": None,
+        },
+    )
     return _inline_static_assets(web_main.home(_request(), None).body.decode())
 
 
@@ -179,6 +192,121 @@ def _rendered_radar(monkeypatch, payload: dict[str, Any]) -> str:
         lambda *_args, **_kwargs: {"radar": payload},
     )
     response = web_main.sports_radar_response(_request("/radar"), None)
+    return _inline_static_assets(response.body.decode())
+
+
+def _rendered_game_detail() -> str:
+    event = {
+        "id": "closed-game",
+        "league": "mlb",
+        "start_time": "2026-08-29T18:20:00+00:00",
+        "status": "pre",
+        "status_detail": "11:20 AM",
+        "completed": False,
+        "venue": "Wrigley Field",
+        "location": "Chicago, IL",
+        "away_abbreviation": "CIN",
+        "away_team_name": "Cincinnati Reds",
+        "away_record": "68-66",
+        "away_score": None,
+        "home_abbreviation": "CHC",
+        "home_team_name": "Chicago Cubs",
+        "home_record": "76-58",
+        "home_score": None,
+        "source_url": "https://example.test/game",
+        "paper_odds": None,
+        "odds": {
+            "away_odds": 186,
+            "home_odds": -186,
+            "sportsbook": "Market consensus",
+            "source_label": "No-vig consensus via The Odds API",
+            "observed_at": "2026-08-29T18:15:00+00:00",
+        },
+        "market_comparison": {"books": []},
+        "prediction": {
+            "selection": "away",
+            "signal": "watch",
+            "edge_pct": 6.4,
+            "away_probability": 0.413,
+            "home_probability": 0.587,
+            "away_market_probability": 0.35,
+            "home_market_probability": 0.65,
+            "model_version": "sports-baseline-v1",
+        },
+        "receipt": None,
+        "model_record": {
+            "games": 24,
+            "sample": {"label": "24 of 100 graded", "target": 100, "remaining": 76},
+        },
+        "model_winner_coin_tone": 0,
+        "model_winner_abbreviation": "CHC",
+        "model_winner_detail_label": "BASELINE WINNER",
+        "model_winner_team_name": "Chicago Cubs",
+        "model_winner_probability_pct": 58.7,
+        "edge_history": {
+            "label": "CIN model edge grew 1.4 points; now +6.4 percentage points",
+            "points": [1, 2, 3, 4],
+            "plot_points": "2,14 31,12 61,10 90,7",
+            "dot_y": 7,
+            "start_pct": 5.0,
+            "current_pct": 6.4,
+        },
+        "context": {
+            "headline": "Recent team form",
+            "back_to_back": False,
+            "series_game_count": 1,
+            "previous_meeting": None,
+            "head_to_head": {"meetings": 0},
+            "recent_form": [],
+        },
+        "matchup_players": [],
+        "news": [],
+        "picks": [],
+        "odds_history": [
+            {
+                "observed_at": "2026-08-29T18:15:00+00:00",
+                "away_odds": 186,
+                "home_odds": -186,
+                "source_label": "No-vig consensus via The Odds API",
+            }
+        ],
+        "view_state": {
+            "label": "Game started",
+            "detail": "Score pending from ESPN",
+            "started": True,
+            "score_available": False,
+            "pick_state": "closed",
+            "picks_open": False,
+        },
+    }
+    response = web_main.templates.TemplateResponse(
+        request=_request("/game/closed-game"),
+        name="sports_game.html",
+        context={
+            "event": event,
+            "latest_commission": None,
+            "flash_report": {
+                "href": None,
+                "state": "closed",
+                "label": "Reports closed",
+                "detail": "Game has started",
+                "enabled": False,
+                "job_id": None,
+                "message": "",
+                "status_tone": None,
+            },
+            "sports_path_prefix": "",
+            "sports_call_reward_cap": 10,
+            "comments": [],
+            "comment_count": 0,
+            "active_tab": "pulse",
+            "nav_product": "sports",
+            "user": None,
+            "static_version": "test",
+            "runners_origin": "https://rati.chat",
+            "sports_origin": "https://sports.rati.chat",
+        },
+    )
     return _inline_static_assets(response.body.decode())
 
 
@@ -195,13 +323,13 @@ def _load(
         payload = poll_payloads.pop(0) if poll_payloads else _pulse()
         route.fulfill(status=200, content_type="application/json", body=json.dumps(payload))
 
-    page.route("**/api/sports/pulse*", pulse_response)
+    page.route("**/api/pulse*", pulse_response)
 
     def radar_response(route: Route) -> None:
         payload = radar_payloads.pop(0) if radar_payloads else _radar()
         route.fulfill(status=200, content_type="application/json", body=json.dumps(payload))
 
-    page.route("**/api/sports/radar*", radar_response)
+    page.route("**/api/radar*", radar_response)
     page.route(
         "**/game/**",
         lambda route: route.fulfill(
@@ -246,6 +374,16 @@ def test_sports_pulse_applies_updates_without_reloading_or_losing_detail(
     assert errors == []
 
 
+def test_sports_pulse_keeps_missing_update_time_pending(page: Page, monkeypatch) -> None:
+    pulse = _pulse()
+    pulse["updated_at"] = None
+    errors = _load(page, _rendered_pulse(monkeypatch, pulse), [])
+
+    assert page.locator("#sportsPulseStatus").text_content() == "Update pending"
+    assert page.locator("#sportsPulseUpdated").text_content() == "pending"
+    assert errors == []
+
+
 def test_sports_radar_applies_changes_without_reloading_or_losing_detail(
     page: Page, monkeypatch
 ) -> None:
@@ -269,6 +407,12 @@ def test_sports_radar_applies_changes_without_reloading_or_losing_detail(
 
     assert "+4.4pp" in page.locator(".radar-value").text_content()
     assert frame.get_attribute("src") == original_detail
+    assert page.locator(".radar-mark").first.evaluate(
+        "node => ({"
+        "radius: getComputedStyle(node).borderRadius, "
+        "rightRule: getComputedStyle(node).borderRightWidth"
+        "})"
+    ) == {"radius": "0px", "rightRule": "1px"}
     assert errors == []
 
 
@@ -309,6 +453,71 @@ def test_sports_detail_panel_stays_dark_while_a_game_loads(
     assert errors == []
 
 
+def test_game_detail_prioritizes_actions_and_closes_started_actions(page: Page) -> None:
+    html = _rendered_game_detail()
+    page.set_viewport_size({"width": 1280, "height": 800})
+    page.route(
+        "http://app.test/",
+        lambda route: route.fulfill(status=200, content_type="text/html", body=html),
+    )
+    page.goto("http://app.test/", wait_until="domcontentloaded")
+
+    app = page.locator(".sports-game-app")
+    grid = page.locator(".game-detail-grid")
+    assert app.evaluate("node => Math.round(node.getBoundingClientRect().width)") == 1120
+    assert grid.evaluate("node => getComputedStyle(node).display") == "block"
+    assert grid.evaluate("node => Math.round(node.getBoundingClientRect().width)") == 860
+    assert page.locator(".probability-row").count() == 2
+    assert page.locator(".decision-movement .edge-spark").bounding_box()["width"] > 200
+    assert page.get_by_role("heading", name="Game thread").count() == 0
+    assert page.get_by_role("heading", name="Calls closed").is_visible()
+    assert page.get_by_text("Score pending from ESPN").is_visible()
+    assert page.get_by_text("Log in to make a Call").count() == 0
+    assert page.locator(".game-disclosure > summary b").first.evaluate(
+        "node => getComputedStyle(node).fontSize"
+    ) == "9px"
+    assert page.evaluate(
+        """() => {
+          const style = selector => getComputedStyle(document.querySelector(selector));
+          return {
+            stripRadius: style('.match-strip').borderRadius,
+            boardRadius: style('.decision-board').borderRadius,
+            modelCallRadius: style('.decision-model-call').borderRadius,
+            valueCallRule: style('.decision-value-call').borderLeftWidth,
+            metricRadius: style('.value-numbers > span').borderRadius,
+            notebookRadius: style('.game-notebook').borderRadius,
+            notebookItemRadius: style('.game-notebook .game-disclosure').borderRadius,
+            actionRadius: style('.game-actions > .paper-pick').borderRadius,
+            flashRadius: style('.game-actions > .game-flash').borderRadius,
+          };
+        }"""
+    ) == {
+        "stripRadius": "0px",
+        "boardRadius": "0px",
+        "modelCallRadius": "0px",
+        "valueCallRule": "1px",
+        "metricRadius": "0px",
+        "notebookRadius": "0px",
+        "notebookItemRadius": "0px",
+        "actionRadius": "0px",
+        "flashRadius": "0px",
+    }
+    assert page.locator(".game-actions").bounding_box()["y"] < page.locator(
+        ".game-notebook"
+    ).bounding_box()["y"]
+
+    page.set_viewport_size({"width": 390, "height": 800})
+    assert grid.evaluate("node => getComputedStyle(node).display") == "block"
+    assert app.evaluate("node => Math.round(node.getBoundingClientRect().width)") == 390
+    assert page.locator(".decision-value-call").evaluate(
+        "node => ({"
+        "left: getComputedStyle(node).borderLeftWidth, "
+        "top: getComputedStyle(node).borderTopWidth"
+        "})"
+    ) == {"left": "0px", "top": "1px"}
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
 @pytest.mark.parametrize("width", [390, 900, 1280])
 def test_sports_pulse_respects_shared_responsive_breakpoints(
     page: Page, monkeypatch, width: int
@@ -333,6 +542,12 @@ def test_sports_pulse_respects_shared_responsive_breakpoints(
         assert link_box["y"] >= navigation_box["y"]
         assert link_box["y"] + link_box["height"] <= navigation_box["y"] + navigation_box["height"]
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    assert page.locator(".sports-record-strip").evaluate(
+        "node => getComputedStyle(node).borderRadius"
+    ) == "0px"
+    assert page.locator(".league-tabs a").first.evaluate(
+        "node => getComputedStyle(node).borderRadius"
+    ) == "2px"
     if width < 900:
         assert page.locator(".desktop-detail-panel").is_hidden()
     else:
@@ -360,6 +575,7 @@ def test_sports_pulse_uses_the_exact_ticker_row_contract(
     assert "PROJECTED" in copy
     assert "58%" in copy
     assert "Value HME +7.8pp" in copy
+    assert "MODEL41.8%MARKET34.0%" in copy
     assert "vs HME · MLB" in copy
     assert row.get_attribute("class") == "token-row ticker-row sports-pulse-row"
     assert row.locator(".coin").count() == 1
@@ -371,7 +587,8 @@ def test_sports_pulse_uses_the_exact_ticker_row_contract(
     assert page.locator(".model-favorite").count() == 0
     assert row.get_attribute("aria-label") == (
         "AWY Club is projected to beat HME Club with a 58 percent win chance; "
-        "value side HME with a +7.8 percentage-point model edge"
+        "value side HME with a +7.8 percentage-point model edge, model 41.8 percent "
+        "versus market 34.0 percent"
     )
     assert page.evaluate(
         """() => {
@@ -393,7 +610,7 @@ def test_sports_pulse_uses_the_exact_ticker_row_contract(
         }"""
     ) == {
         "display": "grid",
-        "minHeight": "78px",
+        "minHeight": "94px",
         "padding": "9px 8px",
         "radius": "0px",
         "coinWidth": "42px",
@@ -423,8 +640,42 @@ def test_sports_pulse_calls_a_close_projection_a_slight_edge(
     assert "Value AWY +2.6pp" in row.text_content()
     assert row.get_attribute("aria-label") == (
         "AWY Club has a slight model edge over HME Club with a 51 percent win chance; "
-        "value side AWY with a +2.6 percentage-point model edge"
+        "value side AWY with a +2.6 percentage-point model edge, model 58.2 percent "
+        "versus market 55.6 percent"
     )
+    assert errors == []
+
+
+def test_nba_pulse_renders_a_clear_between_seasons_state(page: Page, monkeypatch) -> None:
+    pulse = {
+        **_pulse(),
+        "league": "nba",
+        "scanned_count": 12,
+        "empty_state": {
+            "kind": "season-break",
+            "title": "NBA is between seasons.",
+            "detail": (
+                "The next scheduled game is MIA at TOR. Pulse will wait for regular-season "
+                "records and fresh market consensus before publishing a projection."
+            ),
+            "next_start_time": "2026-10-03T23:00:00+00:00",
+            "status_label": "Next NBA game scheduled",
+        },
+    }
+    page.set_viewport_size({"width": 390, "height": 800})
+    errors = _load(page, _rendered_pulse(monkeypatch, _pulse()), [pulse])
+
+    page.evaluate("window.sportsPulseLive.poll()")
+    refresh = page.locator("#sportsPulseRefresh")
+    assert refresh.is_visible()
+    refresh.click()
+
+    empty = page.locator(".sports-season-break")
+    assert empty.is_visible()
+    assert "NBA is between seasons." in empty.text_content()
+    assert "MIA at TOR" in empty.text_content()
+    assert "Next tipoff" in empty.text_content()
+    assert page.locator("#sportsPulseMaturity").text_content() == "Next NBA game scheduled"
     assert errors == []
 
 

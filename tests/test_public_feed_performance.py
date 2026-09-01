@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from starlette.requests import Request
@@ -72,6 +76,11 @@ def test_runner_public_feed_omits_detail_only_fields(monkeypatch) -> None:
         "company": "One Corp",
         "price": 1.25,
         "change_pct": 9.5,
+        "custom_rank": 1,
+        "score": 72.4,
+        "setup_score": 61.2,
+        "relative_volume": 3.1,
+        "momentum_15m_pct": -2.4,
         "section": "scored",
         "trade_state": "EARLY",
         "coin_tone": 2,
@@ -102,6 +111,11 @@ def test_runner_public_feed_omits_detail_only_fields(monkeypatch) -> None:
     assert public_row["ticker"] == "ONE"
     assert public_row["pulse_label"] == "Form 4 · CEO buy"
     assert public_row["case_thesis"] == "Management buying supports the case."
+    assert public_row["custom_rank"] == 1
+    assert public_row["score"] == 72.4
+    assert public_row["setup_score"] == 61.2
+    assert public_row["relative_volume"] == 3.1
+    assert public_row["momentum_15m_pct"] == -2.4
     assert "issuer_risk_json" not in public_row
     assert "score_components" not in public_row
     assert "kol_calls" not in public_row
@@ -144,7 +158,7 @@ def test_sports_feed_cache_is_shared_across_view_and_limit(monkeypatch) -> None:
     built: list[tuple[str, str, int]] = []
     cache: dict[tuple[str, str], dict[str, Any]] = {}
 
-    def screen_data(scope: str, identity: str, builder):
+    def screen_data(scope: str, identity: str, builder, **_kwargs):
         key = (scope, identity)
         if key not in cache:
             cache[key] = builder()
@@ -184,3 +198,69 @@ def test_public_json_uses_etag_for_bodyless_revalidation() -> None:
     assert repeated.status_code == 304
     assert repeated.body == b""
     assert repeated.headers["etag"] == etag
+
+
+def test_detail_chart_cache_coalesces_concurrent_builds(monkeypatch) -> None:
+    calls = 0
+    lock = threading.Lock()
+
+    def build(ticker: str) -> dict[str, Any]:
+        nonlocal calls
+        with lock:
+            calls += 1
+        time.sleep(0.02)
+        return {"ticker": ticker, "points": [{"price": 1.25}]}
+
+    with web_main.PUBLIC_SCREEN_DATA_CONDITION:
+        web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
+        web_main.PUBLIC_SCREEN_DATA_REFRESHING.clear()
+    monkeypatch.setattr(web_main, "shared_cache_get", lambda _key: None)
+    monkeypatch.setattr(web_main, "shared_cache_set", lambda *_args: None)
+    monkeypatch.setattr(web_main, "_ticker_chart_detail_payload_uncached", build)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(
+            pool.map(lambda _index: web_main.ticker_chart_detail_payload("ONE"), range(8))
+        )
+
+    assert calls == 1
+    assert all(result["points"] == [{"price": 1.25}] for result in results)
+
+
+def test_ticker_pressure_reuses_the_shared_detail(monkeypatch) -> None:
+    detail = {
+        "trade_pressure": {"state": "buying"},
+        "evidence_gate": {"state": "ready"},
+    }
+    monkeypatch.setattr(web_main, "enforce_rate", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(web_main, "_public_ticker_detail_data", lambda _ticker: detail)
+    monkeypatch.setattr(
+        web_main,
+        "ticker_chart_data",
+        lambda _ticker: (_ for _ in ()).throw(AssertionError("duplicate chart read")),
+    )
+    monkeypatch.setattr(
+        web_main,
+        "_market_trade_pressure",
+        lambda _ticker: (_ for _ in ()).throw(AssertionError("duplicate pressure read")),
+    )
+
+    response = asyncio.run(web_main.ticker_pressure_api("one", _request()))
+
+    assert json.loads(response.body) == {
+        "ticker": "ONE",
+        "pressure": {"state": "buying"},
+        "evidence_gate": {"state": "ready"},
+    }
+
+
+def test_page_context_accepts_an_already_resolved_user(monkeypatch) -> None:
+    monkeypatch.setattr(
+        web_main,
+        "current_user",
+        lambda _token: (_ for _ in ()).throw(AssertionError("duplicate user lookup")),
+    )
+
+    context = web_main.page_context(_request(), "session", resolved_user=None)
+
+    assert context["user"] is None

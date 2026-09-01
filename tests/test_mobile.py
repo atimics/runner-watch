@@ -22,7 +22,6 @@ from runner_web.flash_wallet import claim_daily_flash, wallet_for_user
 from runner_web.ingestion import record_source_batch
 from runner_web.main import (
     APP_ORIGIN,
-    PublishSignal,
     _chart_annotations,
     _commission_research,
     _evidence_gate,
@@ -37,12 +36,12 @@ from runner_web.main import (
     comments_for_ticker,
     create_ticker_comment,
     get_commission,
-    get_signal,
     prune_storage,
     publish_signal,
     pulse_data,
     radar_data,
     register_options,
+    scan_collection_allowed,
     templates,
     ticker_chart_detail_payload,
     ticker_charts_payload,
@@ -57,6 +56,18 @@ def _test_flash_forecast() -> dict[str, Any]:
         "probability_up": 0.5,
         "reason": "The frozen evidence does not support a directional call.",
     }
+
+
+def _approve_test_source(source: str, feed: str) -> None:
+    with connection() as database:
+        database.execute(
+            """
+            UPDATE source_registry
+            SET review_status='approved',display_policy='source_link_with_attribution',enabled=1
+            WHERE source=? AND feed=?
+            """,
+            (source, feed),
+        )
 
 
 @pytest.mark.parametrize(
@@ -134,7 +145,9 @@ def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
     assert "exposureQueue" not in pulse_template
     assert "body:JSON.stringify({entries})" not in pulse_template
     assert "1 new event" in radar_template
-    assert "pendingUpdateTickers" in radar_template
+    assert "RatiLiveList.mount" in pulse_template
+    assert "RatiLiveList.mount" in radar_template
+    assert "pendingUpdateTickers" not in radar_template
 
 
 def test_pulse_does_not_render_an_empty_scorecard_spacer() -> None:
@@ -146,7 +159,7 @@ def test_pulse_does_not_render_an_empty_scorecard_spacer() -> None:
     assert "{% if not flash_record %} hidden{% endif %}" in pulse_template
     assert ".kol-score-strip[hidden] { display: none; }" in kol_styles
     assert "function renderKolScorecard()" in pulse_template
-    assert "pulse.flash_record = nextPulse.flash_record || null;" in pulse_template
+    assert "pulse.flash_record = next.flash_record || null;" in pulse_template
 
 
 def test_pulse_refresh_handles_missing_markers_stale_updates_and_page_failures() -> None:
@@ -154,7 +167,8 @@ def test_pulse_refresh_handles_missing_markers_stale_updates_and_page_failures()
 
     assert "function tickerKey(row)" in pulse_template
     assert "flatMap(row => [tickerKey(row), entryKey(row)])" in pulse_template
-    assert "pendingPulse = null;\n        refreshButton.hidden = true;" in pulse_template
+    assert "RatiLiveList.mount" in pulse_template
+    assert "pendingPulse" not in pulse_template
     assert "function scheduleLoadMoreRetry()" in pulse_template
     assert "catch (_) {\n    scheduleLoadMoreRetry();" in pulse_template
 
@@ -166,23 +180,40 @@ def test_large_responses_are_compressed() -> None:
 def test_ticker_has_public_call_and_flash_actions() -> None:
     template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
     script = (Path(__file__).parents[1] / "web/static/ticker-detail.js").read_text()
+    comments = (
+        Path(__file__).parents[1] / "web/templates/_flash_comments.html"
+    ).read_text()
+    comment_script = (
+        Path(__file__).parents[1] / "web/static/flash-comments.js"
+    ).read_text()
+    action = (
+        Path(__file__).parents[1] / "web/templates/_flash_report_action.html"
+    ).read_text()
 
     assert "Track a thesis" not in template
     assert "thesisDialog" not in template
     assert "thesisForm" not in template
-    assert "Generate today's report" in template
-    assert "commissionButton" in template
+    assert "flash_report_action(flash_report)" in template
+    assert "commissionButton" in action
     assert "Make Call" in template
     assert 'class="ticker-action-row"' in template
     assert template.count('class="ticker-action-slot"') == 2
     assert "action-card" not in template
     assert template.count("<textarea") == 0
-    assert 'id="generateComment"' in template
-    assert "Persistent avatars · public across tickers" in template
-    assert "render_comment_avatar(comment.avatar)" in template
-    assert "'Idempotency-Key': pendingCommentRequestId" in script
-    assert "sessionStorage.setItem(pendingCommentStorageKey" in script
-    assert "item.dataset.commentId === String(result.comment.id)" in script
+    assert "flash_comments('stock', detail.ticker" in template
+    assert 'id="generateComment"' in comments
+    assert "Post with Flash" in comments
+    assert "Persistent avatars · public across tickers" not in template
+    assert "ability guides a short Flash draft" not in template
+    assert "Start the read" not in template
+    assert "Flash drafted" not in template
+    assert "Flash is drafting" not in script
+    assert "comment_generation_enabled" in template
+    assert "window.RatiFlash?.canSpend" in comment_script
+    assert "render_comment_avatar(comment.avatar)" in comments
+    assert "'Idempotency-Key': pending" in comment_script
+    assert "sessionStorage.setItem(storageKey" in comment_script
+    assert "item.dataset.commentId === String(result.comment.id)" in comment_script
 
 
 def test_ticker_layout_puts_subtle_actions_after_the_analysis() -> None:
@@ -324,7 +355,6 @@ def test_desktop_panel_security_allows_only_supported_detail_pages() -> None:
     for path in (
         "/t/WRAP",
         "/research/report-1",
-        "/s/signal-1",
         "/game/mlb:401816699",
         "/sports/game/mlb:401816699",
     ):
@@ -343,7 +373,7 @@ def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
     ]
     game = (templates_dir / "sports_game.html").read_text()
     live_script = (root / "web/static/sports-live.js").read_text()
-    core_styles = (root / "web/static/sports-core.css").read_text()
+    product_styles = (root / "web/static/sports-product.css").read_text()
 
     for template in sports_templates:
         assert '{% extends "mobile_base.html" %}' in template
@@ -355,11 +385,17 @@ def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
     assert '{% extends "mobile_base.html" %}' in game
     assert 'class="detail-nav sports-detail-nav"' in game
     assert 'class="detail-body sports-detail-body"' in game
+    assert 'class="game-detail-grid game-detail-flow"' in game
+    assert "html:not(.embedded-pane) .game-detail-grid" in product_styles
+    assert ".game-detail-grid.game-detail-flow" in product_styles
+    assert "max-width: 1120px" in product_styles
     assert not (templates_dir / "sports_base.html").exists()
     assert "location.reload" not in "\n".join([*sports_templates, game, live_script])
-    assert "setInterval(poll, POLL_INTERVAL)" in live_script
-    assert "body.sports-product" in core_styles
-    assert not core_styles.startswith(":root")
+    assert "RatiLiveList.mount" in live_script
+    assert "setInterval(poll" not in live_script
+    assert "body.sports-product" in product_styles
+    assert not product_styles.startswith(":root")
+    assert (templates_dir / "_sports_styles.html").read_text().count("stylesheet") == 1
 
 
 def test_ticker_rows_have_no_reader_attention_state() -> None:
@@ -521,6 +557,7 @@ def insert_scored_snapshot(
     captured_at: str,
     *,
     price: float = 1.25,
+    quote_time: str | None = None,
 ) -> None:
     with connection() as database:
         database.execute(
@@ -546,7 +583,7 @@ def insert_scored_snapshot(
                 4.0,
                 0.8,
                 800_000,
-                captured_at,
+                quote_time or captured_at,
                 '["Volume acceleration"]',
                 "[]",
                 captured_at,
@@ -555,6 +592,23 @@ def insert_scored_snapshot(
             ),
         )
         _record_pulse_entries_for_run(database, run_id, captured_at)
+
+
+@pytest.mark.parametrize(
+    ("timestamp", "allowed"),
+    [
+        (datetime(2026, 8, 31, 7, 59, tzinfo=UTC), False),
+        (datetime(2026, 8, 31, 8, 0, tzinfo=UTC), True),
+        (datetime(2026, 8, 31, 23, 59, tzinfo=UTC), True),
+        (datetime(2026, 9, 1, 0, 0, tzinfo=UTC), False),
+        (datetime(2026, 8, 30, 14, 0, tzinfo=UTC), False),
+    ],
+)
+def test_scan_collection_only_runs_during_the_weekday_market_window(
+    timestamp: datetime,
+    allowed: bool,
+) -> None:
+    assert scan_collection_allowed(timestamp) is allowed
 
 
 def test_storage_prune_removes_old_raw_snapshots_but_keeps_public_receipts(
@@ -622,61 +676,19 @@ def test_storage_prune_removes_old_raw_snapshots_but_keeps_public_receipts(
     assert runs == {"old-public-run"}
 
 
-def test_public_calls_get_an_automatic_identity_not_the_account_name(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "caller-signals.db")
-    init_db()
-    captured_at = datetime.now(UTC).isoformat()
-    with connection() as database:
-        database.execute(
-            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
-            ("signal-user", "secret_account", "Secret Account", "active", captured_at),
-        )
-    insert_scan_run("signal-run", captured_at, 1)
-    insert_scored_snapshot(
-        "signal-snapshot", "signal-run", "CALL", 60, 1, captured_at
-    )
-    monkeypatch.setattr(
-        web_main,
-        "require_user",
-        lambda session: {"id": "signal-user", "username": "secret_account"},
-    )
-    request = Request(
-        {
-            "type": "http",
-            "method": "POST",
-            "path": "/api/signals",
-            "headers": [(b"origin", APP_ORIGIN.encode())],
-            "client": ("127.0.0.1", 4200),
-        }
-    )
+def test_human_written_public_signals_are_retired() -> None:
+    with pytest.raises(HTTPException) as error:
+        publish_signal()
 
-    payload = PublishSignal(
-        snapshot_id="signal-snapshot",
-        thesis="A source-bound public call.",
-        horizon="intraday",
-        invalidation="Price loses support.",
-        disclosure="No position.",
-    )
-    response = publish_signal(payload, request, None)
-    signal = get_signal(json.loads(response.body)["url"].removeprefix("/s/"))
-
-    assert signal is not None
-    assert "-" in signal["caller_handle"]
-    assert "username" not in signal
-    assert "display_name" not in signal
-    templates_root = Path(__file__).parents[1] / "web/templates"
-    assert "signal.username" not in (templates_root / "signal.html").read_text()
-    assert "signal.username" not in (templates_root / "home.html").read_text()
-
-    assert get_signal(str(signal["public_id"])) is not None
+    assert error.value.status_code == 410
+    assert error.value.detail == "Public Signals were replaced by Calls."
 
 
 def test_ticker_page_does_not_add_a_guest_research_action(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "ticker-page.db")
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "")
     init_db()
     captured_at = datetime.now(UTC).isoformat()
     insert_scan_run("ticker-page-run", captured_at, 1)
@@ -705,8 +717,8 @@ def test_ticker_page_does_not_add_a_guest_research_action(
 
     assert response.status_code == 200
     assert "Ask Flash" not in response.body.decode()
-    assert "Daily Flash" in response.body.decode()
-    assert "Log in · 100 Flash" in response.body.decode()
+    assert "Report unavailable" in response.body.decode()
+    assert "Log in to generate" not in response.body.decode()
     assert "Connect OpenRouter" not in response.body.decode()
 
 
@@ -739,6 +751,31 @@ def test_pulse_only_lists_tickers_from_the_latest_scored_scan(
     assert "EVENT" not in {row["ticker"] for row in result["rows"]}
 
 
+def test_pulse_freshness_uses_the_market_quote_time(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "quote-freshness.db")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    quote_time = (datetime.now(UTC) - timedelta(hours=53)).isoformat()
+    insert_scan_run("quote-run", captured_at, 1)
+    insert_scored_snapshot(
+        "quote-snapshot",
+        "quote-run",
+        "OLD",
+        42,
+        1,
+        captured_at,
+        quote_time=quote_time,
+    )
+
+    result = pulse_data()
+
+    assert result["updated_at"] == quote_time
+    assert result["market_updated_at"] == quote_time
+    assert result["rows"][0]["quote_time"] == quote_time
+
+
 def test_pulse_reuses_the_shared_base_payload(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
@@ -747,7 +784,7 @@ def test_pulse_reuses_the_shared_base_payload(
     captured_at = datetime.now(UTC).isoformat()
     insert_scan_run("cached-run", captured_at, 1)
     insert_scored_snapshot("cached-one", "cached-run", "ONE", 42, 1, captured_at)
-    web_main.PULSE_DATA_CACHE.clear()
+    web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
     original = web_main._pulse_data_uncached
     calls = 0
 
@@ -778,8 +815,8 @@ def test_pulse_coalesces_concurrent_first_build(
         1,
         captured_at,
     )
-    web_main.PULSE_DATA_CACHE.clear()
-    web_main.PULSE_DATA_REFRESHING.clear()
+    web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
+    web_main.PUBLIC_SCREEN_DATA_REFRESHING.clear()
     original = web_main._pulse_data_uncached
     started = threading.Event()
     release = threading.Event()
@@ -872,7 +909,7 @@ def test_radar_reuses_the_shared_base_payload(
     insert_scored_snapshot(
         "radar-cache-snapshot", "radar-cache-run", "ONE", 60, 1, captured_at
     )
-    web_main.RADAR_DATA_CACHE.clear()
+    web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
     original = web_main._radar_base_data_uncached
     calls = 0
 
@@ -916,7 +953,7 @@ def test_alpha_reuses_shared_public_call_data(
                 captured_at, captured_at, captured_at,
             ),
         )
-    web_main.ALPHA_DATA_CACHE.clear()
+    web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
     original = web_main._alpha_base_data_uncached
     calls = 0
 
@@ -1029,6 +1066,7 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
             ),
         )
     )
+    _approve_test_source("test_discovery", "mixed")
 
     pulse = pulse_data()["rows"][0]
     radar = radar_data()[0]
@@ -1099,7 +1137,8 @@ def test_negative_social_counts_do_not_break_pulse_or_radar(
             ),
         )
     )
-    web_main.RADAR_DATA_CACHE.clear()
+    _approve_test_source("test_discovery", "social")
+    web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
 
     pulse = pulse_data()["rows"][0]
     radar = radar_data()[0]
@@ -1344,6 +1383,7 @@ def test_stored_halt_must_be_recently_confirmed(tmp_path: Path, monkeypatch: Mon
             ),
         )
     )
+    _approve_test_source("test_halts", "trade_halts")
     with connection() as database:
         database.execute(
             "UPDATE market_events SET last_collected_at=? WHERE ticker='STALE'",
@@ -1394,6 +1434,7 @@ def test_market_risk_context_ignores_news_payloads(
             ),
         )
     )
+    _approve_test_source("test_risk_events", "events")
 
     with connection() as database:
         context = _stored_market_risk_contexts(database, ["RISK"])["RISK"]
@@ -1790,6 +1831,7 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
     assert comment == "My read is constructive, but thin volume is the risk."
     assert model == "z-ai/glm-5.3"
     assert captured["body"]["models"] == list(web_main.OPENROUTER_COMMENT_MODELS)
+    assert len(captured["body"]["models"]) <= web_main.OPENROUTER_COMMENT_MODEL_LIMIT
     assert "model" not in captured["body"]
     assert captured["body"]["response_format"] == {"type": "json_object"}
     assert captured["body"]["provider"] == {
@@ -2040,6 +2082,7 @@ def test_chart_annotations_keep_the_real_pulse_entry_and_detected_events(
             ),
         )
     )
+    _approve_test_source("test_media", "social")
 
     entry = _pulse_entry_markers(["ONE"])["ONE"]
     annotations = _chart_annotations(["ONE"])["ONE"]
@@ -2315,7 +2358,16 @@ def test_first_daily_flash_report_locks_other_users_for_one_hour(
             (completed_at, completed_at, expired_at, first["id"]),
         )
 
+    release_reports = web_main._release_expired_daily_reports
+    monkeypatch.setattr(
+        web_main,
+        "_release_expired_daily_reports",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("daily report reads must not run a release update")
+        ),
+    )
     shared = web_main.daily_report_for_ticker("ONE", "other")
+    monkeypatch.setattr(web_main, "_release_expired_daily_reports", release_reports)
     same_report, created = web_main._create_research_commission("other", "ONE")
 
     assert shared is not None
@@ -2344,22 +2396,25 @@ def test_first_daily_flash_report_locks_other_users_for_one_hour(
     assert late_publish["balance"] == 0
 
 
-def test_ticker_commissions_flash_with_no_browser_key() -> None:
+def test_ticker_and_sports_share_one_flash_report_workflow() -> None:
     root = Path(__file__).parents[1]
-    template = (root / "web/templates/ticker.html").read_text()
-    script = (root / "web/static/ticker-detail.js").read_text()
+    ticker_template = (root / "web/templates/ticker.html").read_text()
+    sports_template = (root / "web/templates/sports_game.html").read_text()
+    action_template = (root / "web/templates/_flash_report_action.html").read_text()
+    report_script = (root / "web/static/flash-report.js").read_text()
+    ticker_script = (root / "web/static/ticker-detail.js").read_text()
 
-    assert "Generate today's report" in template
-    assert "Retry Flash" in script
-    assert "100 Flash" in template
-    assert "commissionButton" in template
-    assert "fetch(`/api/research/${encodeURIComponent(ticker)}`" in script
-    assert 'id="tickerPageData" type="application/json"' in template
-    assert 'src="/static/ticker-detail.js?v={{ static_version }}" defer' in template
-    assert "runnerOpenRouter" not in template + script
-    assert "X-OpenRouter-Key" not in template + script
-    assert '<strong>Daily Flash</strong><span>100 Flash · private 1h</span>' in template
-    assert "{{ flash.model }}" not in template
+    assert "flash_report_action(flash_report)" in ticker_template
+    assert "flash_report_action(flash_report, 'sports')" in sports_template
+    assert "/static/flash-report.js" in ticker_template
+    assert "/static/flash-report.js" in sports_template
+    assert "Generate report" in report_script
+    assert "Report couldn't be generated" in report_script
+    assert "data-start-url" in action_template
+    assert "pollFlash" not in ticker_script + sports_template
+    assert "Sending the report to the queue" not in report_script + sports_template
+    assert "OpenRouter" not in action_template + report_script
+    assert "X-OpenRouter-Key" not in action_template + report_script
 
 
 def test_flash_model_label_is_shown_on_research_and_pulse() -> None:
@@ -2671,13 +2726,99 @@ def test_failed_commission_stores_safe_diagnostics_and_is_retryable(
     assert failed is not None
     assert failed["status"] == "failed"
     assert failed["usage"]["failure"]["failure_kind"] == "invalid_json"
-    assert web_main._commission_api_payload(failed)["retryable"] is True
     assert wallet_for_user("failed-user")["balance"] == 100
+    payload = web_main._commission_api_payload(failed, "failed-user")
+    assert payload["retryable"] is True
+    assert payload["error"] == "Report couldn't be generated. No Flash was charged."
+    assert payload["balance"] == 100
+    assert payload["refunded"] == 100
+    assert "malformed" not in json.dumps(payload)
     assert "OPENROUTER_API_KEY" not in json.dumps(failed)
     retry, created = web_main._create_research_commission("failed-user", "EU")
     assert created is True
     assert retry["status"] == "running"
     assert wallet_for_user("failed-user")["balance"] == 0
+
+
+def test_flash_report_circuit_breaker_stops_promising_failed_reports(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "flash-circuit.db")
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "server-test-key")
+    init_db()
+    timestamp = datetime.now(UTC).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("circuit-user", "circuit_user", "Circuit User", "active", timestamp),
+        )
+        for index in range(web_main.FLASH_REPORT_FAILURE_STREAK_LIMIT):
+            database.execute(
+                """
+                INSERT INTO research_commissions(
+                    id,public_id,user_id,ticker,evidence_key,status,requested_model,
+                    actor_id,created_at,updated_at,report_day,error
+                ) VALUES(?,?,?,?,?,'failed',?,?,?,?,?,?)
+                """,
+                (
+                    f"failed-{index}",
+                    f"failed-public-{index}",
+                    "circuit-user",
+                    "FAIL",
+                    f"evidence-{index}",
+                    web_main.FLASH.model,
+                    web_main.FLASH.id,
+                    timestamp,
+                    timestamp,
+                    datetime.now(UTC).date().isoformat(),
+                    "Internal provider detail",
+                ),
+            )
+
+    assert web_main._flash_provider_ready() is False
+    assert web_main._flash_daily_capacity_available() is True
+    report_action = web_main._flash_report_action(
+        user_id="circuit-user",
+        latest_report=None,
+        latest_attempt=web_main.latest_commission("circuit-user", "FAIL"),
+        start_url="/api/research/FAIL",
+        login_url="/login?next=/t/FAIL",
+    )
+    assert report_action["state"] == "unavailable"
+    assert report_action["label"] == "Report unavailable"
+    assert report_action["message"] == "Report couldn't be generated. No Flash was charged."
+    assert "provider" not in json.dumps(report_action).lower()
+
+
+def test_flash_queue_failure_refunds_before_the_response(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "flash-queue.db")
+    init_db()
+    timestamp = datetime.now(UTC).isoformat()
+    insert_filing("queue-one", "ONE", 1.25, 90, timestamp, "P")
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("queue-user", "queue_user", "Queue User", "active", timestamp),
+        )
+    claim_daily_flash("queue-user")
+    report, created = web_main._create_research_commission("queue-user", "ONE")
+    assert created is True
+    assert wallet_for_user("queue-user")["balance"] == 0
+    monkeypatch.setattr(web_main, "redis_configured", lambda: True)
+
+    def fail_enqueue(_report_id: str) -> None:
+        raise RuntimeError("private queue detail")
+
+    monkeypatch.setattr(web_main, "enqueue_research_job", fail_enqueue)
+    failed = asyncio.run(web_main._enqueue_created_research_report(report, "queue-user"))
+    payload = web_main._commission_api_payload(failed, "queue-user")
+
+    assert payload["status"] == "failed"
+    assert payload["balance"] == 100
+    assert payload["message"] == "Report couldn't be generated. No Flash was charged."
+    assert "queue" not in json.dumps(payload).lower()
 
 
 def test_owner_can_publish_report_once_and_earn_flash(

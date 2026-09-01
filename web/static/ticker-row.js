@@ -60,11 +60,7 @@
     const direction = String(thesis?.direction || '').toLowerCase();
     if (!['up', 'down', 'flat'].includes(direction)) {
       if (row.source !== 'market' && row.section !== 'scored') return ['', ''];
-      const description = 'Directional thesis: model learning';
-      return [
-        `<small class="ticker-thesis ticker-thesis-learning" title="${description}" aria-hidden="true"><b>—</b><span>MODEL LEARNING</span></small>`,
-        description,
-      ];
+      return ['', 'Directional thesis: model learning'];
     }
     const arrows = {up: '↑', down: '↓', flat: '↔'};
     const label = String(thesis.label || (direction === 'flat' ? 'No edge' : direction));
@@ -74,6 +70,23 @@
       `<small class="ticker-thesis ticker-thesis-${direction}" title="${esc(description)}" aria-hidden="true"><b>${arrows[direction]}</b><span>${esc(label.toUpperCase())} · ${esc(horizon.toUpperCase())}</span></small>`,
       description,
     ];
+  }
+
+  function scoredComparison(row) {
+    if (row.section !== 'scored') return '';
+    const values = [
+      ['RANK', number(row.custom_rank) === null ? '—' : `#${Math.round(number(row.custom_rank))}`],
+      ['PULSE', number(row.score) === null ? '—' : Math.round(number(row.score))],
+      ['SETUP', number(row.setup_score) === null ? '—' : Math.round(number(row.setup_score))],
+      ['RVOL', number(row.relative_volume) === null ? '—' : `${number(row.relative_volume).toFixed(1)}×`],
+      ['15M', percent(row.momentum_15m_pct)],
+    ];
+    return `<span class="ticker-comparison" aria-hidden="true">${values.map(([label, value]) => {
+      const tone = label === '15M' && number(row.momentum_15m_pct) !== null
+        ? (number(row.momentum_15m_pct) >= 0 ? ' up' : ' down')
+        : '';
+      return `<span><small>${label}</small><b class="${tone.trim()}">${esc(value)}</b></span>`;
+    }).join('')}</span>`;
   }
 
   function renderShell({
@@ -130,7 +143,10 @@
       ? `<small class="ticker-badge ticker-badge-${statusTone}">${esc(statusLabel)}</small>`
       : '';
     const [thesisCueMarkup, thesisLabel] = thesisCue(row);
-    const age = ago(row.entered_at || row.event_at);
+    const marketFreshness = row.section === 'scored' || row.source === 'market';
+    const age = ago(marketFreshness
+      ? row.quote_time || row.event_at || row.entered_at
+      : row.entered_at || row.event_at);
     const events = Number(row.event_count) > 1
       ? `<span class="event-count">+${Number(row.event_count) - 1}</span>`
       : '';
@@ -150,7 +166,10 @@
       ? `, ${tradeState}`
       : '';
     const marketLabel = `${statusLabel ? `, ${statusLabel}` : ''}${tradeStateLabel}${rugValue !== null ? `, rug risk ${rugValue.toFixed(0)}` : ''}`;
-    const label = `${row.ticker}, ${company}, ${money(row.price)}, ${percent(row.change_pct)}${marketLabel}${thesisLabel ? `, ${thesisLabel}` : ''}`;
+    const scoreLabel = row.section === 'scored'
+      ? `, rank ${number(row.custom_rank) ?? 'unknown'}, Pulse score ${number(row.score) ?? 'unknown'}, setup ${number(row.setup_score) ?? 'unknown'}, relative volume ${number(row.relative_volume) ?? 'unknown'}, 15 minute momentum ${percent(row.momentum_15m_pct)}`
+      : '';
+    const label = `${row.ticker}, ${company}, ${money(row.price)}, ${percent(row.change_pct)}${marketLabel}${scoreLabel}${thesisLabel ? `, ${thesisLabel}` : ''}`;
     const thesis = row.section === 'cases' && row.case_thesis
       ? `<span class="case-thesis">${esc(row.case_thesis)}</span>`
       : '';
@@ -163,6 +182,7 @@
     const trackPrompt = row.needs_thesis
       ? '<span class="case-track-prompt">Comment once to make this view personal</span>'
       : '';
+    const comparison = scoredComparison(row);
     return renderShell({
       href: `/t/${encodeURIComponent(row.ticker)}`,
       ariaLabel: label,
@@ -172,38 +192,56 @@
       headlineMeta: badge,
       age,
       company,
-      detailMarkup: `${caseSource}${thesis}${caseSocial}${trackPrompt}`,
+      detailMarkup: `${caseSource}${thesis}${caseSocial}${trackPrompt}${comparison}`,
       catalyst: row.pulse_label || 'No recent event',
       catalystTone: catalystTone.trim(),
       catalystMarkup: `${events}${thesisCueMarkup}${safety}`,
       quoteValue: money(row.price),
       chartMarkup: `<svg class="mini-chart" data-ticker="${esc(row.ticker)}" viewBox="0 0 64 18" preserveAspectRatio="none" aria-hidden="true"><path class="chart-placeholder" d="M1 12 L13 10 L25 13 L39 8 L51 10 L63 7"/></svg>`,
-      quoteMarkup: `<span class="quote-period">Today</span> ${esc(percent(row.change_pct))}`,
+      quoteMarkup: `<span class="quote-period">Session</span> ${esc(percent(row.change_pct))}`,
       quoteTone: changeClass,
       updated: Boolean(updateClass),
       dataTicker: row.ticker,
     });
   }
 
-  function drawMiniChart(svg, points, annotations = []) {
-    const rows = points
+  function chartRows(points) {
+    return points
       .map(point => ({time: new Date(point.time).getTime(), price: number(point.price)}))
-      .filter(point => point.price !== null)
-      .slice(-36);
+      .filter(point => point.price !== null && Number.isFinite(point.time));
+  }
+
+  function sharedChartDomain() {
+    let maximum = 0;
+    chartCache.forEach(points => {
+      const rows = chartRows(points);
+      const baseline = rows[0]?.price;
+      if (!baseline) return;
+      rows.forEach(point => {
+        maximum = Math.max(maximum, Math.abs((point.price / baseline - 1) * 100));
+      });
+    });
+    return Math.max(2, Math.ceil(maximum / 2) * 2);
+  }
+
+  function drawMiniChart(svg, points, annotations = [], domain = sharedChartDomain()) {
+    const rows = chartRows(points);
     if (rows.length < 2) {
       svg.classList.add('unavailable');
       return;
     }
-    const values = rows.map(point => point.price);
-    const low = Math.min(...values);
-    const high = Math.max(...values);
-    const spread = Math.max(high - low, Math.abs(high) * .002, .001);
+    const baseline = rows[0].price;
+    if (!baseline) {
+      svg.classList.add('unavailable');
+      return;
+    }
+    const values = rows.map(point => (point.price / baseline - 1) * 100);
     const path = values.map((value, index) => {
       const x = 1 + index / (values.length - 1) * 62;
-      const y = 16 - (value - low) / spread * 14;
+      const y = 9 - (value / domain) * 7;
       return `${index ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`;
     }).join(' ');
-    const rising = values.at(-1) >= values[0];
+    const rising = values.at(-1) >= 0;
     const entry = annotations.filter(item => item.type === 'pulse_entry').at(-1);
     const entryTime = entry ? new Date(entry.time).getTime() : NaN;
     let marker = '';
@@ -213,23 +251,25 @@
         if (Math.abs(point.time - entryTime) < Math.abs(rows[markerIndex].time - entryTime)) markerIndex = index;
       });
       const x = 1 + markerIndex / (rows.length - 1) * 62;
-      const y = 16 - (values[markerIndex] - low) / spread * 14;
+      const y = 9 - (values[markerIndex] / domain) * 7;
       marker = `<line class="pulse-entry-line" x1="${x.toFixed(1)}" y1="1" x2="${x.toFixed(1)}" y2="17"/><circle class="pulse-entry-dot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.4"/>`;
     }
     svg.classList.toggle('rising', rising);
     svg.classList.toggle('falling', !rising);
-    svg.innerHTML = `<path d="${path}" fill="none" stroke="currentColor" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>${marker}`;
+    svg.innerHTML = `<line class="mini-chart-zero" x1="1" y1="9" x2="63" y2="9"/><path d="${path}" fill="none" stroke="currentColor" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>${marker}`;
     svg.classList.remove('unavailable');
     svg.classList.add('loaded');
   }
 
   function paintCharts(root = document) {
+    const domain = sharedChartDomain();
     root.querySelectorAll('.mini-chart').forEach(svg => {
       if (chartCache.has(svg.dataset.ticker)) {
         drawMiniChart(
           svg,
           chartCache.get(svg.dataset.ticker),
           annotationCache.get(svg.dataset.ticker) || [],
+          domain,
         );
       }
     });

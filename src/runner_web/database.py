@@ -3,12 +3,15 @@ from __future__ import annotations
 import re
 import sqlite3
 import threading
+import time
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
 from functools import wraps
 from pathlib import Path
 from time import sleep
 from typing import Any, ParamSpec, TypeVar
+
+from runner_web.performance import record_database_wait
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -317,7 +320,9 @@ def close_database_pool() -> None:
 def open_database(database_url: str, database_path: Path) -> Iterator[DatabaseConnection]:
     if database_url:
         pool = _pool(database_url)
+        started = time.perf_counter()
         with pool.connection() as raw:
+            record_database_wait((time.perf_counter() - started) * 1000)
             database = DatabaseConnection(raw, "postgres")
             try:
                 yield database

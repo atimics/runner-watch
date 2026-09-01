@@ -27,6 +27,7 @@
   }
 
   function localTime(value, options = {}) {
+    if (value === null || value === undefined || String(value).trim() === '') return 'pending';
     const date = new Date(value);
     if (Number.isNaN(date.valueOf())) return value ? String(value) : 'pending';
     return date.toLocaleString([], {
@@ -41,6 +42,7 @@
   }
 
   function shortGameTime(value) {
+    if (value === null || value === undefined || String(value).trim() === '') return 'pending';
     const date = new Date(value);
     if (Number.isNaN(date.valueOf())) return value ? String(value) : 'pending';
     return date.toLocaleString([], {
@@ -48,6 +50,19 @@
       hour: 'numeric',
       minute: '2-digit',
     });
+  }
+
+  function freshness(value) {
+    if (value === null || value === undefined || String(value).trim() === '') {
+      return 'Update pending';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.valueOf())) return 'Update pending';
+    const seconds = Math.max(0, (Date.now() - date.getTime()) / 1000);
+    if (seconds < 90) return 'Updated now';
+    if (seconds < 5400) return `Updated ${Math.round(seconds / 60)}m ago`;
+    if (seconds < 129600) return `Updated ${Math.round(seconds / 3600)}h ago`;
+    return `Updated ${date.toLocaleDateString([], {month: 'short', day: 'numeric'})}`;
   }
 
   function formatLocalTimes(root = document) {
@@ -100,7 +115,13 @@
     const projectionLabel = event.model_winner_label || (slightEdge ? 'SLIGHT EDGE' : 'PROJECTED');
     const ariaAction = event.model_winner_aria_action
       || (slightEdge ? 'has a slight model edge over' : 'is projected to beat');
-    const label = `${event.model_winner_team_name || model} ${ariaAction} ${opponentName} with a ${number(event.model_winner_probability_pct)} percent win chance; value side ${signal} with a ${signed(prediction.edge_pct)} percentage-point model edge`;
+    const comparisonLabel = Number.isFinite(Number(event.model_probability_pct))
+      ? `, model ${number(event.model_probability_pct, 1)} percent versus market ${Number.isFinite(Number(event.market_probability_pct)) ? number(event.market_probability_pct, 1) : 'unavailable'} percent`
+      : '';
+    const label = `${event.model_winner_team_name || model} ${ariaAction} ${opponentName} with a ${number(event.model_winner_probability_pct)} percent win chance; value side ${signal} with a ${signed(prediction.edge_pct)} percentage-point model edge${comparisonLabel}`;
+    const comparison = Number.isFinite(Number(event.model_probability_pct))
+      ? `<span class="sports-probability-pair" aria-hidden="true"><span><small>MODEL</small><b>${number(event.model_probability_pct, 1)}%</b></span><span><small>MARKET</small><b>${Number.isFinite(Number(event.market_probability_pct)) ? `${number(event.market_probability_pct, 1)}%` : '—'}</b></span></span>`
+      : '';
     return TickerRow.renderShell({
       href: gameHref(prefix, event.id),
       ariaLabel: label,
@@ -110,6 +131,7 @@
       headlineMeta: `<small class="ticker-badge ticker-badge-update">${escapeHtml(projectionLabel)}</small>`,
       age: shortGameTime(event.start_time),
       company: event.model_winner_team_name || model,
+      detailMarkup: comparison,
       catalyst: `vs ${opponentAbbreviation} · ${String(event.league || '').toUpperCase()}`,
       catalystTone: 'gap',
       quoteValue: `${number(event.model_winner_probability_pct)}%`,
@@ -120,8 +142,14 @@
     });
   }
 
-  function renderPulseEvents(events, prefix) {
+  function renderPulseEvents(events, prefix, emptyState = null) {
     if (!events.length) {
+      if (emptyState?.kind === 'season-break') {
+        const nextTip = localTime(emptyState.next_start_time, {
+          year: 'numeric',
+        });
+        return `<div class="sports-empty sports-season-break"><strong>${escapeHtml(emptyState.title || 'Season break')}</strong><p>${escapeHtml(emptyState.detail || '')}</p><small>Next tipoff · ${escapeHtml(nextTip)}</small></div>`;
+      }
       return '<div class="sports-empty"><strong>No matchups right now.</strong><p>Pulse stays quiet until a game clears the model-versus-market threshold.</p></div>';
     }
     return events.map(event => {
@@ -166,7 +194,13 @@
   }
 
   function payloadChanged(current, next) {
-    return JSON.stringify(current?.events || []) !== JSON.stringify(next?.events || []);
+    return JSON.stringify({
+      events: current?.events || [],
+      emptyState: current?.empty_state || null,
+    }) !== JSON.stringify({
+      events: next?.events || [],
+      emptyState: next?.empty_state || null,
+    });
   }
 
   function restorePanelSelection(list) {
@@ -191,8 +225,6 @@
 
   function mountPulse({initial, prefix = ''}) {
     let current = initial;
-    let pending = null;
-    let polling = false;
     const list = document.getElementById('sportsPulseList');
     const refresh = document.getElementById('sportsPulseRefresh');
     const count = document.getElementById('sportsPulseCount');
@@ -201,12 +233,16 @@
     const updated = document.getElementById('sportsPulseUpdated');
     if (!list || !refresh) return null;
 
-    function render() {
-      list.innerHTML = renderPulseEvents(current.events || [], prefix);
+    function render(next = current) {
+      current = next;
+      list.innerHTML = renderPulseEvents(current.events || [], prefix, current.empty_state);
       count.textContent = current.display_count ?? (current.events || []).length;
-      if (maturity && current.model_record) {
-        maturity.textContent = `Baseline ${current.model_record.games}/${current.model_record.sample?.target ?? '—'} graded`;
+      if (maturity && current.empty_state?.status_label) {
+        maturity.textContent = current.empty_state.status_label;
+      } else if (maturity && current.model_record) {
+        maturity.textContent = `Baseline ${current.model_record.games} graded · target ${current.model_record.sample?.target ?? '—'}`;
       }
+      if (status) status.textContent = freshness(current.updated_at);
       if (updated) {
         updated.dataset.localTime = current.updated_at || '';
         updated.textContent = localTime(current.updated_at);
@@ -215,100 +251,74 @@
       list.dispatchEvent(new Event('desktop-rows-rendered'));
     }
 
-    refresh.addEventListener('click', () => {
-      if (!pending) return;
-      current = pending;
-      pending = null;
-      refresh.hidden = true;
-      render();
-    });
-
-    async function poll() {
-      if (polling || document.hidden) return;
-      polling = true;
-      try {
-        const response = await fetch(queryEndpoint('/api/sports/pulse'));
+    const controller = RatiLiveList.mount({
+      refreshButton: refresh,
+      interval: POLL_INTERVAL,
+      getCurrent: () => current,
+      setCurrent: value => { current = value; },
+      fetchNext: async () => {
+        const response = await fetch(queryEndpoint('/api/pulse'));
         if (!response.ok) throw new Error('Sports Pulse refresh failed');
-        const next = await response.json();
-        status.textContent = 'Live';
-        if (!payloadChanged(current, next)) {
-          current = {...current, ...next};
-          pending = null;
-          refresh.hidden = true;
-          return;
-        }
-        const currentIds = new Set((current.events || []).map(eventKey));
-        const newCount = (next.events || []).filter(event => !currentIds.has(eventKey(event))).length;
-        pending = next;
-        refresh.textContent = newCount === 1 ? '1 new matchup' : (newCount > 1 ? `${newCount} new matchups` : 'Slate updated');
-        refresh.hidden = false;
-      } catch (_) {
-        status.textContent = 'Offline';
-      } finally {
-        polling = false;
-      }
-    }
-
-    render();
+        return response.json();
+      },
+      changed: payloadChanged,
+      changeCount: (value, next) => {
+        const currentIds = new Set((value.events || []).map(eventKey));
+        return (next.events || []).filter(event => !currentIds.has(eventKey(event))).length;
+      },
+      label: count => count === 1
+        ? '1 new matchup'
+        : (count > 1 ? `${count} new matchups` : 'Slate updated'),
+      render,
+      onPoll: next => { if (status) status.textContent = freshness(next.updated_at); },
+      onNoChange: (next, value) => ({...value, ...next}),
+      onError: () => { if (status) status.textContent = 'Refresh failed'; },
+    });
     formatLocalTimes();
-    const timer = setInterval(poll, POLL_INTERVAL);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
-    return {poll, applyPending: () => refresh.click(), stop: () => clearInterval(timer)};
+    return controller;
   }
 
   function mountRadar({initial, prefix = ''}) {
     let current = initial;
-    let pending = null;
-    let polling = false;
     const list = document.getElementById('sportsRadarList');
     const refresh = document.getElementById('sportsRadarRefresh');
     const count = document.getElementById('sportsRadarCount');
     const status = document.getElementById('sportsRadarStatus');
     if (!list || !refresh) return null;
 
-    function render() {
+    function render(next = current) {
+      current = next;
       list.innerHTML = renderRadarEvents(current.events || [], prefix);
       count.textContent = current.display_count ?? (current.events || []).length;
+      if (status) status.textContent = freshness(current.updated_at);
       restorePanelSelection(list);
     }
 
-    refresh.addEventListener('click', () => {
-      if (!pending) return;
-      current = pending;
-      pending = null;
-      refresh.hidden = true;
-      render();
-    });
-
-    async function poll() {
-      if (polling || document.hidden) return;
-      polling = true;
-      try {
-        const response = await fetch(queryEndpoint('/api/sports/radar'));
+    const controller = RatiLiveList.mount({
+      refreshButton: refresh,
+      interval: POLL_INTERVAL,
+      getCurrent: () => current,
+      setCurrent: value => { current = value; },
+      fetchNext: async () => {
+        const response = await fetch(queryEndpoint('/api/radar'));
         if (!response.ok) throw new Error('Sports Radar refresh failed');
-        const next = await response.json();
-        status.textContent = 'Live';
-        if (!payloadChanged(current, next)) {
-          pending = null;
-          refresh.hidden = true;
-          return;
-        }
-        const currentIds = new Set((current.events || []).map(eventKey));
-        const newCount = (next.events || []).filter(event => !currentIds.has(eventKey(event))).length;
-        pending = next;
-        refresh.textContent = newCount === 1 ? '1 new event' : (newCount > 1 ? `${newCount} new events` : 'Radar updated');
-        refresh.hidden = false;
-      } catch (_) {
-        status.textContent = 'Offline';
-      } finally {
-        polling = false;
-      }
-    }
-
+        return response.json();
+      },
+      changed: payloadChanged,
+      changeCount: (value, next) => {
+        const currentIds = new Set((value.events || []).map(eventKey));
+        return (next.events || []).filter(event => !currentIds.has(eventKey(event))).length;
+      },
+      label: count => count === 1
+        ? '1 new event'
+        : (count > 1 ? `${count} new events` : 'Radar updated'),
+      render,
+      onPoll: next => { if (status) status.textContent = freshness(next.updated_at); },
+      onNoChange: (next, value) => ({...value, ...next}),
+      onError: () => { if (status) status.textContent = 'Refresh failed'; },
+    });
     formatLocalTimes();
-    const timer = setInterval(poll, POLL_INTERVAL);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
-    return {poll, applyPending: () => refresh.click(), stop: () => clearInterval(timer)};
+    return controller;
   }
 
   window.SportsLive = {formatLocalTimes, mountPulse, mountRadar};

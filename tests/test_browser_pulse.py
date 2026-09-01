@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -53,17 +54,35 @@ def _pulse(
         "flash_record": flash_record,
         "has_more": has_more,
         "next_offset": len(rows),
+        "updated_at": "2026-08-27T18:00:00+00:00",
     }
 
 
 def _rendered_pulse(monkeypatch, payload: dict[str, Any]) -> str:
     monkeypatch.setattr(web_main, "pulse_data", lambda **_kwargs: payload)
+    monkeypatch.setattr(
+        web_main,
+        "market_reports_overview",
+        lambda **_kwargs: {
+            "featured": None,
+            "schedule": {
+                "next_label": "Pre-market briefing",
+                "schedule_note": "Weekdays · 9:00 ET and 4:15 ET",
+            },
+        },
+    )
     html = web_main.home(_request(), None).body.decode()
+    live_list_script = (ROOT / "web/static/live-list.js").read_text()
     ticker_script = (ROOT / "web/static/ticker-row.js").read_text()
     html = html.replace("<head>", '<head><base href="http://app.test/">')
     html = re.sub(
         r'<link rel="stylesheet" href="/static/([^"?]+)[^"]*">',
         lambda match: f"<style>{(ROOT / 'web/static' / match.group(1)).read_text()}</style>",
+        html,
+    )
+    html = re.sub(
+        r'<script src="/static/live-list\.js[^\"]*"[^>]*></script>',
+        lambda _match: f"<script>{live_list_script}</script>",
         html,
     )
     html = re.sub(
@@ -110,10 +129,37 @@ def test_empty_flash_record_has_no_layout_gap(page: Page, monkeypatch) -> None:
     scorecard = page.locator("#kolScoreStrip")
     assert scorecard.is_hidden()
     assert scorecard.evaluate("element => element.getBoundingClientRect().height") == 0
-    assert "Today +4.2%" in page.locator('[data-ticker-row="AAA"] .quote').text_content()
+    assert "Session +4.2%" in page.locator('[data-ticker-row="AAA"] .quote').text_content()
+    assert page.locator(".market-turn-strip").is_visible()
+    assert page.locator(".market-turn-strip strong").text_content() == "Pre-market briefing"
     assert page.evaluate(
         "TickerRow.ago(new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString())"
     ) == "3h ago"
+    assert errors == []
+
+
+def test_market_row_age_uses_quote_time_not_scan_entry_time(page: Page, monkeypatch) -> None:
+    entered_at = datetime.now(UTC).isoformat()
+    quote_time = (datetime.now(UTC) - timedelta(hours=3)).isoformat()
+    row = {
+        **_row("OLD", entered_at),
+        "section": "scored",
+        "source": "market",
+        "quote_time": quote_time,
+    }
+    html = _rendered_pulse(monkeypatch, _pulse(row))
+    errors = _load(page, html, [])
+
+    rendered_age = page.evaluate(
+        """row => {
+          const holder = document.createElement('div');
+          holder.innerHTML = TickerRow.render(row);
+          return holder.querySelector('.ticker-age').textContent;
+        }""",
+        row,
+    )
+
+    assert rendered_age == "3h ago"
     assert errors == []
 
 
@@ -139,6 +185,9 @@ def test_pulse_header_is_one_compact_stack(page: Page, monkeypatch, width: int) 
     assert page.locator(".pulse-list-column > .pulse-search").count() == 0
     assert page.locator(".pulse-list-column > .session-clock").count() == 0
     assert page.locator(".screen-head .head-meta").count() == 0
+    assert page.locator(".pulse-context").is_visible()
+    assert "Ranked by Pulse score" in page.locator(".pulse-context").text_content()
+    assert "7-day sparklines share one % scale" in page.locator(".pulse-context").text_content()
     assert scorecard.is_visible()
     assert scorecard.evaluate("element => element.getBoundingClientRect().height") <= 34
     assert page.evaluate(
@@ -177,11 +226,34 @@ def test_pulse_labels_an_unavailable_market_model_as_learning(page: Page, monkey
     html = _rendered_pulse(monkeypatch, _pulse({**_row("AAA"), "source": "market"}))
     errors = _load(page, html, [])
 
-    cue = page.locator('[data-ticker-row="AAA"] .ticker-thesis-learning')
-    assert cue.text_content() == "—MODEL LEARNING"
+    assert page.locator('[data-ticker-row="AAA"] .ticker-thesis-learning').count() == 0
     assert "Directional thesis: model learning" in page.locator(
         '[data-ticker-row="AAA"]'
     ).get_attribute("aria-label")
+    assert errors == []
+
+
+def test_scored_pulse_rows_expose_comparable_rank_and_signal_metrics(
+    page: Page, monkeypatch
+) -> None:
+    row = {
+        **_row("AAA"),
+        "section": "scored",
+        "custom_rank": 1,
+        "score": 72.4,
+        "setup_score": 61.2,
+        "relative_volume": 3.18,
+        "momentum_15m_pct": -2.4,
+    }
+    html = _rendered_pulse(monkeypatch, _pulse(row))
+    errors = _load(page, html, [])
+
+    comparison = page.locator('[data-ticker-row="AAA"] .ticker-comparison')
+    assert comparison.text_content() == "RANK#1PULSE72SETUP61RVOL3.2×15M-2.4%"
+    assert comparison.locator("b.down").text_content() == "-2.4%"
+    assert comparison.evaluate(
+        "element => getComputedStyle(element.closest('.ticker-row')).minHeight"
+    ) == "94px"
     assert errors == []
 
 
@@ -192,11 +264,11 @@ def test_refresh_executes_missing_markers_and_clears_stale_alerts(page: Page, mo
     html = _rendered_pulse(monkeypatch, initial)
     errors = _load(page, html, [newer, settled])
 
-    page.evaluate("pollForUpdates()")
+    page.evaluate("window.pulseLive.poll()")
     assert page.locator("#pulseRefresh").is_visible()
     assert page.locator("#pulseRefresh").text_content() == "1 new ticker"
 
-    page.evaluate("pollForUpdates()")
+    page.evaluate("window.pulseLive.poll()")
     assert page.locator("#pulseRefresh").is_hidden()
     assert errors == []
 
@@ -220,7 +292,7 @@ def test_refresh_updates_flash_record_and_merges_new_ticker(page: Page, monkeypa
     html = _rendered_pulse(monkeypatch, initial)
     errors = _load(page, html, [newer])
 
-    page.evaluate("pollForUpdates()")
+    page.evaluate("window.pulseLive.poll()")
     assert page.locator("#kolScoreStrip").is_visible()
     assert "12 hits · 8 misses · 50% hit" in page.locator("[data-kol-stats]").text_content()
     assert page.locator("[data-kol-pnl]").text_content() == "View record ›"

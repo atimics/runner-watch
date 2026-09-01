@@ -31,7 +31,8 @@ def test_general_interface_keeps_its_editorial_edge() -> None:
     assert "risk-evidence" in ticker
     assert "astrology for the tape" in ticker_script
     assert "Evidence review, not a trade alert." not in ticker
-    assert "#1 most called" in community
+    assert "#1 by open Calls" in community
+    assert "Open Calls first · total Calls break ties" in community
     assert "🐺" in community
     assert '<span class="tab-icon alpha-icon" aria-hidden="true"></span>' in navigation
 
@@ -40,16 +41,18 @@ def test_sports_pulse_is_locked_to_the_shared_ticker_row() -> None:
     sports = (ROOT / "web/templates/sports.html").read_text()
     sports_live = (ROOT / "web/static/sports-live.js").read_text()
     ticker_row = (ROOT / "web/static/ticker-row.js").read_text()
-    sports_ticker = (ROOT / "web/static/sports-ticker.css").read_text()
-    sports_unified = (ROOT / "web/static/sports-unified.css").read_text()
+    sports_product = (ROOT / "web/static/sports-product.css").read_text()
 
     assert 'class="token-list" id="sportsPulseList"' in sports
     assert "TickerRow.renderShell" in sports_live
     assert "renderShell" in ticker_row
     assert "data-sports-pulse-row" in ticker_row
-    assert "winner-card" not in sports + sports_live + sports_ticker + sports_unified
-    assert "team-projection-card" not in sports + sports_live + sports_ticker + sports_unified
-    assert "Sports Pulse rows intentionally use the shared ticker-row.css contract" in sports_ticker
+    assert "winner-card" not in sports + sports_live + sports_product
+    assert "team-projection-card" not in sports + sports_live + sports_product
+    assert (
+        "Sports Pulse rows intentionally use the shared ticker-row.css contract"
+        in sports_product
+    )
 
 
 def test_ai_report_carries_the_single_clear_disclaimer() -> None:

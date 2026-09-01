@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 from contextlib import contextmanager
@@ -13,19 +14,34 @@ from runner_web import db
 from runner_web import main as web_main
 from runner_web import sports as sports_module
 from runner_web.db import connection, init_db
-from runner_web.flash_wallet import SPORTS_CALL_REWARD_CAP, sports_call_reward, wallet_for_user
+from runner_web.flash_wallet import (
+    SPORTS_CALL_REWARD_CAP,
+    claim_daily_flash,
+    sports_call_reward,
+    wallet_for_user,
+)
 from runner_web.main import (
     alpha_page,
+    create_sports_comment,
     home,
     origin_for_request,
     product_for_request,
     radar_page,
+    sports_alpha_api,
+    sports_alpha_page,
+    sports_game_legacy_page,
     sports_game_page,
+    sports_home,
+    sports_pulse_api,
+    sports_radar_api,
+    sports_radar_page,
+    sports_receipts_legacy_page,
     sports_receipts_page,
 )
 from runner_web.sports import (
     collect_stored_player_appearances,
     create_sports_pick,
+    fetch_league,
     fetch_league_history_chunk,
     golf_slate,
     implied_probability,
@@ -211,6 +227,39 @@ def test_moneyline_probabilities_remove_the_vig() -> None:
     assert away == pytest.approx(0.5)
 
 
+def test_nba_fetch_discovers_the_next_scheduled_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, Any, Any, str]] = []
+
+    def fake_range(league, start, end, *, feed):
+        calls.append((league, start, end, feed))
+        return []
+
+    monkeypatch.setattr(sports_module, "_fetch_league_range", fake_range)
+    current = datetime(2026, 8, 30, 12, tzinfo=UTC)
+
+    fetch_league("nba", current)
+    fetch_league("mlb", current)
+
+    assert calls[0][2] == current.date() + timedelta(days=3)
+    assert calls[1][1] == current.date() + timedelta(days=4)
+    assert calls[1][2] == current.date() + timedelta(days=45)
+    assert calls[2][2] == current.date() + timedelta(days=3)
+
+    calls.clear()
+    nearby = [{"id": "nba:nearby"}]
+
+    def fake_nearby(league, start, end, *, feed):
+        calls.append((league, start, end, feed))
+        return nearby
+
+    monkeypatch.setattr(sports_module, "_fetch_league_range", fake_nearby)
+
+    assert fetch_league("nba", current) == nearby
+    assert len(calls) == 1
+
+
 def test_scoreboard_event_becomes_a_source_bound_prediction() -> None:
     event = normalize_event("mlb", sample_event())
     assert event is not None
@@ -235,6 +284,9 @@ def test_golf_tournament_becomes_a_ranked_pga_leaderboard(sports_db) -> None:
     assert event["leaderboard"][0]["round_number"] == 2
     assert event["leaderboard"][0]["through_display"] == "F"
 
+    event["status"] = "pre"
+    event["status_detail"] = "Scheduled"
+
     stored = store_golf_events([event])
     slate = golf_slate()
 
@@ -242,6 +294,7 @@ def test_golf_tournament_becomes_a_ranked_pga_leaderboard(sports_db) -> None:
     assert slate["display_count"] == 1
     assert slate["entrant_count"] == 2
     assert slate["events"][0]["venue"] == "East Lake Golf Club"
+    assert slate["events"][0]["display_status"] == "Round 2 complete"
     assert [player["player_name"] for player in slate["events"][0]["leaderboard"]] == [
         "Ryan Gerard",
         "Viktor Hovland",
@@ -350,7 +403,7 @@ def test_ai_prediction_cannot_be_created_after_a_game_starts(sports_db) -> None:
     assert event is not None
     store_events([event])
 
-    with pytest.raises(HTTPException, match="only before the game starts"):
+    with pytest.raises(HTTPException, match="Reports close when the game starts"):
         web_main._create_research_commission(
             "unused-user",
             web_main._sports_report_key(str(event["id"])),
@@ -470,7 +523,8 @@ def test_event_linked_recap_stays_with_previous_game_and_builds_series_context(
         None,
     )
     assert b"Back-to-back rematch" in response.body
-    assert b"GAME RECAP" in response.body
+    assert b"RELATED NEWS" in response.body
+    assert b"GAME RECAP" not in response.body
     assert b"Game 2 of 2" in response.body
     assert b"timeZoneName:'short'" in response.body
 
@@ -546,6 +600,92 @@ def test_paper_pick_rejects_an_old_moneyline(sports_db) -> None:
     assert detail["paper_odds"] is None
     with pytest.raises(ValueError, match="fresh moneyline"):
         create_sports_pick("stale-user", str(event["id"]), "home")
+
+
+def test_started_game_closes_picks_before_offering_login(sports_db) -> None:
+    raw = sample_event()
+    raw["date"] = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    for competitor in raw["competitions"][0]["competitors"]:
+        competitor["score"] = ""
+    event = normalize_event("mlb", raw)
+    assert event is not None
+    store_events([event])
+
+    detail = sports_event(str(event["id"]))
+    assert detail is not None
+    assert detail["view_state"] == {
+        "label": "Game started",
+        "detail": "Score pending from ESPN",
+        "started": True,
+        "score_available": False,
+        "pick_state": "closed",
+        "picks_open": False,
+    }
+
+    response = sports_game_page(
+        str(event["id"]),
+        request(path=f"/game/{event['id']}"),
+        None,
+    )
+    assert b"Game started" in response.body
+    assert b"Score pending from ESPN" in response.body
+    assert b"Calls closed" in response.body
+    assert b"No new picks can be added" in response.body
+    assert b"Make a Call" not in response.body
+    assert b"Log in to make a Call" not in response.body
+
+
+def test_sports_comments_use_the_shared_flash_funded_generator(
+    sports_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    user_id = "sports-comment-user"
+    created_at = datetime.now(UTC).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            (user_id, "sports_comment", "Sports Comment", "active", created_at),
+        )
+    claim_daily_flash(user_id)
+    monkeypatch.setattr(web_main, "require_origin", lambda _request: None)
+    monkeypatch.setattr(web_main, "require_user", lambda _session: {"id": user_id})
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "sports-comment-test-key")
+    monkeypatch.setattr(
+        web_main,
+        "_generate_sports_comment_text",
+        lambda _event_id, *, avatar_ability_id: (
+            f"The {avatar_ability_id} read favors the verified matchup edge.",
+            "test/sports-comment-model",
+        ),
+    )
+    comment_request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": f"/api/comments/game/{event['id']}",
+            "headers": [(b"idempotency-key", b"sports-comment-request-0001")],
+            "client": ("127.0.0.1", 4300),
+        }
+    )
+
+    response = asyncio.run(create_sports_comment(str(event["id"]), comment_request, None))
+    payload = json.loads(response.body)
+
+    assert response.status_code == 201
+    assert payload["comment"]["ai_generated"] is True
+    assert payload["comment"]["generation_model"] == "test/sports-comment-model"
+    assert payload["balance"] == 90
+    with connection() as database:
+        row = database.execute(
+            "SELECT subject_kind,subject_key,source FROM ticker_comments"
+        ).fetchone()
+    assert dict(row) == {
+        "subject_kind": "sports_game",
+        "subject_key": event["id"],
+        "source": "ai_generated",
+    }
 
 
 def test_pick_api_invalidates_game_and_alpha_caches(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -682,7 +822,8 @@ def test_bovada_odds_show_feed_attribution_and_freeze_on_paper_pick(sports_db) -
     assert observed_at.isoformat()[:16].replace("T", " ").encode() in response.body
 
 
-def test_sports_host_gets_the_sports_product(sports_db) -> None:
+def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "server-test-key")
     event = normalize_event("mlb", sample_event())
     assert event is not None
     store_events([event])
@@ -733,21 +874,70 @@ def test_sports_host_gets_the_sports_product(sports_db) -> None:
     assert b'class="decision-team"' in detail_response.body
     assert b"BASELINE WINNER" in detail_response.body
     assert b"MARKET GAP" in detail_response.body
+    assert b"Model vs no-vig market" in detail_response.body
+    assert detail_response.body.count(b'class="probability-row') == 2
     assert b"Season records plus home edge" in detail_response.body
     assert detail_response.body.index(b"SEASON-RECORD BASELINE") < detail_response.body.index(
-        b"Daily Flash"
+        b"Flash report"
     )
     assert b"Team news" in detail_response.body
-    assert b"Make a paper pick" in detail_response.body
+    assert b"Game thread" not in detail_response.body
+    assert b"<textarea" not in detail_response.body
+    assert b'/static/sports-comments.js' not in detail_response.body
+    assert b"Make a Call" in detail_response.body
     assert b"Wins earn up to" in detail_response.body
+    assert b'class="game-notebook"' in detail_response.body
+    assert detail_response.body.index(b"SEASON-RECORD BASELINE") < detail_response.body.index(
+        b"Make a Call"
+    ) < detail_response.body.index(
+        b"Flash report"
+    ) < detail_response.body.index(b"Game details")
 
     path_response = sports_game_page(
         event["id"],
         request(host="localhost", path=f"/sports/game/{event['id']}"),
         None,
     )
-    expected_return = f'href="/login?next=/sports/game/{event["id"]}"'.encode()
-    assert expected_return in path_response.body
+    assert path_response.status_code == 307
+    assert path_response.headers["location"] == f"{web_main.SPORTS_ORIGIN}/game/{event['id']}"
+
+
+def test_legacy_sports_routes_cannot_redirect_to_user_input(sports_db) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    runners_request = request(host="runners.rati.chat")
+    untrusted = "//untrusted.example/%2f.."
+
+    page_redirects = (
+        (sports_home(runners_request, None, league=untrusted, view=untrusted), "/"),
+        (sports_radar_page(runners_request, None, league=untrusted), "/radar"),
+        (sports_alpha_page(runners_request, None, league=untrusted), "/alpha"),
+        (
+            sports_receipts_legacy_page(runners_request, None, league=untrusted),
+            "/alpha",
+        ),
+    )
+    for response, path in page_redirects:
+        assert response.status_code == 307
+        assert response.headers["location"] == f"{web_main.SPORTS_ORIGIN}{path}"
+        assert "untrusted.example" not in response.headers["location"]
+
+    legacy_api_responses = (
+        sports_pulse_api(runners_request, league=untrusted, view=untrusted, limit=1),
+        sports_radar_api(runners_request, league=untrusted, limit=1),
+        sports_alpha_api(runners_request, league=untrusted, limit=1),
+    )
+    assert all(response.status_code == 200 for response in legacy_api_responses)
+    assert all("location" not in response.headers for response in legacy_api_responses)
+
+    game_redirect = sports_game_legacy_page(str(event["id"]))
+    assert game_redirect.headers["location"] == (
+        f"{web_main.SPORTS_ORIGIN}/game/{event['id']}"
+    )
+    with pytest.raises(HTTPException) as error:
+        sports_game_legacy_page("//untrusted.example")
+    assert error.value.status_code == 404
 
 
 def test_game_page_handles_winner_without_market_gap(sports_db) -> None:
@@ -769,6 +959,29 @@ def test_game_page_handles_winner_without_market_gap(sports_db) -> None:
     assert response.status_code == 200
     assert b"BASELINE WINNER" in response.body
     assert b"A complete fresh market is not available" in response.body
+
+
+def test_game_page_tolerates_minimal_cached_event_data(
+    sports_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    detail = sports_event(str(event["id"]))
+    assert detail is not None
+    monkeypatch.setattr(
+        web_main,
+        "_public_screen_data",
+        lambda *_args, **_kwargs: {"event": detail},
+    )
+
+    response = sports_game_page(
+        str(event["id"]), request(path=f"/game/{event['id']}"), None
+    )
+
+    assert response.status_code == 200
+    assert b"Game thread" not in response.body
+    assert b"<textarea" not in response.body
 
 
 def test_slate_builds_fixed_side_edge_history(sports_db) -> None:
@@ -880,6 +1093,34 @@ def test_sports_pulse_hides_passes_and_radar_keeps_real_moves(sports_db) -> None
     radar = sports_radar()
     assert radar["events"][0]["id"] == promoted["id"]
     assert radar["events"][0]["radar_kind"] == "market"
+
+
+def test_nba_pulse_explains_the_offseason_without_promoting_preseason(
+    sports_db,
+) -> None:
+    raw = sample_event()
+    raw["id"] = "401902644"
+    raw["date"] = (datetime.now(UTC) + timedelta(days=30)).isoformat()
+    raw["season"] = {"year": 2027, "type": 1, "slug": "preseason"}
+    event = normalize_event("nba", raw)
+    assert event is not None
+    store_events([event])
+
+    pulse = sports_pulse("nba")
+
+    assert pulse["events"] == []
+    assert pulse["scanned_count"] == 1
+    assert pulse["hidden_count"] == 1
+    assert pulse["empty_state"] == {
+        "kind": "season-break",
+        "title": "NBA is between seasons.",
+        "detail": (
+            "The next scheduled game is AWY at HOM. Pulse will wait for regular-season "
+            "records and fresh market consensus before publishing a projection."
+        ),
+        "next_start_time": event["start_time"].isoformat(),
+        "status_label": "Next NBA game scheduled",
+    }
 
 
 def test_pulse_separates_model_favorite_from_value_edge(sports_db) -> None:
@@ -1019,7 +1260,10 @@ def test_sports_alpha_builds_team_and_player_win_rate_history(sports_db) -> None
     assert alpha["model"]["receipts"][0]["receipt_id"]
 
 
-def test_game_page_keeps_player_context_and_flash_inside_the_matchup(sports_db) -> None:
+def test_game_page_keeps_player_context_and_flash_inside_the_matchup(
+    sports_db, monkeypatch
+) -> None:
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "server-test-key")
     payload = {
         "boxscore": {
             "players": [
@@ -1094,13 +1338,14 @@ def test_game_page_keeps_player_context_and_flash_inside_the_matchup(sports_db) 
         request(path=f"/game/{upcoming['id']}"),
         None,
     )
-    assert b"Daily Flash" in response.body
+    assert b"Flash report" in response.body
     assert b"Last stored team rosters" in response.body
     assert b"Previous team rosters" in response.body
     assert b"Home Player" in response.body
     assert b"Not confirmed for this game" in response.body
     assert b"team record in" not in response.body
-    assert b"/api/sports/games/mlb:401200003/research" in response.body
+    assert b"Log in to generate" in response.body
+    assert b"/api/sports/games/mlb:401200003/research" not in response.body
 
 
 def test_sports_flash_uses_a_sports_only_contract_and_frozen_numbers(monkeypatch) -> None:
@@ -1319,7 +1564,9 @@ def test_finished_game_seals_the_last_pregame_prediction_and_market(sports_db) -
     )
     assert b"SEALED PREGAME" in response.body
     assert b"Later news and results cannot rewrite it" in response.body
-    assert b"Pregame market timeline" in response.body
+    assert b"Pregame moneyline record" in response.body
+    assert b"Reports closed" in response.body
+    assert b'id="commissionButton"' not in response.body
 
 
 def test_sports_alpha_fetches_history_only_for_ranked_players(sports_db) -> None:
@@ -1435,7 +1682,7 @@ def test_sports_host_uses_the_sports_shell_for_alpha(sports_db) -> None:
     assert b"Four prediction slots" not in alpha_response.body
     assert b"Rankings stay hidden" in alpha_response.body
     assert b"3 of 20 public Calls recorded" in alpha_response.body
-    assert b"Call activity" in alpha_response.body
+    assert b"Activity is building" in alpha_response.body
     assert b'<span class="alpha-rank">1</span>' not in alpha_response.body
     assert b"open Calls" in alpha_response.body
     assert b'href="/alpha"' in alpha_response.body
@@ -1467,8 +1714,8 @@ def test_game_pages_reuse_the_cached_model_record(sports_db, monkeypatch) -> Non
 
 
 def test_sports_alpha_page_reuses_warmed_result(sports_db, monkeypatch) -> None:
-    web_main.SPORTS_ALPHA_DATA_CACHE.clear()
-    web_main.SPORTS_ALPHA_DATA_REFRESHING.clear()
+    web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
+    web_main.PUBLIC_SCREEN_DATA_REFRESHING.clear()
     monkeypatch.setattr(web_main, "shared_cache_get", lambda _name: None)
     monkeypatch.setattr(web_main, "shared_cache_set", lambda *_args: None)
     original = web_main.sports_alpha_board

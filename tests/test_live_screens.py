@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import runpy
 import sqlite3
 import sys
@@ -23,9 +24,6 @@ def _manifest_database() -> sqlite3.Connection:
         CREATE TABLE scan_snapshots(ticker TEXT, captured_at TEXT);
         CREATE TABLE caller_identities(id TEXT, handle TEXT, status TEXT);
         CREATE TABLE community_calls(caller_identity_id TEXT, updated_at TEXT);
-        CREATE TABLE signals(
-            public_id TEXT, caller_identity_id TEXT, status TEXT, created_at TEXT
-        );
         CREATE TABLE research_commissions(
             public_id TEXT, status TEXT, visibility TEXT, published_at TEXT,
             completed_at TEXT, created_at TEXT
@@ -46,12 +44,6 @@ def test_public_dynamic_screen_paths_uses_latest_safe_public_records() -> None:
             INSERT INTO caller_identities VALUES ('caller-2', 'retired-ibis', 'tombstoned');
             INSERT INTO community_calls VALUES ('caller-1', '2026-01-01T00:00:00Z');
             INSERT INTO community_calls VALUES ('caller-2', '2026-01-02T00:00:00Z');
-            INSERT INTO signals VALUES (
-                'public/id', 'caller-1', 'public', '2026-01-01T00:00:00Z'
-            );
-            INSERT INTO signals VALUES (
-                'hidden', 'caller-1', 'removed', '2026-01-02T00:00:00Z'
-            );
             INSERT INTO research_commissions VALUES (
                 'public-report', 'complete', 'public', '2026-01-01T00:00:00Z', NULL,
                 '2026-01-01T00:00:00Z'
@@ -68,7 +60,6 @@ def test_public_dynamic_screen_paths_uses_latest_safe_public_records() -> None:
         assert public_dynamic_screen_paths(database) == {
             "ticker": "/t/NEW.A",
             "caller": "/u/steady-ibis",
-            "signal": "/s/public%2Fid",
             "research": "/research/public-report",
             "sports_game": "/game/mlb:next",
         }
@@ -79,7 +70,6 @@ def test_public_dynamic_screen_paths_reports_missing_fixtures() -> None:
         assert public_dynamic_screen_paths(database) == {
             "ticker": None,
             "caller": None,
-            "signal": None,
             "research": None,
             "sports_game": None,
         }
@@ -108,19 +98,37 @@ def test_live_screen_manifest_returns_only_public_path_keys(
     assert set(payload["dynamic"]) == {
         "ticker",
         "caller",
-        "signal",
         "research",
         "sports_game",
     }
 
 
-def test_live_screen_sweep_defaults_to_one_second(monkeypatch: MonkeyPatch) -> None:
+def test_live_screen_sweep_defaults_to_one_worker_with_a_retry_and_hard_limit(
+    monkeypatch: MonkeyPatch,
+) -> None:
     script = Path(__file__).resolve().parents[1] / "scripts" / "test-live-screens"
     namespace = runpy.run_path(str(script))
     monkeypatch.delenv("LIVE_SCREEN_SLOW_MS", raising=False)
+    monkeypatch.delenv("LIVE_SCREEN_FAILURE_MS", raising=False)
+    monkeypatch.delenv("LIVE_SCREEN_WORKERS", raising=False)
     monkeypatch.setattr(sys, "argv", [str(script)])
 
-    assert namespace["parse_args"]().slow_ms == 1_000
+    args = namespace["parse_args"]()
+
+    assert args.slow_ms == 1_000
+    assert args.failure_ms == 2_500
+    assert args.workers == 1
+
+
+def test_privacy_screen_heading_matches_the_template() -> None:
+    root = Path(__file__).resolve().parents[1]
+    namespace = runpy.run_path(str(root / "scripts" / "test-live-screens"))
+    privacy_screen = next(screen for screen in namespace["SCREENS"] if screen.key == "privacy")
+    privacy_template = (root / "web" / "templates" / "privacy.html").read_text()
+    heading = re.search(r"<h1>([^<]+)</h1>", privacy_template)
+
+    assert heading is not None
+    assert re.fullmatch(privacy_screen.heading, heading.group(1))
 
 
 def test_public_screen_data_reuses_warmed_payload(

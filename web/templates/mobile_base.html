@@ -59,10 +59,11 @@
       <div><strong>{{ comment_avatar.name }}</strong><small>{{ comment_avatar.ability }} · Level {{ comment_avatar.level }} · {{ flash_wallet.balance }} Flash</small></div>
     </div>
     <a href="/billing">Flash wallet <span>›</span></a>
-    {% if current_product != 'sports' %}<a href="/flash/record">Flash record <span>›</span></a>{% endif %}
+    <a href="{{ runners_origin }}/flash/record">Flash record <span>›</span></a>
     <a href="/roadmap">Roadmap <span>›</span></a>
-    {% if current_product == 'sports' %}<a href="{{ runners_origin }}/my-calls">My stock Calls <span>›</span></a>{% else %}<a href="/my-calls">My Calls <span>›</span></a>{% endif %}
+    <a href="{{ runners_origin }}/my-calls">My Calls <span>›</span></a>
     <a href="/privacy">Privacy and my data <span>›</span></a>
+    <a href="/settings/models">AI model <span>›</span></a>
     <a href="/settings/passkey">Add passkey <span>›</span></a>
     <button type="button" id="logoutButton">Log out</button>
     <button type="button" class="sheet-close" id="closeProfile">Close</button>
@@ -80,6 +81,7 @@
   {% endif %}
   {% include "_flash_release_modal.html" %}
   <script src="/static/ticker-row.js?v={{ static_version }}"></script>
+  <script src="/static/live-list.js?v={{ static_version }}"></script>
   <script src="/static/desktop-workspace.js?v={{ static_version }}" defer></script>
   {% block scripts %}{% endblock %}
 </body>

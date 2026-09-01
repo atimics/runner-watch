@@ -95,13 +95,15 @@
 }
 
 .ticker-action-status {
+  min-height: 30px;
   margin: 6px 2px 0;
   color: #7f8b85;
-  font-size: 9px;
+  font-size: 10px;
   line-height: 1.45;
 }
 
-.ticker-action-status:empty { display: none; }
+.ticker-action-status:empty { visibility: hidden; }
+.flash-report-status[data-tone="error"] { color: #d9a0a3; }
 
 .detail-actions > .call-ledger-mini { margin-top: 10px; }
 

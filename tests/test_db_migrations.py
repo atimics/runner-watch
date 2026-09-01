@@ -16,6 +16,7 @@ from runner_web.db import (
     _migration_028_caller_identities,
     _migration_040_comment_glyph_avatars,
     _migration_041_persistent_comment_avatars,
+    _migration_051_public_source_policy_gate,
     _release_migration_lock,
     connection,
     init_db,
@@ -88,6 +89,22 @@ def test_postgres_commits_each_migration_before_releasing_lock(
     _apply_migrations(Database())  # type: ignore[arg-type]
 
     assert events == ["apply", "record", "commit", "unlock"]
+
+
+def test_public_source_view_uses_postgres_supported_create_syntax() -> None:
+    statements: list[str] = []
+
+    class Database:
+        backend = "postgres"
+
+        def execute(self, statement: str) -> None:
+            statements.append(statement)
+
+    _migration_051_public_source_policy_gate(Database())  # type: ignore[arg-type]
+
+    assert len(statements) == 1
+    assert "CREATE OR REPLACE VIEW public_market_events AS" in statements[0]
+    assert "IF NOT EXISTS" not in statements[0]
 
 
 def test_newer_additive_schema_is_only_allowed_for_rollback_compatibility(
@@ -181,6 +198,9 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             "SELECT name FROM sqlite_master "
             "WHERE type='table' AND name='comment_generation_requests'"
         ).fetchone()
+        sports_comment_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='sports_comments'"
+        ).fetchone()
         flash_wallet_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='flash_wallets'"
         ).fetchone()
@@ -227,6 +247,15 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             "SELECT name FROM sqlite_master WHERE type='table' "
             "AND name='sports_golf_leaderboard'"
         ).fetchone()
+        llm_route_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='user_llm_routes'"
+        ).fetchone()
+        edge_connector_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='llm_edge_connectors'"
+        ).fetchone()
+        edge_job_table = database.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='llm_edge_jobs'"
+        ).fetchone()
         flash = database.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
         commission_columns = {
             row["name"]
@@ -240,6 +269,10 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             for row in database.execute(
                 "PRAGMA table_info(comment_generation_requests)"
             ).fetchall()
+        }
+        sports_comment_columns = {
+            row["name"]
+            for row in database.execute("PRAGMA table_info(sports_comments)").fetchall()
         }
         indexes = {
             row["name"]
@@ -291,6 +324,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert community_call_table is not None
     assert flash_request_table is not None
     assert comment_generation_request_table is not None
+    assert sports_comment_table is not None
     assert flash_wallet_table is not None
     assert flash_transaction_table is not None
     assert pulse_entries_table is not None
@@ -311,6 +345,9 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert sports_ai_forecast_table is not None
     assert sports_golf_event_table is not None
     assert sports_golf_leaderboard_table is not None
+    assert llm_route_table is not None
+    assert edge_connector_table is not None
+    assert edge_job_table is not None
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_provider"] == "openrouter"
@@ -330,6 +367,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "citations_json",
     } <= commission_columns
     assert {"visibility", "published_at", "report_day", "exclusive_until"} <= commission_columns
+    assert {"inference_scope", "inference_route_json", "customer_inference"} <= commission_columns
     assert {"source", "generation_model"} <= comment_columns
     assert {
         "id",
@@ -343,6 +381,16 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "created_at",
         "updated_at",
     } <= comment_generation_request_columns
+    assert {
+        "id",
+        "event_id",
+        "user_id",
+        "body",
+        "status",
+        "created_at",
+        "source",
+        "generation_model",
+    } <= sports_comment_columns
     assert "actor_snapshot_json" in call_columns
     assert {
         "opening_range_position",
@@ -414,13 +462,15 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "public_aliases_user",
         "comment_avatars_ability",
         "comment_generation_requests_status_time",
+        "sports_comments_event_time",
         "caller_identities_owner",
         "caller_identities_one_active_per_user",
         "caller_identity_one_free_claim",
         "caller_identity_claims_owner",
         "community_calls_caller_time",
         "signals_caller_identity",
-        "research_commissions_daily_actor",
+        "research_commissions_daily_managed",
+        "research_commissions_daily_customer",
         "research_commissions_daily_visibility",
         "pulse_entries_ticker_time",
         "pulse_entries_time",
@@ -429,6 +479,9 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         "market_bars_collected",
         "sports_bookmaker_odds_event_book_time",
         "sports_bookmaker_odds_event_source_time",
+        "llm_edge_connectors_user",
+        "llm_edge_jobs_claim",
+        "llm_edge_jobs_commission",
     } <= indexes
 
 

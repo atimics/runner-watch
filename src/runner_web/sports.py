@@ -13,6 +13,7 @@ from datetime import UTC, date, datetime, timedelta
 from statistics import median
 from typing import Any
 
+from runner_node.runtime import NODE_SERVICE
 from runner_watch.ingestion import SourceFetch
 from runner_web import db as runner_db
 from runner_web.ai_kol import (
@@ -68,7 +69,13 @@ MODEL_SCORECARD_TARGET = 250
 LEAGUES = {
     "mlb": {"sport": "baseball", "path": "mlb", "name": "MLB", "home_edge": 0.035},
     "nfl": {"sport": "football", "path": "nfl", "name": "NFL", "home_edge": 0.055},
-    "nba": {"sport": "basketball", "path": "nba", "name": "NBA", "home_edge": 0.060},
+    "nba": {
+        "sport": "basketball",
+        "path": "nba",
+        "name": "NBA",
+        "home_edge": 0.060,
+        "preview_days": 45,
+    },
     "nhl": {"sport": "hockey", "path": "nhl", "name": "NHL", "home_edge": 0.040},
 }
 PUBLIC_SPORTS = (
@@ -594,10 +601,19 @@ def _fetch_league_range(
 
 def fetch_league(league: str, at: datetime | None = None) -> list[dict[str, Any]]:
     current = at or datetime.now(UTC)
-    return _fetch_league_range(
+    events = _fetch_league_range(
         league,
         current.date() - timedelta(days=1),
         current.date() + timedelta(days=3),
+        feed=FEED,
+    )
+    preview_days = int(LEAGUES[league].get("preview_days", 3))
+    if events or preview_days <= 3:
+        return events
+    return _fetch_league_range(
+        league,
+        current.date() + timedelta(days=4),
+        current.date() + timedelta(days=preview_days),
         feed=FEED,
     )
 
@@ -1587,7 +1603,7 @@ def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
     golf_counts = {"events": 0, "entrants": 0}
     golf_error: str | None = None
     try:
-        odds_config = OddsApiConfig.from_env()
+        odds_config = OddsApiConfig.from_env(NODE_SERVICE.vault.get("the-odds-api"))
     except (TypeError, ValueError) as exc:
         odds_config = OddsApiConfig(api_key="", enabled=False)
         quota_error = str(exc)[:240]
@@ -1718,7 +1734,9 @@ def _odds_item(row: Any) -> dict[str, Any] | None:
     item = dict(row)
     sportsbook = str(item.get("sportsbook") or "").strip()
     provider = str(item.get("provider") or "").strip()
-    if sportsbook and provider == ODDS_PROVIDER:
+    if sportsbook == "Market consensus" and provider == ODDS_PROVIDER:
+        item["source_label"] = "No-vig consensus via The Odds API"
+    elif sportsbook and provider == ODDS_PROVIDER:
         item["source_label"] = f"{sportsbook} via The Odds API"
     else:
         item["source_label"] = sportsbook or provider or "Unknown source"
@@ -2120,6 +2138,7 @@ def _edge_sparkline_from_rows(
         "plot_points": " ".join(coordinates),
         "dot_x": coordinates[-1].split(",", 1)[0],
         "dot_y": coordinates[-1].split(",", 1)[1],
+        "start_pct": start,
         "current_pct": current,
         "change_pct": change,
         "label": f"{team} model edge {movement}; now {current:+.1f} percentage points",
@@ -2425,6 +2444,33 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
     return output
 
 
+def _golf_display_status(event: dict[str, Any], current: datetime) -> str:
+    """Describe the tournament state from the strongest evidence we have."""
+
+    state = str(event.get("status") or "").lower()
+    detail = str(event.get("status_detail") or "").strip()
+    leaders = event.get("leaderboard") or []
+    rounds = [int(player["round_number"]) for player in leaders if player.get("round_number")]
+    if state == "post" or event.get("completed"):
+        return "Final"
+    if state == "in":
+        return detail if detail and detail.lower() != "scheduled" else "In progress"
+    if rounds:
+        round_number = max(rounds)
+        complete = all(
+            str(player.get("through_display") or "").upper() == "F"
+            for player in leaders
+            if player.get("round_number") == round_number
+        )
+        return f"Round {round_number} {'complete' if complete else 'in progress'}"
+    try:
+        if _parse_time(event.get("start_time")) > current:
+            return "Scheduled"
+    except (TypeError, ValueError):
+        pass
+    return "Awaiting update"
+
+
 def golf_slate(limit: int = 6, leaderboard_limit: int = 10) -> dict[str, Any]:
     """Return current and upcoming PGA tournaments with a compact leaderboard."""
 
@@ -2463,6 +2509,7 @@ def golf_slate(limit: int = 6, leaderboard_limit: int = 10) -> dict[str, Any]:
             ).fetchall()
             event["leaderboard"] = [dict(player) for player in leaders]
             event["leader"] = event["leaderboard"][0] if event["leaderboard"] else None
+            event["display_status"] = _golf_display_status(event, current)
             events.append(event)
         last_run = database.execute(
             """
@@ -2485,9 +2532,10 @@ def golf_slate(limit: int = 6, leaderboard_limit: int = 10) -> dict[str, Any]:
 
 def sports_slate(league: str = "all", limit: int = 80) -> dict[str, Any]:
     current = datetime.now(UTC)
+    preview_days = int(LEAGUES.get(league, {}).get("preview_days", 4))
     parameters: list[Any] = [
         _iso(current - timedelta(hours=12)),
-        _iso(current + timedelta(days=4)),
+        _iso(current + timedelta(days=preview_days)),
     ]
     league_filter = ""
     if league in LEAGUES:
@@ -2573,6 +2621,36 @@ def sports_pulse(league: str = "all", view: str = "signals", limit: int = 30) ->
         )
     )
     grouped = _group_sports_series(signals)
+    empty_state = None
+    season_break_cutoff = datetime.now(UTC) + timedelta(days=4)
+    has_nearby_event = any(
+        (start_time := _optional_time(event.get("start_time"))) is not None
+        and start_time <= season_break_cutoff
+        for event in available
+    )
+    next_event = next(
+        (
+            event
+            for event in available
+            if event.get("status") == "pre"
+            and (start_time := _optional_time(event.get("start_time"))) is not None
+            and start_time > season_break_cutoff
+        ),
+        None,
+    )
+    if league == "nba" and not signals and not has_nearby_event and next_event:
+        empty_state = {
+            "kind": "season-break",
+            "title": "NBA is between seasons.",
+            "detail": (
+                "The next scheduled game is "
+                f"{next_event.get('away_abbreviation')} at "
+                f"{next_event.get('home_abbreviation')}. Pulse will wait for regular-season "
+                "records and fresh market consensus before publishing a projection."
+            ),
+            "next_start_time": str(next_event.get("start_time") or ""),
+            "status_label": "Next NBA game scheduled",
+        }
 
     shown = grouped[: max(1, min(limit, 100))]
     return {
@@ -2584,6 +2662,7 @@ def sports_pulse(league: str = "all", view: str = "signals", limit: int = 30) ->
         "display_count": len(shown),
         "scanned_count": len(available),
         "hidden_count": max(0, len(available) - len(signals)),
+        "empty_state": empty_state,
     }
 
 
@@ -3224,6 +3303,52 @@ def _score_display(value: Any) -> str:
     return str(int(number)) if number.is_integer() else f"{number:g}"
 
 
+def _game_view_state(
+    event: dict[str, Any], current: datetime | None = None
+) -> dict[str, Any]:
+    """Describe the visible game and paper-pick state without trusting a late feed."""
+
+    now = (current or datetime.now(UTC)).astimezone(UTC)
+    status = str(event.get("status") or "pre")
+    completed = bool(event.get("completed")) or status == "post"
+    started = completed or status == "in" or _parse_time(str(event["start_time"])) <= now
+    home_score = _number(event.get("home_score"))
+    away_score = _number(event.get("away_score"))
+    score_available = (
+        status in {"in", "post"} and home_score is not None and away_score is not None
+    )
+
+    if completed:
+        label = "Final"
+        detail = str(event.get("status_detail") or "Final")
+    elif status == "in":
+        label = "In progress"
+        detail = str(event.get("status_detail") or "Live")
+        if not score_available:
+            detail = f"{detail} · score pending"
+    elif started:
+        label = "Game started"
+        detail = "Score pending from ESPN"
+    else:
+        label = "Pregame"
+        detail = str(event.get("status_detail") or "Scheduled")
+
+    if started or status != "pre":
+        pick_state = "closed"
+    elif event.get("paper_odds"):
+        pick_state = "open"
+    else:
+        pick_state = "unavailable"
+    return {
+        "label": label,
+        "detail": detail,
+        "started": started,
+        "score_available": score_available,
+        "pick_state": pick_state,
+        "picks_open": pick_state == "open",
+    }
+
+
 def _history_game(row: Any, team_id: str | None = None) -> dict[str, Any]:
     item = dict(row)
     game = {
@@ -3632,6 +3757,7 @@ def sports_event(event_id: str) -> dict[str, Any] | None:
         event["news"] = [dict(item) for item in news_rows]
         event["context"] = _series_context(database, event)
         event["matchup_players"] = _matchup_player_context(database, event)
+        event["view_state"] = _game_view_state(event)
     event["model_record"] = _model_alpha(str(event["league"]))
     return event
 

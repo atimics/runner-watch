@@ -1,15 +1,34 @@
 {% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
+{% set alpha_prefix = alpha_path_prefix|default('') %}
+{% set alpha_rank_ready = alpha_rank_min_calls is not defined or board.total_calls >= alpha_rank_min_calls %}
 <header class="screen-head">
-  <div><h1>Alpha</h1><span class="head-meta"><b>{{ board.active_calls }}</b> open Calls <i></i><span>{{ board.total_calls }} total</span></span></div>
+  <div>{% if alpha_product_label is defined %}<span class="rati-product">{{ alpha_product_label }}</span>{% endif %}<h1>Alpha</h1><span class="head-meta"><b>{{ board.active_calls }}</b> open Calls <i></i><span>{{ board.total_calls }} total</span></span></div>
   {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open {{ comment_avatar.name }} profile">{{ render_comment_avatar(comment_avatar) }}</button>{% else %}<a class="avatar-button signed-out" href="/login">Log in</a>{% endif %}
 </header>
 
-<main class="alpha-board call-ledger">
+{% if alpha_show_leagues|default(false) %}
+<nav class="league-tabs" aria-label="League filter">
+  <a class="{% if board.league == 'all' %}active{% endif %}" href="{{ alpha_prefix }}/alpha?league=all">All</a>
+  {% for league in board.leagues %}<a class="{% if board.league == league.key %}active{% endif %}" href="{{ alpha_prefix }}/alpha?league={{ league.key }}">{{ league.name }}</a>{% endfor %}
+</nav>
+{% endif %}
+
+{% if alpha_rank_min_calls is defined %}
+<section class="alpha-sample-note" aria-label="Community record maturity">
+  <div>
+    <strong>{{ 'COMMUNITY RECORD IS BUILDING' if not alpha_rank_ready else 'COMMUNITY RECORD' }}</strong>
+    <p>{% if not alpha_rank_ready %}<b>{{ board.total_calls }} of {{ alpha_rank_min_calls }} public Calls recorded.</b> Rankings stay hidden until the sample is large enough. Activity is not evidence of skill.{% else %}Rankings use settled paper Calls with frozen entry odds.{% endif %}</p>
+  </div>
+  {% if not alpha_rank_ready %}<progress max="{{ alpha_rank_min_calls }}" value="{{ board.total_calls }}">{{ board.total_calls }} of {{ alpha_rank_min_calls }}</progress>{% endif %}
+</section>
+{% endif %}
+
+<main class="alpha-board call-ledger {{ alpha_board_class|default('') }}">
 {% if board.rows %}
   {% set leader = board.rows[0] %}
-  {% set leader_href = leader.href if leader.href is defined else '/t/' ~ leader.ticker %}
+  {% set leader_href = alpha_prefix ~ (leader.href if leader.href is defined else '/t/' ~ leader.ticker) %}
   <article class="alpha-leader">
-    <div class="wolf-mark"><span>🐺</span><b>#1 most called</b></div>
+    <div class="wolf-mark"><span>🐺</span><b>{{ '#1 by open Calls' if alpha_rank_ready else 'Activity is building' }}</b></div>
     <a class="alpha-leader-asset" href="{{ leader_href }}" data-desktop-default>
       <span class="coin coin-{{ leader.coin_tone }}"><b>{{ leader.coin_label }}</b><i></i></span>
       <span><strong>{{ leader.ticker }}</strong><small>{{ leader.company }}</small></span>
@@ -26,12 +45,13 @@
 
   {% if board.rows|length > 1 %}
   <section class="alpha-ranking" aria-label="Alpha ranking">
+    <header class="alpha-ranking-basis"><strong>Ranking</strong><span>Open Calls first · total Calls break ties</span></header>
     {% for item in board.rows[1:] %}
-    {% set item_href = item.href if item.href is defined else '/t/' ~ item.ticker %}
+    {% set item_href = alpha_prefix ~ (item.href if item.href is defined else '/t/' ~ item.ticker) %}
     <article class="alpha-rank-row">
-      <span class="rank-number">{{ item.rank }}</span>
+      <span class="rank-number">{{ item.rank if alpha_rank_ready else '•' }}</span>
       <a href="{{ item_href }}"><span class="coin coin-{{ item.coin_tone }}"><b>{{ item.coin_label }}</b><i></i></span><span><strong>{{ item.ticker }}</strong><small>{{ item.pulse_label }}</small></span></a>
-      <div class="call-count"><b>{{ item.active_calls }}</b><small>open Calls</small></div>
+      <div class="call-count"><b>{{ item.active_calls }}</b><small>open Calls · {{ item.total_calls }} total</small></div>
     </article>
     {% endfor %}
   </section>
@@ -40,7 +60,7 @@
 <section class="alpha-contenders">
   <div class="alpha-section-head"><h2>Contenders</h2><span>Make the first Call</span></div>
   {% for item in board.contenders %}
-  {% set item_href = item.href if item.href is defined else '/t/' ~ item.ticker %}
+  {% set item_href = alpha_prefix ~ (item.href if item.href is defined else '/t/' ~ item.ticker) %}
   <article class="alpha-rank-row contender-row">
     <span class="rank-number">—</span>
     <a href="{{ item_href }}"><span class="coin coin-{{ item.coin_tone }}"><b>{{ item.coin_label }}</b><i></i></span><span><strong>{{ item.ticker }}</strong><small>{{ item.pulse_label }}</small></span></a>
@@ -54,9 +74,9 @@
 
 {% if board.calls %}
 <section class="public-call-feed" aria-label="Public Calls">
-  <div class="alpha-section-head"><h2>Calls</h2><span>Entry, mark and PnL</span></div>
+  <div class="alpha-section-head"><h2>Calls</h2><span>{{ alpha_result_label|default('Entry, mark and PnL') }}</span></div>
   {% for call in board.calls %}
-  {% set call_href = call.href if call.href is defined else '/t/' ~ call.ticker %}
+  {% set call_href = alpha_prefix ~ (call.href if call.href is defined else '/t/' ~ call.ticker) %}
   {% set caller_href = call.caller_href if call.caller_href is defined else '/u/' ~ call.caller_handle %}
   <article class="public-call-row">
     <a class="call-owner" href="{{ caller_href }}"><strong>{{ call.caller_handle }}</strong><small>{{ call.status }}</small></a>

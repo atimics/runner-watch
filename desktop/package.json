@@ -1,0 +1,30 @@
+{
+  "name": "rati-swarm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local source workspace for built-in, RATi, and user-configured scanners.",
+  "author": "RATi",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit && cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "test": "vitest run && cargo test --manifest-path src-tauri/Cargo.toml",
+    "package": "tauri build --no-bundle",
+    "make": "tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "7.3.0",
+    "@tauri-apps/cli": "^2.0.0",
+    "jsdom": "30.0.1",
+    "svelte": "5.57.0",
+    "svelte-check": "4.7.6",
+    "typescript": "6.0.3",
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
+  }
+}

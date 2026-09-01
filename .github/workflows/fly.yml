@@ -35,6 +35,7 @@ jobs:
       - run: uv run pip-audit --local --skip-editable --progress-spinner off --timeout 10 --vulnerability-service osv
       - run: uv run pytest -q --cov-fail-under=68
       - run: uv run pytest -q tests/test_browser_pulse.py -o addopts=
+      - run: docker compose -f compose.local.yml config --quiet
       - run: docker build --target test --tag runner-watch:test .
 
   deploy:
@@ -63,7 +64,10 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       - id: deploy
         continue-on-error: true
-        run: flyctl deploy --remote-only --image-label "${{ github.sha }}"
+        run: >-
+          flyctl deploy --remote-only
+          --build-arg APP_BUILD_SHA="${{ github.sha }}"
+          --image-label "${{ github.sha }}"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       - name: Keep background processes running
@@ -105,7 +109,9 @@ jobs:
         id: smoke
         if: steps.deploy.outcome == 'success' && steps.processes.outcome == 'success'
         continue-on-error: true
-        run: scripts/smoke-production https://stonks.rati.foundation
+        run: >-
+          EXPECTED_BUILD_SHA="${{ github.sha }}"
+          scripts/smoke-production https://stonks.rati.foundation
       - name: Render every production screen
         id: screens
         if: steps.deploy.outcome == 'success' && steps.smoke.outcome == 'success'

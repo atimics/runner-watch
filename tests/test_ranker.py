@@ -8,7 +8,6 @@ from types import SimpleNamespace
 
 from pytest import MonkeyPatch
 
-from runner_watch.sample_data import SAMPLE_SYMBOLS, SampleMarketData
 from runner_web import db
 from runner_web import main as web_main
 from runner_web.db import connection, init_db
@@ -22,6 +21,7 @@ from runner_web.ranker import (
     predict_and_store,
     train_shadow_ranker,
 )
+from tests.fake_market_data import FAKE_SYMBOLS, FakeMarketData
 
 
 def test_chart_structure_fields_are_ranker_features() -> None:
@@ -160,6 +160,12 @@ def test_shadow_ranker_trains_predicts_and_exports_crl(
         "up",
     }
     assert trained["metrics"]["training_data"]["groups"] == {"live": 8}
+    training_control = trained["metrics"]["training_control"]
+    assert training_control["requested_epochs"] == 120
+    assert training_control["trained_epochs"] <= 120
+    assert training_control["best_epoch"] <= training_control["trained_epochs"]
+    assert training_control["validation_checks"] >= 1
+    assert training_control["validation_log_loss_micros"] > 0
     model = load_latest_model()
     assert model is not None
     assert len(model.weights) == len(FEATURE_NAMES)
@@ -231,12 +237,12 @@ def test_web_scan_saves_one_complete_candidate_group(
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "web-scan.db")
     init_db()
     sample_now = datetime.now(UTC)
-    provider = SampleMarketData(sample_now)
+    provider = FakeMarketData(sample_now)
     monkeypatch.setattr(web_main, "recording_market_data", lambda batch_size=60: provider)
     monkeypatch.setattr(
         web_main,
         "penny_runner_universe",
-        lambda **kwargs: ([SimpleNamespace(symbol=symbol) for symbol in SAMPLE_SYMBOLS], []),
+        lambda **kwargs: ([SimpleNamespace(symbol=symbol) for symbol in FAKE_SYMBOLS], []),
     )
     web_main.SCAN_CACHE.clear()
 
