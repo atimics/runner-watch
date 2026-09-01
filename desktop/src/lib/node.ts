@@ -20,6 +20,12 @@ export interface ProviderFeed {
   schedule: string;
   review_status: string;
   terms_url: string | null;
+  capabilities: string[];
+  usage_rights: string[];
+  access_model: string;
+  storage_policy: string;
+  display_policy: string;
+  product: string;
 }
 
 export interface ProviderStatus {
@@ -29,7 +35,45 @@ export interface ProviderStatus {
   enabled: boolean;
   configured: boolean;
   configuration_kind: string;
+  capabilities: string[];
   feeds: ProviderFeed[];
+}
+
+export interface CoverageProvider {
+  provider_id: string;
+  provider_title: string;
+  state: string;
+  enabled: boolean;
+  configured: boolean;
+  configuration_kind: string;
+  review_status: string;
+  usage_rights: string[];
+  access_model: string;
+  feeds: string[];
+  terms_url: string | null;
+}
+
+export interface SourceCapability {
+  id: string;
+  title: string;
+  description: string;
+  core: boolean;
+  private_ready: boolean;
+  public_ready: boolean;
+  selected_provider: string | null;
+  provider_route: string[];
+  providers: CoverageProvider[];
+}
+
+export interface CoveragePayload {
+  summary: {
+    private_ready: number;
+    public_ready: number;
+    total: number;
+    core_private_ready: boolean;
+    core_public_ready: boolean;
+  };
+  capabilities: SourceCapability[];
 }
 
 export interface RemoteScannerInput {
@@ -185,6 +229,20 @@ export class NodeClient {
 
   providers(): Promise<{ providers: ProviderStatus[] }> {
     return this.request('/api/v1/providers');
+  }
+
+  coverage(): Promise<CoveragePayload> {
+    return this.request('/api/v1/coverage');
+  }
+
+  setProviderRoute(capability: string, providers: string[]): Promise<{
+    capability: string;
+    providers: string[];
+  }> {
+    return this.request(`/api/v1/routes/${encodeURIComponent(capability)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ providers }),
+    });
   }
 
   openRouter(): Promise<OpenRouterConnection> {

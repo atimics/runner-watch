@@ -3,11 +3,14 @@
 
   import {
     NodeClient,
+    type CoveragePayload,
+    type CoverageProvider,
     type NodeStatus,
     type OpenRouterConnection,
     type ProviderStatus,
     type ResearchResult,
     type ScanResult,
+    type SourceCapability,
     type TickerBar,
     type TickerDetail,
   } from './lib/node';
@@ -27,6 +30,17 @@
   let nodeToken = '';
   let node: NodeStatus | null = null;
   let providers: ProviderStatus[] = [];
+  let coverage: CoveragePayload = {
+    summary: {
+      private_ready: 0,
+      public_ready: 0,
+      total: 0,
+      core_private_ready: false,
+      core_public_ready: false,
+    },
+    capabilities: [],
+  };
+  let coverageScope: 'local_private' | 'public_saas' = 'local_private';
   let openrouter: OpenRouterConnection = { status: 'disconnected', provider: 'openrouter' };
   let receipts: ScanResult[] = [];
   let selectedReceipt: ScanResult | null = null;
@@ -131,18 +145,67 @@
     return providers.filter((provider) => provider.configuration_kind === 'remote_scanner');
   }
 
+  function capabilityReady(capability: SourceCapability): boolean {
+    return coverageScope === 'local_private' ? capability.private_ready : capability.public_ready;
+  }
+
+  function capabilityState(capability: SourceCapability): string {
+    if (capabilityReady(capability)) return 'ready';
+    if (coverageScope === 'public_saas' && capability.private_ready) return 'license needed';
+    if (capability.providers.some((provider) => provider.configuration_kind === 'api_key')) return 'connect source';
+    return 'not connected';
+  }
+
+  function selectedCoverageProvider(capability: SourceCapability): CoverageProvider | undefined {
+    return capability.providers.find((provider) => provider.provider_id === capability.selected_provider)
+      || capability.providers.find((provider) => provider.enabled && provider.configured)
+      || capability.providers[0];
+  }
+
+  function providerRecord(providerId: string): ProviderStatus | undefined {
+    return providers.find((provider) => provider.id === providerId);
+  }
+
+  function accessLabel(provider: CoverageProvider): string {
+    if (provider.access_model === 'contract_review') return 'contract review';
+    if (provider.access_model === 'bring_your_own') return 'bring your key';
+    if (provider.access_model === 'experimental') return 'experimental';
+    return 'included';
+  }
+
+  async function preferProvider(capability: SourceCapability, provider: CoverageProvider) {
+    if (!provider.enabled || !provider.configured) return;
+    try {
+      const route = [
+        provider.provider_id,
+        ...capability.provider_route.filter((item) => item !== provider.provider_id),
+      ];
+      await client().setProviderRoute(capability.id, route);
+      scannerMessage = `${provider.provider_title} is now first for ${capability.title}.`;
+      await refreshSources(false);
+    } catch (error) {
+      scannerMessage = error instanceof Error ? error.message : 'Could not change source priority';
+    }
+  }
+
+  async function connectCoverageProvider(provider: CoverageProvider) {
+    const record = providerRecord(provider.provider_id);
+    if (record) await connectProvider(record);
+  }
+
   async function refreshSources(reportError = true): Promise<boolean> {
     connecting = true;
     try {
       const api = client();
-      const [nextNode, providerResult, nextOpenRouter, localResult] = await Promise.all([
-        api.node(), api.providers(), api.openRouter(), api.scans(),
+      const [nextNode, providerResult, nextCoverage, nextOpenRouter, localResult] = await Promise.all([
+        api.node(), api.providers(), api.coverage(), api.openRouter(), api.scans(),
       ]);
       if (nextNode.api_version !== '1') {
         throw new Error(`This app needs Source API v1, but the local hub reported v${nextNode.api_version}`);
       }
       node = nextNode;
       providers = providerResult.providers;
+      coverage = nextCoverage;
       openrouter = nextOpenRouter;
       const external = await api.sourceScans().catch((error: unknown) => ({
         receipts: [] as ScanResult[],
@@ -159,6 +222,16 @@
     } catch (error) {
       node = null;
       providers = [];
+      coverage = {
+        summary: {
+          private_ready: 0,
+          public_ready: 0,
+          total: 0,
+          core_private_ready: false,
+          core_public_ready: false,
+        },
+        capabilities: [],
+      };
       openrouter = { status: 'disconnected', provider: 'openrouter' };
       if (reportError) scannerMessage = error instanceof Error ? error.message : 'The local source hub is unavailable';
       return false;
@@ -412,12 +485,70 @@
         <section class="ticker-local-head"><button class="back-button" onclick={() => view = tickerBackView}>← Back to {tickerBackView}</button>{#if selectedTicker}<span class="source-badge" style={`--source-color:${selectedTicker.source_color}`}>{selectedTicker.source_name}</span>{/if}</section>
         {#if tickerLoading}<section class="ticker-loading"><span class="local-orbit">⌁</span><h1>{selectedTicker?.ticker}</h1><p>Pulling price bars from the configured market-data sources…</p></section>{:else if tickerError}<section class="offline-library ticker-error"><span class="eyebrow">TICKER</span><h2>Could not load {selectedTicker?.ticker}</h2><p>{tickerError}</p></section>{:else if tickerDetail}<section class="ticker-hero"><div><span class="eyebrow">SOURCE ANALYSIS</span><h1>{tickerDetail.ticker}</h1><p>Fresh analysis from the built-in market-data sources.</p></div><div class="ticker-quote"><strong>${tickerDetail.quote.price.toFixed(2)}</strong><b class:positive={Number(tickerDetail.quote.change_pct || 0) >= 0}>{tickerDetail.quote.change_pct == null ? '—' : `${tickerDetail.quote.change_pct >= 0 ? '+' : ''}${tickerDetail.quote.change_pct.toFixed(2)}%`}</b><small>{tickerDetail.quote.session} · {new Date(tickerDetail.quote.quote_time).toLocaleString()}</small></div></section><section class="ticker-chart-card"><div class="section-head"><div><span class="eyebrow">PRICE BARS</span><h2>{tickerChart === 'intraday' ? 'Five-minute chart' : 'Daily chart'}</h2></div><div class="chart-controls"><button class:active={tickerChart === 'intraday'} onclick={() => tickerChart = 'intraday'}>5 minute</button><button class:active={tickerChart === 'daily'} onclick={() => tickerChart = 'daily'}>Daily</button></div></div>{#if selectedChartBars().length > 1}<svg class="price-chart" viewBox="0 0 1000 250" role="img" aria-label={`${tickerDetail.ticker} chart`}><polyline points={chartPoints(selectedChartBars())}></polyline></svg>{:else}<p class="empty-copy">The source did not return enough bars for this chart.</p>{/if}</section>{#if tickerDetail.analysis}<section class="ticker-metrics"><div><small>Trade state</small><strong>{tickerDetail.analysis.trade_state}</strong></div><div><small>Setup score</small><strong>{tickerDetail.analysis.score.toFixed(1)}</strong></div><div><small>Rug risk</small><strong>{tickerDetail.analysis.rug_level}</strong></div><div><small>Relative volume</small><strong>{tickerDetail.analysis.relative_volume == null ? '—' : `${tickerDetail.analysis.relative_volume.toFixed(1)}×`}</strong></div></section>{/if}<section class="data-pulls"><div class="section-head"><div><span class="eyebrow">DATA PULLS</span><h2>Sources used</h2></div></div>{#each tickerDetail.pulls as pull}<article><span class:failed={pull.status === 'failed'} class="pull-status">{pull.status}</span><div><strong>{pull.label}</strong><small>{pull.provider} · {pull.feed}</small></div><b>{pull.bars} bars</b><small>{pull.fallback_used ? 'Fallback used' : 'Primary source'}</small></article>{/each}{#each tickerDetail.warnings as warning}<p class="pull-warning">{warning}</p>{/each}</section>{/if}
       {:else}
-        <section class="screen-head"><div><span class="eyebrow">LOCAL SOURCE HUB</span><h1>Sources</h1><p>Free sources work immediately. Optional keys and remote scanner tokens stay in the system credential vault.</p></div><span class:online={node} class="connection-dot">{configuredSourceCount()} ready</span></section>
-        <section class="providers-section"><div class="section-head"><div><span class="eyebrow">INCLUDED</span><h2>Free, no-key sources</h2></div><small>Ready by default</small></div><div class="provider-grid">{#each freeSources() as provider}<article class="provider-card" style={`--source-color:${sourceColor(provider.id)}`}><div><strong>{provider.title}</strong><span class:ready={provider.enabled}>{provider.enabled ? 'enabled' : 'available'}</span></div><p>{provider.feeds.map((feed) => feed.title).join(' · ')}</p>{#if provider.id === 'rati-cloud'}<button class={provider.enabled ? '' : 'primary'} onclick={() => toggleRatiCloud(provider)}>{provider.enabled ? 'Disable source' : 'Enable free source'}</button>{:else}<small class="included-label">No setup or API key</small>{/if}{#if provider.feeds[0]?.terms_url}<button class="text-button" onclick={() => openExternal(provider.feeds[0].terms_url!)}>Source terms ↗</button>{/if}</article>{/each}</div></section>
-        <section class="providers-section"><div class="section-head"><div><span class="eyebrow">REMOTE SCANNERS</span><h2>Add any scanner</h2></div><small>HTTPS, or loopback HTTP</small></div><div class="remote-source-form"><input bind:value={remoteName} placeholder="Source name" aria-label="Remote scanner name" /><input bind:value={remoteUrl} placeholder="https://scanner.example.com" aria-label="Remote scanner address" /><input type="password" bind:value={remoteToken} placeholder="Access token, if required" aria-label="Remote scanner token" autocomplete="off" /><button class="primary" onclick={addRemoteScanner} disabled={!remoteName.trim() || !remoteUrl.trim()}>Add source</button></div>{#if remoteSources().length}<div class="provider-grid remote-grid">{#each remoteSources() as provider}<article class="provider-card remote-card" style={`--source-color:${sourceColor(provider.id)}`}><div><strong>{provider.title}</strong><span class="ready">connected</span></div><p>{provider.feeds[0]?.title}</p><button onclick={() => removeRemoteScanner(provider)}>Remove</button></article>{/each}</div>{/if}</section>
-        <section class="providers-section"><div class="section-head"><div><span class="eyebrow">OPTIONAL</span><h2>API-key sources</h2></div><small>Add only what you use</small></div><div class="provider-grid">{#each keySources() as provider}<article class="provider-card"><div><strong>{provider.title}</strong><span class:ready={provider.configured}>{provider.configured ? 'connected' : 'optional'}</span></div><p>{provider.feeds.map((feed) => feed.title).join(' · ')}</p>{#if provider.configured}<button onclick={() => disconnectProvider(provider)}>Disconnect</button>{:else}<div class="key-entry"><input type="password" value={providerKeys[provider.id] || ''} oninput={(event) => providerKeys = { ...providerKeys, [provider.id]: event.currentTarget.value }} autocomplete="off" placeholder={`${provider.title} API key`} /><button onclick={() => connectProvider(provider)} disabled={(providerKeys[provider.id] || '').trim().length < 8}>Save key</button></div>{/if}{#if provider.feeds[0]?.terms_url}<button class="text-button" onclick={() => openExternal(provider.feeds[0].terms_url!)}>Source terms ↗</button>{/if}</article>{/each}</div></section>
-        <section class="workspace-grid"><article class="card action-card"><span class="eyebrow">OPTIONAL AI SOURCE</span><h2>OpenRouter</h2><p>{openrouter.status === 'connected' ? 'Connected to this workspace.' : 'Connect with OAuth or paste your own key.'}</p>{#if openrouter.status === 'connected'}<button onclick={disconnectOpenRouter}>Disconnect</button>{:else}<div class="button-row"><button class="primary" onclick={connectOpenRouter}>Connect OpenRouter</button></div><div class="key-entry"><input type="password" bind:value={openrouterKey} autocomplete="off" placeholder="Or paste an sk-or- API key" /><button onclick={connectOpenRouterKey} disabled={openrouterKey.trim().length < 24}>Save key</button></div>{/if}</article></section>
-        {#if openrouter.status === 'connected'}<section class="research-section"><div class="section-head"><div><span class="eyebrow">OPTIONAL AI</span><h2>Research</h2></div></div><textarea bind:value={researchPrompt} maxlength="6000" placeholder="What should RATi research?"></textarea><button class="primary" onclick={runResearch} disabled={researching || researchPrompt.trim().length < 3}>{researching ? 'Researching…' : 'Run research'}</button>{#if research}<article class="research-answer"><small>{research.model}</small><p>{research.answer}</p></article>{/if}</section>{/if}
+        <section class="screen-head coverage-head">
+          <div><span class="eyebrow">SOVEREIGN SCANNER</span><h1>Scanner coverage</h1><p>Choose what this scanner can see. Providers, licenses, and fallbacks live under each capability.</p></div>
+          <span class:online={node} class="connection-dot">{configuredSourceCount()} sources ready</span>
+        </section>
+
+        <section class="coverage-scope" aria-label="Intended data use">
+          <div><span class="eyebrow">1 · CHOOSE YOUR USE</span><h2>Where will these results run?</h2><p>The same connection can be safe for private research and blocked for a public product.</p></div>
+          <div class="scope-control">
+            <button class:active={coverageScope === 'local_private'} onclick={() => coverageScope = 'local_private'}><b>Private scanner</b><small>Local or self-hosted</small></button>
+            <button class:active={coverageScope === 'public_saas'} onclick={() => coverageScope = 'public_saas'}><b>Public SaaS</b><small>Commercial display</small></button>
+          </div>
+        </section>
+
+        <section class="coverage-summary">
+          <div><small>Coverage ready</small><strong>{coverageScope === 'local_private' ? coverage.summary.private_ready : coverage.summary.public_ready}<i>/{coverage.summary.total}</i></strong></div>
+          <div><small>Core scanner</small><strong class:ready={coverageScope === 'local_private' ? coverage.summary.core_private_ready : coverage.summary.core_public_ready}>{(coverageScope === 'local_private' ? coverage.summary.core_private_ready : coverage.summary.core_public_ready) ? 'Ready' : 'Blocked'}</strong></div>
+          <div><small>Operating mode</small><strong>{coverageScope === 'local_private' ? 'Private' : 'Public'}</strong></div>
+        </section>
+
+        {#if coverageScope === 'public_saas' && !coverage.summary.core_public_ready}
+          <aside class="coverage-warning"><strong>Public SaaS is still blocked.</strong><span>Connect a commercially licensed provider for every core capability. Private-use access is not treated as a public license.</span></aside>
+        {/if}
+
+        <section class="coverage-section">
+          <div class="section-head"><div><span class="eyebrow">2 · COMPLETE YOUR COVERAGE</span><h2>Scanner capabilities</h2></div><small>Open a capability to connect or prioritize a source</small></div>
+          <div class="coverage-grid">
+            {#each coverage.capabilities as capability}
+              {@const selectedProvider = selectedCoverageProvider(capability)}
+              <article class:ready={capabilityReady(capability)} class:core={capability.core} class="coverage-card">
+                <header><div><small>{capability.core ? 'Core capability' : 'Optional evidence'}</small><h3>{capability.title}</h3></div><span>{capabilityState(capability)}</span></header>
+                <p>{capability.description}</p>
+                <div class="coverage-primary"><small>Current source</small><strong>{selectedProvider?.provider_title || 'No source ready'}</strong>{#if selectedProvider}<span>{accessLabel(selectedProvider)}</span>{/if}</div>
+                <details>
+                  <summary>{capability.providers.length} available source{capability.providers.length === 1 ? '' : 's'}</summary>
+                  <div class="coverage-provider-list">
+                    {#each capability.providers as provider}
+                      <section class:selected={provider.provider_id === capability.selected_provider} class="coverage-provider">
+                        <div><strong>{provider.provider_title}</strong><small>{provider.feeds.join(' · ')}</small></div>
+                        <span class:ready={provider.enabled && provider.configured}>{provider.enabled && provider.configured ? 'connected' : accessLabel(provider)}</span>
+                        {#if provider.enabled && provider.configured}
+                          <button onclick={() => preferProvider(capability, provider)} disabled={provider.provider_id === capability.selected_provider}>{provider.provider_id === capability.selected_provider ? 'First' : 'Prefer'}</button>
+                        {:else if provider.configuration_kind === 'api_key'}
+                          <div class="key-entry coverage-key"><input type="password" value={providerKeys[provider.provider_id] || ''} oninput={(event) => providerKeys = { ...providerKeys, [provider.provider_id]: event.currentTarget.value }} autocomplete="off" placeholder={`${provider.provider_title} API key`} aria-label={`${provider.provider_title} API key`} /><button onclick={() => connectCoverageProvider(provider)} disabled={(providerKeys[provider.provider_id] || '').trim().length < 8}>Connect</button></div>
+                        {/if}
+                        {#if provider.terms_url}<button class="text-button" onclick={() => openExternal(provider.terms_url!)}>Terms ↗</button>{/if}
+                      </section>
+                    {/each}
+                  </div>
+                </details>
+              </article>
+            {/each}
+          </div>
+        </section>
+
+        <details class="advanced-sources">
+          <summary><span><small>3 · ADVANCED</small><strong>Raw provider connections</strong></span><i>API keys, remote scanners, and source details</i></summary>
+          <div class="advanced-source-body">
+            <section class="providers-section"><div class="section-head"><div><span class="eyebrow">INCLUDED</span><h2>Free, no-key sources</h2></div><small>Ready by default</small></div><div class="provider-grid">{#each freeSources() as provider}<article class="provider-card" style={`--source-color:${sourceColor(provider.id)}`}><div><strong>{provider.title}</strong><span class:ready={provider.enabled}>{provider.enabled ? 'enabled' : 'available'}</span></div><p>{provider.feeds.map((feed) => feed.title).join(' · ')}</p>{#if provider.id === 'rati-cloud'}<button class={provider.enabled ? '' : 'primary'} onclick={() => toggleRatiCloud(provider)}>{provider.enabled ? 'Disable source' : 'Enable free source'}</button>{:else}<small class="included-label">No setup or API key</small>{/if}{#if provider.feeds[0]?.terms_url}<button class="text-button" onclick={() => openExternal(provider.feeds[0].terms_url!)}>Source terms ↗</button>{/if}</article>{/each}</div></section>
+            <section class="providers-section"><div class="section-head"><div><span class="eyebrow">REMOTE SCANNERS</span><h2>Add any scanner</h2></div><small>HTTPS, or loopback HTTP</small></div><div class="remote-source-form"><input bind:value={remoteName} placeholder="Source name" aria-label="Remote scanner name" /><input bind:value={remoteUrl} placeholder="https://scanner.example.com" aria-label="Remote scanner address" /><input type="password" bind:value={remoteToken} placeholder="Access token, if required" aria-label="Remote scanner token" autocomplete="off" /><button class="primary" onclick={addRemoteScanner} disabled={!remoteName.trim() || !remoteUrl.trim()}>Add source</button></div>{#if remoteSources().length}<div class="provider-grid remote-grid">{#each remoteSources() as provider}<article class="provider-card remote-card" style={`--source-color:${sourceColor(provider.id)}`}><div><strong>{provider.title}</strong><span class="ready">connected</span></div><p>{provider.feeds[0]?.title}</p><button onclick={() => removeRemoteScanner(provider)}>Remove</button></article>{/each}</div>{/if}</section>
+            <section class="providers-section"><div class="section-head"><div><span class="eyebrow">OPTIONAL</span><h2>API-key sources</h2></div><small>Add only what you use</small></div><div class="provider-grid">{#each keySources() as provider}<article class="provider-card"><div><strong>{provider.title}</strong><span class:ready={provider.configured}>{provider.configured ? 'connected' : 'optional'}</span></div><p>{provider.feeds.map((feed) => feed.title).join(' · ')}</p>{#if provider.configured}<button onclick={() => disconnectProvider(provider)}>Disconnect</button>{:else}<div class="key-entry"><input type="password" value={providerKeys[provider.id] || ''} oninput={(event) => providerKeys = { ...providerKeys, [provider.id]: event.currentTarget.value }} autocomplete="off" placeholder={`${provider.title} API key`} /><button onclick={() => connectProvider(provider)} disabled={(providerKeys[provider.id] || '').trim().length < 8}>Save key</button></div>{/if}{#if provider.feeds[0]?.terms_url}<button class="text-button" onclick={() => openExternal(provider.feeds[0].terms_url!)}>Source terms ↗</button>{/if}</article>{/each}</div></section>
+            <section class="workspace-grid"><article class="card action-card"><span class="eyebrow">OPTIONAL AI SOURCE</span><h2>OpenRouter</h2><p>{openrouter.status === 'connected' ? 'Connected to this workspace.' : 'Connect with OAuth or paste your own key.'}</p>{#if openrouter.status === 'connected'}<button onclick={disconnectOpenRouter}>Disconnect</button>{:else}<div class="button-row"><button class="primary" onclick={connectOpenRouter}>Connect OpenRouter</button></div><div class="key-entry"><input type="password" bind:value={openrouterKey} autocomplete="off" placeholder="Or paste an sk-or- API key" /><button onclick={connectOpenRouterKey} disabled={openrouterKey.trim().length < 24}>Save key</button></div>{/if}</article></section>
+            {#if openrouter.status === 'connected'}<section class="research-section"><div class="section-head"><div><span class="eyebrow">OPTIONAL AI</span><h2>Research</h2></div></div><textarea bind:value={researchPrompt} maxlength="6000" placeholder="What should RATi research?"></textarea><button class="primary" onclick={runResearch} disabled={researching || researchPrompt.trim().length < 3}>{researching ? 'Researching…' : 'Run research'}</button>{#if research}<article class="research-answer"><small>{research.model}</small><p>{research.answer}</p></article>{/if}</section>{/if}
+          </div>
+        </details>
       {/if}
     </main>
     <footer>RATi Runners {runtime.appVersion} · {runtime.platform} · Source API v{node?.api_version || '—'} · AGPL-3.0-only · <button class="footer-link" onclick={() => openExternal('https://github.com/atimics/runner-watch')}>Source</button></footer>

@@ -469,6 +469,7 @@ def routed_market_data(
     timeout: float = 15.0,
     fetch_recorder: SourceFetchRecorder | None = None,
     provider_keys: Mapping[str, str] | None = None,
+    provider_order: list[str] | None = None,
 ) -> RoutedMarketData:
     yahoo = YahooBarAdapter(
         YahooMarketData(
@@ -483,13 +484,18 @@ def routed_market_data(
         fetch_recorder=fetch_recorder,
         api_key=(provider_keys or {}).get("massive"),
     )
+    available = {"yahoo": yahoo}
     if massive is not None:
-        daily.register(massive)
-        daily.register(yahoo)
-        daily.route(DataKind.BARS, "massive", "yahoo")
-    else:
-        daily.register(yahoo)
-        daily.route(DataKind.BARS, "yahoo")
+        available["massive"] = massive
+    requested = [
+        provider.strip().lower()
+        for provider in (provider_order or ["massive", "yahoo"])
+        if provider.strip().lower() in available
+    ]
+    ordered = list(dict.fromkeys([*requested, *available]))
+    for name in ordered:
+        daily.register(available[name])
+    daily.route(DataKind.BARS, *ordered)
     intraday.register(yahoo)
     intraday.route(DataKind.BARS, "yahoo")
     return RoutedMarketData(daily, intraday_registry=intraday)

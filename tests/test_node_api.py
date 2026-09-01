@@ -96,12 +96,69 @@ def test_provider_contract_never_exposes_credentials() -> None:
     assert "credential_env" not in response.text
 
 
+def test_coverage_is_grouped_by_scanner_capability() -> None:
+    client, _vault = _client()
+
+    response = client.get("/api/v1/coverage")
+
+    assert response.status_code == 200
+    payload = response.json()
+    capabilities = {row["id"]: row for row in payload["capabilities"]}
+    assert payload["summary"]["core_private_ready"] is True
+    assert payload["summary"]["core_public_ready"] is False
+    bars = capabilities["market_bars"]
+    assert bars["selected_provider"] == "yahoo"
+    providers = {provider["provider_id"]: provider for provider in bars["providers"]}
+    assert providers["yahoo"]["access_model"] == "contract_review"
+    assert "public_derived_signals" not in providers["yahoo"]["usage_rights"]
+    assert providers["massive"]["configuration_kind"] == "api_key"
+
+
+def test_provider_priority_is_saved_and_reported() -> None:
+    vault = MemoryCredentialVault({"massive": "vault-massive-key"})
+    client, _vault = _client(vault=vault)
+    initial = {
+        row["id"]: row for row in client.get("/api/v1/coverage").json()["capabilities"]
+    }
+    assert initial["market_bars"]["selected_provider"] == "massive"
+
+    response = client.put(
+        "/api/v1/routes/market_bars",
+        json={"providers": ["yahoo"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["providers"] == ["yahoo", "massive"]
+    capabilities = {
+        row["id"]: row for row in client.get("/api/v1/coverage").json()["capabilities"]
+    }
+    assert capabilities["market_bars"]["selected_provider"] == "yahoo"
+    assert "yahoo" in (vault.get("provider-routes") or "")
+
+
+def test_provider_priority_rejects_wrong_capability() -> None:
+    client, _vault = _client()
+
+    response = client.put(
+        "/api/v1/routes/market_bars",
+        json={"providers": ["fintel"]},
+    )
+
+    assert response.status_code == 400
+    assert "cannot provide" in response.json()["detail"]
+
+
 def test_live_scan_runs_through_standalone_node(monkeypatch) -> None:
-    def fake_scan(payload: ScanRequest, _provider_keys: dict[str, str]) -> dict[str, object]:
+    def fake_scan(
+        payload: ScanRequest,
+        _provider_keys: dict[str, str],
+        provider_routes: dict[str, list[str]],
+    ) -> dict[str, object]:
         assert payload.top_n == 5
         assert payload.universe == "penny"
         assert payload.min_price == 0.2
         assert payload.max_price == 5
+        assert provider_routes["market_bars"] == ["massive", "yahoo"]
         return {
             "status": "complete",
             "source": "live",
@@ -137,8 +194,16 @@ def test_sample_scan_input_is_rejected() -> None:
 def test_local_ticker_detail_uses_scanner_provider_keys(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_detail(ticker: str, provider_keys: dict[str, str]) -> dict[str, object]:
-        captured.update(ticker=ticker, provider_keys=provider_keys)
+    def fake_detail(
+        ticker: str,
+        provider_keys: dict[str, str],
+        provider_routes: dict[str, list[str]],
+    ) -> dict[str, object]:
+        captured.update(
+            ticker=ticker,
+            provider_keys=provider_keys,
+            provider_routes=provider_routes,
+        )
         return {
             "ticker": ticker,
             "source": "local_scanner",
@@ -157,10 +222,9 @@ def test_local_ticker_detail_uses_scanner_provider_keys(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["source"] == "local_scanner"
-    assert captured == {
-        "ticker": "AAPL",
-        "provider_keys": {"massive": "vault-massive-key"},
-    }
+    assert captured["ticker"] == "AAPL"
+    assert captured["provider_keys"] == {"massive": "vault-massive-key"}
+    assert captured["provider_routes"]["market_bars"] == ["massive", "yahoo"]
 
 
 def test_cloud_node_rejects_local_ticker_detail() -> None:
@@ -361,7 +425,11 @@ def test_remote_scanner_rejects_insecure_non_loopback_address() -> None:
 def test_scan_receives_vault_backed_provider_keys(monkeypatch) -> None:
     captured: dict[str, str] = {}
 
-    def fake_scan(_payload: object, provider_keys: dict[str, str]) -> dict[str, object]:
+    def fake_scan(
+        _payload: object,
+        provider_keys: dict[str, str],
+        _provider_routes: dict[str, list[str]],
+    ) -> dict[str, object]:
         captured.update(provider_keys)
         return {
             "status": "complete",

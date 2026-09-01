@@ -462,6 +462,36 @@ def test_routed_daily_prefers_massive_when_configured(
     assert result.provenance.fallback_used is False
 
 
+def test_routed_daily_honors_saved_yahoo_priority(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    import pandas as pd
+
+    from runner_watch import market_data
+
+    _reset_daily_frame_cache(monkeypatch)
+    index = pd.date_range("2026-08-24", periods=2, freq="1D")
+    raw = pd.DataFrame({"Close": [1.0, 1.1], "Volume": [100, 120]}, index=index)
+    monkeypatch.setattr(market_data.yf, "download", lambda **kwargs: raw)
+
+    class GuardMassive:
+        name = "massive"
+        capabilities = frozenset({DataKind.BARS})
+
+        def fetch(self, request, progress=None) -> FetchBatch:  # pragma: no cover
+            raise AssertionError("Massive must not run when Yahoo succeeds first")
+
+    monkeypatch.setattr(market_data, "massive_bar_adapter", lambda **kwargs: GuardMassive())
+    result = routed_market_data(
+        batch_size=1,
+        provider_order=["yahoo", "massive"],
+    ).daily(["aaa"])
+
+    assert result.provenance is not None
+    assert result.provenance.provider == "yahoo"
+    assert result.provenance.attempted_providers == ("yahoo",)
+
+
 def test_routed_market_data_closes_massive_adapter(monkeypatch: MonkeyPatch) -> None:
     from runner_watch import market_data
 

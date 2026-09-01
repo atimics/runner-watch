@@ -139,9 +139,13 @@ class ScanStore:
 def run_scan(
     request: ScanRequest,
     provider_keys: Mapping[str, str] | None = None,
+    provider_routes: Mapping[str, list[str]] | None = None,
 ) -> dict[str, object]:
     warnings: list[str] = []
-    provider = routed_market_data(provider_keys=provider_keys)
+    provider = routed_market_data(
+        provider_keys=provider_keys,
+        provider_order=(provider_routes or {}).get("market_bars"),
+    )
     if request.universe == "penny":
         entries, warnings = penny_runner_universe(
             min_price=request.min_price,
