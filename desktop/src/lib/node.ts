@@ -186,7 +186,14 @@ export class NodeClient {
   readonly token: string;
 
   constructor(baseUrl: string, token = '') {
-    const parsed = new URL(baseUrl);
+    const value = baseUrl.trim();
+    if (!value) throw new Error('Scanner address is unavailable');
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      throw new Error('Enter a valid scanner address');
+    }
     const loopbackHttp = parsed.protocol === 'http:'
       && (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost');
     if (parsed.protocol !== 'https:' && !loopbackHttp) {
