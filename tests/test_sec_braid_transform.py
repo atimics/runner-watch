@@ -212,6 +212,35 @@ def test_braid_stream_transform_names_shared_accessions_by_issuer(tmp_path: Path
     assert len(identifiers) == len(set(identifiers))
 
 
+def test_braid_stream_transform_rejects_an_incomplete_source_stream(tmp_path: Path) -> None:
+    issuer_output = tmp_path / "partial-issuer"
+
+    with raises(ValueError, match="contains 4 issuers, expected 5"):
+        transform_braid_sec_stream(
+            io.StringIO(_stream()),
+            issuer_output,
+            source_release_id=SOURCE_RELEASE_ID,
+            source_manifest_sha256=SOURCE_MANIFEST_SHA256,
+            runner_revision=RUNNER_REVISION,
+            expected_issuers=5,
+            expected_filings=4,
+        )
+    assert not issuer_output.exists()
+
+    filing_output = tmp_path / "partial-filing"
+    with raises(ValueError, match="contains 4 filings, expected 5"):
+        transform_braid_sec_stream(
+            io.StringIO(_stream()),
+            filing_output,
+            source_release_id=SOURCE_RELEASE_ID,
+            source_manifest_sha256=SOURCE_MANIFEST_SHA256,
+            runner_revision=RUNNER_REVISION,
+            expected_issuers=4,
+            expected_filings=5,
+        )
+    assert not filing_output.exists()
+
+
 def test_braid_stream_transform_rejects_a_body_hash_mismatch(tmp_path: Path) -> None:
     lines = _stream().splitlines()
     filing = json.loads(lines[-1])
