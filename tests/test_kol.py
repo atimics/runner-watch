@@ -128,7 +128,7 @@ def test_ranker_prediction_becomes_one_immutable_flash_call(
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "kol.db")
     init_db()
-    captured_at = datetime(2026, 8, 25, 15, tzinfo=UTC)
+    captured_at = datetime.now(UTC)
     _seed_prediction(
         "run-one",
         "snapshot-one",
