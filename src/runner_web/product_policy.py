@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
-PRODUCT_POLICY_VERSION = "stonks.product-policy.v1"
+PRODUCT_POLICY_VERSION = "stonks.product-policy.v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,10 +64,16 @@ class SourcePolicyLike(Protocol):
     feed: str
     review_status: str
     enabled: bool
+    display_policy: str
+    product: str
 
 
-def source_policy_warnings(policies: Iterable[SourcePolicyLike]) -> list[dict[str, Any]]:
-    """Expose enabled, unapproved collectors without silently changing behavior."""
+def source_policy_warnings(
+    policies: Iterable[SourcePolicyLike],
+    *,
+    product: str | None = None,
+) -> list[dict[str, Any]]:
+    """Expose unapproved sources that can affect the selected public product."""
 
     return [
         {
@@ -78,12 +84,19 @@ def source_policy_warnings(policies: Iterable[SourcePolicyLike]) -> list[dict[st
             "warning": "enabled source has not been approved for public product effects",
         }
         for policy in policies
-        if policy.enabled and policy.review_status != "approved"
+        if (
+            policy.enabled
+            and policy.review_status != "approved"
+            and policy.display_policy != "internal_review_only"
+            and (product is None or policy.product == product)
+        )
     ]
 
 
 def policy_manifest(
     source_policies: Iterable[SourcePolicyLike] = (),
+    *,
+    product: str | None = None,
 ) -> dict[str, Any]:
     """Return the machine-readable policy contract used by docs and APIs."""
 
@@ -91,10 +104,14 @@ def policy_manifest(
     evidence_gate["families"] = list(EVIDENCE_GATE.families)
     return {
         "version": PRODUCT_POLICY_VERSION,
+        "product": product,
         "evidence_gate": evidence_gate,
         "market_base_rates": asdict(BASE_RATES),
         "ranker_training": asdict(RANKER_TRAINING),
         "research_promotion": asdict(RESEARCH_PROMOTION),
         "operations": asdict(OPERATIONS),
-        "source_policy_warnings": source_policy_warnings(source_policies),
+        "source_policy_warnings": source_policy_warnings(
+            source_policies,
+            product=product,
+        ),
     }

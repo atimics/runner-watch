@@ -67,6 +67,7 @@ class OwnershipSummary:
     is_10b5_1: bool = False
     direct_ownership: bool | None = None
     footnotes: str = ""
+    owner_cik: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,6 +349,13 @@ def parse_ownership_xml(text: str) -> OwnershipSummary:
     owner_name = root.findtext(
         "./reportingOwner/reportingOwnerId/rptOwnerName", default=""
     ).strip()
+    owner_cik_text = root.findtext(
+        "./reportingOwner/reportingOwnerId/rptOwnerCik", default=""
+    ).strip()
+    try:
+        owner_cik = int(owner_cik_text) if owner_cik_text else None
+    except ValueError:
+        owner_cik = None
     relationship = root.find("./reportingOwner/reportingOwnerRelationship")
     owner_title = ""
     if relationship is not None:
@@ -423,6 +431,7 @@ def parse_ownership_xml(text: str) -> OwnershipSummary:
         is_10b5_1=is_10b5_1,
         direct_ownership=direct_ownership,
         footnotes=footnotes,
+        owner_cik=owner_cik,
     )
 
 

@@ -1,0 +1,23 @@
+[project]
+name = "stonks-sec-qwen"
+version = "0.1.0"
+description = "Reproducible Qwen LoRA training and evaluation for Runner Watch SEC corpora."
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "accelerate==1.14.0",
+  "huggingface-hub==1.29.0",
+  "peft==0.20.0",
+  "safetensors==0.8.0",
+  "torch==2.13.0",
+  "transformers==5.16.1",
+]
+
+[project.scripts]
+sec-qwen = "sec_qwen.cli:main"
+
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

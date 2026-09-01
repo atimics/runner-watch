@@ -153,12 +153,13 @@ def _rendered_ticker(
     html = html.replace("<head>", '<head><base href="http://app.test/">')
     html = html.replace("</head>", f"<style>{styles}</style></head>")
     if inline_script:
-        ticker_script = (ROOT / "web/static/ticker-detail.js").read_text()
-        html = re.sub(
-            r'<script src="/static/ticker-detail\.js[^\"]*"[^>]*></script>',
-            lambda _match: f"<script>{ticker_script}</script>",
-            html,
-        )
+        for script_name in ("flash-comments.js", "ticker-detail.js"):
+            script = (ROOT / "web/static" / script_name).read_text()
+            html = re.sub(
+                rf'<script src="/static/{re.escape(script_name)}[^\"]*"[^>]*></script>',
+                lambda _match, source=script: f"<script>{source}</script>",
+                html,
+            )
     return re.sub(r'<link rel="stylesheet"[^>]*>', "", html)
 
 
@@ -314,7 +315,7 @@ def test_comment_recovers_from_proxy_timeout_without_another_click(page: Page) -
                 ),
             )
 
-    page.route("**/api/comments/TEST", comment_response)
+    page.route("**/api/comments/stock/TEST", comment_response)
     page.route(
         "**/api/t/TEST/chart",
         lambda route: route.fulfill(

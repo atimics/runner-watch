@@ -18,11 +18,19 @@ from runner_web.discovery_sources import (
     refresh_yahoo_news,
     yahoo_news_enabled,
 )
+from runner_web.free_risk_sources import (
+    free_legal_sources_enabled,
+    refresh_free_legal_sources,
+)
 from runner_web.nasdaq_halts import refresh_trade_halts
 
 LOG = logging.getLogger(__name__)
 EASTERN = ZoneInfo("America/New_York")
 DISCOVERY_INTERVAL_SECONDS = max(15, int(os.getenv("DISCOVERY_INTERVAL_SECONDS", "30")))
+FREE_LEGAL_INTERVAL_SECONDS = max(
+    3_600,
+    int(os.getenv("FREE_LEGAL_INTERVAL_SECONDS", "86400")),
+)
 
 
 def trade_halts_enabled() -> bool:
@@ -108,9 +116,10 @@ async def discovery_source_worker() -> None:
 
 
 async def apewisdom_source_worker() -> None:
-    """Refresh one aggregate Reddit trend response for the current 30-symbol watchlist."""
+    """Refresh slower aggregate sources without adding another process worker."""
 
     await asyncio.sleep(15)
+    next_legal_refresh = 0.0
     while True:
         if apewisdom_social_enabled():
             try:
@@ -121,4 +130,14 @@ async def apewisdom_source_worker() -> None:
                 raise
             except Exception as exc:
                 LOG.warning("ApeWisdom social refresh failed: %s", exc)
+        loop_time = asyncio.get_running_loop().time()
+        if free_legal_sources_enabled() and loop_time >= next_legal_refresh:
+            try:
+                await asyncio.to_thread(refresh_free_legal_sources)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                LOG.warning("Free legal source refresh failed: %s", exc)
+            finally:
+                next_legal_refresh = loop_time + FREE_LEGAL_INTERVAL_SECONDS
         await asyncio.sleep(900)

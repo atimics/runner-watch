@@ -378,7 +378,7 @@ def _corporate_action(
 ) -> dict[str, Any] | None:
     row = database.execute(
         """
-        SELECT event_type,event_at,payload_json FROM market_events
+        SELECT event_type,event_at,payload_json FROM public_market_events
         WHERE ticker=? AND event_at>? AND event_at<=?
           AND event_type IN ('reverse_split','corporate_action','security_action')
         ORDER BY event_at LIMIT 1

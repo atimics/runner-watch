@@ -1,0 +1,22 @@
+{% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
+{% macro flash_comments(subject_kind, subject_key, comments, comment_count, user, enabled, login_url) %}
+<section class="discussion-section" id="discussion" data-flash-comments data-comment-endpoint="/api/comments/{{ subject_kind }}/{{ subject_key }}" data-comment-storage-key="{{ subject_kind }}:{{ subject_key }}">
+  <div class="section-heading"><h2>Comments</h2><b id="discussionCount" data-comment-count>{{ comment_count }}</b></div>
+  {% if user %}
+  <div class="comment-form ai-comment-action">
+    <small id="commentStatus" data-comment-status>{{ '10 Flash' if enabled else 'Unavailable' }}</small><button id="generateComment" data-generate-comment type="button" {% if not enabled %}disabled{% endif %}>Post with Flash</button>
+  </div>
+  {% else %}
+  <a class="comment-login" href="{{ login_url }}">Log in to comment</a>
+  {% endif %}
+  <ol class="comment-list" id="commentList" data-comment-list>
+    {% for comment in comments %}
+    <li data-comment-id="{{ comment.id }}">
+      {{ render_comment_avatar(comment.avatar) }}
+      <div class="comment-copy"><header><strong>{{ comment.avatar.name }}</strong><span class="comment-ability" title="{{ comment.avatar.ability_description }}">{{ comment.avatar.ability }}</span>{% if comment.is_owner %}<span class="comment-owner">You</span>{% endif %}</header><small class="comment-meta"><time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time>{% if comment.is_owner %} · <button type="button" data-delete-comment="{{ comment.id }}">delete</button>{% endif %}</small><p>{{ comment.body }}</p></div>
+    </li>
+    {% endfor %}
+  </ol>
+  <p class="comment-empty" id="commentEmpty" data-comment-empty {% if comments %}hidden{% endif %}>No comments.</p>
+</section>
+{% endmacro %}

@@ -5,10 +5,10 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
+from runner_watch.sample_data import SAMPLE_SYMBOLS, SampleMarketData
 
 from runner_watch.market_data import YahooMarketData
 from runner_watch.models import ScanResult, ScanSettings
-from runner_watch.sample_data import SAMPLE_SYMBOLS, SampleMarketData
 from runner_watch.scanner import RunnerScanner
 from runner_watch.universe import broad_us_universe, parse_custom_symbols, starter_universe
 
@@ -16,7 +16,7 @@ EASTERN = ZoneInfo("America/New_York")
 
 
 st.set_page_config(
-    page_title="Runner Watch",
+    page_title="RATi Scanner Lab",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -52,7 +52,7 @@ def _result_frame(result: ScanResult) -> pd.DataFrame:
             {
                 "Ticker": item.ticker,
                 "Score": item.score,
-                "Stage": item.stage,
+                "Stage (lab)": item.stage,
                 "Price": item.price,
                 "Change": item.change_pct,
                 "5m": item.momentum_5m_pct,
@@ -90,14 +90,20 @@ def _live_chart(ticker: str) -> pd.DataFrame:
 now_et = datetime.now(UTC).astimezone(EASTERN)
 heading, clock = st.columns([4, 1])
 with heading:
-    st.title("⚡ Runner Watch")
-    st.caption("Find unusual price and volume movement before it becomes an obvious top gainer.")
+    st.title("⚡ RATi Scanner Lab")
+    st.caption("A standalone workbench for exploring the basic market scanner.")
 with clock:
     st.metric("New York time", now_et.strftime("%I:%M %p"))
     st.caption(now_et.strftime("%a, %b %d"))
 
+st.warning(
+    "Scanner Lab is not the online RATi product. It has no SEC evidence gate, rug-risk gate, "
+    "trade state, accounts, Calls, Flash, or Sports. Use the local web app for product parity."
+)
+st.link_button("Open local RATi product", "http://127.0.0.1:8080")
+
 with st.sidebar:
-    st.header("Scan setup")
+    st.header("Lab scan setup")
     data_mode = st.radio(
         "Data",
         ["Live Yahoo data", "Sample data"],
@@ -122,7 +128,7 @@ with st.sidebar:
         st.info("Sample mode creates fake market data. It never shows real prices.")
 
     st.subheader("Daily filters")
-    price_range = st.slider("Price range", 0.10, 200.0, (0.50, 50.0), step=0.10)
+    price_range = st.slider("Price range", 0.10, 200.0, (0.20, 5.00), step=0.10)
     min_avg_volume = st.select_slider(
         "Minimum average shares/day",
         options=[0, 50_000, 100_000, 250_000, 500_000, 1_000_000, 2_000_000],
@@ -132,15 +138,15 @@ with st.sidebar:
     min_dollar_volume = st.select_slider(
         "Minimum average dollars/day",
         options=[0, 100_000, 250_000, 500_000, 1_000_000, 2_500_000, 5_000_000],
-        value=500_000,
+        value=250_000,
         format_func=_money,
     )
     if universe_choice == "Full US market":
-        max_symbols = st.slider("Intraday scan cap", 100, 2000, 500, step=100)
+        max_symbols = st.slider("Intraday scan cap", 60, 1980, 240, step=60)
         st.caption("A higher cap gives wider coverage but takes longer and may hit Yahoo limits.")
     else:
-        max_symbols = 500
-    top_n = st.slider("Results to keep", 10, 100, 50, step=10)
+        max_symbols = 240
+    top_n = st.slider("Results to keep", 10, 100, 40, step=10)
     scan_clicked = st.button("Run scan", type="primary", width="stretch")
 
 if scan_clicked:
@@ -221,7 +227,7 @@ if frame.empty:
 filter_col, score_col, export_col = st.columns([2, 1, 1])
 with filter_col:
     stages = st.multiselect(
-        "Show stages",
+        "Show lab stages",
         ["EARLY", "BUILDING", "RUNNING", "WATCH", "EXTENDED"],
         default=["EARLY", "BUILDING", "RUNNING", "WATCH"],
     )
@@ -237,8 +243,8 @@ with export_col:
         width="stretch",
     )
 
-visible = frame[(frame["Stage"].isin(stages)) & (frame["Score"] >= minimum_score)]
-st.subheader("Leaderboard")
+visible = frame[(frame["Stage (lab)"].isin(stages)) & (frame["Score"] >= minimum_score)]
+st.subheader("Lab leaderboard")
 st.dataframe(
     visible,
     hide_index=True,
@@ -264,7 +270,7 @@ st.subheader("Ticker details")
 selected_ticker = st.selectbox("Ticker", visible["Ticker"].tolist() or frame["Ticker"].tolist())
 selected = next(item for item in result.rows if item.ticker == selected_ticker)
 detail_cols = st.columns(5)
-detail_cols[0].metric("Runner score", f"{selected.score:.1f}", selected.stage)
+detail_cols[0].metric("Lab score", f"{selected.score:.1f}", selected.stage)
 detail_cols[1].metric("Last price", f"${selected.price:.2f}", f"{selected.change_pct:+.1f}%")
 detail_cols[2].metric(
     "Same-time volume",
@@ -298,7 +304,7 @@ if st.session_state.get("scan_mode") == "Live Yahoo data":
 with st.expander("How the score works"):
     st.markdown(
         """
-The 0–100 score combines same-time relative volume, recent 15-minute relative volume,
+The lab's 0–100 score combines same-time relative volume, recent 15-minute relative volume,
 5- and 15-minute price movement, the prior-day-high breakout, session-high strength,
 and traded dollar volume. Old quotes reduce the score. A move that is already very large
 also loses points and gets an **EXTENDED** warning.

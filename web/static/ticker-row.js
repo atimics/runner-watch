@@ -143,7 +143,10 @@
       ? `<small class="ticker-badge ticker-badge-${statusTone}">${esc(statusLabel)}</small>`
       : '';
     const [thesisCueMarkup, thesisLabel] = thesisCue(row);
-    const age = ago(row.entered_at || row.event_at);
+    const marketFreshness = row.section === 'scored' || row.source === 'market';
+    const age = ago(marketFreshness
+      ? row.quote_time || row.event_at || row.entered_at
+      : row.entered_at || row.event_at);
     const events = Number(row.event_count) > 1
       ? `<span class="event-count">+${Number(row.event_count) - 1}</span>`
       : '';
