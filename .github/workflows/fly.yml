@@ -34,7 +34,7 @@ jobs:
       - run: uv run ruff check src tests
       - run: uv run pip-audit --local --skip-editable --progress-spinner off --timeout 10 --vulnerability-service osv
       - run: uv run pytest -q --cov-fail-under=68
-      - run: uv run pytest -q tests/test_browser_pulse.py -o addopts=
+      - run: uv run pytest -q tests/test_browser_pulse.py tests/test_browser_ticker.py -o addopts=
       - run: docker compose -f compose.local.yml config --quiet
       - run: docker build --target test --tag runner-watch:test .
 
@@ -93,10 +93,8 @@ jobs:
             | xargs --no-run-if-empty flyctl machine start
 
           for _attempt in {1..12}; do
-            details="$(curl --fail --silent --show-error --location --max-time 20 \
-              https://runners.rati.chat/health/details 2>/dev/null || true)"
-            if jq -e '.worker.status == "ok" and .trainer.status == "ok"' \
-              <<<"$details" >/dev/null 2>&1; then
+            if flyctl ssh console --app runner-watch-ratimics --process-group web \
+              --command "python -m runner_web.deployment_check" --quiet; then
               exit 0
             fi
             sleep 5

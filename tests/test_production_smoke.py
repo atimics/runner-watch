@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import re
+import stat
+import subprocess
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -65,3 +67,30 @@ def test_every_response_identifies_its_build() -> None:
 
     assert response.headers["X-RATi-Build"] == web_main.APP_BUILD_SHA
     assert response.headers["X-RATi-Assets"] == web_main.STATIC_VERSION
+
+
+def test_security_bootstrap_uses_secret_stores_without_deploying_fly() -> None:
+    script_path = Path(__file__).parents[1] / "scripts/configure-production-security"
+    script = script_path.read_text()
+
+    subprocess.run(["sh", "-n", str(script_path)], check=True)
+    assert script_path.stat().st_mode & stat.S_IXUSR
+    assert "openssl rand -hex 32" in script
+    assert "wrangler secret put EDGE_PROXY_SECRET" in script
+    assert "flyctl secrets import" in script
+    assert "--stage" in script
+    assert "gh secret set" not in script
+    assert "flyctl deploy" not in script
+    assert "wrangler deploy" not in script
+    assert "Cloudflare already has EDGE_PROXY_SECRET" in script
+    assert "--keychain" in script
+    assert "security add-generic-password" in script
+    assert "security find-generic-password" in script
+
+
+def test_deploy_health_check_keeps_the_operations_token_inside_fly() -> None:
+    workflow = (Path(__file__).parents[1] / ".github/workflows/fly.yml").read_text()
+
+    assert "flyctl ssh console" in workflow
+    assert "python -m runner_web.deployment_check" in workflow
+    assert "OPERATIONS_TOKEN: ${{ secrets.OPERATIONS_TOKEN }}" not in workflow

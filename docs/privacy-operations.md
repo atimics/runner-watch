@@ -71,12 +71,25 @@ The present Fly `sjc` region is San Jose, United States. Before serving people i
 
 ## Security controls
 
-- Passkeys with user verification; no passwords or biometric templates on the server.
+- Passkeys with user verification; no passwords or biometric templates on the server. Adding a
+  passkey or deleting an account requires a passkey check from the last five minutes.
 - Random sessions stored only as hashes; Secure, HTTP-only, SameSite=Lax cookies in production.
+  Adding a passkey rotates the current session and revokes every other session for that account.
 - TLS for public traffic, PostgreSQL and Redis; fail startup in production if database or cache transport is not encrypted.
+- Authenticate Cloudflare-to-origin requests with `EDGE_PROXY_SECRET`, replace untrusted client-IP
+  headers at the edge, and enable `REQUIRE_EDGE_PROXY_SECRET=1` only after both sides share the
+  secret. Keep the health routes and documented legacy hostname available for operations.
 - Hash rate-limit subjects before writing short-lived Redis keys. Set the same secret `RATE_LIMIT_HASH_KEY` on every web machine so the limit remains shared without storing an IP address or account ID in the key.
-- Origin checks on state-changing browser requests, content security policy, HSTS, frame restrictions, and bounded rate limits.
+- Use one-time, high-entropy registration codes for a closed beta by setting
+  `REGISTRATION_MODE=invite` and storing `REGISTRATION_INVITE_CODES` only in the platform secret
+  store. Never send an invite code to logs or a data export.
+- Origin checks on state-changing browser requests, content security policy, HSTS, frame
+  restrictions, and bounded rate limits, including generated image endpoints.
+- Require `Authorization: Bearer $OPERATIONS_TOKEN` for detailed health, capability, ingestion,
+  ranker, and intelligence endpoints. Public health responses contain only a status.
 - No request-body, cookie, credential, research-evidence, export, or deletion logging.
+- Parse external XML with entity expansion disabled, enforce response and document size limits, and
+  expose only a boolean when an upstream worker error exists.
 - Least-privilege production access, multi-factor authentication for infrastructure and processors, separate production credentials, secret rotation, and a reviewed access list each quarter.
 - Daily backups with a 30-day maximum, restore tests, deletion replay, and encryption in transit and at rest.
 - Dependency, container, and secret scanning in CI; patch critical issues promptly.

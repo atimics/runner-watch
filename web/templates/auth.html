@@ -11,6 +11,11 @@
   <section class="mobile-auth-card">
     <h1>Create your passkey</h1>
     <p>Use Face ID, Touch ID, or your screen lock. No password.</p>
+    {% if registration_invite_required %}
+    <label for="inviteCode">One-time invite code
+      <input id="inviteCode" name="invite_code" autocomplete="one-time-code" maxlength="200" required>
+    </label>
+    {% endif %}
     <button class="auth-submit" id="createButton">Create passkey</button>
     <button class="auth-secondary" id="loginButton">Log in with passkey</button>
     <div id="authStatus" class="status" aria-live="polite"></div>
@@ -24,6 +29,7 @@ const statusBox = document.getElementById('authStatus');
 const createButton = document.getElementById('createButton');
 const loginButton = document.getElementById('loginButton');
 const requestedNext = {{ next_path | tojson }};
+const inviteCode = document.getElementById('inviteCode');
 function safeNextPath(value) {
   try {
     const target = new URL(value, location.origin);
@@ -92,7 +98,8 @@ async function runPasskey(action) {
     if (!window.PublicKeyCredential) throw new Error('This browser does not support passkeys.');
     let start, credential;
     if (action === 'register') {
-      start = await api('/api/auth/register/options');
+      if (inviteCode && !inviteCode.value.trim()) throw new Error('Enter your one-time invite code.');
+      start = await api('/api/auth/register/options', {invite_code: inviteCode ? inviteCode.value.trim() : ''});
       credential = await navigator.credentials.create({publicKey: prepareCreate(start.options)});
       const done = await api('/api/auth/register/verify', {flow_token: start.flow_token, credential: serialize(credential)});
       location.href = welcomePath(nextPath || done.redirect);
