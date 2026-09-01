@@ -6,6 +6,10 @@ import os
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
+from runner_web.congressional_disclosures import (
+    house_disclosures_enabled,
+    refresh_house_disclosures,
+)
 from runner_web.discovery_sources import (
     apewisdom_social_enabled,
     bluesky_search_enabled,
@@ -30,6 +34,10 @@ DISCOVERY_INTERVAL_SECONDS = max(15, int(os.getenv("DISCOVERY_INTERVAL_SECONDS",
 FREE_LEGAL_INTERVAL_SECONDS = max(
     3_600,
     int(os.getenv("FREE_LEGAL_INTERVAL_SECONDS", "86400")),
+)
+HOUSE_DISCLOSURE_INTERVAL_SECONDS = max(
+    300,
+    int(os.getenv("HOUSE_DISCLOSURE_INTERVAL_SECONDS", "900")),
 )
 
 
@@ -61,6 +69,23 @@ async def trading_halt_worker() -> None:
                 # The failed or partial fetch is already durable in ingestion_runs.
                 LOG.warning("Nasdaq halt refresh failed: %s", exc)
         await asyncio.sleep(60)
+
+
+async def house_disclosure_worker() -> None:
+    """Poll the free official House index and fetch only unseen PTR documents."""
+
+    await asyncio.sleep(35)
+    while True:
+        started = asyncio.get_running_loop().time()
+        if house_disclosures_enabled():
+            try:
+                await asyncio.to_thread(refresh_house_disclosures)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                LOG.warning("House disclosure refresh failed: %s", exc)
+        elapsed = asyncio.get_running_loop().time() - started
+        await asyncio.sleep(max(30, HOUSE_DISCLOSURE_INTERVAL_SECONDS - elapsed))
 
 
 async def discovery_source_worker() -> None:

@@ -110,3 +110,27 @@ def test_halt_worker_logs_a_refresh_failure_and_keeps_running(
 
     assert delays == [60]
     assert "Nasdaq halt refresh failed: feed unavailable" in caplog.text
+
+
+def test_house_disclosures_enabled_accepts_explicit_true(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("HOUSE_DISCLOSURES_ENABLED", "true")
+
+    assert source_workers.house_disclosures_enabled() is True
+
+
+def test_house_disclosure_worker_refreshes_the_free_feed(monkeypatch: MonkeyPatch) -> None:
+    delays = stop_after_initial_delay(monkeypatch)
+    calls: list[str] = []
+    monkeypatch.setattr(source_workers, "house_disclosures_enabled", lambda: True)
+    monkeypatch.setattr(
+        source_workers,
+        "refresh_house_disclosures",
+        lambda: calls.append("house"),
+    )
+
+    with pytest.raises(WorkerStopped):
+        asyncio.run(source_workers.house_disclosure_worker())
+
+    assert calls == ["house"]
+    assert delays[0] == 35
+    assert 30 <= delays[1] <= source_workers.HOUSE_DISCLOSURE_INTERVAL_SECONDS

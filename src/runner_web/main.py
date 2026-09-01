@@ -185,6 +185,7 @@ from runner_web.short_data import short_data_configured, short_data_for_scan
 from runner_web.source_workers import (
     apewisdom_source_worker,
     discovery_source_worker,
+    house_disclosure_worker,
     trading_halt_worker,
 )
 from runner_web.sports import (
@@ -538,6 +539,7 @@ def _start_worker_tasks() -> list[asyncio.Task[Any]]:
     workers = [
         asyncio.create_task(edgar_worker(), name="edgar"),
         asyncio.create_task(trading_halt_worker(), name="trading-halts"),
+        asyncio.create_task(house_disclosure_worker(), name="house-disclosures"),
         asyncio.create_task(discovery_source_worker(), name="discovery-sources"),
         asyncio.create_task(apewisdom_source_worker(), name="apewisdom"),
         asyncio.create_task(outcome_worker(), name="outcomes"),
