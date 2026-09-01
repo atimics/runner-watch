@@ -49,7 +49,7 @@ class NodeSettings:
             public_origin=public_origin.rstrip("/") if public_origin else None,
             allowed_origins=_csv(
                 "RATI_NODE_ALLOWED_ORIGINS",
-                "rati-app://app,http://127.0.0.1:5173,http://localhost:5173",
+                "tauri://localhost,rati-app://app,http://127.0.0.1:5173,http://localhost:5173",
             ),
             allow_user_openrouter=allow_user_openrouter,
             credential_backend=os.getenv("RATI_CREDENTIAL_BACKEND", backend_default)

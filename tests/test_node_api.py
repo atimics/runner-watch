@@ -21,7 +21,7 @@ def _settings(**overrides: object) -> NodeSettings:
         "mode": "local",
         "node_id": "test-node",
         "public_origin": "http://127.0.0.1:8787",
-        "allowed_origins": ("rati-app://app",),
+        "allowed_origins": ("tauri://localhost", "rati-app://app"),
         "allow_user_openrouter": True,
         "credential_backend": "memory",
         "auth_token": "test-node-token-with-24-characters",
@@ -225,19 +225,29 @@ def test_openrouter_pkce_exchange_keeps_key_out_of_api() -> None:
     }
 
 
-def test_desktop_origin_receives_node_cors_headers() -> None:
+@pytest.mark.parametrize("origin", ["tauri://localhost", "rati-app://app"])
+def test_desktop_origin_receives_node_cors_headers(origin: str) -> None:
     client, _vault = _client()
 
     response = client.options(
         "/api/v1/node",
         headers={
-            "Origin": "rati-app://app",
+            "Origin": origin,
             "Access-Control-Request-Method": "GET",
         },
     )
 
     assert response.status_code == 200
-    assert response.headers["access-control-allow-origin"] == "rati-app://app"
+    assert response.headers["access-control-allow-origin"] == origin
+
+
+def test_local_node_defaults_include_tauri_origin(monkeypatch) -> None:
+    monkeypatch.setenv("RATI_NODE_MODE", "local")
+    monkeypatch.delenv("RATI_NODE_ALLOWED_ORIGINS", raising=False)
+
+    settings = NodeSettings.from_environment()
+
+    assert "tauri://localhost" in settings.allowed_origins
 
 
 def test_self_hosted_node_rejects_unauthenticated_writes() -> None:
