@@ -5,6 +5,7 @@ from pathlib import Path
 from pytest import MonkeyPatch
 
 from runner_web import db, operations
+from runner_web import main as web_main
 from runner_web.db import connection, init_db
 from runner_web.operations import (
     TRAINER_HEARTBEAT_KEY,
@@ -12,6 +13,7 @@ from runner_web.operations import (
     health_status,
     readiness_status,
     trainer_health,
+    worker_health,
     worker_heartbeat_key,
 )
 from runner_web.performance import (
@@ -120,6 +122,63 @@ def test_health_reports_a_fresh_degraded_worker(
     assert result["status"] == "degraded"
     assert result["worker"]["status"] == "degraded"
     assert result["worker"]["detail"]["failed_workers"] == ["outcomes"]
+
+
+def test_worker_contract_includes_kol_and_case_refreshers() -> None:
+    required = operations.required_worker_names(sports_ingestion_enabled=False)
+
+    assert "kol" in required
+    assert "case-monitor" in required
+
+
+def test_worker_health_recomputes_missing_required_names() -> None:
+    checked_at = datetime(2026, 8, 25, 18, tzinfo=UTC)
+    state = {
+        worker_heartbeat_key("machine-a"): {
+            "value": json.dumps(
+                {
+                    "status": "ok",
+                    "required_workers": ["outcomes", "kol"],
+                    "running_workers": ["outcomes"],
+                }
+            ),
+            "updated_at": checked_at.isoformat(),
+        }
+    }
+
+    result = worker_health(state, checked_at=checked_at)
+
+    assert result["status"] == "degraded"
+    assert result["detail"]["instances"][0]["missing_workers"] == ["kol"]
+
+
+def test_worker_startup_schedules_kol_and_case_refreshers(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class Task:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def get_name(self) -> str:
+            return self.name
+
+        def done(self) -> bool:
+            return False
+
+    created: list[Task] = []
+
+    def create_task(coroutine: object, *, name: str) -> Task:
+        coroutine.close()  # type: ignore[attr-defined]
+        task = Task(name)
+        created.append(task)
+        return task
+
+    monkeypatch.setattr(web_main.asyncio, "create_task", create_task)
+    monkeypatch.setattr(web_main, "SPORTS_INGESTION_ENABLED", False)
+
+    web_main._start_worker_tasks()
+
+    assert {task.name for task in created} >= {"kol", "case-monitor", "worker-heartbeat"}
 
 
 def test_health_reports_one_stale_instance_when_another_is_fresh(

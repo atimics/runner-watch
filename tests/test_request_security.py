@@ -110,6 +110,8 @@ def test_deployment_does_not_trust_forwarded_headers_from_every_peer() -> None:
     fly_config = (root / "fly.toml").read_text()
     worker = (root / "cloudflare-router/src/index.js").read_text()
     worker_config = json.loads((root / "cloudflare-router/wrangler.jsonc").read_text())
+    deploy_workflow = (root / ".github/workflows/fly.yml").read_text()
+    uptime_workflow = (root / ".github/workflows/uptime.yml").read_text()
 
     assert "target.origin !== location.origin" in template
     assert "const nextPath = safeNextPath(requestedNext);" in template
@@ -118,9 +120,14 @@ def test_deployment_does_not_trust_forwarded_headers_from_every_peer() -> None:
     assert 'headers.set("X-Rati-Client-IP"' in worker
     assert 'headers.set("X-Rati-Edge-Secret"' in worker
     assert "env.EDGE_PROXY_SECRET" in worker
-    assert worker_config["secrets"]["required"] == ["EDGE_PROXY_SECRET"]
+    assert "secrets" not in worker_config
     assert 'REQUIRE_EDGE_PROXY_SECRET = "1"' in fly_config
     assert 'REGISTRATION_MODE = "invite"' in fly_config
+    assert "wrangler@4.127.1 deploy" in deploy_workflow
+    assert "https://runners.rati.chat" in deploy_workflow
+    assert "https://sports.rati.chat" in deploy_workflow
+    assert "https://runners.rati.chat" in uptime_workflow
+    assert "https://sports.rati.chat" in uptime_workflow
 
 
 def test_generated_image_cards_are_rate_limited(

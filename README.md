@@ -550,6 +550,10 @@ characters long, in Cloudflare and Fly before setting `REQUIRE_EDGE_PROXY_SECRET
 switch on, public routes fail closed when a request bypasses the edge; health checks and the legacy
 direct hostname remain available for operations.
 
+The legacy host also serves `/.well-known/webauthn` for WebAuthn Related Origins. On either new
+product host, an existing `stonks.rati.foundation` passkey can open the same account once and then
+create a `rati.chat` passkey. The old credential is kept so the migration is recoverable.
+
 List charts send only time and price, use response compression, and cache their complete response
 for one minute.
 
@@ -583,6 +587,10 @@ npx wrangler login
 flyctl auth login
 ./scripts/configure-production-security
 ```
+
+After bootstrap, add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` to the GitHub production
+environment. The main deployment workflow updates the Worker, then checks both
+`runners.rati.chat` and `sports.rati.chat`; the uptime workflow monitors both public hosts too.
 
 It requires an interactive terminal, checks the platforms before changing anything, generates five
 invite codes by default, displays the generated values once for password-manager storage, configures

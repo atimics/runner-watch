@@ -428,6 +428,38 @@ def test_pulse_ticker_search_uses_native_validation() -> None:
     assert "Movement is only the first clue." not in pulse_template
 
 
+def test_public_call_requires_a_fresh_market_snapshot(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        web_main,
+        "ticker_detail_data",
+        lambda _ticker: {
+            "can_publish": False,
+            "current": {
+                "price": 4.25,
+                "event_at": (datetime.now(UTC) - timedelta(days=2)).isoformat(),
+            },
+        },
+    )
+
+    with pytest.raises(HTTPException, match="within the last two hours"):
+        web_main._current_call_mark("OLD")
+
+    monkeypatch.setattr(
+        web_main,
+        "ticker_detail_data",
+        lambda _ticker: {
+            "can_publish": True,
+            "current": {
+                "price": 4.25,
+                "quote_time": (datetime.now(UTC) - timedelta(days=2)).isoformat(),
+                "event_at": datetime.now(UTC).isoformat(),
+            },
+        },
+    )
+    with pytest.raises(HTTPException, match="within the last two hours"):
+        web_main._current_call_mark("OLD")
+
+
 def test_passkey_signup_needs_no_profile_fields(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "auth.db")
     init_db()

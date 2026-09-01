@@ -2724,6 +2724,36 @@ def _migration_052_security_controls(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_053_sports_market_observation_history(db: DatabaseConnection) -> None:
+    """Keep source quote time and distinguish repeated market states."""
+
+    _ensure_column(db, "sports_odds_snapshots", "source_observed_at TEXT")
+    _ensure_column(db, "sports_odds_snapshots", "market_state_hash TEXT")
+    _ensure_column(db, "sports_predictions", "input_state_hash TEXT")
+    db.execute(
+        """
+        UPDATE sports_odds_snapshots
+        SET source_observed_at=COALESCE(source_observed_at,observed_at),
+            market_state_hash=COALESCE(market_state_hash,snapshot_hash)
+        WHERE source_observed_at IS NULL OR market_state_hash IS NULL
+        """
+    )
+    db.execute(
+        """
+        UPDATE sports_predictions SET input_state_hash=input_hash
+        WHERE input_state_hash IS NULL
+        """
+    )
+    db.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS sports_odds_event_source_time
+            ON sports_odds_snapshots(event_id,source_observed_at DESC);
+        CREATE INDEX IF NOT EXISTS sports_predictions_event_state_time
+            ON sports_predictions(event_id,model_version,input_state_hash,observed_at DESC);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2784,6 +2814,11 @@ MIGRATIONS = (
     Migration(50, "market_session_reports", _migration_050_market_session_reports),
     Migration(51, "public_source_policy_gate", _migration_051_public_source_policy_gate),
     Migration(52, "security_controls", _migration_052_security_controls),
+    Migration(
+        53,
+        "sports_market_observation_history",
+        _migration_053_sports_market_observation_history,
+    ),
 )
 
 

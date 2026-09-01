@@ -486,6 +486,7 @@ def apply_moneylines(
                 "market_is_consensus": consensus is not None,
                 "bookmaker_moneylines": bookmakers,
                 "preferred_sportsbook": preferred["sportsbook"],
+                "odds_source_updated_at": str(line.get("last_update") or ""),
             }
         )
         used_markets.add(market_index)
@@ -509,6 +510,7 @@ def clear_event_odds(events: list[dict[str, Any]]) -> None:
                 "market_is_consensus": False,
                 "bookmaker_moneylines": [],
                 "preferred_sportsbook": "",
+                "odds_source_updated_at": "",
             }
         )
 

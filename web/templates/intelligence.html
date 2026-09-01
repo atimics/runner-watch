@@ -41,6 +41,8 @@ const heatmap = document.getElementById('heatmap');
 const statusBox = document.getElementById('intelStatus');
 const filter = document.getElementById('intelFilter');
 function esc(value) { const node = document.createElement('span'); node.textContent = String(value ?? ''); return node.innerHTML; }
+function attr(value) { return esc(value).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function safeSourceUrl(value) { try { const raw = String(value || '').trim(); if (!raw) return '#'; const url = new URL(raw, location.origin); return ['http:', 'https:'].includes(url.protocol) ? attr(url.href) : '#'; } catch (_) { return '#'; } }
 function compact(value) { const number = Number(value); if (!Number.isFinite(number) || number <= 0) return ''; if (number >= 1e6) return '$' + (number / 1e6).toFixed(1) + 'M'; if (number >= 1e3) return '$' + (number / 1e3).toFixed(0) + 'K'; return '$' + number.toFixed(0); }
 function ago(value) { const seconds = Math.max(0, (Date.now() - new Date(value).getTime()) / 1000); if (seconds < 90) return Math.round(seconds) + 's ago'; if (seconds < 5400) return Math.round(seconds / 60) + 'm ago'; if (seconds < 129600) return Math.round(seconds / 3600) + 'h ago'; return Math.round(seconds / 86400) + 'd ago'; }
 function allowed(row, mode) {
@@ -58,8 +60,9 @@ function render() {
     const value = compact(row.transaction_value);
     const market = row.price == null ? 'Price pending' : `$${Number(row.price).toFixed(2)}${row.change_pct == null ? '' : ` · ${Number(row.change_pct) >= 0 ? '+' : ''}${Number(row.change_pct).toFixed(1)}%`}`;
     const heat = Number(row.score) >= 80 ? 'hot' : Number(row.score) >= 60 ? 'warm' : '';
+    const sentiment = ['positive', 'risk', 'gap', 'neutral'].includes(row.sentiment) ? row.sentiment : 'neutral';
     const measured = outcome(row.return_1h_pct, '1h') + outcome(row.return_1d_pct, '1d') + outcome(row.return_5d_pct, '5d');
-    return `<a class="heat-cell ${esc(row.sentiment)} ${heat}" href="${esc(row.filing_url)}" target="_blank" rel="noopener"><div class="heat-top"><strong>$${esc(row.ticker)}</strong><b>${Number(row.score).toFixed(0)}</b></div><span class="heat-kind">${esc(row.kind)}</span><div class="heat-meta"><span>${esc(row.form)}</span><span>${esc(ago(row.filed_at))}</span></div><div class="heat-evidence"><strong>${esc(row.evidence_label)}</strong><p>${esc(row.evidence_text)}</p></div>${measured ? `<div class="heat-outcomes">${measured}</div>` : '<div class="heat-learning">Results pending</div>'}<div class="heat-market"><span>${esc(market)}</span>${value ? `<strong>${esc(value)}</strong>` : ''}</div></a>`;
+    return `<a class="heat-cell ${sentiment} ${heat}" href="${safeSourceUrl(row.filing_url)}" target="_blank" rel="noopener"><div class="heat-top"><strong>$${esc(row.ticker)}</strong><b>${Number(row.score).toFixed(0)}</b></div><span class="heat-kind">${esc(row.kind)}</span><div class="heat-meta"><span>${esc(row.form)}</span><span>${esc(ago(row.filed_at))}</span></div><div class="heat-evidence"><strong>${esc(row.evidence_label)}</strong><p>${esc(row.evidence_text)}</p></div>${measured ? `<div class="heat-outcomes">${measured}</div>` : '<div class="heat-learning">Results pending</div>'}<div class="heat-market"><span>${esc(market)}</span>${value ? `<strong>${esc(value)}</strong>` : ''}</div></a>`;
   }).join('') || '<div class="empty intel-empty"><span>⌁</span><h3>No matches.</h3></div>';
   const state = intelligence.state || {}; const refreshed = state.edgar_last_refresh;
   document.getElementById('lastRefresh').textContent = refreshed ? `Updated ${ago(refreshed)}` : 'Loading…';
