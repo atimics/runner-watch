@@ -17,12 +17,81 @@
 {% block bottom_nav %}{% endblock %}
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
-const statusBox=document.getElementById('authStatus');const button=document.getElementById('authButton');
-function b64bytes(value){const padded=value.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-value.length%4)%4);return Uint8Array.from(atob(padded),c=>c.charCodeAt(0));}
-function bytesB64(value){const bytes=new Uint8Array(value);let text='';bytes.forEach(byte=>text+=String.fromCharCode(byte));return btoa(text).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
-function prepare(options){options.challenge=b64bytes(options.challenge);options.user.id=b64bytes(options.user.id);options.excludeCredentials=(options.excludeCredentials||[]).map(item=>({...item,id:b64bytes(item.id)}));return options;}
-function serialize(credential){const response=credential.response;return {id:credential.id,rawId:bytesB64(credential.rawId),type:credential.type,authenticatorAttachment:credential.authenticatorAttachment,clientExtensionResults:credential.getClientExtensionResults(),response:{clientDataJSON:bytesB64(response.clientDataJSON),attestationObject:bytesB64(response.attestationObject),transports:response.getTransports?response.getTransports():[]}};}
-async function api(url,body){const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):null});const data=await response.json();if(!response.ok)throw new Error(data.detail||'Request failed');return data;}
-button.addEventListener('click',async()=>{button.disabled=true;statusBox.textContent='Waiting for your device…';try{if(!window.PublicKeyCredential)throw new Error('This browser does not support passkeys.');const start=await api('/api/auth/passkey/options');const credential=await navigator.credentials.create({publicKey:prepare(start.options)});await api('/api/auth/passkey/verify',{flow_token:start.flow_token,credential:serialize(credential)});statusBox.className='status success';statusBox.textContent='Backup passkey added.';button.textContent='Done';button.onclick=()=>location.href='/';}catch(error){statusBox.className='status error';statusBox.textContent=error.message||String(error);button.disabled=false;}});
+const statusBox = document.getElementById('authStatus');
+const button = document.getElementById('authButton');
+function b64bytes(value) {
+  const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4);
+  return Uint8Array.from(atob(padded), character => character.charCodeAt(0));
+}
+function bytesB64(value) {
+  const bytes = new Uint8Array(value); let text = '';
+  bytes.forEach(byte => text += String.fromCharCode(byte));
+  return btoa(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function prepareCreate(options) {
+  options.challenge = b64bytes(options.challenge);
+  options.user.id = b64bytes(options.user.id);
+  options.excludeCredentials = (options.excludeCredentials || []).map(item => ({...item, id: b64bytes(item.id)}));
+  return options;
+}
+function prepareGet(options) {
+  options.challenge = b64bytes(options.challenge);
+  options.allowCredentials = (options.allowCredentials || []).map(item => ({...item, id: b64bytes(item.id)}));
+  return options;
+}
+function serialize(credential) {
+  const response = credential.response;
+  const data = {
+    id: credential.id,
+    rawId: bytesB64(credential.rawId),
+    type: credential.type,
+    authenticatorAttachment: credential.authenticatorAttachment,
+    clientExtensionResults: credential.getClientExtensionResults(),
+    response: {clientDataJSON: bytesB64(response.clientDataJSON)},
+  };
+  if (response.attestationObject) {
+    data.response.attestationObject = bytesB64(response.attestationObject);
+    data.response.transports = response.getTransports ? response.getTransports() : [];
+  } else {
+    data.response.authenticatorData = bytesB64(response.authenticatorData);
+    data.response.signature = bytesB64(response.signature);
+    data.response.userHandle = response.userHandle ? bytesB64(response.userHandle) : null;
+  }
+  return data;
+}
+async function api(url, body) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: body ? JSON.stringify(body) : null,
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || 'Request failed');
+  return data;
+}
+button.addEventListener('click', async () => {
+  button.disabled = true;
+  statusBox.textContent = 'Confirm your existing passkey…';
+  try {
+    if (!window.PublicKeyCredential) throw new Error('This browser does not support passkeys.');
+    const reauth = await api('/api/auth/reauth/options');
+    const existing = await navigator.credentials.get({publicKey: prepareGet(reauth.options)});
+    await api('/api/auth/reauth/verify', {flow_token: reauth.flow_token, credential: serialize(existing)});
+    statusBox.textContent = 'Create your new passkey…';
+    const start = await api('/api/auth/passkey/options');
+    const credential = await navigator.credentials.create({publicKey: prepareCreate(start.options)});
+    await api('/api/auth/passkey/verify', {flow_token: start.flow_token, credential: serialize(credential)});
+    statusBox.className = 'status success';
+    statusBox.textContent = 'Backup passkey added. Other sessions were signed out.';
+    button.textContent = 'Done';
+    button.onclick = () => location.href = '/';
+  } catch (error) {
+    statusBox.className = 'status error';
+    statusBox.textContent = error.name === 'NotAllowedError'
+      ? 'Passkey verification was cancelled.'
+      : (error.message || String(error));
+    button.disabled = false;
+  }
+});
 </script>
 {% endblock %}
