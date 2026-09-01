@@ -87,7 +87,7 @@ def test_manifest_claim_and_pack_share_one_node_identity_and_wire_profile() -> N
     )
     signed_claim = SignedClaimV1.sign(claim, key)
 
-    owner = NodeIdentity(node_id=node_id, public_key=public_key, display_name="Cloud scanner")
+    owner = NodeIdentity(node_id=node_id, public_key=public_key, display_name="Swarm scanner")
     pack = AlphaPack(
         pack_id="rati-default",
         pack_version=1,

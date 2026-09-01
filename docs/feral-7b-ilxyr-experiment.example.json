@@ -16,10 +16,10 @@
   },
   "baseline": "weight://huggingface/Qwen/Qwen2.5-7B-Instruct@a09a35458c702b33eeacc393d103063234e8bc28",
   "datasets": [
-    "dataset://stonks/feral-7b-sec/v2"
+    "dataset://braid/feral-7b-sec/v1"
   ],
   "dataset_bindings": {
-    "dataset://stonks/feral-7b-sec/v2": "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    "dataset://braid/feral-7b-sec/v1": "artifact://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "models": [
     "weight://huggingface/Qwen/Qwen2.5-7B-Instruct@a09a35458c702b33eeacc393d103063234e8bc28"
@@ -82,7 +82,7 @@
   },
   "execution": {
     "executor": "oci-job",
-    "program": "oci://ghcr.io/atimics/feral-7b@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "program": "oci://ghcr.io/atimics/feral-7b-sec-qwen@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "args": [
       "train",
       "/inputs/config.toml"
@@ -105,13 +105,13 @@
     "level": "deterministic_replay",
     "scope": {
       "seeds": [17],
-      "eval_set": "dataset://stonks/feral-7b-sec/v2",
+      "eval_set": "dataset://braid/feral-7b-sec/v1",
       "coverage": 1.0
     },
     "provenance": {
       "artifact_hashes": [],
       "model_lineage": "model://feral/feral-7b/v2",
-      "checker": "checker://stonks/sec-qwen-release/v2"
+      "checker": "checker://ilxyr/feral-7b-release/v1"
     }
   },
   "expected_outputs": [

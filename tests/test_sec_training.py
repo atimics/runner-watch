@@ -229,6 +229,7 @@ schema = "stonks.sec_qwen_training.v1"
 model_id = "Qwen/Qwen2.5-7B-Instruct"
 revision = "{'b' * 40}"
 [dataset]
+dataset_id = "dataset://test"
 corpus_manifest = "corpus/corpus-release.json"
 train_file = "train.jsonl"
 validation_file = "validation.jsonl"
@@ -339,6 +340,7 @@ model_id = "Qwen/Qwen2.5-7B-Instruct"
 revision = "{'e' * 40}"
 [dataset]
 provider = "braid"
+dataset_id = "dataset://braid/feral-7b-sec/v1"
 corpus_manifest = "braid-corpus/release.json"
 release_id = "{release_id}"
 manifest_sha256 = "{manifest_sha256}"
@@ -356,7 +358,9 @@ directory = "output"
 
     config = load_config(config_path)
     assert config.dataset.provider == "braid"
-    assert validate_corpus(config)["id"] == release_id
+    assert config.dataset.dataset_id == "dataset://braid/feral-7b-sec/v1"
+    assert validate_corpus(config)["id"] == "dataset://braid/feral-7b-sec/v1"
+    assert validate_corpus(config)["release_id"] == release_id
     assert load_examples(data / "train.jsonl") == [example]
 
     (data / "train.jsonl").write_text("tampered\n", encoding="utf-8")
@@ -374,6 +378,7 @@ model_id = "Qwen/Qwen2.5-7B-Instruct"
 revision = "{'f' * 40}"
 [dataset]
 provider = "braid"
+dataset_id = "dataset://braid/feral-7b-sec/v1"
 corpus_manifest = "release.json"
 train_file = "data/train.jsonl"
 validation_file = "data/validation.jsonl"
@@ -439,6 +444,7 @@ schema = "stonks.sec_qwen_training.v1"
 model_id = "Qwen/Qwen2.5-7B-Instruct"
 revision = "{'d' * 40}"
 [dataset]
+dataset_id = "dataset://profile"
 corpus_manifest = "profile-corpus/corpus-release.json"
 train_file = "train.jsonl"
 validation_file = "validation.jsonl"
@@ -640,6 +646,7 @@ schema = "stonks.sec_qwen_training.v1"
 model_id = "Qwen/Qwen2.5-7B-Instruct"
 revision = "{'a' * 40}"
 [dataset]
+dataset_id = "dataset://citation-test"
 corpus_manifest = "corpus/corpus-release.json"
 train_file = "train.jsonl"
 validation_file = "validation.jsonl"

@@ -1,0 +1,77 @@
+name: FERAL-7B training image
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/feral-7b-oci.yml"
+      - "ml/sec-qwen/**"
+  workflow_dispatch:
+    inputs:
+      base_image:
+        description: "Digest-pinned GPU Python base image"
+        required: true
+        type: string
+      publish:
+        description: "Push the built image to GHCR"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Validate image contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check immutable model and image inputs
+        env:
+          BASE_IMAGE: ${{ inputs.base_image }}
+        run: |
+          test "$(grep -c '^ARG BASE_IMAGE$' ml/sec-qwen/Dockerfile)" -eq 1
+          test "$(grep -c '^ARG MODEL_REVISION$' ml/sec-qwen/Dockerfile)" -eq 1
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            printf '%s' "$BASE_IMAGE" | grep -Eq '^[A-Za-z0-9._/:@-]+@sha256:[0-9a-f]{64}$'
+          fi
+
+  publish:
+    name: Build immutable training image
+    if: github.event_name == 'workflow_dispatch'
+    needs: contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Sign in to GHCR
+        if: inputs.publish
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build the pinned FERAL image
+        id: image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ml/sec-qwen
+          file: ml/sec-qwen/Dockerfile
+          push: ${{ inputs.publish }}
+          tags: ghcr.io/atimics/feral-7b-sec-qwen:${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=${{ inputs.base_image }}
+            MODEL_ID=Qwen/Qwen2.5-7B-Instruct
+            MODEL_REVISION=a09a35458c702b33eeacc393d103063234e8bc28
+      - name: Report the immutable image identity
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          test -n "$IMAGE_DIGEST"
+          printf 'Image: `ghcr.io/atimics/feral-7b-sec-qwen@%s`\n' "$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"

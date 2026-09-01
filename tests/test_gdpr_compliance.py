@@ -108,7 +108,7 @@ def test_public_app_has_a_complete_privacy_surface() -> None:
         assert required_copy in privacy_notice
 
 
-def test_local_vault_checks_encryption_before_cloud_deletion() -> None:
+def test_local_vault_checks_encryption_before_swarm_deletion() -> None:
     source = (ROOT / "web/static/data-vault.js").read_text()
     privacy_notice = (ROOT / "web/templates/privacy.html").read_text()
 
@@ -124,7 +124,9 @@ def test_local_vault_checks_encryption_before_cloud_deletion() -> None:
         "fetch('/api/account/data/delete-cloud-copy'"
     )
     assert "innerHTML" not in source
-    assert "Move saved data off the cloud" in privacy_notice
+    assert "RATi Swarm" in privacy_notice
+    assert "Move saved data off the Swarm" in privacy_notice
+    assert "cloud" not in privacy_notice.lower()
     assert "passphrase and key are never sent to RATi" in privacy_notice
 
 
