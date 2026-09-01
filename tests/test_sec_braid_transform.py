@@ -157,6 +157,7 @@ def test_braid_stream_transform_builds_pinned_training_and_evaluation_inputs(
     build = json.loads((output / "feral-7b-training.braid.json").read_text())
     assert build["metadata"]["name"] == "feral-7b-sec"
     assert build["spec"]["publication"] == {"target": "none"}
+    assert build["spec"]["quality"]["maximumUrlRatio"] == 1
     for source in build["spec"]["sources"]:
         path = output / source["path"]
         assert source["snapshot"]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()

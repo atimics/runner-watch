@@ -523,7 +523,8 @@ def _braid_build(
                 "maximumCharacters": 1_000_000,
                 "minimumAlphabeticRatio": 0,
                 "minimumPrintableRatio": 0.98,
-                "maximumUrlRatio": 0.5,
+                # Inline XBRL evidence legitimately contains dense taxonomy namespace URLs.
+                "maximumUrlRatio": 1,
                 "maximumRepeatedLineRatio": 1,
                 "nearDuplicateHammingDistance": 0,
                 "rejectEmailAddresses": False,
