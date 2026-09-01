@@ -32,6 +32,12 @@ export interface ProviderStatus {
   feeds: ProviderFeed[];
 }
 
+export interface RemoteScannerInput {
+  name: string;
+  url: string;
+  token: string;
+}
+
 export interface OpenRouterConnection {
   status: 'connected' | 'disconnected';
   provider: 'openrouter';
@@ -65,6 +71,8 @@ export interface ScanResult {
   scanned_symbols?: number;
   rows: ScanRow[];
   warnings: string[];
+  source_id?: string;
+  source_name?: string;
 }
 
 export interface TickerBar {
@@ -217,6 +225,32 @@ export class NodeClient {
 
   scans(): Promise<{ receipts: ScanResult[] }> {
     return this.request('/api/v1/scans');
+  }
+
+  sourceScans(): Promise<{ receipts: ScanResult[]; warnings: string[] }> {
+    return this.request('/api/v1/source-scans', undefined, 30_000);
+  }
+
+  setRatiCloudEnabled(enabled: boolean): Promise<{ source: string; status: string }> {
+    return this.request('/api/v1/sources/rati-cloud', {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
+  addRemoteScanner(input: RemoteScannerInput): Promise<{
+    id: string; name: string; url: string; status: string;
+  }> {
+    return this.request('/api/v1/connections/scanners', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  }
+
+  removeRemoteScanner(scannerId: string): Promise<{ id: string; status: string }> {
+    return this.request(`/api/v1/connections/scanners/${encodeURIComponent(scannerId)}`, {
+      method: 'DELETE',
+    });
   }
 
   liveScan(): Promise<ScanResult> {

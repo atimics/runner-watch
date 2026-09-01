@@ -37,6 +37,8 @@ def _client(
     vault: MemoryCredentialVault | None = None,
     exchange_code: object | None = None,
     research: OpenRouterResearch | None = None,
+    cloud_source: object | None = None,
+    remote_source: object | None = None,
     authenticated: bool = True,
 ) -> tuple[TestClient, MemoryCredentialVault]:
     settings = settings or _settings()
@@ -50,6 +52,8 @@ def _client(
         vault=vault,
         openrouter=openrouter,
         research=research,
+        cloud_source=cloud_source,  # type: ignore[arg-type]
+        remote_source=remote_source,  # type: ignore[arg-type]
     )
     client = TestClient(create_app(settings=settings, service=service))
     if authenticated and settings.auth_token:
@@ -80,9 +84,14 @@ def test_provider_contract_never_exposes_credentials() -> None:
     payload = response.json()
     providers = {provider["id"]: provider for provider in payload["providers"]}
     assert "sec" in providers
+    assert "built-in-scanner" in providers
+    assert "rati-cloud" in providers
     assert "openrouter" in providers
     assert providers["yahoo"]["state"] == "connected"
     assert providers["yahoo"]["configuration_kind"] == "none"
+    assert providers["sec"]["configuration_kind"] == "none"
+    assert providers["sec"]["configured"] is True
+    assert providers["rati-cloud"]["state"] == "disabled"
     assert "OPENROUTER_API_KEY" not in response.text
     assert "credential_env" not in response.text
 
@@ -259,6 +268,84 @@ def test_provider_key_is_stored_without_being_returned() -> None:
     assert "massive-secret-key" not in response.text
     providers = {row["id"]: row for row in client.get("/api/v1/providers").json()["providers"]}
     assert providers["massive"]["configured"] is True
+
+
+def test_rati_cloud_is_a_free_toggleable_source() -> None:
+    class FakeCloudSource:
+        def scans(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "id": "rati-one",
+                    "source": "live",
+                    "finished_at": "2026-08-30T00:00:00+00:00",
+                    "rows": [],
+                }
+            ]
+
+    client, vault = _client(cloud_source=FakeCloudSource())
+
+    enabled = client.put("/api/v1/sources/rati-cloud", json={"enabled": True})
+    pulled = client.get("/api/v1/source-scans")
+
+    assert enabled.json() == {"source": "rati-cloud", "status": "connected"}
+    assert vault.get("rati-cloud-enabled") == "enabled"
+    assert pulled.json()["receipts"][0]["source_id"] == "rati-cloud"
+    providers = {row["id"]: row for row in client.get("/api/v1/providers").json()["providers"]}
+    assert providers["rati-cloud"]["enabled"] is True
+
+
+def test_remote_scanner_is_saved_as_a_colored_source_without_exposing_token() -> None:
+    captured: dict[str, str] = {}
+
+    class FakeRemoteSource:
+        def scans(self, url: str, token: str) -> list[dict[str, object]]:
+            captured.update(url=url, token=token)
+            return [
+                {
+                    "id": "remote-one",
+                    "source": "live",
+                    "finished_at": "2026-08-30T00:00:00+00:00",
+                    "rows": [],
+                }
+            ]
+
+    client, vault = _client(remote_source=FakeRemoteSource())
+    response = client.post(
+        "/api/v1/connections/scanners",
+        json={
+            "name": "Desk scanner",
+            "url": "https://scanner.example.com/",
+            "token": "private-remote-token",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["url"] == "https://scanner.example.com"
+    assert "private-remote-token" not in response.text
+    scanner_id = response.json()["id"]
+    providers = {row["id"]: row for row in client.get("/api/v1/providers").json()["providers"]}
+    assert providers[f"remote:{scanner_id}"]["configuration_kind"] == "remote_scanner"
+    receipts = client.get("/api/v1/source-scans").json()["receipts"]
+    assert receipts[0]["source_name"] == "Desk scanner"
+    assert captured == {
+        "url": "https://scanner.example.com",
+        "token": "private-remote-token",
+    }
+    assert "private-remote-token" in (vault.get("remote-scanners") or "")
+    assert client.delete(f"/api/v1/connections/scanners/{scanner_id}").status_code == 200
+    assert vault.get("remote-scanners") is None
+
+
+def test_remote_scanner_rejects_insecure_non_loopback_address() -> None:
+    client, _vault = _client()
+
+    response = client.post(
+        "/api/v1/connections/scanners",
+        json={"name": "Unsafe", "url": "http://scanner.example.com", "token": ""},
+    )
+
+    assert response.status_code == 400
+    assert "HTTPS" in response.json()["detail"]
 
 
 def test_scan_receives_vault_backed_provider_keys(monkeypatch) -> None:

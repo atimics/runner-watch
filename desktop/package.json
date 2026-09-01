@@ -3,42 +3,28 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "RATi Swarm desktop app for Pulse, Radar, Flash, and local or cloud scanning.",
-  "main": "src/main/main.cjs",
+  "description": "Local source workspace for built-in, RATi, and user-configured scanners.",
   "author": "RATi",
   "license": "AGPL-3.0-only",
   "scripts": {
-    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env RATI_DESKTOP_DEV_URL=http://127.0.0.1:5173 electron .\"",
+    "dev": "tauri dev",
     "build": "vite build",
-    "check": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit && node --check src/main/main.cjs && node --check src/preload/preload.cjs && node --check forge.config.cjs",
-    "test": "vitest run && node --test src/main/public-data.test.cjs",
-    "package": "pnpm build && electron-forge package",
-    "make": "pnpm build && electron-forge make"
+    "check": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit && cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "test": "vitest run && cargo test --manifest-path src-tauri/Cargo.toml",
+    "package": "tauri build --no-bundle",
+    "make": "tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0"
   },
   "devDependencies": {
-    "@electron-forge/cli": "7.11.2",
-    "@electron-forge/maker-deb": "7.11.2",
-    "@electron-forge/maker-dmg": "7.11.2",
-    "@electron-forge/maker-squirrel": "7.11.2",
-    "@electron-forge/maker-zip": "7.11.2",
     "@sveltejs/vite-plugin-svelte": "7.3.0",
-    "concurrently": "^9.2.1",
-    "cross-env": "^10.1.0",
-    "electron": "44.0.0",
+    "@tauri-apps/cli": "^2.0.0",
     "jsdom": "30.0.1",
     "svelte": "5.57.0",
     "svelte-check": "4.7.6",
     "typescript": "6.0.3",
     "vite": "8.2.2",
-    "vitest": "4.1.11",
-    "wait-on": "^9.0.1"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron",
-      "electron-winstaller",
-      "fs-xattr",
-      "macos-alias"
-    ]
+    "vitest": "4.1.11"
   }
 }
