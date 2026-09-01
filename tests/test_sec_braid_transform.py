@@ -150,16 +150,20 @@ def test_braid_stream_transform_builds_pinned_training_and_evaluation_inputs(
         "user",
         "assistant",
     ]
-    future = json.loads((output / "evaluation/test-future.jsonl").read_text().splitlines()[0])
+    future = json.loads((output / "candidates/test-future.jsonl").read_text().splitlines()[0])
     assert future["schema"] == "stonks.sec_chat_example.v2"
-    assert "text" not in future
+    assert future["text"].startswith("System:\n")
 
-    build = json.loads((output / "feral-7b.braid.json").read_text())
+    build = json.loads((output / "feral-7b-training.braid.json").read_text())
     assert build["metadata"]["name"] == "feral-7b-sec"
     assert build["spec"]["publication"] == {"target": "none"}
     for source in build["spec"]["sources"]:
         path = output / source["path"]
         assert source["snapshot"]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    future_build = json.loads((output / "feral-7b-future-eval.braid.json").read_text())
+    assert future_build["metadata"]["name"] == "feral-7b-sec-future-eval"
+    assert future_build["spec"]["sources"][0]["split"] == "test"
+    assert future_build["spec"]["purposes"] == ["evaluation", "research"]
 
 
 def test_braid_stream_transform_is_deterministic(tmp_path: Path) -> None:

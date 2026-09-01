@@ -116,15 +116,17 @@ braid-sec-edgar stream \
       --source-manifest-sha256 FULL_64_CHARACTER_SHA256 \
       --runner-revision FULL_40_CHARACTER_GIT_COMMIT
 
-braid build /private/feral-transform/feral-7b.braid.json
+braid build /private/feral-transform/feral-7b-training.braid.json
+braid build /private/feral-transform/feral-7b-future-eval.braid.json
+braid build /private/feral-transform/feral-7b-unseen-eval.braid.json
 ```
 
-The transform stores only derived candidates and evaluation rows in its output. Its temporary
-working database is deleted before completion. `transform-release.json` binds every output to the
-exact Braid source release, raw source-manifest hash, and Runner Watch revision, and keeps
-`training_authorized` false. The generated Braid build includes train and validation only. The
-future and unseen-issuer files remain separate under `evaluation/` so the two preregistered SEC
-scores cannot be silently combined.
+The transform stores only derived candidates in its output. Its temporary working database is
+deleted before completion. `transform-release.json` binds every output to the exact Braid source
+release, raw source-manifest hash, and Runner Watch revision, and keeps `training_authorized`
+false. The three generated builds create one train/validation release and two separate sealed
+evaluation releases, so future and unseen-issuer scores cannot be silently combined. All four
+splits therefore remain Braid releases.
 
 Verify and accept the Braid release outside Runner Watch. It must be a closed
 `braid.release/v2` directory in `RELEASED` state with `data/train.jsonl` and

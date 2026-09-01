@@ -13,9 +13,9 @@ deduplication checks. Training consumes only the preserved chat messages from th
 The logical dataset handle is `dataset://braid/feral-7b-sec/v1`; ilXyr binds that handle to the
 exact imported Braid release artifact before it can admit an experiment.
 
-The Braid release should expose `data/train.jsonl` and `data/validation.jsonl`. Keep future and
-unseen-issuer tests in the frozen ilXyr evaluation release rather than placing them in a training
-configuration. Accepting a Braid release does not authorize training.
+The training Braid release should expose `data/train.jsonl` and `data/validation.jsonl`. Keep the
+future and unseen-issuer Braid releases separate from the training configuration and register both
+as frozen ilXyr evaluation inputs. Accepting any release does not authorize training.
 
 Create that release with the cloud-side `braid-sec-edgar stream | stonks-sec-braid-transform`
 bridge documented in the repository training guide. Do not run Runner Watch's legacy SEC backfill

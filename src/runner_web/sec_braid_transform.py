@@ -417,46 +417,72 @@ def _file_binding(root: Path, relative: str) -> dict[str, Any]:
     }
 
 
+def _braid_source(
+    root: Path,
+    source_release_id: str,
+    source_manifest_sha256: str,
+    runner_revision: str,
+    *,
+    source_id: str,
+    path: str,
+    split: str,
+) -> dict[str, Any]:
+    candidate = root / path
+    revision = f"{source_release_id}:manifest-{source_manifest_sha256}:runner-{runner_revision}"
+    return {
+        "id": source_id,
+        "kind": "file",
+        "path": path,
+        "format": "jsonl",
+        "textField": "text",
+        "license": "NOASSERTION",
+        "language": "en",
+        "domain": "sec",
+        "split": split,
+        "maximumBytes": max(1, candidate.stat().st_size),
+        "attribution": f"Braid SEC source release {source_release_id}",
+        "snapshot": {"revision": revision, "sha256": _sha256(candidate)},
+        "selectionRationale": "Deterministic FERAL-7B SEC multitask example.",
+        "trainingObjective": "Ground SEC answers in accession-bound filing evidence.",
+    }
+
+
 def _braid_build(
     root: Path,
     source_release_id: str,
     source_manifest_sha256: str,
     runner_revision: str,
+    *,
+    name: str,
+    description: str,
+    purposes: tuple[str, ...],
+    source_specs: tuple[tuple[str, str, str], ...],
 ) -> dict[str, Any]:
     digest = source_release_id.removeprefix("braid_sec_")
-    revision = f"{source_release_id}:manifest-{source_manifest_sha256}:runner-{runner_revision}"
-    sources = []
-    for split, filename in (("train", "train.jsonl"), ("validation", "validation.jsonl")):
-        relative = f"candidates/{filename}"
-        path = root / relative
-        sources.append(
-            {
-                "id": f"feral-{split}",
-                "kind": "file",
-                "path": relative,
-                "format": "jsonl",
-                "textField": "text",
-                "license": "NOASSERTION",
-                "language": "en",
-                "domain": "sec",
-                "split": split,
-                "maximumBytes": max(1, path.stat().st_size),
-                "attribution": f"Braid SEC source release {source_release_id}",
-                "snapshot": {"revision": revision, "sha256": _sha256(path)},
-                "selectionRationale": "Deterministic FERAL-7B SEC multitask example.",
-                "trainingObjective": "Ground SEC answers in accession-bound filing evidence.",
-            }
+    sources = [
+        _braid_source(
+            root,
+            source_release_id,
+            source_manifest_sha256,
+            runner_revision,
+            source_id=source_id,
+            path=path,
+            split=split,
         )
+        for source_id, path, split in source_specs
+    ]
+    split_minimums = {split: 1 for _source_id, _path, split in source_specs}
+    minimum_documents = len(source_specs)
     return {
         "apiVersion": "braid/v1",
         "kind": "DatasetBuild",
         "metadata": {
-            "name": "feral-7b-sec",
+            "name": name,
             "version": f"v1-{digest[:12]}",
-            "description": "FERAL-7B deterministic SEC multitask training corpus from Braid.",
+            "description": description,
         },
         "spec": {
-            "purposes": ["fine-tuning", "evaluation", "research"],
+            "purposes": list(purposes),
             "sources": sources,
             "rights": {
                 "allowedLicenses": ["NOASSERTION"],
@@ -489,14 +515,14 @@ def _braid_build(
                 "domainWeights": {},
             },
             "evaluation": {
-                "minimumDocuments": 2,
-                "minimumSourceDocuments": 2,
+                "minimumDocuments": minimum_documents,
+                "minimumSourceDocuments": minimum_documents,
                 "minimumApproximateTokens": 1,
                 "maximumRejectionRatio": 0,
                 "requiredDomains": ["sec"],
-                "minimumDocumentsByDomain": {"sec": 2},
-                "minimumSourceDocumentsByDomain": {"sec": 2},
-                "minimumDocumentsBySplit": {"train": 1, "validation": 1},
+                "minimumDocumentsByDomain": {"sec": minimum_documents},
+                "minimumSourceDocumentsByDomain": {"sec": minimum_documents},
+                "minimumDocumentsBySplit": split_minimums,
             },
             "output": {
                 "directory": ".braid/releases",
@@ -667,17 +693,16 @@ def transform_braid_sec_stream(
             issuer_keys, timestamps_by_issuer, unseen_issuer_fraction
         )
         (root / "candidates").mkdir()
-        (root / "evaluation").mkdir()
         handles = {
             "train": (root / "candidates/train.jsonl").open("w", encoding="utf-8", newline="\n"),
             "validation": (
                 root / "candidates/validation.jsonl"
             ).open("w", encoding="utf-8", newline="\n"),
             "test_future": (
-                root / "evaluation/test-future.jsonl"
+                root / "candidates/test-future.jsonl"
             ).open("w", encoding="utf-8", newline="\n"),
             "test_unseen_issuer": (
-                root / "evaluation/test-unseen-issuer.jsonl"
+                root / "candidates/test-unseen-issuer.jsonl"
             ).open("w", encoding="utf-8", newline="\n"),
         }
         counts = {name: 0 for name in SPLIT_FILES}
@@ -688,12 +713,9 @@ def transform_braid_sec_stream(
             for issuer_key, as_of, payload in rows:
                 split = _split_for(str(issuer_key), str(as_of), unseen, validation, future)
                 example = json.loads(str(payload))
-                if split in {"train", "validation"}:
-                    handles[split].write(
-                        _canonical_json({"text": _training_text(example), **example}) + "\n"
-                    )
-                else:
-                    handles[split].write(_canonical_json(example) + "\n")
+                handles[split].write(
+                    _canonical_json({"text": _training_text(example), **example}) + "\n"
+                )
                 counts[split] += 1
         finally:
             for handle in handles.values():
@@ -717,19 +739,54 @@ def transform_braid_sec_stream(
         (root / "dataset-summary.json").write_text(
             _canonical_json(summary) + "\n", encoding="utf-8", newline="\n"
         )
-        braid_build = _braid_build(
-            root, source_release_id, source_manifest_sha256, runner_revision
-        )
-        (root / "feral-7b.braid.json").write_text(
-            json.dumps(braid_build, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
+        builds = {
+            "feral-7b-training.braid.json": _braid_build(
+                root,
+                source_release_id,
+                source_manifest_sha256,
+                runner_revision,
+                name="feral-7b-sec",
+                description="FERAL-7B deterministic SEC multitask training corpus from Braid.",
+                purposes=("fine-tuning", "evaluation", "research"),
+                source_specs=(
+                    ("feral-train", "candidates/train.jsonl", "train"),
+                    ("feral-validation", "candidates/validation.jsonl", "validation"),
+                ),
+            ),
+            "feral-7b-future-eval.braid.json": _braid_build(
+                root,
+                source_release_id,
+                source_manifest_sha256,
+                runner_revision,
+                name="feral-7b-sec-future-eval",
+                description="FERAL-7B sealed future SEC evaluation release from Braid.",
+                purposes=("evaluation", "research"),
+                source_specs=(("feral-future", "candidates/test-future.jsonl", "test"),),
+            ),
+            "feral-7b-unseen-eval.braid.json": _braid_build(
+                root,
+                source_release_id,
+                source_manifest_sha256,
+                runner_revision,
+                name="feral-7b-sec-unseen-eval",
+                description="FERAL-7B sealed unseen-issuer SEC evaluation release from Braid.",
+                purposes=("evaluation", "research"),
+                source_specs=(
+                    ("feral-unseen", "candidates/test-unseen-issuer.jsonl", "test"),
+                ),
+            ),
+        }
+        for filename, build in builds.items():
+            (root / filename).write_text(
+                json.dumps(build, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
         artifact_paths = [
             "candidates/train.jsonl",
             "candidates/validation.jsonl",
-            "evaluation/test-future.jsonl",
-            "evaluation/test-unseen-issuer.jsonl",
+            "candidates/test-future.jsonl",
+            "candidates/test-unseen-issuer.jsonl",
             "dataset-summary.json",
-            "feral-7b.braid.json",
+            *builds,
         ]
         manifest = {
             "schema": "stonks.sec_braid_transform_release.v1",
