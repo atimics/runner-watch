@@ -94,6 +94,8 @@ _CAPABILITY_BY_FEED = {
     "current_filings": "filings",
     "filing_index": "filings",
     "filing_document": "filings",
+    "house_filing_index": "filings",
+    "house_ptr": "market_events",
     "document": "filings",
     "company_facts": "fundamentals",
     "trade_halts": "market_events",

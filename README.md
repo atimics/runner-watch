@@ -158,6 +158,19 @@ only exposes enabled feeds whose source review is approved and whose display pol
 use. Proof-of-concept events remain available for internal review but cannot change Pulse, Radar,
 ticker pages, risk vetoes, charts, or Flash evidence.
 
+The free House disclosure collector reads the Clerk's official yearly filing ZIP, keeps Periodic
+Transaction Reports from the current lookback window, and downloads each unseen official PDF. It
+archives both source files and emits one `congressional_trade` event per ticker row. Member versus
+spouse ownership, transaction and notification dates, disclosed amount bounds, filing status, and
+option details stay separate. Because the index gives only a filing date, the event uses the end of
+that Eastern day as its conservative public-availability time. Set
+`HOUSE_DISCLOSURES_ENABLED=true` to collect the internal-review feed. The default poll is 15 minutes,
+the default first-run lookback is 14 days, and no more than 50 unseen PDFs are fetched per run. Tune
+those limits with `HOUSE_DISCLOSURE_INTERVAL_SECONDS`, `HOUSE_DISCLOSURES_LOOKBACK_DAYS`, and
+`HOUSE_DISCLOSURES_MAX_FILINGS_PER_RUN`. The source remains blocked from public product surfaces
+until its disclosure-use terms receive explicit approval. Senate eFD collection is not enabled by
+this source because it has a separate agreement and session gate.
+
 Market providers now sit behind canonical typed contracts and an explicit provider registry. The
 scanner still receives its normal data frames, but each routed result carries provider, as-of time,
 collection time, warnings, quality notes, and fallback history. Partial responses are never silently
