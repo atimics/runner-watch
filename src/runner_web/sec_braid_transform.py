@@ -573,6 +573,8 @@ def transform_braid_sec_stream(
     max_examples_per_accession: int = 20,
     max_filings_per_issuer: int = 40,
     unseen_issuer_fraction: float = 0.10,
+    expected_issuers: int | None = None,
+    expected_filings: int | None = None,
 ) -> dict[str, Any]:
     if not SOURCE_RELEASE_RE.fullmatch(source_release_id):
         raise ValueError("source_release_id must be a braid_sec_ release ID")
@@ -590,6 +592,10 @@ def transform_braid_sec_stream(
         raise ValueError("body, document, chunk, fact, example, and filing limits are invalid")
     if not 0 <= unseen_issuer_fraction < 1:
         raise ValueError("unseen_issuer_fraction must be between 0 and 1")
+    if expected_issuers is not None and expected_issuers < 1:
+        raise ValueError("expected_issuers must be positive")
+    if expected_filings is not None and expected_filings < 1:
+        raise ValueError("expected_filings must be positive")
     if output_directory.exists() and (
         not output_directory.is_dir() or any(output_directory.iterdir())
     ):
@@ -611,6 +617,7 @@ def transform_braid_sec_stream(
         characters = 0
         filings = 0
         examples = 0
+        stream_issuers: set[int] = set()
         current_cik = 0
         current_facts: tuple[IssuerFact, ...] = ()
         current_filings = 0
@@ -635,6 +642,7 @@ def transform_braid_sec_stream(
                 raise ValueError(f"input line {line_number} has an invalid issuer CIK") from error
             if cik < current_cik:
                 raise ValueError("Braid SEC stream issuers must be ordered by CIK")
+            stream_issuers.add(cik)
             if cik != current_cik:
                 current_cik = cik
                 current_facts = ()
@@ -712,6 +720,15 @@ def transform_braid_sec_stream(
         database.commit()
         if filings == 0 or examples == 0:
             raise ValueError("Braid SEC stream contains no filing examples")
+        if expected_issuers is not None and len(stream_issuers) != expected_issuers:
+            raise ValueError(
+                "Braid SEC stream contains "
+                f"{len(stream_issuers)} issuers, expected {expected_issuers}"
+            )
+        if expected_filings is not None and filings != expected_filings:
+            raise ValueError(
+                f"Braid SEC stream contains {filings} filings, expected {expected_filings}"
+            )
 
         unseen, validation, future = _split_plan(
             issuer_keys, timestamps_by_issuer, unseen_issuer_fraction
@@ -753,7 +770,11 @@ def transform_braid_sec_stream(
             "runner_revision": runner_revision,
             "filings": filings,
             "examples": examples,
-            "issuers": len(issuer_keys),
+            "issuers": len(stream_issuers),
+            "expected_counts": {
+                "issuers": expected_issuers,
+                "filings": expected_filings,
+            },
             "estimated_training_tokens": characters // 4,
             "task_counts": dict(sorted(tasks.items())),
             "split_counts": counts,
@@ -852,6 +873,8 @@ def main() -> None:
     parser.add_argument("--max-examples-per-accession", type=int, default=20)
     parser.add_argument("--max-filings-per-issuer", type=int, default=40)
     parser.add_argument("--unseen-issuer-fraction", type=float, default=0.10)
+    parser.add_argument("--expected-issuers", type=int, required=True)
+    parser.add_argument("--expected-filings", type=int, required=True)
     arguments = parser.parse_args()
     manifest = transform_braid_sec_stream(
         stream=sys.stdin,
@@ -866,6 +889,8 @@ def main() -> None:
         max_examples_per_accession=arguments.max_examples_per_accession,
         max_filings_per_issuer=arguments.max_filings_per_issuer,
         unseen_issuer_fraction=arguments.unseen_issuer_fraction,
+        expected_issuers=arguments.expected_issuers,
+        expected_filings=arguments.expected_filings,
     )
     print(_canonical_json(manifest))
 
