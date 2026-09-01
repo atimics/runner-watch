@@ -178,6 +178,39 @@ def test_braid_stream_transform_is_deterministic(tmp_path: Path) -> None:
     assert all((first / path).read_bytes() == (second / path).read_bytes() for path in first_files)
 
 
+def test_braid_stream_transform_names_shared_accessions_by_issuer(tmp_path: Path) -> None:
+    lines = _stream().splitlines()
+    filing_indexes = [
+        index for index, line in enumerate(lines) if json.loads(line).get("kind") == "filing"
+    ]
+    first = json.loads(lines[filing_indexes[0]])
+    second = json.loads(lines[filing_indexes[1]])
+    accession = first["filing"]["accession"]
+    second["filing"]["accession"] = accession
+    lines[filing_indexes[1]] = _line(second)
+
+    output = tmp_path / "shared-accession"
+    _transform("\n".join(lines) + "\n", output)
+
+    examples = [
+        json.loads(line)
+        for path in sorted((output / "candidates").glob("*.jsonl"))
+        for line in path.read_text().splitlines()
+    ]
+    identifiers = [str(example["id"]) for example in examples]
+    shared = sorted(
+        identifier
+        for identifier in identifiers
+        if accession in identifier and ":sec_filing_structured_analysis:0" in identifier
+    )
+
+    assert shared == [
+        f"sec:1001:{accession}:sec_filing_structured_analysis:0",
+        f"sec:1002:{accession}:sec_filing_structured_analysis:0",
+    ]
+    assert len(identifiers) == len(set(identifiers))
+
+
 def test_braid_stream_transform_rejects_a_body_hash_mismatch(tmp_path: Path) -> None:
     lines = _stream().splitlines()
     filing = json.loads(lines[-1])

@@ -175,6 +175,29 @@ def _classification_fields(
     }
 
 
+def _braid_example(
+    filing: dict[str, Any],
+    *,
+    task: str,
+    suffix: str,
+    evidence: dict[str, Any],
+    answer: dict[str, Any],
+    instruction: str,
+    sources: list[dict[str, Any]],
+) -> dict[str, Any]:
+    example = _example(
+        filing,
+        task=task,
+        suffix=suffix,
+        evidence=evidence,
+        answer=answer,
+        instruction=instruction,
+        sources=sources,
+    )
+    example["id"] = f"sec:{int(filing['cik'])}:{filing['accession']}:{task}:{suffix}"
+    return example
+
+
 def _examples_for_filing(
     filing: dict[str, Any],
     issuer: dict[str, Any],
@@ -219,7 +242,7 @@ def _examples_for_filing(
         if record.get(key) is not None
     }
     examples = [
-        _example(
+        _braid_example(
             record,
             task="sec_filing_structured_analysis",
             suffix="0",
@@ -236,7 +259,7 @@ def _examples_for_filing(
             ),
             sources=chunk_sources[:2],
         ),
-        _example(
+        _braid_example(
             record,
             task="filing_classification",
             suffix="0",
@@ -257,7 +280,7 @@ def _examples_for_filing(
     for chunk in chunks:
         citation = _source(chunk)
         examples.append(
-            _example(
+            _braid_example(
                 record,
                 task="evidence_navigation",
                 suffix=str(chunk.index),
@@ -270,7 +293,7 @@ def _examples_for_filing(
     for index in range(0, min(len(fact_records), 32), 8):
         group = fact_records[index : index + 8]
         examples.append(
-            _example(
+            _braid_example(
                 record,
                 task="xbrl_fact_extraction",
                 suffix=str(index // 8),
@@ -290,7 +313,7 @@ def _examples_for_filing(
             in {comparison["prior_period_end"], comparison["current_period_end"]}
         ][:2]
         examples.append(
-            _example(
+            _braid_example(
                 record,
                 task="fact_comparison",
                 suffix=str(index),
@@ -323,7 +346,7 @@ def _examples_for_filing(
             }
         )
         examples.append(
-            _example(
+            _braid_example(
                 record,
                 task="insufficient_evidence",
                 suffix=missing,
