@@ -95,6 +95,25 @@ Parsing alone does not verify a signature. Call `verify()` before accepting conf
 that needs archived or revoked packs for audit can call `verify(require_active=False)` while still
 checking the content ID and signature.
 
+## Attached runtime
+
+Set `SWARM_ALPHA_PACK_PATH` to a local canonical `SignedAlphaPack` file when an attached trader
+should join a pack. Startup reads at most the signed-pack size limit, rejects links and non-regular
+files, verifies the owner signature and active time window, then applies the pack as a restriction:
+
+- the running claim protocol must appear in `allowed_claim_versions`;
+- every locally configured topic and claim schema must appear in the pack allowlists; and
+- only safe HTTPS origins from peers with the `bootstrap` role are added to discovery.
+
+Bootstrap origins from a pack remain pinned to their `PeerReference.node_id`. A valid manifest from
+a different node at the same origin is rejected. Other endpoint types stay in the portable pack but
+are ignored until their transport adapters exist. The runtime rereads and verifies the pack before
+each discovery refresh. A revoked, expired, changed, missing, or non-canonical pack stops new
+connections; applying a new active version requires a controlled runtime restart.
+
+The `approved` role is an allowlist, not a reputation grant. Approved peer claims still need local
+outcome history, verified evidence, and the local risk gate before they may become context.
+
 ## Safety limits
 
 The implementation limits a pack to 256 KiB of canonical content, 128 peers, 256 topics, eight

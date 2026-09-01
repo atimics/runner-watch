@@ -202,6 +202,7 @@ from runner_web.sports import (
     sports_slate,
     validate_sports_ai_forecast,
 )
+from runner_web.swarm_runtime import maintain_swarm_runtime, open_swarm_runtime
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
 
 LOG = logging.getLogger(__name__)
@@ -602,6 +603,13 @@ async def lifespan(application: FastAPI):
         tasks.extend(worker_tasks)
     if PROCESS_ROLE in {"all", "web"}:
         tasks.append(asyncio.create_task(request_cache_warmer()))
+    if SWARM_RUNTIME is not None:
+        tasks.append(
+            asyncio.create_task(
+                maintain_swarm_runtime(SWARM_RUNTIME),
+                name="swarm-maintenance",
+            )
+        )
     application.state.worker_tasks = worker_tasks
     try:
         yield
@@ -610,6 +618,8 @@ async def lifespan(application: FastAPI):
         if worker_tasks:
             delete_worker_state(worker_heartbeat_key(WORKER_INSTANCE_ID))
             release_research_worker(WORKER_INSTANCE_ID)
+        if SWARM_RUNTIME is not None:
+            SWARM_RUNTIME.close()
 
 
 async def run_worker() -> None:
@@ -621,12 +631,21 @@ async def run_worker() -> None:
         _fail_orphaned_research_jobs()
     _recover_completed_edge_reports()
     tasks = _start_worker_tasks()
+    if SWARM_RUNTIME is not None:
+        tasks.append(
+            asyncio.create_task(
+                maintain_swarm_runtime(SWARM_RUNTIME),
+                name="swarm-maintenance",
+            )
+        )
     try:
         await asyncio.gather(*tasks)
     finally:
         await _stop_tasks(tasks)
         delete_worker_state(worker_heartbeat_key(WORKER_INSTANCE_ID))
         release_research_worker(WORKER_INSTANCE_ID)
+        if SWARM_RUNTIME is not None:
+            SWARM_RUNTIME.close()
 
 
 def worker_main() -> None:
@@ -649,6 +668,9 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 app.include_router(operations_router)
+SWARM_RUNTIME = open_swarm_runtime()
+if SWARM_RUNTIME is not None and PROCESS_ROLE in {"all", "web"}:
+    app.include_router(SWARM_RUNTIME.router)
 app.include_router(create_node_router(NODE_SERVICE))
 templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
 templates.env.globals["static_version"] = STATIC_VERSION
@@ -1139,6 +1161,19 @@ async def scan_collection_worker() -> None:
                 result = await run_in_threadpool(run_scan, "penny")
                 worker_state("background_scan_last_run", str(result.get("scan_run_id") or "cached"))
                 worker_state("background_scan_last_error", "")
+                if SWARM_RUNTIME is not None and SWARM_RUNTIME.config.publish_scan_claims:
+                    try:
+                        published = await run_in_threadpool(
+                            SWARM_RUNTIME.publish_scan_rows,
+                            result.get("rows") or [],
+                        )
+                        worker_state(
+                            "swarm_scan_last_publish",
+                            json.dumps(published.as_dict(), separators=(",", ":")),
+                        )
+                        worker_state("swarm_scan_last_error", "")
+                    except Exception as exc:
+                        worker_state("swarm_scan_last_error", str(exc)[:500])
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

@@ -1,8 +1,9 @@
 # RATi swarm protocol v1
 
 RATi swarm v1 defines three signed objects that let the same trader run alone, attach to the
-default cloud swarm, or join an alpha pack. These contracts do not implement networking and do
-not make remote claims trusted.
+default RATi swarm, or join an alpha pack. The contract modules do not make remote claims trusted.
+The optional HTTPS transport in `docs/swarm-transport.md` publishes and exchanges them while
+preserving that boundary.
 
 ## Object chain
 
@@ -51,9 +52,9 @@ grades peers from locally observed outcomes, discounts repeated source families,
 its own risk vetoes authoritative.
 
 Private alpha-pack metadata contains key identifiers and encrypted-payload routing only. Secret
-keys never appear in a signed pack. Encryption, key rotation, peer revocation, replay storage,
-rate limits, Sybil resistance, NAT traversal, rendezvous, and gossip are later transport or node
-runtime work.
+keys never appear in a signed pack. The runtime now has local key-rotation decisions, peer bans and
+revocations, replay storage, and rate limits. Encrypting private-pack content, Sybil resistance,
+NAT traversal, rendezvous, and gossip remain future work.
 
 ## Versioning
 
@@ -66,3 +67,4 @@ The detailed contracts are in:
 - `docs/swarm-node-manifest.md`
 - `docs/swarm-signed-claim.md`
 - `docs/swarm-alpha-pack.md`
+- `docs/swarm-transport.md`
