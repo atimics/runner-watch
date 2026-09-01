@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from pytest import MonkeyPatch
 
+from runner_watch.source_catalog import SourcePolicy
 from runner_web import db
 from runner_web.ai_kol import FLASH, flash_version_snapshot
 from runner_web.db import connection, init_db
@@ -20,6 +21,7 @@ from runner_web.flash_evaluations import (
     refresh_flash_forecasts,
     validate_forecast,
 )
+from runner_web.ingestion import register_source
 
 
 @pytest.fixture
@@ -182,6 +184,8 @@ def test_fixed_contract_scores_hits_misses_and_no_calls(flash_db: Path) -> None:
     assert record["current_version"]["headline_rate_visible"] is False
     assert record["current_version"]["forecast_coverage"] == 0.6667
     assert record["current_version"]["brier_score"] == 0.26
+    assert record["current_version"]["median_signed_move_pct"] == 0.0
+    assert len(record["recent_results"]) == 3
     assert refresh_flash_forecasts(
         datetime(2026, 8, 25, 22, 0, tzinfo=UTC), fetch_market_data=False
     )["resolved"] == 0
@@ -239,6 +243,22 @@ def test_reverse_split_voids_the_result(flash_db: Path) -> None:
     del flash_db
     _record("split-report", "SPLT", "up", 0.7)
     _bar("SPLT", 505.0)
+    register_source(
+        SourcePolicy(
+            source="test",
+            feed="actions",
+            title="Test corporate actions",
+            owner="Test",
+            terms_url="https://example.test/terms",
+            credential_env=None,
+            expected_cadence_seconds=None,
+            stale_after_seconds=None,
+            schedule="event",
+            storage_policy="normalized_only",
+            display_policy="source_link_with_attribution",
+            attribution="Test",
+        )
+    )
     with connection() as database:
         database.execute(
             """

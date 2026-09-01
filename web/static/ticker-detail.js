@@ -555,7 +555,7 @@
     setTickerAction(button, 'Make Call', 'Stamping quote…');
     if (callStatus) callStatus.textContent = '';
     try {
-      const response = await fetch(`/api/calls/${encodeURIComponent(ticker)}`, {
+      const response = await fetch(`/api/calls/stock/${encodeURIComponent(ticker)}`, {
         method: 'POST',
       });
       const result = await response.json().catch(() => ({}));
@@ -574,7 +574,7 @@
     setTickerAction(button, 'Close Call', 'Stamping exit…');
     try {
       const response = await fetch(
-        `/api/calls/${encodeURIComponent(button.dataset.callId)}/close`,
+        `/api/calls/stock/${encodeURIComponent(button.dataset.callId)}/close`,
         { method: 'POST' }
       );
       const result = await response.json().catch(() => ({}));
@@ -592,175 +592,6 @@
     } catch (error) {
       if (callStatus) callStatus.textContent = error.message || 'Could not close Call';
       setTickerAction(button, 'Close Call', 'Try again');
-      button.disabled = false;
-    }
-  });
-
-  const generateComment = document.getElementById('generateComment');
-  const commentStatus = document.getElementById('commentStatus');
-  const commentList = document.getElementById('commentList');
-  const pendingCommentStorageKey = `pending-comment:${ticker}`;
-  let pendingCommentRequestId = null;
-  try {
-    pendingCommentRequestId = sessionStorage.getItem(pendingCommentStorageKey);
-  } catch (_) {
-    // A private browser may disable storage. In-memory replay still works.
-  }
-
-  function newCommentRequestId() {
-    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-    const random = Math.random().toString(36).slice(2);
-    return `comment-${Date.now()}-${random}`;
-  }
-
-  function rememberCommentRequest(value) {
-    pendingCommentRequestId = value;
-    try {
-      if (value) sessionStorage.setItem(pendingCommentStorageKey, value);
-      else sessionStorage.removeItem(pendingCommentStorageKey);
-    } catch (_) {
-      // Keep the in-memory value when storage is unavailable.
-    }
-  }
-
-  function relativeCommentTime(value) {
-    const seconds = Math.max(0, (Date.now() - new Date(value).getTime()) / 1000);
-    if (!Number.isFinite(seconds)) return '';
-    if (seconds < 60) return 'now';
-    if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
-    if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
-    if (seconds < 604800) return Math.floor(seconds / 86400) + 'd ago';
-    return new Date(value).toLocaleDateString([], { month: 'short', day: 'numeric' });
-  }
-
-  function refreshCommentTimes() {
-    document.querySelectorAll('[data-comment-time]').forEach(item => {
-      item.textContent = relativeCommentTime(item.dateTime);
-    });
-  }
-
-  function renderComment(comment) {
-    const item = document.createElement('li');
-    item.dataset.commentId = comment.id;
-
-    const avatarData = comment.avatar || {};
-    const avatarVariant = (key, maximum) => {
-      const value = Number(avatarData[key]);
-      return Number.isInteger(value) && value >= 0 && value < maximum ? value : 0;
-    };
-    const avatar = document.createElement('span');
-    avatar.className = [
-      'comment-avatar',
-      'comment-avatar-ai',
-      `avatar-tone-${avatarVariant('tone', 12)}`,
-      `avatar-frame-${avatarVariant('frame', 6)}`,
-      `avatar-eyes-${avatarVariant('eyes', 6)}`,
-      `avatar-signal-${avatarVariant('signal', 6)}`,
-    ].join(' ');
-    avatar.setAttribute('aria-hidden', 'true');
-    avatar.append(document.createElement('i'));
-
-    const copy = document.createElement('div');
-    copy.className = 'comment-copy';
-    const head = document.createElement('header');
-    const author = document.createElement('strong');
-    author.textContent = avatarData.name || comment.alias || 'Unknown Signal';
-    head.append(author);
-    const ability = document.createElement('span');
-    ability.className = 'comment-ability';
-    ability.textContent = avatarData.ability || 'Research Lens';
-    if (avatarData.ability_description) ability.title = avatarData.ability_description;
-    head.append(ability);
-    if (comment.is_owner) {
-      const owner = document.createElement('span');
-      owner.className = 'comment-owner';
-      owner.textContent = 'You';
-      head.append(owner);
-    }
-    const meta = document.createElement('small');
-    meta.className = 'comment-meta';
-    const stamp = document.createElement('time');
-    stamp.dateTime = comment.created_at;
-    stamp.dataset.commentTime = '';
-    stamp.textContent = relativeCommentTime(comment.created_at);
-    meta.append(stamp);
-    if (comment.is_owner) {
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.dataset.deleteComment = comment.id;
-      remove.textContent = 'delete';
-      meta.append(document.createTextNode(' · '), remove);
-    }
-
-    const body = document.createElement('p');
-    body.textContent = comment.body;
-    copy.append(head, meta, body);
-    item.append(avatar, copy);
-    return item;
-  }
-
-  refreshCommentTimes();
-  generateComment?.addEventListener('click', async () => {
-    if (window.RatiFlash?.canSpend && !window.RatiFlash.canSpend(10)) return;
-    if (!pendingCommentRequestId) rememberCommentRequest(newCommentRequestId());
-    generateComment.disabled = true;
-    commentStatus.textContent = 'Posting…';
-    try {
-      const response = await fetch(`/api/comments/${encodeURIComponent(ticker)}`, {
-        method: 'POST',
-        headers: { 'Idempotency-Key': pendingCommentRequestId },
-      });
-      const responseText = await response.text();
-      let result;
-      try {
-        result = JSON.parse(responseText);
-      } catch (_) {
-        throw new Error('Could not confirm the post.');
-      }
-      if (!response.ok) {
-        const error = new Error('Could not post.');
-        error.retryable = result.retryable === true;
-        if (!error.retryable) rememberCommentRequest(null);
-        if (response.status === 402) {
-          window.RatiFlash?.handleInsufficient?.(result.detail, 10);
-        }
-        throw error;
-      }
-      const alreadyShown = Array.from(commentList.children).some(
-        item => item.dataset.commentId === String(result.comment.id)
-      );
-      if (!alreadyShown) commentList.prepend(renderComment(result.comment));
-      commentStatus.textContent = 'Posted';
-      document.querySelectorAll('[data-flash-balance]').forEach(item => {
-        item.textContent = result.balance;
-      });
-      document.getElementById('discussionCount').textContent = result.count;
-      document.getElementById('commentEmpty').hidden = true;
-      rememberCommentRequest(null);
-    } catch (error) {
-      commentStatus.textContent = error.message || 'Could not post.';
-    } finally {
-      generateComment.disabled = false;
-    }
-  });
-
-  commentList?.addEventListener('click', async event => {
-    const button = event.target.closest('[data-delete-comment]');
-    if (!button) return;
-    button.disabled = true;
-    try {
-      const response = await fetch(
-        `/api/comments/${encodeURIComponent(button.dataset.deleteComment)}`,
-        { method: 'DELETE' }
-      );
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error('Could not delete.');
-      button.closest('li')?.remove();
-      const count = document.getElementById('discussionCount');
-      count.textContent = Math.max(0, Number(count.textContent || 0) - 1);
-      document.getElementById('commentEmpty').hidden = Boolean(commentList.children.length);
-    } catch (error) {
-      commentStatus.textContent = error.message || 'Could not delete.';
       button.disabled = false;
     }
   });

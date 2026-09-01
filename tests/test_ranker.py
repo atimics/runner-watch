@@ -160,6 +160,12 @@ def test_shadow_ranker_trains_predicts_and_exports_crl(
         "up",
     }
     assert trained["metrics"]["training_data"]["groups"] == {"live": 8}
+    training_control = trained["metrics"]["training_control"]
+    assert training_control["requested_epochs"] == 120
+    assert training_control["trained_epochs"] <= 120
+    assert training_control["best_epoch"] <= training_control["trained_epochs"]
+    assert training_control["validation_checks"] >= 1
+    assert training_control["validation_log_loss_micros"] > 0
     model = load_latest_model()
     assert model is not None
     assert len(model.weights) == len(FEATURE_NAMES)

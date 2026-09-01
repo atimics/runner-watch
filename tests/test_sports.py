@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 from contextlib import contextmanager
@@ -13,14 +14,28 @@ from runner_web import db
 from runner_web import main as web_main
 from runner_web import sports as sports_module
 from runner_web.db import connection, init_db
-from runner_web.flash_wallet import SPORTS_CALL_REWARD_CAP, sports_call_reward, wallet_for_user
+from runner_web.flash_wallet import (
+    SPORTS_CALL_REWARD_CAP,
+    claim_daily_flash,
+    sports_call_reward,
+    wallet_for_user,
+)
 from runner_web.main import (
     alpha_page,
+    create_sports_comment,
     home,
     origin_for_request,
     product_for_request,
     radar_page,
+    sports_alpha_api,
+    sports_alpha_page,
+    sports_game_legacy_page,
     sports_game_page,
+    sports_home,
+    sports_pulse_api,
+    sports_radar_api,
+    sports_radar_page,
+    sports_receipts_legacy_page,
     sports_receipts_page,
 )
 from runner_web.sports import (
@@ -614,10 +629,63 @@ def test_started_game_closes_picks_before_offering_login(sports_db) -> None:
     )
     assert b"Game started" in response.body
     assert b"Score pending from ESPN" in response.body
-    assert b"Paper picks closed" in response.body
+    assert b"Calls closed" in response.body
     assert b"No new picks can be added" in response.body
-    assert b"Make a paper pick" not in response.body
-    assert b"Log in to make a paper pick" not in response.body
+    assert b"Make a Call" not in response.body
+    assert b"Log in to make a Call" not in response.body
+
+
+def test_sports_comments_use_the_shared_flash_funded_generator(
+    sports_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    user_id = "sports-comment-user"
+    created_at = datetime.now(UTC).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            (user_id, "sports_comment", "Sports Comment", "active", created_at),
+        )
+    claim_daily_flash(user_id)
+    monkeypatch.setattr(web_main, "require_origin", lambda _request: None)
+    monkeypatch.setattr(web_main, "require_user", lambda _session: {"id": user_id})
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "sports-comment-test-key")
+    monkeypatch.setattr(
+        web_main,
+        "_generate_sports_comment_text",
+        lambda _event_id, *, avatar_ability_id: (
+            f"The {avatar_ability_id} read favors the verified matchup edge.",
+            "test/sports-comment-model",
+        ),
+    )
+    comment_request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": f"/api/comments/game/{event['id']}",
+            "headers": [(b"idempotency-key", b"sports-comment-request-0001")],
+            "client": ("127.0.0.1", 4300),
+        }
+    )
+
+    response = asyncio.run(create_sports_comment(str(event["id"]), comment_request, None))
+    payload = json.loads(response.body)
+
+    assert response.status_code == 201
+    assert payload["comment"]["ai_generated"] is True
+    assert payload["comment"]["generation_model"] == "test/sports-comment-model"
+    assert payload["balance"] == 90
+    with connection() as database:
+        row = database.execute(
+            "SELECT subject_kind,subject_key,source FROM ticker_comments"
+        ).fetchone()
+    assert dict(row) == {
+        "subject_kind": "sports_game",
+        "subject_key": event["id"],
+        "source": "ai_generated",
+    }
 
 
 def test_pick_api_invalidates_game_and_alpha_caches(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -650,60 +718,6 @@ def test_pick_api_invalidates_game_and_alpha_caches(monkeypatch: pytest.MonkeyPa
 
     assert response.status_code == 201
     assert invalidated == [("sports-game", "event-1"), ("sports-alpha",)]
-
-
-def test_game_thread_comments_can_be_posted_and_removed(
-    sports_db, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    event = normalize_event("mlb", sample_event())
-    assert event is not None
-    store_events([event])
-    with connection() as database:
-        database.execute(
-            "INSERT INTO users(id,username,display_name,status,created_at) "
-            "VALUES('thread-user','thread_member','Thread Member','active',?)",
-            (datetime.now(UTC).isoformat(),),
-        )
-
-    invalidated: list[tuple[str, str]] = []
-    monkeypatch.setattr(web_main, "require_origin", lambda _request: None)
-    monkeypatch.setattr(web_main, "require_user", lambda _session: {"id": "thread-user"})
-    monkeypatch.setattr(web_main, "enforce_rate", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        web_main,
-        "_invalidate_public_screen_data",
-        lambda scope, identity: invalidated.append((scope, identity)),
-    )
-
-    created = web_main.create_sports_comment_api(
-        str(event["id"]),
-        web_main.SportsCommentPayload(body="  Bullpen depth decides this one.  "),
-        request(path=f"/api/sports/games/{event['id']}/comments"),
-        "session-token",
-    )
-    payload = json.loads(created.body)
-
-    assert created.status_code == 201
-    assert payload["comment"]["body"] == "Bullpen depth decides this one."
-    assert payload["comment"]["is_owner"] is True
-    assert payload["count"] == 1
-    assert web_main.sports_comment_count(str(event["id"])) == 1
-    assert web_main.comments_for_sports_event(
-        str(event["id"]), current_user_id="thread-user"
-    )[0]["is_owner"] is True
-
-    deleted = web_main.delete_sports_comment_api(
-        payload["comment"]["id"],
-        request(path=f"/api/sports/comments/{payload['comment']['id']}"),
-        "session-token",
-    )
-
-    assert deleted.status_code == 200
-    assert web_main.sports_comment_count(str(event["id"])) == 0
-    assert invalidated == [
-        ("sports-game", str(event["id"])),
-        ("sports-game", str(event["id"])),
-    ]
 
 
 def test_sports_alpha_counts_calls_beyond_the_feed_limit(sports_db) -> None:
@@ -867,15 +881,15 @@ def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
         b"Flash report"
     )
     assert b"Team news" in detail_response.body
-    assert b"Game thread" in detail_response.body
-    assert b"No comments yet. Start the game thread." in detail_response.body
-    assert b'/static/sports-comments.js' in detail_response.body
-    assert b"Make a paper pick" in detail_response.body
+    assert b"Game thread" not in detail_response.body
+    assert b"<textarea" not in detail_response.body
+    assert b'/static/sports-comments.js' not in detail_response.body
+    assert b"Make a Call" in detail_response.body
     assert b"Wins earn up to" in detail_response.body
     assert b'class="game-notebook"' in detail_response.body
     assert detail_response.body.index(b"SEASON-RECORD BASELINE") < detail_response.body.index(
-        b"Game thread"
-    ) < detail_response.body.index(b"Make a paper pick") < detail_response.body.index(
+        b"Make a Call"
+    ) < detail_response.body.index(
         b"Flash report"
     ) < detail_response.body.index(b"Game details")
 
@@ -884,8 +898,46 @@ def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
         request(host="localhost", path=f"/sports/game/{event['id']}"),
         None,
     )
-    expected_return = f'href="/login?next=/sports/game/{event["id"]}"'.encode()
-    assert expected_return in path_response.body
+    assert path_response.status_code == 307
+    assert path_response.headers["location"] == f"{web_main.SPORTS_ORIGIN}/game/{event['id']}"
+
+
+def test_legacy_sports_routes_cannot_redirect_to_user_input(sports_db) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    store_events([event])
+    runners_request = request(host="runners.rati.chat")
+    untrusted = "//untrusted.example/%2f.."
+
+    page_redirects = (
+        (sports_home(runners_request, None, league=untrusted, view=untrusted), "/"),
+        (sports_radar_page(runners_request, None, league=untrusted), "/radar"),
+        (sports_alpha_page(runners_request, None, league=untrusted), "/alpha"),
+        (
+            sports_receipts_legacy_page(runners_request, None, league=untrusted),
+            "/alpha",
+        ),
+    )
+    for response, path in page_redirects:
+        assert response.status_code == 307
+        assert response.headers["location"] == f"{web_main.SPORTS_ORIGIN}{path}"
+        assert "untrusted.example" not in response.headers["location"]
+
+    legacy_api_responses = (
+        sports_pulse_api(runners_request, league=untrusted, view=untrusted, limit=1),
+        sports_radar_api(runners_request, league=untrusted, limit=1),
+        sports_alpha_api(runners_request, league=untrusted, limit=1),
+    )
+    assert all(response.status_code == 200 for response in legacy_api_responses)
+    assert all("location" not in response.headers for response in legacy_api_responses)
+
+    game_redirect = sports_game_legacy_page(str(event["id"]))
+    assert game_redirect.headers["location"] == (
+        f"{web_main.SPORTS_ORIGIN}/game/{event['id']}"
+    )
+    with pytest.raises(HTTPException) as error:
+        sports_game_legacy_page("//untrusted.example")
+    assert error.value.status_code == 404
 
 
 def test_game_page_handles_winner_without_market_gap(sports_db) -> None:
@@ -909,7 +961,7 @@ def test_game_page_handles_winner_without_market_gap(sports_db) -> None:
     assert b"A complete fresh market is not available" in response.body
 
 
-def test_game_page_tolerates_cache_entries_created_before_comments(
+def test_game_page_tolerates_minimal_cached_event_data(
     sports_db, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     event = normalize_event("mlb", sample_event())
@@ -928,8 +980,8 @@ def test_game_page_tolerates_cache_entries_created_before_comments(
     )
 
     assert response.status_code == 200
-    assert b"Game thread" in response.body
-    assert b"No comments yet. Start the game thread." in response.body
+    assert b"Game thread" not in response.body
+    assert b"<textarea" not in response.body
 
 
 def test_slate_builds_fixed_side_edge_history(sports_db) -> None:
@@ -1630,7 +1682,7 @@ def test_sports_host_uses_the_sports_shell_for_alpha(sports_db) -> None:
     assert b"Four prediction slots" not in alpha_response.body
     assert b"Rankings stay hidden" in alpha_response.body
     assert b"3 of 20 public Calls recorded" in alpha_response.body
-    assert b"Call activity" in alpha_response.body
+    assert b"Activity is building" in alpha_response.body
     assert b'<span class="alpha-rank">1</span>' not in alpha_response.body
     assert b"open Calls" in alpha_response.body
     assert b'href="/alpha"' in alpha_response.body
@@ -1662,8 +1714,8 @@ def test_game_pages_reuse_the_cached_model_record(sports_db, monkeypatch) -> Non
 
 
 def test_sports_alpha_page_reuses_warmed_result(sports_db, monkeypatch) -> None:
-    web_main.SPORTS_ALPHA_DATA_CACHE.clear()
-    web_main.SPORTS_ALPHA_DATA_REFRESHING.clear()
+    web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
+    web_main.PUBLIC_SCREEN_DATA_REFRESHING.clear()
     monkeypatch.setattr(web_main, "shared_cache_get", lambda _name: None)
     monkeypatch.setattr(web_main, "shared_cache_set", lambda *_args: None)
     original = web_main.sports_alpha_board

@@ -1,5 +1,5 @@
 {% extends "mobile_base.html" %}
-{% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
+{% from "_flash_comments.html" import flash_comments %}
 {% from "_flash_report_action.html" import flash_report_action %}
 {% macro evidence_gate(detail, embedded=false) -%}
 <div class="{{ 'risk-evidence' if embedded else 'evidence-gate' }} gate-{{ detail.evidence_gate.state }}" id="evidenceGate" data-base-class="{{ 'risk-evidence' if embedded else 'evidence-gate' }}">
@@ -149,25 +149,7 @@
     <div><span>5D</span><strong class="{% if detail.current.return_5d_pct is not none %}{{ 'up' if detail.current.return_5d_pct >= 0 else 'down' }}{% endif %}">{% if detail.current.return_5d_pct is not none %}{{ '+' if detail.current.return_5d_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.return_5d_pct) }}%{% else %}pending{% endif %}</strong></div>
   </section>
 
-  <section class="discussion-section" id="discussion">
-    <div class="section-heading"><h2>Comments</h2><b id="discussionCount">{{ comment_count }}</b></div>
-    {% if user %}
-    <div class="comment-form ai-comment-action">
-      <small id="commentStatus">{{ '10 Flash' if comment_generation_enabled else 'Unavailable' }}</small><button id="generateComment" type="button" {% if not comment_generation_enabled %}disabled{% endif %}>Post with Flash</button>
-    </div>
-    {% else %}
-    <a class="comment-login" href="/login?next=/t/{{ detail.ticker }}#discussion">Log in to comment</a>
-    {% endif %}
-    <ol class="comment-list" id="commentList">
-      {% for comment in comments %}
-      <li data-comment-id="{{ comment.id }}">
-        {{ render_comment_avatar(comment.avatar) }}
-        <div class="comment-copy"><header><strong>{{ comment.avatar.name }}</strong><span class="comment-ability" title="{{ comment.avatar.ability_description }}">{{ comment.avatar.ability }}</span>{% if comment.is_owner %}<span class="comment-owner">You</span>{% endif %}</header><small class="comment-meta"><time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time>{% if comment.is_owner %} · <button type="button" data-delete-comment="{{ comment.id }}">delete</button>{% endif %}</small><p>{{ comment.body }}</p></div>
-      </li>
-      {% endfor %}
-    </ol>
-    <p class="comment-empty" id="commentEmpty" {% if comments %}hidden{% endif %}>No comments.</p>
-  </section>
+  {{ flash_comments('stock', detail.ticker, comments, comment_count, user, comment_generation_enabled, '/login?next=/t/' ~ detail.ticker ~ '#discussion') }}
     </div>
 
     <aside class="detail-actions" aria-label="Ticker actions">
@@ -209,5 +191,6 @@
 }
 </script>
 <script src="/static/flash-report.js?v={{ static_version }}" defer></script>
+<script src="/static/flash-comments.js?v={{ static_version }}" defer></script>
 <script src="/static/ticker-detail.js?v={{ static_version }}" defer></script>
 {% endblock %}

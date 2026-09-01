@@ -1,11 +1,10 @@
-# RATi Swarm, RATi Runners, and RATi Sports
+# RATi Runners and RATi Sports
 
-RATi Swarm is the open-source Svelte/Electron desktop app. Pulse, Radar, and Flash are its main
-screens. Scanner can switch between the bundled local engine and RATi Cloud at
-`runners.rati.chat`. Local mode persists receipts in SQLite and stores user-authorized provider
-credentials in the operating-system vault. Local mode shows only local scanner results; Cloud mode
-is the only mode that requests or displays hosted Pulse, Radar, or Flash data. The same client and
-scanner can be self-hosted. See
+RATi Runners is the open-source Svelte/Tauri desktop app. Pulse, Radar, Receipts, Scan, and Sources
+are its main screens. It runs a local source hub: the bundled scanner works immediately, RATi can
+be enabled as a free source, and any compatible remote scanner can be added by URL. Yahoo and the
+other included no-key sources need no setup. Optional provider keys and remote scanner tokens are
+stored in the operating-system credential vault. See
 [the desktop and scanner architecture](docs/desktop-architecture.md).
 
 The project is copyright © 2026 RATi contributors and licensed under the
@@ -111,6 +110,13 @@ The SEC listener declares its user agent and stays below the SEC's published req
 The delayed outcome labels preserve what was known at filing time, giving future ranking models
 clean examples without rewriting history after a move is already known.
 
+Runner Watch can also export archived filing text and point-in-time issuer facts as a deterministic
+Qwen chat corpus. Its time and unseen-issuer test splits stay sealed, and the generated ilXyr corpus
+manifest freezes every file hash. The LoRA training image records the exact model revision, config,
+seed, dependencies, and adapter digest. Corpus v2 also includes a resumable three-year SEC
+backfill and deterministic semantic, XBRL, comparison, and insufficient-evidence tasks. See the
+[SEC Qwen training guide](docs/sec-qwen-training.md).
+
 ## Distributed intelligence
 
 RATi can run alone or join a small, chosen scanner swarm. Solo mode is the default and makes no
@@ -147,7 +153,10 @@ visible for diagnosis.
 The source registry records owner, terms, credentials, cadence, stale limits, storage, display, and
 attribution rules. Use `/api/ingestion/status` to see healthy, stale, idle, pending, failed, and
 disabled feeds. The tables do not replace the app's normal read tables; they provide one audit path
-behind them.
+behind them. Public stock features read external events through `public_market_events`. That view
+only exposes enabled feeds whose source review is approved and whose display policy allows public
+use. Proof-of-concept events remain available for internal review but cannot change Pulse, Radar,
+ticker pages, risk vetoes, charts, or Flash evidence.
 
 Market providers now sit behind canonical typed contracts and an explicit provider registry. The
 scanner still receives its normal data frames, but each routed result carries provider, as-of time,
@@ -173,9 +182,9 @@ together, and HTTP 429 responses are retried with backoff.
 
 The Nasdaq Trader halt collector archives the RSS response and stores versioned halt state once a
 minute during the extended US session. It is off by default while the feed terms are reviewed. Set
-`NASDAQ_TRADE_HALTS_ENABLED=true` to opt in. An active halt is a hard risk veto. The production
-configuration currently opts in, so `/api/capabilities` reports a blocking policy warning until the
-catalog review state is explicitly approved.
+`NASDAQ_TRADE_HALTS_ENABLED=true` to opt in to internal collection. Halt events cannot affect the
+public product until the catalog is promoted to approved public display. After that policy change,
+an active halt becomes a hard risk veto.
 
 The scanner can also show exchange-reported short interest, short float, days to cover, borrow fee,
 and shares available. Set `FINTEL_API_KEY` to enable Fintel's documented API. The app refreshes only
@@ -271,6 +280,19 @@ stock or sports scorecards. Durable edge jobs survive a normal web-worker restar
 server-to-customer model URLs are intentionally not supported in this release because they need a
 separate data-sharing consent and network-isolation design.
 
+## Market turns
+
+RATi freezes two public market reports on weekdays instead of treating every scan as an unrelated
+real-time update. The **pre-market briefing** is due at 9:00 a.m. Eastern and uses the latest saved
+scan from 4:00–9:15 a.m. The **post-market recap** is due at 4:15 p.m. Eastern and compares the first
+regular-hours scan with a close checkpoint from 3:30–4:20 p.m.
+
+Each report keeps its source scan IDs, timestamp, breadth, leaders, risk count, and board changes.
+Reports are written once per market day, survive worker restarts, and are available at `/reports`
+and `/api/market-reports`. If the required scan is missing, the worker waits rather than publishing
+a report from stale or unrelated data. Exchange holidays and exceptional early closes still follow
+the scanner's current availability rules.
+
 ## Flash wallet
 
 `/billing` is now the Flash wallet. It has no subscription or Pro gate. A user starts at zero and
@@ -323,6 +345,8 @@ Stonks keeps a compact, versioned training record for its learned ranker:
   skips times close to real scans, and records its source and limitations on every compact row
 - the oldest 80% of complete groups train the model, the next 10% calibrates its probabilities, and
   the newest 10% is an untouched test set
+- training keeps the checkpoint with the lowest validation loss and stops after eight validation
+  checks without improvement, instead of keeping an overfit final epoch
 - learned probabilities and expected return are stored with the exact model ID
 - the web worker collects a penny-stock scan every 30 minutes on weekdays from 4 a.m. to 8 p.m. ET
 
@@ -367,7 +391,8 @@ reports only that the web process is running. `/health` and its `/ready` alias c
 and minimum schema without depending on the worker. `/health/details` also requires a recent
 healthy worker heartbeat. Fly routes traffic using the backward-compatible `/health` endpoint,
 while the detailed endpoint lets external monitoring detect a dead or partly failed worker without
-taking healthy web machines offline.
+taking healthy web machines offline. `/health/performance` reports bounded route-latency samples,
+cache activity, database-pool waits, and process peak memory without exposing request data.
 
 ## Legacy model evaluations
 
@@ -396,26 +421,57 @@ from AI calls. Scorecards are available at `/api/kols`, and ticker call history 
 These model evaluations are separate from user-created public Calls. User Calls live in
 `community_calls`; private Flash research lives in `research_commissions`.
 
-## Start the dashboard
+## Run RATi locally
 
-This project uses Python 3.11–3.13. With [uv](https://docs.astral.sh/uv/) installed:
+This project uses Python 3.11–3.13. The FastAPI app is the canonical local version of the online
+RATi product. It has the same pages, APIs, evidence gates, accounts, Calls, Flash, and Sports.
+
+For a quick single-process setup with SQLite:
 
 ```bash
 uv sync --extra dev --python 3.13 --no-editable
-uv run streamlit run app.py
-```
-
-Open the local address shown in the terminal. Local scans use live market data from the enabled
-free sources; there is no synthetic demo mode.
-
-To run the public web app locally:
-
-```bash
-APP_ORIGIN=http://127.0.0.1:8080 RP_ID=127.0.0.1 COOKIE_SECURE=0 \
+APP_ORIGIN=http://127.0.0.1:8080 \
+RUNNERS_ORIGIN=http://127.0.0.1:8080 \
+SPORTS_ORIGIN=http://127.0.0.1:8080 \
+RP_ID=127.0.0.1 COOKIE_SECURE=0 \
   uv run --no-sync uvicorn runner_web.main:app --host 127.0.0.1 --port 8080
 ```
 
-The default uses live Yahoo penny-stock discovery. You can also choose one of these ticker lists:
+Open `http://127.0.0.1:8080`. This mode is easy to debug, but its web and background work share one
+process.
+
+For production-like local testing, use Docker Compose:
+
+```bash
+docker compose -f compose.local.yml up --build
+```
+
+This starts the same split web, collection worker, ranker trainer, migration, PostgreSQL, and Redis
+roles used online. Set `SEC_USER_AGENT` to your own contact value before testing SEC collection.
+The local database is saved in a Docker volume. Stop the services with:
+
+```bash
+docker compose -f compose.local.yml down
+```
+
+Live market scans run only on weekdays from 4:00 a.m. to 8:00 p.m. New York time. Outside that
+window, the app shows the last saved market quotes and their true age; a new database may have an
+empty Pulse until the next collection window. `/api/version` reports the running application,
+commit, and static-asset versions. Production checks reject a deployment whose commit does not
+match the commit that the workflow built.
+
+### Scanner Lab
+
+`app.py` is a separate Streamlit scanner workbench. It is useful for testing the basic market
+ranking rules and custom ticker lists. It is not a local copy of the online product: it does not
+include the online evidence, risk, account, community, Flash, or Sports systems. Its optional
+sample mode creates fake prices and labels them as sample data.
+
+```bash
+uv run streamlit run app.py
+```
+
+The Scanner Lab can use one of these ticker lists:
 
 - **Quick starter list:** fast, but it cannot find a runner outside its saved list.
 - **Full US market:** downloads the official Nasdaq Trader symbol directory, runs a daily
@@ -503,10 +559,11 @@ uv run pytest
 uv run ruff check .
 ```
 
-The production browser sweep checks all 17 Runners, Sports, and account screen routes. It uses
-current public ticker, caller, signal, research, and game records, fails screens slower than one
-second, and saves a screenshot for each failure. A dynamic screen with no public record is called
-out; the legacy Signal screen is skipped until production has a real public Signal to render.
+The production browser sweep checks all 16 Runners, Sports, and account screen routes. It runs the
+screens one at a time so the monitor does not create its own load spike. It uses current public
+ticker, caller, research, and game records. It retries and warns about screens slower than one
+second, fails screens that remain slower than 2.5 seconds, and saves a screenshot for each failure.
+A dynamic screen with no public record is called out.
 
 ```bash
 scripts/test-live-screens

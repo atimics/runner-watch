@@ -63,7 +63,8 @@ def test_atom_feed_deduplicates_accession_and_prefers_issuer() -> None:
 def test_form4_parser_only_treats_code_p_as_purchase() -> None:
     text = """<ownershipDocument>
       <issuer><issuerCik>22</issuerCik><issuerTradingSymbol>PEN.N</issuerTradingSymbol></issuer>
-      <reportingOwner><reportingOwnerId><rptOwnerName>Jane Doe</rptOwnerName></reportingOwnerId>
+      <reportingOwner><reportingOwnerId><rptOwnerCik>9876543</rptOwnerCik>
+      <rptOwnerName>Jane Doe</rptOwnerName></reportingOwnerId>
       <reportingOwnerRelationship><isDirector>1</isDirector></reportingOwnerRelationship></reportingOwner>
       <nonDerivativeTable>
         <nonDerivativeTransaction><transactionCoding><transactionCode>A</transactionCode></transactionCoding>
@@ -87,6 +88,7 @@ def test_form4_parser_only_treats_code_p_as_purchase() -> None:
     </ownershipDocument>"""
     summary = parse_ownership_xml(text)
     assert summary.ticker == "PEN-N"
+    assert summary.owner_cik == 9876543
     assert summary.owner_title == "Director"
     assert summary.purchase_shares == 5000
     assert summary.purchase_value == 12_500

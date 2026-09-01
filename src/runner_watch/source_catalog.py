@@ -30,6 +30,7 @@ class SourcePolicy:
     attribution: str | None
     review_status: str = "approved"
     enabled: bool = True
+    product: str = "runners"
 
 
 DEFAULT_SOURCE_POLICIES = (
@@ -158,28 +159,13 @@ DEFAULT_SOURCE_POLICIES = (
         stale_after_seconds=2_700,
         schedule="always",
         storage_policy="normalized_metadata_only",
-        display_policy="review_required",
+        display_policy="internal_review_only",
         attribution="Yahoo Finance",
         review_status="poc_only",
         enabled=(
             _enabled_by_default("DISCOVERY_SOURCES_ENABLED")
             and _enabled_by_default("YAHOO_NEWS_ENABLED")
         ),
-    ),
-    SourcePolicy(
-        source="nasdaq",
-        feed="ticker_bars",
-        title="Nasdaq ticker price charts",
-        owner="Nasdaq",
-        terms_url="https://www.nasdaq.com/market-activity/stocks",
-        credential_env=None,
-        expected_cadence_seconds=None,
-        stale_after_seconds=900,
-        schedule="on_demand",
-        storage_policy="renderer_cache_only",
-        display_policy="source_link_with_attribution",
-        attribution="Nasdaq",
-        review_status="review_required",
     ),
     SourcePolicy(
         source="apewisdom",
@@ -192,7 +178,7 @@ DEFAULT_SOURCE_POLICIES = (
         stale_after_seconds=2_700,
         schedule="always",
         storage_policy="normalized_aggregates_only",
-        display_policy="source_link_with_attribution",
+        display_policy="internal_review_only",
         attribution="ApeWisdom / Reddit",
         review_status="poc_only",
         enabled=(
@@ -211,7 +197,7 @@ DEFAULT_SOURCE_POLICIES = (
         stale_after_seconds=2_700,
         schedule="always",
         storage_policy="normalized_metadata_only",
-        display_policy="source_link_with_attribution",
+        display_policy="internal_review_only",
         attribution="GDELT",
         review_status="poc_only",
         enabled=(
@@ -229,7 +215,7 @@ DEFAULT_SOURCE_POLICIES = (
         stale_after_seconds=2_700,
         schedule="always",
         storage_policy="normalized_aggregates_only",
-        display_policy="source_link_with_attribution",
+        display_policy="internal_review_only",
         attribution="Bluesky",
         review_status="poc_only",
         enabled=(
@@ -266,10 +252,68 @@ DEFAULT_SOURCE_POLICIES = (
         stale_after_seconds=180,
         schedule="us_extended_weekdays",
         storage_policy="archive_raw_and_normalized",
-        display_policy="source_link_with_attribution",
+        display_policy="internal_review_only",
         attribution="Nasdaq Trader",
         review_status="poc_only",
         enabled=_enabled("NASDAQ_TRADE_HALTS_ENABLED"),
+    ),
+    SourcePolicy(
+        source="dol_oalj",
+        feed="decision_search",
+        title="DOL OALJ adjudicatory decision search",
+        owner="U.S. Department of Labor, Office of Administrative Law Judges",
+        terms_url="https://www.dol.gov/general/disclaim",
+        credential_env=None,
+        expected_cadence_seconds=86_400,
+        stale_after_seconds=172_800,
+        schedule="daily_review_queue",
+        storage_policy="normalized_metadata_and_public_documents",
+        display_policy="internal_review_only",
+        attribution="U.S. Department of Labor OALJ",
+        review_status="poc_only",
+        enabled=_enabled("DOL_OALJ_LEGAL_RISK_ENABLED"),
+        product="internal",
+    ),
+    SourcePolicy(
+        source="pacer",
+        feed="party_search",
+        title="PACER Case Locator party search",
+        owner="Administrative Office of the U.S. Courts",
+        terms_url="https://pacer.uscourts.gov/policy-procedures",
+        credential_env="PACER_USERNAME/PACER_PASSWORD",
+        expected_cadence_seconds=86_400,
+        stale_after_seconds=172_800,
+        schedule="budgeted_daily_review_queue",
+        storage_policy="normalized_index_metadata_only",
+        display_policy="internal_review_only",
+        attribution="PACER",
+        review_status="poc_only",
+        enabled=(
+            _enabled("PACER_LEGAL_RISK_ENABLED")
+            and bool(os.getenv("PACER_USERNAME", "").strip())
+            and bool(os.getenv("PACER_PASSWORD", "").strip())
+        ),
+        product="internal",
+    ),
+    SourcePolicy(
+        source="courtlistener",
+        feed="recap_search",
+        title="CourtListener RECAP federal docket search",
+        owner="Free Law Project",
+        terms_url="https://free.law/terms",
+        credential_env="COURTLISTENER_API_TOKEN",
+        expected_cadence_seconds=86_400,
+        stale_after_seconds=172_800,
+        schedule="daily_review_queue",
+        storage_policy="normalized_metadata_and_permitted_public_documents",
+        display_policy="internal_review_only",
+        attribution="CourtListener RECAP / Free Law Project",
+        review_status="poc_only",
+        enabled=(
+            _enabled("COURTLISTENER_LEGAL_RISK_ENABLED")
+            and bool(os.getenv("COURTLISTENER_API_TOKEN", "").strip())
+        ),
+        product="internal",
     ),
     SourcePolicy(
         source="fintel",
@@ -324,6 +368,7 @@ DEFAULT_SOURCE_POLICIES = (
         attribution="ESPN",
         review_status="poc_only",
         enabled=_enabled_by_default("SPORTS_INGESTION_ENABLED"),
+        product="sports",
     ),
     SourcePolicy(
         source="espn",
@@ -340,6 +385,7 @@ DEFAULT_SOURCE_POLICIES = (
         attribution="ESPN",
         review_status="poc_only",
         enabled=_enabled_by_default("SPORTS_INGESTION_ENABLED"),
+        product="sports",
     ),
     SourcePolicy(
         source="the-odds-api",
@@ -357,6 +403,7 @@ DEFAULT_SOURCE_POLICIES = (
         enabled=(
             _enabled_by_default("ODDS_API_ENABLED") and bool(os.getenv("ODDS_API_KEY", "").strip())
         ),
+        product="sports",
     ),
     SourcePolicy(
         source="espn",
@@ -373,6 +420,7 @@ DEFAULT_SOURCE_POLICIES = (
         attribution="ESPN",
         review_status="poc_only",
         enabled=_enabled_by_default("SPORTS_INGESTION_ENABLED"),
+        product="sports",
     ),
     SourcePolicy(
         source="espn",
@@ -389,5 +437,239 @@ DEFAULT_SOURCE_POLICIES = (
         attribution="ESPN",
         review_status="poc_only",
         enabled=_enabled_by_default("SPORTS_INGESTION_ENABLED"),
+        product="sports",
     ),
 )
+
+
+def _free_risk_policy(
+    *,
+    source: str,
+    feed: str,
+    title: str,
+    owner: str,
+    terms_url: str,
+    enabled_env: str,
+    credential_env: str | None = None,
+    schedule: str = "daily_review_queue",
+    storage_policy: str = "archive_raw_and_normalized",
+) -> SourcePolicy:
+    credential_ready = not credential_env or bool(os.getenv(credential_env, "").strip())
+    return SourcePolicy(
+        source=source,
+        feed=feed,
+        title=title,
+        owner=owner,
+        terms_url=terms_url,
+        credential_env=credential_env,
+        expected_cadence_seconds=86_400,
+        stale_after_seconds=172_800,
+        schedule=schedule,
+        storage_policy=storage_policy,
+        display_policy="internal_review_only",
+        attribution=owner,
+        review_status="poc_only",
+        enabled=(
+            _enabled("FREE_LEGAL_SOURCES_ENABLED")
+            and _enabled(enabled_env)
+            and credential_ready
+        ),
+        product="internal",
+    )
+
+
+FREE_RISK_SOURCE_POLICIES = (
+    _free_risk_policy(
+        source="ofac",
+        feed="sanctions_sdn",
+        title="OFAC Specially Designated Nationals",
+        owner="U.S. Treasury Office of Foreign Assets Control",
+        terms_url="https://ofac.treasury.gov/sanctions-list-service",
+        enabled_env="OFAC_LEGAL_RISK_ENABLED",
+        storage_policy="normalized_metadata_and_source_hash",
+    ),
+    _free_risk_policy(
+        source="sam",
+        feed="exclusions",
+        title="SAM.gov public exclusions",
+        owner="U.S. General Services Administration",
+        terms_url="https://open.gsa.gov/api/exclusions-api/",
+        enabled_env="SAM_EXCLUSIONS_LEGAL_RISK_ENABLED",
+        credential_env="SAM_API_KEY",
+        storage_policy="normalized_metadata_and_source_hash",
+    ),
+    _free_risk_policy(
+        source="hhs_oig",
+        feed="leie",
+        title="HHS List of Excluded Individuals and Entities",
+        owner="HHS Office of Inspector General",
+        terms_url=(
+            "https://www.oig.hhs.gov/exclusions/leie-database-supplement-downloads/"
+        ),
+        enabled_env="HHS_LEIE_LEGAL_RISK_ENABLED",
+        storage_policy="normalized_metadata_and_source_hash",
+    ),
+    _free_risk_policy(
+        source="govinfo",
+        feed="uscourts_opinions",
+        title="GovInfo United States Courts opinions",
+        owner="U.S. Government Publishing Office",
+        terms_url="https://www.govinfo.gov/developers",
+        enabled_env="GOVINFO_LEGAL_RISK_ENABLED",
+        credential_env="GOVINFO_API_KEY",
+    ),
+    _free_risk_policy(
+        source="sec",
+        feed="enforcement_litigation",
+        title="SEC litigation and enforcement releases",
+        owner="U.S. Securities and Exchange Commission",
+        terms_url="https://www.sec.gov/about/privacy-information#security",
+        enabled_env="SEC_ENFORCEMENT_RISK_ENABLED",
+        credential_env="SEC_USER_AGENT",
+    ),
+    _free_risk_policy(
+        source="doj",
+        feed="corporate_enforcement",
+        title="DOJ corporate enforcement archive",
+        owner="U.S. Department of Justice",
+        terms_url="https://www.justice.gov/legalpolicies",
+        enabled_env="DOJ_ENFORCEMENT_RISK_ENABLED",
+    ),
+    _free_risk_policy(
+        source="ftc",
+        feed="cases",
+        title="FTC cases and proceedings",
+        owner="Federal Trade Commission",
+        terms_url="https://www.ftc.gov/site-information/privacy-policy",
+        enabled_env="FTC_ENFORCEMENT_RISK_ENABLED",
+    ),
+    _free_risk_policy(
+        source="pcaob",
+        feed="enforcement_actions",
+        title="PCAOB public enforcement actions",
+        owner="Public Company Accounting Oversight Board",
+        terms_url="https://pcaobus.org/oversight/enforcement/enforcement-actions",
+        enabled_env="PCAOB_ENFORCEMENT_RISK_ENABLED",
+    ),
+    _free_risk_policy(
+        source="occ",
+        feed="enforcement_actions",
+        title="OCC enforcement actions",
+        owner="Office of the Comptroller of the Currency",
+        terms_url=(
+            "https://www.occ.gov/topics/laws-and-regulations/enforcement-actions/"
+            "index-enforcement-actions.html"
+        ),
+        enabled_env="OCC_ENFORCEMENT_RISK_ENABLED",
+    ),
+    _free_risk_policy(
+        source="fdic",
+        feed="enforcement_orders",
+        title="FDIC enforcement decisions and orders",
+        owner="Federal Deposit Insurance Corporation",
+        terms_url="https://orders.fdic.gov/s/",
+        enabled_env="FDIC_ENFORCEMENT_RISK_ENABLED",
+    ),
+    _free_risk_policy(
+        source="finra",
+        feed="disciplinary_actions",
+        title="FINRA public disciplinary actions",
+        owner="Financial Industry Regulatory Authority",
+        terms_url="https://www.finra.org/privacy",
+        enabled_env="FINRA_DISCIPLINARY_RISK_ENABLED",
+        schedule="reviewed_manual_import",
+        storage_policy="normalized_metadata_only",
+    ),
+    _free_risk_policy(
+        source="epa",
+        feed="echo_enforcement",
+        title="EPA ECHO compliance and enforcement data",
+        owner="U.S. Environmental Protection Agency",
+        terms_url="https://echo.epa.gov/tools/data-downloads",
+        enabled_env="EPA_ECHO_RISK_ENABLED",
+    ),
+    _free_risk_policy(
+        source="osha",
+        feed="establishment_inspections",
+        title="OSHA establishment inspections and citations",
+        owner="Occupational Safety and Health Administration",
+        terms_url="https://www.osha.gov/ords/imis/establishment.html",
+        enabled_env="OSHA_INSPECTION_RISK_ENABLED",
+        schedule="reviewed_manual_import",
+        storage_policy="normalized_metadata_only",
+    ),
+    _free_risk_policy(
+        source="nlrb",
+        feed="cases",
+        title="NLRB casehandling data",
+        owner="National Labor Relations Board",
+        terms_url="https://www.nlrb.gov/advanced-search",
+        enabled_env="NLRB_CASE_RISK_ENABLED",
+    ),
+    _free_risk_policy(
+        source="fda",
+        feed="enforcement_recalls",
+        title="FDA enforcement and recall data",
+        owner="U.S. Food and Drug Administration",
+        terms_url="https://open.fda.gov/terms/",
+        enabled_env="FDA_ENFORCEMENT_RISK_ENABLED",
+    ),
+    _free_risk_policy(
+        source="usitc",
+        feed="edis_investigations",
+        title="USITC EDIS trade and intellectual-property investigations",
+        owner="U.S. International Trade Commission",
+        terms_url="https://www.usitc.gov/documents/disclaimer.htm",
+        enabled_env="USITC_EDIS_RISK_ENABLED",
+    ),
+    _free_risk_policy(
+        source="cfpb",
+        feed="complaints",
+        title="CFPB consumer complaint data",
+        owner="Consumer Financial Protection Bureau",
+        terms_url=(
+            "https://www.consumerfinance.gov/data-research/consumer-complaints/"
+        ),
+        enabled_env="CFPB_COMPLAINT_RISK_ENABLED",
+        storage_policy="normalized_metadata_only",
+    ),
+    _free_risk_policy(
+        source="gleif",
+        feed="entity_relationships",
+        title="GLEIF legal entity and parent relationships",
+        owner="Global Legal Entity Identifier Foundation",
+        terms_url="https://www.gleif.org/en/meta/lei-data-terms-of-use",
+        enabled_env="GLEIF_ENTITY_LINKS_ENABLED",
+        storage_policy="normalized_relationships_only",
+    ),
+    _free_risk_policy(
+        source="usaspending",
+        feed="awards",
+        title="USAspending federal awards",
+        owner="U.S. Department of the Treasury",
+        terms_url="https://www.usaspending.gov/about",
+        enabled_env="USASPENDING_RELATIONSHIPS_ENABLED",
+        storage_policy="normalized_metadata_only",
+    ),
+    _free_risk_policy(
+        source="cms",
+        feed="open_payments",
+        title="CMS Open Payments",
+        owner="Centers for Medicare & Medicaid Services",
+        terms_url="https://openpaymentsdata.cms.gov/about",
+        enabled_env="CMS_OPEN_PAYMENTS_RISK_ENABLED",
+        storage_policy="normalized_metadata_only",
+    ),
+    _free_risk_policy(
+        source="fec",
+        feed="contributions",
+        title="OpenFEC contribution records",
+        owner="Federal Election Commission",
+        terms_url="https://www.fec.gov/usage-policy/",
+        enabled_env="FEC_RELATIONSHIPS_ENABLED",
+        credential_env="FEC_API_KEY",
+        storage_policy="normalized_metadata_only",
+    ),
+)
+
+DEFAULT_SOURCE_POLICIES = (*DEFAULT_SOURCE_POLICIES, *FREE_RISK_SOURCE_POLICIES)

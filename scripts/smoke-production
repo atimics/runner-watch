@@ -23,6 +23,7 @@ check_endpoint() {
 }
 
 check_endpoint /live
+check_endpoint /api/version
 check_endpoint /ready
 check_endpoint /health/details
 check_endpoint /
@@ -31,3 +32,22 @@ check_endpoint /radar
 check_endpoint '/api/pulse?limit=1'
 check_endpoint '/api/radar?limit=1'
 check_endpoint '/api/sports/pulse?limit=1'
+
+version_payload=$(curl --fail --silent --show-error --location --max-time 20 \
+    "${origin}/api/version")
+if ! deployed_build=$(printf '%s' "$version_payload" | python3 -c '
+import json
+import sys
+
+payload = json.load(sys.stdin)
+assert all(payload.get(key) for key in ("version", "build_sha", "static_version"))
+print(payload["build_sha"])
+'); then
+    echo "Production version response is invalid: ${origin}/api/version" >&2
+    exit 1
+fi
+
+if [ -n "${EXPECTED_BUILD_SHA:-}" ] && [ "$deployed_build" != "$EXPECTED_BUILD_SHA" ]; then
+    echo "Production build mismatch: expected ${EXPECTED_BUILD_SHA}, got ${deployed_build}" >&2
+    exit 1
+fi

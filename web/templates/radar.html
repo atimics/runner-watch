@@ -22,38 +22,39 @@
 <script nonce="{{ request.state.csp_nonce }}">
 let rows={{ watches|tojson }};const list=document.getElementById('radarList');
 const refreshButton=document.getElementById('radarRefresh');
-let pendingRows=null;
-const pendingUpdateTickers=new Set();
 function eventKey(row){return `${row?.ticker||''}|${row?.event_at||''}|${row?.pulse_label||''}|${row?.event_count||0}`;}
 function render(){
   document.getElementById('watchCount').textContent=rows.length;
   list.innerHTML=rows.map(item=>TickerRow.render(item,{updated:item.has_update})).join('')||`<div class="empty-list radar-empty"><span class="empty-radar"></span><strong>No recent Pulse events</strong><p>Events will appear when a ticker in Pulse gets fresh news, filings, or market alerts.</p><a href="/">View Pulse</a></div>`;
   TickerRow.paintCharts();
 }
-refreshButton.addEventListener('click',()=>{
-  if(!pendingRows)return;
-  rows=pendingRows;pendingRows=null;pendingUpdateTickers.clear();refreshButton.hidden=true;
-  render();TickerRow.loadCharts('/api/radar/charts');
-});
-render();TickerRow.loadCharts('/api/radar/charts');let pollCount=0;
-setInterval(async()=>{
-  try{
+function radarUpdates(current,next){
+  const currentEvents=new Set(current.map(eventKey));
+  return next.filter(item=>!currentEvents.has(eventKey(item)));
+}
+let pollCount=0;
+RatiLiveList.mount({
+  refreshButton,
+  getCurrent:()=>rows,
+  setCurrent:value=>{rows=value;},
+  fetchNext:async()=>{
     const response=await fetch('/api/radar');
-    if(!response.ok)return;
+    if(!response.ok)throw new Error('Radar refresh failed');
     const data=await response.json();
-    const currentEvents=new Set(rows.map(eventKey));
-    const updates=(data.rows||[]).filter(item=>!currentEvents.has(eventKey(item)));
-    if(updates.length){
-      pendingRows=data.rows||[];
-      updates.forEach(item=>pendingUpdateTickers.add(item.ticker));
-      const count=pendingUpdateTickers.size;
-      refreshButton.textContent=count===1?'1 new event':`${count} new events`;
-      refreshButton.hidden=false;
-    }
+    return data.rows||[];
+  },
+  changed:(current,next)=>radarUpdates(current,next).length>0,
+  changeCount:(current,next)=>new Set(radarUpdates(current,next).map(item=>item.ticker)).size,
+  label:count=>count===1?'1 new event':`${count} new events`,
+  render,
+  afterApply:()=>TickerRow.loadCharts('/api/radar/charts'),
+  onPoll:()=>{
     document.getElementById('radarStatus').textContent='Live';
     pollCount+=1;
     if(pollCount%4===0)TickerRow.loadCharts('/api/radar/charts');
-  }catch(_){document.getElementById('radarStatus').textContent='Offline';}
-},30000);
+  },
+  onError:()=>{document.getElementById('radarStatus').textContent='Offline';},
+});
+TickerRow.loadCharts('/api/radar/charts');
 </script>
 {% endblock %}
