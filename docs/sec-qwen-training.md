@@ -94,6 +94,38 @@ corpus.
 
 ## Freeze and materialize in ilXyr
 
+Export Braid's issuer-universe input from the current Runner database. This reads the intersection
+of scan snapshots and the SEC company map; it does not contact the SEC:
+
+```bash
+stonks-sec-braid-universe /private/feral-7b-issuers.json \
+  --database-path /private/runner-watch.db
+```
+
+Run the source-to-training transform beside Braid's private object store, not as a second SEC
+backfill on a laptop. Braid verifies and streams the immutable source release; Runner Watch verifies
+each streamed body again, recreates the deterministic v2 examples, and writes a digest-pinned Braid
+build specification plus the sealed evaluation files:
+
+```bash
+braid-sec-edgar stream \
+  --config /private/feral-7b-cloud-config.json \
+  --manifest-key sec-edgar/feral-7b-sec/v1/releases/braid_sec_REPLACE/manifest.json \
+  | stonks-sec-braid-transform /private/feral-transform \
+      --source-release-id braid_sec_REPLACE \
+      --source-manifest-sha256 FULL_64_CHARACTER_SHA256 \
+      --runner-revision FULL_40_CHARACTER_GIT_COMMIT
+
+braid build /private/feral-transform/feral-7b.braid.json
+```
+
+The transform stores only derived candidates and evaluation rows in its output. Its temporary
+working database is deleted before completion. `transform-release.json` binds every output to the
+exact Braid source release, raw source-manifest hash, and Runner Watch revision, and keeps
+`training_authorized` false. The generated Braid build includes train and validation only. The
+future and unseen-issuer files remain separate under `evaluation/` so the two preregistered SEC
+scores cannot be silently combined.
+
 Verify and accept the Braid release outside Runner Watch. It must be a closed
 `braid.release/v2` directory in `RELEASED` state with `data/train.jsonl` and
 `data/validation.jsonl`. Copy ilXyr's `examples/corpus/feral-7b-braid-import.json`, then replace

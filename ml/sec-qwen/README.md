@@ -17,6 +17,10 @@ The Braid release should expose `data/train.jsonl` and `data/validation.jsonl`. 
 unseen-issuer tests in the frozen ilXyr evaluation release rather than placing them in a training
 configuration. Accepting a Braid release does not authorize training.
 
+Create that release with the cloud-side `braid-sec-edgar stream | stonks-sec-braid-transform`
+bridge documented in the repository training guide. Do not run Runner Watch's legacy SEC backfill
+to reconstruct the Season 00 corpus.
+
 Use a pinned GPU base image. The Dockerfile intentionally has no mutable default:
 
 ```bash
