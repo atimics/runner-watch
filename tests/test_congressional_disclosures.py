@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import tomllib
 import zipfile
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -81,6 +82,12 @@ $1,000,000
 F S: New
 D: Additional investment in LLC which is acquiring and restoring a luxury hotel property.
 """
+
+
+def test_fly_deploy_enables_internal_house_collection() -> None:
+    config = tomllib.loads((Path(__file__).parents[1] / "fly.toml").read_text())
+
+    assert config["env"]["HOUSE_DISCLOSURES_ENABLED"] == "true"
 
 
 def _index_zip() -> bytes:

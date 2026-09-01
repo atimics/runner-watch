@@ -63,6 +63,7 @@ kill_timeout = 30
   GDELT_NEWS_ENABLED = "false"
   BLUESKY_SEARCH_ENABLED = "false"
   NASDAQ_TRADE_HALTS_ENABLED = "true"
+  HOUSE_DISCLOSURES_ENABLED = "true"
   SEC_USER_AGENT = "RATi-Runners/0.3 https://runners.rati.chat"
 
 [http_service]
