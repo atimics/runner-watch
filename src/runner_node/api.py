@@ -21,6 +21,13 @@ from runner_node.openrouter import OpenRouterConnections
 from runner_node.research import OpenRouterResearch, ResearchRequest
 from runner_node.scans import ScanRequest, ScanStore, run_scan
 from runner_node.tickers import load_ticker_detail
+from runner_watch.source_capabilities import (
+    CAPABILITY_BY_ID,
+    SOURCE_CAPABILITIES,
+    access_model_for_policy,
+    capability_for_policy,
+    usage_rights_for_policy,
+)
 from runner_watch.source_catalog import DEFAULT_SOURCE_POLICIES
 
 
@@ -42,9 +49,14 @@ class RemoteScannerInput(BaseModel):
     token: str = Field(default="", max_length=2_048)
 
 
+class ProviderRouteInput(BaseModel):
+    providers: list[str] = Field(min_length=1, max_length=20)
+
+
 MARKET_PROVIDER_IDS = frozenset({"massive", "fintel", "the-odds-api"})
 REMOTE_SCANNERS_VAULT_KEY = "remote-scanners"
 RATI_CLOUD_ENABLED_VAULT_KEY = "rati-cloud-enabled"
+PROVIDER_ROUTES_VAULT_KEY = "provider-routes"
 
 
 class NodeService:
@@ -95,6 +107,71 @@ class NodeService:
             for provider in MARKET_PROVIDER_IDS
             if (value := self.vault.get(provider))
         }
+
+    def provider_routes(self) -> dict[str, list[str]]:
+        routes: dict[str, list[str]] = {capability.id: [] for capability in SOURCE_CAPABILITIES}
+        for policy in DEFAULT_SOURCE_POLICIES:
+            capability = capability_for_policy(policy)
+            if policy.source not in routes[capability.id]:
+                routes[capability.id].append(policy.source)
+
+        # Preserve the scanner's existing preference for Massive daily bars
+        # when a user has connected it. Yahoo remains the local fallback.
+        routes["market_bars"] = [
+            source for source in ("massive", "yahoo") if source in routes["market_bars"]
+        ]
+
+        raw = self.vault.get(PROVIDER_ROUTES_VAULT_KEY)
+        if not raw:
+            return routes
+        try:
+            saved = json.loads(raw)
+        except (TypeError, ValueError):
+            return routes
+        if not isinstance(saved, dict):
+            return routes
+        for capability_id, providers in saved.items():
+            if capability_id not in routes or not isinstance(providers, list):
+                continue
+            supported = routes[capability_id]
+            requested = [
+                provider
+                for value in providers
+                if isinstance(value, str)
+                and (provider := value.strip().lower()) in supported
+            ]
+            routes[capability_id] = list(dict.fromkeys([*requested, *supported]))
+        return routes
+
+    def save_provider_route(self, capability_id: str, providers: list[str]) -> list[str]:
+        routes = self.provider_routes()
+        if capability_id not in CAPABILITY_BY_ID:
+            raise ValueError("Unknown scanner capability")
+        supported = routes[capability_id]
+        requested = list(
+            dict.fromkeys(provider.strip().lower() for provider in providers if provider.strip())
+        )
+        invalid = [provider for provider in requested if provider not in supported]
+        if invalid:
+            raise ValueError(
+                f"{', '.join(invalid)} cannot provide {CAPABILITY_BY_ID[capability_id].title}"
+            )
+        if not requested:
+            raise ValueError("Choose at least one provider")
+        next_route = [
+            *requested,
+            *(provider for provider in supported if provider not in requested),
+        ]
+        raw = self.vault.get(PROVIDER_ROUTES_VAULT_KEY)
+        try:
+            saved = json.loads(raw) if raw else {}
+        except (TypeError, ValueError):
+            saved = {}
+        if not isinstance(saved, dict):
+            saved = {}
+        saved[capability_id] = next_route
+        self.vault.set(PROVIDER_ROUTES_VAULT_KEY, json.dumps(saved, separators=(",", ":")))
+        return next_route
 
     def callback_origin(self, request: Request) -> str:
         if self.settings.public_origin:
@@ -209,6 +286,22 @@ class NodeService:
                 state = "review_required"
             else:
                 state = "experimental"
+            feeds = [
+                {
+                    "id": policy.feed,
+                    "title": policy.title,
+                    "schedule": policy.schedule,
+                    "review_status": policy.review_status,
+                    "terms_url": policy.terms_url,
+                    "capabilities": [capability_for_policy(policy).id],
+                    "usage_rights": list(usage_rights_for_policy(policy)),
+                    "access_model": access_model_for_policy(policy),
+                    "storage_policy": policy.storage_policy,
+                    "display_policy": policy.display_policy,
+                    "product": policy.product,
+                }
+                for policy in policies
+            ]
             output.append(
                 {
                     "id": source,
@@ -219,16 +312,10 @@ class NodeService:
                     "configuration_kind": ("none" if built_in_contact else "api_key")
                     if credential_names
                     else "none",
-                    "feeds": [
-                        {
-                            "id": policy.feed,
-                            "title": policy.title,
-                            "schedule": policy.schedule,
-                            "review_status": policy.review_status,
-                            "terms_url": policy.terms_url,
-                        }
-                        for policy in policies
-                    ],
+                    "capabilities": sorted(
+                        {capability for feed in feeds for capability in feed["capabilities"]}
+                    ),
+                    "feeds": feeds,
                 }
             )
         output.insert(
@@ -240,6 +327,7 @@ class NodeService:
                 "enabled": True,
                 "configured": True,
                 "configuration_kind": "none",
+                "capabilities": ["scanner_results"],
                 "feeds": [
                     {
                         "id": "momentum_scans",
@@ -247,6 +335,12 @@ class NodeService:
                         "schedule": "on_demand",
                         "review_status": "approved",
                         "terms_url": None,
+                        "capabilities": ["scanner_results"],
+                        "usage_rights": ["local_private", "store_normalized"],
+                        "access_model": "included",
+                        "storage_policy": "local_receipts",
+                        "display_policy": "local_only",
+                        "product": "runners",
                     }
                 ],
             },
@@ -260,6 +354,7 @@ class NodeService:
                 "enabled": cloud_connected,
                 "configured": True,
                 "configuration_kind": "toggle",
+                "capabilities": ["scanner_results"],
                 "feeds": [
                     {
                         "id": "cloud_scans",
@@ -267,6 +362,12 @@ class NodeService:
                         "schedule": "on_demand",
                         "review_status": "approved",
                         "terms_url": "https://rati.chat",
+                        "capabilities": ["scanner_results"],
+                        "usage_rights": ["local_private", "store_normalized"],
+                        "access_model": "included",
+                        "storage_policy": "local_receipts",
+                        "display_policy": "local_only",
+                        "product": "runners",
                     }
                 ],
             }
@@ -280,6 +381,7 @@ class NodeService:
                     "enabled": True,
                     "configured": True,
                     "configuration_kind": "remote_scanner",
+                    "capabilities": ["scanner_results"],
                     "feeds": [
                         {
                             "id": "remote_scans",
@@ -287,6 +389,12 @@ class NodeService:
                             "schedule": "on_demand",
                             "review_status": "user_configured",
                             "terms_url": None,
+                            "capabilities": ["scanner_results"],
+                            "usage_rights": ["local_private", "store_normalized"],
+                            "access_model": "user_managed",
+                            "storage_policy": "local_receipts",
+                            "display_policy": "local_only",
+                            "product": "runners",
                         }
                     ],
                 }
@@ -299,6 +407,7 @@ class NodeService:
                 "enabled": self.settings.allow_user_openrouter,
                 "configured": self.openrouter.status()["status"] == "connected",
                 "configuration_kind": "oauth_pkce",
+                "capabilities": ["ai_research"],
                 "feeds": [
                     {
                         "id": "ai_research",
@@ -306,11 +415,110 @@ class NodeService:
                         "schedule": "on_demand",
                         "review_status": "approved",
                         "terms_url": "https://openrouter.ai/terms",
+                        "capabilities": ["ai_research"],
+                        "usage_rights": ["local_private", "store_normalized"],
+                        "access_model": "bring_your_own",
+                        "storage_policy": "user_selected_results",
+                        "display_policy": "local_only",
+                        "product": "runners",
                     }
                 ],
             }
         )
         return output
+
+    def coverage_payload(self) -> dict[str, Any]:
+        providers = self.provider_rows()
+        routes = self.provider_routes()
+        rows: list[dict[str, Any]] = []
+        for capability in SOURCE_CAPABILITIES:
+            options: list[dict[str, Any]] = []
+            for provider in providers:
+                matching_feeds = [
+                    feed
+                    for feed in provider["feeds"]
+                    if capability.id in feed.get("capabilities", [])
+                ]
+                if not matching_feeds:
+                    continue
+                rights = sorted(
+                    {
+                        right
+                        for feed in matching_feeds
+                        for right in feed.get("usage_rights", [])
+                    }
+                )
+                reviews = {feed["review_status"] for feed in matching_feeds}
+                review_status = (
+                    "approved"
+                    if reviews == {"approved"}
+                    else "review_required"
+                    if "review_required" in reviews
+                    else "experimental"
+                )
+                options.append(
+                    {
+                        "provider_id": provider["id"],
+                        "provider_title": provider["title"],
+                        "state": provider["state"],
+                        "enabled": provider["enabled"],
+                        "configured": provider["configured"],
+                        "configuration_kind": provider["configuration_kind"],
+                        "review_status": review_status,
+                        "usage_rights": rights,
+                        "access_model": matching_feeds[0]["access_model"],
+                        "feeds": [feed["title"] for feed in matching_feeds],
+                        "terms_url": next(
+                            (feed["terms_url"] for feed in matching_feeds if feed["terms_url"]),
+                            None,
+                        ),
+                    }
+                )
+
+            route = routes.get(capability.id, [])
+            effective_route = [
+                provider_id
+                for provider_id in route
+                if any(
+                    option["provider_id"] == provider_id
+                    and option["enabled"]
+                    and option["configured"]
+                    for option in options
+                )
+            ]
+            private_ready = any(option["enabled"] and option["configured"] for option in options)
+            public_ready = any(
+                option["enabled"]
+                and option["configured"]
+                and (
+                    "public_display" in option["usage_rights"]
+                    or "public_derived_signals" in option["usage_rights"]
+                )
+                for option in options
+            )
+            rows.append(
+                {
+                    "id": capability.id,
+                    "title": capability.title,
+                    "description": capability.description,
+                    "core": capability.core,
+                    "private_ready": private_ready,
+                    "public_ready": public_ready,
+                    "selected_provider": effective_route[0] if effective_route else None,
+                    "provider_route": route,
+                    "providers": options,
+                }
+            )
+        return {
+            "summary": {
+                "private_ready": sum(row["private_ready"] for row in rows),
+                "public_ready": sum(row["public_ready"] for row in rows),
+                "total": len(rows),
+                "core_private_ready": all(row["private_ready"] for row in rows if row["core"]),
+                "core_public_ready": all(row["public_ready"] for row in rows if row["core"]),
+            },
+            "capabilities": rows,
+        }
 
     def node_payload(self) -> dict[str, Any]:
         openrouter = self.openrouter.status()
@@ -330,6 +538,7 @@ class NodeService:
             },
             "links": {
                 "providers": "/api/v1/providers",
+                "coverage": "/api/v1/coverage",
                 "scans": "/api/v1/scans",
                 "tickers": "/api/v1/tickers/{ticker}",
                 "research": "/api/v1/research",
@@ -356,6 +565,10 @@ def create_node_router(service: NodeService | None = None) -> APIRouter:
     def providers() -> dict[str, Any]:
         return {"providers": service.provider_rows()}
 
+    @router.get("/coverage")
+    def coverage() -> dict[str, Any]:
+        return service.coverage_payload()
+
     @router.get("/scans", dependencies=protected)
     def scans() -> dict[str, object]:
         return {"receipts": service.scans.list()}
@@ -368,7 +581,12 @@ def create_node_router(service: NodeService | None = None) -> APIRouter:
     async def create_scan(payload: ScanRequest) -> dict[str, object]:
         if service.settings.mode == "cloud":
             raise HTTPException(403, "Cloud scans are scheduled by the managed scanner")
-        result = await run_in_threadpool(run_scan, payload, service.provider_credentials())
+        result = await run_in_threadpool(
+            run_scan,
+            payload,
+            service.provider_credentials(),
+            service.provider_routes(),
+        )
         return service.scans.save(result)
 
     @router.get("/scans/{scan_id}", dependencies=protected)
@@ -387,6 +605,7 @@ def create_node_router(service: NodeService | None = None) -> APIRouter:
                 load_ticker_detail,
                 ticker,
                 service.provider_credentials(),
+                service.provider_routes(),
             )
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
@@ -464,6 +683,17 @@ def create_node_router(service: NodeService | None = None) -> APIRouter:
             "source": "rati-cloud",
             "status": "connected" if payload.enabled else "disabled",
         }
+
+    @router.put("/routes/{capability_id}", dependencies=protected)
+    def set_provider_route(
+        capability_id: str,
+        payload: ProviderRouteInput,
+    ) -> dict[str, Any]:
+        try:
+            providers = service.save_provider_route(capability_id, payload.providers)
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"capability": capability_id, "providers": providers}
 
     @router.post("/connections/scanners", dependencies=protected)
     def connect_scanner(payload: RemoteScannerInput) -> dict[str, Any]:

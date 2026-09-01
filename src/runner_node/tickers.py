@@ -265,6 +265,7 @@ def _use_fallback(
 def load_ticker_detail(
     ticker: str,
     provider_keys: Mapping[str, str] | None = None,
+    provider_routes: Mapping[str, list[str]] | None = None,
 ) -> dict[str, object]:
     symbol = validate_ticker(ticker)
     try:
@@ -285,7 +286,10 @@ def load_ticker_detail(
     needs_daily_fallback = nasdaq_daily_frame is None or nasdaq_daily_frame.empty
     needs_intraday_fallback = nasdaq_intraday_frame is None or nasdaq_intraday_frame.empty
     if needs_daily_fallback or needs_intraday_fallback:
-        provider = routed_market_data(provider_keys=provider_keys)
+        provider = routed_market_data(
+            provider_keys=provider_keys,
+            provider_order=(provider_routes or {}).get("market_bars"),
+        )
         try:
             if needs_daily_fallback:
                 daily_result = _use_fallback(provider.daily, daily_result, symbol, "daily")

@@ -1,6 +1,7 @@
 from dataclasses import replace
 from pathlib import Path
 
+from runner_watch.source_capabilities import assert_catalog_has_capabilities
 from runner_watch.source_catalog import DEFAULT_SOURCE_POLICIES
 from runner_web.product_policy import (
     PRODUCT_POLICY_VERSION,
@@ -9,6 +10,10 @@ from runner_web.product_policy import (
 )
 
 ROOT = Path(__file__).parents[1]
+
+
+def test_every_catalog_feed_has_a_scanner_capability() -> None:
+    assert_catalog_has_capabilities(DEFAULT_SOURCE_POLICIES)
 
 
 def test_policy_manifest_is_machine_readable_and_reports_source_review_drift() -> None:
