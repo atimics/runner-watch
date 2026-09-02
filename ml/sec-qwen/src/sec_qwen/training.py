@@ -6,10 +6,16 @@ import json
 import math
 import os
 import random
+import sys
 import tarfile
 import time
 from pathlib import Path
 from typing import Any
+
+try:
+    import resource
+except ImportError:  # pragma: no cover - Windows does not expose process rusage.
+    resource = None  # type: ignore[assignment]
 
 from sec_qwen.config import Config, load_examples, sha256_file, validate_corpus
 
@@ -199,6 +205,8 @@ def train(
         eval_dataset=ChatDataset(validation_examples) if validation_examples else None,
         data_collator=collate,
     )
+    if calibration and torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
     started_at = time.perf_counter()
     train_result = trainer.train()
     runtime_seconds = time.perf_counter() - started_at
@@ -217,6 +225,25 @@ def train(
             if torch.backends.mps.is_available()
             else "cpu"
         )
+        measurement = {
+            "device": device,
+            "runtime_seconds": round(runtime_seconds, 4),
+            "effective_token_passes": round(token_passes),
+            "tokens_per_device_hour": round(token_passes / runtime_seconds * 3600, 2),
+        }
+        if resource is not None:
+            peak_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            if sys.platform != "darwin":
+                peak_rss *= 1024
+            measurement["process_peak_rss_bytes"] = peak_rss
+        if torch.cuda.is_available():
+            measurement.update(
+                {
+                    "device_total_memory_bytes": torch.cuda.get_device_properties(0).total_memory,
+                    "peak_device_memory_allocated_bytes": torch.cuda.max_memory_allocated(),
+                    "peak_device_memory_reserved_bytes": torch.cuda.max_memory_reserved(),
+                }
+            )
         report = {
             "schema": "stonks.sec_qwen_calibration.v1",
             "model": {"id": config.model.model_id, "revision": config.model.revision},
@@ -234,12 +261,7 @@ def train(
                     "\n".join(str(example["id"]) for example in train_examples).encode()
                 ).hexdigest(),
             },
-            "measurement": {
-                "device": device,
-                "runtime_seconds": round(runtime_seconds, 4),
-                "effective_token_passes": round(token_passes),
-                "tokens_per_device_hour": round(token_passes / runtime_seconds * 3600, 2),
-            },
+            "measurement": measurement,
             "artifact": None,
             "training_authorized": False,
         }
