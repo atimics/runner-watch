@@ -25,7 +25,7 @@ from sec_qwen.baseline import (  # noqa: E402
 from sec_qwen.benchmarks import release_metrics  # noqa: E402
 from sec_qwen.completion import build_completion  # noqa: E402
 from sec_qwen.config import load_config, load_examples, validate_corpus  # noqa: E402
-from sec_qwen.evaluation import score_predictions  # noqa: E402
+from sec_qwen.evaluation import _profile_sample, score_predictions  # noqa: E402
 from sec_qwen.profiling import profile_corpus  # noqa: E402
 from sec_qwen.receipts import canonical_sha256, chat_template_sha256  # noqa: E402
 from sec_qwen.training import _calibration_sample, _training_argument_values  # noqa: E402
@@ -579,6 +579,18 @@ def test_calibration_sample_is_stable_and_uses_one_percent_ceiling() -> None:
     second = _calibration_sample(list(reversed(examples)), 0.01)
     assert first == second
     assert len(first) == 2
+
+
+def test_base_profile_sample_is_stable_and_binds_the_selected_view() -> None:
+    examples = [{"id": f"example-{index}", "messages": []} for index in range(101)]
+    first, first_receipt = _profile_sample(examples, 0.01)
+    second, second_receipt = _profile_sample(list(reversed(examples)), 0.01)
+    assert first == second
+    assert first_receipt == second_receipt
+    assert first_receipt["selected_examples"] == 2
+    assert first_receipt["input_view_ref"] == (
+        f"view://feral-7b/base/{first_receipt['input_view_sha256']}"
+    )
 
 
 def test_profile_hashes_are_canonical_and_bind_the_chat_template() -> None:
