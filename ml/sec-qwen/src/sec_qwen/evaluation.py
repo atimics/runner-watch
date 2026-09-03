@@ -190,7 +190,15 @@ def _evaluate(
     profile = {
         "schema": "stonks.sec_qwen_base_profile.v1",
         "purpose": "base_profile",
-        "model": {"id": config.model.model_id, "revision": config.model.revision},
+        "model": {
+            "id": config.model.model_id,
+            "revision": config.model.revision,
+            "tokenizer_revision": config.model.revision,
+            "trust_remote_code": False,
+            "weight_ref": (
+                f"weight://huggingface/{config.model.model_id}@{config.model.revision}"
+            ),
+        },
         "implementation": implementation_receipt(
             config,
             entrypoint="ml/sec-qwen/src/sec_qwen/evaluation.py:profile_base_model",

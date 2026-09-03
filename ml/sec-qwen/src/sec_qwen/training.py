@@ -292,7 +292,15 @@ def train(
         report = {
             "schema": "stonks.sec_qwen_calibration.v1",
             "purpose": "calibration",
-            "model": {"id": config.model.model_id, "revision": config.model.revision},
+            "model": {
+                "id": config.model.model_id,
+                "revision": config.model.revision,
+                "tokenizer_revision": config.model.revision,
+                "trust_remote_code": False,
+                "weight_ref": (
+                    f"weight://huggingface/{config.model.model_id}@{config.model.revision}"
+                ),
+            },
             "implementation": implementation_receipt(
                 config,
                 entrypoint="ml/sec-qwen/src/sec_qwen/training.py:train",
