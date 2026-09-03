@@ -8,6 +8,7 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from runner_web.db import connection
+from runner_web.market_forecasts import attach_market_forecasts, queue_market_forecasts
 
 EASTERN = ZoneInfo("America/New_York")
 PRE_MARKET_START = time(4, 0)
@@ -121,7 +122,7 @@ def _snapshots(database: Any, scan_run_id: str) -> list[dict[str, Any]]:
         """
         SELECT id,ticker,score,setup_score,baseline_rank,stage,session,price,
                change_pct,momentum_15m_pct,relative_volume,recent_relative_volume,
-               signals_json,risks_json,rug_score,trade_state,captured_at
+               signals_json,risks_json,rug_score,trade_state,captured_at,quote_time
         FROM scan_snapshots WHERE scan_run_id=?
         ORDER BY score DESC,baseline_rank,ticker
         """,
@@ -139,6 +140,7 @@ def _snapshots(database: Any, scan_run_id: str) -> list[dict[str, Any]]:
                 "stage": str(row.get("stage") or ""),
                 "session": str(row.get("session") or ""),
                 "price": _round(row.get("price"), 4),
+                "quote_time": row.get("quote_time"),
                 "change_pct": _round(row.get("change_pct")),
                 "momentum_15m_pct": _round(row.get("momentum_15m_pct")),
                 "relative_volume": _round(row.get("relative_volume")),
@@ -354,7 +356,10 @@ def market_report(report_day: str, report_type: ReportType) -> dict[str, Any] | 
             "SELECT * FROM market_session_reports WHERE report_day=? AND report_type=?",
             (report_day, report_type),
         ).fetchone()
-    return _report_record(row)
+        report = _report_record(row)
+        if report:
+            attach_market_forecasts(database, [report])
+    return report
 
 
 def _create_report(
@@ -376,9 +381,9 @@ def _create_report(
         )
         if not payload:
             return None
-        timestamp = datetime.now(UTC).isoformat()
+        timestamp = _iso_utc(current)
         report_id = secrets.token_urlsafe(10)
-        database.execute(
+        inserted = database.execute(
             """
             INSERT INTO market_session_reports(
                 id,report_day,report_type,source_scan_run_id,comparison_scan_run_id,
@@ -402,7 +407,11 @@ def _create_report(
                 timestamp,
                 timestamp,
             ),
-        )
+        ).rowcount
+        if inserted and report_type == "pre_market":
+            queue_market_forecasts(
+                database, report_id, report_day.isoformat(), payload["leaders"], current
+            )
         row = database.execute(
             "SELECT * FROM market_session_reports WHERE report_day=? AND report_type=?",
             (report_day.isoformat(), report_type),
@@ -447,7 +456,8 @@ def market_reports_overview(
             """,
             (max(2, min(history_limit, 30)),),
         ).fetchall()
-    reports = [report for row in rows if (report := _report_record(row))]
+        reports = [report for row in rows if (report := _report_record(row))]
+        attach_market_forecasts(database, reports)
     latest = {
         report_type: next(
             (report for report in reports if report["report_type"] == report_type),

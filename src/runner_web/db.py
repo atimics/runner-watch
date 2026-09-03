@@ -2754,6 +2754,53 @@ def _migration_053_sports_market_observation_history(db: DatabaseConnection) -> 
     )
 
 
+def _migration_054_market_report_forecasts(db: DatabaseConnection) -> None:
+    """Keep pre-market targets and their closing-price receipts."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS market_report_forecast_jobs (
+            report_id TEXT PRIMARY KEY REFERENCES market_session_reports(id) ON DELETE CASCADE,
+            report_day TEXT NOT NULL,
+            status TEXT NOT NULL
+                CHECK(status IN ('queued','running','complete','expired','failed')),
+            attempts INTEGER NOT NULL DEFAULT 0,
+            lease_token TEXT,
+            lease_until TEXT,
+            request_json TEXT NOT NULL,
+            response_id TEXT,
+            last_error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS market_report_forecasts (
+            report_id TEXT NOT NULL REFERENCES market_session_reports(id) ON DELETE CASCADE,
+            ticker TEXT NOT NULL,
+            report_day TEXT NOT NULL,
+            reference_price REAL,
+            reference_at TEXT,
+            target_price REAL CHECK(target_price>0),
+            direction TEXT NOT NULL CHECK(direction IN ('up','down','pass')),
+            reason TEXT NOT NULL,
+            model TEXT NOT NULL,
+            contract_version TEXT NOT NULL,
+            forecast_at TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('pending','hit','miss','pass','review')),
+            close_price REAL,
+            close_bar_at TEXT,
+            close_source TEXT,
+            close_interval TEXT,
+            close_collected_at TEXT,
+            settled_at TEXT,
+            review_reason TEXT,
+            PRIMARY KEY(report_id,ticker)
+        );
+        CREATE INDEX IF NOT EXISTS market_report_forecasts_pending
+            ON market_report_forecasts(status,report_day);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2819,6 +2866,7 @@ MIGRATIONS = (
         "sports_market_observation_history",
         _migration_053_sports_market_observation_history,
     ),
+    Migration(54, "market_report_forecasts", _migration_054_market_report_forecasts),
 )
 
 

@@ -158,9 +158,13 @@ def test_pre_market_report_freezes_the_latest_pre_open_scan(
         "high_risk": 1,
     }
     assert [row["ticker"] for row in report["leaders"]] == ["ONE", "RISK"]
+    assert report["forecast_state"] == "queued"
+    assert all(row["eod_forecast"] is None for row in report["leaders"])
     with connection() as database:
         saved = database.execute("SELECT COUNT(*) FROM market_session_reports").fetchone()[0]
+        jobs = database.execute("SELECT COUNT(*) FROM market_report_forecast_jobs").fetchone()[0]
     assert saved == 1
+    assert jobs == 1
 
 
 def test_post_market_report_compares_the_open_and_close_boards(

@@ -14,7 +14,7 @@
 </header>
 
 <section class="market-cycle" aria-label="Report schedule">
-  <div><span>Before the bell</span><strong>9:00 ET</strong><small>What is moving and what carries risk</small></div>
+  <div><span>Before the bell</span><strong>9:00 ET</strong><small>Watch board and Flash EOD targets</small></div>
   <i aria-hidden="true">→</i>
   <div><span>After the bell</span><strong>4:15 ET</strong><small>What held, joined, or dropped off</small></div>
 </section>
@@ -43,18 +43,40 @@
 
       <section class="market-report-leaders">
         <h3>{{ 'Closing board' if report.report_type == 'post_market' else 'Watch board' }}</h3>
+        {% set shown_leaders = report.leaders if report.report_type == 'pre_market' else report.leaders[:5] %}
         <ol>
-          {% for leader in report.leaders[:5] %}
+          {% for leader in shown_leaders %}
           <li>
             <a href="/t/{{ leader.ticker }}"><b>{{ leader.ticker }}</b><span>#{{ leader.rank }} · score {{ '%.0f'|format(leader.score) }}</span></a>
             <div>
               {% if leader.change_pct is not none %}<strong class="{{ 'up' if leader.change_pct > 0 else 'down' if leader.change_pct < 0 else 'flat' }}">{{ '%+.1f'|format(leader.change_pct) }}%</strong>{% endif %}
               <small>{% if leader.relative_volume is not none %}{{ '%.1f'|format(leader.relative_volume) }}× RVOL{% else %}RVOL —{% endif %}</small>
             </div>
+            {% if report.report_type == 'pre_market' %}
+              {% set forecast = leader.eod_forecast %}
+              <div class="market-eod-forecast">
+                {% if forecast %}
+                <dl>
+                  <div><dt>Pre-market</dt><dd>{% if forecast.reference_price is not none %}${{ '%.4f'|format(forecast.reference_price) }}{% else %}—{% endif %}</dd></div>
+                  <div><dt>Target EOD</dt><dd>{% if forecast.target_price is not none %}${{ '%.4f'|format(forecast.target_price) }} <small>{{ forecast.direction|capitalize }}</small>{% else %}—{% endif %}</dd></div>
+                  <div><dt>Actual close</dt><dd>{% if forecast.close_price is not none %}${{ '%.4f'|format(forecast.close_price) }}{% else %}—{% endif %}</dd></div>
+                  <div><dt>Result</dt><dd class="eod-result result-{{ forecast.status }}">{{ 'Price review' if forecast.status == 'review' else forecast.status|capitalize }}</dd></div>
+                </dl>
+                <p>{{ forecast.review_reason or forecast.reason }}</p>
+                {% if forecast.close_source %}<p>Close source: {{ forecast.close_source|capitalize }} · {{ report.report_day }}</p>{% endif %}
+                {% else %}
+                <p><b>Target EOD</b> · {{ 'Preparing target' if report.forecast_state in ['queued', 'running'] else 'Earlier report' if report.forecast_state == 'legacy' else 'Forecast window passed' if report.forecast_state == 'expired' else 'Forecast needs review' }}</p>
+                {% endif %}
+              </div>
+            {% endif %}
           </li>
           {% endfor %}
         </ol>
       </section>
+
+      {% if report.report_type == 'pre_market' and report.forecast_model %}
+      <p class="market-eod-rule">Flash · {{ report.forecast_model.model_label }}. Targets are saved before the open. Up targets hit at or above the target close. Down targets hit at or below it. Results settle after 4:15 p.m. ET.</p>
+      {% endif %}
 
       {% if report.turns %}
       <section class="market-report-turns">
