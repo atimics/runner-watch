@@ -36,6 +36,10 @@ jobs:
           test "$(grep -c '^ARG MODEL_REVISION$' ml/sec-qwen/Dockerfile)" -eq 1
           test "$(grep -c '^ARG SOURCE_REVISION$' ml/sec-qwen/Dockerfile)" -eq 1
           test "$(grep -c '^ARG IMAGE_REPOSITORY$' ml/sec-qwen/Dockerfile)" -eq 1
+          grep -Fxq 'dataset_id = "dataset://braid/feral-7b-sec/v1"' ml/sec-qwen/config.braid.example.toml
+          grep -Fxq 'optimizer = "adamw_torch_fused"' ml/sec-qwen/config.braid.example.toml
+          grep -Fxq 'eval_on_start = true' ml/sec-qwen/config.braid.example.toml
+          grep -Fxq 'dataloader_in_order = true' ml/sec-qwen/config.braid.example.toml
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             printf '%s' "$BASE_IMAGE" | grep -Eq '^[A-Za-z0-9._/:@-]+@sha256:[0-9a-f]{64}$'
           fi

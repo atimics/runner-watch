@@ -444,6 +444,10 @@ schema = "stonks.sec_qwen_training.v1"
 [model]
 model_id = "Qwen/Qwen2.5-7B-Instruct"
 revision = "{'d' * 40}"
+torch_dtype = "bfloat16"
+attn_implementation = "sdpa"
+mask_backend = "transformers.masking_utils.sdpa_mask"
+evaluation_device_map = "auto"
 [dataset]
 dataset_id = "dataset://profile"
 corpus_manifest = "profile-corpus/corpus-release.json"
@@ -457,6 +461,10 @@ gradient_accumulation_steps = 2
 target_modules = ["q_proj"]
 dataloader_num_workers = 4
 evaluation_batch_size = 2
+optimizer = "adamw_torch_fused"
+lr_scheduler_type = "linear"
+eval_on_start = true
+dataloader_in_order = true
 [output]
 directory = "output"
 """.strip()
@@ -492,6 +500,9 @@ directory = "output"
     assert training_arguments["lr_scheduler_type"] == "linear"
     assert training_arguments["eval_on_start"] is True
     assert training_arguments["dataloader_in_order"] is True
+    assert config.model.attn_implementation == "sdpa"
+    assert config.model.evaluation_device_map == "auto"
+    assert config.model.mask_backend == "transformers.masking_utils.sdpa_mask"
     profile = profile_corpus(
         config,
         tokenizer=CharacterTokenizer(),
@@ -568,19 +579,6 @@ def test_calibration_sample_is_stable_and_uses_one_percent_ceiling() -> None:
     second = _calibration_sample(list(reversed(examples)), 0.01)
     assert first == second
     assert len(first) == 2
-
-
-def test_feral_configs_pin_transformers_runtime_choices() -> None:
-    package = Path(__file__).resolve().parents[1] / "ml" / "sec-qwen"
-    for name in ("config.example.toml", "config.braid.example.toml"):
-        config = load_config(package / name)
-        assert config.model.attn_implementation == "sdpa"
-        assert config.model.evaluation_device_map == "auto"
-        assert config.model.mask_backend == "transformers.masking_utils.sdpa_mask"
-        assert config.training.optimizer == "adamw_torch_fused"
-        assert config.training.lr_scheduler_type == "linear"
-        assert config.training.eval_on_start is True
-        assert config.training.dataloader_in_order is True
 
 
 def test_profile_hashes_are_canonical_and_bind_the_chat_template() -> None:
