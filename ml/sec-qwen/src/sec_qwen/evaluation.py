@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import sys
 import time
@@ -20,6 +21,7 @@ from sec_qwen.receipts import (
     implementation_receipt,
     software_receipt,
 )
+from sec_qwen.training import _calibration_sample
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -66,12 +68,31 @@ def _peak_process_rss_bytes() -> int | None:
     return peak_rss
 
 
+def _profile_sample(
+    examples: list[dict[str, Any]], sample_fraction: float
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    selected = _calibration_sample(examples, sample_fraction)
+    view_sha256 = canonical_sha256(selected)
+    return selected, {
+        "fraction": sample_fraction,
+        "population_examples": len(examples),
+        "selected_examples": len(selected),
+        "selection": "lowest-sha256-example-id-v1",
+        "ids_sha256": hashlib.sha256(
+            "\n".join(str(example["id"]) for example in selected).encode()
+        ).hexdigest(),
+        "input_view_ref": f"view://feral-7b/base/{view_sha256}",
+        "input_view_sha256": view_sha256,
+    }
+
+
 def _evaluate(
     config: Config,
     *,
     adapter_directory: Path | None,
     split_file: str,
     predictions_path: Path,
+    sample_fraction: float = 1.0,
 ) -> tuple[dict[str, float], dict[str, Any]]:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -79,9 +100,10 @@ def _evaluate(
     manifest = validate_corpus(config)
     corpus_directory = config.dataset.corpus_manifest.parent
     input_path = corpus_directory / split_file
-    examples = load_examples(input_path)
-    if not examples:
+    all_examples = load_examples(input_path)
+    if not all_examples:
         raise ValueError(f"evaluation split is empty: {split_file}")
+    examples, sample = _profile_sample(all_examples, sample_fraction)
     total_started_at = time.perf_counter()
     tokenizer_started_at = time.perf_counter()
     tokenizer = AutoTokenizer.from_pretrained(
@@ -234,6 +256,7 @@ def _evaluate(
             input_path=input_path,
             tokenizer=tokenizer,
         ),
+        "sample": sample,
         "adapter": (
             {"method": "none"}
             if adapter_directory is None
@@ -281,6 +304,7 @@ def profile_base_model(
     *,
     split_file: str,
     output_directory: Path,
+    sample_fraction: float = 0.01,
 ) -> dict[str, Any]:
     if output_directory.exists() and any(output_directory.iterdir()):
         raise FileExistsError(f"output directory is not empty: {output_directory}")
@@ -290,6 +314,7 @@ def profile_base_model(
         adapter_directory=None,
         split_file=split_file,
         predictions_path=output_directory / "private-base-predictions.jsonl",
+        sample_fraction=sample_fraction,
     )
     _write_json(output_directory / "base-metrics.json", {"metrics": metrics})
     _write_json(output_directory / "base-profile.json", profile)

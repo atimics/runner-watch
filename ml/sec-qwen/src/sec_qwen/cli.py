@@ -51,6 +51,7 @@ def main() -> None:
     base_profile_parser = commands.add_parser("base-profile")
     base_profile_parser.add_argument("config", type=Path)
     base_profile_parser.add_argument("--split", required=True)
+    base_profile_parser.add_argument("--sample-fraction", type=float, default=0.01)
     base_profile_parser.add_argument("--output", type=Path, required=True)
     score_parser = commands.add_parser("score")
     score_parser.add_argument("predictions", type=Path)
@@ -191,6 +192,7 @@ def main() -> None:
                     config,
                     split_file=arguments.split,
                     output_directory=arguments.output,
+                    sample_fraction=arguments.sample_fraction,
                 )
             )
         )

@@ -50,6 +50,7 @@ sec-qwen profile config.toml \
   --output artifacts/feral-7b-sec-v2/profile.json
 sec-qwen base-profile config.toml \
   --split data/validation.jsonl \
+  --sample-fraction 0.01 \
   --output artifacts/feral-7b-sec-v2/base-profile
 sec-qwen calibrate config.toml \
   --sample-fraction 0.01 \
@@ -61,9 +62,10 @@ sec-qwen evaluate config.toml \
   --predictions artifacts/feral-7b-sec-v2/test-future.predictions.jsonl
 ```
 
-`base-profile` runs the pinned base model on private validation data. It records load time,
-generation time, memory, quality, the resolved generation settings, the chat template hash, the
-input hash, the Python and package versions, and the resolved device map.
+`base-profile` deterministically selects one percent of private validation data by example-ID hash.
+It records the selected view hash, load time, generation time, memory, quality, the resolved
+generation settings, the chat template hash, the source input hash, the Python and package
+versions, and the resolved device map. Set `--sample-fraction 1` for a full-split evaluation.
 
 `calibrate` deterministically selects one percent of train and validation examples by example-ID
 hash. It runs the full LoRA path, including validation, optimizer work, scheduler work, and
