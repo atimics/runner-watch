@@ -27,7 +27,8 @@ from sec_qwen.completion import build_completion  # noqa: E402
 from sec_qwen.config import load_config, load_examples, validate_corpus  # noqa: E402
 from sec_qwen.evaluation import score_predictions  # noqa: E402
 from sec_qwen.profiling import profile_corpus  # noqa: E402
-from sec_qwen.training import _calibration_sample  # noqa: E402
+from sec_qwen.receipts import canonical_sha256, chat_template_sha256  # noqa: E402
+from sec_qwen.training import _calibration_sample, _training_argument_values  # noqa: E402
 
 
 def _insert_filing(
@@ -443,6 +444,10 @@ schema = "stonks.sec_qwen_training.v1"
 [model]
 model_id = "Qwen/Qwen2.5-7B-Instruct"
 revision = "{'d' * 40}"
+torch_dtype = "bfloat16"
+attn_implementation = "sdpa"
+mask_backend = "transformers.masking_utils.sdpa_mask"
+evaluation_device_map = "auto"
 [dataset]
 dataset_id = "dataset://profile"
 corpus_manifest = "profile-corpus/corpus-release.json"
@@ -456,6 +461,10 @@ gradient_accumulation_steps = 2
 target_modules = ["q_proj"]
 dataloader_num_workers = 4
 evaluation_batch_size = 2
+optimizer = "adamw_torch_fused"
+lr_scheduler_type = "linear"
+eval_on_start = true
+dataloader_in_order = true
 [output]
 directory = "output"
 """.strip()
@@ -480,6 +489,20 @@ directory = "output"
             return {"input_ids": list(text.encode())}
 
     config = load_config(config_path)
+    training_arguments = _training_argument_values(
+        config,
+        output=tmp_path / "output",
+        has_validation=True,
+    )
+    assert training_arguments["per_device_train_batch_size"] == 1
+    assert training_arguments["per_device_eval_batch_size"] == 2
+    assert training_arguments["optim"] == "adamw_torch_fused"
+    assert training_arguments["lr_scheduler_type"] == "linear"
+    assert training_arguments["eval_on_start"] is True
+    assert training_arguments["dataloader_in_order"] is True
+    assert config.model.attn_implementation == "sdpa"
+    assert config.model.evaluation_device_map == "auto"
+    assert config.model.mask_backend == "transformers.masking_utils.sdpa_mask"
     profile = profile_corpus(
         config,
         tokenizer=CharacterTokenizer(),
@@ -556,6 +579,17 @@ def test_calibration_sample_is_stable_and_uses_one_percent_ceiling() -> None:
     second = _calibration_sample(list(reversed(examples)), 0.01)
     assert first == second
     assert len(first) == 2
+
+
+def test_profile_hashes_are_canonical_and_bind_the_chat_template() -> None:
+    class Tokenizer:
+        chat_template = {"default": "{{ messages }}", "tool_use": "{{ tools }}"}
+
+    expected = hashlib.sha256(b'{"default":"{{ messages }}","tool_use":"{{ tools }}"}').hexdigest()
+    assert chat_template_sha256(Tokenizer()) == expected
+    assert canonical_sha256([{"id": "b"}, {"id": "a"}]) != canonical_sha256(
+        [{"id": "a"}, {"id": "b"}]
+    )
 
 
 def test_prepare_finqa_freezes_source_and_output_digests(tmp_path: Path) -> None:
