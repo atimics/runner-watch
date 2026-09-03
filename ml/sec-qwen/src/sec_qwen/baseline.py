@@ -216,8 +216,8 @@ def evaluate_benchmark(
     model_kwargs: dict[str, Any] = {
         "revision": config.model.revision,
         "trust_remote_code": False,
-        "torch_dtype": config.model.torch_dtype,
-        "device_map": "mps" if torch.backends.mps.is_available() else "auto",
+        "dtype": config.model.torch_dtype,
+        "device_map": config.model.evaluation_device_map,
     }
     if config.model.attn_implementation:
         model_kwargs["attn_implementation"] = config.model.attn_implementation

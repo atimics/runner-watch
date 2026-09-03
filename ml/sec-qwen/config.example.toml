@@ -1,3 +1,4 @@
+# Legacy local smoke-test config. Use config.braid.example.toml for a FERAL run.
 schema = "stonks.sec_qwen_training.v1"
 
 [model]
@@ -5,6 +6,8 @@ model_id = "Qwen/Qwen2.5-7B-Instruct"
 revision = "a09a35458c702b33eeacc393d103063234e8bc28"
 torch_dtype = "bfloat16"
 attn_implementation = "sdpa"
+mask_backend = "transformers.masking_utils.sdpa_mask"
+evaluation_device_map = "auto"
 
 [dataset]
 dataset_id = "dataset://stonks/feral-7b-sec/v2"
@@ -29,6 +32,10 @@ bf16 = true
 max_new_tokens = 512
 dataloader_num_workers = 4
 evaluation_batch_size = 2
+optimizer = "adamw_torch_fused"
+lr_scheduler_type = "linear"
+eval_on_start = true
+dataloader_in_order = true
 
 [output]
 directory = "../../../artifacts/feral-7b-sec-v2"

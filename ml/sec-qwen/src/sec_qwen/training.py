@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.metadata
 import json
 import math
 import os
@@ -18,6 +17,14 @@ except ImportError:  # pragma: no cover - Windows does not expose process rusage
     resource = None  # type: ignore[assignment]
 
 from sec_qwen.config import Config, load_examples, sha256_file, validate_corpus
+from sec_qwen.receipts import (
+    canonical_sha256,
+    data_receipt,
+    dependency_versions,
+    environment_receipt,
+    implementation_receipt,
+    software_receipt,
+)
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -58,6 +65,38 @@ def _calibration_sample(
     )[:selected]
 
 
+def _training_argument_values(
+    config: Config,
+    *,
+    output: Path,
+    has_validation: bool,
+) -> dict[str, Any]:
+    return {
+        "output_dir": str(output / "checkpoints"),
+        "num_train_epochs": config.training.epochs,
+        "per_device_train_batch_size": config.training.per_device_batch_size,
+        "per_device_eval_batch_size": config.training.evaluation_batch_size,
+        "gradient_accumulation_steps": config.training.gradient_accumulation_steps,
+        "learning_rate": config.training.learning_rate,
+        "optim": config.training.optimizer,
+        "lr_scheduler_type": config.training.lr_scheduler_type,
+        "logging_steps": 1,
+        "save_strategy": "epoch",
+        "eval_strategy": "epoch" if has_validation else "no",
+        "eval_on_start": config.training.eval_on_start and has_validation,
+        "bf16": config.training.bf16,
+        "fp16": False,
+        "gradient_checkpointing": config.training.gradient_checkpointing,
+        "dataloader_num_workers": config.training.dataloader_num_workers,
+        "dataloader_persistent_workers": config.training.dataloader_num_workers > 0,
+        "dataloader_in_order": config.training.dataloader_in_order,
+        "report_to": "none",
+        "seed": config.training.seed,
+        "data_seed": config.training.seed,
+        "remove_unused_columns": False,
+    }
+
+
 def train(
     config: Config,
     *,
@@ -92,8 +131,9 @@ def train(
     if not all_train_examples:
         raise ValueError("training split must not be empty")
     train_examples = _calibration_sample(all_train_examples, sample_fraction)
+    all_validation_examples = validation_examples
     if calibration:
-        validation_examples = []
+        validation_examples = _calibration_sample(validation_examples, sample_fraction)
     tokenizer = AutoTokenizer.from_pretrained(
         config.model.model_id,
         revision=config.model.revision,
@@ -159,7 +199,7 @@ def train(
     model_kwargs: dict[str, Any] = {
         "revision": config.model.revision,
         "trust_remote_code": False,
-        "torch_dtype": config.model.torch_dtype,
+        "dtype": config.model.torch_dtype,
     }
     if config.model.attn_implementation:
         model_kwargs["attn_implementation"] = config.model.attn_implementation
@@ -179,24 +219,11 @@ def train(
         ),
     )
     arguments = TrainingArguments(
-        output_dir=str(output / "checkpoints"),
-        num_train_epochs=config.training.epochs,
-        per_device_train_batch_size=config.training.per_device_batch_size,
-        per_device_eval_batch_size=config.training.per_device_batch_size,
-        gradient_accumulation_steps=config.training.gradient_accumulation_steps,
-        learning_rate=config.training.learning_rate,
-        logging_steps=1,
-        save_strategy="no" if calibration else "epoch",
-        eval_strategy="epoch" if validation_examples else "no",
-        bf16=config.training.bf16,
-        fp16=False,
-        gradient_checkpointing=config.training.gradient_checkpointing,
-        dataloader_num_workers=config.training.dataloader_num_workers,
-        dataloader_persistent_workers=config.training.dataloader_num_workers > 0,
-        report_to="none",
-        seed=config.training.seed,
-        data_seed=config.training.seed,
-        remove_unused_columns=False,
+        **_training_argument_values(
+            config,
+            output=output,
+            has_validation=bool(validation_examples),
+        )
     )
     trainer = Trainer(
         model=model,
@@ -210,7 +237,31 @@ def train(
     started_at = time.perf_counter()
     train_result = trainer.train()
     runtime_seconds = time.perf_counter() - started_at
+    adapter_directory = output / ("private-calibration-adapter" if calibration else "adapter")
+    model.save_pretrained(adapter_directory, safe_serialization=True)
+    tokenizer.save_pretrained(adapter_directory)
+    adapter_tar = output / ("private-calibration-adapter.tar" if calibration else "adapter.tar")
+    _deterministic_tar(adapter_directory, adapter_tar)
+    metrics = {
+        key: float(value)
+        for key, value in train_result.metrics.items()
+        if isinstance(value, (int, float))
+    }
+    _write_json(output / "training-metrics.json", {"metrics": metrics})
+    artifact = {
+        "name": "private-calibration-adapter" if calibration else "adapter",
+        "path": adapter_tar.name,
+        "sha256": sha256_file(adapter_tar),
+        "size_bytes": adapter_tar.stat().st_size,
+        "media_type": "application/x-tar",
+        "visibility": "private" if calibration else "release-candidate",
+    }
     if calibration:
+        calibration_view = {
+            "train": train_examples,
+            "validation": validation_examples,
+        }
+        calibration_view_sha256 = canonical_sha256(calibration_view)
         effective_tokens = 0
         for example in train_examples:
             token_ids = tokenizer.apply_chat_template(
@@ -218,15 +269,9 @@ def train(
             )
             effective_tokens += min(len(token_ids), config.training.max_seq_length)
         token_passes = effective_tokens * config.training.epochs
-        device = (
-            torch.cuda.get_device_name(0)
-            if torch.cuda.is_available()
-            else "mps"
-            if torch.backends.mps.is_available()
-            else "cpu"
-        )
+        environment = environment_receipt(torch, model)
         measurement = {
-            "device": device,
+            "device": environment["hardware"]["accelerator"],
             "runtime_seconds": round(runtime_seconds, 4),
             "effective_token_passes": round(token_passes),
             "tokens_per_device_hour": round(token_passes / runtime_seconds * 3600, 2),
@@ -246,45 +291,100 @@ def train(
             )
         report = {
             "schema": "stonks.sec_qwen_calibration.v1",
+            "purpose": "calibration",
             "model": {"id": config.model.model_id, "revision": config.model.revision},
-            "corpus": {
-                "id": manifest["id"],
-                "manifest_sha256": sha256_file(config.dataset.corpus_manifest),
+            "implementation": implementation_receipt(
+                config,
+                entrypoint="ml/sec-qwen/src/sec_qwen/training.py:train",
+                source_files=(
+                    Path(__file__),
+                    Path(__file__).with_name("config.py"),
+                    Path(__file__).with_name("receipts.py"),
+                ),
+            ),
+            "software": software_receipt(),
+            "environment": environment,
+            "runtime": {
+                "torch_dtype": config.model.torch_dtype,
+                "attention_backend": config.model.attn_implementation,
+                "mask_backend": config.model.mask_backend,
+                "device_map": "accelerate_single_process",
+                "use_cache": False,
+                "cache_implementation": "disabled",
+                "gradient_checkpointing": config.training.gradient_checkpointing,
+                "compile": {"enabled": False, "backend": None},
             },
-            "config_sha256": sha256_file(config.source_path),
+            "trainer": {
+                "loop": "transformers.Trainer",
+                "optimizer": config.training.optimizer,
+                "scheduler": config.training.lr_scheduler_type,
+                "epochs": config.training.epochs,
+                "per_device_train_batch_size": config.training.per_device_batch_size,
+                "per_device_eval_batch_size": config.training.evaluation_batch_size,
+                "gradient_accumulation_steps": config.training.gradient_accumulation_steps,
+                "learning_rate": config.training.learning_rate,
+                "save_strategy": "epoch",
+                "eval_strategy": "epoch" if validation_examples else "no",
+                "eval_on_start": config.training.eval_on_start and bool(validation_examples),
+            },
+            "data": {
+                **data_receipt(
+                    config,
+                    manifest=manifest,
+                    input_path=corpus_directory / config.dataset.train_file,
+                    tokenizer=tokenizer,
+                ),
+                "calibration_view": {
+                    "ref": f"view://feral-7b/calibration/{calibration_view_sha256}",
+                    "sha256": calibration_view_sha256,
+                },
+            },
             "sample": {
                 "fraction": sample_fraction,
                 "population_examples": len(all_train_examples),
                 "selected_examples": len(train_examples),
+                "validation_population_examples": len(all_validation_examples),
+                "validation_selected_examples": len(validation_examples),
                 "selection": "lowest-sha256-example-id-v1",
                 "ids_sha256": hashlib.sha256(
                     "\n".join(str(example["id"]) for example in train_examples).encode()
                 ).hexdigest(),
+                "validation_ids_sha256": hashlib.sha256(
+                    "\n".join(str(example["id"]) for example in validation_examples).encode()
+                ).hexdigest(),
             },
+            "adapter": {
+                "method": "lora",
+                "rank": config.training.lora_r,
+                "alpha": config.training.lora_alpha,
+                "dropout": config.training.lora_dropout,
+                "bias": "none",
+                "target_modules": list(config.training.target_modules),
+            },
+            "determinism": {
+                "seed": config.training.seed,
+                "data_seed": config.training.seed,
+                "dataloader_workers": config.training.dataloader_num_workers,
+                "dataloader_in_order": config.training.dataloader_in_order,
+                "persistent_workers": config.training.dataloader_num_workers > 0,
+                "deterministic_algorithms": True,
+                "warn_only": True,
+            },
+            "outputs": [
+                "private-calibration-adapter.tar",
+                "run-manifest.json",
+                "training-metrics.json",
+                "calibration-profile.json",
+            ],
             "measurement": measurement,
-            "artifact": None,
+            "metrics": metrics,
+            "artifact": artifact,
             "training_authorized": False,
+            "execution_authorized": False,
         }
-        _write_json(output / "calibration.json", report)
+        _write_json(output / "calibration-profile.json", report)
+        _write_json(output / "run-manifest.json", report)
         return report
-    adapter_directory = output / "adapter"
-    model.save_pretrained(adapter_directory, safe_serialization=True)
-    tokenizer.save_pretrained(adapter_directory)
-    adapter_tar = output / "adapter.tar"
-    _deterministic_tar(adapter_directory, adapter_tar)
-    metrics = {
-        key: float(value)
-        for key, value in train_result.metrics.items()
-        if isinstance(value, (int, float))
-    }
-    _write_json(output / "training-metrics.json", {"metrics": metrics})
-    artifact = {
-        "name": "adapter",
-        "path": adapter_tar.name,
-        "sha256": sha256_file(adapter_tar),
-        "size_bytes": adapter_tar.stat().st_size,
-        "media_type": "application/x-tar",
-    }
     provenance = {
         "schema": "stonks.sec_qwen_run.v1",
         "model": {"id": config.model.model_id, "revision": config.model.revision},
@@ -295,10 +395,7 @@ def train(
         "config_sha256": sha256_file(config.source_path),
         "seed": config.training.seed,
         "examples": {"train": len(train_examples), "validation": len(validation_examples)},
-        "dependencies": {
-            name: importlib.metadata.version(name)
-            for name in ("accelerate", "peft", "safetensors", "torch", "transformers")
-        },
+        "dependencies": dependency_versions(),
         "artifact": artifact,
     }
     _write_json(output / "run-manifest.json", provenance)

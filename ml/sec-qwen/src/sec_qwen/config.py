@@ -13,7 +13,9 @@ class ModelConfig:
     model_id: str
     revision: str
     torch_dtype: str
-    attn_implementation: str | None
+    attn_implementation: str
+    mask_backend: str
+    evaluation_device_map: str
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,10 @@ class TrainingConfig:
     max_new_tokens: int
     dataloader_num_workers: int
     evaluation_batch_size: int
+    optimizer: str
+    lr_scheduler_type: str
+    eval_on_start: bool
+    dataloader_in_order: bool
 
 
 @dataclass(frozen=True)
@@ -80,7 +86,14 @@ def load_config(path: Path) -> Config:
     output = dict(raw.get("output") or {})
     _only_keys(
         model,
-        {"model_id", "revision", "torch_dtype", "attn_implementation"},
+        {
+            "model_id",
+            "revision",
+            "torch_dtype",
+            "attn_implementation",
+            "mask_backend",
+            "evaluation_device_map",
+        },
         "model",
     )
     _only_keys(
@@ -115,6 +128,10 @@ def load_config(path: Path) -> Config:
             "max_new_tokens",
             "dataloader_num_workers",
             "evaluation_batch_size",
+            "optimizer",
+            "lr_scheduler_type",
+            "eval_on_start",
+            "dataloader_in_order",
         },
         "training",
     )
@@ -156,11 +173,11 @@ def load_config(path: Path) -> Config:
             model_id=model_id,
             revision=revision,
             torch_dtype=str(model.get("torch_dtype") or "bfloat16"),
-            attn_implementation=(
-                str(model["attn_implementation"])
-                if model.get("attn_implementation")
-                else None
+            attn_implementation=str(model.get("attn_implementation") or "sdpa"),
+            mask_backend=str(
+                model.get("mask_backend") or "transformers.masking_utils.sdpa_mask"
             ),
+            evaluation_device_map=str(model.get("evaluation_device_map") or "auto"),
         ),
         dataset=DatasetConfig(
             provider=dataset_provider,
@@ -188,6 +205,10 @@ def load_config(path: Path) -> Config:
             max_new_tokens=int(training.get("max_new_tokens", 512)),
             dataloader_num_workers=int(training.get("dataloader_num_workers", 0)),
             evaluation_batch_size=int(training.get("evaluation_batch_size", 1)),
+            optimizer=str(training.get("optimizer") or "adamw_torch_fused"),
+            lr_scheduler_type=str(training.get("lr_scheduler_type") or "linear"),
+            eval_on_start=bool(training.get("eval_on_start", True)),
+            dataloader_in_order=bool(training.get("dataloader_in_order", True)),
         ),
         output_directory=output_directory,
         source_path=source_path,
@@ -202,6 +223,26 @@ def load_config(path: Path) -> Config:
         raise ValueError("training.dataloader_num_workers must not be negative")
     if config.training.evaluation_batch_size < 1:
         raise ValueError("training.evaluation_batch_size must be positive")
+    if config.model.attn_implementation not in {
+        "eager",
+        "sdpa",
+        "flash_attention_2",
+        "flash_attention_3",
+        "flex_attention",
+    }:
+        raise ValueError("model.attn_implementation is unsupported")
+    for label, value in {
+        "model.mask_backend": config.model.mask_backend,
+        "model.evaluation_device_map": config.model.evaluation_device_map,
+    }.items():
+        if not value or any(character.isspace() for character in value):
+            raise ValueError(f"{label} must not be empty or contain whitespace")
+    for label, value in {
+        "training.optimizer": config.training.optimizer,
+        "training.lr_scheduler_type": config.training.lr_scheduler_type,
+    }.items():
+        if not value or any(character.isspace() for character in value):
+            raise ValueError(f"{label} must not be empty or contain whitespace")
     return config
 
 

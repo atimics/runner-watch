@@ -48,6 +48,9 @@ sec-qwen profile config.toml \
   --tokens-per-gpu-hour MEASURED_CALIBRATION_THROUGHPUT \
   --gpu-hour-price CURRENT_PROVIDER_PRICE \
   --output artifacts/feral-7b-sec-v2/profile.json
+sec-qwen base-profile config.toml \
+  --split data/validation.jsonl \
+  --output artifacts/feral-7b-sec-v2/base-profile
 sec-qwen calibrate config.toml \
   --sample-fraction 0.01 \
   --output artifacts/feral-7b-sec-v2/calibration
@@ -58,10 +61,16 @@ sec-qwen evaluate config.toml \
   --predictions artifacts/feral-7b-sec-v2/test-future.predictions.jsonl
 ```
 
-`calibrate` deterministically selects one percent of training examples by example-ID hash, runs the
-real LoRA training path without saving an adapter, and records measured effective-token throughput.
-Its receipt keeps `training_authorized` false. Use the same image and GPU planned for the full run
-before turning that throughput into a provider cost limit.
+`base-profile` runs the pinned base model on private validation data. It records load time,
+generation time, memory, quality, the resolved generation settings, the chat template hash, the
+input hash, the Python and package versions, and the resolved device map.
+
+`calibrate` deterministically selects one percent of train and validation examples by example-ID
+hash. It runs the full LoRA path, including validation, optimizer work, scheduler work, and
+checkpointing. It saves `private-calibration-adapter.tar` beside a calibration profile and a run
+manifest. Its receipt keeps `training_authorized` false. Keep this diagnostic adapter in private
+storage. Use the same image and GPU planned for the full run before turning its throughput into a
+provider cost limit.
 
 Omit `--adapter` to measure the pinned base-model baseline on the same frozen split. The command
 uses the identical tokenizer, prompt construction, batching, generation settings, and scorer for
@@ -82,6 +91,11 @@ the upload; ilXyr still requires the configured executor to sign the completed r
 truncation, tokens by task, optimizer steps, and an optional cost ceiling before model weights are
 loaded. The example uses four data-loader workers and batched greedy evaluation; these settings stay
 inside the hashed config for replay.
+
+The example config names the evaluation device map, mask backend, optimizer, scheduler,
+evaluation-at-start choice, and data-loader ordering. These values are passed to Transformers and
+included in the runtime receipts. Set `OCI_IMAGE_DIGEST`, `EXECUTOR_ENVIRONMENT_REF`, and
+`ACCELERATOR_DRIVER_VERSION` in the admitted job so the receipts can bind the final environment.
 
 The release gate mirrors the FERAL-7B experiment card: improve FinQA by at least 8 percentage
 points, do not increase confident hallucinations, and retain at least 70% exact SEC fields. Supply
