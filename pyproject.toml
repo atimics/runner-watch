@@ -22,6 +22,7 @@ dependencies = [
   "uvicorn[standard]>=0.35",
   "webauthn>=2.2",
   "yfinance>=0.2.54",
+  "exchange-calendars>=4.13,<5",
 ]
 
 [project.optional-dependencies]
