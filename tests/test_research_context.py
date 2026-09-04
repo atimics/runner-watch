@@ -113,3 +113,55 @@ def test_one_shot_context_includes_filings_people_and_social_reports(
     assert "raw_source_document:test_social" in kinds
     assert social_url in packet["sources"]
     assert packet["context_stats"]["used_input_tokens_estimate"] <= 12_000
+
+
+def test_market_bars_get_stable_internal_receipts(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "market-receipts.db")
+    init_db()
+    observed_at = "2026-08-25T19:55:00+00:00"
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO market_bars(
+                source,ticker,interval,bar_time,open,high,low,close,volume,
+                first_collected_at,last_collected_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                "test_archive",
+                "ONE",
+                "5m",
+                observed_at,
+                1.0,
+                1.3,
+                0.9,
+                1.25,
+                5000,
+                observed_at,
+                observed_at,
+            ),
+        )
+    primary = {"ticker": "ONE", "captured_at": observed_at, "price": 1.25}
+
+    first = build_research_context("ONE", primary, as_of=observed_at)
+    second = build_research_context("ONE", primary, as_of=observed_at)
+    first_bars = next(
+        item for item in first["context_sections"] if item["kind"] == "stored_market_bars"
+    )
+    second_bars = next(
+        item for item in second["context_sections"] if item["kind"] == "stored_market_bars"
+    )
+
+    assert first_bars["evidence_id"] == second_bars["evidence_id"]
+    assert first_bars["source_url"] is None
+    assert first_bars["source_receipt"] == {
+        "receipt_id": first_bars["evidence_id"],
+        "source_type": "stored_market_bars",
+        "ticker": "ONE",
+        "observed_at": observed_at,
+    }
+    assert first["primary_evidence_receipt"]["receipt_id"] == first[
+        "primary_evidence_id"
+    ]

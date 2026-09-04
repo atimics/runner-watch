@@ -145,7 +145,11 @@ from runner_web.ranker import (
 )
 from runner_web.request_security import request_client_ip, safe_next_path
 from runner_web.research_context import build_research_context
-from runner_web.research_pipeline import PIPELINE_VERSION, run_verified_pipeline
+from runner_web.research_pipeline import (
+    PIPELINE_VERSION,
+    run_verified_pipeline,
+    verified_public_citations,
+)
 from runner_web.shared_state import (
     acknowledge_research_job,
     dequeue_research_job,
@@ -3177,6 +3181,7 @@ def _sports_report_output_contract() -> dict[str, Any]:
         "citations": [
             {
                 "claim": "one important factual claim from the report",
+                "evidence_ids": ["exact stable evidence_id attached to the source item"],
                 "source_urls": ["provided source URL"],
             }
         ],
@@ -3260,6 +3265,7 @@ def _generate_openrouter_report(
             "citations": [
                 {
                     "claim": "one important factual claim from the report",
+                    "evidence_ids": ["exact stable evidence_id attached to the source item"],
                     "source_urls": ["provided source URL"],
                 }
             ],
@@ -3495,28 +3501,17 @@ def _generate_openrouter_report(
         filing["source_url"] = source if source in approved_set else None
         clean_filings.append(filing)
     report["filings"] = clean_filings
-    clean_citations: list[dict[str, Any]] = []
-    cited_urls: list[str] = []
-    for citation in report.get("citations", [])[:30]:
-        claim = str(citation.get("claim") or "").strip()[:500]
-        source_urls = [
-            source
-            for value in citation.get("source_urls") or []
-            if (source := _safe_source_url(value)) and source in approved_set
-        ][:6]
-        if claim and source_urls:
-            clean_citations.append({"claim": claim, "source_urls": source_urls})
-            cited_urls.extend(source_urls)
+    clean_citations = verified_public_citations(report.get("citations"), evidence)
+    cited_urls = [
+        source
+        for citation in clean_citations
+        for source in citation["source_urls"]
+    ]
     selected_sources = [
         *cited_urls,
         *report["company_profile"].get("source_urls", []),
         *(source for person in clean_people for source in person.get("source_urls", [])),
         *(filing["source_url"] for filing in clean_filings if filing.get("source_url")),
-        *(
-            source
-            for value in report.get("sources", [])
-            if (source := _safe_source_url(value)) and source in approved_set
-        ),
     ]
     report["citations"] = clean_citations
     report["sources"] = list(dict.fromkeys(selected_sources))[:40]
