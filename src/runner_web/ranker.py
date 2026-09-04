@@ -19,6 +19,7 @@ from typing import Any
 from runner_web.database import retry_database_operation
 from runner_web.db import connection, init_db
 from runner_web.product_policy import RANKER_TRAINING
+from runner_web.ranker_promotion import promotion_status
 
 FEATURE_SCHEMA_VERSION = "stonks.ranker_features.v4"
 MODEL_KIND = "integer_multiclass_logistic_barrier_v6"
@@ -100,6 +101,7 @@ class RankerModel:
     horizon: str
     artifact: dict[str, Any]
     metrics: dict[str, Any]
+    status: str = "shadow"
 
     @property
     def weights(self) -> tuple[tuple[int, ...], ...]:
@@ -545,6 +547,7 @@ def train_shadow_ranker(
         "groups": dict(sorted(origin_groups.items())),
         "rows": dict(sorted(origin_rows.items())),
     }
+    metrics["promotion"] = promotion_status(metrics)
     if not _valid_artifact(artifact):
         raise RuntimeError("The integer ranker returned an incompatible artifact.")
     identity = hashlib.sha256(
@@ -782,7 +785,43 @@ def load_latest_model(horizon: str = DEFAULT_HORIZON) -> RankerModel | None:
         horizon=str(row["horizon"]),
         artifact=artifact,
         metrics=json.loads(str(row["metrics_json"])),
+        status=str(row["status"]),
     )
+
+
+def promote_ranker(model_id: str) -> dict[str, Any]:
+    with connection() as database:
+        row = database.execute(
+            "SELECT * FROM ranker_models WHERE id=?", (model_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError("Choose an existing ranker model")
+        if (
+            row["feature_schema_version"] != FEATURE_SCHEMA_VERSION
+            or row["model_kind"] != MODEL_KIND
+        ):
+            raise ValueError("Choose a model with the current feature schema and model kind")
+        artifact = json.loads(str(row["weights_json"]))
+        if not _valid_artifact(artifact):
+            raise ValueError("Model artifact is incompatible")
+        metrics = json.loads(str(row["metrics_json"]))
+        approval = promotion_status(metrics)
+        if not approval["eligible"]:
+            raise ValueError("Model requires more evidence: " + "; ".join(approval["reasons"]))
+        approved_at = _iso()
+        metrics["promotion"] = {**approval, "approved_at": approved_at}
+        database.execute(
+            """
+            UPDATE ranker_models SET status='shadow'
+            WHERE horizon=? AND feature_schema_version=? AND model_kind=?
+            """,
+            (row["horizon"], FEATURE_SCHEMA_VERSION, MODEL_KIND),
+        )
+        database.execute(
+            "UPDATE ranker_models SET status='active',metrics_json=? WHERE id=?",
+            (json.dumps(metrics, separators=(",", ":")), model_id),
+        )
+    return {"model_id": model_id, "status": "active", "promotion": metrics["promotion"]}
 
 
 def predict_and_store(scan_run_id: str, model: RankerModel | None = None) -> dict[str, Any]:
@@ -853,6 +892,7 @@ def predict_and_store(scan_run_id: str, model: RankerModel | None = None) -> dic
     return {
         "predicted": True,
         "model_id": model.id,
+        "model_status": model.status,
         "model_kind": MODEL_KIND,
         "integer_only": True,
         "rows": len(rows),
@@ -916,7 +956,8 @@ def ranker_status() -> dict[str, Any]:
             {
                 "id": model.id,
                 "horizon": model.horizon,
-                "status": "shadow",
+                "status": model.status,
+                "promotion": promotion_status(model.metrics),
                 "metrics": model.metrics,
             }
             if model
@@ -1026,6 +1067,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train and inspect the Stonks integer Rust ranker")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("status")
+    promote = subparsers.add_parser("promote")
+    promote.add_argument("model_id")
     train = subparsers.add_parser("train")
     train.add_argument("--horizon", choices=sorted(HORIZONS), default=DEFAULT_HORIZON)
     train.add_argument(
@@ -1066,6 +1109,8 @@ def main() -> None:
     init_db()
     if arguments.command == "status":
         result = ranker_status()
+    elif arguments.command == "promote":
+        result = promote_ranker(arguments.model_id)
     elif arguments.command == "train":
         result = train_shadow_ranker(
             arguments.horizon,
