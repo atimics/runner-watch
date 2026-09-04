@@ -6,12 +6,22 @@ from pathlib import Path
 from pytest import MonkeyPatch
 
 from runner_web import db
+from runner_web import main as web_main
 from runner_web.caller_ids import ensure_caller_identity
 from runner_web.db import connection, init_db
 from runner_web.privacy import delete_user_data, export_user_data, purge_passive_tracking
 from runner_web.pseudonyms import ensure_comment_avatar, ensure_scoped_alias
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _route_paths(routes: list[object]) -> set[str]:
+    paths = {str(route.path) for route in routes if hasattr(route, "path")}
+    for route in routes:
+        included_router = getattr(route, "original_router", None)
+        if included_router is not None:
+            paths.update(_route_paths(included_router.routes))
+    return paths
 
 
 def _seed_user() -> None:
@@ -43,14 +53,15 @@ def test_public_app_has_a_complete_privacy_surface() -> None:
     main_source = (ROOT / "src/runner_web/main.py").read_text()
     templates = "\n".join(path.read_text() for path in (ROOT / "web/templates").glob("*.html"))
     privacy_notice = (ROOT / "web/templates/privacy.html").read_text()
+    route_paths = _route_paths(web_main.app.routes)
 
     assert 'VISITOR_COOKIE = "runner_visitor"' not in main_source
     assert "claim_visitor_profile" not in main_source
     assert "TickerCommentPayload" not in main_source
     assert 'max_age=365 * 24 * 3600' not in main_source
-    assert '@app.get("/privacy"' in main_source
-    assert '@app.get("/api/account/export"' in main_source
-    assert '@app.post("/api/account/delete"' in main_source
+    assert "/privacy" in route_paths
+    assert "/api/account/export" in route_paths
+    assert "/api/account/delete" in route_paths
     assert 'href="/privacy"' in templates
     for required_copy in (
         "Who controls your data",

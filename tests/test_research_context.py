@@ -156,11 +156,16 @@ def test_evidence_metrics_match_distinct_report_points_to_citations() -> None:
     report = {
         "catalysts": ["Revenue grew", "Revenue grew"],
         "risks": ["Cash is low"],
-        "watch": ["New filing"],
+        "watch": ["New filing", "Price held"],
         "citations": [
             {"claim": "Revenue grew", "source_urls": ["https://example.com/a"]},
             {"claim": "revenue   grew", "source_urls": ["https://example.com/a"]},
             {"claim": "Cash is low", "source_urls": []},
+            {
+                "claim": "Price held",
+                "source_urls": [],
+                "source_receipts": [{"receipt_id": "ev_market"}],
+            },
             {"claim": "Different claim", "source_urls": ["https://example.com/b"]},
         ],
         "sources": [],
@@ -168,8 +173,8 @@ def test_evidence_metrics_match_distinct_report_points_to_citations() -> None:
 
     metrics = research_evidence_metrics(context, report)
 
-    assert metrics["report_claim_count"] == 3
-    assert metrics["linked_report_claim_count"] == 1
+    assert metrics["report_claim_count"] == 4
+    assert metrics["linked_report_claim_count"] == 2
 
 
 def test_evidence_metrics_count_each_public_link_once() -> None:
@@ -190,3 +195,55 @@ def test_evidence_metrics_count_each_public_link_once() -> None:
     metrics = research_evidence_metrics(context, report)
 
     assert metrics["public_link_count"] == 2
+
+
+def test_market_bars_get_stable_internal_receipts(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "market-receipts.db")
+    init_db()
+    observed_at = "2026-08-25T19:55:00+00:00"
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO market_bars(
+                source,ticker,interval,bar_time,open,high,low,close,volume,
+                first_collected_at,last_collected_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                "test_archive",
+                "ONE",
+                "5m",
+                observed_at,
+                1.0,
+                1.3,
+                0.9,
+                1.25,
+                5000,
+                observed_at,
+                observed_at,
+            ),
+        )
+    primary = {"ticker": "ONE", "captured_at": observed_at, "price": 1.25}
+
+    first = build_research_context("ONE", primary, as_of=observed_at)
+    second = build_research_context("ONE", primary, as_of=observed_at)
+    first_bars = next(
+        item for item in first["context_sections"] if item["kind"] == "stored_market_bars"
+    )
+    second_bars = next(
+        item for item in second["context_sections"] if item["kind"] == "stored_market_bars"
+    )
+
+    assert first_bars["evidence_id"] == second_bars["evidence_id"]
+    assert first_bars["source_url"] is None
+    assert first_bars["source_receipt"] == {
+        "receipt_id": first_bars["evidence_id"],
+        "source_type": "stored_market_bars",
+        "ticker": "ONE",
+        "observed_at": observed_at,
+    }
+    assert first["primary_evidence_receipt"]["receipt_id"] == first[
+        "primary_evidence_id"
+    ]

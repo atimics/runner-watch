@@ -98,6 +98,23 @@ def _document_text(row: dict[str, Any]) -> str:
     return body.decode("utf-8", errors="replace").strip()
 
 
+def evidence_id_for(
+    kind: str,
+    observed_at: str | None,
+    source_url: str | None,
+    data: Any,
+) -> str:
+    identity = {
+        "kind": kind,
+        "observed_at": observed_at,
+        "source_url": source_url,
+        "data": data,
+    }
+    return "ev_" + hashlib.sha256(
+        json.dumps(identity, sort_keys=True, default=str, separators=(",", ":")).encode()
+    ).hexdigest()[:24]
+
+
 def _candidate(
     *,
     priority: int,
@@ -105,14 +122,28 @@ def _candidate(
     observed_at: str | None,
     source_url: str | None,
     data: Any,
+    ticker: str,
 ) -> dict[str, Any]:
-    return {
+    evidence_id = evidence_id_for(kind, observed_at, source_url, data)
+    candidate = {
         "priority": priority,
+        "evidence_id": evidence_id,
         "kind": kind,
         "observed_at": observed_at,
         "source_url": source_url,
         "data": data,
     }
+    if source_url is None and kind in {
+        "historical_market_assessment",
+        "stored_market_bars",
+    }:
+        candidate["source_receipt"] = {
+            "receipt_id": evidence_id,
+            "source_type": kind,
+            "ticker": ticker,
+            "observed_at": observed_at,
+        }
+    return candidate
 
 
 def _filing_prefix(url: str) -> str | None:
@@ -180,6 +211,16 @@ def _public_urls(values: Any) -> set[str]:
     }
 
 
+def _source_receipt_ids(values: Any) -> set[str]:
+    if not isinstance(values, list):
+        return set()
+    return {
+        str(value.get("receipt_id") or "").strip()
+        for value in values
+        if isinstance(value, dict) and str(value.get("receipt_id") or "").strip()
+    }
+
+
 def research_evidence_metrics(
     context: dict[str, Any],
     report: dict[str, Any] | None = None,
@@ -229,9 +270,10 @@ def research_evidence_metrics(
             if not isinstance(citation, dict):
                 continue
             urls = _public_urls(citation.get("source_urls"))
+            receipt_ids = _source_receipt_ids(citation.get("source_receipts"))
             public_urls.update(urls)
             claim = " ".join(str(citation.get("claim") or "").split()).casefold()
-            if claim in claims and urls:
+            if claim in claims and (urls or receipt_ids):
                 linked_claims.add(claim)
     return {
         "source_family_count": len(latest_by_family),
@@ -370,6 +412,7 @@ def build_research_context(
                 observed_at=company.get("refreshed_at"),
                 source_url="https://www.sec.gov/files/company_tickers_exchange.json",
                 data=company,
+                ticker=symbol,
             )
         )
     for raw in filing_rows:
@@ -381,6 +424,7 @@ def build_research_context(
                 observed_at=filing.get("filed_at"),
                 source_url=filing.get("filing_url"),
                 data=filing,
+                ticker=symbol,
             )
         )
     for raw in fact_rows:
@@ -397,6 +441,7 @@ def build_research_context(
                     else None
                 ),
                 data=fact,
+                ticker=symbol,
             )
         )
     for raw in event_rows:
@@ -411,6 +456,7 @@ def build_research_context(
                 observed_at=event.get("event_at"),
                 source_url=event.get("source_url"),
                 data=event,
+                ticker=symbol,
             )
         )
     seen_documents: set[str] = set()
@@ -436,6 +482,7 @@ def build_research_context(
                     "content_hash": document.get("content_hash"),
                     "text": text,
                 },
+                ticker=symbol,
             )
         )
     for raw in scan_rows:
@@ -450,6 +497,7 @@ def build_research_context(
                 observed_at=scan.get("captured_at"),
                 source_url=None,
                 data=scan,
+                ticker=symbol,
             )
         )
     if bar_rows:
@@ -460,6 +508,7 @@ def build_research_context(
                 observed_at=str(bar_rows[0]["bar_time"]),
                 source_url=None,
                 data=[dict(row) for row in reversed(bar_rows)],
+                ticker=symbol,
             )
         )
 
@@ -490,14 +539,18 @@ def build_research_context(
                 candidate.get("data"), dict
             ) else None
             if isinstance(raw_text, str) and remaining >= 1_000:
-                shortened = {
-                    **candidate,
-                    "data": {
+                shortened = _candidate(
+                    priority=int(candidate["priority"]),
+                    kind=str(candidate["kind"]),
+                    observed_at=candidate.get("observed_at"),
+                    source_url=candidate.get("source_url"),
+                    data={
                         **candidate["data"],
                         "text": raw_text[: max(1_000, remaining * 3 - 800)],
                         "truncated_to_context_budget": True,
                     },
-                }
+                    ticker=symbol,
+                )
                 packed.append(shortened)
                 used_tokens += _estimated_tokens(shortened)
                 truncated += 1
@@ -510,6 +563,13 @@ def build_research_context(
         if included and isinstance(source_url, str) and source_url.startswith("https://"):
             sources.append(source_url)
 
+    primary_observed_at = primary_evidence.get("captured_at")
+    primary_evidence_id = evidence_id_for(
+        "primary_evidence",
+        primary_observed_at,
+        None,
+        primary_evidence,
+    )
     context = {
         "ticker": symbol,
         "evidence_as_of": as_of_value,
@@ -519,6 +579,13 @@ def build_research_context(
             "context and must be described with their stored provenance."
         ),
         "primary_evidence": primary_evidence,
+        "primary_evidence_id": primary_evidence_id,
+        "primary_evidence_receipt": {
+            "receipt_id": primary_evidence_id,
+            "source_type": "internal_market_snapshot",
+            "ticker": symbol,
+            "observed_at": primary_observed_at,
+        },
         "context_sections": packed,
         "sources": list(dict.fromkeys(sources))[:100],
         "context_stats": {

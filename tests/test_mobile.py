@@ -49,6 +49,7 @@ from runner_web.main import (
     ticker_detail_data,
 )
 from runner_web.pseudonyms import COMMENT_AVATAR_ABILITIES
+from runner_web.research_context import evidence_id_for
 
 
 def _test_flash_forecast() -> dict[str, Any]:
@@ -78,7 +79,7 @@ def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
 def test_pulse_does_not_render_an_empty_scorecard_spacer() -> None:
     root = Path(__file__).parents[1]
     pulse_template = (root / "web/templates/pulse.html").read_text()
-    kol_styles = (root / "web/static/kol.css").read_text()
+    kol_styles = (root / "web/static/mobile.css").read_text()
 
     assert 'id="kolScoreStrip"' in pulse_template
     assert "{% if not flash_record %} hidden{% endif %}" in pulse_template
@@ -115,6 +116,9 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert "action-card" not in template
     assert template.count("<textarea") == 0
     assert 'id="generateComment"' in template
+    assert "your AI avatar" in template
+    assert "Post with avatar" in template
+    assert "{{ comment.author_label }}" in template
     assert "Persistent avatars · public across tickers" in template
     assert "render_comment_avatar(comment.avatar)" in template
 
@@ -122,7 +126,7 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
 def test_ticker_layout_puts_subtle_actions_after_the_analysis() -> None:
     root = Path(__file__).parents[1]
     template = (root / "web/templates/ticker.html").read_text()
-    desktop_css = (root / "web/static/desktop-split.css").read_text()
+    desktop_css = (root / "web/static/mobile.css").read_text()
 
     chart = template.index('class="detail-chart-panel"')
     actions = template.index('class="detail-actions"')
@@ -231,7 +235,7 @@ def test_desktop_feeds_share_full_info_and_article_panel() -> None:
     alpha = (templates_dir / "community.html").read_text()
     panel = (templates_dir / "_desktop_panel.html").read_text()
     workspace = (root / "web/static/desktop-workspace.js").read_text()
-    desktop_css = (root / "web/static/desktop-split.css").read_text()
+    desktop_css = (root / "web/static/mobile.css").read_text()
 
     for template in (pulse, radar, alpha):
         assert "workspace-app" in template
@@ -273,7 +277,7 @@ def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
     ]
     game = (templates_dir / "sports_game.html").read_text()
     live_script = (root / "web/static/sports-live.js").read_text()
-    core_styles = (root / "web/static/sports-core.css").read_text()
+    core_styles = (root / "web/static/sports.css").read_text()
 
     for template in sports_templates:
         assert '{% extends "mobile_base.html" %}' in template
@@ -295,7 +299,7 @@ def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
 def test_ticker_rows_have_no_reader_attention_state() -> None:
     root = Path(__file__).parents[1]
     row_script = (root / "web/static/ticker-row.js").read_text()
-    row_styles = (root / "web/static/ticker-row.css").read_text()
+    row_styles = (root / "web/static/mobile.css").read_text()
 
     assert "attention-unseen" not in row_styles
     assert "attention-seen" not in row_styles
@@ -1605,7 +1609,7 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
     monkeypatch.setattr(
         web_main,
         "_generate_ticker_comment_text",
-        lambda ticker, *, avatar_ability_id: (
+        lambda ticker, *, avatar: (
             "My read is above VWAP, but low volume is the risk.",
             "test/model",
         ),
@@ -1627,6 +1631,8 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
     assert payload["count"] == 1
     assert payload["comment"]["body"] == "My read is above VWAP, but low volume is the risk."
     assert payload["comment"]["ai_generated"] is True
+    assert payload["comment"]["author_kind"] == "ai_avatar"
+    assert payload["comment"]["author_label"] == "AI avatar"
     assert payload["comment"]["generation_model"] == "test/model"
     assert payload["balance"] == 90
     assert payload["comment"]["avatar"]["name"] == payload["comment"]["alias"]
@@ -1685,11 +1691,43 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
             "events": [],
         },
     )
+    monkeypatch.setattr(
+        web_main,
+        "daily_report_for_ticker",
+        lambda ticker: {
+            "headline": "ONE holds above VWAP",
+            "summary": "Momentum is positive while volume stays thin.",
+            "thesis": "The setup stays valid above VWAP.",
+            "catalysts": ["A dated company update"],
+            "risks": ["Thin volume"],
+            "watch": ["VWAP"],
+            "unknowns": ["Follow-through"],
+            "citations": [{"url": "https://example.com/source"}],
+            "evidence_as_of": "2026-09-03T12:00:00Z",
+            "locked": False,
+        },
+    )
+    monkeypatch.setattr(
+        web_main,
+        "comments_for_ticker",
+        lambda ticker, *, limit: [
+            {
+                "body": "Thin tape so far.",
+                "created_at": "2026-09-03T11:00:00Z",
+                "avatar": {"name": "Quiet Amber Relay"},
+                "author_kind": "ai_avatar",
+            }
+        ],
+    )
     monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
 
     comment, model = web_main._generate_ticker_comment_text(
         "ONE",
-        avatar_ability_id="risk_sentinel",
+        avatar={
+            "name": "Quiet Amber Relay",
+            "ability_id": "risk_sentinel",
+            "level": 2,
+        },
     )
 
     assert comment == "My read is constructive, but thin volume is the risk."
@@ -1698,8 +1736,28 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
     assert captured["body"]["max_tokens"] == web_main.OPENROUTER_COMMENT_OUTPUT_TOKENS
     assert captured["body"]["max_tokens"] >= 1_200
     assert "user" not in captured["body"]
-    assert "Risk Sentinel" in captured["body"]["messages"][0]["content"]
-    assert "public name" not in captured["body"]["messages"][0]["content"]
+    assert captured["body"]["messages"][1] == {
+        "role": "user",
+        "content": "Post a comment.",
+    }
+    context = json.loads(captured["body"]["messages"][0]["content"])
+    assert context["avatar"] == {
+        "name": "Quiet Amber Relay",
+        "kind": "user_ai_avatar",
+        "level": 2,
+        "ability": {
+            "name": "Risk Sentinel",
+            "description": "Keeps the downside and invalidation in view.",
+            "focus": "Prioritize the clearest downside, blocker, or invalidation in the evidence.",
+        },
+    }
+    assert context["thread"]["recent_comments"][0]["body"] == "Thin tape so far."
+    assert context["thread"]["recent_comments"][0]["from_this_avatar"] is True
+    assert context["report"]["headline"] == "ONE holds above VWAP"
+    assert context["evidence"]["signals"] == ["Price is above VWAP"]
+    assert context["publication"]["author_kind"] == "ai_avatar"
+    assert context["publication"]["author_name"] == "Quiet Amber Relay"
+    assert context["publication"]["field"] == "comment"
 
 
 def test_radar_orders_events_by_time_not_activity(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -1987,7 +2045,7 @@ def test_verified_pipeline_freezes_every_stage(
         ).fetchall()
     assert report["headline"] == "ONE remains a watch"
     assert model == "z-ai/glm-5.3"
-    assert usage["pipeline_version"] == "verified-research-v1"
+    assert usage["pipeline_version"] == "verified-research-v2"
     assert [row["stage"] for row in stages] == [
         "catalyst_researcher",
         "financing_skeptic",
@@ -1996,7 +2054,7 @@ def test_verified_pipeline_freezes_every_stage(
         "synthesis",
     ]
     assert all(row["status"] == "complete" for row in stages)
-    assert all(row["prompt_version"] == "verified-research-v1" for row in stages)
+    assert all(row["prompt_version"] == "verified-research-v2" for row in stages)
     assert all(len(row["input_fingerprint"]) == 64 for row in stages)
 
 
@@ -2256,7 +2314,12 @@ def test_flash_keeps_only_citations_from_the_frozen_context(
     monkeypatch: MonkeyPatch,
 ) -> None:
     allowed = "https://www.sec.gov/Archives/edgar/data/1/report.htm"
+    other = "https://www.sec.gov/Archives/edgar/data/1/other.htm"
     invented = "https://invented.example/report"
+    allowed_data = {"form": "10-Q", "filed_at": "2026-08-25"}
+    other_data = {"form": "8-K", "filed_at": "2026-08-24"}
+    allowed_id = evidence_id_for("sec_filing", "2026-08-25", allowed, allowed_data)
+    other_id = evidence_id_for("sec_filing", "2026-08-24", other, other_data)
     generated = {
         "headline": "ONE evidence report",
         "thesis": "The filing is the only verified source.",
@@ -2268,10 +2331,23 @@ def test_flash_keeps_only_citations_from_the_frozen_context(
         "risks": [],
         "watch": [],
         "unknowns": [],
-        "sources": [allowed, invented],
+        "sources": [allowed, other, invented],
         "citations": [
-            {"claim": "Verified claim", "source_urls": [allowed, invented]},
-            {"claim": "Invented claim", "source_urls": [invented]},
+            {
+                "claim": "Verified claim",
+                "evidence_ids": [allowed_id],
+                "source_urls": [allowed],
+            },
+            {
+                "claim": "Mismatched claim",
+                "evidence_ids": [allowed_id],
+                "source_urls": [other],
+            },
+            {
+                "claim": "Invented claim",
+                "evidence_ids": ["ev_missing"],
+                "source_urls": [invented],
+            },
         ],
         "forecast": _test_flash_forecast(),
     }
@@ -2289,15 +2365,40 @@ def test_flash_keeps_only_citations_from_the_frozen_context(
     monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
     report, _, _ = web_main._generate_openrouter_report(
         "server-key",
-        {"ticker": "ONE", "sources": [allowed]},
+        {
+            "ticker": "ONE",
+            "sources": [allowed, other],
+            "context_sections": [
+                {
+                    "evidence_id": allowed_id,
+                    "kind": "sec_filing",
+                    "observed_at": "2026-08-25",
+                    "source_url": allowed,
+                    "data": allowed_data,
+                },
+                {
+                    "evidence_id": other_id,
+                    "kind": "sec_filing",
+                    "observed_at": "2026-08-24",
+                    "source_url": other,
+                    "data": other_data,
+                },
+            ],
+        },
         "member-one",
     )
 
     assert report["sources"] == [allowed]
     assert report["company_profile"]["source_urls"] == []
     assert report["citations"] == [
-        {"claim": "Verified claim", "source_urls": [allowed]}
+        {
+            "claim": "Verified claim",
+            "evidence_ids": [allowed_id],
+            "source_urls": [allowed],
+            "source_receipts": [],
+        }
     ]
+    assert other not in json.dumps(report)
     assert invented not in json.dumps(report)
 
 

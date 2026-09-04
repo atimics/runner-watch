@@ -56,6 +56,10 @@ from runner_watch.risk import RiskInput, assess_risk
 from runner_watch.scanner import RunnerScanner
 from runner_watch.universe import penny_runner_universe
 from runner_web import db as runner_db
+from runner_web.account_routes import (
+    AccountRouteDependencies,
+    create_account_routes,
+)
 from runner_web.ai_kol import FLASH, AIKol, actor_snapshot, flash_version_snapshot
 from runner_web.base_rates import matched_market_base_rates
 from runner_web.billing import (
@@ -145,7 +149,11 @@ from runner_web.ranker import (
 )
 from runner_web.request_security import request_client_ip, safe_next_path
 from runner_web.research_context import build_research_context, research_evidence_metrics
-from runner_web.research_pipeline import PIPELINE_VERSION, run_verified_pipeline
+from runner_web.research_pipeline import (
+    PIPELINE_VERSION,
+    run_verified_pipeline,
+    verified_public_citations,
+)
 from runner_web.shared_state import (
     acknowledge_research_job,
     dequeue_research_job,
@@ -1096,10 +1104,6 @@ class ReportSignal(BaseModel):
     reason: str = Field(min_length=3, max_length=240)
 
 
-class AccountDeletePayload(BaseModel):
-    confirmation: Literal["DELETE MY ACCOUNT"]
-
-
 class SportsPickPayload(BaseModel):
     selection: Literal["home", "away"]
 
@@ -1189,61 +1193,27 @@ def claim_daily_flash_api(
     return JSONResponse({"claimed": claimed, "wallet": wallet})
 
 
-@app.get("/privacy", response_class=HTMLResponse)
-def privacy_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request=request,
-        name="privacy.html",
-        context=page_context(request, runner_session),
+account_routes = create_account_routes(
+    AccountRouteDependencies(
+        templates=templates,
+        page_context=lambda request, session, **extra: page_context(
+            request, session, **extra
+        ),
+        require_origin=lambda request: require_origin(request),
+        require_user=lambda session: require_user(session),
+        enforce_rate=lambda *args, **kwargs: enforce_rate(*args, **kwargs),
+        export_user_data=lambda user_id: export_user_data(user_id),
+        delete_customer=lambda user: delete_customer(user),
+        delete_user_data=lambda user_id: delete_user_data(user_id),
+        now=now,
+        session_cookie=SESSION_COOKIE,
+        cookie_domain=COOKIE_DOMAIN,
     )
-
-
-@app.get("/api/account/export")
-def account_export_api(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    user = require_user(runner_session)
-    enforce_rate(request, "account-export", limit=3, seconds=3600, subject=user["id"])
-    response = JSONResponse(export_user_data(str(user["id"])))
-    response.headers["Content-Disposition"] = (
-        f'attachment; filename="runner-watch-export-{now().date().isoformat()}.json"'
-    )
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-@app.post("/api/account/delete")
-def account_delete_api(
-    payload: AccountDeletePayload,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "account-delete", limit=3, seconds=3600, subject=user["id"])
-    try:
-        delete_customer(user)
-    except Exception as exc:
-        LOG.warning(
-            "Could not delete Stripe customer during account deletion: %s",
-            type(exc).__name__,
-        )
-        raise HTTPException(
-            502,
-            "We could not stop billing, so the local account was not deleted. Try again.",
-        ) from exc
-    result = delete_user_data(str(user["id"]))
-    if not result["deleted"]:
-        raise HTTPException(404, "Account not found")
-    response = JSONResponse({"deleted": True})
-    response.headers["Cache-Control"] = "no-store"
-    response.delete_cookie("runner_visitor", path="/")
-    response.delete_cookie(SESSION_COOKIE, path="/", domain=COOKIE_DOMAIN)
-    return response
+)
+app.include_router(account_routes.router)
+privacy_page = account_routes.privacy_page
+account_export_api = account_routes.account_export_api
+account_delete_api = account_routes.account_delete_api
 
 
 @app.post("/api/billing/checkout")
@@ -3177,6 +3147,7 @@ def _sports_report_output_contract() -> dict[str, Any]:
         "citations": [
             {
                 "claim": "one important factual claim from the report",
+                "evidence_ids": ["exact stable evidence_id attached to the source item"],
                 "source_urls": ["provided source URL"],
             }
         ],
@@ -3260,6 +3231,7 @@ def _generate_openrouter_report(
             "citations": [
                 {
                     "claim": "one important factual claim from the report",
+                    "evidence_ids": ["exact stable evidence_id attached to the source item"],
                     "source_urls": ["provided source URL"],
                 }
             ],
@@ -3495,28 +3467,17 @@ def _generate_openrouter_report(
         filing["source_url"] = source if source in approved_set else None
         clean_filings.append(filing)
     report["filings"] = clean_filings
-    clean_citations: list[dict[str, Any]] = []
-    cited_urls: list[str] = []
-    for citation in report.get("citations", [])[:30]:
-        claim = str(citation.get("claim") or "").strip()[:500]
-        source_urls = [
-            source
-            for value in citation.get("source_urls") or []
-            if (source := _safe_source_url(value)) and source in approved_set
-        ][:6]
-        if claim and source_urls:
-            clean_citations.append({"claim": claim, "source_urls": source_urls})
-            cited_urls.extend(source_urls)
+    clean_citations = verified_public_citations(report.get("citations"), evidence)
+    cited_urls = [
+        source
+        for citation in clean_citations
+        for source in citation["source_urls"]
+    ]
     selected_sources = [
         *cited_urls,
         *report["company_profile"].get("source_urls", []),
         *(source for person in clean_people for source in person.get("source_urls", [])),
         *(filing["source_url"] for filing in clean_filings if filing.get("source_url")),
-        *(
-            source
-            for value in report.get("sources", [])
-            if (source := _safe_source_url(value)) and source in approved_set
-        ),
     ]
     report["citations"] = clean_citations
     report["sources"] = list(dict.fromkeys(selected_sources))[:40]
@@ -6200,6 +6161,7 @@ def _known_ticker(ticker: str) -> bool:
 def _public_comment(row: Any, current_user_id: str | None = None) -> dict[str, Any]:
     keys = set(row.keys())
     source = str(row["source"] or "user") if "source" in keys else "user"
+    ai_avatar = source in {"ai_avatar", "ai_generated"}
     avatar = comment_avatar_profile(
         str(row["avatar_name"]),
         str(row["avatar_seed"]),
@@ -6213,7 +6175,9 @@ def _public_comment(row: Any, current_user_id: str | None = None) -> dict[str, A
         "alias": avatar["name"],
         "avatar": avatar,
         "is_owner": bool(current_user_id and str(row["user_id"]) == current_user_id),
-        "ai_generated": source == "ai_generated",
+        "author_kind": "ai_avatar" if ai_avatar else "account_avatar",
+        "author_label": "AI avatar" if ai_avatar else "Account avatar",
+        "ai_generated": ai_avatar,
         "generation_model": (
             str(row["generation_model"] or "") if "generation_model" in keys else ""
         ),
@@ -6334,7 +6298,7 @@ def thesis_case_revisions_api(
 def _generate_ticker_comment_text(
     ticker: str,
     *,
-    avatar_ability_id: str = "catalyst_scout",
+    avatar: dict[str, Any],
 ) -> tuple[str, str]:
     if not OPENROUTER_API_KEY:
         raise HTTPException(503, "AI comments are temporarily unavailable.")
@@ -6366,24 +6330,67 @@ def _generate_ticker_comment_text(
             for item in detail.get("events", [])[:3]
         ],
     }
-    ability = comment_avatar_ability(avatar_ability_id)
+    ability = comment_avatar_ability(str(avatar.get("ability_id") or "catalyst_scout"))
+    recent_comments = comments_for_ticker(ticker, limit=12)
+    latest_report = daily_report_for_ticker(ticker)
+    if latest_report and latest_report.get("locked"):
+        latest_report = None
+    context = {
+        "avatar": {
+            "name": str(avatar.get("name") or "Signal Avatar"),
+            "kind": "user_ai_avatar",
+            "level": int(avatar.get("level") or 1),
+            "ability": {
+                "name": ability["label"],
+                "description": ability["description"],
+                "focus": ability["prompt"],
+            },
+        },
+        "thread": {
+            "ticker": ticker,
+            "recent_comments": [
+                {
+                    "author": comment["avatar"]["name"],
+                    "author_kind": comment["author_kind"],
+                    "body": comment["body"],
+                    "created_at": comment["created_at"],
+                    "from_this_avatar": comment["avatar"]["name"] == avatar.get("name"),
+                }
+                for comment in recent_comments
+            ],
+        },
+        "report": (
+            {
+                "headline": latest_report.get("headline"),
+                "summary": latest_report.get("summary"),
+                "thesis": latest_report.get("thesis"),
+                "catalysts": list(latest_report.get("catalysts") or [])[:6],
+                "risks": list(latest_report.get("risks") or [])[:6],
+                "watch": list(latest_report.get("watch") or [])[:6],
+                "unknowns": list(latest_report.get("unknowns") or [])[:6],
+                "citations": list(latest_report.get("citations") or [])[:8],
+                "evidence_as_of": latest_report.get("evidence_as_of"),
+            }
+            if latest_report
+            else None
+        ),
+        "evidence": evidence,
+        "publication": {
+            "author_kind": "ai_avatar",
+            "author_name": str(avatar.get("name") or "Signal Avatar"),
+            "format": "json",
+            "field": "comment",
+            "max_characters": COMMENT_MAX_CHARS,
+            "language": "simple English",
+            "grounding": "supplied context",
+            "financial_advice": False,
+        },
+    }
     body = {
         "model": FLASH.model,
         "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "Write one short stock comment in first person, as the human's public "
-                    "avatar speaking. "
-                    "Use simple English and only the supplied evidence. Keep it under 240 "
-                    "characters. State a view and the key risk. Do not give buy or sell advice. "
-                    "Do not mention AI. The avatar's lasting research ability is "
-                    f"{ability['label']}: {ability['prompt']} "
-                    "Use that as an emphasis, never as permission to invent facts. "
-                    "Return JSON with one field named comment."
-                ),
-            },
-            {"role": "user", "content": json.dumps(evidence, separators=(",", ":"))},
+            {"role": "system", "content": json.dumps(context, separators=(",", ":"))},
+            {"role": "user", "content": "Post a comment."},
         ],
         "response_format": {"type": "json_object"},
         "provider": {"require_parameters": True, "zdr": True},
@@ -6450,7 +6457,7 @@ async def create_ticker_comment(
         body, model = await run_in_threadpool(
             _generate_ticker_comment_text,
             normalized,
-            avatar_ability_id=str(avatar["ability_id"]),
+            avatar=avatar,
         )
         with connection() as db:
             db.execute(
@@ -6466,7 +6473,7 @@ async def create_ticker_comment(
                     body,
                     "public",
                     created_at,
-                    "ai_generated",
+                    "ai_avatar",
                     model,
                 ),
             )
