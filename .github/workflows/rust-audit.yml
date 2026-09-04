@@ -1,0 +1,45 @@
+name: Rust Dependency Audit
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/rust-audit.yml"
+      - "desktop/src-tauri/Cargo.lock"
+      - "rust/stonks-ranker/Cargo.lock"
+  schedule:
+    - cron: "19 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: Check new Rust advisories
+    if: github.event_name == 'pull_request'
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@0c58c542420dfd23fcac08dd9c8ca3cca9c36f1a
+    with:
+      scan-args: |-
+        --lockfile=./desktop/src-tauri/Cargo.lock
+        --lockfile=./rust/stonks-ranker/Cargo.lock
+      upload-sarif: false
+      fail-on-vuln: true
+
+  full:
+    name: Check all Rust advisories
+    if: github.event_name != 'pull_request'
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@0c58c542420dfd23fcac08dd9c8ca3cca9c36f1a
+    with:
+      scan-args: |-
+        --lockfile=./desktop/src-tauri/Cargo.lock
+        --lockfile=./rust/stonks-ranker/Cargo.lock
+      upload-sarif: false
+      fail-on-vuln: true
