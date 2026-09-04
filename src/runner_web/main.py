@@ -56,6 +56,10 @@ from runner_watch.risk import RiskInput, assess_risk
 from runner_watch.scanner import RunnerScanner
 from runner_watch.universe import penny_runner_universe
 from runner_web import db as runner_db
+from runner_web.account_routes import (
+    AccountRouteDependencies,
+    create_account_routes,
+)
 from runner_web.ai_kol import FLASH, AIKol, actor_snapshot, flash_version_snapshot
 from runner_web.base_rates import matched_market_base_rates
 from runner_web.billing import (
@@ -1096,10 +1100,6 @@ class ReportSignal(BaseModel):
     reason: str = Field(min_length=3, max_length=240)
 
 
-class AccountDeletePayload(BaseModel):
-    confirmation: Literal["DELETE MY ACCOUNT"]
-
-
 class SportsPickPayload(BaseModel):
     selection: Literal["home", "away"]
 
@@ -1189,61 +1189,27 @@ def claim_daily_flash_api(
     return JSONResponse({"claimed": claimed, "wallet": wallet})
 
 
-@app.get("/privacy", response_class=HTMLResponse)
-def privacy_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request=request,
-        name="privacy.html",
-        context=page_context(request, runner_session),
+account_routes = create_account_routes(
+    AccountRouteDependencies(
+        templates=templates,
+        page_context=lambda request, session, **extra: page_context(
+            request, session, **extra
+        ),
+        require_origin=lambda request: require_origin(request),
+        require_user=lambda session: require_user(session),
+        enforce_rate=lambda *args, **kwargs: enforce_rate(*args, **kwargs),
+        export_user_data=lambda user_id: export_user_data(user_id),
+        delete_customer=lambda user: delete_customer(user),
+        delete_user_data=lambda user_id: delete_user_data(user_id),
+        now=now,
+        session_cookie=SESSION_COOKIE,
+        cookie_domain=COOKIE_DOMAIN,
     )
-
-
-@app.get("/api/account/export")
-def account_export_api(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    user = require_user(runner_session)
-    enforce_rate(request, "account-export", limit=3, seconds=3600, subject=user["id"])
-    response = JSONResponse(export_user_data(str(user["id"])))
-    response.headers["Content-Disposition"] = (
-        f'attachment; filename="runner-watch-export-{now().date().isoformat()}.json"'
-    )
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-@app.post("/api/account/delete")
-def account_delete_api(
-    payload: AccountDeletePayload,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "account-delete", limit=3, seconds=3600, subject=user["id"])
-    try:
-        delete_customer(user)
-    except Exception as exc:
-        LOG.warning(
-            "Could not delete Stripe customer during account deletion: %s",
-            type(exc).__name__,
-        )
-        raise HTTPException(
-            502,
-            "We could not stop billing, so the local account was not deleted. Try again.",
-        ) from exc
-    result = delete_user_data(str(user["id"]))
-    if not result["deleted"]:
-        raise HTTPException(404, "Account not found")
-    response = JSONResponse({"deleted": True})
-    response.headers["Cache-Control"] = "no-store"
-    response.delete_cookie("runner_visitor", path="/")
-    response.delete_cookie(SESSION_COOKIE, path="/", domain=COOKIE_DOMAIN)
-    return response
+)
+app.include_router(account_routes.router)
+privacy_page = account_routes.privacy_page
+account_export_api = account_routes.account_export_api
+account_delete_api = account_routes.account_delete_api
 
 
 @app.post("/api/billing/checkout")
