@@ -132,7 +132,7 @@
   {% if report.citations or report.sources %}
   <div id="report-sources" class="report-source-index">
     {% if report.citations %}
-    <section class="research-section"><h2>Citations</h2>{% for citation in report.citations %}<article class="research-citation"><p>{{ citation.claim }}</p><div class="research-sources">{% for source in citation.source_urls %}<a href="{{ source }}" target="_blank" rel="noopener">Source {{ loop.index }}</a>{% endfor %}</div></article>{% endfor %}</section>
+    <section class="research-section"><h2>Citations</h2>{% for citation in report.citations %}<article class="research-citation"><p>{{ citation.claim }}</p><div class="research-sources">{% for source in citation.source_urls %}<a href="{{ source }}" target="_blank" rel="noopener">Source {{ loop.index }}</a>{% endfor %}{% if citation.source_receipts %}<span>Stored market data</span>{% endif %}</div></article>{% endfor %}</section>
     {% endif %}
     {% if report.sources %}
     <section class="research-section"><h2>Sources</h2><div class="research-sources">{% for source in report.sources %}<a href="{{ source.url }}" target="_blank" rel="noopener">{{ source.label }}</a>{% endfor %}</div></section>

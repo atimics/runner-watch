@@ -49,6 +49,7 @@ from runner_web.main import (
     ticker_detail_data,
 )
 from runner_web.pseudonyms import COMMENT_AVATAR_ABILITIES
+from runner_web.research_context import evidence_id_for
 
 
 def _test_flash_forecast() -> dict[str, Any]:
@@ -2044,7 +2045,7 @@ def test_verified_pipeline_freezes_every_stage(
         ).fetchall()
     assert report["headline"] == "ONE remains a watch"
     assert model == "z-ai/glm-5.3"
-    assert usage["pipeline_version"] == "verified-research-v1"
+    assert usage["pipeline_version"] == "verified-research-v2"
     assert [row["stage"] for row in stages] == [
         "catalyst_researcher",
         "financing_skeptic",
@@ -2053,7 +2054,7 @@ def test_verified_pipeline_freezes_every_stage(
         "synthesis",
     ]
     assert all(row["status"] == "complete" for row in stages)
-    assert all(row["prompt_version"] == "verified-research-v1" for row in stages)
+    assert all(row["prompt_version"] == "verified-research-v2" for row in stages)
     assert all(len(row["input_fingerprint"]) == 64 for row in stages)
 
 
@@ -2313,7 +2314,12 @@ def test_flash_keeps_only_citations_from_the_frozen_context(
     monkeypatch: MonkeyPatch,
 ) -> None:
     allowed = "https://www.sec.gov/Archives/edgar/data/1/report.htm"
+    other = "https://www.sec.gov/Archives/edgar/data/1/other.htm"
     invented = "https://invented.example/report"
+    allowed_data = {"form": "10-Q", "filed_at": "2026-08-25"}
+    other_data = {"form": "8-K", "filed_at": "2026-08-24"}
+    allowed_id = evidence_id_for("sec_filing", "2026-08-25", allowed, allowed_data)
+    other_id = evidence_id_for("sec_filing", "2026-08-24", other, other_data)
     generated = {
         "headline": "ONE evidence report",
         "thesis": "The filing is the only verified source.",
@@ -2325,10 +2331,23 @@ def test_flash_keeps_only_citations_from_the_frozen_context(
         "risks": [],
         "watch": [],
         "unknowns": [],
-        "sources": [allowed, invented],
+        "sources": [allowed, other, invented],
         "citations": [
-            {"claim": "Verified claim", "source_urls": [allowed, invented]},
-            {"claim": "Invented claim", "source_urls": [invented]},
+            {
+                "claim": "Verified claim",
+                "evidence_ids": [allowed_id],
+                "source_urls": [allowed],
+            },
+            {
+                "claim": "Mismatched claim",
+                "evidence_ids": [allowed_id],
+                "source_urls": [other],
+            },
+            {
+                "claim": "Invented claim",
+                "evidence_ids": ["ev_missing"],
+                "source_urls": [invented],
+            },
         ],
         "forecast": _test_flash_forecast(),
     }
@@ -2346,15 +2365,40 @@ def test_flash_keeps_only_citations_from_the_frozen_context(
     monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
     report, _, _ = web_main._generate_openrouter_report(
         "server-key",
-        {"ticker": "ONE", "sources": [allowed]},
+        {
+            "ticker": "ONE",
+            "sources": [allowed, other],
+            "context_sections": [
+                {
+                    "evidence_id": allowed_id,
+                    "kind": "sec_filing",
+                    "observed_at": "2026-08-25",
+                    "source_url": allowed,
+                    "data": allowed_data,
+                },
+                {
+                    "evidence_id": other_id,
+                    "kind": "sec_filing",
+                    "observed_at": "2026-08-24",
+                    "source_url": other,
+                    "data": other_data,
+                },
+            ],
+        },
         "member-one",
     )
 
     assert report["sources"] == [allowed]
     assert report["company_profile"]["source_urls"] == []
     assert report["citations"] == [
-        {"claim": "Verified claim", "source_urls": [allowed]}
+        {
+            "claim": "Verified claim",
+            "evidence_ids": [allowed_id],
+            "source_urls": [allowed],
+            "source_receipts": [],
+        }
     ]
+    assert other not in json.dumps(report)
     assert invented not in json.dumps(report)
 
 
