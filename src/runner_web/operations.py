@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from runner_node.runtime import NODE_SERVICE
 from runner_watch.source_catalog import DEFAULT_SOURCE_POLICIES
 from runner_web.ai_kol import FLASH
+from runner_web.data_health import data_health
 from runner_web.db import MIGRATIONS, connection
 from runner_web.flash_wallet import (
     COMMENT_COST,
@@ -434,6 +435,25 @@ def readiness_api() -> JSONResponse:
 @router.get("/health/details")
 def health_api(_access: None = Depends(require_operations_access)) -> JSONResponse:
     payload = health_status()
+    return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
+
+
+@router.get("/health/data")
+def data_health_api(request: Request) -> JSONResponse:
+    product = "sports" if (request.url.hostname or "").lower() == SPORTS_HOST else "runners"
+    payload = data_health(product)
+    return JSONResponse(
+        {"status": payload["status"]},
+        status_code=200 if payload["status"] == "ok" else 503,
+    )
+
+
+@router.get("/health/data/details")
+def data_health_details_api(
+    request: Request, _access: None = Depends(require_operations_access)
+) -> JSONResponse:
+    product = "sports" if (request.url.hostname or "").lower() == SPORTS_HOST else "runners"
+    payload = data_health(product)
     return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
 
 

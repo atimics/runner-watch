@@ -33,6 +33,7 @@ def test_detailed_operations_require_a_bearer_token(monkeypatch: MonkeyPatch) ->
 def test_every_private_operations_route_requires_the_bearer_token() -> None:
     private_paths = {
         "/health/details",
+        "/health/data/details",
         "/health/performance",
         "/api/ranker/status",
         "/api/ingestion/status",

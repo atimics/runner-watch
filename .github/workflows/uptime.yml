@@ -13,6 +13,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  data:
+    name: Check feed freshness
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    strategy:
+      fail-fast: false
+      matrix:
+        origin: ["https://runners.rati.chat", "https://sports.rati.chat"]
+    steps:
+      - run: curl --fail --silent --show-error --max-time 15 --retry 2 --retry-delay 5 "${{ matrix.origin }}/health/data"
+
   monitor:
     name: Check production
     runs-on: ubuntu-latest
