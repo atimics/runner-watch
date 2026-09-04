@@ -115,6 +115,9 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert "action-card" not in template
     assert template.count("<textarea") == 0
     assert 'id="generateComment"' in template
+    assert "your AI avatar" in template
+    assert "Post with avatar" in template
+    assert "{{ comment.author_label }}" in template
     assert "Persistent avatars · public across tickers" in template
     assert "render_comment_avatar(comment.avatar)" in template
 
@@ -1605,7 +1608,7 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
     monkeypatch.setattr(
         web_main,
         "_generate_ticker_comment_text",
-        lambda ticker, *, avatar_ability_id: (
+        lambda ticker, *, avatar: (
             "My read is above VWAP, but low volume is the risk.",
             "test/model",
         ),
@@ -1627,6 +1630,8 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
     assert payload["count"] == 1
     assert payload["comment"]["body"] == "My read is above VWAP, but low volume is the risk."
     assert payload["comment"]["ai_generated"] is True
+    assert payload["comment"]["author_kind"] == "ai_avatar"
+    assert payload["comment"]["author_label"] == "AI avatar"
     assert payload["comment"]["generation_model"] == "test/model"
     assert payload["balance"] == 90
     assert payload["comment"]["avatar"]["name"] == payload["comment"]["alias"]
@@ -1685,11 +1690,43 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
             "events": [],
         },
     )
+    monkeypatch.setattr(
+        web_main,
+        "daily_report_for_ticker",
+        lambda ticker: {
+            "headline": "ONE holds above VWAP",
+            "summary": "Momentum is positive while volume stays thin.",
+            "thesis": "The setup stays valid above VWAP.",
+            "catalysts": ["A dated company update"],
+            "risks": ["Thin volume"],
+            "watch": ["VWAP"],
+            "unknowns": ["Follow-through"],
+            "citations": [{"url": "https://example.com/source"}],
+            "evidence_as_of": "2026-09-03T12:00:00Z",
+            "locked": False,
+        },
+    )
+    monkeypatch.setattr(
+        web_main,
+        "comments_for_ticker",
+        lambda ticker, *, limit: [
+            {
+                "body": "Thin tape so far.",
+                "created_at": "2026-09-03T11:00:00Z",
+                "avatar": {"name": "Quiet Amber Relay"},
+                "author_kind": "ai_avatar",
+            }
+        ],
+    )
     monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
 
     comment, model = web_main._generate_ticker_comment_text(
         "ONE",
-        avatar_ability_id="risk_sentinel",
+        avatar={
+            "name": "Quiet Amber Relay",
+            "ability_id": "risk_sentinel",
+            "level": 2,
+        },
     )
 
     assert comment == "My read is constructive, but thin volume is the risk."
@@ -1698,8 +1735,28 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
     assert captured["body"]["max_tokens"] == web_main.OPENROUTER_COMMENT_OUTPUT_TOKENS
     assert captured["body"]["max_tokens"] >= 1_200
     assert "user" not in captured["body"]
-    assert "Risk Sentinel" in captured["body"]["messages"][0]["content"]
-    assert "public name" not in captured["body"]["messages"][0]["content"]
+    assert captured["body"]["messages"][1] == {
+        "role": "user",
+        "content": "Post a comment.",
+    }
+    context = json.loads(captured["body"]["messages"][0]["content"])
+    assert context["avatar"] == {
+        "name": "Quiet Amber Relay",
+        "kind": "user_ai_avatar",
+        "level": 2,
+        "ability": {
+            "name": "Risk Sentinel",
+            "description": "Keeps the downside and invalidation in view.",
+            "focus": "Prioritize the clearest downside, blocker, or invalidation in the evidence.",
+        },
+    }
+    assert context["thread"]["recent_comments"][0]["body"] == "Thin tape so far."
+    assert context["thread"]["recent_comments"][0]["from_this_avatar"] is True
+    assert context["report"]["headline"] == "ONE holds above VWAP"
+    assert context["evidence"]["signals"] == ["Price is above VWAP"]
+    assert context["publication"]["author_kind"] == "ai_avatar"
+    assert context["publication"]["author_name"] == "Quiet Amber Relay"
+    assert context["publication"]["field"] == "comment"
 
 
 def test_radar_orders_events_by_time_not_activity(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
