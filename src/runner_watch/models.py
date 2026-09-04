@@ -7,8 +7,6 @@ from typing import Any
 
 @dataclass(slots=True)
 class ScanSettings:
-    """Filters and limits for one scan."""
-
     min_price: float = 0.50
     max_price: float = 50.00
     min_avg_volume: int = 100_000

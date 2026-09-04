@@ -40,8 +40,6 @@ EVENT_START_TOLERANCE = timedelta(hours=2)
 
 
 class OddsApiError(RuntimeError):
-    """A safe error that never includes the API key."""
-
     def __init__(self, message: str, quota: Quota | None = None) -> None:
         super().__init__(message)
         self.quota = quota
@@ -160,7 +158,7 @@ def _request_json(url: str) -> tuple[Any, Quota]:
         headers={"User-Agent": "RATi-Sports/0.1 https://sports.rati.chat"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=20) as response:
             body = response.read()
             quota = _quota_from_headers(response.headers)
     except urllib.error.HTTPError as exc:
@@ -268,7 +266,6 @@ def _select_bookmaker(
 def _fresh_moneylines(
     candidates: list[dict[str, Any]], observed_at: datetime | None = None
 ) -> list[dict[str, Any]]:
-    """Return quotes that are recent now and synchronized with one another."""
 
     reference = (observed_at or datetime.now(UTC)).astimezone(UTC)
     recent = [
@@ -280,11 +277,7 @@ def _fresh_moneylines(
     if not recent:
         return []
     newest = max(updated for _line, updated in recent)
-    return [
-        line
-        for line, updated in recent
-        if newest - updated <= BOOKMAKER_FRESHNESS
-    ]
+    return [line for line, updated in recent if newest - updated <= BOOKMAKER_FRESHNESS]
 
 
 def _consensus_moneyline(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -429,10 +422,7 @@ def _team_key(value: Any) -> str:
     return aliases.get(key, key)
 
 
-def apply_moneylines(
-    events: list[dict[str, Any]], moneylines: tuple[dict[str, Any], ...]
-) -> int:
-    """Attach each provider market to at most one scheduled event."""
+def apply_moneylines(events: list[dict[str, Any]], moneylines: tuple[dict[str, Any], ...]) -> int:
 
     available = list(enumerate(moneylines))
     used_markets: set[int] = set()

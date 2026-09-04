@@ -178,7 +178,6 @@ def parse_house_filing_index(
     *,
     expected_year: int | None = None,
 ) -> tuple[HouseFiling, ...]:
-    """Read the official yearly ZIP without extracting files onto disk."""
 
     if len(body) > MAX_INDEX_BYTES:
         raise ValueError(f"House filing index exceeds the {MAX_INDEX_BYTES}-byte limit")
@@ -347,7 +346,6 @@ def _optional_date(match: re.Match[str] | None, name: str) -> date | None:
 
 
 def parse_house_ptr_text(text: str) -> tuple[HouseTrade, ...]:
-    """Parse electronic House PTR rows while keeping every disclosed range and label."""
 
     lines = [_text(line) for line in text.replace("\r", "\n").splitlines()]
     lines = [line for line in lines if line]
@@ -435,7 +433,7 @@ def parse_house_ptr_pdf(body: bytes) -> tuple[HouseTrade, ...]:
 
 
 def _filing_datetime(value: date) -> datetime:
-    # The official index only gives a date. End-of-day is conservative for backtests.
+
     return datetime.combine(value, time.max, tzinfo=EASTERN).astimezone(UTC)
 
 
@@ -515,7 +513,7 @@ def _download(url: str, timeout: float) -> tuple[bytes, str | None]:
         headers={"User-Agent": USER_AGENT, "Accept": accept},
     )
     maximum = MAX_PTR_BYTES if url.lower().endswith(".pdf") else MAX_INDEX_BYTES
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return read_limited(response, max_bytes=maximum), response.headers.get_content_type()
 
 
@@ -548,7 +546,6 @@ def refresh_house_disclosures(
     lookback_days: int | None = None,
     max_filings: int | None = None,
 ) -> dict[str, Any]:
-    """Fetch official House indexes, then archive and normalize unseen PTR filings."""
 
     as_of = now or datetime.now(UTC)
     if as_of.tzinfo is None:

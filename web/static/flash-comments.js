@@ -45,15 +45,18 @@
     const head = document.createElement('header');
     const author = document.createElement('strong');
     author.textContent = avatarData.name || comment.alias || 'Unknown Signal';
+    const authorship = document.createElement('span');
+    authorship.className = 'comment-owner';
+    authorship.textContent = comment.author_label || 'AI avatar';
     const ability = document.createElement('span');
     ability.className = 'comment-ability';
     ability.textContent = avatarData.ability || 'Research Lens';
     if (avatarData.ability_description) ability.title = avatarData.ability_description;
-    head.append(author, ability);
+    head.append(author, authorship, ability);
     if (comment.is_owner) {
       const owner = document.createElement('span');
       owner.className = 'comment-owner';
-      owner.textContent = 'You';
+      owner.textContent = 'Yours';
       head.append(owner);
     }
     const meta = document.createElement('small');
@@ -117,7 +120,7 @@
       if (window.RatiFlash?.canSpend && !window.RatiFlash.canSpend(COST)) return;
       if (!pending) remember(requestId());
       generate.disabled = true;
-      status.textContent = 'Posting…';
+      status.textContent = 'Your AI avatar is posting…';
       try {
         let recoveryAttempt = 0;
         let response;

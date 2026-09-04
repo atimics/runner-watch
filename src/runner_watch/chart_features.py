@@ -43,7 +43,6 @@ def _column(frame: pd.DataFrame, name: str) -> pd.Series:
 
 
 def clean_ohlcv(frame: pd.DataFrame) -> pd.DataFrame:
-    """Return sorted numeric OHLCV bars with an Eastern time index."""
 
     if frame is None or frame.empty:
         return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
@@ -281,7 +280,6 @@ def _fibonacci_map(
 
 
 def analyze_market_structure(frame: pd.DataFrame) -> StructureAnalysis:
-    """Calculate chart levels and point-in-time ranker features from known bars."""
 
     clean = clean_ohlcv(frame)
     if len(clean) < 5:
@@ -384,9 +382,7 @@ def analyze_market_structure(frame: pd.DataFrame) -> StructureAnalysis:
     summary = {
         "price": round(current_price, 6),
         "vwap": round(float(context["vwap"]), 6),
-        "previous_close": (
-            round(float(prior["close"].iloc[-1]), 6) if not prior.empty else None
-        ),
+        "previous_close": (round(float(prior["close"].iloc[-1]), 6) if not prior.empty else None),
         "opening_range": (
             {
                 "low": round(float(opening["low"].min()), 6),

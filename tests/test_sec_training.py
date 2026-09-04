@@ -15,20 +15,20 @@ from runner_web.sec_training import SPLIT_FILES, export_sec_training_corpus
 SEC_QWEN_SOURCE = Path(__file__).resolve().parents[1] / "ml" / "sec-qwen" / "src"
 sys.path.insert(0, str(SEC_QWEN_SOURCE))
 
-from sec_qwen.baseline import (  # noqa: E402
+from sec_qwen.baseline import (
     _existing_predictions,
     _finqa_prediction,
     _read_suite,
     prepare_citation_support,
     prepare_finqa,
 )
-from sec_qwen.benchmarks import release_metrics  # noqa: E402
-from sec_qwen.completion import build_completion  # noqa: E402
-from sec_qwen.config import load_config, load_examples, validate_corpus  # noqa: E402
-from sec_qwen.evaluation import _profile_sample, score_predictions  # noqa: E402
-from sec_qwen.profiling import profile_corpus  # noqa: E402
-from sec_qwen.receipts import canonical_sha256, chat_template_sha256  # noqa: E402
-from sec_qwen.training import _calibration_sample, _training_argument_values  # noqa: E402
+from sec_qwen.benchmarks import release_metrics
+from sec_qwen.completion import build_completion
+from sec_qwen.config import load_config, load_examples, validate_corpus
+from sec_qwen.evaluation import _profile_sample, score_predictions
+from sec_qwen.profiling import profile_corpus
+from sec_qwen.receipts import canonical_sha256, chat_template_sha256
+from sec_qwen.training import _calibration_sample, _training_argument_values
 
 
 def _insert_filing(
@@ -174,8 +174,7 @@ def test_sec_export_is_deterministic_point_in_time_and_leakage_safe(
         ).read_bytes()
 
     splits = {
-        name: _read_jsonl(tmp_path / "first" / filename)
-        for name, filename in SPLIT_FILES.items()
+        name: _read_jsonl(tmp_path / "first" / filename) for name, filename in SPLIT_FILES.items()
     }
     all_examples = [example for rows in splits.values() for example in rows]
     assert len(all_examples) == 12
@@ -228,7 +227,7 @@ def test_qwen_config_verifies_corpus_and_scores_strict_json(tmp_path: Path) -> N
 schema = "stonks.sec_qwen_training.v1"
 [model]
 model_id = "Qwen/Qwen2.5-7B-Instruct"
-revision = "{'b' * 40}"
+revision = "{"b" * 40}"
 [dataset]
 dataset_id = "dataset://test"
 corpus_manifest = "corpus/corpus-release.json"
@@ -338,7 +337,7 @@ def test_qwen_config_verifies_braid_release_and_unwraps_examples(
 schema = "stonks.sec_qwen_training.v1"
 [model]
 model_id = "Qwen/Qwen2.5-7B-Instruct"
-revision = "{'e' * 40}"
+revision = "{"e" * 40}"
 [dataset]
 provider = "braid"
 dataset_id = "dataset://braid/feral-7b-sec/v1"
@@ -376,7 +375,7 @@ def test_qwen_braid_config_requires_pinned_release(tmp_path: Path) -> None:
 schema = "stonks.sec_qwen_training.v1"
 [model]
 model_id = "Qwen/Qwen2.5-7B-Instruct"
-revision = "{'f' * 40}"
+revision = "{"f" * 40}"
 [dataset]
 provider = "braid"
 dataset_id = "dataset://braid/feral-7b-sec/v1"
@@ -443,7 +442,7 @@ def test_qwen_profile_uses_exact_template_tokens_and_builds_budget(tmp_path: Pat
 schema = "stonks.sec_qwen_training.v1"
 [model]
 model_id = "Qwen/Qwen2.5-7B-Instruct"
-revision = "{'d' * 40}"
+revision = "{"d" * 40}"
 torch_dtype = "bfloat16"
 attn_implementation = "sdpa"
 mask_backend = "transformers.masking_utils.sdpa_mask"
@@ -690,7 +689,7 @@ def test_prepare_citation_support_uses_only_sealed_insufficient_cases(tmp_path: 
 schema = "stonks.sec_qwen_training.v1"
 [model]
 model_id = "Qwen/Qwen2.5-7B-Instruct"
-revision = "{'a' * 40}"
+revision = "{"a" * 40}"
 [dataset]
 dataset_id = "dataset://citation-test"
 corpus_manifest = "corpus/corpus-release.json"

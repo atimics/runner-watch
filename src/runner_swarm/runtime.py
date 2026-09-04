@@ -1,5 +1,3 @@
-"""Runtime assembly shared by solo, attached, and alpha-pack trader nodes."""
-
 from __future__ import annotations
 
 import json
@@ -79,8 +77,6 @@ MAX_RUNTIME_BOOTSTRAPS = 16
 
 @dataclass(frozen=True, slots=True)
 class AlphaPackRuntimePolicy:
-    """Verified pack state reduced to the policy the runtime can enforce."""
-
     signed_pack: SignedAlphaPack | None
     effective_config: SwarmRuntimeConfig
     bootstrap_peer_ids: tuple[tuple[str, str], ...] = ()
@@ -92,7 +88,6 @@ def load_signed_alpha_pack(
     *,
     at: datetime | None = None,
 ) -> SignedAlphaPack:
-    """Read one canonical pack from a bounded regular file and verify it."""
 
     pack_path = Path(path)
     try:
@@ -157,7 +152,6 @@ def apply_alpha_pack_policy(
     config: SwarmRuntimeConfig,
     signed_pack: SignedAlphaPack,
 ) -> AlphaPackRuntimePolicy:
-    """Apply a verified pack as a restrictive compatibility and discovery policy."""
 
     pack = signed_pack.pack
     if PROTOCOL_VERSION not in pack.allowed_claim_versions:
@@ -239,7 +233,6 @@ def prepare_alpha_pack_runtime(
     *,
     at: datetime | None = None,
 ) -> AlphaPackRuntimePolicy:
-    """Load and apply the optional signed pack selected by local configuration."""
 
     alpha_pack_path = getattr(config, "alpha_pack_path", None)
     if alpha_pack_path is None:
@@ -250,8 +243,6 @@ def prepare_alpha_pack_runtime(
 
 @dataclass(frozen=True, slots=True)
 class SwarmNodeIdentity:
-    """One stable local identity that can sign every swarm contract."""
-
     private_key: Ed25519PrivateKey
     public_key: str
     node_id: str
@@ -277,7 +268,6 @@ def build_signed_runtime_manifest(
     *,
     at: datetime | None = None,
 ) -> SignedNodeManifest:
-    """Build the short-lived public discovery record for an attached node."""
 
     if config.public_url is None:
         raise ValueError("SWARM_PUBLIC_URL is required to publish a swarm manifest")
@@ -306,8 +296,6 @@ def build_signed_runtime_manifest(
 
 @dataclass(frozen=True, slots=True)
 class BootstrapResult:
-    """One local view of a configured bootstrap attempt."""
-
     origin: str
     peer_node_id: str | None
     accepted_topics: tuple[str, ...]
@@ -320,8 +308,6 @@ class BootstrapResult:
 
 @dataclass(frozen=True, slots=True)
 class ClaimPublishSummary:
-    """Bounded result for one local scan fan-out."""
-
     rows_seen: int
     claims_built: int
     deliveries_succeeded: int
@@ -365,8 +351,6 @@ def _signals(value: object) -> tuple[str, ...]:
 
 
 class AttachedSwarmRuntime:
-    """Assemble discovery, exchange, and the isolated peer-claim trust boundary."""
-
     def __init__(
         self,
         config: SwarmRuntimeConfig,
@@ -397,7 +381,7 @@ class AttachedSwarmRuntime:
                 getattr(config, "claim_schema_versions", ("runner-v1",))
             ),
         )
-        self.transport: SwarmTransport = self.router.swarm_transport  # type: ignore[attr-defined]
+        self.transport: SwarmTransport = self.router.swarm_transport
         self.last_bootstrap_results: tuple[BootstrapResult, ...] = ()
 
     @classmethod
@@ -442,7 +426,6 @@ class AttachedSwarmRuntime:
             raise
 
     def receive_peer_claim(self, received: ReceivedPeerClaim) -> bool:
-        """Persist a verified claim as peer context, never as provider evidence."""
 
         self._revalidate_alpha_pack(at=received.received_at)
         if self._peer_is_banned(
@@ -480,7 +463,6 @@ class AttachedSwarmRuntime:
         verified_claim_source_families: tuple[str, ...],
         verification_source_families: tuple[str, ...],
     ) -> ClaimOutcomeRecord:
-        """Persist an outcome measured locally for one verified remote observation."""
 
         return self.local_trust_store.record_outcome(
             signed_claim,
@@ -491,7 +473,6 @@ class AttachedSwarmRuntime:
         )
 
     def peer_reputation(self, peer_node_id: str) -> PeerReputation:
-        """Score a peer only from this node's durable local outcome history."""
 
         return self.local_trust_store.score(peer_node_id, self._reputation_policy())
 
@@ -503,7 +484,6 @@ class AttachedSwarmRuntime:
         verified_evidence_ids: tuple[str, ...],
         at: datetime | None = None,
     ) -> RemoteClaimAssessment:
-        """Assess remote evidence as context only; it can never execute a trade."""
 
         self._revalidate_alpha_pack(at=at)
         pack = self.signed_alpha_pack.pack if self.signed_alpha_pack is not None else None
@@ -595,7 +575,6 @@ class AttachedSwarmRuntime:
         return self.local_trust_store.resolve_node_id(node_id)
 
     def _peer_is_banned(self, node_id: str, *, at: datetime | None) -> bool:
-        """Apply a local ban to every identity in an accepted rotation chain."""
 
         return any(
             self.peer_store.is_banned(candidate, at=at)
@@ -651,7 +630,6 @@ class AttachedSwarmRuntime:
             raise
 
     def refresh_bootstraps(self, *, at: datetime | None = None) -> tuple[BootstrapResult, ...]:
-        """Discover and negotiate every configured seed without trusting membership."""
 
         self._revalidate_alpha_pack(at=at, reload_file=True)
         results: list[BootstrapResult] = []
@@ -728,7 +706,6 @@ class AttachedSwarmRuntime:
         *,
         at: datetime | None = None,
     ) -> SignedClaimV1:
-        """Turn one local scanner row into a signed, provider-safe observation."""
 
         issued_at = normalize_utc(at or datetime.now(UTC), field_name="claim issued_at")
         observed_at = _row_time(row.get("captured_at"), issued_at)
@@ -803,7 +780,6 @@ class AttachedSwarmRuntime:
         *,
         at: datetime | None = None,
     ) -> ClaimPublishSummary:
-        """Sign top scanner rows and fan them out to currently negotiated peers."""
 
         selected = tuple(rows[: self.config.max_claims_per_scan])
         claims: list[SignedClaimV1] = []

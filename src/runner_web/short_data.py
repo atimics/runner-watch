@@ -140,8 +140,6 @@ def _default_transport(url: str, headers: dict[str, str], timeout: float) -> Any
 
 
 class FintelShortDataClient:
-    """Read Fintel's documented short-interest and borrow endpoints."""
-
     def __init__(
         self,
         api_key: str,
@@ -316,7 +314,7 @@ class FintelShortDataClient:
                 ticker = futures[future]
                 try:
                     result = future.result()
-                except Exception as exc:  # one ticker must not break a scan
+                except Exception as exc:
                     warnings.append(f"Fintel short-data lookup failed for {ticker}: {exc}")
                     continue
                 attempts.extend(result.fetches)
@@ -348,7 +346,7 @@ def load_cached_short_data(tickers: list[str]) -> dict[str, ShortData]:
         rows = database.execute(
             f"""
             SELECT * FROM short_data_cache WHERE ticker IN ({placeholders})
-            """,  # noqa: S608
+            """,
             unique,
         ).fetchall()
     return {
@@ -457,16 +455,17 @@ def short_data_for_scan(
     fetch_recorder: SourceFetchRecorder | None = None,
     api_key: str | None = None,
 ) -> ShortDataScanResult:
-    """Return cached positioning data and refresh the displayed scan rows."""
 
     checked_at = (as_of or datetime.now(UTC)).astimezone(UTC)
     unique = list(dict.fromkeys(ticker.strip().upper() for ticker in tickers if ticker.strip()))
     cached = load_cached_short_data(unique)
     resolved_api_key = (api_key or os.getenv("FINTEL_API_KEY", "")).strip()
-    source_enabled = (
-        os.getenv("FINTEL_SHORT_DATA_ENABLED", "true").strip().lower()
-        not in {"0", "false", "no", "off"}
-    )
+    source_enabled = os.getenv("FINTEL_SHORT_DATA_ENABLED", "true").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
     configured = source_enabled and (client is not None or bool(resolved_api_key))
     if not configured:
         return ShortDataScanResult(
@@ -506,9 +505,7 @@ def short_data_for_scan(
         fetch_recorder=fetch_recorder,
     )
     fresh, raw_warnings = active_client.fetch_many(stale)
-    merged = {
-        ticker: _merge_short_data(cached.get(ticker), row) for ticker, row in fresh.items()
-    }
+    merged = {ticker: _merge_short_data(cached.get(ticker), row) for ticker, row in fresh.items()}
     store_short_data(merged)
     cached.update(merged)
     available_fresh = sum(row.available for row in fresh.values())

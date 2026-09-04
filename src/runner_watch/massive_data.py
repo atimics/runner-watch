@@ -1,25 +1,3 @@
-"""Massive daily bar provider.
-
-Massive (https://massive.com) exposes a Polygon-shaped REST API. The grouped
-daily endpoint returns one day of OHLCV bars for every listed US stock in a
-single request, so one call per trading session covers the whole scanner
-universe. The Bars Basic plan is end-of-day with about 5 calls per minute, so
-this module keeps a local SQLite cache of grouped sessions and bounds how many
-uncached sessions a scan-time fetch may backfill before it fails and lets the
-provider registry fall back to Yahoo.
-
-Environment:
-
-- MASSIVE_API_KEY: enables the provider when present.
-- MASSIVE_ENABLED: set to a false value to disable without removing the key.
-- MASSIVE_CALLS_PER_MINUTE: token bucket size/refill, default 5 (Basic plan).
-- MASSIVE_MAX_SCAN_CALLS: uncached-session budget per scan-time fetch, default 10.
-- MASSIVE_CACHE_PATH: SQLite cache location, default data/massive_daily.sqlite3.
-- MASSIVE_TIMEOUT_SECONDS: per-request HTTP timeout, default 15.
-- MASSIVE_BACKFILL_CALLS: uncached-session budget for each worker warm-up pass,
-  default 20. A warm cache makes no calls.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -67,11 +45,11 @@ _PERIOD_DAYS = {
 
 
 class MassiveAPIError(RuntimeError):
-    """Raised when Massive cannot serve a request cleanly."""
+    pass
 
 
 class MassiveRateLimitError(MassiveAPIError):
-    """Raised when honoring the rate limit would block the caller too long."""
+    pass
 
 
 def massive_api_key() -> str:
@@ -111,7 +89,7 @@ def massive_timeout_seconds() -> float:
 
 
 def massive_backfill_calls() -> int:
-    """Uncached-session budget for one worker warm-up pass."""
+
     try:
         return max(0, int(os.getenv("MASSIVE_BACKFILL_CALLS", "20").strip() or "20"))
     except ValueError:
@@ -119,7 +97,7 @@ def massive_backfill_calls() -> int:
 
 
 def _weekdays(start: date, end: date) -> list[date]:
-    """Inclusive list of weekday dates between start and end."""
+
     output: list[date] = []
     current = start
     while current <= end:
@@ -130,7 +108,7 @@ def _weekdays(start: date, end: date) -> list[date]:
 
 
 def _session_dates(period: str | None, today_et: date) -> list[date]:
-    """Completed weekday sessions covered by a yfinance-style period string."""
+
     days = _PERIOD_DAYS.get((period or "1y").strip(), 365)
     start = today_et - timedelta(days=days)
     return _weekdays(start, today_et - timedelta(days=1))
@@ -145,8 +123,6 @@ def _finite(value: Any) -> float | None:
 
 
 class RateLimiter:
-    """Thread-safe token bucket sized for the Massive plan's call rate."""
-
     def __init__(self, calls_per_minute: int = 5) -> None:
         if calls_per_minute < 1:
             raise ValueError("calls_per_minute must be at least 1")
@@ -197,8 +173,6 @@ CREATE TABLE IF NOT EXISTS rate_limit (
 
 
 class MassiveDailyCache:
-    """SQLite store of grouped daily sessions, shared by adapter instances."""
-
     def __init__(self, path: str | Path | None = None) -> None:
         self._path = Path(path) if path is not None else massive_cache_path()
         self._lock = threading.Lock()
@@ -223,12 +197,7 @@ class MassiveDailyCache:
     def acquire_call_slot(
         self, min_interval_seconds: float, max_wait_seconds: float = 300.0
     ) -> None:
-        """Reserve one API call slot across every process sharing this cache.
 
-        The worker daemon and a manual backfill both rate-limit separately in
-        memory, so they can exceed the plan limit together. This SQLite slot
-        spreads calls at least `min_interval_seconds` apart machine-wide.
-        """
         deadline = time.monotonic() + max_wait_seconds
         while True:
             try:
@@ -382,8 +351,6 @@ class MassiveDailyCache:
 
 
 class MassiveClient:
-    """Minimal Massive REST client for the grouped daily endpoint."""
-
     def __init__(
         self,
         api_key: str,
@@ -408,11 +375,10 @@ class MassiveClient:
             return
         try:
             self.fetch_recorder(fetch)
-        except Exception:  # ingestion must not break live quotes
+        except Exception:
             pass
 
     def _safe_error(self, error: object) -> str:
-        """Return provider errors without ever repeating the API key."""
 
         message = str(error)
         encoded_key = urllib.parse.quote(self.api_key)
@@ -422,7 +388,7 @@ class MassiveClient:
         return message
 
     def _reserve_call(self) -> None:
-        """Apply both the in-process bucket and the machine-wide slot."""
+
         self.limiter.acquire()
         if self.shared_cache is not None:
             self.shared_cache.acquire_call_slot(60.0 / self.calls_per_minute)
@@ -438,8 +404,6 @@ class MassiveClient:
             if body is not None:
                 return self._parse_grouped_daily(session, safe_locator, body)
             if attempt + 1 < attempts:
-                # Back off hard before the retry; other processes on this
-                # machine share the plan's call budget.
                 time.sleep(60.0 * (attempt + 1))
         raise MassiveAPIError(
             f"Massive kept returning HTTP 429 for {session} after {attempts} attempts"
@@ -448,7 +412,7 @@ class MassiveClient:
     def _grouped_daily_request(
         self, session: date, safe_locator: str, request_url: str
     ) -> bytes | None:
-        """Issue one grouped daily request; None means retry on rate limit."""
+
         started_at = datetime.now(UTC)
         request = urllib.request.Request(request_url, headers={"User-Agent": USER_AGENT})
         try:
@@ -467,8 +431,7 @@ class MassiveClient:
             )
             if exc.code == 429:
                 return None
-            # HTTPError retains the full request URL, including credentials.
-            # Do not attach it as a printable exception cause.
+
             raise MassiveAPIError(f"Massive returned HTTP {exc.code} for {session}") from None
         except urllib.error.URLError as exc:
             safe_error = self._safe_error(exc.reason)
@@ -482,11 +445,8 @@ class MassiveClient:
                     metadata={"session": session.isoformat()},
                 )
             )
-            # URLError reasons can repeat the full URL. The safe outer error is
-            # enough for operators and keeps tracebacks free of credentials.
-            raise MassiveAPIError(
-                f"Could not reach Massive for {session}: {safe_error}"
-            ) from None
+
+            raise MassiveAPIError(f"Could not reach Massive for {session}: {safe_error}") from None
 
     def _parse_grouped_daily(
         self, session: date, safe_locator: str, body: bytes
@@ -510,8 +470,6 @@ class MassiveClient:
         status = payload.get("status")
         results = payload.get("results")
         if status == "OK" and results is None:
-            # Market holidays return no results; cache them as empty sessions
-            # so they are not refetched on every scan.
             results = []
         if status != "OK" or not isinstance(results, list):
             self._record(
@@ -546,8 +504,6 @@ class MassiveClient:
 
 
 class MassiveBarAdapter:
-    """Provider adapter serving daily bars from the grouped daily cache."""
-
     name = "massive"
     capabilities = frozenset({DataKind.BARS})
 
@@ -668,7 +624,7 @@ def massive_bar_adapter(
     fetch_recorder: SourceFetchRecorder | None = None,
     api_key: str | None = None,
 ) -> MassiveBarAdapter | None:
-    """Build the Massive adapter from an injected key or the environment."""
+
     key = (api_key or massive_api_key()).strip()
     if not massive_enabled(key):
         return None
@@ -699,7 +655,7 @@ def backfill_daily_cache(
     prune_days: int | None = 730,
     progress: ProgressCallback | None = None,
 ) -> dict[str, int]:
-    """Warm the grouped daily cache for `days` of weekday sessions."""
+
     today = today_et or datetime.now(UTC).astimezone(EASTERN).date()
     if prune_days:
         cache.prune_before(today - timedelta(days=prune_days))
@@ -725,15 +681,11 @@ def backfill_daily_cache(
 
 
 def refresh_massive_backfill() -> dict[str, int | bool]:
-    """Warm the daily cache from the environment for the worker loop.
 
-    Makes no API calls when the cache is already warm. Returns stats for the
-    worker heartbeat state and closes its cache connection after each pass.
-    """
     if not massive_enabled():
         return {"enabled": False}
     adapter = massive_bar_adapter()
-    if adapter is None:  # pragma: no cover - enabled() guarantees a key
+    if adapter is None:
         return {"enabled": False}
     try:
         return backfill_daily_cache(
@@ -764,7 +716,7 @@ def main() -> int:
         print("Massive is not enabled; set MASSIVE_API_KEY to use it.")
         return 1
     adapter = massive_bar_adapter()
-    if adapter is None:  # pragma: no cover - enabled() guarantees a key
+    if adapter is None:
         print("Massive is not enabled; set MASSIVE_API_KEY to use it.")
         return 1
     with adapter:

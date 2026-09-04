@@ -1,5 +1,3 @@
-"""Signed, compact node discovery manifests for the RATi swarm."""
-
 from __future__ import annotations
 
 import re
@@ -49,7 +47,7 @@ _VERSION_PATTERN = re.compile(
 
 
 class ManifestVerificationError(ValueError):
-    """Raised when a signed manifest cannot be trusted."""
+    pass
 
 
 def _to_utc(value: datetime, *, field_name: str) -> datetime:
@@ -79,14 +77,11 @@ def _validate_version(value: str, *, field_name: str) -> str:
 
 
 def public_key_base64(public_key: Ed25519PublicKey) -> str:
-    """Return a public key as canonical unpadded URL-safe base64."""
 
     return public_key_text(public_key)
 
 
 class VersionedDeclaration(SwarmModel):
-    """A named capability or payload schema and its semantic version."""
-
     name: str = Field(min_length=1, max_length=64)
     version: str = Field(min_length=5, max_length=64)
 
@@ -102,8 +97,6 @@ class VersionedDeclaration(SwarmModel):
 
 
 class NodeEndpoint(SwarmModel):
-    """One public transport address advertised by a node."""
-
     transport: Literal["https", "wss", "libp2p"]
     address: str = Field(min_length=1, max_length=512)
 
@@ -135,8 +128,6 @@ class NodeEndpoint(SwarmModel):
 
 
 class NodeManifest(SwarmModel):
-    """Unsigned discovery content whose canonical bytes are signed by its node."""
-
     message_type: Literal["rati.node_manifest"] = MANIFEST_TYPE
     protocol_version: Literal["1"] = PROTOCOL_VERSION
     node_id: str = Field(min_length=74, max_length=74)
@@ -222,7 +213,6 @@ class NodeManifest(SwarmModel):
         return self
 
     def canonical_bytes(self) -> bytes:
-        """Return the stable JSON bytes used for hashing and signing."""
 
         return canonical_json_bytes(self)
 
@@ -232,8 +222,6 @@ class NodeManifest(SwarmModel):
 
 
 class SignedNodeManifest(SwarmModel):
-    """Wire envelope for a node manifest, its content ID, and its signature."""
-
     manifest: NodeManifest
     content_id: str = Field(min_length=71, max_length=71)
     signature_algorithm: Literal["ed25519"] = SIGNATURE_ALGORITHM
@@ -253,7 +241,6 @@ class SignedNodeManifest(SwarmModel):
         return value
 
     def canonical_bytes(self) -> bytes:
-        """Return compact, sorted JSON suitable for publication or exchange."""
 
         return canonical_json_bytes(self)
 
@@ -279,7 +266,6 @@ class SignedNodeManifest(SwarmModel):
 def sign_node_manifest(
     manifest: NodeManifest, private_key: Ed25519PrivateKey
 ) -> SignedNodeManifest:
-    """Sign a manifest with the private key belonging to its advertised identity."""
 
     signer_public_key = public_key_base64(private_key.public_key())
     if signer_public_key != manifest.public_key:
@@ -298,12 +284,10 @@ def verify_signed_node_manifest(
     at: datetime | None = None,
     clock_skew: timedelta = DEFAULT_CLOCK_SKEW,
 ) -> NodeManifest:
-    """Verify identity, content hash, signature, and the validity window."""
 
     if clock_skew < timedelta(0):
         raise ValueError("clock_skew cannot be negative")
-    # Manifest fields use whole seconds on the wire. The receiver's wall clock
-    # normally has sub-second precision and must not be rejected for that.
+
     checked_at = normalize_utc(at or datetime.now(UTC), field_name="at")
     manifest = signed.manifest
 

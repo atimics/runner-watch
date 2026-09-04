@@ -1,5 +1,3 @@
-"""Safe HTTPS discovery and bounded HTTP exchange for RATi swarm peers."""
-
 from __future__ import annotations
 
 import http.client
@@ -59,16 +57,14 @@ _BLOCKED_HOST_SUFFIXES = (".home", ".internal", ".lan", ".local", ".localhost")
 
 
 class DiscoveryError(ValueError):
-    """A peer discovery URL or response failed the safe-fetch policy."""
+    pass
 
 
 class PeerExchangeError(ValueError):
-    """A peer message failed identity, compatibility, or signature checks."""
+    pass
 
 
 class PeerClaimRejected(PeerExchangeError):
-    """Local peer policy rejected an otherwise transport-valid claim."""
-
     def __init__(self, message: str, *, status_code: int) -> None:
         if status_code not in {403, 429}:
             raise ValueError("Peer claim rejection status must be 403 or 429")
@@ -87,8 +83,6 @@ def _normalize_topic(value: str) -> str:
 
 
 class PeerNegotiationRequest(SwarmModel):
-    """A signed peer manifest plus the topics it wants for this connection."""
-
     peer_manifest: SignedNodeManifest
     requested_topics: Annotated[tuple[str, ...], Field(min_length=1, max_length=64)]
 
@@ -102,8 +96,6 @@ class PeerNegotiationRequest(SwarmModel):
 
 
 class PeerNegotiationResponse(SwarmModel):
-    """The exact intersection accepted by the receiving node."""
-
     protocol_version: Literal["1"] = PROTOCOL_VERSION
     local_node_id: Annotated[str, Field(pattern=NODE_ID_PATTERN.pattern)]
     peer_node_id: Annotated[str, Field(pattern=NODE_ID_PATTERN.pattern)]
@@ -125,8 +117,6 @@ class PeerNegotiationResponse(SwarmModel):
 
 
 class ClaimExchangeRequest(SwarmModel):
-    """A signed peer identity and signed claim routed under one negotiated topic."""
-
     topic: str
     peer_manifest: SignedNodeManifest
     signed_claim: SignedClaimV1
@@ -155,8 +145,6 @@ class ClaimExchangeReceipt(SwarmModel):
 
 @dataclass(frozen=True, slots=True)
 class ReceivedPeerClaim:
-    """Verified transport input that must remain outside trusted provider data."""
-
     topic: str
     peer_manifest: NodeManifest
     signed_claim: SignedClaimV1
@@ -164,8 +152,6 @@ class ReceivedPeerClaim:
 
 
 class PeerClaimInbox:
-    """A small replay filter and volatile inbox for untrusted peer claims."""
-
     def __init__(self, max_claims: int = DEFAULT_INBOX_SIZE) -> None:
         if not 1 <= max_claims <= 100_000:
             raise ValueError("max_claims must be between 1 and 100000")
@@ -175,7 +161,6 @@ class PeerClaimInbox:
         self._lock = threading.Lock()
 
     def receive(self, received: ReceivedPeerClaim) -> bool:
-        """Store once, evict oldest when full, and return whether it was new."""
 
         claim_id = received.signed_claim.claim_id
         with self._lock:
@@ -214,8 +199,6 @@ def _compatible_declarations(
             if peer_item.name == local_item.name and _declaration_major(
                 peer_item.version
             ) == _declaration_major(local_item.version):
-                # Report the local implementation. A shared major version means the
-                # peers can negotiate minor details without pretending they are equal.
                 compatible[(local_item.name, local_item.version)] = local_item
     return tuple(compatible[key] for key in sorted(compatible))
 
@@ -228,8 +211,6 @@ def _has_capability(manifest: NodeManifest, name: str) -> bool:
 
 
 class SwarmTransport:
-    """Verify discovery and claim traffic without making trading decisions."""
-
     def __init__(
         self,
         signed_manifest: SignedNodeManifest,
@@ -252,12 +233,7 @@ class SwarmTransport:
         return verify_signed_node_manifest(self.signed_manifest, at=self._clock())
 
     def replace_local_manifest(self, signed_manifest: SignedNodeManifest) -> None:
-        """Renew the local manifest without changing this runtime's node identity."""
 
-        # A renewal can arrive just after the previous manifest expires. Verify the
-        # stored manifest at its own issue time so its content hash, signature, and
-        # advertised identity are still authenticated without requiring it to remain
-        # current. The replacement itself must be valid now.
         current = verify_signed_node_manifest(
             self.signed_manifest,
             at=self.signed_manifest.manifest.issued_at,
@@ -395,7 +371,6 @@ def create_swarm_router(
     accepted_claim_schema_versions: frozenset[str] | None = None,
     clock: Callable[[], datetime] = _now,
 ) -> APIRouter:
-    """Build routes that runtime wiring can mount on a FastAPI application."""
 
     transport = SwarmTransport(
         signed_manifest,
@@ -441,8 +416,7 @@ def create_swarm_router(
             raise HTTPException(status_code=400, detail="Invalid peer claim") from error
         return _json_response(receipt, status_code=202)
 
-    # Runtime code can inspect the transport and its default inbox without a global registry.
-    router.swarm_transport = transport  # type: ignore[attr-defined]
+    router.swarm_transport = transport
     return router
 
 
@@ -499,7 +473,6 @@ def _validate_discovery_origin(
 
 
 def well_known_manifest_url(origin: str, *, allow_private_addresses: bool = False) -> str:
-    """Return the one allowed manifest URL for a permitted HTTPS origin."""
 
     parsed = _validate_discovery_origin(
         origin,
@@ -568,8 +541,6 @@ def _resolve_addresses(
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
-    """Connect to pre-checked DNS answers while keeping TLS SNI and Host intact."""
-
     def __init__(
         self,
         host: str,
@@ -706,7 +677,6 @@ def fetch_signed_manifest(
     resolver: Callable[..., list[tuple[Any, ...]]] = socket.getaddrinfo,
     requester: Callable[..., bytes] | None = None,
 ) -> SignedNodeManifest:
-    """Fetch and verify a manifest; private targets require an explicit opt-in."""
 
     _validate_timeout(timeout_seconds)
     url = well_known_manifest_url(
@@ -770,7 +740,6 @@ def negotiate_with_peer(
     resolver: Callable[..., list[tuple[Any, ...]]] = socket.getaddrinfo,
     requester: Callable[..., bytes] | None = None,
 ) -> PeerNegotiationResponse:
-    """Negotiate topics over pinned HTTPS and verify the peer's bounded response."""
 
     _validate_timeout(timeout_seconds)
     checked_local = verify_signed_node_manifest(local_manifest, at=at)
@@ -837,7 +806,6 @@ def post_claim_to_peer(
     resolver: Callable[..., list[tuple[Any, ...]]] = socket.getaddrinfo,
     requester: Callable[..., bytes] | None = None,
 ) -> ClaimExchangeReceipt:
-    """Post one signed claim over pinned HTTPS and verify its bounded receipt."""
 
     _validate_timeout(timeout_seconds)
     checked_local = verify_signed_node_manifest(local_manifest, at=at)

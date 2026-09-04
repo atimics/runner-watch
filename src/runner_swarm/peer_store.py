@@ -1,5 +1,3 @@
-"""Bounded, local-only storage and safety policy for untrusted peer claims."""
-
 from __future__ import annotations
 
 import re
@@ -19,7 +17,7 @@ _CLAIM_ID_PATTERN = re.compile(CLAIM_ID_PATTERN)
 
 
 class PeerStoreError(RuntimeError):
-    """The local peer store could not complete an operation."""
+    pass
 
 
 class ClaimState(StrEnum):
@@ -39,8 +37,6 @@ class IngestOutcome(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class PeerStoreLimits:
-    """Local resource limits. They are not part of the signed wire protocol."""
-
     claims_per_window: int = 120
     rate_window: timedelta = timedelta(minutes=1)
     max_claims: int = 10_000
@@ -202,13 +198,6 @@ def _claim_id(value: str) -> str:
 
 
 class PeerClaimStore:
-    """A dedicated SQLite trust boundary for signed, untrusted peer claims.
-
-    This store deliberately has no connection to runner_web's database layer or
-    provider evidence tables. Runtime code can read current peer statements here,
-    then apply its own reputation and risk policy before using them.
-    """
-
     def __init__(
         self,
         path: str | Path = DEFAULT_PEER_STORE_PATH,
@@ -244,7 +233,6 @@ class PeerClaimStore:
         topic: str,
         received_at: datetime | None = None,
     ) -> IngestResult:
-        """Parse, authenticate, and store one canonical signed wire message."""
 
         return self.ingest(
             SignedClaimV1.from_wire_bytes(wire_bytes),
@@ -259,7 +247,6 @@ class PeerClaimStore:
         topic: str,
         received_at: datetime | None = None,
     ) -> IngestResult:
-        """Authenticate and admit one claim under local safety policy."""
 
         checked_at = _utc(received_at)
         normalized_topic = _topic(topic)
@@ -381,7 +368,6 @@ class PeerClaimStore:
         at: datetime | None = None,
         limit: int = 500,
     ) -> tuple[StoredPeerClaim, ...]:
-        """Return current, locally allowed claims; never provider records."""
 
         if limit < 1 or limit > 5_000:
             raise ValueError("limit must be between 1 and 5000")

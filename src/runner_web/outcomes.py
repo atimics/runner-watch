@@ -80,7 +80,6 @@ def _state(key: str, value: str, timestamp: str) -> None:
 
 
 def refresh_outcomes(at: datetime | None = None) -> dict[str, Any]:
-    """Sample later prices so filing scores can be judged against real outcomes."""
 
     current = at or datetime.now(UTC)
     timestamp = iso(current)
@@ -110,8 +109,7 @@ def refresh_outcomes(at: datetime | None = None) -> dict[str, Any]:
         if horizons:
             pending.append((row, horizons))
     tickers = [str(row["ticker"]) for row, _ in pending]
-    # Fetching also records the newest bars. Outcomes themselves always come
-    # from the archived bar nearest their own horizon.
+
     _latest_prices(tickers)
     prices = _bar_prices(tickers)
 
@@ -142,7 +140,7 @@ def refresh_outcomes(at: datetime | None = None) -> dict[str, Any]:
                 continue
             assignments = ",".join(f"{column}=?" for column in changes)
             db.execute(
-                f"UPDATE sec_outcomes SET {assignments} WHERE accession=?",  # noqa: S608
+                f"UPDATE sec_outcomes SET {assignments} WHERE accession=?",
                 (*changes.values(), row["accession"]),
             )
         labeled = int(
@@ -182,7 +180,7 @@ def _bar_prices(tickers: list[str]) -> dict[str, list[Bar]]:
             WHERE source='yahoo' AND interval='5m' AND close>0
                   AND ticker IN ({placeholders})
             ORDER BY ticker,bar_time
-            """,  # noqa: S608
+            """,
             unique,
         ).fetchall()
     output: dict[str, list[Bar]] = {}
@@ -210,7 +208,6 @@ def _first_price_at_or_after(bars: list[Bar], target: datetime) -> tuple[float, 
 
 
 def _price_near_target(bars: list[Bar], target: datetime) -> tuple[float, datetime] | None:
-    """Use a nearby bar, but never jump across a closed-session gap."""
 
     target_utc = target.astimezone(UTC)
     after = next(
@@ -251,7 +248,6 @@ def _scan_horizon_price(
 
 
 def barrier_outcome(bars: list[Bar], base_at: datetime, base_price: float) -> dict[str, Any] | None:
-    """Label whether +8% or -4% was touched first during the next 60 minutes."""
 
     base_utc = base_at.astimezone(UTC)
     target = base_utc + BARRIER_HORIZON
@@ -281,8 +277,6 @@ def barrier_outcome(bars: list[Bar], base_at: datetime, base_price: float) -> di
         touched_up = high >= upper
         touched_down = low <= lower
         if touched_up and touched_down:
-            # A 5-minute OHLC bar does not reveal which happened first. Treat
-            # it as a loss so training cannot benefit from hidden optimism.
             result.update(
                 barrier_label="down",
                 barrier_hit_at=iso(stamp),
@@ -304,8 +298,6 @@ def barrier_outcome(bars: list[Bar], base_at: datetime, base_price: float) -> di
             )
             return result
 
-    # A timeout is valid only when bars cover the start and end of the window.
-    # This avoids treating an overnight or halted gap as a calm hour.
     if target - previous <= BAR_TOLERANCE:
         result.update(barrier_label="timeout", barrier_hit_at=None, barrier_ambiguous=0)
         return result
@@ -320,7 +312,6 @@ def case_horizon_outcome(
     *,
     at: datetime | None = None,
 ) -> dict[str, Any] | None:
-    """Measure a case at its own horizon without reading bars after that point."""
 
     current = (at or datetime.now(UTC)).astimezone(UTC)
     base_utc = base_at.astimezone(UTC)
@@ -370,7 +361,6 @@ def _horizon_label(minutes: int) -> str:
 
 
 def refresh_case_outcomes(at: datetime | None = None) -> dict[str, Any]:
-    """Close personal views only when archived prices cover their own horizon."""
 
     current = (at or datetime.now(UTC)).astimezone(UTC)
     timestamp = iso(current)
@@ -512,7 +502,6 @@ def refresh_case_outcomes(at: datetime | None = None) -> dict[str, Any]:
 
 
 def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
-    """Label scan rows from archived bars without looking beyond each horizon."""
 
     current = at or datetime.now(UTC)
     timestamp = iso(current)
@@ -562,7 +551,7 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
             pending.append((row, horizons, barrier_due))
 
     tickers = [str(row["ticker"]) for row, _, _ in pending]
-    # This refresh also archives the newest 5-minute bars through the recorder.
+
     _latest_prices(tickers)
     prices = _bar_prices(tickers)
 
@@ -605,7 +594,7 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
                 continue
             assignments = ",".join(f"{column}=?" for column in changes)
             db.execute(
-                f"UPDATE scan_outcomes SET {assignments} WHERE snapshot_id=?",  # noqa: S608
+                f"UPDATE scan_outcomes SET {assignments} WHERE snapshot_id=?",
                 (*changes.values(), row["snapshot_id"]),
             )
             if changes.get("barrier_label"):

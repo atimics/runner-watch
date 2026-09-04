@@ -131,9 +131,7 @@ def test_privacy_screen_heading_matches_the_template() -> None:
     assert re.fullmatch(privacy_screen.heading, heading.group(1))
 
 
-def test_public_screen_data_reuses_warmed_payload(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_public_screen_data_reuses_warmed_payload(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "public-screen-cache.db")
     monkeypatch.setattr(web_main, "shared_cache_get", lambda _name: None)
     monkeypatch.setattr(web_main, "shared_cache_set", lambda *_args: None)

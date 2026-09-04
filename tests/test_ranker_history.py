@@ -31,11 +31,7 @@ def test_default_replay_cadence_can_fill_the_training_window() -> None:
 
 
 def test_replay_times_only_cover_regular_market_hours() -> None:
-    frames = {
-        "AAA": pd.DataFrame(
-            index=pd.to_datetime(["2026-08-19T13:30:00Z"], utc=True)
-        )
-    }
+    frames = {"AAA": pd.DataFrame(index=pd.to_datetime(["2026-08-19T13:30:00Z"], utc=True))}
 
     points = _replay_times(
         frames,
@@ -215,14 +211,11 @@ def test_historical_replay_writes_only_compact_point_in_time_rows(
     assert result["rows_written"] == 3
     assert write_attempts == 2
     assert any(
-        event.get("stage") == "loading_5m_bars"
-        and event.get("tickers_loaded") == 3
+        event.get("stage") == "loading_5m_bars" and event.get("tickers_loaded") == 3
         for event in progress
     )
     with connection() as database:
-        rows = database.execute(
-            "SELECT * FROM ranker_training_examples ORDER BY ticker"
-        ).fetchall()
+        rows = database.execute("SELECT * FROM ranker_training_examples ORDER BY ticker").fetchall()
         public_counts = {
             table: database.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             for table in ("scan_runs", "scan_snapshots", "pulse_entries")
@@ -293,9 +286,7 @@ def test_historical_replay_is_idempotent_and_respects_dry_run(
     )
     assert dry_run["groups_written"] == 1
     with connection() as database:
-        assert database.execute(
-            "SELECT COUNT(*) FROM ranker_training_examples"
-        ).fetchone()[0] == 0
+        assert database.execute("SELECT COUNT(*) FROM ranker_training_examples").fetchone()[0] == 0
 
     first = backfill_historical_training(
         target_groups=1,

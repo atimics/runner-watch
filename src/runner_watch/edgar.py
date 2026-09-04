@@ -21,12 +21,9 @@ from runner_watch.xml_security import read_limited, safe_xml_fromstring
 SEC_BASE = "https://www.sec.gov"
 COMPANY_MAP_URL = f"{SEC_BASE}/files/company_tickers_exchange.json"
 LATEST_FILINGS_URL = (
-    f"{SEC_BASE}/cgi-bin/browse-edgar?"
-    "action=getcurrent&count=100&output=atom&owner=include"
+    f"{SEC_BASE}/cgi-bin/browse-edgar?action=getcurrent&count=100&output=atom&owner=include"
 )
-SEC_USER_AGENT = os.getenv(
-    "SEC_USER_AGENT", "RunnerWatch/0.2 https://stonks.rati.foundation"
-)
+SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "RunnerWatch/0.2 https://stonks.rati.foundation")
 ATOM = {"atom": "http://www.w3.org/2005/Atom"}
 ACCESSION_RE = re.compile(r"accession-number=([0-9-]+)")
 TITLE_CIK_RE = re.compile(r"\((\d{6,10})\)\s+\((Issuer|Filer|Subject|Reporting)\)")
@@ -82,8 +79,6 @@ class BeneficialOwnershipSummary:
 
 
 class EdgarClient:
-    """Small, rate-limited client for public SEC EDGAR data."""
-
     def __init__(
         self,
         user_agent: str = SEC_USER_AGENT,
@@ -115,7 +110,6 @@ class EdgarClient:
         try:
             self.fetch_recorder(fetch)
         except Exception:
-            # Collection is best effort and must not block the SEC listener.
             pass
 
     def _get(self, url: str) -> bytes:
@@ -132,7 +126,7 @@ class EdgarClient:
             if wait > 0:
                 time.sleep(wait)
             try:
-                with urllib.request.urlopen(request, timeout=35) as response:  # noqa: S310
+                with urllib.request.urlopen(request, timeout=35) as response:
                     body = read_limited(response, max_bytes=MAX_SEC_RESPONSE_BYTES)
                 self._last_request = time.monotonic()
                 stripped = body.lstrip()
@@ -158,7 +152,6 @@ class EdgarClient:
                     try:
                         self.recorder(url, body)
                     except Exception:
-                        # Archival is best effort and must not block the SEC listener.
                         pass
                 return body
             except (TimeoutError, urllib.error.URLError) as exc:
@@ -221,9 +214,7 @@ class EdgarClient:
         ]
         for name in xml_names:
             try:
-                summary = parse_beneficial_ownership_xml(
-                    self.get_text(f"{directory_url}/{name}")
-                )
+                summary = parse_beneficial_ownership_xml(self.get_text(f"{directory_url}/{name}"))
                 if summary is not None:
                     return summary
             except (OSError, ValueError, DefusedElementTree.ParseError):
@@ -231,7 +222,6 @@ class EdgarClient:
         return None
 
     def archive_primary_filing(self, filing: EdgarFiling) -> str | None:
-        """Fetch one primary filing document so later reports can use its full text."""
 
         directory_url = filing_directory_url(filing.filing_url)
         index = self.get_json(f"{directory_url}/index.json")
@@ -310,10 +300,7 @@ def filing_directory_url(filing_url: str) -> str:
     return f"{SEC_BASE}{directory}"
 
 
-def primary_filing_document_names(
-    index: dict[str, Any], accession: str
-) -> list[str]:
-    """Prefer the SEC full-submission text, then likely primary HTML documents."""
+def primary_filing_document_names(index: dict[str, Any], accession: str) -> list[str]:
 
     items = index.get("directory", {}).get("item", [])
     names = [str(item.get("name") or "") for item in items]
@@ -349,9 +336,7 @@ def parse_ownership_xml(text: str) -> OwnershipSummary:
     root = safe_xml_fromstring(text)
     issuer_cik = int(root.findtext("./issuer/issuerCik", default="0"))
     ticker = root.findtext("./issuer/issuerTradingSymbol", default="").strip().upper()
-    owner_name = root.findtext(
-        "./reportingOwner/reportingOwnerId/rptOwnerName", default=""
-    ).strip()
+    owner_name = root.findtext("./reportingOwner/reportingOwnerId/rptOwnerName", default="").strip()
     owner_cik_text = root.findtext(
         "./reportingOwner/reportingOwnerId/rptOwnerCik", default=""
     ).strip()
@@ -457,11 +442,6 @@ def _first_number(values: list[str]) -> float | None:
 
 
 def parse_beneficial_ownership_xml(text: str) -> BeneficialOwnershipSummary | None:
-    """Read common structured Schedule 13D/G ownership fields.
-
-    SEC schedule schemas have changed over time, so matching uses local tag
-    names and accepts the common variants instead of assuming one namespace.
-    """
 
     root = safe_xml_fromstring(text)
     values: dict[str, list[str]] = {}
@@ -487,30 +467,16 @@ def parse_beneficial_ownership_xml(text: str) -> BeneficialOwnershipSummary | No
     }
     type_tags = {"typeofreportingperson", "reportingpersontype"}
     owners = tuple(
-        dict.fromkeys(
-            value[:200]
-            for tag in owner_tags
-            for value in values.get(tag, [])
-            if value
-        )
+        dict.fromkeys(value[:200] for tag in owner_tags for value in values.get(tag, []) if value)
     )
     percentages = [
-        number
-        for tag in percent_tags
-        if (number := _first_number(values.get(tag, []))) is not None
+        number for tag in percent_tags if (number := _first_number(values.get(tag, []))) is not None
     ]
     shares = [
-        number
-        for tag in share_tags
-        if (number := _first_number(values.get(tag, []))) is not None
+        number for tag in share_tags if (number := _first_number(values.get(tag, []))) is not None
     ]
     person_types = tuple(
-        dict.fromkeys(
-            value[:40]
-            for tag in type_tags
-            for value in values.get(tag, [])
-            if value
-        )
+        dict.fromkeys(value[:40] for tag in type_tags for value in values.get(tag, []) if value)
     )
     if not owners and not percentages and not shares:
         return None

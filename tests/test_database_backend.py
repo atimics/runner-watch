@@ -16,8 +16,7 @@ from runner_web.database import initialize_sqlite, open_database, postgres_state
 
 def test_postgres_statement_converts_placeholders_and_sqlite_types() -> None:
     statement = postgres_statement(
-        "INSERT OR IGNORE INTO samples(id,payload,note) "
-        "VALUES(?,?, 'keep ? quoted');"
+        "INSERT OR IGNORE INTO samples(id,payload,note) VALUES(?,?, 'keep ? quoted');"
     )
 
     assert statement == (
@@ -34,9 +33,10 @@ def test_postgres_statement_converts_placeholders_and_sqlite_types() -> None:
     assert postgres_statement("SELECT MIN(score,COALESCE(?,0)) FROM x") == (
         "SELECT LEAST(score,COALESCE(%s,0)) FROM x"
     )
-    assert postgres_statement(
-        "INSERT INTO x(id,note) VALUES(:id,':keep') RETURNING id::text"
-    ) == "INSERT INTO x(id,note) VALUES(%(id)s,':keep') RETURNING id::text"
+    assert (
+        postgres_statement("INSERT INTO x(id,note) VALUES(:id,':keep') RETURNING id::text")
+        == "INSERT INTO x(id,note) VALUES(%(id)s,':keep') RETURNING id::text"
+    )
 
 
 def test_public_daily_report_query_does_not_send_an_untyped_null_to_postgres(
@@ -141,12 +141,14 @@ def test_production_database_requires_an_encrypted_connection(
     assert db.database_url_with_required_tls("postgresql://db/app") == (
         "postgresql://db/app?sslmode=require"
     )
-    assert db.database_url_with_required_tls(
-        "postgresql://db/app?application_name=runner"
-    ) == "postgresql://db/app?application_name=runner&sslmode=require"
-    assert db.database_url_with_required_tls(
-        "postgresql://db/app?sslmode=verify-full"
-    ) == "postgresql://db/app?sslmode=verify-full"
+    assert (
+        db.database_url_with_required_tls("postgresql://db/app?application_name=runner")
+        == "postgresql://db/app?application_name=runner&sslmode=require"
+    )
+    assert (
+        db.database_url_with_required_tls("postgresql://db/app?sslmode=verify-full")
+        == "postgresql://db/app?sslmode=verify-full"
+    )
 
     monkeypatch.setattr(db, "DATABASE_URL", "postgresql://db/app?sslmode=disable")
     monkeypatch.setattr(db, "REQUIRE_DATABASE_TLS", True)

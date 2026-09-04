@@ -9,7 +9,6 @@ MIN_POLICY_OUTCOMES = RESEARCH_PROMOTION.learning_cases
 
 
 def _wilson_lower_bound(successes: int, total: int) -> float | None:
-    """Return the 95% Wilson lower bound for a binary accuracy result."""
 
     if total <= 0:
         return None
@@ -17,9 +16,7 @@ def _wilson_lower_bound(successes: int, total: int) -> float | None:
     proportion = successes / total
     denominator = 1.0 + z**2 / total
     center = proportion + z**2 / (2 * total)
-    margin = z * (
-        (proportion * (1.0 - proportion) + z**2 / (4 * total)) / total
-    ) ** 0.5
+    margin = z * ((proportion * (1.0 - proportion) + z**2 / (4 * total)) / total) ** 0.5
     return max(0.0, (center - margin) / denominator)
 
 
@@ -33,7 +30,6 @@ def _probability_up(view: str, confidence: float) -> float:
 
 
 def research_policy_scorecards() -> list[dict[str, Any]]:
-    """Compare real model-policy outputs only after their linked case resolves."""
 
     with connection() as db:
         rows = [
@@ -120,15 +116,11 @@ def research_policy_scorecards() -> list[dict[str, Any]]:
                 "tickers": tickers,
                 "accuracy": round(accuracy, 4) if accuracy is not None else None,
                 "accuracy_lower_bound": (
-                    round(accuracy_lower_bound, 4)
-                    if accuracy_lower_bound is not None
-                    else None
+                    round(accuracy_lower_bound, 4) if accuracy_lower_bound is not None else None
                 ),
                 "brier_score": round(brier, 4) if brier is not None else None,
                 "brier_skill_score": (
-                    round(100.0 * brier_skill, 2)
-                    if brier_skill is not None
-                    else None
+                    round(100.0 * brier_skill, 2) if brier_skill is not None else None
                 ),
                 "promotion_checks": promotion_checks,
                 "eligible_for_promotion": eligible,
@@ -155,9 +147,7 @@ def research_policy_scorecards() -> list[dict[str, Any]]:
         item["promotion_requirements"] = {
             "independent_cases": RESEARCH_PROMOTION.promotion_cases,
             "distinct_tickers": RESEARCH_PROMOTION.promotion_tickers,
-            "minimum_accuracy_lower_bound": (
-                RESEARCH_PROMOTION.minimum_accuracy_lower_bound
-            ),
+            "minimum_accuracy_lower_bound": (RESEARCH_PROMOTION.minimum_accuracy_lower_bound),
             "maximum_brier_score": RESEARCH_PROMOTION.maximum_brier_score,
         }
     return scorecards

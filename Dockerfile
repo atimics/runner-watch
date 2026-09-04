@@ -35,7 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-co
     && groupadd --system runner \
     && useradd --system --gid runner --home-dir /app --no-create-home runner
 
-COPY pyproject.toml uv.lock README.md LICENSE ./
+COPY pyproject.toml uv.lock LICENSE ./
 RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
 COPY web ./web
@@ -54,7 +54,6 @@ COPY scripts ./scripts
 COPY tests ./tests
 COPY cloudflare-router ./cloudflare-router
 COPY ml/sec-qwen/src ./ml/sec-qwen/src
-COPY docs/privacy-operations.md ./docs/privacy-operations.md
 COPY .github/workflows/fly.yml .github/workflows/uptime.yml ./.github/workflows/
 COPY app.py compose.local.yml fly.toml Dockerfile ./
 RUN uv sync --locked --extra dev --no-editable

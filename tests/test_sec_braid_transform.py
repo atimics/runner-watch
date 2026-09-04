@@ -85,8 +85,7 @@ def _stream() -> str:
             f"deterministic filing evidence for Example {index}.</p></html>"
         ).encode()
         url = (
-            f"https://www.sec.gov/Archives/edgar/data/{cik}/"
-            f"{accession.replace('-', '')}/annual.htm"
+            f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession.replace('-', '')}/annual.htm"
         )
         binding = _binding("filing", url, filing_body)
         lines.append(
@@ -319,8 +318,6 @@ def test_braid_universe_export_uses_runner_scan_intersection(
     universe = export_braid_issuer_universe(output)
     assert universe == {
         "schemaVersion": "braid.sec-issuer-universe/v1",
-        "issuers": [
-            {"cik": 1001, "company": "Example Corp", "tickers": ["EXM", "EXM.A"]}
-        ],
+        "issuers": [{"cik": 1001, "company": "Example Corp", "tickers": ["EXM", "EXM.A"]}],
     }
     assert json.loads(output.read_text()) == universe

@@ -20,12 +20,12 @@ DEFAULT_BINARY = ROOT / "desktop" / ".scanner-dist" / (
 
 
 def _lines(stream: object, output: queue.Queue[str]) -> None:
-    for line in stream:  # type: ignore[union-attr]
+    for line in stream:
         output.put(str(line).strip())
 
 
 def _capture(stream: object, output: list[str]) -> None:
-    for line in stream:  # type: ignore[union-attr]
+    for line in stream:
         output.append(str(line).strip())
         del output[:-100]
 
@@ -33,7 +33,7 @@ def _capture(stream: object, output: list[str]) -> None:
 def _get(url: str, token: str = "") -> dict[str, object]:
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     request = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(request, timeout=3) as response:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=3) as response:
         return json.loads(response.read().decode())
 
 
@@ -59,7 +59,7 @@ def main() -> None:
             "RATI_NODE_PORT": "0",
             "RATI_NODE_TOKEN": token,
         }
-        process = subprocess.Popen(  # noqa: S603
+        process = subprocess.Popen(
             [str(binary)],
             env=environment,
             stdout=subprocess.PIPE,
@@ -110,7 +110,7 @@ def main() -> None:
             raise SystemExit("Scanner API did not become healthy before the timeout")
         finally:
             if sys.platform == "win32":
-                subprocess.run(  # noqa: S603
+                subprocess.run(
                     ["taskkill", "/PID", str(process.pid), "/T", "/F"],
                     check=False,
                     capture_output=True,

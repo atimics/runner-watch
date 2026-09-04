@@ -100,8 +100,6 @@ class TopicStore(Protocol):
 
 
 class SQLiteTopicStore:
-    """Durable last-known-good values for restarts and worker handoffs."""
-
     def load(self, topic: str) -> TopicValue | None:
         with connection() as database:
             row = database.execute(
@@ -161,8 +159,6 @@ class _Entry:
 
 
 class TopicHub:
-    """Shares refreshes and keeps stale data visible when a source fails."""
-
     def __init__(
         self,
         *,

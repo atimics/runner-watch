@@ -12,15 +12,9 @@ LOG = logging.getLogger(__name__)
 REDIS_URL = os.getenv("REDIS_URL", "").strip()
 REQUIRE_REDIS_TLS = os.getenv("REQUIRE_REDIS_TLS", "0") == "1"
 KEY_PREFIX = os.getenv("REDIS_KEY_PREFIX", "stonks").strip() or "stonks"
-RESEARCH_WORKER_LEASE_SECONDS = max(
-    60, int(os.getenv("RESEARCH_WORKER_LEASE_SECONDS", "300"))
-)
-REDIS_FAST_TIMEOUT_SECONDS = max(
-    0.1, float(os.getenv("REDIS_FAST_TIMEOUT_SECONDS", "1"))
-)
-REDIS_BLOCKING_TIMEOUT_SECONDS = max(
-    6.0, float(os.getenv("REDIS_BLOCKING_TIMEOUT_SECONDS", "10"))
-)
+RESEARCH_WORKER_LEASE_SECONDS = max(60, int(os.getenv("RESEARCH_WORKER_LEASE_SECONDS", "300")))
+REDIS_FAST_TIMEOUT_SECONDS = max(0.1, float(os.getenv("REDIS_FAST_TIMEOUT_SECONDS", "1")))
+REDIS_BLOCKING_TIMEOUT_SECONDS = max(6.0, float(os.getenv("REDIS_BLOCKING_TIMEOUT_SECONDS", "10")))
 
 _CLIENT_LOCK = threading.Lock()
 _CLIENT: Any | None = None
@@ -55,7 +49,6 @@ def _client() -> Any:
 
 
 def _blocking_client() -> Any:
-    """Use a longer timeout only for the worker's blocking queue read."""
 
     global _BLOCKING_CLIENT
     if not REDIS_URL:
@@ -70,8 +63,6 @@ def _blocking_client() -> Any:
                 REDIS_URL,
                 decode_responses=True,
                 socket_connect_timeout=2,
-                # Queue reads wait up to five seconds. This client is never
-                # used by latency-sensitive web requests.
                 socket_timeout=REDIS_BLOCKING_TIMEOUT_SECONDS,
                 health_check_interval=30,
             )
@@ -125,7 +116,6 @@ return count
 
 
 def rate_limit_allowed(name: str, limit: int, seconds: int) -> bool | None:
-    """Return None when Redis is absent or unavailable so callers can use a local fallback."""
 
     if not REDIS_URL:
         return None
@@ -163,13 +153,11 @@ def _research_worker_lease_key(worker_token: str) -> str:
 
 
 def enqueue_research_job(report_id: str) -> None:
-    """Queue only the public report ID. Provider credentials stay on the server."""
 
     _client().lpush(_queue_key(), report_id)
 
 
 def touch_research_worker(worker_id: str) -> None:
-    """Keep this worker's queue ownership alive while its task is healthy."""
 
     if not REDIS_URL:
         return
@@ -186,7 +174,6 @@ def touch_research_worker(worker_id: str) -> None:
 
 
 def release_research_worker(worker_id: str) -> None:
-    """Expire this worker's lease while keeping its pending bucket discoverable."""
 
     if not REDIS_URL:
         return
@@ -231,7 +218,6 @@ def _recover_stale_research_workers(client: Any, current_token: str) -> int:
 
 
 def recover_research_jobs(worker_id: str) -> int:
-    """Recover this restarted worker and jobs owned by workers with expired leases."""
 
     if not REDIS_URL:
         return 0
@@ -250,7 +236,6 @@ def recover_research_jobs(worker_id: str) -> int:
 
 
 def dequeue_research_job(worker_id: str, timeout_seconds: int = 5) -> str | None:
-    """Atomically claim one job while leaving it recoverable until it is acknowledged."""
 
     client = _blocking_client()
     worker_token = _worker_token(worker_id)

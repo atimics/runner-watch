@@ -83,7 +83,6 @@ def _iso(value: datetime | None = None) -> str:
 
 
 def normalize_person_name(value: str) -> str:
-    """Create a comparison key without claiming two matching names are one person."""
 
     normalized = unicodedata.normalize("NFKD", value)
     normalized = "".join(
@@ -191,7 +190,6 @@ def _upsert_filing_person(
 
 
 def sync_filing_people(limit: int = 2_000) -> dict[str, int]:
-    """Stage people named in SEC ownership filings for identity review."""
 
     limit = max(1, min(limit, 20_000))
     with connection() as database:
@@ -259,7 +257,6 @@ def review_filing_person(
     *,
     note: str = "",
 ) -> None:
-    """Record the human identity decision required before a legal search."""
 
     if status not in REVIEW_STATUSES:
         raise ValueError("Unknown person review status")
@@ -280,7 +277,6 @@ def review_filing_person_link(
     *,
     note: str = "",
 ) -> None:
-    """Review one person's relationship to one issuer separately from identity."""
 
     if status not in REVIEW_STATUSES:
         raise ValueError("Unknown issuer-link review status")
@@ -298,7 +294,6 @@ def review_filing_person_link(
 
 
 def legal_search_targets(limit: int = 25) -> list[LegalSearchTarget]:
-    """Return only people and issuer links that a reviewer approved."""
 
     limit = max(1, min(limit, 500))
     with connection() as database:
@@ -335,7 +330,6 @@ def pacer_party_search_criteria(
     *,
     filed_from: str | None = None,
 ) -> dict[str, Any]:
-    """Build one immediate, page-one PACER party search request."""
 
     words = target.normalized_name.split()
     if len(words) < 2:
@@ -356,7 +350,6 @@ def pacer_party_search_criteria(
 
 
 def person_name_match(candidate_name: str, target_name: str) -> tuple[float, str] | None:
-    """Return a conservative name match that still requires later human review."""
 
     candidate = normalize_person_name(candidate_name)
     target = normalize_person_name(target_name)
@@ -404,7 +397,6 @@ def parse_pacer_party_results(
     payload: dict[str, Any],
     target: LegalSearchTarget,
 ) -> tuple[LegalCaseCandidate, ...]:
-    """Normalize PACER party results into the private review queue."""
 
     output: list[LegalCaseCandidate] = []
     seen: set[str] = set()
@@ -487,7 +479,6 @@ def parse_oalj_results(
     payload: dict[str, Any],
     target: LegalSearchTarget,
 ) -> tuple[LegalCaseCandidate, ...]:
-    """Normalize metadata exported from the public OALJ search."""
 
     output: list[LegalCaseCandidate] = []
     for row in _rows(payload):
@@ -535,7 +526,6 @@ def record_legal_search(
     fetch: SourceFetch,
     candidates: Iterable[LegalCaseCandidate],
 ) -> dict[str, Any]:
-    """Audit one source fetch and upsert its private review candidates."""
 
     candidate_list = list(candidates)
     if any((item.source, item.feed) != (fetch.source, fetch.feed) for item in candidate_list):
@@ -633,7 +623,6 @@ def review_legal_case_candidate(
     risk_label: str = "unknown",
     note: str = "",
 ) -> None:
-    """Approve identity/relevance and separately label materiality."""
 
     if status not in REVIEW_STATUSES:
         raise ValueError("Unknown case review status")
@@ -654,7 +643,6 @@ def review_legal_case_candidate(
 
 
 def legal_risk_context(ticker: str) -> dict[str, Any]:
-    """Return reviewed correlations only; no matches means unknown, not cleared."""
 
     symbol = ticker.strip().upper()
     with connection() as database:

@@ -43,7 +43,6 @@ MIGRATION_LOCK_ID = 7_348_195_620_341_977_301
 
 
 def database_identity() -> str:
-    """Return a safe cache namespace without exposing database credentials."""
 
     if DATABASE_URL:
         digest = sha256(DATABASE_URL.encode()).hexdigest()[:12]
@@ -59,7 +58,6 @@ def database_tls_enabled(database_url: str) -> bool:
 
 
 def database_url_with_required_tls(database_url: str) -> str:
-    """Add TLS when it is required, while rejecting an explicit unsafe mode."""
 
     if not database_url:
         raise RuntimeError("DATABASE_URL must require TLS in this deployment")
@@ -625,8 +623,7 @@ def _migration_001_baseline(db: DatabaseConnection) -> None:
                 ON ranker_predictions(model_id,rank);
             """
         )
-        # These migrations keep existing beta databases usable. New fields are
-        # nullable because older snapshots cannot be reconstructed exactly.
+
         for definition in (
             "scan_run_id TEXT REFERENCES scan_runs(id)",
             "baseline_rank INTEGER",
@@ -706,7 +703,6 @@ def _migration_002_topic_snapshots(db: DatabaseConnection) -> None:
 
 
 def _migration_003_ai_kol(db: DatabaseConnection) -> None:
-    """Add immutable AI KOL calls without mixing them with human hearts."""
 
     db.executescript(
         """
@@ -793,7 +789,6 @@ def _migration_003_ai_kol(db: DatabaseConnection) -> None:
 
 
 def _migration_004_rug_risk(db: DatabaseConnection) -> None:
-    """Store separate setup, rug, crash, and state evidence."""
 
     timestamp = datetime.now(UTC).isoformat()
     for definition in (
@@ -868,7 +863,6 @@ def _migration_004_rug_risk(db: DatabaseConnection) -> None:
 
 
 def _migration_005_performance_indexes(db: DatabaseConnection) -> None:
-    """Keep risk lookups bounded as collected history grows."""
 
     db.execute(
         "CREATE INDEX IF NOT EXISTS scan_snapshots_ticker_state_captured "
@@ -887,7 +881,6 @@ def _migration_005_performance_indexes(db: DatabaseConnection) -> None:
 
 
 def _migration_006_identity_research(db: DatabaseConnection) -> None:
-    """Store thesis-first company, person, and filing research."""
 
     _ensure_column(
         db,
@@ -906,7 +899,6 @@ def _migration_006_identity_research(db: DatabaseConnection) -> None:
 
 
 def _migration_007_pulse_attention(db: DatabaseConnection) -> None:
-    """Track each profile's attention state for a real Pulse entry."""
 
     db.executescript(
         """
@@ -929,7 +921,6 @@ def _migration_007_pulse_attention(db: DatabaseConnection) -> None:
 
 
 def _sync_flash_actor(db: DatabaseConnection) -> None:
-    """Keep Flash's live model assignment in sync without changing its identity."""
 
     row = db.execute("SELECT * FROM kol_predictors WHERE id=?", (FLASH.id,)).fetchone()
     if not row:
@@ -975,7 +966,6 @@ def _sync_flash_actor(db: DatabaseConnection) -> None:
 
 
 def _migration_008_flash_actor(db: DatabaseConnection) -> None:
-    """Make Flash a durable KOL slot with a replaceable model assignment."""
 
     for definition in (
         "slot TEXT",
@@ -1044,7 +1034,6 @@ def _migration_008_flash_actor(db: DatabaseConnection) -> None:
 
 
 def _migration_009_request_path_indexes(db: DatabaseConnection) -> None:
-    """Avoid table scans on the live Pulse request path."""
 
     db.executescript(
         """
@@ -1059,7 +1048,6 @@ def _migration_009_request_path_indexes(db: DatabaseConnection) -> None:
 
 
 def _migration_010_radar_indexes(db: DatabaseConnection) -> None:
-    """Support Radar's latest-event and latest-snapshot batch reads."""
 
     db.executescript(
         """
@@ -1074,7 +1062,6 @@ def _migration_010_radar_indexes(db: DatabaseConnection) -> None:
 
 
 def _migration_011_ticker_feedback(db: DatabaseConnection) -> None:
-    """Store one bull/bear reaction per profile and signed-in comments."""
 
     db.executescript(
         """
@@ -1108,7 +1095,6 @@ def _migration_011_ticker_feedback(db: DatabaseConnection) -> None:
 
 
 def _migration_012_chart_structure(db: DatabaseConnection) -> None:
-    """Persist point-in-time chart structure for model training."""
 
     for definition in (
         "opening_range_position REAL",
@@ -1126,7 +1112,6 @@ def _migration_012_chart_structure(db: DatabaseConnection) -> None:
 
 
 def _migration_013_comment_pseudonyms(db: DatabaseConnection) -> None:
-    """Add stable public aliases for databases that already applied feedback."""
 
     db.execute(
         """
@@ -1140,7 +1125,6 @@ def _migration_013_comment_pseudonyms(db: DatabaseConnection) -> None:
 
 
 def _migration_014_thesis_cases(db: DatabaseConnection) -> None:
-    """Store living user theses and every revision made to them."""
 
     db.executescript(
         """
@@ -1227,7 +1211,6 @@ def _migration_014_thesis_cases(db: DatabaseConnection) -> None:
 
 
 def _migration_015_evidence_claims(db: DatabaseConnection) -> None:
-    """Group repeated source items into one real-world evidence claim."""
 
     db.executescript(
         """
@@ -1280,7 +1263,6 @@ def _migration_015_evidence_claims(db: DatabaseConnection) -> None:
 
 
 def _migration_016_research_stages(db: DatabaseConnection) -> None:
-    """Freeze each role and model call in the verified research pipeline."""
 
     db.executescript(
         """
@@ -1312,7 +1294,6 @@ def _migration_016_research_stages(db: DatabaseConnection) -> None:
 
 
 def _migration_017_case_outcomes(db: DatabaseConnection) -> None:
-    """Measure each private case at the horizon inferred from its comment."""
 
     db.executescript(
         """
@@ -1342,7 +1323,6 @@ def _migration_017_case_outcomes(db: DatabaseConnection) -> None:
 
 
 def _migration_018_research_policy_outcomes(db: DatabaseConnection) -> None:
-    """Link model-policy reports to the private case outcomes that judge them."""
 
     for definition in (
         "case_id TEXT REFERENCES thesis_cases(id)",
@@ -1363,7 +1343,6 @@ def _migration_018_research_policy_outcomes(db: DatabaseConnection) -> None:
 
 
 def _migration_019_repair_thesis_case_sources(db: DatabaseConnection) -> None:
-    """Repair thesis tables created by an earlier version of migration 14."""
 
     _ensure_column(
         db,
@@ -1391,7 +1370,6 @@ def _migration_019_repair_thesis_case_sources(db: DatabaseConnection) -> None:
 
 
 def _migration_020_user_positions(db: DatabaseConnection) -> None:
-    """Store private entry and exit marks separately from public comments."""
 
     db.executescript(
         """
@@ -1423,7 +1401,6 @@ def _migration_020_user_positions(db: DatabaseConnection) -> None:
 
 
 def _migration_021_short_data(db: DatabaseConnection) -> None:
-    """Cache current short and borrow facts and freeze them on each scan."""
 
     db.executescript(
         """
@@ -1460,7 +1437,6 @@ def _migration_021_short_data(db: DatabaseConnection) -> None:
 
 
 def _migration_022_public_calls_and_flash(db: DatabaseConnection) -> None:
-    """Add immutable public Calls and Flash request audit records."""
 
     db.executescript(
         """
@@ -1517,7 +1493,6 @@ def _migration_022_public_calls_and_flash(db: DatabaseConnection) -> None:
 
 
 def _migration_023_private_flash_commissions(db: DatabaseConnection) -> None:
-    """Keep commissioned Flash reports isolated to the requesting user."""
 
     db.execute("DROP INDEX IF EXISTS research_commissions_running_shared")
     db.execute(
@@ -1529,7 +1504,6 @@ def _migration_023_private_flash_commissions(db: DatabaseConnection) -> None:
 
 
 def _migration_024_stripe_billing(db: DatabaseConnection) -> None:
-    """Mirror Stripe subscription state without storing payment details."""
 
     for definition in (
         "stripe_customer_id TEXT",
@@ -1559,7 +1533,6 @@ def _migration_024_stripe_billing(db: DatabaseConnection) -> None:
 
 
 def _migration_025_flash_wallet(db: DatabaseConnection) -> None:
-    """Add claimable Flash credits and explicit report publishing."""
 
     for definition in (
         "visibility TEXT NOT NULL DEFAULT 'private'",
@@ -1598,7 +1571,6 @@ def _migration_025_flash_wallet(db: DatabaseConnection) -> None:
 
 
 def _migration_026_daily_report_alpha(db: DatabaseConnection) -> None:
-    """Make each ticker's daily Flash report exclusive for its first hour."""
 
     for definition in (
         "report_day TEXT",
@@ -1617,7 +1589,6 @@ def _migration_026_daily_report_alpha(db: DatabaseConnection) -> None:
 
 
 def _migration_031_scalable_scan_storage(db: DatabaseConnection) -> None:
-    """Store small read and training records separately from full scan snapshots."""
 
     db.executescript(
         """
@@ -1699,7 +1670,6 @@ def _migration_031_scalable_scan_storage(db: DatabaseConnection) -> None:
 
 
 def _migration_027_gdpr_privacy(db: DatabaseConnection) -> None:
-    """Remove passive profiles and replace global public names with thread aliases."""
 
     db.executescript(
         """
@@ -1730,7 +1700,6 @@ def _migration_027_gdpr_privacy(db: DatabaseConnection) -> None:
 
 
 def _migration_028_caller_identities(db: DatabaseConnection) -> None:
-    """Give accounts unlinkable public caller IDs with permanent name tombstones."""
 
     db.executescript(
         """
@@ -1789,7 +1758,6 @@ def _migration_028_caller_identities(db: DatabaseConnection) -> None:
 
 
 def _migration_029_signal_caller_identities(db: DatabaseConnection) -> None:
-    """Stop exposing account names on human calls and require a separate caller ID."""
 
     _ensure_column(
         db,
@@ -1819,7 +1787,6 @@ def _migrated_caller_identity(
     user_id: str,
     claimed_at: str,
 ) -> str:
-    """Give existing Calls one random animal ID without reviving account names."""
 
     existing = db.execute(
         "SELECT id FROM caller_identities "
@@ -1855,7 +1822,6 @@ def _migrated_caller_identity(
 
 
 def _migration_030_drop_passive_tracking(db: DatabaseConnection) -> None:
-    """Permanently remove the legacy behavioural tracking schema."""
 
     db.executescript(
         """
@@ -1870,7 +1836,6 @@ def _migration_030_drop_passive_tracking(db: DatabaseConnection) -> None:
 
 
 def _migration_032_sports_domain(db: DatabaseConnection) -> None:
-    """Add source-bound sports events, odds, predictions, and paper picks."""
 
     db.executescript(
         """
@@ -1975,7 +1940,6 @@ def _migration_032_sports_domain(db: DatabaseConnection) -> None:
 
 
 def _migration_033_one_automatic_caller_name(db: DatabaseConnection) -> None:
-    """Collapse the retired caller-ID picker to one automatic name per account."""
 
     rows = db.execute(
         """
@@ -2019,7 +1983,6 @@ def _migration_033_one_automatic_caller_name(db: DatabaseConnection) -> None:
 
 
 def _migration_034_sports_performance_history(db: DatabaseConnection) -> None:
-    """Store completed box-score appearances for player performance history."""
 
     db.executescript(
         """
@@ -2048,7 +2011,6 @@ def _migration_034_sports_performance_history(db: DatabaseConnection) -> None:
 
 
 def _migration_035_sports_news(db: DatabaseConnection) -> None:
-    """Store team-linked news for promoted sports matchups."""
 
     db.executescript(
         """
@@ -2073,7 +2035,6 @@ def _migration_035_sports_news(db: DatabaseConnection) -> None:
 
 
 def _migration_036_sports_request_indexes(db: DatabaseConnection) -> None:
-    """Keep bounded slate and history reads fast across all leagues."""
 
     db.executescript(
         """
@@ -2084,7 +2045,6 @@ def _migration_036_sports_request_indexes(db: DatabaseConnection) -> None:
 
 
 def _sync_flash_version(db: DatabaseConnection) -> None:
-    """Register one exact Flash release and reject silent configuration drift."""
 
     version = flash_version_snapshot(FLASH)
     existing = db.execute("SELECT * FROM flash_versions WHERE id=?", (version["id"],)).fetchone()
@@ -2139,7 +2099,6 @@ def _sync_flash_version(db: DatabaseConnection) -> None:
 
 
 def _migration_037_flash_forecast_record(db: DatabaseConnection) -> None:
-    """Add immutable, versioned Daily Flash forecasts and later market results."""
 
     db.executescript(
         """
@@ -2247,7 +2206,6 @@ def _migration_037_flash_forecast_record(db: DatabaseConnection) -> None:
 
 
 def _migration_038_sports_bookmaker_odds(db: DatabaseConnection) -> None:
-    """Store each fresh sportsbook quote separately from the consensus receipt."""
 
     db.executescript(
         """
@@ -2276,7 +2234,6 @@ def _migration_038_sports_bookmaker_odds(db: DatabaseConnection) -> None:
 
 
 def _migration_039_sports_ai_forecasts(db: DatabaseConnection) -> None:
-    """Freeze and score pregame AI forecasts separately from the sports baseline."""
 
     db.executescript(
         """
@@ -2319,13 +2276,11 @@ def _migration_039_sports_ai_forecasts(db: DatabaseConnection) -> None:
 
 
 def _migration_040_comment_glyph_avatars(db: DatabaseConnection) -> None:
-    """Replace public comment emoji pairs with one abstract glyph per author and ticker."""
 
     migrate_comment_aliases_to_glyphs(db)
 
 
 def _migration_041_persistent_comment_avatars(db: DatabaseConnection) -> None:
-    """Give every account one durable public comment avatar and research ability."""
 
     db.executescript(
         """
@@ -2349,7 +2304,6 @@ def _migration_041_persistent_comment_avatars(db: DatabaseConnection) -> None:
 
 
 def _migration_042_comment_generation_requests(db: DatabaseConnection) -> None:
-    """Make paid AI comment requests safe to replay after a lost response."""
 
     db.executescript(
         """
@@ -2373,7 +2327,6 @@ def _migration_042_comment_generation_requests(db: DatabaseConnection) -> None:
 
 
 def _migration_043_ranker_training_provenance(db: DatabaseConnection) -> None:
-    """Identify replayed ranker rows without mixing them into public scan history."""
 
     _ensure_column(
         db,
@@ -2394,7 +2347,6 @@ def _migration_043_ranker_training_provenance(db: DatabaseConnection) -> None:
 
 
 def _migration_044_golf_leaderboards(db: DatabaseConnection) -> None:
-    """Store PGA tournaments separately from two-team sports matchups."""
 
     db.executescript(
         """
@@ -2442,7 +2394,6 @@ def _migration_044_golf_leaderboards(db: DatabaseConnection) -> None:
 
 
 def _migration_045_sports_comments(db: DatabaseConnection) -> None:
-    """Store public, human-written game-thread comments."""
 
     db.executescript(
         """
@@ -2463,7 +2414,6 @@ def _migration_045_sports_comments(db: DatabaseConnection) -> None:
 
 
 def _migration_046_customer_llm_routing(db: DatabaseConnection) -> None:
-    """Store private customer model routes and durable outbound edge work."""
 
     for definition in (
         "inference_scope TEXT NOT NULL DEFAULT 'managed'",
@@ -2540,7 +2490,6 @@ def _migration_046_customer_llm_routing(db: DatabaseConnection) -> None:
 
 
 def _migration_047_scorecard_and_release_indexes(db: DatabaseConnection) -> None:
-    """Keep release and scorecard scans on their narrow lookup paths."""
 
     db.executescript(
         """
@@ -2559,7 +2508,6 @@ def _migration_047_scorecard_and_release_indexes(db: DatabaseConnection) -> None
 
 
 def _migration_048_shared_comment_subjects(db: DatabaseConnection) -> None:
-    """Let the paid AI comment pipeline serve stocks and sports games."""
 
     for table in ("ticker_comments", "comment_generation_requests"):
         _ensure_column(
@@ -2581,7 +2529,6 @@ def _migration_048_shared_comment_subjects(db: DatabaseConnection) -> None:
 
 
 def _migration_049_legal_identity_review(db: DatabaseConnection) -> None:
-    """Stage filing people and legal cases behind explicit identity review."""
 
     _ensure_column(db, "sec_filings", "actor_cik INTEGER")
     db.executescript(
@@ -2662,7 +2609,6 @@ def _migration_049_legal_identity_review(db: DatabaseConnection) -> None:
 
 
 def _migration_050_market_session_reports(db: DatabaseConnection) -> None:
-    """Freeze one pre-market briefing and one post-market recap per trading day."""
 
     db.executescript(
         """
@@ -2709,7 +2655,6 @@ def _migration_051_public_source_policy_gate(db: DatabaseConnection) -> None:
 
 
 def _migration_052_security_controls(db: DatabaseConnection) -> None:
-    """Track fresh authentication and consume registration invite codes once."""
 
     _ensure_column(db, "sessions", "authenticated_at TEXT")
     _ensure_column(db, "users", "registration_invite_hash TEXT")
@@ -2725,7 +2670,6 @@ def _migration_052_security_controls(db: DatabaseConnection) -> None:
 
 
 def _migration_053_sports_market_observation_history(db: DatabaseConnection) -> None:
-    """Keep source quote time and distinguish repeated market states."""
 
     _ensure_column(db, "sports_odds_snapshots", "source_observed_at TEXT")
     _ensure_column(db, "sports_odds_snapshots", "market_state_hash TEXT")
@@ -2755,7 +2699,6 @@ def _migration_053_sports_market_observation_history(db: DatabaseConnection) -> 
 
 
 def _migration_054_market_report_forecasts(db: DatabaseConnection) -> None:
-    """Keep pre-market targets and their closing-price receipts."""
 
     db.executescript(
         """
@@ -2871,7 +2814,6 @@ MIGRATIONS = (
 
 
 def _acquire_migration_lock(db: DatabaseConnection) -> bool:
-    """Serialize PostgreSQL migrations across web, worker, and release processes."""
 
     if db.backend == "postgres":
         db.execute(
@@ -2923,9 +2865,7 @@ def _apply_migrations(db: DatabaseConnection) -> None:
                 "INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)",
                 (migration.version, migration.name, datetime.now(UTC).isoformat()),
             )
-            # Keep each PostgreSQL migration in its own transaction. A long
-            # transaction can deadlock with live requests when a later
-            # migration needs an exclusive table lock.
+
             if db.backend == "postgres":
                 db.commit()
     except BaseException:
@@ -2938,7 +2878,6 @@ def _apply_migrations(db: DatabaseConnection) -> None:
 
 
 def init_db() -> None:
-    """Apply migrations, then refresh environment-based assignments and source policy."""
 
     if not DATABASE_URL:
         initialize_sqlite(DATABASE_PATH)
@@ -2950,7 +2889,6 @@ def init_db() -> None:
 
 
 def main() -> None:
-    """Apply the current database schema as a deployment release command."""
 
     try:
         init_db()

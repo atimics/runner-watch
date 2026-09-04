@@ -1,5 +1,3 @@
-"""Opt-in web-process lifecycle for the local-first swarm runtime."""
-
 from __future__ import annotations
 
 import asyncio
@@ -15,14 +13,12 @@ LOG = logging.getLogger(__name__)
 def open_swarm_runtime(
     env: Mapping[str, str] | None = None,
 ) -> AttachedSwarmRuntime | None:
-    """Return no network runtime in solo mode and a complete one in attached mode."""
 
     config = SwarmRuntimeConfig.from_env(env)
     return AttachedSwarmRuntime.open(config) if config.attached else None
 
 
 async def maintain_swarm_runtime(runtime: AttachedSwarmRuntime) -> None:
-    """Renew discovery independently from slower bootstrap network work."""
 
     async def renew_manifest() -> None:
         interval = max(15, runtime.config.manifest_ttl_seconds // 3)

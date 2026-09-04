@@ -1,2 +1,1 @@
-"""Runner Watch public web application."""
-
+pass

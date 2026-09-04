@@ -193,13 +193,7 @@ def test_shadow_ranker_trains_predicts_and_exports_crl(
     assert prediction_count == 4
     assert all(0 <= row["score"] <= 100 for row in probabilities)
     assert all(
-        abs(
-            row["probability_up"]
-            + row["probability_down"]
-            + row["probability_timeout"]
-            - 1
-        )
-        < 1e-9
+        abs(row["probability_up"] + row["probability_down"] + row["probability_timeout"] - 1) < 1e-9
         for row in probabilities
     )
 
@@ -223,9 +217,9 @@ def test_ranker_compacts_and_bounds_legacy_training_rows(
     groups = _load_groups("60m", maximum_groups=5)
 
     with connection() as database:
-        compact_rows = database.execute(
-            "SELECT COUNT(*) FROM ranker_training_examples"
-        ).fetchone()[0]
+        compact_rows = database.execute("SELECT COUNT(*) FROM ranker_training_examples").fetchone()[
+            0
+        ]
     assert len(groups) == 5
     assert sum(len(group) for group in groups) == 20
     assert compact_rows == 20

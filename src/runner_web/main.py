@@ -61,6 +61,12 @@ from runner_watch.risk import RiskInput, assess_risk
 from runner_watch.scanner import RunnerScanner
 from runner_watch.universe import penny_runner_universe
 from runner_web import db as runner_db
+from runner_web.account_routes import (
+    AccountDeletePayload,
+    AccountRouteDependencies,
+    CloudDataDeletePayload,
+    create_account_routes,
+)
 from runner_web.ai_kol import FLASH, AIKol, actor_snapshot, flash_version_snapshot
 from runner_web.base_rates import matched_market_base_rates
 from runner_web.billing import (
@@ -165,8 +171,12 @@ from runner_web.request_security import (
     request_client_ip,
     safe_next_path,
 )
-from runner_web.research_context import build_research_context
-from runner_web.research_pipeline import PIPELINE_VERSION, run_verified_pipeline
+from runner_web.research_context import build_research_context, research_evidence_metrics
+from runner_web.research_pipeline import (
+    PIPELINE_VERSION,
+    run_verified_pipeline,
+    verified_public_citations,
+)
 from runner_web.shared_state import (
     acknowledge_research_job,
     dequeue_research_job,
@@ -216,6 +226,8 @@ from runner_web.sports import (
 from runner_web.swarm_runtime import maintain_swarm_runtime, open_swarm_runtime
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
 
+__all__ = ["AccountDeletePayload", "CloudDataDeletePayload"]
+
 LOG = logging.getLogger(__name__)
 
 APP_ORIGIN = os.getenv("APP_ORIGIN", "http://localhost:8080").rstrip("/")
@@ -254,7 +266,6 @@ APP_BUILD_SHA = re.sub(
 
 
 def _rate_limit_hash_key(value: str) -> bytes:
-    """Normalize operator-provided text to a valid BLAKE2 key."""
 
     return hashlib.sha256(value.encode()).digest() if value else secrets.token_bytes(32)
 
@@ -286,9 +297,7 @@ OPENROUTER_RESEARCH_TIMEOUT_SECONDS = max(
 )
 EDGE_JOB_LEASE_MINUTES = 10
 FLASH_GLOBAL_DAILY_LIMIT = max(1, int(os.getenv("FLASH_GLOBAL_DAILY_LIMIT", "50")))
-FLASH_REPORT_FAILURE_STREAK_LIMIT = max(
-    2, int(os.getenv("FLASH_REPORT_FAILURE_STREAK_LIMIT", "3"))
-)
+FLASH_REPORT_FAILURE_STREAK_LIMIT = max(2, int(os.getenv("FLASH_REPORT_FAILURE_STREAK_LIMIT", "3")))
 FLASH_REPORT_FAILURE_WINDOW_MINUTES = max(
     5, int(os.getenv("FLASH_REPORT_FAILURE_WINDOW_MINUTES", "30"))
 )
@@ -373,8 +382,8 @@ CHART_TOPIC_POLICY = TopicPolicy(
     maximum_stale_seconds=15 * 60,
     keep_last_good=True,
 )
-# Chart points already live in market_bars. Persisting the derived cache wrote one
-# SQLite transaction per ticker on every refresh, which is very slow on a Fly volume.
+
+
 MARKET_TOPICS = TopicHub()
 
 
@@ -397,7 +406,6 @@ def _shared_request_cache_name(scope: str) -> str:
 
 
 def _conditional_json_response(request: Request, payload: Any) -> Response:
-    """Return compact public JSON with cheap browser revalidation."""
 
     response = JSONResponse(payload)
     etag = f'W/"{hashlib.sha256(response.body).hexdigest()[:24]}"'
@@ -666,7 +674,6 @@ async def lifespan(application: FastAPI):
 
 
 async def run_worker() -> None:
-    """Run background jobs without starting an HTTP server."""
 
     validate_runtime_configuration()
     init_db()
@@ -696,7 +703,6 @@ def worker_main() -> None:
 
 
 def _openrouter_api_key() -> str:
-    """Use an operator secret first, then a user-authorized scanner credential."""
 
     return OPENROUTER_API_KEY or NODE_SERVICE.vault.get("openrouter") or ""
 
@@ -729,7 +735,6 @@ if DESKTOP_RENDERER_ROOT.is_dir():
 
 @app.get("/api/version")
 def version_api() -> dict[str, str]:
-    """Identify the running application and static-asset builds."""
 
     return {
         "version": APP_VERSION,
@@ -784,7 +789,6 @@ def _delete_batched(
     batch_size: int = 5_000,
     maximum_batches: int = 20,
 ) -> int:
-    """Delete a bounded number of old rows and commit between small batches."""
 
     keys = ",".join(key_columns)
     target = key_columns[0] if len(key_columns) == 1 else f"({keys})"
@@ -795,7 +799,7 @@ def _delete_batched(
             DELETE FROM {table} WHERE {target} IN (
                 SELECT {keys} FROM {table} WHERE {where_sql} LIMIT ?
             )
-            """,  # noqa: S608 - all identifiers and predicates are internal constants
+            """,
             (*parameters, batch_size),
         )
         count = max(0, result.rowcount)
@@ -807,7 +811,6 @@ def _delete_batched(
 
 
 def prune_storage() -> None:
-    """Keep raw rows bounded while preserving compact model and entry records."""
 
     with connection() as db:
         previous = db.execute(
@@ -917,7 +920,7 @@ def _edge_proxy_authenticated(request: Request) -> bool:
 
 
 def _request_host(request: Request) -> str:
-    """Return a known public host, including the Cloudflare edge host."""
+
     direct_host = (request.url.hostname or "").lower()
     if not _edge_proxy_authenticated(request):
         return direct_host
@@ -1189,8 +1192,6 @@ def _flash_provider_ready(actor: AIKol = FLASH) -> bool:
                 (actor.id, since, FLASH_REPORT_FAILURE_STREAK_LIMIT),
             ).fetchall()
     except Exception:
-        # Database readiness is checked elsewhere. Do not hide Flash merely because
-        # this optional circuit-breaker history is not available during startup.
         return True
     return not (
         len(rows) == FLASH_REPORT_FAILURE_STREAK_LIMIT
@@ -1264,7 +1265,6 @@ async def kol_worker() -> None:
 
 
 def scan_collection_allowed(value: datetime) -> bool:
-    """Return whether a live market scan may be collected at this time."""
 
     eastern_now = value.astimezone(EASTERN)
     local_time = eastern_now.time().replace(tzinfo=None)
@@ -1324,7 +1324,6 @@ async def market_report_worker() -> None:
 
 
 def _generate_market_report_targets(evidence: dict[str, Any]) -> dict[str, Any]:
-    """Use the report's saved Flash model for one small pre-market batch."""
 
     public_evidence = {
         **evidence,
@@ -1366,7 +1365,7 @@ def _generate_market_report_targets(evidence: dict[str, Any]) -> dict[str, Any]:
         },
         method="POST",
     )
-    with urllib.request.urlopen(api_request, timeout=90) as response:  # noqa: S310
+    with urllib.request.urlopen(api_request, timeout=90) as response:
         raw_result = response.read(262_145)
     if len(raw_result) > 262_144:
         raise ValueError("OpenRouter returned an oversized target response.")
@@ -1380,11 +1379,7 @@ def _generate_market_report_targets(evidence: dict[str, Any]) -> dict[str, Any]:
 
 
 async def massive_backfill_worker() -> None:
-    """Keep the Massive grouped daily cache warm.
 
-    Each pass fetches at most MASSIVE_BACKFILL_CALLS uncached sessions, so the
-    cache self-heals after a deploy and stays quiet once warm.
-    """
     await asyncio.sleep(90)
     while True:
         try:
@@ -1491,14 +1486,6 @@ class ReportSignal(BaseModel):
     reason: str = Field(min_length=3, max_length=240)
 
 
-class AccountDeletePayload(BaseModel):
-    confirmation: Literal["DELETE MY ACCOUNT"]
-
-
-class CloudDataDeletePayload(BaseModel):
-    confirmation: Literal["MOVE MY DATA"]
-
-
 class SportsPickPayload(BaseModel):
     selection: Literal["home", "away"]
 
@@ -1540,7 +1527,6 @@ def api_flash_record(request: Request) -> dict[str, Any]:
 
 @app.get("/api/smoke/screens")
 def live_screen_manifest(request: Request) -> JSONResponse:
-    """Expose only public paths used by the production browser smoke test."""
 
     enforce_rate(request, "screen-manifest", limit=30, seconds=60)
     with connection() as database:
@@ -1586,9 +1572,7 @@ def billing_page(
             runner_session,
             resolved_user=user,
             transactions=recent_transactions(str(user["id"])) if user else [],
-            flash_reports_available=(
-                _flash_provider_ready() and _flash_daily_capacity_available()
-            ),
+            flash_reports_available=(_flash_provider_ready() and _flash_daily_capacity_available()),
         ),
     )
 
@@ -1603,22 +1587,6 @@ def claim_daily_flash_api(
     enforce_rate(request, "flash-claim", limit=6, seconds=600, subject=user["id"])
     wallet, claimed = claim_daily_flash(str(user["id"]))
     return JSONResponse({"claimed": claimed, "wallet": wallet})
-
-
-@app.get("/privacy", response_class=HTMLResponse)
-def privacy_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> HTMLResponse:
-    context = page_context(request, runner_session)
-    user = context.get("user")
-    if user:
-        context["data_summary"] = user_data_summary(str(user["id"]))
-    return templates.TemplateResponse(
-        request=request,
-        name="privacy.html",
-        context=context,
-    )
 
 
 def _llm_settings_data(user_id: str) -> dict[str, Any]:
@@ -2049,73 +2017,29 @@ async def fail_edge_job_api(
     return JSONResponse({"ok": True})
 
 
-@app.get("/api/account/export")
-def account_export_api(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    user = require_user(runner_session)
-    enforce_rate(request, "account-export", limit=3, seconds=3600, subject=user["id"])
-    response = JSONResponse(export_user_data(str(user["id"])))
-    response.headers["Content-Disposition"] = (
-        f'attachment; filename="runner-watch-export-{now().date().isoformat()}.json"'
+account_routes = create_account_routes(
+    AccountRouteDependencies(
+        templates=templates,
+        page_context=lambda *args, **kwargs: page_context(*args, **kwargs),
+        require_origin=lambda request: require_origin(request),
+        require_user=lambda session: require_user(session),
+        enforce_rate=lambda *args, **kwargs: enforce_rate(*args, **kwargs),
+        require_recent_auth=lambda session: require_recent_auth(session),
+        user_data_summary=lambda user_id: user_data_summary(user_id),
+        export_user_data=lambda user_id: export_user_data(user_id),
+        delete_user_content=lambda user_id: delete_user_content(user_id),
+        delete_customer=lambda user: delete_customer(user),
+        delete_user_data=lambda user_id: delete_user_data(user_id),
+        now=lambda: now(),
+        session_cookie=SESSION_COOKIE,
+        cookie_domain=COOKIE_DOMAIN,
     )
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-@app.post("/api/account/data/delete-cloud-copy")
-def account_cloud_data_delete_api(
-    payload: CloudDataDeletePayload,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(
-        request,
-        "account-cloud-data-delete",
-        limit=3,
-        seconds=3600,
-        subject=user["id"],
-    )
-    result = delete_user_content(str(user["id"]))
-    if not result["deleted"]:
-        raise HTTPException(404, "Account not found")
-    response = JSONResponse(result)
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-@app.post("/api/account/delete")
-def account_delete_api(
-    payload: AccountDeletePayload,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    require_recent_auth(runner_session)
-    enforce_rate(request, "account-delete", limit=3, seconds=3600, subject=user["id"])
-    try:
-        delete_customer(user)
-    except Exception as exc:
-        LOG.warning(
-            "Could not delete Stripe customer during account deletion: %s",
-            type(exc).__name__,
-        )
-        raise HTTPException(
-            502,
-            "We could not stop billing, so the local account was not deleted. Try again.",
-        ) from exc
-    result = delete_user_data(str(user["id"]))
-    if not result["deleted"]:
-        raise HTTPException(404, "Account not found")
-    response = JSONResponse({"deleted": True})
-    response.headers["Cache-Control"] = "no-store"
-    response.delete_cookie("runner_visitor", path="/")
-    response.delete_cookie(SESSION_COOKIE, path="/", domain=COOKIE_DOMAIN)
-    return response
+)
+app.include_router(account_routes.router)
+privacy_page = account_routes.privacy_page
+account_export_api = account_routes.account_export_api
+account_cloud_data_delete_api = account_routes.account_cloud_data_delete_api
+account_delete_api = account_routes.account_delete_api
 
 
 @app.post("/api/billing/checkout")
@@ -2763,7 +2687,6 @@ def _baseline_summary(base_rates: dict[str, Any] | None) -> str | None:
 
 
 def _ranker_directional_thesis(prediction: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Describe the ranker's forward outcome without reusing attention colour."""
 
     if not prediction:
         return None
@@ -2940,8 +2863,7 @@ def _external_event_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
         _nonnegative_event_count(event["payload"].get("mention_count")) for event in social
     )
     engagement_count = sum(
-        _nonnegative_event_count(event["payload"].get("engagement_count"))
-        for event in social
+        _nonnegative_event_count(event["payload"].get("engagement_count")) for event in social
     )
     news_boost = min(6.0, 1.5 * math.sqrt(len(news)))
     social_boost = min(
@@ -3369,7 +3291,6 @@ def _report_record(row: Any) -> dict[str, Any] | None:
 
 
 def _apply_effective_report_visibility(report: dict[str, Any]) -> dict[str, Any]:
-    """Treat an elapsed private window as public without writing during a GET."""
 
     if (
         report.get("status") != "complete"
@@ -3429,18 +3350,14 @@ def _commission_record(
             selection = str(sports_forecast.get("selection") or "pass")
             teams = evidence.get("teams") or {}
             selected_team = teams.get(selection) or {}
-            sports_forecast["selected_team"] = str(
-                selected_team.get("name") or "No prediction"
-            )
+            sports_forecast["selected_team"] = str(selected_team.get("name") or "No prediction")
             sports_forecast["selected_abbreviation"] = str(
                 selected_team.get("abbreviation") or "PASS"
             )
             sports_forecast["selected_probability"] = sports_forecast.get(
                 f"{selection}_probability"
             )
-            baseline_selection = str(
-                (evidence.get("prediction") or {}).get("selection") or "pass"
-            )
+            baseline_selection = str((evidence.get("prediction") or {}).get("selection") or "pass")
             sports_forecast["baseline_selection"] = baseline_selection
             sports_forecast["agrees_with_baseline"] = selection == baseline_selection
             report["sports_forecast"] = sports_forecast
@@ -3465,9 +3382,7 @@ def _commission_record(
         summary = summary or _ticker_summary(report["ticker"])
         report["company"] = summary["company"] if summary else report["ticker"]
         report["coin_label"] = summary["coin_label"] if summary else report["ticker"][:2]
-        report["coin_tone"] = (
-            summary["coin_tone"] if summary else _coin_tone(report["ticker"])
-        )
+        report["coin_tone"] = summary["coin_tone"] if summary else _coin_tone(report["ticker"])
         report["subject_type"] = "ticker"
         report["asset_href"] = f"/t/{report['ticker']}"
         report["back_href"] = "/community"
@@ -3497,7 +3412,6 @@ def _attach_sports_forecast_result(
 
 
 def _release_expired_daily_reports(database: Any, *, at: datetime | None = None) -> int:
-    """Share completed daily reports when their private alpha hour ends."""
 
     timestamp = iso(at)
     updated = database.execute(
@@ -3541,7 +3455,6 @@ def _release_expired_reports_once() -> int:
 
 
 async def report_release_worker() -> None:
-    """Materialize elapsed report locks away from latency-sensitive requests."""
 
     await asyncio.sleep(15)
     while True:
@@ -3558,7 +3471,6 @@ def daily_report_for_ticker(
     ticker: str,
     viewer_user_id: str | None = None,
 ) -> dict[str, Any] | None:
-    """Return today's shared report or a safe description of its active lock."""
 
     report_day = now().date().isoformat()
     with connection() as database:
@@ -3647,7 +3559,6 @@ def _flash_report_action(
     sports_event: dict[str, Any] | None = None,
     at: datetime | None = None,
 ) -> dict[str, Any]:
-    """Return the single user-facing state for a Flash report action."""
 
     current_time = at or now()
 
@@ -3992,8 +3903,6 @@ def _alpha_evidence(ticker: str, engagement_count: int) -> tuple[str, dict[str, 
 
 
 class ReportGenerationFailure(HTTPException):
-    """A user-safe report failure with provider metadata but no report content."""
-
     def __init__(
         self,
         status_code: int,
@@ -4011,7 +3920,6 @@ def _openrouter_diagnostics(
     message: Any = None,
     content: Any = None,
 ) -> dict[str, Any]:
-    """Keep enough response metadata to debug failures without storing model output."""
 
     payload = result if isinstance(result, dict) else {}
     selected = choice if isinstance(choice, dict) else {}
@@ -4088,14 +3996,11 @@ def _openrouter_report_json(content: Any) -> dict[str, Any]:
             try:
                 return _openrouter_report_json(nested)
             except (TypeError, ValueError, json.JSONDecodeError):
-                # Some OpenRouter models put plain prose in `answer`. The
-                # normalizer can still turn that into a useful report.
                 break
     return parsed
 
 
 def _openrouter_comment_text(content: Any) -> str:
-    """Read a short comment from OpenRouter's supported response shapes."""
 
     def unwrap(value: Any, depth: int = 0) -> str:
         if depth > 5:
@@ -4177,7 +4082,6 @@ def _normalize_openrouter_report(
     raw_report: dict[str, Any],
     evidence: dict[str, Any],
 ) -> tuple[dict[str, Any], list[str]]:
-    """Fill optional report fields while preserving the model's usable thesis."""
 
     normalized_fields: list[str] = []
     headline = _report_text(raw_report.get("headline"))
@@ -4271,7 +4175,6 @@ def _sports_report_items(value: Any) -> list[str]:
 def _sports_report_numeric_claims_are_frozen(
     raw_report: dict[str, Any], evidence: dict[str, Any]
 ) -> bool:
-    """Reject probabilities and moneylines that are not in the frozen game evidence."""
 
     copy_parts: list[str] = []
     for field in (
@@ -4328,16 +4231,13 @@ def _sports_report_numeric_claims_are_frozen(
         for value in reported_percentages
     ):
         return False
-    reported_odds = [
-        int(value) for value in re.findall(r"(?<!\w)([+-]\d{3,4})(?!\w)", copy)
-    ]
+    reported_odds = [int(value) for value in re.findall(r"(?<!\w)([+-]\d{3,4})(?!\w)", copy)]
     return all(value in allowed_odds for value in reported_odds)
 
 
 def _normalize_sports_openrouter_report(
     raw_report: dict[str, Any], evidence: dict[str, Any]
 ) -> tuple[dict[str, Any], list[str]]:
-    """Map the sports-only contract into the shared report storage fields."""
 
     normalized_fields: list[str] = []
     model_summary = _report_text(raw_report.get("model_summary"))
@@ -4423,6 +4323,7 @@ def _sports_report_output_contract() -> dict[str, Any]:
         "citations": [
             {
                 "claim": "one important factual claim from the report",
+                "evidence_ids": ["provided evidence ID"],
                 "source_urls": ["provided source URL"],
             }
         ],
@@ -4512,6 +4413,7 @@ def _generate_openrouter_report(
             "citations": [
                 {
                     "claim": "one important factual claim from the report",
+                    "evidence_ids": ["provided evidence ID"],
                     "source_urls": ["provided source URL"],
                 }
             ],
@@ -4617,7 +4519,7 @@ def _generate_openrouter_report(
         try:
             with urllib.request.urlopen(
                 api_request, timeout=OPENROUTER_RESEARCH_TIMEOUT_SECONDS
-            ) as response:  # noqa: S310
+            ) as response:
                 result = json.load(response)
         except urllib.error.HTTPError as exc:
             if exc.code in {401, 403}:
@@ -4714,9 +4616,7 @@ def _generate_openrouter_report(
             )
         )
         diagnostics["missing_fields"] = sorted(
-            field
-            for field in required_fields
-            if field not in raw_report
+            field for field in required_fields if field not in raw_report
         )
         raise ReportGenerationFailure(
             502,
@@ -4762,28 +4662,15 @@ def _generate_openrouter_report(
         filing["source_url"] = source if source in approved_set else None
         clean_filings.append(filing)
     report["filings"] = clean_filings
-    clean_citations: list[dict[str, Any]] = []
-    cited_urls: list[str] = []
-    for citation in report.get("citations", [])[:30]:
-        claim = str(citation.get("claim") or "").strip()[:500]
-        source_urls = [
-            source
-            for value in citation.get("source_urls") or []
-            if (source := _safe_source_url(value)) and source in approved_set
-        ][:6]
-        if claim and source_urls:
-            clean_citations.append({"claim": claim, "source_urls": source_urls})
-            cited_urls.extend(source_urls)
+    clean_citations = verified_public_citations(report.get("citations"), evidence)
+    cited_urls = [
+        source for citation in clean_citations for source in citation.get("source_urls", [])
+    ]
     selected_sources = [
         *cited_urls,
         *report["company_profile"].get("source_urls", []),
         *(source for person in clean_people for source in person.get("source_urls", [])),
         *(filing["source_url"] for filing in clean_filings if filing.get("source_url")),
-        *(
-            source
-            for value in report.get("sources", [])
-            if (source := _safe_source_url(value)) and source in approved_set
-        ),
     ]
     report["citations"] = clean_citations
     report["sources"] = list(dict.fromkeys(selected_sources))[:40]
@@ -4850,7 +4737,6 @@ def _create_research_commission(
     actor: AIKol = FLASH,
     case_id: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    """Create one credit-backed daily report and private alpha lock."""
 
     current_time = now()
     timestamp = iso(current_time)
@@ -5052,7 +4938,7 @@ def _generate_openai_stage(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(api_request, timeout=75) as response:  # noqa: S310
+        with urllib.request.urlopen(api_request, timeout=75) as response:
             result = json.load(response)
         output = _responses_output_json(result)
     except urllib.error.HTTPError as exc:
@@ -5191,11 +5077,15 @@ def _generate_verified_report(
 
     report, trace = run_verified_pipeline(research_context, call_stage)
     models = [str(item.get("model")) for item in trace if item.get("model")]
+    context_stats = {
+        **research_context.get("context_stats", {}),
+        "evidence_metrics": research_evidence_metrics(research_context, report),
+    }
     usage = {
         "research_mode": "verified_agent_pipeline",
         "pipeline_version": PIPELINE_VERSION,
         "stages": trace,
-        "context": research_context.get("context_stats", {}),
+        "context": context_stats,
     }
     return report, models[-1] if models else actor.model, usage
 
@@ -5372,9 +5262,7 @@ def _run_research_commission(
             )
         research_mode = "one_shot_system_context"
         trade_state = str(evidence.get("trade_state") or "").upper()
-        if not is_sports and (
-            bool(evidence.get("hard_veto")) or trade_state in {"AVOID", "EXIT"}
-        ):
+        if not is_sports and (bool(evidence.get("hard_veto")) or trade_state in {"AVOID", "EXIT"}):
             reason = str(evidence.get("state_reason") or "The deterministic risk gate fired.")
             override = f"Risk override: {trade_state or 'AVOID'}. {reason}".strip()
             report["headline"] = f"{trade_state or 'AVOID'} · {report['headline']}"[:180]
@@ -5418,10 +5306,14 @@ def _run_research_commission(
                 "Flash returned no usable sports prediction. Retry Flash.",
                 {"phase": "sports_forecast_contract"},
             )
+        context_stats = {
+            **research_context.get("context_stats", {}),
+            "evidence_metrics": research_evidence_metrics(research_context, report),
+        }
         usage = {
             **usage,
             "research_mode": research_mode,
-            "context": research_context.get("context_stats", {}),
+            "context": context_stats,
             "inference_route": inference_route,
             **({"sports_forecast": sports_forecast} if sports_forecast else {}),
         }
@@ -5534,7 +5426,6 @@ def _commission_research(
     *,
     actor: AIKol = FLASH,
 ) -> dict[str, Any]:
-    """Run a commission inline for internal callers and focused tests."""
 
     commission, created = _create_research_commission(user_id, ticker, actor=actor)
     if not created:
@@ -5543,7 +5434,6 @@ def _commission_research(
 
 
 def _fail_orphaned_research_jobs() -> None:
-    """Release in-memory research jobs interrupted by a server restart."""
 
     timestamp = iso()
     with connection() as db:
@@ -5580,7 +5470,6 @@ def _fail_orphaned_research_jobs() -> None:
 
 
 def _recover_completed_edge_reports() -> None:
-    """Finish local-model responses saved just before a process stopped."""
 
     with connection() as db:
         report_ids = [
@@ -5604,7 +5493,6 @@ def _recover_completed_edge_reports() -> None:
 
 
 async def research_job_worker() -> None:
-    """Finish commissioned reports independently of the browser request."""
 
     if redis_configured():
         while True:
@@ -5813,7 +5701,7 @@ def _generate_alpha_report(evidence: dict[str, Any]) -> dict[str, Any]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(api_request, timeout=45) as response:  # noqa: S310
+        with urllib.request.urlopen(api_request, timeout=45) as response:
             result = json.load(response)
     except urllib.error.HTTPError as exc:
         message = exc.read(1000).decode(errors="replace")
@@ -6015,9 +5903,7 @@ def _compact_edge_history(history: Any) -> dict[str, Any] | None:
 def _compact_sports_event(event: dict[str, Any], *, radar: bool) -> dict[str, Any]:
     fields = SPORTS_RADAR_EVENT_FIELDS if radar else SPORTS_PULSE_EVENT_FIELDS
     compact = {
-        field: event[field]
-        for field in fields
-        if field in event and event[field] is not None
+        field: event[field] for field in fields if field in event and event[field] is not None
     }
     history = _compact_edge_history(event.get("edge_history"))
     if history:
@@ -6061,7 +5947,7 @@ def _public_sports_pulse_data(
     view: str = "signals",
     limit: int = 30,
 ) -> dict[str, Any]:
-    _ = view  # The public Pulse only has the signals view.
+    _ = view
     selected_league = league if league in SPORTS_LEAGUES else "all"
     result_limit = max(1, min(limit, 100))
     cached = _public_screen_data(
@@ -6801,7 +6687,6 @@ def _chart_topic(ticker: str) -> str:
 
 
 def _pulse_entry_markers(tickers: list[str]) -> dict[str, dict[str, Any]]:
-    """Return materialized Pulse entry events inside the chart window."""
 
     requested = list(dict.fromkeys(str(ticker).upper() for ticker in tickers))[:50]
     if not requested:
@@ -6814,7 +6699,7 @@ def _pulse_entry_markers(tickers: list[str]) -> dict[str, dict[str, Any]]:
             SELECT ticker,entered_at,price FROM pulse_entries
             WHERE ticker IN ({placeholders}) AND entered_at>=?
             ORDER BY entered_at
-            """,  # noqa: S608 - placeholders are generated above
+            """,
             (*requested, cutoff),
         ).fetchall()
     entries: dict[str, dict[str, Any]] = {}
@@ -6993,7 +6878,6 @@ def _ticker_charts_payload_uncached(requested: list[str]) -> dict[str, Any]:
 
 
 def _compact_list_chart_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Keep the richer internal chart contract while sending small list sparklines."""
 
     return {
         **payload,
@@ -7193,9 +7077,7 @@ def ticker_page(
         )
         current_price = detail.get("current", {}).get("price")
         mark = float(current_price) if current_price is not None else None
-        active_call = active_call_for_user(
-            str(user["id"]), normalized, current_price=mark
-        )
+        active_call = active_call_for_user(str(user["id"]), normalized, current_price=mark)
         comment_count = comment_count_for_ticker(normalized)
         calls = community_calls_for_ticker(normalized, current_price=mark, limit=20)
         latest_report = daily_report_for_ticker(normalized, str(user["id"]))
@@ -7310,7 +7192,6 @@ def _ticker_summary(ticker: str) -> dict[str, Any] | None:
 
 
 def _radar_market_summaries(tickers: list[str]) -> dict[str, dict[str, Any]]:
-    """Load the small amount of ticker context Radar actually renders."""
 
     requested = list(dict.fromkeys(str(ticker).upper() for ticker in tickers))[:40]
     if not requested:
@@ -7387,7 +7268,7 @@ def _radar_social_summaries(tickers: list[str]) -> dict[str, dict[str, Any]]:
             WHERE subject_kind='stock' AND ticker IN ({placeholders})
               AND status='public' AND created_at>=?
             GROUP BY ticker
-            """,  # noqa: S608 - placeholders are generated above
+            """,
             (*requested, cutoff),
         ).fetchall()
         calls = db.execute(
@@ -7396,7 +7277,7 @@ def _radar_social_summaries(tickers: list[str]) -> dict[str, dict[str, Any]]:
             FROM community_calls
             WHERE ticker IN ({placeholders}) AND status='active'
             GROUP BY ticker
-            """,  # noqa: S608 - placeholders are generated above
+            """,
             requested,
         ).fetchall()
     output = {
@@ -7552,9 +7433,7 @@ def _radar_base_data_uncached() -> list[dict[str, Any]]:
                 "event_at": event["event_at"],
                 "attention_score": score,
                 "filing_url": event.get("source_url"),
-                "external_social_mentions": _nonnegative_event_count(
-                    payload.get("mention_count")
-                ),
+                "external_social_mentions": _nonnegative_event_count(payload.get("mention_count")),
                 "external_social_engagement": _nonnegative_event_count(
                     payload.get("engagement_count")
                 ),
@@ -7605,7 +7484,6 @@ def radar_data() -> list[dict[str, Any]]:
 
 
 async def request_cache_warmer() -> None:
-    """Fill request caches shortly after startup without delaying health checks."""
 
     await asyncio.sleep(1)
     builders: list[Callable[[], Any]] = [
@@ -7717,6 +7595,7 @@ def _known_ticker(ticker: str) -> bool:
 def _public_comment(row: Any, current_user_id: str | None = None) -> dict[str, Any]:
     keys = set(row.keys())
     source = str(row["source"] or "user") if "source" in keys else "user"
+    ai_avatar = source in {"ai_avatar", "ai_generated"}
     avatar = comment_avatar_profile(
         str(row["avatar_name"]),
         str(row["avatar_seed"]),
@@ -7730,7 +7609,9 @@ def _public_comment(row: Any, current_user_id: str | None = None) -> dict[str, A
         "alias": avatar["name"],
         "avatar": avatar,
         "is_owner": bool(current_user_id and str(row["user_id"]) == current_user_id),
-        "ai_generated": source == "ai_generated",
+        "author_kind": "ai_avatar" if ai_avatar else "account_avatar",
+        "author_label": "AI avatar" if ai_avatar else "Account avatar",
+        "ai_generated": ai_avatar,
         "generation_model": (
             str(row["generation_model"] or "") if "generation_model" in keys else ""
         ),
@@ -7738,7 +7619,6 @@ def _public_comment(row: Any, current_user_id: str | None = None) -> dict[str, A
 
 
 def alpha_comments_data(*, limit: int = 50) -> list[dict[str, Any]]:
-    """Return the newest public ticker comments as one simple stream."""
 
     bounded_limit = min(100, max(1, limit))
     with connection() as db:
@@ -7870,7 +7750,6 @@ def thesis_case_revisions_api(
 
 
 def _openrouter_route_diagnostics(payload: Any) -> dict[str, Any]:
-    """Keep useful routing facts while excluding prompts and provider response text."""
 
     if not isinstance(payload, dict):
         return {}
@@ -7928,7 +7807,7 @@ def _request_openrouter_comment(body: dict[str, Any], models: tuple[str, ...]) -
         method="POST",
     )
     try:
-        with urllib.request.urlopen(api_request, timeout=30) as response:  # noqa: S310
+        with urllib.request.urlopen(api_request, timeout=30) as response:
             result = json.load(response)
     except urllib.error.HTTPError as exc:
         try:
@@ -7967,27 +7846,42 @@ def _generate_comment_from_evidence(
     evidence: dict[str, Any],
     *,
     subject_label: str,
-    avatar_ability_id: str,
+    avatar: dict[str, Any],
+    thread: dict[str, Any] | None = None,
+    report: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     if not _flash_provider_ready():
         raise HTTPException(503, "AI comments are temporarily unavailable.")
-    ability = comment_avatar_ability(avatar_ability_id)
+    ability = comment_avatar_ability(str(avatar.get("ability_id") or "catalyst_scout"))
+    context = {
+        "avatar": {
+            "name": str(avatar.get("name") or "Signal Avatar"),
+            "kind": "user_ai_avatar",
+            "level": int(avatar.get("level") or 1),
+            "ability": {
+                "name": ability["label"],
+                "description": ability["description"],
+                "focus": ability["prompt"],
+            },
+        },
+        "subject": {"kind": subject_label, **(thread or {})},
+        "report": report,
+        "evidence": evidence,
+        "publication": {
+            "author_kind": "ai_avatar",
+            "author_name": str(avatar.get("name") or "Signal Avatar"),
+            "format": "json",
+            "field": "comment",
+            "max_characters": COMMENT_MAX_CHARS,
+            "language": "simple English",
+            "grounding": "supplied context",
+            "financial_advice": False,
+        },
+    }
     body = {
         "messages": [
-            {
-                "role": "system",
-                "content": (
-                    f"Write one short {subject_label} comment in first person, as the "
-                    "human's public avatar speaking. "
-                    "Use simple English and only the supplied evidence. Keep it under 240 "
-                    "characters. State a view and the key risk. Do not give buy or sell advice. "
-                    "Do not mention AI. The avatar's lasting research ability is "
-                    f"{ability['label']}: {ability['prompt']} "
-                    "Use that as an emphasis, never as permission to invent facts. "
-                    "Return JSON with one field named comment."
-                ),
-            },
-            {"role": "user", "content": json.dumps(evidence, separators=(",", ":"))},
+            {"role": "system", "content": json.dumps(context, separators=(",", ":"))},
+            {"role": "user", "content": "Post a comment."},
         ],
         "response_format": {"type": "json_object"},
         "provider": {
@@ -8032,7 +7926,7 @@ def _generate_comment_from_evidence(
 def _generate_ticker_comment_text(
     ticker: str,
     *,
-    avatar_ability_id: str = "catalyst_scout",
+    avatar: dict[str, Any],
 ) -> tuple[str, str]:
     detail = ticker_detail_data(ticker)
     if not detail:
@@ -8062,17 +7956,50 @@ def _generate_ticker_comment_text(
             for item in detail.get("events", [])[:3]
         ],
     }
+    latest_report = daily_report_for_ticker(ticker)
+    if latest_report and latest_report.get("locked"):
+        latest_report = None
+    report = (
+        {
+            "headline": latest_report.get("headline"),
+            "summary": latest_report.get("summary"),
+            "thesis": latest_report.get("thesis"),
+            "catalysts": list(latest_report.get("catalysts") or [])[:6],
+            "risks": list(latest_report.get("risks") or [])[:6],
+            "watch": list(latest_report.get("watch") or [])[:6],
+            "unknowns": list(latest_report.get("unknowns") or [])[:6],
+            "citations": list(latest_report.get("citations") or [])[:8],
+            "evidence_as_of": latest_report.get("evidence_as_of"),
+        }
+        if latest_report
+        else None
+    )
+    recent_comments = comments_for_ticker(ticker, limit=12)
     return _generate_comment_from_evidence(
         evidence,
         subject_label="stock",
-        avatar_ability_id=avatar_ability_id,
+        avatar=avatar,
+        thread={
+            "ticker": ticker,
+            "recent_comments": [
+                {
+                    "author": comment["avatar"]["name"],
+                    "author_kind": comment["author_kind"],
+                    "body": comment["body"],
+                    "created_at": comment["created_at"],
+                    "from_this_avatar": comment["avatar"]["name"] == avatar.get("name"),
+                }
+                for comment in recent_comments
+            ],
+        },
+        report=report,
     )
 
 
 def _generate_sports_comment_text(
     event_id: str,
     *,
-    avatar_ability_id: str = "catalyst_scout",
+    avatar: dict[str, Any],
 ) -> tuple[str, str]:
     event = sports_event(event_id)
     if not event:
@@ -8111,10 +8038,24 @@ def _generate_sports_comment_text(
             for item in list(event.get("news") or [])[:3]
         ],
     }
+    recent_comments = comments_for_subject("sports_game", event_id, limit=12)
     return _generate_comment_from_evidence(
         evidence,
         subject_label="sports matchup",
-        avatar_ability_id=avatar_ability_id,
+        avatar=avatar,
+        thread={
+            "event_id": event_id,
+            "recent_comments": [
+                {
+                    "author": comment["avatar"]["name"],
+                    "author_kind": comment["author_kind"],
+                    "body": comment["body"],
+                    "created_at": comment["created_at"],
+                    "from_this_avatar": comment["avatar"]["name"] == avatar.get("name"),
+                }
+                for comment in recent_comments
+            ],
+        },
     )
 
 
@@ -8175,10 +8116,7 @@ def _replay_comment_request(
     subject_key: str,
     user_id: str,
 ) -> JSONResponse:
-    if (
-        str(row["subject_kind"]) != subject_kind
-        or str(row["subject_key"]) != subject_key
-    ):
+    if str(row["subject_kind"]) != subject_kind or str(row["subject_key"]) != subject_key:
         raise HTTPException(409, "This comment request key was used for another subject.")
     status = str(row["status"])
     if status == "pending" and _comment_request_is_stale(row):
@@ -8334,7 +8272,7 @@ async def _create_subject_comment(
         body, model = await run_in_threadpool(
             generator,
             subject_key,
-            avatar_ability_id=str(avatar["ability_id"]),
+            avatar=avatar,
         )
         completed_at = iso()
         with connection() as db:
@@ -8363,7 +8301,7 @@ async def _create_subject_comment(
                     body,
                     "public",
                     created_at,
-                    "ai_generated",
+                    "ai_avatar",
                     model,
                 ),
             )
@@ -8470,7 +8408,6 @@ def delete_ticker_comment(
 
 
 def _current_call_mark(ticker: str) -> tuple[float, str]:
-    """Return the server's current market mark and its observed time."""
 
     detail = ticker_detail_data(ticker)
     if not detail or not detail.get("can_publish"):
@@ -8622,9 +8559,7 @@ def research_job_status_api(
         ).fetchone()
     if not row:
         raise HTTPException(404, "Flash report not found")
-    return JSONResponse(
-        _commission_api_payload(_commission_record(row) or {}, str(user["id"]))
-    )
+    return JSONResponse(_commission_api_payload(_commission_record(row) or {}, str(user["id"])))
 
 
 @app.post("/api/research/{public_id}/publish")
@@ -8698,9 +8633,7 @@ def research_report_page(
 ) -> HTMLResponse:
     user = current_user(runner_session)
     report = (
-        get_commission(public_id)
-        if user
-        else _public_research_report_data(public_id).get("report")
+        get_commission(public_id) if user else _public_research_report_data(public_id).get("report")
     )
     is_owner = bool(user and report and str(report["user_id"]) == str(user["id"]))
     if not report or (str(report.get("visibility") or "private") != "public" and not is_owner):
@@ -8749,11 +8682,12 @@ def research_report_card(
     card_label = (
         f"YOUR MODEL · {model_label.upper()} · PRIVATE"
         if customer_inference
-        else
-        f"{str(actor.get('display_name') or 'AI').upper()} · {model_label.upper()} "
+        else f"{str(actor.get('display_name') or 'AI').upper()} · {model_label.upper()} "
         f"{'SPORTS' if is_sports else 'RESEARCH'}"
         if actor
-        else "RATi SPORTS" if is_sports else "RUNNER WATCH RESEARCH"
+        else "RATi SPORTS"
+        if is_sports
+        else "RUNNER WATCH RESEARCH"
     )
     ladder_label = f"#{actor.get('ladder_position')} · " if actor and not customer_inference else ""
     image = Image.new("RGB", (1200, 630), "#090b0b")
@@ -8831,7 +8765,6 @@ def intelligence_api(_access: None = Depends(require_operations_access)) -> JSON
 
 @app.get("/auth/openrouter/callback")
 def legacy_openrouter_callback() -> RedirectResponse:
-    """Old bookmarked callbacks no longer expose a consumer-key setup screen."""
 
     return RedirectResponse("/", 303)
 
@@ -8862,13 +8795,10 @@ def login_page(request: Request, runner_session: str | None = Cookie(default=Non
 
 @app.get("/.well-known/webauthn")
 def webauthn_related_origins() -> JSONResponse:
-    """Allow legacy passkeys to be used once on the replacement product origins."""
 
     origins = list(
         dict.fromkeys(
-            origin
-            for origin in (RUNNERS_ORIGIN, SPORTS_ORIGIN)
-            if origin.startswith("https://")
+            origin for origin in (RUNNERS_ORIGIN, SPORTS_ORIGIN) if origin.startswith("https://")
         )
     )
     return JSONResponse(
@@ -9051,7 +8981,6 @@ def login_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
 
 @app.post("/api/auth/login/legacy/options")
 def legacy_login_options(request: Request) -> JSONResponse:
-    """Start a Related Origins login for an account created on the old host."""
 
     require_origin(request)
     if not legacy_passkey_migration_available(request):
@@ -9068,7 +8997,6 @@ def legacy_login_options(request: Request) -> JSONResponse:
 
 @app.post("/api/auth/login/legacy/verify")
 def legacy_login_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
-    """Link a verified legacy credential to a fresh session on the new host."""
 
     require_origin(request)
     if not legacy_passkey_migration_available(request):
@@ -9099,9 +9027,7 @@ def legacy_login_verify(payload: PasskeyFinish, request: Request) -> JSONRespons
             "UPDATE passkeys SET sign_count=?,last_used_at=? WHERE credential_id=?",
             (verification.new_sign_count, iso(), credential_id),
         )
-    response = JSONResponse(
-        {"ok": True, "redirect": "/settings/passkey?migrate=1"}
-    )
+    response = JSONResponse({"ok": True, "redirect": "/settings/passkey?migrate=1"})
     create_session(passkey["user_id"], response)
     return response
 
@@ -9145,8 +9071,7 @@ def reauth_options(
         rp_id=rp_id_for_request(request),
         timeout=60_000,
         allow_credentials=[
-            PublicKeyCredentialDescriptor(id=bytes(row["credential_id"]))
-            for row in credential_rows
+            PublicKeyCredentialDescriptor(id=bytes(row["credential_id"])) for row in credential_rows
         ],
         user_verification=UserVerificationRequirement.REQUIRED,
     )
@@ -9296,7 +9221,7 @@ def recent_sec_catalysts(tickers: list[str]) -> dict[str, dict[str, Any]]:
                    beneficial_ownership_pct FROM sec_filings
             WHERE ticker IN ({placeholders}) AND created_at>?
             ORDER BY filed_at DESC
-            """,  # noqa: S608
+            """,
             (*unique, iso(now() - timedelta(days=3))),
         ).fetchall()
     output: dict[str, dict[str, Any]] = {}
@@ -9318,7 +9243,7 @@ def recent_sec_risks(tickers: list[str]) -> dict[str, dict[str, Any]]:
             FROM sec_filings
             WHERE ticker IN ({placeholders}) AND sentiment='risk' AND created_at>?
             ORDER BY score DESC,filed_at DESC
-            """,  # noqa: S608
+            """,
             (*unique, iso(now() - timedelta(days=180))),
         ).fetchall()
     output: dict[str, dict[str, Any]] = {}
@@ -9341,7 +9266,7 @@ def _stored_market_risk_contexts(database: Any, tickers: list[str]) -> dict[str,
                   'trading_halt','reverse_split','corporate_action','security_action'
               )
         ORDER BY event_at DESC,last_collected_at DESC
-        """,  # noqa: S608
+        """,
         (*unique, iso(now() - timedelta(days=370))),
     ).fetchall()
     output = {ticker: {"active_halt": False, "reverse_split_count_1y": 0} for ticker in unique}
@@ -9394,7 +9319,7 @@ def _previous_trade_states(database: Any, tickers: list[str]) -> dict[str, str]:
                    LIMIT 1
                ) AS trade_state
         FROM requested
-        """,  # noqa: S608
+        """,
         unique,
     ).fetchall()
     return {
@@ -9409,7 +9334,6 @@ def _record_pulse_entries_for_run(
     scan_run_id: str,
     captured_at: str,
 ) -> int:
-    """Materialize entry events once, while the scan transaction is still open."""
 
     previous = database.execute(
         """
@@ -9792,7 +9716,6 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
 
 @app.post("/api/signals")
 def publish_signal() -> None:
-    """Retired: public text posts were replaced by structured Calls."""
 
     raise HTTPException(410, "Public Signals were replaced by Calls.")
 

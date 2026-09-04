@@ -1,5 +1,3 @@
-"""Secure persistence for a swarm node's Ed25519 identity."""
-
 from __future__ import annotations
 
 import os
@@ -15,7 +13,7 @@ PRIVATE_KEY_BYTES = 32
 
 
 class NodeKeyError(ValueError):
-    """A node identity key could not be loaded or stored safely."""
+    pass
 
 
 def private_key_text(private_key: Ed25519PrivateKey) -> str:
@@ -48,7 +46,6 @@ def _read_key(path: Path) -> Ed25519PrivateKey:
 
 
 def load_or_create_node_key(path: Path) -> Ed25519PrivateKey:
-    """Load one stable node key, creating it with owner-only permissions when absent."""
 
     path = Path(path)
     if path.exists() or path.is_symlink():

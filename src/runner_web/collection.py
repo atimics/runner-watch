@@ -11,7 +11,6 @@ from runner_web.ingestion import record_source_fetch
 
 
 def record_market_bars(interval: str, frames: dict[str, pd.DataFrame]) -> None:
-    """Compatibility wrapper that sends Yahoo bars through the shared pipe."""
 
     timestamp = datetime.now(UTC)
     record_source_fetch(
@@ -33,7 +32,6 @@ def record_market_bars(interval: str, frames: dict[str, pd.DataFrame]) -> None:
 
 
 def record_source_document(url: str, body: bytes) -> None:
-    """Compatibility wrapper that sends an SEC document through the shared pipe."""
 
     timestamp = datetime.now(UTC)
     stripped = body.lstrip()

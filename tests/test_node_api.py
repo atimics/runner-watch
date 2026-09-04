@@ -28,7 +28,7 @@ def _settings(**overrides: object) -> NodeSettings:
         "database_path": None,
         **overrides,
     }
-    return NodeSettings(**values)  # type: ignore[arg-type]
+    return NodeSettings(**values)
 
 
 def _client(
@@ -52,8 +52,8 @@ def _client(
         vault=vault,
         openrouter=openrouter,
         research=research,
-        cloud_source=cloud_source,  # type: ignore[arg-type]
-        remote_source=remote_source,  # type: ignore[arg-type]
+        cloud_source=cloud_source,
+        remote_source=remote_source,
     )
     client = TestClient(create_app(settings=settings, service=service))
     if authenticated and settings.auth_token:
@@ -117,9 +117,7 @@ def test_coverage_is_grouped_by_scanner_capability() -> None:
 def test_provider_priority_is_saved_and_reported() -> None:
     vault = MemoryCredentialVault({"massive": "vault-massive-key"})
     client, _vault = _client(vault=vault)
-    initial = {
-        row["id"]: row for row in client.get("/api/v1/coverage").json()["capabilities"]
-    }
+    initial = {row["id"]: row for row in client.get("/api/v1/coverage").json()["capabilities"]}
     assert initial["market_bars"]["selected_provider"] == "massive"
 
     response = client.put(
@@ -129,9 +127,7 @@ def test_provider_priority_is_saved_and_reported() -> None:
 
     assert response.status_code == 200
     assert response.json()["providers"] == ["yahoo", "massive"]
-    capabilities = {
-        row["id"]: row for row in client.get("/api/v1/coverage").json()["capabilities"]
-    }
+    capabilities = {row["id"]: row for row in client.get("/api/v1/coverage").json()["capabilities"]}
     assert capabilities["market_bars"]["selected_provider"] == "yahoo"
     assert "yahoo" in (vault.get("provider-routes") or "")
 

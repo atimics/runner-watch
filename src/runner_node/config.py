@@ -11,8 +11,6 @@ def _csv(name: str, default: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True, slots=True)
 class NodeSettings:
-    """Runtime settings shared by local, self-hosted, and cloud scanner nodes."""
-
     mode: str
     node_id: str
     public_origin: str | None

@@ -43,11 +43,11 @@ ClaimId = Annotated[str, Field(pattern=CLAIM_ID_PATTERN)]
 
 
 class ClaimVerificationError(ValueError):
-    """The claim cannot be trusted as a valid signed protocol message."""
+    pass
 
 
 class ClaimExpiredError(ClaimVerificationError):
-    """The claim was signed correctly but is no longer current."""
+    pass
 
 
 class TradeState(StrEnum):
@@ -77,14 +77,11 @@ def _utc(value: datetime) -> datetime:
 
 
 def encode_public_key(public_key: Ed25519PublicKey) -> str:
-    """Return the registry-free wire identity for an Ed25519 public key."""
 
     return public_key_text(public_key)
 
 
 class EvidenceReferenceV1(SwarmModel):
-    """A content reference, not a copy of provider data."""
-
     evidence_id: Annotated[str, Field(pattern=CLAIM_ID_PATTERN)]
     family: Annotated[str, Field(min_length=1, max_length=48, pattern=SLUG_PATTERN)]
     source: Annotated[str, Field(min_length=1, max_length=96, pattern=SLUG_PATTERN)]
@@ -260,8 +257,6 @@ _CLAIM_ADAPTER = TypeAdapter(ClaimPayloadV1)
 
 
 class SignedClaimV1(SwarmModel):
-    """A signed, untrusted peer statement with a content-derived identity."""
-
     claim: ClaimPayloadV1
     claim_id: ClaimId
     signature_algorithm: Literal["ed25519"] = SIGNATURE_ALGORITHM

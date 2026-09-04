@@ -31,7 +31,6 @@ class InferenceRoute:
     unavailable_reason: str | None = None
 
     def snapshot(self) -> dict[str, Any]:
-        """Return the safe route metadata stored with a report."""
 
         return {
             "policy": self.policy,
@@ -59,7 +58,7 @@ class LLMRouteError(RuntimeError):
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(  # type: ignore[override]
+    def redirect_request(
         self,
         req: urllib.request.Request,
         fp: Any,
@@ -110,7 +109,6 @@ def _global_addresses(hostname: str) -> list[str]:
 
 
 def normalize_openai_base_url(value: str, *, allow_local: bool = False) -> str:
-    """Validate an OpenAI-compatible base URL and return its canonical form."""
 
     candidate = value.strip().rstrip("/")
     try:
@@ -201,7 +199,7 @@ def _request_json(
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     opener = urllib.request.build_opener(_NoRedirect)
     try:
-        with opener.open(request, timeout=timeout) as response:  # noqa: S310
+        with opener.open(request, timeout=timeout) as response:
             declared_size = int(response.headers.get("Content-Length") or 0)
             if declared_size > MAX_PROVIDER_RESPONSE_BYTES:
                 raise LLMRouteError(
@@ -264,10 +262,11 @@ def probe_openai_compatible(
         timeout=timeout,
     )
     models = result.get("data")
-    model_ids = [
-        str(item.get("id"))[:160]
-        for item in models if isinstance(item, dict) and item.get("id")
-    ] if isinstance(models, list) else []
+    model_ids = (
+        [str(item.get("id"))[:160] for item in models if isinstance(item, dict) and item.get("id")]
+        if isinstance(models, list)
+        else []
+    )
     return {"ok": True, "models": model_ids[:100]}
 
 
@@ -335,8 +334,8 @@ def route_for_user(database: Any, user_id: str, *, managed_model: str) -> Infere
     if not available and policy == "prefer_customer":
         return InferenceRoute(policy="prefer_customer", kind="managed", model=managed_model)
     return InferenceRoute(
-        policy=policy,  # type: ignore[arg-type]
-        kind=kind,  # type: ignore[arg-type]
+        policy=policy,
+        kind=kind,
         model=model or managed_model,
         connector_id=connector_id,
         customer_inference=True,

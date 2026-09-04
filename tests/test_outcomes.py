@@ -61,9 +61,7 @@ def test_barrier_outcome_uses_highs_lows_and_first_touch() -> None:
 
 def test_barrier_outcome_marks_same_bar_ambiguity_as_down() -> None:
     base = datetime(2026, 8, 24, 14, tzinfo=UTC)
-    result = barrier_outcome(
-        [(base + timedelta(minutes=5), 109.0, 95.0, 101.0)], base, 100.0
-    )
+    result = barrier_outcome([(base + timedelta(minutes=5), 109.0, 95.0, 101.0)], base, 100.0)
     assert result is not None
     assert result["barrier_label"] == "down"
     assert result["barrier_ambiguous"] == 1
@@ -72,8 +70,7 @@ def test_barrier_outcome_marks_same_bar_ambiguity_as_down() -> None:
 def test_timeout_requires_bars_covering_the_full_hour() -> None:
     base = datetime(2026, 8, 24, 14, tzinfo=UTC)
     complete = [
-        (base + timedelta(minutes=minute), 102.0, 98.0, 100.0)
-        for minute in range(5, 61, 5)
+        (base + timedelta(minutes=minute), 102.0, 98.0, 100.0) for minute in range(5, 61, 5)
     ]
     result = barrier_outcome(complete, base, 100.0)
     assert result is not None

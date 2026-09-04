@@ -47,7 +47,7 @@ def _exchange_code(code: str, verifier: str) -> dict[str, Any]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=20) as response:
             return json.loads(response.read().decode())
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")[:500]
@@ -65,8 +65,6 @@ class PendingFlow:
 
 
 class OpenRouterConnections:
-    """Own OpenRouter PKCE state and keep credentials outside the renderer."""
-
     def __init__(
         self,
         vault: CredentialVault,

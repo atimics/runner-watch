@@ -13,8 +13,8 @@ from typing import Any
 
 try:
     import resource
-except ImportError:  # pragma: no cover - Windows does not expose process rusage.
-    resource = None  # type: ignore[assignment]
+except ImportError:
+    resource = None
 
 from sec_qwen.config import Config, load_examples, sha256_file, validate_corpus
 from sec_qwen.receipts import (

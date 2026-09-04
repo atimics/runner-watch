@@ -7,8 +7,6 @@ from runner_watch.source_catalog import SourcePolicy
 
 @dataclass(frozen=True, slots=True)
 class SourceCapability:
-    """One kind of evidence that a scanner source can supply."""
-
     id: str
     title: str
     description: str
@@ -145,7 +143,6 @@ def capability_for_policy(policy: SourcePolicy) -> SourceCapability:
 
 
 def usage_rights_for_policy(policy: SourcePolicy) -> tuple[str, ...]:
-    """Return conservative product rights, not a claim about provider ownership."""
 
     rights = ["local_private"]
     if policy.storage_policy not in {"none", "do_not_store"}:

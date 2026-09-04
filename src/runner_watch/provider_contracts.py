@@ -16,8 +16,6 @@ class DataKind(StrEnum):
 
 
 class CanonicalModel(BaseModel):
-    """Base for provider-neutral records passed into the product."""
-
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
 
@@ -141,9 +139,7 @@ class ProviderRequest(CanonicalModel):
         if isinstance(value, str):
             value = (value,)
         return tuple(
-            dict.fromkeys(
-                str(item).strip().upper() for item in value if str(item).strip()
-            )
+            dict.fromkeys(str(item).strip().upper() for item in value if str(item).strip())
         )
 
     @model_validator(mode="after")

@@ -1,5 +1,3 @@
-"""Bounded SQLite storage for local swarm trust decisions."""
-
 from __future__ import annotations
 
 import sqlite3
@@ -30,12 +28,10 @@ DEFAULT_MAX_ROTATION_DECISIONS = 10_000
 
 
 class LocalTrustStoreError(ValueError):
-    """The isolated local trust database cannot safely apply an operation."""
+    pass
 
 
 class LocalTrustStore:
-    """Durable local outcomes and rotations, isolated from provider data."""
-
     def __init__(
         self,
         path: str | Path,
@@ -81,7 +77,6 @@ class LocalTrustStore:
         verified_claim_source_families: tuple[str, ...],
         verification_source_families: tuple[str, ...],
     ) -> ClaimOutcomeRecord:
-        """Build a record from a verified claim and persist it idempotently."""
 
         record = LocalOutcomeLedger().record(
             signed_claim,
@@ -93,7 +88,6 @@ class LocalTrustStore:
         return self.add_outcome(record)
 
     def add_outcome(self, record: ClaimOutcomeRecord) -> ClaimOutcomeRecord:
-        """Load an already trusted local result and enforce immutable claim outcomes."""
 
         payload = canonical_json_bytes(record)
         measured_at = record.measured_at.isoformat(timespec="microseconds")

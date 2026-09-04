@@ -72,16 +72,12 @@ def _bounded_receipts(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 class RemoteScannerSource:
-    """Reads bounded scan receipts from a configured scanner node."""
-
     def scans(self, url: str, token: str = "") -> list[dict[str, Any]]:
         origin = normalize_scanner_url(url)
         return _bounded_receipts(_get_json(f"{origin}/api/v1/scans", token))
 
 
 class RatiCloudSource:
-    """Normalizes the preconfigured free RATi feed into one source receipt."""
-
     def scans(self) -> list[dict[str, Any]]:
         payload = _get_json(f"{RATI_CLOUD_ORIGIN}/api/pulse?offset=0&limit=20")
         rows = payload.get("rows")

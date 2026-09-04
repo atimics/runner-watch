@@ -152,9 +152,7 @@ def _classification_fields(
         "actor": ownership.owner_name if ownership else None,
         "actor_title": ownership.owner_title if ownership else None,
         "transaction_codes": ",".join(ownership.codes) if ownership else "",
-        "transaction_shares": (
-            ownership.purchase_shares if is_purchase else ownership.sale_shares
-        )
+        "transaction_shares": (ownership.purchase_shares if is_purchase else ownership.sale_shares)
         if ownership
         else None,
         "transaction_price": (
@@ -162,9 +160,7 @@ def _classification_fields(
         )
         if ownership
         else None,
-        "transaction_value": (
-            ownership.purchase_value if is_purchase else ownership.sale_value
-        )
+        "transaction_value": (ownership.purchase_value if is_purchase else ownership.sale_value)
         if ownership
         else None,
         "post_transaction_shares": ownership.post_transaction_shares if ownership else None,
@@ -523,7 +519,6 @@ def _braid_build(
                 "maximumCharacters": 1_000_000,
                 "minimumAlphabeticRatio": 0,
                 "minimumPrintableRatio": 0.98,
-                # Inline XBRL evidence legitimately contains dense taxonomy namespace URLs.
                 "maximumUrlRatio": 1,
                 "maximumRepeatedLineRatio": 1,
                 "nearDuplicateHammingDistance": 0,
@@ -582,13 +577,17 @@ def transform_braid_sec_stream(
         raise ValueError("source_manifest_sha256 must be a lowercase SHA-256 digest")
     if not re.fullmatch(r"[a-f0-9]{40}", runner_revision):
         raise ValueError("runner_revision must be a full lowercase Git commit SHA")
-    if min(
-        max_body_bytes,
-        max_document_chars,
-        max_chunks_per_accession,
-        max_examples_per_accession,
-        max_filings_per_issuer,
-    ) < 1 or max_facts < 0:
+    if (
+        min(
+            max_body_bytes,
+            max_document_chars,
+            max_chunks_per_accession,
+            max_examples_per_accession,
+            max_filings_per_issuer,
+        )
+        < 1
+        or max_facts < 0
+    ):
         raise ValueError("body, document, chunk, fact, example, and filing limits are invalid")
     if not 0 <= unseen_issuer_fraction < 1:
         raise ValueError("unseen_issuer_fraction must be between 0 and 1")
@@ -736,15 +735,15 @@ def transform_braid_sec_stream(
         (root / "candidates").mkdir()
         handles = {
             "train": (root / "candidates/train.jsonl").open("w", encoding="utf-8", newline="\n"),
-            "validation": (
-                root / "candidates/validation.jsonl"
-            ).open("w", encoding="utf-8", newline="\n"),
-            "test_future": (
-                root / "candidates/test-future.jsonl"
-            ).open("w", encoding="utf-8", newline="\n"),
-            "test_unseen_issuer": (
-                root / "candidates/test-unseen-issuer.jsonl"
-            ).open("w", encoding="utf-8", newline="\n"),
+            "validation": (root / "candidates/validation.jsonl").open(
+                "w", encoding="utf-8", newline="\n"
+            ),
+            "test_future": (root / "candidates/test-future.jsonl").open(
+                "w", encoding="utf-8", newline="\n"
+            ),
+            "test_unseen_issuer": (root / "candidates/test-unseen-issuer.jsonl").open(
+                "w", encoding="utf-8", newline="\n"
+            ),
         }
         counts = {name: 0 for name in SPLIT_FILES}
         try:
@@ -816,9 +815,7 @@ def transform_braid_sec_stream(
                 name="feral-7b-sec-unseen-eval",
                 description="FERAL-7B sealed unseen-issuer SEC evaluation release from Braid.",
                 purposes=("evaluation", "research"),
-                source_specs=(
-                    ("feral-unseen", "candidates/test-unseen-issuer.jsonl", "test"),
-                ),
+                source_specs=(("feral-unseen", "candidates/test-unseen-issuer.jsonl", "test"),),
             ),
         }
         for filename, build in builds.items():

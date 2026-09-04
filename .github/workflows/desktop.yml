@@ -37,8 +37,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  audit:
+    name: Dependency audit
+    runs-on: macos-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        with:
+          version: 10.19.0
+          run_install: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --audit-level low
+
   build:
     name: ${{ matrix.name }}
+    needs: audit
     strategy:
       fail-fast: false
       matrix:
@@ -61,8 +84,8 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
         with:
           python-version: "3.13"
           enable-cache: true
@@ -93,11 +116,11 @@ jobs:
         run: uv run python scripts/smoke_desktop_scanner.py
       - name: Stage Tauri scanner sidecar
         run: uv run python scripts/stage_desktop_scanner.py
-      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
         with:
           version: 10.19.0
           run_install: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: "24"
           cache: pnpm
@@ -105,9 +128,6 @@ jobs:
       - name: Install desktop dependencies
         working-directory: desktop
         run: pnpm install --frozen-lockfile
-      - name: Audit desktop dependencies
-        working-directory: desktop
-        run: pnpm audit --audit-level low
       - name: Check desktop client
         working-directory: desktop
         run: |
@@ -116,7 +136,7 @@ jobs:
       - name: Build native package
         working-directory: desktop
         run: pnpm tauri build --bundles "${{ matrix.bundles }}"
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: ${{ matrix.artifact }}
           path: desktop/src-tauri/target/release/bundle/**

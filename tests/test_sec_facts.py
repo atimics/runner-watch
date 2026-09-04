@@ -61,9 +61,7 @@ def test_company_facts_normalize_treasury_burn_and_share_supply() -> None:
             },
         },
     }
-    facts = parse_company_facts(
-        payload, collected_at=datetime(2026, 8, 25, tzinfo=UTC)
-    )
+    facts = parse_company_facts(payload, collected_at=datetime(2026, 8, 25, tzinfo=UTC))
     rows = [
         {
             "concept": fact.concept,

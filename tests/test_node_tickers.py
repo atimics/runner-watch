@@ -106,12 +106,12 @@ def test_local_ticker_detail_returns_charts_analysis_and_provenance(monkeypatch)
 
     assert detail["ticker"] == "TEST"
     assert detail["source"] == "local_scanner"
-    assert detail["quote"]["price"] > 0  # type: ignore[index]
+    assert detail["quote"]["price"] > 0
     assert detail["analysis"] is not None
-    assert len(detail["charts"]["daily"]) == 30  # type: ignore[index]
-    assert len(detail["charts"]["intraday"]) == 40  # type: ignore[index]
-    assert [pull["provider"] for pull in detail["pulls"]] == ["yahoo", "yahoo"]  # type: ignore[index]
-    assert all(pull["fallback_used"] for pull in detail["pulls"])  # type: ignore[index]
+    assert len(detail["charts"]["daily"]) == 30
+    assert len(detail["charts"]["intraday"]) == 40
+    assert [pull["provider"] for pull in detail["pulls"]] == ["yahoo", "yahoo"]
+    assert all(pull["fallback_used"] for pull in detail["pulls"])
 
 
 def test_local_ticker_detail_keeps_successful_nasdaq_results(monkeypatch) -> None:
@@ -129,7 +129,7 @@ def test_local_ticker_detail_keeps_successful_nasdaq_results(monkeypatch) -> Non
 
     detail = load_ticker_detail("test")
 
-    assert [pull["provider"] for pull in detail["pulls"]] == ["nasdaq", "nasdaq"]  # type: ignore[index]
+    assert [pull["provider"] for pull in detail["pulls"]] == ["nasdaq", "nasdaq"]
 
 
 def test_local_ticker_detail_falls_back_only_for_missing_interval(monkeypatch) -> None:
@@ -149,8 +149,8 @@ def test_local_ticker_detail_falls_back_only_for_missing_interval(monkeypatch) -
 
     detail = load_ticker_detail("test")
 
-    assert [pull["provider"] for pull in detail["pulls"]] == ["nasdaq", "yahoo"]  # type: ignore[index]
-    assert detail["pulls"][1]["fallback_used"] is True  # type: ignore[index]
+    assert [pull["provider"] for pull in detail["pulls"]] == ["nasdaq", "yahoo"]
+    assert detail["pulls"][1]["fallback_used"] is True
     assert detail["warnings"] == ["Nasdaq intraday ticker source failed: timeout"]
 
 
@@ -167,9 +167,9 @@ def test_local_ticker_detail_keeps_partial_data_when_fallback_fails(monkeypatch)
 
     detail = load_ticker_detail("test")
 
-    assert len(detail["charts"]["daily"]) == 30  # type: ignore[index]
-    assert detail["charts"]["intraday"] == []  # type: ignore[index]
-    assert detail["pulls"][1]["status"] == "failed"  # type: ignore[index]
+    assert len(detail["charts"]["daily"]) == 30
+    assert detail["charts"]["intraday"] == []
+    assert detail["pulls"][1]["status"] == "failed"
     assert detail["warnings"] == [
         "Market-data intraday fallback failed: Intraday unavailable for ['TEST']"
     ]

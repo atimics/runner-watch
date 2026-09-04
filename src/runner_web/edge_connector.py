@@ -14,7 +14,7 @@ from runner_web.llm_routing import LLMRouteError, call_chat_completions
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(  # type: ignore[override]
+    def redirect_request(
         self,
         req: urllib.request.Request,
         fp: Any,
@@ -61,7 +61,7 @@ def _cloud_json(
         method="POST",
     )
     opener = urllib.request.build_opener(_NoRedirect)
-    with opener.open(request, timeout=timeout) as response:  # noqa: S310
+    with opener.open(request, timeout=timeout) as response:
         result = json.load(response)
     if not isinstance(result, dict):
         raise ValueError("RATi returned an invalid connector response")

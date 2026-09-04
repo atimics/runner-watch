@@ -158,9 +158,7 @@ def sample_golf_event() -> dict[str, object]:
         "name": "TOUR Championship",
         "date": (current - timedelta(days=1)).isoformat(),
         "endDate": (current + timedelta(days=2)).isoformat(),
-        "status": {
-            "type": {"state": "in", "completed": False, "shortDetail": "Round 2"}
-        },
+        "status": {"type": {"state": "in", "completed": False, "shortDetail": "Round 2"}},
         "competitions": [
             {
                 "venue": {
@@ -723,6 +721,8 @@ def test_concurrent_pick_conflict_returns_the_stored_pick(monkeypatch) -> None:
     result = create_sports_pick("race-user", "mlb:race", "home")
 
     assert result == existing
+
+
 def test_paper_pick_rejects_an_old_moneyline(sports_db) -> None:
     event = normalize_event("mlb", sample_event())
     assert event is not None
@@ -795,8 +795,8 @@ def test_sports_comments_use_the_shared_flash_funded_generator(
     monkeypatch.setattr(
         web_main,
         "_generate_sports_comment_text",
-        lambda _event_id, *, avatar_ability_id: (
-            f"The {avatar_ability_id} read favors the verified matchup edge.",
+        lambda _event_id, *, avatar: (
+            f"The {avatar['ability_id']} read favors the verified matchup edge.",
             "test/sports-comment-model",
         ),
     )
@@ -824,7 +824,7 @@ def test_sports_comments_use_the_shared_flash_funded_generator(
     assert dict(row) == {
         "subject_kind": "sports_game",
         "subject_key": event["id"],
-        "source": "ai_generated",
+        "source": "ai_avatar",
     }
 
 
@@ -867,8 +867,7 @@ def test_sports_alpha_counts_calls_beyond_the_feed_limit(sports_db) -> None:
     with connection() as database:
         for index in range(12):
             database.execute(
-                "INSERT INTO users(id,username,display_name,status,created_at) "
-                "VALUES(?,?,?,?,?)",
+                "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
                 (
                     f"count-user-{index}",
                     f"count_member_{index}",
@@ -977,8 +976,8 @@ def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
     assert b"RATi Sports" in response.body
     assert b'class="token-list" id="sportsPulseList"' in response.body
     assert b'class="game-card winner-card' not in response.body
-    assert b'/static/ticker-row.js' in response.body
-    assert b'/static/sports-live.js' in response.body
+    assert b"/static/ticker-row.js" in response.body
+    assert b"/static/sports-live.js" in response.body
     assert b"Away Club" in response.body
     assert b"Home Club" in response.body
     assert b"ESTIMATED SCORE" not in response.body
@@ -1023,15 +1022,16 @@ def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
     assert b"Team news" in detail_response.body
     assert b"Game thread" not in detail_response.body
     assert b"<textarea" not in detail_response.body
-    assert b'/static/sports-comments.js' not in detail_response.body
+    assert b"/static/sports-comments.js" not in detail_response.body
     assert b"Make a Call" in detail_response.body
     assert b"Wins earn up to" in detail_response.body
     assert b'class="game-notebook"' in detail_response.body
-    assert detail_response.body.index(b"SEASON-RECORD BASELINE") < detail_response.body.index(
-        b"Make a Call"
-    ) < detail_response.body.index(
-        b"Flash report"
-    ) < detail_response.body.index(b"Game details")
+    assert (
+        detail_response.body.index(b"SEASON-RECORD BASELINE")
+        < detail_response.body.index(b"Make a Call")
+        < detail_response.body.index(b"Flash report")
+        < detail_response.body.index(b"Game details")
+    )
 
     path_response = sports_game_page(
         event["id"],
@@ -1072,9 +1072,7 @@ def test_legacy_sports_routes_cannot_redirect_to_user_input(sports_db) -> None:
     assert all("location" not in response.headers for response in legacy_api_responses)
 
     game_redirect = sports_game_legacy_page(str(event["id"]))
-    assert game_redirect.headers["location"] == (
-        f"{web_main.SPORTS_ORIGIN}/game/{event['id']}"
-    )
+    assert game_redirect.headers["location"] == (f"{web_main.SPORTS_ORIGIN}/game/{event['id']}")
     with pytest.raises(HTTPException) as error:
         sports_game_legacy_page("//untrusted.example")
     assert error.value.status_code == 404
@@ -1115,9 +1113,7 @@ def test_game_page_tolerates_minimal_cached_event_data(
         lambda *_args, **_kwargs: {"event": detail},
     )
 
-    response = sports_game_page(
-        str(event["id"]), request(path=f"/game/{event['id']}"), None
-    )
+    response = sports_game_page(str(event["id"]), request(path=f"/game/{event['id']}"), None)
 
     assert response.status_code == 200
     assert b"Game thread" not in response.body
@@ -1222,8 +1218,9 @@ def test_sports_pulse_hides_passes_and_radar_keeps_real_moves(sports_db) -> None
         "is projected to beat",
     }
     assert pulse["events"][0]["projected_home_score"] > pulse["events"][0]["projected_away_score"]
-    assert pulse["events"][0]["model_winner_projected_score_display"] == (
-        pulse["events"][0]["projected_home_score_display"]
+    assert (
+        pulse["events"][0]["model_winner_projected_score_display"]
+        == (pulse["events"][0]["projected_home_score_display"])
     )
 
     full_slate_request = sports_pulse(view="all")
@@ -1693,9 +1690,7 @@ def test_finished_game_seals_the_last_pregame_prediction_and_market(sports_db) -
     assert detail["receipt"]["input_hash"] == pregame_prediction["input_hash"]
     assert detail["receipt"]["outcome"]["final_score"] == "AWY 3 – HOM 5"
     assert detail["odds"]["observed_at"] == pregame_at.isoformat()
-    assert [row["observed_at"] for row in detail["odds_history"]] == [
-        pregame_at.isoformat()
-    ]
+    assert [row["observed_at"] for row in detail["odds_history"]] == [pregame_at.isoformat()]
 
     response = sports_game_page(
         str(final_event["id"]),
@@ -1795,8 +1790,7 @@ def test_sports_host_uses_the_sports_shell_for_alpha(sports_db) -> None:
     with connection() as database:
         for index in range(3):
             database.execute(
-                "INSERT INTO users(id,username,display_name,status,created_at) "
-                "VALUES(?,?,?,?,?)",
+                "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
                 (
                     f"alpha-user-{index}",
                     f"alpha_member_{index}",
@@ -1816,7 +1810,7 @@ def test_sports_host_uses_the_sports_shell_for_alpha(sports_db) -> None:
     assert b'id="sportsRadarRefresh"' in radar_response.body
     assert b'class="sports-hero' not in radar_response.body
     assert alpha_response.status_code == 200
-    assert b'<h1>Alpha</h1>' in alpha_response.body
+    assert b"<h1>Alpha</h1>" in alpha_response.body
     assert b'class="alpha-sample-note"' in alpha_response.body
     assert b'class="desktop-workspace"' in alpha_response.body
     assert b"Four prediction slots" not in alpha_response.body

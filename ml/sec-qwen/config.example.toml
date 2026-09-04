@@ -1,4 +1,4 @@
-# Legacy local smoke-test config. Use config.braid.example.toml for a FERAL run.
+
 schema = "stonks.sec_qwen_training.v1"
 
 [model]

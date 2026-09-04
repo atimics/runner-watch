@@ -257,8 +257,7 @@ def test_normalized_archive_import_is_audited_and_private(
     assert result["candidates"] == 1
     with connection() as database:
         candidate = database.execute(
-            "SELECT review_status,risk_label FROM legal_case_candidates "
-            "WHERE source='pcaob'"
+            "SELECT review_status,risk_label FROM legal_case_candidates WHERE source='pcaob'"
         ).fetchone()
         run = database.execute(
             "SELECT status,metadata_json FROM ingestion_runs WHERE source='pcaob'"
@@ -279,9 +278,7 @@ def test_sam_api_key_is_never_written_to_ingestion_locator(
         payload = {
             "excludedEntity": [
                 {
-                    "exclusionDetails": {
-                        "exclusionType": "Ineligible (Proceedings Completed)"
-                    },
+                    "exclusionDetails": {"exclusionType": "Ineligible (Proceedings Completed)"},
                     "exclusionIdentification": {
                         "ueiSAM": "UEI123",
                         "firstName": "John",
@@ -325,9 +322,9 @@ def test_sam_api_key_is_redacted_from_recorded_errors(
 
     assert result["status"] == "partial"
     with connection() as database:
-        error = database.execute(
-            "SELECT error FROM ingestion_runs WHERE source='sam'"
-        ).fetchone()["error"]
+        error = database.execute("SELECT error FROM ingestion_runs WHERE source='sam'").fetchone()[
+            "error"
+        ]
     assert "top-secret-key" not in error
     assert "[redacted]" in error
 

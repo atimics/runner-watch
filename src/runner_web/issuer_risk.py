@@ -81,9 +81,7 @@ def build_issuer_risk_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
             None,
         )
         if comparison and float(comparison["value"]) > 0:
-            shares_growth = (
-                float(latest_shares["value"]) / float(comparison["value"]) - 1
-            ) * 100
+            shares_growth = (float(latest_shares["value"]) / float(comparison["value"]) - 1) * 100
 
     return {
         "issuer_data_available": True,
@@ -109,7 +107,7 @@ def issuer_risk_contexts(database: Any, tickers: list[str]) -> dict[str, dict[st
         LEFT JOIN issuer_facts f ON f.cik=c.cik
         WHERE c.ticker IN ({placeholders})
         ORDER BY c.ticker,f.filed_at DESC,f.period_end DESC
-        """,  # noqa: S608
+        """,
         unique,
     ).fetchall()
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)

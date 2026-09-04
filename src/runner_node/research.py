@@ -35,7 +35,7 @@ def _request_openrouter(api_key: str, payload: dict[str, Any]) -> dict[str, Any]
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=45) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=45) as response:
             return json.loads(response.read().decode())
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")[:500]
@@ -45,8 +45,6 @@ def _request_openrouter(api_key: str, payload: dict[str, Any]) -> dict[str, Any]
 
 
 class OpenRouterResearch:
-    """Small standalone research client backed by the node-owned credential."""
-
     def __init__(self, transport: ResearchTransport = _request_openrouter) -> None:
         self.transport = transport
 

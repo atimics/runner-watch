@@ -368,8 +368,10 @@ def test_sports_pulse_applies_updates_without_reloading_or_losing_detail(
 
     assert page.locator('a[href="/game/new-game"]').count() == 1
     assert frame.get_attribute("src") == original_detail
-    assert page.locator('a[href="/game/old-game"]').get_attribute("class").endswith(
-        "desktop-panel-selected"
+    assert (
+        page.locator('a[href="/game/old-game"]')
+        .get_attribute("class")
+        .endswith("desktop-panel-selected")
     )
     assert errors == []
 
@@ -416,9 +418,7 @@ def test_sports_radar_applies_changes_without_reloading_or_losing_detail(
     assert errors == []
 
 
-def test_sports_detail_panel_stays_dark_while_a_game_loads(
-    page: Page, monkeypatch
-) -> None:
+def test_sports_detail_panel_stays_dark_while_a_game_loads(page: Page, monkeypatch) -> None:
     first = _event("first-game", "ONE", "HME")
     second = _event("second-game", "TWO", "HME")
     page.set_viewport_size({"width": 1280, "height": 800})
@@ -473,9 +473,12 @@ def test_game_detail_prioritizes_actions_and_closes_started_actions(page: Page) 
     assert page.get_by_role("heading", name="Calls closed").is_visible()
     assert page.get_by_text("Score pending from ESPN").is_visible()
     assert page.get_by_text("Log in to make a Call").count() == 0
-    assert page.locator(".game-disclosure > summary b").first.evaluate(
-        "node => getComputedStyle(node).fontSize"
-    ) == "9px"
+    assert (
+        page.locator(".game-disclosure > summary b").first.evaluate(
+            "node => getComputedStyle(node).fontSize"
+        )
+        == "9px"
+    )
     assert page.evaluate(
         """() => {
           const style = selector => getComputedStyle(document.querySelector(selector));
@@ -502,9 +505,10 @@ def test_game_detail_prioritizes_actions_and_closes_started_actions(page: Page) 
         "actionRadius": "0px",
         "flashRadius": "0px",
     }
-    assert page.locator(".game-actions").bounding_box()["y"] < page.locator(
-        ".game-notebook"
-    ).bounding_box()["y"]
+    assert (
+        page.locator(".game-actions").bounding_box()["y"]
+        < page.locator(".game-notebook").bounding_box()["y"]
+    )
 
     page.set_viewport_size({"width": 390, "height": 800})
     assert grid.evaluate("node => getComputedStyle(node).display") == "block"
@@ -531,9 +535,13 @@ def test_sports_pulse_respects_shared_responsive_breakpoints(
     navigation = page.locator(".tab-bar")
     navigation_box = navigation.bounding_box()
     assert navigation_box is not None
-    assert page.evaluate(
-        "getComputedStyle(document.querySelector('.tab-bar')).gridTemplateColumns.split(' ').length"
-    ) == 4
+    assert (
+        page.evaluate(
+            "getComputedStyle(document.querySelector('.tab-bar'))"
+            ".gridTemplateColumns.split(' ').length"
+        )
+        == 4
+    )
     links = navigation.locator(".tab-link")
     assert links.count() == 4
     for index in range(links.count()):
@@ -542,12 +550,14 @@ def test_sports_pulse_respects_shared_responsive_breakpoints(
         assert link_box["y"] >= navigation_box["y"]
         assert link_box["y"] + link_box["height"] <= navigation_box["y"] + navigation_box["height"]
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-    assert page.locator(".sports-record-strip").evaluate(
-        "node => getComputedStyle(node).borderRadius"
-    ) == "0px"
-    assert page.locator(".league-tabs a").first.evaluate(
-        "node => getComputedStyle(node).borderRadius"
-    ) == "2px"
+    assert (
+        page.locator(".sports-record-strip").evaluate("node => getComputedStyle(node).borderRadius")
+        == "0px"
+    )
+    assert (
+        page.locator(".league-tabs a").first.evaluate("node => getComputedStyle(node).borderRadius")
+        == "2px"
+    )
     if width < 900:
         assert page.locator(".desktop-detail-panel").is_hidden()
     else:
@@ -556,9 +566,7 @@ def test_sports_pulse_respects_shared_responsive_breakpoints(
     assert errors == []
 
 
-def test_sports_pulse_uses_the_exact_ticker_row_contract(
-    page: Page, monkeypatch
-) -> None:
+def test_sports_pulse_uses_the_exact_ticker_row_contract(page: Page, monkeypatch) -> None:
     event = {
         **_event("split-decision", "AWY", "HME"),
         "signal_abbreviation": "HME",
@@ -621,9 +629,7 @@ def test_sports_pulse_uses_the_exact_ticker_row_contract(
     assert errors == []
 
 
-def test_sports_pulse_calls_a_close_projection_a_slight_edge(
-    page: Page, monkeypatch
-) -> None:
+def test_sports_pulse_calls_a_close_projection_a_slight_edge(page: Page, monkeypatch) -> None:
     event = {
         **_event("close-game", "AWY", "HME"),
         "model_winner_probability_pct": 51.2,
@@ -712,7 +718,9 @@ def test_sports_alpha_opens_its_leader_in_the_shared_detail_pane(page: Page, mon
     errors = _load(page, html, [])
 
     assert page.locator("[data-desktop-frame]").get_attribute("src") == "/game/alpha-game"
-    assert page.locator('a[href="/game/alpha-game"][data-desktop-default]').get_attribute(
-        "class"
-    ).endswith("desktop-panel-selected")
+    assert (
+        page.locator('a[href="/game/alpha-game"][data-desktop-default]')
+        .get_attribute("class")
+        .endswith("desktop-panel-selected")
+    )
     assert errors == []

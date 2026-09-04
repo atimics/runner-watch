@@ -137,7 +137,6 @@ def analyze_ticker(
     intraday: pd.DataFrame,
     now: datetime | None = None,
 ) -> RunnerSnapshot | None:
-    """Turn recent bars into one ranked snapshot."""
 
     if intraday.empty:
         return None
@@ -203,9 +202,7 @@ def analyze_ticker(
     momentum_5m = (price / comparison_5m - 1) * 100 if comparison_5m else 0.0
     momentum_15m = (price / comparison_15m - 1) * 100 if comparison_15m else 0.0
     momentum_previous_5m = (
-        (comparison_5m / comparison_10m - 1) * 100
-        if comparison_5m and comparison_10m
-        else 0.0
+        (comparison_5m / comparison_10m - 1) * 100 if comparison_5m and comparison_10m else 0.0
     )
     momentum_acceleration = momentum_5m - momentum_previous_5m
     change_pct = (price / daily.previous_close - 1) * 100
@@ -217,9 +214,7 @@ def analyze_ticker(
     dollar_volume = session_volume * price
     recent_dollar_volume = current_recent * price
     recent_returns = current_close.pct_change().dropna().tail(6) * 100
-    intraday_volatility = (
-        float(recent_returns.std(ddof=0)) if len(recent_returns) >= 2 else 0.0
-    )
+    intraday_volatility = float(recent_returns.std(ddof=0)) if len(recent_returns) >= 2 else 0.0
     typical_price = (
         _column(current, "High") + _column(current, "Low") + _column(current, "Close")
     ) / 3
@@ -234,18 +229,14 @@ def analyze_ticker(
     latest_high = float(current_high.iloc[-1])
     latest_low = float(current_low.iloc[-1])
     close_location = (
-        (price - latest_low) / (latest_high - latest_low)
-        if latest_high > latest_low
-        else 0.5
+        (price - latest_low) / (latest_high - latest_low) if latest_high > latest_low else 0.5
     )
     close_location = max(0.0, min(1.0, close_location))
     stale_minutes = max(0.0, (now_et - (latest_time + timedelta(minutes=5))).total_seconds() / 60)
     drawdown_20d = max(0.0, (1 - price / daily.high_20d) * 100) if daily.high_20d > 0 else 0.0
     drawdown_90d = max(0.0, (1 - price / daily.high_90d) * 100) if daily.high_90d > 0 else 0.0
     drawdown_52w = max(0.0, (1 - price / daily.high_52w) * 100) if daily.high_52w > 0 else 0.0
-    rebound_from_20d_low = (
-        max(0.0, (price / daily.low_20d - 1) * 100) if daily.low_20d > 0 else 0.0
-    )
+    rebound_from_20d_low = max(0.0, (price / daily.low_20d - 1) * 100) if daily.low_20d > 0 else 0.0
     structure = analyze_market_structure(usable)
 
     result = score_runner(
@@ -389,8 +380,6 @@ class RunnerScanner:
                 continue
             profiles.append(profile)
 
-        # Share volume is the main sort key here. This keeps active lower-priced
-        # stocks in a broad scan instead of filling every slot with mega-caps.
         profiles.sort(
             key=lambda item: (item.average_volume, item.average_dollar_volume), reverse=True
         )
@@ -417,9 +406,7 @@ class RunnerScanner:
                 selected = crash_profiles[:reserve]
                 selected_tickers = {profile.ticker for profile in selected}
                 selected.extend(
-                    profile
-                    for profile in profiles
-                    if profile.ticker not in selected_tickers
+                    profile for profile in profiles if profile.ticker not in selected_tickers
                 )
                 profiles = selected[: settings.max_symbols]
 

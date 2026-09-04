@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run small, bounded HTTP bursts against a staging deployment."""
+
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def request_once(url: str, barrier: Barrier, timeout: float) -> Sample:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = response.read()
             return Sample(
                 status=int(response.status),

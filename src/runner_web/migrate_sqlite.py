@@ -55,9 +55,7 @@ def _ordered_tables(source: sqlite3.Connection) -> list[str]:
 def _source_columns(source: sqlite3.Connection, table: str) -> list[str]:
     return [
         str(row[1])
-        for row in source.execute(
-            f"PRAGMA table_info({_quote_identifier(table)})"
-        ).fetchall()
+        for row in source.execute(f"PRAGMA table_info({_quote_identifier(table)})").fetchall()
     ]
 
 
@@ -100,17 +98,14 @@ def _copy_table(
     select = source.execute(f"SELECT {column_sql} FROM {quoted_table}")
     if target.backend == "postgres":
         copied = 0
-        with target.raw.cursor().copy(
-            f"COPY {quoted_table}({column_sql}) FROM STDIN"
-        ) as copy:
+        with target.raw.cursor().copy(f"COPY {quoted_table}({column_sql}) FROM STDIN") as copy:
             for row in select:
                 copy.write_row(row)
                 copied += 1
         target.commit()
         return copied
     insert = (
-        f"INSERT INTO {quoted_table}({column_sql}) "
-        f"VALUES({placeholders}) ON CONFLICT DO NOTHING"
+        f"INSERT INTO {quoted_table}({column_sql}) VALUES({placeholders}) ON CONFLICT DO NOTHING"
     )
     copied = 0
     for batch in _batches(select, batch_size):
@@ -147,9 +142,7 @@ def _grant_role(target: DatabaseConnection, role: str) -> None:
     target.execute(
         f"GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO {quoted_role}"
     )
-    target.execute(
-        f"GRANT USAGE,SELECT,UPDATE ON ALL SEQUENCES IN SCHEMA public TO {quoted_role}"
-    )
+    target.execute(f"GRANT USAGE,SELECT,UPDATE ON ALL SEQUENCES IN SCHEMA public TO {quoted_role}")
     target.execute(
         "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
         f"GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO {quoted_role}"
@@ -209,17 +202,13 @@ def migrate(
             tables = _ordered_tables(source)
             source_counts = {
                 table: int(
-                    source.execute(
-                        f"SELECT COUNT(*) FROM {_quote_identifier(table)}"
-                    ).fetchone()[0]
+                    source.execute(f"SELECT COUNT(*) FROM {_quote_identifier(table)}").fetchone()[0]
                 )
                 for table in tables
             }
             for table in tables:
                 target_count = int(
-                    target.execute(
-                        f"SELECT COUNT(*) FROM {_quote_identifier(table)}"
-                    ).fetchone()[0]
+                    target.execute(f"SELECT COUNT(*) FROM {_quote_identifier(table)}").fetchone()[0]
                 )
                 _require_empty_target(table, target_count)
 
@@ -232,9 +221,7 @@ def migrate(
                     max(1, batch_size),
                 )
                 target_count = int(
-                    target.execute(
-                        f"SELECT COUNT(*) FROM {_quote_identifier(table)}"
-                    ).fetchone()[0]
+                    target.execute(f"SELECT COUNT(*) FROM {_quote_identifier(table)}").fetchone()[0]
                 )
                 if target_count != source_count:
                     raise RuntimeError(

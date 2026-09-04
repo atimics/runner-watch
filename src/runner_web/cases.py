@@ -15,7 +15,6 @@ MAX_CASE_HORIZON_MINUTES = 180 * 24 * 60
 
 
 def infer_horizon_minutes(comment: str) -> int:
-    """Infer a useful case horizon from the user's normal short comment."""
 
     text = " ".join(comment.casefold().split())
     explicit = re.search(r"(?<![a-z0-9])(\d{1,3})\s*(h|hr|hrs|d|day|days|w|wk|wks)(?![a-z])", text)
