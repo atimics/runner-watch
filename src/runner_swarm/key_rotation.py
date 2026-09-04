@@ -1,5 +1,3 @@
-"""Dual-signed node-key continuity with explicit local decisions."""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -37,12 +35,10 @@ MAX_CLOCK_SKEW = timedelta(minutes=5)
 
 
 class KeyRotationError(ValueError):
-    """A rotation artifact or local continuity decision is invalid."""
+    pass
 
 
 class KeyRotationV1(SwarmModel):
-    """An old identity's request to continue as a new identity."""
-
     message_type: Literal["rati.key_rotation"] = MESSAGE_TYPE
     protocol_version: Literal["1"] = PROTOCOL_VERSION
     old_identity: NodeIdentity
@@ -82,8 +78,6 @@ class KeyRotationV1(SwarmModel):
 
 
 class SignedKeyRotationV1(SwarmModel):
-    """A rotation countersigned by both the retiring and replacement keys."""
-
     rotation: KeyRotationV1
     content_id: Annotated[str, Field(min_length=71, max_length=71)]
     signature_algorithm: Literal["ed25519"] = SIGNATURE_ALGORITHM
@@ -176,8 +170,6 @@ class RotationDecisionStatus(StrEnum):
 
 
 class LocalRotationDecision(SwarmModel):
-    """A local trust decision; it is deliberately not a swarm wire artifact."""
-
     rotation_content_id: Annotated[str, Field(min_length=71, max_length=71)]
     old_node_id: Annotated[str, Field(min_length=74, max_length=74)]
     new_node_id: Annotated[str, Field(min_length=74, max_length=74)]
@@ -207,8 +199,6 @@ class LocalRotationDecision(SwarmModel):
 
 
 class LocalKeyRotationRegistry:
-    """Explicit local old-to-new mappings with reject and revoke history."""
-
     def __init__(self) -> None:
         self._artifacts: dict[str, SignedKeyRotationV1] = {}
         self._history: list[LocalRotationDecision] = []
@@ -282,7 +272,6 @@ class LocalKeyRotationRegistry:
         return self._record(signed, RotationDecisionStatus.REVOKED, decided_at, reason)
 
     def resolve(self, node_id: str) -> str:
-        """Follow active local mappings to the current identity."""
 
         current = node_id
         seen: set[str] = set()
@@ -298,7 +287,6 @@ class LocalKeyRotationRegistry:
         return self.resolve(original_node_id) == self.resolve(presented_node_id)
 
     def continuity_node_ids(self, node_id: str) -> tuple[str, ...]:
-        """Return every identity connected by currently accepted rotations."""
 
         active_forward = {
             decision.old_node_id: decision.new_node_id

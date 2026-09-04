@@ -13,7 +13,6 @@ def _latest_value(database: Any, query: str) -> str | None:
 
 
 def public_dynamic_screen_paths(database: Any) -> dict[str, str | None]:
-    """Return current public records that make dynamic screens safe to smoke test."""
 
     ticker = _latest_value(
         database,

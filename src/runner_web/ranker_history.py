@@ -41,8 +41,6 @@ ProgressCallback = Callable[[dict[str, Any]], None]
 
 
 class ArchivedMarketData:
-    """Serve immutable archived frames to the normal scanner at one past time."""
-
     def __init__(
         self,
         daily_frames: dict[str, pd.DataFrame],
@@ -58,9 +56,7 @@ class ArchivedMarketData:
 
     def daily(self, tickers: list[str], progress: Any = None) -> DownloadResult:
         frames = {
-            ticker: self._daily_frames[ticker]
-            for ticker in tickers
-            if ticker in self._daily_frames
+            ticker: self._daily_frames[ticker] for ticker in tickers if ticker in self._daily_frames
         }
         return DownloadResult(frames, [ticker for ticker in tickers if ticker not in frames], [])
 
@@ -156,7 +152,7 @@ def _load_interval_frames(
                 WHERE source=? AND ticker IN ({placeholders}) AND interval=?
                   AND bar_time>=? AND bar_time<=?
                 ORDER BY ticker,bar_time
-                """,  # noqa: S608 - placeholders are generated above
+                """,
                 (
                     source,
                     *batch,
@@ -248,19 +244,14 @@ def _replay_times(
 
 
 def _session_symbols(frames: dict[str, pd.DataFrame], replay_at: datetime) -> list[str]:
-    return sorted(
-        ticker
-        for ticker, frame in frames.items()
-        if _known_on_session(frame, replay_at)
-    )
+    return sorted(ticker for ticker, frame in frames.items() if _known_on_session(frame, replay_at))
 
 
 def _known_on_session(frame: pd.DataFrame, replay_at: datetime) -> bool:
     position = frame.index.searchsorted(replay_at - BAR_COMPLETION_LAG, side="right") - 1
     return bool(
         position >= 0
-        and frame.index[position].tz_convert(EASTERN).date()
-        == replay_at.astimezone(EASTERN).date()
+        and frame.index[position].tz_convert(EASTERN).date() == replay_at.astimezone(EASTERN).date()
     )
 
 
@@ -303,9 +294,7 @@ def _select_replay_symbols(
     reserve = min(len(crash_profiles), max(1, settings.max_symbols // 3))
     selected = crash_profiles[:reserve]
     selected_tickers = {profile.ticker for profile in selected}
-    selected.extend(
-        profile for profile in profiles if profile.ticker not in selected_tickers
-    )
+    selected.extend(profile for profile in profiles if profile.ticker not in selected_tickers)
     return [profile.ticker for profile in selected[: settings.max_symbols]]
 
 
@@ -313,9 +302,9 @@ def _bar_tuples(frame: pd.DataFrame) -> list[tuple[datetime, float, float, float
     if frame.empty:
         return []
     output: list[tuple[datetime, float, float, float]] = []
-    for stamp, high_raw, low_raw, close_raw in frame[
-        ["High", "Low", "Close"]
-    ].itertuples(index=True, name=None):
+    for stamp, high_raw, low_raw, close_raw in frame[["High", "Low", "Close"]].itertuples(
+        index=True, name=None
+    ):
         try:
             high = float(high_raw)
             low = float(low_raw)
@@ -435,7 +424,6 @@ def backfill_historical_training(
     dry_run: bool = False,
     progress: ProgressCallback | None = None,
 ) -> dict[str, Any]:
-    """Rebuild compact point-in-time groups from already archived market bars."""
 
     if days < 1:
         raise ValueError("days must be at least 1")
@@ -510,9 +498,7 @@ def backfill_historical_training(
             continue
         session = replay_at.astimezone(EASTERN).date()
         if session not in session_selections:
-            selection_at = datetime.combine(session, time(19, 5), tzinfo=EASTERN).astimezone(
-                UTC
-            )
+            selection_at = datetime.combine(session, time(19, 5), tzinfo=EASTERN).astimezone(UTC)
             session_selections[session] = _select_replay_symbols(
                 daily_frames,
                 _session_symbols(intraday_frames, selection_at),
@@ -544,9 +530,7 @@ def backfill_historical_training(
         for candidate in candidates:
             bars = bar_cache.get(candidate.ticker)
             if bars is None:
-                bars = _bar_tuples(
-                    intraday_frames.get(candidate.ticker, pd.DataFrame())
-                )
+                bars = _bar_tuples(intraday_frames.get(candidate.ticker, pd.DataFrame()))
                 bar_cache[candidate.ticker] = bars
                 bar_stamp_cache[candidate.ticker] = [bar[0] for bar in bars]
             bars = _outcome_window(
@@ -576,11 +560,15 @@ def backfill_historical_training(
         if len(labeled) != len(candidates) or len(labeled) < 2:
             skipped_incomplete += 1
             continue
-        written = len(labeled) if dry_run else _write_group(
-            selected_source,
-            replay_at,
-            labeled,
-            cadence_minutes,
+        written = (
+            len(labeled)
+            if dry_run
+            else _write_group(
+                selected_source,
+                replay_at,
+                labeled,
+                cadence_minutes,
+            )
         )
         groups_written += 1
         rows_written += written

@@ -100,7 +100,7 @@
     try {
       localStorage.setItem('rati.receipts', JSON.stringify(local.slice(0, 20)));
     } catch {
-      // Results remain available for this session when local storage is full.
+
     }
     selectedReceipt = latestLocalScan(selectedReceipt, receipts);
   }

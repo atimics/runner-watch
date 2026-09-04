@@ -48,6 +48,7 @@ from runner_web.main import (
     ticker_detail_data,
 )
 from runner_web.pseudonyms import COMMENT_AVATAR_ABILITIES
+from runner_web.research_context import evidence_id_for
 
 
 def _test_flash_forecast() -> dict[str, Any]:
@@ -120,7 +121,7 @@ def test_ranker_directional_thesis_uses_the_three_way_contract(
 def test_ticker_model_path_is_compact_explicit_and_separate_from_risk() -> None:
     root = Path(__file__).parents[1]
     template = (root / "web/templates/ticker.html").read_text()
-    styles = (root / "web/static/ticker-row.css").read_text()
+    styles = (root / "web/static/mobile.css").read_text()
 
     assert 'class="model-path-card model-path-' in template
     assert "MODEL PATH ·" in template
@@ -153,7 +154,7 @@ def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
 def test_pulse_does_not_render_an_empty_scorecard_spacer() -> None:
     root = Path(__file__).parents[1]
     pulse_template = (root / "web/templates/pulse.html").read_text()
-    kol_styles = (root / "web/static/kol.css").read_text()
+    kol_styles = (root / "web/static/mobile.css").read_text()
 
     assert 'id="kolScoreStrip"' in pulse_template
     assert "{% if not flash_record %} hidden{% endif %}" in pulse_template
@@ -180,15 +181,9 @@ def test_large_responses_are_compressed() -> None:
 def test_ticker_has_public_call_and_flash_actions() -> None:
     template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
     script = (Path(__file__).parents[1] / "web/static/ticker-detail.js").read_text()
-    comments = (
-        Path(__file__).parents[1] / "web/templates/_flash_comments.html"
-    ).read_text()
-    comment_script = (
-        Path(__file__).parents[1] / "web/static/flash-comments.js"
-    ).read_text()
-    action = (
-        Path(__file__).parents[1] / "web/templates/_flash_report_action.html"
-    ).read_text()
+    comments = (Path(__file__).parents[1] / "web/templates/_flash_comments.html").read_text()
+    comment_script = (Path(__file__).parents[1] / "web/static/flash-comments.js").read_text()
+    action = (Path(__file__).parents[1] / "web/templates/_flash_report_action.html").read_text()
 
     assert "Track a thesis" not in template
     assert "thesisDialog" not in template
@@ -202,7 +197,7 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert template.count("<textarea") == 0
     assert "flash_comments('stock', detail.ticker" in template
     assert 'id="generateComment"' in comments
-    assert "Post with Flash" in comments
+    assert "Post with avatar" in comments
     assert "Persistent avatars · public across tickers" not in template
     assert "ability guides a short Flash draft" not in template
     assert "Start the read" not in template
@@ -221,14 +216,14 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
 def test_ticker_layout_puts_subtle_actions_after_the_analysis() -> None:
     root = Path(__file__).parents[1]
     template = (root / "web/templates/ticker.html").read_text()
-    desktop_css = (root / "web/static/desktop-split.css").read_text()
+    desktop_css = (root / "web/static/mobile.css").read_text()
 
     chart = template.index('class="detail-chart-panel"')
     actions = template.index('class="detail-actions"')
     analysis = template.index('class="detail-analysis"')
 
     assert chart < analysis < actions
-    assert 'grid-template-areas:' in desktop_css
+    assert "grid-template-areas:" in desktop_css
     assert '"chart"\n      "analysis"\n      "actions"' in desktop_css
     assert "grid-template-columns: repeat(2, minmax(0, 210px))" in desktop_css
     assert "background: rgba(255, 255, 255, .018)" in desktop_css
@@ -251,7 +246,7 @@ def test_ticker_layout_puts_subtle_actions_after_the_analysis() -> None:
             "My setup is early; dilution is the risk.",
         ),
         (
-            "```json\n{\"comment\":\"My signal is improving; liquidity is the risk.\"}\n```",
+            '```json\n{"comment":"My signal is improving; liquidity is the risk."}\n```',
             "My signal is improving; liquidity is the risk.",
         ),
         (
@@ -260,9 +255,7 @@ def test_ticker_layout_puts_subtle_actions_after_the_analysis() -> None:
         ),
     ],
 )
-def test_openrouter_comment_accepts_supported_response_shapes(
-    content: Any, expected: str
-) -> None:
+def test_openrouter_comment_accepts_supported_response_shapes(content: Any, expected: str) -> None:
     assert web_main._openrouter_comment_text(content) == expected
 
 
@@ -308,13 +301,9 @@ def test_ui_copy_drops_ai_and_corporate_filler() -> None:
 def test_scanner_page_is_removed() -> None:
     root = Path(__file__).parents[1]
     routes = {
-        path
-        for route in web_main.app.routes
-        if (path := getattr(route, "path", None)) is not None
+        path for route in web_main.app.routes if (path := getattr(route, "path", None)) is not None
     }
-    templates_text = "\n".join(
-        path.read_text() for path in (root / "web/templates").glob("*.html")
-    )
+    templates_text = "\n".join(path.read_text() for path in (root / "web/templates").glob("*.html"))
 
     assert "/scanner" not in routes
     assert "/api/scan" not in routes
@@ -330,7 +319,7 @@ def test_desktop_feeds_share_full_info_and_article_panel() -> None:
     alpha = (templates_dir / "community.html").read_text()
     panel = (templates_dir / "_desktop_panel.html").read_text()
     workspace = (root / "web/static/desktop-workspace.js").read_text()
-    desktop_css = (root / "web/static/desktop-split.css").read_text()
+    desktop_css = (root / "web/static/mobile.css").read_text()
 
     for template in (pulse, radar, alpha):
         assert "workspace-app" in template
@@ -347,9 +336,7 @@ def test_desktop_feeds_share_full_info_and_article_panel() -> None:
     assert "openPanel(current ? panelUrl(current) : defaultUrl())" in workspace
     assert "sessionStorage" not in workspace
     assert "html.embedded-pane .mobile-app" in desktop_css
-    assert '"SAMEORIGIN" if panel_path else "DENY"' in (
-        root / "src/runner_web/main.py"
-    ).read_text()
+    assert '"SAMEORIGIN" if panel_path else "DENY"' in (root / "src/runner_web/main.py").read_text()
     assert '"/game/"' in (root / "src/runner_web/main.py").read_text()
 
 
@@ -403,7 +390,7 @@ def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
 def test_ticker_rows_have_no_reader_attention_state() -> None:
     root = Path(__file__).parents[1]
     row_script = (root / "web/static/ticker-row.js").read_text()
-    row_styles = (root / "web/static/ticker-row.css").read_text()
+    row_styles = (root / "web/static/mobile.css").read_text()
 
     assert "attention-unseen" not in row_styles
     assert "attention-seen" not in row_styles
@@ -699,13 +686,9 @@ def test_storage_prune_removes_old_raw_snapshots_but_keeps_public_receipts(
 
     with connection() as database:
         snapshots = {
-            str(row["id"])
-            for row in database.execute("SELECT id FROM scan_snapshots").fetchall()
+            str(row["id"]) for row in database.execute("SELECT id FROM scan_snapshots").fetchall()
         }
-        runs = {
-            str(row["id"])
-            for row in database.execute("SELECT id FROM scan_runs").fetchall()
-        }
+        runs = {str(row["id"]) for row in database.execute("SELECT id FROM scan_runs").fetchall()}
     assert snapshots == {"old-public-snapshot"}
     assert runs == {"old-public-run"}
 
@@ -810,9 +793,7 @@ def test_pulse_freshness_uses_the_market_quote_time(
     assert result["rows"][0]["quote_time"] == quote_time
 
 
-def test_pulse_reuses_the_shared_base_payload(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_pulse_reuses_the_shared_base_payload(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "pulse-cache.db")
     init_db()
     captured_at = datetime.now(UTC).isoformat()
@@ -834,9 +815,7 @@ def test_pulse_reuses_the_shared_base_payload(
     assert calls == 1
 
 
-def test_pulse_coalesces_concurrent_first_build(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_pulse_coalesces_concurrent_first_build(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "pulse-single-flight.db")
     init_db()
     captured_at = datetime.now(UTC).isoformat()
@@ -927,22 +906,16 @@ def test_list_chart_payload_sends_only_time_and_price(monkeypatch: MonkeyPatch) 
         web_main._ticker_charts_payload_uncached(["ONE"])
     )
 
-    assert payload["charts"] == {
-        "ONE": [{"time": "2026-08-26T12:00:00+00:00", "price": 1.25}]
-    }
+    assert payload["charts"] == {"ONE": [{"time": "2026-08-26T12:00:00+00:00", "price": 1.25}]}
 
 
-def test_radar_reuses_the_shared_base_payload(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_radar_reuses_the_shared_base_payload(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "radar-cache.db")
     init_db()
     captured_at = datetime.now(UTC).isoformat()
     insert_filing("radar-cache-one", "ONE", 1.25, 80, captured_at, "P")
     insert_scan_run("radar-cache-run", captured_at, 1)
-    insert_scored_snapshot(
-        "radar-cache-snapshot", "radar-cache-run", "ONE", 60, 1, captured_at
-    )
+    insert_scored_snapshot("radar-cache-snapshot", "radar-cache-run", "ONE", 60, 1, captured_at)
     web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
     original = web_main._radar_base_data_uncached
     calls = 0
@@ -959,9 +932,7 @@ def test_radar_reuses_the_shared_base_payload(
     assert calls == 1
 
 
-def test_alpha_reuses_shared_public_call_data(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_alpha_reuses_shared_public_call_data(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "alpha-cache.db")
     init_db()
     captured_at = datetime.now(UTC).isoformat()
@@ -983,8 +954,15 @@ def test_alpha_reuses_shared_public_call_data(
                 status,created_at,updated_at
             ) VALUES(?,?,?,?,?,?,?,'active',?,?)""",
             (
-                "call", "public-call", "caller", "caller-id", "ONE", 1.25,
-                captured_at, captured_at, captured_at,
+                "call",
+                "public-call",
+                "caller",
+                "caller-id",
+                "ONE",
+                1.25,
+                captured_at,
+                captured_at,
+                captured_at,
             ),
         )
     web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
@@ -1025,10 +1003,12 @@ def test_pulse_entry_is_shared_without_storing_reader_attention(
     assert row["entered_at"] == entered_at
     assert "novelty_state" not in row
     with connection() as database:
-        assert database.execute(
-            "SELECT name FROM sqlite_master "
-            "WHERE type='table' AND name='pulse_profile_state'"
-        ).fetchone() is None
+        assert (
+            database.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='pulse_profile_state'"
+            ).fetchone()
+            is None
+        )
 
 
 def test_news_and_social_flow_into_pulse_radar_and_alpha(
@@ -1057,8 +1037,15 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
                 status,created_at,updated_at
             ) VALUES(?,?,?,?,?,?,?,'active',?,?)""",
             (
-                "flow-call", "flow-public", "fan", "fan-caller-id", "FLOW", 1.0,
-                captured_at, captured_at, captured_at,
+                "flow-call",
+                "flow-public",
+                "fan",
+                "fan-caller-id",
+                "FLOW",
+                1.0,
+                captured_at,
+                captured_at,
+                captured_at,
             ),
         )
     fetch = SourceFetch.success(
@@ -1633,9 +1620,12 @@ def test_radar_marks_new_state_seen(tmp_path: Path, monkeypatch: MonkeyPatch) ->
     assert first[0]["evidence_gate"]["checks"] == ["Primary filing"]
     assert second[0]["has_update"] is True
     with connection() as database:
-        assert database.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='radar_seen'"
-        ).fetchone() is None
+        assert (
+            database.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='radar_seen'"
+            ).fetchone()
+            is None
+        )
 
 
 def test_radar_excludes_events_for_tickers_not_in_pulse(
@@ -1660,9 +1650,7 @@ def test_radar_excludes_events_for_tickers_not_in_pulse(
     assert result == []
 
 
-def test_alpha_ranks_public_calls_and_shows_pnl(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_alpha_ranks_public_calls_and_shows_pnl(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "alpha.db")
     init_db()
     captured_at = datetime.now(UTC).isoformat()
@@ -1695,16 +1683,37 @@ def test_alpha_ranks_public_calls_and_shows_pnl(
             ) VALUES(?,?,?,?,?,?,?,'active',?,?)""",
             [
                 (
-                    "call-one", "public-one", "caller-one", "identity-one", "ONE", 1.0,
-                    captured_at, captured_at, captured_at,
+                    "call-one",
+                    "public-one",
+                    "caller-one",
+                    "identity-one",
+                    "ONE",
+                    1.0,
+                    captured_at,
+                    captured_at,
+                    captured_at,
                 ),
                 (
-                    "call-two", "public-two", "caller-two", "identity-two", "ONE", 1.2,
-                    captured_at, captured_at, captured_at,
+                    "call-two",
+                    "public-two",
+                    "caller-two",
+                    "identity-two",
+                    "ONE",
+                    1.2,
+                    captured_at,
+                    captured_at,
+                    captured_at,
                 ),
                 (
-                    "call-three", "public-three", "caller-three", "identity-three", "TWO", 2.0,
-                    captured_at, captured_at, captured_at,
+                    "call-three",
+                    "public-three",
+                    "caller-three",
+                    "identity-three",
+                    "TWO",
+                    2.0,
+                    captured_at,
+                    captured_at,
+                    captured_at,
                 ),
             ],
         )
@@ -1727,6 +1736,7 @@ def test_alpha_ranks_public_calls_and_shows_pnl(
     assert board["calls"][0]["caller_handle"].endswith("wolf")
     assert board["total_calls"] == 3
     assert board["total_comments"] == 1
+
 
 def test_ticker_feedback_tracks_signed_in_public_comments(
     tmp_path: Path, monkeypatch: MonkeyPatch
@@ -1754,7 +1764,7 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
     claim_daily_flash("feedback-user")
     generation_calls = 0
 
-    def generate_comment(ticker: str, *, avatar_ability_id: str) -> tuple[str, str]:
+    def generate_comment(ticker: str, *, avatar: dict[str, object]) -> tuple[str, str]:
         nonlocal generation_calls
         generation_calls += 1
         return (
@@ -1827,9 +1837,7 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
                     "choices": [
                         {
                             "message": {
-                                "content": (
-                                    "My read is constructive, but thin volume is the risk."
-                                )
+                                "content": ("My read is constructive, but thin volume is the risk.")
                             }
                         }
                     ],
@@ -1856,10 +1864,12 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
         },
     )
     monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(web_main, "daily_report_for_ticker", lambda _ticker: None)
+    monkeypatch.setattr(web_main, "comments_for_ticker", lambda _ticker, limit=12: [])
 
     comment, model = web_main._generate_ticker_comment_text(
         "ONE",
-        avatar_ability_id="risk_sentinel",
+        avatar={"name": "Risk Reader", "ability_id": "risk_sentinel", "level": 1},
     )
 
     assert comment == "My read is constructive, but thin volume is the risk."
@@ -1878,6 +1888,14 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
     assert "user" not in captured["body"]
     assert "Risk Sentinel" in captured["body"]["messages"][0]["content"]
     assert "public name" not in captured["body"]["messages"][0]["content"]
+    assert captured["body"]["messages"][1] == {
+        "role": "user",
+        "content": "Post a comment.",
+    }
+    context = json.loads(captured["body"]["messages"][0]["content"])
+    assert context["avatar"]["kind"] == "user_ai_avatar"
+    assert context["avatar"]["name"] == "Risk Reader"
+    assert context["subject"]["ticker"] == "ONE"
 
 
 def test_failed_ticker_comment_request_refunds_once_and_replays_the_error(
@@ -1905,7 +1923,7 @@ def test_failed_ticker_comment_request_refunds_once_and_replays_the_error(
     claim_daily_flash("failed-comment-user")
     generation_calls = 0
 
-    def fail_generation(ticker: str, *, avatar_ability_id: str) -> tuple[str, str]:
+    def fail_generation(ticker: str, *, avatar: dict[str, object]) -> tuple[str, str]:
         nonlocal generation_calls
         generation_calls += 1
         raise HTTPException(502, "AI comment generation failed. Your Flash was returned.")
@@ -1989,8 +2007,13 @@ def test_ticker_comment_generator_retries_invalid_content_with_other_models(
         },
     )
     monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(web_main, "daily_report_for_ticker", lambda _ticker: None)
+    monkeypatch.setattr(web_main, "comments_for_ticker", lambda _ticker, limit=12: [])
 
-    comment, model = web_main._generate_ticker_comment_text("ONE")
+    comment, model = web_main._generate_ticker_comment_text(
+        "ONE",
+        avatar={"name": "Signal Avatar", "ability_id": "catalyst_scout", "level": 1},
+    )
 
     assert comment == "My view is mixed; cash is the risk."
     assert model == "contender/two"
@@ -2021,9 +2044,7 @@ def test_openrouter_route_diagnostics_exclude_prompts_and_raw_errors() -> None:
 
     assert diagnostics == {
         "error_code": 502,
-        "attempts": [
-            {"provider_name": "Provider A", "model": "contender/one", "status": 503}
-        ],
+        "attempts": [{"provider_name": "Provider A", "model": "contender/one", "status": 503}],
     }
     assert "private prompt text" not in json.dumps(diagnostics)
     assert "provider secret" not in json.dumps(diagnostics)
@@ -2236,9 +2257,7 @@ def test_browser_commission_uses_the_server_openrouter_key(
     assert captured["key"] == "sk-or-server-side-test-key"
 
 
-def test_verified_pipeline_freezes_every_stage(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_verified_pipeline_freezes_every_stage(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "research-stages.db")
     init_db()
     captured_at = datetime.now(UTC).isoformat()
@@ -2315,7 +2334,7 @@ def test_verified_pipeline_freezes_every_stage(
         ).fetchall()
     assert report["headline"] == "ONE remains a watch"
     assert model == "z-ai/glm-5.3"
-    assert usage["pipeline_version"] == "verified-research-v1"
+    assert usage["pipeline_version"] == "verified-research-v2"
     assert [row["stage"] for row in stages] == [
         "catalyst_researcher",
         "financing_skeptic",
@@ -2324,7 +2343,7 @@ def test_verified_pipeline_freezes_every_stage(
         "synthesis",
     ]
     assert all(row["status"] == "complete" for row in stages)
-    assert all(row["prompt_version"] == "verified-research-v1" for row in stages)
+    assert all(row["prompt_version"] == "verified-research-v2" for row in stages)
     assert all(len(row["input_fingerprint"]) == 64 for row in stages)
 
 
@@ -2421,9 +2440,7 @@ def test_first_daily_flash_report_locks_other_users_for_one_hour(
         }
     )
     late_publish = json.loads(
-        web_main.publish_research_report_api(
-            first["public_id"], publish_request, raw_session
-        ).body
+        web_main.publish_research_report_api(first["public_id"], publish_request, raw_session).body
     )
     assert late_publish["published"] is False
     assert late_publish["reward"] == 0
@@ -2597,6 +2614,12 @@ def test_flash_keeps_only_citations_from_the_frozen_context(
 ) -> None:
     allowed = "https://www.sec.gov/Archives/edgar/data/1/report.htm"
     invented = "https://invented.example/report"
+    evidence_id = evidence_id_for(
+        "filing",
+        None,
+        allowed,
+        {"claim": "Verified filing claim"},
+    )
     generated = {
         "headline": "ONE evidence report",
         "thesis": "The filing is the only verified source.",
@@ -2610,8 +2633,16 @@ def test_flash_keeps_only_citations_from_the_frozen_context(
         "unknowns": [],
         "sources": [allowed, invented],
         "citations": [
-            {"claim": "Verified claim", "source_urls": [allowed, invented]},
-            {"claim": "Invented claim", "source_urls": [invented]},
+            {
+                "claim": "Verified filing claim",
+                "evidence_ids": [evidence_id],
+                "source_urls": [allowed],
+            },
+            {
+                "claim": "Invented claim",
+                "evidence_ids": ["ev_missing"],
+                "source_urls": [invented],
+            },
         ],
         "forecast": _test_flash_forecast(),
     }
@@ -2629,15 +2660,25 @@ def test_flash_keeps_only_citations_from_the_frozen_context(
     monkeypatch.setattr(web_main.urllib.request, "urlopen", fake_urlopen)
     report, _, _ = web_main._generate_openrouter_report(
         "server-key",
-        {"ticker": "ONE", "sources": [allowed]},
+        {
+            "ticker": "ONE",
+            "sources": [allowed],
+            "context_sections": [
+                {
+                    "kind": "filing",
+                    "source_url": allowed,
+                    "data": {"claim": "Verified filing claim"},
+                }
+            ],
+        },
         "member-one",
     )
 
     assert report["sources"] == [allowed]
     assert report["company_profile"]["source_urls"] == []
-    assert report["citations"] == [
-        {"claim": "Verified claim", "source_urls": [allowed]}
-    ]
+    assert report["citations"][0]["claim"] == "Verified filing claim"
+    assert report["citations"][0]["evidence_ids"] == [evidence_id]
+    assert report["citations"][0]["source_urls"] == [allowed]
     assert invented not in json.dumps(report)
 
 
@@ -2672,9 +2713,7 @@ def test_commission_unwraps_glm_report_envelope(
                     "choices": [
                         {
                             "finish_reason": "stop",
-                            "message": {
-                                "content": json.dumps({wrapper: wrapped_report})
-                            },
+                            "message": {"content": json.dumps({wrapper: wrapped_report})},
                         }
                     ],
                     "model": "z-ai/glm-5.3",
@@ -2902,9 +2941,7 @@ def test_owner_can_publish_report_once_and_earn_flash(
     )
     monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "sk-or-share-test-key")
     report = _commission_research("sharer", "ONE")
-    public_request = Request(
-        {"type": "http", "method": "GET", "path": "/research", "headers": []}
-    )
+    public_request = Request({"type": "http", "method": "GET", "path": "/research", "headers": []})
     public_request.state.csp_nonce = "test"
     with pytest.raises(HTTPException) as private_error:
         web_main.research_report_page(report["public_id"], public_request, None)
@@ -2920,14 +2957,10 @@ def test_owner_can_publish_report_once_and_earn_flash(
         }
     )
     first_publish = json.loads(
-        web_main.publish_research_report_api(
-            report["public_id"], publish_request, raw_session
-        ).body
+        web_main.publish_research_report_api(report["public_id"], publish_request, raw_session).body
     )
     second_publish = json.loads(
-        web_main.publish_research_report_api(
-            report["public_id"], publish_request, raw_session
-        ).body
+        web_main.publish_research_report_api(report["public_id"], publish_request, raw_session).body
     )
 
     assert first_publish["published"] is True
@@ -2950,7 +2983,7 @@ def test_owner_can_publish_report_once_and_earn_flash(
     )
 
     assert "Shareable ONE report" in html
-    assert "<strong>Flash <span class=\"flash-model-label\">z-ai/glm-5.3</span>" in html
+    assert '<strong>Flash <span class="flash-model-label">z-ai/glm-5.3</span>' in html
     assert "#1 of 4" in html
     assert f"/research/{report['public_id']}/card.png" in html
     assert "sk-or-share-test-key" not in html

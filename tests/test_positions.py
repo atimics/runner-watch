@@ -26,9 +26,7 @@ def test_runner_call_reward_is_ten_times_positive_pnl() -> None:
     assert runner_call_reward(50) == 500
 
 
-def test_public_call_freezes_entry_and_exit_marks(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_public_call_freezes_entry_and_exit_marks(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "positions.db")
     init_db()
     current = datetime.now(UTC)
@@ -76,9 +74,10 @@ def test_public_call_freezes_entry_and_exit_marks(
     assert closed["reward_label"] == "+500 Flash"
     assert wallet_for_user("owner")["balance"] == 500
     assert call_stats([closed])["wins"] == 1
-    assert close_call(
-        "owner", created["public_id"], exit_price=3.1, exit_at=current.isoformat()
-    ) is None
+    assert (
+        close_call("owner", created["public_id"], exit_price=3.1, exit_at=current.isoformat())
+        is None
+    )
     assert wallet_for_user("owner")["balance"] == 500
 
     losing = create_call(

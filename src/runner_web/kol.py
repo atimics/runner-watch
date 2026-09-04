@@ -132,7 +132,6 @@ def publish_calls_for_scan(
     predictor_slug: str | None = None,
     at: datetime | None = None,
 ) -> dict[str, Any]:
-    """Turn selective ranker predictions into immutable, public call receipts."""
 
     timestamp = _iso(at)
     created: list[str] = []
@@ -341,7 +340,6 @@ def refresh_kol_calls(
     *,
     latest_prices: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    """Mark active paper calls and copy the fixed scanner outcome onto every receipt."""
 
     timestamp = _iso(at)
     with connection() as db:
@@ -577,7 +575,7 @@ def calls_for_tickers(
                   AND p.visible=1
             ORDER BY c.ticker,CASE c.status WHEN 'active' THEN 0 ELSE 1 END,
                      c.created_at DESC
-            """,  # noqa: S608
+            """,
             unique,
         ).fetchall()
     output: dict[str, list[dict[str, Any]]] = {}

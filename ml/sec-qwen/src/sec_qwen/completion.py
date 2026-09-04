@@ -44,8 +44,7 @@ def build_completion(
     if not isinstance(metrics, dict) or not metrics:
         raise ValueError("metrics document requires a non-empty metrics object")
     if any(
-        isinstance(value, bool) or not isinstance(value, (int, float))
-        for value in metrics.values()
+        isinstance(value, bool) or not isinstance(value, (int, float)) for value in metrics.values()
     ):
         raise ValueError("every completion metric must be numeric")
     return {

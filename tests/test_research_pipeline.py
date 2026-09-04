@@ -43,22 +43,42 @@ def test_verified_pipeline_runs_five_roles_and_drops_unsupported_evidence() -> N
         calls.append((stage, payload))
         metadata = {"provider": "test", "model": "test-model", "usage": {"total": order}}
         if order <= 3:
+            filing_evidence_id = next(
+                item["evidence_id"]
+                for item in payload["evidence_catalog"]
+                if item["kind"] == "sec_filing"
+            )
+            primary_evidence_id = next(
+                item["evidence_id"]
+                for item in payload["evidence_catalog"]
+                if item["kind"] == "primary_evidence"
+            )
             return (
                 {
                     "findings": [
                         {
                             "statement": f"Verified finding from {stage}",
                             "effect": "risks" if order == 2 else "supports",
-                            "evidence_refs": ["E1"],
-                            "source_urls": [
-                                "https://www.sec.gov/Archives/edgar/data/1/filing.txt"
-                            ],
+                            "evidence_ids": [filing_evidence_id],
+                            "source_urls": ["https://www.sec.gov/Archives/edgar/data/1/filing.txt"],
                         },
                         {
                             "statement": "Unsupported rumor",
                             "effect": "supports",
-                            "evidence_refs": ["MISSING"],
+                            "evidence_ids": ["ev_missing"],
                             "source_urls": ["https://rumor.invalid/story"],
+                        },
+                        {
+                            "statement": "Market price rose on strong volume",
+                            "effect": "supports",
+                            "evidence_ids": [filing_evidence_id],
+                            "source_urls": ["https://www.sec.gov/Archives/edgar/data/1/filing.txt"],
+                        },
+                        {
+                            "statement": "A bound market claim has the wrong URL",
+                            "effect": "supports",
+                            "evidence_ids": [primary_evidence_id],
+                            "source_urls": ["https://www.sec.gov/Archives/edgar/data/1/filing.txt"],
                         },
                     ],
                     "unknowns": ["Cash runway is unknown"],
@@ -72,6 +92,8 @@ def test_verified_pipeline_runs_five_roles_and_drops_unsupported_evidence() -> N
                 for finding in review["findings"]
             ]
             assert "Unsupported rumor" not in review_statements
+            assert "Market price rose on strong volume" not in review_statements
+            assert "A bound market claim has the wrong URL" not in review_statements
             return (
                 {
                     "supported_statements": review_statements + ["Invented critic claim"],
@@ -113,9 +135,11 @@ def test_verified_pipeline_runs_five_roles_and_drops_unsupported_evidence() -> N
         "synthesis",
     ]
     assert [item["stage_order"] for item in trace] == [1, 2, 3, 4, 5]
-    assert report["sources"] == [
-        "https://www.sec.gov/Archives/edgar/data/1/filing.txt"
-    ]
+    assert report["sources"] == ["https://www.sec.gov/Archives/edgar/data/1/filing.txt"]
+    assert all(
+        citation["source_urls"] == ["https://www.sec.gov/Archives/edgar/data/1/filing.txt"]
+        for citation in report["citations"]
+    )
     assert "Invented critic claim" not in report["critic"]["supported_statements"]
     assert "Verified finding from catalyst_researcher" in report["catalysts"]
     assert "Verified finding from financing_skeptic" in report["risks"]
@@ -169,3 +193,77 @@ def test_deterministic_veto_overrides_the_model_report() -> None:
     assert report["thesis"] == "Thesis weakened. Active offering risk"
     assert report["risks"][0] == "Active offering risk"
     assert report["deterministic_override"] is True
+
+
+def test_internal_market_claim_keeps_its_bound_receipt() -> None:
+    def fake_stage(
+        stage: str,
+        order: int,
+        instructions: str,
+        payload: dict[str, Any],
+        schema: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        del instructions, schema
+        metadata = {"provider": "test", "model": "test-model"}
+        if order <= 3:
+            primary_id = payload["evidence_catalog"][0]["evidence_id"]
+            return (
+                {
+                    "findings": [
+                        {
+                            "statement": "The stored price is 1.25.",
+                            "effect": "neutral",
+                            "evidence_ids": [primary_id],
+                            "source_urls": [],
+                        }
+                    ],
+                    "unknowns": [],
+                },
+                metadata,
+            )
+        if stage == "independent_critic":
+            statements = [
+                finding["statement"]
+                for review in payload["reviews"].values()
+                for finding in review["findings"]
+            ]
+            return (
+                {
+                    "supported_statements": statements,
+                    "rejected_statements": [],
+                    "conflicts": [],
+                    "required_caveats": [],
+                    "verdict": "unchanged",
+                },
+                metadata,
+            )
+        return (
+            {
+                "headline": "ONE market update",
+                "thesis": "The stored price is 1.25.",
+                "summary": "The market snapshot is unchanged.",
+                "case_effect": "unchanged",
+                "market_view": "neutral",
+                "confidence": 0.5,
+                "catalysts": [],
+                "risks": [],
+                "watch": [],
+                "unknowns": [],
+                "sources": [],
+            },
+            metadata,
+        )
+
+    context = _context()
+    context["primary_evidence"]["price"] = 1.25
+    report, _ = run_verified_pipeline(context, fake_stage)
+
+    assert report["sources"] == []
+    receipt_citations = [
+        citation for citation in report["citations"] if citation["source_receipts"]
+    ]
+    assert len(receipt_citations) == 3
+    assert all(
+        citation["source_receipts"][0]["source_type"] == "internal_market_snapshot"
+        for citation in receipt_citations
+    )

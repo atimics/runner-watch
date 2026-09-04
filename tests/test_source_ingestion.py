@@ -127,9 +127,7 @@ def test_source_batch_records_raw_and_normalized_rows_atomically(
             "SELECT review_status,display_policy FROM source_registry "
             "WHERE source='example' AND feed='mixed'"
         ).fetchone()
-        hidden_events = database.execute(
-            "SELECT COUNT(*) FROM public_market_events"
-        ).fetchone()[0]
+        hidden_events = database.execute("SELECT COUNT(*) FROM public_market_events").fetchone()[0]
         database.execute(
             """
             UPDATE source_registry
@@ -137,9 +135,9 @@ def test_source_batch_records_raw_and_normalized_rows_atomically(
             WHERE source='example' AND feed='mixed'
             """
         )
-        approved_events = database.execute(
-            "SELECT COUNT(*) FROM public_market_events"
-        ).fetchone()[0]
+        approved_events = database.execute("SELECT COUNT(*) FROM public_market_events").fetchone()[
+            0
+        ]
     assert counts == {
         "ingestion_runs": 2,
         "source_documents": 1,
@@ -248,9 +246,7 @@ def test_source_status_uses_normalized_company_map_freshness(
 
     status = ingestion_status(as_of=refreshed_at + timedelta(hours=1))
     source = next(
-        row
-        for row in status["sources"]
-        if row["source"] == "sec" and row["feed"] == "company_map"
+        row for row in status["sources"] if row["source"] == "sec" and row["feed"] == "company_map"
     )
 
     assert source["health"] == "healthy"
@@ -266,9 +262,7 @@ def test_source_status_treats_unused_event_feeds_as_idle(
 
     status = ingestion_status(as_of=datetime(2026, 8, 24, 20, tzinfo=UTC))
     source = next(
-        row
-        for row in status["sources"]
-        if row["source"] == "sec" and row["feed"] == "document"
+        row for row in status["sources"] if row["source"] == "sec" and row["feed"] == "document"
     )
 
     assert source["health"] == "idle"

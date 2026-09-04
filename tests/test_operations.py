@@ -45,9 +45,7 @@ def test_performance_snapshot_reports_bounded_runtime_metrics() -> None:
     assert snapshot["process"]["maximum_rss_mb"] > 0
 
 
-def test_health_requires_a_fresh_worker_heartbeat(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_health_requires_a_fresh_worker_heartbeat(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "health.db")
     init_db()
     checked_at = datetime(2026, 8, 25, 18, tzinfo=UTC)
@@ -72,9 +70,7 @@ def test_health_requires_a_fresh_worker_heartbeat(
     assert healthy["worker"]["age_seconds"] == 30.0
 
 
-def test_health_rejects_an_old_worker_heartbeat(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_health_rejects_an_old_worker_heartbeat(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "stale-health.db")
     init_db()
     checked_at = datetime(2026, 8, 25, 18, tzinfo=UTC)
@@ -94,9 +90,7 @@ def test_health_rejects_an_old_worker_heartbeat(
     assert result["worker"]["status"] == "stale"
 
 
-def test_health_reports_a_fresh_degraded_worker(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_health_reports_a_fresh_degraded_worker(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "degraded-worker.db")
     init_db()
     checked_at = datetime(2026, 8, 25, 18, tzinfo=UTC)
@@ -168,7 +162,7 @@ def test_worker_startup_schedules_kol_and_case_refreshers(
     created: list[Task] = []
 
     def create_task(coroutine: object, *, name: str) -> Task:
-        coroutine.close()  # type: ignore[attr-defined]
+        coroutine.close()
         task = Task(name)
         created.append(task)
         return task

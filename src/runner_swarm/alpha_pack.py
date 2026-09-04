@@ -1,5 +1,3 @@
-"""Signed, non-executable configuration for RATi swarm alpha packs."""
-
 from __future__ import annotations
 
 import re
@@ -47,7 +45,7 @@ VersionToken = Annotated[str, Field(min_length=1, max_length=128)]
 
 
 class AlphaPackError(ValueError):
-    """Raised when an alpha pack cannot be safely verified or used."""
+    pass
 
 
 class PackVisibility(StrEnum):
@@ -66,7 +64,7 @@ class PackStatus(StrEnum):
 
 
 class FrozenModel(SwarmModel):
-    """Backward-compatible local name for the shared protocol model."""
+    pass
 
 
 def _utc(value: datetime) -> datetime:
@@ -122,8 +120,6 @@ class PeerReference(NodeIdentity):
 
 
 class LocalTrustPolicy(FrozenModel):
-    """Owner recommendations; every receiving node may use stricter local rules."""
-
     membership_grants_trust: Literal[False] = False
     initial_peer_weight_ppm: Annotated[int, Field(ge=0, le=250_000)] = 0
     minimum_reputation_ppm: Annotated[int, Field(ge=0, le=1_000_000)] = 600_000
@@ -166,8 +162,6 @@ class EvidenceRequirements(FrozenModel):
 
 
 class PrivatePackEncryption(FrozenModel):
-    """Public routing metadata only. Secret or content-encryption keys are forbidden."""
-
     scheme: Literal["x25519-xchacha20poly1305"] = "x25519-xchacha20poly1305"
     group_key_id: ShortText
     recipient_key_ids: tuple[ShortText, ...]
@@ -347,7 +341,6 @@ class SignedAlphaPack(FrozenModel):
         return canonical_json_bytes(self)
 
     def verify(self, *, at: datetime | None = None, require_active: bool = True) -> None:
-        """Verify content identity, owner signature, and optionally current activity."""
 
         if self.content_id != self.pack.content_id:
             raise AlphaPackError("Alpha pack content ID does not match its content")
@@ -390,7 +383,6 @@ class SignedAlphaPack(FrozenModel):
 
 
 def sign_alpha_pack(pack: AlphaPack, private_key: Ed25519PrivateKey) -> SignedAlphaPack:
-    """Sign an alpha pack with the private key bound to its owner identity."""
 
     if public_key_text(private_key) != pack.owner.public_key:
         raise AlphaPackError("Signing key does not match alpha pack owner")

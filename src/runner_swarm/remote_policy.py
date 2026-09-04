@@ -1,5 +1,3 @@
-"""Local policy gate for untrusted remote swarm claims."""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -24,8 +22,6 @@ class RemoteClaimUse(StrEnum):
 
 
 class RemoteClaimAssessment(SwarmModel):
-    """The only output remote claims may have at the execution boundary."""
-
     claim_id: Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
     peer_node_id: Annotated[str, Field(min_length=74, max_length=74)]
     use: RemoteClaimUse
@@ -46,7 +42,6 @@ def assess_remote_claim(
     verified_evidence_ids: tuple[str, ...],
     at: datetime | None = None,
 ) -> RemoteClaimAssessment:
-    """Allow eligible remote evidence as weighted context, never as a trade command."""
 
     trust_policy = trust_policy or LocalTrustPolicy()
     evidence_requirements = evidence_requirements or EvidenceRequirements()

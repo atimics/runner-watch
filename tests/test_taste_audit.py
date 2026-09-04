@@ -1,19 +1,29 @@
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 
 
-def test_shared_product_system_is_loaded_after_existing_styles() -> None:
+def test_shared_product_system_has_one_component_and_one_theme_file() -> None:
     base = (ROOT / "web/templates/mobile_base.html").read_text()
     sports = (ROOT / "web/templates/sports.html").read_text()
 
-    assert base.index("desktop-split.css") < base.index("product-system.css")
-    assert '{% block product_head %}{% endblock %}' in base
+    styles = re.findall(r'href="/static/([^"?]+\.css)', base)
+    assert styles == ["mobile.css", "product-system.css"]
+    assert len(styles) == len(set(styles))
+    assert all((ROOT / "web/static" / style).is_file() for style in styles)
+    assert "{% block product_head %}{% endblock %}" in base
     assert '{% include "_sports_styles.html" %}' in sports
+    sports_styles = re.findall(
+        r'href="/static/([^"?]+\.css)',
+        (ROOT / "web/templates/_sports_styles.html").read_text(),
+    )
+    assert sports_styles == ["sports-product.css"]
+    assert all((ROOT / "web/static" / style).is_file() for style in sports_styles)
     assert 'class="skip-link"' in base
     assert 'id="app-content"' in base
     assert 'class="tab-link product-tab-link"' in base
-    assert 'data-desktop-workspace' in sports
+    assert "data-desktop-workspace" in sports
     assert not (ROOT / "web/templates/sports_base.html").exists()
     assert 'class="product-switch"' not in base
 
@@ -49,17 +59,11 @@ def test_sports_pulse_is_locked_to_the_shared_ticker_row() -> None:
     assert "data-sports-pulse-row" in ticker_row
     assert "winner-card" not in sports + sports_live + sports_product
     assert "team-projection-card" not in sports + sports_live + sports_product
-    assert (
-        "Sports Pulse rows intentionally use the shared ticker-row.css contract"
-        in sports_product
-    )
 
 
 def test_ai_report_carries_the_single_clear_disclaimer() -> None:
     report = (ROOT / "web/templates/research_report.html").read_text()
-    all_templates = "\n".join(
-        path.read_text() for path in (ROOT / "web/templates").glob("*.html")
-    )
+    all_templates = "\n".join(path.read_text() for path in (ROOT / "web/templates").glob("*.html"))
 
     assert "AI-generated opinion" in report
     assert "May be incomplete or wrong. Not financial advice." in report
@@ -73,8 +77,6 @@ def test_ai_report_does_not_repeat_its_opening_summary() -> None:
     report = (ROOT / "web/templates/research_report.html").read_text()
 
     assert 'class="research-summary"' not in report
-    assert report.index('class="flash-forecast-receipt') < report.index(
-        'class="research-thesis"'
-    )
+    assert report.index('class="flash-forecast-receipt') < report.index('class="research-thesis"')
     assert "All {{ report.sources|length }} source links" in report
     assert "People in the filings" not in report

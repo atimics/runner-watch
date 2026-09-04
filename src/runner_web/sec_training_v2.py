@@ -329,9 +329,7 @@ def _fact_comparisons(facts: list[dict[str, Any]], limit: int = 3) -> list[dict[
                 "current_period_end": current["period_end"],
                 "current_value": current_value,
                 "absolute_change": absolute_change,
-                "percent_change": absolute_change / abs(prior_value) * 100
-                if prior_value
-                else None,
+                "percent_change": absolute_change / abs(prior_value) * 100 if prior_value else None,
             }
         )
         if len(output) >= limit:
@@ -379,10 +377,7 @@ def _filing_examples(
         )
         if filing.get(key) is not None
     }
-    preview = [
-        {"source": _source(chunk), "text": chunk.text}
-        for chunk in chunks[:1]
-    ]
+    preview = [{"source": _source(chunk), "text": chunk.text} for chunk in chunks[:1]]
     examples = [
         _example(
             filing,
@@ -552,13 +547,17 @@ def export_sec_training_corpus_v2(
         raise ValueError("dataset_id must be a dataset:// handle")
     if output_directory.exists() and any(output_directory.iterdir()):
         raise FileExistsError(f"output directory is not empty: {output_directory}")
-    if min(
-        max_document_chars,
-        max_documents,
-        max_chunks_per_accession,
-        max_examples_per_accession,
-        max_filings_per_issuer,
-    ) < 1 or max_facts < 0:
+    if (
+        min(
+            max_document_chars,
+            max_documents,
+            max_chunks_per_accession,
+            max_examples_per_accession,
+            max_filings_per_issuer,
+        )
+        < 1
+        or max_facts < 0
+    ):
         raise ValueError("document, chunk, example, and fact limits are invalid")
     if not 0 <= unseen_issuer_fraction < 1:
         raise ValueError("unseen_issuer_fraction must be between 0 and 1")
@@ -610,9 +609,7 @@ def export_sec_training_corpus_v2(
     counts = {split: len(records) for split, records in splits.items()}
     task_counts = Counter(example["task"] for example in examples)
     character_count = sum(
-        len(message["content"])
-        for example in examples
-        for message in example["messages"]
+        len(message["content"]) for example in examples for message in example["messages"]
     )
     summary = {
         "schema": "stonks.sec_corpus_summary.v2",

@@ -19,7 +19,6 @@ DATABASE_RETRY_DELAYS = (1, 2, 4, 8, 16)
 
 
 def retry_database_operation(function: Callable[_P, _R]) -> Callable[_P, _R]:
-    """Retry an idempotent database operation through a short outage."""
 
     @wraps(function)
     def retrying(*args: _P.args, **kwargs: _P.kwargs) -> _R:
@@ -36,8 +35,6 @@ def retry_database_operation(function: Callable[_P, _R]) -> Callable[_P, _R]:
 
 
 class ResultRow:
-    """A small row type that supports both row[0] and row["column"]."""
-
     __slots__ = ("_keys", "_lookup", "_values")
 
     def __init__(self, keys: Sequence[str], values: Sequence[Any]) -> None:
@@ -136,9 +133,7 @@ def _replace_named_parameters(statement: str) -> str:
             and (statement[index + 1].isalpha() or statement[index + 1] == "_")
         ):
             end = index + 2
-            while end < len(statement) and (
-                statement[end].isalnum() or statement[end] == "_"
-            ):
+            while end < len(statement) and (statement[end].isalnum() or statement[end] == "_"):
                 end += 1
             name = statement[index + 1 : end]
             output.append(f"%({name})s")
@@ -150,7 +145,6 @@ def _replace_named_parameters(statement: str) -> str:
 
 
 def _replace_scalar_extrema(statement: str) -> str:
-    """Translate SQLite's two-argument MAX/MIN functions for PostgreSQL."""
 
     replacements: list[tuple[int, int, str]] = []
     for match in re.finditer(r"\b(MAX|MIN)\s*\(", statement, flags=re.IGNORECASE):
@@ -352,9 +346,7 @@ def open_database(database_url: str, database_path: Path) -> Iterator[DatabaseCo
 
 def initialize_sqlite(database_path: Path) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
-    # A sqlite connection commits or rolls back on context exit, but it does
-    # not close itself. Use both contexts so repeated startup never leaks a
-    # file descriptor.
+
     with closing(sqlite3.connect(database_path, timeout=20)) as raw, raw as database:
         database.execute("PRAGMA busy_timeout=20000")
         database.execute("PRAGMA journal_mode=WAL")

@@ -57,7 +57,6 @@ def extended_us_session_is_open(value: datetime | None = None) -> bool:
 
 
 async def trading_halt_worker() -> None:
-    """Poll at Nasdaq's stated maximum rate while the extended session is open."""
 
     while True:
         if trade_halts_enabled() and extended_us_session_is_open():
@@ -66,13 +65,11 @@ async def trading_halt_worker() -> None:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                # The failed or partial fetch is already durable in ingestion_runs.
                 LOG.warning("Nasdaq halt refresh failed: %s", exc)
         await asyncio.sleep(60)
 
 
 async def house_disclosure_worker() -> None:
-    """Poll the free official House index and fetch only unseen PTR documents."""
 
     await asyncio.sleep(35)
     while True:
@@ -89,7 +86,6 @@ async def house_disclosure_worker() -> None:
 
 
 async def discovery_source_worker() -> None:
-    """Rotate across 30 Pulse/Alpha symbols so each is searched about every 15 minutes."""
 
     await asyncio.sleep(25)
     cursor = 0
@@ -141,7 +137,6 @@ async def discovery_source_worker() -> None:
 
 
 async def apewisdom_source_worker() -> None:
-    """Refresh slower aggregate sources without adding another process worker."""
 
     await asyncio.sleep(15)
     next_legal_refresh = 0.0

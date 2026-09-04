@@ -24,15 +24,13 @@ class BillingConfig:
     @property
     def checkout_ready(self) -> bool:
         return bool(
-            STRIPE_BILLING_ENABLED
-            and self.secret_key
-            and self.pro_price_id
-            and self.webhook_secret
+            STRIPE_BILLING_ENABLED and self.secret_key and self.pro_price_id and self.webhook_secret
         )
 
     @property
     def portal_ready(self) -> bool:
         return bool(STRIPE_BILLING_ENABLED and self.secret_key)
+
 
 def billing_config() -> BillingConfig:
     return BillingConfig(
@@ -189,7 +187,6 @@ def create_portal_session(user: dict[str, Any], app_origin: str) -> str:
 
 
 def delete_customer(user: dict[str, Any]) -> bool:
-    """Delete the linked Stripe customer and cancel its active subscriptions."""
 
     customer_id = str(user.get("stripe_customer_id") or "").strip()
     if not customer_id:

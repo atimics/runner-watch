@@ -186,9 +186,12 @@ def test_fixed_contract_scores_hits_misses_and_no_calls(flash_db: Path) -> None:
     assert record["current_version"]["brier_score"] == 0.26
     assert record["current_version"]["median_signed_move_pct"] == 0.0
     assert len(record["recent_results"]) == 3
-    assert refresh_flash_forecasts(
-        datetime(2026, 8, 25, 22, 0, tzinfo=UTC), fetch_market_data=False
-    )["resolved"] == 0
+    assert (
+        refresh_flash_forecasts(datetime(2026, 8, 25, 22, 0, tzinfo=UTC), fetch_market_data=False)[
+            "resolved"
+        ]
+        == 0
+    )
 
 
 def test_half_percent_boundary_is_not_a_hit(flash_db: Path) -> None:
@@ -196,9 +199,7 @@ def test_half_percent_boundary_is_not_a_hit(flash_db: Path) -> None:
     _record("boundary-report", "EDGE", "up", 0.6)
     _bar("EDGE", 100.5)
 
-    refresh_flash_forecasts(
-        datetime(2026, 8, 25, 21, 0, tzinfo=UTC), fetch_market_data=False
-    )
+    refresh_flash_forecasts(datetime(2026, 8, 25, 21, 0, tzinfo=UTC), fetch_market_data=False)
     outcome = forecast_for_report("boundary-report")
 
     assert outcome is not None
@@ -333,9 +334,7 @@ def test_correction_keeps_the_previous_result_in_history(flash_db: Path) -> None
     del flash_db
     created = _record("corrected-report", "FIX", "up", 0.6)
     _bar("FIX", 101.0)
-    refresh_flash_forecasts(
-        datetime(2026, 8, 25, 21, 0, tzinfo=UTC), fetch_market_data=False
-    )
+    refresh_flash_forecasts(datetime(2026, 8, 25, 21, 0, tzinfo=UTC), fetch_market_data=False)
 
     corrected = correct_flash_outcome(
         created["id"],
@@ -392,8 +391,6 @@ def test_prepare_forecast_evidence_freezes_only_fresh_prices(flash_db: Path) -> 
         ),
     ],
 )
-def test_forecast_probability_must_match_direction(
-    forecast: dict[str, Any], message: str
-) -> None:
+def test_forecast_probability_must_match_direction(forecast: dict[str, Any], message: str) -> None:
     with pytest.raises(ValueError, match=message):
         validate_forecast(forecast)

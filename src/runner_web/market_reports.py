@@ -112,7 +112,7 @@ def _scan_run(database: Any, start: datetime, end: datetime, *, latest: bool) ->
         SELECT id,captured_at,candidate_rows FROM scan_runs
         WHERE captured_at>=? AND captured_at<=? AND candidate_rows>0
         ORDER BY captured_at {direction},id {direction} LIMIT 1
-        """,  # noqa: S608 - direction is selected from two internal constants
+        """,
         (_iso_utc(start), _iso_utc(end)),
     ).fetchone()
 

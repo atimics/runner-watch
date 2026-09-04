@@ -16,7 +16,7 @@ def make_input(**overrides: object) -> RiskInput:
         "stale_minutes": 2.0,
     }
     values.update(overrides)
-    return RiskInput(**values)  # type: ignore[arg-type]
+    return RiskInput(**values)
 
 
 def test_strong_setup_can_still_be_blocked_as_a_rug() -> None:

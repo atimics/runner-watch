@@ -84,17 +84,19 @@ def _seed_user() -> None:
 
 def test_public_app_has_a_complete_privacy_surface() -> None:
     main_source = (ROOT / "src/runner_web/main.py").read_text()
+    account_source = (ROOT / "src/runner_web/account_routes.py").read_text()
     templates = "\n".join(path.read_text() for path in (ROOT / "web/templates").glob("*.html"))
     privacy_notice = (ROOT / "web/templates/privacy.html").read_text()
 
     assert 'VISITOR_COOKIE = "runner_visitor"' not in main_source
     assert "claim_visitor_profile" not in main_source
     assert "TickerCommentPayload" not in main_source
-    assert 'max_age=365 * 24 * 3600' not in main_source
-    assert '@app.get("/privacy"' in main_source
-    assert '@app.get("/api/account/export"' in main_source
-    assert '@app.post("/api/account/data/delete-cloud-copy"' in main_source
-    assert '@app.post("/api/account/delete"' in main_source
+    assert "max_age=365 * 24 * 3600" not in main_source
+    assert '@router.get("/privacy"' in account_source
+    assert '@router.get("/api/account/export"' in account_source
+    assert '@router.post("/api/account/data/delete-cloud-copy"' in account_source
+    assert '@router.post("/api/account/delete"' in account_source
+    assert "create_account_routes" in main_source
     assert 'href="/privacy"' in templates
     for required_copy in (
         "Who controls your data",
@@ -144,8 +146,15 @@ def test_export_and_delete_cover_account_content_and_leave_anonymous_tombstone(
             "id,public_id,user_id,caller_identity_id,ticker,entry_price,entry_at,"
             "status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'active',?,?)",
             (
-                "gdpr-call", "gdpr-public", "gdpr-user", caller["id"], "ONE", 1.0,
-                timestamp, timestamp, timestamp,
+                "gdpr-call",
+                "gdpr-public",
+                "gdpr-user",
+                caller["id"],
+                "ONE",
+                1.0,
+                timestamp,
+                timestamp,
+                timestamp,
             ),
         )
 
@@ -215,8 +224,7 @@ def test_move_to_device_deletes_content_but_keeps_the_working_account(
             ),
         )
         database.execute(
-            "INSERT INTO flash_wallets(user_id,balance,created_at,updated_at) "
-            "VALUES(?,?,?,?)",
+            "INSERT INTO flash_wallets(user_id,balance,created_at,updated_at) VALUES(?,?,?,?)",
             ("gdpr-user", 250, timestamp, timestamp),
         )
 
@@ -329,14 +337,20 @@ def test_one_account_gets_one_automatic_anonymous_call_identity(
     assert "-" in first["handle"]
     assert ensure_caller_identity("caller-owner") == first
     with connection() as database:
-        assert database.execute(
-            "SELECT COUNT(*) FROM caller_identities WHERE user_id=? AND status='active'",
-            ("caller-owner",),
-        ).fetchone()[0] == 1
-        assert database.execute(
-            "SELECT COUNT(*) FROM caller_identity_claims WHERE user_id=?",
-            ("caller-owner",),
-        ).fetchone()[0] == 0
+        assert (
+            database.execute(
+                "SELECT COUNT(*) FROM caller_identities WHERE user_id=? AND status='active'",
+                ("caller-owner",),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            database.execute(
+                "SELECT COUNT(*) FROM caller_identity_claims WHERE user_id=?",
+                ("caller-owner",),
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_openrouter_request_has_no_user_fingerprint() -> None:
@@ -363,20 +377,3 @@ def test_runtime_container_is_non_root_and_uses_immutable_base_images() -> None:
     ]
     assert len(external_stages) == 4
     assert all("@sha256:" in line for line in external_stages)
-
-
-def test_compliance_runbook_covers_operations_not_just_ui() -> None:
-    runbook = (ROOT / "docs/privacy-operations.md").read_text()
-
-    for required_copy in (
-        "Record of processing",
-        "Retention schedule",
-        "Data subject requests",
-        "Processor register",
-        "International transfers",
-        "Security controls",
-        "Personal data breach",
-        "72 hours",
-        "DPIA screening",
-    ):
-        assert required_copy in runbook

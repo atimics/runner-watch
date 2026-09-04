@@ -69,7 +69,6 @@ def bluesky_search_enabled() -> bool:
 
 
 def discovery_watchlist(limit: int = 30) -> list[dict[str, str]]:
-    """Build a watchlist: 10 Pulse leaders, 10 public Call leaders, then flex."""
 
     limit = max(1, min(limit, 100))
     with connection() as database:
@@ -150,7 +149,7 @@ def _download(url: str, timeout: float) -> tuple[bytes, str | None]:
         url,
         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read(), response.headers.get_content_type()
 
 
@@ -190,9 +189,7 @@ def _strong_news_match(title: str, ticker: str, company: str) -> bool:
     cashtag = re.search(rf"(?<![A-Z0-9])\${re.escape(ticker)}\b", title, re.IGNORECASE)
     if cashtag:
         return True
-    return len(ticker) >= 4 and bool(
-        re.search(rf"\b{re.escape(ticker)}\b", title, re.IGNORECASE)
-    )
+    return len(ticker) >= 4 and bool(re.search(rf"\b{re.escape(ticker)}\b", title, re.IGNORECASE))
 
 
 def parse_gdelt_articles(

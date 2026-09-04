@@ -21,9 +21,7 @@ class _RecordingPostgresDatabase:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[str, ...]]] = []
 
-    def execute(
-        self, statement: str, parameters: tuple[str, ...] = ()
-    ) -> _EmptyResult:
+    def execute(self, statement: str, parameters: tuple[str, ...] = ()) -> _EmptyResult:
         from runner_web.database import postgres_statement
 
         self.calls.append((postgres_statement(statement), parameters))

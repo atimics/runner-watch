@@ -115,8 +115,6 @@ class NodeService:
             if policy.source not in routes[capability.id]:
                 routes[capability.id].append(policy.source)
 
-        # Preserve the scanner's existing preference for Massive daily bars
-        # when a user has connected it. Yahoo remains the local fallback.
         routes["market_bars"] = [
             source for source in ("massive", "yahoo") if source in routes["market_bars"]
         ]
@@ -137,8 +135,7 @@ class NodeService:
             requested = [
                 provider
                 for value in providers
-                if isinstance(value, str)
-                and (provider := value.strip().lower()) in supported
+                if isinstance(value, str) and (provider := value.strip().lower()) in supported
             ]
             routes[capability_id] = list(dict.fromkeys([*requested, *supported]))
         return routes
@@ -442,11 +439,7 @@ class NodeService:
                 if not matching_feeds:
                     continue
                 rights = sorted(
-                    {
-                        right
-                        for feed in matching_feeds
-                        for right in feed.get("usage_rights", [])
-                    }
+                    {right for feed in matching_feeds for right in feed.get("usage_rights", [])}
                 )
                 reviews = {feed["review_status"] for feed in matching_feeds}
                 review_status = (

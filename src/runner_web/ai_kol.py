@@ -28,8 +28,6 @@ def model_display_name(model: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AIKol:
-    """A public AI identity and its current, replaceable model assignment."""
-
     id: str
     slot: str
     ladder_position: int
@@ -54,7 +52,6 @@ _FLASH_MODEL = os.getenv(
 )
 
 
-# Flash is the only live ladder slot. Its identity survives future model promotions.
 FLASH = AIKol(
     id="kol-flash",
     slot="flash",
@@ -69,13 +66,11 @@ FLASH = AIKol(
 
 
 def actor_snapshot(actor: AIKol = FLASH) -> dict[str, Any]:
-    """Freeze public identity and model attribution onto an authored result."""
 
     return actor.snapshot()
 
 
 def flash_version_snapshot(actor: AIKol = FLASH) -> dict[str, Any]:
-    """Return the immutable public release that owns new Flash forecasts."""
 
     configuration = {
         "actor_id": actor.id,

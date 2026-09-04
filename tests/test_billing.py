@@ -97,9 +97,7 @@ def test_daily_flash_must_be_claimed_and_does_not_backfill(
 
     empty = wallet_for_user("wallet-user", at=first_day)
     first, claimed = claim_daily_flash("wallet-user", at=first_day)
-    duplicate, claimed_again = claim_daily_flash(
-        "wallet-user", at=first_day + timedelta(hours=2)
-    )
+    duplicate, claimed_again = claim_daily_flash("wallet-user", at=first_day + timedelta(hours=2))
     missed_day = wallet_for_user("wallet-user", at=first_day + timedelta(days=2))
     later, claimed_later = claim_daily_flash("wallet-user", at=first_day + timedelta(days=3))
 
@@ -272,9 +270,7 @@ def test_daily_claim_api_updates_the_signed_in_wallet(
             ),
         )
 
-    response = claim_daily_flash_api(
-        page_request("/api/flash/claim", method="POST"), raw_session
-    )
+    response = claim_daily_flash_api(page_request("/api/flash/claim", method="POST"), raw_session)
     payload = json.loads(response.body)
 
     assert payload["claimed"] is True
@@ -307,8 +303,7 @@ def test_account_erasure_deletes_the_linked_stripe_customer(
     monkeypatch.setattr(
         billing.stripe.Customer,
         "delete",
-        lambda customer_id: deleted.append(customer_id)
-        or {"id": customer_id, "deleted": True},
+        lambda customer_id: deleted.append(customer_id) or {"id": customer_id, "deleted": True},
     )
 
     assert delete_customer({"stripe_customer_id": None}) is False

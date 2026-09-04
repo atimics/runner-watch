@@ -73,7 +73,6 @@ def source_policy_warnings(
     *,
     product: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Expose unapproved sources that can affect the selected public product."""
 
     return [
         {
@@ -98,7 +97,6 @@ def policy_manifest(
     *,
     product: str | None = None,
 ) -> dict[str, Any]:
-    """Return the machine-readable policy contract used by docs and APIs."""
 
     evidence_gate = asdict(EVIDENCE_GATE)
     evidence_gate["families"] = list(EVIDENCE_GATE.families)

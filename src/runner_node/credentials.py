@@ -25,8 +25,6 @@ class CredentialVault(Protocol):
 
 
 class MemoryCredentialVault:
-    """Small test and embedding vault; it never persists secrets."""
-
     def __init__(self, values: Mapping[str, str] | None = None) -> None:
         self._values = dict(values or {})
 
@@ -41,8 +39,6 @@ class MemoryCredentialVault:
 
 
 class EnvironmentCredentialVault:
-    """Read-only credentials supplied by a process manager or secret store."""
-
     def get(self, provider: str) -> str | None:
         variable = PROVIDER_ENVIRONMENTS.get(provider)
         if variable is None:
@@ -57,8 +53,6 @@ class EnvironmentCredentialVault:
 
 
 class KeyringCredentialVault:
-    """Persist local user credentials in the operating system credential vault."""
-
     def get(self, provider: str) -> str | None:
         try:
             return keyring.get_password(SERVICE_NAME, provider)
@@ -82,8 +76,6 @@ class KeyringCredentialVault:
 
 
 class LayeredCredentialVault:
-    """Prefer operator-managed environment secrets, then local user credentials."""
-
     def __init__(self, writable: CredentialVault) -> None:
         self.environment = EnvironmentCredentialVault()
         self.writable = writable

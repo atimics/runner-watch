@@ -54,7 +54,6 @@ router = APIRouter()
 
 
 def required_worker_names(*, sports_ingestion_enabled: bool) -> frozenset[str]:
-    """Return the worker contract independently from the tasks that were started."""
 
     if sports_ingestion_enabled:
         return BASE_REQUIRED_WORKER_NAMES | {"sports-ingestion"}
@@ -142,9 +141,8 @@ def worker_health(
     fresh_instances = sum(instance["status"] != "stale" for instance in instances)
     if not instances or fresh_instances == 0:
         status = "stale"
-    elif (
-        fresh_instances >= WORKER_EXPECTED_INSTANCES
-        and all(instance["status"] == "ok" for instance in instances)
+    elif fresh_instances >= WORKER_EXPECTED_INSTANCES and all(
+        instance["status"] == "ok" for instance in instances
     ):
         status = "ok"
     else:
@@ -174,16 +172,13 @@ def trainer_health(
     *,
     checked_at: datetime | None = None,
 ) -> dict[str, Any]:
-    """Report whether the separate model trainer is alive and making progress."""
 
     checked_at = checked_at or datetime.now(UTC)
     heartbeat = states.get(TRAINER_HEARTBEAT_KEY)
     heartbeat_at = _time(heartbeat.get("updated_at")) if heartbeat else None
     detail = _heartbeat_detail(heartbeat.get("value")) if heartbeat else {}
     age = (
-        max(0.0, (checked_at - heartbeat_at).total_seconds())
-        if heartbeat_at is not None
-        else None
+        max(0.0, (checked_at - heartbeat_at).total_seconds()) if heartbeat_at is not None else None
     )
     fresh = age is not None and age <= OPERATIONS.worker_heartbeat_max_age_seconds
     reported = str(detail.get("status") or "unknown").lower()
@@ -198,7 +193,6 @@ def trainer_health(
 
 
 def readiness_status(*, checked_at: datetime | None = None) -> dict[str, Any]:
-    """Report whether this web process can safely receive user traffic."""
 
     checked_at = checked_at or datetime.now(UTC)
     expected_schema_version = MIGRATIONS[-1].version if MIGRATIONS else 0
@@ -240,9 +234,7 @@ def health_status(*, checked_at: datetime | None = None) -> dict[str, Any]:
                     "SELECT key,value,updated_at FROM worker_state"
                 ).fetchall()
             }
-            latest_scan = database.execute(
-                "SELECT MAX(captured_at) FROM scan_runs"
-            ).fetchone()[0]
+            latest_scan = database.execute("SELECT MAX(captured_at) FROM scan_runs").fetchone()[0]
     except Exception:
         return {
             "status": "degraded",
@@ -273,13 +265,10 @@ def runtime_capabilities(
     *,
     product: str = "runners",
 ) -> dict[str, Any]:
-    """Describe the deployment from live state and the shared product policy."""
 
     ingestion = ingestion_status()
     source_rows = ingestion["sources"]
-    policy_by_key = {
-        (policy.source, policy.feed): policy for policy in DEFAULT_SOURCE_POLICIES
-    }
+    policy_by_key = {(policy.source, policy.feed): policy for policy in DEFAULT_SOURCE_POLICIES}
     sources: dict[str, dict[str, Any]] = {}
     for row in source_rows:
         policy = policy_by_key.get((str(row["source"]), str(row["feed"])))
@@ -298,15 +287,11 @@ def runtime_capabilities(
 
     def feature(*keys: str) -> dict[str, Any]:
         matched = [
-            sources[key]
-            for key in keys
-            if key in sources and sources[key]["product"] == product
+            sources[key] for key in keys if key in sources and sources[key]["product"] == product
         ]
         public = [row for row in matched if row["enabled"] and row["public_effects"]]
         live = [row for row in public if row["state"] == "healthy"]
-        internal = [
-            row for row in matched if row["enabled"] and not row["public_effects"]
-        ]
+        internal = [row for row in matched if row["enabled"] and not row["public_effects"]]
         state = (
             "healthy"
             if live
@@ -334,9 +319,7 @@ def runtime_capabilities(
     deployment_health = health_status()
     manifest = policy_manifest(DEFAULT_SOURCE_POLICIES, product=product)
     policy_warnings = manifest["source_policy_warnings"]
-    policy_blockers = [
-        warning for warning in policy_warnings if warning["severity"] == "blocking"
-    ]
+    policy_blockers = [warning for warning in policy_warnings if warning["severity"] == "blocking"]
     evidence_gate = manifest["evidence_gate"]
     base_rates = manifest["market_base_rates"]
     product_features = (
@@ -352,13 +335,9 @@ def runtime_capabilities(
             "issuer_facts": feature("sec:company_facts"),
             "market_bars": feature("yahoo:market_bars"),
             "news": feature("yahoo:news_search", "gdelt:news_search"),
-            "public_social": feature(
-                "apewisdom:reddit_trends", "bluesky:social_search"
-            ),
+            "public_social": feature("apewisdom:reddit_trends", "bluesky:social_search"),
             "trading_halts": feature("nasdaq_trader:trade_halts"),
-            "short_positioning": feature(
-                "fintel:short_interest", "fintel:borrow_rate"
-            ),
+            "short_positioning": feature("fintel:short_interest", "fintel:borrow_rate"),
         }
     )
     return {
@@ -412,9 +391,7 @@ def runtime_capabilities(
             },
             "research": {
                 "openai_available": bool(os.getenv("OPENAI_API_KEY", "")),
-                "openrouter_available": (
-                    NODE_SERVICE.openrouter.status()["status"] == "connected"
-                ),
+                "openrouter_available": (NODE_SERVICE.openrouter.status()["status"] == "connected"),
                 "provider": FLASH.provider,
                 "flash_model": FLASH.model,
                 "credential_location": "server",

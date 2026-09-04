@@ -50,7 +50,7 @@ def _nasdaq_json(path: str, params: Mapping[str, str], *, timeout: float = 8.0) 
             "User-Agent": "Mozilla/5.0 (compatible; RATi-Swarm/0.1; +https://github.com/atimics/runner-watch)",
         },
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         payload = json.load(response)
     status = payload.get("status") or {}
     data = payload.get("data")
@@ -122,9 +122,12 @@ def _nasdaq_ticker_results(symbol: str) -> tuple[DownloadResult, DownloadResult]
     ]
     if minute_values:
         minute_frame = pd.DataFrame(minute_values).set_index("timestamp").sort_index()
-        intraday_frame = minute_frame["Price"].resample("5min").agg(
-            Open="first", High="max", Low="min", Close="last"
-        ).dropna(how="all")
+        intraday_frame = (
+            minute_frame["Price"]
+            .resample("5min")
+            .agg(Open="first", High="max", Low="min", Close="last")
+            .dropna(how="all")
+        )
         intraday_frame["Volume"] = math.nan
     else:
         intraday_frame = pd.DataFrame()
@@ -145,9 +148,7 @@ def _nasdaq_ticker_results(symbol: str) -> tuple[DownloadResult, DownloadResult]
         warnings = []
         if error is not None:
             source_name = "intraday" if interval == "5m" else "daily"
-            warnings.append(
-                f"Nasdaq {source_name} ticker source failed: {error}"
-            )
+            warnings.append(f"Nasdaq {source_name} ticker source failed: {error}")
         if interval == "5m" and not frame.empty:
             warnings.append(
                 "Nasdaq's ticker chart does not publish volume per point; "
@@ -178,11 +179,7 @@ def _nasdaq_ticker_results(symbol: str) -> tuple[DownloadResult, DownloadResult]
 def _column_name(frame: pd.DataFrame, wanted: str) -> Any | None:
     normalized = wanted.lower().replace(" ", "")
     return next(
-        (
-            column
-            for column in frame.columns
-            if str(column).lower().replace(" ", "") == normalized
-        ),
+        (column for column in frame.columns if str(column).lower().replace(" ", "") == normalized),
         None,
     )
 
@@ -328,9 +325,7 @@ def load_ticker_detail(
     change_pct = (
         (price / previous_close - 1) * 100 if previous_close and previous_close > 0 else None
     )
-    warnings = list(
-        dict.fromkeys([*daily_result.warnings, *intraday_result.warnings])
-    )
+    warnings = list(dict.fromkeys([*daily_result.warnings, *intraday_result.warnings]))
     return {
         "ticker": symbol,
         "source": "local_scanner",
@@ -338,9 +333,7 @@ def load_ticker_detail(
         "quote": {
             "price": snapshot.price if snapshot else price,
             "change_pct": snapshot.change_pct if snapshot else change_pct,
-            "quote_time": snapshot.quote_time.isoformat()
-            if snapshot
-            else str(latest["timestamp"]),
+            "quote_time": snapshot.quote_time.isoformat() if snapshot else str(latest["timestamp"]),
             "session": snapshot.session if snapshot else "MARKET DATA",
         },
         "analysis": snapshot.to_dict() if snapshot else None,

@@ -20,9 +20,7 @@ class MissingCompanyEdgarClient:
             title="4 - Missing Company",
             role="Issuer",
             filed_at="2026-08-24T18:00:00-04:00",
-            filing_url=(
-                "https://www.sec.gov/Archives/edgar/data/999/0001/0001-index.htm"
-            ),
+            filing_url=("https://www.sec.gov/Archives/edgar/data/999/0001/0001-index.htm"),
         )
 
     def latest_filings(self) -> list[EdgarFiling]:

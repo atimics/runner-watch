@@ -1,5 +1,3 @@
-"""Shared wire rules for RATi swarm protocol messages."""
-
 from __future__ import annotations
 
 import base64
@@ -30,8 +28,6 @@ _B64URL_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class SwarmModel(BaseModel):
-    """Immutable, closed model used at a swarm trust boundary."""
-
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
 
@@ -85,7 +81,6 @@ def content_id(value: bytes) -> str:
 
 
 def signature_domain(message_type: str, protocol_version: str = PROTOCOL_VERSION) -> bytes:
-    """Return the common, type-separated prefix for a signed payload."""
 
     if not message_type or "\x00" in message_type or "\x00" in protocol_version:
         raise ValueError("Signature domain values must be non-empty and cannot contain NUL")
@@ -132,7 +127,6 @@ def _canonical_value(value: Any) -> Any:
 
 
 def canonical_json_bytes(value: BaseModel | dict[str, Any]) -> bytes:
-    """Serialize the portable RATi canonical JSON profile."""
 
     return json.dumps(
         _canonical_value(value),
@@ -144,8 +138,6 @@ def canonical_json_bytes(value: BaseModel | dict[str, Any]) -> bytes:
 
 
 class NodeIdentity(SwarmModel):
-    """A stable swarm node ID bound to one Ed25519 public key."""
-
     node_id: str
     public_key: str = Field(min_length=43, max_length=43)
     display_name: str | None = Field(default=None, min_length=1, max_length=128)

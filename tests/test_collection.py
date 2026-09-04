@@ -136,7 +136,7 @@ def test_market_bar_projection_keeps_the_actual_provider(
     )
 
     with connection() as database:
-        source = database.execute(
-            "SELECT source FROM market_bars WHERE ticker='PEN'"
-        ).fetchone()["source"]
+        source = database.execute("SELECT source FROM market_bars WHERE ticker='PEN'").fetchone()[
+            "source"
+        ]
     assert source == "test_provider"

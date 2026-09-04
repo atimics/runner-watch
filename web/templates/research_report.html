@@ -141,7 +141,7 @@
   <section id="report-sources" class="research-section report-source-index">
     <h2>Sources</h2>
     {% if report.citations %}
-    {% for citation in report.citations %}<article class="research-citation"><p>{{ citation.claim }}</p><div class="research-sources">{% for source in citation.source_urls %}<a href="{{ source }}" target="_blank" rel="noopener">Source {{ loop.index }}</a>{% endfor %}</div></article>{% endfor %}
+    {% for citation in report.citations %}<article class="research-citation"><p>{{ citation.claim }}</p><div class="research-sources">{% for source in citation.source_urls %}<a href="{{ source }}" target="_blank" rel="noopener">Source {{ loop.index }}</a>{% endfor %}{% if citation.source_receipts %}<span>Stored market data</span>{% endif %}</div></article>{% endfor %}
     {% endif %}
     {% if report.sources %}
     <details class="research-more all-sources"><summary>All {{ report.sources|length }} source links</summary><div class="research-sources">{% for source in report.sources %}<a href="{{ source.url }}" target="_blank" rel="noopener">{{ source.label }}</a>{% endfor %}</div></details>
@@ -166,7 +166,7 @@
     {% endif %}
   </section>
   {% endif %}
-  <div class="research-meta">{% if report.customer_inference %}Your model · {{ report.model or report.requested_model }}{% elif report.actor %}{{ report.actor.display_name }} · {{ report.actor.model }}{% else %}{{ report.model or report.requested_model }}{% endif %} · {{ report.completed_at[:16]|replace('T', ' ') }} UTC{% if report.usage.context %} · {{ report.usage.context.included_sections }} evidence sections{% endif %}</div>
+  <div class="research-meta">{% if report.customer_inference %}Your model · {{ report.model or report.requested_model }}{% elif report.actor %}{{ report.actor.display_name }} · {{ report.actor.model }}{% else %}{{ report.model or report.requested_model }}{% endif %} · {{ report.completed_at[:16]|replace('T', ' ') }} UTC{% if report.usage.context.evidence_metrics %}{% set metrics = report.usage.context.evidence_metrics %} · {{ metrics.source_family_count }} source families · {{ metrics.fresh_evidence_count }} fresh · {{ metrics.linked_claim_count }} points linked · {{ metrics.public_link_count }} public links{% endif %}</div>
 </main>
 {% endblock %}
 {% block scripts %}

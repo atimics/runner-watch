@@ -44,8 +44,13 @@ def test_yahoo_download_emits_a_shared_source_fetch(monkeypatch: MonkeyPatch) ->
 def test_routed_market_data_returns_provider_provenance(monkeypatch: MonkeyPatch) -> None:
     index = pd.date_range("2026-08-25 09:30", periods=2, freq="5min")
     raw = pd.DataFrame(
-        {"Open": [1.0, 1.1], "High": [1.2, 1.3], "Low": [0.9, 1.0],
-         "Close": [1.1, 1.2], "Volume": [100, 120]},
+        {
+            "Open": [1.0, 1.1],
+            "High": [1.2, 1.3],
+            "Low": [0.9, 1.0],
+            "Close": [1.1, 1.2],
+            "Volume": [100, 120],
+        },
         index=index,
     )
     monkeypatch.setattr(market_data.yf, "download", lambda **kwargs: raw)

@@ -52,13 +52,10 @@ def _iso(value: datetime | None = None) -> str:
 def _tables(database: Any) -> set[str]:
     if database.backend == "postgres":
         rows = database.execute(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_schema=current_schema()"
+            "SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema()"
         ).fetchall()
         return {str(row["table_name"]) for row in rows}
-    rows = database.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    ).fetchall()
+    rows = database.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     return {str(row["name"]) for row in rows}
 
 
@@ -91,7 +88,6 @@ def _public_passkeys(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def export_user_data(user_id: str) -> dict[str, Any]:
-    """Return a portable copy without authentication secrets or session hashes."""
 
     with connection() as database:
         tables = _tables(database)
@@ -126,6 +122,7 @@ def export_user_data(user_id: str) -> dict[str, Any]:
             (user_id,),
             order_by="claimed_at",
         )
+
         def related(table: str, column: str, values: list[str]) -> list[dict[str, Any]]:
             if not values or table not in tables:
                 return []
@@ -256,22 +253,16 @@ def export_user_data(user_id: str) -> dict[str, Any]:
             "case_updates": related("thesis_case_updates", "case_id", case_ids),
             "case_outcomes": related("thesis_case_outcomes", "case_id", case_ids),
             "research": commissions,
-            "research_stages": related(
-                "research_stage_runs", "commission_id", commission_ids
-            ),
+            "research_stages": related("research_stage_runs", "commission_id", commission_ids),
             "flash_forecasts": flash_forecasts,
-            "sports_ai_forecasts": related(
-                "sports_ai_forecasts", "report_id", commission_ids
-            ),
+            "sports_ai_forecasts": related("sports_ai_forecasts", "report_id", commission_ids),
             "flash_forecast_outcomes": related(
                 "flash_forecast_outcomes", "forecast_id", forecast_ids
             ),
             "flash_evaluation_events": related(
                 "flash_evaluation_events", "forecast_id", forecast_ids
             ),
-            "flash_wallet": _rows(
-                database, tables, "flash_wallets", "user_id=?", (user_id,)
-            ),
+            "flash_wallet": _rows(database, tables, "flash_wallets", "user_id=?", (user_id,)),
             "flash_transactions": _rows(
                 database,
                 tables,
@@ -330,7 +321,6 @@ def export_user_data(user_id: str) -> dict[str, Any]:
 
 
 def user_data_summary(user_id: str) -> dict[str, Any]:
-    """Return small counts for the account data controls."""
 
     exported = export_user_data(user_id)
     groups = {
@@ -344,7 +334,6 @@ def user_data_summary(user_id: str) -> dict[str, Any]:
 
 
 def purge_passive_tracking() -> dict[str, int]:
-    """Delete passive behavioural profiles; the product no longer writes them."""
 
     deleted: dict[str, int] = {}
     with connection() as database:
@@ -357,7 +346,6 @@ def purge_passive_tracking() -> dict[str, int]:
 
 
 def prune_personal_data(at: datetime | None = None) -> dict[str, int]:
-    """Apply the short technical retention periods defined in the privacy notice."""
 
     timestamp = at or datetime.now(UTC)
     deleted = purge_passive_tracking()
@@ -396,13 +384,10 @@ def _delete_user_content_rows(
         nonlocal deleted
         if table not in tables:
             return
-        rowcount = database.execute(
-            f"DELETE FROM {table} WHERE {where}", parameters
-        ).rowcount
+        rowcount = database.execute(f"DELETE FROM {table} WHERE {where}", parameters).rowcount
         if rowcount and rowcount > 0:
             deleted += rowcount
 
-    # Remove dependent records before older foreign keys that do not cascade.
     delete("comment_generation_requests", "user_id=?", (user_id,))
     delete("flash_report_requests", "user_id=?", (user_id,))
     delete(
@@ -466,7 +451,6 @@ def _delete_user_content_rows(
 
 
 def delete_user_content(user_id: str) -> dict[str, Any]:
-    """Delete portable work while keeping login, identity, wallet, and billing data."""
 
     with connection() as database:
         tables = _tables(database)
@@ -480,7 +464,6 @@ def delete_user_content(user_id: str) -> dict[str, Any]:
 
 
 def delete_user_data(user_id: str) -> dict[str, Any]:
-    """Delete one account and all local data that can identify or describe it."""
 
     with connection() as database:
         tables = _tables(database)

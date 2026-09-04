@@ -72,9 +72,7 @@ def test_fintel_client_maps_short_interest_and_borrow_fields() -> None:
     assert len(calls) == 2
 
 
-def test_short_data_cache_avoids_repeat_api_calls(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_short_data_cache_avoids_repeat_api_calls(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "short-data.db")
     monkeypatch.delenv("FINTEL_API_KEY", raising=False)
     init_db()

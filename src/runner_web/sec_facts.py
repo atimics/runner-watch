@@ -12,9 +12,7 @@ from typing import Any
 from runner_watch.ingestion import IssuerFact, SourceBatch, SourceFetch
 from runner_web.ingestion import record_source_batch
 
-SEC_USER_AGENT = os.getenv(
-    "SEC_USER_AGENT", "RunnerWatch/0.2 https://stonks.rati.foundation"
-)
+SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "RunnerWatch/0.2 https://stonks.rati.foundation")
 COMPANY_FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json"
 Download = Callable[[str, float], tuple[bytes, str | None]]
 
@@ -48,7 +46,7 @@ def _download(url: str, timeout: float) -> tuple[bytes, str | None]:
         url,
         headers={"User-Agent": SEC_USER_AGENT, "Accept": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read(), response.headers.get_content_type()
 
 
@@ -62,7 +60,6 @@ def _day(value: Any) -> date | None:
 def parse_company_facts(
     payload: dict[str, Any], *, collected_at: datetime | None = None
 ) -> tuple[IssuerFact, ...]:
-    """Normalize the small SEC fact set needed by the rug-risk engine."""
 
     try:
         cik = int(payload["cik"])

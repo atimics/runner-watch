@@ -290,8 +290,19 @@ def test_watchlist_prioritizes_pulse_then_alpha_then_flex(
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
-                "run", "penny", "Penny stocks", "test", 20, 20, 20, 12,
-                "[]", "[]", captured_at, captured_at, captured_at,
+                "run",
+                "penny",
+                "Penny stocks",
+                "test",
+                20,
+                20,
+                20,
+                12,
+                "[]",
+                "[]",
+                captured_at,
+                captured_at,
+                captured_at,
             ),
         )
         for rank in range(1, 13):
@@ -305,9 +316,23 @@ def test_watchlist_prioritizes_pulse_then_alpha_then_flex(
                 ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
-                    f"snap-{rank}", ticker, 100-rank, "BUILDING", "regular", 1.0,
-                    5.0, 1.0, 2.0, 0.5, 500_000, captured_at, "[]", "[]",
-                    captured_at, "run", rank,
+                    f"snap-{rank}",
+                    ticker,
+                    100 - rank,
+                    "BUILDING",
+                    "regular",
+                    1.0,
+                    5.0,
+                    1.0,
+                    2.0,
+                    0.5,
+                    500_000,
+                    captured_at,
+                    "[]",
+                    "[]",
+                    captured_at,
+                    "run",
+                    rank,
                 ),
             )
         database.execute(

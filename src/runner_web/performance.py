@@ -82,7 +82,6 @@ def performance_snapshot() -> dict[str, Any]:
 
 
 def reset_performance_metrics() -> None:
-    """Clear process-local metrics for tests."""
 
     with _LOCK:
         _ROUTES.clear()

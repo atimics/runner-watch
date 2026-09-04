@@ -10,8 +10,8 @@ from typing import Any
 
 try:
     import resource
-except ImportError:  # pragma: no cover - Windows does not expose process rusage.
-    resource = None  # type: ignore[assignment]
+except ImportError:
+    resource = None
 
 from sec_qwen.config import Config, load_examples, validate_corpus
 from sec_qwen.receipts import (
@@ -217,9 +217,7 @@ def _evaluate(
             "revision": config.model.revision,
             "tokenizer_revision": config.model.revision,
             "trust_remote_code": False,
-            "weight_ref": (
-                f"weight://huggingface/{config.model.model_id}@{config.model.revision}"
-            ),
+            "weight_ref": (f"weight://huggingface/{config.model.model_id}@{config.model.revision}"),
         },
         "implementation": implementation_receipt(
             config,

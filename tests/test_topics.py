@@ -30,9 +30,7 @@ def test_topic_hub_caches_and_keeps_last_good_after_failure() -> None:
     def success() -> TopicUpdate:
         nonlocal calls
         calls += 1
-        return TopicUpdate(
-            data={"price": 1.25}, source="test", as_of=clock(), collected_at=clock()
-        )
+        return TopicUpdate(data={"price": 1.25}, source="test", as_of=clock(), collected_at=clock())
 
     first = hub.get_or_refresh("market:quote:PEN", policy=policy, producer=success)
     second = hub.get_or_refresh("market:quote:PEN", policy=policy, producer=success)
@@ -86,9 +84,7 @@ def test_topic_hub_coalesces_concurrent_refreshes() -> None:
     assert first_result.data == second_result.data == [1, 2, 3]
 
 
-def test_sqlite_topic_store_survives_a_new_hub(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_sqlite_topic_store_survives_a_new_hub(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "topics.db")
     init_db()
     policy = TopicPolicy(ttl_seconds=60, maximum_stale_seconds=120)
@@ -96,9 +92,7 @@ def test_sqlite_topic_store_survives_a_new_hub(
     first_hub.get_or_refresh(
         "market:quote:PEN",
         policy=policy,
-        producer=lambda: TopicUpdate(
-            data={"last": 1.5}, source="test", as_of=datetime.now(UTC)
-        ),
+        producer=lambda: TopicUpdate(data={"last": 1.5}, source="test", as_of=datetime.now(UTC)),
     )
 
     restored = TopicHub(store=SQLiteTopicStore()).peek("market:quote:PEN", policy=policy)

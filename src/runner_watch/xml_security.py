@@ -12,7 +12,6 @@ class PayloadTooLargeError(ValueError):
 
 
 def read_limited(response: Any, *, max_bytes: int) -> bytes:
-    """Read one byte beyond the limit so oversized responses fail closed."""
 
     body = response.read(max_bytes + 1)
     if len(body) > max_bytes:

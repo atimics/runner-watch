@@ -25,7 +25,6 @@ class InsufficientFlashError(ValueError):
 
 
 def runner_call_reward(return_pct: float | int | None) -> int:
-    """Return 10× positive PnL, rounded to whole Flash."""
 
     if return_pct is None or float(return_pct) <= 0:
         return 0
@@ -34,7 +33,6 @@ def runner_call_reward(return_pct: float | int | None) -> int:
 
 
 def sports_call_reward(american_odds: int | float | None) -> int:
-    """Scale a winning paper-Call reward by its frozen market payout."""
 
     if american_odds is None:
         return 0

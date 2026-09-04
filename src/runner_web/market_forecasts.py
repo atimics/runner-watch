@@ -53,7 +53,6 @@ def _price(value: Any) -> float | None:
 def queue_market_forecasts(
     database: Any, report_id: str, report_day: str, leaders: list[dict[str, Any]], at: datetime
 ) -> None:
-    """Queue targets with the same frozen evidence as the new briefing."""
 
     current = _utc(at)
     if current >= _at(report_day, 9, 30):
@@ -219,7 +218,6 @@ def generate_market_forecasts(
             )
         return {"completed": 0, "expired": expired, "failed": 1}
 
-    # Account for the provider call before publishing a pre-open forecast.
     finished = current + timedelta(seconds=max(0, time.monotonic() - started))
     status = "complete" if finished < cutoff else "expired"
     with connection() as database:
@@ -386,14 +384,14 @@ def attach_market_forecasts(database: Any, reports: list[dict[str, Any]]) -> Non
     jobs = {
         row["report_id"]: dict(row)
         for row in database.execute(
-            f"SELECT * FROM market_report_forecast_jobs WHERE report_id IN ({placeholders})",  # noqa: S608
+            f"SELECT * FROM market_report_forecast_jobs WHERE report_id IN ({placeholders})",
             list(pre_reports),
         ).fetchall()
     }
     forecasts = {
         (row["report_id"], row["ticker"]): dict(row)
         for row in database.execute(
-            f"SELECT * FROM market_report_forecasts WHERE report_id IN ({placeholders})",  # noqa: S608
+            f"SELECT * FROM market_report_forecasts WHERE report_id IN ({placeholders})",
             list(pre_reports),
         ).fetchall()
     }

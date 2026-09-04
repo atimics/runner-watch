@@ -103,17 +103,12 @@ def profile_corpus(
         for name in split_names
     }
     train_profile = splits[config.dataset.train_file]
-    training_token_passes = round(
-        int(train_profile["effective_tokens"]) * config.training.epochs
-    )
+    training_token_passes = round(int(train_profile["effective_tokens"]) * config.training.epochs)
     effective_batch_size = (
-        config.training.per_device_batch_size
-        * config.training.gradient_accumulation_steps
+        config.training.per_device_batch_size * config.training.gradient_accumulation_steps
     )
     optimizer_steps = math.ceil(
-        int(train_profile["examples"])
-        * config.training.epochs
-        / effective_batch_size
+        int(train_profile["examples"]) * config.training.epochs / effective_batch_size
     )
     result: dict[str, Any] = {
         "schema": "stonks.sec_qwen_profile.v1",

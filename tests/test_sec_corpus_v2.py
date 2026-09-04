@@ -103,12 +103,8 @@ def test_backfill_archives_historical_filings_and_resumes(
 
     recent_url = SUBMISSIONS_URL.format(cik=1001)
     history_url = SUBMISSIONS_BASE + "CIK0000001001-submissions-001.json"
-    annual_url = (
-        "https://www.sec.gov/Archives/edgar/data/1001/000000100124000002/annual.htm"
-    )
-    current_url = (
-        "https://www.sec.gov/Archives/edgar/data/1001/000000100123000001/current.htm"
-    )
+    annual_url = "https://www.sec.gov/Archives/edgar/data/1001/000000100124000002/annual.htm"
+    current_url = "https://www.sec.gov/Archives/edgar/data/1001/000000100123000001/current.htm"
     payloads = {
         recent_url: _json_bytes(_submissions()),
         history_url: _json_bytes(_history()),
@@ -138,12 +134,18 @@ def test_backfill_archives_historical_filings_and_resumes(
     assert result.documents_fetched == 1
     with connection() as database:
         assert database.execute("SELECT COUNT(*) FROM sec_filings").fetchone()[0] == 1
-        assert database.execute(
-            "SELECT COUNT(*) FROM source_documents WHERE source='sec'"
-        ).fetchone()[0] == 3
-        assert database.execute(
-            "SELECT COUNT(*) FROM sec_filings WHERE market_score IS NOT NULL"
-        ).fetchone()[0] == 0
+        assert (
+            database.execute("SELECT COUNT(*) FROM source_documents WHERE source='sec'").fetchone()[
+                0
+            ]
+            == 3
+        )
+        assert (
+            database.execute(
+                "SELECT COUNT(*) FROM sec_filings WHERE market_score IS NOT NULL"
+            ).fetchone()[0]
+            == 0
+        )
 
     calls_before_resume = len(calls)
     resumed = backfill_sec_corpus(
@@ -201,12 +203,8 @@ def test_backfill_completes_when_optional_company_facts_are_not_available(
 
     recent_url = SUBMISSIONS_URL.format(cik=1001)
     history_url = SUBMISSIONS_BASE + "CIK0000001001-submissions-001.json"
-    annual_url = (
-        "https://www.sec.gov/Archives/edgar/data/1001/000000100124000002/annual.htm"
-    )
-    current_url = (
-        "https://www.sec.gov/Archives/edgar/data/1001/000000100123000001/current.htm"
-    )
+    annual_url = "https://www.sec.gov/Archives/edgar/data/1001/000000100124000002/annual.htm"
+    current_url = "https://www.sec.gov/Archives/edgar/data/1001/000000100123000001/current.htm"
     payloads = {
         recent_url: _json_bytes(_submissions()),
         history_url: _json_bytes(_history()),
@@ -255,12 +253,9 @@ def test_sec_client_requires_contact_and_rejects_non_sec_urls() -> None:
         client("https://example.com/data.json", 1)
 
 
-def _insert_filing(
-    database: Any, *, accession: str, cik: int, ticker: str, filed_at: str
-) -> None:
+def _insert_filing(database: Any, *, accession: str, cik: int, ticker: str, filed_at: str) -> None:
     filing_url = (
-        f"https://www.sec.gov/Archives/edgar/data/{cik}/"
-        f"{accession.replace('-', '')}/filing.htm"
+        f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession.replace('-', '')}/filing.htm"
     )
     database.execute(
         """
@@ -414,18 +409,14 @@ def test_v2_export_is_deterministic_multitask_and_accession_safe(
     )
     structured_evidence = json.loads(structured["messages"][1]["content"].split("\nEVIDENCE\n")[1])
     assert len(structured_evidence["document_chunks"]) <= 1
-    classification = next(
-        row for row in all_examples if row["task"] == "filing_classification"
-    )
+    classification = next(row for row in all_examples if row["task"] == "filing_classification")
     classification_evidence = json.loads(
         classification["messages"][1]["content"].split("\nEVIDENCE\n")[1]
     )
     assert "document_chunks" not in classification_evidence
     assert classification["source"]["evidence"] == []
     comparison = next(row for row in all_examples if row["task"] == "fact_comparison")
-    comparison_evidence = json.loads(
-        comparison["messages"][1]["content"].split("\nEVIDENCE\n")[1]
-    )
+    comparison_evidence = json.loads(comparison["messages"][1]["content"].split("\nEVIDENCE\n")[1])
     assert len(comparison_evidence["facts"]) == 2
     insufficient = next(row for row in all_examples if row["task"] == "insufficient_evidence")
     insufficient_evidence = json.loads(

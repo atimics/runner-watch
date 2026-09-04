@@ -116,7 +116,6 @@ def _interesting(form: str) -> bool:
 
 
 def _ensure_parser_version() -> None:
-    """Record the parser version without deleting historical training data."""
 
     with connection() as db:
         row = db.execute(
@@ -243,7 +242,6 @@ def _companyfacts_candidate(new_events: list[dict[str, Any]]) -> int | None:
 
 
 def refresh_edgar() -> dict[str, Any]:
-    """Fetch the newest filings and persist pre-scored catalyst events."""
 
     client = EdgarClient(fetch_recorder=record_source_fetch)
     _ensure_parser_version()

@@ -1,5 +1,3 @@
-"""Local, deterministic peer reputation for RATi swarm claims."""
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -18,16 +16,12 @@ SourceFamily = Annotated[str, Field(min_length=1, max_length=48, pattern=_FAMILY
 
 
 class OutcomeVerdict(StrEnum):
-    """A result measured by this node, never supplied by the remote peer."""
-
     CONFIRMED = "confirmed"
     REFUTED = "refuted"
     INCONCLUSIVE = "inconclusive"
 
 
 class ClaimOutcomeRecord(SwarmModel):
-    """One local measurement of a previously verified runner observation."""
-
     claim_id: Annotated[str, Field(pattern=_CLAIM_ID_PATTERN)]
     peer_node_id: Annotated[str, Field(min_length=74, max_length=74)]
     measured_at: datetime
@@ -62,8 +56,6 @@ class ClaimOutcomeRecord(SwarmModel):
 
 
 class ReputationPolicy(SwarmModel):
-    """Local scoring choices expressed only as deterministic integers."""
-
     prior_confirmed: Annotated[int, Field(ge=0, le=1000)] = 1
     prior_refuted: Annotated[int, Field(ge=1, le=1000)] = 3
     minimum_scored_outcomes: Annotated[int, Field(ge=1, le=100_000)] = 20
@@ -73,8 +65,6 @@ class ReputationPolicy(SwarmModel):
 
 
 class PeerReputation(SwarmModel):
-    """A reproducible snapshot derived only from local outcome records."""
-
     peer_node_id: Annotated[str, Field(min_length=74, max_length=74)]
     confirmed: Annotated[int, Field(ge=0)]
     refuted: Annotated[int, Field(ge=0)]
@@ -91,8 +81,6 @@ class PeerReputation(SwarmModel):
 
 
 class LocalOutcomeLedger:
-    """Small in-memory ledger; callers decide how local records are persisted."""
-
     def __init__(self) -> None:
         self._records: dict[str, ClaimOutcomeRecord] = {}
 
@@ -105,7 +93,6 @@ class LocalOutcomeLedger:
         verified_claim_source_families: tuple[str, ...],
         verification_source_families: tuple[str, ...],
     ) -> ClaimOutcomeRecord:
-        """Verify identity, then record one locally observed result per claim."""
 
         signed_claim.verify(at=measured_at, require_current=False)
         claim = signed_claim.claim
@@ -133,7 +120,6 @@ class LocalOutcomeLedger:
         return record
 
     def add_record(self, record: ClaimOutcomeRecord) -> ClaimOutcomeRecord:
-        """Load a trusted local record without treating peer input as a measurement."""
 
         previous = self._records.get(record.claim_id)
         if previous is not None and previous != record:
@@ -166,7 +152,6 @@ def score_peer_reputation(
     records: tuple[ClaimOutcomeRecord, ...],
     policy: ReputationPolicy | None = None,
 ) -> PeerReputation:
-    """Calculate a skeptical posterior discounted for correlated source families."""
 
     if not NODE_ID_PATTERN.fullmatch(peer_node_id):
         raise ValueError("peer_node_id must use the rati-node:<sha256> format")

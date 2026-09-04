@@ -50,9 +50,7 @@ def _call(row: Any, current_price: float | None = None) -> dict[str, Any]:
         if item["status"] == "active"
         else item["flash_reward"]
     )
-    item["reward_label"] = (
-        f"+{item['flash_reward']} Flash" if item["flash_reward"] > 0 else None
-    )
+    item["reward_label"] = f"+{item['flash_reward']} Flash" if item["flash_reward"] > 0 else None
     return item
 
 
@@ -63,7 +61,6 @@ def create_call(
     entry_price: float,
     entry_at: str,
 ) -> dict[str, Any]:
-    """Create an immutable public Call using a server supplied market mark."""
 
     call_id = str(uuid.uuid4())
     timestamp = _iso()
@@ -182,7 +179,6 @@ def close_call(
     exit_price: float,
     exit_at: str,
 ) -> dict[str, Any] | None:
-    """Close a Call once. Entry and exit marks cannot be edited afterward."""
 
     timestamp = _iso()
     with connection() as db:
@@ -313,9 +309,7 @@ def call_stats(calls: list[dict[str, Any]]) -> dict[str, Any]:
     returns = [float(item["return_pct"]) for item in calls if item.get("return_pct") is not None]
     closed = [item for item in calls if item["status"] == "closed"]
     closed_returns = [
-        float(item["return_pct"])
-        for item in closed
-        if item.get("return_pct") is not None
+        float(item["return_pct"]) for item in closed if item.get("return_pct") is not None
     ]
     return {
         "total": len(calls),
@@ -332,7 +326,6 @@ def call_stats(calls: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def caller_summary_for_user(user_id: str) -> dict[str, Any]:
-    """Return a small, stored-price performance summary for the account bar."""
 
     with connection() as database:
         identity = database.execute(

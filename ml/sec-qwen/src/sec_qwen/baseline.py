@@ -196,9 +196,7 @@ def evaluate_benchmark(
         raise ValueError("task must be finqa or citation_support")
     rows = _read_suite(dataset_path, task)
     predictions_path.parent.mkdir(parents=True, exist_ok=True)
-    output_rows = _existing_predictions(
-        predictions_path, [str(row["id"]) for row in rows]
-    )
+    output_rows = _existing_predictions(predictions_path, [str(row["id"]) for row in rows])
     if len(output_rows) == len(rows):
         return _benchmark_metrics(task, output_rows)
 

@@ -174,9 +174,7 @@ def load_config(path: Path) -> Config:
             revision=revision,
             torch_dtype=str(model.get("torch_dtype") or "bfloat16"),
             attn_implementation=str(model.get("attn_implementation") or "sdpa"),
-            mask_backend=str(
-                model.get("mask_backend") or "transformers.masking_utils.sdpa_mask"
-            ),
+            mask_backend=str(model.get("mask_backend") or "transformers.masking_utils.sdpa_mask"),
             evaluation_device_map=str(model.get("evaluation_device_map") or "auto"),
         ),
         dataset=DatasetConfig(
@@ -295,9 +293,7 @@ def validate_corpus(config: Config) -> dict[str, Any]:
         if sha256_file(path) != item.get("sha256"):
             raise ValueError(f"corpus file hash does not match manifest: {name}")
         declared_size = (
-            item.get("bytes")
-            if config.dataset.provider == "braid"
-            else item.get("size_bytes")
+            item.get("bytes") if config.dataset.provider == "braid" else item.get("size_bytes")
         )
         if path.stat().st_size != declared_size:
             raise ValueError(f"corpus file size does not match manifest: {name}")
@@ -375,8 +371,7 @@ def _unwrap_example(row: Any, path: Path, line_number: int) -> dict[str, Any]:
         isinstance(metadata, dict)
         and isinstance(row.get("provenance"), dict)
         and isinstance(row.get("contentHash"), str)
-        and metadata.get("schema")
-        in {"stonks.sec_chat_example.v1", "stonks.sec_chat_example.v2"}
+        and metadata.get("schema") in {"stonks.sec_chat_example.v1", "stonks.sec_chat_example.v2"}
     ):
         example = dict(metadata)
         example.setdefault("id", row.get("id"))

@@ -146,8 +146,7 @@ def _facts_as_of(database: Any, cik: int, filed_at: str, limit: int) -> list[dic
 
 def _target(filing: dict[str, Any]) -> dict[str, Any]:
     target = {
-        field: filing.get("kind" if field == "filing_kind" else field)
-        for field in TARGET_FIELDS
+        field: filing.get("kind" if field == "filing_kind" else field) for field in TARGET_FIELDS
     }
     target["cik"] = int(target["cik"])
     target["score"] = float(target["score"])

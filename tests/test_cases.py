@@ -89,12 +89,15 @@ def test_cases_are_private_to_their_owner(tmp_path: Path, monkeypatch: MonkeyPat
     assert len(list_cases("owner")) == 1
     assert list_cases("other") == []
     assert get_case("other", created["public_id"]) is None
-    assert update_case(
-        "other",
-        created["public_id"],
-        {"confidence": 0.9},
-        change_note="Should not work",
-    ) is None
+    assert (
+        update_case(
+            "other",
+            created["public_id"],
+            {"confidence": 0.9},
+            change_note="Should not work",
+        )
+        is None
+    )
 
 
 def test_case_keeps_its_social_comment_source(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

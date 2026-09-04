@@ -193,9 +193,7 @@ def _upsert_claim(
     else:
         existing = _row(existing_row)
         claim_id = str(existing["id"])
-        promote_primary = (
-            primary_source_type == "sec" and existing["primary_source_type"] != "sec"
-        )
+        promote_primary = primary_source_type == "sec" and existing["primary_source_type"] != "sec"
         database.execute(
             """
             UPDATE evidence_claims SET
@@ -263,7 +261,7 @@ def _materialize_claims(
             SELECT * FROM sec_filings
             WHERE ticker IN ({placeholders}) AND created_at>=?
             ORDER BY filed_at
-            """,  # noqa: S608 - placeholders are generated from ticker count
+            """,
             (*tickers, cutoff),
         ).fetchall()
     ]
@@ -274,7 +272,7 @@ def _materialize_claims(
             SELECT * FROM market_events
             WHERE ticker IN ({placeholders}) AND first_collected_at>=?
             ORDER BY event_at,last_collected_at
-            """,  # noqa: S608 - placeholders are generated from ticker count
+            """,
             (*tickers, cutoff),
         ).fetchall()
     ]
@@ -290,7 +288,7 @@ def _materialize_claims(
             )
             SELECT * FROM ranked WHERE monitor_position<=2
             ORDER BY ticker,captured_at DESC
-            """,  # noqa: S608 - placeholders are generated from ticker count
+            """,
             tickers,
         ).fetchall()
     ]
@@ -303,7 +301,7 @@ def _materialize_claims(
             f"""
             SELECT * FROM evidence_claims
             WHERE ticker IN ({placeholders}) AND claim_type='news' AND occurred_at>=?
-            """,  # noqa: S608 - placeholders are generated from ticker count
+            """,
             (*tickers, cutoff),
         ).fetchall()
     ]
@@ -454,11 +452,7 @@ def _materialize_claims(
         if not changed and not risk_active:
             continue
         direction = (
-            "risks"
-            if risk_active
-            else "supports"
-            if state in {"ARMED", "TRIGGERED"}
-            else "neutral"
+            "risks" if risk_active else "supports" if state in {"ARMED", "TRIGGERED"} else "neutral"
         )
         reason = str(latest.get("state_reason") or "").strip()
         summary = (
@@ -469,9 +463,7 @@ def _materialize_claims(
         claim = _upsert_claim(
             database,
             ticker=ticker,
-            claim_key=(
-                f"market-risk:{latest['id']}:{state}:{rug_level}:{int(hard_veto)}"
-            ),
+            claim_key=(f"market-risk:{latest['id']}:{state}:{rug_level}:{int(hard_veto)}"),
             claim_type="market_risk",
             summary=summary,
             direction=direction,

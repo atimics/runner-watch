@@ -139,7 +139,6 @@ def _flag(value: bool) -> int:
 
 
 def feature_vector(row: dict[str, Any]) -> tuple[int, ...]:
-    """Quantize one database row before it crosses into the integer Rust model."""
 
     compact = row.get("feature_vector")
     if compact is not None:
@@ -225,7 +224,6 @@ def store_training_examples(
     scan_mode: str,
     expected_candidates: int,
 ) -> int:
-    """Save small, versioned model inputs without keeping full rows in memory later."""
 
     if not rows:
         return 0
@@ -265,7 +263,6 @@ def sync_training_outcome(
     outcome_return_pct: Any,
     labeled_at: str,
 ) -> None:
-    """Attach a later outcome to its compact feature vector."""
 
     database.execute(
         """
@@ -283,7 +280,6 @@ def sync_training_outcome(
 
 
 def _backfill_recent_training_examples(maximum_groups: int) -> int:
-    """Compact a bounded legacy window after the new table is introduced."""
 
     with connection() as database:
         run_rows = database.execute(
@@ -318,7 +314,7 @@ def _backfill_recent_training_examples(maximum_groups: int) -> int:
               AND s.stale_minutes IS NOT NULL
               AND compact.snapshot_id IS NULL
             ORDER BY r.captured_at,s.baseline_rank,s.ticker
-            """,  # noqa: S608 - placeholders are generated above
+            """,
             run_ids,
         ).fetchall()
         compact_rows = []
@@ -386,7 +382,7 @@ def _load_groups(
               AND feature_schema_version=?
               AND barrier_label IN ('down','timeout','up')
             ORDER BY captured_at,scan_run_id,ticker
-            """,  # noqa: S608 - placeholders are generated above
+            """,
             (*run_ids, FEATURE_SCHEMA_VERSION),
         ).fetchall()
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -434,9 +430,7 @@ def _rust_command() -> list[str]:
     crate = root / "rust" / "stonks-ranker"
     cargo = shutil.which("cargo")
     if not cargo:
-        raise RuntimeError(
-            "The integer ranker binary is missing. Build rust/stonks-ranker first."
-        )
+        raise RuntimeError("The integer ranker binary is missing. Build rust/stonks-ranker first.")
     return [
         cargo,
         "run",
@@ -455,7 +449,7 @@ def _rust_command() -> list[str]:
 
 def _run_rust(request: dict[str, Any], *, timeout_seconds: int = 300) -> dict[str, Any]:
     try:
-        completed = subprocess.run(  # noqa: S603
+        completed = subprocess.run(
             _rust_command(),
             input=json.dumps(request, separators=(",", ":")),
             capture_output=True,
@@ -483,9 +477,7 @@ def _training_payload(groups: list[list[dict[str, Any]]]) -> list[list[dict[str,
                 "ticker": str(row["ticker"]),
                 "features": list(feature_vector(row)),
                 "outcome": CLASS_INDEX[str(row["outcome"])],
-                "outcome_return_bp": int(
-                    round(_float(row.get("outcome_return")) * RETURN_SCALE)
-                ),
+                "outcome_return_bp": int(round(_float(row.get("outcome_return")) * RETURN_SCALE)),
                 "baseline_score_milli": _scaled(row.get("score")),
             }
             for row in group
@@ -502,7 +494,6 @@ def train_shadow_ranker(
     maximum_groups: int = RANKER_TRAINING.maximum_groups,
     epochs: int = 500,
 ) -> dict[str, Any]:
-    """Train the deterministic integer Rust ranker in shadow status."""
 
     groups = _load_groups(horizon, maximum_groups)
     row_count = sum(len(group) for group in groups)
@@ -613,7 +604,6 @@ def train_shadow_ranker_if_due(
     minimum_new_groups: int = RANKER_TRAINING.minimum_new_groups,
     maximum_groups: int = RANKER_TRAINING.maximum_groups,
 ) -> dict[str, Any]:
-    """Train only after enough new complete groups have arrived."""
 
     _backfill_recent_training_examples(maximum_groups)
     with connection() as database:
@@ -639,9 +629,7 @@ def train_shadow_ranker_if_due(
             (FEATURE_SCHEMA_VERSION, maximum_groups),
         ).fetchall()
     latest_end = str(latest["training_end"]) if latest else None
-    new_groups = sum(
-        latest_end is None or str(row["captured_at"]) > latest_end for row in complete
-    )
+    new_groups = sum(latest_end is None or str(row["captured_at"]) > latest_end for row in complete)
     if latest_end is not None and new_groups < max(1, minimum_new_groups):
         return {
             "trained": False,
@@ -668,7 +656,6 @@ def _trainer_state(key: str, value: Any) -> None:
 
 
 def trainer_main() -> None:
-    """Run bounded ranker training away from the web and collection workers."""
 
     init_db()
     interval = max(
@@ -676,9 +663,11 @@ def trainer_main() -> None:
         int(os.getenv("RANKER_TRAIN_INTERVAL_SECONDS", RANKER_TRAINING.interval_seconds)),
     )
     heartbeat_seconds = max(10, int(os.getenv("RANKER_TRAIN_HEARTBEAT_SECONDS", "30")))
-    historical_backfill_enabled = os.getenv(
-        "RANKER_HISTORICAL_BACKFILL_ENABLED", "0"
-    ).lower() in {"1", "true", "yes"}
+    historical_backfill_enabled = os.getenv("RANKER_HISTORICAL_BACKFILL_ENABLED", "0").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
     while True:
         started_at = datetime.now(UTC)
         last_error = ""
@@ -956,9 +945,7 @@ def _integer_normalizer(vectors: list[tuple[int, ...]]) -> tuple[list[int], list
     scales = [
         max(
             1,
-            math.isqrt(
-                sum((vector[index] - means[index]) ** 2 for vector in vectors) // row_count
-            ),
+            math.isqrt(sum((vector[index] - means[index]) ** 2 for vector in vectors) // row_count),
         )
         for index in range(len(FEATURE_NAMES))
     ]
@@ -985,7 +972,6 @@ def export_crl_dataset(
     horizon: str = DEFAULT_HORIZON,
     maximum_groups: int = RANKER_TRAINING.maximum_groups,
 ) -> dict[str, Any]:
-    """Write integer grouped rows for crlplrimes' generic scorer contract."""
 
     groups = _load_groups(horizon, maximum_groups)
     if not groups:
@@ -994,17 +980,13 @@ def export_crl_dataset(
     validation_count = holdout_count // 2
     train_end = len(groups) - holdout_count
     valid_end = train_end + validation_count
-    normalizer_vectors = [
-        feature_vector(row) for group in groups[:train_end] for row in group
-    ]
+    normalizer_vectors = [feature_vector(row) for group in groups[:train_end] for row in group]
     means, scales = _integer_normalizer(normalizer_vectors)
     path.parent.mkdir(parents=True, exist_ok=True)
     rows_written = 0
     with path.open("w", newline="", encoding="utf-8") as output:
         writer = csv.writer(output)
-        writer.writerow(
-            ["split", "group_id", "state_hash", "action_id", "target", *FEATURE_NAMES]
-        )
+        writer.writerow(["split", "group_id", "state_hash", "action_id", "target", *FEATURE_NAMES])
         for group_index, group in enumerate(groups, start=1):
             if group_index <= train_end:
                 split = "train"

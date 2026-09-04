@@ -11,7 +11,7 @@ SOURCE = ROOT / "desktop" / ".scanner-dist" / SOURCE_NAME
 
 
 def rust_host_tuple() -> str:
-    completed = subprocess.run(  # noqa: S603
+    completed = subprocess.run(
         ["rustc", "--print", "host-tuple"],
         check=True,
         capture_output=True,

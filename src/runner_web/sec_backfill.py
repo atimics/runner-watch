@@ -102,8 +102,6 @@ def _informative_user_agent(value: str) -> bool:
 
 
 class SecHttpClient:
-    """A small SEC-only downloader with a conservative shared request rate."""
-
     def __init__(
         self,
         user_agent: str,
@@ -144,7 +142,7 @@ class SecHttpClient:
             if wait > 0:
                 self.sleep(wait)
             try:
-                with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+                with urllib.request.urlopen(request, timeout=timeout) as response:
                     body = response.read()
                     content_type = response.headers.get_content_type()
                 self.last_request = self.monotonic()
@@ -155,15 +153,15 @@ class SecHttpClient:
                     raise
                 retry_after = exc.headers.get("Retry-After") if exc.headers else None
                 try:
-                    delay = float(retry_after) if retry_after else float(2 ** attempt)
+                    delay = float(retry_after) if retry_after else float(2**attempt)
                 except ValueError:
-                    delay = float(2 ** attempt)
+                    delay = float(2**attempt)
                 self.sleep(min(60.0, max(1.0, delay)))
             except (TimeoutError, urllib.error.URLError):
                 self.last_request = self.monotonic()
                 if attempt + 1 >= self.attempts:
                     raise
-                self.sleep(float(2 ** attempt))
+                self.sleep(float(2**attempt))
         raise RuntimeError("SEC request failed")
 
 
@@ -534,7 +532,7 @@ def _selected_issuers(ciks: tuple[int, ...], issuer_limit: int | None) -> list[d
             SELECT cik,MIN(ticker) AS ticker,MIN(name) AS name
             FROM sec_companies WHERE cik IN ({placeholders})
             GROUP BY cik ORDER BY cik
-            """,  # noqa: S608 - placeholders are generated, not user supplied
+            """,
             ciks,
         ).fetchall()
     found = {int(row["cik"]): dict(row) for row in rows}

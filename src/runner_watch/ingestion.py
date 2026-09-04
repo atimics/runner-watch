@@ -9,8 +9,6 @@ FetchStatus = Literal["success", "partial", "error"]
 
 @dataclass(slots=True)
 class SourceFetch:
-    """One completed attempt to read data from an outside source."""
-
     source: str
     feed: str
     locator: str
@@ -76,8 +74,6 @@ class SourceFetchRecorder(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class MarketEvent:
-    """One source event, kept with its source ID and point-in-time timestamps."""
-
     event_id: str
     ticker: str
     event_type: str
@@ -92,8 +88,6 @@ class MarketEvent:
 
 @dataclass(frozen=True, slots=True)
 class SecurityQuote:
-    """A source-labelled quote snapshot. A quote is not assumed to be an NBBO."""
-
     ticker: str
     observed_at: datetime
     bid: float | None = None
@@ -108,8 +102,6 @@ class SecurityQuote:
 
 @dataclass(frozen=True, slots=True)
 class IssuerFact:
-    """A filed issuer fact with enough timing data for point-in-time training."""
-
     cik: int
     concept: str
     value: float
@@ -125,8 +117,6 @@ class IssuerFact:
 
 @dataclass(frozen=True, slots=True)
 class EntityLink:
-    """A reviewed link between a source entity and a listed issuer."""
-
     external_id: str
     ticker: str
     confidence: float
@@ -139,8 +129,6 @@ class EntityLink:
 
 @dataclass(frozen=True, slots=True)
 class MacroObservation:
-    """One macro value with its publication vintage preserved."""
-
     series_id: str
     observation_date: date
     vintage_date: date
@@ -150,8 +138,6 @@ class MacroObservation:
 
 @dataclass(frozen=True, slots=True)
 class SourceBatch:
-    """A raw fetch and every normalized record derived from that exact response."""
-
     fetch: SourceFetch
     market_events: tuple[MarketEvent, ...] = ()
     security_quotes: tuple[SecurityQuote, ...] = ()

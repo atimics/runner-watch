@@ -1,5 +1,3 @@
-"""Environment-backed configuration shared by local and hosted swarm runtimes."""
-
 from __future__ import annotations
 
 import os
@@ -15,8 +13,6 @@ MAX_TOPICS = 64
 
 
 class SwarmMode(StrEnum):
-    """Whether the trader stays isolated or connects to configured peers."""
-
     SOLO = "solo"
     ATTACHED = "attached"
 
@@ -92,8 +88,6 @@ def _topics(env: Mapping[str, str]) -> tuple[str, ...]:
 
 @dataclass(frozen=True, slots=True)
 class SwarmRuntimeConfig:
-    """One deployable configuration for solo or attached operation."""
-
     mode: SwarmMode
     key_path: Path
     node_private_key_text: str | None = field(repr=False)

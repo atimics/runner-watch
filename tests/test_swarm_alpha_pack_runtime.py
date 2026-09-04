@@ -668,7 +668,7 @@ def test_accepted_rotation_updates_alpha_pack_bootstrap_pin(
     expected_ids: list[str | None] = []
 
     def negotiate(*_args: object, **kwargs: object) -> SimpleNamespace:
-        expected_ids.append(kwargs.get("expected_peer_node_id"))  # type: ignore[arg-type]
+        expected_ids.append(kwargs.get("expected_peer_node_id"))
         return SimpleNamespace(
             local_node_id=node_id_from_public_key(new_key),
             accepted_topics=(TOPIC,),

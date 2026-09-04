@@ -132,9 +132,10 @@ def test_empty_flash_record_has_no_layout_gap(page: Page, monkeypatch) -> None:
     assert "Session +4.2%" in page.locator('[data-ticker-row="AAA"] .quote').text_content()
     assert page.locator(".market-turn-strip").is_visible()
     assert page.locator(".market-turn-strip strong").text_content() == "Pre-market briefing"
-    assert page.evaluate(
-        "TickerRow.ago(new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString())"
-    ) == "3h ago"
+    assert (
+        page.evaluate("TickerRow.ago(new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString())")
+        == "3h ago"
+    )
     assert errors == []
 
 
@@ -218,16 +219,17 @@ def test_pulse_header_is_one_compact_stack(page: Page, monkeypatch, width: int) 
     assert "7-day sparklines share one % scale" in page.locator(".pulse-context").text_content()
     assert scorecard.is_visible()
     assert scorecard.evaluate("element => element.getBoundingClientRect().height") <= 34
-    assert page.evaluate(
-        "document.querySelector('.account-ticker-search').getBoundingClientRect().left === "
-        "document.querySelector('.account-strip').getBoundingClientRect().left"
-    ) is True
+    assert (
+        page.evaluate(
+            "document.querySelector('.account-ticker-search').getBoundingClientRect().left === "
+            "document.querySelector('.account-strip').getBoundingClientRect().left"
+        )
+        is True
+    )
     assert errors == []
 
 
-def test_pulse_renders_the_forward_thesis_as_a_tiny_separate_cue(
-    page: Page, monkeypatch
-) -> None:
+def test_pulse_renders_the_forward_thesis_as_a_tiny_separate_cue(page: Page, monkeypatch) -> None:
     row = {
         **_row("AAA"),
         "directional_thesis": {
@@ -279,9 +281,10 @@ def test_scored_pulse_rows_expose_comparable_rank_and_signal_metrics(
     comparison = page.locator('[data-ticker-row="AAA"] .ticker-comparison')
     assert comparison.text_content() == "RANK#1PULSE72SETUP61RVOL3.2×15M-2.4%"
     assert comparison.locator("b.down").text_content() == "-2.4%"
-    assert comparison.evaluate(
-        "element => getComputedStyle(element.closest('.ticker-row')).minHeight"
-    ) == "94px"
+    assert (
+        comparison.evaluate("element => getComputedStyle(element.closest('.ticker-row')).minHeight")
+        == "94px"
+    )
     assert errors == []
 
 

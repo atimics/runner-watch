@@ -19,7 +19,6 @@ def safe_next_path(value: str | None) -> str:
 
 
 def edge_proxy_authenticated(request: Any, *, edge_proxy_secret: str) -> bool:
-    """Return true only for requests carrying the shared edge-to-origin secret."""
 
     if not edge_proxy_secret:
         return False

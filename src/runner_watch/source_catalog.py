@@ -14,8 +14,6 @@ def _enabled_by_default(name: str) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class SourcePolicy:
-    """Storage, display, and freshness rules for one outside feed."""
-
     source: str
     feed: str
     title: str
@@ -502,9 +500,7 @@ def _free_risk_policy(
         attribution=owner,
         review_status="poc_only",
         enabled=(
-            _enabled("FREE_LEGAL_SOURCES_ENABLED")
-            and _enabled(enabled_env)
-            and credential_ready
+            _enabled("FREE_LEGAL_SOURCES_ENABLED") and _enabled(enabled_env) and credential_ready
         ),
         product="internal",
     )
@@ -535,9 +531,7 @@ FREE_RISK_SOURCE_POLICIES = (
         feed="leie",
         title="HHS List of Excluded Individuals and Entities",
         owner="HHS Office of Inspector General",
-        terms_url=(
-            "https://www.oig.hhs.gov/exclusions/leie-database-supplement-downloads/"
-        ),
+        terms_url=("https://www.oig.hhs.gov/exclusions/leie-database-supplement-downloads/"),
         enabled_env="HHS_LEIE_LEGAL_RISK_ENABLED",
         storage_policy="normalized_metadata_and_source_hash",
     ),
@@ -659,9 +653,7 @@ FREE_RISK_SOURCE_POLICIES = (
         feed="complaints",
         title="CFPB consumer complaint data",
         owner="Consumer Financial Protection Bureau",
-        terms_url=(
-            "https://www.consumerfinance.gov/data-research/consumer-complaints/"
-        ),
+        terms_url=("https://www.consumerfinance.gov/data-research/consumer-complaints/"),
         enabled_env="CFPB_COMPLAINT_RISK_ENABLED",
         storage_policy="normalized_metadata_only",
     ),

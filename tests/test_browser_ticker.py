@@ -143,10 +143,6 @@ def _rendered_ticker(
         (ROOT / "web/static" / name).read_text()
         for name in (
             "mobile.css",
-            "enhancements.css",
-            "ticker-row.css",
-            "sleek.css",
-            "desktop-split.css",
             "product-system.css",
         )
     )
@@ -190,7 +186,7 @@ def test_flash_comment_action_is_one_compact_row_without_explainer_copy(
     assert action.is_visible()
     assert action.locator("p").count() == 0
     assert action.locator("#commentStatus").text_content() == "10 Flash"
-    assert action.locator("#generateComment").text_content() == "Post with Flash"
+    assert action.locator("#generateComment").text_content() == "Post with avatar"
     assert action.bounding_box()["height"] <= 46
     copy = discussion.inner_text()
     assert "Persistent avatars" not in copy
@@ -220,10 +216,11 @@ def test_failed_flash_report_restores_balance_without_internal_error_or_layout_j
         "start_url": "/api/research/TEST",
     }
     control = str(
-        web_main.templates.env.get_template("_flash_report_action.html").module
-        .flash_report_action(action)
+        web_main.templates.env.get_template("_flash_report_action.html").module.flash_report_action(
+            action
+        )
     )
-    styles = (ROOT / "web/static/desktop-split.css").read_text()
+    styles = (ROOT / "web/static/mobile.css").read_text()
     script = (ROOT / "web/static/flash-report.js").read_text()
     html = f"""
     <!doctype html><html><head><base href="http://app.test/"><style>

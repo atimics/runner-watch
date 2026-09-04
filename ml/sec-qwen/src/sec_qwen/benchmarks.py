@@ -70,9 +70,7 @@ def release_metrics(
     _aligned(candidate_finqa_rows, baseline_finqa_rows, "FinQA")
     _aligned(candidate_hallucination_rows, baseline_hallucination_rows, "hallucination")
     sec_metrics = score_predictions(sec_rows)
-    finqa_delta = 100 * (
-        finqa_accuracy(candidate_finqa_rows) - finqa_accuracy(baseline_finqa_rows)
-    )
+    finqa_delta = 100 * (finqa_accuracy(candidate_finqa_rows) - finqa_accuracy(baseline_finqa_rows))
     hallucination_delta = 100 * (
         confident_hallucination_rate(candidate_hallucination_rows)
         - confident_hallucination_rate(baseline_hallucination_rows)

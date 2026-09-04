@@ -96,9 +96,7 @@ def test_legacy_passkey_migration_publishes_related_origins(
     }
 
 
-def test_new_host_can_start_a_legacy_rp_login(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_new_host_can_start_a_legacy_rp_login(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "legacy-login.db")
     monkeypatch.setattr(web_main, "RUNNERS_ORIGIN", "https://runners.rati.chat")
     monkeypatch.setattr(web_main, "SPORTS_ORIGIN", "https://sports.rati.chat")

@@ -27,7 +27,7 @@ class PublicationResult:
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(  # type: ignore[override]
+    def redirect_request(
         self,
         req: urllib.request.Request,
         fp: Any,
@@ -119,7 +119,7 @@ def _post_json(
     )
     opener = urllib.request.build_opener(_NoRedirect)
     try:
-        with opener.open(request, timeout=timeout) as response:  # noqa: S310
+        with opener.open(request, timeout=timeout) as response:
             declared = int(response.headers.get("Content-Length") or 0)
             if declared > MAX_RESPONSE_BYTES:
                 raise ValueError("ilXyr corpus service response is too large")

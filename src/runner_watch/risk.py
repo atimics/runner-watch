@@ -9,12 +9,6 @@ def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
 
 @dataclass(frozen=True, slots=True)
 class RiskInput:
-    """Point-in-time facts used to judge rug risk and trade state.
-
-    Missing facts stay missing. The engine never turns an unknown fundamental
-    into a bullish assumption.
-    """
-
     setup_score: float
     price: float
     change_pct: float
@@ -97,7 +91,6 @@ def _filing_flags(item: RiskInput) -> tuple[float, list[str], bool]:
 
 
 def assess_risk(item: RiskInput) -> RiskAssessment:
-    """Return an independent rug score and a rules-based trade state."""
 
     points = 0.0
     reasons: list[str] = []
@@ -189,16 +182,10 @@ def assess_risk(item: RiskInput) -> RiskAssessment:
         points += 8
         reasons.append("treasury and share-supply facts are still unknown")
 
-    if (
-        item.institutional_change_pct is not None
-        and item.institutional_change_pct <= -15
-    ):
+    if item.institutional_change_pct is not None and item.institutional_change_pct <= -15:
         points += 8
         reasons.append("reported institutional ownership fell sharply")
-    if (
-        item.institutional_data_age_days is not None
-        and item.institutional_data_age_days > 120
-    ):
+    if item.institutional_data_age_days is not None and item.institutional_data_age_days > 120:
         points += 4
         reasons.append("institutional ownership data is stale")
     if item.beneficial_ownership_pct is not None:
@@ -227,10 +214,7 @@ def assess_risk(item: RiskInput) -> RiskAssessment:
     )
     previous = (item.previous_trade_state or "").upper()
     invalidated = (
-        rug_score >= 65
-        or item.vwap_position_pct <= -1
-        or item.momentum_15m_pct <= -3
-        or hard_veto
+        rug_score >= 65 or item.vwap_position_pct <= -1 or item.momentum_15m_pct <= -3 or hard_veto
     )
 
     if previous in {"TRIGGERED", "MANAGE"}:
@@ -247,11 +231,7 @@ def assess_risk(item: RiskInput) -> RiskAssessment:
         if structure_confirmed and rug_score < 50:
             trade_state = "TRIGGERED"
             state_reason = "Reclaimed VWAP with momentum and lower rug risk."
-        elif (
-            rug_score < 65
-            and item.vwap_position_pct >= -0.5
-            and item.momentum_15m_pct > 0
-        ):
+        elif rug_score < 65 and item.vwap_position_pct >= -0.5 and item.momentum_15m_pct > 0:
             trade_state = "ARMED"
             state_reason = "Bounce is improving. Reclaim still needs proof."
         else:

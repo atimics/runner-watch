@@ -26,10 +26,7 @@ from runner_web.legal_risk import (
 )
 
 USER_AGENT = "RunnerWatch/0.2 legal-risk ingestion https://stonks.rati.foundation"
-OFAC_SDN_URL = (
-    "https://sanctionslistservice.ofac.treas.gov/"
-    "api/PublicationPreview/exports/SDN.XML"
-)
+OFAC_SDN_URL = "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.XML"
 OFAC_PUBLIC_URL = "https://ofac.treasury.gov/sanctions-list-service"
 HHS_LEIE_URL = "https://oig.hhs.gov/exclusions/downloadables/UPDATED.csv"
 HHS_PUBLIC_URL = "https://www.oig.hhs.gov/exclusions/leie-database-supplement-downloads/"
@@ -215,8 +212,7 @@ OFFICIAL_RISK_PROFILES = {
             "recall_or_enforcement",
             "observational",
             "fda.gov",
-            "https://www.fda.gov/about-fda/open-government-fda-data-sets/"
-            "recalls-data-sets",
+            "https://www.fda.gov/about-fda/open-government-fda-data-sets/recalls-data-sets",
         ),
         _profile(
             "usitc",
@@ -286,7 +282,7 @@ def _enabled(name: str) -> bool:
 
 
 def _download(request: urllib.request.Request, timeout: float) -> tuple[bytes, str | None]:
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read(), response.headers.get_content_type()
 
 
@@ -306,8 +302,7 @@ def _trusted_url(value: Any, profile: OfficialRiskProfile) -> str:
     parsed = urlparse(candidate)
     hostname = (parsed.hostname or "").lower()
     if parsed.scheme == "https" and any(
-        hostname == allowed or hostname.endswith(f".{allowed}")
-        for allowed in profile.allowed_hosts
+        hostname == allowed or hostname.endswith(f".{allowed}") for allowed in profile.allowed_hosts
     ):
         return candidate
     return profile.fallback_url
@@ -380,7 +375,6 @@ def parse_official_risk_results(
     source: str,
     feed: str,
 ) -> tuple[LegalCaseCandidate, ...]:
-    """Stage exact person matches from one normalized official-source payload."""
 
     try:
         profile = OFFICIAL_RISK_PROFILES[(source, feed)]
@@ -450,14 +444,11 @@ def parse_official_risk_results(
                         case_type=profile.event_kind,
                         nature_of_suit=_clean(row.get("category"), 240) or None,
                         filed_at=_clean(row.get("date") or row.get("filed_at"), 50) or None,
-                        closed_at=_clean(row.get("end_date") or row.get("closed_at"), 50)
-                        or None,
+                        closed_at=_clean(row.get("end_date") or row.get("closed_at"), 50) or None,
                         case_status=_clean(row.get("status") or evidence_status, 120) or None,
                         source_url=_trusted_url(row.get("source_url"), profile),
                         name_match_confidence=min(confidence, target.link_confidence),
-                        match_method=(
-                            f"reviewed_sec_link+{method}+official_{source}_record"
-                        ),
+                        match_method=(f"reviewed_sec_link+{method}+official_{source}_record"),
                         payload=normalized_payload,
                     )
                 )
@@ -473,7 +464,6 @@ def ingest_official_risk_payload(
     targets: list[LegalSearchTarget] | None = None,
     started_at: datetime | None = None,
 ) -> dict[str, Any]:
-    """Audit one normalized official archive import and stage private candidates."""
 
     try:
         profile = OFFICIAL_RISK_PROFILES[(source, feed)]
@@ -532,7 +522,6 @@ def _person_name(node: ET.Element) -> str:
 
 
 def parse_ofac_sdn_xml(body: bytes) -> dict[str, list[dict[str, Any]]]:
-    """Normalize OFAC's official SDN XML without treating a name as an identity."""
 
     root = ET.fromstring(body)
     records: list[dict[str, Any]] = []
@@ -580,7 +569,6 @@ def _date(value: Any) -> str:
 
 
 def parse_hhs_leie_csv(body: bytes) -> dict[str, list[dict[str, Any]]]:
-    """Normalize the current HHS exclusion CSV and preserve its public identifiers."""
 
     reader = csv.DictReader(io.StringIO(body.decode("utf-8-sig", errors="replace")))
     records: list[dict[str, Any]] = []
@@ -657,7 +645,6 @@ def _nested_value(row: dict[str, Any], *keys: str) -> Any:
 
 
 def parse_sam_exclusions(payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
-    """Normalize the public SAM exclusions response for the review queue."""
 
     raw_records = payload.get("excludedEntity")
     if isinstance(raw_records, dict):
@@ -832,7 +819,6 @@ def refresh_sam_exclusions(
     timeout: float = 20,
     download: Download = _download,
 ) -> dict[str, Any]:
-    """Use a small daily request budget because basic SAM keys allow few requests."""
 
     key = (api_key or os.getenv("SAM_API_KEY", "")).strip()
     if not key:
@@ -905,7 +891,6 @@ def refresh_sam_exclusions(
 
 
 def refresh_free_legal_sources() -> dict[str, Any]:
-    """Run only explicitly enabled official collectors; all matches remain private."""
 
     if not free_legal_sources_enabled():
         return {"status": "disabled", "sources": {}}

@@ -280,8 +280,7 @@ async def run(args: argparse.Namespace) -> int:
             print(f"{status}  {result.screen.name}: {result.duration_ms}ms{retry} ({result.url})")
     passed = len(results) - len(failures) - len(skipped)
     print(
-        f"\n{passed} passed, {len(warnings)} slow, "
-        f"{len(skipped)} skipped, {len(failures)} failed"
+        f"\n{passed} passed, {len(warnings)} slow, {len(skipped)} skipped, {len(failures)} failed"
     )
     if failures:
         print(f"Failure screenshots: {output_dir}")

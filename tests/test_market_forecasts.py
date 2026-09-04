@@ -111,7 +111,7 @@ def test_frozen_targets_use_saved_evidence_and_model(monkeypatch):
 
     def generate(request):
         requests.append(request)
-        # A second worker observes the active claim.
+
         assert generate_market_forecasts(_generate, PRE)["completed"] == 0
         return _generate(request)
 

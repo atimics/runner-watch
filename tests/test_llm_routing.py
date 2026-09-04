@@ -403,7 +403,5 @@ def test_account_connector_can_claim_its_private_report_job(
     assert revoked["route"]["policy"] == "managed"
     assert revoked["connectors"][0]["status"] == "revoked"
     with pytest.raises(HTTPException) as revoked_token:
-        web_main.claim_edge_job_api(
-            _request("/api/llm/edge/jobs/claim", token=connector_token)
-        )
+        web_main.claim_edge_job_api(_request("/api/llm/edge/jobs/claim", token=connector_token))
     assert revoked_token.value.status_code == 401

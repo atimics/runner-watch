@@ -45,8 +45,6 @@ class ScanRequest(BaseModel):
 
 
 class ScanStore:
-    """Bounded receipt store, persisted to SQLite when a path is configured."""
-
     def __init__(self, maximum: int = 20, database_path: str | Path | None = None) -> None:
         self.maximum = maximum
         self._lock = Lock()

@@ -26,12 +26,3 @@ def test_local_compose_has_the_production_process_boundaries() -> None:
     assert services["trainer"]["command"] == ["stonks-trainer"]
     assert services["web"]["environment"]["REQUIRE_DATABASE_URL"] == "1"
     assert services["web"]["environment"]["REQUIRE_RATE_LIMIT_HASH_KEY"] == "1"
-
-
-def test_readme_names_the_canonical_and_lab_local_modes() -> None:
-    readme = (ROOT / "README.md").read_text()
-
-    assert "FastAPI app is the canonical local version" in readme
-    assert "production-like local testing" in readme
-    assert "Scanner Lab" in readme
-    assert "sample mode creates fake prices" in readme

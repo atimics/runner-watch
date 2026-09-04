@@ -58,7 +58,7 @@ def test_rati_source_normalizes_free_candidates(monkeypatch) -> None:
     receipt = RatiCloudSource().scans()[0]
 
     assert receipt["id"] == "rati-cloud-2026-08-30T12:00:00+00:00"
-    assert receipt["rows"][0] == {  # type: ignore[index]
+    assert receipt["rows"][0] == {
         "ticker": "RATI",
         "score": 72.0,
         "rug_score": 0.0,

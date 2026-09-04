@@ -1,4 +1,4 @@
-/* Consolidated from sports-core.css. */
+
 body.sports-product {
   --accent: #d59a71;
   --hot: var(--accent);
@@ -516,7 +516,7 @@ body.sports-product {
   }
 }
 
-/* Consolidated from sports.css. */
+
 .game-detail{max-width:920px}
 .sports-back{margin:22px 0 12px;font-size:12px}
 .match-strip{overflow:hidden;border:1px solid var(--line);border-radius:14px;background:rgba(19,17,29,.76)}
@@ -1042,7 +1042,7 @@ body.sports-product {
   .receipt-scope > section + section{border-top:1px solid var(--line);border-left:0}
 }
 
-/* Keep the frozen decision visible and fold secondary matchup context away. */
+
 .game-detail-compact{max-width:860px}
 .model-maturity{margin-top:14px;padding:12px 14px;border:1px solid rgba(248,202,118,.22);border-radius:10px;background:rgba(248,202,118,.055)}
 .model-maturity>div{display:flex;align-items:center;justify-content:space-between;gap:14px}
@@ -1079,7 +1079,7 @@ body.sports-product {
   .game-disclosure>summary small{display:none}
 }
 
-/* Keep the matchup and baseline up front, then fold all reference data once. */
+
 .sports-game-app .match-strip{
   border-width:0 0 1px;
   border-radius:0;
@@ -1141,8 +1141,8 @@ body.sports-product {
   .game-notebook-body>.game-disclosure-body{margin-right:-14px;margin-left:-14px}
 }
 
-/* Consolidated from sports-ticker.css. */
-/* Sports Pulse rows intentionally use the shared ticker-row.css contract. */
+
+
 
 .winner-coin {
   position: relative;
@@ -1245,7 +1245,7 @@ body.sports-product {
   .game-chevron { font-size: 18px; }
 }
 
-/* Consolidated from sports-dashboard.css. */
+
 .game-model strong {
   display: -webkit-box;
   overflow: hidden;
@@ -2608,14 +2608,14 @@ body.sports-product {
   }
 }
 
-/* Consolidated from sports-unified.css. */
+
 .sports-product .screen-head {
   height: auto;
   min-height: 118px;
   border-bottom-color: var(--line);
 }
 
-/* Probability comparison: one scale, direct labels, no decorative cards. */
+
 .probability-comparison {
   margin-top: 14px;
   padding: 14px 0 4px;
@@ -2878,7 +2878,7 @@ body.sports-product {
   letter-spacing: .08em;
 }
 
-/* Keep evidence labels readable; 7px labels hid the provenance they described. */
+
 .sports-game-app :is(
   .match-strip-teams small,
   .match-strip-source,
@@ -3048,7 +3048,7 @@ html.embedded-pane .sports-detail-body {
   }
 }
 
-/* Structural chrome: one frame, ruled sections, and no card-inside-card layers. */
+
 body.sports-product {
   --sports-chrome-radius: 2px;
   --sports-rule: color-mix(in srgb, var(--line) 86%, transparent);

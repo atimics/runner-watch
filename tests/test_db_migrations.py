@@ -43,8 +43,8 @@ class _PostgresLockDatabase:
 def test_postgres_migrations_take_one_session_lock() -> None:
     database = _PostgresLockDatabase()
 
-    _acquire_migration_lock(database)  # type: ignore[arg-type]
-    _release_migration_lock(database)  # type: ignore[arg-type]
+    _acquire_migration_lock(database)
+    _release_migration_lock(database)
 
     assert database.calls == [
         ("SELECT pg_advisory_lock(?)", (MIGRATION_LOCK_ID,)),
@@ -86,7 +86,7 @@ def test_postgres_commits_each_migration_before_releasing_lock(
         (Migration(1, "sample", lambda _database: events.append("apply")),),
     )
 
-    _apply_migrations(Database())  # type: ignore[arg-type]
+    _apply_migrations(Database())
 
     assert events == ["apply", "record", "commit", "unlock"]
 
@@ -100,7 +100,7 @@ def test_public_source_view_uses_postgres_supported_create_syntax() -> None:
         def execute(self, statement: str) -> None:
             statements.append(statement)
 
-    _migration_051_public_source_policy_gate(Database())  # type: ignore[arg-type]
+    _migration_051_public_source_policy_gate(Database())
 
     assert len(statements) == 1
     assert "CREATE OR REPLACE VIEW public_market_events AS" in statements[0]
@@ -223,32 +223,26 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
             "SELECT name FROM sqlite_master WHERE type='table' AND name='flash_forecasts'"
         ).fetchone()
         flash_outcome_table = database.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name='flash_forecast_outcomes'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='flash_forecast_outcomes'"
         ).fetchone()
         flash_event_table = database.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name='flash_evaluation_events'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='flash_evaluation_events'"
         ).fetchone()
         sports_bookmaker_table = database.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name='sports_bookmaker_odds'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='sports_bookmaker_odds'"
         ).fetchone()
         sports_bookmaker_columns = {
             row["name"]
             for row in database.execute("PRAGMA table_info(sports_bookmaker_odds)").fetchall()
         }
         sports_ai_forecast_table = database.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name='sports_ai_forecasts'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='sports_ai_forecasts'"
         ).fetchone()
         sports_golf_event_table = database.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name='sports_golf_events'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='sports_golf_events'"
         ).fetchone()
         sports_golf_leaderboard_table = database.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name='sports_golf_leaderboard'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='sports_golf_leaderboard'"
         ).fetchone()
         llm_route_table = database.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='user_llm_routes'"
@@ -269,13 +263,10 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         }
         comment_generation_request_columns = {
             row["name"]
-            for row in database.execute(
-                "PRAGMA table_info(comment_generation_requests)"
-            ).fetchall()
+            for row in database.execute("PRAGMA table_info(comment_generation_requests)").fetchall()
         }
         sports_comment_columns = {
-            row["name"]
-            for row in database.execute("PRAGMA table_info(sports_comments)").fetchall()
+            row["name"] for row in database.execute("PRAGMA table_info(sports_comments)").fetchall()
         }
         indexes = {
             row["name"]
@@ -291,9 +282,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
         }
         ranker_training_columns = {
             row["name"]
-            for row in database.execute(
-                "PRAGMA table_info(ranker_training_examples)"
-            ).fetchall()
+            for row in database.execute("PRAGMA table_info(ranker_training_examples)").fetchall()
         }
         case_columns = {
             row["name"] for row in database.execute("PRAGMA table_info(thesis_cases)").fetchall()
@@ -569,8 +558,7 @@ def test_existing_comment_emoji_aliases_become_unique_glyphs(
     timestamp = "2026-08-28T00:00:00+00:00"
     with connection() as database:
         database.executemany(
-            "INSERT INTO users(id,username,display_name,status,created_at) "
-            "VALUES(?,?,?,?,?)",
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
             [
                 ("glyph-one", "glyph_one", "One", "active", timestamp),
                 ("glyph-two", "glyph_two", "Two", "active", timestamp),
@@ -594,9 +582,7 @@ def test_existing_comment_emoji_aliases_become_unique_glyphs(
             "SELECT scope,user_id,alias FROM public_aliases ORDER BY scope,user_id"
         ).fetchall()
 
-    comment_aliases = [
-        str(row["alias"]) for row in first_pass if row["scope"] == "comment:ONE"
-    ]
+    comment_aliases = [str(row["alias"]) for row in first_pass if row["scope"] == "comment:ONE"]
     assert len(comment_aliases) == 2
     assert len(set(comment_aliases)) == 2
     assert all(alias in COMMENT_GLYPHS and len(alias) == 1 for alias in comment_aliases)
@@ -613,8 +599,7 @@ def test_persistent_comment_avatar_migration_covers_active_accounts_and_is_idemp
     timestamp = "2026-08-28T00:00:00+00:00"
     with connection() as database:
         database.executemany(
-            "INSERT INTO users(id,username,display_name,status,created_at) "
-            "VALUES(?,?,?,?,?)",
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
             [
                 ("avatar-one", "avatar_one", "One", "active", timestamp),
                 ("avatar-two", "avatar_two", "Two", "active", timestamp),
@@ -729,9 +714,7 @@ def test_sports_market_migration_keeps_source_and_state_times(
     with connection() as database:
         odds_columns = {
             row["name"]
-            for row in database.execute(
-                "PRAGMA table_info(sports_odds_snapshots)"
-            ).fetchall()
+            for row in database.execute("PRAGMA table_info(sports_odds_snapshots)").fetchall()
         }
         prediction_columns = {
             row["name"]
@@ -755,9 +738,7 @@ def test_market_forecast_migration_keeps_targets_and_outcome_receipts(
         ).fetchone()
         forecast_columns = {
             row["name"]
-            for row in database.execute(
-                "PRAGMA table_info(market_report_forecasts)"
-            ).fetchall()
+            for row in database.execute("PRAGMA table_info(market_report_forecasts)").fetchall()
         }
 
     assert job_table is not None

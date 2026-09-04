@@ -1,5 +1,3 @@
-"""Synthetic market frames used only by scanner and ranker tests."""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime, time, timedelta
@@ -15,8 +13,6 @@ FAKE_SYMBOLS = ["SPRK", "VOLT", "NOVA", "PULSE", "LIFT", "CALM", "DUSK", "TIDE"]
 
 
 class FakeMarketData:
-    """Deterministic market-shaped data that is never packaged with production code."""
-
     def __init__(self, now: datetime | None = None) -> None:
         self.now = (now or datetime.now(UTC)).astimezone(EASTERN)
 
@@ -29,9 +25,7 @@ class FakeMarketData:
             day -= timedelta(days=1)
         return list(reversed(values))
 
-    def daily(
-        self, tickers: list[str], progress: ProgressCallback | None = None
-    ) -> DownloadResult:
+    def daily(self, tickers: list[str], progress: ProgressCallback | None = None) -> DownloadResult:
         frames: dict[str, pd.DataFrame] = {}
         days = self._trading_days(24)
         for number, ticker in enumerate(tickers):
