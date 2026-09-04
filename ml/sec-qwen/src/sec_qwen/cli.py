@@ -12,7 +12,7 @@ from sec_qwen.baseline import (
 from sec_qwen.benchmarks import release_metrics
 from sec_qwen.completion import build_completion
 from sec_qwen.config import load_config, validate_corpus
-from sec_qwen.evaluation import evaluate_model, score_predictions
+from sec_qwen.evaluation import evaluate_model, profile_base_model, score_predictions
 from sec_qwen.profiling import profile_corpus, write_profile
 from sec_qwen.training import train
 
@@ -48,6 +48,11 @@ def main() -> None:
     evaluate_parser.add_argument("--adapter", type=Path)
     evaluate_parser.add_argument("--split", required=True)
     evaluate_parser.add_argument("--predictions", type=Path, required=True)
+    base_profile_parser = commands.add_parser("base-profile")
+    base_profile_parser.add_argument("config", type=Path)
+    base_profile_parser.add_argument("--split", required=True)
+    base_profile_parser.add_argument("--sample-fraction", type=float, default=0.01)
+    base_profile_parser.add_argument("--output", type=Path, required=True)
     score_parser = commands.add_parser("score")
     score_parser.add_argument("predictions", type=Path)
     release_parser = commands.add_parser("release-score")
@@ -180,6 +185,17 @@ def main() -> None:
             predictions_path=arguments.predictions,
         )
         print(_json({"metrics": metrics}))
+    elif arguments.command == "base-profile":
+        print(
+            _json(
+                profile_base_model(
+                    config,
+                    split_file=arguments.split,
+                    output_directory=arguments.output,
+                    sample_fraction=arguments.sample_fraction,
+                )
+            )
+        )
 
 
 if __name__ == "__main__":
