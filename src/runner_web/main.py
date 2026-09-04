@@ -6196,6 +6196,7 @@ def _known_ticker(ticker: str) -> bool:
 def _public_comment(row: Any, current_user_id: str | None = None) -> dict[str, Any]:
     keys = set(row.keys())
     source = str(row["source"] or "user") if "source" in keys else "user"
+    ai_avatar = source in {"ai_avatar", "ai_generated"}
     avatar = comment_avatar_profile(
         str(row["avatar_name"]),
         str(row["avatar_seed"]),
@@ -6209,7 +6210,9 @@ def _public_comment(row: Any, current_user_id: str | None = None) -> dict[str, A
         "alias": avatar["name"],
         "avatar": avatar,
         "is_owner": bool(current_user_id and str(row["user_id"]) == current_user_id),
-        "ai_generated": source == "ai_generated",
+        "author_kind": "ai_avatar" if ai_avatar else "account_avatar",
+        "author_label": "AI avatar" if ai_avatar else "Account avatar",
+        "ai_generated": ai_avatar,
         "generation_model": (
             str(row["generation_model"] or "") if "generation_model" in keys else ""
         ),
@@ -6330,7 +6333,7 @@ def thesis_case_revisions_api(
 def _generate_ticker_comment_text(
     ticker: str,
     *,
-    avatar_ability_id: str = "catalyst_scout",
+    avatar: dict[str, Any],
 ) -> tuple[str, str]:
     if not OPENROUTER_API_KEY:
         raise HTTPException(503, "AI comments are temporarily unavailable.")
@@ -6362,24 +6365,67 @@ def _generate_ticker_comment_text(
             for item in detail.get("events", [])[:3]
         ],
     }
-    ability = comment_avatar_ability(avatar_ability_id)
+    ability = comment_avatar_ability(str(avatar.get("ability_id") or "catalyst_scout"))
+    recent_comments = comments_for_ticker(ticker, limit=12)
+    latest_report = daily_report_for_ticker(ticker)
+    if latest_report and latest_report.get("locked"):
+        latest_report = None
+    context = {
+        "avatar": {
+            "name": str(avatar.get("name") or "Signal Avatar"),
+            "kind": "user_ai_avatar",
+            "level": int(avatar.get("level") or 1),
+            "ability": {
+                "name": ability["label"],
+                "description": ability["description"],
+                "focus": ability["prompt"],
+            },
+        },
+        "thread": {
+            "ticker": ticker,
+            "recent_comments": [
+                {
+                    "author": comment["avatar"]["name"],
+                    "author_kind": comment["author_kind"],
+                    "body": comment["body"],
+                    "created_at": comment["created_at"],
+                    "from_this_avatar": comment["avatar"]["name"] == avatar.get("name"),
+                }
+                for comment in recent_comments
+            ],
+        },
+        "report": (
+            {
+                "headline": latest_report.get("headline"),
+                "summary": latest_report.get("summary"),
+                "thesis": latest_report.get("thesis"),
+                "catalysts": list(latest_report.get("catalysts") or [])[:6],
+                "risks": list(latest_report.get("risks") or [])[:6],
+                "watch": list(latest_report.get("watch") or [])[:6],
+                "unknowns": list(latest_report.get("unknowns") or [])[:6],
+                "citations": list(latest_report.get("citations") or [])[:8],
+                "evidence_as_of": latest_report.get("evidence_as_of"),
+            }
+            if latest_report
+            else None
+        ),
+        "evidence": evidence,
+        "publication": {
+            "author_kind": "ai_avatar",
+            "author_name": str(avatar.get("name") or "Signal Avatar"),
+            "format": "json",
+            "field": "comment",
+            "max_characters": COMMENT_MAX_CHARS,
+            "language": "simple English",
+            "grounding": "supplied context",
+            "financial_advice": False,
+        },
+    }
     body = {
         "model": FLASH.model,
         "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "Write one short stock comment in first person, as the human's public "
-                    "avatar speaking. "
-                    "Use simple English and only the supplied evidence. Keep it under 240 "
-                    "characters. State a view and the key risk. Do not give buy or sell advice. "
-                    "Do not mention AI. The avatar's lasting research ability is "
-                    f"{ability['label']}: {ability['prompt']} "
-                    "Use that as an emphasis, never as permission to invent facts. "
-                    "Return JSON with one field named comment."
-                ),
-            },
-            {"role": "user", "content": json.dumps(evidence, separators=(",", ":"))},
+            {"role": "system", "content": json.dumps(context, separators=(",", ":"))},
+            {"role": "user", "content": "Post a comment."},
         ],
         "response_format": {"type": "json_object"},
         "provider": {"require_parameters": True, "zdr": True},
@@ -6446,7 +6492,7 @@ async def create_ticker_comment(
         body, model = await run_in_threadpool(
             _generate_ticker_comment_text,
             normalized,
-            avatar_ability_id=str(avatar["ability_id"]),
+            avatar=avatar,
         )
         with connection() as db:
             db.execute(
@@ -6462,7 +6508,7 @@ async def create_ticker_comment(
                     body,
                     "public",
                     created_at,
-                    "ai_generated",
+                    "ai_avatar",
                     model,
                 ),
             )

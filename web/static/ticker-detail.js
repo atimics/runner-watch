@@ -695,6 +695,10 @@
     const author = document.createElement('strong');
     author.textContent = avatarData.name || comment.alias || 'Unknown Signal';
     head.append(author);
+    const authorship = document.createElement('span');
+    authorship.className = 'comment-owner';
+    authorship.textContent = comment.author_label || 'AI avatar';
+    head.append(authorship);
     const ability = document.createElement('span');
     ability.className = 'comment-ability';
     ability.textContent = avatarData.ability || 'Research Lens';
@@ -703,7 +707,7 @@
     if (comment.is_owner) {
       const owner = document.createElement('span');
       owner.className = 'comment-owner';
-      owner.textContent = 'You';
+      owner.textContent = 'Yours';
       head.append(owner);
     }
     const meta = document.createElement('small');
@@ -713,9 +717,6 @@
     stamp.dataset.commentTime = '';
     stamp.textContent = relativeCommentTime(comment.created_at);
     meta.append(stamp);
-    if (comment.ai_generated) {
-      meta.prepend(document.createTextNode('Flash drafted · '));
-    }
     if (comment.is_owner) {
       const remove = document.createElement('button');
       remove.type = 'button';
@@ -734,7 +735,7 @@
   refreshCommentTimes();
   generateComment?.addEventListener('click', async () => {
     generateComment.disabled = true;
-    commentStatus.textContent = 'Flash is drafting your comment…';
+    commentStatus.textContent = 'Your AI avatar is posting…';
     try {
       const response = await fetch(`/api/comments/${encodeURIComponent(ticker)}`, {
         method: 'POST',
