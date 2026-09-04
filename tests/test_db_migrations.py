@@ -740,3 +740,35 @@ def test_sports_market_migration_keeps_source_and_state_times(
 
     assert {"source_observed_at", "market_state_hash"} <= odds_columns
     assert "input_state_hash" in prediction_columns
+
+
+def test_market_forecast_migration_keeps_targets_and_outcome_receipts(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "market-forecast-columns.db")
+    init_db()
+
+    with connection() as database:
+        job_table = database.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='market_report_forecast_jobs'"
+        ).fetchone()
+        forecast_columns = {
+            row["name"]
+            for row in database.execute(
+                "PRAGMA table_info(market_report_forecasts)"
+            ).fetchall()
+        }
+
+    assert job_table is not None
+    assert {
+        "reference_price",
+        "target_price",
+        "direction",
+        "model",
+        "status",
+        "close_price",
+        "close_source",
+        "close_collected_at",
+        "settled_at",
+    } <= forecast_columns

@@ -301,6 +301,20 @@ scan from 4:00–9:15 a.m. The **post-market recap** is due at 4:15 p.m. Eastern
 regular-hours scan with a close checkpoint from 3:30–4:20 p.m.
 
 Each report keeps its source scan IDs, timestamp, breadth, leaders, risk count, and board changes.
+New pre-market reports also ask Flash for an end-of-day target for each eligible watch-board ticker.
+Flash receives the frozen public scan through OpenRouter. Each report has one successful batch,
+with up to three attempts before 9:30 a.m. Eastern. Targets and the Flash model are saved before
+the open. A ticker can receive a pass while its price or risk state needs review.
+
+The report shows the pre-market price, target EOD price, actual closing price, and result. An upward
+target is a hit when the regular-session close is at or above the target. A downward target is a hit
+when the close is at or below the target. Other scored outcomes are misses. Settlement starts at
+4:15 p.m. Eastern. It uses that day's daily closing bar, or the completed 3:55–4:00 p.m. bar,
+collected after 4:15 p.m. Daily bars also cover early-close sessions. Results stay pending while
+closing data arrives. Corporate actions and prolonged data gaps go to price review. The stored
+receipt keeps the source and collection time. These EOD results have their own record, separate
+from the Daily Flash next-session scorecard.
+
 Reports are written once per market day, survive worker restarts, and are available at `/reports`
 and `/api/market-reports`. If the required scan is missing, the worker waits rather than publishing
 a report from stale or unrelated data. Exchange holidays and exceptional early closes still follow

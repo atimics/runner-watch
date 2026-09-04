@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 ROADMAP_VERSION = "stonks.roadmap.v1"
-ROADMAP_REVIEWED_AT = "2026-08-26"
+ROADMAP_REVIEWED_AT = "2026-09-03"
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +43,13 @@ ROADMAP_ITEMS = (
         "outcome-loop",
         "Outcome receipts",
         "Freeze calls and measure what happened without rewriting the original view.",
+        "own",
+        "live",
+    ),
+    RoadmapItem(
+        "market-turn-targets",
+        "Pre-market EOD targets",
+        "Freeze Flash targets before the open, then show the closing price and result.",
         "own",
         "live",
     ),
