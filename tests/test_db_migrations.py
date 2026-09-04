@@ -42,8 +42,8 @@ class _PostgresLockDatabase:
 def test_postgres_migrations_take_one_session_lock() -> None:
     database = _PostgresLockDatabase()
 
-    _acquire_migration_lock(database)  # type: ignore[arg-type]
-    _release_migration_lock(database)  # type: ignore[arg-type]
+    _acquire_migration_lock(database)
+    _release_migration_lock(database)
 
     assert database.calls == [
         ("SELECT pg_advisory_lock(?)", (MIGRATION_LOCK_ID,)),
@@ -85,7 +85,7 @@ def test_postgres_commits_each_migration_before_releasing_lock(
         (Migration(1, "sample", lambda _database: events.append("apply")),),
     )
 
-    _apply_migrations(Database())  # type: ignore[arg-type]
+    _apply_migrations(Database())
 
     assert events == ["apply", "record", "commit", "unlock"]
 

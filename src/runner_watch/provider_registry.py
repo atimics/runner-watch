@@ -34,7 +34,7 @@ class ProviderRoute:
 
 
 class ProviderRegistry:
-    """Routes one canonical request through an explicit provider fallback list."""
+
 
     def __init__(self) -> None:
         self._providers: dict[str, ProviderAdapter] = {}
@@ -119,7 +119,7 @@ class ProviderRegistry:
         }
 
     def close(self) -> None:
-        """Release resources owned by registered providers."""
+
 
         for provider in self._providers.values():
             close = getattr(provider, "close", None)

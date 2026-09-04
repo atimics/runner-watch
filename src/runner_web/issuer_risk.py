@@ -109,7 +109,7 @@ def issuer_risk_contexts(database: Any, tickers: list[str]) -> dict[str, dict[st
         LEFT JOIN issuer_facts f ON f.cik=c.cik
         WHERE c.ticker IN ({placeholders})
         ORDER BY c.ticker,f.filed_at DESC,f.period_end DESC
-        """,  # noqa: S608
+        """,
         unique,
     ).fetchall()
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)

@@ -189,7 +189,7 @@ def create_portal_session(user: dict[str, Any], app_origin: str) -> str:
 
 
 def delete_customer(user: dict[str, Any]) -> bool:
-    """Delete the linked Stripe customer and cancel its active subscriptions."""
+
 
     customer_id = str(user.get("stripe_customer_id") or "").strip()
     if not customer_id:

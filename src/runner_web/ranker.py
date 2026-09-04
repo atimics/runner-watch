@@ -138,7 +138,7 @@ def _flag(value: bool) -> int:
 
 
 def feature_vector(row: dict[str, Any]) -> tuple[int, ...]:
-    """Quantize one database row before it crosses into the integer Rust model."""
+
 
     compact = row.get("feature_vector")
     if compact is not None:
@@ -224,7 +224,7 @@ def store_training_examples(
     scan_mode: str,
     expected_candidates: int,
 ) -> int:
-    """Save small, versioned model inputs without keeping full rows in memory later."""
+
 
     if not rows:
         return 0
@@ -264,7 +264,7 @@ def sync_training_outcome(
     outcome_return_pct: Any,
     labeled_at: str,
 ) -> None:
-    """Attach a later outcome to its compact feature vector."""
+
 
     database.execute(
         """
@@ -282,7 +282,7 @@ def sync_training_outcome(
 
 
 def _backfill_recent_training_examples(maximum_groups: int) -> int:
-    """Compact a bounded legacy window after the new table is introduced."""
+
 
     with connection() as database:
         run_rows = database.execute(
@@ -317,7 +317,7 @@ def _backfill_recent_training_examples(maximum_groups: int) -> int:
               AND s.stale_minutes IS NOT NULL
               AND compact.snapshot_id IS NULL
             ORDER BY r.captured_at,s.baseline_rank,s.ticker
-            """,  # noqa: S608 - placeholders are generated above
+            """,
             run_ids,
         ).fetchall()
         compact_rows = []
@@ -385,7 +385,7 @@ def _load_groups(
               AND feature_schema_version=?
               AND barrier_label IN ('down','timeout','up')
             ORDER BY captured_at,scan_run_id,ticker
-            """,  # noqa: S608 - placeholders are generated above
+            """,
             (*run_ids, FEATURE_SCHEMA_VERSION),
         ).fetchall()
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -453,7 +453,7 @@ def _rust_command() -> list[str]:
 
 def _run_rust(request: dict[str, Any], *, timeout_seconds: int = 300) -> dict[str, Any]:
     try:
-        completed = subprocess.run(  # noqa: S603
+        completed = subprocess.run(
             _rust_command(),
             input=json.dumps(request, separators=(",", ":")),
             capture_output=True,
@@ -500,7 +500,7 @@ def train_shadow_ranker(
     maximum_groups: int = RANKER_TRAINING.maximum_groups,
     epochs: int = 500,
 ) -> dict[str, Any]:
-    """Train the deterministic integer Rust ranker in shadow status."""
+
 
     groups = _load_groups(horizon, maximum_groups)
     row_count = sum(len(group) for group in groups)
@@ -600,7 +600,7 @@ def train_shadow_ranker_if_due(
     minimum_new_groups: int = RANKER_TRAINING.minimum_new_groups,
     maximum_groups: int = RANKER_TRAINING.maximum_groups,
 ) -> dict[str, Any]:
-    """Train only after enough new complete groups have arrived."""
+
 
     _backfill_recent_training_examples(maximum_groups)
     with connection() as database:
@@ -654,7 +654,7 @@ def _trainer_state(key: str, value: Any) -> None:
 
 
 def trainer_main() -> None:
-    """Run bounded ranker training away from the web and collection workers."""
+
 
     init_db()
     interval = max(
@@ -888,7 +888,7 @@ def export_crl_dataset(
     horizon: str = DEFAULT_HORIZON,
     maximum_groups: int = RANKER_TRAINING.maximum_groups,
 ) -> dict[str, Any]:
-    """Write integer grouped rows for crlplrimes' generic scorer contract."""
+
 
     groups = _load_groups(horizon, maximum_groups)
     if not groups:

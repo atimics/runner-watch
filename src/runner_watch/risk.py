@@ -9,11 +9,11 @@ def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
 
 @dataclass(frozen=True, slots=True)
 class RiskInput:
-    """Point-in-time facts used to judge rug risk and trade state.
 
-    Missing facts stay missing. The engine never turns an unknown fundamental
-    into a bullish assumption.
-    """
+
+
+
+
 
     setup_score: float
     price: float
@@ -97,7 +97,7 @@ def _filing_flags(item: RiskInput) -> tuple[float, list[str], bool]:
 
 
 def assess_risk(item: RiskInput) -> RiskAssessment:
-    """Return an independent rug score and a rules-based trade state."""
+
 
     points = 0.0
     reasons: list[str] = []

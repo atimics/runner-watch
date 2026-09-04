@@ -140,7 +140,7 @@ def _default_transport(url: str, headers: dict[str, str], timeout: float) -> Any
 
 
 class FintelShortDataClient:
-    """Read Fintel's documented short-interest and borrow endpoints."""
+
 
     def __init__(
         self,
@@ -316,7 +316,7 @@ class FintelShortDataClient:
                 ticker = futures[future]
                 try:
                     result = future.result()
-                except Exception as exc:  # one ticker must not break a scan
+                except Exception as exc:
                     warnings.append(f"Fintel short-data lookup failed for {ticker}: {exc}")
                     continue
                 attempts.extend(result.fetches)
@@ -348,7 +348,7 @@ def load_cached_short_data(tickers: list[str]) -> dict[str, ShortData]:
         rows = database.execute(
             f"""
             SELECT * FROM short_data_cache WHERE ticker IN ({placeholders})
-            """,  # noqa: S608
+            """,
             unique,
         ).fetchall()
     return {
@@ -456,7 +456,7 @@ def short_data_for_scan(
     client: FintelShortDataClient | None = None,
     fetch_recorder: SourceFetchRecorder | None = None,
 ) -> ShortDataScanResult:
-    """Return cached positioning data and refresh the displayed scan rows."""
+
 
     checked_at = (as_of or datetime.now(UTC)).astimezone(UTC)
     unique = list(dict.fromkeys(ticker.strip().upper() for ticker in tickers if ticker.strip()))

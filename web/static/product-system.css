@@ -1,4 +1,4 @@
-/* Shared product shell for RATi Runners and RATi Sports. */
+
 :root {
   color-scheme: dark;
   --bg: #080b09;
@@ -72,7 +72,7 @@ textarea {
   outline-offset: 2px;
 }
 
-/* Signed-in account strip */
+
 .account-strip {
   position: relative;
   z-index: 9;
@@ -153,7 +153,7 @@ html.embedded-pane .account-strip {
   display: none;
 }
 
-/* Flash claim and release announcement */
+
 .flash-release-dialog {
   width: min(620px, calc(100% - 28px));
   max-height: min(780px, calc(100dvh - 28px));
@@ -422,7 +422,7 @@ html.embedded-pane .account-strip {
   }
 }
 
-/* Runners shell */
+
 .runners-product .mobile-app {
   background: var(--bg);
   border-color: #171d19;
@@ -794,7 +794,7 @@ html.embedded-pane .product-tab-link {
   display: none;
 }
 
-/* Sports shell */
+
 .sports-product .sports-topbar {
   height: 64px;
   padding: 0 max(20px, calc((100% - 1040px) / 2));

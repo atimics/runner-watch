@@ -60,7 +60,7 @@ def empirical_receipt(
     label: str,
     minimum_samples: int = MIN_BASE_RATE_SAMPLES,
 ) -> dict[str, Any]:
-    """Compare one observation with a finite empirical control distribution."""
+
 
     observed_number = _number(observed)
     values = sorted(value for item in controls if (value := _number(item)) is not None)
@@ -115,7 +115,7 @@ def empirical_receipt(
 
 
 def matched_market_base_rates(current: dict[str, Any]) -> dict[str, Any]:
-    """Build same-ticker, same-session, same-clock historical comparisons."""
+
 
     ticker = str(current.get("ticker") or "").strip().upper()
     observed_at = _time(current.get("captured_at") or current.get("event_at"))

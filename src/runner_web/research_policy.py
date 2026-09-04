@@ -9,7 +9,7 @@ MIN_POLICY_OUTCOMES = RESEARCH_PROMOTION.learning_cases
 
 
 def _wilson_lower_bound(successes: int, total: int) -> float | None:
-    """Return the 95% Wilson lower bound for a binary accuracy result."""
+
 
     if total <= 0:
         return None
@@ -33,7 +33,7 @@ def _probability_up(view: str, confidence: float) -> float:
 
 
 def research_policy_scorecards() -> list[dict[str, Any]]:
-    """Compare real model-policy outputs only after their linked case resolves."""
+
 
     with connection() as db:
         rows = [

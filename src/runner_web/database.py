@@ -10,7 +10,7 @@ from typing import Any
 
 
 class ResultRow:
-    """A small row type that supports both row[0] and row["column"]."""
+
 
     __slots__ = ("_keys", "_lookup", "_values")
 
@@ -124,7 +124,7 @@ def _replace_named_parameters(statement: str) -> str:
 
 
 def _replace_scalar_extrema(statement: str) -> str:
-    """Translate SQLite's two-argument MAX/MIN functions for PostgreSQL."""
+
 
     replacements: list[tuple[int, int, str]] = []
     for match in re.finditer(r"\b(MAX|MIN)\s*\(", statement, flags=re.IGNORECASE):
@@ -324,9 +324,9 @@ def open_database(database_url: str, database_path: Path) -> Iterator[DatabaseCo
 
 def initialize_sqlite(database_path: Path) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
-    # A sqlite connection commits or rolls back on context exit, but it does
-    # not close itself. Use both contexts so repeated startup never leaks a
-    # file descriptor.
+
+
+
     with closing(sqlite3.connect(database_path, timeout=20)) as raw, raw as database:
         database.execute("PRAGMA busy_timeout=20000")
         database.execute("PRAGMA journal_mode=WAL")

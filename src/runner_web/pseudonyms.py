@@ -50,11 +50,11 @@ EMOJIS = tuple(
 )
 
 _COMMENT_GLYPH_RANGES = (
-    (0x2200, 0x23FF),  # mathematical and technical symbols
-    (0x2500, 0x25FF),  # box, block, and geometric symbols
-    (0x27C0, 0x27EF),  # miscellaneous mathematical symbols
-    (0x2801, 0x28FF),  # non-empty braille patterns
-    (0x2980, 0x2AFF),  # supplemental mathematical symbols
+    (0x2200, 0x23FF),
+    (0x2500, 0x25FF),
+    (0x27C0, 0x27EF),
+    (0x2801, 0x28FF),
+    (0x2980, 0x2AFF),
 )
 _MISLEADING_GLYPH_TERMS = (
     "ARROW",
@@ -157,7 +157,7 @@ def comment_avatar_profile(
     ability_id: str,
     level: int = 1,
 ) -> dict[str, Any]:
-    """Build the stable public shape of one comment avatar."""
+
 
     digest = sha256(seed.encode()).digest()
     ability = comment_avatar_ability(ability_id)
@@ -175,7 +175,7 @@ def comment_avatar_profile(
 
 
 def ensure_comment_avatar(database: Any, user_id: str) -> dict[str, Any]:
-    """Assign one durable public AI-style avatar to an account."""
+
 
     existing = database.execute(
         "SELECT name,seed,ability_id,level FROM comment_avatars WHERE user_id=?",
@@ -216,7 +216,7 @@ def ensure_comment_avatar(database: Any, user_id: str) -> dict[str, Any]:
 
 
 def migrate_comment_aliases_to_glyphs(database: Any) -> int:
-    """Replace old comment emoji pairs with unique one-glyph thread aliases."""
+
 
     rows = database.execute(
         "SELECT scope,user_id,alias FROM public_aliases "
@@ -250,7 +250,7 @@ def migrate_comment_aliases_to_glyphs(database: Any) -> int:
 
 
 def ensure_scoped_alias(database: Any, user_id: str, scope: str) -> str:
-    """Assign a random public pseudonym inside one discussion or Call thread."""
+
 
     if not scope.startswith(("comment:", "call:")):
         raise ValueError("Public alias scope must be a comment or Call thread")

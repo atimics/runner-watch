@@ -78,7 +78,7 @@ class BeneficialOwnershipSummary:
 
 
 class EdgarClient:
-    """Small, rate-limited client for public SEC EDGAR data."""
+
 
     def __init__(
         self,
@@ -111,7 +111,7 @@ class EdgarClient:
         try:
             self.fetch_recorder(fetch)
         except Exception:
-            # Collection is best effort and must not block the SEC listener.
+
             pass
 
     def _get(self, url: str) -> bytes:
@@ -128,7 +128,7 @@ class EdgarClient:
             if wait > 0:
                 time.sleep(wait)
             try:
-                with urllib.request.urlopen(request, timeout=35) as response:  # noqa: S310
+                with urllib.request.urlopen(request, timeout=35) as response:
                     body = response.read()
                 self._last_request = time.monotonic()
                 stripped = body.lstrip()
@@ -154,7 +154,7 @@ class EdgarClient:
                     try:
                         self.recorder(url, body)
                     except Exception:
-                        # Archival is best effort and must not block the SEC listener.
+
                         pass
                 return body
             except (TimeoutError, urllib.error.URLError) as exc:
@@ -227,7 +227,7 @@ class EdgarClient:
         return None
 
     def archive_primary_filing(self, filing: EdgarFiling) -> str | None:
-        """Fetch one primary filing document so later reports can use its full text."""
+
 
         directory_url = filing_directory_url(filing.filing_url)
         index = self.get_json(f"{directory_url}/index.json")
@@ -309,7 +309,7 @@ def filing_directory_url(filing_url: str) -> str:
 def primary_filing_document_names(
     index: dict[str, Any], accession: str
 ) -> list[str]:
-    """Prefer the SEC full-submission text, then likely primary HTML documents."""
+
 
     items = index.get("directory", {}).get("item", [])
     names = [str(item.get("name") or "") for item in items]
@@ -445,11 +445,11 @@ def _first_number(values: list[str]) -> float | None:
 
 
 def parse_beneficial_ownership_xml(text: str) -> BeneficialOwnershipSummary | None:
-    """Read common structured Schedule 13D/G ownership fields.
 
-    SEC schedule schemas have changed over time, so matching uses local tag
-    names and accepts the common variants instead of assuming one namespace.
-    """
+
+
+
+
 
     root = ET.fromstring(text)
     values: dict[str, list[str]] = {}

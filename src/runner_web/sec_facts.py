@@ -48,7 +48,7 @@ def _download(url: str, timeout: float) -> tuple[bytes, str | None]:
         url,
         headers={"User-Agent": SEC_USER_AGENT, "Accept": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read(), response.headers.get_content_type()
 
 
@@ -62,7 +62,7 @@ def _day(value: Any) -> date | None:
 def parse_company_facts(
     payload: dict[str, Any], *, collected_at: datetime | None = None
 ) -> tuple[IssuerFact, ...]:
-    """Normalize the small SEC fact set needed by the rug-risk engine."""
+
 
     try:
         cik = int(payload["cik"])

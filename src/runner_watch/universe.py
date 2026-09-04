@@ -16,8 +16,8 @@ from runner_watch.ingestion import SourceFetch, SourceFetchRecorder
 NASDAQ_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
 OTHER_LISTED_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
 
-# A quick-start list. It mixes liquid stocks with names that often attract retail
-# momentum. The broad scan should be used when full market coverage matters.
+
+
 STARTER_SYMBOLS = [
     "AAL", "AAPL", "ACHR", "AFRM", "AI", "ALAB", "AMD", "AMZN", "ASTS", "AVGO",
     "BBAI", "BILI", "BITF", "BROS", "BTBT", "BYND", "CAVA", "CCL", "CELH", "CHPT",
@@ -41,7 +41,7 @@ class UniverseEntry:
 
 
 def normalize_symbol(value: str) -> str:
-    """Convert an exchange symbol to Yahoo's common symbol format."""
+
 
     return value.strip().upper().replace(".", "-")
 
@@ -110,7 +110,7 @@ def starter_universe() -> list[UniverseEntry]:
 
 
 def _screen_entries(quotes: list[dict[str, Any]]) -> list[UniverseEntry]:
-    """Keep normal listed symbols from a Yahoo screener response."""
+
 
     allowed_exchanges = {"ASE", "BTS", "NAE", "NCM", "NGM", "NMS", "NYQ", "PCX"}
     entries: list[UniverseEntry] = []
@@ -137,11 +137,11 @@ def penny_runner_universe(
     per_screen: int = 175,
     fetch_recorder: SourceFetchRecorder | None = None,
 ) -> tuple[list[UniverseEntry], list[str]]:
-    """Find active low-priced US-listed stocks using Yahoo's live screener.
 
-    One screen finds the largest current movers and another finds the most
-    actively traded names. The intraday scanner performs the final ranking.
-    """
+
+
+
+
 
     warnings: list[str] = []
     overall_started_at = datetime.now(UTC)
@@ -210,7 +210,7 @@ def penny_runner_universe(
                 )
                 for entry in _screen_entries(quotes):
                     entries.setdefault(entry.symbol, entry)
-            except Exception as exc:  # Yahoo can reject one screen while the other works
+            except Exception as exc:
                 direction = "ascending" if sort_ascending else "descending"
                 warnings.append(f"Yahoo {sort_field} {direction} candidate screen failed: {exc}")
                 record(
@@ -256,7 +256,7 @@ def penny_runner_universe(
 
 def _download_text(url: str, timeout: int = 15) -> str:
     request = urllib.request.Request(url, headers={"User-Agent": "RunnerWatch/0.1"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read().decode("utf-8", errors="replace")
 
 
@@ -265,7 +265,7 @@ def broad_us_universe(
     cache_dir: Path | None = None,
     cache_hours: int = 18,
 ) -> tuple[list[UniverseEntry], list[str]]:
-    """Load US-listed symbols from Nasdaq Trader, with a local cache."""
+
 
     warnings: list[str] = []
     cache_dir = cache_dir or Path.cwd() / ".runner_watch_cache"

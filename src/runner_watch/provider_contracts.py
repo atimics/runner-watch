@@ -16,7 +16,7 @@ class DataKind(StrEnum):
 
 
 class CanonicalModel(BaseModel):
-    """Base for provider-neutral records passed into the product."""
+
 
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 

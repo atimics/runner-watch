@@ -128,7 +128,7 @@ def build_research_context(
     model: str | None = None,
     as_of: str | None = None,
 ) -> dict[str, Any]:
-    """Fill one bounded prompt with ranked evidence already collected by Runner Watch."""
+
 
     symbol = ticker.upper()
     budget = research_context_budget(model)
@@ -234,7 +234,7 @@ def build_research_context(
                     SELECT * FROM source_documents
                     WHERE ({' OR '.join(clauses)}) AND last_collected_at<=?
                     ORDER BY last_collected_at DESC LIMIT 300
-                    """,  # noqa: S608
+                    """,
                     (*parameters, as_of_value),
                 ).fetchall()
             )

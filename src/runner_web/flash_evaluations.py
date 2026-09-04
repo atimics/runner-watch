@@ -92,7 +92,7 @@ def prepare_forecast_evidence(
     *,
     evidence_as_of: str,
 ) -> dict[str, Any]:
-    """Freeze the price the model sees and record why it can or cannot be scored."""
+
 
     frozen = dict(evidence)
     as_of = _datetime(evidence_as_of) or datetime.now(UTC)
@@ -162,7 +162,7 @@ def prepare_forecast_evidence(
 
 
 def validate_forecast(value: Any) -> dict[str, Any]:
-    """Validate a model-authored forecast without inferring from narrative prose."""
+
 
     if not isinstance(value, dict):
         raise ValueError("missing forecast")
@@ -227,7 +227,7 @@ def record_flash_forecast(
     actor: AIKol = FLASH,
     at: str | None = None,
 ) -> dict[str, Any]:
-    """Commit the immutable forecast beside its completed report."""
+
 
     timestamp = at or _iso()
     forecast = validate_forecast(generated.get("forecast"))
@@ -342,7 +342,7 @@ def _forecast_bars(tickers: list[str]) -> dict[str, list[Bar]]:
             SELECT source,ticker,bar_time,high,low,close FROM market_bars
             WHERE interval='5m' AND close>0 AND ticker IN ({placeholders})
             ORDER BY ticker,bar_time,source
-            """,  # noqa: S608
+            """,
             unique,
         ).fetchall()
     selected: dict[str, dict[datetime, Bar]] = {}
@@ -408,7 +408,7 @@ def refresh_flash_forecasts(
     *,
     fetch_market_data: bool = True,
 ) -> dict[str, int]:
-    """Resolve due forecasts from archived regular-session bars."""
+
 
     current = (at or datetime.now(UTC)).astimezone(UTC)
     timestamp = _iso(current)
@@ -430,7 +430,7 @@ def refresh_flash_forecasts(
             with recording_market_data(batch_size=60) as market_data:
                 market_data.intraday(tickers)
         except Exception:
-            # The saved bar archive may still be enough to settle older forecasts.
+
             pass
     bars_by_ticker = _forecast_bars(tickers)
     resolved = 0
@@ -624,7 +624,7 @@ def correct_flash_outcome(
     void: bool = False,
     at: datetime | None = None,
 ) -> dict[str, Any]:
-    """Correct a bad result while preserving its full previous value in the audit log."""
+
 
     clean_reason = " ".join(reason.split())[:500]
     if not clean_reason:

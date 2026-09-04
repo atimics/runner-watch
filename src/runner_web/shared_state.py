@@ -40,9 +40,9 @@ def _client() -> Any:
                 REDIS_URL,
                 decode_responses=True,
                 socket_connect_timeout=2,
-                # Blocking queue reads wait up to five seconds. Leave enough
-                # headroom for Redis to send its empty response without the
-                # client treating a normal queue poll as a network failure.
+
+
+
                 socket_timeout=10,
                 health_check_interval=30,
             )
@@ -96,7 +96,7 @@ return count
 
 
 def rate_limit_allowed(name: str, limit: int, seconds: int) -> bool | None:
-    """Return None when Redis is absent or unavailable so callers can use a local fallback."""
+
 
     if not REDIS_URL:
         return None
@@ -134,13 +134,13 @@ def _research_worker_lease_key(worker_token: str) -> str:
 
 
 def enqueue_research_job(report_id: str) -> None:
-    """Queue only the public report ID. Provider credentials stay on the server."""
+
 
     _client().lpush(_queue_key(), report_id)
 
 
 def touch_research_worker(worker_id: str) -> None:
-    """Keep this worker's queue ownership alive while its task is healthy."""
+
 
     if not REDIS_URL:
         return
@@ -157,7 +157,7 @@ def touch_research_worker(worker_id: str) -> None:
 
 
 def release_research_worker(worker_id: str) -> None:
-    """Expire this worker's lease while keeping its pending bucket discoverable."""
+
 
     if not REDIS_URL:
         return
@@ -202,7 +202,7 @@ def _recover_stale_research_workers(client: Any, current_token: str) -> int:
 
 
 def recover_research_jobs(worker_id: str) -> int:
-    """Recover this restarted worker and jobs owned by workers with expired leases."""
+
 
     if not REDIS_URL:
         return 0
@@ -221,7 +221,7 @@ def recover_research_jobs(worker_id: str) -> int:
 
 
 def dequeue_research_job(worker_id: str, timeout_seconds: int = 5) -> str | None:
-    """Atomically claim one job while leaving it recoverable until it is acknowledged."""
+
 
     client = _client()
     worker_token = _worker_token(worker_id)

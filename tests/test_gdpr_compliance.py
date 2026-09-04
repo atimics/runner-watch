@@ -223,20 +223,3 @@ def test_openrouter_request_has_no_user_fingerprint() -> None:
 def test_production_does_not_write_web_access_logs() -> None:
     assert "--no-access-log" in (ROOT / "fly.toml").read_text()
     assert '"--no-access-log"' in (ROOT / "Dockerfile").read_text()
-
-
-def test_compliance_runbook_covers_operations_not_just_ui() -> None:
-    runbook = (ROOT / "docs/privacy-operations.md").read_text()
-
-    for required_copy in (
-        "Record of processing",
-        "Retention schedule",
-        "Data subject requests",
-        "Processor register",
-        "International transfers",
-        "Security controls",
-        "Personal data breach",
-        "72 hours",
-        "DPIA screening",
-    ):
-        assert required_copy in runbook

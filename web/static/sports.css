@@ -522,7 +522,7 @@
   .receipt-scope > section + section{border-top:1px solid var(--line);border-left:0}
 }
 
-/* Keep the frozen decision visible and fold secondary matchup context away. */
+
 .game-detail-compact{max-width:860px}
 .model-maturity{margin-top:14px;padding:12px 14px;border:1px solid rgba(248,202,118,.22);border-radius:10px;background:rgba(248,202,118,.055)}
 .model-maturity>div{display:flex;align-items:center;justify-content:space-between;gap:14px}

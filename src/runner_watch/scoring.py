@@ -43,12 +43,12 @@ def _volume_score(value: float | None, maximum: float) -> float:
 
 
 def score_runner(item: ScoreInput) -> ScoreOutput:
-    """Score a possible runner from 0 to 100.
 
-    The score favors unusual volume and short-term acceleration. It also rewards
-    a move through yesterday's high, then cuts the score when the quote is stale
-    or the stock is already heavily extended.
-    """
+
+
+
+
+
 
     volume = _volume_score(item.relative_volume, 24.0)
     recent_volume = _volume_score(item.recent_relative_volume, 12.0)
@@ -81,8 +81,8 @@ def score_runner(item: ScoreInput) -> ScoreOutput:
         )
         liquidity = recent_liquidity + session_liquidity
     else:
-        # Keep old callers useful while new snapshots collect the better
-        # time-local liquidity measure.
+
+
         liquidity = clamp((math.log10(max(item.dollar_volume, 1)) - 4.5) * 4, 0, 9)
 
     raw = (

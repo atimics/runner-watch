@@ -61,7 +61,7 @@
     chartEvents.hidden = !items.length;
     items.forEach(item => {
       const safeTone = Object.hasOwn(annotationColors, item.tone) ? item.tone : 'neutral';
-      const hasLink = typeof item.url === 'string' && /^https?:\/\//i.test(item.url);
+      const hasLink = typeof item.url === 'string' && /^https?:\/\
       const chip = document.createElement(hasLink ? 'a' : 'span');
       chip.className = 'chart-event-chip tone-' + safeTone;
       if (hasLink) {
