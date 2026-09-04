@@ -1,15 +1,25 @@
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 
 
-def test_shared_product_system_is_loaded_after_existing_styles() -> None:
+def test_shared_product_system_has_one_component_and_one_theme_file() -> None:
     base = (ROOT / "web/templates/mobile_base.html").read_text()
     sports = (ROOT / "web/templates/sports.html").read_text()
 
-    assert base.index("desktop-split.css") < base.index("product-system.css")
+    styles = re.findall(r'href="/static/([^"?]+\.css)', base)
+    assert styles == ["mobile.css", "product-system.css"]
+    assert len(styles) == len(set(styles))
+    assert all((ROOT / "web/static" / style).is_file() for style in styles)
     assert '{% block product_head %}{% endblock %}' in base
     assert '{% include "_sports_styles.html" %}' in sports
+    sports_styles = re.findall(
+        r'href="/static/([^"?]+\.css)',
+        (ROOT / "web/templates/_sports_styles.html").read_text(),
+    )
+    assert sports_styles == ["sports.css"]
+    assert all((ROOT / "web/static" / style).is_file() for style in sports_styles)
     assert 'class="skip-link"' in base
     assert 'id="app-content"' in base
     assert 'class="tab-link product-tab-link"' in base

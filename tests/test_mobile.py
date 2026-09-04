@@ -78,7 +78,7 @@ def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
 def test_pulse_does_not_render_an_empty_scorecard_spacer() -> None:
     root = Path(__file__).parents[1]
     pulse_template = (root / "web/templates/pulse.html").read_text()
-    kol_styles = (root / "web/static/kol.css").read_text()
+    kol_styles = (root / "web/static/mobile.css").read_text()
 
     assert 'id="kolScoreStrip"' in pulse_template
     assert "{% if not flash_record %} hidden{% endif %}" in pulse_template
@@ -122,7 +122,7 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
 def test_ticker_layout_puts_subtle_actions_after_the_analysis() -> None:
     root = Path(__file__).parents[1]
     template = (root / "web/templates/ticker.html").read_text()
-    desktop_css = (root / "web/static/desktop-split.css").read_text()
+    desktop_css = (root / "web/static/mobile.css").read_text()
 
     chart = template.index('class="detail-chart-panel"')
     actions = template.index('class="detail-actions"')
@@ -231,7 +231,7 @@ def test_desktop_feeds_share_full_info_and_article_panel() -> None:
     alpha = (templates_dir / "community.html").read_text()
     panel = (templates_dir / "_desktop_panel.html").read_text()
     workspace = (root / "web/static/desktop-workspace.js").read_text()
-    desktop_css = (root / "web/static/desktop-split.css").read_text()
+    desktop_css = (root / "web/static/mobile.css").read_text()
 
     for template in (pulse, radar, alpha):
         assert "workspace-app" in template
@@ -273,7 +273,7 @@ def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
     ]
     game = (templates_dir / "sports_game.html").read_text()
     live_script = (root / "web/static/sports-live.js").read_text()
-    core_styles = (root / "web/static/sports-core.css").read_text()
+    core_styles = (root / "web/static/sports.css").read_text()
 
     for template in sports_templates:
         assert '{% extends "mobile_base.html" %}' in template
@@ -295,7 +295,7 @@ def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
 def test_ticker_rows_have_no_reader_attention_state() -> None:
     root = Path(__file__).parents[1]
     row_script = (root / "web/static/ticker-row.js").read_text()
-    row_styles = (root / "web/static/ticker-row.css").read_text()
+    row_styles = (root / "web/static/mobile.css").read_text()
 
     assert "attention-unseen" not in row_styles
     assert "attention-seen" not in row_styles

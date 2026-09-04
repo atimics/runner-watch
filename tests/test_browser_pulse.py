@@ -60,7 +60,7 @@ def _rendered_pulse(monkeypatch, payload: dict[str, Any]) -> str:
     monkeypatch.setattr(web_main, "pulse_data", lambda **_kwargs: payload)
     html = web_main.home(_request(), None).body.decode()
     ticker_script = (ROOT / "web/static/ticker-row.js").read_text()
-    kol_styles = (ROOT / "web/static/kol.css").read_text()
+    kol_styles = (ROOT / "web/static/mobile.css").read_text()
     html = html.replace("<head>", '<head><base href="http://app.test/">')
     html = html.replace("</head>", f"<style>{kol_styles}</style></head>")
     html = re.sub(
