@@ -13,6 +13,7 @@ from starlette.requests import Request
 
 from runner_web import billing, db
 from runner_web import main as web_main
+from runner_web.account_routes import AccountDeletePayload
 from runner_web.billing import delete_customer
 from runner_web.db import connection, init_db
 from runner_web.flash_wallet import (
@@ -323,6 +324,39 @@ def test_account_erasure_does_not_hide_a_stripe_failure(
         delete_customer({"stripe_customer_id": "cus_keep_local_until_retry"})
 
 
+def test_account_export_keeps_download_headers(monkeypatch: MonkeyPatch) -> None:
+    rates: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(web_main, "require_user", lambda session: {"id": "export-user"})
+    monkeypatch.setattr(
+        web_main,
+        "enforce_rate",
+        lambda request, scope, **kwargs: rates.append((scope, kwargs)),
+    )
+    monkeypatch.setattr(
+        web_main,
+        "export_user_data",
+        lambda user_id: {"account": {"id": user_id}},
+    )
+
+    response = web_main.account_export_api(
+        page_request("/api/account/export"),
+        "export-session",
+    )
+
+    assert json.loads(response.body) == {"account": {"id": "export-user"}}
+    assert response.headers["cache-control"] == "no-store"
+    expected_date = web_main.now().date().isoformat()
+    assert response.headers["content-disposition"] == (
+        f'attachment; filename="runner-watch-export-{expected_date}.json"'
+    )
+    assert rates == [
+        (
+            "account-export",
+            {"limit": 3, "seconds": 3600, "subject": "export-user"},
+        )
+    ]
+
+
 def test_account_deletion_runs_stripe_before_local_erasure(
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -346,7 +380,7 @@ def test_account_deletion_runs_stripe_before_local_erasure(
     )
 
     response = web_main.account_delete_api(
-        web_main.AccountDeletePayload(confirmation="DELETE MY ACCOUNT"),
+        AccountDeletePayload(confirmation="DELETE MY ACCOUNT"),
         page_request("/api/account/delete", method="POST"),
         "delete-session",
     )
@@ -381,7 +415,7 @@ def test_account_deletion_keeps_local_data_when_stripe_fails(
 
     with pytest.raises(HTTPException) as error:
         web_main.account_delete_api(
-            web_main.AccountDeletePayload(confirmation="DELETE MY ACCOUNT"),
+            AccountDeletePayload(confirmation="DELETE MY ACCOUNT"),
             page_request("/api/account/delete", method="POST"),
             "retry-session",
         )
