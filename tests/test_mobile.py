@@ -2528,3 +2528,7 @@ def test_owner_can_publish_report_once_and_earn_flash(
     assert "#1 of 4" in html
     assert f"/research/{report['public_id']}/card.png" in html
     assert "sk-or-share-test-key" not in html
+    assert "evidence sections" not in html
+    assert "source families" in html
+    assert "points linked" in html
+    assert "public links" in html

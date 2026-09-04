@@ -144,7 +144,7 @@ from runner_web.ranker import (
     store_training_examples,
 )
 from runner_web.request_security import request_client_ip, safe_next_path
-from runner_web.research_context import build_research_context
+from runner_web.research_context import build_research_context, research_evidence_metrics
 from runner_web.research_pipeline import PIPELINE_VERSION, run_verified_pipeline
 from runner_web.shared_state import (
     acknowledge_research_job,
@@ -4056,10 +4056,14 @@ def _run_research_commission(
                 "Flash returned no usable sports prediction. Retry Flash.",
                 {"phase": "sports_forecast_contract"},
             )
+        context_stats = {
+            **research_context.get("context_stats", {}),
+            "evidence_metrics": research_evidence_metrics(research_context, report),
+        }
         usage = {
             **usage,
             "research_mode": research_mode,
-            "context": research_context.get("context_stats", {}),
+            "context": context_stats,
             **({"sports_forecast": sports_forecast} if sports_forecast else {}),
         }
         case_effect = str(report.get("case_effect") or "") or None

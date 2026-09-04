@@ -7,7 +7,11 @@ from runner_watch.ingestion import MarketEvent, SourceBatch, SourceFetch
 from runner_web import db
 from runner_web.db import connection, init_db
 from runner_web.ingestion import record_source_batch
-from runner_web.research_context import build_research_context, research_context_budget
+from runner_web.research_context import (
+    build_research_context,
+    research_context_budget,
+    research_evidence_metrics,
+)
 
 
 def test_context_budget_uses_configured_fill_ratio(monkeypatch: MonkeyPatch) -> None:
@@ -113,3 +117,76 @@ def test_one_shot_context_includes_filings_people_and_social_reports(
     assert "raw_source_document:test_social" in kinds
     assert social_url in packet["sources"]
     assert packet["context_stats"]["used_input_tokens_estimate"] <= 12_000
+
+
+def test_evidence_metrics_count_duplicate_rows_as_one_source_family() -> None:
+    context = {
+        "evidence_as_of": "2026-09-03T12:00:00+00:00",
+        "context_sections": [
+            {"kind": "structured_sec_filing", "observed_at": "2026-09-03T10:00:00Z"},
+            {"kind": "structured_sec_filing", "observed_at": "2026-09-03T11:00:00Z"},
+            {"kind": "sec_company_fact", "observed_at": "2026-09-03T09:00:00Z"},
+        ],
+    }
+
+    metrics = research_evidence_metrics(context)
+
+    assert metrics["source_family_count"] == 1
+    assert metrics["fresh_source_family_count"] == 1
+
+
+def test_evidence_metrics_mark_a_family_stale_after_24_hours() -> None:
+    context = {
+        "evidence_as_of": "2026-09-03T12:00:00+00:00",
+        "context_sections": [
+            {"kind": "system_event:news_article", "observed_at": "2026-09-02T11:59:59Z"},
+            {"kind": "stored_market_bars", "observed_at": "2026-09-02T12:00:00Z"},
+        ],
+    }
+
+    metrics = research_evidence_metrics(context)
+
+    assert metrics["source_family_count"] == 2
+    assert metrics["fresh_source_family_count"] == 1
+    assert metrics["freshness_window_hours"] == 24
+
+
+def test_evidence_metrics_match_distinct_report_points_to_citations() -> None:
+    context = {"evidence_as_of": "2026-09-03T12:00:00+00:00"}
+    report = {
+        "catalysts": ["Revenue grew", "Revenue grew"],
+        "risks": ["Cash is low"],
+        "watch": ["New filing"],
+        "citations": [
+            {"claim": "Revenue grew", "source_urls": ["https://example.com/a"]},
+            {"claim": "revenue   grew", "source_urls": ["https://example.com/a"]},
+            {"claim": "Cash is low", "source_urls": []},
+            {"claim": "Different claim", "source_urls": ["https://example.com/b"]},
+        ],
+        "sources": [],
+    }
+
+    metrics = research_evidence_metrics(context, report)
+
+    assert metrics["report_claim_count"] == 3
+    assert metrics["linked_report_claim_count"] == 1
+
+
+def test_evidence_metrics_count_each_public_link_once() -> None:
+    context = {"evidence_as_of": "2026-09-03T12:00:00+00:00"}
+    report = {
+        "catalysts": [],
+        "risks": [],
+        "watch": [],
+        "sources": ["https://example.com/a", "https://example.com/a"],
+        "citations": [
+            {
+                "claim": "A claim",
+                "source_urls": ["https://example.com/a", "https://example.com/b"],
+            }
+        ],
+    }
+
+    metrics = research_evidence_metrics(context, report)
+
+    assert metrics["public_link_count"] == 2

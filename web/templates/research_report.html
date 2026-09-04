@@ -152,7 +152,8 @@
     {% endif %}
   </section>
   {% endif %}
-  <div class="research-meta">{% if report.actor %}{{ report.actor.display_name }} · {{ report.actor.model }}{% else %}{{ report.model or report.requested_model }}{% endif %} · {{ report.completed_at[:16]|replace('T', ' ') }} UTC{% if report.usage.context %} · {{ report.usage.context.included_sections }} evidence sections{% endif %}</div>
+  {% set metrics = report.usage.context.evidence_metrics if report.usage.context else none %}
+  <div class="research-meta">{% if report.actor %}{{ report.actor.display_name }} · {{ report.actor.model }}{% else %}{{ report.model or report.requested_model }}{% endif %} · {{ report.completed_at[:16]|replace('T', ' ') }} UTC{% if metrics %} · <span title="Distinct evidence families in this report">{{ metrics.source_family_count }} source families</span> · <span title="Families with evidence observed in the {{ metrics.freshness_window_hours }} hours before this report">{{ metrics.fresh_source_family_count }}/{{ metrics.source_family_count }} fresh</span> · <span title="Distinct support, risk, and watch points with an exact public citation">{{ metrics.linked_report_claim_count }}/{{ metrics.report_claim_count }} points linked</span> · <span title="Distinct public source links available in this report">{{ metrics.public_link_count }} public links</span>{% endif %}</div>
 </main>
 {% endblock %}
 {% block scripts %}

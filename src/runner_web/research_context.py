@@ -13,6 +13,7 @@ from runner_web.db import connection
 
 DEFAULT_CONTEXT_FILL_RATIO = 0.80
 DEFAULT_OUTPUT_RESERVE_TOKENS = 16_384
+EVIDENCE_FRESHNESS_HOURS = 24
 KNOWN_MODEL_CONTEXT_TOKENS = {
     "gpt-5.6-terra": 1_050_000,
     "gpt-5.6-luna": 1_050_000,
@@ -118,6 +119,128 @@ def _filing_prefix(url: str) -> str | None:
     if "sec.gov/Archives/edgar/data/" not in url or "/" not in url:
         return None
     return f"{url.rsplit('/', 1)[0]}/%"
+
+
+def _source_family(kind: Any) -> str:
+    value = str(kind or "").lower()
+    if any(token in value for token in ("market", "bar", "scan", "halt", "odds")):
+        return "market"
+    if any(
+        token in value for token in ("sec", "filing", "issuer", "official_company", "sports_event")
+    ):
+        return "primary"
+    if any(token in value for token in ("news", "gdelt", "yahoo")):
+        return "news"
+    if any(token in value for token in ("social", "crowd", "bluesky", "apewisdom")):
+        return "crowd"
+    return "other"
+
+
+def _timestamp(value: Any) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _sports_metric_sections(context: dict[str, Any]) -> list[dict[str, Any]]:
+    captured_at = context.get("captured_at")
+    sections: list[dict[str, Any]] = []
+    if context.get("winner") or context.get("teams"):
+        sections.append({"kind": "sports_event", "observed_at": captured_at})
+    prediction = context.get("prediction") or {}
+    odds = context.get("odds") or {}
+    if prediction or odds:
+        sections.append(
+            {
+                "kind": "sports_market",
+                "observed_at": prediction.get("observed_at")
+                or odds.get("observed_at")
+                or captured_at,
+            }
+        )
+    for article in context.get("news") or []:
+        if isinstance(article, dict):
+            sections.append({"kind": "sports_news", "observed_at": article.get("published_at")})
+    if context.get("public_picks"):
+        sections.append({"kind": "sports_crowd", "observed_at": captured_at})
+    return sections
+
+
+def _public_urls(values: Any) -> set[str]:
+    if not isinstance(values, list):
+        return set()
+    return {
+        str(value).strip()
+        for value in values
+        if isinstance(value, str) and str(value).strip().startswith("https://")
+    }
+
+
+def research_evidence_metrics(
+    context: dict[str, Any],
+    report: dict[str, Any] | None = None,
+) -> dict[str, int]:
+    as_of = _timestamp(
+        context.get("evidence_as_of")
+        or context.get("captured_at")
+        or (context.get("context_stats") or {}).get("as_of")
+    ) or datetime.now(UTC)
+    sections = list(context.get("context_sections") or [])
+    if context.get("subject_type") == "sports_game":
+        sections.extend(_sports_metric_sections(context))
+    elif context.get("primary_evidence"):
+        sections.append(
+            {
+                "kind": "market_primary_evidence",
+                "observed_at": (context.get("primary_evidence") or {}).get("captured_at"),
+            }
+        )
+    latest_by_family: dict[str, datetime | None] = {}
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        family = _source_family(section.get("kind"))
+        observed_at = _timestamp(section.get("observed_at"))
+        if family not in latest_by_family:
+            latest_by_family[family] = observed_at
+        elif observed_at and (
+            latest_by_family[family] is None or observed_at > latest_by_family[family]
+        ):
+            latest_by_family[family] = observed_at
+    fresh_family_count = sum(
+        observed_at is not None
+        and timedelta(0) <= as_of - observed_at <= timedelta(hours=EVIDENCE_FRESHNESS_HOURS)
+        for observed_at in latest_by_family.values()
+    )
+    claims: set[str] = set()
+    linked_claims: set[str] = set()
+    public_urls = _public_urls((report or context).get("sources"))
+    if report:
+        for field in ("catalysts", "risks", "watch"):
+            for value in report.get(field) or []:
+                claim = " ".join(str(value).split()).casefold()
+                if claim:
+                    claims.add(claim)
+        for citation in report.get("citations") or []:
+            if not isinstance(citation, dict):
+                continue
+            urls = _public_urls(citation.get("source_urls"))
+            public_urls.update(urls)
+            claim = " ".join(str(citation.get("claim") or "").split()).casefold()
+            if claim in claims and urls:
+                linked_claims.add(claim)
+    return {
+        "source_family_count": len(latest_by_family),
+        "fresh_source_family_count": fresh_family_count,
+        "freshness_window_hours": EVIDENCE_FRESHNESS_HOURS,
+        "report_claim_count": len(claims),
+        "linked_report_claim_count": len(linked_claims),
+        "public_link_count": len(public_urls),
+    }
 
 
 def build_research_context(
@@ -387,7 +510,7 @@ def build_research_context(
         if included and isinstance(source_url, str) and source_url.startswith("https://"):
             sources.append(source_url)
 
-    return {
+    context = {
         "ticker": symbol,
         "evidence_as_of": as_of_value,
         "source_policy": (
@@ -408,3 +531,5 @@ def build_research_context(
             "estimator": "conservative characters divided by three",
         },
     }
+    context["context_stats"]["evidence_metrics"] = research_evidence_metrics(context)
+    return context
