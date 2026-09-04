@@ -128,7 +128,7 @@ def _write_source_policy(database: Any, policy: SourcePolicy, timestamp: str) ->
 
 
 def register_source(policy: SourcePolicy) -> None:
-    """Create or update one feed's written access and freshness rules."""
+
 
     with connection() as database:
         _write_source_policy(database, policy, _iso())
@@ -644,7 +644,7 @@ def _normalized_projection(
 
 
 def record_source_batch(batch: SourceBatch) -> str:
-    """Atomically record a raw fetch and every normalized row derived from it."""
+
 
     fetch = batch.fetch
     run_id = uuid.uuid4().hex
@@ -714,7 +714,7 @@ def record_source_batch(batch: SourceBatch) -> str:
 
 
 def record_source_fetch(fetch: SourceFetch) -> str:
-    """Backward-compatible wrapper for a fetch with no extra normalized rows."""
+
 
     return record_source_batch(SourceBatch(fetch=fetch))
 
@@ -837,7 +837,7 @@ def _source_health(
 
 
 def ingestion_status(as_of: datetime | None = None) -> dict[str, Any]:
-    """Return a small operational view without exposing stored source payloads."""
+
 
     checked_at = as_of or datetime.now(UTC)
     if checked_at.tzinfo is None:

@@ -1,4 +1,4 @@
-"""Runner Watch stock scanner."""
+
 
 from runner_watch.models import RunnerSnapshot, ScanSettings
 

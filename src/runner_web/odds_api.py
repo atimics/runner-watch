@@ -40,7 +40,7 @@ EVENT_START_TOLERANCE = timedelta(hours=2)
 
 
 class OddsApiError(RuntimeError):
-    """A safe error that never includes the API key."""
+
 
     def __init__(self, message: str, quota: Quota | None = None) -> None:
         super().__init__(message)
@@ -160,7 +160,7 @@ def _request_json(url: str) -> tuple[Any, Quota]:
         headers={"User-Agent": "RATi-Sports/0.1 https://sports.rati.chat"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=20) as response:
             body = response.read()
             quota = _quota_from_headers(response.headers)
     except urllib.error.HTTPError as exc:
@@ -268,7 +268,7 @@ def _select_bookmaker(
 def _fresh_moneylines(
     candidates: list[dict[str, Any]], observed_at: datetime | None = None
 ) -> list[dict[str, Any]]:
-    """Return quotes that are recent now and synchronized with one another."""
+
 
     reference = (observed_at or datetime.now(UTC)).astimezone(UTC)
     recent = [
@@ -432,7 +432,7 @@ def _team_key(value: Any) -> str:
 def apply_moneylines(
     events: list[dict[str, Any]], moneylines: tuple[dict[str, Any], ...]
 ) -> int:
-    """Attach each provider market to at most one scheduled event."""
+
 
     available = list(enumerate(moneylines))
     used_markets: set[int] = set()

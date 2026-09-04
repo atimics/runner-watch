@@ -67,7 +67,7 @@ class SourcePolicyLike(Protocol):
 
 
 def source_policy_warnings(policies: Iterable[SourcePolicyLike]) -> list[dict[str, Any]]:
-    """Expose enabled, unapproved collectors without silently changing behavior."""
+
 
     return [
         {
@@ -85,7 +85,7 @@ def source_policy_warnings(policies: Iterable[SourcePolicyLike]) -> list[dict[st
 def policy_manifest(
     source_policies: Iterable[SourcePolicyLike] = (),
 ) -> dict[str, Any]:
-    """Return the machine-readable policy contract used by docs and APIs."""
+
 
     evidence_gate = asdict(EVIDENCE_GATE)
     evidence_gate["families"] = list(EVIDENCE_GATE.families)

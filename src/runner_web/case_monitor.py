@@ -263,7 +263,7 @@ def _materialize_claims(
             SELECT * FROM sec_filings
             WHERE ticker IN ({placeholders}) AND created_at>=?
             ORDER BY filed_at
-            """,  # noqa: S608 - placeholders are generated from ticker count
+            """,
             (*tickers, cutoff),
         ).fetchall()
     ]
@@ -274,7 +274,7 @@ def _materialize_claims(
             SELECT * FROM market_events
             WHERE ticker IN ({placeholders}) AND first_collected_at>=?
             ORDER BY event_at,last_collected_at
-            """,  # noqa: S608 - placeholders are generated from ticker count
+            """,
             (*tickers, cutoff),
         ).fetchall()
     ]
@@ -290,7 +290,7 @@ def _materialize_claims(
             )
             SELECT * FROM ranked WHERE monitor_position<=2
             ORDER BY ticker,captured_at DESC
-            """,  # noqa: S608 - placeholders are generated from ticker count
+            """,
             tickers,
         ).fetchall()
     ]
@@ -303,7 +303,7 @@ def _materialize_claims(
             f"""
             SELECT * FROM evidence_claims
             WHERE ticker IN ({placeholders}) AND claim_type='news' AND occurred_at>=?
-            """,  # noqa: S608 - placeholders are generated from ticker count
+            """,
             (*tickers, cutoff),
         ).fetchall()
     ]

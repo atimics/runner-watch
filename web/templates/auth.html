@@ -46,7 +46,7 @@ function b64bytes(value) {
 function bytesB64(value) {
   const bytes = new Uint8Array(value); let text = '';
   bytes.forEach(byte => text += String.fromCharCode(byte));
-  return btoa(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return btoa(text).replace(/\+/g, '-').replace(/\
 }
 function prepareCreate(options) {
   options.challenge = b64bytes(options.challenge);

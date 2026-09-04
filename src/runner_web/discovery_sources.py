@@ -69,7 +69,7 @@ def bluesky_search_enabled() -> bool:
 
 
 def discovery_watchlist(limit: int = 30) -> list[dict[str, str]]:
-    """Build a watchlist: 10 Pulse leaders, 10 public Call leaders, then flex."""
+
 
     limit = max(1, min(limit, 100))
     with connection() as database:
@@ -150,7 +150,7 @@ def _download(url: str, timeout: float) -> tuple[bytes, str | None]:
         url,
         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read(), response.headers.get_content_type()
 
 

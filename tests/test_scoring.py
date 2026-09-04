@@ -14,7 +14,7 @@ def make_input(**overrides: float | None) -> ScoreInput:
         "stale_minutes": 2.0,
     }
     values.update(overrides)
-    return ScoreInput(**values)  # type: ignore[arg-type]
+    return ScoreInput(**values)
 
 
 def test_strong_unextended_move_is_ranked_early() -> None:

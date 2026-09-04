@@ -63,7 +63,7 @@ def create_call(
     entry_price: float,
     entry_at: str,
 ) -> dict[str, Any]:
-    """Create an immutable public Call using a server supplied market mark."""
+
 
     call_id = str(uuid.uuid4())
     timestamp = _iso()
@@ -182,7 +182,7 @@ def close_call(
     exit_price: float,
     exit_at: str,
 ) -> dict[str, Any] | None:
-    """Close a Call once. Entry and exit marks cannot be edited afterward."""
+
 
     timestamp = _iso()
     with connection() as db:
@@ -332,7 +332,7 @@ def call_stats(calls: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def caller_summary_for_user(user_id: str) -> dict[str, Any]:
-    """Return a small, stored-price performance summary for the account bar."""
+
 
     with connection() as database:
         identity = database.execute(

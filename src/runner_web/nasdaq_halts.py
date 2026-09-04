@@ -57,7 +57,7 @@ def _published_at(value: str) -> datetime | None:
 
 
 def parse_trade_halts(body: bytes) -> tuple[MarketEvent, ...]:
-    """Parse the Nasdaq RSS response without depending on its namespace prefix."""
+
 
     root = ET.fromstring(body)
     events: list[MarketEvent] = []
@@ -111,7 +111,7 @@ def _download(url: str, timeout: float) -> tuple[bytes, str | None]:
         url,
         headers={"User-Agent": USER_AGENT, "Accept": "application/rss+xml, application/xml"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         content_type = response.headers.get_content_type()
         return response.read(), content_type
 
@@ -121,7 +121,7 @@ def refresh_trade_halts(
     timeout: float = 10,
     download: Download = _download,
 ) -> dict[str, Any]:
-    """Fetch, archive, parse, and normalize the current Nasdaq halt feed."""
+
 
     started_at = datetime.now(UTC)
     try:

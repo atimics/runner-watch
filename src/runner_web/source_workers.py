@@ -41,7 +41,7 @@ def extended_us_session_is_open(value: datetime | None = None) -> bool:
 
 
 async def trading_halt_worker() -> None:
-    """Poll at Nasdaq's stated maximum rate while the extended session is open."""
+
 
     while True:
         if trade_halts_enabled() and extended_us_session_is_open():
@@ -50,13 +50,13 @@ async def trading_halt_worker() -> None:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                # The failed or partial fetch is already durable in ingestion_runs.
+
                 LOG.warning("Nasdaq halt refresh failed: %s", exc)
         await asyncio.sleep(60)
 
 
 async def discovery_source_worker() -> None:
-    """Rotate across 30 Pulse/Alpha symbols so each is searched about every 15 minutes."""
+
 
     await asyncio.sleep(25)
     cursor = 0
@@ -108,7 +108,7 @@ async def discovery_source_worker() -> None:
 
 
 async def apewisdom_source_worker() -> None:
-    """Refresh one aggregate Reddit trend response for the current 30-symbol watchlist."""
+
 
     await asyncio.sleep(15)
     while True:

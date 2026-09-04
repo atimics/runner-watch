@@ -14,7 +14,7 @@ def _enabled_by_default(name: str) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class SourcePolicy:
-    """Storage, display, and freshness rules for one outside feed."""
+
 
     source: str
     feed: str

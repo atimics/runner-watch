@@ -18,7 +18,7 @@ def _public(row: Any) -> dict[str, Any]:
 
 
 def ensure_caller_identity_with_database(database: Any, user_id: str) -> dict[str, Any]:
-    """Return the account's automatic anonymous Call identity."""
+
 
     if not database.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone():
         raise KeyError("Account not found")
@@ -62,7 +62,7 @@ def ensure_caller_identity_with_database(database: Any, user_id: str) -> dict[st
 
 
 def ensure_caller_identity(user_id: str) -> dict[str, Any]:
-    """Return one automatic anonymous identity without exposing a picker."""
+
 
     with connection() as database:
         return ensure_caller_identity_with_database(database, user_id)

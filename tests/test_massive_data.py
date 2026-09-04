@@ -21,7 +21,7 @@ from runner_watch.massive_data import (
 )
 from runner_watch.provider_contracts import Bar, DataKind, FetchBatch, ProviderRequest
 
-TODAY = date(2026, 8, 25)  # a Tuesday
+TODAY = date(2026, 8, 25)
 
 
 def _grouped_body(*symbols: str) -> bytes:
@@ -69,9 +69,9 @@ def test_rate_limiter_blocks_when_wait_is_too_long() -> None:
 
 
 def test_rate_limiter_recovers_after_refill() -> None:
-    limiter = RateLimiter(calls_per_minute=600)  # refill is fast
+    limiter = RateLimiter(calls_per_minute=600)
     limiter.acquire(max_wait_seconds=0.0)
-    limiter.acquire(max_wait_seconds=5.0)  # should not raise
+    limiter.acquire(max_wait_seconds=5.0)
 
 
 def test_client_sends_api_key_and_parses_results(monkeypatch: MonkeyPatch) -> None:
@@ -162,7 +162,7 @@ def test_cache_stores_and_reads_bars(tmp_path: Path) -> None:
         bars = cache.bars_for({"AAA"})
         assert list(bars) == ["AAA"]
         assert bars["AAA"][0][1]["close"] == 1.25
-        # OTC rows must not be stored.
+
         assert "OTCX" not in cache.bars_for({"OTCX"})
 
 
@@ -171,7 +171,7 @@ def test_cache_prunes_old_sessions(tmp_path: Path) -> None:
         old = TODAY - timedelta(days=800)
         cache.store_date(old, [{"T": "AAA", "c": 1.0}])
         removed = cache.prune_before(TODAY - timedelta(days=730))
-        assert removed >= 2  # one fetched_dates row plus one daily_bars row
+        assert removed >= 2
         assert old not in cache.fetched_dates()
 
 
@@ -197,7 +197,7 @@ def test_adapter_serves_daily_bars_from_cache_without_api_calls(
 ) -> None:
     adapter, cache, sessions = _adapter_with_warm_cache(tmp_path, {"AAA", "BBB"})
 
-    def fail(*args, **kwargs):  # pragma: no cover - must not be reached
+    def fail(*args, **kwargs):
         raise AssertionError("cache was warm; no API call expected")
 
     monkeypatch.setattr(adapter.client, "grouped_daily", fail)
@@ -254,7 +254,7 @@ def test_adapter_reports_partial_when_symbol_is_missing(tmp_path: Path) -> None:
 
 
 def test_shared_call_slot_spreads_two_clients(tmp_path: Path) -> None:
-    """Two processes sharing one cache cannot call back-to-back."""
+
     cache = MassiveDailyCache(tmp_path / "cache.sqlite3")
     cache.acquire_call_slot(min_interval_seconds=1.0, max_wait_seconds=0.0)
     with pytest.raises(massive_data.MassiveRateLimitError):
@@ -298,7 +298,7 @@ def test_client_gives_up_after_persistent_429(monkeypatch: MonkeyPatch) -> None:
 
 
 def test_client_treats_market_holiday_as_empty_session(monkeypatch: MonkeyPatch) -> None:
-    """Massive returns status OK with null results on market holidays."""
+
 
     def fake_urlopen(request, timeout=None):
         return _FakeResponse(json.dumps({"status": "OK", "results": None}).encode())
@@ -323,7 +323,7 @@ def test_backfill_daily_cache_continues_past_holidays(tmp_path: Path) -> None:
 
     class HolidayAwareClient(MassiveClient):
         def grouped_daily(self, session: date):
-            if session.weekday() == 0:  # pretend every Monday is a holiday
+            if session.weekday() == 0:
                 return []
             return [{"T": "AAA", "c": 1.0}]
 
@@ -486,7 +486,7 @@ def test_routed_intraday_stays_on_yahoo_when_massive_is_configured(
     raw = pd.DataFrame({"Close": [1.0, 1.1], "Volume": [100, 120]}, index=index)
     monkeypatch.setattr(market_data.yf, "download", lambda **kwargs: raw)
 
-    def surprise_fetch(request, progress=None):  # pragma: no cover - must not be reached
+    def surprise_fetch(request, progress=None):
         raise AssertionError("massive must not be consulted for intraday bars")
 
     class GuardMassive:
@@ -535,9 +535,9 @@ def test_routed_daily_falls_back_to_yahoo_when_massive_errors(
 
 
 def test_session_dates_exclude_today_and_weekends() -> None:
-    # TODAY is Tuesday 2026-08-25; Monday and Friday must appear, Sunday not.
+
     sessions = _session_dates("5d", TODAY)
-    assert sessions  # 5 calendar days back includes Friday + Monday
+    assert sessions
     assert TODAY not in sessions
     assert all(session.weekday() < 5 for session in sessions)
-    assert max(sessions) == TODAY - timedelta(days=1)  # Monday
+    assert max(sessions) == TODAY - timedelta(days=1)

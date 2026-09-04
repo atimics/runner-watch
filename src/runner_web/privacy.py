@@ -60,7 +60,7 @@ def _public_passkeys(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def export_user_data(user_id: str) -> dict[str, Any]:
-    """Return a portable copy without authentication secrets or session hashes."""
+
 
     with connection() as database:
         tables = _tables(database)
@@ -243,7 +243,7 @@ def export_user_data(user_id: str) -> dict[str, Any]:
 
 
 def purge_passive_tracking() -> dict[str, int]:
-    """Delete passive behavioural profiles; the product no longer writes them."""
+
 
     deleted: dict[str, int] = {}
     with connection() as database:
@@ -256,7 +256,7 @@ def purge_passive_tracking() -> dict[str, int]:
 
 
 def prune_personal_data(at: datetime | None = None) -> dict[str, int]:
-    """Apply the short technical retention periods defined in the privacy notice."""
+
 
     timestamp = at or datetime.now(UTC)
     deleted = purge_passive_tracking()
@@ -285,7 +285,7 @@ def prune_personal_data(at: datetime | None = None) -> dict[str, int]:
 
 
 def delete_user_data(user_id: str) -> dict[str, Any]:
-    """Delete one account and all local data that can identify or describe it."""
+
 
     with connection() as database:
         tables = _tables(database)
@@ -299,7 +299,7 @@ def delete_user_data(user_id: str) -> dict[str, Any]:
             if table in tables:
                 database.execute(f"DELETE FROM {table} WHERE {where}", parameters)
 
-        # Remove dependent records before older foreign keys that do not cascade.
+
         delete("flash_report_requests", "user_id=?", (user_id,))
         delete(
             "flash_evaluation_events",

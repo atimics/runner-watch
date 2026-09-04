@@ -358,7 +358,7 @@ def validate_sports_ai_forecast(
     value: Any,
     evidence: dict[str, Any],
 ) -> dict[str, Any]:
-    """Normalize one independent, pregame AI winner forecast."""
+
 
     if not isinstance(value, dict):
         raise ValueError("sports forecast is missing")
@@ -446,7 +446,7 @@ def _fetch_league_range(
     started = datetime.now(UTC)
     request = urllib.request.Request(locator)
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=20) as response:
             body = response.read()
         payload = json.loads(body)
         events = [
@@ -530,7 +530,7 @@ def fetch_league_history_chunk(
     league: str,
     at: datetime | None = None,
 ) -> list[dict[str, Any]]:
-    """Fetch one older scoreboard chunk so Alpha fills without a request storm."""
+
 
     current = (at or datetime.now(UTC)).astimezone(UTC)
     cursor = _history_cursor(league, current)
@@ -583,7 +583,7 @@ def normalize_news_articles(
     payload: dict[str, Any],
     collected_at: datetime | None = None,
 ) -> list[dict[str, Any]]:
-    """Match recent headlines to exact games first, then fall back to source team IDs."""
+
 
     current = collected_at or datetime.now(UTC)
     promoted = [event for event in events if predict_event(event).get("signal") in PROMOTED_SIGNALS]
@@ -671,7 +671,7 @@ def fetch_league_news(
     started = datetime.now(UTC)
     request = urllib.request.Request(locator, headers={"Accept": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=20) as response:
             body = response.read()
         payload = json.loads(body)
         articles = normalize_news_articles(events, payload, at or datetime.now(UTC))
@@ -717,7 +717,7 @@ def store_news_articles(
             placeholders = ",".join("?" for _ in event_ids)
             database.execute(
                 f"DELETE FROM sports_news_articles "
-                f"WHERE provider=? AND event_id IN ({placeholders})",  # noqa: S608
+                f"WHERE provider=? AND event_id IN ({placeholders})",
                 (SOURCE, *event_ids),
             )
         for article in articles:
@@ -759,7 +759,7 @@ def _summary_url(event: dict[str, Any]) -> str:
 def normalize_player_appearances(
     event: dict[str, Any], payload: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    """Normalize one completed box score into one row per player appearance."""
+
 
     home_score = _number(event["home"].get("score"))
     away_score = _number(event["away"].get("score"))
@@ -824,7 +824,7 @@ def fetch_player_appearances(event: dict[str, Any]) -> list[dict[str, Any]]:
     started = datetime.now(UTC)
     request = urllib.request.Request(locator)
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=20) as response:
             body = response.read()
         payload = json.loads(body)
         appearances = normalize_player_appearances(event, payload)
@@ -911,7 +911,7 @@ def _mark_player_boxscore_checked(event_id: str) -> None:
 def collect_player_appearances(
     events: list[dict[str, Any]], max_events: int = 12
 ) -> dict[str, int]:
-    """Backfill completed events once; later refreshes reuse the stored box score."""
+
 
     candidates = [event for event in events if event.get("completed")]
     if not candidates:
@@ -923,7 +923,7 @@ def collect_player_appearances(
                 """
                 SELECT DISTINCT event_id FROM sports_player_appearances
                 WHERE event_id IN ({})
-                """.format(",".join("?" for _ in candidates)),  # noqa: S608
+                """.format(",".join("?" for _ in candidates)),
                 tuple(str(event["id"]) for event in candidates),
             ).fetchall()
         }
@@ -945,7 +945,7 @@ def collect_stored_player_appearances(
     league: str,
     max_events: int = 3,
 ) -> dict[str, int]:
-    """Fill the newest missing completed box scores from stored Alpha history."""
+
 
     with connection() as database:
         rows = database.execute(
@@ -1003,7 +1003,7 @@ def _input_hash(event: dict[str, Any], prediction: dict[str, Any]) -> str:
 
 
 def _apply_cached_moneylines(events: list[dict[str, Any]]) -> int:
-    """Use a recent paid snapshot between scheduled API refreshes."""
+
 
     applied = 0
     with connection() as database:
@@ -1300,7 +1300,7 @@ def settle_picks() -> int:
 
 
 def settle_sports_ai_forecasts() -> int:
-    """Score frozen AI probabilities after the matching game becomes final."""
+
 
     timestamp = _iso()
     settled = 0
@@ -1516,7 +1516,7 @@ def _latest_bookmaker_rows(database: Any, event_ids: list[str]) -> list[Any]:
             WHERE event_id IN ({placeholders}) AND provider=?
         ) latest
         WHERE latest_rank=1
-        """,  # noqa: S608 - placeholders are generated, not user input
+        """,
         (*event_ids, ODDS_PROVIDER),
     ).fetchall()
 
@@ -1617,7 +1617,7 @@ def _paper_moneyline(
     *,
     has_bookmaker_rows: bool,
 ) -> dict[str, Any] | None:
-    """Choose a recent line for a paper Call, preferring Bovada when present."""
+
 
     bovada = comparison.get("bovada")
     if bovada:
@@ -1654,7 +1654,7 @@ def _pregame_prediction(
     event_id: str,
     start_time: str,
 ) -> dict[str, Any] | None:
-    """Return the last forecast that existed before the game started."""
+
 
     row = database.execute(
         """
@@ -1802,7 +1802,7 @@ def _edge_sparkline(
     event: dict[str, Any],
     prediction: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    """Build a small, fixed-scale history for the latest preferred side."""
+
 
     if not prediction or prediction.get("edge") is None or not _preferred_side(prediction):
         return None
@@ -1848,7 +1848,7 @@ def _edge_sparkline_from_rows(
     if not points:
         return None
 
-    # A fixed +/-12 point scale keeps small moves from looking dramatic.
+
     chart_width = 92.0
     chart_midline = 12.0
     chart_range = 9.0
@@ -1891,7 +1891,7 @@ def _edge_sparkline_from_rows(
 
 
 def _event_attention(event: dict[str, Any]) -> dict[str, Any]:
-    """Turn a stored prediction into the compact, ranked Sports Pulse contract."""
+
 
     prediction = event.get("prediction") or {}
     odds = event.get("odds") or {}
@@ -2038,7 +2038,7 @@ def _event_row(database: Any, row: Any) -> dict[str, Any]:
 
 
 def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
-    """Build slate rows with a fixed number of database queries."""
+
 
     events = [dict(row) for row in rows]
     event_ids = [str(event["id"]) for event in events]
@@ -2057,7 +2057,7 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
             WHERE event_id IN ({placeholders})
         ) latest
         WHERE latest_rank=1
-        """,  # noqa: S608 - placeholders are generated, not user input
+        """,
         parameters,
     ).fetchall()
     odds_by_event: dict[str, dict[str, Any]] = {}
@@ -2094,7 +2094,7 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
         SELECT * FROM ranked
         WHERE history_rank<=24
         ORDER BY event_id,observed_at DESC,id DESC
-        """,  # noqa: S608 - placeholders are generated, not user input
+        """,
         parameters,
     ).fetchall()
     prediction_history: dict[str, list[Any]] = defaultdict(list)
@@ -2117,7 +2117,7 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
             WHERE event_id IN ({placeholders})
         ) latest
         WHERE latest_rank=1
-        """,  # noqa: S608 - placeholders are generated, not user input
+        """,
         parameters,
     ).fetchall()
     news_by_event: dict[str, tuple[int, dict[str, Any]]] = {}
@@ -2131,7 +2131,7 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
         f"""
         SELECT DISTINCT event_id FROM sports_predictions
         WHERE event_id IN ({placeholders}) AND signal IN ('lean','watch')
-        """,  # noqa: S608 - placeholders are generated, not user input
+        """,
         parameters,
     ).fetchall()
     promoted_ids = {str(row["event_id"]) for row in promoted_rows}
@@ -2184,7 +2184,7 @@ def sports_slate(league: str = "all", limit: int = 80) -> dict[str, Any]:
             WHERE start_time>=? AND start_time<=?{league_filter}
             ORDER BY CASE status WHEN 'in' THEN 0 WHEN 'pre' THEN 1 ELSE 2 END,
                      start_time,id LIMIT ?
-            """,  # noqa: S608 - filter is a fixed internal fragment
+            """,
             tuple(parameters),
         ).fetchall()
         events = _event_rows(database, rows)
@@ -2237,9 +2237,9 @@ def _group_sports_series(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def sports_pulse(league: str = "all", view: str = "signals", limit: int = 30) -> dict[str, Any]:
-    """Return promoted signals ranked first, with repeated series kept together."""
 
-    _ = view  # Keep the old query parameter harmless while the slate view is hidden.
+
+    _ = view
     payload = sports_slate(league, limit=200)
     available = [event for event in payload["events"] if str(event.get("status")) in {"pre", "in"}]
     signals = [
@@ -2271,7 +2271,7 @@ def sports_pulse(league: str = "all", view: str = "signals", limit: int = 30) ->
 
 
 def sports_radar(league: str = "all", limit: int = 40) -> dict[str, Any]:
-    """Return live games and material changes attached to promoted Pulse signals."""
+
 
     payload = sports_slate(league, limit=200)
     changes: list[dict[str, Any]] = []
@@ -2502,7 +2502,7 @@ def _build_model_alpha(league: str) -> dict[str, Any]:
               AND e.start_time>=?
               AND e.season_type NOT IN ('preseason','pre-season'){league_filter}
             ORDER BY e.start_time,e.id
-            """,  # noqa: S608 - filter is a fixed internal fragment
+            """,
             tuple(parameters),
         ).fetchall()
 
@@ -2693,7 +2693,7 @@ def _build_model_alpha(league: str) -> dict[str, Any]:
 
 
 def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
-    """Rank team and player results and keep the underlying rate history visible."""
+
 
     selected_league = league if league in LEAGUES else "all"
     result_limit = max(1, min(limit, 100))
@@ -2713,7 +2713,7 @@ def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
             WHERE start_time>=?
               AND season_type NOT IN ('preseason','pre-season'){league_filter}
             ORDER BY start_time,id
-            """,  # noqa: S608 - filter is a fixed internal fragment
+            """,
             tuple(history_parameters),
         ).fetchall()
         coverage_row = database.execute(
@@ -2725,7 +2725,7 @@ def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
                    MAX(last_collected_at) AS updated_at
             FROM sports_events
             WHERE season_type NOT IN ('preseason','pre-season'){league_filter}
-            """,  # noqa: S608 - filter is a fixed internal fragment
+            """,
             coverage_parameters,
         ).fetchone()
         player_rows = database.execute(
@@ -2764,7 +2764,7 @@ def sports_alpha(league: str = "all", limit: int = 24) -> dict[str, Any]:
             SELECT * FROM ranked_history
             WHERE history_rank<=?
             ORDER BY start_time,event_id,player_id
-            """,  # noqa: S608 - filter is a fixed internal fragment
+            """,
             (*history_parameters, result_limit, *history_parameters, ALPHA_HISTORY_POINTS),
         ).fetchall()
 
@@ -3009,7 +3009,7 @@ def _series_context(database: Any, event: dict[str, Any]) -> dict[str, Any]:
           AND ((home_team_id=? AND away_team_id=?)
             OR (home_team_id=? AND away_team_id=?))
         ORDER BY start_time DESC,id DESC LIMIT 5
-        """,  # noqa: S608 - selected columns are fixed above
+        """,
         (event["league"], event["start_time"], home_id, away_id, away_id, home_id),
     ).fetchall()
     previous_meetings = [_history_game(row) for row in previous_rows]
@@ -3039,7 +3039,7 @@ def _series_context(database: Any, event: dict[str, Any]) -> dict[str, Any]:
           AND ((home_team_id=? AND away_team_id=?)
             OR (home_team_id=? AND away_team_id=?))
         ORDER BY start_time,id
-        """,  # noqa: S608 - selected columns are fixed above
+        """,
         (
             event["league"],
             _iso(start - SERIES_WINDOW),
@@ -3149,7 +3149,7 @@ def _player_stats(stats_json: Any) -> tuple[dict[str, Any], str]:
 
 
 def _matchup_player_context(database: Any, event: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return only players tied to the latest stored roster for this matchup."""
+
 
     team_ids = [str(event["away_team_id"]), str(event["home_team_id"])]
     roster_events = database.execute(
@@ -3180,7 +3180,7 @@ def _matchup_player_context(database: Any, event: dict[str, Any]) -> list[dict[s
         SELECT * FROM sports_player_appearances
         WHERE event_id IN ({placeholders})
         ORDER BY starter DESC,player_name,player_id
-        """,  # noqa: S608 - placeholders are generated above
+        """,
         tuple(roster_event_ids),
     ).fetchall()
     roster = [dict(row) for row in roster_rows]
@@ -3198,7 +3198,7 @@ def _matchup_player_context(database: Any, event: dict[str, Any]) -> list[dict[s
         WHERE a.league=? AND e.start_time>=? AND e.start_time<?
           AND a.player_id IN ({player_placeholders})
         ORDER BY e.start_time,a.event_id
-        """,  # noqa: S608 - placeholders are generated above
+        """,
         (event["league"], cutoff, event["start_time"], *player_ids),
     ).fetchall()
     outcomes: dict[tuple[str, str], list[tuple[str, bool]]] = defaultdict(list)
@@ -3320,7 +3320,7 @@ def sports_event(event_id: str) -> dict[str, Any] | None:
 
 
 def sports_flash_evidence(event_id: str) -> tuple[str, dict[str, Any]]:
-    """Build a source-bound Flash snapshot for one game, never a global player list."""
+
 
     event = sports_event(event_id)
     if not event:
@@ -3460,7 +3460,7 @@ def record_sports_ai_forecast(
     resolved_model: str,
     observed_at: str,
 ) -> dict[str, Any]:
-    """Store one immutable model forecast before the game starts."""
+
 
     try:
         predicted_at = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
@@ -3520,7 +3520,7 @@ def record_sports_ai_forecast(
 
 
 def sports_ai_tournament(league: str = "all") -> dict[str, Any]:
-    """Return four durable model slots and scored pregame forecast records."""
+
 
     selected_league = league if league in LEAGUES else "all"
     league_filter = " WHERE league=?" if selected_league in LEAGUES else ""
@@ -3537,7 +3537,7 @@ def sports_ai_tournament(league: str = "all") -> dict[str, Any]:
             ) ranked
             WHERE final_rank=1
             ORDER BY observed_at,id
-            """,  # noqa: S608 - filter is a fixed internal fragment
+            """,
             parameters,
         ).fetchall()
 
@@ -3829,7 +3829,7 @@ def _sports_alpha_item(
 
 
 def sports_alpha_board(league: str = "all", limit: int = 50) -> dict[str, Any]:
-    """Build public paper-Call activity for the Sports Alpha screen."""
+
 
     selected_league = league if league in LEAGUES else "all"
     parameters: list[Any] = []
@@ -3876,7 +3876,7 @@ def sports_alpha_board(league: str = "all", limit: int = 50) -> dict[str, Any]:
               ON opening.event_id=e.id AND opening.opening_rank=1
             WHERE 1=1{league_filter}
             ORDER BY p.updated_at DESC,p.id DESC LIMIT ?
-            """,  # noqa: S608 - filter is a fixed internal fragment
+            """,
             tuple(parameters),
         ).fetchall()
 

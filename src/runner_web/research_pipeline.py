@@ -181,7 +181,7 @@ def run_verified_pipeline(
     context: dict[str, Any],
     call_stage: StageCall,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Run independent research roles, then a critic and source-bound synthesis."""
+
 
     catalog, approved_refs, approved_urls = _catalog(context)
     common = {

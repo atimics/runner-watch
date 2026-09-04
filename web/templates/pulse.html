@@ -194,7 +194,7 @@ async function pollForUpdates() {
       if (pollCount % 6 === 0) TickerRow.loadCharts(chartsUrl);
     }
   } catch (_) {
-    // Keep the current feed when a background refresh fails.
+
   } finally {
     polling = false;
   }

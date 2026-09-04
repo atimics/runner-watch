@@ -119,7 +119,7 @@ def worker_health(
 
 
 def readiness_status(*, checked_at: datetime | None = None) -> dict[str, Any]:
-    """Report whether this web process can safely receive user traffic."""
+
 
     checked_at = checked_at or datetime.now(UTC)
     expected_schema_version = MIGRATIONS[-1].version if MIGRATIONS else 0
@@ -189,7 +189,7 @@ def health_status(*, checked_at: datetime | None = None) -> dict[str, Any]:
 def runtime_capabilities(
     worker_tasks: list[Any] | None = None,
 ) -> dict[str, Any]:
-    """Describe the deployment from live state and the shared product policy."""
+
 
     ingestion = ingestion_status()
     source_rows = ingestion["sources"]

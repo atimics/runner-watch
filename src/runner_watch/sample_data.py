@@ -13,7 +13,7 @@ SAMPLE_SYMBOLS = ["SPRK", "VOLT", "NOVA", "PULSE", "LIFT", "CALM", "DUSK", "TIDE
 
 
 class SampleMarketData:
-    """Deterministic market-shaped data for demos and tests."""
+
 
     is_sample = True
 

@@ -217,7 +217,7 @@ RATE_LIMIT_HASH_KEY_VALUE = os.getenv("RATE_LIMIT_HASH_KEY", "").strip()
 
 
 def _rate_limit_hash_key(value: str) -> bytes:
-    """Normalize operator-provided text to a valid BLAKE2 key."""
+
 
     return hashlib.sha256(value.encode()).digest() if value else secrets.token_bytes(32)
 
@@ -330,8 +330,8 @@ CHART_TOPIC_POLICY = TopicPolicy(
     maximum_stale_seconds=15 * 60,
     keep_last_good=True,
 )
-# Chart points already live in market_bars. Persisting the derived cache wrote one
-# SQLite transaction per ticker on every refresh, which is very slow on a Fly volume.
+
+
 MARKET_TOPICS = TopicHub()
 
 
@@ -546,7 +546,7 @@ async def lifespan(application: FastAPI):
 
 
 async def run_worker() -> None:
-    """Run background jobs without starting an HTTP server."""
+
 
     validate_runtime_configuration()
     init_db()
@@ -608,7 +608,7 @@ def _delete_batched(
     batch_size: int = 5_000,
     maximum_batches: int = 20,
 ) -> int:
-    """Delete a bounded number of old rows and commit between small batches."""
+
 
     keys = ",".join(key_columns)
     target = key_columns[0] if len(key_columns) == 1 else f"({keys})"
@@ -619,7 +619,7 @@ def _delete_batched(
             DELETE FROM {table} WHERE {target} IN (
                 SELECT {keys} FROM {table} WHERE {where_sql} LIMIT ?
             )
-            """,  # noqa: S608 - all identifiers and predicates are internal constants
+            """,
             (*parameters, batch_size),
         )
         count = max(0, result.rowcount)
@@ -631,7 +631,7 @@ def _delete_batched(
 
 
 def prune_storage() -> None:
-    """Keep raw rows bounded while preserving compact model and entry records."""
+
 
     with connection() as db:
         previous = db.execute(
@@ -737,7 +737,7 @@ def _origin_host(origin: str) -> str:
 
 
 def _request_host(request: Request) -> str:
-    """Return a known public host, including the Cloudflare edge host."""
+
     direct_host = (request.url.hostname or "").lower()
     forwarded_host = request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip()
     forwarded_host = forwarded_host.split(":", 1)[0].lower()
@@ -1005,11 +1005,11 @@ async def scan_collection_worker() -> None:
 
 
 async def massive_backfill_worker() -> None:
-    """Keep the Massive grouped daily cache warm.
 
-    Each pass fetches at most MASSIVE_BACKFILL_CALLS uncached sessions, so the
-    cache self-heals after a deploy and stays quiet once warm.
-    """
+
+
+
+
     await asyncio.sleep(90)
     while True:
         try:
@@ -1127,7 +1127,7 @@ def api_flash_record(request: Request) -> dict[str, Any]:
 
 @app.get("/api/smoke/screens")
 def live_screen_manifest(request: Request) -> JSONResponse:
-    """Expose only public paths used by the production browser smoke test."""
+
 
     enforce_rate(request, "screen-manifest", limit=30, seconds=60)
     with connection() as database:
@@ -2369,7 +2369,7 @@ def _attach_sports_forecast_result(
 
 
 def _release_expired_daily_reports(database: Any, *, at: datetime | None = None) -> int:
-    """Share completed daily reports when their private alpha hour ends."""
+
 
     timestamp = iso(at)
     updated = database.execute(
@@ -2390,7 +2390,7 @@ def daily_report_for_ticker(
     ticker: str,
     viewer_user_id: str | None = None,
 ) -> dict[str, Any] | None:
-    """Return today's shared report or a safe description of its active lock."""
+
 
     report_day = now().date().isoformat()
     with connection() as database:
@@ -2749,7 +2749,7 @@ def _alpha_evidence(ticker: str, engagement_count: int) -> tuple[str, dict[str, 
 
 
 class ReportGenerationFailure(HTTPException):
-    """A user-safe report failure with provider metadata but no report content."""
+
 
     def __init__(
         self,
@@ -2768,7 +2768,7 @@ def _openrouter_diagnostics(
     message: Any = None,
     content: Any = None,
 ) -> dict[str, Any]:
-    """Keep enough response metadata to debug failures without storing model output."""
+
 
     payload = result if isinstance(result, dict) else {}
     selected = choice if isinstance(choice, dict) else {}
@@ -2845,14 +2845,14 @@ def _openrouter_report_json(content: Any) -> dict[str, Any]:
             try:
                 return _openrouter_report_json(nested)
             except (TypeError, ValueError, json.JSONDecodeError):
-                # Some OpenRouter models put plain prose in `answer`. The
-                # normalizer can still turn that into a useful report.
+
+
                 break
     return parsed
 
 
 def _openrouter_comment_text(content: Any) -> str:
-    """Read a short comment from OpenRouter's supported response shapes."""
+
 
     def unwrap(value: Any, depth: int = 0) -> str:
         if depth > 5:
@@ -2934,7 +2934,7 @@ def _normalize_openrouter_report(
     raw_report: dict[str, Any],
     evidence: dict[str, Any],
 ) -> tuple[dict[str, Any], list[str]]:
-    """Fill optional report fields while preserving the model's usable thesis."""
+
 
     normalized_fields: list[str] = []
     headline = _report_text(raw_report.get("headline"))
@@ -3028,7 +3028,7 @@ def _sports_report_items(value: Any) -> list[str]:
 def _sports_report_numeric_claims_are_frozen(
     raw_report: dict[str, Any], evidence: dict[str, Any]
 ) -> bool:
-    """Reject probabilities and moneylines that are not in the frozen game evidence."""
+
 
     copy_parts: list[str] = []
     for field in (
@@ -3094,7 +3094,7 @@ def _sports_report_numeric_claims_are_frozen(
 def _normalize_sports_openrouter_report(
     raw_report: dict[str, Any], evidence: dict[str, Any]
 ) -> tuple[dict[str, Any], list[str]]:
-    """Map the sports-only contract into the shared report storage fields."""
+
 
     normalized_fields: list[str] = []
     model_summary = _report_text(raw_report.get("model_summary"))
@@ -3350,7 +3350,7 @@ def _generate_openrouter_report(
     try:
         with urllib.request.urlopen(
             api_request, timeout=OPENROUTER_RESEARCH_TIMEOUT_SECONDS
-        ) as response:  # noqa: S310
+        ) as response:
             result = json.load(response)
     except urllib.error.HTTPError as exc:
         if exc.code in {401, 403}:
@@ -3583,7 +3583,7 @@ def _create_research_commission(
     actor: AIKol = FLASH,
     case_id: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    """Create one credit-backed daily report and private alpha lock."""
+
 
     current_time = now()
     timestamp = iso(current_time)
@@ -3771,7 +3771,7 @@ def _generate_openai_stage(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(api_request, timeout=75) as response:  # noqa: S310
+        with urllib.request.urlopen(api_request, timeout=75) as response:
             result = json.load(response)
         output = _responses_output_json(result)
     except urllib.error.HTTPError as exc:
@@ -4176,7 +4176,7 @@ def _commission_research(
     *,
     actor: AIKol = FLASH,
 ) -> dict[str, Any]:
-    """Run a commission inline for internal callers and focused tests."""
+
 
     commission, created = _create_research_commission(user_id, ticker, actor=actor)
     if not created:
@@ -4185,7 +4185,7 @@ def _commission_research(
 
 
 def _fail_orphaned_research_jobs() -> None:
-    """Release in-memory research jobs interrupted by a server restart."""
+
 
     timestamp = iso()
     with connection() as db:
@@ -4211,7 +4211,7 @@ def _fail_orphaned_research_jobs() -> None:
 
 
 async def research_job_worker() -> None:
-    """Finish commissioned reports independently of the browser request."""
+
 
     if redis_configured():
         while True:
@@ -4401,7 +4401,7 @@ def _generate_alpha_report(evidence: dict[str, Any]) -> dict[str, Any]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(api_request, timeout=45) as response:  # noqa: S310
+        with urllib.request.urlopen(api_request, timeout=45) as response:
             result = json.load(response)
     except urllib.error.HTTPError as exc:
         message = exc.read(1000).decode(errors="replace")
@@ -5241,7 +5241,7 @@ def _chart_topic(ticker: str) -> str:
 
 
 def _pulse_entry_markers(tickers: list[str]) -> dict[str, dict[str, Any]]:
-    """Return materialized Pulse entry events inside the chart window."""
+
 
     requested = list(dict.fromkeys(str(ticker).upper() for ticker in tickers))[:50]
     if not requested:
@@ -5254,7 +5254,7 @@ def _pulse_entry_markers(tickers: list[str]) -> dict[str, dict[str, Any]]:
             SELECT ticker,entered_at,price FROM pulse_entries
             WHERE ticker IN ({placeholders}) AND entered_at>=?
             ORDER BY entered_at
-            """,  # noqa: S608 - placeholders are generated above
+            """,
             (*requested, cutoff),
         ).fetchall()
     entries: dict[str, dict[str, Any]] = {}
@@ -5433,7 +5433,7 @@ def _ticker_charts_payload_uncached(requested: list[str]) -> dict[str, Any]:
 
 
 def _compact_list_chart_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Keep the richer internal chart contract while sending small list sparklines."""
+
 
     return {
         **payload,
@@ -5727,7 +5727,7 @@ def _ticker_summary(ticker: str) -> dict[str, Any] | None:
 
 
 def _radar_market_summaries(tickers: list[str]) -> dict[str, dict[str, Any]]:
-    """Load the small amount of ticker context Radar actually renders."""
+
 
     requested = list(dict.fromkeys(str(ticker).upper() for ticker in tickers))[:40]
     if not requested:
@@ -5803,7 +5803,7 @@ def _radar_social_summaries(tickers: list[str]) -> dict[str, dict[str, Any]]:
             FROM ticker_comments
             WHERE ticker IN ({placeholders}) AND status='public' AND created_at>=?
             GROUP BY ticker
-            """,  # noqa: S608 - placeholders are generated above
+            """,
             (*requested, cutoff),
         ).fetchall()
         calls = db.execute(
@@ -5812,7 +5812,7 @@ def _radar_social_summaries(tickers: list[str]) -> dict[str, dict[str, Any]]:
             FROM community_calls
             WHERE ticker IN ({placeholders}) AND status='active'
             GROUP BY ticker
-            """,  # noqa: S608 - placeholders are generated above
+            """,
             requested,
         ).fetchall()
     output = {
@@ -6092,7 +6092,7 @@ def radar_data() -> list[dict[str, Any]]:
 
 
 async def request_cache_warmer() -> None:
-    """Fill request caches shortly after startup without delaying health checks."""
+
 
     await asyncio.sleep(1)
     builders: list[Callable[[], Any]] = [
@@ -6217,7 +6217,7 @@ def _public_comment(row: Any, current_user_id: str | None = None) -> dict[str, A
 
 
 def alpha_comments_data(*, limit: int = 50) -> list[dict[str, Any]]:
-    """Return the newest public ticker comments as one simple stream."""
+
 
     bounded_limit = min(100, max(1, limit))
     with connection() as db:
@@ -6397,7 +6397,7 @@ def _generate_ticker_comment_text(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(api_request, timeout=30) as response:  # noqa: S310
+        with urllib.request.urlopen(api_request, timeout=30) as response:
             result = json.load(response)
         content = result["choices"][0]["message"]["content"]
         comment = _openrouter_comment_text(content)
@@ -6538,7 +6538,7 @@ def delete_ticker_comment(
 
 
 def _current_call_mark(ticker: str) -> tuple[float, str]:
-    """Return the server's current market mark and its observed time."""
+
 
     detail = ticker_detail_data(ticker)
     current = detail.get("current", {}).get("price") if detail else None
@@ -6872,7 +6872,7 @@ def intelligence_api() -> JSONResponse:
 
 @app.get("/auth/openrouter/callback")
 def legacy_openrouter_callback() -> RedirectResponse:
-    """Old bookmarked callbacks no longer expose a consumer-key setup screen."""
+
 
     return RedirectResponse("/", 303)
 
@@ -7138,7 +7138,7 @@ def recent_sec_catalysts(tickers: list[str]) -> dict[str, dict[str, Any]]:
                    beneficial_ownership_pct FROM sec_filings
             WHERE ticker IN ({placeholders}) AND created_at>?
             ORDER BY filed_at DESC
-            """,  # noqa: S608
+            """,
             (*unique, iso(now() - timedelta(days=3))),
         ).fetchall()
     output: dict[str, dict[str, Any]] = {}
@@ -7160,7 +7160,7 @@ def recent_sec_risks(tickers: list[str]) -> dict[str, dict[str, Any]]:
             FROM sec_filings
             WHERE ticker IN ({placeholders}) AND sentiment='risk' AND created_at>?
             ORDER BY score DESC,filed_at DESC
-            """,  # noqa: S608
+            """,
             (*unique, iso(now() - timedelta(days=180))),
         ).fetchall()
     output: dict[str, dict[str, Any]] = {}
@@ -7183,7 +7183,7 @@ def _stored_market_risk_contexts(database: Any, tickers: list[str]) -> dict[str,
                   'trading_halt','reverse_split','corporate_action','security_action'
               )
         ORDER BY event_at DESC,last_collected_at DESC
-        """,  # noqa: S608
+        """,
         (*unique, iso(now() - timedelta(days=370))),
     ).fetchall()
     output = {ticker: {"active_halt": False, "reverse_split_count_1y": 0} for ticker in unique}
@@ -7236,7 +7236,7 @@ def _previous_trade_states(database: Any, tickers: list[str]) -> dict[str, str]:
                    LIMIT 1
                ) AS trade_state
         FROM requested
-        """,  # noqa: S608
+        """,
         unique,
     ).fetchall()
     return {
@@ -7251,7 +7251,7 @@ def _record_pulse_entries_for_run(
     scan_run_id: str,
     captured_at: str,
 ) -> int:
-    """Materialize entry events once, while the scan transaction is still open."""
+
 
     previous = database.execute(
         """

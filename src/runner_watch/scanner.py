@@ -137,7 +137,7 @@ def analyze_ticker(
     intraday: pd.DataFrame,
     now: datetime | None = None,
 ) -> RunnerSnapshot | None:
-    """Turn recent bars into one ranked snapshot."""
+
 
     if intraday.empty:
         return None
@@ -389,8 +389,8 @@ class RunnerScanner:
                 continue
             profiles.append(profile)
 
-        # Share volume is the main sort key here. This keeps active lower-priced
-        # stocks in a broad scan instead of filling every slot with mega-caps.
+
+
         profiles.sort(
             key=lambda item: (item.average_volume, item.average_dollar_volume), reverse=True
         )

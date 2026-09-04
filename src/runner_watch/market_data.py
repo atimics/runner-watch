@@ -47,7 +47,7 @@ def _chunks(values: list[str], size: int) -> Iterable[list[str]]:
 
 
 def split_download_frame(raw: pd.DataFrame, tickers: list[str]) -> dict[str, pd.DataFrame]:
-    """Split any common yfinance download shape into one frame per ticker."""
+
 
     if raw is None or raw.empty:
         return {}
@@ -78,7 +78,7 @@ def split_download_frame(raw: pd.DataFrame, tickers: list[str]) -> dict[str, pd.
 
 
 class YahooMarketData:
-    """Small batching wrapper around yfinance."""
+
 
     def __init__(
         self,
@@ -97,7 +97,7 @@ class YahooMarketData:
             return
         try:
             self.fetch_recorder(fetch)
-        except Exception as exc:  # ingestion must not break live quotes
+        except Exception as exc:
             warnings.append(f"Could not record {fetch.source} {fetch.feed} fetch: {exc}")
 
     def _download(
@@ -162,10 +162,10 @@ class YahooMarketData:
                 if self.recorder and found:
                     try:
                         self.recorder(interval, found)
-                    except Exception as exc:  # collection must not break live quotes
+                    except Exception as exc:
                         warnings.append(f"Could not store {label.lower()} bars: {exc}")
                 failed.extend(missing)
-            except Exception as exc:  # yfinance has changed exception types across releases
+            except Exception as exc:
                 failed.extend(batch)
                 warnings.append(f"{label} batch {number} failed: {exc}")
                 self._record_fetch(
@@ -249,7 +249,7 @@ def _frame_bars(symbol: str, interval: str, frame: pd.DataFrame) -> list[Bar]:
 
 
 class YahooBarAdapter:
-    """Turns Yahoo frames into the provider-neutral bar contract."""
+
 
     name = "yahoo"
     capabilities = frozenset({DataKind.BARS})
@@ -343,15 +343,15 @@ def _bars_to_frames(batch: FetchBatch) -> dict[str, pd.DataFrame]:
 
 
 class RoutedMarketData:
-    """Scanner-compatible view over the canonical provider registry."""
+
 
     def __init__(
         self,
         registry: ProviderRegistry,
         intraday_registry: ProviderRegistry | None = None,
     ) -> None:
-        # The daily registry may include slower end-of-day providers (Massive);
-        # intraday scans stay on providers that serve the live session.
+
+
         self.registry = registry
         self.intraday_registry = intraday_registry or registry
         self._closed = False
@@ -410,8 +410,8 @@ class RoutedMarketData:
     def daily(self, tickers: list[str], progress: ProgressCallback | None = None) -> DownloadResult:
         global _DAILY_CACHE_DAY, _DAILY_CACHE_PROVENANCE
 
-        # Completed daily bars stay fixed during one Eastern trading day. This
-        # cache is module-wide because web scans create a new routed client.
+
+
         symbols = list(
             dict.fromkeys(ticker.strip().upper() for ticker in tickers if ticker.strip())
         )

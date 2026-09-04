@@ -22,7 +22,7 @@ COPY --from=integer-ranker /ranker/target/release/stonks-integer-ranker \
 RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
 COPY web ./web
@@ -36,7 +36,6 @@ EXPOSE 8080
 FROM base AS test
 COPY scripts ./scripts
 COPY tests ./tests
-COPY docs/privacy-operations.md ./docs/privacy-operations.md
 COPY fly.toml Dockerfile ./
 RUN uv sync --locked --extra dev --no-editable
 RUN uv run --no-sync pytest -q && uv run --no-sync ruff check src tests
