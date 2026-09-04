@@ -378,7 +378,7 @@ def runtime_capabilities(
                 **base_rates,
             },
             "ranker": {
-                "state": "shadow" if model else "learning",
+                "state": model["status"] if model else "learning",
                 "model_id": model.get("id") if model else None,
                 "engine": ranker.get("engine"),
                 "integer_only": ranker.get("integer_only"),

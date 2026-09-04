@@ -154,7 +154,8 @@ def publish_calls_for_scan(
                        s.rug_score,s.rug_level,s.trade_state,s.hard_veto
                 FROM ranker_predictions p
                 JOIN scan_snapshots s ON s.id=p.snapshot_id
-                WHERE s.scan_run_id=? AND p.model_id=?
+                JOIN ranker_models m ON m.id=p.model_id
+                WHERE s.scan_run_id=? AND p.model_id=? AND m.status='active'
                 ORDER BY p.rank,s.ticker
                 """,
                 (scan_run_id, model_id),

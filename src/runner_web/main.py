@@ -2955,7 +2955,7 @@ def _pulse_data_uncached() -> dict[str, Any]:
                 SELECT p.*,m.status AS model_status FROM ranker_predictions p
                 JOIN scan_snapshots s ON s.id=p.snapshot_id
                 JOIN ranker_models m ON m.id=p.model_id
-                WHERE s.scan_run_id=? AND m.status IN ('shadow','active')
+                WHERE s.scan_run_id=? AND m.status='active'
                 ORDER BY p.created_at DESC
                 """,
                 (latest_run["id"],),
@@ -6466,7 +6466,7 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
                        m.status AS model_status
                 FROM ranker_predictions p
                 JOIN ranker_models m ON m.id=p.model_id
-                WHERE p.snapshot_id=? AND m.status IN ('shadow','active')
+                WHERE p.snapshot_id=? AND m.status='active'
                 ORDER BY p.created_at DESC LIMIT 1
                 """,
                 (snapshot["id"],),
@@ -9660,7 +9660,7 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
         "calls_created": 0,
         "calls_abandoned": 0,
     }
-    if prediction.get("predicted"):
+    if prediction.get("predicted") and prediction.get("model_status") == "active":
         with connection() as db:
             predicted_rows = db.execute(
                 """
