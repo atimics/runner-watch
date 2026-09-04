@@ -21,3 +21,17 @@ updates:
     groups:
       workflow-actions:
         patterns: ["*"]
+  - package-ecosystem: cargo
+    directory: "/desktop/src-tauri"
+    schedule:
+      interval: weekly
+    groups:
+      desktop-rust-dependencies:
+        patterns: ["*"]
+  - package-ecosystem: npm
+    directory: "/desktop"
+    schedule:
+      interval: weekly
+    groups:
+      desktop-javascript-dependencies:
+        patterns: ["*"]
