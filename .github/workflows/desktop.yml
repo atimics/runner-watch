@@ -9,6 +9,8 @@ on:
       - "scripts/rati_scanner_entry.py"
       - "scripts/stage_desktop_scanner.py"
       - "scripts/smoke_desktop_scanner.py"
+      - "scripts/prepare_desktop_release.py"
+      - "tests/test_desktop_release.py"
       - "src/runner_node/**"
       - "src/runner_watch/**"
       - "src/runner_web/source_catalog.py"
@@ -16,12 +18,15 @@ on:
       - "uv.lock"
   push:
     branches: [main]
+    tags: ["v*"]
     paths:
       - ".github/workflows/desktop.yml"
       - "desktop/**"
       - "scripts/rati_scanner_entry.py"
       - "scripts/stage_desktop_scanner.py"
       - "scripts/smoke_desktop_scanner.py"
+      - "scripts/prepare_desktop_release.py"
+      - "tests/test_desktop_release.py"
       - "src/runner_node/**"
       - "src/runner_watch/**"
       - "src/runner_web/source_catalog.py"
@@ -37,6 +42,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  release-check:
+    name: Release metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Test release preparation
+        run: python3 -m unittest discover -s tests -p test_desktop_release.py
+      - name: Check package versions
+        run: python3 scripts/prepare_desktop_release.py check-version
+      - name: Check release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python3 scripts/prepare_desktop_release.py check-version --tag "$RELEASE_TAG"
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+
   audit:
     name: Dependency audit
     permissions:
@@ -52,7 +73,7 @@ jobs:
 
   build:
     name: ${{ matrix.name }}
-    needs: audit
+    needs: [audit, release-check]
     strategy:
       fail-fast: false
       matrix:
@@ -139,3 +160,36 @@ jobs:
           path: desktop/src-tauri/target/release/bundle/**
           if-no-files-found: error
           retention-days: 14
+
+  draft-release:
+    name: Prepare draft release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Download checked desktop builds
+        run: gh run download "$GITHUB_RUN_ID" --pattern 'rati-swarm-*' --dir release-input
+      - name: Prepare release assets and checksums
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 scripts/prepare_desktop_release.py prepare \
+            --tag "$RELEASE_TAG" \
+            --commit "$GITHUB_SHA" \
+            --artifacts release-input \
+            --output release-assets
+          cd release-assets
+          sha256sum --check SHA256SUMS
+      - name: Create draft release
+        run: |
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --draft --verify-tag --target "$GITHUB_SHA" \
+            --title "RATi Runners $RELEASE_TAG" --generate-notes
