@@ -540,10 +540,10 @@ def test_sports_pulse_respects_shared_responsive_breakpoints(
             "getComputedStyle(document.querySelector('.tab-bar'))"
             ".gridTemplateColumns.split(' ').length"
         )
-        == 4
+        == 5
     )
     links = navigation.locator(".tab-link")
-    assert links.count() == 4
+    assert links.count() == 5
     for index in range(links.count()):
         link_box = links.nth(index).bounding_box()
         assert link_box is not None

@@ -1121,3 +1121,9 @@ html.embedded-pane .product-tab-link {
     transition-duration: .01ms !important;
   }
 }
+
+.tab-bar.markets-tab-bar {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  padding-left: 12px;
+  padding-right: 12px;
+}
