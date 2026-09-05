@@ -293,3 +293,84 @@ def test_alpha_closed_return_and_caller_link_survive_refresh(page: Page) -> None
     )
     expect(page.locator("[data-coin-calls] dl")).to_contain_text("Exit$0.000001125")
     expect(page.locator("[data-calls-empty]")).to_be_hidden()
+
+
+def test_paper_call_open_and_close_reload_the_current_coin_context(page: Page) -> None:
+    current_call: dict[str, Any] | None = None
+    posts: list[str] = []
+    url = "http://app.test/memecoins/coin/tiny-doge?q=doge&sort=gainers&view=radar"
+
+    def serve(route: Route) -> None:
+        route.fulfill(
+            content_type="text/html",
+            body=_html(
+                "detail",
+                signed_in=True,
+                active_call=current_call,
+                calls=[current_call] if current_call else [],
+            ),
+        )
+
+    def make(route: Route) -> None:
+        nonlocal current_call
+        posts.append(route.request.url)
+        current_call = _call()
+        route.fulfill(json={"call": current_call})
+
+    def close(route: Route) -> None:
+        nonlocal current_call
+        posts.append(route.request.url)
+        result = _call(status="closed", exit_at=NOW.isoformat(), exit_price_label="$0.00000123")
+        current_call = None
+        route.fulfill(json={"call": result})
+
+    page.route("http://app.test/**", serve)
+    page.route("**/api/memecoins/tiny-doge/calls", make)
+    page.route("**/api/memecoin-calls/call-one/close", close)
+    page.goto(url, wait_until="domcontentloaded")
+    page.get_by_role("button", name="Make paper Call").click()
+    close_button = page.get_by_role("button", name="Close paper Call")
+    expect(close_button).to_be_visible()
+    assert page.url == url
+    expect(page.locator("[data-active-call-return]")).to_have_text("+23.00%")
+    close_button.click()
+    expect(page.get_by_role("button", name="Make paper Call")).to_be_visible()
+    assert page.url == url
+    assert posts == [
+        "http://app.test/api/memecoins/tiny-doge/calls",
+        "http://app.test/api/memecoin-calls/call-one/close",
+    ]
+
+
+def test_automatic_refresh_ages_quote_and_keeps_saved_data_on_error(page: Page) -> None:
+    page.clock.install(time=NOW)
+    _open(page, _html("detail", signed_in=True))
+    requests: list[str] = []
+
+    def failed_refresh(route: Route) -> None:
+        requests.append(route.request.url)
+        route.fulfill(status=503, json={"detail": "Refresh pending"})
+
+    page.route("**/api/memecoins/tiny-doge", failed_refresh)
+    page.clock.fast_forward(16 * 60 * 1000)
+    expect(page.get_by_role("button", name="Make paper Call")).to_be_disabled()
+    expect(page.locator("[data-coin-price]")).to_have_text("$0.00000123")
+    expect(page.locator("[data-detail-status]")).to_contain_text("Saved updates are delayed")
+    expect(page.locator("[data-call-status]")).to_contain_text("A fresh source quote is required")
+    assert requests
+
+
+def test_price_chart_keeps_collection_gaps_and_flat_prices(page: Page) -> None:
+    history = [
+        {"observed_at": (NOW - timedelta(minutes=minute)).isoformat(), "price": 0.1}
+        for minute in (30, 25, 0)
+    ]
+    _open(page, _html("detail", detail=_detail(history=history)))
+    chart = page.locator("[data-coin-chart]")
+    expect(chart).to_be_visible()
+    expect(chart.locator("circle")).to_have_count(3)
+    expect(chart.locator("polyline")).to_have_count(1)
+    assert chart.locator("circle").evaluate_all(
+        "nodes => nodes.map(n => +n.getAttribute('cy'))"
+    ) == [110, 110, 110]
+    expect(chart).to_have_accessible_name(re.compile("Gaps mark periods"))
