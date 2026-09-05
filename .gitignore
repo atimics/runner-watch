@@ -17,6 +17,7 @@ __pycache__/
 /desktop/.scanner-build/
 /desktop/.scanner-dist/
 /desktop/.scanner-spec/
+/desktop/.svelte-check/
 /desktop/node_modules/
 /desktop/src-tauri/binaries/*
 !/desktop/src-tauri/binaries/.gitkeep
