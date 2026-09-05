@@ -2744,6 +2744,40 @@ def _migration_054_market_report_forecasts(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_056_memecoin_calls(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS memecoin_calls (
+            public_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            caller_identity_id TEXT NOT NULL REFERENCES caller_identities(id),
+            coin_id TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            name TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('active','closed')),
+            entry_price REAL NOT NULL CHECK(entry_price>0),
+            entry_at TEXT NOT NULL,
+            entry_evidence TEXT NOT NULL,
+            exit_price REAL CHECK(exit_price>0),
+            exit_at TEXT,
+            exit_evidence TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK((status='active' AND exit_price IS NULL AND exit_at IS NULL
+                    AND exit_evidence IS NULL)
+                OR (status='closed' AND exit_price IS NOT NULL AND exit_at IS NOT NULL
+                    AND exit_evidence IS NOT NULL))
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS memecoin_calls_one_active
+            ON memecoin_calls(user_id,coin_id) WHERE status='active';
+        CREATE INDEX IF NOT EXISTS memecoin_calls_coin_time
+            ON memecoin_calls(coin_id,updated_at DESC);
+        CREATE INDEX IF NOT EXISTS memecoin_calls_caller_time
+            ON memecoin_calls(caller_identity_id,updated_at DESC);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2810,6 +2844,7 @@ MIGRATIONS = (
         _migration_053_sports_market_observation_history,
     ),
     Migration(54, "market_report_forecasts", _migration_054_market_report_forecasts),
+    Migration(56, "memecoin_calls", _migration_056_memecoin_calls),
 )
 
 
