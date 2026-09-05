@@ -25,9 +25,9 @@ jobs:
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@8e5cf47b818121e8b405931c82126c2630b0b20d
     with:
       scan-args: |-
-        --lockfile=./desktop/src-tauri/Cargo.lock
-        --lockfile=./desktop/backport-regression/Cargo.lock
         --lockfile=./rust/stonks-ranker/Cargo.lock
+        --recursive
+        ./desktop
       upload-sarif: false
       fail-on-vuln: true
 
@@ -41,8 +41,8 @@ jobs:
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@8e5cf47b818121e8b405931c82126c2630b0b20d
     with:
       scan-args: |-
-        --lockfile=./desktop/src-tauri/Cargo.lock
-        --lockfile=./desktop/backport-regression/Cargo.lock
         --lockfile=./rust/stonks-ranker/Cargo.lock
+        --recursive
+        ./desktop
       upload-sarif: false
       fail-on-vuln: true
