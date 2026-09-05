@@ -206,7 +206,7 @@ def test_refresh_updates_saved_prices_and_preserves_filter_edits(page: Page) -> 
     expect(page.locator("[data-coin-list] .quote strong")).to_have_text("$0.000002")
     expect(page.get_by_role("searchbox", name="Find a coin")).to_have_value("pepe")
     expect(page.locator(".meme-stale")).to_have_text("Stale")
-    assert requests == ["http://app.test/api/memecoins?q=doge&sort=gainers"]
+    assert requests == ["http://app.test/api/memecoins?q=doge&sort=gainers&view=radar"]
     assert "q=doge&sort=gainers" in page.url
 
 
@@ -423,3 +423,47 @@ def test_future_source_time_uses_the_server_freshness_tolerance(page: Page) -> N
     _open(page, _html("detail", signed_in=True, detail=_detail(coin=_coin(observed_at=future))))
     expect(page.get_by_role("button", name="Make paper Call")).to_be_disabled()
     expect(page.locator("[data-detail-status]")).to_contain_text("Waiting for a fresh source time")
+
+
+@pytest.mark.parametrize("view", ["pulse", "radar"])
+def test_refresh_preserves_market_view_and_applied_filters(page: Page, view: str) -> None:
+    path = "/memecoins" if view == "pulse" else "/memecoins/radar"
+    _open(
+        page,
+        _html("market", market=_market(view=view), list_path=path),
+        f"{path}?q=doge&sort=gainers",
+    )
+    requests: list[str] = []
+
+    def refresh(route: Route) -> None:
+        requests.append(route.request.url)
+        route.fulfill(json=_market(view=view, rows=[_coin(price_label="$0.000002")]))
+
+    page.route("**/api/memecoins?**", refresh)
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    expect(page.locator("[data-coin-list] .quote strong")).to_have_text("$0.000002")
+    expect(page.get_by_role("searchbox", name="Find a coin")).to_have_value("doge")
+    expect(page.get_by_role("combobox", name="Sort by")).to_have_value("gainers")
+    expect(page.locator("[data-coin-list] > a")).to_have_attribute(
+        "href", f"/memecoins/coin/tiny-doge?q=doge&sort=gainers&view={view}"
+    )
+    expect(page.locator("[data-market-scope]")).to_have_text(
+        "Fresh quotes · up to 20 most active coins"
+        if view == "pulse"
+        else "Full CoinGecko snapshot"
+    )
+    assert requests == [f"http://app.test/api/memecoins?q=doge&sort=gainers&view={view}"]
+    assert page.url == f"http://app.test{path}?q=doge&sort=gainers"
+
+
+def test_stale_pulse_links_to_saved_radar_prices(page: Page) -> None:
+    _open(
+        page,
+        _html(
+            "market", market=_market(view="pulse", rows=[], status="stale"), list_path="/memecoins"
+        ),
+    )
+    expect(page.locator("[data-coin-empty] strong")).to_have_text("Waiting for fresh quotes")
+    expect(page.get_by_role("link", name="View saved prices in Radar")).to_have_attribute(
+        "href", "/memecoins/radar?q=doge&sort=gainers"
+    )

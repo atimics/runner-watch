@@ -27,12 +27,13 @@
   const element = (tag, text, className) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; };
   const showStatus = (selector, message) => { const node = find(selector); if (node) { node.textContent = message; node.hidden = !message; } };
   const coinPath = (coin) => `/memecoins/coin/${encodeURIComponent(coin.id || coin.coin_id)}`;
+  const marketView = (market = page.market) => market?.view || find('[data-list-view]')?.dataset.listView || 'radar';
   const detailHref = (coin) => {
     const url = new URL(coinPath(coin), location.origin);
     const market = page.market || {};
     url.searchParams.set('q', market.query || '');
     url.searchParams.set('sort', market.sort || 'volume');
-    url.searchParams.set('view', find('[data-list-view]')?.dataset.listView || 'pulse');
+    url.searchParams.set('view', marketView(market));
     return `${url.pathname}${url.search}`;
   };
   const marketMessage = (market) => {
@@ -63,6 +64,7 @@
     });
     list.replaceChildren(fragment);
     if (focused) Array.from(list.children).find((row) => row.dataset.coinId === focused)?.focus({preventScroll: true});
+    put('[data-market-scope]', marketView(market) === 'pulse' ? 'Fresh quotes · up to 20 most active coins' : 'Full CoinGecko snapshot');
     put('[data-coin-count]', `${market.rows.length} of ${market.total} coins`);
     put('[data-market-updated]', market.collected_at ? `Collected ${time(market.collected_at)}` : 'First collection pending');
     showStatus('[data-market-status]', marketMessage(market));
@@ -74,9 +76,11 @@
         unavailable: ['Waiting for CoinGecko', 'The source refresh will retry shortly.'],
         pending: ['First prices are on the way', 'The next collection will fill this list.']
       };
-      const message = messages[market.status] || ['Try another name or symbol', `Search covers the ${market.total} coins in this snapshot.`];
+      const waitingForFresh = marketView(market) === 'pulse' && market.status === 'stale';
+      const message = waitingForFresh ? ['Waiting for fresh quotes', 'Radar has the saved prices from the latest collection.'] : messages[market.status] || ['Try another name or symbol', `Search covers the ${market.total} coins in this snapshot.`];
       empty.replaceChildren(element('strong', message[0]), element('p', message[1]));
-      if (!messages[market.status]) { const link = element('a', 'Show all coins'); link.href = find('[data-list-path]').dataset.listPath; empty.append(link); }
+      if (waitingForFresh) { const link = element('a', 'View saved prices in Radar'); link.href = `/memecoins/radar?${new URLSearchParams({q: market.query || '', sort: market.sort || 'volume'})}`; empty.append(link); }
+      else if (!messages[market.status]) { const link = element('a', 'Show all coins'); link.href = find('[data-list-path]').dataset.listPath; empty.append(link); }
     }
     find('[data-desktop-list]')?.dispatchEvent(new CustomEvent('desktop-rows-rendered', {bubbles: true}));
   }
@@ -161,7 +165,7 @@
     const buttons = document.querySelectorAll('[data-coin-refresh]'); buttons.forEach((button) => { button.disabled = true; button.textContent = 'Refreshing…'; });
     try {
       let url;
-      if (page.kind === 'market') { const params = new URLSearchParams({q: page.market.query || '', sort: page.market.sort || 'volume'}); url = `/api/memecoins?${params}`; }
+      if (page.kind === 'market') { const params = new URLSearchParams({q: page.market.query || '', sort: page.market.sort || 'volume', view: marketView()}); url = `/api/memecoins?${params}`; }
       else if (page.kind === 'detail') url = `/api/memecoins/${encodeURIComponent(page.detail.coin.id)}`;
       else url = '/api/memecoin-calls';
       const response = await fetch(url, {credentials: 'same-origin', signal: controller.signal, headers: {Accept: 'application/json'}});

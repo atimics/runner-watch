@@ -2,7 +2,7 @@
 {% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
 {% set list_path = list_path|default('/memecoins') %}
 {% set list_title = list_title|default('Memecoins') %}
-{% set list_view = list_view|default('pulse') %}
+{% set list_view = market.view|default(list_view|default('pulse')) %}
 {% block app_class %}workspace-app memecoins-app{% endblock %}
 {% block title %}{{ list_title }} · RATi Memecoins{% endblock %}
 {% block product_head %}<link rel="stylesheet" href="/static/memecoins.css?v={{ static_version }}">{% endblock %}
@@ -14,6 +14,7 @@
       {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open {{ comment_avatar.name }} profile">{{ render_comment_avatar(comment_avatar) }}</button>{% else %}<a class="avatar-button signed-out" href="/login?next={{ (request.url.path ~ ('?' ~ request.url.query if request.url.query else ''))|urlencode }}">Log in</a>{% endif %}
     </header>
     <main class="meme-market" aria-label="Memecoin markets">
+      <p class="meme-source" data-market-scope>{{ 'Fresh quotes · up to 20 most active coins' if list_view == 'pulse' else 'Full CoinGecko snapshot' }}</p>
       <form class="meme-filters" action="{{ list_path }}" method="get" role="search" data-coin-filters>
         <label>Find a coin<input type="search" name="q" value="{{ market.query }}" maxlength="80" placeholder="Name or symbol"></label>
         <label>Sort by<select name="sort">
@@ -33,7 +34,7 @@
         {% endfor %}
       </div>
       <div class="meme-empty" role="status" data-coin-empty{% if market.rows %} hidden{% endif %}>
-        {% if market.status == 'disabled' %}<strong>Memecoin feed paused</strong><p>The feed will return when collection resumes.</p>{% elif market.status == 'unavailable' %}<strong>Waiting for CoinGecko</strong><p>The source refresh will retry shortly.</p>{% elif market.status == 'pending' %}<strong>First prices are on the way</strong><p>The next collection will fill this list.</p>{% else %}<strong>Try another name or symbol</strong><p>Search covers the {{ market.total }} coins in this snapshot.</p><a href="{{ list_path }}">Show all coins</a>{% endif %}
+        {% if market.status == 'disabled' %}<strong>Memecoin feed paused</strong><p>The feed will return when collection resumes.</p>{% elif market.status == 'unavailable' %}<strong>Waiting for CoinGecko</strong><p>The source refresh will retry shortly.</p>{% elif market.status == 'pending' %}<strong>First prices are on the way</strong><p>The next collection will fill this list.</p>{% elif list_view == 'pulse' and market.status == 'stale' %}<strong>Waiting for fresh quotes</strong><p>Radar has the saved prices from the latest collection.</p><a href="/memecoins/radar?q={{ market.query|urlencode }}&amp;sort={{ market.sort }}">View saved prices in Radar</a>{% else %}<strong>Try another name or symbol</strong><p>Search covers the {{ market.total }} coins in this snapshot.</p><a href="{{ list_path }}">Show all coins</a>{% endif %}
       </div>
       <p class="meme-source">Top 100 by market cap in <a href="https://www.coingecko.com/en/categories/meme-token" target="_blank" rel="noopener noreferrer">CoinGecko’s meme category ↗</a>. Source collection every five minutes; this view checks for saved updates every minute.</p>
     </main>
