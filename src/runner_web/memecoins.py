@@ -13,6 +13,7 @@ from runner_watch.ingestion import SourceFetch
 from runner_watch.xml_security import read_limited
 from runner_web.db import connection
 from runner_web.ingestion import record_source_fetch
+from runner_web.memecoin_store import memecoin_history, save_memecoin_snapshot, stored_memecoin
 
 MARKETS_URL = (
     "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd"
@@ -83,6 +84,18 @@ def normalize_memecoins(payload: Any) -> list[dict[str, Any]]:
                 "market_cap": _number(item.get("market_cap"), minimum=0),
                 "observed_at": observed_at.isoformat() if observed_at else None,
                 "source_url": f"https://www.coingecko.com/en/coins/{coin_id}",
+                "detail_url": f"/memecoins/{coin_id}",
+                **{
+                    field: _number(item.get(field), minimum=0)
+                    for field in (
+                        "high_24h",
+                        "low_24h",
+                        "fully_diluted_valuation",
+                        "circulating_supply",
+                        "total_supply",
+                        "max_supply",
+                    )
+                },
             },
         )
     if not rows:
@@ -158,16 +171,7 @@ def refresh_memecoins(
             partial=len(rows) < len(payload),
         )
     )
-    _save_state(
-        "memecoins_snapshot",
-        {
-            "rows": rows,
-            "collected_at": collected_at.isoformat(),
-            "run_id": run_id,
-        },
-        collected_at,
-    )
-    _save_state("memecoins_error", None, collected_at)
+    save_memecoin_snapshot(rows, run_id=run_id, collected_at=collected_at)
     return {"status": "ok", "count": len(rows), "run_id": run_id}
 
 
@@ -177,7 +181,7 @@ def _price_label(price: float) -> str:
     if price < 0.00000001:
         return f"${price:.4g}"
     decimals = max(2, 3 - math.floor(math.log10(price)))
-    return "$" + f"{price:.{decimals}f}".rstrip("0")
+    return "$" + f"{price:.{decimals}f}".rstrip("0").rstrip(".")
 
 
 def _amount_label(value: float | None) -> str:
@@ -189,31 +193,49 @@ def _amount_label(value: float | None) -> str:
     return f"${value:,.2f}"
 
 
-def memecoin_market(
-    *, query: str = "", sort: str = "volume", at: datetime | None = None
-) -> dict[str, Any]:
-    current = at or datetime.now(UTC)
+def _market_states() -> dict[str, Any]:
     states = {}
     with connection() as database:
         for state in database.execute(
             "SELECT key,value FROM worker_state "
             "WHERE key IN ('memecoins_snapshot','memecoins_error')"
         ).fetchall():
-            states[state["key"]] = json.loads(state["value"])
+            try:
+                states[state["key"]] = json.loads(state["value"])
+            except (TypeError, ValueError):
+                states[state["key"]] = None
+    return states
+
+
+def _quote_display(row: dict[str, Any], collected_at: Any, at: datetime) -> dict[str, Any]:
+    row = dict(row)
+    observed = _time(row.get("observed_at"))
+    collected = _time(collected_at)
+    row["stale"] = (
+        collected is None
+        or not 0 <= (at - collected).total_seconds() <= STALE_SECONDS
+        or observed is None
+        or not -60 <= (at - observed).total_seconds() <= STALE_SECONDS
+    )
+    row["price_label"] = _price_label(row["price"])
+    row["volume_label"] = _amount_label(row["volume_24h"])
+    row["market_cap_label"] = _amount_label(row["market_cap"])
+    row["detail_url"] = f"/memecoins/{row['id']}"
+    return row
+
+
+def memecoin_market(
+    *, query: str = "", sort: str = "volume", at: datetime | None = None
+) -> dict[str, Any]:
+    current = at or datetime.now(UTC)
+    states = _market_states()
     snapshot = states.get("memecoins_snapshot") or {}
-    rows = [dict(row) for row in snapshot.get("rows", [])]
+    rows = [
+        _quote_display(row, snapshot.get("collected_at"), current)
+        for row in snapshot.get("rows", [])
+    ]
     collected = _time(snapshot.get("collected_at"))
     stale = collected is None or not 0 <= (current - collected).total_seconds() <= STALE_SECONDS
-    for row in rows:
-        observed = _time(row["observed_at"])
-        row["stale"] = (
-            stale
-            or observed is None
-            or not (-60 <= (current - observed).total_seconds() <= STALE_SECONDS)
-        )
-        row["price_label"] = _price_label(row["price"])
-        row["volume_label"] = _amount_label(row["volume_24h"])
-        row["market_cap_label"] = _amount_label(row["market_cap"])
     total = len(rows)
     status = "stale" if rows and (stale or all(row["stale"] for row in rows)) else "ok"
     if not rows:
@@ -250,4 +272,52 @@ def memecoin_market(
         "currency": "USD",
         "source": "CoinGecko",
         "refresh_seconds": REFRESH_SECONDS,
+    }
+
+
+def memecoin_detail(
+    coin_id: str, *, at: datetime | None = None, history_limit: int = 288
+) -> dict[str, Any] | None:
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", coin_id):
+        return None
+    current = at or datetime.now(UTC)
+    states = _market_states()
+    snapshot = states.get("memecoins_snapshot") or {}
+    snapshot_coin = next((row for row in snapshot.get("rows", []) if row["id"] == coin_id), None)
+    saved = stored_memecoin(coin_id)
+    if saved is None:
+        if snapshot_coin is None:
+            return None
+        saved = {
+            "coin": snapshot_coin,
+            "collected_at": snapshot.get("collected_at"),
+            "run_id": snapshot.get("run_id"),
+        }
+    coin = _quote_display(saved["coin"], saved["collected_at"], current)
+    active = snapshot_coin is not None
+    coin["stale"] = coin["stale"] or not memecoins_enabled()
+    status = "stale" if coin["stale"] else "ok"
+    if not memecoins_enabled():
+        status = "disabled"
+    return {
+        "coin": coin,
+        "status": status,
+        "collected_at": saved["collected_at"],
+        "refresh_failed": bool(states.get("memecoins_error")),
+        "source": "CoinGecko",
+        "currency": "USD",
+        "history": memecoin_history(coin_id, at=current, limit=history_limit),
+        "evidence": {
+            "source_url": coin["source_url"],
+            "run_id": saved["run_id"],
+            "observed_at": coin.get("observed_at"),
+            "collected_at": saved["collected_at"],
+            "checks": {
+                "source_time_known": coin.get("observed_at") is not None,
+                "quote_fresh": not coin["stale"],
+                "volume_known": coin.get("volume_24h") is not None,
+                "market_cap_known": coin.get("market_cap") is not None,
+            },
+        },
+        "in_current_snapshot": active,
     }
