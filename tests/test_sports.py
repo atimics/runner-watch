@@ -1820,8 +1820,11 @@ def test_sports_host_uses_the_sports_shell_for_alpha(sports_db) -> None:
     assert b'<span class="alpha-rank">1</span>' not in alpha_response.body
     assert b"open Calls" in alpha_response.body
     assert b'href="/alpha"' in alpha_response.body
-    assert b'class="tab-link product-tab-link"' in alpha_response.body
-    assert b">Runners<" in alpha_response.body
+    assert b'class="market-switcher" aria-label="Market"' in alpha_response.body
+    assert b">Stocks</a>" in alpha_response.body
+    assert b">Memecoins</a>" in alpha_response.body
+    assert b'aria-current="true">Sports</a>' in alpha_response.body
+    assert b'aria-label="Sports navigation"' in alpha_response.body
     assert b'class="skip-link"' in alpha_response.body
     assert receipts_response.status_code == 307
     assert receipts_response.headers["location"] == "/alpha"

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import quote, urlencode, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 RATI_CLOUD_ORIGIN = "https://runners.rati.chat"
@@ -42,7 +43,7 @@ def _get_json(url: str, token: str = "") -> dict[str, Any]:
         if exc.code in {401, 403}:
             raise RuntimeError("Scanner source rejected the access token") from exc
         raise RuntimeError(f"Scanner source returned {exc.code}") from exc
-    except URLError as exc:
+    except (URLError, TimeoutError) as exc:
         raise RuntimeError("Scanner source could not be reached") from exc
     if len(raw) > MAX_RESPONSE_BYTES:
         raise RuntimeError("Scanner source returned too much data")
@@ -78,6 +79,50 @@ class RemoteScannerSource:
 
 
 class RatiCloudSource:
+    def memecoins(self, query: str = "", sort: str = "volume") -> dict[str, Any]:
+        if sort not in {"volume", "market_cap", "gainers", "losers"}:
+            raise ValueError("Choose volume, market cap, gainers, or losers")
+        params = urlencode({"q": query.strip()[:80], "sort": sort})
+        payload = _get_json(f"{RATI_CLOUD_ORIGIN}/api/memecoins?{params}")
+        return self._market_rows(payload, "rows", "id", 100)
+
+    def memecoin(self, coin_id: str) -> dict[str, Any]:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", coin_id):
+            raise ValueError("Enter a valid coin ID")
+        payload = _get_json(f"{RATI_CLOUD_ORIGIN}/api/memecoins/{quote(coin_id, safe='')}")
+        coin = payload.get("coin")
+        if not isinstance(coin, dict) or coin.get("id") != coin_id:
+            raise RuntimeError("RATi Cloud returned an invalid coin detail")
+        return payload
+
+    def memecoin_calls(self) -> dict[str, Any]:
+        payload = _get_json(f"{RATI_CLOUD_ORIGIN}/api/memecoin-calls")
+        return self._market_rows(payload, "calls", "coin_id", 100)
+
+    def sports(self, view: str) -> dict[str, Any]:
+        if view not in {"pulse", "radar", "alpha"}:
+            raise ValueError("Choose Pulse, Radar, or Alpha")
+        payload = _get_json(f"{RATI_CLOUD_ORIGIN}/api/sports/{view}?limit=40")
+        if view == "alpha":
+            return self._market_rows(payload, "rows", None, 100)
+        return self._market_rows(payload, "events", "id", 100)
+
+    @staticmethod
+    def _market_rows(
+        payload: dict[str, Any], key: str, identity: str | None, maximum: int
+    ) -> dict[str, Any]:
+        rows = payload.get(key)
+        if (
+            not isinstance(rows, list)
+            or len(rows) > maximum
+            or not all(
+                isinstance(row, dict) and (identity is None or bool(row.get(identity)))
+                for row in rows
+            )
+        ):
+            raise RuntimeError("RATi Cloud returned an invalid market feed")
+        return payload
+
     def scans(self) -> list[dict[str, Any]]:
         payload = _get_json(f"{RATI_CLOUD_ORIGIN}/api/pulse?offset=0&limit=20")
         rows = payload.get("rows")
