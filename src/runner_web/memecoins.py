@@ -174,9 +174,10 @@ def refresh_memecoins(
 def _price_label(price: float) -> str:
     if price >= 1:
         return f"${price:,.2f}"
-    if price < 0.0000000001:
+    if price < 0.00000001:
         return f"${price:.4g}"
-    return "$" + f"{price:.12f}".rstrip("0")
+    decimals = max(2, 3 - math.floor(math.log10(price)))
+    return "$" + f"{price:.{decimals}f}".rstrip("0")
 
 
 def _amount_label(value: float | None) -> str:
