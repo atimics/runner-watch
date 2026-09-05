@@ -13,7 +13,14 @@
     {% for comment in comments %}
     <li data-comment-id="{{ comment.id }}">
       {{ render_comment_avatar(comment.avatar) }}
-      <div class="comment-copy"><header><strong>{{ comment.avatar.name }}</strong><span class="comment-owner">{{ comment.author_label }}</span><span class="comment-ability" title="{{ comment.avatar.ability_description }}">{{ comment.avatar.ability }}</span>{% if comment.is_owner %}<span class="comment-owner">Yours</span>{% endif %}</header><small class="comment-meta"><time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time>{% if comment.is_owner %} · <button type="button" data-delete-comment="{{ comment.id }}">delete</button>{% endif %}</small><p>{{ comment.body }}</p></div>
+      <div class="comment-copy">
+        <header>
+          <strong>{{ comment.avatar.name }}</strong><span class="comment-owner">{{ comment.author_label }}</span>
+          {% if comment.ai_generated %}<span class="comment-model">Model {{ comment.generation_model or 'unknown' }}</span>{% endif %}
+          <span class="comment-ability" title="{{ comment.avatar.ability_description }}">{{ comment.avatar.ability }}</span>{% if comment.is_owner %}<span class="comment-owner">Yours</span>{% endif %}
+        </header>
+        <small class="comment-meta"><time datetime="{{ comment.created_at }}" data-comment-time>{{ comment.created_at[:10] }}</time>{% if comment.is_owner %} · <button type="button" data-delete-comment="{{ comment.id }}">delete</button>{% endif %}</small><p>{{ comment.body }}</p>
+      </div>
     </li>
     {% endfor %}
   </ol>

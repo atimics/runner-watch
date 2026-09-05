@@ -52,7 +52,14 @@
     ability.className = 'comment-ability';
     ability.textContent = avatarData.ability || 'Research Lens';
     if (avatarData.ability_description) ability.title = avatarData.ability_description;
-    head.append(author, authorship, ability);
+    head.append(author, authorship);
+    if (comment.ai_generated) {
+      const model = document.createElement('span');
+      model.className = 'comment-model';
+      model.textContent = `Model ${comment.generation_model || 'unknown'}`;
+      head.append(model);
+    }
+    head.append(ability);
     if (comment.is_owner) {
       const owner = document.createElement('span');
       owner.className = 'comment-owner';

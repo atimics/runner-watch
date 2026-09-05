@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 from playwright.sync_api import Page, Route
@@ -36,6 +37,8 @@ def _rendered_ticker(
     signed_in: bool = False,
     comment_generation_enabled: bool = True,
     inline_script: bool = False,
+    current_overrides: dict[str, Any] | None = None,
+    comments: list[dict[str, Any]] | None = None,
 ) -> str:
     thesis = web_main._ranker_directional_thesis(
         {
@@ -90,6 +93,7 @@ def _rendered_ticker(
             "baseline_summary": "Building the same-time baseline.",
         },
     }
+    detail["current"].update(current_overrides or {})
     signed_in_context = {}
     if signed_in:
         signed_in_context = {
@@ -118,8 +122,8 @@ def _rendered_ticker(
             request,
             None,
             detail=detail,
-            comments=[],
-            comment_count=0,
+            comments=comments or [],
+            comment_count=len(comments or []),
             active_call=None,
             calls=[],
             latest_commission=None,
@@ -166,12 +170,70 @@ def test_model_path_receipt_stays_compact_and_keeps_risk_separate(page: Page) ->
     card = page.locator(".model-path-card")
     risk = page.locator(".risk-decision")
     assert card.is_visible()
+    assert "Model estimates" in card.inner_text()
+    assert "Actual outcomes can differ" in card.inner_text()
     assert [
         " ".join(text.split())
         for text in card.locator(".model-path-outcomes > div").all_inner_texts()
     ] == ["15% −4% first", "31% No barrier", "54% +8% first"]
     assert card.bounding_box()["height"] < 170
     assert risk.bounding_box()["y"] > card.bounding_box()["y"] + card.bounding_box()["height"]
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
+
+
+@pytest.mark.parametrize(
+    ("values", "display"),
+    [
+        ((None, None, None), ["unknown", "unknown", "unknown"]),
+        ((0, 0, 0), ["0", "0", "0%"]),
+        ((67, 42, 31), ["67", "42", "31%"]),
+    ],
+)
+def test_ticker_risk_readings_keep_missing_values_and_zero_distinct(
+    page: Page, values: tuple[float | None, ...], display: list[str]
+) -> None:
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.set_content(
+        _rendered_ticker(
+            current_overrides=dict(
+                zip(("setup_score", "rug_score", "drawdown_52w_pct"), values, strict=True)
+            )
+        ),
+        wait_until="domcontentloaded",
+    )
+
+    assert page.locator(".risk-grid b").all_inner_texts() == display
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
+
+
+@pytest.mark.parametrize(
+    ("ai_generated", "model"),
+    [(True, "test/model-<script>alert(1)</script>"), (True, ""), (False, "test/model")],
+)
+def test_saved_comments_show_generated_authorship_and_model(
+    page: Page, ai_generated: bool, model: str
+) -> None:
+    comment = {
+        "id": "saved-comment",
+        "avatar": web_main.comment_avatar_profile("Tape Reader", "browser-seed", "filing_sleuth"),
+        "author_label": "AI avatar" if ai_generated else "Account avatar",
+        "ai_generated": ai_generated,
+        "generation_model": model,
+        "is_owner": False,
+        "created_at": "2026-08-28T18:00:00+00:00",
+        "body": "Volume is improving.",
+    }
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.set_content(_rendered_ticker(comments=[comment]), wait_until="domcontentloaded")
+
+    rendered = page.locator('[data-comment-id="saved-comment"]')
+    assert rendered.locator(".comment-owner").inner_text() == comment["author_label"]
+    if ai_generated:
+        assert rendered.locator(".comment-model").inner_text() == f"Model {model or 'unknown'}"
+        assert rendered.locator(".comment-model").is_visible()
+    else:
+        assert rendered.locator(".comment-model").count() == 0
+    assert rendered.locator("script").count() == 0
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
 
 
@@ -272,7 +334,8 @@ def test_failed_flash_report_restores_balance_without_internal_error_or_layout_j
     assert page.locator(".flash-shell").bounding_box()["height"] == initial_height
 
 
-def test_comment_recovers_from_proxy_timeout_without_another_click(page: Page) -> None:
+@pytest.mark.parametrize("model", ["test/model-<script>alert(1)</script>", ""])
+def test_comment_recovers_from_proxy_timeout_without_another_click(page: Page, model: str) -> None:
     request_keys: list[str] = []
 
     def comment_response(route: Route) -> None:
@@ -304,6 +367,8 @@ def test_comment_recovers_from_proxy_timeout_without_another_click(page: Page) -
                             "created_at": "2026-08-28T18:00:00+00:00",
                             "body": "Volume is improving, but the spread is still the risk.",
                             "ai_generated": True,
+                            "generation_model": model,
+                            "author_label": "AI avatar",
                             "is_owner": True,
                         },
                         "count": 1,
@@ -338,5 +403,8 @@ def test_comment_recovers_from_proxy_timeout_without_another_click(page: Page) -
     assert len(request_keys) == 3
     assert len(set(request_keys)) == 1
     assert page.locator("#commentList > li").count() == 1
+    assert page.locator("#commentList .comment-owner").first.inner_text() == "AI avatar"
+    assert page.locator("#commentList .comment-model").inner_text() == f"Model {model or 'unknown'}"
+    assert page.locator("#commentList script").count() == 0
     assert page.locator("#commentStatus").text_content() == "Posted"
     assert page.locator("#discussionCount").text_content() == "1"
