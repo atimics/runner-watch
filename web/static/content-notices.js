@@ -11,7 +11,7 @@
   function render(disclosures = [], corrections = []) {
     const section = element('section', null, 'content-notices');
     section.setAttribute('aria-label', 'Disclosures and corrections');
-    for (const [title, notices] of [['Correction', corrections], ['Disclosure', disclosures]]) {
+    for (const [title, notices] of [['Correction', [...(corrections || [])].reverse()], ['Disclosure', disclosures]]) {
       for (const notice of notices || []) {
         const article = element('article', null, 'content-notice');
         article.dataset.noticeId = notice.id;
