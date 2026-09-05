@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 from datetime import time as clock_time
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, unquote, urlencode, urlparse
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -135,7 +135,18 @@ from runner_web.llm_routing import (
 from runner_web.market_clock import market_clock
 from runner_web.market_forecasts import generate_market_forecasts, settle_market_forecasts
 from runner_web.market_reports import market_reports_overview, refresh_market_reports
-from runner_web.memecoins import REFRESH_SECONDS, memecoin_market, refresh_memecoins
+from runner_web.memecoin_calls import (
+    active_memecoin_call,
+    close_memecoin_call,
+    create_memecoin_call,
+    memecoin_calls,
+)
+from runner_web.memecoins import (
+    REFRESH_SECONDS,
+    memecoin_detail,
+    memecoin_market,
+    refresh_memecoins,
+)
 from runner_web.operations import (
     require_operations_access,
     required_worker_names,
@@ -2183,10 +2194,12 @@ def alpha_comments_api(request: Request) -> JSONResponse:
 def my_calls_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
+    market: str = "",
 ) -> RedirectResponse:
     user = require_user(runner_session)
     identity = ensure_caller_identity(str(user["id"]))
-    return RedirectResponse(f"/u/{identity['handle']}", status_code=303)
+    suffix = "?market=memecoins" if market == "memecoins" else ""
+    return RedirectResponse(f"/u/{identity['handle']}{suffix}", status_code=303)
 
 
 def _sports_calls_for_caller(caller_handle: str) -> list[dict[str, Any]] | None:
@@ -2294,8 +2307,35 @@ def _unified_caller_page_data(caller_handle: str) -> dict[str, Any]:
         }
         for call in marked_stock
     ]
+    coin_items = []
+    for call in memecoin_calls(caller_handle=caller_handle, limit=500):
+        result = call["return_pct"]
+        coin_items.append(
+            {
+                "kind": "memecoin",
+                "subject_key": call["coin_id"],
+                "product_label": "Memecoins",
+                "subject": call["symbol"],
+                "company": call["name"],
+                "href": f"{RUNNERS_ORIGIN}{call['detail_url']}",
+                "status": call["status"],
+                "entry_label": call["entry_price_label"],
+                "result_label": f"{result:+.1f}%" if result is not None else "Quote pending",
+                "result_tone": "up"
+                if result is not None and result >= 0
+                else "down"
+                if result is not None
+                else "",
+                "reward_label": "Paper Call",
+                "created_at": call["created_at"],
+                "updated_at": call["updated_at"],
+                "won": call["status"] == "closed" and result is not None and result > 0,
+                "lost": call["status"] == "closed" and result is not None and result < 0,
+                "open": call["status"] == "active",
+            }
+        )
     calls = sorted(
-        [*stock_items, *(sports_calls or [])],
+        [*stock_items, *(sports_calls or []), *coin_items],
         key=lambda item: (str(item["updated_at"]), str(item["subject"])),
         reverse=True,
     )
@@ -2308,7 +2348,12 @@ def _unified_caller_page_data(caller_handle: str) -> dict[str, Any]:
             "settled": sum(not bool(item["open"]) for item in calls),
             "wins": sum(bool(item["won"]) for item in calls),
             "losses": sum(bool(item["lost"]) for item in calls),
-            "subjects": len({(str(item["kind"]), str(item["subject"])) for item in calls}),
+            "subjects": len(
+                {
+                    (str(item["kind"]), str(item.get("subject_key", item["subject"])))
+                    for item in calls
+                }
+            ),
         },
     }
 
@@ -2326,6 +2371,7 @@ def caller_page(
     caller_handle: str,
     request: Request,
     runner_session: str | None = Cookie(default=None),
+    market: str = "",
 ) -> HTMLResponse:
     public_data = (
         _unified_caller_page_data(caller_handle)
@@ -2346,6 +2392,12 @@ def caller_page(
             calls=marked_calls,
             stats=stats,
             active_tab="alpha",
+            nav_product="memecoins" if market == "memecoins" else product_for_request(request),
+            caller_back_url="/memecoins/alpha"
+            if market == "memecoins"
+            else "/alpha"
+            if product_for_request(request) == "sports"
+            else "/community",
         ),
     )
 
@@ -5847,6 +5899,7 @@ async def alpha_report_worker() -> None:
 
 
 @app.get("/memecoins", response_class=HTMLResponse)
+@app.get("/memecoins/radar", response_class=HTMLResponse)
 def memecoins_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
@@ -5854,13 +5907,19 @@ def memecoins_page(
     sort: str = "volume",
 ):
     enforce_rate(request, "memecoins", limit=120, seconds=60)
+    radar = request.url.path == "/memecoins/radar"
     return templates.TemplateResponse(
         request,
         "memecoins.html",
         page_context(
             request,
             runner_session,
-            active_tab="memecoins",
+            nav_product="memecoins",
+            active_tab="radar" if radar else "pulse",
+            list_path="/memecoins/radar" if radar else "/memecoins",
+            list_view="radar" if radar else "pulse",
+            list_title="Radar" if radar else "Memecoins",
+            back_url="/memecoins",
             market=memecoin_market(query=q, sort=sort),
         ),
     )
@@ -5870,6 +5929,123 @@ def memecoins_page(
 def memecoins_api(request: Request, q: str = "", sort: str = "volume"):
     enforce_rate(request, "memecoins", limit=120, seconds=60)
     return memecoin_market(query=q, sort=sort)
+
+
+@app.get("/memecoins/alpha", response_class=HTMLResponse)
+def memecoin_alpha_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    enforce_rate(request, "memecoins", limit=120, seconds=60)
+    return templates.TemplateResponse(
+        request,
+        "memecoin_alpha.html",
+        page_context(
+            request,
+            runner_session,
+            nav_product="memecoins",
+            active_tab="alpha",
+            calls=memecoin_calls(),
+            back_url="/memecoins",
+        ),
+    )
+
+
+@app.get("/api/memecoin-calls")
+def memecoin_calls_api(request: Request) -> dict[str, Any]:
+    enforce_rate(request, "memecoins", limit=120, seconds=60)
+    return {"calls": memecoin_calls()}
+
+
+def _memecoin_detail_payload(coin_id: str) -> dict[str, Any]:
+    detail = memecoin_detail(coin_id)
+    if detail is None:
+        raise HTTPException(404, "Coin not found")
+    return {
+        **detail,
+        "calls": memecoin_calls(coin_id=coin_id),
+        "can_call": detail["status"] == "ok" and not detail["coin"]["stale"],
+    }
+
+
+@app.get("/api/memecoins/{coin_id}")
+def memecoin_detail_api(coin_id: str, request: Request) -> dict[str, Any]:
+    enforce_rate(request, "memecoins", limit=120, seconds=60)
+    return _memecoin_detail_payload(coin_id)
+
+
+@app.get("/memecoins/{coin_id}", response_class=HTMLResponse)
+def memecoin_detail_page(
+    coin_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+    view: str = "pulse",
+    q: str = "",
+    sort: str = "volume",
+) -> HTMLResponse:
+    enforce_rate(request, "memecoins", limit=120, seconds=60)
+    detail = _memecoin_detail_payload(coin_id)
+    view = "radar" if view == "radar" else "pulse"
+    list_path = "/memecoins/radar" if view == "radar" else "/memecoins"
+    sort = sort if sort in {"volume", "market_cap", "gainers", "losers"} else "volume"
+    back_url = list_path + "?" + urlencode({"q": q.strip()[:80], "sort": sort})
+    context = page_context(
+        request,
+        runner_session,
+        nav_product="memecoins",
+        active_tab=view,
+        detail=detail,
+        calls=detail["calls"],
+        back_url=back_url,
+        list_path=list_path,
+        list_view=view,
+        query=q.strip()[:80],
+        sort=sort,
+    )
+    context["active_call"] = (
+        active_memecoin_call(str(context["user"]["id"]), coin_id) if context["user"] else None
+    )
+    return templates.TemplateResponse(request, "memecoin_detail.html", context)
+
+
+@app.post("/api/memecoins/{coin_id}/calls")
+async def make_memecoin_call_api(
+    coin_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "call-create", limit=12, seconds=3600, subject=user["id"])
+    try:
+        call = await run_in_threadpool(create_memecoin_call, str(user["id"]), coin_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    _invalidate_public_screen_data("caller", str(call["caller_handle"]))
+    return JSONResponse({"call": call}, status_code=201)
+
+
+@app.post("/api/memecoin-calls/{public_id}/close")
+async def close_memecoin_call_api(
+    public_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "call-close", limit=12, seconds=3600, subject=user["id"])
+    try:
+        call = await run_in_threadpool(close_memecoin_call, str(user["id"]), public_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if call is None:
+        raise HTTPException(404, "Call not found")
+    _invalidate_public_screen_data("caller", str(call["caller_handle"]))
+    return JSONResponse({"call": call})
 
 
 @app.get("/", response_class=HTMLResponse)
