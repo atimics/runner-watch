@@ -2322,7 +2322,13 @@ def _unified_caller_page_data(caller_handle: str) -> dict[str, Any]:
                 "href": f"{RUNNERS_ORIGIN}{call['detail_url']}",
                 "status": call["status"],
                 "entry_label": call["entry_price_label"],
-                "result_label": f"{result:+.1f}%" if result is not None else "Quote pending",
+                "result_label": (
+                    f"{result:+.1f}%"
+                    if result is not None
+                    else "Return unavailable"
+                    if call["status"] == "closed"
+                    else "Quote pending"
+                ),
                 "result_tone": "up"
                 if result is not None and result >= 0
                 else "down"
@@ -2331,8 +2337,8 @@ def _unified_caller_page_data(caller_handle: str) -> dict[str, Any]:
                 "reward_label": "Paper Call",
                 "created_at": call["created_at"],
                 "updated_at": call["updated_at"],
-                "won": call["status"] == "closed" and result is not None and result > 0,
-                "lost": call["status"] == "closed" and result is not None and result < 0,
+                "won": call["status"] == "closed" and call["exit_price"] > call["entry_price"],
+                "lost": call["status"] == "closed" and call["exit_price"] < call["entry_price"],
                 "open": call["status"] == "active",
             }
         )
