@@ -1442,7 +1442,7 @@ async def sports_ingestion_worker() -> None:
 
 
 def _is_panel_path(path: str) -> bool:
-    return path.startswith(("/t/", "/research/", "/game/", "/sports/game/"))
+    return path.startswith(("/t/", "/research/", "/game/", "/sports/game/", "/memecoins/coin/"))
 
 
 @app.middleware("http")

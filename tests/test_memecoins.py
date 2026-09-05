@@ -190,6 +190,11 @@ def test_public_routes_render_prices_and_escape_provider_text(market_db, monkeyp
         assert '<script>alert("coin")</script>' not in response.text
         assert "&lt;script&gt;" in response.text
         assert 'href="/memecoins" aria-current="page"' in response.text
+        assert response.headers["X-Frame-Options"] == "DENY"
+        detail = client.get("/memecoins/coin/dogecoin")
+        assert detail.status_code == 200
+        assert detail.headers["X-Frame-Options"] == "SAMEORIGIN"
+        assert "frame-ancestors 'self'" in detail.headers["Content-Security-Policy"]
         data = client.get("/api/memecoins?q=doge&sort=market_cap").json()
         assert data["currency"] == "USD"
         assert data["rows"][0]["id"] == "dogecoin"
