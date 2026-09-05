@@ -1416,6 +1416,7 @@ async def security_headers(request: Request, call_next: Any) -> Response:
     started = time.perf_counter()
     nonce = secrets.token_urlsafe(16)
     request.state.csp_nonce = nonce
+    request.state.product = product_for_request(request)
     direct_host = (request.url.hostname or "").lower()
     public_health_path = request.url.path in {"/live", "/health", "/ready"}
     legacy_direct_request = direct_host == _origin_host(LEGACY_ORIGIN)
