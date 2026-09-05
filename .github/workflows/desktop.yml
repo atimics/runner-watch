@@ -130,6 +130,9 @@ jobs:
       - name: Verify macOS bundle signature
         if: runner.os == 'macOS'
         run: codesign --verify --deep --strict "desktop/src-tauri/target/release/bundle/macos/RATi Runners.app"
+      - name: Smoke test bundled macOS scanner
+        if: runner.os == 'macOS'
+        run: uv run python scripts/smoke_desktop_scanner.py "desktop/src-tauri/target/release/bundle/macos/RATi Runners.app/Contents/MacOS/rati-scanner"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: ${{ matrix.artifact }}
