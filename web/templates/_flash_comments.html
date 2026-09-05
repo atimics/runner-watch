@@ -1,7 +1,7 @@
 {% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
 {% from "_content_notices.html" import content_notices %}
 {% macro flash_comments(subject_kind, subject_key, comments, comment_count, user, enabled, login_url) %}
-<section class="discussion-section" id="discussion" data-flash-comments data-comment-endpoint="/api/comments/{{ subject_kind }}/{{ subject_key }}" data-comment-storage-key="{{ subject_kind }}:{{ subject_key }}">
+<section class="discussion-section" id="discussion" data-flash-comments data-comment-endpoint="/api/comments/{{ subject_kind }}/{{ subject_key }}" data-comment-storage-key="{{ subject_kind }}:{{ subject_key }}:{{ user.id if user else 'anonymous' }}">
   <div class="section-heading"><h2>Comments</h2><b id="discussionCount" data-comment-count>{{ comment_count }}</b></div>
   {% if user %}
   <div class="comment-form ai-comment-action">
