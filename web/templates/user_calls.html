@@ -2,14 +2,14 @@
 {% block title %}{{ caller }} Calls · RATi{% endblock %}
 {% block content %}
 <header class="detail-nav">
-  <a href="/alpha" aria-label="Back to Alpha">‹</a>
+  <a href="{{ caller_back_url|default('/community') }}" aria-label="Back to Alpha">‹</a>
   <strong>Caller</strong>
   <span></span>
 </header>
 <main class="caller-page">
   <section class="caller-head">
     <span class="comment-avatar">{{ caller[-2:] }}</span>
-    <div><h1>{{ caller }}</h1><p>Public Calls across Runners and Sports. Every entry is server stamped.</p></div>
+    <div><h1>{{ caller }}</h1><p>Public Calls across Stocks, Memecoins, and Sports. Every entry keeps its source price and time.</p></div>
   </section>
 
   <section class="caller-stats" aria-label="Call performance">

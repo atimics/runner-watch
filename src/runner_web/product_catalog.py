@@ -69,9 +69,9 @@ ROADMAP_ITEMS = (
     ),
     RoadmapItem(
         "memecoins",
-        "Memecoin markets",
-        "Browse CoinGecko prices and volume with source times and saved-price labels.",
-        "copy",
+        "Memecoin evidence and Calls",
+        "Open a coin, compare observed prices and source times, and record paper Call outcomes.",
+        "own",
         "live",
     ),
     RoadmapItem(

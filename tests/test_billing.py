@@ -116,7 +116,7 @@ def test_daily_flash_must_be_claimed_and_does_not_backfill(
     assert later["balance"] == 200
 
 
-def test_signed_in_pages_show_flash_pnl_and_the_release_claim_modal(
+def test_signed_in_pages_show_flash_calls_and_the_release_claim_modal(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -167,9 +167,10 @@ def test_signed_in_pages_show_flash_pnl_and_the_release_claim_modal(
     html = response.body.decode()
 
     assert 'class="account-strip runners-account-strip"' in html
-    assert "Caller PnL" in html
-    assert "+10.0%" in html
-    assert "1–0 record" in html
+    assert "My Calls" in html
+    assert "/my-calls?market=stocks" in html
+    assert "<b>1–0</b>" in html
+    assert "<small>0 open</small>" in html
     assert 'id="flashReleaseDialog"' in html
     assert "RELEASE NOTES" in html
     assert "RATi Runners 1.0" in html

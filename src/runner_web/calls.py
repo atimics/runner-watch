@@ -346,5 +346,29 @@ def caller_summary_for_user(user_id: str) -> dict[str, Any]:
             """,
             (identity["handle"], user_id, identity["id"]),
         ).fetchall()
+        coin_rows = database.execute(
+            "SELECT coin_id,status,entry_price,exit_price FROM memecoin_calls "
+            "WHERE user_id=? AND caller_identity_id=?",
+            (user_id, identity["id"]),
+        ).fetchall()
+        sports_rows = database.execute(
+            "SELECT event_id,status,result FROM sports_picks "
+            "WHERE user_id=? AND caller_identity_id=?",
+            (user_id, identity["id"]),
+        ).fetchall()
     calls = [_call(row) for row in rows]
-    return {"handle": str(identity["handle"]), **call_stats(calls)}
+    stats = call_stats(calls)
+    stats["total"] += len(coin_rows) + len(sports_rows)
+    stats["open"] += sum(row["status"] == "active" for row in coin_rows)
+    stats["open"] += sum(row["status"] == "open" for row in sports_rows)
+    stats["closed"] += sum(row["status"] == "closed" for row in coin_rows)
+    stats["closed"] += sum(row["status"] != "open" for row in sports_rows)
+    stats["wins"] += sum(
+        row["status"] == "closed" and row["exit_price"] > row["entry_price"] for row in coin_rows
+    ) + sum(row["result"] == "win" for row in sports_rows)
+    stats["losses"] += sum(
+        row["status"] == "closed" and row["exit_price"] < row["entry_price"] for row in coin_rows
+    ) + sum(row["result"] == "loss" for row in sports_rows)
+    for field in ("average_return_pct", "median_return_pct", "best_return_pct", "worst_return_pct"):
+        stats[field] = None
+    return {"handle": str(identity["handle"]), **stats}
