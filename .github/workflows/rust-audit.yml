@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/rust-audit.yml"
       - "desktop/src-tauri/Cargo.lock"
+      - "desktop/backport-regression/Cargo.lock"
       - "rust/stonks-ranker/Cargo.lock"
   schedule:
     - cron: "19 8 * * 1"
@@ -25,6 +26,7 @@ jobs:
     with:
       scan-args: |-
         --lockfile=./desktop/src-tauri/Cargo.lock
+        --lockfile=./desktop/backport-regression/Cargo.lock
         --lockfile=./rust/stonks-ranker/Cargo.lock
       upload-sarif: false
       fail-on-vuln: true
@@ -40,6 +42,7 @@ jobs:
     with:
       scan-args: |-
         --lockfile=./desktop/src-tauri/Cargo.lock
+        --lockfile=./desktop/backport-regression/Cargo.lock
         --lockfile=./rust/stonks-ranker/Cargo.lock
       upload-sarif: false
       fail-on-vuln: true

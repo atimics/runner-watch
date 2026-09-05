@@ -1,5 +1,5 @@
 [package]
-name = "glib-backport-regression"
+name = "desktop-backport-regression"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -7,6 +7,7 @@ license = "AGPL-3.0-only"
 
 [dependencies]
 glib = { path = "../src-tauri/vendor/glib" }
+urlpattern = { path = "../src-tauri/vendor/urlpattern" }
 
 [profile.release]
 codegen-units = 1
