@@ -33,6 +33,22 @@ class SourcePolicy:
 
 DEFAULT_SOURCE_POLICIES = (
     SourcePolicy(
+        source="coingecko",
+        feed="memecoins",
+        title="CoinGecko memecoin markets",
+        owner="CoinGecko",
+        terms_url="https://www.coingecko.com/en/api_terms",
+        credential_env=None,
+        expected_cadence_seconds=300,
+        stale_after_seconds=900,
+        schedule="always",
+        storage_policy="normalized_only",
+        display_policy="source_link_with_attribution",
+        attribution="CoinGecko",
+        review_status="review_required",
+        enabled=_enabled_by_default("MEMECOINS_ENABLED"),
+    ),
+    SourcePolicy(
         source="sec",
         feed="company_map",
         title="SEC listed company map",

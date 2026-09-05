@@ -15,6 +15,11 @@ class SourceCapability:
 
 SOURCE_CAPABILITIES = (
     SourceCapability(
+        "crypto_markets",
+        "Memecoin markets",
+        "USD prices, daily moves, volume, and market caps for memecoins.",
+    ),
+    SourceCapability(
         "market_universe",
         "Market universe",
         "Symbols, listings, and the companies the scanner can search.",
@@ -86,6 +91,7 @@ SOURCE_CAPABILITIES = (
 CAPABILITY_BY_ID = {capability.id: capability for capability in SOURCE_CAPABILITIES}
 
 _CAPABILITY_BY_FEED = {
+    "memecoins": "crypto_markets",
     "universe": "market_universe",
     "company_map": "market_universe",
     "market_bars": "market_bars",

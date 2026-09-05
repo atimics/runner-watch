@@ -1,0 +1,50 @@
+{% extends "mobile_base.html" %}
+{% block title %}Memecoins · RATi{% endblock %}
+{% block product_head %}<link rel="stylesheet" href="/static/memecoins.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+<header class="screen-head">
+  <div>
+    <span class="rati-product">RATi MARKETS</span>
+    <h1>Memecoins</h1>
+    <span class="head-meta">24/7 market · USD · {{ market.total }} coins</span>
+  </div>
+  <a class="meme-refresh" href="/memecoins?q={{ market.query|urlencode }}&amp;sort={{ market.sort }}">Refresh</a>
+</header>
+<section class="meme-market" aria-label="Memecoin markets">
+  <p class="meme-source">Top 100 by market cap in <a href="https://www.coingecko.com/en/categories/meme-token" target="_blank" rel="noopener noreferrer">CoinGecko’s meme category ↗</a>. Updates every five minutes.</p>
+  <form class="meme-filters" action="/memecoins" method="get" role="search">
+    <label>Find a coin<input type="search" name="q" value="{{ market.query }}" maxlength="80" placeholder="Name or symbol"></label>
+    <label>Sort by<select name="sort">
+      {% for value, label in [('volume', '24h volume'), ('market_cap', 'Market cap'), ('gainers', '24h gainers'), ('losers', '24h losers')] %}
+      <option value="{{ value }}"{% if market.sort == value %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select></label>
+    <button type="submit">Apply</button>
+  </form>
+  {% if market.status == 'stale' %}
+  <p class="meme-status" role="status">Saved prices · Quotes are over 15 minutes old or await a source time.</p>
+  {% elif market.refresh_failed and market.rows %}
+  <p class="meme-status" role="status">Saved prices · The source refresh will retry shortly.</p>
+  {% endif %}
+  {% if market.rows %}
+  <div class="meme-columns" aria-hidden="true"><span>Coin</span><span>Price / 24h</span><span>24h vol / Cap</span></div>
+  <ol class="meme-list">
+    {% for coin in market.rows %}
+    <li class="meme-row" data-coin-id="{{ coin.id }}">
+      <div class="meme-name"><a href="{{ coin.source_url }}" target="_blank" rel="noopener noreferrer"><strong>{{ coin.symbol }}</strong><span>{{ coin.name }} ↗</span></a><small>{% if coin.stale %}<b class="meme-stale">Stale · </b>{% endif %}{% if coin.observed_at %}<time datetime="{{ coin.observed_at }}" title="{{ coin.observed_at }}">{{ coin.observed_at[:10] }} {{ coin.observed_at[11:16] }} UTC</time>{% else %}Source time pending{% endif %}</small></div>
+      <div class="meme-quote"><strong>{{ coin.price_label }}</strong><span class="{% if coin.change_24h is not none %}{{ 'up' if coin.change_24h >= 0 else 'down' }}{% endif %}">{% if coin.change_24h is not none %}{{ '%+.2f'|format(coin.change_24h) }}%{% else %}—{% endif %}</span></div>
+      <div class="meme-amounts"><span>{{ coin.volume_label }}</span><small>{{ coin.market_cap_label }}</small></div>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <div class="meme-empty" role="status">
+    {% if market.status == 'disabled' %}<strong>Memecoin feed paused</strong><p>The feed will return when collection resumes.</p>
+    {% elif market.status == 'unavailable' %}<strong>Waiting for CoinGecko</strong><p>The source refresh will retry shortly.</p>
+    {% elif market.status == 'pending' %}<strong>First prices are on the way</strong><p>The next collection will fill this list.</p>
+    {% else %}<strong>Try another name or symbol</strong><p>Search covers the {{ market.total }} coins in this snapshot.</p>{% endif %}
+  </div>
+  {% endif %}
+  <footer class="meme-source">Data provided by <a href="https://www.coingecko.com/en/api" target="_blank" rel="noopener noreferrer">CoinGecko</a>.{% if market.collected_at %} Collected <time datetime="{{ market.collected_at }}">{{ market.collected_at[:10] }} {{ market.collected_at[11:16] }} UTC</time>.{% endif %}</footer>
+</section>
+{% endblock %}
