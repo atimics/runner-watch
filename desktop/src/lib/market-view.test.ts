@@ -24,8 +24,8 @@ describe('saved market evidence', () => {
     expect(priceHistorySegments([sample(0, 1)])).toEqual([]);
   });
 
-  it('ages open Call marks while preserving closed results', () => {
-    const call = { status: 'open', mark_at: new Date(start).toISOString() } as CoinCall;
+  it('ages active Call marks while preserving closed results', () => {
+    const call: CoinCall = { public_id: 'active-call', coin_id: 'dogecoin', symbol: 'DOGE', name: 'Dogecoin', caller_handle: 'wolf', status: 'active', entry_price_label: '$1', mark_price_label: '$1.12', mark_at: new Date(start).toISOString(), return_pct: 12.3 };
     expect(callMarkExpired(call, start + 15 * 60_000)).toBe(false);
     expect(callMarkExpired(call, start + 15 * 60_000 + 1)).toBe(true);
     expect(callMarkExpired({ ...call, mark_at: null }, start)).toBe(true);

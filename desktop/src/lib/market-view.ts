@@ -13,7 +13,7 @@ export function quoteExpired(coin: CoinRow, collectedAt: string | null | undefin
 }
 
 export function callMarkExpired(call: CoinCall, now: number): boolean {
-  return call.status === 'open' && timestampExpired(call.mark_at, now);
+  return call.status === 'active' && timestampExpired(call.mark_at, now);
 }
 
 export interface HistorySegment {
