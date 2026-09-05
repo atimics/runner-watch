@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -416,3 +417,106 @@ def test_author_unicode_disclosure_uses_bounded_duplicate_key(notice_db):
         ).fetchone()
     assert first == second
     assert len(row["dedup_key"]) == 64
+
+
+@pytest.mark.parametrize(
+    "correction,disclosure", [(False, False), (True, False), (False, True), (True, True)]
+)
+def test_report_share_metadata_and_card_carry_current_notices(
+    notice_db, monkeypatch, correction, disclosure
+):
+    original = web_main.get_commission("public-stock")
+    current_claim = "Revenue was $2.1 million for the quarter."
+    if correction:
+        record_content_notice(
+            "report",
+            "public-stock",
+            kind="correction",
+            text="Revenue was $2 million.",
+            reason="The first unit was wrong.",
+        )
+        record_content_notice(
+            "report",
+            "public-stock",
+            kind="correction",
+            text=current_claim,
+            reason="The filing was amended.",
+        )
+    if disclosure:
+        record_content_notice(
+            "report", "public-stock", kind="sponsorship", text="The issuer paid the publisher."
+        )
+    report = web_main.get_commission("public-stock")
+    labels = (["Correction"] if correction else []) + (["Disclosure"] if disclosure else [])
+    assert report["share_notice_label"] == " · ".join(labels)
+    assert report["headline"] == original["headline"] == "Original headline"
+    assert report["summary"] == original["summary"] == "Original summary"
+    if correction:
+        assert report["share_summary"].endswith(current_claim)
+        assert "Original" not in report["share_title"] + report["share_summary"]
+    else:
+        assert report["share_title"].endswith("Original headline")
+        assert report["share_summary"].endswith("Original summary")
+    for label in labels:
+        assert label in report["share_title"] and label in report["share_summary"]
+    drawn_text = []
+    original_text = web_main.ImageDraw.ImageDraw.text
+
+    def draw_text(self, xy, text, *args, **kwargs):
+        drawn_text.append(str(text))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(web_main.ImageDraw.ImageDraw, "text", draw_text)
+    client = _client()
+    try:
+        response = client.get("/research/public-stock/card.png")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/png"
+        assert "no-store" in response.headers["cache-control"]
+        with web_main.Image.open(io.BytesIO(response.content)) as image:
+            assert image.size == (1200, 630)
+            if labels:
+                assert image.getpixel((100, 275)) == (59, 41, 19)
+        visible = " ".join(" ".join(drawn_text).split())
+        for label in labels:
+            assert label in visible
+        if correction:
+            assert current_claim in visible
+            assert "Original headline" not in visible
+        else:
+            assert "Original headline" in visible
+    finally:
+        client.close()
+
+
+def test_report_card_changes_after_correction_and_respects_private_access(notice_db):
+    client = _client()
+    try:
+        first = client.get("/research/public-stock/card.png")
+        record_content_notice(
+            "report",
+            "public-stock",
+            kind="correction",
+            text="The filing date was Monday.",
+            reason="The day was incorrect.",
+        )
+        second = client.get("/research/public-stock/card.png")
+        assert first.content != second.content
+        assert client.get("/research/public-private/card.png").status_code == 404
+        client.cookies.set(web_main.SESSION_COOKIE, "alice")
+        assert client.get("/research/public-private/card.png").status_code == 200
+    finally:
+        client.close()
+
+
+def test_report_card_fallback_font_keeps_requested_size(monkeypatch):
+    original = web_main.ImageFont.truetype
+
+    def missing_named_font(name, *args, **kwargs):
+        if isinstance(name, str):
+            raise OSError("The preferred font is unavailable")
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(web_main.ImageFont, "truetype", missing_named_font)
+    bounds = web_main.font(37, True).getbbox("Revenue was $2.1 million.")
+    assert bounds[3] - bounds[1] >= 30

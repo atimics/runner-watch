@@ -149,3 +149,20 @@ def notices_for_content(subject: str, subject_ids: list[str]) -> dict[str, dict[
 def attach_comment_notices(comments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     notices = notices_for_content("comment", [str(row["id"]) for row in comments])
     return [{**row, **notices[str(row["id"])]} for row in comments]
+
+
+def report_share_metadata(report: dict[str, Any]) -> dict[str, str]:
+    corrections = report.get("corrections") or []
+    disclosures = report.get("disclosures") or []
+    latest_correction = corrections[-1] if corrections else None
+    labels = (["Correction"] if corrections else []) + (["Disclosure"] if disclosures else [])
+    label = " · ".join(labels)
+    headline = str(report.get("headline") or "Research report")
+    summary = str(latest_correction["text"] if latest_correction else report.get("summary") or "")
+    title = " · ".join([str(report["ticker"]), *labels, *([] if corrections else [headline])])
+    return {
+        "share_title": title,
+        "share_summary": f"{label}: {summary}" if label else summary,
+        "share_excerpt": str(latest_correction["text"]) if latest_correction else headline,
+        "share_notice_label": label,
+    }

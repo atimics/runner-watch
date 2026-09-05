@@ -94,6 +94,7 @@ from runner_web.content_notices import (
     disclosure_input,
     insert_content_notice,
     notices_for_content,
+    report_share_metadata,
 )
 from runner_web.db import connection, init_db
 from runner_web.flash_evaluations import (
@@ -3483,6 +3484,7 @@ def _commission_record(
         report["risk_heading"] = "What could rug it"
         report["sports_forecast"] = None
     report.update(notices_for_content("report", [str(report["id"])])[str(report["id"])])
+    report.update(report_share_metadata(report))
     return _apply_effective_report_visibility(report)
 
 
@@ -9009,8 +9011,23 @@ def research_report_card(
     draw.text((95, 88), card_label, "#87e8a9", font=font(29, True))
     subject_label = str(report["ticker"]) if is_sports else f"${report['ticker']}"
     draw.text((95, 150), subject_label, "#f4f8f6", font=font(84, True))
-    headline = "\n".join(textwrap.wrap(str(report["headline"]), width=39)[:3])
-    draw.multiline_text((95, 265), headline, fill="#f4f8f6", font=font(37, True), spacing=11)
+    notice_label = report["share_notice_label"]
+    if notice_label:
+        badge_font = font(21, True)
+        badge_width = draw.textlength(notice_label, font=badge_font) + 34
+        draw.rounded_rectangle((95, 258, 95 + badge_width, 300), radius=10, fill="#3b2913")
+        draw.text((112, 267), notice_label, "#ffd88c", font=badge_font)
+    lines = textwrap.wrap(report["share_excerpt"], width=39)
+    headline = "\n".join(lines[:3])
+    if len(lines) > 3:
+        headline = headline.rstrip(" .") + "…"
+    draw.multiline_text(
+        (95, 320 if notice_label else 265),
+        headline,
+        fill="#f4f8f6",
+        font=font(37, True),
+        spacing=11,
+    )
     draw.text(
         (95, 515),
         f"{ladder_label}{model_label}"[:70] if actor else model_label[:70],
@@ -9022,7 +9039,7 @@ def research_report_card(
     return Response(
         buffer.getvalue(),
         media_type="image/png",
-        headers={"Cache-Control": "private,max-age=3600"},
+        headers={"Cache-Control": "private, no-store"},
     )
 
 
@@ -10044,7 +10061,7 @@ def font(size: int, bold: bool = False) -> ImageFont.ImageFont:
     try:
         return ImageFont.truetype(name, size)
     except OSError:
-        return ImageFont.load_default()
+        return ImageFont.load_default(size=size)
 
 
 @app.get("/s/{public_id}/card.png")
