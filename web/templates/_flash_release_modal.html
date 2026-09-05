@@ -15,13 +15,13 @@
   </div>
   <div class="flash-release-body">
     <header>
-      <h2 id="flashReleaseTitle">Top bar update</h2>
-      <p id="flashReleaseIntro">Flash balance and Caller PnL are now in the top bar.</p>
+      <h2 id="flashReleaseTitle">RATi Runners 1.0</h2>
+      <p id="flashReleaseIntro">Follow the move, read the evidence, and track the result.</p>
     </header>
     <ul class="flash-release-features">
-      <li><strong>Flash balance</strong><small>Open the wallet or claim 100 daily Flash.</small></li>
-      <li><strong>Caller PnL</strong><small>Average closed-Call return and record.</small></li>
-      <li><strong>Rewards</strong><small>Profitable stock Calls earn 10× their return in Flash.</small></li>
+      <li><strong>Flash targets</strong><small>Pre-market targets with closing prices and results.</small></li>
+      <li><strong>Sports Calls</strong><small>Paper picks with saved odds and settled returns.</small></li>
+      <li><strong>Memecoins</strong><small>Browse prices, volume, and source times.</small></li>
     </ul>
     <section class="flash-daily-card" aria-labelledby="flashDailyTitle">
       <div>
@@ -74,8 +74,8 @@
   }
   function setReleaseCopy() {
     releaseKicker.textContent = 'RELEASE NOTES';
-    releaseTitle.textContent = 'Top bar update';
-    releaseIntro.textContent = 'Flash balance and Caller PnL are now in the top bar.';
+    releaseTitle.textContent = 'RATi Runners 1.0';
+    releaseIntro.textContent = 'Follow the move, read the evidence, and track the result.';
   }
   function setLowBalanceCopy(required) {
     const shortfall = Math.max(0, Number(required || 0) - balance);

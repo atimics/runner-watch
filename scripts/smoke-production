@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-origin=${1:-https://stonks.rati.foundation}
+origin=${1:-https://runners.rati.chat}
 attempts=${SMOKE_ATTEMPTS:-12}
 delay_seconds=${SMOKE_DELAY_SECONDS:-10}
 
@@ -29,6 +29,8 @@ check_endpoint /health
 check_endpoint /
 check_endpoint /login
 check_endpoint /radar
+check_endpoint /reports
+check_endpoint /memecoins
 check_endpoint '/api/pulse?limit=1'
 check_endpoint '/api/radar?limit=1'
 check_endpoint '/api/sports/pulse?limit=1'

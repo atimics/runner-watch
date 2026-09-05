@@ -14,6 +14,7 @@ from runner_node.credentials import MemoryCredentialVault
 from runner_node.openrouter import OpenRouterConnections
 from runner_node.research import OpenRouterResearch
 from runner_node.scans import ScanRequest, ScanStore
+from runner_watch import __version__
 
 
 def _settings(**overrides: object) -> NodeSettings:
@@ -69,6 +70,8 @@ def test_node_contract_reports_mode_and_capabilities() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["api_version"] == "1"
+    assert payload["scanner_version"] == __version__
+    assert client.get("/openapi.json").json()["info"]["version"] == __version__
     assert payload["node_id"] == "test-node"
     assert payload["mode"] == "local"
     assert payload["capabilities"]["stocks"] == "ready"

@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
+from runner_watch import __version__
 from runner_web import main as web_main
 from runner_web.main import app
 
@@ -36,7 +37,7 @@ def test_production_smoke_only_checks_real_routes() -> None:
 
 def test_version_endpoint_identifies_code_and_assets() -> None:
     assert web_main.version_api() == {
-        "version": "0.1.0",
+        "version": __version__,
         "build_sha": web_main.APP_BUILD_SHA,
         "static_version": web_main.STATIC_VERSION,
     }

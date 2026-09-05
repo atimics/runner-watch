@@ -1165,7 +1165,7 @@ def page_context(
         "comment_avatar": comment_avatar,
         "flash_wallet": wallet_for_user(user_id) if user_id else None,
         "caller_summary": caller_summary_for_user(user_id) if user_id else None,
-        "release_announcement_id": "flash-edge-2026-08-28",
+        "release_announcement_id": f"rati-runners-{APP_VERSION}",
         "app_origin": origin_for_request(request),
         "product": product_for_request(request),
         "runners_origin": RUNNERS_ORIGIN,

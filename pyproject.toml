@@ -1,6 +1,6 @@
 [project]
 name = "runner-watch"
-version = "0.1.0"
+version = "1.0.0"
 description = "A free-data stock momentum scanner for finding possible market runners early."
 license = "AGPL-3.0-only"
 requires-python = ">=3.11,<3.14"

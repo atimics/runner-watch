@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 ROADMAP_VERSION = "stonks.roadmap.v1"
-ROADMAP_REVIEWED_AT = "2026-09-03"
+ROADMAP_REVIEWED_AT = "2026-09-05"
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +59,27 @@ ROADMAP_ITEMS = (
         "Claim 100 Flash each day, lock one ticker's daily alpha for an hour, or publish it early.",
         "own",
         "live",
+    ),
+    RoadmapItem(
+        "sports-calls",
+        "Sports research and Calls",
+        "Compare team form with saved odds, read Flash research, and follow settled paper picks.",
+        "own",
+        "live",
+    ),
+    RoadmapItem(
+        "memecoins",
+        "Memecoin markets",
+        "Browse CoinGecko prices and volume with source times and saved-price labels.",
+        "copy",
+        "live",
+    ),
+    RoadmapItem(
+        "desktop-scanner",
+        "Local desktop scanner",
+        "Run local scans, save receipts, and connect scanner sources on macOS, Windows, and Linux.",
+        "own",
+        "ready",
     ),
     RoadmapItem(
         "ranker",

@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
+from runner_node import SCANNER_VERSION
 from runner_node.api import NodeService, create_node_router
 from runner_node.config import NodeSettings
 
@@ -24,7 +25,7 @@ def create_app(
     service = service or NodeService(settings=settings)
     application = FastAPI(
         title="RATi Scanner Node",
-        version="0.1.0",
+        version=SCANNER_VERSION,
         docs_url="/docs",
         redoc_url=None,
     )

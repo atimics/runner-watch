@@ -3,12 +3,14 @@ from pathlib import Path
 import pytest
 
 from runner_swarm.config import DEFAULT_TOPIC, SwarmMode, SwarmRuntimeConfig
+from runner_watch import __version__
 
 
 def test_default_runtime_is_solo_and_local_first() -> None:
     config = SwarmRuntimeConfig.from_env({})
 
     assert config.mode == SwarmMode.SOLO
+    assert config.software_version == __version__
     assert config.attached is False
     assert config.bootstrap_urls == ()
     assert config.topics == (DEFAULT_TOPIC,)

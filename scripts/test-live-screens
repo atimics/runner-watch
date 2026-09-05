@@ -44,6 +44,8 @@ SCREENS = (
     Screen("runners_pulse", "Runners · Pulse", "runners", "/", r"^Pulse$"),
     Screen("ticker", "Runners · Ticker", "runners", None, r"\S+", "ticker"),
     Screen("runners_radar", "Runners · Radar", "runners", "/radar", r"^Radar$"),
+    Screen("market_reports", "Runners · Market turns", "runners", "/reports", r"^Market turns$"),
+    Screen("memecoins", "Markets · Memecoins", "runners", "/memecoins", r"^Memecoins$"),
     Screen("runners_alpha", "Runners · Alpha", "runners", "/community", r"^Alpha$"),
     Screen("caller", "Runners · Caller", "runners", None, r"\S+", "caller"),
     Screen("research", "Runners · Research", "runners", None, r"\S+", "research"),
