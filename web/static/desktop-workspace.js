@@ -7,7 +7,8 @@
     const supported = /^\/t\/[^/]+\/?$/.test(url.pathname)
       || /^\/research\/[^/]+\/?$/.test(url.pathname)
       || /^\/s\/[^/]+\/?$/.test(url.pathname)
-      || /^\/(?:sports\/)?game\/[^/]+\/?$/.test(url.pathname);
+      || /^\/(?:sports\/)?game\/[^/]+\/?$/.test(url.pathname)
+      || /^\/memecoins\/(?!radar\/?$|alpha\/?$)[^/]+\/?$/.test(url.pathname);
     return supported ? url : null;
   }
 
@@ -22,8 +23,8 @@
     let loaded = false;
 
     function defaultUrl() {
-      const preferred = list.querySelector('a[data-desktop-default], a[href^="/t/"], a[href^="/research/"], a[href^="/s/"], a[href^="/game/"], a[href^="/sports/game/"]');
-      return preferred ? panelUrl(preferred.href) : null;
+      const preferred = list.querySelectorAll('a[data-desktop-default], a[href^="/t/"], a[href^="/research/"], a[href^="/s/"], a[href^="/game/"], a[href^="/sports/game/"], a[href^="/memecoins/"]');
+      return Array.from(preferred).map(link => panelUrl(link.href)).find(Boolean) || null;
     }
 
     function markSelected(url) {
