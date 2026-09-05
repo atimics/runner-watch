@@ -1628,3 +1628,10 @@ html.embedded-pane .research-report {
   html.embedded-pane .detail-body { padding: 34px 38px 72px; }
   html.embedded-pane .research-report { padding: 42px 52px 72px; }
 }
+
+.comment-disclosure-form { margin: 8px 0 16px; color: var(--soft); font-size: 12px; }
+.comment-disclosure-form summary { min-height: 32px; padding: 8px 0; cursor: pointer; }
+.comment-disclosure-form label { display: block; margin: 10px 0; color: var(--muted); font-size: 11px; }
+.comment-disclosure-form select, .comment-disclosure-form textarea { display: block; width: 100%; min-height: 44px; padding: 10px; margin-top: 5px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; }
+.comment-disclosure-form textarea { resize: vertical; }
+.comment-disclosure-form small { color: var(--muted); font-size: 10px; }

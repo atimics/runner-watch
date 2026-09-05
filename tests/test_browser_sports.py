@@ -195,7 +195,7 @@ def _rendered_radar(monkeypatch, payload: dict[str, Any]) -> str:
     return _inline_static_assets(response.body.decode())
 
 
-def _rendered_game_detail() -> str:
+def _rendered_game_detail(latest_commission: dict[str, Any] | None = None) -> str:
     event = {
         "id": "closed-game",
         "league": "mlb",
@@ -284,7 +284,7 @@ def _rendered_game_detail() -> str:
         name="sports_game.html",
         context={
             "event": event,
-            "latest_commission": None,
+            "latest_commission": latest_commission,
             "flash_report": {
                 "href": None,
                 "state": "closed",
@@ -531,7 +531,12 @@ def test_sports_pulse_respects_shared_responsive_breakpoints(
 
     assert page.locator(".screen-head").is_visible()
     assert page.locator(".tab-bar").is_visible()
-    assert page.locator(".product-tab-link").is_visible()
+    assert page.get_by_role("navigation", name="Market", exact=True).is_visible()
+    assert page.locator(".market-switcher a").count() == 3
+    if width >= 900:
+        assert page.locator(".desktop-workspace").evaluate(
+            "node => node.getBoundingClientRect().bottom <= window.innerHeight"
+        )
     navigation = page.locator(".tab-bar")
     navigation_box = navigation.bounding_box()
     assert navigation_box is not None
@@ -540,10 +545,10 @@ def test_sports_pulse_respects_shared_responsive_breakpoints(
             "getComputedStyle(document.querySelector('.tab-bar'))"
             ".gridTemplateColumns.split(' ').length"
         )
-        == 5
+        == 3
     )
     links = navigation.locator(".tab-link")
-    assert links.count() == 5
+    assert links.count() == 3
     for index in range(links.count()):
         link_box = links.nth(index).bounding_box()
         assert link_box is not None
@@ -724,3 +729,30 @@ def test_sports_alpha_opens_its_leader_in_the_shared_detail_pane(page: Page, mon
         .endswith("desktop-panel-selected")
     )
     assert errors == []
+
+
+def test_sports_forecast_keeps_model_context_next_to_its_estimate(page: Page) -> None:
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.set_content(
+        _rendered_game_detail(
+            {
+                "locked": False,
+                "actor": {"ladder_position": 1, "ladder_size": 2, "model_label": "test/model"},
+                "sports_forecast": {
+                    "selection": "away",
+                    "selected_abbreviation": "SEA",
+                    "selected_probability": 0.57,
+                    "selected_team": "Seattle",
+                    "agrees_with_baseline": True,
+                },
+            }
+        ),
+        wait_until="domcontentloaded",
+    )
+    forecast = page.locator(".game-flash-prediction")
+    assert "SEA 57%" in forecast.inner_text()
+    assert "test/model" in forecast.inner_text()
+    assert forecast.locator(".game-forecast-context").inner_text() == (
+        "AI estimate from the report’s saved inputs. Actual outcomes can differ."
+    )
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

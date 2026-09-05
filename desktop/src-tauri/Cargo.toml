@@ -6,6 +6,12 @@ authors = ["RATi"]
 edition = "2021"
 license = "AGPL-3.0-only"
 
+[workspace]
+members = ["backport-regression"]
+default-members = ["."]
+exclude = ["vendor/glib", "vendor/urlpattern"]
+resolver = "2"
+
 [lib]
 name = "rati_swarm_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -29,3 +35,7 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+[patch.crates-io]
+glib = { path = "vendor/glib" }
+urlpattern = { path = "vendor/urlpattern" }

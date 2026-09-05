@@ -15,12 +15,10 @@
     <b data-flash-balance>{{ flash_wallet.balance }}</b>
     <small>Flash</small>
   </button>
-  <a class="account-strip-caller" href="{{ runners_origin ~ '/my-calls' if account_product == 'sports' else '/my-calls' }}">
-    <span>Caller PnL</span>
-    <b class="{% if caller_summary.average_return_pct is not none %}{{ 'up' if caller_summary.average_return_pct >= 0 else 'down' }}{% endif %}">
-      {% if caller_summary.average_return_pct is not none %}{{ '+' if caller_summary.average_return_pct >= 0 else '' }}{{ '%.1f'|format(caller_summary.average_return_pct) }}%{% else %}—{% endif %}
-    </b>
-    <small>{{ caller_summary.wins }}–{{ caller_summary.losses }} record</small>
+  <a class="account-strip-caller" href="{{ runners_origin }}/my-calls?market={{ 'stocks' if account_product == 'runners' else account_product }}">
+    <span>My Calls</span>
+    <b>{{ caller_summary.wins }}–{{ caller_summary.losses }}</b>
+    <small>{{ caller_summary.open|default(0) }} open</small>
   </a>
   {% endif %}
 </nav>

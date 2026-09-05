@@ -18,9 +18,11 @@ PORTABLE_CONTENT_GROUPS = {
         "comments",
         "sports_comments",
         "community_calls",
+        "memecoin_calls",
         "sports_picks",
         "signals",
         "reports_submitted",
+        "content_notices",
     ),
     "Private work": (
         "watchlist",
@@ -208,6 +210,14 @@ def export_user_data(user_id: str) -> dict[str, Any]:
                 (user_id,),
                 order_by="created_at",
             ),
+            "memecoin_calls": _rows(
+                database,
+                tables,
+                "memecoin_calls",
+                "user_id=?",
+                (user_id,),
+                order_by="created_at",
+            ),
             "sports_picks": _rows(
                 database,
                 tables,
@@ -252,6 +262,15 @@ def export_user_data(user_id: str) -> dict[str, Any]:
             "case_revisions": related("thesis_case_revisions", "case_id", case_ids),
             "case_updates": related("thesis_case_updates", "case_id", case_ids),
             "case_outcomes": related("thesis_case_outcomes", "case_id", case_ids),
+            "content_notices": _rows(
+                database,
+                tables,
+                "content_notices",
+                "report_id IN (SELECT id FROM research_commissions WHERE user_id=?) "
+                "OR comment_id IN (SELECT id FROM ticker_comments WHERE user_id=?)",
+                (user_id, user_id),
+                order_by="created_at,id",
+            ),
             "research": commissions,
             "research_stages": related("research_stage_runs", "commission_id", commission_ids),
             "flash_forecasts": flash_forecasts,
@@ -388,6 +407,12 @@ def _delete_user_content_rows(
         if rowcount and rowcount > 0:
             deleted += rowcount
 
+    delete(
+        "content_notices",
+        "report_id IN (SELECT id FROM research_commissions WHERE user_id=?) "
+        "OR comment_id IN (SELECT id FROM ticker_comments WHERE user_id=?)",
+        (user_id, user_id),
+    )
     delete("comment_generation_requests", "user_id=?", (user_id,))
     delete("flash_report_requests", "user_id=?", (user_id,))
     delete(
@@ -444,6 +469,7 @@ def _delete_user_content_rows(
     delete("ticker_comments", "user_id=?", (user_id,))
     delete("sports_comments", "user_id=?", (user_id,))
     delete("community_calls", "user_id=?", (user_id,))
+    delete("memecoin_calls", "user_id=?", (user_id,))
     delete("sports_picks", "user_id=?", (user_id,))
     delete("user_positions", "user_id=?", (user_id,))
     delete("watches", "user_id=?", (user_id,))

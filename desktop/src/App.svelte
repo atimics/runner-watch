@@ -1,10 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import MarketWorkspace from './lib/MarketWorkspace.svelte';
 
   import {
     NodeClient,
     type CoveragePayload,
     type CoverageProvider,
+    type Market,
+    type MarketTab,
     type NodeStatus,
     type OpenRouterConnection,
     type ProviderStatus,
@@ -26,6 +29,8 @@
   type View = 'pulse' | 'radar' | 'flash' | 'scanner' | 'settings' | 'ticker';
 
   let view: View = 'pulse';
+  let market: Market = 'stocks';
+  let marketTab: MarketTab = 'pulse';
   let nodeUrl = 'http://127.0.0.1:8787';
   let nodeToken = '';
   let node: NodeStatus | null = null;
@@ -128,17 +133,17 @@
   }
 
   function configuredSourceCount(): number {
-    return providers.filter((provider) => provider.enabled && provider.configured && provider.id !== 'openrouter').length;
+    return providers.filter((provider) => provider.enabled && provider.configured && provider.runtime_available !== false && provider.id !== 'openrouter').length;
   }
 
   function freeSources(): ProviderStatus[] {
-    return providers.filter((provider) => provider.id !== 'openrouter' && (
+    return providers.filter((provider) => provider.runtime_available !== false && provider.id !== 'openrouter' && (
       provider.configuration_kind === 'none' || provider.configuration_kind === 'toggle'
     ) && (provider.enabled || provider.id === 'rati-cloud'));
   }
 
   function keySources(): ProviderStatus[] {
-    return providers.filter((provider) => provider.configuration_kind === 'api_key');
+    return providers.filter((provider) => provider.configuration_kind === 'api_key' && provider.runtime_available !== false);
   }
 
   function remoteSources(): ProviderStatus[] {
@@ -152,13 +157,14 @@
   function capabilityState(capability: SourceCapability): string {
     if (capabilityReady(capability)) return 'ready';
     if (coverageScope === 'public_saas' && capability.private_ready) return 'license needed';
+    if (capability.providers.every((provider) => provider.runtime_available === false)) return 'cloud service';
     if (capability.providers.some((provider) => provider.configuration_kind === 'api_key')) return 'connect source';
     return 'not connected';
   }
 
   function selectedCoverageProvider(capability: SourceCapability): CoverageProvider | undefined {
     return capability.providers.find((provider) => provider.provider_id === capability.selected_provider)
-      || capability.providers.find((provider) => provider.enabled && provider.configured)
+      || capability.providers.find((provider) => provider.enabled && provider.configured && provider.runtime_available !== false)
       || capability.providers[0];
   }
 
@@ -174,7 +180,7 @@
   }
 
   async function preferProvider(capability: SourceCapability, provider: CoverageProvider) {
-    if (!provider.enabled || !provider.configured) return;
+    if (!provider.enabled || !provider.configured || provider.runtime_available === false) return;
     try {
       const route = [
         provider.provider_id,
@@ -416,8 +422,20 @@
     return tickerDetail?.charts[tickerChart] || [];
   }
 
+  function chooseMarket(next: Market) {
+    market = next;
+    marketTab = 'pulse';
+    view = 'pulse';
+  }
+
+  async function enableMarketCloud() {
+    await client().setRatiCloudEnabled(true);
+    if (!await refreshSources()) throw new Error(scannerMessage);
+  }
+
   function currentViewLabel(): string {
     if (view === 'settings') return 'Sources';
+    if (market !== 'stocks') return `${market === 'memecoins' ? 'Memecoins' : 'Sports'} · ${marketTab[0].toUpperCase()}${marketTab.slice(1)}`;
     if (view === 'ticker') return selectedTicker?.ticker || 'Ticker';
     return navItems.find((item) => item.id === view)?.label || 'RATi Runners';
   }
@@ -448,8 +466,14 @@
 
 <div class="app-shell">
   <aside class="app-sidebar">
-    <button class="brand" onclick={() => view = 'pulse'} aria-label="Open Pulse"><span class="brand-mark">R</span><span class="brand-copy"><small>RATi</small><b>RUNNERS</b></span></button>
-    <nav class="app-nav" aria-label="Main navigation"><small>Workspace</small>{#each navItems as item}<button class:active={view === item.id} onclick={() => view = item.id}><span>{item.icon}</span>{item.label}</button>{/each}<button onclick={() => openExternal('https://runners.rati.chat/memecoins')}><span>↗</span>Memecoins</button></nav>
+    <button class="brand" onclick={() => chooseMarket('stocks')} aria-label="Open Stocks Pulse"><span class="brand-mark">R</span><span class="brand-copy"><small>RATi</small><b>RUNNERS</b></span></button>
+    <nav class="app-nav market-nav" aria-label="Market"><small>Markets</small>
+      {#each ['stocks', 'memecoins', 'sports'] as item}<button class:active={market === item} aria-current={market === item ? 'true' : undefined} onclick={() => chooseMarket(item as Market)}>{item === 'stocks' ? 'Stocks' : item === 'memecoins' ? 'Memecoins' : 'Sports'}</button>{/each}
+    </nav>
+    <nav class="app-nav workspace-nav" aria-label="Current market navigation"><small>{market === 'stocks' ? 'Stocks' : market === 'memecoins' ? 'Memecoins' : 'Sports'}</small>
+      {#if market === 'stocks'}{#each navItems as item}<button class:active={view === item.id} onclick={() => view = item.id}><span>{item.icon}</span>{item.label}</button>{/each}
+      {:else}{#each ['pulse', 'radar', 'alpha'] as item}<button class:active={marketTab === item && view !== 'settings'} onclick={() => { marketTab = item as MarketTab; view = 'pulse'; }}>{item[0].toUpperCase()}{item.slice(1)}</button>{/each}{/if}
+    </nav>
     <div class="sidebar-actions">
       <small>Sources</small>
       <button class:active={view === 'settings'} class="settings-button" onclick={() => view = 'settings'}><span>⚙</span> Manage sources</button>
@@ -458,9 +482,11 @@
   </aside>
 
   <section class="app-workspace">
-    <header class="app-toolbar"><div><small>Local workspace</small><strong>{currentViewLabel()}</strong></div><div class="toolbar-state"><span>Source hub</span><i class:online={node}></i></div></header>
+    <header class="app-toolbar"><div><small>{market === 'stocks' ? 'Local workspace' : 'Shared market workspace'}</small><strong>{currentViewLabel()}</strong></div><div class="toolbar-state"><span>Source hub</span><i class:online={node}></i></div></header>
     <main>
-      {#if view === 'pulse'}
+      {#if market !== 'stocks' && view !== 'settings'}
+        <MarketWorkspace {market} tab={marketTab} enabled={node?.capabilities[market] === 'ready'} available={!!node} {nodeUrl} {nodeToken} onconnect={enableMarketCloud} {openExternal} />
+      {:else if view === 'pulse'}
         <section class="screen-head local-feed-head"><div><span class="eyebrow">ALL ENABLED SOURCES</span><h1>Pulse</h1><p>Candidates from the newest receipt produced by each scanner source.</p></div><div class="local-head-actions"><div class="live-state"><i></i><span>{scannerMessage}</span><small>{allRows().length} source items</small></div><button class="primary" onclick={() => refreshSources()} disabled={connecting}>{connecting ? 'Refreshing…' : 'Refresh sources'}</button></div></section>
         <section class="runner-list">
           {#each allRows() as row}
@@ -523,8 +549,9 @@
                     {#each capability.providers as provider}
                       <section class:selected={provider.provider_id === capability.selected_provider} class="coverage-provider">
                         <div><strong>{provider.provider_title}</strong><small>{provider.feeds.join(' · ')}</small></div>
-                        <span class:ready={provider.enabled && provider.configured}>{provider.enabled && provider.configured ? 'connected' : accessLabel(provider)}</span>
-                        {#if provider.enabled && provider.configured}
+                        <span class:ready={provider.enabled && provider.configured && provider.runtime_available !== false}>{provider.runtime_available === false ? 'Cloud feed' : provider.enabled && provider.configured ? 'connected' : accessLabel(provider)}</span>
+                        {#if provider.runtime_available === false}<small>Available through the cloud app</small>
+                        {:else if provider.enabled && provider.configured}
                           <button onclick={() => preferProvider(capability, provider)} disabled={provider.provider_id === capability.selected_provider}>{provider.provider_id === capability.selected_provider ? 'First' : 'Prefer'}</button>
                         {:else if provider.configuration_kind === 'api_key'}
                           <div class="key-entry coverage-key"><input type="password" value={providerKeys[provider.provider_id] || ''} oninput={(event) => providerKeys = { ...providerKeys, [provider.provider_id]: event.currentTarget.value }} autocomplete="off" placeholder={`${provider.provider_title} API key`} aria-label={`${provider.provider_title} API key`} /><button onclick={() => connectCoverageProvider(provider)} disabled={(providerKeys[provider.provider_id] || '').trim().length < 8}>Connect</button></div>

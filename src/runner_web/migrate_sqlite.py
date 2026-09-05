@@ -4,6 +4,7 @@ import argparse
 import os
 import sqlite3
 from collections.abc import Iterable
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -197,7 +198,7 @@ def migrate(
     schema.init_db()
     source_uri = f"file:{source_path.resolve()}?mode=ro"
     counts: dict[str, int] = {}
-    with sqlite3.connect(source_uri, uri=True) as source:
+    with closing(sqlite3.connect(source_uri, uri=True)) as source, source:
         with open_database(database_url, source_path) as target:
             tables = _ordered_tables(source)
             source_counts = {

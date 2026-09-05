@@ -96,3 +96,18 @@ describe('scanner node addresses', () => {
     await expectation;
   });
 });
+
+describe('shared market routes', () => {
+  it.each([
+    ['coin list', (client: NodeClient) => client.memecoins('doge & coin', 'gainers', 'pulse'), '/api/v1/markets/memecoins?q=doge+%26+coin&sort=gainers&view=pulse'],
+    ['coin detail', (client: NodeClient) => client.memecoin('same-symbol-two'), '/api/v1/markets/memecoins/coins/same-symbol-two'],
+    ['coin Calls', (client: NodeClient) => client.memecoinCalls(), '/api/v1/markets/memecoins/calls'],
+    ['Sports Radar', (client: NodeClient) => client.sports('radar'), '/api/v1/markets/sports/radar'],
+  ] as const)('loads %s through the authenticated node', async (_label, load, path) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 200 }));
+    await load(new NodeClient('http://127.0.0.1:8787', 'private-token'));
+    expect(fetchMock).toHaveBeenCalledWith(`http://127.0.0.1:8787${path}`, expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: 'Bearer private-token' }),
+    }));
+  });
+});

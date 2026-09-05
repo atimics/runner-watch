@@ -1,0 +1,14 @@
+{% macro content_notices(disclosures, corrections) %}
+<section class="content-notices" aria-label="Disclosures and corrections"{% if not disclosures and not corrections %} hidden{% endif %}>
+  {% for title, notices in [('Correction', (corrections or [])|reverse|list), ('Disclosure', disclosures)] %}
+  {% for notice in notices or [] %}
+  <article class="content-notice" data-notice-id="{{ notice.id }}">
+    <strong class="content-notice-label">{{ title }}{% if title == 'Disclosure' and notice.label and notice.label != title %} · {{ notice.label }}{% endif %}</strong>
+    <p>{{ notice.text }}</p>
+    {% if notice.reason %}<p class="content-notice-reason">Reason: {{ notice.reason }}</p>{% endif %}
+    <small class="content-notice-time"><time datetime="{{ notice.created_at }}">{{ notice.created_at[:16]|replace('T', ' ') }} UTC</time>{% if notice.recorded_by %} · {{ notice.recorded_by }}{% endif %}</small>
+  </article>
+  {% endfor %}
+  {% endfor %}
+</section>
+{% endmacro %}

@@ -1,6 +1,7 @@
 {% extends "mobile_base.html" %}
 {% from "_flash_comments.html" import flash_comments %}
 {% from "_flash_report_action.html" import flash_report_action %}
+{% from "_content_notices.html" import content_notices %}
 {% block app_class %}detail-app sports-game-app{% endblock %}
 {% block title %}{{ event.away_abbreviation }} at {{ event.home_abbreviation }} · RATi Sports{% endblock %}
 {% block product_head %}{% include "_sports_styles.html" %}{% endblock %}
@@ -100,7 +101,9 @@
           <strong>{{ ai_forecast.selected_abbreviation }} {{ '%.0f'|format(ai_forecast.selected_probability * 100) }}%</strong><b>{{ ai_forecast.selected_team }}</b>
           {% endif %}
           <em>{{ 'Agrees with' if ai_forecast.agrees_with_baseline else 'Differs from' }} {{ prediction.model_version }} · {{ latest_commission.actor.model_label }}</em>
+          <p class="game-forecast-context">AI estimate from the report’s saved inputs. Actual outcomes can differ.</p>
         </div>
+        {{ content_notices(latest_commission.disclosures, latest_commission.corrections) }}
         {% endif %}
       </div>
       <div class="game-flash-action">
