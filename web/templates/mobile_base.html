@@ -23,7 +23,7 @@
     {% include "_account_strip.html" %}
     {% block content %}{% endblock %}
     {% block bottom_nav %}
-    <nav class="tab-bar" aria-label="Main navigation">
+    <nav class="tab-bar markets-tab-bar" aria-label="Main navigation">
       <a class="tab-link {% if active_tab == 'pulse' %}active{% endif %}" href="{% if current_product == 'sports' %}{{ sports_prefix }}/{% else %}/{% endif %}"{% if active_tab == 'pulse' %} aria-current="page"{% endif %}>
         <span class="tab-icon pulse-icon" aria-hidden="true"></span>
         <span>Pulse</span>
@@ -35,6 +35,10 @@
       <a class="tab-link {% if active_tab == 'alpha' %}active{% endif %}" href="{% if current_product == 'sports' %}{{ sports_prefix }}/alpha{% else %}/community{% endif %}"{% if active_tab == 'alpha' %} aria-current="page"{% endif %}>
         <span class="tab-icon alpha-icon" aria-hidden="true"></span>
         <span>Alpha</span>
+      </a>
+      <a class="tab-link {% if active_tab == 'memecoins' %}active{% endif %}" href="/memecoins"{% if active_tab == 'memecoins' %} aria-current="page"{% endif %}>
+        <span class="tab-icon product-tab-icon" aria-hidden="true">M</span>
+        <span>Memecoins</span>
       </a>
       <a class="tab-link product-tab-link" href="{{ runners_origin if current_product == 'sports' else sports_origin }}">
         <span class="tab-icon product-tab-icon" aria-hidden="true">{{ 'R' if current_product == 'sports' else 'S' }}</span>

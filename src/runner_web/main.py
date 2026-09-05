@@ -135,6 +135,7 @@ from runner_web.llm_routing import (
 from runner_web.market_clock import market_clock
 from runner_web.market_forecasts import generate_market_forecasts, settle_market_forecasts
 from runner_web.market_reports import market_reports_overview, refresh_market_reports
+from runner_web.memecoins import REFRESH_SECONDS, memecoin_market, refresh_memecoins
 from runner_web.operations import (
     require_operations_access,
     required_worker_names,
@@ -566,6 +567,7 @@ def _start_worker_tasks(
         asyncio.create_task(report_release_worker(), name="report-release"),
         asyncio.create_task(case_monitor_worker(), name="case-monitor"),
         asyncio.create_task(kol_worker(), name="kol"),
+        asyncio.create_task(memecoin_worker(), name="memecoins"),
     ]
     if SPORTS_INGESTION_ENABLED:
         workers.append(asyncio.create_task(sports_ingestion_worker(), name="sports-ingestion"))
@@ -1401,6 +1403,17 @@ async def massive_backfill_worker() -> None:
         except Exception as exc:
             worker_state("massive_backfill_last_error", str(exc)[:500])
         await asyncio.sleep(3600)
+
+
+async def memecoin_worker() -> None:
+    while True:
+        try:
+            await run_in_threadpool(refresh_memecoins)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOG.exception("Memecoin refresh failed")
+        await asyncio.sleep(REFRESH_SECONDS)
 
 
 async def sports_ingestion_worker() -> None:
@@ -5831,6 +5844,32 @@ async def alpha_report_worker() -> None:
         except Exception as exc:
             worker_state("alpha_report_last_error", str(exc)[:500])
         await asyncio.sleep(60)
+
+
+@app.get("/memecoins", response_class=HTMLResponse)
+def memecoins_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+    q: str = "",
+    sort: str = "volume",
+):
+    enforce_rate(request, "memecoins", limit=120, seconds=60)
+    return templates.TemplateResponse(
+        request,
+        "memecoins.html",
+        page_context(
+            request,
+            runner_session,
+            active_tab="memecoins",
+            market=memecoin_market(query=q, sort=sort),
+        ),
+    )
+
+
+@app.get("/api/memecoins")
+def memecoins_api(request: Request, q: str = "", sort: str = "volume"):
+    enforce_rate(request, "memecoins", limit=120, seconds=60)
+    return memecoin_market(query=q, sort=sort)
 
 
 @app.get("/", response_class=HTMLResponse)
