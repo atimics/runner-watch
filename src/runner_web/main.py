@@ -9000,7 +9000,7 @@ def research_report_card(
         if actor
         else "RATi SPORTS"
         if is_sports
-        else "RUNNER WATCH RESEARCH"
+        else "RATi RUNNERS RESEARCH"
     )
     ladder_label = f"#{actor.get('ladder_position')} · " if actor and not customer_inference else ""
     image = Image.new("RGB", (1200, 630), "#090b0b")
