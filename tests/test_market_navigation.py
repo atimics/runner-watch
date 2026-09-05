@@ -51,9 +51,7 @@ def test_coin_navigation_keeps_market_context_on_each_host(host_product, active_
         "https://runners.rati.chat/memecoins"
     ]
     tabs = navigation.links["Memecoins navigation"]
-    assert [link["href"] for link in tabs] == [
-        "/memecoins", "/memecoins/radar", "/memecoins/alpha"
-    ]
+    assert [link["href"] for link in tabs] == ["/memecoins", "/memecoins/radar", "/memecoins/alpha"]
     assert tabs[["pulse", "radar", "alpha"].index(active_tab)]["aria-current"] == "page"
     assert 'class="memecoins-product"' in html
 
