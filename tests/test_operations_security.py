@@ -76,6 +76,36 @@ def test_public_readiness_response_is_minimal(monkeypatch: MonkeyPatch) -> None:
     assert json.loads(response.body) == {"status": "ok"}
 
 
+@pytest.mark.parametrize(
+    ("database", "worker", "trainer", "expected"),
+    [
+        ("ok", "ok", "ok", 200),
+        ("unavailable", "ok", "ok", 503),
+        ("ok", "stale", "ok", 503),
+        ("ok", "degraded", "ok", 503),
+        ("ok", "ok", "stale", 503),
+        ("ok", "ok", "degraded", 503),
+    ],
+)
+def test_public_worker_health_checks_each_process_and_returns_only_status(
+    monkeypatch: MonkeyPatch, database: str, worker: str, trainer: str, expected: int
+) -> None:
+    monkeypatch.setattr(
+        operations,
+        "health_status",
+        lambda: {
+            "database": database,
+            "worker": {"status": worker, "detail": {"instance_id": "private-machine"}},
+            "trainer": {"status": trainer, "detail": {"model_id": "private-model"}},
+        },
+    )
+
+    response = operations.workers_health_api()
+
+    assert response.status_code == expected
+    assert json.loads(response.body) == {"status": "ok" if expected == 200 else "degraded"}
+
+
 def test_detailed_health_never_returns_raw_worker_errors(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

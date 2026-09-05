@@ -225,6 +225,7 @@ from runner_web.sports import (
 )
 from runner_web.swarm_runtime import maintain_swarm_runtime, open_swarm_runtime
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
+from runner_web.worker_supervisor import run_supervised
 
 __all__ = ["AccountDeletePayload", "CloudDataDeletePayload"]
 
@@ -548,7 +549,9 @@ def _public_screen_data(
             PUBLIC_SCREEN_DATA_CONDITION.notify_all()
 
 
-def _start_worker_tasks() -> list[asyncio.Task[Any]]:
+def _start_worker_tasks(
+    heartbeat: Callable[[], None] | None = None,
+) -> list[asyncio.Task[Any]]:
     workers = [
         asyncio.create_task(edgar_worker(), name="edgar"),
         asyncio.create_task(trading_halt_worker(), name="trading-halts"),
@@ -566,11 +569,11 @@ def _start_worker_tasks() -> list[asyncio.Task[Any]]:
     ]
     if SPORTS_INGESTION_ENABLED:
         workers.append(asyncio.create_task(sports_ingestion_worker(), name="sports-ingestion"))
-    heartbeat = asyncio.create_task(
-        worker_process_heartbeat(workers),
+    heartbeat_task = asyncio.create_task(
+        worker_process_heartbeat(workers, heartbeat),
         name="worker-heartbeat",
     )
-    return [*workers, heartbeat]
+    return [*workers, heartbeat_task]
 
 
 def _worker_heartbeat_detail(workers: list[asyncio.Task[Any]]) -> dict[str, Any]:
@@ -590,12 +593,18 @@ def _worker_heartbeat_detail(workers: list[asyncio.Task[Any]]) -> dict[str, Any]
     }
 
 
-async def worker_process_heartbeat(workers: list[asyncio.Task[Any]]) -> None:
+async def worker_process_heartbeat(
+    workers: list[asyncio.Task[Any]], heartbeat: Callable[[], None] | None = None
+) -> None:
     while True:
-        worker_state(
+        detail = _worker_heartbeat_detail(workers)
+        await asyncio.to_thread(
+            worker_state,
             worker_heartbeat_key(WORKER_INSTANCE_ID),
-            json.dumps(_worker_heartbeat_detail(workers), separators=(",", ":")),
+            json.dumps(detail, separators=(",", ":")),
         )
+        if heartbeat is not None and detail["status"] == "ok":
+            heartbeat()
         research_worker = next(
             (task for task in workers if task.get_name() == "research-jobs"), None
         )
@@ -610,11 +619,7 @@ async def worker_process_heartbeat(workers: list[asyncio.Task[Any]]) -> None:
 async def _stop_tasks(tasks: list[asyncio.Task[Any]]) -> None:
     for task in tasks:
         task.cancel()
-    for task in tasks:
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def validate_runtime_configuration() -> None:
@@ -673,14 +678,14 @@ async def lifespan(application: FastAPI):
             SWARM_RUNTIME.close()
 
 
-async def run_worker() -> None:
+async def run_worker(heartbeat: Callable[[], None] | None = None) -> None:
 
     validate_runtime_configuration()
     init_db()
     if not redis_configured():
         _fail_orphaned_research_jobs()
     _recover_completed_edge_reports()
-    tasks = _start_worker_tasks()
+    tasks = _start_worker_tasks(heartbeat)
     if SWARM_RUNTIME is not None:
         tasks.append(
             asyncio.create_task(
@@ -699,7 +704,12 @@ async def run_worker() -> None:
 
 
 def worker_main() -> None:
-    asyncio.run(run_worker())
+    run_supervised(
+        run_worker,
+        timeout_seconds=(
+            OPERATIONS.worker_heartbeat_max_age_seconds + 2 * OPERATIONS.worker_heartbeat_seconds
+        ),
+    )
 
 
 def _openrouter_api_key() -> str:

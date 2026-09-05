@@ -445,6 +445,20 @@ def health_api(_access: None = Depends(require_operations_access)) -> JSONRespon
     return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
 
 
+@router.get("/health/workers")
+def workers_health_api() -> JSONResponse:
+    payload = health_status()
+    healthy = (
+        payload["database"] == "ok"
+        and payload["worker"]["status"] == "ok"
+        and payload["trainer"]["status"] == "ok"
+    )
+    return JSONResponse(
+        {"status": "ok" if healthy else "degraded"},
+        status_code=200 if healthy else 503,
+    )
+
+
 @router.get("/health/data")
 def data_health_api(request: Request) -> JSONResponse:
     product = _request_product(request)
