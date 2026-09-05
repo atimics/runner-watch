@@ -17,7 +17,12 @@
   };
   const stale = (coin) => {
     const stamp = Date.parse(coin.observed_at);
-    return Boolean(coin.stale) || !Number.isFinite(stamp) || Date.now() - stamp > 900000 || stamp - Date.now() > 300000;
+    return Boolean(coin.stale) || !Number.isFinite(stamp) || Date.now() - stamp > 900000 || stamp - Date.now() > 60000;
+  };
+  const callReturn = (call) => {
+    if (call.status === 'closed') return call.return_pct;
+    const stamp = Date.parse(call.mark_at);
+    return Number.isFinite(stamp) && Date.now() - stamp <= 900000 && stamp - Date.now() <= 60000 ? call.return_pct : null;
   };
   const element = (tag, text, className) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; };
   const showStatus = (selector, message) => { const node = find(selector); if (node) { node.textContent = message; node.hidden = !message; } };
@@ -83,18 +88,19 @@
       const row = element('li'); row.dataset.callId = call.public_id;
       const header = element('header'); const link = element('a'); link.href = coinPath(call);
       link.append(element('strong', call.symbol), element('span', call.name));
-      header.append(link, element('b', percent(call.return_pct), tone(call.return_pct)));
+      const result = callReturn(call);
+      header.append(link, element('b', percent(result), tone(result)));
       const who = element('p'); const caller = element('a', call.caller_handle); caller.href = `/u/${encodeURIComponent(call.caller_handle)}?market=memecoins`;
       const closed = call.status === 'closed'; who.append(caller, document.createTextNode(` · ${closed ? 'Closed' : 'Open'}`));
       const facts = element('dl');
-      [['Entry', call.entry_price_label], [closed ? 'Exit' : 'Current', closed ? call.exit_price_label : call.mark_price_label]].forEach(([label, value]) => { const fact = element('div'); fact.append(element('dt', label), element('dd', value || 'Pending')); facts.append(fact); });
-      row.append(header, who, facts, element('small', `Opened ${time(call.entry_at)}${closed && call.exit_at ? ` · Closed ${time(call.exit_at)}` : ''}`)); fragment.append(row);
+      [['Entry', call.entry_price_label], [closed ? 'Exit' : 'Current', closed ? call.exit_price_label : finite(result) ? call.mark_price_label : 'Pending']].forEach(([label, value]) => { const fact = element('div'); fact.append(element('dt', label), element('dd', value || 'Pending')); facts.append(fact); });
+      row.append(header, who, facts, element('small', `Opened ${time(call.entry_at)}${closed && call.exit_at ? ` · Closed ${time(call.exit_at)}` : call.mark_at ? ` · Quote ${time(call.mark_at)}` : ''}`)); fragment.append(row);
     });
     list.replaceChildren(fragment);
     const empty = find('[data-calls-empty]'); if (empty) empty.hidden = calls.length > 0;
     const active = calls.find((call) => call.public_id === page.active_call_id);
     const activeReturn = find('[data-active-call-return]');
-    if (active && activeReturn) { activeReturn.textContent = percent(active.return_pct); activeReturn.className = tone(active.return_pct); }
+    if (active && activeReturn) { activeReturn.textContent = percent(callReturn(active)); activeReturn.className = tone(callReturn(active)); }
     find('[data-desktop-list]')?.dispatchEvent(new CustomEvent('desktop-rows-rendered', {bubbles: true}));
   }
   function renderChart(history) {
@@ -147,13 +153,18 @@
   async function refresh() {
     if (refreshing) return;
     refreshing = true;
+    if (page.kind === 'market') renderMarket(page.market);
+    else if (page.kind === 'detail') renderDetail(page.detail);
+    else renderCalls(page.calls || []);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
     const buttons = document.querySelectorAll('[data-coin-refresh]'); buttons.forEach((button) => { button.disabled = true; button.textContent = 'Refreshing…'; });
     try {
       let url;
       if (page.kind === 'market') { const params = new URLSearchParams({q: page.market.query || '', sort: page.market.sort || 'volume'}); url = `/api/memecoins?${params}`; }
       else if (page.kind === 'detail') url = `/api/memecoins/${encodeURIComponent(page.detail.coin.id)}`;
       else url = '/api/memecoin-calls';
-      const response = await fetch(url, {credentials: 'same-origin', headers: {Accept: 'application/json'}});
+      const response = await fetch(url, {credentials: 'same-origin', signal: controller.signal, headers: {Accept: 'application/json'}});
       if (!response.ok) throw new Error('Saved updates are delayed. Try Refresh again shortly.');
       const data = await response.json();
       if (page.kind === 'market') { if (!Array.isArray(data.rows)) throw new Error('Saved updates are delayed. Try Refresh again shortly.'); page.market = data; renderMarket(data); }
@@ -163,7 +174,7 @@
       if (page.kind === 'market') renderMarket(page.market);
       if (page.kind === 'detail') renderDetail(page.detail);
       showStatus(page.kind === 'market' ? '[data-market-status]' : page.kind === 'detail' ? '[data-detail-status]' : '[data-alpha-status]', 'Saved updates are delayed. Try Refresh again shortly.');
-    } finally { refreshing = false; buttons.forEach((button) => { button.disabled = false; button.textContent = 'Refresh'; }); }
+    } finally { clearTimeout(timeout); refreshing = false; buttons.forEach((button) => { button.disabled = false; button.textContent = 'Refresh'; }); }
   }
   document.querySelectorAll('[data-coin-refresh]').forEach((button) => button.addEventListener('click', refresh));
   find('[data-coin-call-endpoint]')?.addEventListener('click', async (event) => {
@@ -186,6 +197,7 @@
   });
   if (page.kind === 'market') renderMarket(page.market);
   if (page.kind === 'detail') renderDetail(page.detail);
+  if (page.kind === 'alpha') renderCalls(page.calls || []);
   setInterval(() => { if (!document.hidden) refresh(); }, 60000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 })();
