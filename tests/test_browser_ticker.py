@@ -35,6 +35,7 @@ def _request() -> Request:
 def _rendered_ticker(
     *,
     signed_in: bool = False,
+    user_id: str = "browser-user",
     comment_generation_enabled: bool = True,
     inline_script: bool = False,
     current_overrides: dict[str, Any] | None = None,
@@ -97,7 +98,7 @@ def _rendered_ticker(
     signed_in_context = {}
     if signed_in:
         signed_in_context = {
-            "user": {"id": "browser-user"},
+            "user": {"id": user_id},
             "comment_avatar": web_main.comment_avatar_profile(
                 "Quiet Signal", "browser-seed", "filing_sleuth"
             ),
@@ -558,3 +559,64 @@ def test_pending_comment_restores_its_disclosure_after_reload(page: Page) -> Non
     assert len(requests) == 2
     assert requests[0] == requests[1]
     assert page.locator("#commentList > li").count() == 1
+
+
+def test_pending_disclosure_stays_with_its_account_after_same_tab_switch(page: Page) -> None:
+    requests: list[tuple[str, dict[str, Any]]] = []
+    _open_disclosure_composer(page)
+
+    def post_comment(route: Route) -> None:
+        requests.append(
+            (route.request.headers["idempotency-key"], json.loads(route.request.post_data or "{}"))
+        )
+        if len(requests) > 1:
+            route.fulfill(
+                status=201,
+                json={
+                    "comment": _comment_with_notices(),
+                    "count": 1,
+                    "balance": 90,
+                },
+            )
+
+    page.route("**/api/comments/stock/TEST", post_comment)
+    page.get_by_role("combobox", name="Disclosure relationship").select_option("holdings")
+    page.get_by_role("textbox", name="Public details").fill("First account holds shares.")
+    with page.expect_request("**/api/comments/stock/TEST"):
+        page.get_by_role("button", name="Post with avatar").click()
+
+    account = "second-browser-user"
+    page.route(
+        "http://app.test/t/TEST",
+        lambda route: route.fulfill(
+            body=_rendered_ticker(signed_in=True, user_id=account, inline_script=True),
+            content_type="text/html",
+        ),
+    )
+    page.reload(wait_until="domcontentloaded")
+    page.get_by_text("Add a public disclosure", exact=True).click()
+    assert page.get_by_role("combobox", name="Disclosure relationship").input_value() == ""
+    assert page.get_by_role("textbox", name="Public details").input_value() == ""
+    assert page.get_by_role("textbox", name="Public details").is_enabled()
+    page.get_by_role("combobox", name="Disclosure relationship").select_option("sponsorship")
+    page.get_by_role("textbox", name="Public details").fill("Second account receives sponsorship.")
+    page.get_by_role("button", name="Post with avatar").click()
+    page.wait_for_function("document.querySelector('#commentStatus').textContent === 'Posted'")
+    assert len(requests) == 2
+    assert requests[0][0] != requests[1][0]
+    assert requests[1][1] == {
+        "disclosure_kind": "sponsorship",
+        "disclosure": "Second account receives sponsorship.",
+    }
+
+    account = "browser-user"
+    page.reload(wait_until="domcontentloaded")
+    page.get_by_text("Add a public disclosure", exact=True).click()
+    assert page.get_by_role("textbox", name="Public details").input_value() == (
+        "First account holds shares."
+    )
+    assert page.get_by_role("textbox", name="Public details").is_disabled()
+    page.get_by_role("button", name="Post with avatar").click()
+    page.wait_for_function("document.querySelector('#commentStatus').textContent === 'Posted'")
+    assert len(requests) == 3
+    assert requests[0] == requests[2]
