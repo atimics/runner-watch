@@ -16,8 +16,8 @@ function workspace(desktop = true) {
   document.body.innerHTML = `<div data-desktop-workspace>
     <div data-desktop-list>
       <a href="/memecoins/radar" id="radar">Radar</a>
-      <a href="/memecoins/dogecoin" id="doge">Dogecoin</a>
-      <a href="/memecoins/shiba-inu" id="shib">Shiba Inu</a>
+      <a href="/memecoins/coin/dogecoin" id="doge">Dogecoin</a>
+      <a href="/memecoins/coin/shiba-inu" id="shib">Shiba Inu</a>
     </div>
     <iframe data-desktop-frame></iframe>
     <div data-desktop-empty></div><div data-desktop-loading hidden></div>
@@ -29,16 +29,16 @@ describe('web desktop coin panels', () => {
   it('selects a coin by ID and keeps market navigation as full pages', () => {
     workspace();
     const frame = document.querySelector('iframe')!;
-    expect(frame.getAttribute('src')).toBe('/memecoins/dogecoin');
+    expect(frame.getAttribute('src')).toBe('/memecoins/coin/dogecoin');
     expect(document.querySelector('#doge')?.classList.contains('desktop-panel-selected')).toBe(true);
     const coinClick = new MouseEvent('click', { bubbles: true, cancelable: true });
     document.querySelector('#shib')!.dispatchEvent(coinClick);
     expect(coinClick.defaultPrevented).toBe(true);
-    expect(frame.getAttribute('src')).toBe('/memecoins/shiba-inu');
+    expect(frame.getAttribute('src')).toBe('/memecoins/coin/shiba-inu');
     const navigation = new MouseEvent('click', { bubbles: true, cancelable: true });
     document.querySelector('#radar')!.dispatchEvent(navigation);
     expect(navigation.defaultPrevented).toBe(false);
-    expect(frame.getAttribute('src')).toBe('/memecoins/shiba-inu');
+    expect(frame.getAttribute('src')).toBe('/memecoins/coin/shiba-inu');
   });
 
   it('opens coin details as full pages at phone width', () => {

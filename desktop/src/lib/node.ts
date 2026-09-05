@@ -3,6 +3,7 @@ export interface NodeCapabilities {
   community: string;
   research: string;
   sports: string;
+  memecoins: string;
   stocks: string;
 }
 
@@ -35,6 +36,7 @@ export interface ProviderStatus {
   enabled: boolean;
   configured: boolean;
   configuration_kind: string;
+  runtime_available?: boolean;
   capabilities: string[];
   feeds: ProviderFeed[];
 }
@@ -46,6 +48,7 @@ export interface CoverageProvider {
   enabled: boolean;
   configured: boolean;
   configuration_kind: string;
+  runtime_available?: boolean;
   review_status: string;
   usage_rights: string[];
   access_model: string;
@@ -181,6 +184,90 @@ export interface ResearchResult {
   generated_at: string;
 }
 
+export type Market = 'stocks' | 'memecoins' | 'sports';
+export type MarketTab = 'pulse' | 'radar' | 'alpha';
+export type CoinSort = 'volume' | 'market_cap' | 'gainers' | 'losers';
+
+export interface CoinRow {
+  id: string;
+  symbol: string;
+  name: string;
+  price: number;
+  price_label: string;
+  change_24h: number | null;
+  volume_label: string;
+  market_cap_label: string;
+  observed_at: string | null;
+  stale: boolean;
+}
+
+export interface CoinCall {
+  public_id: string;
+  coin_id: string;
+  symbol: string;
+  name: string;
+  caller_handle: string;
+  status: string;
+  entry_price_label: string;
+  mark_price_label: string;
+  return_pct: number | null;
+}
+
+export interface CoinMarket {
+  rows: CoinRow[];
+  status: string;
+  collected_at: string | null;
+  refresh_failed: boolean;
+  total: number;
+  source: string;
+}
+
+export interface CoinDetail {
+  coin: CoinRow;
+  status: string;
+  collected_at: string | null;
+  refresh_failed: boolean;
+  source: string;
+  history: { observed_at: string; price: number }[];
+  evidence: { observed_at: string | null; collected_at: string | null };
+  in_current_snapshot: boolean;
+  calls: CoinCall[];
+}
+
+export interface SportsRow {
+  id?: string;
+  event_id?: string;
+  company?: string;
+  ticker?: string;
+  league?: string;
+  away_abbreviation?: string;
+  home_abbreviation?: string;
+  away_score?: number;
+  home_score?: number;
+  start_time?: string;
+  status_detail?: string;
+  model_winner_team_name?: string;
+  model_winner_probability_pct?: number;
+  market_probability_pct?: number;
+  model_winner_projected_score_display?: string;
+  model_winner_opponent_projected_score_display?: string;
+  radar_label?: string;
+  radar_detail?: string;
+  pulse_label?: string;
+  price_label?: string;
+  odds_label?: string;
+  active_calls?: number;
+  total_calls?: number;
+}
+
+export interface SportsMarket {
+  events?: SportsRow[];
+  rows?: SportsRow[];
+  updated_at?: string;
+  source_status?: string;
+  source_error?: string;
+}
+
 export class NodeClient {
   readonly baseUrl: string;
   readonly token: string;
@@ -232,6 +319,23 @@ export class NodeClient {
 
   node(): Promise<NodeStatus> {
     return this.request('/api/v1/node');
+  }
+
+  memecoins(query = '', sort: CoinSort = 'volume'): Promise<CoinMarket> {
+    const params = new URLSearchParams({ q: query, sort });
+    return this.request(`/api/v1/markets/memecoins?${params}`, undefined, 20_000);
+  }
+
+  memecoin(coinId: string): Promise<CoinDetail> {
+    return this.request(`/api/v1/markets/memecoins/coins/${encodeURIComponent(coinId)}`, undefined, 20_000);
+  }
+
+  memecoinCalls(): Promise<{ calls: CoinCall[] }> {
+    return this.request('/api/v1/markets/memecoins/calls', undefined, 20_000);
+  }
+
+  sports(tab: MarketTab): Promise<SportsMarket> {
+    return this.request(`/api/v1/markets/sports/${tab}`, undefined, 20_000);
   }
 
   providers(): Promise<{ providers: ProviderStatus[] }> {

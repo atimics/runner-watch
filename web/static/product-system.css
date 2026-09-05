@@ -1053,6 +1053,20 @@ html.embedded-pane .product-tab-link {
 }
 
 @media (min-width: 900px) {
+  .mobile-app.workspace-app {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .workspace-app > .desktop-workspace {
+    flex: 1;
+    height: auto;
+  }
+
+  .workspace-app > .account-strip {
+    flex: 0 0 auto;
+  }
+
   :is(.runners-product, .memecoins-product) .mobile-app.workspace-app {
     --desktop-rail: clamp(410px, 33vw, 470px);
     width: min(1360px, 100%);

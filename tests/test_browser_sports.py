@@ -531,7 +531,12 @@ def test_sports_pulse_respects_shared_responsive_breakpoints(
 
     assert page.locator(".screen-head").is_visible()
     assert page.locator(".tab-bar").is_visible()
-    assert page.locator(".product-tab-link").is_visible()
+    assert page.get_by_role("navigation", name="Market", exact=True).is_visible()
+    assert page.locator(".market-switcher a").count() == 3
+    if width >= 900:
+        assert page.locator(".desktop-workspace").evaluate(
+            "node => node.getBoundingClientRect().bottom <= window.innerHeight"
+        )
     navigation = page.locator(".tab-bar")
     navigation_box = navigation.bounding_box()
     assert navigation_box is not None
@@ -540,10 +545,10 @@ def test_sports_pulse_respects_shared_responsive_breakpoints(
             "getComputedStyle(document.querySelector('.tab-bar'))"
             ".gridTemplateColumns.split(' ').length"
         )
-        == 5
+        == 3
     )
     links = navigation.locator(".tab-link")
-    assert links.count() == 5
+    assert links.count() == 3
     for index in range(links.count()):
         link_box = links.nth(index).bounding_box()
         assert link_box is not None

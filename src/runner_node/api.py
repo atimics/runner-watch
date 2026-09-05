@@ -5,10 +5,10 @@ import json
 import os
 import secrets
 from collections import defaultdict
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -57,6 +57,8 @@ MARKET_PROVIDER_IDS = frozenset({"massive", "fintel", "the-odds-api"})
 REMOTE_SCANNERS_VAULT_KEY = "remote-scanners"
 RATI_CLOUD_ENABLED_VAULT_KEY = "rati-cloud-enabled"
 PROVIDER_ROUTES_VAULT_KEY = "provider-routes"
+CLOUD_MARKET_CAPABILITIES = ("crypto_markets", "sports_scores")
+CLOUD_ONLY_CAPABILITIES = frozenset({*CLOUD_MARKET_CAPABILITIES, "sports_odds", "sports_news"})
 
 
 class NodeService:
@@ -118,6 +120,9 @@ class NodeService:
         routes["market_bars"] = [
             source for source in ("massive", "yahoo") if source in routes["market_bars"]
         ]
+
+        for capability_id in CLOUD_MARKET_CAPABILITIES:
+            routes[capability_id].insert(0, "rati-cloud")
 
         raw = self.vault.get(PROVIDER_ROUTES_VAULT_KEY)
         if not raw:
@@ -296,6 +301,8 @@ class NodeService:
                     "storage_policy": policy.storage_policy,
                     "display_policy": policy.display_policy,
                     "product": policy.product,
+                    "runtime_available": capability_for_policy(policy).id
+                    not in CLOUD_ONLY_CAPABILITIES,
                 }
                 for policy in policies
             ]
@@ -303,7 +310,10 @@ class NodeService:
                 {
                     "id": source,
                     "title": policies[0].owner,
-                    "state": state,
+                    "state": state
+                    if any(feed["runtime_available"] for feed in feeds)
+                    else "cloud_required",
+                    "runtime_available": any(feed["runtime_available"] for feed in feeds),
                     "enabled": enabled,
                     "configured": configured,
                     "configuration_kind": ("none" if built_in_contact else "api_key")
@@ -351,15 +361,15 @@ class NodeService:
                 "enabled": cloud_connected,
                 "configured": True,
                 "configuration_kind": "toggle",
-                "capabilities": ["scanner_results"],
+                "capabilities": ["scanner_results", *CLOUD_MARKET_CAPABILITIES],
                 "feeds": [
                     {
                         "id": "cloud_scans",
-                        "title": "Shared scanner receipts",
+                        "title": "Shared stock scans, Memecoins, and Sports",
                         "schedule": "on_demand",
                         "review_status": "approved",
                         "terms_url": "https://rati.chat",
-                        "capabilities": ["scanner_results"],
+                        "capabilities": ["scanner_results", *CLOUD_MARKET_CAPABILITIES],
                         "usage_rights": ["local_private", "store_normalized"],
                         "access_model": "included",
                         "storage_policy": "local_receipts",
@@ -456,6 +466,9 @@ class NodeService:
                         "state": provider["state"],
                         "enabled": provider["enabled"],
                         "configured": provider["configured"],
+                        "runtime_available": any(
+                            feed.get("runtime_available", True) for feed in matching_feeds
+                        ),
                         "configuration_kind": provider["configuration_kind"],
                         "review_status": review_status,
                         "usage_rights": rights,
@@ -476,13 +489,18 @@ class NodeService:
                     option["provider_id"] == provider_id
                     and option["enabled"]
                     and option["configured"]
+                    and option["runtime_available"]
                     for option in options
                 )
             ]
-            private_ready = any(option["enabled"] and option["configured"] for option in options)
+            private_ready = any(
+                option["enabled"] and option["configured"] and option["runtime_available"]
+                for option in options
+            )
             public_ready = any(
                 option["enabled"]
                 and option["configured"]
+                and option["runtime_available"]
                 and (
                     "public_display" in option["usage_rights"]
                     or "public_derived_signals" in option["usage_rights"]
@@ -522,7 +540,8 @@ class NodeService:
             "mode": self.settings.mode,
             "capabilities": {
                 "stocks": "ready",
-                "sports": "ready",
+                "sports": "ready" if self.rati_cloud_enabled() else "missing_connection",
+                "memecoins": "ready" if self.rati_cloud_enabled() else "missing_connection",
                 "research": (
                     "ready" if openrouter["status"] == "connected" else "missing_connection"
                 ),
@@ -537,6 +556,10 @@ class NodeService:
                 "research": "/api/v1/research",
                 "openrouter": "/api/v1/connections/openrouter",
                 "source_scans": "/api/v1/source-scans",
+                "memecoins": "/api/v1/markets/memecoins",
+                "memecoin": "/api/v1/markets/memecoins/coins/{coin_id}",
+                "memecoin_calls": "/api/v1/markets/memecoins/calls",
+                "sports": "/api/v1/markets/sports/{view}",
             },
         }
 
@@ -665,6 +688,35 @@ def create_node_router(service: NodeService | None = None) -> APIRouter:
     @router.delete("/connections/openrouter", dependencies=protected)
     def disconnect_openrouter() -> dict[str, Any]:
         return service.openrouter.disconnect()
+
+    def cloud_market(method: str, *args: str) -> dict[str, Any]:
+        if not service.rati_cloud_enabled():
+            raise HTTPException(409, "Enable RATi Cloud to open shared market views")
+        try:
+            return getattr(service.cloud_source, method)(*args)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(502, str(exc)) from exc
+
+    @router.get("/markets/memecoins", dependencies=protected)
+    def memecoins(
+        q: str = Query(default="", max_length=80),
+        sort: Literal["volume", "market_cap", "gainers", "losers"] = "volume",
+    ) -> dict[str, Any]:
+        return cloud_market("memecoins", q, sort)
+
+    @router.get("/markets/memecoins/calls", dependencies=protected)
+    def memecoin_calls() -> dict[str, Any]:
+        return cloud_market("memecoin_calls")
+
+    @router.get("/markets/memecoins/coins/{coin_id}", dependencies=protected)
+    def memecoin(coin_id: str) -> dict[str, Any]:
+        return cloud_market("memecoin", coin_id)
+
+    @router.get("/markets/sports/{view}", dependencies=protected)
+    def sports(view: Literal["pulse", "radar", "alpha"]) -> dict[str, Any]:
+        return cloud_market("sports", view)
 
     @router.put("/sources/rati-cloud", dependencies=protected)
     def toggle_rati_cloud(payload: SourceEnabledInput) -> dict[str, Any]:

@@ -270,3 +270,31 @@ footer { padding: 8px 28px 22px; color: #59675f; font-size: 9px; text-align: cen
 @media (max-width: 1250px) { .screen-head { flex-wrap: wrap; } .local-head-actions { width: 100%; justify-content: flex-end; } }
 @media (max-width: 1050px) { .app-shell { grid-template-columns: 196px minmax(0, 1fr); } .runner-row { grid-template-columns: 44px 120px 1fr 90px 20px; } .runner-risk { display: none; } .provider-grid, .coverage-grid { grid-template-columns: repeat(2, 1fr); } .coverage-scope { grid-template-columns: 1fr; } .ticker-metrics { grid-template-columns: repeat(3, 1fr); } .ticker-metrics div:nth-child(3) { border-right: 0; } .ticker-metrics div:nth-child(-n+3) { border-bottom: 1px solid #23372b; } }
 @media (max-width: 760px) { .app-shell { display: block; } .app-sidebar { position: sticky; display: grid; height: auto; grid-template-columns: auto minmax(0, 1fr); gap: 12px; padding: 12px 16px; border-right: 0; border-bottom: 1px solid #1c2921; } .brand span:last-child, .app-nav > small, .sidebar-actions > small, .sidebar-status { display: none; } .app-nav { flex-direction: row; min-width: 0; margin: 0; overflow-x: auto; } .app-nav button { width: auto; white-space: nowrap; } .sidebar-actions { display: flex; grid-column: 1 / -1; margin: 0; } .settings-button { width: auto; } .app-toolbar { display: none; } main { padding: 24px 16px; } .screen-head { align-items: flex-end; } .local-head-actions { align-items: flex-end; flex-direction: column; } .runner-row { grid-template-columns: 42px 100px 1fr 80px; } .runner-thesis { display: none; } .row-arrow { display: none; } .record-grid, .scanner-hero, .workspace-grid, .provider-grid, .coverage-grid, .ticker-evidence-grid { grid-template-columns: 1fr; } .scope-control, .coverage-summary { grid-template-columns: 1fr; } .coverage-summary div { border-right: 0; border-bottom: 1px solid #202a24; } .coverage-summary div:last-child { border-bottom: 0; } .coverage-warning, .advanced-sources > summary { align-items: flex-start; flex-direction: column; } .remote-source-form { grid-template-columns: 1fr; } .node-summary { grid-template-columns: repeat(2, 1fr); } .receipt-grid { grid-template-columns: 1fr; } .ticker-hero { align-items: flex-start; flex-direction: column; } .ticker-quote { text-align: left; } .ticker-metrics { grid-template-columns: repeat(2, 1fr); } .ticker-metrics div:nth-child(odd) { border-right: 1px solid #23372b; } .ticker-metrics div:nth-child(even) { border-right: 0; } .ticker-metrics div:nth-child(-n+4) { border-bottom: 1px solid #23372b; } .data-pulls article { grid-template-columns: 60px 1fr; } .data-pulls article > b, .data-pulls article > small { text-align: left; } }
+
+.market-nav { margin-top: 24px; }
+.workspace-nav { margin-top: 22px; }
+.market-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, auto) 12px; align-items: center; gap: 20px; width: 100%; padding: 17px; border: 0; border-bottom: 1px solid #202a24; background: transparent; color: inherit; text-align: left; }
+.market-row:hover { background: #101b14; }
+.market-row strong, .market-row b, .market-row small, .market-value small, .market-call small { display: block; }
+.market-row small, .market-caption, .market-call small { margin-top: 6px; color: #91a398; font-size: 12px; line-height: 1.5; }
+.market-row > span:nth-child(2) { text-align: right; }
+.market-list > .market-caption { padding: 18px; }
+.market-search { display: flex; gap: 8px; margin-bottom: 12px; }
+.market-search input { flex: 1; min-width: 0; }
+.market-search input, .market-search select { padding: 10px; border: 1px solid #344c3d; border-radius: 5px; color: inherit; background: #0a130d; }
+.market-notice { padding: 12px; border: 1px solid #685431; background: #211c10; color: #e8cd95; font-size: 13px; }
+.market-detail { padding: 24px; border: 1px solid #263c2e; background: #0b130e; }
+.market-detail .text-button { margin-bottom: 20px; }
+.market-detail h3 { margin-top: 28px; }
+.market-value { text-align: right; }
+.market-value strong { font-size: 26px; }
+.market-facts { display: flex; flex-wrap: wrap; gap: 25px; margin: 24px 0; color: #91a398; }
+.market-facts b { display: block; margin-top: 6px; color: #e7f1eb; }
+.market-chart { display: block; width: 100%; max-height: 230px; margin: 20px 0; color: #60e594; }
+.market-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.market-call { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid #263c2e; }
+@media (max-width: 760px) {
+  .market-search { flex-wrap: wrap; }
+  .market-row { gap: 10px; padding: 12px; }
+  .market-detail { padding: 16px; }
+}
