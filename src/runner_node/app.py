@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import os
 import socket
+import sys
+import threading
+import time
 
 import uvicorn
 from fastapi import FastAPI
@@ -40,6 +43,15 @@ def create_app(
 app = create_app()
 
 
+def _watch_parent_input(server: uvicorn.Server) -> None:
+    # The desktop owns the write end of this pipe, including through PyInstaller.
+    while sys.stdin.read(1):
+        pass
+    server.should_exit = True
+    time.sleep(5)
+    os._exit(0)
+
+
 def main() -> None:
     host = os.getenv("RATI_NODE_HOST", "127.0.0.1")
     port = int(os.getenv("RATI_NODE_PORT", "8787"))
@@ -63,7 +75,15 @@ def main() -> None:
         reload=False,
         access_log=False,
     )
-    uvicorn.Server(config).run(sockets=[listener])
+    server = uvicorn.Server(config)
+    if os.getenv("RATI_NODE_EXIT_ON_STDIN_CLOSE") == "1":
+        threading.Thread(
+            target=_watch_parent_input,
+            args=(server,),
+            daemon=True,
+            name="desktop-parent",
+        ).start()
+    server.run(sockets=[listener])
 
 
 if __name__ == "__main__":

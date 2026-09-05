@@ -449,7 +449,7 @@
 <div class="app-shell">
   <aside class="app-sidebar">
     <button class="brand" onclick={() => view = 'pulse'} aria-label="Open Pulse"><span class="brand-mark">R</span><span class="brand-copy"><small>RATi</small><b>RUNNERS</b></span></button>
-    <nav class="app-nav" aria-label="Main navigation"><small>Workspace</small>{#each navItems as item}<button class:active={view === item.id} onclick={() => view = item.id}><span>{item.icon}</span>{item.label}</button>{/each}</nav>
+    <nav class="app-nav" aria-label="Main navigation"><small>Workspace</small>{#each navItems as item}<button class:active={view === item.id} onclick={() => view = item.id}><span>{item.icon}</span>{item.label}</button>{/each}<button onclick={() => openExternal('https://runners.rati.chat/memecoins')}><span>↗</span>Memecoins</button></nav>
     <div class="sidebar-actions">
       <small>Sources</small>
       <button class:active={view === 'settings'} class="settings-button" onclick={() => view = 'settings'}><span>⚙</span> Manage sources</button>
