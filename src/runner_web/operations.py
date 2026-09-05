@@ -54,6 +54,13 @@ OPERATIONS_TOKEN = os.getenv("OPERATIONS_TOKEN", "").strip()
 router = APIRouter()
 
 
+def _request_product(request: Request) -> str:
+    product = getattr(request.state, "product", None)
+    if product in {"runners", "sports"}:
+        return product
+    return "sports" if (request.url.hostname or "").lower() == SPORTS_HOST else "runners"
+
+
 def required_worker_names(*, sports_ingestion_enabled: bool) -> frozenset[str]:
 
     if sports_ingestion_enabled:
@@ -440,7 +447,7 @@ def health_api(_access: None = Depends(require_operations_access)) -> JSONRespon
 
 @router.get("/health/data")
 def data_health_api(request: Request) -> JSONResponse:
-    product = "sports" if (request.url.hostname or "").lower() == SPORTS_HOST else "runners"
+    product = _request_product(request)
     payload = data_health(product)
     return JSONResponse(
         {"status": payload["status"]},
@@ -452,7 +459,7 @@ def data_health_api(request: Request) -> JSONResponse:
 def data_health_details_api(
     request: Request, _access: None = Depends(require_operations_access)
 ) -> JSONResponse:
-    product = "sports" if (request.url.hostname or "").lower() == SPORTS_HOST else "runners"
+    product = _request_product(request)
     payload = data_health(product)
     return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
 
@@ -477,8 +484,7 @@ def capabilities_api(
     request: Request,
     _access: None = Depends(require_operations_access),
 ) -> dict[str, Any]:
-    request_host = (request.url.hostname or "").lower()
-    product = "sports" if request_host == SPORTS_HOST else "runners"
+    product = _request_product(request)
     return runtime_capabilities(
         getattr(request.app.state, "worker_tasks", []),
         product=product,
