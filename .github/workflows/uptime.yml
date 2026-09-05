@@ -13,6 +13,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  workers:
+    name: Check worker and trainer health
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: curl --fail --silent --show-error --max-time 15 --retry 2 --retry-delay 5 https://runners.rati.chat/health/workers
+
   data:
     name: Check feed freshness
     runs-on: ubuntu-latest

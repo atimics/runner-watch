@@ -107,6 +107,9 @@ jobs:
               '[.[] | select(.config.metadata.fly_process_group == $group)] | length' \
               <<<"$machines")"
             test "$count" -eq 1
+            jq -e --arg group "$group" \
+              '[.[] | select(.config.metadata.fly_process_group == $group)] | all(.config.restart.policy == "always")' \
+              <<<"$machines"
           done
 
           jq -r '.[]
