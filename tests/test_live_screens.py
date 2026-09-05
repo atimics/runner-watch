@@ -29,6 +29,7 @@ def _manifest_database() -> sqlite3.Connection:
             completed_at TEXT, created_at TEXT
         );
         CREATE TABLE sports_events(id TEXT, status TEXT, start_time TEXT);
+        CREATE TABLE memecoin_assets(coin_id TEXT, collected_at TEXT);
         """
     )
     return database
@@ -54,6 +55,7 @@ def test_public_dynamic_screen_paths_uses_latest_safe_public_records() -> None:
             );
             INSERT INTO sports_events VALUES ('mlb:past', 'post', '2026-01-03T00:00:00Z');
             INSERT INTO sports_events VALUES ('mlb:next', 'pre', '2026-01-04T00:00:00Z');
+            INSERT INTO memecoin_assets VALUES ('alpha', '2026-01-04T00:00:00Z');
             """
         )
 
@@ -62,6 +64,7 @@ def test_public_dynamic_screen_paths_uses_latest_safe_public_records() -> None:
             "caller": "/u/steady-ibis",
             "research": "/research/public-report",
             "sports_game": "/game/mlb:next",
+            "memecoin": "/memecoins/coin/alpha",
         }
 
 
@@ -72,6 +75,7 @@ def test_public_dynamic_screen_paths_reports_missing_fixtures() -> None:
             "caller": None,
             "research": None,
             "sports_game": None,
+            "memecoin": None,
         }
 
 
@@ -100,6 +104,7 @@ def test_live_screen_manifest_returns_only_public_path_keys(
         "caller",
         "research",
         "sports_game",
+        "memecoin",
     }
 
 

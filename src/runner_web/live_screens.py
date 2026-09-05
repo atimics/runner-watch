@@ -57,10 +57,15 @@ def public_dynamic_screen_paths(database: Any) -> dict[str, str | None]:
         LIMIT 1
         """,
     )
+    coin = _latest_value(
+        database,
+        "SELECT coin_id FROM memecoin_assets ORDER BY collected_at DESC,coin_id LIMIT 1",
+    )
 
     return {
         "ticker": f"/t/{quote(ticker, safe='.-')}" if ticker else None,
         "caller": f"/u/{quote(caller, safe='-')}" if caller else None,
         "research": f"/research/{quote(research, safe='')}" if research else None,
         "sports_game": f"/game/{quote(game, safe=':-')}" if game else None,
+        "memecoin": f"/memecoins/coin/{quote(coin, safe='-_')}" if coin else None,
     }
