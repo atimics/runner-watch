@@ -89,14 +89,18 @@ def test_memecoin_query_is_encoded_and_local_credentials_stay_local(client, monk
     monkeypatch.setattr("runner_node.cloud_source._get_json", get_json)
     enable(client)
     response = client.get(
-        "/api/v1/markets/memecoins", params={"q": "doge & coin", "sort": "gainers"}
+        "/api/v1/markets/memecoins", params={"q": "doge & coin", "sort": "gainers", "view": "pulse"}
     )
     assert response.status_code == 200
     assert response.json()["status"] == "stale"
     assert response.json()["refresh_failed"] is True
     url, token = captured[0]
     assert url.startswith(f"{RATI_CLOUD_ORIGIN}/api/memecoins?")
-    assert parse_qs(urlparse(url).query) == {"q": ["doge & coin"], "sort": ["gainers"]}
+    assert parse_qs(urlparse(url).query) == {
+        "q": ["doge & coin"],
+        "sort": ["gainers"],
+        "view": ["pulse"],
+    }
     assert token == ""
 
 
@@ -132,6 +136,7 @@ def test_market_requests_reject_invalid_views_and_coin_ids(client, monkeypatch):
     monkeypatch.setattr("runner_node.cloud_source._get_json", lambda url: captured.append(url))
     enable(client)
     assert client.get("/api/v1/markets/memecoins?sort=unknown").status_code == 422
+    assert client.get("/api/v1/markets/memecoins?view=unknown").status_code == 422
     assert client.get("/api/v1/markets/memecoins", params={"q": "x" * 81}).status_code == 422
     assert client.get("/api/v1/markets/memecoins/coins/INVALID").status_code == 400
     assert client.get("/api/v1/markets/sports/unknown").status_code == 422

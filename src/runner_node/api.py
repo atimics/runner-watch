@@ -703,8 +703,9 @@ def create_node_router(service: NodeService | None = None) -> APIRouter:
     def memecoins(
         q: str = Query(default="", max_length=80),
         sort: Literal["volume", "market_cap", "gainers", "losers"] = "volume",
+        view: Literal["pulse", "radar"] = "radar",
     ) -> dict[str, Any]:
-        return cloud_market("memecoins", q, sort)
+        return cloud_market("memecoins", q, sort, view)
 
     @router.get("/markets/memecoins/calls", dependencies=protected)
     def memecoin_calls() -> dict[str, Any]:

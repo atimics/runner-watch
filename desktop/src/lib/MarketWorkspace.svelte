@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { callMarkExpired, priceHistorySegments, quoteExpired } from './market-view';
   import { NodeClient, type CoinCall, type CoinDetail, type CoinMarket, type CoinSort, type MarketTab, type SportsMarket, type SportsRow } from './node';
 
   export let market: 'memecoins' | 'sports';
@@ -15,6 +17,8 @@
   let sports: SportsMarket | null = null;
   let detail: CoinDetail | null = null;
   let game: SportsRow | null = null;
+  let gameUpdatedAt: string | undefined;
+  let now = Date.now();
   let query = '';
   let sort: CoinSort = 'volume';
   let loading = false;
@@ -23,6 +27,17 @@
   let requestVersion = 0;
 
   $: loadContext(market, tab, enabled);
+
+  onMount(() => {
+    const timer = window.setInterval(() => {
+      now = Date.now();
+      if (enabled && !loading && document.visibilityState !== 'hidden') void load();
+    }, 60_000);
+    return () => {
+      window.clearInterval(timer);
+      requestVersion += 1;
+    };
+  });
 
   function client() { return new NodeClient(nodeUrl, nodeToken); }
   function title() { return market === 'memecoins' ? 'Memecoins' : 'Sports'; }
@@ -40,12 +55,9 @@
   function gameId(row: SportsRow) { return row.id || row.event_id || ''; }
   function gameUrl(row: SportsRow) { return `https://sports.rati.chat/game/${encodeURIComponent(gameId(row))}`; }
   function coinUrl(coinId: string) { return `https://runners.rati.chat/memecoins/coin/${encodeURIComponent(coinId)}`; }
-  function points(value: CoinDetail) {
-    const prices = value.history.filter(point => Number.isFinite(point.price) && point.price > 0).map(point => point.price);
-    if (prices.length < 2) return '';
-    const low = Math.min(...prices);
-    const spread = Math.max(...prices) - low || low * 0.001;
-    return prices.map((price, index) => `${10 + index / (prices.length - 1) * 780},${170 - (price - low) / spread * 150}`).join(' ');
+  function openGame(row: SportsRow) {
+    game = row;
+    gameUpdatedAt = sports?.updated_at;
   }
 
   function loadContext(_market: string, _tab: MarketTab, connected: boolean) {
@@ -65,19 +77,29 @@
   async function load() {
     const version = ++requestVersion;
     loading = true;
+    now = Date.now();
     error = '';
-    detail = null;
-    game = null;
     try {
       const api = client();
+      if (detail) {
+        const result = await api.memecoin(detail.coin.id);
+        if (version === requestVersion) detail = result;
+        return;
+      }
       if (market === 'sports') {
         const result = await api.sports(tab);
-        if (version === requestVersion) sports = result;
+        if (version === requestVersion) {
+          sports = result;
+          if (game) {
+            const updated = (tab === 'alpha' ? result.rows : result.events)?.find(row => gameId(row) === gameId(game!));
+            if (updated) openGame(updated);
+          }
+        }
       } else if (tab === 'alpha') {
         const result = await api.memecoinCalls();
         if (version === requestVersion) calls = result.calls;
       } else {
-        const result = await api.memecoins(query, sort);
+        const result = await api.memecoins(query, sort, tab === 'pulse' ? 'pulse' : 'radar');
         if (version === requestVersion) coins = result;
       }
     } catch (failure) {
@@ -125,13 +147,13 @@
   <section class="market-detail">
     <button class="text-button" onclick={() => detail = null}>← Back to {tabTitle()}</button>
     <div class="section-head"><div><span class="eyebrow">{detail.coin.symbol} · {detail.coin.id}</span><h2>{detail.coin.name}</h2></div><div class="market-value"><strong>{detail.coin.price_label}</strong><small>{percent(detail.coin.change_24h)} · 24h</small></div></div>
-    {#if detail.coin.stale || detail.status !== 'ok' || detail.refresh_failed}<p class="market-notice">Saved quote · {detail.status}{detail.refresh_failed ? ' · source refresh delayed' : ''}</p>{/if}
+    {#if quoteExpired(detail.coin, detail.collected_at, now) || detail.status !== 'ok' || detail.refresh_failed}<p class="market-notice">Saved quote · {quoteExpired(detail.coin, detail.collected_at, now) ? 'stale' : detail.status}{detail.refresh_failed ? ' · source refresh delayed' : ''}</p>{/if}
     <div class="market-facts"><span>24h volume <b>{detail.coin.volume_label}</b></span><span>Market cap <b>{detail.coin.market_cap_label}</b></span><span>Source <b>{detail.source}</b></span></div>
-    {#if points(detail)}<svg class="market-chart" viewBox="0 0 800 190" role="img" aria-label={`${detail.coin.name} saved price history`}><polyline fill="none" stroke="currentColor" stroke-width="2" points={points(detail)} /></svg>{:else}<p class="market-caption">Price history appears after two source observations.</p>{/if}
+    {#if priceHistorySegments(detail.history).length}<svg class="market-chart" viewBox="0 0 800 190" role="img" aria-label={`${detail.coin.name} saved price history`}>{#each priceHistorySegments(detail.history) as segment}{#if segment.count > 1}<polyline fill="none" stroke="currentColor" stroke-width="2" points={segment.points} />{:else}<circle cx={segment.x} cy={segment.y} r="2" fill="currentColor" />{/if}{/each}</svg>{:else}<p class="market-caption">Price history appears after two source observations.</p>{/if}
     <p class="market-caption">Source observed {time(detail.evidence.observed_at)} · Collected {time(detail.collected_at)}</p>
     <div class="market-actions"><button onclick={() => openExternal(coinUrl(detail!.coin.id))}>Open coin and paper Calls ↗</button><button onclick={() => openExternal(`https://www.coingecko.com/en/coins/${encodeURIComponent(detail!.coin.id)}`)}>CoinGecko evidence ↗</button></div>
     <h3>Public paper Calls</h3>
-    {#each detail.calls || [] as call}<div class="market-call"><span>@{call.caller_handle}<small>{call.status}</small></span><span>Entry {call.entry_price_label}<small>Mark {call.mark_price_label}</small></span><b>{percent(call.return_pct)}</b></div>{:else}<p class="market-caption">The first paper Call will appear here.</p>{/each}
+    {#each detail.calls || [] as call}<div class="market-call"><span>@{call.caller_handle}<small>{call.status}</small></span><span>Entry {call.entry_price_label}<small>Mark {callMarkExpired(call, now) ? 'expired' : call.mark_price_label}</small></span><b>{callMarkExpired(call, now) ? '—' : percent(call.return_pct)}</b></div>{:else}<p class="market-caption">The first paper Call will appear here.</p>{/each}
   </section>
 {:else if game}
   <section class="market-detail">
@@ -140,7 +162,7 @@
     <p>{game.radar_detail || game.status_detail || 'Public market snapshot'}</p>
     {#if game.model_winner_team_name}<p>Projected winner: <b>{game.model_winner_team_name}</b> · {game.model_winner_probability_pct?.toFixed(1) || '—'}%</p>{/if}
     <div class="market-facts">{#if game.market_probability_pct != null}<span>Market probability <b>{game.market_probability_pct.toFixed(1)}%</b></span>{/if}{#if game.away_score != null}<span>Score <b>{game.away_score} – {game.home_score ?? '—'}</b></span>{/if}{#if game.odds_label}<span>Current odds <b>{game.odds_label}</b></span>{/if}{#if game.total_calls != null}<span>Paper Calls <b>{game.active_calls || 0} open · {game.total_calls} total</b></span>{/if}</div>
-    <p class="market-caption">{time(game.start_time || sports?.updated_at)}</p>
+    <p class="market-caption">{time(game.start_time || gameUpdatedAt)}</p>
     <button class="primary" onclick={() => openExternal(gameUrl(game!))}>Open game evidence and paper Calls ↗</button>
   </section>
 {:else}
@@ -152,11 +174,11 @@
   <section class="runner-list market-list" aria-label={`${title()} ${tabTitle()} results`}>
     {#if market === 'sports'}
       {#if sports?.source_error}<p class="market-notice">{sports.source_error}</p>{/if}
-      {#each (tab === 'alpha' ? sports?.rows : sports?.events) || [] as row}<button class="market-row" onclick={() => game = row}><span><strong>{gameTitle(row)}</strong><small>{row.league?.toUpperCase() || row.pulse_label || 'Sports'} · {row.radar_detail || row.model_winner_team_name || `${row.active_calls || 0} open Calls`}</small></span><span><b>{row.price_label || row.radar_label || (row.model_winner_probability_pct != null ? `${row.model_winner_probability_pct.toFixed(1)}%` : '—')}</b><small>{row.status_detail || time(row.start_time)}</small></span><span aria-hidden="true">›</span></button>{:else}{#if !loading && !error}<p class="market-caption">Saved {tabTitle()} results will appear here as the source updates.</p>{/if}{/each}
+      {#each (tab === 'alpha' ? sports?.rows : sports?.events) || [] as row}<button class="market-row" onclick={() => openGame(row)}><span><strong>{gameTitle(row)}</strong><small>{row.league?.toUpperCase() || row.pulse_label || 'Sports'} · {row.radar_detail || row.model_winner_team_name || `${row.active_calls || 0} open Calls`}</small></span><span><b>{row.price_label || row.radar_label || (row.model_winner_probability_pct != null ? `${row.model_winner_probability_pct.toFixed(1)}%` : '—')}</b><small>{row.status_detail || time(row.start_time)}</small></span><span aria-hidden="true">›</span></button>{:else}{#if !loading && !error}<p class="market-caption">Saved {tabTitle()} results will appear here as the source updates.</p>{/if}{/each}
     {:else if tab === 'alpha'}
-      {#each calls as call}<button class="market-row" onclick={() => openCoin(call.coin_id)}><span><strong>{call.name} · {call.symbol}</strong><small>@{call.caller_handle} · {call.status}</small></span><span><b>{percent(call.return_pct)}</b><small>Entry {call.entry_price_label} · Mark {call.mark_price_label}</small></span><span aria-hidden="true">›</span></button>{:else}{#if !loading && !error}<p class="market-caption">Public paper Calls will appear here after someone opens a coin Call.</p>{/if}{/each}
+      {#each calls as call}<button class="market-row" onclick={() => openCoin(call.coin_id)}><span><strong>{call.name} · {call.symbol}</strong><small>@{call.caller_handle} · {call.status}</small></span><span><b>{callMarkExpired(call, now) ? '—' : percent(call.return_pct)}</b><small>Entry {call.entry_price_label} · Mark {callMarkExpired(call, now) ? 'expired' : call.mark_price_label}</small></span><span aria-hidden="true">›</span></button>{:else}{#if !loading && !error}<p class="market-caption">Public paper Calls will appear here after someone opens a coin Call.</p>{/if}{/each}
     {:else}
-      {#each coins?.rows || [] as coin}<button class="market-row" onclick={() => openCoin(coin.id)}><span><strong>{coin.name} · {coin.symbol}</strong><small>{coin.id} · Volume {coin.volume_label}{coin.stale ? ' · saved quote' : ''}</small></span><span><b>{coin.price_label}</b><small>{percent(coin.change_24h)} · 24h</small></span><span aria-hidden="true">›</span></button>{:else}{#if !loading && !error}<p class="market-caption">{query ? 'Try another name, symbol, or coin ID.' : 'Saved coin quotes will appear after the next source update.'}</p>{/if}{/each}
+      {#each coins?.rows || [] as coin}<button class="market-row" onclick={() => openCoin(coin.id)}><span><strong>{coin.name} · {coin.symbol}</strong><small>{coin.id} · Volume {coin.volume_label}{quoteExpired(coin, coins?.collected_at, now) ? ' · saved quote' : ''}</small></span><span><b>{coin.price_label}</b><small>{percent(coin.change_24h)} · 24h</small></span><span aria-hidden="true">›</span></button>{:else}{#if !loading && !error}<p class="market-caption">{query ? 'Try another name, symbol, or coin ID.' : 'Saved coin quotes will appear after the next source update.'}</p>{/if}{/each}
     {/if}
   </section>
   {#if market === 'sports' && sports?.updated_at}<p class="market-caption">Source updated {time(sports.updated_at)}</p>{/if}

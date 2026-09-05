@@ -9,6 +9,7 @@ afterEach(async () => {
   component = null;
   document.body.innerHTML = '';
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 const coin = { id: 'same-symbol-two', symbol: 'SAME', name: 'Second coin', price: 0.0000012, price_label: '$0.0000012', change_24h: 3.2, volume_label: '$3M', market_cap_label: '$8M', observed_at: '2026-09-05T16:00:00Z', stale: true };
@@ -69,5 +70,63 @@ describe('native market workspace', () => {
     button('Refresh').click();
     await vi.waitFor(() => expect(document.body.textContent).toContain('Feed status: pending'));
     expect(markets).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('native market refresh', () => {
+  const market = { rows: [coin], status: 'ok', collected_at: coin.observed_at, refresh_failed: false, total: 1, source: 'CoinGecko' };
+  const coinDetail = { coin, status: 'ok', collected_at: coin.observed_at, refresh_failed: false, source: 'CoinGecko', history: [], evidence: { observed_at: coin.observed_at, collected_at: coin.observed_at }, in_current_snapshot: true, calls: [] };
+
+  it('keeps selected coin evidence visible through refresh errors and updates', async () => {
+    const list = vi.spyOn(NodeClient.prototype, 'memecoins').mockResolvedValue(market);
+    vi.spyOn(NodeClient.prototype, 'memecoin').mockResolvedValueOnce(coinDetail).mockRejectedValueOnce(new Error('Refresh delayed')).mockResolvedValueOnce({ ...coinDetail, coin: { ...coin, price_label: '$0.0000013' } });
+    render();
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Second coin'));
+    button('Second coin').click();
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Source observed'));
+    button('Refresh').click();
+    await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toBe('Refresh delayed'));
+    expect(document.body.textContent).toContain('Source observed');
+    expect(document.body.textContent).toContain('$0.0000012');
+    button('Refresh').click();
+    await vi.waitFor(() => expect(document.body.textContent).toContain('$0.0000013'));
+    expect(document.body.textContent).toContain('Source observed');
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(list).toHaveBeenCalledWith('', 'volume', 'pulse');
+  });
+
+  it('keeps the selected game open as the shared feed changes', async () => {
+    const row = { id: 'event-1', away_abbreviation: 'SEA', home_abbreviation: 'TOR', model_winner_team_name: 'Seattle', model_winner_probability_pct: 57.2 };
+    vi.spyOn(NodeClient.prototype, 'sports').mockResolvedValueOnce({ events: [row] }).mockResolvedValueOnce({ events: [{ ...row, model_winner_probability_pct: 62.3 }] });
+    render({ market: 'sports' });
+    await vi.waitFor(() => expect(document.body.textContent).toContain('SEA at TOR'));
+    button('SEA at TOR').click();
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Projected winner:'));
+    button('Refresh').click();
+    await vi.waitFor(() => expect(document.body.textContent).toContain('62.3%'));
+    expect(document.body.textContent).toContain('Projected winner:');
+  });
+
+  it('expires open marks on the refresh clock, preserves closed returns, and clears its timer', async () => {
+    vi.useFakeTimers();
+    const start = Date.parse('2026-09-05T16:00:00Z');
+    vi.setSystemTime(start);
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    const call = { public_id: 'open-call', coin_id: coin.id, name: coin.name, symbol: coin.symbol, caller_handle: 'wolf', status: 'open', entry_price_label: '$1', mark_price_label: '$1.12', mark_at: new Date(start).toISOString(), return_pct: 12.3 };
+    const calls = vi.spyOn(NodeClient.prototype, 'memecoinCalls').mockResolvedValueOnce({ calls: [call, { ...call, public_id: 'closed-call', status: 'closed' }] }).mockRejectedValue(new Error('Refresh delayed'));
+    render({ tab: 'alpha' });
+    await vi.advanceTimersByTimeAsync(0);
+    flushSync();
+    expect(document.body.textContent).toContain('Mark $1.12');
+    vi.setSystemTime(start + 16 * 60_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+    flushSync();
+    expect(calls).toHaveBeenCalledTimes(2);
+    expect(document.body.textContent).toContain('Mark expired');
+    expect(document.body.textContent).toContain('+12.3%');
+    expect(document.body.textContent).toContain('Refresh delayed');
+    await unmount(component!);
+    component = null;
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
