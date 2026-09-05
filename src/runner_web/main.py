@@ -8671,8 +8671,23 @@ async def _author_disclosure(
             )
         except KeyError as exc:
             raise HTTPException(409, str(exc.args[0])) from exc
-    if subject == "comment":
-        _invalidate_comment_subject(str(row["subject_kind"]), str(row["subject_key"]))
+    if subject == "report":
+        report = _commission_record(row)
+        return JSONResponse(
+            {
+                "notice": notice,
+                **{
+                    key: report[key]
+                    for key in (
+                        "disclosures",
+                        "corrections",
+                        "share_title",
+                        "share_summary",
+                    )
+                },
+            }
+        )
+    _invalidate_comment_subject(str(row["subject_kind"]), str(row["subject_key"]))
     return JSONResponse(
         {
             "notice": notice,

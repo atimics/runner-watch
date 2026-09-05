@@ -59,6 +59,15 @@
         if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : 'Save failed. Try again.');
         if (!Array.isArray(result.disclosures) || !Array.isArray(result.corrections)) throw new Error('The reply is incomplete. Refresh to check the record.');
         document.querySelector('[data-report-notices]')?.replaceChildren(render(result.disclosures, result.corrections));
+        for (const [key, selectors] of [
+          ['share_title', ['meta[property="og:title"]', 'meta[name="twitter:title"]']],
+          ['share_summary', ['meta[name="description"]', 'meta[property="og:description"]', 'meta[name="twitter:description"]']],
+        ]) {
+          if (typeof result[key] !== 'string') continue;
+          for (const selector of selectors) {
+            document.querySelectorAll(selector).forEach(meta => meta.setAttribute('content', result[key]));
+          }
+        }
         form.reset();
         status.textContent = 'Disclosure saved.';
       } catch (error) {

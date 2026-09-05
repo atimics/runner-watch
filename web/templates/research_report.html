@@ -20,8 +20,8 @@
 {% set share_title = report.share_title|default(report.ticker ~ ' · ' ~ report.headline) %}
 {% set share_summary = report.share_summary|default(report.summary) %}
 {% block title %}{{ report.ticker }} research · {{ 'RATi Sports' if report.subject_type == 'sports_game' else 'RATi Runners' }}{% endblock %}
+{% block page_description %}<meta name="description" content="{{ share_summary }}">{% endblock %}
 {% block head %}
-<meta name="description" content="{{ share_summary }}">
 <meta property="og:title" content="{{ share_title }}">
 <meta property="og:description" content="{{ share_summary }}">
 <meta property="og:type" content="article">
@@ -179,7 +179,7 @@
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
 document.getElementById('shareReport')?.addEventListener('click',async event=>{
-  const share={title:{{ share_title|tojson }},text:{{ share_summary|tojson }},url:location.href};
+  const share={title:document.querySelector('meta[property="og:title"]')?.content || {{ share_title|tojson }},text:document.querySelector('meta[property="og:description"]')?.content || {{ share_summary|tojson }},url:location.href};
   try{if(navigator.share)await navigator.share(share);else{await navigator.clipboard.writeText(location.href);event.currentTarget.textContent='✓';}}catch(_){}
 });
 document.getElementById('publishReport')?.addEventListener('click',async event=>{

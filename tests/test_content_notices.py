@@ -215,6 +215,9 @@ def test_author_disclosures_require_ownership_and_origin_and_retry_safely(notice
         assert first.json() == second.json()
         assert first.json()["notice"]["recorded_by"] == "author"
         assert len(first.json()["disclosures"]) == 1
+        if "/research/" in endpoint:
+            assert "Disclosure" in first.json()["share_title"]
+            assert first.json()["share_summary"] == "Disclosure: Original summary"
         assert set(first.json()["notice"]) == {
             "id",
             "kind",
