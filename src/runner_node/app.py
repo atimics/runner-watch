@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 import os
 import socket
+import sys
+import threading
+import time
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
+from runner_node import SCANNER_VERSION
 from runner_node.api import NodeService, create_node_router
 from runner_node.config import NodeSettings
 
@@ -21,7 +25,7 @@ def create_app(
     service = service or NodeService(settings=settings)
     application = FastAPI(
         title="RATi Scanner Node",
-        version="0.1.0",
+        version=SCANNER_VERSION,
         docs_url="/docs",
         redoc_url=None,
     )
@@ -38,6 +42,15 @@ def create_app(
 
 
 app = create_app()
+
+
+def _watch_parent_input(server: uvicorn.Server) -> None:
+    # The desktop owns the write end of this pipe, including through PyInstaller.
+    while sys.stdin.read(1):
+        pass
+    server.should_exit = True
+    time.sleep(5)
+    os._exit(0)
 
 
 def main() -> None:
@@ -63,7 +76,15 @@ def main() -> None:
         reload=False,
         access_log=False,
     )
-    uvicorn.Server(config).run(sockets=[listener])
+    server = uvicorn.Server(config)
+    if os.getenv("RATI_NODE_EXIT_ON_STDIN_CLOSE") == "1":
+        threading.Thread(
+            target=_watch_parent_input,
+            args=(server,),
+            daemon=True,
+            name="desktop-parent",
+        ).start()
+    server.run(sockets=[listener])
 
 
 if __name__ == "__main__":

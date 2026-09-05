@@ -72,7 +72,7 @@
         <div class="model-path-outcomes">
           {% for outcome in detail.directional_thesis.distribution %}<div class="path-{{ outcome.key }}"><b>{{ outcome.probability_pct }}%</b><span>{{ outcome.label }}</span></div>{% endfor %}
         </div>
-        <p>Chance of touching either barrier first in the next {{ detail.directional_thesis.horizon_label }}. “No barrier” means neither was reached.</p>
+        <p>Model estimates for the first barrier reached within {{ detail.directional_thesis.horizon_label }}. Actual outcomes can differ. “No barrier” means neither was reached.</p>
         <footer>
           <span title="Model {{ detail.directional_thesis.model_id }}">{{ detail.directional_thesis.status_label }} · {{ detail.directional_thesis.model_id }}</span>
           {% if detail.directional_thesis.evidence_at %}<time datetime="{{ detail.directional_thesis.evidence_at }}">Evidence {{ detail.directional_thesis.evidence_at[:16]|replace('T', ' ') }} UTC</time>{% endif %}
@@ -99,9 +99,9 @@
       <section class="risk-decision risk-{{ (detail.current.rug_level or 'unknown')|lower }} state-{{ (detail.current.trade_state or 'watch')|lower }}">
     <div class="risk-decision-head"><span>RUG CHECK</span><strong>{{ detail.current.trade_state or 'WATCH' }}</strong></div>
     <div class="risk-grid">
-      <div><span>Setup</span><b>{{ '%.0f'|format(detail.current.setup_score or detail.current.score or 0) }}</b><small>score</small></div>
-      <div><span>Rug risk</span><b>{{ '%.0f'|format(detail.current.rug_score or 0) }}</b><small>{{ detail.current.rug_level or 'unknown' }}</small></div>
-      <div><span>52w fall</span><b>{{ '%.0f'|format(detail.current.drawdown_52w_pct or 0) }}%</b><small>{{ 'crash candidate' if detail.current.crash_candidate else 'from high' }}</small></div>
+      <div><span>Setup</span><b>{% if detail.current.get('setup_score') is not none %}{{ '%.0f'|format(detail.current.setup_score) }}{% else %}unknown{% endif %}</b><small>score</small></div>
+      <div><span>Rug risk</span><b>{% if detail.current.get('rug_score') is not none %}{{ '%.0f'|format(detail.current.rug_score) }}{% else %}unknown{% endif %}</b><small>{{ detail.current.rug_level or 'unknown' }}</small></div>
+      <div><span>52w fall</span><b>{% if detail.current.get('drawdown_52w_pct') is not none %}{{ '%.0f'|format(detail.current.drawdown_52w_pct) }}%{% else %}unknown{% endif %}</b><small>{{ 'crash candidate' if detail.current.crash_candidate else 'from high' }}</small></div>
     </div>
     <p>{{ detail.current.state_reason or 'No entry state is confirmed.' }}</p>
     {% set issuer = detail.current.issuer_risk or {} %}

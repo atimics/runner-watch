@@ -14,8 +14,11 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BINARY = ROOT / "desktop" / ".scanner-dist" / (
-    "rati-scanner.exe" if sys.platform == "win32" else "rati-scanner"
+DEFAULT_BINARY = (
+    ROOT
+    / "desktop"
+    / ".scanner-dist"
+    / ("rati-scanner.exe" if sys.platform == "win32" else "rati-scanner")
 )
 
 
@@ -37,6 +40,29 @@ def _get(url: str, token: str = "") -> dict[str, object]:
         return json.loads(response.read().decode())
 
 
+def _check_desktop_cors(url: str, token: str) -> None:
+    for origin in ("tauri://localhost", "http://tauri.localhost"):
+        request = urllib.request.Request(
+            f"{url}/api/v1/scans",
+            method="OPTIONS",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=3) as response:
+            if response.headers.get("Access-Control-Allow-Origin") != origin:
+                raise SystemExit(f"Packaged scanner needs CORS access for {origin}")
+        request = urllib.request.Request(
+            f"{url}/api/v1/scans",
+            headers={"Origin": origin, "Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(request, timeout=3) as response:
+            if response.headers.get("Access-Control-Allow-Origin") != origin:
+                raise SystemExit(f"Packaged scanner needs authenticated CORS access for {origin}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Start and verify a packaged RATi scanner.")
     parser.add_argument("binary", nargs="?", type=Path, default=DEFAULT_BINARY)
@@ -56,12 +82,14 @@ def main() -> None:
             "RATI_CREDENTIAL_BACKEND": "memory",
             "RATI_NODE_HOST": "127.0.0.1",
             "RATI_NODE_MODE": "local",
+            "RATI_NODE_EXIT_ON_STDIN_CLOSE": "1",
             "RATI_NODE_PORT": "0",
             "RATI_NODE_TOKEN": token,
         }
         process = subprocess.Popen(
             [str(binary)],
             env=environment,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -94,8 +122,7 @@ def main() -> None:
             if not scanner_url:
                 detail = "\n".join(errors[-20:]) or "No stderr output"
                 raise SystemExit(
-                    "Scanner did not announce readiness "
-                    f"(exit={process.poll()})\n{detail}"
+                    f"Scanner did not announce readiness (exit={process.poll()})\n{detail}"
                 )
 
             while time.monotonic() < deadline:
@@ -103,19 +130,32 @@ def main() -> None:
                     node = _get(f"{scanner_url}/api/v1/node")
                     receipts = _get(f"{scanner_url}/api/v1/scans", token)
                     if node.get("api_version") == "1" and receipts.get("receipts") == []:
-                        print(f"Packaged scanner is healthy at {scanner_url}")
+                        _check_desktop_cors(scanner_url, token)
+                        assert process.stdin is not None
+                        process.stdin.close()
+                        try:
+                            process.wait(timeout=10)
+                        except subprocess.TimeoutExpired as exc:
+                            raise SystemExit("Scanner stayed alive after desktop shutdown") from exc
+                        try:
+                            _get(f"{scanner_url}/api/v1/node")
+                        except OSError:
+                            pass
+                        else:
+                            raise SystemExit("Scanner API stayed open after desktop shutdown")
+                        print("Packaged scanner passed startup, desktop CORS, and shutdown checks")
                         return
                 except (OSError, ValueError, urllib.error.URLError):
                     time.sleep(0.25)
             raise SystemExit("Scanner API did not become healthy before the timeout")
         finally:
-            if sys.platform == "win32":
+            if process.poll() is None and sys.platform == "win32":
                 subprocess.run(
                     ["taskkill", "/PID", str(process.pid), "/T", "/F"],
                     check=False,
                     capture_output=True,
                 )
-            else:
+            elif process.poll() is None:
                 process.terminate()
             try:
                 process.wait(timeout=10)

@@ -7,6 +7,8 @@ from enum import StrEnum
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from runner_watch import __version__
+
 DEFAULT_TOPIC = "markets/equities/us/runners"
 MAX_BOOTSTRAP_URLS = 16
 MAX_TOPICS = 64
@@ -130,7 +132,7 @@ class SwarmRuntimeConfig:
                     "SWARM_PUBLIC_URL cannot contain credentials, queries, or fragments"
                 )
 
-        software_version = source.get("SWARM_SOFTWARE_VERSION", "0.1.0").strip()
+        software_version = source.get("SWARM_SOFTWARE_VERSION", __version__).strip()
         if not software_version:
             raise ValueError("SWARM_SOFTWARE_VERSION cannot be empty")
 

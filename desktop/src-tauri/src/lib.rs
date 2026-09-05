@@ -31,6 +31,7 @@ const EXTERNAL_HOSTS: &[&str] = &[
     "the-odds-api.com",
     "disneytermsofuse.com",
     "github.com",
+    "www.coingecko.com",
 ];
 
 #[derive(Clone, Copy, Default, Serialize, PartialEq, Eq)]
@@ -200,6 +201,7 @@ async fn start_bundled_scanner(app: AppHandle) {
         .env("RATI_NODE_TOKEN", &token)
         .env("RATI_NODE_HOST", "127.0.0.1")
         .env("RATI_NODE_MODE", "local")
+        .env("RATI_NODE_EXIT_ON_STDIN_CLOSE", "1")
         .env("RATI_NODE_PORT", "0")
         .spawn();
     let (mut events, child) = match spawn {
@@ -363,6 +365,8 @@ mod tests {
     #[test]
     fn external_urls_require_an_allowlisted_https_host() {
         assert!(safe_external_url("https://github.com/atimics/runner-watch").is_some());
+        assert!(safe_external_url("https://www.coingecko.com/en/api_terms").is_some());
+        assert!(safe_external_url("https://www.coingecko.com.evil.test").is_none());
         assert!(safe_external_url("http://github.com/atimics/runner-watch").is_none());
         assert!(safe_external_url("https://example.com").is_none());
         assert!(safe_external_url("https://github.com.evil.test").is_none());

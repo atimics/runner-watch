@@ -694,6 +694,7 @@ body {
 .comment-list header { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; }
 .comment-list strong { font-size: 10px; }
 .comment-owner { color: var(--soft); font-size: 9px; font-weight: 700; }
+.comment-model { color: var(--muted); font-size: 9px; overflow-wrap: anywhere; }
 .comment-ability { padding: 2px 5px; border: 1px solid color-mix(in srgb, var(--green) 26%, var(--line)); border-radius: 8px; color: #91bda1; font-size: 7px; font-weight: 700; letter-spacing: .01em; }
 .comment-meta { min-width: 0; overflow: hidden; display: block; margin-top: 2px; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .comment-list p { margin: 4px 0 0; color: #acb6b1; font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }

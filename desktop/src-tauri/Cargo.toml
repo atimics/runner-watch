@@ -1,6 +1,6 @@
 [package]
 name = "rati-swarm"
-version = "0.1.0"
+version = "1.0.0"
 description = "RATi Runners desktop shell"
 authors = ["RATi"]
 edition = "2021"

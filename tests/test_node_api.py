@@ -14,6 +14,7 @@ from runner_node.credentials import MemoryCredentialVault
 from runner_node.openrouter import OpenRouterConnections
 from runner_node.research import OpenRouterResearch
 from runner_node.scans import ScanRequest, ScanStore
+from runner_watch import __version__
 
 
 def _settings(**overrides: object) -> NodeSettings:
@@ -69,6 +70,8 @@ def test_node_contract_reports_mode_and_capabilities() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["api_version"] == "1"
+    assert payload["scanner_version"] == __version__
+    assert client.get("/openapi.json").json()["info"]["version"] == __version__
     assert payload["node_id"] == "test-node"
     assert payload["mode"] == "local"
     assert payload["capabilities"]["stocks"] == "ready"
@@ -301,13 +304,40 @@ def test_desktop_origin_receives_node_cors_headers(origin: str) -> None:
     assert response.headers["access-control-allow-origin"] == origin
 
 
-def test_local_node_defaults_include_tauri_origin(monkeypatch) -> None:
+@pytest.mark.parametrize("origin", ["tauri://localhost", "http://tauri.localhost"])
+def test_packaged_desktop_origins_reach_authenticated_scanner(monkeypatch, origin) -> None:
     monkeypatch.setenv("RATI_NODE_MODE", "local")
+    monkeypatch.setenv("RATI_CREDENTIAL_BACKEND", "memory")
+    monkeypatch.setenv("RATI_NODE_TOKEN", "test-node-token-with-24-characters")
     monkeypatch.delenv("RATI_NODE_ALLOWED_ORIGINS", raising=False)
-
     settings = NodeSettings.from_environment()
+    client, _vault = _client(settings=settings)
 
-    assert "tauri://localhost" in settings.allowed_origins
+    preflight = client.options(
+        "/api/v1/scans",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == origin
+    response = client.get("/api/v1/scans", headers={"Origin": origin})
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == origin
+
+    client.headers.pop("Authorization")
+    assert client.get("/api/v1/scans", headers={"Origin": origin}).status_code == 401
+    rejected = client.options(
+        "/api/v1/scans",
+        headers={
+            "Origin": "http://tauri.localhost.evil.test",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert rejected.status_code == 400
+    assert "access-control-allow-origin" not in rejected.headers
 
 
 def test_self_hosted_node_rejects_unauthenticated_writes() -> None:

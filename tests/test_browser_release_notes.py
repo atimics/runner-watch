@@ -83,9 +83,9 @@ def test_release_notes_stay_compact_and_factual(page: Page, width: int) -> None:
     assert box["height"] < 430
     assert page.locator(".flash-release-visual").count() == 0
     assert page.locator(".flash-release-features li").all_inner_texts() == [
-        "Flash balance\nOpen the wallet or claim 100 daily Flash.",
-        "Caller PnL\nAverage closed-Call return and record.",
-        "Rewards\nProfitable stock Calls earn 10× their return in Flash.",
+        "Flash targets\nPre-market targets with closing prices and results.",
+        "Sports Calls\nPaper picks with saved odds and settled returns.",
+        "Memecoins\nBrowse prices, volume, and source times.",
     ]
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
     assert errors == []
