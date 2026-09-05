@@ -2198,7 +2198,9 @@ def my_calls_page(
 ) -> RedirectResponse:
     user = require_user(runner_session)
     identity = ensure_caller_identity(str(user["id"]))
-    suffix = "?market=memecoins" if market == "memecoins" else ""
+    suffix = (
+        "?" + urlencode({"market": market}) if market in {"stocks", "memecoins", "sports"} else ""
+    )
     return RedirectResponse(f"/u/{identity['handle']}{suffix}", status_code=303)
 
 
@@ -2392,12 +2394,18 @@ def caller_page(
             calls=marked_calls,
             stats=stats,
             active_tab="alpha",
-            nav_product="memecoins" if market == "memecoins" else product_for_request(request),
+            nav_product=(
+                "runners"
+                if market == "stocks"
+                else market
+                if market in {"memecoins", "sports"}
+                else product_for_request(request)
+            ),
             caller_back_url="/memecoins/alpha"
             if market == "memecoins"
-            else "/alpha"
-            if product_for_request(request) == "sports"
-            else "/community",
+            else f"{SPORTS_ORIGIN}/alpha"
+            if market == "sports" or (not market and product_for_request(request) == "sports")
+            else f"{RUNNERS_ORIGIN}/community",
         ),
     )
 
@@ -5974,7 +5982,7 @@ def memecoin_detail_api(coin_id: str, request: Request) -> dict[str, Any]:
     return _memecoin_detail_payload(coin_id)
 
 
-@app.get("/memecoins/{coin_id}", response_class=HTMLResponse)
+@app.get("/memecoins/coin/{coin_id}", response_class=HTMLResponse)
 def memecoin_detail_page(
     coin_id: str,
     request: Request,

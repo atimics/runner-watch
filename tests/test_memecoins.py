@@ -250,7 +250,7 @@ def test_detail_has_its_quote_receipt_and_optional_market_fields(market_db):
     assert detail is not None
     assert detail["status"] == "ok"
     assert detail["in_current_snapshot"] is True
-    assert detail["coin"]["detail_url"] == "/memecoins/dogecoin"
+    assert detail["coin"]["detail_url"] == "/memecoins/coin/dogecoin"
     assert detail["coin"]["price_label"] == "$0.12"
     assert detail["coin"]["volume_label"] == "$900.00M"
     assert detail["coin"]["market_cap_label"] == "$18.00B"
@@ -275,7 +275,7 @@ def test_detail_has_its_quote_receipt_and_optional_market_fields(market_db):
     assert detail["history"] == [
         {"observed_at": AT.isoformat(), "collected_at": AT.isoformat(), "price": 0.12}
     ]
-    assert memecoins.memecoin_market(at=AT)["rows"][0]["detail_url"] == "/memecoins/dogecoin"
+    assert memecoins.memecoin_market(at=AT)["rows"][0]["detail_url"] == "/memecoins/coin/dogecoin"
 
 
 def test_detail_keeps_coin_identity_separate_from_symbols(market_db):

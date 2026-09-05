@@ -84,7 +84,7 @@ def normalize_memecoins(payload: Any) -> list[dict[str, Any]]:
                 "market_cap": _number(item.get("market_cap"), minimum=0),
                 "observed_at": observed_at.isoformat() if observed_at else None,
                 "source_url": f"https://www.coingecko.com/en/coins/{coin_id}",
-                "detail_url": f"/memecoins/{coin_id}",
+                "detail_url": f"/memecoins/coin/{coin_id}",
                 **{
                     field: _number(item.get(field), minimum=0)
                     for field in (
@@ -220,7 +220,7 @@ def _quote_display(row: dict[str, Any], collected_at: Any, at: datetime) -> dict
     row["price_label"] = _price_label(row["price"])
     row["volume_label"] = _amount_label(row["volume_24h"])
     row["market_cap_label"] = _amount_label(row["market_cap"])
-    row["detail_url"] = f"/memecoins/{row['id']}"
+    row["detail_url"] = f"/memecoins/coin/{row['id']}"
     return row
 
 

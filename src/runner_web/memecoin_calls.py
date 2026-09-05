@@ -73,15 +73,18 @@ def _call(row: Any, mark: dict[str, Any] | None = None) -> dict[str, Any]:
         item[f"{field}_label"] = (
             memecoins._price_label(float(item[field])) if item[field] is not None else "—"
         )
-    item["detail_url"] = f"/memecoins/{item['coin_id']}"
+    item["detail_url"] = f"/memecoins/coin/{item['coin_id']}"
     item["entry_evidence"] = json.loads(saved["entry_evidence"])
     item["exit_evidence"] = json.loads(saved["exit_evidence"]) if saved["exit_evidence"] else None
     return item
 
 
 _SELECT = """
-    SELECT c.*,ci.handle AS caller_handle FROM memecoin_calls c
+    SELECT c.*,ci.handle AS caller_handle,
+           q.quote_json AS current_quote_json,q.collected_at AS current_collected_at
+    FROM memecoin_calls c
     JOIN caller_identities ci ON ci.id=c.caller_identity_id AND ci.status='active'
+    LEFT JOIN memecoin_assets q ON q.coin_id=c.coin_id
 """
 
 
@@ -175,9 +178,19 @@ def memecoin_calls(
             _SELECT + where + " ORDER BY c.updated_at DESC,c.public_id DESC LIMIT ?",
             (*parameters, max(1, min(limit, 500))),
         ).fetchall()
-    market = memecoins.memecoin_market()
-    marks = {row["id"]: row for row in market["rows"]} if market["status"] == "ok" else {}
-    return [_call(row, marks.get(row["coin_id"])) for row in rows]
+    current = datetime.now(UTC)
+    enabled = memecoins.memecoins_enabled()
+    return [
+        _call(
+            row,
+            memecoins._quote_display(
+                json.loads(row["current_quote_json"]), row["current_collected_at"], current
+            )
+            if enabled and row["current_quote_json"]
+            else None,
+        )
+        for row in rows
+    ]
 
 
 def active_memecoin_call(user_id: str, coin_id: str) -> dict[str, Any] | None:
