@@ -79,10 +79,14 @@ class RemoteScannerSource:
 
 
 class RatiCloudSource:
-    def memecoins(self, query: str = "", sort: str = "volume") -> dict[str, Any]:
+    def memecoins(
+        self, query: str = "", sort: str = "volume", view: str = "radar"
+    ) -> dict[str, Any]:
         if sort not in {"volume", "market_cap", "gainers", "losers"}:
             raise ValueError("Choose volume, market cap, gainers, or losers")
-        params = urlencode({"q": query.strip()[:80], "sort": sort})
+        if view not in {"pulse", "radar"}:
+            raise ValueError("Choose Pulse or Radar")
+        params = urlencode({"q": query.strip()[:80], "sort": sort, "view": view})
         payload = _get_json(f"{RATI_CLOUD_ORIGIN}/api/memecoins?{params}")
         return self._market_rows(payload, "rows", "id", 100)
 

@@ -210,6 +210,7 @@ export interface CoinCall {
   status: string;
   entry_price_label: string;
   mark_price_label: string;
+  mark_at?: string | null;
   return_pct: number | null;
 }
 
@@ -321,8 +322,8 @@ export class NodeClient {
     return this.request('/api/v1/node');
   }
 
-  memecoins(query = '', sort: CoinSort = 'volume'): Promise<CoinMarket> {
-    const params = new URLSearchParams({ q: query, sort });
+  memecoins(query = '', sort: CoinSort = 'volume', view: 'pulse' | 'radar' = 'radar'): Promise<CoinMarket> {
+    const params = new URLSearchParams({ q: query, sort, view });
     return this.request(`/api/v1/markets/memecoins?${params}`, undefined, 20_000);
   }
 

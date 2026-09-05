@@ -99,7 +99,7 @@ describe('scanner node addresses', () => {
 
 describe('shared market routes', () => {
   it.each([
-    ['coin list', (client: NodeClient) => client.memecoins('doge & coin', 'gainers'), '/api/v1/markets/memecoins?q=doge+%26+coin&sort=gainers'],
+    ['coin list', (client: NodeClient) => client.memecoins('doge & coin', 'gainers', 'pulse'), '/api/v1/markets/memecoins?q=doge+%26+coin&sort=gainers&view=pulse'],
     ['coin detail', (client: NodeClient) => client.memecoin('same-symbol-two'), '/api/v1/markets/memecoins/coins/same-symbol-two'],
     ['coin Calls', (client: NodeClient) => client.memecoinCalls(), '/api/v1/markets/memecoins/calls'],
     ['Sports Radar', (client: NodeClient) => client.sports('radar'), '/api/v1/markets/sports/radar'],
