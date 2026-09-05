@@ -26,6 +26,16 @@ class DesktopReleaseTests(unittest.TestCase):
         (self.root / "desktop/src-tauri/Cargo.toml").write_text(
             '[package]\nversion = "1.0.0"\n'
         )
+        (self.root / "src/runner_watch").mkdir(parents=True)
+        (self.root / "src/runner_watch/__init__.py").write_text(
+            'from unavailable_dependency import models\n__version__ = "1.0.0"\n'
+        )
+        (self.root / "uv.lock").write_text(
+            '[[package]]\nname = "runner-watch"\nversion = "1.0.0"\n'
+        )
+        (self.root / "desktop/src-tauri/Cargo.lock").write_text(
+            '[[package]]\nname = "rati-swarm"\nversion = "1.0.0"\n'
+        )
         self.installers = []
         for platform, _architecture, extension, template in MODULE["ASSETS"]:
             path = self.artifacts / f"rati-swarm-{platform}" / extension / template.format(
@@ -106,6 +116,22 @@ class DesktopReleaseTests(unittest.TestCase):
         (self.root / "desktop/package.json").write_text('{"version": "0.1.0"}')
         with self.assertRaisesRegex(ValueError, "Package versions differ"):
             self.prepare()
+
+    def test_runtime_version_mismatch_stops_release(self) -> None:
+        (self.root / "src/runner_watch/__init__.py").write_text('__version__ = "0.1.0"\n')
+        with self.assertRaisesRegex(ValueError, "Package versions differ"):
+            self.prepare()
+
+    def test_lock_version_mismatch_stops_release(self) -> None:
+        for relative in ("uv.lock", "desktop/src-tauri/Cargo.lock"):
+            path = self.root / relative
+            original = path.read_text()
+            path.write_text(original.replace('"1.0.0"', '"0.1.0"'))
+            with self.subTest(lock=relative), self.assertRaisesRegex(
+                ValueError, "Package versions differ"
+            ):
+                self.prepare()
+            path.write_text(original)
 
     def test_tag_must_match_package_version(self) -> None:
         for tag in ("v0.1.0", "1.0.0", "v1.0.0-beta.1"):

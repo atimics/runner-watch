@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import re
@@ -18,6 +19,34 @@ ASSETS = (
 )
 
 
+def _runtime_version(path: Path) -> str:
+    assignments = [
+        node
+        for node in ast.parse(path.read_text()).body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets
+        )
+    ]
+    if len(assignments) != 1:
+        raise ValueError(f"Expected one runtime __version__ assignment in {path}")
+    value = ast.literal_eval(assignments[0].value)
+    if not isinstance(value, str):
+        raise ValueError(f"Expected a string runtime version in {path}")
+    return value
+
+
+def _locked_version(path: Path, package_name: str) -> str:
+    versions = [
+        package["version"]
+        for package in tomllib.loads(path.read_text())["package"]
+        if package["name"] == package_name
+    ]
+    if len(versions) != 1:
+        raise ValueError(f"Expected one locked {package_name} package in {path}")
+    return versions[0]
+
+
 def check_version(root: Path, tag: str | None = None) -> str:
     versions = {
         "pyproject.toml": tomllib.loads((root / "pyproject.toml").read_text())["project"][
@@ -32,6 +61,11 @@ def check_version(root: Path, tag: str | None = None) -> str:
         "desktop/src-tauri/Cargo.toml": tomllib.loads(
             (root / "desktop/src-tauri/Cargo.toml").read_text()
         )["package"]["version"],
+        "src/runner_watch/__init__.py": _runtime_version(root / "src/runner_watch/__init__.py"),
+        "uv.lock": _locked_version(root / "uv.lock", "runner-watch"),
+        "desktop/src-tauri/Cargo.lock": _locked_version(
+            root / "desktop/src-tauri/Cargo.lock", "rati-swarm"
+        ),
     }
     version = versions["pyproject.toml"]
     if not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version):
