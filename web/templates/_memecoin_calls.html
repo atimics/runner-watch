@@ -5,7 +5,7 @@
     <header><a href="{{ call.detail_url }}"><strong>{{ call.symbol }}</strong><span>{{ call.name }}</span></a><b class="{{ 'up' if call.return_pct is not none and call.return_pct >= 0 else 'down' if call.return_pct is not none else '' }}">{% if call.return_pct is not none %}{{ '%+.2f'|format(call.return_pct) }}%{% else %}Pending{% endif %}</b></header>
     <p><a href="/u/{{ call.caller_handle|urlencode }}?market=memecoins">{{ call.caller_handle }}</a> · {{ 'Closed' if call.status == 'closed' else 'Open' }}</p>
     <dl><div><dt>Entry</dt><dd>{{ call.entry_price_label }}</dd></div><div><dt>{{ 'Exit' if call.status == 'closed' else 'Current' }}</dt><dd>{{ call.exit_price_label if call.status == 'closed' else call.mark_price_label }}</dd></div></dl>
-    <small>Opened <time datetime="{{ call.entry_at }}">{{ call.entry_at[:16]|replace('T', ' ') }} UTC</time>{% if call.exit_at %} · Closed <time datetime="{{ call.exit_at }}">{{ call.exit_at[:16]|replace('T', ' ') }} UTC</time>{% endif %}</small>
+    <small>Opened <time datetime="{{ call.entry_at }}">{{ call.entry_at[:16]|replace('T', ' ') }} UTC</time>{% if call.exit_at %} · Closed <time datetime="{{ call.exit_at }}">{{ call.exit_at[:16]|replace('T', ' ') }} UTC</time>{% elif call.mark_at %} · Quote <time datetime="{{ call.mark_at }}">{{ call.mark_at[:16]|replace('T', ' ') }} UTC</time>{% endif %}</small>
   </li>
   {% endfor %}
 </ol>

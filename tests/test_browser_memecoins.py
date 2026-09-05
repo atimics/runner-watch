@@ -81,6 +81,7 @@ def _call(**overrides: Any) -> dict[str, Any]:
         "exit_price_label": None,
         "entry_at": NOW.isoformat(),
         "exit_at": None,
+        "mark_at": NOW.isoformat(),
         "return_pct": 23,
         "detail_url": "/memecoins/coin/tiny-doge",
         **overrides,
@@ -113,6 +114,7 @@ def _html(kind: str, *, signed_in: bool = False, **overrides: Any) -> str:
         "back_url": "/memecoins/radar?q=doge&sort=gainers",
         "active_tab": "radar",
         "nav_product": "memecoins",
+        "release_announcement_id": "memecoin-browser-checks",
         **overrides,
     }
     if signed_in:
@@ -136,7 +138,11 @@ def _html(kind: str, *, signed_in: bool = False, **overrides: Any) -> str:
             "memecoins.css",
         )
     )
-    html = html.replace("</head>", f"<style>{styles}</style></head>")
+    html = html.replace(
+        "</head>",
+        "<script>localStorage.setItem('rati-release:memecoin-browser-checks', '1');</script>"
+        f"<style>{styles}</style></head>",
+    )
     html = re.sub(r'<link rel="stylesheet"[^>]*>', "", html)
     script = (ROOT / "web/static/memecoins.js").read_text()
     html = re.sub(
@@ -374,3 +380,46 @@ def test_price_chart_keeps_collection_gaps_and_flat_prices(page: Page) -> None:
         "nodes => nodes.map(n => +n.getAttribute('cy'))"
     ) == [110, 110, 110]
     expect(chart).to_have_accessible_name(re.compile("Gaps mark periods"))
+
+
+def test_stalled_refresh_times_out_and_expires_open_call_marks(page: Page) -> None:
+    page.clock.install(time=NOW)
+    closed = _call(
+        public_id="closed-call",
+        status="closed",
+        return_pct=10,
+        exit_at=NOW.isoformat(),
+        exit_price_label="$0.0000011",
+    )
+    _open(page, _html("detail", signed_in=True, active_call=_call(), calls=[_call(), closed]))
+    held: list[Route] = []
+    page.route("**/api/memecoins/tiny-doge", lambda route: held.append(route))
+    page.clock.fast_forward(16 * 60 * 1000)
+    expect(page.locator("[data-active-call-return]")).to_have_text("Pending")
+    expect(page.locator('[data-call-id="call-one"] header b')).to_have_text("Pending")
+    expect(page.locator('[data-call-id="closed-call"] header b')).to_have_text("+10.00%")
+    expect(page.get_by_role("button", name="Close paper Call")).to_be_disabled()
+    expect(page.get_by_role("button", name="Refreshing…")).to_be_disabled()
+    page.clock.fast_forward(11000)
+    expect(page.get_by_role("button", name="Refresh", exact=True)).to_be_enabled()
+    expect(page.locator("[data-detail-status]")).to_contain_text("Saved updates are delayed")
+    assert held
+    page.route(
+        "**/api/memecoins/tiny-doge",
+        lambda route: route.fulfill(
+            json=_detail(
+                coin=_coin(observed_at=(NOW + timedelta(minutes=16)).isoformat()),
+            )
+        ),
+    )
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    expect(page.get_by_role("button", name="Close paper Call")).to_be_enabled()
+    expect(page.locator("[data-coin-price]")).to_have_text("$0.00000123")
+
+
+def test_future_source_time_uses_the_server_freshness_tolerance(page: Page) -> None:
+    page.clock.install(time=NOW)
+    future = (NOW + timedelta(seconds=90)).isoformat()
+    _open(page, _html("detail", signed_in=True, detail=_detail(coin=_coin(observed_at=future))))
+    expect(page.get_by_role("button", name="Make paper Call")).to_be_disabled()
+    expect(page.locator("[data-detail-status]")).to_contain_text("Waiting for a fresh source time")
