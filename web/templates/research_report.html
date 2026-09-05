@@ -1,4 +1,5 @@
 {% extends "mobile_base.html" %}
+{% from "_content_notices.html" import content_notices %}
 {% macro research_points(title, items, extra_class='') -%}
 <section class="research-section research-points {{ extra_class }}">
   <h2>{{ title }}</h2>
@@ -16,15 +17,19 @@
   {% if person.source_urls %}<div class="person-sources">{% for source in person.source_urls %}<a href="{{ source }}" target="_blank" rel="noopener">Evidence {{ loop.index }}</a>{% endfor %}</div>{% endif %}
 </article>
 {%- endmacro %}
+{% set share_title = report.share_title|default(report.ticker ~ ' · ' ~ report.headline) %}
+{% set share_summary = report.share_summary|default(report.summary) %}
 {% block title %}{{ report.ticker }} research · {{ 'RATi Sports' if report.subject_type == 'sports_game' else 'RATi Runners' }}{% endblock %}
 {% block head %}
-<meta name="description" content="{{ report.summary }}">
-<meta property="og:title" content="{{ report.ticker }} · {{ report.headline }}">
-<meta property="og:description" content="{{ report.summary }}">
+<meta name="description" content="{{ share_summary }}">
+<meta property="og:title" content="{{ share_title }}">
+<meta property="og:description" content="{{ share_summary }}">
 <meta property="og:type" content="article">
 <meta property="og:url" content="{{ app_origin }}/research/{{ report.public_id }}">
 <meta property="og:image" content="{{ app_origin }}/research/{{ report.public_id }}/card.png">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{{ share_title }}">
+<meta name="twitter:description" content="{{ share_summary }}">
 {% endblock %}
 {% block content %}
 <header class="detail-nav">
@@ -59,6 +64,7 @@
     {% if report.citations or report.sources %}<a href="#report-sources">Sources ↓</a>{% endif %}
   </aside>
   <h1>{{ report.headline }}</h1>
+  <div data-report-notices>{{ content_notices(report.disclosures, report.corrections) }}</div>
 
   {% if report.subject_type == 'sports_game' and report.sports_forecast %}
   {% set forecast = report.sports_forecast %}
@@ -149,6 +155,7 @@
   </section>
   {% endif %}
   {% if is_owner %}
+  {% include "_report_disclosure_form.html" %}
   <section class="research-section report-publish">
     {% if report.customer_inference %}
     <h2>Private local-model report</h2>
@@ -172,7 +179,7 @@
 {% block scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
 document.getElementById('shareReport')?.addEventListener('click',async event=>{
-  const share={title:{{ (report.ticker ~ ' · ' ~ report.headline)|tojson }},text:{{ report.summary|tojson }},url:location.href};
+  const share={title:{{ share_title|tojson }},text:{{ share_summary|tojson }},url:location.href};
   try{if(navigator.share)await navigator.share(share);else{await navigator.clipboard.writeText(location.href);event.currentTarget.textContent='✓';}}catch(_){}
 });
 document.getElementById('publishReport')?.addEventListener('click',async event=>{

@@ -1175,3 +1175,108 @@ html.embedded-pane .product-tab-link {
 html.embedded-pane .market-switcher {
   display: none;
 }
+
+
+.content-notices {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.content-notices[hidden] {
+  display: none;
+}
+
+.content-notice {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-xs);
+}
+
+.content-notice-label {
+  display: block;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.content-notice p {
+  margin: 7px 0;
+  color: var(--text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.content-notice .content-notice-reason, .content-notice-time {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.content-notice-editor {
+  margin: 18px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+}
+
+.content-notice-editor > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.content-notice-editor > p {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.content-notice-form fieldset {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.content-notice-field {
+  display: grid;
+  gap: 6px;
+}
+
+.content-notice-form label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.content-notice-form select, .content-notice-form textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  padding: 10px;
+  color: var(--text);
+  background: var(--panel-2);
+  font: inherit;
+}
+
+.content-notice-form textarea {
+  resize: vertical;
+}
+
+.content-notice-form button {
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  color: var(--text);
+  background: var(--panel-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.content-notice-form [role="status"] {
+  color: var(--muted);
+  font-size: 12px;
+}
