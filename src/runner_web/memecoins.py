@@ -225,7 +225,7 @@ def _quote_display(row: dict[str, Any], collected_at: Any, at: datetime) -> dict
 
 
 def memecoin_market(
-    *, query: str = "", sort: str = "volume", at: datetime | None = None
+    *, query: str = "", sort: str = "volume", view: str = "radar", at: datetime | None = None
 ) -> dict[str, Any]:
     current = at or datetime.now(UTC)
     states = _market_states()
@@ -242,6 +242,13 @@ def memecoin_market(
         status = "unavailable" if states.get("memecoins_error") else "pending"
     if not memecoins_enabled():
         status, rows = "disabled", []
+    view = "pulse" if view == "pulse" else "radar"
+    if view == "pulse":
+        rows = [
+            row
+            for row in rows
+            if not row["stale"] and row["change_24h"] is not None and row["volume_24h"] is not None
+        ]
     query = query.strip()[:80]
     if query:
         rows = [
@@ -260,9 +267,13 @@ def memecoin_market(
             row["id"],
         )
     )
+    if view == "pulse":
+        rows = rows[:20]
     return {
         "rows": rows,
         "total": total,
+        "view": view,
+        "visible_count": len(rows),
         "status": status,
         "query": query,
         "sort": sort,

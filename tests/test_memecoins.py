@@ -176,7 +176,10 @@ def test_pending_disabled_and_failure_before_first_snapshot(market_db, monkeypat
 def test_public_routes_render_prices_and_escape_provider_text(market_db, monkeypatch):
     from runner_web import main
 
-    seed([coin(name='<script>alert("coin")</script>')], at=datetime.now(UTC))
+    current = datetime.now(UTC)
+    seed(
+        [coin(name='<script>alert("coin")</script>', last_updated=current.isoformat())], at=current
+    )
     monkeypatch.setattr(main, "enforce_rate", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main, "current_user", lambda *_: None)
     client = TestClient(main.app)
@@ -440,3 +443,71 @@ def test_optional_market_fields_reject_invalid_values():
 def test_sub_dollar_price_rounds_to_a_complete_label():
     assert memecoins._price_label(0.99999) == "$1"
     assert memecoins._price_label(0.00001234) == "$0.00001234"
+
+
+def test_pulse_uses_fresh_quotes_with_known_change_and_volume(market_db):
+    seed(
+        [
+            coin("fresh"),
+            coin("zero", total_volume=0, price_change_percentage_24h=0),
+            coin("old", last_updated=(AT - timedelta(minutes=16)).isoformat()),
+            coin("future", last_updated=(AT + timedelta(minutes=2)).isoformat()),
+            coin("unknown-time", last_updated=None),
+            coin("unknown-volume", total_volume=None),
+            coin("unknown-change", price_change_percentage_24h=None),
+        ]
+    )
+
+    pulse = memecoins.memecoin_market(view="pulse", at=AT)
+    radar = memecoins.memecoin_market(view="radar", at=AT)
+
+    assert [row["id"] for row in pulse["rows"]] == ["fresh", "zero"]
+    assert pulse["view"] == "pulse"
+    assert pulse["visible_count"] == 2
+    assert pulse["total"] == radar["total"] == 7
+    assert pulse["status"] == "ok"
+    assert radar["view"] == "radar"
+    assert radar["visible_count"] == len(radar["rows"]) == 7
+    assert memecoins.memecoin_market(at=AT) == radar
+    assert memecoins.memecoin_market(view="unknown", at=AT) == radar
+
+
+def test_pulse_search_and_sort_run_before_the_twenty_quote_limit(market_db):
+    seed(
+        [
+            coin(f"coin-{index:02}", total_volume=index, price_change_percentage_24h=index)
+            for index in range(30)
+        ]
+    )
+
+    pulse = memecoins.memecoin_market(view="pulse", at=AT)
+    losers = memecoins.memecoin_market(view="pulse", sort="losers", at=AT)
+    found = memecoins.memecoin_market(view="pulse", query=" COIN-00 ", at=AT)
+    radar = memecoins.memecoin_market(at=AT)
+
+    assert pulse["visible_count"] == len(pulse["rows"]) == 20
+    assert [row["id"] for row in pulse["rows"]] == [
+        f"coin-{index:02}" for index in reversed(range(10, 30))
+    ]
+    assert [row["id"] for row in losers["rows"]] == [f"coin-{index:02}" for index in range(20)]
+    assert found["query"] == "COIN-00"
+    assert found["visible_count"] == 1 and found["rows"][0]["id"] == "coin-00"
+    assert pulse["total"] == losers["total"] == found["total"] == radar["total"] == 30
+    assert radar["visible_count"] == 30
+    assert memecoins.memecoin_market(view="pulse", query="absent", at=AT)["visible_count"] == 0
+
+
+def test_empty_pulse_keeps_source_status(market_db, monkeypatch):
+    pending = memecoins.memecoin_market(view="pulse", at=AT)
+    assert pending["status"] == "pending" and pending["visible_count"] == 0
+    seed([])
+    unavailable = memecoins.memecoin_market(view="pulse", at=AT)
+    assert unavailable["status"] == "unavailable" and unavailable["rows"] == []
+    collected = AT + timedelta(minutes=5)
+    seed([coin(last_updated=collected.isoformat())], at=collected)
+    stale = memecoins.memecoin_market(view="pulse", at=collected + timedelta(minutes=16))
+    assert stale["status"] == "stale"
+    assert stale["rows"] == [] and stale["visible_count"] == 0 and stale["total"] == 1
+    monkeypatch.setenv("MEMECOINS_ENABLED", "false")
+    disabled = memecoins.memecoin_market(view="pulse", at=collected)
+    assert disabled["status"] == "disabled" and disabled["visible_count"] == 0
