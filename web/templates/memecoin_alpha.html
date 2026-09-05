@@ -1,0 +1,10 @@
+{% extends "mobile_base.html" %}
+{% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
+{% from "_memecoin_calls.html" import coin_calls %}
+{% block app_class %}workspace-app memecoins-app{% endblock %}
+{% block title %}Alpha · RATi Memecoins{% endblock %}
+{% block product_head %}<link rel="stylesheet" href="/static/memecoins.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+<div class="desktop-workspace" data-desktop-workspace data-memecoin-alpha><section class="desktop-list-pane" data-desktop-list><header class="screen-head"><div><span class="rati-product">RATi MEMECOINS</span><h1>Alpha</h1><span class="head-meta">Public paper Calls</span></div>{% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open {{ comment_avatar.name }} profile">{{ render_comment_avatar(comment_avatar) }}</button>{% else %}<a class="avatar-button signed-out" href="/login?next=/memecoins/alpha">Log in</a>{% endif %}</header><main class="meme-market"><p class="meme-source">Entry, current price and closed results share one public record. Returns follow the saved source quotes.</p><div class="meme-refresh-row"><p data-alpha-status role="status"></p><button type="button" data-coin-refresh>Refresh</button></div>{{ coin_calls(calls) }}<div class="meme-empty" data-calls-empty{% if calls %} hidden{% endif %}><strong>Start the public record</strong><p>Open a coin to make its first paper Call.</p><a href="/memecoins">Browse coins →</a></div></main></section>{% with detail_panel_label='Selected memecoin market details', detail_panel_mark='M', detail_panel_title='Open a coin Call', detail_panel_copy='Read the quote, price history and public record.' %}{% include "_desktop_panel.html" %}{% endwith %}</div>
+{% endblock %}
+{% block scripts %}<script type="application/json" id="memecoinPageData" nonce="{{ request.state.csp_nonce }}">{{ {'kind': 'alpha', 'calls': calls}|tojson }}</script><script src="/static/memecoins.js?v={{ static_version }}" defer></script>{% endblock %}
