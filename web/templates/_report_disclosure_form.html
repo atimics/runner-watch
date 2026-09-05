@@ -1,0 +1,24 @@
+<details class="content-notice-editor">
+  <summary>Add a disclosure</summary>
+  <p>Describe a holding, payment, sponsor, or issuer relationship.</p>
+  <form class="content-notice-form" data-report-disclosure action="/api/research/{{ report.public_id }}/disclosures" method="post">
+    <fieldset>
+      <div class="content-notice-field">
+        <label for="reportDisclosureKind">Relationship</label>
+        <select id="reportDisclosureKind" name="disclosure_kind" required>
+          <option value="">Choose a relationship</option>
+          <option value="holdings">Holdings</option>
+          <option value="compensation">Payment</option>
+          <option value="issuer_relationship">Issuer relationship</option>
+          <option value="sponsorship">Sponsorship</option>
+        </select>
+      </div>
+      <div class="content-notice-field">
+        <label for="reportDisclosureText">Disclosure</label>
+        <textarea id="reportDisclosureText" name="disclosure" rows="3" minlength="3" maxlength="1000" required></textarea>
+      </div>
+      <button type="submit">Save disclosure</button>
+    </fieldset>
+    <p role="status" data-disclosure-status></p>
+  </form>
+</details>

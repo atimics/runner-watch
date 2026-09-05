@@ -1,4 +1,5 @@
 {% extends "mobile_base.html" %}
+{% from "_content_notices.html" import content_notices %}
 {% macro research_points(title, items, extra_class='') -%}
 <section class="research-section research-points {{ extra_class }}">
   <h2>{{ title }}</h2>
@@ -59,6 +60,7 @@
     {% if report.citations or report.sources %}<a href="#report-sources">Sources ↓</a>{% endif %}
   </aside>
   <h1>{{ report.headline }}</h1>
+  <div data-report-notices>{{ content_notices(report.disclosures, report.corrections) }}</div>
 
   {% if report.subject_type == 'sports_game' and report.sports_forecast %}
   {% set forecast = report.sports_forecast %}
@@ -149,6 +151,7 @@
   </section>
   {% endif %}
   {% if is_owner %}
+  {% include "_report_disclosure_form.html" %}
   <section class="research-section report-publish">
     {% if report.customer_inference %}
     <h2>Private local-model report</h2>
