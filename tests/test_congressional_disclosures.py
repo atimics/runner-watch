@@ -119,8 +119,10 @@ def _index_zip() -> bytes:
 """
     body = io.BytesIO()
     with zipfile.ZipFile(body, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("2026FD.xml", xml)
-        archive.writestr("2026FD.txt", "official text index")
+        for name, content in (("2026FD.xml", xml), ("2026FD.txt", "official text index")):
+            entry = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(entry, content)
     return body.getvalue()
 
 
