@@ -448,7 +448,7 @@ def test_refresh_preserves_market_view_and_applied_filters(page: Page, view: str
         "href", f"/memecoins/coin/tiny-doge?q=doge&sort=gainers&view={view}"
     )
     expect(page.locator("[data-market-scope]")).to_have_text(
-        "Fresh quotes · up to 20 most active coins"
+        "Fresh quotes · up to 20 coins"
         if view == "pulse"
         else "Full CoinGecko snapshot"
     )

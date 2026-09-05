@@ -64,7 +64,7 @@
     });
     list.replaceChildren(fragment);
     if (focused) Array.from(list.children).find((row) => row.dataset.coinId === focused)?.focus({preventScroll: true});
-    put('[data-market-scope]', marketView(market) === 'pulse' ? 'Fresh quotes · up to 20 most active coins' : 'Full CoinGecko snapshot');
+    put('[data-market-scope]', marketView(market) === 'pulse' ? 'Fresh quotes · up to 20 coins' : 'Full CoinGecko snapshot');
     put('[data-coin-count]', `${market.rows.length} of ${market.total} coins`);
     put('[data-market-updated]', market.collected_at ? `Collected ${time(market.collected_at)}` : 'First collection pending');
     showStatus('[data-market-status]', marketMessage(market));

@@ -14,7 +14,7 @@
       {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open {{ comment_avatar.name }} profile">{{ render_comment_avatar(comment_avatar) }}</button>{% else %}<a class="avatar-button signed-out" href="/login?next={{ (request.url.path ~ ('?' ~ request.url.query if request.url.query else ''))|urlencode }}">Log in</a>{% endif %}
     </header>
     <main class="meme-market" aria-label="Memecoin markets">
-      <p class="meme-source" data-market-scope>{{ 'Fresh quotes · up to 20 most active coins' if list_view == 'pulse' else 'Full CoinGecko snapshot' }}</p>
+      <p class="meme-source" data-market-scope>{{ 'Fresh quotes · up to 20 coins' if list_view == 'pulse' else 'Full CoinGecko snapshot' }}</p>
       <form class="meme-filters" action="{{ list_path }}" method="get" role="search" data-coin-filters>
         <label>Find a coin<input type="search" name="q" value="{{ market.query }}" maxlength="80" placeholder="Name or symbol"></label>
         <label>Sort by<select name="sort">
