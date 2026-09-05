@@ -5930,15 +5930,15 @@ def memecoins_page(
             list_view="radar" if radar else "pulse",
             list_title="Radar" if radar else "Memecoins",
             back_url="/memecoins",
-            market=memecoin_market(query=q, sort=sort),
+            market=memecoin_market(query=q, sort=sort, view="radar" if radar else "pulse"),
         ),
     )
 
 
 @app.get("/api/memecoins")
-def memecoins_api(request: Request, q: str = "", sort: str = "volume"):
+def memecoins_api(request: Request, q: str = "", sort: str = "volume", view: str = "radar"):
     enforce_rate(request, "memecoins", limit=120, seconds=60)
-    return memecoin_market(query=q, sort=sort)
+    return memecoin_market(query=q, sort=sort, view=view)
 
 
 @app.get("/memecoins/alpha", response_class=HTMLResponse)
