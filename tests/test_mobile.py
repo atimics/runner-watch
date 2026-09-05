@@ -768,6 +768,36 @@ def test_pulse_only_lists_tickers_from_the_latest_scored_scan(
     assert "EVENT" not in {row["ticker"] for row in result["rows"]}
 
 
+@pytest.mark.parametrize("setup_score", [None, 0.0])
+def test_pulse_and_flash_evidence_preserve_setup_score(
+    tmp_path: Path, monkeypatch: MonkeyPatch, setup_score: float | None
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "setup-score.db")
+    monkeypatch.setattr(db, "DATABASE_URL", "")
+    monkeypatch.setattr(db, "REQUIRE_DATABASE_URL", False)
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_scan_run("setup-run", captured_at, 2)
+    insert_scored_snapshot("setup-one", "setup-run", "ONE", 42, 1, captured_at)
+    insert_scored_snapshot("setup-two", "setup-run", "TWO", 31, 2, captured_at)
+    with connection() as database:
+        database.execute(
+            "UPDATE scan_snapshots SET setup_score=? WHERE id='setup-one'", (setup_score,)
+        )
+        database.execute("UPDATE scan_snapshots SET setup_score=90 WHERE id='setup-two'")
+
+    rows = pulse_data()["rows"]
+    _, evidence = web_main._alpha_evidence("ONE", 0)
+
+    assert [row["ticker"] for row in rows] == ["ONE", "TWO"]
+    assert rows[0]["setup_score"] == setup_score
+    assert rows[1]["setup_score"] == 90.0
+    assert rows[0]["baseline_score"] == 42.0
+    assert rows[0]["score"] == 42.0
+    assert evidence["setup_score"] == setup_score
+    assert evidence["score"] == 42.0
+
+
 def test_pulse_freshness_uses_the_market_quote_time(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
