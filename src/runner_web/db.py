@@ -2757,7 +2757,7 @@ def _migration_055_memecoin_quote_history(db: DatabaseConnection) -> None:
             coin_id TEXT NOT NULL REFERENCES memecoin_assets(coin_id) ON DELETE CASCADE,
             observed_at TEXT NOT NULL,
             collected_at TEXT NOT NULL,
-            price REAL NOT NULL CHECK(price>0),
+            price DOUBLE PRECISION NOT NULL CHECK(price>0),
             run_id TEXT NOT NULL,
             PRIMARY KEY(coin_id,observed_at)
         );
@@ -2807,10 +2807,10 @@ def _migration_056_memecoin_calls(db: DatabaseConnection) -> None:
             symbol TEXT NOT NULL,
             name TEXT NOT NULL,
             status TEXT NOT NULL CHECK(status IN ('active','closed')),
-            entry_price REAL NOT NULL CHECK(entry_price>0),
+            entry_price DOUBLE PRECISION NOT NULL CHECK(entry_price>0),
             entry_at TEXT NOT NULL,
             entry_evidence TEXT NOT NULL,
-            exit_price REAL CHECK(exit_price>0),
+            exit_price DOUBLE PRECISION CHECK(exit_price>0),
             exit_at TEXT,
             exit_evidence TEXT,
             created_at TEXT NOT NULL,

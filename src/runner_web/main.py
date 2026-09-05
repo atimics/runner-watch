@@ -2361,11 +2361,7 @@ def _unified_caller_page_data(caller_handle: str) -> dict[str, Any]:
 
 
 def _public_caller_page_data(caller_handle: str) -> dict[str, Any]:
-    return _public_screen_data(
-        "caller",
-        caller_handle,
-        lambda: _unified_caller_page_data(caller_handle),
-    )
+    return _unified_caller_page_data(caller_handle)
 
 
 @app.get("/u/{caller_handle}", response_class=HTMLResponse)

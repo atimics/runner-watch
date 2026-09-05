@@ -64,11 +64,13 @@ def _call(row: Any, mark: dict[str, Any] | None = None) -> dict[str, Any]:
         else (mark.get("price") if mark and not mark.get("stale", True) else None)
     )
     item["mark_price"] = price
-    item["return_pct"] = (
-        round((float(price) / float(item["entry_price"]) - 1) * 100, 2)
-        if price is not None
-        else None
+    item["mark_at"] = (
+        item["exit_at"]
+        if item["status"] == "closed"
+        else (mark.get("observed_at") if price is not None and mark else None)
     )
+    change = (float(price) / float(item["entry_price"]) - 1) * 100 if price is not None else None
+    item["return_pct"] = round(change, 2) if change is not None and math.isfinite(change) else None
     for field in ("entry_price", "exit_price", "mark_price"):
         item[f"{field}_label"] = (
             memecoins._price_label(float(item[field])) if item[field] is not None else "—"
