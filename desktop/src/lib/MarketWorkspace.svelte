@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { callMarkExpired, callStatusLabel, priceHistorySegments, quoteExpired } from './market-view';
+  import { callMarkExpired, callStatusLabel, priceHistorySegments, quoteExpired, timestampExpired } from './market-view';
   import { NodeClient, type CoinCall, type CoinDetail, type CoinMarket, type CoinSort, type MarketTab, type SportsMarket, type SportsRow } from './node';
 
   export let market: 'memecoins' | 'sports';
@@ -44,6 +44,12 @@
   function tabTitle() { return tab === 'pulse' ? 'Pulse' : tab === 'radar' ? 'Radar' : 'Alpha'; }
   function percent(value: number | null | undefined) {
     return value == null ? '—' : `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
+  }
+  function probability(value: number | null | undefined) {
+    return value == null || !Number.isFinite(value) ? 'unknown' : `${value.toFixed(1)}%`;
+  }
+  function openCallCount(value: number | null | undefined) {
+    return value == null || !Number.isFinite(value) ? 'Open Call count pending' : `${value} open Calls`;
   }
   function time(value: string | null | undefined) {
     if (!value || !Number.isFinite(Date.parse(value))) return 'Awaiting source time';
@@ -160,9 +166,11 @@
     <button class="text-button" onclick={() => game = null}>← Back to {tabTitle()}</button>
     <span class="eyebrow">{game.league || game.pulse_label || 'Sports'}</span><h2>{gameTitle(game)}</h2>
     <p>{game.radar_detail || game.status_detail || 'Public market snapshot'}</p>
-    {#if game.model_winner_team_name}<p>Projected winner: <b>{game.model_winner_team_name}</b> · {game.model_winner_probability_pct?.toFixed(1) || '—'}%</p>{/if}
-    <div class="market-facts">{#if game.market_probability_pct != null}<span>Market probability <b>{game.market_probability_pct.toFixed(1)}%</b></span>{/if}{#if game.away_score != null}<span>Score <b>{game.away_score} – {game.home_score ?? '—'}</b></span>{/if}{#if game.odds_label}<span>Current odds <b>{game.odds_label}</b></span>{/if}{#if game.total_calls != null}<span>Paper Calls <b>{game.active_calls || 0} open · {game.total_calls} total</b></span>{/if}</div>
-    <p class="market-caption">{time(game.start_time || gameUpdatedAt)}</p>
+    {#if game.model_winner_team_name}<p>Projected winner: <b>{game.model_winner_team_name}</b> · {probability(game.model_winner_probability_pct)}</p><p class="market-caption">Model estimate from saved game data. Actual outcomes can differ.</p>{/if}
+    <div class="market-facts">{#if game.market_probability_pct != null}<span>Market probability <b>{game.market_probability_pct.toFixed(1)}%</b></span>{/if}{#if game.away_score != null}<span>Score <b>{game.away_score} – {game.home_score ?? '—'}</b></span>{/if}{#if game.odds_label}<span>Current odds <b>{game.odds_label}</b></span>{/if}{#if game.total_calls != null}<span>Paper Calls <b>{game.active_calls ?? 'unknown'} open · {game.total_calls} total</b></span>{/if}</div>
+    <p class="market-caption">Game starts {time(game.start_time)}</p>
+    <p class="market-caption">Source updated {time(gameUpdatedAt)}</p>
+    {#if timestampExpired(gameUpdatedAt, now)}<p class="market-notice">Saved game snapshot · {gameUpdatedAt ? 'Source update is delayed.' : 'Source time is pending.'}</p>{/if}
     <button class="primary" onclick={() => openExternal(gameUrl(game!))}>Open game evidence and paper Calls ↗</button>
   </section>
 {:else}
@@ -174,7 +182,7 @@
   <section class="runner-list market-list" aria-label={`${title()} ${tabTitle()} results`}>
     {#if market === 'sports'}
       {#if sports?.source_error}<p class="market-notice">{sports.source_error}</p>{/if}
-      {#each (tab === 'alpha' ? sports?.rows : sports?.events) || [] as row}<button class="market-row" onclick={() => openGame(row)}><span><strong>{gameTitle(row)}</strong><small>{row.league?.toUpperCase() || row.pulse_label || 'Sports'} · {row.radar_detail || row.model_winner_team_name || `${row.active_calls || 0} open Calls`}</small></span><span><b>{row.price_label || row.radar_label || (row.model_winner_probability_pct != null ? `${row.model_winner_probability_pct.toFixed(1)}%` : '—')}</b><small>{row.status_detail || time(row.start_time)}</small></span><span aria-hidden="true">›</span></button>{:else}{#if !loading && !error}<p class="market-caption">Saved {tabTitle()} results will appear here as the source updates.</p>{/if}{/each}
+      {#each (tab === 'alpha' ? sports?.rows : sports?.events) || [] as row}<button class="market-row" onclick={() => openGame(row)}><span><strong>{gameTitle(row)}</strong><small>{row.league?.toUpperCase() || row.pulse_label || 'Sports'} · {row.radar_detail || row.model_winner_team_name || openCallCount(row.active_calls)}</small></span><span><b>{row.price_label || row.radar_label || (row.model_winner_probability_pct != null ? `${row.model_winner_probability_pct.toFixed(1)}%` : '—')}</b><small>{row.status_detail || time(row.start_time)}</small></span><span aria-hidden="true">›</span></button>{:else}{#if !loading && !error}<p class="market-caption">Saved {tabTitle()} results will appear here as the source updates.</p>{/if}{/each}
     {:else if tab === 'alpha'}
       {#each calls as call}<button class="market-row" onclick={() => openCoin(call.coin_id)}><span><strong>{call.name} · {call.symbol}</strong><small>@{call.caller_handle} · {callStatusLabel(call.status)}</small></span><span><b>{callMarkExpired(call, now) ? '—' : percent(call.return_pct)}</b><small>Entry {call.entry_price_label} · Mark {callMarkExpired(call, now) ? 'expired' : call.mark_price_label}</small></span><span aria-hidden="true">›</span></button>{:else}{#if !loading && !error}<p class="market-caption">Public paper Calls will appear here after someone opens a coin Call.</p>{/if}{/each}
     {:else}
