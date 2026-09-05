@@ -2830,6 +2830,36 @@ def _migration_056_memecoin_calls(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_057_content_notices(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS content_notices (
+            id TEXT PRIMARY KEY,
+            report_id TEXT REFERENCES research_commissions(id) ON DELETE CASCADE,
+            comment_id TEXT REFERENCES ticker_comments(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL CHECK(kind IN
+                ('correction','holdings','compensation','issuer_relationship','sponsorship')),
+            text TEXT NOT NULL,
+            reason TEXT,
+            recorded_by TEXT NOT NULL CHECK(recorded_by IN ('author','operator')),
+            dedup_key TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            CHECK((report_id IS NOT NULL AND comment_id IS NULL)
+                OR (report_id IS NULL AND comment_id IS NOT NULL)),
+            CHECK(kind != 'correction' OR (reason IS NOT NULL AND length(reason)>0))
+        );
+        CREATE INDEX IF NOT EXISTS content_notices_report
+            ON content_notices(report_id,created_at,id);
+        CREATE INDEX IF NOT EXISTS content_notices_comment
+            ON content_notices(comment_id,created_at,id);
+        CREATE UNIQUE INDEX IF NOT EXISTS content_notices_author_report
+            ON content_notices(report_id,dedup_key) WHERE recorded_by='author';
+        CREATE UNIQUE INDEX IF NOT EXISTS content_notices_author_comment
+            ON content_notices(comment_id,dedup_key) WHERE recorded_by='author';
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2898,6 +2928,7 @@ MIGRATIONS = (
     Migration(54, "market_report_forecasts", _migration_054_market_report_forecasts),
     Migration(55, "memecoin_quote_history", _migration_055_memecoin_quote_history),
     Migration(56, "memecoin_calls", _migration_056_memecoin_calls),
+    Migration(57, "content_notices", _migration_057_content_notices),
 )
 
 
