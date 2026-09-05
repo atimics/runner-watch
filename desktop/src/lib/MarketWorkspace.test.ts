@@ -118,6 +118,8 @@ describe('native market refresh', () => {
     await vi.advanceTimersByTimeAsync(0);
     flushSync();
     expect(document.body.textContent).toContain('Mark $1.12');
+    expect(document.querySelectorAll('.market-row')[0].textContent).toContain('Open');
+    expect(document.querySelectorAll('.market-row')[1].textContent).toContain('Closed');
     vi.setSystemTime(start + 16 * 60_000);
     await vi.advanceTimersByTimeAsync(60_000);
     flushSync();
