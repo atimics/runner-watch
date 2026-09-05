@@ -89,6 +89,12 @@ from runner_web.calls import (
 )
 from runner_web.case_monitor import refresh_case_monitor
 from runner_web.collection import recording_market_data
+from runner_web.content_notices import (
+    attach_comment_notices,
+    disclosure_input,
+    insert_content_notice,
+    notices_for_content,
+)
 from runner_web.db import connection, init_db
 from runner_web.flash_evaluations import (
     flash_record,
@@ -3476,6 +3482,7 @@ def _commission_record(
         report["profile_heading"] = "Company"
         report["risk_heading"] = "What could rug it"
         report["sports_forecast"] = None
+    report.update(notices_for_content("report", [str(report["id"])])[str(report["id"])])
     return _apply_effective_report_visibility(report)
 
 
@@ -5654,19 +5661,12 @@ def get_commission(public_id: str) -> dict[str, Any] | None:
 
 
 def _public_research_report_data(public_id: str) -> dict[str, Any]:
-    def public_report() -> dict[str, Any]:
-        report = get_commission(public_id)
-        if not report or str(report.get("visibility") or "private") != "public":
-            return {"report": None}
-        if bool(report.get("customer_inference")):
-            return {"report": None}
-        return {"report": report}
-
-    return _public_screen_data(
-        "research",
-        public_id,
-        public_report,
-    )
+    report = get_commission(public_id)
+    if not report or str(report.get("visibility") or "private") != "public":
+        return {"report": None}
+    if bool(report.get("customer_inference")):
+        return {"report": None}
+    return {"report": report}
 
 
 def latest_commission(user_id: str, ticker: str) -> dict[str, Any] | None:
@@ -6514,22 +6514,14 @@ def sports_game_page(
     public_data = _public_screen_data(
         "sports-game",
         event_id,
-        lambda: {
-            "event": sports_event(event_id),
-            "comments": comments_for_subject("sports_game", event_id),
-            "comment_count": comment_count_for_subject("sports_game", event_id),
-        },
+        lambda: {"event": sports_event(event_id)},
     )
     event = public_data.get("event")
     if not event:
         raise HTTPException(404, "Game not found")
     user = current_user(runner_session)
     user_id = str(user["id"]) if user else None
-    comments = (
-        comments_for_subject("sports_game", event_id, current_user_id=user_id)
-        if user_id
-        else list(public_data.get("comments") or [])
-    )
+    comments = comments_for_subject("sports_game", event_id, current_user_id=user_id)
     latest_report = daily_report_for_sports_game(event_id, user_id)
     sports_path_prefix = ""
     return templates.TemplateResponse(
@@ -6541,7 +6533,7 @@ def sports_game_page(
             resolved_user=user,
             event=event,
             comments=comments,
-            comment_count=int(public_data.get("comment_count") or 0),
+            comment_count=comment_count_for_subject("sports_game", event_id),
             comment_generation_enabled=_flash_provider_ready(),
             latest_commission=latest_report,
             flash_report=_flash_report_action(
@@ -7286,13 +7278,15 @@ def _public_ticker_page_data(ticker: str) -> dict[str, Any]:
         return {
             "found": True,
             "detail": detail,
-            "comments": comments_for_ticker(ticker),
-            "comment_count": comment_count_for_ticker(ticker),
             "calls": community_calls_for_ticker(ticker, current_price=mark, limit=20),
-            "latest_commission": daily_report_for_ticker(ticker),
         }
 
-    return _public_screen_data("ticker", ticker, build)
+    payload = dict(_public_screen_data("ticker", ticker, build))
+    if payload.get("found"):
+        payload["comments"] = comments_for_ticker(ticker)
+        payload["comment_count"] = comment_count_for_ticker(ticker)
+        payload["latest_commission"] = daily_report_for_ticker(ticker)
+    return payload
 
 
 @app.get("/t/{ticker}", response_class=HTMLResponse)
@@ -7883,7 +7877,9 @@ def alpha_comments_data(*, limit: int = 50) -> list[dict[str, Any]]:
             """,
             (bounded_limit,),
         ).fetchall()
-    return [{**_public_comment(row), "ticker": str(row["ticker"])} for row in rows]
+    return attach_comment_notices(
+        [{**_public_comment(row), "ticker": str(row["ticker"])} for row in rows]
+    )
 
 
 def comments_for_subject(
@@ -7921,7 +7917,7 @@ def comments_for_subject(
             """,
             (subject_kind, subject_key, bounded_limit),
         ).fetchall()
-    return [_public_comment(row, current_user_id) for row in rows]
+    return attach_comment_notices([_public_comment(row, current_user_id) for row in rows])
 
 
 def comment_count_for_subject(subject_kind: str, subject_key: str) -> int:
@@ -8340,7 +8336,7 @@ def _comment_response_payload(
     if row is None:
         raise HTTPException(410, "This comment was already removed.")
     return {
-        "comment": _public_comment(row, user_id),
+        "comment": attach_comment_notices([_public_comment(row, user_id)])[0],
         "count": int(count),
         "balance": wallet_for_user(user_id)["balance"],
     }
@@ -8425,6 +8421,13 @@ async def _create_subject_comment(
     require_origin(request)
     user = require_user(runner_session)
     user_id = str(user["id"])
+    try:
+        has_json = request.headers.get("content-type", "").split(";", 1)[0] == "application/json"
+        disclosure = (
+            disclosure_input(await request.json()) if has_json and await request.body() else None
+        )
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(422, str(exc)) from exc
     request_key_hash = _comment_request_key_hash(request)
     with connection() as db:
         existing_request = db.execute(
@@ -8541,6 +8544,15 @@ async def _create_subject_comment(
                     model,
                 ),
             )
+            if disclosure is not None:
+                insert_content_notice(
+                    db,
+                    "comment",
+                    request_id,
+                    kind=disclosure[0],
+                    text=disclosure[1],
+                    recorded_by="author",
+                )
             db.execute(
                 """
                 UPDATE comment_generation_requests
@@ -8620,6 +8632,69 @@ async def create_sports_comment(
         request,
         runner_session,
     )
+
+
+async def _author_disclosure(
+    subject: str,
+    target_id: str,
+    request: Request,
+    runner_session: str | None,
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "content-disclosure", limit=30, seconds=3600, subject=user["id"])
+    try:
+        disclosure = disclosure_input(await request.json())
+        if disclosure is None:
+            raise ValueError("Choose a disclosure kind and describe the relationship")
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    table = "research_commissions" if subject == "report" else "ticker_comments"
+    key = "public_id" if subject == "report" else "id"
+    with connection() as db:
+        row = db.execute(
+            f"SELECT * FROM {table} WHERE {key}=? AND user_id=?",
+            (target_id, str(user["id"])),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "Content not found")
+        try:
+            notice = insert_content_notice(
+                db,
+                subject,
+                str(row["id"]),
+                kind=disclosure[0],
+                text=disclosure[1],
+                recorded_by="author",
+            )
+        except KeyError as exc:
+            raise HTTPException(409, str(exc.args[0])) from exc
+    if subject == "comment":
+        _invalidate_comment_subject(str(row["subject_kind"]), str(row["subject_key"]))
+    return JSONResponse(
+        {
+            "notice": notice,
+            **notices_for_content(subject, [str(row["id"])])[str(row["id"])],
+        }
+    )
+
+
+@app.post("/api/comments/{comment_id}/disclosures")
+async def disclose_comment(
+    comment_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    return await _author_disclosure("comment", comment_id, request, runner_session)
+
+
+@app.post("/api/research/{public_id}/disclosures")
+async def disclose_research(
+    public_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    return await _author_disclosure("report", public_id, request, runner_session)
 
 
 @app.delete("/api/comments/{comment_id}")
