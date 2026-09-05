@@ -309,3 +309,82 @@ def test_navigation_names_are_valid_coin_ids(calls_db, coin_id):
         assert call["detail_url"] == f"/memecoins/coin/{coin_id}"
     finally:
         client.close()
+
+
+def test_tiny_prices_survive_quote_history_and_call_receipts(calls_db):
+    price = 1.23456789012345e-50
+    _refresh(calls_db, _coin(calls_db, current_price=price))
+    opened = call_service.create_memecoin_call("alice", "dogecoin")
+    detail = memecoins.memecoin_detail("dogecoin")
+
+    assert detail["history"][0]["price"] == price
+    assert opened["entry_price"] == price
+    assert opened["entry_evidence"]["price"] == price
+    calls_db["now"] += timedelta(minutes=5)
+    _refresh(calls_db, _coin(calls_db, current_price=price * 2))
+    closed = call_service.close_memecoin_call("alice", opened["public_id"])
+    assert closed["exit_price"] == price * 2
+    assert closed["exit_evidence"]["price"] == price * 2
+    assert closed["return_pct"] == 100.0
+
+
+def test_extreme_finite_prices_keep_call_output_valid_json(calls_db):
+    _refresh(calls_db, _coin(calls_db, current_price=1e-200))
+    opened = call_service.create_memecoin_call("alice", "dogecoin")
+    calls_db["now"] += timedelta(minutes=5)
+    _refresh(calls_db, _coin(calls_db, current_price=1e200))
+
+    repeated = call_service.create_memecoin_call("alice", "dogecoin")
+    public = call_service.memecoin_calls(coin_id="dogecoin")
+    assert repeated["return_pct"] is None
+    assert public[0]["return_pct"] is None
+    json.dumps({"repeated": repeated, "public": public}, allow_nan=False)
+    client = TestClient(web_main.app, base_url=web_main.RUNNERS_ORIGIN)
+    try:
+        client.cookies.set(web_main.SESSION_COOKIE, "alice-session")
+        response = client.post(
+            f"/api/memecoin-calls/{opened['public_id']}/close",
+            headers={"Origin": web_main.RUNNERS_ORIGIN},
+        )
+        assert response.status_code == 200
+        assert response.json()["call"]["return_pct"] is None
+        assert response.json()["call"]["exit_price"] == 1e200
+        json.dumps(response.json(), allow_nan=False)
+        assert client.get("/api/memecoin-calls").status_code == 200
+        record = web_main._unified_caller_page_data(opened["caller_handle"])
+        assert record["stats"]["wins"] == caller_summary_for_user("alice")["wins"] == 1
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("delete_account", [False, True])
+def test_account_deletion_clears_the_public_caller_cache(calls_db, delete_account):
+    _refresh(calls_db)
+    opened = call_service.create_memecoin_call("alice", "dogecoin")
+    handle = opened["caller_handle"]
+    assert web_main._public_caller_page_data(handle)["stats"]["total"] == 1
+    client = TestClient(web_main.app, base_url=web_main.RUNNERS_ORIGIN)
+    try:
+        client.cookies.set(web_main.SESSION_COOKIE, "alice-session")
+        caller_url = f"/u/{handle}?market=memecoins"
+        call_link = f'href="{web_main.RUNNERS_ORIGIN}/memecoins/coin/dogecoin"'
+        before = client.get(caller_url)
+        assert before.status_code == 200
+        assert call_link in before.text
+        response = client.post(
+            "/api/account/delete" if delete_account else "/api/account/data/delete-cloud-copy",
+            headers={"Origin": web_main.RUNNERS_ORIGIN},
+            json={"confirmation": "DELETE MY ACCOUNT" if delete_account else "MOVE MY DATA"},
+        )
+        assert response.status_code == 200
+        assert _rows() == []
+        public = web_main._public_caller_page_data(handle)
+        if delete_account:
+            assert public == {"found": False}
+        else:
+            assert public["stats"]["total"] == 0
+        after = client.get(caller_url)
+        assert after.status_code == (404 if delete_account else 200)
+        assert call_link not in after.text
+    finally:
+        client.close()
