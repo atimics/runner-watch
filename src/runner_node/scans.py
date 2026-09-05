@@ -4,6 +4,7 @@ import json
 import secrets
 import sqlite3
 from collections.abc import Mapping
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
@@ -52,7 +53,7 @@ class ScanStore:
         self.database_path = Path(database_path).expanduser() if database_path else None
         if self.database_path is not None:
             self.database_path.parent.mkdir(parents=True, exist_ok=True)
-            with sqlite3.connect(self.database_path) as database:
+            with closing(sqlite3.connect(self.database_path)) as database, database:
                 database.execute(
                     """
                     CREATE TABLE IF NOT EXISTS node_scan_receipts (
@@ -88,7 +89,7 @@ class ScanStore:
                 while len(self._scans) > self.maximum:
                     self._scans.pop(next(iter(self._scans)))
             else:
-                with sqlite3.connect(self.database_path) as database:
+                with closing(sqlite3.connect(self.database_path)) as database, database:
                     database.execute(
                         "INSERT INTO node_scan_receipts(id,finished_at,payload_json) VALUES(?,?,?)",
                         (
@@ -113,7 +114,7 @@ class ScanStore:
         with self._lock:
             if self.database_path is None:
                 return self._scans.get(scan_id)
-            with sqlite3.connect(self.database_path) as database:
+            with closing(sqlite3.connect(self.database_path)) as database, database:
                 row = database.execute(
                     "SELECT payload_json FROM node_scan_receipts WHERE id=?", (scan_id,)
                 ).fetchone()
@@ -123,7 +124,7 @@ class ScanStore:
         with self._lock:
             if self.database_path is None:
                 return list(reversed(list(self._scans.values())))
-            with sqlite3.connect(self.database_path) as database:
+            with closing(sqlite3.connect(self.database_path)) as database, database:
                 rows = database.execute(
                     """
                     SELECT payload_json FROM node_scan_receipts

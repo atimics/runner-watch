@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -98,7 +99,7 @@ def test_store_keeps_peer_claims_in_a_dedicated_database(tmp_path: Path) -> None
     assert current[0].signed_claim == signed
     assert current[0].topic == "alpha/nasdaq"
 
-    with sqlite3.connect(path) as database:
+    with closing(sqlite3.connect(path)) as database, database:
         tables = {
             row[0] for row in database.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }

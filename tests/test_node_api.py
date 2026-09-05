@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -529,7 +530,7 @@ def test_scan_store_removes_legacy_non_live_receipts(tmp_path) -> None:
         }
     )
     legacy = {**saved, "source": "sample"}
-    with sqlite3.connect(database_path) as database:
+    with closing(sqlite3.connect(database_path)) as database, database:
         database.execute(
             "UPDATE node_scan_receipts SET payload_json=? WHERE id=?",
             (json.dumps(legacy), saved["id"]),
