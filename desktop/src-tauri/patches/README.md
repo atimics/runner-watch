@@ -11,9 +11,9 @@ Run these checks from the repository root. The Rust tests need the system GLib d
 ```sh
 python3 scripts/verify_desktop_backports.py
 python3 -m unittest discover -s tests -p test_desktop_backports.py
-cargo test --locked --release --manifest-path desktop/backport-regression/Cargo.toml
+cargo test -p desktop-backport-regression --locked --release --manifest-path desktop/src-tauri/Cargo.toml
 ```
 
-The source verifier allows only the recorded upstream changes. The optimized tests cover GLib iteration and URLPattern Unicode names, URL matching, and host boundaries. The existing full Rust audit remains active. Its version-based result still lists GLib 0.18.5 even though this source contains the fix, and it reports the remaining GTK/proc-macro maintenance advisories.
+The source verifier allows only the recorded upstream changes. The regression package shares the app's workspace lock and release profile, so it tests the exact dependency versions shipped by the app. The app remains the default workspace member. The optimized tests cover GLib iteration and URLPattern Unicode names, URL matching, and host boundaries. The existing full Rust audit remains active. Its version-based result still lists GLib 0.18.5 even though this source contains the fix, and it reports the remaining GTK/proc-macro maintenance advisories.
 
 Remove each backport when a compatible released Tauri stack resolves that dependency to a maintained release with the fix. Then remove its Cargo patch, vendor directory, JSON provenance, verifier entry, and dedicated regression coverage; refresh the locks and run all desktop platform builds and the full dependency scan. GTK3's current development branch uses prerelease bindings, so verify published framework constraints at that time.

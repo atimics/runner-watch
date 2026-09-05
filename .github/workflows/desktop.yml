@@ -125,7 +125,7 @@ jobs:
             patchelf
       - name: Test optimized dependency backports
         if: runner.os == 'Linux'
-        run: cargo test --locked --release --manifest-path desktop/backport-regression/Cargo.toml
+        run: cargo test -p desktop-backport-regression --locked --release --manifest-path desktop/src-tauri/Cargo.toml
       - name: Build scanner sidecar
         run: |
           uv sync --locked --extra desktop
