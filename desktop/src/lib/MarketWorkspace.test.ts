@@ -132,3 +132,44 @@ describe('native market refresh', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+it('keeps missing sports values distinct from zero and labels the source time', async () => {
+  const now = new Date().toISOString();
+  const missing = { id: 'missing-count', away_abbreviation: 'SEA', home_abbreviation: 'TOR', model_winner_team_name: 'Seattle', total_calls: 3, start_time: '2030-01-01T20:00:00Z' };
+  vi.spyOn(NodeClient.prototype, 'sports').mockResolvedValue({ events: [missing, { ...missing, id: 'zero-count', away_abbreviation: 'BOS', active_calls: 0, model_winner_probability_pct: 0 }], updated_at: now });
+  render({ market: 'sports' });
+  await vi.waitFor(() => expect(document.body.textContent).toContain('SEA at TOR'));
+  button('SEA at TOR').click();
+  await vi.waitFor(() => expect(document.body.textContent).toContain('Projected winner:'));
+  expect(document.body.textContent).toContain('Seattle · unknown');
+  expect(document.body.textContent).toContain('unknown open · 3 total');
+  expect(document.body.textContent).toContain('Model estimate from saved game data. Actual outcomes can differ.');
+  expect(document.body.textContent).toContain(`Source updated ${new Date(now).toLocaleString()}`);
+  expect(document.body.textContent).toContain(`Game starts ${new Date(missing.start_time).toLocaleString()}`);
+  button('Back to Pulse').click();
+  flushSync();
+  button('BOS at TOR').click();
+  flushSync();
+  expect(document.body.textContent).toContain('Seattle · 0.0%');
+  expect(document.body.textContent).toContain('0 open · 3 total');
+});
+
+it('ages a saved sports snapshot while a refresh fails', async () => {
+  vi.useFakeTimers();
+  const start = Date.parse('2026-09-05T16:00:00Z');
+  vi.setSystemTime(start);
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  vi.spyOn(NodeClient.prototype, 'sports').mockResolvedValueOnce({ events: [{ id: 'event-one', away_abbreviation: 'SEA', home_abbreviation: 'TOR' }], updated_at: new Date(start).toISOString() }).mockRejectedValue(new Error('Refresh delayed'));
+  render({ market: 'sports' });
+  await vi.advanceTimersByTimeAsync(0);
+  flushSync();
+  button('SEA at TOR').click();
+  flushSync();
+  expect(document.body.textContent).not.toContain('Saved game snapshot');
+  vi.setSystemTime(start + 16 * 60_000);
+  await vi.advanceTimersByTimeAsync(60_000);
+  flushSync();
+  expect(document.body.textContent).toContain('Saved game snapshot · Source update is delayed.');
+  expect(document.body.textContent).toContain('Source updated');
+  expect(document.body.textContent).toContain('SEA at TOR');
+});

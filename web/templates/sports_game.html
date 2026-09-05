@@ -101,8 +101,9 @@
           <strong>{{ ai_forecast.selected_abbreviation }} {{ '%.0f'|format(ai_forecast.selected_probability * 100) }}%</strong><b>{{ ai_forecast.selected_team }}</b>
           {% endif %}
           <em>{{ 'Agrees with' if ai_forecast.agrees_with_baseline else 'Differs from' }} {{ prediction.model_version }} · {{ latest_commission.actor.model_label }}</em>
-          {{ content_notices(latest_commission.disclosures, latest_commission.corrections) }}
+          <p class="game-forecast-context">AI estimate from the report’s saved inputs. Actual outcomes can differ.</p>
         </div>
+        {{ content_notices(latest_commission.disclosures, latest_commission.corrections) }}
         {% endif %}
       </div>
       <div class="game-flash-action">
