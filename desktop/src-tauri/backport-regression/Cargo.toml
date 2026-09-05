@@ -1,0 +1,10 @@
+[package]
+name = "desktop-backport-regression"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "AGPL-3.0-only"
+
+[dependencies]
+glib = "=0.18.5"
+urlpattern = "=0.3.0"
