@@ -17,6 +17,10 @@ kill_timeout = 30
   worker = "env PROCESS_ROLE=worker stonks-worker"
   trainer = "env PROCESS_ROLE=trainer stonks-trainer"
 
+[[restart]]
+  policy = "always"
+  processes = ["worker", "trainer"]
+
 [env]
   APP_ORIGIN = "https://runners.rati.chat"
   RUNNERS_ORIGIN = "https://runners.rati.chat"
