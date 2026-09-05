@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { callMarkExpired, priceHistorySegments, quoteExpired } from './market-view';
+  import { callMarkExpired, callStatusLabel, priceHistorySegments, quoteExpired } from './market-view';
   import { NodeClient, type CoinCall, type CoinDetail, type CoinMarket, type CoinSort, type MarketTab, type SportsMarket, type SportsRow } from './node';
 
   export let market: 'memecoins' | 'sports';
@@ -153,7 +153,7 @@
     <p class="market-caption">Source observed {time(detail.evidence.observed_at)} · Collected {time(detail.collected_at)}</p>
     <div class="market-actions"><button onclick={() => openExternal(coinUrl(detail!.coin.id))}>Open coin and paper Calls ↗</button><button onclick={() => openExternal(`https://www.coingecko.com/en/coins/${encodeURIComponent(detail!.coin.id)}`)}>CoinGecko evidence ↗</button></div>
     <h3>Public paper Calls</h3>
-    {#each detail.calls || [] as call}<div class="market-call"><span>@{call.caller_handle}<small>{call.status}</small></span><span>Entry {call.entry_price_label}<small>Mark {callMarkExpired(call, now) ? 'expired' : call.mark_price_label}</small></span><b>{callMarkExpired(call, now) ? '—' : percent(call.return_pct)}</b></div>{:else}<p class="market-caption">The first paper Call will appear here.</p>{/each}
+    {#each detail.calls || [] as call}<div class="market-call"><span>@{call.caller_handle}<small>{callStatusLabel(call.status)}</small></span><span>Entry {call.entry_price_label}<small>Mark {callMarkExpired(call, now) ? 'expired' : call.mark_price_label}</small></span><b>{callMarkExpired(call, now) ? '—' : percent(call.return_pct)}</b></div>{:else}<p class="market-caption">The first paper Call will appear here.</p>{/each}
   </section>
 {:else if game}
   <section class="market-detail">
@@ -176,7 +176,7 @@
       {#if sports?.source_error}<p class="market-notice">{sports.source_error}</p>{/if}
       {#each (tab === 'alpha' ? sports?.rows : sports?.events) || [] as row}<button class="market-row" onclick={() => openGame(row)}><span><strong>{gameTitle(row)}</strong><small>{row.league?.toUpperCase() || row.pulse_label || 'Sports'} · {row.radar_detail || row.model_winner_team_name || `${row.active_calls || 0} open Calls`}</small></span><span><b>{row.price_label || row.radar_label || (row.model_winner_probability_pct != null ? `${row.model_winner_probability_pct.toFixed(1)}%` : '—')}</b><small>{row.status_detail || time(row.start_time)}</small></span><span aria-hidden="true">›</span></button>{:else}{#if !loading && !error}<p class="market-caption">Saved {tabTitle()} results will appear here as the source updates.</p>{/if}{/each}
     {:else if tab === 'alpha'}
-      {#each calls as call}<button class="market-row" onclick={() => openCoin(call.coin_id)}><span><strong>{call.name} · {call.symbol}</strong><small>@{call.caller_handle} · {call.status}</small></span><span><b>{callMarkExpired(call, now) ? '—' : percent(call.return_pct)}</b><small>Entry {call.entry_price_label} · Mark {callMarkExpired(call, now) ? 'expired' : call.mark_price_label}</small></span><span aria-hidden="true">›</span></button>{:else}{#if !loading && !error}<p class="market-caption">Public paper Calls will appear here after someone opens a coin Call.</p>{/if}{/each}
+      {#each calls as call}<button class="market-row" onclick={() => openCoin(call.coin_id)}><span><strong>{call.name} · {call.symbol}</strong><small>@{call.caller_handle} · {callStatusLabel(call.status)}</small></span><span><b>{callMarkExpired(call, now) ? '—' : percent(call.return_pct)}</b><small>Entry {call.entry_price_label} · Mark {callMarkExpired(call, now) ? 'expired' : call.mark_price_label}</small></span><span aria-hidden="true">›</span></button>{:else}{#if !loading && !error}<p class="market-caption">Public paper Calls will appear here after someone opens a coin Call.</p>{/if}{/each}
     {:else}
       {#each coins?.rows || [] as coin}<button class="market-row" onclick={() => openCoin(coin.id)}><span><strong>{coin.name} · {coin.symbol}</strong><small>{coin.id} · Volume {coin.volume_label}{quoteExpired(coin, coins?.collected_at, now) ? ' · saved quote' : ''}</small></span><span><b>{coin.price_label}</b><small>{percent(coin.change_24h)} · 24h</small></span><span aria-hidden="true">›</span></button>{:else}{#if !loading && !error}<p class="market-caption">{query ? 'Try another name, symbol, or coin ID.' : 'Saved coin quotes will appear after the next source update.'}</p>{/if}{/each}
     {/if}

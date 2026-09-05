@@ -12,8 +12,12 @@ export function quoteExpired(coin: CoinRow, collectedAt: string | null | undefin
   return coin.stale || timestampExpired(coin.observed_at, now) || timestampExpired(collectedAt, now);
 }
 
+export function callStatusLabel(status: CoinCall['status']): string {
+  return status === 'active' ? 'Open' : 'Closed';
+}
+
 export function callMarkExpired(call: CoinCall, now: number): boolean {
-  return call.status === 'open' && timestampExpired(call.mark_at, now);
+  return call.status === 'active' && timestampExpired(call.mark_at, now);
 }
 
 export interface HistorySegment {

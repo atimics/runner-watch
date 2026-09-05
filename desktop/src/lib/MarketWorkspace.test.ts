@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import MarketWorkspace from './MarketWorkspace.svelte';
-import { NodeClient } from './node';
+import { NodeClient, type CoinCall } from './node';
 
 let component: ReturnType<typeof mount> | null = null;
 afterEach(async () => {
@@ -107,17 +107,19 @@ describe('native market refresh', () => {
     expect(document.body.textContent).toContain('Projected winner:');
   });
 
-  it('expires open marks on the refresh clock, preserves closed returns, and clears its timer', async () => {
+  it('expires active marks on the refresh clock, preserves closed returns, and clears its timer', async () => {
     vi.useFakeTimers();
     const start = Date.parse('2026-09-05T16:00:00Z');
     vi.setSystemTime(start);
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
-    const call = { public_id: 'open-call', coin_id: coin.id, name: coin.name, symbol: coin.symbol, caller_handle: 'wolf', status: 'open', entry_price_label: '$1', mark_price_label: '$1.12', mark_at: new Date(start).toISOString(), return_pct: 12.3 };
+    const call: CoinCall = { public_id: 'active-call', coin_id: coin.id, name: coin.name, symbol: coin.symbol, caller_handle: 'wolf', status: 'active', entry_price_label: '$1', mark_price_label: '$1.12', mark_at: new Date(start).toISOString(), return_pct: 12.3 };
     const calls = vi.spyOn(NodeClient.prototype, 'memecoinCalls').mockResolvedValueOnce({ calls: [call, { ...call, public_id: 'closed-call', status: 'closed' }] }).mockRejectedValue(new Error('Refresh delayed'));
     render({ tab: 'alpha' });
     await vi.advanceTimersByTimeAsync(0);
     flushSync();
     expect(document.body.textContent).toContain('Mark $1.12');
+    expect(document.querySelectorAll('.market-row')[0].textContent).toContain('Open');
+    expect(document.querySelectorAll('.market-row')[1].textContent).toContain('Closed');
     vi.setSystemTime(start + 16 * 60_000);
     await vi.advanceTimersByTimeAsync(60_000);
     flushSync();

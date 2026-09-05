@@ -207,10 +207,10 @@ export interface CoinCall {
   symbol: string;
   name: string;
   caller_handle: string;
-  status: string;
+  status: 'active' | 'closed';
   entry_price_label: string;
   mark_price_label: string;
-  mark_at?: string | null;
+  mark_at: string | null;
   return_pct: number | null;
 }
 
