@@ -2367,6 +2367,58 @@ def _sports_calls_for_caller(caller_handle: str) -> list[dict[str, Any]] | None:
     return output
 
 
+def _stock_day_record(rows: list[Any] | None, *, day_start: str) -> dict[str, Any]:
+    """Settled-today stats and the current win streak from stock call rows."""
+    settled = sorted(
+        (
+            row
+            for row in rows or []
+            if str(row["status"]) == "closed"
+            and str(row["exit_at"] or "") >= day_start
+        ),
+        key=lambda row: str(row["exit_at"]),
+        reverse=True,
+    )
+    returns = [
+        (float(row["exit_price"]) / float(row["entry_price"]) - 1) * 100 for row in settled
+    ]
+    streak = 0
+    for row in sorted(
+        (row for row in rows or [] if str(row["status"]) == "closed"),
+        key=lambda row: str(row["exit_at"] or row["updated_at"]),
+        reverse=True,
+    ):
+        if float(row["exit_price"]) > float(row["entry_price"]):
+            streak += 1
+        else:
+            break
+    return {
+        "settled": len(settled),
+        "wins": sum(value > 0 for value in returns),
+        "losses": sum(value < 0 for value in returns),
+        "avg_return_pct": round(sum(returns) / len(returns), 1) if returns else None,
+        "streak": streak,
+    }
+
+
+def _day_verdict(you: dict[str, Any], machine: dict[str, Any]) -> str | None:
+    if you["settled"] and machine["settled"]:
+        your_return = you["avg_return_pct"]
+        machine_return = machine["avg_return_pct"]
+        if your_return is None or machine_return is None:
+            return None
+        if your_return > machine_return:
+            return "you"
+        if your_return < machine_return:
+            return "machine"
+        return "even"
+    if you["settled"]:
+        return "you-only"
+    if machine["settled"]:
+        return "machine-only"
+    return None
+
+
 def _unified_caller_page_data(caller_handle: str) -> dict[str, Any]:
     stock_rows = caller_call_rows(caller_handle)
     sports_calls = _sports_calls_for_caller(caller_handle)
@@ -2459,6 +2511,14 @@ def _unified_caller_page_data(caller_handle: str) -> dict[str, Any]:
         key=lambda item: (str(item["updated_at"]), str(item["subject"])),
         reverse=True,
     )
+    day_start = datetime.combine(
+        now().astimezone(EASTERN).date(), clock_time(0), tzinfo=EASTERN
+    ).astimezone(UTC).isoformat()
+    your_day = _stock_day_record(stock_rows, day_start=day_start)
+    machine_rows = (
+        stock_rows if caller_handle == MACHINE_HANDLE else caller_call_rows(MACHINE_HANDLE)
+    )
+    machine_day = _stock_day_record(machine_rows, day_start=day_start)
     return {
         "found": True,
         "calls": calls,
@@ -2475,6 +2535,12 @@ def _unified_caller_page_data(caller_handle: str) -> dict[str, Any]:
                 }
             ),
         },
+        "today": {
+            "you": your_day,
+            "machine": machine_day,
+            "verdict": _day_verdict(your_day, machine_day),
+        },
+        "streak": your_day["streak"],
     }
 
 
@@ -2502,6 +2568,8 @@ def caller_page(
         raise HTTPException(404, "Caller not found")
     marked_calls = list(public_data["calls"])
     stats = dict(public_data["stats"])
+    today = dict(public_data.get("today") or {"you": {}, "machine": {}, "verdict": None})
+    streak = int(public_data.get("streak") or 0)
     return templates.TemplateResponse(
         request=request,
         name="user_calls.html",
@@ -2511,6 +2579,8 @@ def caller_page(
             caller=caller_handle,
             calls=marked_calls,
             stats=stats,
+            today=today,
+            streak=streak,
             active_tab="alpha",
             nav_product=(
                 "runners"

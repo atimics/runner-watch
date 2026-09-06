@@ -1635,3 +1635,77 @@ html.embedded-pane .research-report {
 .comment-disclosure-form select, .comment-disclosure-form textarea { display: block; width: 100%; min-height: 44px; padding: 10px; margin-top: 5px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; }
 .comment-disclosure-form textarea { resize: vertical; }
 .comment-disclosure-form small { color: var(--muted); font-size: 10px; }
+
+.day-matchup {
+  margin-top: 12px;
+  padding: 13px 14px;
+  border: 1px solid #29312d;
+  border-radius: 12px;
+}
+
+.day-matchup header span {
+  display: block;
+  color: #8a948e;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .12em;
+}
+
+.day-matchup header strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 15px;
+}
+
+.day-matchup-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.day-matchup-row div {
+  text-align: center;
+}
+
+.day-matchup-row i {
+  color: #8a948e;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  font-style: normal;
+}
+
+.day-matchup-row small {
+  display: block;
+  color: #8a948e;
+  font-size: 10px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.day-matchup-row b {
+  display: block;
+  font-size: 17px;
+}
+
+.day-matchup-row span {
+  display: block;
+  color: #8a948e;
+  font-size: 10px;
+}
+
+.streak-chip {
+  display: inline-block;
+  margin: 10px 0 0;
+  padding: 5px 10px;
+  border: 1px solid #2e9e5b;
+  border-radius: 999px;
+  color: #7ee2a8;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .06em;
+}
