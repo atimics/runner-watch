@@ -388,3 +388,31 @@ def test_account_deletion_clears_the_public_caller_cache(calls_db, delete_accoun
         assert call_link not in after.text
     finally:
         client.close()
+
+
+def test_public_caller_page_data_reuses_the_cached_build(calls_db, monkeypatch):
+    _refresh(calls_db)
+    opened = call_service.create_memecoin_call("alice", "dogecoin")
+    handle = opened["caller_handle"]
+
+    builds = {"count": 0}
+    real_builder = web_main._unified_caller_page_data
+
+    def counting_builder(caller_handle):
+        builds["count"] += 1
+        return real_builder(caller_handle)
+
+    monkeypatch.setattr(web_main, "_unified_caller_page_data", counting_builder)
+
+    first = web_main._public_caller_page_data(handle)
+    assert builds["count"] == 1
+    assert first["stats"]["total"] == 1
+
+    second = web_main._public_caller_page_data(handle)
+    assert builds["count"] == 1
+    assert second == first
+
+    web_main._invalidate_public_screen_data("caller", handle)
+    rebuilt = web_main._public_caller_page_data(handle)
+    assert builds["count"] == 2
+    assert rebuilt["stats"]["total"] == 1
