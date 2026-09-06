@@ -122,7 +122,7 @@ def test_deployment_does_not_trust_forwarded_headers_from_every_peer() -> None:
     assert "env.EDGE_PROXY_SECRET" in worker
     assert "secrets" not in worker_config
     assert 'REQUIRE_EDGE_PROXY_SECRET = "1"' in fly_config
-    assert 'REGISTRATION_MODE = "invite"' in fly_config
+    assert 'REGISTRATION_MODE = "open"' in fly_config
     assert "wrangler@4.127.1 deploy" in deploy_workflow
     deploy_lines = deploy_workflow.splitlines()
     uptime_lines = uptime_workflow.splitlines()
