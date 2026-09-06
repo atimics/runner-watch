@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import secrets
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from statistics import median
 from typing import Any
 
@@ -390,3 +390,70 @@ def caller_summary_for_user(user_id: str) -> dict[str, Any]:
     for field in ("average_return_pct", "median_return_pct", "best_return_pct", "worst_return_pct"):
         stats[field] = None
     return {"handle": str(identity["handle"]), **stats}
+
+
+STOCK_CALL_MAX_AGE_DAYS = 30
+
+
+def expire_stock_calls(
+    at: datetime | None = None,
+    *,
+    max_age_days: int = STOCK_CALL_MAX_AGE_DAYS,
+) -> list[str]:
+    """Settle stock Calls left open past the expiry window at the latest mark.
+
+    Returns the caller handles whose public records changed. A Call with no
+    stored mark at or after its entry time stays open until a mark arrives.
+    """
+    current = at or datetime.now(UTC)
+    cutoff = (current - timedelta(days=max_age_days)).isoformat()
+    handles: list[str] = []
+    with connection() as database:
+        rows = database.execute(
+            """
+            SELECT c.*,ci.handle AS caller_handle
+            FROM community_calls c
+            JOIN caller_identities ci ON ci.id=c.caller_identity_id
+            WHERE c.status='active' AND c.entry_at<?
+            """,
+            (cutoff,),
+        ).fetchall()
+        for row in rows:
+            mark = database.execute(
+                """
+                SELECT price,captured_at FROM scan_snapshots
+                WHERE ticker=? AND captured_at>=?
+                ORDER BY captured_at DESC LIMIT 1
+                """,
+                (str(row["ticker"]), str(row["entry_at"])),
+            ).fetchone()
+            if not mark or mark["price"] is None:
+                continue
+            changed = database.execute(
+                """
+                UPDATE community_calls
+                SET exit_price=?,exit_at=?,status='closed',updated_at=?
+                WHERE id=? AND status='active'
+                """,
+                (
+                    float(mark["price"]),
+                    str(mark["captured_at"]),
+                    current.isoformat(),
+                    str(row["id"]),
+                ),
+            )
+            if changed.rowcount != 1:
+                continue
+            handles.append(str(row["caller_handle"]))
+            return_pct = (float(mark["price"]) / float(row["entry_price"]) - 1) * 100
+            reward = runner_call_reward(return_pct)
+            if reward:
+                credit_flash(
+                    database,
+                    str(row["user_id"]),
+                    reward,
+                    kind="runner_call_win",
+                    reference_id=str(row["id"]),
+                    at=current,
+                )
+    return handles

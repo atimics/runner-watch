@@ -83,6 +83,7 @@ from runner_web.calls import (
     calls_from_rows,
     close_call,
     create_call,
+    expire_stock_calls,
     recent_calls,
 )
 from runner_web.calls import (
@@ -148,6 +149,7 @@ from runner_web.memecoin_calls import (
     active_memecoin_call,
     close_memecoin_call,
     create_memecoin_call,
+    expire_memecoin_calls,
     memecoin_calls,
 )
 from runner_web.memecoins import (
@@ -591,6 +593,7 @@ def _start_worker_tasks(
         asyncio.create_task(case_monitor_worker(), name="case-monitor"),
         asyncio.create_task(kol_worker(), name="kol"),
         asyncio.create_task(memecoin_worker(), name="memecoins"),
+        asyncio.create_task(call_expiry_worker(), name="call-expiry"),
     ]
     if SPORTS_INGESTION_ENABLED:
         workers.append(asyncio.create_task(sports_ingestion_worker(), name="sports-ingestion"))
@@ -1429,6 +1432,19 @@ async def massive_backfill_worker() -> None:
         await asyncio.sleep(3600)
 
 
+CALL_EXPIRY_SWEEP_SECONDS = max(300, int(os.getenv("CALL_EXPIRY_SWEEP_SECONDS", "1800")))
+
+
+def expire_open_calls() -> dict[str, Any]:
+    """Mark-to-market Calls left open past their expiry window."""
+    handles = [*expire_stock_calls(), *expire_memecoin_calls()]
+    for handle in dict.fromkeys(handles):
+        _invalidate_public_screen_data("caller", handle)
+    if handles:
+        _invalidate_runners_feeds("pulse", "alpha")
+    return {"expired": len(handles), "callers": len(set(handles))}
+
+
 async def memecoin_worker() -> None:
     while True:
         try:
@@ -1438,6 +1454,20 @@ async def memecoin_worker() -> None:
         except Exception:
             LOG.exception("Memecoin refresh failed")
         await asyncio.sleep(REFRESH_SECONDS)
+
+
+async def call_expiry_worker() -> None:
+    await asyncio.sleep(60)
+    while True:
+        try:
+            result = await run_in_threadpool(expire_open_calls)
+            worker_state("call_expiry_last_run", json.dumps(result, separators=(",", ":")))
+            worker_state("call_expiry_last_error", "")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            worker_state("call_expiry_last_error", str(exc)[:500])
+        await asyncio.sleep(CALL_EXPIRY_SWEEP_SECONDS)
 
 
 async def sports_ingestion_worker() -> None:

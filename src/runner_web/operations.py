@@ -46,6 +46,7 @@ BASE_REQUIRED_WORKER_NAMES = frozenset(
         "case-monitor",
         "kol",
         "memecoins",
+        "call-expiry",
     }
 )
 SPORTS_HOST = (
