@@ -10329,7 +10329,7 @@ def callers_leaderboard(
             JOIN caller_identities ci ON ci.user_id=ft.user_id AND ci.status='active'
             WHERE ft.kind IN ({','.join('?' for _ in CALL_WIN_KINDS)})
               AND ft.amount>0 AND ft.created_at>=?
-            GROUP BY ft.user_id
+            GROUP BY ft.user_id,ci.handle
             ORDER BY flash_earned DESC, ci.handle
             """,
             (*CALL_WIN_KINDS, cutoff),
