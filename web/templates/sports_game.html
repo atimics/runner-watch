@@ -74,7 +74,7 @@
         <strong>Waiting for a verified line.</strong>
       {% else %}
         <h2>Make a Call</h2>
-        <p>Freeze the current {{ quote.source_label }} line. Wins earn up to {{ sports_call_reward_cap }} Flash. No real bet.</p>
+        <p>Freeze the current {{ quote.source_label }} line. Wins earn up to {{ call_win_flash_cap }} Flash. No real bet.</p>
         {% if not user %}
         <a href="/login">Log in to make a Call</a>
         {% else %}

@@ -82,6 +82,17 @@ def _rows() -> list[dict[str, Any]]:
         return [dict(row) for row in database.execute("SELECT * FROM memecoin_calls").fetchall()]
 
 
+def _flash_rows(user_id: str) -> list[dict[str, Any]]:
+    with connection() as database:
+        return [
+            dict(row)
+            for row in database.execute(
+                "SELECT amount,kind,reference_id FROM flash_transactions WHERE user_id=?",
+                (user_id,),
+            ).fetchall()
+        ]
+
+
 def test_entry_and_exit_freeze_source_receipts_and_repeated_requests(calls_db):
     first_run = _refresh(calls_db)
     entry_time = calls_db["now"].isoformat()
@@ -416,3 +427,66 @@ def test_public_caller_page_data_reuses_the_cached_build(calls_db, monkeypatch):
     rebuilt = web_main._public_caller_page_data(handle)
     assert builds["count"] == 2
     assert rebuilt["stats"]["total"] == 1
+
+
+def test_closing_a_winning_memecoin_call_credits_flash(calls_db):
+    _refresh(calls_db)
+    opened = call_service.create_memecoin_call("alice", "dogecoin")
+    assert opened["flash_reward"] == 0
+    assert opened["reward_label"] is None
+    assert opened["projected_flash_reward"] == 0
+
+    calls_db["now"] += timedelta(minutes=5)
+    _refresh(calls_db, _coin(calls_db, current_price=0.15))
+    closed = call_service.close_memecoin_call("alice", opened["public_id"])
+
+    assert closed["return_pct"] == 25.0
+    assert closed["flash_reward"] == 25
+    assert closed["reward_label"] == "+25 Flash"
+    with connection() as database:
+        credited = [
+            dict(row)
+            for row in database.execute(
+                "SELECT amount,kind,reference_id FROM flash_transactions WHERE user_id='alice'"
+            ).fetchall()
+        ]
+    assert credited == [
+        {"amount": 25, "kind": "memecoin_call_win", "reference_id": opened["public_id"]}
+    ]
+
+    repeated = call_service.close_memecoin_call("alice", opened["public_id"])
+    assert repeated["flash_reward"] == 25
+    assert len(_flash_rows("alice")) == 1
+
+    record = web_main._unified_caller_page_data(opened["caller_handle"])
+    coin = next(call for call in record["calls"] if call["kind"] == "memecoin")
+    assert coin["reward_label"] == "+25 Flash"
+
+
+def test_closing_a_losing_memecoin_call_earns_nothing(calls_db):
+    _refresh(calls_db)
+    opened = call_service.create_memecoin_call("alice", "dogecoin")
+    calls_db["now"] += timedelta(minutes=5)
+    _refresh(calls_db, _coin(calls_db, current_price=0.06))
+    closed = call_service.close_memecoin_call("alice", opened["public_id"])
+
+    assert closed["return_pct"] == -50.0
+    assert closed["flash_reward"] == 0
+    assert closed["reward_label"] is None
+    assert _flash_rows("alice") == []
+
+
+def test_open_memecoin_call_projection_and_reward_cap(calls_db):
+    _refresh(calls_db)
+    opened = call_service.create_memecoin_call("alice", "dogecoin")
+    calls_db["now"] += timedelta(minutes=5)
+    _refresh(calls_db, _coin(calls_db, current_price=9.60))
+
+    marked = call_service.memecoin_calls(user_id="alice")[0]
+    assert marked["return_pct"] == 7900.0
+    assert marked["projected_flash_reward"] == 50
+    assert marked["flash_reward"] == 0
+
+    record = web_main._unified_caller_page_data(opened["caller_handle"])
+    coin = next(call for call in record["calls"] if call["kind"] == "memecoin")
+    assert coin["reward_label"] == "Up to +50 Flash"

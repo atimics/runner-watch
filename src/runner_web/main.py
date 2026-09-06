@@ -109,11 +109,12 @@ from runner_web.flash_evaluations import (
 )
 from runner_web.flash_wallet import (
     CALL_CLOSE_REWARD_MULTIPLIER,
+    CALL_WIN_FLASH_CAP,
     COMMENT_COST,
+    MEMECOIN_CALL_REWARD_MULTIPLIER,
     PUBLISH_REPORT_REWARD,
     REPORT_COST,
     REPORT_EXCLUSIVE_HOURS,
-    SPORTS_CALL_REWARD_CAP,
     WINNING_CALL_REWARD,
     InsufficientFlashError,
     claim_daily_flash,
@@ -1199,7 +1200,8 @@ def page_context(
         "flash": actor_snapshot(),
         "call_close_reward_multiplier": CALL_CLOSE_REWARD_MULTIPLIER,
         "winning_call_reward": WINNING_CALL_REWARD,
-        "sports_call_reward_cap": SPORTS_CALL_REWARD_CAP,
+        "call_win_flash_cap": CALL_WIN_FLASH_CAP,
+        "memecoin_call_reward_multiplier": MEMECOIN_CALL_REWARD_MULTIPLIER,
         **extra,
     }
 
@@ -2374,7 +2376,15 @@ def _unified_caller_page_data(caller_handle: str) -> dict[str, Any]:
                 else "down"
                 if result is not None
                 else "",
-                "reward_label": "Paper Call",
+                "reward_label": (
+                    call.get("reward_label")
+                    or (
+                        f"Up to +{int(call['projected_flash_reward'])} Flash"
+                        if call["status"] == "active"
+                        and int(call.get("projected_flash_reward") or 0) > 0
+                        else None
+                    )
+                ),
                 "created_at": call["created_at"],
                 "updated_at": call["updated_at"],
                 "won": call["status"] == "closed" and call["exit_price"] > call["entry_price"],
@@ -6094,7 +6104,14 @@ async def close_memecoin_call_api(
     if call is None:
         raise HTTPException(404, "Call not found")
     _invalidate_public_screen_data("caller", str(call["caller_handle"]))
-    return JSONResponse({"call": call})
+    wallet = wallet_for_user(str(user["id"]))
+    return JSONResponse(
+        {
+            "call": call,
+            "reward": int(call.get("flash_reward") or 0),
+            "balance": wallet["balance"],
+        }
+    )
 
 
 @app.get("/", response_class=HTMLResponse)

@@ -95,7 +95,7 @@
       const result = callReturn(call);
       header.append(link, element('b', percent(result), tone(result)));
       const who = element('p'); const caller = element('a', call.caller_handle); caller.href = `/u/${encodeURIComponent(call.caller_handle)}?market=memecoins`;
-      const closed = call.status === 'closed'; who.append(caller, document.createTextNode(` · ${closed ? 'Closed' : 'Open'}`));
+      const closed = call.status === 'closed'; who.append(caller, document.createTextNode(` · ${closed ? 'Closed' : 'Open'}${call.reward_label ? ` · ${call.reward_label}` : ''}`));
       const facts = element('dl');
       [['Entry', call.entry_price_label], [closed ? 'Exit' : 'Current', closed ? call.exit_price_label : finite(result) ? call.mark_price_label : 'Pending']].forEach(([label, value]) => { const fact = element('div'); fact.append(element('dt', label), element('dd', value || 'Pending')); facts.append(fact); });
       row.append(header, who, facts, element('small', `Opened ${time(call.entry_at)}${closed && call.exit_at ? ` · Closed ${time(call.exit_at)}` : call.mark_at ? ` · Quote ${time(call.mark_at)}` : ''}`)); fragment.append(row);

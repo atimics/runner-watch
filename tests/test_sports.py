@@ -15,8 +15,10 @@ from runner_web import main as web_main
 from runner_web import sports as sports_module
 from runner_web.db import connection, init_db
 from runner_web.flash_wallet import (
-    SPORTS_CALL_REWARD_CAP,
+    CALL_WIN_FLASH_CAP,
     claim_daily_flash,
+    memecoin_call_reward,
+    runner_call_reward,
     sports_call_reward,
     wallet_for_user,
 )
@@ -891,7 +893,7 @@ def test_sports_call_reward_scales_with_frozen_odds() -> None:
     assert sports_call_reward(None) == 0
     assert sports_call_reward(-400) < sports_call_reward(-130)
     assert sports_call_reward(-130) < sports_call_reward(150)
-    assert sports_call_reward(1000) == SPORTS_CALL_REWARD_CAP
+    assert sports_call_reward(1000) == CALL_WIN_FLASH_CAP
 
 
 def test_losing_sports_call_does_not_earn_flash(sports_db) -> None:
@@ -1897,3 +1899,12 @@ def test_cloudflare_forwarded_host_selects_the_public_product(
         edge_secret="test-edge-secret",
     )
     assert product_for_request(unknown_request) == "runners"
+
+
+def test_all_markets_share_one_call_win_flash_cap() -> None:
+    assert runner_call_reward(3) == 30
+    assert runner_call_reward(100) == CALL_WIN_FLASH_CAP
+    assert memecoin_call_reward(30) == 30
+    assert memecoin_call_reward(900) == CALL_WIN_FLASH_CAP
+    assert runner_call_reward(-5) == 0
+    assert memecoin_call_reward(None) == 0

@@ -296,7 +296,7 @@ def _rendered_game_detail(latest_commission: dict[str, Any] | None = None) -> st
                 "status_tone": None,
             },
             "sports_path_prefix": "",
-            "sports_call_reward_cap": 10,
+            "call_win_flash_cap": 10,
             "comments": [],
             "comment_count": 0,
             "active_tab": "pulse",

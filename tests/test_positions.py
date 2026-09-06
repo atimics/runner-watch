@@ -13,17 +13,17 @@ from runner_web.calls import (
     create_call,
 )
 from runner_web.db import connection, init_db
-from runner_web.flash_wallet import runner_call_reward, wallet_for_user
+from runner_web.flash_wallet import CALL_WIN_FLASH_CAP, runner_call_reward, wallet_for_user
 
 
-def test_runner_call_reward_is_ten_times_positive_pnl() -> None:
+def test_runner_call_reward_is_ten_times_positive_pnl_up_to_the_cap() -> None:
     assert runner_call_reward(None) == 0
     assert runner_call_reward(-1) == 0
     assert runner_call_reward(0) == 0
     assert runner_call_reward(0.01) == 0
     assert runner_call_reward(1.25) == 13
-    assert runner_call_reward(10) == 100
-    assert runner_call_reward(50) == 500
+    assert runner_call_reward(10) == CALL_WIN_FLASH_CAP
+    assert runner_call_reward(50) == CALL_WIN_FLASH_CAP
 
 
 def test_public_call_freezes_entry_and_exit_marks(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -51,7 +51,7 @@ def test_public_call_freezes_entry_and_exit_marks(tmp_path: Path, monkeypatch: M
     active = active_call_for_user("owner", "ONE", current_price=2.5)
     assert active["return_pct"] == 25.0
     assert active["flash_reward"] == 0
-    assert active["projected_flash_reward"] == 250
+    assert active["projected_flash_reward"] == CALL_WIN_FLASH_CAP
     caller_handle = calls_for_ticker("ONE", current_price=2.5)[0]["caller_handle"]
     assert "-" in caller_handle
     assert "user_id" not in calls_for_ticker("ONE", current_price=2.5)[0]
@@ -69,16 +69,16 @@ def test_public_call_freezes_entry_and_exit_marks(tmp_path: Path, monkeypatch: M
     assert closed["status"] == "closed"
     assert closed["exit_at"] == exited_at
     assert closed["return_pct"] == 50.0
-    assert closed["flash_reward"] == 500
-    assert closed["projected_flash_reward"] == 500
-    assert closed["reward_label"] == "+500 Flash"
-    assert wallet_for_user("owner")["balance"] == 500
+    assert closed["flash_reward"] == CALL_WIN_FLASH_CAP
+    assert closed["projected_flash_reward"] == CALL_WIN_FLASH_CAP
+    assert closed["reward_label"] == f"+{CALL_WIN_FLASH_CAP} Flash"
+    assert wallet_for_user("owner")["balance"] == CALL_WIN_FLASH_CAP
     assert call_stats([closed])["wins"] == 1
     assert (
         close_call("owner", created["public_id"], exit_price=3.1, exit_at=current.isoformat())
         is None
     )
-    assert wallet_for_user("owner")["balance"] == 500
+    assert wallet_for_user("owner")["balance"] == CALL_WIN_FLASH_CAP
 
     losing = create_call(
         "other",
@@ -101,7 +101,7 @@ def test_public_call_freezes_entry_and_exit_marks(tmp_path: Path, monkeypatch: M
         rewards = database.execute(
             "SELECT user_id,amount,kind FROM flash_transactions ORDER BY created_at"
         ).fetchall()
-    assert [tuple(row) for row in rewards] == [("owner", 500, "runner_call_win")]
+    assert [tuple(row) for row in rewards] == [("owner", CALL_WIN_FLASH_CAP, "runner_call_win")]
 
 
 def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
