@@ -274,12 +274,12 @@ def recent_calls(
     return [_call(row, marks.get(str(row["ticker"]))) for row in rows]
 
 
-def caller_calls(
+def caller_call_rows(
     caller_handle: str,
     *,
-    current_prices: dict[str, float | None] | None = None,
     limit: int = 200,
-) -> list[dict[str, Any]] | None:
+) -> list[Any] | None:
+    """Fetch one caller's raw call rows, or None when the handle is unknown."""
     with connection() as db:
         identity = db.execute(
             """
@@ -290,7 +290,7 @@ def caller_calls(
         ).fetchone()
         if not identity:
             return None
-        rows = db.execute(
+        return db.execute(
             """
             SELECT c.*,? AS caller_handle,COALESCE(ft.amount,0) AS flash_reward
             FROM community_calls c
@@ -301,8 +301,26 @@ def caller_calls(
             """,
             (caller_handle, identity["id"], max(1, min(limit, 500))),
         ).fetchall()
+
+
+def calls_from_rows(
+    rows: list[Any],
+    current_prices: dict[str, float | None] | None = None,
+) -> list[dict[str, Any]]:
     marks = current_prices or {}
     return [_call(row, marks.get(str(row["ticker"]))) for row in rows]
+
+
+def caller_calls(
+    caller_handle: str,
+    *,
+    current_prices: dict[str, float | None] | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]] | None:
+    rows = caller_call_rows(caller_handle, limit=limit)
+    if rows is None:
+        return None
+    return calls_from_rows(rows, current_prices)
 
 
 def call_stats(calls: list[dict[str, Any]]) -> dict[str, Any]:

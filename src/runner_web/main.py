@@ -78,8 +78,9 @@ from runner_web.caller_ids import ensure_caller_identity
 from runner_web.calls import (
     active_call_for_user,
     call_for_user,
-    caller_calls,
+    caller_call_rows,
     caller_summary_for_user,
+    calls_from_rows,
     close_call,
     create_call,
     recent_calls,
@@ -167,6 +168,9 @@ from runner_web.outcomes import (
     refresh_scan_outcomes,
 )
 from runner_web.performance import record_cache, record_route
+from runner_web.privacy import (
+    _tables as privacy_tables,
+)
 from runner_web.privacy import (
     delete_user_content,
     delete_user_data,
@@ -2059,6 +2063,35 @@ async def fail_edge_job_api(
     return JSONResponse({"ok": True})
 
 
+def _public_caller_handles_for_user(user_id: str) -> list[str]:
+    with connection() as database:
+        if "caller_identities" not in privacy_tables(database):
+            return []
+        return [
+            str(row["handle"])
+            for row in database.execute(
+                "SELECT handle FROM caller_identities WHERE user_id=?",
+                (user_id,),
+            ).fetchall()
+        ]
+
+
+def _delete_user_content_and_invalidate(user_id: str) -> dict[str, Any]:
+    handles = _public_caller_handles_for_user(user_id)
+    result = delete_user_content(user_id)
+    for handle in handles:
+        _invalidate_public_screen_data("caller", handle)
+    return result
+
+
+def _delete_user_data_and_invalidate(user_id: str) -> dict[str, Any]:
+    handles = _public_caller_handles_for_user(user_id)
+    result = delete_user_data(user_id)
+    for handle in handles:
+        _invalidate_public_screen_data("caller", handle)
+    return result
+
+
 account_routes = create_account_routes(
     AccountRouteDependencies(
         templates=templates,
@@ -2069,9 +2102,9 @@ account_routes = create_account_routes(
         require_recent_auth=lambda session: require_recent_auth(session),
         user_data_summary=lambda user_id: user_data_summary(user_id),
         export_user_data=lambda user_id: export_user_data(user_id),
-        delete_user_content=lambda user_id: delete_user_content(user_id),
+        delete_user_content=lambda user_id: _delete_user_content_and_invalidate(user_id),
         delete_customer=lambda user: delete_customer(user),
-        delete_user_data=lambda user_id: delete_user_data(user_id),
+        delete_user_data=lambda user_id: _delete_user_data_and_invalidate(user_id),
         now=lambda: now(),
         session_cookie=SESSION_COOKIE,
         cookie_domain=COOKIE_DOMAIN,
@@ -2271,17 +2304,17 @@ def _sports_calls_for_caller(caller_handle: str) -> list[dict[str, Any]] | None:
 
 
 def _unified_caller_page_data(caller_handle: str) -> dict[str, Any]:
-    stock_calls = caller_calls(caller_handle)
+    stock_rows = caller_call_rows(caller_handle)
     sports_calls = _sports_calls_for_caller(caller_handle)
-    if stock_calls is None and sports_calls is None:
+    if stock_rows is None and sports_calls is None:
         return {"found": False}
-    tickers = list(dict.fromkeys(str(item["ticker"]) for item in stock_calls or []))
+    tickers = list(dict.fromkeys(str(row["ticker"]) for row in stock_rows or []))
     summaries = _radar_market_summaries(tickers)
     marks = {
         ticker: float(summary["price"]) if summary.get("price") is not None else None
         for ticker, summary in summaries.items()
     }
-    marked_stock = caller_calls(caller_handle, current_prices=marks) or []
+    marked_stock = calls_from_rows(stock_rows or [], current_prices=marks)
     stock_items = [
         {
             "kind": "stock",
@@ -2374,7 +2407,11 @@ def _unified_caller_page_data(caller_handle: str) -> dict[str, Any]:
 
 
 def _public_caller_page_data(caller_handle: str) -> dict[str, Any]:
-    return _unified_caller_page_data(caller_handle)
+    return _public_screen_data(
+        "caller",
+        caller_handle,
+        lambda: _unified_caller_page_data(caller_handle),
+    )
 
 
 @app.get("/u/{caller_handle}", response_class=HTMLResponse)
