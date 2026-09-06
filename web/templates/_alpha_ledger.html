@@ -56,6 +56,27 @@
     {% endfor %}
   </section>
   {% endif %}
+
+  {% if board.callers is defined and (board.callers.rows or board.callers.machine.settled) %}
+  <section class="alpha-callers" aria-label="Top callers by Flash earned">
+    <div class="alpha-section-head"><h2>Top callers</h2><span>Flash earned from Calls · {{ board.callers.days }} days</span></div>
+    {% for caller in board.callers.rows %}
+    <article class="alpha-rank-row caller-rank-row">
+      <span class="rank-number">{{ caller.rank }}</span>
+      <a href="{{ alpha_prefix }}/u/{{ caller.handle|urlencode }}"><span class="comment-avatar">{{ caller.handle[-2:] }}</span><span><strong>{{ caller.handle }}</strong><small>{{ caller.win_count }} winning Call{{ 's' if caller.win_count != 1 }}</small></span></a>
+      <div class="call-count"><b>+{{ caller.flash_earned }}</b><small>Flash earned</small></div>
+    </article>
+    {% endfor %}
+    {% if board.callers.machine.settled %}
+    <article class="alpha-rank-row caller-rank-row machine-row">
+      <span class="rank-number">∞</span>
+      <a href="{{ alpha_prefix }}/u/rati-flash"><span class="comment-avatar">⚡</span><span><strong>Flash</strong><small>the machine · plays every session, earns no Flash</small></span></a>
+      <div class="call-count"><b>{{ board.callers.machine.wins }}–{{ board.callers.machine.losses }}</b><small>{% if board.callers.machine.avg_return_pct is not none %}{{ '%+.1f'|format(board.callers.machine.avg_return_pct) }}% avg{% else %}settled Calls{% endif %}</small></div>
+    </article>
+    {% endif %}
+    <p class="alpha-callers-note">Rankings need {{ board.callers.min_settled }} settled Calls. Only winning Calls earn Flash.</p>
+  </section>
+  {% endif %}
 {% elif board.contenders %}
 <section class="alpha-contenders">
   <div class="alpha-section-head"><h2>Contenders</h2><span>Make the first Call</span></div>

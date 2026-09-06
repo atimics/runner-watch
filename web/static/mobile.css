@@ -1709,3 +1709,33 @@ html.embedded-pane .research-report {
   font-weight: 900;
   letter-spacing: .06em;
 }
+
+.alpha-callers {
+  margin-top: 14px;
+  border-top: 1px solid #29312d;
+  padding-top: 12px;
+}
+
+.caller-rank-row .comment-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid #29312d;
+  color: #c9d3cd;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.machine-row .comment-avatar {
+  background: #1d241f;
+}
+
+.alpha-callers-note {
+  margin: 10px 0 0;
+  color: #8a948e;
+  font-size: 10px;
+  line-height: 1.5;
+}
