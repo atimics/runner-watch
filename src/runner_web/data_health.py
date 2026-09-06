@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from functools import lru_cache
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -37,6 +37,15 @@ def _market_window(at: datetime) -> tuple[datetime, datetime] | None:
         calendar.session_open(day.isoformat()).to_pydatetime(),
         calendar.session_close(day.isoformat()).to_pydatetime(),
     )
+
+
+def stock_session_open_for_day(day_iso: str) -> datetime | None:
+    """UTC regular-session open time for a trading day, or None on non-session days."""
+    day = date.fromisoformat(day_iso)
+    calendar = _calendar(day.year)
+    if not calendar.is_session(day_iso):
+        return None
+    return calendar.session_open(day_iso).to_pydatetime()
 
 
 def stock_settlement_close(at: datetime) -> datetime:

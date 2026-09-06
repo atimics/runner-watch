@@ -64,3 +64,42 @@ def ensure_caller_identity(user_id: str) -> dict[str, Any]:
 
     with connection() as database:
         return ensure_caller_identity_with_database(database, user_id)
+
+
+MACHINE_USER_ID = "rati-flash"
+MACHINE_HANDLE = "rati-flash"
+MACHINE_DISPLAY_NAME = "RATi Flash"
+
+
+def ensure_machine_trader(database: Any = None) -> dict[str, str]:
+    """Create or return the machine's system account and public caller identity.
+
+    The machine plays the same day-session Calls game as human traders so its
+    record is directly comparable on /u/rati-flash and the public feeds.
+    """
+    timestamp = _iso()
+    if database is None:
+        with connection() as database:
+            return ensure_machine_trader(database)
+    database.execute(
+        """
+        INSERT INTO users(id,username,display_name,status,created_at)
+        VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING
+        """,
+        (MACHINE_USER_ID, MACHINE_HANDLE, MACHINE_DISPLAY_NAME, "active", timestamp),
+    )
+    database.execute(
+        """
+        INSERT INTO caller_identities(
+            id,handle,user_id,status,claim_cost_cents,claimed_at
+        ) VALUES(?,?,?,'active',0,?) ON CONFLICT DO NOTHING
+        """,
+        (str(uuid.uuid4()), MACHINE_HANDLE, MACHINE_USER_ID, timestamp),
+    )
+    row = database.execute(
+        "SELECT id,handle FROM caller_identities WHERE handle=? AND status='active'",
+        (MACHINE_HANDLE,),
+    ).fetchone()
+    if not row:
+        raise RuntimeError("The machine caller identity could not be created")
+    return _public(row)

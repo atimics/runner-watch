@@ -6,8 +6,16 @@ from datetime import UTC, datetime, timedelta
 from statistics import median
 from typing import Any
 
-from runner_web.caller_ids import ensure_caller_identity_with_database
-from runner_web.data_health import stock_settlement_close
+from runner_web.caller_ids import (
+    MACHINE_USER_ID,
+    ensure_caller_identity_with_database,
+    ensure_machine_trader,
+)
+from runner_web.data_health import (
+    EASTERN,
+    stock_session_open_for_day,
+    stock_settlement_close,
+)
 from runner_web.db import connection
 from runner_web.flash_wallet import credit_flash, runner_call_reward
 
@@ -462,7 +470,7 @@ def settle_stock_calls(at: datetime | None = None) -> list[str]:
             handles.append(str(row["caller_handle"]))
             return_pct = (float(mark["price"]) / float(row["entry_price"]) - 1) * 100
             reward = runner_call_reward(return_pct)
-            if reward:
+            if reward and str(row["user_id"]) != MACHINE_USER_ID:
                 credit_flash(
                     database,
                     str(row["user_id"]),
@@ -472,3 +480,86 @@ def settle_stock_calls(at: datetime | None = None) -> list[str]:
                     at=current,
                 )
     return handles
+
+MACHINE_SLATE_LIMIT = 5
+MACHINE_OPEN_WINDOW = timedelta(hours=1)
+
+
+def open_machine_slate(at: datetime | None = None) -> list[str]:
+    """Open the machine's day-session Calls on its pre-bell up picks.
+
+    The machine plays the same open-to-close game as human traders. It enters
+    at the first stored quote of the session's first hour; if that window
+    stayed empty, it falls back to the session's official open price once the
+    daily bar has been collected after the close. A pick with no usable price
+    is skipped for the day. Returns the tickers Calls were opened on.
+    """
+    current = at or datetime.now(UTC)
+    day = current.astimezone(EASTERN).date().isoformat()
+    session_open = stock_session_open_for_day(day)
+    if session_open is None or current < session_open:
+        return []
+    window_end = session_open + MACHINE_OPEN_WINDOW
+    session_close = stock_settlement_close(session_open)
+    entries: list[tuple[str, float, str]] = []
+    with connection() as database:
+        ensure_machine_trader(database)
+        slate = database.execute(
+            """
+            SELECT ticker FROM market_report_forecasts
+            WHERE report_day=? AND direction='up' AND status='pending'
+            ORDER BY ticker LIMIT ?
+            """,
+            (day, MACHINE_SLATE_LIMIT),
+        ).fetchall()
+        for row in slate:
+            ticker = str(row["ticker"])
+            already = database.execute(
+                """
+                SELECT 1 FROM community_calls
+                WHERE user_id=? AND ticker=? AND entry_at>=?
+                """,
+                (MACHINE_USER_ID, ticker, session_open.isoformat()),
+            ).fetchone()
+            if already:
+                continue
+            mark = database.execute(
+                """
+                SELECT price,quote_time FROM scan_snapshots
+                WHERE ticker=? AND quote_time>=? AND quote_time<=?
+                ORDER BY quote_time ASC LIMIT 1
+                """,
+                (ticker, session_open.isoformat(), window_end.isoformat()),
+            ).fetchone()
+            entry_price = float(mark["price"]) if mark and mark["price"] else None
+            entry_at = str(mark["quote_time"]) if entry_price is not None else None
+            if entry_price is None and current >= session_close:
+                bar = database.execute(
+                    """
+                    SELECT open FROM market_bars
+                    WHERE ticker=? AND interval='1d' AND bar_time>=? AND bar_time<?
+                      AND open IS NOT NULL AND open>0
+                    ORDER BY CASE source WHEN 'massive' THEN 0 ELSE 1 END,
+                             last_collected_at DESC LIMIT 1
+                    """,
+                    (
+                        ticker,
+                        day,
+                        (datetime.fromisoformat(day) + timedelta(days=1)).isoformat(),
+                    ),
+                ).fetchone()
+                if bar:
+                    entry_price = float(bar["open"])
+                    entry_at = session_open.isoformat()
+            if entry_price is not None:
+                entries.append((ticker, entry_price, str(entry_at)))
+    opened: list[str] = []
+    for ticker, entry_price, entry_at in entries:
+        create_call(
+            MACHINE_USER_ID,
+            ticker,
+            entry_price=entry_price,
+            entry_at=entry_at,
+        )
+        opened.append(ticker)
+    return opened
