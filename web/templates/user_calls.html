@@ -19,6 +19,31 @@
     <div><strong>{{ stats.total }}</strong><span>Total</span></div>
   </section>
 
+  {% if today and (today.you.settled or today.machine.settled) %}
+  <section class="day-matchup" aria-label="Today versus the machine">
+    <header>
+      <span>TODAY · SETTLED AT THE CLOSE</span>
+      <strong>
+        {%- if today.verdict == 'you' -%}You beat Flash today
+        {%- elif today.verdict == 'machine' -%}Flash ahead today
+        {%- elif today.verdict == 'even' -%}Even with Flash today
+        {%- elif today.verdict == 'you-only' -%}On the board today · Flash has not settled yet
+        {%- else -%}Flash is on the board today
+        {%- endif -%}
+      </strong>
+    </header>
+    <div class="day-matchup-row">
+      <div><small>{{ caller }}</small><b>{{ today.you.wins }}–{{ today.you.losses }}</b><span>{% if today.you.avg_return_pct is not none %}{{ '%+.1f'|format(today.you.avg_return_pct) }}% avg{% else %}no returns yet{% endif %}</span></div>
+      <i>VS</i>
+      <div><small>Flash</small><b>{{ today.machine.wins }}–{{ today.machine.losses }}</b><span>{% if today.machine.avg_return_pct is not none %}{{ '%+.1f'|format(today.machine.avg_return_pct) }}% avg{% else %}no calls settled{% endif %}</span></div>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if streak and streak >= 2 %}
+  <p class="streak-chip">{{ streak }}-win streak</p>
+  {% endif %}
+
   <section class="public-call-feed">
     <div class="alpha-section-head"><h2>Calls</h2><span>{{ stats.subjects }} subjects</span></div>
     {% if calls %}
