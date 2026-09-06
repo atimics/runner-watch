@@ -9,6 +9,7 @@ from typing import Any
 from runner_web import memecoins
 from runner_web.caller_ids import ensure_caller_identity_with_database
 from runner_web.db import connection
+from runner_web.flash_wallet import credit_flash, memecoin_call_reward
 
 
 def _now() -> str:
@@ -78,14 +79,29 @@ def _call(row: Any, mark: dict[str, Any] | None = None) -> dict[str, Any]:
     item["detail_url"] = f"/memecoins/coin/{item['coin_id']}"
     item["entry_evidence"] = json.loads(saved["entry_evidence"])
     item["exit_evidence"] = json.loads(saved["exit_evidence"]) if saved["exit_evidence"] else None
+    flash_reward = int(saved.get("flash_reward") or 0)
+    item["flash_reward"] = flash_reward
+    item["projected_flash_reward"] = (
+        memecoin_call_reward(item["return_pct"])
+        if item["status"] == "active"
+        else flash_reward
+    )
+    item["reward_label"] = (
+        f"+{flash_reward} Flash"
+        if item["status"] == "closed" and flash_reward > 0
+        else None
+    )
     return item
 
 
 _SELECT = """
     SELECT c.*,ci.handle AS caller_handle,
+           COALESCE(ft.amount,0) AS flash_reward,
            q.quote_json AS current_quote_json,q.collected_at AS current_collected_at
     FROM memecoin_calls c
     JOIN caller_identities ci ON ci.id=c.caller_identity_id AND ci.status='active'
+    LEFT JOIN flash_transactions ft
+      ON ft.user_id=c.user_id AND ft.kind='memecoin_call_win' AND ft.reference_id=c.public_id
     LEFT JOIN memecoin_assets q ON q.coin_id=c.coin_id
 """
 
@@ -138,7 +154,7 @@ def close_memecoin_call(user_id: str, public_id: str) -> dict[str, Any] | None:
             "A source quote at or after the entry time is required to close this Call."
         )
     with connection() as database:
-        database.execute(
+        changed = database.execute(
             """
             UPDATE memecoin_calls SET status='closed',exit_price=?,exit_at=?,exit_evidence=?,
                 updated_at=? WHERE public_id=? AND user_id=? AND status='active'
@@ -152,6 +168,17 @@ def close_memecoin_call(user_id: str, public_id: str) -> dict[str, Any] | None:
                 user_id,
             ),
         )
+        if changed.rowcount == 1:
+            return_pct = (float(mark["price"]) / float(existing["entry_price"]) - 1) * 100
+            reward = memecoin_call_reward(return_pct)
+            if reward:
+                credit_flash(
+                    database,
+                    user_id,
+                    reward,
+                    kind="memecoin_call_win",
+                    reference_id=str(existing["public_id"]),
+                )
         row = database.execute(
             _SELECT + " WHERE c.user_id=? AND c.public_id=?", (user_id, public_id)
         ).fetchone()

@@ -11,9 +11,10 @@ DAILY_CLAIM_AMOUNT = 100
 REPORT_COST = 100
 COMMENT_COST = 10
 PUBLISH_REPORT_REWARD = 50
+CALL_WIN_FLASH_CAP = 50
 WINNING_CALL_REWARD = 25
-SPORTS_CALL_REWARD_CAP = 50
 CALL_CLOSE_REWARD_MULTIPLIER = 10
+MEMECOIN_CALL_REWARD_MULTIPLIER = 1
 REPORT_EXCLUSIVE_HOURS = 1
 
 
@@ -24,12 +25,27 @@ class InsufficientFlashError(ValueError):
         super().__init__(f"This action costs {cost} Flash. Your balance is {balance}.")
 
 
+def _capped_call_reward(amount: Decimal) -> int:
+    if not amount.is_finite() or amount <= 0:
+        return 0
+    if amount >= CALL_WIN_FLASH_CAP:
+        return CALL_WIN_FLASH_CAP
+    reward = int(amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    return max(0, min(CALL_WIN_FLASH_CAP, reward))
+
+
 def runner_call_reward(return_pct: float | int | None) -> int:
 
     if return_pct is None or float(return_pct) <= 0:
         return 0
-    reward = Decimal(str(return_pct)) * CALL_CLOSE_REWARD_MULTIPLIER
-    return int(reward.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    return _capped_call_reward(Decimal(str(return_pct)) * CALL_CLOSE_REWARD_MULTIPLIER)
+
+
+def memecoin_call_reward(return_pct: float | int | None) -> int:
+
+    if return_pct is None or float(return_pct) <= 0:
+        return 0
+    return _capped_call_reward(Decimal(str(return_pct)) * MEMECOIN_CALL_REWARD_MULTIPLIER)
 
 
 def sports_call_reward(american_odds: int | float | None) -> int:
@@ -40,7 +56,7 @@ def sports_call_reward(american_odds: int | float | None) -> int:
     if odds == 0:
         return 0
     profit_units = odds / 100 if odds > 0 else 100 / abs(odds)
-    return max(1, min(SPORTS_CALL_REWARD_CAP, round(WINNING_CALL_REWARD * profit_units)))
+    return max(1, _capped_call_reward(Decimal(WINNING_CALL_REWARD) * Decimal(str(profit_units))))
 
 
 def _timestamp(value: datetime | None = None) -> datetime:
@@ -90,8 +106,9 @@ def _wallet_payload(row: Any, current: datetime) -> dict[str, Any]:
         "comment_cost": COMMENT_COST,
         "publish_reward": PUBLISH_REPORT_REWARD,
         "winning_call_reward": WINNING_CALL_REWARD,
-        "sports_call_reward_cap": SPORTS_CALL_REWARD_CAP,
+        "call_win_flash_cap": CALL_WIN_FLASH_CAP,
         "call_close_reward_multiplier": CALL_CLOSE_REWARD_MULTIPLIER,
+        "memecoin_call_reward_multiplier": MEMECOIN_CALL_REWARD_MULTIPLIER,
     }
 
 
