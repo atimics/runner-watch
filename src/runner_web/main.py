@@ -74,7 +74,7 @@ from runner_web.billing import (
     delete_customer,
     process_webhook_event,
 )
-from runner_web.caller_ids import MACHINE_HANDLE, ensure_caller_identity
+from runner_web.caller_ids import MACHINE_HANDLE, MACHINE_USER_ID, ensure_caller_identity
 from runner_web.calls import (
     active_call_for_user,
     call_for_user,
@@ -4046,6 +4046,7 @@ def _alpha_base_data_uncached() -> dict[str, Any]:
     return {
         "rows": rows,
         "calls": calls,
+        "callers": callers_leaderboard(),
         "contenders": contenders,
         "total_calls": len(calls),
         "active_calls": sum(item["status"] == "active" for item in calls),
@@ -10294,3 +10295,94 @@ def signal_card(public_id: str) -> None:
 def report_signal(public_id: str) -> None:
     _ = public_id
     raise HTTPException(410, "Public Signals were replaced by Calls.")
+
+
+CALLER_BOARD_DAYS = 7
+CALLER_BOARD_MIN_SETTLED = 5
+CALLER_BOARD_LIMIT = 10
+CALL_WIN_KINDS = ("runner_call_win", "sports_call_win", "memecoin_call_win")
+
+
+def callers_leaderboard(
+    at: datetime | None = None,
+    *,
+    days: int = CALLER_BOARD_DAYS,
+    min_settled: int = CALLER_BOARD_MIN_SETTLED,
+    limit: int = CALLER_BOARD_LIMIT,
+) -> dict[str, Any]:
+    """Callers ranked by Flash earned from winning Calls over the window.
+
+    Only outcomes earn, so the board measures wins, not activity. Callers
+    below the settled-Call gate stay hidden until their record matures. The
+    machine plays the same game but earns no Flash, so it appears only as a
+    benchmark row with its stock record.
+    """
+    current = at or now()
+    cutoff = (current - timedelta(days=days)).isoformat()
+    with connection() as database:
+        earn_rows = database.execute(
+            f"""
+            SELECT ft.user_id, ci.handle,
+                   SUM(ft.amount) AS flash_earned,
+                   COUNT(*) AS win_count
+            FROM flash_transactions ft
+            JOIN caller_identities ci ON ci.user_id=ft.user_id AND ci.status='active'
+            WHERE ft.kind IN ({','.join('?' for _ in CALL_WIN_KINDS)})
+              AND ft.amount>0 AND ft.created_at>=?
+            GROUP BY ft.user_id
+            ORDER BY flash_earned DESC, ci.handle
+            """,
+            (*CALL_WIN_KINDS, cutoff),
+        ).fetchall()
+        settled_rows = database.execute(
+            """
+            SELECT user_id,COUNT(*) AS settled FROM community_calls
+            WHERE status='closed' GROUP BY user_id
+            UNION ALL
+            SELECT user_id,COUNT(*) AS settled FROM memecoin_calls
+            WHERE status='closed' GROUP BY user_id
+            UNION ALL
+            SELECT user_id,COUNT(*) AS settled FROM sports_picks
+            WHERE status='settled' GROUP BY user_id
+            """
+        ).fetchall()
+        machine_rows = database.execute(
+            """
+            SELECT exit_price,entry_price FROM community_calls
+            WHERE user_id=? AND status='closed' AND exit_at>=?
+            """,
+            (MACHINE_USER_ID, cutoff),
+        ).fetchall()
+    settled_counts: dict[str, int] = {}
+    for row in settled_rows:
+        settled_counts[str(row["user_id"])] = (
+            settled_counts.get(str(row["user_id"]), 0) + int(row["settled"])
+        )
+    rows: list[dict[str, Any]] = []
+    for rank, row in enumerate(earn_rows, start=1):
+        user_id = str(row["user_id"])
+        if settled_counts.get(user_id, 0) < min_settled:
+            continue
+        rows.append(
+            {
+                "rank": rank,
+                "handle": str(row["handle"]),
+                "flash_earned": int(row["flash_earned"] or 0),
+                "win_count": int(row["win_count"] or 0),
+            }
+        )
+        if len(rows) >= limit:
+            break
+    machine_returns = [
+        (float(row["exit_price"]) / float(row["entry_price"]) - 1) * 100
+        for row in machine_rows
+    ]
+    machine = {
+        "settled": len(machine_rows),
+        "wins": sum(value > 0 for value in machine_returns),
+        "losses": sum(value < 0 for value in machine_returns),
+        "avg_return_pct": round(sum(machine_returns) / len(machine_returns), 1)
+        if machine_returns
+        else None,
+    }
+    return {"rows": rows, "machine": machine, "min_settled": min_settled, "days": days}
