@@ -74,7 +74,7 @@ from runner_web.billing import (
     delete_customer,
     process_webhook_event,
 )
-from runner_web.caller_ids import ensure_caller_identity
+from runner_web.caller_ids import MACHINE_HANDLE, ensure_caller_identity
 from runner_web.calls import (
     active_call_for_user,
     call_for_user,
@@ -83,6 +83,7 @@ from runner_web.calls import (
     calls_from_rows,
     close_call,
     create_call,
+    open_machine_slate,
     recent_calls,
     settle_stock_calls,
 )
@@ -1436,17 +1437,24 @@ CALL_SETTLEMENT_SWEEP_SECONDS = max(300, int(os.getenv("CALL_SETTLEMENT_SWEEP_SE
 
 
 def settle_open_calls() -> dict[str, Any]:
-    """Settle Calls that reached their settlement time.
+    """Open the machine's daily slate, then settle Calls that reached their time.
 
     Stock Calls settle at their session close. Memecoin Calls settle after
     their expiry window when the quote history has gone quiet on them.
     """
+    opened = open_machine_slate()
     handles = [*settle_stock_calls(), *expire_memecoin_calls()]
     for handle in dict.fromkeys(handles):
         _invalidate_public_screen_data("caller", handle)
-    if handles:
+    if handles or opened:
         _invalidate_runners_feeds("pulse", "alpha")
-    return {"settled": len(handles), "callers": len(set(handles))}
+    if opened:
+        _invalidate_public_screen_data("caller", MACHINE_HANDLE)
+    return {
+        "settled": len(handles),
+        "callers": len(set(handles)),
+        "machine_opened": len(opened),
+    }
 
 
 async def memecoin_worker() -> None:
