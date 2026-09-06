@@ -64,7 +64,24 @@
   <section class="game-actions" aria-label="Game actions">
     <section class="paper-pick">
       <span>PUBLIC RECEIPT</span>
-      {% if game_state.pick_state == 'closed' %}
+      {% if my_pick %}
+      <h2>Your Call</h2>
+      <div class="pick-ticket">
+        <header>
+          <strong>{{ event[my_pick.selection ~ '_abbreviation'] }} {{ '%+d'|format(my_pick.american_odds) if my_pick.american_odds is not none else 'no frozen line' }}</strong>
+          <b class="{{ 'up' if my_pick.result == 'win' else 'down' if my_pick.result == 'loss' else '' }}">{{ 'WON · +' ~ my_pick.reward_flash ~ ' Flash' if my_pick.result == 'win' else my_pick.result|upper if my_pick.result else 'OPEN' }}</b>
+        </header>
+        <p>
+          {% if game_state.started and game_state.score_available %}
+          {{ event.away_abbreviation }} {{ event.away_score|int }} – {{ event.home_score|int }} {{ event.home_abbreviation }} · {{ game_state.detail }}
+          {% elif game_state.started %}
+          {{ game_state.label }} · {{ game_state.detail }}
+          {% else %}
+          Settles when the game ends. Wins pay at the frozen line.
+          {% endif %}
+        </p>
+      </div>
+      {% elif game_state.pick_state == 'closed' %}
         <h2>Calls closed</h2>
         <p>The pregame window has closed. Existing Calls and their frozen lines remain public.</p>
         <strong>No new picks can be added.</strong>
@@ -74,13 +91,25 @@
         <strong>Waiting for a verified line.</strong>
       {% else %}
         <h2>Make a Call</h2>
-        <p>Freeze the current {{ quote.source_label }} line. Wins earn up to {{ call_win_flash_cap }} Flash. No real bet.</p>
+        <p>Freeze the current {{ quote.source_label }} line. Wins earn up to {{ call_win_flash_cap }} Flash. No real bet. One Call per game, no undo.</p>
         {% if not user %}
         <a href="/login">Log in to make a Call</a>
         {% else %}
         <div class="pick-buttons">
-          <button type="button" data-pick="away">{{ event.away_abbreviation }} {% if quote.away_odds is not none %}{{ '%+d'|format(quote.away_odds) }}{% endif %}</button>
-          <button type="button" data-pick="home">{{ event.home_abbreviation }} {% if quote.home_odds is not none %}{{ '%+d'|format(quote.home_odds) }}{% endif %}</button>
+          <button type="button" data-pick="away" data-team="{{ event.away_team_name }}" data-odds="{{ '%+d'|format(quote.away_odds) if quote.away_odds is not none else '—' }}" data-reward="{{ pick_rewards.away }}">{{ event.away_abbreviation }} {% if quote.away_odds is not none %}{{ '%+d'|format(quote.away_odds) }}{% endif %}</button>
+          <button type="button" data-pick="home" data-team="{{ event.home_team_name }}" data-odds="{{ '%+d'|format(quote.home_odds) if quote.home_odds is not none else '—' }}" data-reward="{{ pick_rewards.home }}">{{ event.home_abbreviation }} {% if quote.home_odds is not none %}{{ '%+d'|format(quote.home_odds) }}{% endif %}</button>
+        </div>
+        <div class="pick-slip" id="pickSlip" hidden>
+          <div class="pick-slip-line"><span>YOUR CALL</span><strong id="slipTeam"></strong></div>
+          <dl>
+            <div><dt>Line</dt><dd id="slipOdds"></dd></div>
+            <div><dt>If it wins</dt><dd id="slipReward"></dd></div>
+            <div><dt>Settles</dt><dd>When the game ends</dd></div>
+          </dl>
+          <div class="pick-slip-actions">
+            <button type="button" id="slipConfirm">Freeze Call</button>
+            <button type="button" id="slipCancel" class="pick-slip-cancel">Cancel</button>
+          </div>
         </div>
         <small id="pickStatus"></small>
         {% endif %}
@@ -371,13 +400,37 @@
   document.querySelectorAll('[data-local-date]').forEach(node=>{
     const date=new Date(node.dataset.localDate);if(!Number.isNaN(date.valueOf()))node.textContent=date.toLocaleDateString([],{month:'short',day:'numeric'});
   });
-  document.querySelectorAll('[data-pick]').forEach(button=>button.addEventListener('click',async()=>{
-    const status=document.getElementById('pickStatus');button.disabled=true;status.textContent='Freezing the receipt…';
-    const response=await fetch('/api/calls/game/{{ event.id }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({selection:button.dataset.pick})});
-    const payload=await response.json();
-    if(response.ok){status.textContent='Call recorded.';document.querySelectorAll('[data-pick]').forEach(item=>{item.disabled=true;});}
-    else{button.disabled=false;status.textContent=payload.detail||'Could not record the pick.';}
+  document.querySelectorAll('[data-pick]').forEach(button=>button.addEventListener('click',()=>{
+    const slip=document.getElementById('pickSlip');
+    document.getElementById('slipTeam').textContent=`${button.dataset.team} (${button.dataset.pick.toUpperCase()})`;
+    document.getElementById('slipOdds').textContent=button.dataset.odds;
+    document.getElementById('slipReward').textContent=`about +${button.dataset.reward} Flash`;
+    slip.hidden=false;
+    slip.dataset.pick=button.dataset.pick;
+    document.getElementById('pickStatus').textContent='';
   }));
+  document.getElementById('slipCancel')?.addEventListener('click',()=>{
+    document.getElementById('pickSlip').hidden=true;
+    document.getElementById('pickStatus').textContent='';
+  });
+  document.getElementById('slipConfirm')?.addEventListener('click',async()=>{
+    const status=document.getElementById('pickStatus');
+    const slip=document.getElementById('pickSlip');
+    const chosen=document.querySelector('.pick-buttons button[data-pick="'+slip.dataset.pick+'"]');
+    status.textContent='Freezing the receipt…';
+    const response=await fetch('/api/calls/game/{{ event.id }}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({selection:slip.dataset.pick})});
+    const payload=await response.json();
+    if(response.ok){
+      status.textContent='Call recorded.';
+      const ticket=document.createElement('div');
+      ticket.className='pick-ticket';
+      ticket.innerHTML='<header><strong></strong><b>OPEN</b></header><p>Settles when the game ends. Wins pay at the frozen line.</p>';
+      ticket.querySelector('strong').textContent=`${chosen.dataset.team} ${chosen.dataset.odds}`;
+      slip.replaceWith(ticket);
+      document.querySelector('.pick-buttons')?.remove();
+    }
+    else{status.textContent=payload.detail||'Could not record the pick.';}
+  });
 </script>
 <script src="/static/flash-report.js?v={{ static_version }}" defer></script>
 <script src="/static/flash-comments.js?v={{ static_version }}" defer></script>

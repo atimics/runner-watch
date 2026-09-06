@@ -297,6 +297,8 @@ def _rendered_game_detail(latest_commission: dict[str, Any] | None = None) -> st
             },
             "sports_path_prefix": "",
             "call_win_flash_cap": 10,
+            "my_pick": None,
+            "pick_rewards": {"away": 0, "home": 0},
             "comments": [],
             "comment_count": 0,
             "active_tab": "pulse",
@@ -308,6 +310,155 @@ def _rendered_game_detail(latest_commission: dict[str, Any] | None = None) -> st
         },
     )
     return _inline_static_assets(response.body.decode())
+
+
+def _rendered_open_game_with_slip(
+    *, user: dict[str, Any] | None, my_pick: dict | None = None
+) -> str:
+    event = {
+        "id": "open-game",
+        "league": "mlb",
+        "start_time": "2026-08-29T23:20:00+00:00",
+        "status": "pre",
+        "status_detail": "6:20 PM",
+        "completed": False,
+        "venue": "Wrigley Field",
+        "location": "Chicago, IL",
+        "away_abbreviation": "CIN",
+        "away_team_name": "Cincinnati Reds",
+        "away_record": "68-66",
+        "away_score": None,
+        "home_abbreviation": "CHC",
+        "home_team_name": "Chicago Cubs",
+        "home_record": "76-58",
+        "home_score": None,
+        "source_url": "https://example.test/game",
+        "paper_odds": {
+            "away_odds": 150,
+            "home_odds": -170,
+            "sportsbook": "Market consensus",
+            "source_label": "No-vig consensus via The Odds API",
+            "observed_at": "2026-08-29T18:15:00+00:00",
+        },
+        "odds": {
+            "away_odds": 150,
+            "home_odds": -170,
+            "sportsbook": "Market consensus",
+            "source_label": "No-vig consensus via The Odds API",
+            "observed_at": "2026-08-29T18:15:00+00:00",
+        },
+        "market_comparison": {"books": []},
+        "prediction": None,
+        "receipt": None,
+        "model_record": {
+            "games": 24,
+            "sample": {"label": "24 of 100 graded", "target": 100, "remaining": 76},
+        },
+        "model_winner_coin_tone": 0,
+        "model_winner_abbreviation": "CHC",
+        "model_winner_detail_label": "BASELINE WINNER",
+        "model_winner_team_name": "Chicago Cubs",
+        "model_winner_probability_pct": 58.7,
+        "edge_history": None,
+        "context": {"headline": "Recent team form", "back_to_back": False, "series_game_count": 1,
+                    "previous_meeting": None, "head_to_head": {"meetings": 0}, "recent_form": []},
+        "matchup_players": [],
+        "news": [],
+        "picks": [],
+        "odds_history": [],
+        "view_state": {
+            "label": "Pregame",
+            "detail": "6:20 PM",
+            "started": False,
+            "score_available": False,
+            "pick_state": "open",
+            "picks_open": True,
+        },
+    }
+    response = web_main.templates.TemplateResponse(
+        request=_request("/game/open-game"),
+        name="sports_game.html",
+        context={
+            "event": event,
+            "latest_commission": None,
+            "flash_report": {
+                "href": None,
+                "state": "closed",
+                "label": "Reports closed",
+                "detail": "Game has started",
+                "enabled": False,
+                "job_id": None,
+                "message": "",
+                "status_tone": None,
+            },
+            "sports_path_prefix": "",
+            "call_win_flash_cap": 50,
+            "my_pick": my_pick,
+            "pick_rewards": {"away": 38, "home": 15},
+            "comments": [],
+            "comment_count": 0,
+            "active_tab": "pulse",
+            "nav_product": "sports",
+            "user": user,
+            "flash_wallet": {"balance": 120, "report_cost": 100},
+            "caller_summary": {"handle": "swift-ibis"},
+            "comment_avatar": web_main.comment_avatar_profile(
+                "Quiet Signal", "browser-seed", "filing_sleuth"
+            ),
+            "static_version": "test",
+            "runners_origin": "https://rati.chat",
+            "sports_origin": "https://sports.rati.chat",
+        },
+    )
+    return _inline_static_assets(response.body.decode())
+
+
+def test_game_detail_shows_a_confirmation_slip_with_the_exact_payout() -> None:
+    html = _rendered_open_game_with_slip(user={"id": "user-1"})
+
+    assert 'data-pick="away" data-team="Cincinnati Reds" data-odds="+150" data-reward="38"' in html
+    assert 'data-pick="home" data-team="Chicago Cubs" data-odds="-170" data-reward="15"' in html
+    assert 'id="pickSlip" hidden' in html
+    assert "Freeze Call" in html
+    assert "Settles" in html
+    assert "One Call per game, no undo." in html
+    assert "about +38 Flash" not in html  # exact numbers only fill the slip after a tap
+
+
+def test_game_detail_shows_your_call_ticket_instead_of_pick_buttons() -> None:
+    html = _rendered_open_game_with_slip(
+        user={"id": "user-1"},
+        my_pick={
+            "selection": "away",
+            "american_odds": 150,
+            "status": "open",
+            "result": None,
+            "reward_flash": 0,
+        },
+    )
+
+    assert "Your Call" in html
+    assert "CIN +150" in html
+    assert "OPEN" in html
+    assert '<button type="button" data-pick=' not in html  # pick buttons are gone
+    assert "Settles when the game ends." in html
+
+
+def test_game_detail_ticket_shows_a_won_call_with_its_flash_reward() -> None:
+    html = _rendered_open_game_with_slip(
+        user={"id": "user-1"},
+        my_pick={
+            "selection": "home",
+            "american_odds": -170,
+            "status": "settled",
+            "result": "win",
+            "reward_flash": 15,
+        },
+    )
+
+    assert "Your Call" in html
+    assert "CHC -170" in html
+    assert "WON · +15 Flash" in html
 
 
 def _load(
