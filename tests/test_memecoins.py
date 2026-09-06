@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from fastapi.testclient import TestClient
 
-from runner_web import db, memecoins
+from runner_web import db, memecoin_store, memecoins
 from runner_web.db import connection, init_db
 
 AT = datetime(2026, 9, 5, 7, tzinfo=UTC)
@@ -30,6 +30,8 @@ def coin(coin_id="dogecoin", **extra):
 @pytest.fixture
 def market_db(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "memecoins.db")
+    monkeypatch.setattr(db, "DATABASE_URL", "")
+    monkeypatch.setattr(db, "REQUIRE_DATABASE_URL", False)
     monkeypatch.setenv("MEMECOINS_ENABLED", "true")
     init_db()
 
@@ -174,7 +176,10 @@ def test_pending_disabled_and_failure_before_first_snapshot(market_db, monkeypat
 def test_public_routes_render_prices_and_escape_provider_text(market_db, monkeypatch):
     from runner_web import main
 
-    seed([coin(name='<script>alert("coin")</script>')], at=datetime.now(UTC))
+    current = datetime.now(UTC)
+    seed(
+        [coin(name='<script>alert("coin")</script>', last_updated=current.isoformat())], at=current
+    )
     monkeypatch.setattr(main, "enforce_rate", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main, "current_user", lambda *_: None)
     client = TestClient(main.app)
@@ -185,6 +190,11 @@ def test_public_routes_render_prices_and_escape_provider_text(market_db, monkeyp
         assert '<script>alert("coin")</script>' not in response.text
         assert "&lt;script&gt;" in response.text
         assert 'href="/memecoins" aria-current="page"' in response.text
+        assert response.headers["X-Frame-Options"] == "DENY"
+        detail = client.get("/memecoins/coin/dogecoin")
+        assert detail.status_code == 200
+        assert detail.headers["X-Frame-Options"] == "SAMEORIGIN"
+        assert "frame-ancestors 'self'" in detail.headers["Content-Security-Policy"]
         data = client.get("/api/memecoins?q=doge&sort=market_cap").json()
         assert data["currency"] == "USD"
         assert data["rows"][0]["id"] == "dogecoin"
@@ -227,3 +237,282 @@ def test_download_uses_bounded_public_category_request(monkeypatch):
     assert params["category"] == ["meme-token"]
     assert params["vs_currency"] == ["usd"]
     assert params["per_page"] == ["100"]
+
+
+def test_detail_has_its_quote_receipt_and_optional_market_fields(market_db):
+    result = seed(
+        [
+            coin(
+                high_24h=0.13,
+                low_24h=0.11,
+                fully_diluted_valuation=20_000_000_000,
+                circulating_supply=0,
+                total_supply=150_000_000_000,
+                max_supply=None,
+            )
+        ]
+    )
+
+    detail = memecoins.memecoin_detail("dogecoin", at=AT)
+
+    assert detail is not None
+    assert detail["status"] == "ok"
+    assert detail["in_current_snapshot"] is True
+    assert detail["coin"]["detail_url"] == "/memecoins/coin/dogecoin"
+    assert detail["coin"]["price_label"] == "$0.12"
+    assert detail["coin"]["volume_label"] == "$900.00M"
+    assert detail["coin"]["market_cap_label"] == "$18.00B"
+    assert detail["coin"]["high_24h"] == 0.13
+    assert detail["coin"]["low_24h"] == 0.11
+    assert detail["coin"]["fully_diluted_valuation"] == 20_000_000_000
+    assert detail["coin"]["circulating_supply"] == 0
+    assert detail["coin"]["total_supply"] == 150_000_000_000
+    assert detail["coin"]["max_supply"] is None
+    assert detail["evidence"] == {
+        "source_url": "https://www.coingecko.com/en/coins/dogecoin",
+        "run_id": result["run_id"],
+        "observed_at": AT.isoformat(),
+        "collected_at": AT.isoformat(),
+        "checks": {
+            "source_time_known": True,
+            "quote_fresh": True,
+            "volume_known": True,
+            "market_cap_known": True,
+        },
+    }
+    assert detail["history"] == [
+        {"observed_at": AT.isoformat(), "collected_at": AT.isoformat(), "price": 0.12}
+    ]
+    assert memecoins.memecoin_market(at=AT)["rows"][0]["detail_url"] == "/memecoins/coin/dogecoin"
+
+
+def test_detail_keeps_coin_identity_separate_from_symbols(market_db):
+    seed([coin("first", current_price=0.1), coin("second", current_price=0.2)])
+
+    first = memecoins.memecoin_detail("first", at=AT)
+    second = memecoins.memecoin_detail("second", at=AT)
+
+    assert first["coin"]["symbol"] == second["coin"]["symbol"] == "DOGE"
+    assert first["coin"]["price"] == first["history"][0]["price"] == 0.1
+    assert second["coin"]["price"] == second["history"][0]["price"] == 0.2
+    assert memecoins.memecoin_detail("DOGE", at=AT) is None
+    assert memecoins.memecoin_detail("unknown", at=AT) is None
+    assert memecoins.memecoin_detail("../first", at=AT) is None
+
+
+def test_coin_that_leaves_snapshot_keeps_its_own_receipt_and_freshness(market_db):
+    original = seed()
+    next_at = AT + timedelta(minutes=5)
+    latest = seed([coin("pepe", last_updated=next_at.isoformat())], at=next_at)
+
+    detail = memecoins.memecoin_detail("dogecoin", at=AT + timedelta(minutes=6))
+
+    assert [row["id"] for row in memecoins.memecoin_market(at=next_at)["rows"]] == ["pepe"]
+    assert detail["in_current_snapshot"] is False
+    assert detail["status"] == "ok"
+    assert detail["coin"]["stale"] is False
+    assert detail["collected_at"] == AT.isoformat()
+    assert detail["evidence"]["run_id"] == original["run_id"]
+    assert detail["evidence"]["run_id"] != latest["run_id"]
+    stale = memecoins.memecoin_detail("dogecoin", at=AT + timedelta(minutes=16))
+    assert stale["status"] == "stale"
+    assert stale["coin"]["stale"] is True
+
+
+def test_history_keeps_real_observations_in_time_order(market_db):
+    seed()
+    seed(at=AT + timedelta(minutes=5))
+    new_at = AT + timedelta(minutes=10)
+    seed([coin(current_price=0.14, last_updated=new_at.isoformat())], at=new_at)
+
+    detail = memecoins.memecoin_detail("dogecoin", at=new_at)
+
+    assert [point["observed_at"] for point in detail["history"]] == [
+        AT.isoformat(),
+        new_at.isoformat(),
+    ]
+    assert [point["price"] for point in detail["history"]] == [0.12, 0.14]
+    assert detail["history"][0]["collected_at"] == (AT + timedelta(minutes=5)).isoformat()
+
+
+@pytest.mark.parametrize("observed_at", [None, "2026-09-05T07:00:00", "2026-09-05T08:00:00Z"])
+def test_history_requires_a_plausible_source_time(market_db, observed_at):
+    seed([coin(last_updated=observed_at)])
+
+    detail = memecoins.memecoin_detail("dogecoin", at=AT)
+
+    assert detail["status"] == "stale"
+    assert detail["coin"]["stale"] is True
+    assert detail["history"] == []
+
+
+def test_history_storage_and_detail_query_are_bounded(market_db, monkeypatch):
+    monkeypatch.setattr(memecoin_store, "MAX_HISTORY_POINTS", 3)
+    monkeypatch.setattr(memecoin_store, "MAX_DETAIL_HISTORY", 2)
+    for index in range(4):
+        collected = AT + timedelta(minutes=index * 5)
+        seed([coin(current_price=1 + index, last_updated=collected.isoformat())], at=collected)
+
+    detail = memecoins.memecoin_detail("dogecoin", at=collected, history_limit=10_000)
+
+    assert [point["price"] for point in detail["history"]] == [3, 4]
+    with connection() as database:
+        assert database.execute("SELECT COUNT(*) FROM memecoin_quote_history").fetchone()[0] == 3
+    later = AT + timedelta(days=8)
+    seed([coin("pepe", last_updated=later.isoformat())], at=later)
+    retired = memecoins.memecoin_detail("dogecoin", at=later)
+    assert retired["coin"]["price"] == 4
+    assert retired["status"] == "stale"
+    assert retired["history"] == []
+    with connection() as database:
+        assert database.execute("SELECT COUNT(*) FROM memecoin_quote_history").fetchone()[0] == 1
+        assert database.execute("SELECT COUNT(*) FROM memecoin_assets").fetchone()[0] == 2
+
+
+def test_failed_refresh_keeps_detail_receipt_and_disabled_feed_marks_it_stale(
+    market_db, monkeypatch
+):
+    original = seed()
+    seed([], at=AT + timedelta(minutes=5))
+
+    detail = memecoins.memecoin_detail("dogecoin", at=AT + timedelta(minutes=6))
+
+    assert detail["refresh_failed"] is True
+    assert detail["coin"]["price"] == 0.12
+    assert detail["evidence"]["run_id"] == original["run_id"]
+    monkeypatch.setenv("MEMECOINS_ENABLED", "false")
+    disabled = memecoins.memecoin_detail("dogecoin", at=AT + timedelta(minutes=6))
+    assert disabled["status"] == "disabled"
+    assert disabled["coin"]["stale"] is True
+    assert disabled["evidence"]["checks"]["quote_fresh"] is False
+
+
+def test_detail_reads_existing_snapshot_before_first_collection_after_upgrade(market_db):
+    rows = memecoins.normalize_memecoins([coin()])
+    with connection() as database:
+        database.execute(
+            "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?)",
+            (
+                "memecoins_snapshot",
+                json.dumps({"rows": rows, "collected_at": AT.isoformat(), "run_id": "old-run"}),
+                AT.isoformat(),
+            ),
+        )
+
+    detail = memecoins.memecoin_detail("dogecoin", at=AT)
+
+    assert detail["status"] == "ok"
+    assert detail["evidence"]["run_id"] == "old-run"
+    assert detail["history"] == []
+
+
+def test_upgrade_keeps_legacy_coin_after_the_first_new_snapshot(market_db, monkeypatch):
+    with connection() as database:
+        database.execute("DROP TABLE memecoin_quote_history")
+        database.execute("DROP TABLE memecoin_assets")
+        database.execute("DELETE FROM schema_migrations WHERE version=55")
+        database.execute(
+            "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?)",
+            (
+                "memecoins_snapshot",
+                json.dumps(
+                    {
+                        "rows": memecoins.normalize_memecoins([coin()]),
+                        "collected_at": AT.isoformat(),
+                        "run_id": "legacy-run",
+                    }
+                ),
+                AT.isoformat(),
+            ),
+        )
+
+    init_db()
+    later = AT + timedelta(minutes=5)
+    seed([coin("pepe", last_updated=later.isoformat())], at=later)
+    detail = memecoins.memecoin_detail("dogecoin", at=later)
+
+    assert detail["coin"]["price"] == 0.12
+    assert detail["evidence"]["run_id"] == "legacy-run"
+    assert detail["in_current_snapshot"] is False
+    assert detail["history"] == []
+
+
+def test_optional_market_fields_reject_invalid_values():
+    row = memecoins.normalize_memecoins([coin(high_24h=float("inf"), low_24h=-1, max_supply=True)])[
+        0
+    ]
+    assert row["high_24h"] is row["low_24h"] is row["max_supply"] is None
+    assert row["fully_diluted_valuation"] is None
+
+
+def test_sub_dollar_price_rounds_to_a_complete_label():
+    assert memecoins._price_label(0.99999) == "$1"
+    assert memecoins._price_label(0.00001234) == "$0.00001234"
+
+
+def test_pulse_uses_fresh_quotes_with_known_change_and_volume(market_db):
+    seed(
+        [
+            coin("fresh"),
+            coin("zero", total_volume=0, price_change_percentage_24h=0),
+            coin("old", last_updated=(AT - timedelta(minutes=16)).isoformat()),
+            coin("future", last_updated=(AT + timedelta(minutes=2)).isoformat()),
+            coin("unknown-time", last_updated=None),
+            coin("unknown-volume", total_volume=None),
+            coin("unknown-change", price_change_percentage_24h=None),
+        ]
+    )
+
+    pulse = memecoins.memecoin_market(view="pulse", at=AT)
+    radar = memecoins.memecoin_market(view="radar", at=AT)
+
+    assert [row["id"] for row in pulse["rows"]] == ["fresh", "zero"]
+    assert pulse["view"] == "pulse"
+    assert pulse["visible_count"] == 2
+    assert pulse["total"] == radar["total"] == 7
+    assert pulse["status"] == "ok"
+    assert radar["view"] == "radar"
+    assert radar["visible_count"] == len(radar["rows"]) == 7
+    assert memecoins.memecoin_market(at=AT) == radar
+    assert memecoins.memecoin_market(view="unknown", at=AT) == radar
+
+
+def test_pulse_search_and_sort_run_before_the_twenty_quote_limit(market_db):
+    seed(
+        [
+            coin(f"coin-{index:02}", total_volume=index, price_change_percentage_24h=index)
+            for index in range(30)
+        ]
+    )
+
+    pulse = memecoins.memecoin_market(view="pulse", at=AT)
+    losers = memecoins.memecoin_market(view="pulse", sort="losers", at=AT)
+    found = memecoins.memecoin_market(view="pulse", query=" COIN-00 ", at=AT)
+    radar = memecoins.memecoin_market(at=AT)
+
+    assert pulse["visible_count"] == len(pulse["rows"]) == 20
+    assert [row["id"] for row in pulse["rows"]] == [
+        f"coin-{index:02}" for index in reversed(range(10, 30))
+    ]
+    assert [row["id"] for row in losers["rows"]] == [f"coin-{index:02}" for index in range(20)]
+    assert found["query"] == "COIN-00"
+    assert found["visible_count"] == 1 and found["rows"][0]["id"] == "coin-00"
+    assert pulse["total"] == losers["total"] == found["total"] == radar["total"] == 30
+    assert radar["visible_count"] == 30
+    assert memecoins.memecoin_market(view="pulse", query="absent", at=AT)["visible_count"] == 0
+
+
+def test_empty_pulse_keeps_source_status(market_db, monkeypatch):
+    pending = memecoins.memecoin_market(view="pulse", at=AT)
+    assert pending["status"] == "pending" and pending["visible_count"] == 0
+    seed([])
+    unavailable = memecoins.memecoin_market(view="pulse", at=AT)
+    assert unavailable["status"] == "unavailable" and unavailable["rows"] == []
+    collected = AT + timedelta(minutes=5)
+    seed([coin(last_updated=collected.isoformat())], at=collected)
+    stale = memecoins.memecoin_market(view="pulse", at=collected + timedelta(minutes=16))
+    assert stale["status"] == "stale"
+    assert stale["rows"] == [] and stale["visible_count"] == 0 and stale["total"] == 1
+    monkeypatch.setenv("MEMECOINS_ENABLED", "false")
+    disabled = memecoins.memecoin_market(view="pulse", at=collected)
+    assert disabled["status"] == "disabled" and disabled["visible_count"] == 0

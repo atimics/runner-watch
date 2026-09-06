@@ -31,6 +31,10 @@ check_endpoint /login
 check_endpoint /radar
 check_endpoint /reports
 check_endpoint /memecoins
+check_endpoint /memecoins/radar
+check_endpoint /memecoins/alpha
+check_endpoint /api/memecoins
+check_endpoint /api/memecoin-calls
 check_endpoint '/api/pulse?limit=1'
 check_endpoint '/api/radar?limit=1'
 check_endpoint '/api/sports/pulse?limit=1'

@@ -22,7 +22,12 @@ def test_shared_product_system_has_one_component_and_one_theme_file() -> None:
     assert all((ROOT / "web/static" / style).is_file() for style in sports_styles)
     assert 'class="skip-link"' in base
     assert 'id="app-content"' in base
-    assert 'class="tab-link product-tab-link"' in base
+    assert '{% include "_market_switcher.html" %}' in base
+    market_switcher = (ROOT / "web/templates/_market_switcher.html").read_text()
+    assert 'aria-label="Market"' in market_switcher
+    assert market_switcher.count("<a ") == 3
+    for market in ("Stocks", "Memecoins", "Sports"):
+        assert f">{market}</a>" in market_switcher
     assert "data-desktop-workspace" in sports
     assert not (ROOT / "web/templates/sports_base.html").exists()
     assert 'class="product-switch"' not in base

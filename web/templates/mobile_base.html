@@ -7,7 +7,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#090b0b">
-  <meta name="description" content="{% if current_product == 'sports' %}Winner odds, stats, public Calls, and source-backed sports research in one evidence-first view.{% else %}Market movement, filings, risk context, and public research calls in one evidence-first view.{% endif %}">
+  {% block page_description %}<meta name="description" content="{% if current_product == 'memecoins' %}Memecoin prices, volume, source evidence, and public paper Calls.{% elif current_product == 'sports' %}Winner odds, stats, public Calls, and source-backed sports research in one evidence-first view.{% else %}Market movement, filings, risk context, and public research calls in one evidence-first view.{% endif %}">{% endblock %}
   <title>{% block title %}RATi Runners{% endblock %}</title>
   <script nonce="{{ request.state.csp_nonce }}">if (window.self !== window.top) document.documentElement.classList.add('embedded-pane');</script>
   <link rel="icon" href="/static/favicon.svg?v={{ static_version }}" type="image/svg+xml">
@@ -20,29 +20,22 @@
 <body class="{{ current_product }}-product">
   <a class="skip-link" href="#app-content">Skip to content</a>
   <div class="mobile-app {% block app_class %}{% endblock %}" id="app-content">
+    {% include "_market_switcher.html" %}
     {% include "_account_strip.html" %}
     {% block content %}{% endblock %}
     {% block bottom_nav %}
-    <nav class="tab-bar markets-tab-bar" aria-label="Main navigation">
-      <a class="tab-link {% if active_tab == 'pulse' %}active{% endif %}" href="{% if current_product == 'sports' %}{{ sports_prefix }}/{% else %}/{% endif %}"{% if active_tab == 'pulse' %} aria-current="page"{% endif %}>
+    <nav class="tab-bar markets-tab-bar" aria-label="{{ 'Memecoins' if current_product == 'memecoins' else 'Sports' if current_product == 'sports' else 'Stocks' }} navigation">
+      <a class="tab-link {% if active_tab == 'pulse' %}active{% endif %}" href="{% if current_product == 'memecoins' %}/memecoins{% elif current_product == 'sports' %}{{ sports_prefix }}/{% else %}/{% endif %}"{% if active_tab == 'pulse' %} aria-current="page"{% endif %}>
         <span class="tab-icon pulse-icon" aria-hidden="true"></span>
         <span>Pulse</span>
       </a>
-      <a class="tab-link {% if active_tab == 'radar' %}active{% endif %}" href="{% if current_product == 'sports' %}{{ sports_prefix }}/radar{% else %}/radar{% endif %}"{% if active_tab == 'radar' %} aria-current="page"{% endif %}>
+      <a class="tab-link {% if active_tab == 'radar' %}active{% endif %}" href="{% if current_product == 'memecoins' %}/memecoins/radar{% elif current_product == 'sports' %}{{ sports_prefix }}/radar{% else %}/radar{% endif %}"{% if active_tab == 'radar' %} aria-current="page"{% endif %}>
         <span class="tab-icon radar-icon" aria-hidden="true"></span>
         <span>Radar</span>
       </a>
-      <a class="tab-link {% if active_tab == 'alpha' %}active{% endif %}" href="{% if current_product == 'sports' %}{{ sports_prefix }}/alpha{% else %}/community{% endif %}"{% if active_tab == 'alpha' %} aria-current="page"{% endif %}>
+      <a class="tab-link {% if active_tab == 'alpha' %}active{% endif %}" href="{% if current_product == 'memecoins' %}/memecoins/alpha{% elif current_product == 'sports' %}{{ sports_prefix }}/alpha{% else %}/community{% endif %}"{% if active_tab == 'alpha' %} aria-current="page"{% endif %}>
         <span class="tab-icon alpha-icon" aria-hidden="true"></span>
         <span>Alpha</span>
-      </a>
-      <a class="tab-link {% if active_tab == 'memecoins' %}active{% endif %}" href="/memecoins"{% if active_tab == 'memecoins' %} aria-current="page"{% endif %}>
-        <span class="tab-icon product-tab-icon" aria-hidden="true">M</span>
-        <span>Memecoins</span>
-      </a>
-      <a class="tab-link product-tab-link" href="{{ runners_origin if current_product == 'sports' else sports_origin }}">
-        <span class="tab-icon product-tab-icon" aria-hidden="true">{{ 'R' if current_product == 'sports' else 'S' }}</span>
-        <span>{{ 'Runners' if current_product == 'sports' else 'Sports' }}</span>
       </a>
     </nav>
     {% endblock %}
@@ -58,7 +51,7 @@
     <a href="/billing">Flash wallet <span>›</span></a>
     <a href="{{ runners_origin }}/flash/record">Flash record <span>›</span></a>
     <a href="/roadmap">Roadmap <span>›</span></a>
-    <a href="{{ runners_origin }}/my-calls">My Calls <span>›</span></a>
+    <a href="{{ runners_origin }}/my-calls?market={{ 'stocks' if current_product == 'runners' else current_product }}">My Calls <span>›</span></a>
     <a href="/privacy">Privacy and my data <span>›</span></a>
     <a href="/settings/models">AI model <span>›</span></a>
     <a href="/settings/passkey">Add passkey <span>›</span></a>
@@ -77,6 +70,7 @@
   </script>
   {% endif %}
   {% include "_flash_release_modal.html" %}
+  <script src="/static/content-notices.js?v={{ static_version }}"></script>
   <script src="/static/ticker-row.js?v={{ static_version }}"></script>
   <script src="/static/live-list.js?v={{ static_version }}"></script>
   <script src="/static/desktop-workspace.js?v={{ static_version }}" defer></script>

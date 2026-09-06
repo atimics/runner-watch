@@ -50,6 +50,9 @@ EXPOSE 8080
 USER runner
 
 FROM base AS test
+COPY desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock ./desktop/src-tauri/
+COPY desktop/src-tauri/vendor ./desktop/src-tauri/vendor
+COPY desktop/src-tauri/patches ./desktop/src-tauri/patches
 COPY scripts ./scripts
 COPY tests ./tests
 COPY cloudflare-router ./cloudflare-router

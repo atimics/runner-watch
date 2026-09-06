@@ -1,0 +1,5 @@
+<nav class="market-switcher" aria-label="Market">
+  <a href="{{ runners_origin }}/"{% if current_product == 'runners' %} class="active" aria-current="true"{% endif %}>Stocks</a>
+  <a href="{{ runners_origin }}/memecoins"{% if current_product == 'memecoins' %} class="active" aria-current="true"{% endif %}>Memecoins</a>
+  <a href="{{ sports_origin }}/"{% if current_product == 'sports' %} class="active" aria-current="true"{% endif %}>Sports</a>
+</nav>

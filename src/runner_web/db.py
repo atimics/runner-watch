@@ -2744,6 +2744,122 @@ def _migration_054_market_report_forecasts(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_055_memecoin_quote_history(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS memecoin_assets (
+            coin_id TEXT PRIMARY KEY,
+            quote_json TEXT NOT NULL,
+            collected_at TEXT NOT NULL,
+            run_id TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS memecoin_quote_history (
+            coin_id TEXT NOT NULL REFERENCES memecoin_assets(coin_id) ON DELETE CASCADE,
+            observed_at TEXT NOT NULL,
+            collected_at TEXT NOT NULL,
+            price DOUBLE PRECISION NOT NULL CHECK(price>0),
+            run_id TEXT NOT NULL,
+            PRIMARY KEY(coin_id,observed_at)
+        );
+        CREATE INDEX IF NOT EXISTS memecoin_quote_history_time
+            ON memecoin_quote_history(observed_at DESC,coin_id);
+        """
+    )
+    legacy = db.execute("SELECT value FROM worker_state WHERE key='memecoins_snapshot'").fetchone()
+    if legacy is None:
+        return
+    try:
+        snapshot = json.loads(legacy["value"])
+    except (TypeError, ValueError):
+        return
+    if (
+        not isinstance(snapshot, dict)
+        or not isinstance(snapshot.get("rows"), list)
+        or not snapshot.get("collected_at")
+        or not snapshot.get("run_id")
+    ):
+        return
+    for coin in snapshot["rows"][:100]:
+        if not isinstance(coin, dict) or not coin.get("id"):
+            continue
+        db.execute(
+            """
+            INSERT INTO memecoin_assets(coin_id,quote_json,collected_at,run_id)
+            VALUES(?,?,?,?) ON CONFLICT(coin_id) DO NOTHING
+            """,
+            (
+                coin["id"],
+                json.dumps(coin),
+                snapshot["collected_at"],
+                snapshot["run_id"],
+            ),
+        )
+
+
+def _migration_056_memecoin_calls(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS memecoin_calls (
+            public_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            caller_identity_id TEXT NOT NULL REFERENCES caller_identities(id),
+            coin_id TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            name TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('active','closed')),
+            entry_price DOUBLE PRECISION NOT NULL CHECK(entry_price>0),
+            entry_at TEXT NOT NULL,
+            entry_evidence TEXT NOT NULL,
+            exit_price DOUBLE PRECISION CHECK(exit_price>0),
+            exit_at TEXT,
+            exit_evidence TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK((status='active' AND exit_price IS NULL AND exit_at IS NULL
+                    AND exit_evidence IS NULL)
+                OR (status='closed' AND exit_price IS NOT NULL AND exit_at IS NOT NULL
+                    AND exit_evidence IS NOT NULL))
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS memecoin_calls_one_active
+            ON memecoin_calls(user_id,coin_id) WHERE status='active';
+        CREATE INDEX IF NOT EXISTS memecoin_calls_coin_time
+            ON memecoin_calls(coin_id,updated_at DESC);
+        CREATE INDEX IF NOT EXISTS memecoin_calls_caller_time
+            ON memecoin_calls(caller_identity_id,updated_at DESC);
+        """
+    )
+
+
+def _migration_057_content_notices(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS content_notices (
+            id TEXT PRIMARY KEY,
+            report_id TEXT REFERENCES research_commissions(id) ON DELETE CASCADE,
+            comment_id TEXT REFERENCES ticker_comments(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL CHECK(kind IN
+                ('correction','holdings','compensation','issuer_relationship','sponsorship')),
+            text TEXT NOT NULL,
+            reason TEXT,
+            recorded_by TEXT NOT NULL CHECK(recorded_by IN ('author','operator')),
+            dedup_key TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            CHECK((report_id IS NOT NULL AND comment_id IS NULL)
+                OR (report_id IS NULL AND comment_id IS NOT NULL)),
+            CHECK(kind != 'correction' OR (reason IS NOT NULL AND length(reason)>0))
+        );
+        CREATE INDEX IF NOT EXISTS content_notices_report
+            ON content_notices(report_id,created_at,id);
+        CREATE INDEX IF NOT EXISTS content_notices_comment
+            ON content_notices(comment_id,created_at,id);
+        CREATE UNIQUE INDEX IF NOT EXISTS content_notices_author_report
+            ON content_notices(report_id,dedup_key) WHERE recorded_by='author';
+        CREATE UNIQUE INDEX IF NOT EXISTS content_notices_author_comment
+            ON content_notices(comment_id,dedup_key) WHERE recorded_by='author';
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2810,6 +2926,9 @@ MIGRATIONS = (
         _migration_053_sports_market_observation_history,
     ),
     Migration(54, "market_report_forecasts", _migration_054_market_report_forecasts),
+    Migration(55, "memecoin_quote_history", _migration_055_memecoin_quote_history),
+    Migration(56, "memecoin_calls", _migration_056_memecoin_calls),
+    Migration(57, "content_notices", _migration_057_content_notices),
 )
 
 

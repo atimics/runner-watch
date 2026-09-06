@@ -69,3 +69,15 @@ def test_rati_source_normalizes_free_candidates(monkeypatch) -> None:
         "relative_volume": None,
         "state_reason": "Source evidence",
     }
+
+
+def test_source_timeout_becomes_a_clear_connection_error(monkeypatch) -> None:
+    from runner_node.cloud_source import _get_json
+
+    class TimeoutSource:
+        def open(self, *_args, **_kwargs):
+            raise TimeoutError("timed out")
+
+    monkeypatch.setattr("runner_node.cloud_source.build_opener", lambda *_args: TimeoutSource())
+    with pytest.raises(RuntimeError, match="could not be reached"):
+        _get_json("https://runners.rati.chat/api/memecoins")

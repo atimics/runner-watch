@@ -3203,3 +3203,5 @@ body.sports-product .alpha-sample-note {
     border-left: 0;
   }
 }
+
+.game-flash-prediction .game-forecast-context { grid-column: 1 / -1; margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }

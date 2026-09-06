@@ -13,6 +13,7 @@ import sys
 import tempfile
 from collections import Counter
 from collections.abc import Iterable
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
@@ -601,11 +602,13 @@ def transform_braid_sec_stream(
         raise FileExistsError(f"output directory is not empty: {output_directory}")
 
     output_directory.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(
-        prefix=f".{output_directory.name}-", dir=output_directory.parent
-    ) as temporary:
+    with (
+        tempfile.TemporaryDirectory(
+            prefix=f".{output_directory.name}-", dir=output_directory.parent
+        ) as temporary,
+        closing(sqlite3.connect(Path(temporary) / "examples.sqlite3")) as database,
+    ):
         root = Path(temporary)
-        database = sqlite3.connect(root / "examples.sqlite3")
         database.execute(
             "CREATE TABLE examples("
             "issuer_key TEXT,as_of TEXT,id TEXT PRIMARY KEY,task TEXT,payload TEXT)"

@@ -346,10 +346,20 @@ def test_desktop_panel_security_allows_only_supported_detail_pages() -> None:
         "/research/report-1",
         "/game/mlb:401816699",
         "/sports/game/mlb:401816699",
+        "/memecoins/coin/dogecoin",
     ):
         assert web_main._is_panel_path(path)
 
-    for path in ("/", "/radar", "/sports", "/sports/alpha", "/api/sports/pulse"):
+    for path in (
+        "/",
+        "/radar",
+        "/sports",
+        "/sports/alpha",
+        "/api/sports/pulse",
+        "/memecoins",
+        "/memecoins/radar",
+        "/api/memecoins/dogecoin",
+    ):
         assert not web_main._is_panel_path(path)
 
 

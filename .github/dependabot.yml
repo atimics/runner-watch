@@ -32,6 +32,9 @@ updates:
     directory: "/desktop"
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
     groups:
       desktop-javascript-dependencies:
         patterns: ["*"]
