@@ -242,6 +242,7 @@ from runner_web.sports import (
     refresh_sports,
     sports_alpha,
     sports_alpha_board,
+    sports_call_reward,
     sports_event,
     sports_flash_evidence,
     sports_pick_stats,
@@ -2288,6 +2289,12 @@ def my_calls_page(
     return RedirectResponse(f"/u/{identity['handle']}{suffix}", status_code=303)
 
 
+def _score(value: Any) -> str:
+    try:
+        return str(int(value))
+    except (TypeError, ValueError):
+        return "0"
+
 def _sports_calls_for_caller(caller_handle: str) -> list[dict[str, Any]] | None:
     with connection() as database:
         identity = database.execute(
@@ -2299,7 +2306,9 @@ def _sports_calls_for_caller(caller_handle: str) -> list[dict[str, Any]] | None:
         rows = database.execute(
             """
             SELECT p.*,e.league,e.away_team_name,e.home_team_name,
-                   e.away_abbreviation,e.home_abbreviation,
+                   e.away_abbreviation,e.home_abbreviation,e.status AS event_status,
+                   e.status_detail AS event_status_detail,e.home_score AS event_home_score,
+                   e.away_score AS event_away_score,
                    COALESCE(ft.amount,0) AS flash_reward
             FROM sports_picks p
             JOIN sports_events e ON e.id=p.event_id
@@ -2335,6 +2344,17 @@ def _sports_calls_for_caller(caller_handle: str) -> list[dict[str, Any]] | None:
                 "reward_label": (
                     f"+{int(item['flash_reward'])} Flash"
                     if int(item.get("flash_reward") or 0) > 0
+                    else None
+                ),
+                "live_label": (
+                    (
+                        f"{str(item['away_abbreviation'])} {_score(item['event_away_score'])}"
+                        f"\u2013{_score(item['event_home_score'])} {str(item['home_abbreviation'])}"
+                        f" \u00b7 {str(item['event_status_detail'] or 'live')}"
+                    )
+                    if str(item.get("event_status") or "") == "in"
+                    and item.get("event_away_score") is not None
+                    and item.get("event_home_score") is not None
                     else None
                 ),
                 "created_at": str(item["created_at"]),
@@ -6619,6 +6639,23 @@ def sports_game_page(
         raise HTTPException(404, "Game not found")
     user = current_user(runner_session)
     user_id = str(user["id"]) if user else None
+    my_pick = None
+    if user_id:
+        my_handle = caller_summary_for_user(user_id).get("handle")
+        if my_handle:
+            my_pick = next(
+                (
+                    pick
+                    for pick in event.get("picks") or []
+                    if pick.get("caller_handle") == my_handle
+                ),
+                None,
+            )
+    quote = event.get("paper_odds") or {}
+    pick_rewards = {
+        "away": sports_call_reward(quote.get("away_odds")),
+        "home": sports_call_reward(quote.get("home_odds")),
+    }
     comments = comments_for_subject("sports_game", event_id, current_user_id=user_id)
     latest_report = daily_report_for_sports_game(event_id, user_id)
     sports_path_prefix = ""
@@ -6630,6 +6667,8 @@ def sports_game_page(
             runner_session,
             resolved_user=user,
             event=event,
+            my_pick=my_pick,
+            pick_rewards=pick_rewards,
             comments=comments,
             comment_count=comment_count_for_subject("sports_game", event_id),
             comment_generation_enabled=_flash_provider_ready(),

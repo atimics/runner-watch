@@ -24,7 +24,7 @@
     {% if calls %}
       {% for call in calls %}
       <article class="public-call-row">
-        <a class="call-ticker" href="{{ call.href }}"><strong>{{ call.subject }}</strong><small>{{ call.product_label }} · {{ call.company }} · {{ call.created_at[:10] }}</small></a>
+        <a class="call-ticker" href="{{ call.href }}"><strong>{{ call.subject }}</strong><small>{{ call.product_label }} · {{ call.company }}{% if call.live_label %} · {{ call.live_label }}{% endif %} · {{ call.created_at[:10] }}</small></a>
         <span class="call-prices"><small>Entry</small><b>{{ call.entry_label }}</b></span>
         <span class="call-pnl"><b class="{{ call.result_tone }}">{{ call.result_label }}</b><small>{{ call.reward_label or call.status }}</small></span>
       </article>

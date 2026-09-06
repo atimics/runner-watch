@@ -3205,3 +3205,96 @@ body.sports-product .alpha-sample-note {
 }
 
 .game-flash-prediction .game-forecast-context { grid-column: 1 / -1; margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+.pick-ticket {
+  margin-top: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel2);
+}
+
+.pick-ticket header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.pick-ticket header b {
+  font-size: 10px;
+  letter-spacing: .08em;
+}
+
+.pick-ticket header b.up { color: var(--up, #2e9e5b); }
+.pick-ticket header b.down { color: var(--down, #d64545); }
+
+.pick-slip {
+  margin-top: 10px;
+  padding: 14px;
+  border: 1px solid var(--hot);
+  border-radius: 10px;
+  background: var(--panel2);
+}
+
+.pick-slip-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.pick-slip-line span {
+  color: var(--violet);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .12em;
+}
+
+.pick-slip-line strong {
+  font-size: 14px;
+}
+
+.pick-slip dl {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.pick-slip dt {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: .08em;
+}
+
+.pick-slip dd {
+  margin: 2px 0 0;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.pick-slip-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.pick-slip-actions button {
+  padding: 12px;
+  border: 1px solid var(--hot);
+  border-radius: 8px;
+  background: var(--hot);
+  color: #1a0e08;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.pick-slip-actions .pick-slip-cancel {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--muted);
+}
