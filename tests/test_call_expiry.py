@@ -8,7 +8,8 @@ from pytest import MonkeyPatch
 
 from runner_web import db, operations
 from runner_web.caller_ids import ensure_caller_identity_with_database
-from runner_web.calls import close_call, create_call, expire_stock_calls
+from runner_web.calls import close_call, create_call, settle_stock_calls
+from runner_web.data_health import stock_settlement_close
 from runner_web.db import connection, init_db
 from runner_web.flash_wallet import CALL_WIN_FLASH_CAP, wallet_for_user
 from runner_web.memecoin_calls import expire_memecoin_calls
@@ -113,14 +114,27 @@ def _stock_call(entry_price: float, entry_at: str, ticker: str = "ONE") -> str:
     return str(created["public_id"])
 
 
-def test_stale_winning_stock_call_settles_at_the_latest_mark(tmp_path, monkeypatch) -> None:
-    current = _database(tmp_path, monkeypatch)
-    entered_at = (current - timedelta(days=40)).isoformat()
-    marked_at = (current - timedelta(days=39)).isoformat()
-    public_id = _stock_call(2.0, entered_at)
-    _snapshot(3.0, marked_at)
+FRIDAY = datetime(2026, 9, 4, 14, 0, tzinfo=UTC)
+FRIDAY_CLOSE = datetime(2026, 9, 4, 20, 0, tzinfo=UTC)
+TUESDAY_CLOSE = datetime(2026, 9, 8, 20, 0, tzinfo=UTC)
 
-    handles = expire_stock_calls(at=current)
+
+def test_stock_settlement_close_uses_the_trading_calendar() -> None:
+    assert stock_settlement_close(FRIDAY) == FRIDAY_CLOSE
+    assert stock_settlement_close(FRIDAY_CLOSE - timedelta(minutes=30)) == FRIDAY_CLOSE
+    # After Friday's close, Labor Day Monday means the next close is Tuesday.
+    assert stock_settlement_close(datetime(2026, 9, 4, 22, 0, tzinfo=UTC)) == TUESDAY_CLOSE
+    assert stock_settlement_close(datetime(2026, 9, 6, 12, 0, tzinfo=UTC)) == TUESDAY_CLOSE
+
+
+def test_intraday_stock_call_settles_an_hour_after_the_close(tmp_path, monkeypatch) -> None:
+    _database(tmp_path, monkeypatch)
+    public_id = _stock_call(2.0, FRIDAY.isoformat())
+    _snapshot(3.0, (FRIDAY_CLOSE - timedelta(minutes=5)).isoformat())
+
+    assert settle_stock_calls(at=FRIDAY_CLOSE + timedelta(minutes=30)) == []
+
+    handles = settle_stock_calls(at=FRIDAY_CLOSE + timedelta(hours=2))
 
     with connection() as database:
         row = database.execute(
@@ -133,18 +147,16 @@ def test_stale_winning_stock_call_settles_at_the_latest_mark(tmp_path, monkeypat
     assert handles == [str(identity["handle"])]
     assert row["status"] == "closed"
     assert row["exit_price"] == 3.0
-    assert row["exit_at"] == marked_at
+    assert row["exit_at"] == (FRIDAY_CLOSE - timedelta(minutes=5)).isoformat()
     assert wallet_for_user("owner")["balance"] == CALL_WIN_FLASH_CAP
 
 
-def test_stale_losing_stock_call_records_the_loss_without_credit(tmp_path, monkeypatch) -> None:
-    current = _database(tmp_path, monkeypatch)
-    entered_at = (current - timedelta(days=40)).isoformat()
-    marked_at = (current - timedelta(days=39)).isoformat()
-    public_id = _stock_call(2.0, entered_at)
-    _snapshot(1.5, marked_at)
+def test_losing_intraday_stock_call_records_the_loss_without_credit(tmp_path, monkeypatch) -> None:
+    _database(tmp_path, monkeypatch)
+    public_id = _stock_call(2.0, FRIDAY.isoformat())
+    _snapshot(1.5, (FRIDAY_CLOSE - timedelta(minutes=5)).isoformat())
 
-    assert expire_stock_calls(at=current) != []
+    assert settle_stock_calls(at=FRIDAY_CLOSE + timedelta(hours=2)) != []
 
     with connection() as database:
         row = database.execute(
@@ -156,13 +168,49 @@ def test_stale_losing_stock_call_records_the_loss_without_credit(tmp_path, monke
     assert wallet_for_user("owner")["balance"] == 0
 
 
-def test_fresh_stock_calls_stay_open(tmp_path, monkeypatch) -> None:
-    current = _database(tmp_path, monkeypatch)
-    entered_at = (current - timedelta(days=2)).isoformat()
+def test_after_hours_entry_settles_at_the_next_session_close(tmp_path, monkeypatch) -> None:
+    _database(tmp_path, monkeypatch)
+    entered_at = datetime(2026, 9, 4, 22, 0, tzinfo=UTC).isoformat()
     public_id = _stock_call(2.0, entered_at)
-    _snapshot(2.5, (current - timedelta(days=1)).isoformat())
+    _snapshot(2.6, (TUESDAY_CLOSE - timedelta(minutes=5)).isoformat())
 
-    assert expire_stock_calls(at=current) == []
+    assert settle_stock_calls(at=datetime(2026, 9, 7, 21, 0, tzinfo=UTC)) == []
+    assert settle_stock_calls(at=TUESDAY_CLOSE + timedelta(hours=2)) != []
+
+    with connection() as database:
+        row = database.execute(
+            "SELECT status,exit_price FROM community_calls WHERE public_id=?",
+            (public_id,),
+        ).fetchone()
+    assert row["status"] == "closed"
+    assert row["exit_price"] == 2.6
+    assert wallet_for_user("owner")["balance"] == CALL_WIN_FLASH_CAP
+
+
+def test_call_without_a_quote_before_the_close_settles_at_the_first_post_close_quote(
+    tmp_path, monkeypatch
+) -> None:
+    _database(tmp_path, monkeypatch)
+    public_id = _stock_call(2.0, FRIDAY.isoformat())
+    _snapshot(2.4, datetime(2026, 9, 9, 14, 0, tzinfo=UTC).isoformat())
+
+    assert settle_stock_calls(at=FRIDAY_CLOSE + timedelta(hours=2)) != []
+
+    with connection() as database:
+        row = database.execute(
+            "SELECT status,exit_price,exit_at FROM community_calls WHERE public_id=?",
+            (public_id,),
+        ).fetchone()
+    assert row["status"] == "closed"
+    assert row["exit_price"] == 2.4
+    assert row["exit_at"] == datetime(2026, 9, 9, 14, 0, tzinfo=UTC).isoformat()
+
+
+def test_call_without_any_quote_stays_open(tmp_path, monkeypatch) -> None:
+    _database(tmp_path, monkeypatch)
+    public_id = _stock_call(2.0, FRIDAY.isoformat())
+
+    assert settle_stock_calls(at=TUESDAY_CLOSE + timedelta(days=2)) == []
 
     with connection() as database:
         status = database.execute(
@@ -171,29 +219,14 @@ def test_fresh_stock_calls_stay_open(tmp_path, monkeypatch) -> None:
     assert status == "active"
 
 
-def test_stale_call_without_a_mark_at_or_after_entry_stays_open(tmp_path, monkeypatch) -> None:
-    current = _database(tmp_path, monkeypatch)
-    entered_at = (current - timedelta(days=40)).isoformat()
-    public_id = _stock_call(2.0, entered_at)
-    _snapshot(2.5, (current - timedelta(days=41)).isoformat())
+def test_settlement_sweeps_are_idempotent(tmp_path, monkeypatch) -> None:
+    _database(tmp_path, monkeypatch)
+    _snapshot(2.5, (FRIDAY_CLOSE - timedelta(minutes=5)).isoformat())
+    _stock_call(2.0, FRIDAY.isoformat())
+    sweep = FRIDAY_CLOSE + timedelta(hours=2)
 
-    assert expire_stock_calls(at=current) == []
-
-    with connection() as database:
-        status = database.execute(
-            "SELECT status FROM community_calls WHERE public_id=?", (public_id,)
-        ).fetchone()["status"]
-    assert status == "active"
-
-
-def test_expiry_sweeps_are_idempotent(tmp_path, monkeypatch) -> None:
-    current = _database(tmp_path, monkeypatch)
-    entered_at = (current - timedelta(days=40)).isoformat()
-    _snapshot(2.5, (current - timedelta(days=39)).isoformat())
-    _stock_call(2.0, entered_at)
-
-    assert expire_stock_calls(at=current) != []
-    assert expire_stock_calls(at=current) == []
+    assert settle_stock_calls(at=sweep) != []
+    assert settle_stock_calls(at=sweep) == []
     with connection() as database:
         credits = database.execute(
             "SELECT COUNT(*) AS count FROM flash_transactions WHERE kind='runner_call_win'"
@@ -201,15 +234,19 @@ def test_expiry_sweeps_are_idempotent(tmp_path, monkeypatch) -> None:
     assert credits == 1
 
 
-def test_manual_close_still_wins_the_race_against_the_sweeper(tmp_path, monkeypatch) -> None:
+def test_manual_close_still_wins_the_race_against_the_settler(tmp_path, monkeypatch) -> None:
     current = _database(tmp_path, monkeypatch)
-    entered_at = (current - timedelta(days=40)).isoformat()
-    public_id = _stock_call(2.0, entered_at)
-    _snapshot(3.0, (current - timedelta(days=39)).isoformat())
-    closed = close_call("owner", public_id, exit_price=2.4, exit_at=current.isoformat())
+    public_id = _stock_call(2.0, FRIDAY.isoformat())
+    _snapshot(3.0, (FRIDAY_CLOSE - timedelta(minutes=5)).isoformat())
+    closed = close_call(
+        "owner",
+        public_id,
+        exit_price=2.4,
+        exit_at=(current - timedelta(days=1)).isoformat(),
+    )
 
     assert closed is not None
-    assert expire_stock_calls(at=current) == []
+    assert settle_stock_calls(at=FRIDAY_CLOSE + timedelta(hours=2)) == []
     with connection() as database:
         row = database.execute(
             "SELECT exit_price FROM community_calls WHERE public_id=?", (public_id,)
@@ -244,7 +281,7 @@ def test_stale_winning_memecoin_call_settles_at_the_latest_stored_quote(
     assert wallet_for_user("owner")["balance"] == 25
 
 
-def test_worker_contract_requires_the_call_expiry_sweeper() -> None:
+def test_worker_contract_requires_the_call_settlement_worker() -> None:
     required = operations.required_worker_names(sports_ingestion_enabled=False)
 
-    assert "call-expiry" in required
+    assert "call-settlement" in required
