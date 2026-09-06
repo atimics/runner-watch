@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from runner_web import memecoins
@@ -231,3 +231,79 @@ def active_memecoin_call(user_id: str, coin_id: str) -> dict[str, Any] | None:
         ),
         None,
     )
+
+
+MEMECOIN_CALL_MAX_AGE_DAYS = 7
+
+
+def expire_memecoin_calls(
+    at: datetime | None = None,
+    *,
+    max_age_days: int = MEMECOIN_CALL_MAX_AGE_DAYS,
+) -> list[str]:
+    """Settle memecoin Calls left open past the expiry window at the latest stored quote.
+
+    Returns the caller handles whose public records changed. A Call with no
+    stored quote at or after its entry time stays open until a quote arrives.
+    """
+    current = at or datetime.now(UTC)
+    cutoff = (current - timedelta(days=max_age_days)).isoformat()
+    handles: list[str] = []
+    with connection() as database:
+        rows = database.execute(
+            """
+            SELECT c.*,ci.handle AS caller_handle
+            FROM memecoin_calls c
+            JOIN caller_identities ci ON ci.id=c.caller_identity_id
+            WHERE c.status='active' AND c.entry_at<?
+            """,
+            (cutoff,),
+        ).fetchall()
+        for row in rows:
+            mark = database.execute(
+                """
+                SELECT observed_at,price,collected_at,run_id FROM memecoin_quote_history
+                WHERE coin_id=? AND observed_at>=?
+                ORDER BY observed_at DESC LIMIT 1
+                """,
+                (str(row["coin_id"]), str(row["entry_at"])),
+            ).fetchone()
+            if not mark or mark["price"] is None:
+                continue
+            exit_evidence = {
+                "coin_id": str(row["coin_id"]),
+                "price": float(mark["price"]),
+                "observed_at": str(mark["observed_at"]),
+                "collected_at": str(mark["collected_at"]),
+                "run_id": str(mark["run_id"]),
+                "auto_expired": True,
+            }
+            changed = database.execute(
+                """
+                UPDATE memecoin_calls
+                SET status='closed',exit_price=?,exit_at=?,exit_evidence=?,updated_at=?
+                WHERE public_id=? AND status='active'
+                """,
+                (
+                    float(mark["price"]),
+                    str(mark["observed_at"]),
+                    json.dumps(exit_evidence, allow_nan=False),
+                    current.isoformat(),
+                    str(row["public_id"]),
+                ),
+            )
+            if changed.rowcount != 1:
+                continue
+            handles.append(str(row["caller_handle"]))
+            return_pct = (float(mark["price"]) / float(row["entry_price"]) - 1) * 100
+            reward = memecoin_call_reward(return_pct)
+            if reward:
+                credit_flash(
+                    database,
+                    str(row["user_id"]),
+                    reward,
+                    kind="memecoin_call_win",
+                    reference_id=str(row["public_id"]),
+                    at=current,
+                )
+    return handles
