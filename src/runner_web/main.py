@@ -83,8 +83,8 @@ from runner_web.calls import (
     calls_from_rows,
     close_call,
     create_call,
-    expire_stock_calls,
     recent_calls,
+    settle_stock_calls,
 )
 from runner_web.calls import (
     calls_for_ticker as community_calls_for_ticker,
@@ -593,7 +593,7 @@ def _start_worker_tasks(
         asyncio.create_task(case_monitor_worker(), name="case-monitor"),
         asyncio.create_task(kol_worker(), name="kol"),
         asyncio.create_task(memecoin_worker(), name="memecoins"),
-        asyncio.create_task(call_expiry_worker(), name="call-expiry"),
+        asyncio.create_task(call_settlement_worker(), name="call-settlement"),
     ]
     if SPORTS_INGESTION_ENABLED:
         workers.append(asyncio.create_task(sports_ingestion_worker(), name="sports-ingestion"))
@@ -1432,17 +1432,21 @@ async def massive_backfill_worker() -> None:
         await asyncio.sleep(3600)
 
 
-CALL_EXPIRY_SWEEP_SECONDS = max(300, int(os.getenv("CALL_EXPIRY_SWEEP_SECONDS", "1800")))
+CALL_SETTLEMENT_SWEEP_SECONDS = max(300, int(os.getenv("CALL_SETTLEMENT_SWEEP_SECONDS", "1800")))
 
 
-def expire_open_calls() -> dict[str, Any]:
-    """Mark-to-market Calls left open past their expiry window."""
-    handles = [*expire_stock_calls(), *expire_memecoin_calls()]
+def settle_open_calls() -> dict[str, Any]:
+    """Settle Calls that reached their settlement time.
+
+    Stock Calls settle at their session close. Memecoin Calls settle after
+    their expiry window when the quote history has gone quiet on them.
+    """
+    handles = [*settle_stock_calls(), *expire_memecoin_calls()]
     for handle in dict.fromkeys(handles):
         _invalidate_public_screen_data("caller", handle)
     if handles:
         _invalidate_runners_feeds("pulse", "alpha")
-    return {"expired": len(handles), "callers": len(set(handles))}
+    return {"settled": len(handles), "callers": len(set(handles))}
 
 
 async def memecoin_worker() -> None:
@@ -1456,18 +1460,18 @@ async def memecoin_worker() -> None:
         await asyncio.sleep(REFRESH_SECONDS)
 
 
-async def call_expiry_worker() -> None:
+async def call_settlement_worker() -> None:
     await asyncio.sleep(60)
     while True:
         try:
-            result = await run_in_threadpool(expire_open_calls)
-            worker_state("call_expiry_last_run", json.dumps(result, separators=(",", ":")))
-            worker_state("call_expiry_last_error", "")
+            result = await run_in_threadpool(settle_open_calls)
+            worker_state("call_settlement_last_run", json.dumps(result, separators=(",", ":")))
+            worker_state("call_settlement_last_error", "")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            worker_state("call_expiry_last_error", str(exc)[:500])
-        await asyncio.sleep(CALL_EXPIRY_SWEEP_SECONDS)
+            worker_state("call_settlement_last_error", str(exc)[:500])
+        await asyncio.sleep(CALL_SETTLEMENT_SWEEP_SECONDS)
 
 
 async def sports_ingestion_worker() -> None:

@@ -7,6 +7,7 @@ from statistics import median
 from typing import Any
 
 from runner_web.caller_ids import ensure_caller_identity_with_database
+from runner_web.data_health import stock_settlement_close
 from runner_web.db import connection
 from runner_web.flash_wallet import credit_flash, runner_call_reward
 
@@ -392,21 +393,21 @@ def caller_summary_for_user(user_id: str) -> dict[str, Any]:
     return {"handle": str(identity["handle"]), **stats}
 
 
-STOCK_CALL_MAX_AGE_DAYS = 30
+STOCK_CALL_SETTLEMENT_DELAY = timedelta(hours=1)
 
 
-def expire_stock_calls(
-    at: datetime | None = None,
-    *,
-    max_age_days: int = STOCK_CALL_MAX_AGE_DAYS,
-) -> list[str]:
-    """Settle stock Calls left open past the expiry window at the latest mark.
+def settle_stock_calls(at: datetime | None = None) -> list[str]:
+    """Settle open stock Calls at their session close, about an hour after the bell.
 
-    Returns the caller handles whose public records changed. A Call with no
-    stored mark at or after its entry time stays open until a mark arrives.
+    A Call opened before a trading session's close settles at that day's
+    close, priced at the latest stored quote between entry and the close.
+    A Call opened after the close settles at the next session's close. If no
+    quote exists in that window, the first quote after the close settles the
+    Call. A Call with no usable quote stays open until one arrives.
+
+    Returns the caller handles whose public records changed.
     """
     current = at or datetime.now(UTC)
-    cutoff = (current - timedelta(days=max_age_days)).isoformat()
     handles: list[str] = []
     with connection() as database:
         rows = database.execute(
@@ -414,19 +415,33 @@ def expire_stock_calls(
             SELECT c.*,ci.handle AS caller_handle
             FROM community_calls c
             JOIN caller_identities ci ON ci.id=c.caller_identity_id
-            WHERE c.status='active' AND c.entry_at<?
-            """,
-            (cutoff,),
+            WHERE c.status='active'
+            """
         ).fetchall()
         for row in rows:
+            entry_at = datetime.fromisoformat(str(row["entry_at"]))
+            if entry_at.tzinfo is None:
+                entry_at = entry_at.replace(tzinfo=UTC)
+            close = stock_settlement_close(entry_at)
+            if current < close + STOCK_CALL_SETTLEMENT_DELAY:
+                continue
             mark = database.execute(
                 """
-                SELECT price,captured_at FROM scan_snapshots
-                WHERE ticker=? AND captured_at>=?
-                ORDER BY captured_at DESC LIMIT 1
+                SELECT price,quote_time FROM scan_snapshots
+                WHERE ticker=? AND quote_time>=? AND quote_time<=?
+                ORDER BY quote_time DESC LIMIT 1
                 """,
-                (str(row["ticker"]), str(row["entry_at"])),
+                (str(row["ticker"]), str(row["entry_at"]), close.isoformat()),
             ).fetchone()
+            if not mark or mark["price"] is None:
+                mark = database.execute(
+                    """
+                    SELECT price,quote_time FROM scan_snapshots
+                    WHERE ticker=? AND quote_time>?
+                    ORDER BY quote_time ASC LIMIT 1
+                    """,
+                    (str(row["ticker"]), close.isoformat()),
+                ).fetchone()
             if not mark or mark["price"] is None:
                 continue
             changed = database.execute(
@@ -437,7 +452,7 @@ def expire_stock_calls(
                 """,
                 (
                     float(mark["price"]),
-                    str(mark["captured_at"]),
+                    str(mark["quote_time"]),
                     current.isoformat(),
                     str(row["id"]),
                 ),

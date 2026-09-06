@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from functools import lru_cache
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -37,6 +37,30 @@ def _market_window(at: datetime) -> tuple[datetime, datetime] | None:
         calendar.session_open(day.isoformat()).to_pydatetime(),
         calendar.session_close(day.isoformat()).to_pydatetime(),
     )
+
+
+def stock_settlement_close(at: datetime) -> datetime:
+    """UTC close time of the trading session that settles a stock Call opened at `at`.
+
+    A Call opened before a session's close settles at that same-day close.
+    A Call opened after the close, on a weekend, or on a holiday settles at
+    the close of the next trading session.
+    """
+    moment = at.astimezone(UTC)
+    probe = at.astimezone(EASTERN).date()
+    for _ in range(16):
+        calendar = _calendar(probe.year)
+        if not calendar.is_session(probe.isoformat()):
+            probe += timedelta(days=1)
+            continue
+        close = calendar.session_close(probe.isoformat()).to_pydatetime()
+        if moment < close:
+            return close
+        probe += timedelta(days=1)
+    fallback = datetime.combine(probe, time(16, 0), tzinfo=EASTERN).astimezone(UTC)
+    if fallback <= moment:
+        fallback += timedelta(days=1)
+    return fallback
 
 
 def quote_health(quote_times: list[Any], at: datetime) -> dict[str, Any]:
