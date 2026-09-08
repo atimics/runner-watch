@@ -94,8 +94,6 @@ from runner_web.case_monitor import refresh_case_monitor
 from runner_web.collection import recording_market_data
 from runner_web.content_notices import (
     attach_comment_notices,
-    disclosure_input,
-    insert_content_notice,
     notices_for_content,
     report_share_metadata,
 )
@@ -8629,13 +8627,13 @@ async def _create_subject_comment(
     require_origin(request)
     user = require_user(runner_session)
     user_id = str(user["id"])
-    try:
-        has_json = request.headers.get("content-type", "").split(";", 1)[0] == "application/json"
-        disclosure = (
-            disclosure_input(await request.json()) if has_json and await request.body() else None
-        )
-    except (ValueError, TypeError) as exc:
-        raise HTTPException(422, str(exc)) from exc
+    if await request.body():
+        try:
+            payload = await request.json()
+        except ValueError as exc:
+            raise HTTPException(422, "Tap Summon avatar to create a generated reaction.") from exc
+        if not isinstance(payload, dict) or payload:
+            raise HTTPException(422, "Tap Summon avatar to create a generated reaction.")
     request_key_hash = _comment_request_key_hash(request)
     with connection() as db:
         existing_request = db.execute(
@@ -8752,15 +8750,6 @@ async def _create_subject_comment(
                     model,
                 ),
             )
-            if disclosure is not None:
-                insert_content_notice(
-                    db,
-                    "comment",
-                    request_id,
-                    kind=disclosure[0],
-                    text=disclosure[1],
-                    recorded_by="author",
-                )
             db.execute(
                 """
                 UPDATE comment_generation_requests
@@ -8849,57 +8838,8 @@ async def _author_disclosure(
     runner_session: str | None,
 ) -> JSONResponse:
     require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "content-disclosure", limit=30, seconds=3600, subject=user["id"])
-    try:
-        disclosure = disclosure_input(await request.json())
-        if disclosure is None:
-            raise ValueError("Choose a disclosure kind and describe the relationship")
-    except (ValueError, TypeError) as exc:
-        raise HTTPException(422, str(exc)) from exc
-    table = "research_commissions" if subject == "report" else "ticker_comments"
-    key = "public_id" if subject == "report" else "id"
-    with connection() as db:
-        row = db.execute(
-            f"SELECT * FROM {table} WHERE {key}=? AND user_id=?",
-            (target_id, str(user["id"])),
-        ).fetchone()
-        if row is None:
-            raise HTTPException(404, "Content not found")
-        try:
-            notice = insert_content_notice(
-                db,
-                subject,
-                str(row["id"]),
-                kind=disclosure[0],
-                text=disclosure[1],
-                recorded_by="author",
-            )
-        except KeyError as exc:
-            raise HTTPException(409, str(exc.args[0])) from exc
-    if subject == "report":
-        report = _commission_record(row)
-        return JSONResponse(
-            {
-                "notice": notice,
-                **{
-                    key: report[key]
-                    for key in (
-                        "disclosures",
-                        "corrections",
-                        "share_title",
-                        "share_summary",
-                    )
-                },
-            }
-        )
-    _invalidate_comment_subject(str(row["subject_kind"]), str(row["subject_key"]))
-    return JSONResponse(
-        {
-            "notice": notice,
-            **notices_for_content(subject, [str(row["id"])])[str(row["id"])],
-        }
-    )
+    require_user(runner_session)
+    raise HTTPException(410, "RATi supplies the story text and editorial notices.")
 
 
 @app.post("/api/comments/{comment_id}/disclosures")

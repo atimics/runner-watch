@@ -197,7 +197,7 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert template.count("<textarea") == 0
     assert "flash_comments('stock', detail.ticker" in template
     assert 'id="generateComment"' in comments
-    assert "Post with avatar" in comments
+    assert "Summon avatar" in comments
     assert "Persistent avatars · public across tickers" not in template
     assert "ability guides a short Flash draft" not in template
     assert "Start the read" not in template
