@@ -215,7 +215,7 @@ def test_refresh_updates_saved_prices_and_preserves_filter_edits(page: Page) -> 
     [
         ("pending", "First prices are on the way"),
         ("disabled", "Memecoin feed paused"),
-        ("unavailable", "Waiting for CoinGecko"),
+        ("unavailable", "Waiting for pool data"),
         ("ok", "Try another name or symbol"),
     ],
 )
@@ -448,7 +448,7 @@ def test_refresh_preserves_market_view_and_applied_filters(page: Page, view: str
         "href", f"/memecoins/coin/tiny-doge?q=doge&sort=gainers&view={view}"
     )
     expect(page.locator("[data-market-scope]")).to_have_text(
-        "Fresh quotes · up to 20 coins" if view == "pulse" else "Full CoinGecko snapshot"
+        "Fresh quotes · up to 20 coins" if view == "pulse" else "Helius pool discoveries"
     )
     assert requests == [f"http://app.test/api/memecoins?q=doge&sort=gainers&view={view}"]
     assert page.url == f"http://app.test{path}?q=doge&sort=gainers"
@@ -465,3 +465,148 @@ def test_stale_pulse_links_to_saved_radar_prices(page: Page) -> None:
     expect(page.get_by_role("link", name="View saved prices in Radar")).to_have_attribute(
         "href", "/memecoins/radar?q=doge&sort=gainers"
     )
+
+
+def test_chain_pool_evidence_on_mobile(page: Page) -> None:
+    page.set_viewport_size({"width": 320, "height": 850})
+    address = "AbC" * 14
+    coin = _coin(
+        network="solana",
+        token_address=address,
+        pool_address="Pool123",
+        liquidity_usd=2345,
+        buys_24h=4,
+        sells_24h=2,
+        time_basis="indexer_fetch",
+        name="solana · " + address,
+    )
+    _open(
+        page,
+        _html("detail", detail=_detail(coin=coin, source="GeckoTerminal")),
+        "/memecoins/coin/tiny-doge",
+    )
+    expect(page.get_by_text(address, exact=True)).to_be_visible()
+    expect(page.get_by_text("4 buys · 2 sells", exact=True)).to_be_visible()
+    expect(
+        page.get_by_text("Quote time records when GeckoTerminal returned the pool data.")
+    ).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    updated = {
+        **coin,
+        "pool_address": "DeeperPool",
+        "buys_24h": 8,
+        "source_url": "https://www.geckoterminal.com/solana/pools/DeeperPool",
+    }
+    page.route(
+        "**/api/memecoins/tiny-doge",
+        lambda route: route.fulfill(json=_detail(coin=updated, source="GeckoTerminal")),
+    )
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    expect(page.locator("[data-pool-address]")).to_have_text("DeeperPool")
+    expect(page.locator("[data-pool-trades]")).to_have_text("8 buys · 2 sells")
+    expect(page.locator("[data-pool-source]")).to_have_attribute("href", updated["source_url"])
+
+
+def test_empty_chain_window_has_clear_copy(page: Page) -> None:
+    market = _market(rows=[], total=0)
+    _open(page, _html("market", market=market))
+    expect(page.locator("[data-coin-empty] strong")).to_have_text("Waiting for active pools")
+    page.route("**/api/memecoins?**", lambda route: route.fulfill(json=market))
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    expect(page.locator("[data-coin-empty] strong")).to_have_text("Waiting for active pools")
+
+
+def test_on_chain_watch_shows_both_receipts_and_refreshes(page: Page) -> None:
+    page.set_viewport_size({"width": 320, "height": 850})
+    alert = {
+        "title": "Pool-linked wallet sold",
+        "net_token_amount": "6.000000",
+        "wallet": "AbC" * 14,
+        "token_address": "Def" * 14,
+        "observed_at": NOW.isoformat(),
+        "role_label": "Declared coin creator",
+        "source_url": "https://solscan.io/tx/trade",
+        "relationship_source_url": "https://solscan.io/tx/creation",
+    }
+    market = _market(
+        rows=[],
+        total=0,
+        integrity_alerts=[alert],
+        integrity_coverage={"checked_at": NOW.isoformat()},
+    )
+    _open(page, _html("market", market=market))
+    expect(page.locator("[data-integrity-alerts]")).to_contain_text("Declared coin creator")
+    expect(page.get_by_role("link", name="Pool creation link ↗")).to_have_attribute(
+        "href", alert["relationship_source_url"]
+    )
+    expect(
+        page.get_by_role("link", name="Pool-linked wallet sold · 6.000000 tokens ↗")
+    ).to_have_attribute("href", alert["source_url"])
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    updated = {**market, "integrity_alerts": []}
+    page.route("**/api/memecoins?**", lambda route: route.fulfill(json=updated))
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    expect(page.locator("[data-integrity-alerts] li")).to_have_count(0)
+    expect(page.locator("[data-integrity-empty]")).to_be_visible()
+
+
+def test_pattern_findings_show_basis_evidence_and_credit_budget(page: Page) -> None:
+    alert = {
+        "title": "Buyers share a SOL funding source",
+        "basis": "relationship",
+        "wallet": "root",
+        "token_address": "mint",
+        "observed_at": NOW.isoformat(),
+        "source_url": "https://solscan.io/tx/buy",
+        "related_wallets": ["wallet-a", "wallet-b"],
+        "explanation": "Shared services can also create this funding pattern.",
+        "evidence": [{"kind": "sol_transfer", "source_url": "https://solscan.io/tx/fund"}],
+    }
+    market = _market(
+        integrity_alerts=[alert],
+        integrity_coverage={
+            "checked_at": NOW.isoformat(),
+            "budget": {"reserved_credits": 8640, "daily_limit": 10000},
+            "recorded_coverage_gaps": 2,
+        },
+    )
+    _open(page, _html("market", market=market))
+    expect(page.locator("[data-integrity-alerts]")).to_contain_text("wallet-a · wallet-b")
+    expect(page.locator("[data-integrity-alerts]")).to_contain_text(alert["explanation"])
+    expect(page.locator("[data-integrity-gaps]")).to_contain_text("2 recorded coverage gaps")
+    expect(page.locator("[data-integrity-budget]")).to_have_text(
+        "8640 / 10000 credits reserved today"
+    )
+    page.route("**/api/memecoins?**", lambda route: route.fulfill(json=market))
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    expect(page.locator("[data-integrity-alerts]")).to_contain_text("relationship")
+    expect(page.get_by_role("link", name="sol_transfer ↗")).to_have_attribute(
+        "href", "https://solscan.io/tx/fund"
+    )
+    expect(page.locator("[data-integrity-alerts]")).not_to_contain_text("undefined")
+
+
+@pytest.mark.parametrize(
+    "unsafe_url", ["javascript:alert(1)", "data:text/html,<script>alert(1)</script>"]
+)
+def test_refreshed_evidence_links_require_solscan_transactions(page: Page, unsafe_url: str) -> None:
+    market = _market(
+        integrity_alerts=[
+            {
+                "title": "Observed trade",
+                "wallet": "wallet",
+                "token_address": "mint",
+                "observed_at": NOW.isoformat(),
+                "source_url": unsafe_url,
+                "relationship_source_url": unsafe_url,
+                "evidence": [{"kind": "proof", "source_url": unsafe_url}],
+            }
+        ]
+    )
+    _open(page, _html("market", market=_market()))
+    page.route("**/api/memecoins?**", lambda route: route.fulfill(json=market))
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    links = page.locator("[data-integrity-alerts] a")
+    expect(links).to_have_count(3)
+    for link in links.all():
+        expect(link).to_have_attribute("href", "#")

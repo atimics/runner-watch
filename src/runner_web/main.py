@@ -6115,6 +6115,19 @@ def memecoins_page(
     )
 
 
+@app.get("/api/memecoins/evidence/{signature}")
+def memecoin_transaction_evidence(request: Request, signature: str):
+    from runner_web.memecoin_evidence import transaction_receipt
+
+    enforce_rate(request, "memecoin_evidence", limit=30, seconds=60)
+    if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{64,88}", signature):
+        raise HTTPException(404, "Transaction receipt unavailable")
+    receipt = transaction_receipt(signature)
+    if receipt is None:
+        raise HTTPException(404, "Transaction receipt unavailable")
+    return receipt
+
+
 @app.get("/api/memecoins")
 def memecoins_api(request: Request, q: str = "", sort: str = "volume", view: str = "radar"):
     enforce_rate(request, "memecoins", limit=120, seconds=60)
