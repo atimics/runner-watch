@@ -180,6 +180,7 @@
       showStatus(page.kind === 'market' ? '[data-market-status]' : page.kind === 'detail' ? '[data-detail-status]' : '[data-alpha-status]', 'Saved updates are delayed. Try Refresh again shortly.');
     } finally { clearTimeout(timeout); refreshing = false; buttons.forEach((button) => { button.disabled = false; button.textContent = 'Refresh'; }); }
   }
+  find('[data-coin-sort]')?.addEventListener('change', () => find('[data-coin-filters]').requestSubmit());
   document.querySelectorAll('[data-coin-refresh]').forEach((button) => button.addEventListener('click', refresh));
   find('[data-coin-call-endpoint]')?.addEventListener('click', async (event) => {
     const button = event.currentTarget; if (actionPending || button.disabled) return;

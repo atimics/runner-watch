@@ -1,6 +1,7 @@
 {% extends "mobile_base.html" %}
 {% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
 {% set list_path = list_path|default('/memecoins') %}
+{% set coin_search_path = list_path %}
 {% set list_title = list_title|default('Memecoins') %}
 {% set list_view = market.view|default(list_view|default('pulse')) %}
 {% block app_class %}workspace-app memecoins-app{% endblock %}
@@ -14,15 +15,16 @@
       {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open {{ comment_avatar.name }} profile">{{ render_comment_avatar(comment_avatar) }}</button>{% else %}<a class="avatar-button signed-out" href="/login?next={{ (request.url.path ~ ('?' ~ request.url.query if request.url.query else ''))|urlencode }}">Log in</a>{% endif %}
     </header>
     <main class="meme-market" aria-label="Memecoin markets">
-      <p class="meme-source" data-market-scope>{{ 'Fresh quotes · up to 20 coins' if list_view == 'pulse' else 'Full CoinGecko snapshot' }}</p>
-      <form class="meme-filters" action="{{ list_path }}" method="get" role="search" data-coin-filters>
-        <label>Find a coin<input type="search" name="q" value="{{ market.query }}" maxlength="80" placeholder="Name or symbol"></label>
-        <label>Sort by<select name="sort">
+      <div class="meme-toolbar">
+        <label class="meme-sort">Sort<select name="sort" form="coinSearch" aria-label="Sort by" data-coin-sort>
           {% for value, label in [('volume', '24h volume'), ('market_cap', 'Market cap'), ('gainers', '24h gainers'), ('losers', '24h losers')] %}<option value="{{ value }}"{% if market.sort == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
         </select></label>
-        <button type="submit">Apply</button>
-      </form>
-      <div class="meme-refresh-row"><p data-market-updated>{% if market.collected_at %}Collected <time datetime="{{ market.collected_at }}">{{ market.collected_at[:16]|replace('T', ' ') }} UTC</time>{% else %}First collection pending{% endif %}</p><button type="button" data-coin-refresh>Refresh</button></div>
+        <button type="button" data-coin-refresh>Refresh</button>
+      </div>
+      <div class="meme-market-context">
+        <p data-market-scope>{{ 'Fresh quotes · up to 20 coins' if list_view == 'pulse' else 'Full CoinGecko snapshot' }}</p>
+        <p data-market-updated>{% if market.collected_at %}Collected <time datetime="{{ market.collected_at }}">{{ market.collected_at[:16]|replace('T', ' ') }} UTC</time>{% else %}First collection pending{% endif %}</p>
+      </div>
       <p class="meme-status" role="status" data-market-status{% if market.status == 'ok' and not market.refresh_failed %} hidden{% endif %}>{% if market.status == 'disabled' %}Collection paused. Saved market data will return when collection resumes.{% elif market.status == 'stale' %}Saved prices · Quote updates are delayed.{% elif market.refresh_failed %}Saved prices · The source refresh will retry shortly.{% endif %}</p>
       <div class="token-list" data-coin-list>
         {% for coin in market.rows %}

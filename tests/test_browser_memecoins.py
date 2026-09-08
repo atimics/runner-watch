@@ -5,6 +5,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from playwright.sync_api import Page, Route, expect
@@ -465,3 +466,40 @@ def test_stale_pulse_links_to_saved_radar_prices(page: Page) -> None:
     expect(page.get_by_role("link", name="View saved prices in Radar")).to_have_attribute(
         "href", "/memecoins/radar?q=doge&sort=gainers"
     )
+
+
+@pytest.mark.parametrize("width,signed_in", [(390, False), (1440, True)])
+def test_shared_search_and_sort_submit_current_coin_filters(
+    page: Page, width: int, signed_in: bool
+) -> None:
+    page.set_viewport_size({"width": width, "height": 900})
+
+    def market_page(route: Route) -> None:
+        query = parse_qs(urlsplit(route.request.url).query)
+        route.fulfill(
+            body=_html(
+                "market",
+                signed_in=signed_in,
+                market=_market(
+                    query=query.get("q", [""])[0],
+                    sort=query.get("sort", ["volume"])[0],
+                ),
+            ),
+            content_type="text/html",
+        )
+
+    page.route("http://app.test/**", market_page)
+    page.goto("http://app.test/memecoins/radar?q=doge&sort=gainers")
+    search = page.get_by_role("searchbox", name="Find a coin")
+    expect(page.get_by_role("search")).to_have_count(1)
+    search.fill("Pepe & friends")
+    page.get_by_role("button", name="Search coins").click()
+    expect(page).to_have_url(re.compile(r"q=Pepe\+%26\+friends&sort=gainers$"))
+    expect(search).to_have_value("Pepe & friends")
+    page.get_by_role("combobox", name="Sort by").select_option("market_cap")
+    expect(page).to_have_url(re.compile(r"q=Pepe\+%26\+friends&sort=market_cap$"))
+    expect(search).to_have_value("Pepe & friends")
+    search.fill("")
+    search.press("Enter")
+    expect(page).to_have_url(re.compile(r"q=&sort=market_cap$"))
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
