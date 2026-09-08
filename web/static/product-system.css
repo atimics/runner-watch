@@ -1280,3 +1280,11 @@ html.embedded-pane .market-switcher {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* The media loop sits beside the live story feed. */
+.media-game-intro { padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.media-game-intro h2 { margin: 8px 0; font-size: 22px; line-height: 1.2; }
+.media-game-intro p, .avatar-story-note { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.media-game-intro p { margin: 0 0 12px; }
+.media-game-intro a { display: inline-flex; align-items: center; gap: 12px; min-height: 44px; color: var(--accent); font-weight: 700; }
+.avatar-story-note { margin: 0 0 12px; }

@@ -802,6 +802,9 @@ def test_sports_comments_use_the_shared_flash_funded_generator(
             "test/sports-comment-model",
         ),
     )
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
     comment_request = Request(
         {
             "type": "http",
@@ -809,7 +812,8 @@ def test_sports_comments_use_the_shared_flash_funded_generator(
             "path": f"/api/comments/game/{event['id']}",
             "headers": [(b"idempotency-key", b"sports-comment-request-0001")],
             "client": ("127.0.0.1", 4300),
-        }
+        },
+        receive=receive,
     )
 
     response = asyncio.run(create_sports_comment(str(event["id"]), comment_request, None))

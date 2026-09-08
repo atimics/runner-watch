@@ -197,7 +197,7 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert template.count("<textarea") == 0
     assert "flash_comments('stock', detail.ticker" in template
     assert 'id="generateComment"' in comments
-    assert "Post with avatar" in comments
+    assert "Summon avatar" in comments
     assert "Persistent avatars · public across tickers" not in template
     assert "ability guides a short Flash draft" not in template
     assert "Start the read" not in template
@@ -1778,6 +1778,10 @@ def test_alpha_ranks_public_calls_and_shows_pnl(tmp_path: Path, monkeypatch: Mon
     assert board["total_comments"] == 1
 
 
+async def _empty_comment_body() -> dict[str, Any]:
+    return {"type": "http.request", "body": b"", "more_body": False}
+
+
 def test_ticker_feedback_tracks_signed_in_public_comments(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
@@ -1824,9 +1828,13 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
         ],
         "client": ("127.0.0.78", 4780),
     }
-    comment_request = Request(request_scope)
+    comment_request = Request(request_scope, receive=_empty_comment_body)
     result = asyncio.run(create_ticker_comment("ONE", comment_request, raw_session))
-    replay = asyncio.run(create_ticker_comment("ONE", Request(request_scope), raw_session))
+    replay = asyncio.run(
+        create_ticker_comment(
+            "ONE", Request(request_scope, receive=_empty_comment_body), raw_session
+        )
+    )
     payload = json.loads(result.body)
     replay_payload = json.loads(replay.body)
 
@@ -1983,7 +1991,11 @@ def test_failed_ticker_comment_request_refunds_once_and_replays_the_error(
 
     for _attempt in range(2):
         with pytest.raises(HTTPException) as error:
-            asyncio.run(create_ticker_comment("ONE", Request(request_scope), raw_session))
+            asyncio.run(
+                create_ticker_comment(
+                    "ONE", Request(request_scope, receive=_empty_comment_body), raw_session
+                )
+            )
         assert error.value.status_code == 502
         assert error.value.detail == "AI comment generation failed. Your Flash was returned."
 

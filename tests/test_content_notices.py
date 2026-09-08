@@ -188,14 +188,13 @@ def test_operator_cli_rejects_invalid_records_without_writes(notice_db, args):
         "/api/comments/comment-sport/disclosures",
     ],
 )
-def test_author_disclosures_require_ownership_and_origin_and_retry_safely(notice_db, endpoint):
-    payload = {"disclosure_kind": "sponsorship", "disclosure": "The issuer paid me for this post."}
-    headers = {"Origin": web_main.APP_ORIGIN}
-    client = _client()
-    try:
-        assert client.post(endpoint, headers=headers, json=payload).status_code == 401
-        client.cookies.set(web_main.SESSION_COOKIE, "bob")
-        assert client.post(endpoint, headers=headers, json=payload).status_code == 404
+def test_player_disclosure_routes_are_closed(notice_db, endpoint):
+    payload = {"disclosure_kind": "sponsorship", "disclosure": "Player text"}
+    with _client() as client:
+        assert (
+            client.post(endpoint, headers={"Origin": web_main.APP_ORIGIN}, json=payload).status_code
+            == 401
+        )
         client.cookies.set(web_main.SESSION_COOKIE, "alice")
         assert (
             client.post(
@@ -204,31 +203,11 @@ def test_author_disclosures_require_ownership_and_origin_and_retry_safely(notice
             == 403
         )
         assert (
-            client.post(
-                endpoint, headers=headers, json={"disclosure_kind": "sponsorship"}
-            ).status_code
-            == 422
+            client.post(endpoint, headers={"Origin": web_main.APP_ORIGIN}, json=payload).status_code
+            == 410
         )
-        first = client.post(endpoint, headers=headers, json=payload)
-        assert first.status_code == 200
-        second = client.post(endpoint, headers=headers, json=payload)
-        assert first.json() == second.json()
-        assert first.json()["notice"]["recorded_by"] == "author"
-        assert len(first.json()["disclosures"]) == 1
-        if "/research/" in endpoint:
-            assert "Disclosure" in first.json()["share_title"]
-            assert first.json()["share_summary"] == "Disclosure: Original summary"
-        assert set(first.json()["notice"]) == {
-            "id",
-            "kind",
-            "label",
-            "text",
-            "reason",
-            "created_at",
-            "recorded_by",
-        }
-    finally:
-        client.close()
+    with connection() as database:
+        assert database.execute("SELECT COUNT(*) FROM content_notices").fetchone()[0] == 0
 
 
 def test_concurrent_author_retry_stores_one_notice(notice_db):
@@ -309,58 +288,43 @@ def test_export_and_delete_include_notices_and_refresh_report(notice_db, delete)
 
 
 @pytest.mark.parametrize("subject", ["stock", "game"])
-def test_generated_comment_stores_disclosure_separately_from_model_input(
-    notice_db, monkeypatch, subject
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"disclosure_kind": "holdings", "disclosure": "Player text"},
+        {"body": "Player text"},
+        {"prompt": "Player text"},
+        [],
+        "Player text",
+    ],
+)
+def test_generated_reactions_reject_player_text_before_generation_or_charge(
+    notice_db, monkeypatch, subject, payload
 ):
     seen = []
 
     def generate(key, *, avatar):
-        seen.append((key, avatar))
+        seen.append(key)
         return "Generated from source evidence.", "test/model"
 
     monkeypatch.setattr(web_main, "_generate_ticker_comment_text", generate)
     monkeypatch.setattr(web_main, "_generate_sports_comment_text", generate)
     monkeypatch.setattr(web_main, "sports_event", lambda _: {"id": "game1"})
-    client = _client("alice")
-    try:
+    with connection() as database:
+        before = database.execute("SELECT COUNT(*) FROM flash_transactions").fetchone()[0]
+    with _client("alice") as client:
         response = client.post(
             f"/api/comments/{subject}/{'FIX' if subject == 'stock' else 'game1'}",
-            headers={
-                "Origin": web_main.APP_ORIGIN,
-                "Idempotency-Key": f"disclosure-{subject}-request",
-            },
-            json={"disclosure_kind": "holdings", "disclosure": "PRIVATE-RELATIONSHIP-SENTINEL"},
+            headers={"Origin": web_main.APP_ORIGIN, "Idempotency-Key": "media-reaction-request"},
+            json=payload,
         )
-        assert response.status_code == 201, response.text
-        comment = response.json()["comment"]
-        assert comment["disclosures"][0]["text"] == "PRIVATE-RELATIONSHIP-SENTINEL"
-        assert "PRIVATE-RELATIONSHIP-SENTINEL" not in json.dumps(seen)
-        assert "PRIVATE-RELATIONSHIP-SENTINEL" not in comment["body"]
-        replay = client.post(
-            f"/api/comments/{subject}/{'FIX' if subject == 'stock' else 'game1'}",
-            headers={
-                "Origin": web_main.APP_ORIGIN,
-                "Idempotency-Key": f"disclosure-{subject}-request",
-            },
-            json={"disclosure_kind": "compensation", "disclosure": "A different retry body."},
-        )
-        assert replay.json()["comment"] == comment
-        assert len(seen) == 1
+        assert response.status_code == 422, response.text
+    assert seen == []
+    with connection() as database:
+        assert database.execute("SELECT COUNT(*) FROM flash_transactions").fetchone()[0] == before
         assert (
-            client.delete(
-                f"/api/comments/{comment['id']}", headers={"Origin": web_main.APP_ORIGIN}
-            ).status_code
-            == 200
+            database.execute("SELECT COUNT(*) FROM comment_generation_requests").fetchone()[0] == 0
         )
-        with connection() as database:
-            assert (
-                database.execute(
-                    "SELECT COUNT(*) FROM content_notices WHERE comment_id=?", (comment["id"],)
-                ).fetchone()[0]
-                == 0
-            )
-    finally:
-        client.close()
 
 
 @pytest.mark.parametrize(

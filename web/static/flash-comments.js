@@ -94,35 +94,21 @@
     const list = thread.querySelector('[data-comment-list]');
     const count = thread.querySelector('[data-comment-count]');
     const empty = thread.querySelector('[data-comment-empty]');
-    const disclosureKind = thread.querySelector('[data-comment-disclosure-kind]');
-    const disclosureText = thread.querySelector('[data-comment-disclosure]');
     const storageKey = `pending-comment:${thread.dataset.commentStorageKey}`;
     let pending = null;
-    let pendingDisclosure = {};
     try {
       pending = sessionStorage.getItem(storageKey);
-      if (pending) {
-        const saved = JSON.parse(sessionStorage.getItem(`${storageKey}:disclosure`) || '{}');
-        if (saved && typeof saved === 'object' && !Array.isArray(saved)) pendingDisclosure = saved;
-      }
+      sessionStorage.removeItem(`${storageKey}:disclosure`);
     } catch (_) {}
-    if (pending && disclosureKind && disclosureText) {
-      disclosureKind.value = pendingDisclosure.disclosure_kind || '';
-      disclosureText.value = pendingDisclosure.disclosure || '';
-      disclosureKind.disabled = true;
-      disclosureText.disabled = true;
-    }
 
     const remember = value => {
       pending = value;
       try {
         if (value) {
           sessionStorage.setItem(storageKey, value);
-          sessionStorage.setItem(`${storageKey}:disclosure`, JSON.stringify(pendingDisclosure));
         } else {
           sessionStorage.removeItem(storageKey);
           sessionStorage.removeItem(`${storageKey}:disclosure`);
-          pendingDisclosure = {};
         }
       } catch (_) {}
     };
@@ -131,7 +117,7 @@
       try {
         const response = await fetch(thread.dataset.commentEndpoint, {
           method: 'POST', headers: {'Idempotency-Key': pending, 'Content-Type': 'application/json'},
-          body: JSON.stringify(pendingDisclosure),
+          body: '{}',
         });
         const responseText = await response.text();
         let result = null;
@@ -147,23 +133,10 @@
     });
 
     generate?.addEventListener('click', async () => {
-      if (!pending) {
-        const kind = disclosureKind?.value || '';
-        const disclosure = disclosureText?.value.trim() || '';
-        if (Boolean(kind) !== Boolean(disclosure) || (disclosure && disclosure.length < 3)) {
-          status.textContent = 'Choose a relationship and add at least 3 characters of public details.';
-          thread.querySelector('.comment-disclosure-form').open = true;
-          (kind ? disclosureText : disclosureKind)?.focus();
-          return;
-        }
-        pendingDisclosure = kind ? {disclosure_kind: kind, disclosure} : {};
-      }
       if (window.RatiFlash?.canSpend && !window.RatiFlash.canSpend(COST)) return;
       if (!pending) remember(requestId());
       generate.disabled = true;
-      if (disclosureKind) disclosureKind.disabled = true;
-      if (disclosureText) disclosureText.disabled = true;
-      status.textContent = 'Your AI avatar is posting…';
+      status.textContent = 'Your avatar is reading the story…';
       try {
         let recoveryAttempt = 0;
         let response;
@@ -190,9 +163,7 @@
           item => item.dataset.commentId === String(result.comment.id)
         );
         if (!shown) list.prepend(renderComment(result.comment));
-        status.textContent = 'Posted';
-        if (disclosureKind) disclosureKind.value = '';
-        if (disclosureText) disclosureText.value = '';
+        status.textContent = 'Reaction added';
         count.textContent = result.count;
         empty.hidden = true;
         window.RatiFlash?.updateBalance?.(result.balance);
@@ -201,8 +172,6 @@
         status.textContent = error.message || 'Could not post.';
       } finally {
         generate.disabled = false;
-        if (disclosureKind) disclosureKind.disabled = Boolean(pending);
-        if (disclosureText) disclosureText.disabled = Boolean(pending);
       }
     });
 
