@@ -42,6 +42,7 @@
     if (market.refresh_failed) return 'Saved prices · The source refresh will retry shortly.';
     return '';
   };
+  const evidenceUrl = (value) => typeof value === 'string' && /^https:\/\/solscan\.io\/tx\/[A-Za-z0-9]+$/.test(value) ? value : '#';
   function renderIntegrity(market) {
     const list = find('[data-integrity-alerts]'); if (!list) return;
     const alerts = market.integrity_alerts || [];
@@ -49,15 +50,15 @@
     alerts.forEach((alert) => {
       const row = element('li');
       const link = element('a', `${alert.title}${alert.net_token_amount ? ` · ${alert.net_token_amount} tokens` : ''} ↗`);
-      link.href = alert.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      link.href = evidenceUrl(alert.source_url); link.target = '_blank'; link.rel = 'noopener noreferrer';
       const evidence = element('a', 'Pool creation link ↗');
-      evidence.href = alert.relationship_source_url || alert.source_url; evidence.target = '_blank'; evidence.rel = 'noopener noreferrer';
+      evidence.href = evidenceUrl(alert.relationship_source_url || alert.source_url); evidence.target = '_blank'; evidence.rel = 'noopener noreferrer';
       row.append(link, element('p', `${alert.wallet} · ${alert.token_address}`), element('small', `${time(alert.observed_at)} · ${alert.role_label || alert.basis || 'Observation'} · `), evidence);
       if (alert.related_wallets?.length) row.append(element('p', alert.related_wallets.join(' · ')));
       if (alert.explanation) row.append(element('p', alert.explanation));
       if (!alert.relationship_source_url) evidence.remove();
       (alert.evidence || []).slice(0, 6).forEach((proof) => {
-        const link = element('a', ` ${proof.kind} ↗`); link.href = proof.source_url;
+        const link = element('a', ` ${proof.kind} ↗`); link.href = evidenceUrl(proof.source_url);
         link.target = '_blank'; link.rel = 'noopener noreferrer'; row.append(link);
       });
       fragment.append(row);

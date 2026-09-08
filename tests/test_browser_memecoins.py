@@ -584,3 +584,29 @@ def test_pattern_findings_show_basis_evidence_and_credit_budget(page: Page) -> N
         "href", "https://solscan.io/tx/fund"
     )
     expect(page.locator("[data-integrity-alerts]")).not_to_contain_text("undefined")
+
+
+@pytest.mark.parametrize(
+    "unsafe_url", ["javascript:alert(1)", "data:text/html,<script>alert(1)</script>"]
+)
+def test_refreshed_evidence_links_require_solscan_transactions(page: Page, unsafe_url: str) -> None:
+    market = _market(
+        integrity_alerts=[
+            {
+                "title": "Observed trade",
+                "wallet": "wallet",
+                "token_address": "mint",
+                "observed_at": NOW.isoformat(),
+                "source_url": unsafe_url,
+                "relationship_source_url": unsafe_url,
+                "evidence": [{"kind": "proof", "source_url": unsafe_url}],
+            }
+        ]
+    )
+    _open(page, _html("market", market=_market()))
+    page.route("**/api/memecoins?**", lambda route: route.fulfill(json=market))
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    links = page.locator("[data-integrity-alerts] a")
+    expect(links).to_have_count(3)
+    for link in links.all():
+        expect(link).to_have_attribute("href", "#")
