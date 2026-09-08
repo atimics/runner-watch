@@ -35,7 +35,7 @@ DEFAULT_SOURCE_POLICIES = (
     SourcePolicy(
         source="helius",
         feed="memecoins",
-        title="Helius PumpSwap pool discovery",
+        title="Helius Solana launch and trade evidence",
         owner="Helius",
         terms_url="https://www.helius.dev/terms",
         credential_env="HELIUS_API_KEY",

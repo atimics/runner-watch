@@ -2860,6 +2860,45 @@ def _migration_057_content_notices(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_058_memecoin_chain_evidence(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        UPDATE source_registry SET enabled=0
+            WHERE feed='memecoins' AND source IN ('coingecko','geckoterminal');
+        CREATE TABLE IF NOT EXISTS memecoin_chain_transactions (
+            signature TEXT PRIMARY KEY, slot BIGINT NOT NULL, observed_at TEXT NOT NULL,
+            evidence_json TEXT NOT NULL, evidence_sha256 TEXT NOT NULL,
+            collected_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS memecoin_chain_transactions_time
+            ON memecoin_chain_transactions(observed_at,signature);
+        CREATE TABLE IF NOT EXISTS memecoin_chain_events (
+            event_id TEXT PRIMARY KEY, kind TEXT NOT NULL, token_address TEXT,
+            wallet TEXT, pool_address TEXT, observed_at TEXT NOT NULL,
+            signature TEXT NOT NULL, evidence_json TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS memecoin_chain_events_token
+            ON memecoin_chain_events(token_address,observed_at);
+        CREATE INDEX IF NOT EXISTS memecoin_chain_events_wallet
+            ON memecoin_chain_events(wallet,observed_at);
+        CREATE INDEX IF NOT EXISTS memecoin_chain_events_kind
+            ON memecoin_chain_events(kind,observed_at);
+        CREATE TABLE IF NOT EXISTS memecoin_chain_cursors (
+            stream TEXT PRIMARY KEY, state_json TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS memecoin_chain_gaps (
+            stream TEXT NOT NULL, start_time BIGINT NOT NULL, end_time BIGINT NOT NULL,
+            reason TEXT NOT NULL, recorded_at TEXT NOT NULL,
+            PRIMARY KEY(stream,start_time,end_time)
+        );
+        CREATE TABLE IF NOT EXISTS memecoin_helius_budget (
+            day TEXT PRIMARY KEY, reserved_credits INTEGER NOT NULL,
+            request_count INTEGER NOT NULL, updated_at TEXT NOT NULL
+        );
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2929,6 +2968,7 @@ MIGRATIONS = (
     Migration(55, "memecoin_quote_history", _migration_055_memecoin_quote_history),
     Migration(56, "memecoin_calls", _migration_056_memecoin_calls),
     Migration(57, "content_notices", _migration_057_content_notices),
+    Migration(58, "memecoin_chain_evidence", _migration_058_memecoin_chain_evidence),
 )
 
 

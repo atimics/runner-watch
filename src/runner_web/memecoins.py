@@ -13,8 +13,10 @@ from typing import Any
 from runner_watch.ingestion import SourceFetch
 from runner_watch.xml_security import read_limited
 from runner_web.db import connection
-from runner_web.helius_discovery import RPC_URL, Rpc, discover_pools
+from runner_web.helius_discovery import RPC_URL, Rpc
 from runner_web.ingestion import record_source_fetch
+from runner_web.memecoin_chain_ingestion import collect_chain as discover_pools
+from runner_web.memecoin_forensics import analyze_events
 from runner_web.memecoin_integrity import creator_trades
 from runner_web.memecoin_store import memecoin_history, save_memecoin_snapshot, stored_memecoin
 
@@ -229,11 +231,13 @@ def _collect_helius(
     candidates = {}
     for candidate in discovery["pools"] + previous:
         created = _time(candidate.get("created_at"))
-        if created and 0 <= (at - created).total_seconds() <= 86400:
+        if created and 0 <= (at - created).total_seconds() <= 30 * 86400:
             candidates.setdefault(candidate["pool_address"], candidate)
     selected = sorted(candidates.values(), key=lambda item: item["created_at"], reverse=True)[:100]
     # Keep chain discoveries while USD quotes become available in the pool index.
     _save_state("helius_discovered_pools", selected, at)
+    analytics = analyze_events(discovery.get("events", []))
+    _save_state("memecoin_forensics", analytics, at)
     alerts = creator_trades(discovery.get("transactions", []), selected, at=at)
     with connection() as database:
         saved_alerts = database.execute(
@@ -253,11 +257,16 @@ def _collect_helius(
         "memecoin_integrity_coverage",
         {
             "checked_at": at.isoformat(),
-            "program": "PumpSwap",
+            "program": "Pump, PumpSwap, Raydium CPMM",
+            "streams": discovery.get("coverage", {}).get("streams", []),
+            "budget": discovery.get("coverage", {}).get("budget", {}),
+            "recorded_coverage_gaps": discovery.get("coverage", {}).get(
+                "recorded_coverage_gaps", 0
+            ),
             "commitment": "finalized",
             "received_transactions": discovery.get("received_transactions", 0),
             "partial": discovery.get("partial", False),
-            "mode": "sampled",
+            "mode": "resumable",
         },
         at,
     )
@@ -293,7 +302,9 @@ def _collect_helius(
         row["discovery"] = allowed[row["pool_address"]]
         row["discovery_source"] = "Helius"
     metadata = {
-        key: value for key, value in discovery.items() if key not in {"pools", "transactions"}
+        key: value
+        for key, value in discovery.items()
+        if key not in {"pools", "transactions", "events"}
     }
     metadata.update(
         discovered_pools=len(discovery["pools"]),
@@ -375,7 +386,7 @@ def _market_states() -> dict[str, Any]:
         for state in database.execute(
             "SELECT key,value FROM worker_state "
             "WHERE key IN ('memecoins_snapshot','memecoins_error',"
-            "'memecoin_integrity_alerts','memecoin_integrity_coverage')"
+            "'memecoin_integrity_alerts','memecoin_integrity_coverage','memecoin_forensics')"
         ).fetchall():
             try:
                 states[state["key"]] = json.loads(state["value"])
@@ -467,8 +478,13 @@ def memecoin_market(
         "source": rows[0].get("source", "CoinGecko") if rows else SOURCE,
         "refresh_seconds": REFRESH_SECONDS,
         "discovery_source": "Helius",
-        "integrity_alerts": states.get("memecoin_integrity_alerts") or [],
+        "integrity_alerts": (
+            (states.get("memecoin_forensics") or {}).get("findings", [])
+            if (states.get("memecoin_forensics") or {}).get("analyzed_events")
+            else states.get("memecoin_integrity_alerts") or []
+        ),
         "integrity_coverage": states.get("memecoin_integrity_coverage") or {},
+        "forensics": states.get("memecoin_forensics") or {},
     }
 
 

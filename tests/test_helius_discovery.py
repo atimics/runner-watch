@@ -21,7 +21,7 @@ def creation():
     data = helius.CREATE_POOL + bytes(18) + helius._decode(CREATOR)
     return {
         "slot": 100,
-        "blockTime": int(AT.timestamp()) - 30,
+        "blockTime": int(AT.timestamp()) - 120,
         "meta": {"err": None, "innerInstructions": []},
         "transaction": {
             "signatures": [SIGNATURE],
@@ -66,7 +66,7 @@ def reply(entries, cursor=None):
     return {"result": {"data": entries, "paginationToken": cursor}}
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def database(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "helius.db")
     monkeypatch.setattr(db, "DATABASE_URL", "")
@@ -206,7 +206,7 @@ def test_full_refresh_keeps_evidence_before_quotes_arrive(database):
     market = memecoins.memecoin_market(at=AT)
     assert market["rows"] == []
     assert market["integrity_alerts"][0]["net_token_amount"] == "6.000000"
-    assert market["integrity_coverage"]["received_transactions"] == 2
+    assert market["integrity_coverage"]["received_transactions"] == 6
     again = memecoins.refresh_memecoins(
         at=AT + timedelta(minutes=5), rpc=lambda _: reply([sale()]), download=download
     )

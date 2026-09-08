@@ -548,3 +548,39 @@ def test_on_chain_watch_shows_both_receipts_and_refreshes(page: Page) -> None:
     page.get_by_role("button", name="Refresh", exact=True).click()
     expect(page.locator("[data-integrity-alerts] li")).to_have_count(0)
     expect(page.locator("[data-integrity-empty]")).to_be_visible()
+
+
+def test_pattern_findings_show_basis_evidence_and_credit_budget(page: Page) -> None:
+    alert = {
+        "title": "Buyers share a SOL funding source",
+        "basis": "relationship",
+        "wallet": "root",
+        "token_address": "mint",
+        "observed_at": NOW.isoformat(),
+        "source_url": "https://solscan.io/tx/buy",
+        "related_wallets": ["wallet-a", "wallet-b"],
+        "explanation": "Shared services can also create this funding pattern.",
+        "evidence": [{"kind": "sol_transfer", "source_url": "https://solscan.io/tx/fund"}],
+    }
+    market = _market(
+        integrity_alerts=[alert],
+        integrity_coverage={
+            "checked_at": NOW.isoformat(),
+            "budget": {"reserved_credits": 8640, "daily_limit": 10000},
+            "recorded_coverage_gaps": 2,
+        },
+    )
+    _open(page, _html("market", market=market))
+    expect(page.locator("[data-integrity-alerts]")).to_contain_text("wallet-a · wallet-b")
+    expect(page.locator("[data-integrity-alerts]")).to_contain_text(alert["explanation"])
+    expect(page.locator("[data-integrity-gaps]")).to_contain_text("2 recorded coverage gaps")
+    expect(page.locator("[data-integrity-budget]")).to_have_text(
+        "8640 / 10000 credits reserved today"
+    )
+    page.route("**/api/memecoins?**", lambda route: route.fulfill(json=market))
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    expect(page.locator("[data-integrity-alerts]")).to_contain_text("relationship")
+    expect(page.get_by_role("link", name="sol_transfer ↗")).to_have_attribute(
+        "href", "https://solscan.io/tx/fund"
+    )
+    expect(page.locator("[data-integrity-alerts]")).not_to_contain_text("undefined")

@@ -48,14 +48,26 @@
     const fragment = document.createDocumentFragment();
     alerts.forEach((alert) => {
       const row = element('li');
-      const link = element('a', `${alert.title} · ${alert.net_token_amount} tokens ↗`);
+      const link = element('a', `${alert.title}${alert.net_token_amount ? ` · ${alert.net_token_amount} tokens` : ''} ↗`);
       link.href = alert.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer';
       const evidence = element('a', 'Pool creation link ↗');
-      evidence.href = alert.relationship_source_url; evidence.target = '_blank'; evidence.rel = 'noopener noreferrer';
-      row.append(link, element('p', `${alert.wallet} · ${alert.token_address}`), element('small', `${time(alert.observed_at)} · ${alert.role_label} · Wallet net change · `), evidence);
+      evidence.href = alert.relationship_source_url || alert.source_url; evidence.target = '_blank'; evidence.rel = 'noopener noreferrer';
+      row.append(link, element('p', `${alert.wallet} · ${alert.token_address}`), element('small', `${time(alert.observed_at)} · ${alert.role_label || alert.basis || 'Observation'} · `), evidence);
+      if (alert.related_wallets?.length) row.append(element('p', alert.related_wallets.join(' · ')));
+      if (alert.explanation) row.append(element('p', alert.explanation));
+      if (!alert.relationship_source_url) evidence.remove();
+      (alert.evidence || []).slice(0, 6).forEach((proof) => {
+        const link = element('a', ` ${proof.kind} ↗`); link.href = proof.source_url;
+        link.target = '_blank'; link.rel = 'noopener noreferrer'; row.append(link);
+      });
       fragment.append(row);
     });
     list.replaceChildren(fragment);
+    const budget = market.integrity_coverage?.budget;
+    put('[data-integrity-budget]', budget ? `${budget.reserved_credits} / ${budget.daily_limit} credits reserved today` : '');
+    const gaps = market.integrity_coverage?.recorded_coverage_gaps || 0;
+    const gapNote = find('[data-integrity-gaps]');
+    if (gapNote) { gapNote.hidden = !gaps; gapNote.textContent = `${gaps} recorded coverage gaps. Source progress is available in the data feed.`; }
     const empty = find('[data-integrity-empty]'); if (empty) empty.hidden = alerts.length > 0;
     put('[data-integrity-coverage]', market.integrity_coverage?.checked_at ? `Checked ${time(market.integrity_coverage.checked_at)}` : 'First check pending');
   }
