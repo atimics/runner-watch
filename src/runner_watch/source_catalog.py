@@ -33,9 +33,9 @@ class SourcePolicy:
 
 DEFAULT_SOURCE_POLICIES = (
     SourcePolicy(
-        source="coingecko",
+        source="geckoterminal",
         feed="memecoins",
-        title="CoinGecko memecoin markets",
+        title="GeckoTerminal new DEX pools",
         owner="CoinGecko",
         terms_url="https://www.coingecko.com/en/api_terms",
         credential_env=None,
@@ -44,7 +44,7 @@ DEFAULT_SOURCE_POLICIES = (
         schedule="always",
         storage_policy="normalized_only",
         display_policy="source_link_with_attribution",
-        attribution="CoinGecko",
+        attribution="GeckoTerminal",
         review_status="review_required",
         enabled=_enabled_by_default("MEMECOINS_ENABLED"),
     ),

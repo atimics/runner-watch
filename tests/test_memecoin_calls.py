@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -72,7 +73,12 @@ def _coin(clock: dict[str, datetime], coin_id: str = "dogecoin", **extra: Any) -
 
 def _refresh(clock: dict[str, datetime], *coins: dict[str, Any]) -> dict[str, Any]:
     body = json.dumps(list(coins) or [_coin(clock)]).encode()
-    result = memecoins.refresh_memecoins(download=lambda *_: body, at=clock["now"])
+    with patch.object(
+        memecoins,
+        "normalize_chain_pools",
+        side_effect=lambda payload, **_: memecoins.normalize_memecoins(payload),
+    ):
+        result = memecoins.refresh_memecoins(download=lambda *_: body, at=clock["now"])
     assert result["status"] == "ok"
     return result
 

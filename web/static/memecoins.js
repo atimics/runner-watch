@@ -64,7 +64,7 @@
     });
     list.replaceChildren(fragment);
     if (focused) Array.from(list.children).find((row) => row.dataset.coinId === focused)?.focus({preventScroll: true});
-    put('[data-market-scope]', marketView(market) === 'pulse' ? 'Fresh quotes · up to 20 coins' : 'Full CoinGecko snapshot');
+    put('[data-market-scope]', marketView(market) === 'pulse' ? 'Fresh quotes · up to 20 coins' : 'New DEX pool snapshot');
     put('[data-coin-count]', `${market.rows.length} of ${market.total} coins`);
     put('[data-market-updated]', market.collected_at ? `Collected ${time(market.collected_at)}` : 'First collection pending');
     showStatus('[data-market-status]', marketMessage(market));
@@ -73,8 +73,9 @@
     if (!market.rows.length) {
       const messages = {
         disabled: ['Memecoin feed paused', 'The feed will return when collection resumes.'],
-        unavailable: ['Waiting for CoinGecko', 'The source refresh will retry shortly.'],
-        pending: ['First prices are on the way', 'The next collection will fill this list.']
+        unavailable: ['Waiting for pool data', 'The source refresh will retry shortly.'],
+        pending: ['First prices are on the way', 'The next collection will fill this list.'],
+        ...(market.total === 0 && market.collected_at ? {ok: ['Waiting for active pools', 'The next collection checks new pools for liquidity and trades.']} : {})
       };
       const waitingForFresh = marketView(market) === 'pulse' && market.status === 'stale';
       const message = waitingForFresh ? ['Waiting for fresh quotes', 'Radar has the saved prices from the latest collection.'] : messages[market.status] || ['Try another name or symbol', `Search covers the ${market.total} coins in this snapshot.`];
@@ -140,10 +141,16 @@
     put('[data-quote-time]', time(coin.observed_at)); put('[data-coin-volume]', coin.volume_label); put('[data-coin-cap]', coin.market_cap_label);
     document.querySelectorAll('[data-coin-metric]').forEach((node) => { const key = node.dataset.coinMetric, value = coin[key]; node.textContent = key.endsWith('24h') ? price(value) : finite(value) ? value.toLocaleString('en-US', {maximumFractionDigits: 2}) : 'unknown'; });
     put('[data-evidence-time]', time(coin.observed_at)); put('[data-collected-time]', time(detail.collected_at));
+    if (coin.network) {
+      put('[data-pool-address]', coin.pool_address);
+      put('[data-pool-liquidity]', price(coin.liquidity_usd));
+      put('[data-pool-trades]', `${coin.buys_24h} buys · ${coin.sells_24h} sells`);
+      const source = find('[data-pool-source]'); if (source) source.href = coin.source_url;
+    }
     let message = '';
     if (detail.status === 'disabled') message = 'Collection paused · Showing the saved quote.';
     else if (old || detail.status === 'stale') message = 'Saved quote · Waiting for a fresh source time.';
-    else if (!detail.in_current_snapshot) message = 'Saved coin · Outside the latest top-100 snapshot.';
+    else if (!detail.in_current_snapshot) message = 'Saved coin · Outside the latest discovery snapshot.';
     else if (detail.refresh_failed) message = 'Saved quote · The source refresh will retry shortly.';
     showStatus('[data-detail-status]', message);
     const canCall = !old && detail.status === 'ok' && detail.can_call !== false;

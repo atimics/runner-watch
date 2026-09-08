@@ -1,6 +1,7 @@
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlparse
 
@@ -38,7 +39,12 @@ def market_db(tmp_path, monkeypatch):
 
 def seed(rows=None, at=AT):
     body = json.dumps(rows if rows is not None else [coin()]).encode()
-    return memecoins.refresh_memecoins(download=lambda *_: body, at=at)
+    with patch.object(
+        memecoins,
+        "normalize_chain_pools",
+        side_effect=lambda payload, **_: memecoins.normalize_memecoins(payload),
+    ):
+        return memecoins.refresh_memecoins(download=lambda *_: body, at=at)
 
 
 def test_normalization_uses_coin_ids_and_keeps_tiny_prices():
@@ -94,7 +100,9 @@ def test_refresh_records_source_and_shares_request_budget(market_db):
     )
     assert seed(at=AT + timedelta(seconds=300))["status"] == "ok"
     with connection() as database:
-        runs = database.execute("SELECT * FROM ingestion_runs WHERE source='coingecko'").fetchall()
+        runs = database.execute(
+            "SELECT * FROM ingestion_runs WHERE source='geckoterminal'"
+        ).fetchall()
         assert len(runs) == 2
         assert all(row["status"] == "success" and row["received_count"] == 1 for row in runs)
         assert database.execute("SELECT COUNT(*) FROM scan_snapshots").fetchone()[0] == 0
@@ -222,7 +230,7 @@ def test_worker_refresh_runs_in_a_thread_and_cancels(monkeypatch):
     assert calls == [main.refresh_memecoins]
 
 
-def test_download_uses_bounded_public_category_request(monkeypatch):
+def test_download_uses_public_new_pool_request(monkeypatch):
     import io
 
     seen = []
@@ -234,9 +242,8 @@ def test_download_uses_bounded_public_category_request(monkeypatch):
     monkeypatch.setattr(memecoins.urllib.request, "urlopen", open_url)
     assert memecoins._download(memecoins.MARKETS_URL, 10) == b"[]"
     params = parse_qs(urlparse(seen[0][0].full_url).query)
-    assert params["category"] == ["meme-token"]
-    assert params["vs_currency"] == ["usd"]
-    assert params["per_page"] == ["100"]
+    assert params == {"page": ["1"]}
+    assert urlparse(seen[0][0].full_url).path.endswith("/networks/new_pools")
 
 
 def test_detail_has_its_quote_receipt_and_optional_market_fields(market_db):

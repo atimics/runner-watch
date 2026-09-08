@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -15,11 +16,9 @@ from runner_web.db import connection
 from runner_web.ingestion import record_source_fetch
 from runner_web.memecoin_store import memecoin_history, save_memecoin_snapshot, stored_memecoin
 
-MARKETS_URL = (
-    "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd"
-    "&category=meme-token&order=market_cap_desc&per_page=100&page=1"
-    "&sparkline=false&precision=full"
-)
+MARKETS_URL = "https://api.geckoterminal.com/api/v2/networks/new_pools?page=1"
+SOURCE = "GeckoTerminal"
+MIN_POOL_LIQUIDITY_USD = 1000
 REFRESH_SECONDS = 300
 STALE_SECONDS = 900
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -103,6 +102,94 @@ def normalize_memecoins(payload: Any) -> list[dict[str, Any]]:
     return list(rows.values())
 
 
+def normalize_chain_pools(payload: Any, *, at: datetime) -> list[dict[str, Any]]:
+    """Discover from pool records. Token identity and selection use chain fields only."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        raise ValueError("Expected DEX pool records")
+    if len(payload["data"]) > 100:
+        raise ValueError("Expected up to 100 pool records")
+    rows: dict[str, dict[str, Any]] = {}
+    for pool in payload["data"]:
+        try:
+            attrs = pool["attributes"]
+            links = pool["relationships"]
+            network = links["network"]["data"]["id"]
+            token_id = links["base_token"]["data"]["id"]
+            address = attrs["address"]
+            if not re.fullmatch(r"[a-z0-9-]{1,40}", network):
+                continue
+            if not token_id.startswith(network + "_"):
+                continue
+            token = token_id[len(network) + 1 :]
+            if not all(re.fullmatch(r"[A-Za-z0-9_-]{1,128}", x) for x in (token, address)):
+                continue
+            # EVM addresses are case insensitive; Solana addresses preserve case.
+            if re.fullmatch(r"0x[0-9a-fA-F]{40}", token):
+                token = token.lower()
+            price = _number(attrs.get("base_token_price_usd"), minimum=0)
+            liquidity = _number(attrs.get("reserve_in_usd"), minimum=0)
+            volume = _number(attrs.get("volume_usd", {}).get("h24"), minimum=0)
+            activity = attrs.get("transactions", {}).get("h24", {})
+            buys = _number(activity.get("buys"), minimum=0)
+            sells = _number(activity.get("sells"), minimum=0)
+            created = _time(attrs.get("pool_created_at"))
+            if (
+                price is None
+                or price <= 0
+                or liquidity is None
+                or liquidity < MIN_POOL_LIQUIDITY_USD
+                or volume is None
+                or volume <= 0
+                or buys is None
+                or sells is None
+                or buys + sells <= 0
+                or created is None
+                or created > at + timedelta(seconds=60)
+            ):
+                continue
+            coin_id = "chain-" + hashlib.sha256(f"{network}:{token}".encode()).hexdigest()
+            row = {
+                "id": coin_id,
+                "symbol": token[:8],
+                "name": f"{network} · {token}",
+                "network": network,
+                "token_address": token,
+                "pool_address": address,
+                "pool_created_at": created.isoformat(),
+                "liquidity_usd": liquidity,
+                "buys_24h": buys,
+                "sells_24h": sells,
+                "price": price,
+                "volume_24h": volume,
+                "market_cap": None,
+                "change_24h": _number(
+                    attrs.get("price_change_percentage", {}).get("h24"), minimum=-100
+                ),
+                "observed_at": at.isoformat(),
+                "time_basis": "indexer_fetch",
+                "source": SOURCE,
+                "source_url": f"https://www.geckoterminal.com/{network}/pools/{address}",
+                "detail_url": f"/memecoins/coin/{coin_id}",
+                "fully_diluted_valuation": _number(attrs.get("fdv_usd"), minimum=0),
+                "high_24h": None,
+                "low_24h": None,
+                "circulating_supply": None,
+                "total_supply": None,
+                "max_supply": None,
+            }
+            previous = rows.get(coin_id)
+            # One representative pool per token; keep its price and volume together.
+            if previous is None or (liquidity, volume, address) > (
+                previous["liquidity_usd"],
+                previous["volume_24h"],
+                previous["pool_address"],
+            ):
+                rows[coin_id] = row
+        except (KeyError, TypeError, AttributeError):
+            continue
+    return sorted(rows.values(), key=lambda row: (-row["volume_24h"], row["id"]))
+
+
 def _download(url: str, timeout: float) -> bytes:
     request = urllib.request.Request(
         url,
@@ -145,11 +232,11 @@ def refresh_memecoins(
         if len(body) > MAX_RESPONSE_BYTES:
             raise ValueError("Memecoin response exceeds the size limit")
         payload = json.loads(body)
-        rows = normalize_memecoins(payload)
+        rows = normalize_chain_pools(payload, at=at or datetime.now(UTC))
     except Exception as exc:
         run_id = record_source_fetch(
             SourceFetch.failure(
-                source="coingecko",
+                source="geckoterminal",
                 feed="memecoins",
                 locator=MARKETS_URL,
                 started_at=started,
@@ -161,14 +248,14 @@ def refresh_memecoins(
     collected_at = at or datetime.now(UTC)
     run_id = record_source_fetch(
         SourceFetch.success(
-            source="coingecko",
+            source="geckoterminal",
             feed="memecoins",
             locator=MARKETS_URL,
             started_at=started,
             payload=rows,
             content_type="application/json",
-            metadata={"received_count": len(rows), "requested_count": 100},
-            partial=len(rows) < len(payload),
+            metadata={"received_count": len(rows), "requested_count": 20, "selection": "new_pools"},
+            partial=False,
         )
     )
     save_memecoin_snapshot(rows, run_id=run_id, collected_at=collected_at)
@@ -239,7 +326,13 @@ def memecoin_market(
     total = len(rows)
     status = "stale" if rows and (stale or all(row["stale"] for row in rows)) else "ok"
     if not rows:
-        status = "unavailable" if states.get("memecoins_error") else "pending"
+        status = (
+            "unavailable"
+            if states.get("memecoins_error")
+            else "ok"
+            if collected is not None and not stale
+            else "pending"
+        )
     if not memecoins_enabled():
         status, rows = "disabled", []
     view = "pulse" if view == "pulse" else "radar"
@@ -281,7 +374,7 @@ def memecoin_market(
         "run_id": snapshot.get("run_id"),
         "refresh_failed": bool(states.get("memecoins_error")),
         "currency": "USD",
-        "source": "CoinGecko",
+        "source": rows[0].get("source", "CoinGecko") if rows else SOURCE,
         "refresh_seconds": REFRESH_SECONDS,
     }
 
@@ -315,7 +408,7 @@ def memecoin_detail(
         "status": status,
         "collected_at": saved["collected_at"],
         "refresh_failed": bool(states.get("memecoins_error")),
-        "source": "CoinGecko",
+        "source": coin.get("source", "CoinGecko"),
         "currency": "USD",
         "history": memecoin_history(coin_id, at=current, limit=history_limit),
         "evidence": {

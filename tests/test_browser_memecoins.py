@@ -215,7 +215,7 @@ def test_refresh_updates_saved_prices_and_preserves_filter_edits(page: Page) -> 
     [
         ("pending", "First prices are on the way"),
         ("disabled", "Memecoin feed paused"),
-        ("unavailable", "Waiting for CoinGecko"),
+        ("unavailable", "Waiting for pool data"),
         ("ok", "Try another name or symbol"),
     ],
 )
@@ -448,7 +448,7 @@ def test_refresh_preserves_market_view_and_applied_filters(page: Page, view: str
         "href", f"/memecoins/coin/tiny-doge?q=doge&sort=gainers&view={view}"
     )
     expect(page.locator("[data-market-scope]")).to_have_text(
-        "Fresh quotes · up to 20 coins" if view == "pulse" else "Full CoinGecko snapshot"
+        "Fresh quotes · up to 20 coins" if view == "pulse" else "New DEX pool snapshot"
     )
     assert requests == [f"http://app.test/api/memecoins?q=doge&sort=gainers&view={view}"]
     assert page.url == f"http://app.test{path}?q=doge&sort=gainers"
@@ -465,3 +465,52 @@ def test_stale_pulse_links_to_saved_radar_prices(page: Page) -> None:
     expect(page.get_by_role("link", name="View saved prices in Radar")).to_have_attribute(
         "href", "/memecoins/radar?q=doge&sort=gainers"
     )
+
+
+def test_chain_pool_evidence_on_mobile(page: Page) -> None:
+    page.set_viewport_size({"width": 320, "height": 850})
+    address = "AbC" * 14
+    coin = _coin(
+        network="solana",
+        token_address=address,
+        pool_address="Pool123",
+        liquidity_usd=2345,
+        buys_24h=4,
+        sells_24h=2,
+        time_basis="indexer_fetch",
+        name="solana · " + address,
+    )
+    _open(
+        page,
+        _html("detail", detail=_detail(coin=coin, source="GeckoTerminal")),
+        "/memecoins/coin/tiny-doge",
+    )
+    expect(page.get_by_text(address, exact=True)).to_be_visible()
+    expect(page.get_by_text("4 buys · 2 sells", exact=True)).to_be_visible()
+    expect(
+        page.get_by_text("Quote time records when GeckoTerminal returned the pool data.")
+    ).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    updated = {
+        **coin,
+        "pool_address": "DeeperPool",
+        "buys_24h": 8,
+        "source_url": "https://www.geckoterminal.com/solana/pools/DeeperPool",
+    }
+    page.route(
+        "**/api/memecoins/tiny-doge",
+        lambda route: route.fulfill(json=_detail(coin=updated, source="GeckoTerminal")),
+    )
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    expect(page.locator("[data-pool-address]")).to_have_text("DeeperPool")
+    expect(page.locator("[data-pool-trades]")).to_have_text("8 buys · 2 sells")
+    expect(page.locator("[data-pool-source]")).to_have_attribute("href", updated["source_url"])
+
+
+def test_empty_chain_window_has_clear_copy(page: Page) -> None:
+    market = _market(rows=[], total=0)
+    _open(page, _html("market", market=market))
+    expect(page.locator("[data-coin-empty] strong")).to_have_text("Waiting for active pools")
+    page.route("**/api/memecoins?**", lambda route: route.fulfill(json=market))
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    expect(page.locator("[data-coin-empty] strong")).to_have_text("Waiting for active pools")
