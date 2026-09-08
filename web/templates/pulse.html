@@ -14,6 +14,12 @@
         <a class="avatar-button signed-out" href="/login">Log in</a>
       {% endif %}
     </header>
+    <section class="media-game-intro" aria-label="How to play">
+      <span class="rati-product">A PLAYABLE MEDIA FEED</span>
+      <h2>Pick a story. Meet your avatar.</h2>
+      <p>Explore the stories below, summon a reaction, and follow Flash’s results as the story unfolds.</p>
+      <a href="/flash/record">Follow Flash’s scorecard <span aria-hidden="true">→</span></a>
+    </section>
     {% set flash_record = pulse.flash_record %}
     <a class="kol-score-strip" id="kolScoreStrip" href="/flash/record" aria-label="Open the Flash forecast record"{% if not flash_record %} hidden{% endif %}>
       <span class="kol-avatar" data-kol-avatar aria-hidden="true">⚡</span>

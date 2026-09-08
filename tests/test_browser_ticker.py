@@ -249,7 +249,7 @@ def test_flash_comment_action_is_one_compact_row_without_explainer_copy(
     assert action.is_visible()
     assert action.locator("p").count() == 0
     assert action.locator("#commentStatus").text_content() == "10 Flash"
-    assert action.locator("#generateComment").text_content() == "Post with avatar"
+    assert action.locator("#generateComment").text_content() == "Summon avatar"
     assert action.bounding_box()["height"] <= 46
     copy = discussion.inner_text()
     assert "Persistent avatars" not in copy
@@ -398,7 +398,7 @@ def test_comment_recovers_from_proxy_timeout_without_another_click(page: Page, m
 
     page.locator("#generateComment").click()
     page.wait_for_function(
-        "document.querySelector('#commentStatus').textContent.startsWith('Posted')"
+        "document.querySelector('#commentStatus').textContent.startsWith('Reaction added')"
     )
 
     assert len(request_keys) == 3
@@ -407,7 +407,7 @@ def test_comment_recovers_from_proxy_timeout_without_another_click(page: Page, m
     assert page.locator("#commentList .comment-owner").first.inner_text() == "AI avatar"
     assert page.locator("#commentList .comment-model").inner_text() == f"Model {model or 'unknown'}"
     assert page.locator("#commentList script").count() == 0
-    assert page.locator("#commentStatus").text_content() == "Posted"
+    assert page.locator("#commentStatus").text_content() == "Reaction added"
     assert page.locator("#discussionCount").text_content() == "1"
 
 
@@ -462,7 +462,7 @@ def test_saved_comment_keeps_public_disclosure_and_correction_visible(page: Page
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 
-def _open_disclosure_composer(page: Page) -> None:
+def _open_avatar_action(page: Page) -> None:
     page.add_init_script(
         f"localStorage.setItem('rati-release:rati-runners-{web_main.APP_VERSION}', '1')"
     )
@@ -472,12 +472,11 @@ def _open_disclosure_composer(page: Page) -> None:
     )
     page.route("**/api/t/TEST/**", lambda route: route.fulfill(json={"points": []}))
     page.goto("http://app.test/t/TEST", wait_until="domcontentloaded")
-    page.get_by_text("Add a public disclosure", exact=True).click()
 
 
-def test_comment_retry_preserves_disclosure_and_renders_returned_notices(page: Page) -> None:
+def test_avatar_retry_reuses_request_and_renders_editorial_notices(page: Page) -> None:
     requests: list[tuple[str, dict[str, Any]]] = []
-    _open_disclosure_composer(page)
+    _open_avatar_action(page)
 
     def post_comment(route: Route) -> None:
         requests.append(
@@ -496,40 +495,30 @@ def test_comment_retry_preserves_disclosure_and_renders_returned_notices(page: P
             )
 
     page.route("**/api/comments/stock/TEST", post_comment)
-    page.get_by_role("combobox", name="Disclosure relationship").select_option("holdings")
-    page.get_by_role("textbox", name="Public details").fill("I hold shares.")
-    page.get_by_role("button", name="Post with avatar").click()
-    page.wait_for_function("document.querySelector('#commentStatus').textContent === 'Posted'")
+    page.get_by_role("button", name="Summon avatar").click()
+    page.wait_for_function(
+        "document.querySelector('#commentStatus').textContent === 'Reaction added'"
+    )
     assert len(requests) == 2
     assert requests[0] == requests[1]
-    assert requests[0][1] == {"disclosure_kind": "holdings", "disclosure": "I hold shares."}
+    assert requests[0][1] == {}
     notices = page.locator("#commentList .content-notices")
     assert "Disclosure · Holdings" in notices.inner_text()
     assert "Correction" in notices.inner_text()
     assert "I hold shares. <script>alert(1)</script>" in notices.inner_text()
     assert notices.locator("script").count() == 0
-    assert page.get_by_role("textbox", name="Public details").input_value() == ""
-    assert page.get_by_role("combobox", name="Disclosure relationship").is_enabled()
 
 
-def test_comment_disclosure_requires_a_relationship_and_public_details(page: Page) -> None:
-    _open_disclosure_composer(page)
-    requests: list[str] = []
-    page.route("**/api/comments/stock/TEST", lambda route: requests.append(route.request.url))
-    page.get_by_role("combobox", name="Disclosure relationship").select_option("sponsorship")
-    page.get_by_role("button", name="Post with avatar").click()
-    assert page.locator("#commentStatus").inner_text() == (
-        "Choose a relationship and add at least 3 characters of public details."
-    )
-    assert page.get_by_role("textbox", name="Public details").evaluate(
-        "node => node === document.activeElement"
-    )
-    assert requests == []
+def test_avatar_action_uses_a_button_and_displays_its_cost(page: Page) -> None:
+    _open_avatar_action(page)
+    assert page.locator("#discussion textarea, #discussion select").count() == 0
+    assert page.locator("#commentStatus").inner_text() == "10 Flash"
+    assert page.get_by_role("button", name="Summon avatar").is_enabled()
 
 
-def test_pending_comment_restores_its_disclosure_after_reload(page: Page) -> None:
+def test_pending_avatar_request_survives_reload(page: Page) -> None:
     requests: list[tuple[str, dict[str, Any]]] = []
-    _open_disclosure_composer(page)
+    _open_avatar_action(page)
 
     def post_comment(route: Route) -> None:
         requests.append(
@@ -546,24 +535,21 @@ def test_pending_comment_restores_its_disclosure_after_reload(page: Page) -> Non
             )
 
     page.route("**/api/comments/stock/TEST", post_comment)
-    page.get_by_role("combobox", name="Disclosure relationship").select_option("holdings")
-    page.get_by_role("textbox", name="Public details").fill("I hold shares.")
     with page.expect_request("**/api/comments/stock/TEST"):
-        page.get_by_role("button", name="Post with avatar").click()
+        page.get_by_role("button", name="Summon avatar").click()
     page.reload(wait_until="domcontentloaded")
-    page.get_by_text("Add a public disclosure", exact=True).click()
-    assert page.get_by_role("textbox", name="Public details").input_value() == "I hold shares."
-    assert page.get_by_role("textbox", name="Public details").is_disabled()
-    page.get_by_role("button", name="Post with avatar").click()
-    page.wait_for_function("document.querySelector('#commentStatus').textContent === 'Posted'")
+    page.get_by_role("button", name="Summon avatar").click()
+    page.wait_for_function(
+        "document.querySelector('#commentStatus').textContent === 'Reaction added'"
+    )
     assert len(requests) == 2
     assert requests[0] == requests[1]
     assert page.locator("#commentList > li").count() == 1
 
 
-def test_pending_disclosure_stays_with_its_account_after_same_tab_switch(page: Page) -> None:
+def test_pending_avatar_request_stays_with_its_account(page: Page) -> None:
     requests: list[tuple[str, dict[str, Any]]] = []
-    _open_disclosure_composer(page)
+    _open_avatar_action(page)
 
     def post_comment(route: Route) -> None:
         requests.append(
@@ -580,10 +566,8 @@ def test_pending_disclosure_stays_with_its_account_after_same_tab_switch(page: P
             )
 
     page.route("**/api/comments/stock/TEST", post_comment)
-    page.get_by_role("combobox", name="Disclosure relationship").select_option("holdings")
-    page.get_by_role("textbox", name="Public details").fill("First account holds shares.")
     with page.expect_request("**/api/comments/stock/TEST"):
-        page.get_by_role("button", name="Post with avatar").click()
+        page.get_by_role("button", name="Summon avatar").click()
 
     account = "second-browser-user"
     page.route(
@@ -594,29 +578,19 @@ def test_pending_disclosure_stays_with_its_account_after_same_tab_switch(page: P
         ),
     )
     page.reload(wait_until="domcontentloaded")
-    page.get_by_text("Add a public disclosure", exact=True).click()
-    assert page.get_by_role("combobox", name="Disclosure relationship").input_value() == ""
-    assert page.get_by_role("textbox", name="Public details").input_value() == ""
-    assert page.get_by_role("textbox", name="Public details").is_enabled()
-    page.get_by_role("combobox", name="Disclosure relationship").select_option("sponsorship")
-    page.get_by_role("textbox", name="Public details").fill("Second account receives sponsorship.")
-    page.get_by_role("button", name="Post with avatar").click()
-    page.wait_for_function("document.querySelector('#commentStatus').textContent === 'Posted'")
+    page.get_by_role("button", name="Summon avatar").click()
+    page.wait_for_function(
+        "document.querySelector('#commentStatus').textContent === 'Reaction added'"
+    )
     assert len(requests) == 2
     assert requests[0][0] != requests[1][0]
-    assert requests[1][1] == {
-        "disclosure_kind": "sponsorship",
-        "disclosure": "Second account receives sponsorship.",
-    }
+    assert requests[1][1] == {}
 
     account = "browser-user"
     page.reload(wait_until="domcontentloaded")
-    page.get_by_text("Add a public disclosure", exact=True).click()
-    assert page.get_by_role("textbox", name="Public details").input_value() == (
-        "First account holds shares."
+    page.get_by_role("button", name="Summon avatar").click()
+    page.wait_for_function(
+        "document.querySelector('#commentStatus').textContent === 'Reaction added'"
     )
-    assert page.get_by_role("textbox", name="Public details").is_disabled()
-    page.get_by_role("button", name="Post with avatar").click()
-    page.wait_for_function("document.querySelector('#commentStatus').textContent === 'Posted'")
     assert len(requests) == 3
     assert requests[0] == requests[2]

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from playwright.sync_api import Page, Route, expect
+from playwright.sync_api import Page, expect
 
 from runner_web import main as web_main
 
@@ -30,7 +30,6 @@ def _open(page: Page, *, disclosures: list | None = None, corrections: list | No
     template = web_main.templates.env.from_string(
         '{% from "_content_notices.html" import content_notices %}'
         "<div data-report-notices>{{ content_notices(disclosures, corrections) }}</div>"
-        '{% include "_report_disclosure_form.html" %}'
     )
     content = template.render(
         report={"public_id": "test-report"},
@@ -83,47 +82,6 @@ def test_public_notices_show_reason_and_time_and_escape_text(page: Page, width: 
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 
-def test_report_owner_can_save_and_read_the_disclosure_without_reloading(page: Page) -> None:
+def test_editorial_notices_have_no_player_composer(page: Page) -> None:
     _open(page)
-    payloads: list[dict[str, Any]] = []
-    text = '<script>alert("holding")</script> shares'
-
-    def save(route: Route) -> None:
-        payloads.append(route.request.post_data_json)
-        route.fulfill(json={"disclosures": [_notice(text=text)], "corrections": []})
-
-    page.route("**/api/research/test-report/disclosures", save)
-    page.get_by_text("Add a disclosure", exact=True).click()
-    page.get_by_label("Relationship", exact=True).select_option("holdings")
-    page.get_by_label("Disclosure", exact=True).fill(text)
-    page.get_by_role("button", name="Save disclosure").click()
-    expect(page.get_by_role("status")).to_have_text("Disclosure saved.")
-    expect(page.locator(".content-notice p")).to_have_text(text)
-    expect(page.locator(".content-notices script")).to_have_count(0)
-    expect(page.get_by_label("Disclosure", exact=True)).to_have_value("")
-    assert payloads == [{"disclosure_kind": "holdings", "disclosure": text}]
-    assert page.url == "http://app.test/research/test-report"
-
-
-def test_failed_save_keeps_the_disclosure_for_a_safe_retry(page: Page) -> None:
-    _open(page)
-    payloads: list[dict[str, Any]] = []
-
-    def save(route: Route) -> None:
-        payloads.append(route.request.post_data_json)
-        if len(payloads) == 1:
-            route.fulfill(status=503, json={"detail": "Please retry shortly."})
-        else:
-            route.fulfill(json={"disclosures": [_notice()], "corrections": []})
-
-    page.route("**/api/research/test-report/disclosures", save)
-    page.get_by_text("Add a disclosure", exact=True).click()
-    page.get_by_label("Relationship", exact=True).select_option("holdings")
-    page.get_by_label("Disclosure", exact=True).fill(_notice()["text"])
-    page.get_by_role("button", name="Save disclosure").click()
-    expect(page.get_by_role("status")).to_have_text("Please retry shortly.")
-    expect(page.get_by_label("Disclosure", exact=True)).to_have_value(_notice()["text"])
-    page.get_by_role("button", name="Save disclosure").click()
-    expect(page.get_by_role("status")).to_have_text("Disclosure saved.")
-    expect(page.locator(".content-notice")).to_have_count(1)
-    assert len(payloads) == 2 and payloads[0] == payloads[1]
+    expect(page.locator("textarea, input, select, form")).to_have_count(0)
