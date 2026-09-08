@@ -104,6 +104,26 @@ export interface ScanRow {
   change_pct: number;
   relative_volume: number | null;
   state_reason: string;
+  quote_time?: string;
+}
+
+export interface ScanRequest {
+  universe: 'penny' | 'starter' | 'broad' | 'custom';
+  symbols: string[];
+  min_price: number;
+  max_price: number;
+  min_avg_volume: number;
+  min_avg_dollar_volume: number;
+  max_symbols: number;
+  top_n: number;
+  crash_only: boolean;
+  sort: 'score' | 'volume' | 'gainers' | 'losers' | 'price_asc' | 'price_desc';
+}
+
+export function defaultScanRequest(): ScanRequest {
+  return { universe: 'penny', symbols: [], min_price: 0.2, max_price: 5,
+    min_avg_volume: 100_000, min_avg_dollar_volume: 500_000,
+    max_symbols: 300, top_n: 20, crash_only: false, sort: 'score' };
 }
 
 export interface ScanResult {
@@ -116,6 +136,11 @@ export interface ScanResult {
   requested_symbols?: number;
   liquid_symbols?: number;
   scanned_symbols?: number;
+  matched_symbols?: number;
+  failed_symbols?: string[];
+  scan_cap_reached?: boolean;
+  result_cap_reached?: boolean;
+  request?: ScanRequest;
   rows: ScanRow[];
   warnings: string[];
   source_id?: string;
@@ -423,10 +448,10 @@ export class NodeClient {
     });
   }
 
-  liveScan(): Promise<ScanResult> {
+  liveScan(input: ScanRequest = defaultScanRequest()): Promise<ScanResult> {
     return this.request('/api/v1/scans', {
       method: 'POST',
-      body: JSON.stringify({ universe: 'penny', min_price: 0.2, max_price: 5, top_n: 20 }),
+      body: JSON.stringify(input),
     }, 180_000);
   }
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { NodeClient, normalizeNodeUrl } from './node';
+import { NodeClient, normalizeNodeUrl, defaultScanRequest } from './node';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -60,7 +60,7 @@ describe('scanner node addresses', () => {
       'http://127.0.0.1:8787/api/v1/scans',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ universe: 'penny', min_price: 0.2, max_price: 5, top_n: 20 }),
+        body: JSON.stringify(defaultScanRequest()),
       }),
     );
     expect(fetchMock.mock.calls[0][1]?.body).not.toContain('sample');

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import sqlite3
 from collections.abc import Mapping
@@ -24,7 +25,7 @@ from runner_watch.universe import (
 
 
 class ScanRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     universe: Literal["penny", "starter", "broad", "custom"] = "penny"
     symbols: list[str] = Field(default_factory=list, max_length=500)
@@ -35,11 +36,17 @@ class ScanRequest(BaseModel):
     max_symbols: int = Field(default=300, ge=1, le=5_000)
     top_n: int = Field(default=50, ge=1, le=100)
     crash_only: bool = False
+    sort: Literal["score", "volume", "gainers", "losers", "price_asc", "price_desc"] = "score"
 
     @model_validator(mode="after")
     def validate_range_and_symbols(self) -> ScanRequest:
         if self.max_price <= self.min_price:
             raise ValueError("max_price must be greater than min_price")
+        self.symbols = parse_custom_symbols(" ".join(self.symbols))
+        if len(self.symbols) > 500:
+            raise ValueError("Use up to 500 custom symbols")
+        if any(not re.fullmatch(r"[A-Z][A-Z0-9-]{0,11}", symbol) for symbol in self.symbols):
+            raise ValueError("Use stock symbols such as AAPL or BRK-B")
         if self.universe == "custom" and not self.symbols:
             raise ValueError("custom scans require at least one symbol")
         return self
@@ -141,10 +148,6 @@ def run_scan(
     provider_routes: Mapping[str, list[str]] | None = None,
 ) -> dict[str, object]:
     warnings: list[str] = []
-    provider = routed_market_data(
-        provider_keys=provider_keys,
-        provider_order=(provider_routes or {}).get("market_bars"),
-    )
     if request.universe == "penny":
         entries, warnings = penny_runner_universe(
             min_price=request.min_price,
@@ -168,6 +171,10 @@ def run_scan(
         top_n=request.top_n,
         crash_only=request.crash_only,
     )
+    provider = routed_market_data(
+        provider_keys=provider_keys,
+        provider_order=(provider_routes or {}).get("market_bars"),
+    )
     started_at = datetime.now(UTC)
     try:
         result = RunnerScanner(provider).scan(symbols, settings)
@@ -175,6 +182,27 @@ def run_scan(
         close = getattr(provider, "close", None)
         if callable(close):
             close()
+    # Rank the entire usable scan before applying the display limit.
+    rows = result.all_rows or result.rows
+    sort_field = {
+        "score": "score",
+        "volume": "relative_volume",
+        "gainers": "change_pct",
+        "losers": "change_pct",
+        "price_asc": "price",
+        "price_desc": "price",
+    }[request.sort]
+    ascending = request.sort in {"losers", "price_asc"}
+    ranked = sorted(
+        rows,
+        key=lambda row: (
+            getattr(row, sort_field) is None,
+            (getattr(row, sort_field) or 0) * (1 if ascending else -1),
+            -row.score,
+            -row.dollar_volume,
+            row.ticker,
+        ),
+    )
     return {
         "status": "complete",
         "source": "live",
@@ -184,6 +212,11 @@ def run_scan(
         "requested_symbols": result.requested_symbols,
         "liquid_symbols": result.liquid_symbols,
         "scanned_symbols": result.scanned_symbols,
-        "rows": [row.to_dict() for row in result.rows],
+        "matched_symbols": len(rows),
+        "failed_symbols": result.failed_symbols,
+        "scan_cap_reached": result.liquid_symbols > request.max_symbols,
+        "result_cap_reached": len(rows) > request.top_n,
+        "request": request.model_dump(),
+        "rows": [row.to_dict() for row in ranked[: request.top_n]],
         "warnings": list(dict.fromkeys([*warnings, *result.warnings])),
     }
