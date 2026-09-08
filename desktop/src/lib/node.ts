@@ -331,8 +331,11 @@ export class NodeClient {
         },
       });
       if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { detail?: string };
-        throw new Error(body.detail || `Scanner returned ${response.status}`);
+        const body = (await response.json().catch(() => ({}))) as { detail?: unknown };
+        const detail = typeof body.detail === 'string' ? body.detail : Array.isArray(body.detail)
+          ? body.detail.slice(0, 3).map((item: { msg?: unknown }) => typeof item?.msg === 'string' ? item.msg : '').filter(Boolean).join('. ')
+          : '';
+        throw new Error(detail || `Scanner returned ${response.status}`);
       }
       return response.json() as Promise<T>;
     } catch (error) {

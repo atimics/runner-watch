@@ -84,6 +84,16 @@ describe('scanner node addresses', () => {
     );
   });
 
+  it('shows validation messages from the scanner and preserves custom settings', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
+      JSON.stringify({ detail: [{ msg: 'max_price must be greater than min_price', input: 'private input' }] }),
+      { status: 422 },
+    ));
+    const settings = { ...defaultScanRequest(), universe: 'custom' as const, symbols: ['BRK-B'], sort: 'gainers' as const, min_price: 20, max_price: 5 };
+    await expect(new NodeClient('http://127.0.0.1:8787').liveScan(settings)).rejects.toThrow('max_price must be greater than min_price');
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual(settings);
+  });
+
   it('stops waiting when a scanner does not respond', async () => {
     vi.useFakeTimers();
     vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => new Promise((_resolve, reject) => {

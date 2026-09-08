@@ -273,6 +273,12 @@ footer { padding: 8px 28px 22px; color: #59675f; font-size: 9px; text-align: cen
 
 .market-nav { margin-top: 24px; }
 .workspace-nav { margin-top: 22px; }
+@media (max-width: 760px) {
+  .app-sidebar { grid-template-columns: 38px minmax(0, 1fr); align-items: center; }
+  .market-nav, .workspace-nav { margin-top: 0; }
+  .workspace-nav { grid-column: 1 / -1; }
+  .app-nav button { padding: 8px 10px; gap: 7px; font-size: 12px; }
+}
 .market-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, auto) 12px; align-items: center; gap: 20px; width: 100%; padding: 17px; border: 0; border-bottom: 1px solid #202a24; background: transparent; color: inherit; text-align: left; }
 .market-row:hover { background: #101b14; }
 .market-row strong, .market-row b, .market-row small, .market-value small, .market-call small { display: block; }
