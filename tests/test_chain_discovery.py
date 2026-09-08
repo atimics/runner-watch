@@ -16,6 +16,20 @@ def market_db(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "REQUIRE_DATABASE_URL", False)
     monkeypatch.setenv("MEMECOINS_ENABLED", "true")
     db.init_db()
+    monkeypatch.setattr(
+        memecoins,
+        "discover_pools",
+        lambda **_: {
+            "pools": [
+                {
+                    "pool_address": "Pool123",
+                    "token_address": "AbC123",
+                    "created_at": (AT - timedelta(minutes=10)).isoformat(),
+                }
+            ],
+            "partial": False,
+        },
+    )
 
 
 def pool(token="AbC123", network="solana", address="Pool123", **attrs):
@@ -106,7 +120,7 @@ def test_real_worker_path_and_failure_receipts(market_db):  # noqa: F811
         return json.dumps({"data": [pool()]}).encode()
 
     assert memecoins.refresh_memecoins(download=download, at=AT)["count"] == 1
-    assert requests == [memecoins.MARKETS_URL]
+    assert requests == ["https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/Pool123"]
     market = memecoins.memecoin_market(at=AT)
     assert market["source"] == "GeckoTerminal"
     row = market["rows"][0]

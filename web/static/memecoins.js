@@ -42,7 +42,25 @@
     if (market.refresh_failed) return 'Saved prices · The source refresh will retry shortly.';
     return '';
   };
+  function renderIntegrity(market) {
+    const list = find('[data-integrity-alerts]'); if (!list) return;
+    const alerts = market.integrity_alerts || [];
+    const fragment = document.createDocumentFragment();
+    alerts.forEach((alert) => {
+      const row = element('li');
+      const link = element('a', `${alert.title} · ${alert.net_token_amount} tokens ↗`);
+      link.href = alert.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      const evidence = element('a', 'Pool creation link ↗');
+      evidence.href = alert.relationship_source_url; evidence.target = '_blank'; evidence.rel = 'noopener noreferrer';
+      row.append(link, element('p', `${alert.wallet} · ${alert.token_address}`), element('small', `${time(alert.observed_at)} · ${alert.role_label} · Wallet net change · `), evidence);
+      fragment.append(row);
+    });
+    list.replaceChildren(fragment);
+    const empty = find('[data-integrity-empty]'); if (empty) empty.hidden = alerts.length > 0;
+    put('[data-integrity-coverage]', market.integrity_coverage?.checked_at ? `Checked ${time(market.integrity_coverage.checked_at)}` : 'First check pending');
+  }
   function renderMarket(market) {
+    renderIntegrity(market);
     const list = find('[data-coin-list]');
     if (!list) return;
     const focused = list.contains(document.activeElement) ? document.activeElement?.closest('[data-coin-id]')?.dataset.coinId : null;
@@ -64,7 +82,7 @@
     });
     list.replaceChildren(fragment);
     if (focused) Array.from(list.children).find((row) => row.dataset.coinId === focused)?.focus({preventScroll: true});
-    put('[data-market-scope]', marketView(market) === 'pulse' ? 'Fresh quotes · up to 20 coins' : 'New DEX pool snapshot');
+    put('[data-market-scope]', marketView(market) === 'pulse' ? 'Fresh quotes · up to 20 coins' : 'Helius pool discoveries');
     put('[data-coin-count]', `${market.rows.length} of ${market.total} coins`);
     put('[data-market-updated]', market.collected_at ? `Collected ${time(market.collected_at)}` : 'First collection pending');
     showStatus('[data-market-status]', marketMessage(market));

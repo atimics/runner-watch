@@ -75,8 +75,8 @@ def _refresh(clock: dict[str, datetime], *coins: dict[str, Any]) -> dict[str, An
     body = json.dumps(list(coins) or [_coin(clock)]).encode()
     with patch.object(
         memecoins,
-        "normalize_chain_pools",
-        side_effect=lambda payload, **_: memecoins.normalize_memecoins(payload),
+        "_collect_helius",
+        side_effect=lambda **_: (memecoins.normalize_memecoins(json.loads(body)), {}),
     ):
         result = memecoins.refresh_memecoins(download=lambda *_: body, at=clock["now"])
     assert result["status"] == "ok"

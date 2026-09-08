@@ -448,7 +448,7 @@ def test_refresh_preserves_market_view_and_applied_filters(page: Page, view: str
         "href", f"/memecoins/coin/tiny-doge?q=doge&sort=gainers&view={view}"
     )
     expect(page.locator("[data-market-scope]")).to_have_text(
-        "Fresh quotes · up to 20 coins" if view == "pulse" else "New DEX pool snapshot"
+        "Fresh quotes · up to 20 coins" if view == "pulse" else "Helius pool discoveries"
     )
     assert requests == [f"http://app.test/api/memecoins?q=doge&sort=gainers&view={view}"]
     assert page.url == f"http://app.test{path}?q=doge&sort=gainers"
@@ -514,3 +514,37 @@ def test_empty_chain_window_has_clear_copy(page: Page) -> None:
     page.route("**/api/memecoins?**", lambda route: route.fulfill(json=market))
     page.get_by_role("button", name="Refresh", exact=True).click()
     expect(page.locator("[data-coin-empty] strong")).to_have_text("Waiting for active pools")
+
+
+def test_on_chain_watch_shows_both_receipts_and_refreshes(page: Page) -> None:
+    page.set_viewport_size({"width": 320, "height": 850})
+    alert = {
+        "title": "Pool-linked wallet sold",
+        "net_token_amount": "6.000000",
+        "wallet": "AbC" * 14,
+        "token_address": "Def" * 14,
+        "observed_at": NOW.isoformat(),
+        "role_label": "Declared coin creator",
+        "source_url": "https://solscan.io/tx/trade",
+        "relationship_source_url": "https://solscan.io/tx/creation",
+    }
+    market = _market(
+        rows=[],
+        total=0,
+        integrity_alerts=[alert],
+        integrity_coverage={"checked_at": NOW.isoformat()},
+    )
+    _open(page, _html("market", market=market))
+    expect(page.locator("[data-integrity-alerts]")).to_contain_text("Declared coin creator")
+    expect(page.get_by_role("link", name="Pool creation link ↗")).to_have_attribute(
+        "href", alert["relationship_source_url"]
+    )
+    expect(
+        page.get_by_role("link", name="Pool-linked wallet sold · 6.000000 tokens ↗")
+    ).to_have_attribute("href", alert["source_url"])
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    updated = {**market, "integrity_alerts": []}
+    page.route("**/api/memecoins?**", lambda route: route.fulfill(json=updated))
+    page.get_by_role("button", name="Refresh", exact=True).click()
+    expect(page.locator("[data-integrity-alerts] li")).to_have_count(0)
+    expect(page.locator("[data-integrity-empty]")).to_be_visible()

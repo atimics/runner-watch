@@ -1,42 +1,72 @@
-# Chain-first token discovery
+# Helius discovery and on-chain watch
 
-`/memecoins` discovers base tokens from GeckoTerminal's latest DEX pools across
-supported networks. Each five-minute collection reads the first page (up to 20
-pools). This is a bounded window of the provider's chain index. The product uses
-Memecoins as its navigation label; selection covers new tokens based on pool data.
+Memecoin discovery starts with finalized Solana transactions returned by Helius.
+The first supported protocol is PumpSwap. The collector decodes `create_pool`
+instructions, including calls inside other instructions, against the official
+PumpSwap interface. Each candidate keeps its mint, pool, creation slot, creation
+time, transaction signature, pool creator and declared coin creator.
 
-A pool qualifies with a positive USD price, at least $1,000 of liquidity, positive
-24-hour pool volume, at least one recorded trade, and a valid pool creation time.
-The feed uses chain and contract address for identity. EVM address case is
-normalized, while case-sensitive addresses retain their spelling. Multiple pools
-for one token resolve to the pool with the greatest liquidity, then volume.
-Price and volume both come from that selected pool. Default ordering is pool
-volume. Metadata and marketing fields have zero weight in discovery and ordering.
-The UI uses chain and address labels.
+`getTransactionsForAddress` reads the latest successful PumpSwap transactions
+from the past day. Each five-minute run requests up to two pages of 100 full
+transactions. `HELIUS_DISCOVERY_TX_LIMIT` sets the page size from 1 to 1,000.
+Coverage is sampled. The source receipt records the transaction count and whether
+more pages were available. Default usage is at most 576 RPC requests per day;
+Helius documents a 10-credit minimum per full-transaction response, so two full
+100-transaction pages per cycle would use 5,760 credits per day. Larger page sizes
+increase the credit budget. Configure the limit to match the paid plan.
 
-The keyless source is `geckoterminal/memecoins`. Source runs retain the request
-URL and normalized pool records. Records include chain, token address, pool
-address, creation time, liquidity, buys, sells, price, volume and daily change.
-Market cap stays unknown; FDV has its own field. Quote time records the indexer
-fetch time, identified by `time_basis=indexer_fetch`. Pool creation time is stored
-separately. The indexer controls its data coverage and update delay.
+Set `HELIUS_API_KEY` as a secret on the worker. Provider URLs and errors stored in
+source receipts keep the key private. A missing key or failed RPC preserves saved
+quotes and records a collection error. `MEMECOINS_ENABLED=false` pauses collection.
 
-A database claim shares the request budget across processes and restarts. Saved
-quotes become stale after 15 minutes. A failed request preserves the prior
-snapshot and timestamps. A successful empty window clears the current discovery
-list. A token's saved detail, price history and Calls remain accessible after it
-leaves the window. Its quote ages until its pool appears in another collection.
-Existing category-era assets retain their IDs, source links, history and Calls.
-New chain-address IDs keep the two sets of records separate.
+The collector retains up to 100 discovered pools for one day. It requests USD
+quotes from GeckoTerminal for those exact pool addresses, in batches of 30. A
+returned pool must match a Helius-discovered address and base mint. Metadata,
+categories, promotion and reported market cap have zero weight. Active quote
+rows require $1,000 liquidity, recorded trades, positive volume and price. The
+quote time is the indexer fetch time; the pool-creation receipt uses Solana block
+time. Market cap stays unknown, and FDV has its own field. Quotes age after 15
+minutes. Existing assets, Calls and price history retain their IDs and sources.
 
-`/api/memecoins` serves the saved snapshot with search and sort parameters.
-`MEMECOINS_ENABLED=false` pauses collection. Source attribution links to
-GeckoTerminal; the source catalog retains its terms-review status.
+## On-chain watch
 
-Provider references:
+The public memecoin page and `/api/memecoins` include a transaction evidence feed.
+A first detector finds PumpSwap buy/sell instructions whose trading wallet was
+named in a known pool's creation. It checks the program, pool, mint, successful
+transaction status, slot and direction of the wallet's token-balance change.
+Each observation keeps:
 
-- [GeckoTerminal API endpoints](https://api.geckoterminal.com/docs/index.html)
-- [Pool liquidity and market-cap field meanings](https://apiguide.geckoterminal.com/faq)
-- [API terms](https://www.coingecko.com/en/api_terms)
+- Trade signature, slot, block time and transaction link.
+- Wallet, mint, pool and observed wallet role.
+- Exact net token change across that transaction.
+- The pool-creation transaction establishing the wallet relationship.
 
-Validation: `uv run pytest tests/test_chain_discovery.py tests/test_memecoins.py tests/test_memecoin_calls.py -q -o addopts=`.
+The two wallet roles are distinct: the pool creator signed the pool creation;
+the declared coin creator was named in its instruction data. A declared role is
+a claim stored on chain. Pool creation can also involve program-controlled wallets.
+These observations establish a transaction relationship. Insider ownership,
+intent and real-world identity require further evidence.
+
+The feed retains up to 1,000 unique observations for one day. It works while USD
+quotes are pending. Duplicate delivery produces one observation per transaction,
+pool, wallet and direction. Last-check time and sampled coverage remain visible.
+A gap in the sampled transaction window leaves activity outside the observed set
+unknown. Saved observations survive collection failures.
+
+## Further detectors
+
+The same receipt model can support linked-wallet funding, early accumulation,
+creator-linked transfers and liquidity withdrawals. Each detector needs its own
+protocol checks, wallet relationship evidence and coverage record. A shared funder
+is a useful lead; exchanges and shared services require special treatment. A
+future case view should separate directly observed facts, inferred wallet groups,
+and open questions.
+
+## References and validation
+
+- [Helius transaction-history RPC and metering](https://www.helius.dev/docs/rpc/gettransactionsforaddress)
+- [Official PumpSwap interface](https://github.com/pump-fun/pump-public-docs/blob/main/idl/pump_amm.json)
+- [GeckoTerminal pool quotes](https://api.geckoterminal.com/docs/index.html)
+- [Helius terms](https://www.helius.dev/terms)
+
+Run `uv run pytest tests/test_helius_discovery.py tests/test_chain_discovery.py tests/test_memecoins.py tests/test_memecoin_calls.py -q -o addopts=` and the memecoin browser suite.
