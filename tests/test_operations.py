@@ -169,6 +169,7 @@ def test_worker_startup_schedules_kol_and_case_refreshers(
 
     monkeypatch.setattr(web_main.asyncio, "create_task", create_task)
     monkeypatch.setattr(web_main, "SPORTS_INGESTION_ENABLED", False)
+    monkeypatch.setattr(web_main, "BACKGROUND_WORKERS_ENABLED", True)
 
     web_main._start_worker_tasks()
 

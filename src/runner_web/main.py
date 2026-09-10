@@ -586,9 +586,15 @@ def _public_screen_data(
             PUBLIC_SCREEN_DATA_CONDITION.notify_all()
 
 
+BACKGROUND_WORKERS_ENABLED = os.getenv("BACKGROUND_WORKERS_ENABLED", "1") != "0"
+
+
 def _start_worker_tasks(
     heartbeat: Callable[[], None] | None = None,
 ) -> list[asyncio.Task[Any]]:
+    if not BACKGROUND_WORKERS_ENABLED:
+        LOG.info("Background workers are disabled by BACKGROUND_WORKERS_ENABLED")
+        return []
     workers = [
         asyncio.create_task(edgar_worker(), name="edgar"),
         asyncio.create_task(trading_halt_worker(), name="trading-halts"),
@@ -1259,6 +1265,7 @@ def _require_research_route(user_id: str, *, actor: AIKol = FLASH) -> None:
 
 
 async def edgar_worker() -> None:
+    await asyncio.sleep(20)
     while True:
         try:
             await run_in_threadpool(refresh_edgar)
@@ -1368,7 +1375,8 @@ async def market_report_worker() -> None:
             awaiting_scan = any(
                 item.get("status") == "awaiting_scan" for item in result.get("results", [])
             )
-            delay = 60 if awaiting_scan else 300
+            waiting_targets = int(result["forecasts"].get("waiting") or 0)
+            delay = 60 if awaiting_scan or waiting_targets else 300
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -1380,9 +1388,8 @@ async def market_report_worker() -> None:
 def _generate_market_report_targets(evidence: dict[str, Any]) -> dict[str, Any]:
 
     public_evidence = {
-        **evidence,
-        "leaders": [row for row in evidence["leaders"] if not row["pass_reason"]],
-    }
+        key: value for key, value in evidence.items() if key != "waiting"
+    } | {"leaders": [row for row in evidence["leaders"] if not row["pass_reason"]]}
     body = {
         "model": evidence["actor"]["model"],
         "messages": [
