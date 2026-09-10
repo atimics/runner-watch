@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from pytest import MonkeyPatch
 
@@ -420,12 +421,111 @@ def test_market_report_routes_and_template_are_public() -> None:
     root = Path(__file__).parents[1]
     source = (root / "src/runner_web/main.py").read_text()
     template = (root / "web/templates/market_reports.html").read_text()
+    card = (root / "web/templates/_market_report_card.html").read_text()
+    meta = (root / "web/templates/_market_report_meta.html").read_text()
 
     assert '@app.get("/reports"' in source
     assert '@app.get("/api/market-reports")' in source
+    assert '@app.get("/reports/{report_day}/{slug}"' in source
+    assert '@app.get("/reports/{report_day}/{slug}/card.png")' in source
     assert "Pre-market" in template
     assert "After the bell" in template
     assert "4:15 a.m. ET" in template
     assert "4:15 p.m. ET" in template
-    assert "Desk commentary" in template
-    assert "Frozen from scanner checkpoints" in template
+    assert "Desk commentary" in card
+    assert "Frozen from scanner checkpoints" in card
+    for tag in ("og:title", "og:description", "og:image", "twitter:card"):
+        assert tag in meta
+
+
+def _share_client(tmp_path: Path, monkeypatch: MonkeyPatch) -> Any:
+    from starlette.testclient import TestClient
+
+    from runner_web import main as web_main
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "share.db")
+    init_db()
+    pre_at = "2026-08-24T08:10:00+00:00"
+    close_at = "2026-08-24T20:10:00+00:00"
+    _insert_scan_run("pre", pre_at, 2)
+    _insert_snapshot(
+        "pre-one", "pre", "ONE", 80, 1, pre_at, session="pre", price=1.0, change_pct=10.0
+    )
+    _insert_snapshot(
+        "pre-two", "pre", "TWO", 60, 2, pre_at, session="pre", price=2.0, change_pct=-4.0
+    )
+    _insert_scan_run("close", close_at, 1)
+    _insert_snapshot(
+        "close-two", "close", "TWO", 90, 1, close_at, session="after", price=3.0, change_pct=25.0
+    )
+    refresh_market_reports(datetime(2026, 8, 24, 20, 15, tzinfo=UTC))
+    return TestClient(web_main.app, base_url=web_main.APP_ORIGIN)
+
+
+def test_each_report_has_a_shareable_permalink_and_card(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    client = _share_client(tmp_path, monkeypatch)
+    try:
+        page = client.get("/reports/2026-08-24/post")
+        card = client.get("/reports/2026-08-24/post/card.png")
+        listing = client.get("/reports")
+    finally:
+        client.close()
+
+    assert page.status_code == 200
+    assert 'property="og:image"' in page.text
+    assert 'name="twitter:card" content="summary_large_image"' in page.text
+    assert "/reports/2026-08-24/post/card.png?v=" in page.text
+    assert "Share this turn" in page.text
+    assert card.status_code == 200
+    assert card.headers["content-type"] == "image/png"
+    assert "public" in card.headers["cache-control"]
+    assert listing.status_code == 200
+    assert 'property="og:image"' in listing.text
+    assert 'href="/reports/2026-08-24/pre"' in listing.text
+
+
+def test_share_metadata_names_the_top_pick_and_the_record(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "share-meta.db")
+    init_db()
+    pre_at = "2026-08-24T08:10:00+00:00"
+    close_at = "2026-08-24T20:10:00+00:00"
+    _insert_scan_run("pre", pre_at, 1)
+    _insert_snapshot(
+        "pre-one", "pre", "ONE", 80, 1, pre_at, session="pre", price=1.0, change_pct=10.0
+    )
+    _insert_scan_run("close", close_at, 1)
+    _insert_snapshot(
+        "close-one", "close", "ONE", 90, 1, close_at, session="after", price=1.5, change_pct=25.0
+    )
+    at = datetime(2026, 8, 24, 20, 15, tzinfo=UTC)
+    refresh_market_reports(at)
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO market_report_forecasts(
+                report_id,ticker,report_day,reference_price,reference_at,target_price,
+                direction,reason,model,contract_version,forecast_at,status,close_price
+            ) SELECT id,'ONE','2026-08-24',1.0,?,1.2,'up','Momentum','model','v1',?,'hit',1.5
+            FROM market_session_reports WHERE report_type='pre_market'
+            """,
+            (pre_at, pre_at),
+        )
+    overview = market_reports_overview(at)
+    pre_share = overview["latest"]["pre_market"]["share"]
+    post_share = overview["latest"]["post_market"]["share"]
+
+    assert pre_share["path"] == "/reports/2026-08-24/pre"
+    assert pre_share["title"] == "$ONE · Flash targets $1.2 by the close"
+    assert pre_share["top_pick"]["ticker"] == "ONE"
+    assert post_share["path"] == "/reports/2026-08-24/post"
+    assert post_share["title"] == "$ONE target hit · Flash 1–0 on the day"
+    assert post_share["summary"].startswith("2026-08-24 · Flash 1–0 on targets, board 1–0")
+    assert post_share["top_pick"]["status"] == "hit"
+    assert post_share["card_path"] != pre_share["card_path"]
+    assert len(post_share["summary"]) <= 200

@@ -1,0 +1,121 @@
+{% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
+{% macro market_report_card(report, featured_id=none, linked=true) %}
+    {% set is_post = report.report_type == 'post_market' %}
+    <article class="market-report-card report-{{ report.report_type }}"{% if featured_id and report.id == featured_id %} data-featured{% endif %}>
+      <header>
+        <div><span>{{ report.label }}</span><time datetime="{{ report.as_of }}">{{ report.report_day }} · {{ report.as_of_label }}</time></div>
+        {% if featured_id and report.id == featured_id %}<b>Current turn</b>{% endif %}
+      </header>
+      {% if linked %}<a class="market-report-permalink" href="{{ report.permalink }}">Open this turn <span aria-hidden="true">›</span></a>{% endif %}
+      <h2>{{ report.headline }}</h2>
+      <p>{{ report.summary }}</p>
+
+      <div class="market-report-metrics">
+        {% for metric in report.metric_cards %}
+        <div><strong>{{ metric.value }}</strong><span>{{ metric.label }}</span></div>
+        {% endfor %}
+      </div>
+
+      {% if is_post %}
+      <div class="market-report-metrics market-report-record">
+        {% for metric in report.record_cards %}
+        <div class="tone-{{ metric.tone }}"><strong>{{ metric.value }}</strong><span>{{ metric.label }}</span></div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <section class="market-report-analysis">
+        <h3>{{ 'Flash reviews the session' if is_post else 'Flash reads the session ahead' }}</h3>
+        {% if report.analysis %}
+        <strong>{{ report.analysis.headline }}</strong>
+        <p>{{ report.analysis.narrative }}</p>
+        {% if report.analysis.points %}
+        <ul>
+          {% for point in report.analysis.points %}<li>{{ point }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+        {% else %}
+        <p class="market-report-pending">
+          {% if report.commentary_state in ['queued', 'running'] %}Flash is writing this {{ 'review' if is_post else 'preview' }}.
+          {% elif report.commentary_state == 'legacy' %}This report was frozen before the desk wrote commentary.
+          {% else %}Flash could not write this {{ 'review' if is_post else 'preview' }}.{% endif %}
+        </p>
+        {% endif %}
+      </section>
+
+      <section class="market-report-leaders">
+        <h3>{{ 'Watch board at the close' if is_post else 'Watch board' }}</h3>
+        <ol>
+          {% for leader in report.leaders %}
+          <li{% if leader.board_status %} class="board-{{ leader.board_status }}"{% endif %}>
+            <a href="/t/{{ leader.ticker }}"><b>{{ leader.ticker }}</b><span>#{{ leader.rank }} · score {{ '%.0f'|format(leader.score) }}</span></a>
+            <div>
+              {% if leader.change_pct is not none %}<strong class="{{ 'up' if leader.change_pct > 0 else 'down' if leader.change_pct < 0 else 'flat' }}">{{ '%+.1f'|format(leader.change_pct) }}%</strong>{% endif %}
+              <small>{% if leader.relative_volume is not none %}{{ '%.1f'|format(leader.relative_volume) }}× RVOL{% else %}RVOL —{% endif %}</small>
+            </div>
+            {% if is_post %}
+            <p class="market-board-close">
+              {% if leader.board_status == 'held' %}Still on the board at #{{ leader.close_rank }}{% if leader.close_price is not none %} · ${{ '%.4f'|format(leader.close_price) }}{% endif %}
+              {% else %}Dropped off the board{% if leader.close_price is not none %} · closed ${{ '%.4f'|format(leader.close_price) }}{% endif %}{% endif %}
+              {% if leader.session_return_pct is not none %} · <b class="{{ 'up' if leader.session_return_pct > 0 else 'down' if leader.session_return_pct < 0 else 'flat' }}">{{ '%+.1f'|format(leader.session_return_pct) }}% from the watch price</b>{% endif %}
+            </p>
+            {% endif %}
+            {% set forecast = leader.eod_forecast %}
+            <div class="market-eod-forecast">
+              {% if forecast %}
+              <dl>
+                <div><dt>Pre-market</dt><dd>{% if forecast.reference_price is not none %}${{ '%.4f'|format(forecast.reference_price) }}{% else %}—{% endif %}</dd></div>
+                <div><dt>Target EOD</dt><dd>{% if forecast.target_price is not none %}${{ '%.4f'|format(forecast.target_price) }} <small>{{ forecast.direction|capitalize }}</small>{% else %}—{% endif %}</dd></div>
+                <div><dt>Actual close</dt><dd>{% if forecast.close_price is not none %}${{ '%.4f'|format(forecast.close_price) }}{% else %}—{% endif %}</dd></div>
+                <div><dt>Result</dt><dd class="eod-result result-{{ forecast.status }}">{{ 'Price review' if forecast.status == 'review' else forecast.status|capitalize }}</dd></div>
+              </dl>
+              <p>{{ forecast.review_reason or forecast.reason }}</p>
+              {% if forecast.close_source %}<p>Close source: {{ forecast.close_source|capitalize }} · {{ report.report_day }}</p>{% endif %}
+              {% else %}
+              <p><b>Target EOD</b> · {{ 'Preparing target' if report.forecast_state in ['queued', 'running'] else 'Earlier report' if report.forecast_state == 'legacy' else 'Forecast window passed' if report.forecast_state == 'expired' else 'Forecast needs review' }}</p>
+              {% endif %}
+            </div>
+          </li>
+          {% endfor %}
+        </ol>
+      </section>
+
+      {% if report.forecast_model %}
+      <p class="market-eod-rule">Flash · {{ report.forecast_model.model_label }}. Targets are saved before the open. Up targets hit at or above the target close. Down targets hit at or below it. Results settle after 4:15 p.m. ET.{% if is_post %} Today's record: {{ report.forecast_record.label }}{% if report.forecast_record.pending %} with {{ report.forecast_record.pending }} still settling{% endif %}.{% endif %}</p>
+      {% endif %}
+
+      {% set joined = report.turns | selectattr('status', 'equalto', 'joined') | list %}
+      {% if joined %}
+      <section class="market-report-turns">
+        <h3>Joined after the watch board</h3>
+        <div>
+          {% for turn in joined[:8] %}
+          <span class="turn-joined"><b>{{ turn.ticker }}</b><small>came in at #{{ turn.close_rank }}</small></span>
+          {% endfor %}
+        </div>
+      </section>
+      {% endif %}
+
+      {% if report.desk_comments %}
+      <section class="market-desk-comments">
+        <h3>Desk commentary</h3>
+        <ol>
+          {% for comment in report.desk_comments %}
+          <li>
+            {{ render_comment_avatar(comment.avatar) }}
+            <div>
+              <header><strong>{{ comment.name }}</strong><span class="comment-model">AI avatar</span><span class="comment-ability" title="{{ comment.ability_description }}">{{ comment.ability }}</span></header>
+              <p>{{ comment.body }}</p>
+            </div>
+          </li>
+          {% endfor %}
+        </ol>
+      </section>
+      {% endif %}
+
+      <footer>
+        <span>Frozen from scanner checkpoints · Commentary written by Flash · Research only</span>
+        {% if not linked %}<button type="button" class="market-report-share" data-share-report>Share this turn ↗</button>{% endif %}
+      </footer>
+    </article>
+{% endmacro %}

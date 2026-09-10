@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 import statistics
@@ -29,6 +30,9 @@ REPORT_LABELS: dict[ReportType, str] = {
     "pre_market": "Pre-market briefing",
     "post_market": "Post-market recap",
 }
+REPORT_SLUGS: dict[str, ReportType] = {"pre": "pre_market", "post": "post_market"}
+REPORT_TYPE_SLUGS: dict[str, str] = {value: key for key, value in REPORT_SLUGS.items()}
+SHARE_SUMMARY_MAX_CHARS = 200
 
 
 def _as_eastern(moment: datetime | None) -> datetime:
@@ -455,6 +459,9 @@ def _decorate(database: Any, reports: list[dict[str, Any]]) -> list[dict[str, An
         report["record_cards"] = (
             _record_cards(report) if report["report_type"] == "post_market" else []
         )
+        report["share"] = _share(report)
+        report["slug"] = report["share"]["slug"]
+        report["permalink"] = report["share"]["path"]
     return reports
 
 
@@ -507,6 +514,100 @@ def _record_cards(report: dict[str, Any]) -> list[dict[str, Any]]:
             "tone": _tone(average),
         },
     ]
+
+
+def _price_label(value: Any) -> str | None:
+    price = _round(value, 4)
+    if price is None:
+        return None
+    text = f"{price:.4f}".rstrip("0").rstrip(".")
+    return f"${text or '0'}"
+
+
+def _top_pick(report: dict[str, Any]) -> dict[str, Any] | None:
+
+    leaders = report.get("leaders") or []
+    if not leaders:
+        return None
+    directional = [
+        row
+        for row in leaders
+        if (row.get("eod_forecast") or {}).get("direction") in {"up", "down"}
+    ]
+    pick = min(directional or leaders, key=lambda row: int(row.get("rank") or 1_000_000))
+    forecast = pick.get("eod_forecast") or {}
+    return {
+        "ticker": str(pick["ticker"]),
+        "rank": pick.get("rank"),
+        "score": pick.get("score"),
+        "change_pct": pick.get("change_pct"),
+        "relative_volume": pick.get("relative_volume"),
+        "reference_price": forecast.get("reference_price", pick.get("price")),
+        "target_price": forecast.get("target_price"),
+        "direction": forecast.get("direction"),
+        "status": forecast.get("status"),
+        "reason": forecast.get("reason"),
+        "close_price": forecast.get("close_price", pick.get("close_price")),
+        "board_status": pick.get("board_status"),
+        "session_return_pct": pick.get("session_return_pct"),
+    }
+
+
+def _share_title(report: dict[str, Any], pick: dict[str, Any] | None) -> str:
+    if report["report_type"] == "pre_market":
+        target = _price_label(pick["target_price"]) if pick else None
+        if pick and target:
+            return f"${pick['ticker']} · Flash targets {target} by the close"
+        return f"Pre-market briefing · {report['headline']}"
+    record = report.get("forecast_record") or {}
+    if pick and pick.get("status") in {"hit", "miss"}:
+        verdict = "hit" if pick["status"] == "hit" else "missed"
+        label = record.get("label") or "0–0"
+        return f"${pick['ticker']} target {verdict} · Flash {label} on the day"
+    return f"Post-market recap · {report['headline']}"
+
+
+def _share_summary(report: dict[str, Any]) -> str:
+    analysis = report.get("analysis") or {}
+    lead = str(analysis.get("headline") or "").strip() or str(report["summary"])
+    parts = [str(report["report_day"])]
+    if report["report_type"] == "post_market":
+        metrics = report.get("metrics") or {}
+        record = report.get("forecast_record") or {}
+        parts.append(
+            f"Flash {record.get('label') or '0–0'} on targets, "
+            f"board {metrics.get('winners', 0)}–{metrics.get('losers', 0)}"
+        )
+    parts.append(lead)
+    summary = " · ".join(parts)
+    if len(summary) <= SHARE_SUMMARY_MAX_CHARS:
+        return summary
+    return summary[: SHARE_SUMMARY_MAX_CHARS - 1].rstrip(" ·,.") + "…"
+
+
+def _share(report: dict[str, Any]) -> dict[str, Any]:
+
+    pick = _top_pick(report)
+    slug = REPORT_TYPE_SLUGS[str(report["report_type"])]
+    path = f"/reports/{report['report_day']}/{slug}"
+    stamp = "|".join(
+        str(value)
+        for value in (
+            report.get("updated_at"),
+            (report.get("forecast_record") or {}).get("label"),
+            (report.get("analysis") or {}).get("headline"),
+            pick["status"] if pick else "",
+        )
+    )
+    version = hashlib.sha256(stamp.encode()).hexdigest()[:10]
+    return {
+        "title": _share_title(report, pick),
+        "summary": _share_summary(report),
+        "top_pick": pick,
+        "slug": slug,
+        "path": path,
+        "card_path": f"{path}/card.png?v={version}",
+    }
 
 
 def market_report(report_day: str, report_type: ReportType) -> dict[str, Any] | None:
