@@ -377,3 +377,38 @@ def test_new_ticker_filter_survives_a_quiet_poll_and_stacks_arrivals(
     assert page.locator('[data-ticker-row="AAA"]').count() == 1
     assert page.locator("#pulseRefresh").is_hidden()
     assert errors == []
+
+
+def test_a_live_mark_shows_a_dot_and_a_stale_one_does_not(page: Page, monkeypatch) -> None:
+    live = {
+        **_row("LIVE", "2026-08-26T18:00:00+00:00"),
+        "section": "scored",
+        "quote_time": "2026-08-26T18:04:30+00:00",
+        "mark_source": "quote",
+        "mark_age_seconds": 30,
+    }
+    swept = {
+        **_row("SWEPT", "2026-08-26T18:00:00+00:00"),
+        "section": "scored",
+        "quote_time": "2026-08-26T18:00:00+00:00",
+    }
+    errors = _load(page, _rendered_pulse(monkeypatch, _pulse(live, swept)), [])
+
+    assert page.locator('[data-ticker-row="LIVE"] .ticker-age-live').count() == 1
+    assert page.locator('[data-ticker-row="SWEPT"] .ticker-age-live').count() == 0
+    assert page.locator('[data-ticker-row="SWEPT"] .ticker-age').count() == 1
+    assert errors == []
+
+
+def test_a_mark_that_has_gone_cold_loses_the_live_dot(page: Page, monkeypatch) -> None:
+    cold = {
+        **_row("COLD", "2026-08-26T18:00:00+00:00"),
+        "section": "scored",
+        "quote_time": "2026-08-26T18:00:00+00:00",
+        "mark_source": "quote",
+        "mark_age_seconds": 600,
+    }
+    errors = _load(page, _rendered_pulse(monkeypatch, _pulse(cold)), [])
+
+    assert page.locator('[data-ticker-row="COLD"] .ticker-age-live').count() == 0
+    assert errors == []

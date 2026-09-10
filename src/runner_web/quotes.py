@@ -4,10 +4,16 @@ import math
 import os
 import threading
 from collections import deque
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from runner_watch.market_data import EASTERN, YahooQuoteAdapter, session_label
+from runner_watch.market_data import (
+    EASTERN,
+    YahooMarketData,
+    YahooQuoteAdapter,
+    _last_print,
+    session_label,
+)
 from runner_watch.provider_contracts import DataKind, ProviderRequest
 from runner_watch.provider_registry import ProviderRegistry
 from runner_web.db import connection
@@ -198,6 +204,121 @@ def ticker_quote(
         _save_quote(database, symbol, values)
         saved = _stored_quote(database, symbol)
     return _public_quote(saved, now)
+
+
+HOT_SET_LIMIT = max(1, int(os.getenv("HOT_QUOTE_LIMIT", "30")))
+
+
+def fresh_quotes(tickers: list[str]) -> dict[str, dict[str, Any]]:
+
+    """The stored quote row for each of these tickers, keyed by ticker."""
+
+    symbols = sorted({str(item).strip().upper() for item in tickers if str(item).strip()})
+    if not symbols:
+        return {}
+    found: dict[str, dict[str, Any]] = {}
+    with connection() as database:
+        for group in (symbols[index : index + 200] for index in range(0, len(symbols), 200)):
+            placeholders = ",".join("?" for _ in group)
+            rows = database.execute(
+                f"SELECT * FROM ticker_quotes WHERE status='ok' AND ticker IN ({placeholders})",
+                group,
+            ).fetchall()
+            for raw in rows:
+                row = dict(raw)
+                found[str(row["ticker"])] = row
+    return found
+
+
+def refresh_hot_quotes(tickers: list[str], at: datetime | None = None) -> dict[str, int]:
+
+    """Refresh a small hot set in one batched request rather than one call per ticker.
+
+    The per-ticker lane suits a page view, where one name is wanted right now. Keeping
+    the whole board warm that way would spend a request per name every cycle, so the
+    hot set rides a single batched download instead.
+    """
+
+    symbols = sorted({str(item).strip().upper() for item in tickers if str(item).strip()})[
+        :HOT_SET_LIMIT
+    ]
+    if not symbols:
+        return {"requested": 0, "stored": 0, "missing": 0}
+    now = _utc(at)
+    if not _claim_budget(now):
+        return {"requested": len(symbols), "stored": 0, "missing": len(symbols)}
+    client = YahooMarketData(
+        batch_size=len(symbols), timeout=QUOTE_TIMEOUT_SECONDS, fetch_recorder=record_source_fetch
+    )
+    try:
+        result = client.minutes(symbols)
+    except Exception:
+        return {"requested": len(symbols), "stored": 0, "missing": len(symbols)}
+    stored = 0
+    timestamp = now.isoformat()
+    session_day = now.astimezone(EASTERN).date()
+    with connection() as database:
+        for symbol in symbols:
+            frame = result.frames.get(symbol)
+            print_row = _last_print(frame) if frame is not None else None
+            if print_row is None:
+                continue
+            observed_at, values = print_row
+            if not observed_at <= now:
+                continue
+            previous = _previous_close_for(database, symbol, session_day)
+            _save_quote(
+                database,
+                symbol,
+                {
+                    "price": values["last"],
+                    "observed_at": observed_at.isoformat(),
+                    "session": session_label(observed_at.astimezone(EASTERN)),
+                    "previous_close": previous,
+                    "change_pct": _change_pct(values["last"], previous),
+                    "day_high": values["day_high"],
+                    "day_low": values["day_low"],
+                    "volume": values["volume"],
+                    "source": "yahoo",
+                    "status": "ok",
+                    "last_error": None,
+                    "requested_at": timestamp,
+                    "collected_at": timestamp,
+                },
+            )
+            stored += 1
+    return {
+        "requested": len(symbols),
+        "stored": stored,
+        "missing": len(symbols) - stored,
+    }
+
+
+def _previous_close_for(database: Any, ticker: str, session_day: date) -> float | None:
+
+    """The prior session's close, so a batched mark can carry a move as well as a price.
+
+    A one-minute batch only covers today, so the anchor comes from whatever the rest of
+    the system already collected: a previous close the per-ticker lane recorded, or the
+    last daily bar before this session.
+    """
+
+    row = database.execute(
+        "SELECT previous_close FROM ticker_quotes WHERE ticker=?",
+        (ticker,),
+    ).fetchone()
+    stored = _positive_price(row["previous_close"]) if row else None
+    if stored is not None:
+        return stored
+    bar = database.execute(
+        """
+        SELECT close FROM market_bars
+        WHERE ticker=? AND interval='1d' AND bar_time<?
+        ORDER BY bar_time DESC LIMIT 1
+        """,
+        (ticker, session_day.isoformat()),
+    ).fetchone()
+    return _positive_price(bar["close"]) if bar else None
 
 
 def _positive_price(value: Any) -> float | None:
