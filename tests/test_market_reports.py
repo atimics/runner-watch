@@ -167,7 +167,7 @@ def test_pre_market_report_freezes_the_latest_pre_open_scan(
     assert jobs == 1
 
 
-def test_post_market_report_compares_the_open_and_close_boards(
+def test_post_market_report_mirrors_the_watch_board_with_results(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -176,40 +176,40 @@ def test_post_market_report_compares_the_open_and_close_boards(
     pre_at = "2026-08-24T12:55:00+00:00"
     open_at = "2026-08-24T13:35:00+00:00"
     close_at = "2026-08-24T20:10:00+00:00"
-    _insert_scan_run("pre", pre_at, 1)
+    _insert_scan_run("pre", pre_at, 2)
     _insert_snapshot(
         "pre-one",
         "pre",
-        "PRE",
-        40,
+        "ONE",
+        80,
         1,
         pre_at,
         session="pre",
         price=1.0,
-        change_pct=3.0,
+        change_pct=10.0,
     )
-    _insert_scan_run("open", open_at, 2)
+    _insert_snapshot(
+        "pre-two",
+        "pre",
+        "TWO",
+        60,
+        2,
+        pre_at,
+        session="pre",
+        price=2.0,
+        change_pct=-4.0,
+    )
+    _insert_scan_run("open", open_at, 1)
     _insert_snapshot(
         "open-one",
         "open",
         "ONE",
-        80,
+        70,
         1,
         open_at,
         session="regular",
-        price=2.0,
-        change_pct=10.0,
-    )
-    _insert_snapshot(
-        "open-two",
-        "open",
-        "TWO",
-        60,
-        2,
-        open_at,
-        session="regular",
-        price=1.0,
-        change_pct=5.0,
+        price=1.1,
+        change_pct=12.0,
     )
     _insert_scan_run("close", close_at, 2)
     _insert_snapshot(
@@ -220,7 +220,7 @@ def test_post_market_report_compares_the_open_and_close_boards(
         1,
         close_at,
         session="after",
-        price=1.5,
+        price=3.0,
         change_pct=25.0,
     )
     _insert_snapshot(
@@ -239,19 +239,41 @@ def test_post_market_report_compares_the_open_and_close_boards(
     result = refresh_market_reports(at)
     overview = market_reports_overview(at)
     report = overview["featured"]
+    pre_report = overview["latest"]["pre_market"]
     weekend_overview = market_reports_overview(datetime(2026, 8, 29, 16, 0, tzinfo=UTC))
 
     assert [item["status"] for item in result["results"]] == ["created", "created"]
     assert report["report_type"] == "post_market"
-    assert report["headline"] == "TWO finishes on top"
-    assert report["comparison_scan_run_id"] == "open"
+    assert report["headline"] == "TWO led the watch board at +50.0%"
+    assert report["comparison_scan_run_id"] == "pre"
     assert report["source_scan_run_id"] == "close"
     assert weekend_overview["featured"]["report_type"] == "post_market"
+    assert [row["ticker"] for row in report["leaders"]] == ["ONE", "TWO"]
+    assert report["metric_cards"] == pre_report["metric_cards"]
+    assert report["record_cards"] == [
+        {"label": "Flash record", "value": "0–0", "tone": "flat"},
+        {"label": "Hit rate", "value": "—", "tone": "flat"},
+        {"label": "Board W–L", "value": "1–0", "tone": "up"},
+        {"label": "Avg move", "value": "+50.0%", "tone": "up"},
+    ]
+    assert pre_report["record_cards"] == []
     assert {key: report["metrics"][key] for key in ("held", "joined", "dropped")} == {
         "held": 1,
         "joined": 1,
         "dropped": 1,
     }
+    assert {key: report["metrics"][key] for key in ("winners", "losers")} == {
+        "winners": 1,
+        "losers": 0,
+    }
+    dropped, held = report["leaders"]
+    assert dropped["board_status"] == "dropped"
+    assert dropped["close_price"] is None
+    assert dropped["session_return_pct"] is None
+    assert held["board_status"] == "held"
+    assert held["close_rank"] == 1
+    assert held["close_price"] == 3.0
+    assert held["session_return_pct"] == 50.0
     assert report["turns"] == [
         {
             "ticker": "NEW",
@@ -280,6 +302,99 @@ def test_post_market_report_compares_the_open_and_close_boards(
     ]
 
 
+def test_post_market_report_keeps_the_pre_market_counts_on_a_wide_board(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "post-market-wide.db")
+    init_db()
+    pre_at = "2026-08-24T12:55:00+00:00"
+    close_at = "2026-08-24T20:10:00+00:00"
+    _insert_scan_run("pre", pre_at, 10)
+    for index in range(10):
+        _insert_snapshot(
+            f"pre-{index}",
+            "pre",
+            f"T{index}",
+            90 - index,
+            index + 1,
+            pre_at,
+            session="pre",
+            price=1.0,
+            change_pct=3.0,
+        )
+    _insert_scan_run("close", close_at, 1)
+    _insert_snapshot(
+        "close-zero",
+        "close",
+        "T0",
+        95,
+        1,
+        close_at,
+        session="after",
+        price=1.5,
+        change_pct=40.0,
+    )
+    at = datetime(2026, 8, 24, 20, 15, tzinfo=UTC)
+
+    refresh_market_reports(at)
+    overview = market_reports_overview(at)
+    pre_report = overview["latest"]["pre_market"]
+    post_report = overview["latest"]["post_market"]
+
+    assert pre_report["metrics"]["candidates"] == 10
+    assert len(pre_report["leaders"]) == 8
+    assert post_report["metrics"]["candidates"] == 10
+    assert [row["ticker"] for row in post_report["leaders"]] == [
+        row["ticker"] for row in pre_report["leaders"]
+    ]
+    assert post_report["metric_cards"] == pre_report["metric_cards"]
+    assert post_report["metrics"]["dropped"] == 7
+
+
+def test_post_market_report_falls_back_to_the_opening_scan(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "post-market-fallback.db")
+    init_db()
+    open_at = "2026-08-24T13:35:00+00:00"
+    close_at = "2026-08-24T20:10:00+00:00"
+    _insert_scan_run("open", open_at, 1)
+    _insert_snapshot(
+        "open-one",
+        "open",
+        "ONE",
+        80,
+        1,
+        open_at,
+        session="regular",
+        price=2.0,
+        change_pct=10.0,
+    )
+    _insert_scan_run("close", close_at, 1)
+    _insert_snapshot(
+        "close-one",
+        "close",
+        "ONE",
+        90,
+        1,
+        close_at,
+        session="after",
+        price=1.0,
+        change_pct=-5.0,
+    )
+    at = datetime(2026, 8, 24, 20, 15, tzinfo=UTC)
+
+    refresh_market_reports(at)
+    report = market_reports_overview(at)["latest"]["post_market"]
+
+    assert report["comparison_scan_run_id"] == "open"
+    assert [row["ticker"] for row in report["leaders"]] == ["ONE"]
+    assert report["leaders"][0]["session_return_pct"] == -50.0
+    assert report["metrics"]["losers"] == 1
+
+
 def test_market_report_schedule_waits_for_scans_and_skips_weekends(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -287,8 +402,8 @@ def test_market_report_schedule_waits_for_scans_and_skips_weekends(
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "schedule.db")
     init_db()
 
-    before_open = refresh_market_reports(datetime(2026, 8, 24, 12, 0, tzinfo=UTC))
-    after_due = refresh_market_reports(datetime(2026, 8, 24, 13, 5, tzinfo=UTC))
+    before_open = refresh_market_reports(datetime(2026, 8, 24, 7, 0, tzinfo=UTC))
+    after_due = refresh_market_reports(datetime(2026, 8, 24, 8, 20, tzinfo=UTC))
     weekend = market_report_schedule(datetime(2026, 8, 29, 16, 0, tzinfo=UTC))
 
     assert before_open["results"] == []
@@ -298,7 +413,7 @@ def test_market_report_schedule_waits_for_scans_and_skips_weekends(
     assert weekend["due"] == []
     assert weekend["is_market_day"] is False
     assert weekend["next_label"] == "Pre-market briefing"
-    assert weekend["next_at"] == "2026-08-31T13:00:00+00:00"
+    assert weekend["next_at"] == "2026-08-31T08:15:00+00:00"
 
 
 def test_market_report_routes_and_template_are_public() -> None:
@@ -308,6 +423,9 @@ def test_market_report_routes_and_template_are_public() -> None:
 
     assert '@app.get("/reports"' in source
     assert '@app.get("/api/market-reports")' in source
-    assert "Before the bell" in template
+    assert "Pre-market" in template
     assert "After the bell" in template
+    assert "4:15 a.m. ET" in template
+    assert "4:15 p.m. ET" in template
+    assert "Desk commentary" in template
     assert "Frozen from scanner checkpoints" in template

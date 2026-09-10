@@ -67,7 +67,7 @@ def _rendered_pulse(monkeypatch, payload: dict[str, Any]) -> str:
             "featured": None,
             "schedule": {
                 "next_label": "Pre-market briefing",
-                "schedule_note": "Weekdays · 9:00 ET and 4:15 ET",
+                "schedule_note": "Weekdays · 4:15 a.m. and 4:15 p.m. ET",
             },
         },
     )

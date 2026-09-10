@@ -374,30 +374,79 @@ def settle_market_forecasts(
     return {"resolved": resolved, "reviewed": reviewed, "fetch_failed": fetch_failed}
 
 
-def attach_market_forecasts(database: Any, reports: list[dict[str, Any]]) -> None:
-    pre_reports = {
-        report["id"]: report for report in reports if report["report_type"] == "pre_market"
+def forecast_record(leaders: list[dict[str, Any]]) -> dict[str, Any]:
+
+    counts = {"hit": 0, "miss": 0, "pending": 0, "pass": 0, "review": 0}
+    for leader in leaders:
+        forecast = leader.get("eod_forecast")
+        status = str(forecast.get("status")) if isinstance(forecast, dict) else ""
+        if status in counts:
+            counts[status] += 1
+    decided = counts["hit"] + counts["miss"]
+    return {
+        **counts,
+        "decided": decided,
+        "tracked": decided + counts["pending"] + counts["review"],
+        "win_rate": round(counts["hit"] / decided * 100, 1) if decided else None,
+        "label": f"{counts['hit']}\u2013{counts['miss']}",
     }
-    if not pre_reports:
+
+
+def _forecast_sources(database: Any, reports: list[dict[str, Any]]) -> list[tuple[Any, str]]:
+    days = sorted(
+        {str(report["report_day"]) for report in reports if report["report_type"] != "pre_market"}
+    )
+    paired: dict[str, str] = {}
+    if days:
+        placeholders = ",".join("?" for _ in days)
+        paired = {
+            str(row["report_day"]): str(row["id"])
+            for row in database.execute(
+                f"SELECT id,report_day FROM market_session_reports "
+                f"WHERE report_type='pre_market' AND report_day IN ({placeholders})",
+                days,
+            ).fetchall()
+        }
+    pairs: list[tuple[Any, str]] = []
+    for report in reports:
+        source_id = (
+            str(report["id"])
+            if report["report_type"] == "pre_market"
+            else paired.get(str(report["report_day"]))
+        )
+        if source_id:
+            pairs.append((report, source_id))
+        else:
+            report["forecast_state"] = "legacy"
+            report["forecast_model"] = None
+            for leader in report["leaders"]:
+                leader["eod_forecast"] = None
+    return pairs
+
+
+def attach_market_forecasts(database: Any, reports: list[dict[str, Any]]) -> None:
+    pairs = _forecast_sources(database, reports)
+    if not pairs:
         return
-    placeholders = ",".join("?" for _ in pre_reports)
+    source_ids = sorted({source_id for _report, source_id in pairs})
+    placeholders = ",".join("?" for _ in source_ids)
     jobs = {
-        row["report_id"]: dict(row)
+        str(row["report_id"]): dict(row)
         for row in database.execute(
             f"SELECT * FROM market_report_forecast_jobs WHERE report_id IN ({placeholders})",
-            list(pre_reports),
+            source_ids,
         ).fetchall()
     }
     forecasts = {
-        (row["report_id"], row["ticker"]): dict(row)
+        (str(row["report_id"]), str(row["ticker"])): dict(row)
         for row in database.execute(
             f"SELECT * FROM market_report_forecasts WHERE report_id IN ({placeholders})",
-            list(pre_reports),
+            source_ids,
         ).fetchall()
     }
-    for report_id, report in pre_reports.items():
-        job = jobs.get(report_id)
+    for report, source_id in pairs:
+        job = jobs.get(source_id)
         report["forecast_state"] = job["status"] if job else "legacy"
         report["forecast_model"] = json.loads(job["request_json"])["actor"] if job else None
         for leader in report["leaders"]:
-            leader["eod_forecast"] = forecasts.get((report_id, leader["ticker"]))
+            leader["eod_forecast"] = forecasts.get((source_id, str(leader["ticker"])))

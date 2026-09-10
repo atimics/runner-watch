@@ -2899,6 +2899,44 @@ def _migration_058_memecoin_chain_evidence(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_059_market_report_commentary(db: DatabaseConnection) -> None:
+
+    _ensure_column(db, "market_session_reports", "analysis_json TEXT")
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS market_report_commentary_jobs (
+            report_id TEXT PRIMARY KEY REFERENCES market_session_reports(id) ON DELETE CASCADE,
+            report_day TEXT NOT NULL,
+            report_type TEXT NOT NULL
+                CHECK(report_type IN ('pre_market','post_market')),
+            status TEXT NOT NULL
+                CHECK(status IN ('queued','running','complete','failed')),
+            attempts INTEGER NOT NULL DEFAULT 0,
+            lease_token TEXT,
+            lease_until TEXT,
+            request_json TEXT,
+            response_id TEXT,
+            last_error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS market_report_commentary_jobs_status
+            ON market_report_commentary_jobs(status,created_at);
+        CREATE TABLE IF NOT EXISTS market_report_comments (
+            report_id TEXT NOT NULL REFERENCES market_session_reports(id) ON DELETE CASCADE,
+            voice_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            body TEXT NOT NULL,
+            model TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(report_id,voice_id)
+        );
+        CREATE INDEX IF NOT EXISTS market_report_comments_order
+            ON market_report_comments(report_id,position);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2969,6 +3007,7 @@ MIGRATIONS = (
     Migration(56, "memecoin_calls", _migration_056_memecoin_calls),
     Migration(57, "content_notices", _migration_057_content_notices),
     Migration(58, "memecoin_chain_evidence", _migration_058_memecoin_chain_evidence),
+    Migration(59, "market_report_commentary", _migration_059_market_report_commentary),
 )
 
 
