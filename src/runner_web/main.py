@@ -195,6 +195,7 @@ from runner_web.pseudonyms import (
     comment_avatar_profile,
     ensure_comment_avatar,
 )
+from runner_web.quotes import ticker_quote
 from runner_web.ranker import (
     FEATURE_SCHEMA_VERSION,
     predict_and_store,
@@ -7841,6 +7842,18 @@ async def ticker_chart_api(ticker: str, request: Request) -> JSONResponse:
         raise HTTPException(404, "Ticker not found")
     payload = await run_in_threadpool(ticker_chart_detail_payload, normalized)
     return JSONResponse(payload)
+
+
+@app.get("/api/t/{ticker}/quote")
+async def ticker_quote_api(ticker: str, request: Request) -> JSONResponse:
+    enforce_rate(request, "ticker-quote", limit=60, seconds=60)
+    normalized = _clean_ticker(ticker)
+    if not _known_ticker(normalized):
+        raise HTTPException(404, "Ticker not found")
+    quote = await run_in_threadpool(ticker_quote, normalized)
+    if quote is None:
+        raise HTTPException(404, "No quote is available yet")
+    return JSONResponse(quote, headers={"Cache-Control": "private, max-age=15"})
 
 
 @app.get("/api/t/{ticker}/pressure")

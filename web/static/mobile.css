@@ -10,6 +10,19 @@
 }
 .alpha-icon { font-size: 22px; line-height: 18px; font-weight: 400; text-align: center; }
 
+.price-block { flex-wrap: wrap; }
+
+.quote-anchor {
+  flex-basis: 100%;
+  margin-top: 3px;
+  color: #59645f;
+  font-size: 8px;
+  text-align: right;
+}
+
+.quote-anchor[hidden] { display: none; }
+.price-block[data-quote-fresh="false"] > [data-quote-meta] { color: var(--amber); }
+
 .range-buttons { display: flex; gap: 3px; }
 .range-buttons button {
   border: 0; border-radius: 5px; padding: 3px 7px; background: transparent;

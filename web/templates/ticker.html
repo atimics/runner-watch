@@ -33,12 +33,13 @@
       </div>
     </section>
 
-    <section class="price-block">
+    <section class="price-block" data-quote-block data-ticker="{{ detail.ticker }}">
       <div>
-        <strong>{% if detail.current.price is not none %}${{ '%.4f'|format(detail.current.price) if detail.current.price < 1 else ('%.2f'|format(detail.current.price)) }}{% else %}No price{% endif %}</strong>
-        {% if detail.current.change_pct is not none %}<span class="{{ 'up' if detail.current.change_pct >= 0 else 'down' }}">{{ '+' if detail.current.change_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.change_pct) }}%</span>{% endif %}
+        <strong data-quote-price>{% if detail.current.price is not none %}${{ '%.4f'|format(detail.current.price) if detail.current.price < 1 else ('%.2f'|format(detail.current.price)) }}{% else %}No price{% endif %}</strong>
+        {% if detail.current.change_pct is not none %}<span data-quote-change class="{{ 'up' if detail.current.change_pct >= 0 else 'down' }}">{{ '+' if detail.current.change_pct >= 0 else '' }}{{ '%.1f'|format(detail.current.change_pct) }}%</span>{% else %}<span data-quote-change hidden></span>{% endif %}
       </div>
-      <small>{% if detail.current.event_at %}{{ detail.current.event_at[:16]|replace('T', ' ') }} UTC{% else %}No recent quote{% endif %}</small>
+      <small data-quote-meta>{% if detail.current.event_at %}{{ detail.current.event_at[:16]|replace('T', ' ') }} UTC{% else %}No recent quote{% endif %}</small>
+      <small class="quote-anchor" data-quote-anchor hidden></small>
     </section>
   </header>
 

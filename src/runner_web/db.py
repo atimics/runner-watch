@@ -2937,6 +2937,32 @@ def _migration_059_market_report_commentary(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_060_ticker_quotes(db: DatabaseConnection) -> None:
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS ticker_quotes (
+            ticker TEXT PRIMARY KEY,
+            price REAL,
+            observed_at TEXT,
+            session TEXT,
+            previous_close REAL,
+            change_pct REAL,
+            day_high REAL,
+            day_low REAL,
+            volume DOUBLE PRECISION,
+            source TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('ok','empty','error')),
+            last_error TEXT,
+            requested_at TEXT NOT NULL,
+            collected_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS ticker_quotes_requested
+            ON ticker_quotes(requested_at DESC);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -3008,6 +3034,7 @@ MIGRATIONS = (
     Migration(57, "content_notices", _migration_057_content_notices),
     Migration(58, "memecoin_chain_evidence", _migration_058_memecoin_chain_evidence),
     Migration(59, "market_report_commentary", _migration_059_market_report_commentary),
+    Migration(60, "ticker_quotes", _migration_060_ticker_quotes),
 )
 
 
