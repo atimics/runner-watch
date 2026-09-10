@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import threading
 from collections import deque
@@ -197,6 +198,97 @@ def ticker_quote(
         _save_quote(database, symbol, values)
         saved = _stored_quote(database, symbol)
     return _public_quote(saved, now)
+
+
+def _positive_price(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(price, 4) if math.isfinite(price) and round(price, 4) > 0 else None
+
+
+def price_marks(
+    database: Any,
+    ticker: str,
+    *,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> list[tuple[datetime, float, str]]:
+
+    """Every stored price observation for a ticker, newest first.
+
+    The on-demand quote lane and the scanner both observe prices on their own cadence.
+    Callers that need "the best price we know right now" should read this rather than
+    reaching for one lane, so a Call, a saved target and the page all agree.
+    """
+
+    symbol = str(ticker).strip().upper()
+    if not symbol:
+        return []
+    marks: list[tuple[datetime, float, str]] = []
+
+    def offer(raw_price: Any, raw_stamp: Any, source: str) -> None:
+        price, observed_at = _positive_price(raw_price), _stamp(raw_stamp)
+        if price is None or observed_at is None:
+            return
+        if since is not None and observed_at < since:
+            return
+        if until is not None and observed_at > until:
+            return
+        marks.append((observed_at, price, source))
+
+    quote = database.execute(
+        "SELECT price,observed_at FROM ticker_quotes WHERE ticker=? AND status='ok'",
+        (symbol,),
+    ).fetchone()
+    if quote:
+        offer(quote["price"], quote["observed_at"], "quote")
+    snapshot = database.execute(
+        """
+        SELECT price,quote_time FROM scan_snapshots
+        WHERE ticker=? ORDER BY captured_at DESC LIMIT 1
+        """,
+        (symbol,),
+    ).fetchone()
+    if snapshot:
+        offer(snapshot["price"], snapshot["quote_time"], "scan")
+    return sorted(marks, reverse=True)
+
+
+def market_mark(
+    ticker: str,
+    *,
+    at: datetime | None = None,
+    refresh: bool = True,
+) -> dict[str, Any] | None:
+
+    """The freshest price we know for a ticker, with its age and where it came from."""
+
+    symbol = str(ticker).strip().upper()
+    if not symbol:
+        return None
+    now = _utc(at)
+    if refresh:
+        try:
+            ticker_quote(symbol, at=now)
+        except Exception:
+            pass
+    with connection() as database:
+        marks = price_marks(database, symbol, until=now)
+    if not marks:
+        return None
+    observed_at, price, source = marks[0]
+    return {
+        "ticker": symbol,
+        "price": price,
+        "observed_at": observed_at.isoformat(),
+        "source": source,
+        "age_seconds": max(0, int((now - observed_at).total_seconds())),
+        "session": session_label(observed_at.astimezone(EASTERN)),
+    }
 
 
 def market_session(at: datetime | None = None) -> str:

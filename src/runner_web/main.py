@@ -195,7 +195,7 @@ from runner_web.pseudonyms import (
     comment_avatar_profile,
     ensure_comment_avatar,
 )
-from runner_web.quotes import ticker_quote
+from runner_web.quotes import market_mark, ticker_quote
 from runner_web.ranker import (
     FEATURE_SCHEMA_VERSION,
     predict_and_store,
@@ -9178,25 +9178,43 @@ def delete_ticker_comment(
     return JSONResponse({"deleted": True, "id": comment_id})
 
 
-def _current_call_mark(ticker: str) -> tuple[float, str]:
+CALL_MARK_MAX_AGE = timedelta(hours=2)
+CALL_MARK_REQUIRED = "A market price observed within the last two hours is required to make a Call."
+
+
+def _current_call_mark(ticker: str) -> dict[str, Any]:
+
+    """Stamp a Call at the freshest price we know, not the last scan.
+
+    Scanner coverage still gates the Call, because a name has to stay on the board for
+    the outcome to settle. The price itself comes from the shared resolver, so a caller
+    is stamped at the number the ticker page just showed them rather than at a scan
+    snapshot that can be two hours old.
+    """
 
     detail = ticker_detail_data(ticker)
     if not detail or not detail.get("can_publish"):
-        raise HTTPException(
-            409,
-            "A market price observed within the last two hours is required to make a Call.",
-        )
-    current_detail = detail.get("current", {})
-    observed_at = str(current_detail.get("quote_time") or current_detail.get("event_at") or "")
-    if not _recent_observation(observed_at, maximum_age=timedelta(hours=2)):
-        raise HTTPException(
-            409,
-            "A market price observed within the last two hours is required to make a Call.",
-        )
-    current = current_detail.get("price")
-    if current is None or float(current) <= 0:
+        raise HTTPException(409, CALL_MARK_REQUIRED)
+    mark = market_mark(ticker)
+    if mark is None:
+        current_detail = detail.get("current", {})
+        price = current_detail.get("price")
+        observed_at = str(current_detail.get("quote_time") or current_detail.get("event_at") or "")
+        if price is None or float(price) <= 0 or not observed_at:
+            raise HTTPException(409, "A current market price is required to make a Call.")
+        mark = {
+            "ticker": ticker,
+            "price": float(price),
+            "observed_at": observed_at,
+            "source": "scan",
+            "age_seconds": None,
+            "session": None,
+        }
+    if not _recent_observation(mark["observed_at"], maximum_age=CALL_MARK_MAX_AGE):
+        raise HTTPException(409, CALL_MARK_REQUIRED)
+    if mark["price"] <= 0:
         raise HTTPException(409, "A current market price is required to make a Call.")
-    return float(current), observed_at
+    return mark
 
 
 @app.post("/api/calls/stock/{ticker}")
@@ -9212,14 +9230,19 @@ async def create_community_call(
     normalized = _clean_ticker(ticker)
     if not _known_ticker(normalized):
         raise HTTPException(404, "Ticker not found")
-    entry_price, entry_at = await run_in_threadpool(_current_call_mark, normalized)
+    mark = await run_in_threadpool(_current_call_mark, normalized)
     call = await run_in_threadpool(
         create_call,
         str(user["id"]),
         normalized,
-        entry_price=entry_price,
-        entry_at=entry_at,
+        entry_price=mark["price"],
+        entry_at=mark["observed_at"],
     )
+    call["entry_mark"] = {
+        "source": mark["source"],
+        "age_seconds": mark["age_seconds"],
+        "session": mark["session"],
+    }
     _invalidate_runners_feeds("pulse", "alpha")
     if call.get("caller_handle"):
         _invalidate_public_screen_data("caller", str(call["caller_handle"]))
@@ -9239,19 +9262,24 @@ async def close_community_call(
     existing = call_for_user(str(user["id"]), public_id)
     if not existing or existing["status"] != "active":
         raise HTTPException(404, "Open Call not found")
-    exit_price, exit_at = await run_in_threadpool(_current_call_mark, str(existing["ticker"]))
+    mark = await run_in_threadpool(_current_call_mark, str(existing["ticker"]))
     try:
         call = await run_in_threadpool(
             close_call,
             str(user["id"]),
             public_id,
-            exit_price=exit_price,
-            exit_at=exit_at,
+            exit_price=mark["price"],
+            exit_at=mark["observed_at"],
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     if not call:
         raise HTTPException(409, "Call was already closed")
+    call["exit_mark"] = {
+        "source": mark["source"],
+        "age_seconds": mark["age_seconds"],
+        "session": mark["session"],
+    }
     _invalidate_runners_feeds("alpha")
     if call.get("caller_handle"):
         _invalidate_public_screen_data("caller", str(call["caller_handle"]))

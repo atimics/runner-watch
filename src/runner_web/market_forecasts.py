@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from runner_web.ai_kol import FLASH, actor_snapshot
 from runner_web.collection import recording_market_data
 from runner_web.db import connection
+from runner_web.quotes import price_marks
 
 EASTERN = ZoneInfo("America/New_York")
 CONTRACT_VERSION = "premarket-eod-target-v1"
@@ -89,22 +90,9 @@ def _reference_quote(
 
     offer(leader.get("price"), leader.get("quote_time"), "report")
     if ticker:
-        snapshot = database.execute(
-            """
-            SELECT price,quote_time FROM scan_snapshots
-            WHERE ticker=? AND captured_at>=? AND captured_at<=?
-            ORDER BY captured_at DESC LIMIT 1
-            """,
-            (ticker, session_start.isoformat(), current.isoformat()),
-        ).fetchone()
-        if snapshot:
-            offer(snapshot["price"], snapshot["quote_time"], "scan")
-        quote = database.execute(
-            "SELECT price,observed_at FROM ticker_quotes WHERE ticker=? AND status='ok'",
-            (ticker,),
-        ).fetchone()
-        if quote:
-            offer(quote["price"], quote["observed_at"], "quote")
+        candidates.extend(
+            price_marks(database, ticker, since=session_start, until=current)
+        )
     if not candidates:
         return None, None, None
     quote_at, price, source = max(candidates)
