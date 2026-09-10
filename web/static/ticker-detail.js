@@ -549,6 +549,19 @@
     button.replaceChildren(title, meta);
   }
 
+  function markNote(mark, price) {
+    if (!mark) return '';
+    const stamped = quotePrice(price);
+    const age = Number(mark.age_seconds);
+    const freshness = Number.isFinite(age)
+      ? age < 90
+        ? 'live'
+        : `${Math.round(age / 60)} min old`
+      : 'last known';
+    const lane = mark.source === 'quote' ? 'live quote' : 'scanner';
+    return `Stamped at ${stamped || 'the market price'} · ${freshness} · ${lane}`;
+  }
+
   document.getElementById('makeCallButton')?.addEventListener('click', async event => {
     const button = event.currentTarget;
     button.disabled = true;
@@ -560,7 +573,11 @@
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.detail || 'Could not make Call');
-      location.reload();
+      const entryMark = result.call?.entry_mark;
+      if (callStatus && entryMark) {
+        callStatus.textContent = markNote(entryMark, result.call?.entry_price);
+      }
+      setTimeout(() => location.reload(), entryMark ? 900 : 0);
     } catch (error) {
       if (callStatus) callStatus.textContent = error.message || 'Could not make Call';
       setTickerAction(button, 'Make Call', 'Public · stamped');
@@ -587,7 +604,11 @@
           `Your +${Number(result.call.return_pct).toFixed(1)}% close earned ${reward} Flash.`;
         setTimeout(() => location.reload(), 700);
       } else {
-        location.reload();
+        const mark = result.call?.exit_mark;
+        if (callStatus && mark) {
+          callStatus.textContent = markNote(mark, result.call?.exit_price);
+        }
+        setTimeout(() => location.reload(), mark ? 900 : 0);
       }
     } catch (error) {
       if (callStatus) callStatus.textContent = error.message || 'Could not close Call';

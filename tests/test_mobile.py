@@ -425,7 +425,18 @@ def test_pulse_ticker_search_uses_native_validation() -> None:
     assert "Movement is only the first clue." not in pulse_template
 
 
-def test_public_call_requires_a_fresh_market_snapshot(monkeypatch: MonkeyPatch) -> None:
+def _call_mark_database(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    from runner_web import quotes
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "call-mark.db")
+    init_db()
+    monkeypatch.setattr(quotes, "ticker_quote", lambda *args, **kwargs: None)
+
+
+def test_public_call_requires_a_fresh_market_snapshot(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    _call_mark_database(tmp_path, monkeypatch)
     monkeypatch.setattr(
         web_main,
         "ticker_detail_data",
@@ -455,6 +466,59 @@ def test_public_call_requires_a_fresh_market_snapshot(monkeypatch: MonkeyPatch) 
     )
     with pytest.raises(HTTPException, match="within the last two hours"):
         web_main._current_call_mark("OLD")
+
+
+def test_a_call_is_stamped_at_the_freshest_price_not_the_last_scan(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    _call_mark_database(tmp_path, monkeypatch)
+    now = datetime.now(UTC)
+    scan_at = now - timedelta(minutes=90)
+    quote_at = now - timedelta(seconds=20)
+    monkeypatch.setattr(
+        web_main,
+        "ticker_detail_data",
+        lambda _ticker: {
+            "can_publish": True,
+            "current": {"price": 1.00, "quote_time": scan_at.isoformat()},
+        },
+    )
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO ticker_quotes(
+                ticker,price,observed_at,session,source,status,requested_at,collected_at
+            ) VALUES('RUN',1.87,?,'REGULAR','yahoo','ok',?,?)
+            """,
+            (quote_at.isoformat(), now.isoformat(), now.isoformat()),
+        )
+
+    mark = web_main._current_call_mark("RUN")
+
+    assert mark["price"] == 1.87
+    assert mark["source"] == "quote"
+    assert mark["observed_at"] == quote_at.isoformat()
+    assert mark["age_seconds"] is not None and mark["age_seconds"] < 120
+
+
+def test_a_call_falls_back_to_the_scan_when_no_quote_exists(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    _call_mark_database(tmp_path, monkeypatch)
+    scan_at = datetime.now(UTC) - timedelta(minutes=4)
+    monkeypatch.setattr(
+        web_main,
+        "ticker_detail_data",
+        lambda _ticker: {
+            "can_publish": True,
+            "current": {"price": 2.5, "quote_time": scan_at.isoformat()},
+        },
+    )
+
+    mark = web_main._current_call_mark("RUN")
+
+    assert mark["price"] == 2.5
+    assert mark["source"] == "scan"
 
 
 def test_passkey_signup_needs_no_profile_fields(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

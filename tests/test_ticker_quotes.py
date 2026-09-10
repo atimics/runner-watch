@@ -345,3 +345,86 @@ def test_a_missing_previous_close_still_yields_a_quote(monkeypatch):
     assert batch.quotes[0].previous_close is None
     assert batch.quotes[0].last == 1.15
     assert "Yahoo did not report a previous close" in batch.provenance.warnings
+
+
+def test_the_shared_resolver_prefers_the_freshest_lane(monkeypatch):
+    from runner_web.quotes import market_mark, price_marks
+
+    _install(monkeypatch, FakeQuoteAdapter(None))
+    scan_at = NOW - timedelta(minutes=40)
+    quote_at = NOW - timedelta(minutes=2)
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO scan_runs(
+                id,mode,label,feature_schema_version,requested_symbols,liquid_symbols,
+                scanned_symbols,candidate_rows,failed_symbols_json,warnings_json,
+                started_at,finished_at,captured_at
+            ) VALUES('run','penny','Penny','test',1,1,1,1,'[]','[]',?,?,?)
+            """,
+            (scan_at.isoformat(), scan_at.isoformat(), scan_at.isoformat()),
+        )
+        database.execute(
+            """
+            INSERT INTO scan_snapshots(
+                id,ticker,score,stage,session,price,change_pct,momentum_5m_pct,
+                momentum_15m_pct,relative_volume,recent_relative_volume,breakout_pct,
+                dollar_volume,quote_time,signals_json,risks_json,captured_at,
+                scan_run_id,baseline_rank,trade_state
+            ) VALUES('snap',?,70.0,'BUILDING','pre',1.0,5.0,1.0,2.0,3.0,3.0,0.5,
+                     500000,?,'[]','[]',?,'run',1,'WATCH')
+            """,
+            (TICKER, scan_at.isoformat(), scan_at.isoformat()),
+        )
+
+    with connection() as database:
+        only_scan = price_marks(database, TICKER)
+    assert [mark[2] for mark in only_scan] == ["scan"]
+
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO ticker_quotes(
+                ticker,price,observed_at,session,source,status,requested_at,collected_at
+            ) VALUES(?,1.9,?,'PRE-MARKET','yahoo','ok',?,?)
+            """,
+            (TICKER, quote_at.isoformat(), NOW.isoformat(), NOW.isoformat()),
+        )
+        both = price_marks(database, TICKER)
+    assert [mark[2] for mark in both] == ["quote", "scan"]
+
+    mark = market_mark(TICKER, at=NOW, refresh=False)
+    assert mark["price"] == 1.9
+    assert mark["source"] == "quote"
+    assert mark["age_seconds"] == 120
+
+
+def test_the_shared_resolver_ignores_a_price_from_the_future(monkeypatch):
+    from runner_web.quotes import market_mark
+
+    _install(monkeypatch, FakeQuoteAdapter(None))
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO ticker_quotes(
+                ticker,price,observed_at,session,source,status,requested_at,collected_at
+            ) VALUES(?,9.9,?,'REGULAR','yahoo','ok',?,?)
+            """,
+            (
+                TICKER,
+                (NOW + timedelta(hours=1)).isoformat(),
+                NOW.isoformat(),
+                NOW.isoformat(),
+            ),
+        )
+
+    assert market_mark(TICKER, at=NOW, refresh=False) is None
+
+
+def test_an_unknown_ticker_has_no_mark(monkeypatch):
+    from runner_web.quotes import market_mark
+
+    _install(monkeypatch, FakeQuoteAdapter(None))
+
+    assert market_mark("NOTHING", at=NOW, refresh=False) is None
+    assert market_mark("", at=NOW, refresh=False) is None
