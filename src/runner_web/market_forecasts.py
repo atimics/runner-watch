@@ -17,8 +17,11 @@ from runner_web.db import connection
 EASTERN = ZoneInfo("America/New_York")
 CONTRACT_VERSION = "premarket-eod-target-v1"
 MAX_ATTEMPTS = 3
+MAX_ROUNDS = 40
 PRICE_MAX_AGE = timedelta(minutes=30)
 DATA_GRACE = timedelta(days=7)
+RISK_PASS_REASON = "The saved risk state calls for a pass."
+NO_PRICE_BY_OPEN = "No pre-market price arrived before the open."
 TargetGenerator = Callable[[dict[str, Any]], dict[str, Any]]
 
 
@@ -57,31 +60,7 @@ def queue_market_forecasts(
     current = _utc(at)
     if current >= _at(report_day, 9, 30):
         return
-    inputs = []
-    for leader in leaders:
-        row = dict(leader)
-        price = _price(row.get("price"))
-        quote_at = _stamp(row.get("quote_time"))
-        pass_reason = None
-        if (
-            price is None
-            or quote_at is None
-            or not timedelta(0) <= current - quote_at <= PRICE_MAX_AGE
-        ):
-            pass_reason = "A fresh pre-market price is needed."
-        elif str(row.get("trade_state")) in {"AVOID", "EXIT"}:
-            pass_reason = "The saved risk state calls for a pass."
-        row.update(price=price, pass_reason=pass_reason)
-        inputs.append(row)
-    request = {
-        "actor": actor_snapshot(FLASH),
-        "contract_version": CONTRACT_VERSION,
-        "report_day": report_day,
-        "evidence_as_of": current.isoformat(),
-        "horizon": "the regular-session closing price on report_day",
-        "scoring": "up: close >= target; down: close <= target; equality counts as a hit",
-        "leaders": inputs,
-    }
+    request = _forecast_request(database, report_day, leaders, set(), current)
     database.execute(
         """
         INSERT INTO market_report_forecast_jobs(
@@ -90,6 +69,145 @@ def queue_market_forecasts(
         """,
         (report_id, report_day, json.dumps(request), current.isoformat(), current.isoformat()),
     )
+
+
+def _reference_quote(
+    database: Any, leader: dict[str, Any], report_day: str, current: datetime
+) -> tuple[float | None, datetime | None, str | None]:
+
+    ticker = str(leader.get("ticker") or "")
+    session_start = _at(report_day, 4, 0)
+    candidates: list[tuple[datetime, float, str]] = []
+
+    def offer(raw_price: Any, raw_stamp: Any, source: str) -> None:
+        price, quote_at = _price(raw_price), _stamp(raw_stamp)
+        if price is None or quote_at is None:
+            return
+        if not session_start <= quote_at <= current:
+            return
+        candidates.append((quote_at, price, source))
+
+    offer(leader.get("price"), leader.get("quote_time"), "report")
+    if ticker:
+        snapshot = database.execute(
+            """
+            SELECT price,quote_time FROM scan_snapshots
+            WHERE ticker=? AND captured_at>=? AND captured_at<=?
+            ORDER BY captured_at DESC LIMIT 1
+            """,
+            (ticker, session_start.isoformat(), current.isoformat()),
+        ).fetchone()
+        if snapshot:
+            offer(snapshot["price"], snapshot["quote_time"], "scan")
+        quote = database.execute(
+            "SELECT price,observed_at FROM ticker_quotes WHERE ticker=? AND status='ok'",
+            (ticker,),
+        ).fetchone()
+        if quote:
+            offer(quote["price"], quote["observed_at"], "quote")
+    if not candidates:
+        return None, None, None
+    quote_at, price, source = max(candidates)
+    return price, quote_at, source
+
+
+def _forecast_request(
+    database: Any,
+    report_day: str,
+    leaders: list[dict[str, Any]],
+    decided: set[str],
+    current: datetime,
+) -> dict[str, Any]:
+
+    inputs: list[dict[str, Any]] = []
+    waiting: list[str] = []
+    for leader in leaders:
+        ticker = str(leader.get("ticker") or "")
+        if not ticker or ticker in decided:
+            continue
+        row = dict(leader)
+        if str(row.get("trade_state")) in {"AVOID", "EXIT"}:
+            row.update(price=None, reference_source=None, pass_reason=RISK_PASS_REASON)
+            inputs.append(row)
+            continue
+        price, quote_at, source = _reference_quote(database, row, report_day, current)
+        if (
+            price is None
+            or quote_at is None
+            or not timedelta(0) <= current - quote_at <= PRICE_MAX_AGE
+        ):
+            waiting.append(ticker)
+            continue
+        row.update(
+            price=price,
+            quote_time=quote_at.isoformat(),
+            reference_source=source,
+            pass_reason=None,
+        )
+        inputs.append(row)
+    return {
+        "actor": actor_snapshot(FLASH),
+        "contract_version": CONTRACT_VERSION,
+        "report_day": report_day,
+        "evidence_as_of": current.isoformat(),
+        "horizon": "the regular-session closing price on report_day",
+        "scoring": "up: close >= target; down: close <= target; equality counts as a hit",
+        "leaders": inputs,
+        "waiting": waiting,
+    }
+
+
+def _report_leaders(database: Any, report_id: str) -> list[dict[str, Any]]:
+    row = database.execute(
+        "SELECT leaders_json FROM market_session_reports WHERE id=?",
+        (report_id,),
+    ).fetchone()
+    if not row:
+        return []
+    try:
+        leaders = json.loads(str(row["leaders_json"] or "[]"))
+    except (TypeError, ValueError):
+        return []
+    return [item for item in leaders if isinstance(item, dict)]
+
+
+def _decided_tickers(database: Any, report_id: str) -> set[str]:
+    return {
+        str(row["ticker"])
+        for row in database.execute(
+            "SELECT ticker FROM market_report_forecasts WHERE report_id=?",
+            (report_id,),
+        ).fetchall()
+    }
+
+
+def _close_out_unfilled(database: Any, report_id: str, report_day: str, timestamp: str) -> int:
+
+    decided = _decided_tickers(database, report_id)
+    written = 0
+    for leader in _report_leaders(database, report_id):
+        ticker = str(leader.get("ticker") or "")
+        if not ticker or ticker in decided:
+            continue
+        written += database.execute(
+            """
+            INSERT INTO market_report_forecasts(
+                report_id,ticker,report_day,reference_price,reference_at,target_price,
+                direction,reason,model,contract_version,forecast_at,status
+            ) VALUES(?,?,?,NULL,NULL,NULL,'pass',?,?,?,?,'pass')
+            ON CONFLICT(report_id,ticker) DO NOTHING
+            """,
+            (
+                report_id,
+                ticker,
+                report_day,
+                NO_PRICE_BY_OPEN,
+                actor_snapshot(FLASH)["model"],
+                CONTRACT_VERSION,
+                timestamp,
+            ),
+        ).rowcount
+    return written
 
 
 def _validated_targets(request: dict[str, Any], result: Any) -> list[dict[str, Any]]:
@@ -129,6 +247,7 @@ def _validated_targets(request: dict[str, Any], result: Any) -> list[dict[str, A
             "ticker": row["ticker"],
             "reference_price": row["price"],
             "reference_at": row.get("quote_time"),
+            "reference_source": row.get("reference_source"),
             **(
                 forecasts[row["ticker"]]
                 if not row["pass_reason"]
@@ -152,6 +271,17 @@ def generate_market_forecasts(
     timestamp = current.isoformat()
     cutoff = _at(today, 9, 30)
     with connection() as database:
+        expiring = [
+            (str(row["report_id"]), str(row["report_day"]))
+            for row in database.execute(
+                """
+                SELECT report_id,report_day FROM market_report_forecast_jobs
+                WHERE status IN ('queued','running')
+                  AND (report_day<? OR (report_day=? AND ?=1))
+                """,
+                (today, today, int(current >= cutoff)),
+            ).fetchall()
+        ]
         expired = database.execute(
             """
             UPDATE market_report_forecast_jobs SET status='expired',updated_at=?
@@ -159,41 +289,53 @@ def generate_market_forecasts(
             """,
             (timestamp, today, today, int(current >= cutoff)),
         ).rowcount
+        for report_id, report_day in expiring:
+            _close_out_unfilled(database, report_id, report_day, timestamp)
         if current >= cutoff or current.weekday() >= 5:
-            return {"completed": 0, "expired": expired, "failed": 0}
+            return {"completed": 0, "expired": expired, "failed": 0, "waiting": 0}
         job = database.execute(
             """
             SELECT * FROM market_report_forecast_jobs WHERE report_day=? AND attempts<?
-              AND (status='queued' OR (status='running' AND lease_until<=?))
+              AND rounds<? AND (status='queued' OR (status='running' AND lease_until<=?))
             ORDER BY created_at LIMIT 1
             """,
-            (today, MAX_ATTEMPTS, timestamp),
+            (today, MAX_ATTEMPTS, MAX_ROUNDS, timestamp),
         ).fetchone()
         if not job:
-            return {"completed": 0, "expired": expired, "failed": 0}
-        request = json.loads(job["request_json"])
+            return {"completed": 0, "expired": expired, "failed": 0, "waiting": 0}
+        report_id = str(job["report_id"])
+        decided = _decided_tickers(database, report_id)
+        request = _forecast_request(
+            database, today, _report_leaders(database, report_id), decided, current
+        )
+        waiting = len(request["waiting"])
+        if not request["leaders"]:
+            return {"completed": 0, "expired": expired, "failed": 0, "waiting": waiting}
         needs_model = any(not row["pass_reason"] for row in request["leaders"])
         if needs_model and generate is None:
-            return {"completed": 0, "expired": expired, "failed": 0}
+            return {"completed": 0, "expired": expired, "failed": 0, "waiting": waiting}
         token = secrets.token_urlsafe(16)
         claimed = database.execute(
             """
             UPDATE market_report_forecast_jobs
-            SET status='running',attempts=attempts+1,lease_token=?,lease_until=?,updated_at=?
-            WHERE report_id=? AND attempts<?
+            SET status='running',attempts=attempts+1,rounds=rounds+1,request_json=?,
+                lease_token=?,lease_until=?,updated_at=?
+            WHERE report_id=? AND attempts<? AND rounds<?
               AND (status='queued' OR (status='running' AND lease_until<=?))
             """,
             (
+                json.dumps(request),
                 token,
                 (current + timedelta(minutes=3)).isoformat(),
                 timestamp,
-                job["report_id"],
+                report_id,
                 MAX_ATTEMPTS,
+                MAX_ROUNDS,
                 timestamp,
             ),
         ).rowcount
     if not claimed:
-        return {"completed": 0, "expired": expired, "failed": 0}
+        return {"completed": 0, "expired": expired, "failed": 0, "waiting": waiting}
 
     try:
         result = (
@@ -214,38 +356,45 @@ def generate_market_forecasts(
                     last_error=?,updated_at=?
                 WHERE report_id=? AND status='running' AND lease_token=?
                 """,
-                (MAX_ATTEMPTS, type(exc).__name__, timestamp, job["report_id"], token),
+                (MAX_ATTEMPTS, type(exc).__name__, timestamp, report_id, token),
             )
-        return {"completed": 0, "expired": expired, "failed": 1}
+        return {"completed": 0, "expired": expired, "failed": 1, "waiting": waiting}
 
     finished = current + timedelta(seconds=max(0, time.monotonic() - started))
-    status = "complete" if finished < cutoff else "expired"
+    if finished >= cutoff:
+        status = "expired"
+    elif waiting:
+        status = "queued"
+    else:
+        status = "complete"
     with connection() as database:
         updated = database.execute(
             """
             UPDATE market_report_forecast_jobs
-            SET status=?,response_id=?,last_error=NULL,updated_at=?
+            SET status=?,response_id=?,last_error=NULL,attempts=0,updated_at=?
             WHERE report_id=? AND status='running' AND lease_token=?
             """,
             (
                 status,
                 str(result.get("request_id") or "")[:160],
                 finished.isoformat(),
-                job["report_id"],
+                report_id,
                 token,
             ),
         ).rowcount
-        if updated and status == "complete":
+        if updated and status != "expired":
             for target in targets:
                 database.execute(
                     """
                     INSERT INTO market_report_forecasts(
                         report_id,ticker,report_day,reference_price,reference_at,target_price,
-                        direction,reason,model,contract_version,forecast_at,status
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                        direction,reason,model,contract_version,forecast_at,status,
+                        reference_source
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(report_id,ticker) DO NOTHING
                     """,
                     (
-                        job["report_id"],
+                        report_id,
                         target["ticker"],
                         today,
                         target["reference_price"],
@@ -257,12 +406,14 @@ def generate_market_forecasts(
                         request["contract_version"],
                         finished.isoformat(),
                         "pass" if target["direction"] == "pass" else "pending",
+                        target.get("reference_source"),
                     ),
                 )
     return {
         "completed": int(bool(updated) and status == "complete"),
         "expired": expired + int(bool(updated) and status == "expired"),
         "failed": 0,
+        "waiting": waiting,
     }
 
 

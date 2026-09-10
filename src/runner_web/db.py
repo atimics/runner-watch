@@ -2963,6 +2963,12 @@ def _migration_060_ticker_quotes(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_061_forecast_rounds(db: DatabaseConnection) -> None:
+
+    _ensure_column(db, "market_report_forecast_jobs", "rounds INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(db, "market_report_forecasts", "reference_source TEXT")
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -3035,6 +3041,7 @@ MIGRATIONS = (
     Migration(58, "memecoin_chain_evidence", _migration_058_memecoin_chain_evidence),
     Migration(59, "market_report_commentary", _migration_059_market_report_commentary),
     Migration(60, "ticker_quotes", _migration_060_ticker_quotes),
+    Migration(61, "forecast_rounds", _migration_061_forecast_rounds),
 )
 
 

@@ -166,11 +166,14 @@ def test_receipt_endpoint_returns_hash_and_bounded_lookup(monkeypatch):
     tx = transaction()
     evidence.save_batch("program:test", [tx], parse_events(tx), {}, at=AT)
     monkeypatch.setattr(main, "enforce_rate", lambda *args, **kwargs: None)
-    with TestClient(main.app) as client:
+    client = TestClient(main.app)
+    try:
         response = client.get("/api/memecoins/evidence/" + "1" * 64)
         assert response.status_code == 200
         assert response.json()["sha256"] == evidence.transaction_receipt("1" * 64)["sha256"]
         assert client.get("/api/memecoins/evidence/bad").status_code == 404
+    finally:
+        client.close()
 
 
 def test_retention_removes_events_and_receipts_together():
