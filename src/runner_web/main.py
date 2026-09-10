@@ -18,6 +18,7 @@ import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from datetime import date as calendar_date
 from datetime import time as clock_time
 from pathlib import Path
 from typing import Any, Literal
@@ -2317,17 +2318,23 @@ def market_reports_api(request: Request) -> Response:
     return _conditional_json_response(request, market_reports_overview(history_limit=14))
 
 
-def _market_report_address(report_day: str, slug: str) -> tuple[str, str, ReportType]:
+def _market_report_address(
+    report_day: str, slug: str
+) -> tuple[calendar_date, str, ReportType]:
 
     report_type = REPORT_SLUGS.get(slug)
     if report_type is None or not MARKET_REPORT_DAY_RE.fullmatch(report_day):
         raise HTTPException(404, "Market report not found")
-    return report_day, REPORT_TYPE_SLUGS[report_type], report_type
+    try:
+        day = calendar_date.fromisoformat(report_day)
+    except ValueError as exc:
+        raise HTTPException(404, "Market report not found") from exc
+    return day, REPORT_TYPE_SLUGS[report_type], report_type
 
 
 def _shared_market_report(report_day: str, slug: str) -> dict[str, Any]:
     day, _slug, report_type = _market_report_address(report_day, slug)
-    report = market_report(day, report_type)
+    report = market_report(f"{day:%Y-%m-%d}", report_type)
     if not report:
         raise HTTPException(404, "Market report not found")
     return report
@@ -2342,9 +2349,11 @@ def market_report_page(
 ) -> Response:
     day, safe_slug, report_type = _market_report_address(report_day, slug)
     if product_for_request(request) == "sports":
-        return RedirectResponse(f"{RUNNERS_ORIGIN}/reports/{day}/{safe_slug}", status_code=307)
+        return RedirectResponse(
+            f"{RUNNERS_ORIGIN}/reports/{day:%Y-%m-%d}/{safe_slug}", status_code=307
+        )
     enforce_rate(request, "market-report", limit=120, seconds=60)
-    report = market_report(day, report_type)
+    report = market_report(f"{day:%Y-%m-%d}", report_type)
     if not report:
         raise HTTPException(404, "Market report not found")
     return templates.TemplateResponse(
