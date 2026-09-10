@@ -529,3 +529,28 @@ def test_share_metadata_names_the_top_pick_and_the_record(
     assert post_share["top_pick"]["status"] == "hit"
     assert post_share["card_path"] != pre_share["card_path"]
     assert len(post_share["summary"]) <= 200
+
+
+def test_a_crafted_report_address_cannot_steer_the_sports_redirect(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    from runner_web import main as web_main
+
+    client = _share_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(web_main, "product_for_request", lambda _request: "sports")
+    try:
+        hijack = client.get(
+            "/reports/2026-08-24%2F..%2F..%2Fevil.example.com/post", follow_redirects=False
+        )
+        bad_slug = client.get(
+            "/reports/2026-08-24/https:%2F%2Fevil.example.com", follow_redirects=False
+        )
+        allowed = client.get("/reports/2026-08-24/post", follow_redirects=False)
+    finally:
+        client.close()
+
+    assert hijack.status_code == 404
+    assert bad_slug.status_code == 404
+    assert allowed.status_code == 307
+    assert allowed.headers["location"] == f"{web_main.RUNNERS_ORIGIN}/reports/2026-08-24/post"

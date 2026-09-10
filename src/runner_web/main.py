@@ -146,6 +146,8 @@ from runner_web.market_commentary import generate_report_commentary
 from runner_web.market_forecasts import generate_market_forecasts, settle_market_forecasts
 from runner_web.market_reports import (
     REPORT_SLUGS,
+    REPORT_TYPE_SLUGS,
+    ReportType,
     market_report,
     market_reports_overview,
     refresh_market_reports,
@@ -2315,11 +2317,17 @@ def market_reports_api(request: Request) -> Response:
     return _conditional_json_response(request, market_reports_overview(history_limit=14))
 
 
-def _shared_market_report(report_day: str, slug: str) -> dict[str, Any]:
+def _market_report_address(report_day: str, slug: str) -> tuple[str, str, ReportType]:
+
     report_type = REPORT_SLUGS.get(slug)
-    if report_type is None or not MARKET_REPORT_DAY_RE.match(report_day):
+    if report_type is None or not MARKET_REPORT_DAY_RE.fullmatch(report_day):
         raise HTTPException(404, "Market report not found")
-    report = market_report(report_day, report_type)
+    return report_day, REPORT_TYPE_SLUGS[report_type], report_type
+
+
+def _shared_market_report(report_day: str, slug: str) -> dict[str, Any]:
+    day, _slug, report_type = _market_report_address(report_day, slug)
+    report = market_report(day, report_type)
     if not report:
         raise HTTPException(404, "Market report not found")
     return report
@@ -2332,10 +2340,13 @@ def market_report_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> Response:
+    day, safe_slug, report_type = _market_report_address(report_day, slug)
     if product_for_request(request) == "sports":
-        return RedirectResponse(f"{RUNNERS_ORIGIN}/reports/{report_day}/{slug}", status_code=307)
+        return RedirectResponse(f"{RUNNERS_ORIGIN}/reports/{day}/{safe_slug}", status_code=307)
     enforce_rate(request, "market-report", limit=120, seconds=60)
-    report = _shared_market_report(report_day, slug)
+    report = market_report(day, report_type)
+    if not report:
+        raise HTTPException(404, "Market report not found")
     return templates.TemplateResponse(
         request=request,
         name="market_report_detail.html",
