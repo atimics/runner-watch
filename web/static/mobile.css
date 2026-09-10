@@ -10,6 +10,18 @@
 }
 .alpha-icon { font-size: 22px; line-height: 18px; font-weight: 400; text-align: center; }
 
+.ticker-age-live { color: #92e5ae; }
+.ticker-age-live::before {
+  content: "";
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--green);
+  vertical-align: middle;
+}
+
 .price-block { flex-wrap: wrap; }
 
 .quote-anchor {

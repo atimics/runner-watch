@@ -195,7 +195,15 @@ from runner_web.pseudonyms import (
     comment_avatar_profile,
     ensure_comment_avatar,
 )
-from runner_web.quotes import market_mark, ticker_quote
+from runner_web.quotes import (
+    HOT_SET_LIMIT as HOT_QUOTE_LIMIT,
+)
+from runner_web.quotes import (
+    fresh_quotes,
+    market_mark,
+    refresh_hot_quotes,
+    ticker_quote,
+)
 from runner_web.ranker import (
     FEATURE_SCHEMA_VERSION,
     predict_and_store,
@@ -604,6 +612,7 @@ def _start_worker_tasks(
         asyncio.create_task(outcome_worker(), name="outcomes"),
         asyncio.create_task(scan_collection_worker(), name="scan-collection"),
         asyncio.create_task(market_report_worker(), name="market-reports"),
+        asyncio.create_task(hot_quote_worker(), name="hot-quotes"),
         asyncio.create_task(massive_backfill_worker(), name="massive-backfill"),
         asyncio.create_task(research_job_worker(), name="research-jobs"),
         asyncio.create_task(report_release_worker(), name="report-release"),
@@ -806,14 +815,21 @@ def iso(value: datetime | None = None) -> str:
     return (value or now()).isoformat()
 
 
-def _recent_observation(value: Any, *, maximum_age: timedelta) -> bool:
+def _timestamp(value: Any) -> datetime | None:
     try:
         observed_at = datetime.fromisoformat(str(value or ""))
     except ValueError:
-        return False
+        return None
     if observed_at.tzinfo is None:
         observed_at = observed_at.replace(tzinfo=UTC)
-    age = now() - observed_at.astimezone(UTC)
+    return observed_at.astimezone(UTC)
+
+
+def _recent_observation(value: Any, *, maximum_age: timedelta) -> bool:
+    observed_at = _timestamp(value)
+    if observed_at is None:
+        return False
+    age = now() - observed_at
     return -timedelta(minutes=5) <= age <= maximum_age
 
 
@@ -1354,6 +1370,60 @@ async def scan_collection_worker() -> None:
             except Exception as exc:
                 worker_state("background_scan_last_error", str(exc)[:500])
         await asyncio.sleep(BACKGROUND_SCAN_INTERVAL_SECONDS)
+
+
+HOT_QUOTE_INTERVAL_SECONDS = max(20, int(os.getenv("HOT_QUOTE_INTERVAL_SECONDS", "45")))
+
+
+def _hot_set() -> list[str]:
+
+    """The names a reader is most likely to be looking at right now."""
+
+    with connection() as db:
+        run = db.execute(
+            """
+            SELECT id FROM scan_runs WHERE candidate_rows>0
+            ORDER BY captured_at DESC LIMIT 1
+            """
+        ).fetchone()
+        if not run:
+            return []
+        rows = db.execute(
+            """
+            SELECT ticker FROM scan_snapshots WHERE scan_run_id=?
+            ORDER BY score DESC,baseline_rank,ticker LIMIT ?
+            """,
+            (run["id"], HOT_QUOTE_LIMIT),
+        ).fetchall()
+    return [str(row["ticker"]) for row in rows]
+
+
+async def hot_quote_worker() -> None:
+
+    """Keep the top of the board on the quote lane between scanner sweeps.
+
+    The sweep reads five-minute bars every few minutes across the whole universe. The
+    handful of names actually on screen deserve better than that, and one batched
+    one-minute request covers all of them, so the cost is a request per cycle rather
+    than a request per name.
+    """
+
+    await asyncio.sleep(40)
+    while True:
+        delay = HOT_QUOTE_INTERVAL_SECONDS
+        try:
+            if market_clock()["scanner_active"]:
+                tickers = await run_in_threadpool(_hot_set)
+                result = await run_in_threadpool(refresh_hot_quotes, tickers)
+                worker_state("hot_quotes_last_refresh", json.dumps(result, separators=(",", ":")))
+                worker_state("hot_quotes_last_error", "")
+            else:
+                delay = max(delay, 300)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            worker_state("hot_quotes_last_error", str(exc)[:500])
+        await asyncio.sleep(delay)
 
 
 async def market_report_worker() -> None:
@@ -3464,6 +3534,45 @@ def _attach_pulse_entries(rows: list[dict[str, Any]]) -> None:
         row["entered_at"] = str(marker["time"]) if marker else None
 
 
+def _apply_market_marks(rows: list[dict[str, Any]]) -> int:
+
+    """Overlay a fresher observed price on board rows, all of a row's fields or none.
+
+    The scanner's price and change come from the same five-minute bar, so replacing one
+    without the other would leave a row quoting a price from one moment against a move
+    from another. A row is only upgraded when the quote lane carries both, and it says
+    how old the mark is so a stale one reads as stale rather than as live.
+    """
+
+    if not rows:
+        return 0
+    marks = fresh_quotes([str(row.get("ticker") or "") for row in rows])
+    if not marks:
+        return 0
+    current = now()
+    upgraded = 0
+    for row in rows:
+        mark = marks.get(str(row.get("ticker") or ""))
+        if not mark:
+            continue
+        price, change = _number(mark.get("price")), _number(mark.get("change_pct"))
+        observed_at = _timestamp(mark.get("observed_at"))
+        if price is None or change is None or observed_at is None or observed_at > current:
+            continue
+        scanned_at = _timestamp(row.get("quote_time"))
+        if scanned_at is not None and observed_at <= scanned_at:
+            continue
+        row.update(
+            price=price,
+            change_pct=change,
+            quote_time=mark.get("observed_at"),
+            mark_source="quote",
+            mark_age_seconds=max(0, int((current - observed_at).total_seconds())),
+        )
+        upgraded += 1
+    return upgraded
+
+
 def _pulse_data_uncached() -> dict[str, Any]:
     event_cutoff = iso(now() - timedelta(days=3))
     scan_cutoff = iso(now() - timedelta(days=7))
@@ -3721,6 +3830,7 @@ def _pulse_data_uncached() -> dict[str, Any]:
     )
     for custom_rank, runner in enumerate(runner_rows, start=1):
         runner["custom_rank"] = custom_rank
+    _apply_market_marks(runner_rows)
     _attach_pulse_entries(runner_rows)
     quote_times = [str(row["quote_time"]) for row in market_rows if row["quote_time"]]
     market_updated_at = max(quote_times) if quote_times else None
@@ -3780,6 +3890,9 @@ PUBLIC_PULSE_ROW_FIELDS = (
     "name",
     "price",
     "change_pct",
+    "quote_time",
+    "mark_source",
+    "mark_age_seconds",
     "momentum_15m_pct",
     "relative_volume",
     "section",

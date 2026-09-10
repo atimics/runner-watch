@@ -28,6 +28,8 @@ from runner_watch.provider_registry import ProviderRegistry, ProvidersExhaustedE
 ProgressCallback = Callable[[int, int, str], None]
 BarRecorder = Callable[[str, dict[str, pd.DataFrame]], None]
 EASTERN = ZoneInfo("America/New_York")
+QUOTE_INTERVAL = "1m"
+QUOTE_PERIOD = "1d"
 
 _DAILY_CACHE_LOCK = threading.Lock()
 _DAILY_CACHE_DAY: date | None = None
@@ -212,6 +214,21 @@ class YahooMarketData:
             label="5-minute history",
         )
 
+    def minutes(
+        self, tickers: list[str], progress: ProgressCallback | None = None
+    ) -> DownloadResult:
+
+        """One-minute bars for a small hot set, in one batched request."""
+
+        return self._download(
+            tickers,
+            period=QUOTE_PERIOD,
+            interval=QUOTE_INTERVAL,
+            prepost=True,
+            progress=progress,
+            label="1-minute history",
+        )
+
 
 def _optional_number(value: Any) -> float | None:
     try:
@@ -317,10 +334,6 @@ class YahooBarAdapter:
             bars=bars,
             error="Yahoo returned no usable bars" if not bars else None,
         )
-
-
-QUOTE_INTERVAL = "1m"
-QUOTE_PERIOD = "1d"
 
 
 def session_label(now_et: datetime) -> str:
