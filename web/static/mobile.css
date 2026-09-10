@@ -955,6 +955,14 @@ body {
 }
 
 .pulse-refresh[hidden] { display: none; }
+
+.pulse-refresh[data-focused] {
+  border-color: #2f7d52;
+  background: #0e1a13;
+  color: #87e8a9;
+}
+
+.pulse-refresh[data-focused]::before { content: "✕ "; }
 .radar-refresh { top: 68px; }
 .pulse-feed { padding-top: 2px; }
 

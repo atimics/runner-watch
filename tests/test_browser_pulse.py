@@ -329,6 +329,51 @@ def test_refresh_updates_flash_record_and_merges_new_ticker(page: Page, monkeypa
     assert page.locator("[data-kol-pnl]").text_content() == "View record ›"
     page.locator("#pulseRefresh").click()
     assert page.locator('[data-ticker-row="BBB"]').count() == 1
+    assert page.locator('[data-ticker-row="AAA"]').count() == 0
+    assert page.locator("#pulseRefresh").text_content() == "Showing 1 new · tap for all"
+    assert page.locator("#pulseRefresh").get_attribute("aria-pressed") == "true"
+
+    page.locator("#pulseRefresh").click()
+    assert page.locator('[data-ticker-row="BBB"]').count() == 1
+    assert page.locator('[data-ticker-row="AAA"]').count() == 1
+    assert page.locator("#pulseRefresh").is_hidden()
+    assert errors == []
+
+
+def test_new_ticker_filter_survives_a_quiet_poll_and_stacks_arrivals(
+    page: Page, monkeypatch
+) -> None:
+    initial = _pulse(_row("AAA", "2026-08-26T18:00:00+00:00"))
+    second = _pulse(
+        _row("BBB", "2026-08-26T18:05:00+00:00"),
+        _row("AAA", "2026-08-26T18:00:00+00:00"),
+    )
+    third = _pulse(
+        _row("CCC", "2026-08-26T18:10:00+00:00"),
+        _row("BBB", "2026-08-26T18:05:00+00:00"),
+        _row("AAA", "2026-08-26T18:00:00+00:00"),
+    )
+    html = _rendered_pulse(monkeypatch, initial)
+    errors = _load(page, html, [second, second, third])
+
+    page.evaluate("window.pulseLive.poll()")
+    page.locator("#pulseRefresh").click()
+    assert page.locator('[data-ticker-row="BBB"]').count() == 1
+    assert page.locator('[data-ticker-row="AAA"]').count() == 0
+
+    page.evaluate("window.pulseLive.poll()")
+    assert page.locator("#pulseRefresh").text_content() == "Showing 1 new · tap for all"
+    assert page.locator('[data-ticker-row="AAA"]').count() == 0
+
+    page.evaluate("window.pulseLive.poll()")
+    assert page.locator("#pulseRefresh").text_content() == "1 new ticker"
+    page.locator("#pulseRefresh").click()
+    assert page.locator("#pulseRefresh").text_content() == "Showing 2 new · tap for all"
+    assert page.locator('[data-ticker-row="CCC"]').count() == 1
+    assert page.locator('[data-ticker-row="BBB"]').count() == 1
+    assert page.locator('[data-ticker-row="AAA"]').count() == 0
+
+    page.locator("#pulseRefresh").click()
     assert page.locator('[data-ticker-row="AAA"]').count() == 1
     assert page.locator("#pulseRefresh").is_hidden()
     assert errors == []

@@ -18,6 +18,7 @@ import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from datetime import date as calendar_date
 from datetime import time as clock_time
 from pathlib import Path
 from typing import Any, Literal
@@ -144,7 +145,14 @@ from runner_web.llm_routing import (
 from runner_web.market_clock import market_clock
 from runner_web.market_commentary import generate_report_commentary
 from runner_web.market_forecasts import generate_market_forecasts, settle_market_forecasts
-from runner_web.market_reports import market_reports_overview, refresh_market_reports
+from runner_web.market_reports import (
+    REPORT_SLUGS,
+    REPORT_TYPE_SLUGS,
+    ReportType,
+    market_report,
+    market_reports_overview,
+    refresh_market_reports,
+)
 from runner_web.memecoin_calls import (
     active_memecoin_call,
     close_memecoin_call,
@@ -334,6 +342,7 @@ FLASH_REPORT_UNAVAILABLE_MESSAGE = "Flash reports are unavailable right now."
 RECENT_AUTH_SECONDS = 5 * 60
 COMMENT_MAX_CHARS = 240
 COMMENT_REQUEST_KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
+MARKET_REPORT_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 COMMENT_REQUEST_PENDING_SECONDS = max(90, int(os.getenv("COMMENT_REQUEST_PENDING_SECONDS", "120")))
 SCAN_MODES = {
     "penny": {
@@ -2307,6 +2316,201 @@ def market_reports_page(
 def market_reports_api(request: Request) -> Response:
     enforce_rate(request, "market-reports", limit=120, seconds=60)
     return _conditional_json_response(request, market_reports_overview(history_limit=14))
+
+
+def _market_report_address(
+    report_day: str, slug: str
+) -> tuple[calendar_date, str, ReportType]:
+
+    report_type = REPORT_SLUGS.get(slug)
+    if report_type is None or not MARKET_REPORT_DAY_RE.fullmatch(report_day):
+        raise HTTPException(404, "Market report not found")
+    try:
+        day = calendar_date.fromisoformat(report_day)
+    except ValueError as exc:
+        raise HTTPException(404, "Market report not found") from exc
+    return day, REPORT_TYPE_SLUGS[report_type], report_type
+
+
+def _shared_market_report(report_day: str, slug: str) -> dict[str, Any]:
+    day, _slug, report_type = _market_report_address(report_day, slug)
+    report = market_report(f"{day:%Y-%m-%d}", report_type)
+    if not report:
+        raise HTTPException(404, "Market report not found")
+    return report
+
+
+@app.get("/reports/{report_day}/{slug}", response_class=HTMLResponse)
+def market_report_page(
+    report_day: str,
+    slug: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> Response:
+    day, safe_slug, report_type = _market_report_address(report_day, slug)
+    if product_for_request(request) == "sports":
+        return RedirectResponse(
+            f"{RUNNERS_ORIGIN}/reports/{day:%Y-%m-%d}/{safe_slug}", status_code=307
+        )
+    enforce_rate(request, "market-report", limit=120, seconds=60)
+    report = market_report(f"{day:%Y-%m-%d}", report_type)
+    if not report:
+        raise HTTPException(404, "Market report not found")
+    return templates.TemplateResponse(
+        request=request,
+        name="market_report_detail.html",
+        context=page_context(
+            request,
+            runner_session,
+            report=report,
+            active_tab="pulse",
+        ),
+    )
+
+
+@app.get("/reports/{report_day}/{slug}/card.png")
+def market_report_card(report_day: str, slug: str, request: Request) -> Response:
+    enforce_rate(request, "market-report-card", limit=60, seconds=60)
+    report = _shared_market_report(report_day, slug)
+    return Response(
+        _market_report_card_png(report),
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+CARD_GLYPHS = str.maketrans(
+    {"\u2013": "-", "\u2014": "-", "\u00d7": "x", "\u2019": "'", "\u201c": '"', "\u201d": '"'}
+)
+
+
+def _card_text(value: Any) -> str:
+
+    return str(value).translate(CARD_GLYPHS)
+
+
+def _market_report_card_png(report: dict[str, Any]) -> bytes:
+
+    is_post = report["report_type"] == "post_market"
+    pick = (report.get("share") or {}).get("top_pick")
+    image = Image.new("RGB", (1200, 630), "#090b0b")
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle(
+        (55, 55, 1145, 575), radius=34, fill="#111514", outline="#57e389", width=3
+    )
+    draw.text(
+        (95, 88),
+        _card_text(f"RATi RUNNERS · {str(report['label']).upper()}"),
+        "#87e8a9",
+        font=font(27, True),
+    )
+    day_label = _card_text(f"{report['report_day']} · {report['as_of_label']}")
+    draw.text(
+        (1105 - draw.textlength(day_label, font=font(23)), 92),
+        day_label,
+        "#7e8b86",
+        font=font(23),
+    )
+
+    draw.text((95, 152), "TOP PICK" if pick else "MARKET TURN", "#7e8b86", font=font(21, True))
+    if pick:
+        draw.text((95, 182), f"${pick['ticker']}", "#f4f8f6", font=font(76, True))
+        _draw_pick_verdict(draw, pick, is_post)
+        draw.text((95, 282), _card_text(_pick_line(pick, is_post)), "#cfe0d7", font=font(28))
+    else:
+        draw.text((95, 182), _card_text(report["headline"])[:28], "#f4f8f6", font=font(58, True))
+
+    analysis = report.get("analysis") or {}
+    lead = _card_text(analysis.get("headline") or report["summary"])
+    lines = textwrap.wrap(lead, width=62)[:2]
+    if len(textwrap.wrap(lead, width=62)) > 2:
+        lines[-1] = lines[-1].rstrip(" .") + "…"
+    draw.multiline_text(
+        (95, 340), "\n".join(lines), fill="#9fb2a8", font=font(26), spacing=10
+    )
+
+    cards = report["record_cards"] if is_post else report["metric_cards"]
+    _draw_scorecard(draw, cards)
+    draw.text(
+        (95, 543), _card_text("runners.rati.chat · Research only"), "#65716b", font=font(21)
+    )
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG", optimize=True)
+    return buffer.getvalue()
+
+
+def _pick_line(pick: dict[str, Any], is_post: bool) -> str:
+    reference = _card_price(pick.get("reference_price"))
+    target = _card_price(pick.get("target_price"))
+    if not target:
+        return "No directional target · the saved risk state called for a pass"
+    if not is_post:
+        way = "up from" if pick.get("direction") == "up" else "down from"
+        return f"Target {target} by the close · {way} {reference or 'the open'}"
+    close = _card_price(pick.get("close_price"))
+    move = pick.get("session_return_pct")
+    tail = f" · {float(move):+.1f}% on the day" if move is not None else ""
+    return f"Target {target} · closed {close or 'unsettled'}{tail}"
+
+
+def _card_price(value: Any) -> str | None:
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return None
+    text = f"{price:.4f}".rstrip("0").rstrip(".")
+    return f"${text or '0'}"
+
+
+def _draw_pick_verdict(draw: Any, pick: dict[str, Any], is_post: bool) -> None:
+    status = str(pick.get("status") or "")
+    tones = {
+        "hit": ("HIT", "#123021", "#87e8a9"),
+        "miss": ("MISS", "#331a1e", "#f2a3ac"),
+        "pass": ("PASS", "#1c2220", "#9fb2a8"),
+        "review": ("REVIEW", "#1c2220", "#9fb2a8"),
+    }
+    if is_post and status in tones:
+        label, fill, ink = tones[status]
+    elif not is_post and pick.get("direction") in {"up", "down"}:
+        up = pick["direction"] == "up"
+        label = "TARGET UP" if up else "TARGET DOWN"
+        fill, ink = ("#123021", "#87e8a9") if up else ("#331a1e", "#f2a3ac")
+    else:
+        return
+    badge = font(27, True)
+    width = draw.textlength(label, font=badge) + 46
+    draw.rounded_rectangle((1105 - width, 196, 1105, 252), radius=14, fill=fill)
+    draw.text((1105 - width + 23, 208), label, ink, font=badge)
+
+
+def _draw_scorecard(draw: Any, cards: list[dict[str, Any]]) -> None:
+    if not cards:
+        return
+    left, right, top, bottom = 95, 1105, 410, 512
+    width = (right - left) / len(cards)
+    draw.rounded_rectangle((left, top, right, bottom), radius=16, outline="#26302c", width=2)
+    for index, card in enumerate(cards[:4]):
+        x = left + width * index
+        if index:
+            draw.line((x, top + 14, x, bottom - 14), fill="#26302c", width=2)
+        tone = str(card.get("tone") or "")
+        ink = {"up": "#87e8a9", "down": "#f2a3ac"}.get(tone, "#f4f8f6")
+        value = _card_text(card["value"])
+        label = _card_text(card["label"]).upper()
+        value_font, label_font = font(38, True), font(19, True)
+        draw.text(
+            (x + (width - draw.textlength(value, font=value_font)) / 2, top + 16),
+            value,
+            ink,
+            font=value_font,
+        )
+        draw.text(
+            (x + (width - draw.textlength(label, font=label_font)) / 2, top + 66),
+            label,
+            "#7e8b86",
+            font=label_font,
+        )
 
 
 @app.get("/community", response_class=HTMLResponse)
