@@ -10,6 +10,31 @@
 }
 .alpha-icon { font-size: 22px; line-height: 18px; font-weight: 400; text-align: center; }
 
+.ticker-age-live { color: #92e5ae; }
+.ticker-age-live::before {
+  content: "";
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--green);
+  vertical-align: middle;
+}
+
+.price-block { flex-wrap: wrap; }
+
+.quote-anchor {
+  flex-basis: 100%;
+  margin-top: 3px;
+  color: #59645f;
+  font-size: 8px;
+  text-align: right;
+}
+
+.quote-anchor[hidden] { display: none; }
+.price-block[data-quote-fresh="false"] > [data-quote-meta] { color: var(--amber); }
+
 .range-buttons { display: flex; gap: 3px; }
 .range-buttons button {
   border: 0; border-radius: 5px; padding: 3px 7px; background: transparent;
@@ -955,6 +980,14 @@ body {
 }
 
 .pulse-refresh[hidden] { display: none; }
+
+.pulse-refresh[data-focused] {
+  border-color: #2f7d52;
+  background: #0e1a13;
+  color: #87e8a9;
+}
+
+.pulse-refresh[data-focused]::before { content: "✕ "; }
 .radar-refresh { top: 68px; }
 .pulse-feed { padding-top: 2px; }
 

@@ -549,6 +549,19 @@
     button.replaceChildren(title, meta);
   }
 
+  function markNote(mark, price) {
+    if (!mark) return '';
+    const stamped = quotePrice(price);
+    const age = Number(mark.age_seconds);
+    const freshness = Number.isFinite(age)
+      ? age < 90
+        ? 'live'
+        : `${Math.round(age / 60)} min old`
+      : 'last known';
+    const lane = mark.source === 'quote' ? 'live quote' : 'scanner';
+    return `Stamped at ${stamped || 'the market price'} · ${freshness} · ${lane}`;
+  }
+
   document.getElementById('makeCallButton')?.addEventListener('click', async event => {
     const button = event.currentTarget;
     button.disabled = true;
@@ -560,7 +573,11 @@
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.detail || 'Could not make Call');
-      location.reload();
+      const entryMark = result.call?.entry_mark;
+      if (callStatus && entryMark) {
+        callStatus.textContent = markNote(entryMark, result.call?.entry_price);
+      }
+      setTimeout(() => location.reload(), entryMark ? 900 : 0);
     } catch (error) {
       if (callStatus) callStatus.textContent = error.message || 'Could not make Call';
       setTickerAction(button, 'Make Call', 'Public · stamped');
@@ -587,7 +604,11 @@
           `Your +${Number(result.call.return_pct).toFixed(1)}% close earned ${reward} Flash.`;
         setTimeout(() => location.reload(), 700);
       } else {
-        location.reload();
+        const mark = result.call?.exit_mark;
+        if (callStatus && mark) {
+          callStatus.textContent = markNote(mark, result.call?.exit_price);
+        }
+        setTimeout(() => location.reload(), mark ? 900 : 0);
       }
     } catch (error) {
       if (callStatus) callStatus.textContent = error.message || 'Could not close Call';
@@ -643,6 +664,71 @@
     });
   }
 
+  const quoteBlock = document.querySelector('[data-quote-block]');
+
+  function quotePrice(value) {
+    const price = Number(value);
+    if (!Number.isFinite(price) || price <= 0) return null;
+    return '$' + (price < 1 ? price.toFixed(4) : price.toFixed(2));
+  }
+
+  function quoteClock(value) {
+    if (!value) return null;
+    const moment = new Date(value);
+    if (Number.isNaN(moment.getTime())) return null;
+    return moment.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZone: 'America/New_York',
+    }) + ' ET';
+  }
+
+  function renderQuote(quote) {
+    if (!quoteBlock || !quote) return;
+    const priceNode = quoteBlock.querySelector('[data-quote-price]');
+    const changeNode = quoteBlock.querySelector('[data-quote-change]');
+    const metaNode = quoteBlock.querySelector('[data-quote-meta]');
+    const anchorNode = quoteBlock.querySelector('[data-quote-anchor]');
+    const price = quotePrice(quote.price);
+    const previous = quotePrice(quote.previous_close);
+
+    if (price) priceNode.textContent = price;
+    const change = quote.change_pct === null || quote.change_pct === undefined
+      ? NaN
+      : Number(quote.change_pct);
+    if (changeNode) {
+      if (Number.isFinite(change)) {
+        changeNode.textContent = (change >= 0 ? '+' : '') + change.toFixed(1) + '%';
+        changeNode.className = change >= 0 ? 'up' : 'down';
+        changeNode.hidden = false;
+      } else {
+        changeNode.hidden = true;
+      }
+    }
+
+    const clock = quoteClock(quote.observed_at);
+    const session = (quote.session || '').replace('-', ' ').toLowerCase();
+    if (metaNode) {
+      metaNode.textContent = clock
+        ? `Last trade ${clock}${session ? ' · ' + session : ''}${quote.fresh ? '' : ' · stale'}`
+        : 'No recent quote';
+    }
+    if (anchorNode) {
+      anchorNode.textContent = previous ? `Prev close ${previous}` : '';
+      anchorNode.hidden = !previous;
+    }
+    quoteBlock.dataset.quoteFresh = quote.fresh ? 'true' : 'false';
+  }
+
+  async function loadQuote() {
+    if (!quoteBlock || document.hidden) return;
+    try {
+      const response = await fetch('/api/t/' + encodeURIComponent(ticker) + '/quote');
+      if (!response.ok) return;
+      renderQuote(await response.json());
+    } catch (_) {}
+  }
+
   renderPressure(initialPressure);
   chartRequest.finally(async () => {
     try {
@@ -652,5 +738,10 @@
       renderPressure(data.pressure);
       renderGate(data.evidence_gate);
     } catch (_) {}
+  });
+  loadQuote();
+  setInterval(loadQuote, 30000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) loadQuote();
   });
 })();

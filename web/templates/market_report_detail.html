@@ -1,0 +1,39 @@
+{% extends "mobile_base.html" %}
+{% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
+{% from "_market_report_card.html" import market_report_card %}
+{% from "_market_report_meta.html" import market_report_meta %}
+{% block app_class %}market-reports-app{% endblock %}
+{% block title %}{{ report.label }} · {{ report.report_day }} · RATi Runners{% endblock %}
+{% block page_description %}<meta name="description" content="{{ report.share.summary }}">{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="/static/market-reports.css?v={{ static_version }}">
+{{ market_report_meta(report, app_origin) }}
+{% endblock %}
+{% block content %}
+<header class="detail-nav">
+  <a href="/reports" aria-label="Back to market turns">‹</a>
+  <strong>{{ report.label }}</strong>
+  <span></span>
+</header>
+
+<main class="market-report-list market-report-single">
+  {{ market_report_card(report, report.id, linked=false) }}
+  <a class="market-report-all" href="/reports">See every market turn <span aria-hidden="true">›</span></a>
+</main>
+{% endblock %}
+{% block scripts %}
+<script nonce="{{ request.state.csp_nonce }}">
+document.querySelector('[data-share-report]')?.addEventListener('click', async event => {
+  const button = event.currentTarget;
+  const share = {
+    title: {{ report.share.title|tojson }},
+    text: {{ report.share.summary|tojson }},
+    url: location.href,
+  };
+  try {
+    if (navigator.share) await navigator.share(share);
+    else { await navigator.clipboard.writeText(location.href); button.textContent = 'Link copied ✓'; }
+  } catch (_) {}
+});
+</script>
+{% endblock %}

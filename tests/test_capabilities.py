@@ -56,4 +56,6 @@ def test_runtime_capabilities_reports_live_modes_without_secrets(
     assert "sec:current_filings" in result["sources"]
     assert "credential_env" not in result["sources"]["sec:current_filings"]
     assert result["features"]["news"]["state"] == "internal_only"
-    assert result["features"]["public_social"]["state"] == "internal_only"
+    # Reddit trend counts are approved for display, so the feature is public-facing and
+    # reads as degraded until a run lands rather than as collected-but-hidden.
+    assert result["features"]["public_social"]["state"] == "degraded"

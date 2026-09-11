@@ -95,6 +95,7 @@ _CAPABILITY_BY_FEED = {
     "universe": "market_universe",
     "company_map": "market_universe",
     "market_bars": "market_bars",
+    "ticker_quote": "market_bars",
     "current_filings": "filings",
     "filing_index": "filings",
     "filing_document": "filings",

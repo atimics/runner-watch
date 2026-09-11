@@ -11,6 +11,7 @@ import pandas as pd
 
 from runner_watch.chart_features import analyze_market_structure
 from runner_watch.market_data import DownloadResult
+from runner_watch.market_data import session_label as _session_name
 from runner_watch.models import DailyProfile, RunnerSnapshot, ScanResult, ScanSettings
 from runner_watch.risk import RiskInput, assess_risk
 from runner_watch.scoring import ScoreInput, score_runner
@@ -95,19 +96,6 @@ def build_daily_profile(
         high_52w=float(normalized_high.tail(252).max()),
         low_20d=float(normalized_low.tail(20).min()),
     )
-
-
-def _session_name(now_et: datetime) -> str:
-    if now_et.weekday() >= 5:
-        return "CLOSED"
-    clock = now_et.time().replace(tzinfo=None)
-    if time(4) <= clock < time(9, 30):
-        return "PRE-MARKET"
-    if time(9, 30) <= clock < time(16):
-        return "REGULAR"
-    if time(16) <= clock < time(20):
-        return "AFTER-HOURS"
-    return "CLOSED"
 
 
 def _median_positive(values: list[float]) -> float | None:
