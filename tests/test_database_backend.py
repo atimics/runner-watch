@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,6 +37,31 @@ def test_postgres_statement_converts_placeholders_and_sqlite_types() -> None:
     assert (
         postgres_statement("INSERT INTO x(id,note) VALUES(:id,':keep') RETURNING id::text")
         == "INSERT INTO x(id,note) VALUES(%(id)s,':keep') RETURNING id::text"
+    )
+
+
+def test_sql_like_patterns_escape_percent_for_postgres() -> None:
+    """A bare % in a LIKE literal is a psycopg placeholder, not a wildcard.
+
+    PostgreSQL turns an unescaped % into a bind marker, so a query such as
+    ``LIKE '%cancelled%'`` fails with "only '%s', '%b', '%t' are allowed as
+    placeholders". SQLite accepts it, so only a production Postgres deploy
+    catches the mistake. Require %% in every SQL LIKE literal.
+    """
+
+    root = Path(__file__).parents[1] / "src" / "runner_web"
+    sqlite_only = {"migrate_sqlite.py"}  # talks to a raw sqlite3 connection
+    offenders: list[str] = []
+    for path in sorted(root.glob("*.py")):
+        if path.name in sqlite_only:
+            continue
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            for match in re.finditer(r"LIKE\s+'([^']*)'", line):
+                if re.search(r"(?<!%)%(?!%)", match.group(1)):
+                    offenders.append(f"{path.name}:{number}: {line.strip()}")
+
+    assert not offenders, (
+        "Escape % as %% in SQL LIKE literals for PostgreSQL:\n" + "\n".join(offenders)
     )
 
 

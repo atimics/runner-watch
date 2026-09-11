@@ -1,9 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import MarketWorkspace from './lib/MarketWorkspace.svelte';
+  import ScanWorkspace from './lib/ScanWorkspace.svelte';
 
   import {
     NodeClient,
+    defaultScanRequest,
+    type ScanRequest,
     type CoveragePayload,
     type CoverageProvider,
     type Market,
@@ -246,12 +249,12 @@
     }
   }
 
-  async function runBuiltInScan() {
-    if (!node) return;
+  async function runBuiltInScan(request: ScanRequest = builtInLatest()?.request ?? defaultScanRequest()) {
+    if (!node || scanning) return;
     scanning = true;
     scannerMessage = builtInLatest() ? 'Refreshing the built-in scanner source…' : 'Running the built-in scanner source…';
     try {
-      const scan = builtInReceipt(await client().liveScan());
+      const scan = builtInReceipt(await client().liveScan(request));
       rememberReceipts([scan, ...receipts]);
       selectedReceipt = scan;
       scannerMessage = `Built-in scan complete · ${scan.rows.length} candidates`;
@@ -493,7 +496,7 @@
             <button class="runner-row source-row" style={`--source-color:${row.source_color}`} onclick={() => openTicker(row, 'pulse')}>
               <span class="source-marker"></span><span class="ticker-badge">{row.ticker.slice(0, 3)}</span><span class="runner-name"><strong>{row.ticker}</strong><small>{row.source_name}</small></span><span class="runner-thesis"><b>{row.trade_state}</b><small>{row.state_reason}</small></span><span class="runner-risk"><small>{row.rug_level} risk</small><b>{row.score.toFixed(1)} setup</b></span><span class="runner-price"><strong>${row.price.toFixed(2)}</strong><small class:positive={row.change_pct >= 0}>{row.change_pct >= 0 ? '+' : ''}{row.change_pct.toFixed(1)}%</small></span><span class="row-arrow">›</span>
             </button>
-          {:else}<div class="empty-state"><span>◉</span><h2>No source results yet</h2><p>The built-in scanner is ready without API keys. Run it now or enable another scanner source.</p><button class="primary" onclick={runBuiltInScan} disabled={!node || scanning}>{scanning ? 'Scanning…' : 'Run built-in scanner'}</button></div>{/each}
+          {:else}<div class="empty-state"><span>◉</span><h2>No source results yet</h2><p>The built-in scanner is ready without API keys. Run it now or enable another scanner source.</p><button class="primary" onclick={() => runBuiltInScan()} disabled={!node || scanning}>{scanning ? 'Scanning…' : 'Run built-in scanner'}</button></div>{/each}
         </section>
       {:else if view === 'radar'}
         <section class="screen-head local-feed-head"><div><span class="eyebrow">SOURCE ACTIVITY</span><h1>Radar</h1><p>Results from every enabled scanner source, ranked by relative volume and movement.</p></div><button class="primary" onclick={() => refreshSources()} disabled={connecting}>{connecting ? 'Refreshing…' : 'Refresh'}</button></section>
@@ -504,8 +507,7 @@
         {#if selectedReceipt}<section class="scan-section"><div class="section-head"><div><span class="eyebrow">{sourceLabel(selectedReceipt).toUpperCase()}</span><h2>Ranked results</h2></div><small>{selectedReceipt.elapsed_seconds.toFixed(1)} seconds</small></div><div class="scan-list">{#each sourcedRows([selectedReceipt]) as row}<button class="scan-row source-row" style={`--source-color:${row.source_color}`} onclick={() => openTicker(row, 'flash')}><span class="source-marker"></span><div><strong>{row.ticker}</strong><small>{row.trade_state} · {row.rug_level} risk</small></div><div><b>{row.score.toFixed(1)}</b><small>setup</small></div><div><b>${row.price.toFixed(2)}</b><small>{row.change_pct >= 0 ? '+' : ''}{row.change_pct.toFixed(1)}%</small></div><p>{row.state_reason}</p></button>{/each}</div></section>{/if}
       {:else if view === 'scanner'}
         <section class="screen-head"><div><span class="eyebrow">BUILT-IN SOURCE</span><h1>Scan</h1><p>The bundled scanner is one source in this workspace. It uses included free market data by default.</p></div><span class:online={node} class="connection-dot">{node ? 'Ready' : 'Unavailable'}</span></section>
-        <section class="scanner-hero"><div><span class="eyebrow">NO ACCOUNT REQUIRED</span><h2>Built-in scanner</h2><p>Yahoo and other no-key sources are preconfigured. Add optional keys in Sources when you want extra coverage.</p></div><button class="primary" onclick={runBuiltInScan} disabled={scanning || !node}>{scanning ? 'Scanning…' : 'Run scanner'}</button></section>
-        {#if builtInLatest()}<section class="node-summary"><div><small>Last run</small><strong>{new Date(builtInLatest()!.finished_at).toLocaleString()}</strong></div><div><small>Candidates</small><strong>{builtInLatest()!.rows.length}</strong></div><div><small>Symbols</small><strong>{builtInLatest()!.scanned_symbols || '—'}</strong></div><div><small>Time</small><strong>{builtInLatest()!.elapsed_seconds.toFixed(1)}s</strong></div></section>{/if}
+        <ScanWorkspace available={!!node} busy={scanning} message={scannerMessage} receipt={builtInLatest()} onscan={runBuiltInScan} onopen={(row) => openTicker(row, 'scanner')} />
         {#each sourceWarnings as warning}<p class="pull-warning">{warning}</p>{/each}
       {:else if view === 'ticker'}
         <section class="ticker-local-head"><button class="back-button" onclick={() => view = tickerBackView}>← Back to {tickerBackView}</button>{#if selectedTicker}<span class="source-badge" style={`--source-color:${selectedTicker.source_color}`}>{selectedTicker.source_name}</span>{/if}</section>
