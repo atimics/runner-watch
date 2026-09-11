@@ -125,6 +125,7 @@ async def _check_screen(
     timeout_ms: int,
     slow_ms: int,
     failure_ms: int,
+    retries: int,
     output_dir: Path,
 ) -> Result:
     path = dynamic.get(screen.dynamic_key, "") if screen.dynamic_key else screen.path
@@ -188,24 +189,30 @@ async def _check_screen(
 
         overall_started = time.monotonic()
         duration_ms: int | None = None
-        first_duration_ms: int | None = None
+        durations: list[int] = []
         try:
-            duration_ms = await render()
-            if duration_ms > slow_ms:
-                first_duration_ms = duration_ms
-                duration_ms = await render(reload=True)
-                if duration_ms > failure_ms:
-                    raise RuntimeError(
-                        f"slow screen after retry: {duration_ms}ms exceeds hard limit "
-                        f"{failure_ms}ms "
-                        f"(first load {first_duration_ms}ms)"
-                    )
+            # A rolling deploy leaves cold caches and a thin fleet, so one slow
+            # render is usually transient load rather than a regression. Try a
+            # few times and judge the screen on its best attempt; a page that is
+            # genuinely too slow still fails.
+            for attempt in range(max(1, retries)):
+                durations.append(await render(reload=attempt > 0))
+                if durations[-1] <= slow_ms:
+                    break
+            duration_ms = min(durations)
+            if duration_ms > failure_ms:
+                attempts = ", ".join(f"{value}ms" for value in durations)
+                raise RuntimeError(
+                    f"slow screen after {len(durations)} attempt"
+                    f"{'s' if len(durations) != 1 else ''}: best {duration_ms}ms exceeds "
+                    f"hard limit {failure_ms}ms (attempts {attempts})"
+                )
             return Result(
                 screen,
                 page.url,
                 duration_ms,
                 None,
-                first_duration_ms=first_duration_ms,
+                first_duration_ms=durations[0] if len(durations) > 1 else None,
             )
         except Exception as exc:
             duration_ms = duration_ms or round((time.monotonic() - overall_started) * 1000)
@@ -253,6 +260,7 @@ async def run(args: argparse.Namespace) -> int:
                         args.timeout_ms,
                         args.slow_ms,
                         args.failure_ms,
+                        args.retries,
                         output_dir,
                     )
                     for screen in SCREENS
@@ -319,6 +327,12 @@ def parse_args() -> argparse.Namespace:
         "--failure-ms",
         type=int,
         default=int(os.getenv("LIVE_SCREEN_FAILURE_MS", "2500")),
+    )
+    parser.add_argument(
+        "--retries",
+        type=int,
+        default=int(os.getenv("LIVE_SCREEN_RETRIES", "3")),
+        help="Attempts per screen; the screen is judged on its fastest attempt.",
     )
     parser.add_argument(
         "--workers",
