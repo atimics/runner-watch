@@ -3002,6 +3002,51 @@ def _migration_062_telegram_runner_alerts(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_063_telegram_chat(db: DatabaseConnection) -> None:
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS telegram_updates (
+            update_id BIGINT PRIMARY KEY,
+            chat_id BIGINT,
+            message_id BIGINT,
+            payload_json TEXT NOT NULL,
+            status TEXT NOT NULL
+                CHECK(status IN ('pending','handled','skipped','failed')),
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT,
+            received_at TEXT NOT NULL,
+            handled_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS telegram_updates_pending
+            ON telegram_updates(status,update_id);
+        CREATE TABLE IF NOT EXISTS telegram_engagements (
+            chat_id BIGINT NOT NULL,
+            user_id BIGINT NOT NULL,
+            replies_left INTEGER NOT NULL,
+            expires_at TEXT NOT NULL,
+            muted_until TEXT,
+            opened_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(chat_id,user_id)
+        );
+        CREATE TABLE IF NOT EXISTS telegram_chat_actions (
+            id TEXT PRIMARY KEY,
+            chat_id BIGINT NOT NULL,
+            message_id BIGINT,
+            update_id BIGINT,
+            action TEXT NOT NULL CHECK(action IN ('reply','react','hold')),
+            detail TEXT,
+            acted_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS telegram_chat_actions_recent
+            ON telegram_chat_actions(chat_id,acted_at DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS telegram_chat_actions_once
+            ON telegram_chat_actions(update_id,action);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -3076,6 +3121,7 @@ MIGRATIONS = (
     Migration(60, "ticker_quotes", _migration_060_ticker_quotes),
     Migration(61, "forecast_rounds", _migration_061_forecast_rounds),
     Migration(62, "telegram_runner_alerts", _migration_062_telegram_runner_alerts),
+    Migration(63, "telegram_chat", _migration_063_telegram_chat),
 )
 
 
