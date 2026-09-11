@@ -9304,8 +9304,13 @@ def delete_ticker_comment(
     return JSONResponse({"deleted": True, "id": comment_id})
 
 
-CALL_MARK_MAX_AGE = timedelta(hours=2)
-CALL_MARK_REQUIRED = "A market price observed within the last two hours is required to make a Call."
+CALL_MARK_MAX_AGE = timedelta(
+    seconds=max(60, int(os.getenv("CALL_MARK_MAX_AGE_SECONDS", "300")))
+)
+CALL_MARK_REQUIRED = (
+    "A Call is stamped at the current market price, and the freshest price we have for "
+    "this ticker is older than that. Open the ticker to pull a new quote and try again."
+)
 
 
 def _current_call_mark(ticker: str) -> dict[str, Any]:
@@ -9337,6 +9342,12 @@ def _current_call_mark(ticker: str) -> dict[str, Any]:
             "session": None,
         }
     if not _recent_observation(mark["observed_at"], maximum_age=CALL_MARK_MAX_AGE):
+        LOG.info(
+            "call_mark_stale ticker=%s age_seconds=%s source=%s",
+            ticker,
+            mark.get("age_seconds"),
+            mark.get("source"),
+        )
         raise HTTPException(409, CALL_MARK_REQUIRED)
     if mark["price"] <= 0:
         raise HTTPException(409, "A current market price is required to make a Call.")

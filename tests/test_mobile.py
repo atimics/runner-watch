@@ -449,7 +449,7 @@ def test_public_call_requires_a_fresh_market_snapshot(
         },
     )
 
-    with pytest.raises(HTTPException, match="within the last two hours"):
+    with pytest.raises(HTTPException, match="stamped at the current market price"):
         web_main._current_call_mark("OLD")
 
     monkeypatch.setattr(
@@ -464,8 +464,26 @@ def test_public_call_requires_a_fresh_market_snapshot(
             },
         },
     )
-    with pytest.raises(HTTPException, match="within the last two hours"):
+    with pytest.raises(HTTPException, match="stamped at the current market price"):
         web_main._current_call_mark("OLD")
+
+
+def test_a_call_will_not_stamp_at_a_price_from_an_hour_ago(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    _call_mark_database(tmp_path, monkeypatch)
+    stale_at = datetime.now(UTC) - timedelta(minutes=45)
+    monkeypatch.setattr(
+        web_main,
+        "ticker_detail_data",
+        lambda _ticker: {
+            "can_publish": True,
+            "current": {"price": 1.0, "quote_time": stale_at.isoformat()},
+        },
+    )
+
+    with pytest.raises(HTTPException, match="stamped at the current market price"):
+        web_main._current_call_mark("SLOW")
 
 
 def test_a_call_is_stamped_at_the_freshest_price_not_the_last_scan(

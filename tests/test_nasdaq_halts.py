@@ -87,3 +87,44 @@ def test_trade_halt_worker_requires_an_explicit_opt_in(monkeypatch: MonkeyPatch)
     assert trade_halts_enabled() is False
     monkeypatch.setenv("NASDAQ_TRADE_HALTS_ENABLED", "true")
     assert trade_halts_enabled() is True
+
+
+def test_a_collected_halt_reaches_the_public_board(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+
+    """Fetching a feed is not the same as showing it.
+
+    public_market_events filters on the source registry's review and display policy, so
+    a halt can be collected for a long time and never reach a reader. This asserts the
+    halt feed is on the displayable side of that gate.
+    """
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "halt-visibility.db")
+    init_db()
+
+    refresh_trade_halts(download=lambda _url, _timeout: (HALT_RSS, "application/rss+xml"))
+    with connection() as database:
+        # Fetching stays behind its own opt-in; production sets it. What is under test
+        # here is whether an enabled halt feed is allowed to reach a reader.
+        database.execute(
+            "UPDATE source_registry SET enabled=1 "
+            "WHERE source='nasdaq_trader' AND feed='trade_halts'"
+        )
+
+    with connection() as database:
+        policy = database.execute(
+            "SELECT review_status,display_policy,enabled FROM source_registry "
+            "WHERE source='nasdaq_trader' AND feed='trade_halts'"
+        ).fetchone()
+        collected = database.execute(
+            "SELECT COUNT(*) FROM market_events WHERE source='nasdaq_trader'"
+        ).fetchone()[0]
+        public = database.execute(
+            "SELECT ticker,event_type FROM public_market_events WHERE source='nasdaq_trader'"
+        ).fetchall()
+
+    assert policy["review_status"] == "approved"
+    assert policy["display_policy"] != "internal_review_only"
+    assert collected == 1
+    assert [tuple(row) for row in public] == [("PEN", "trading_halt")]
