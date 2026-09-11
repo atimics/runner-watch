@@ -99,8 +99,8 @@ def _filing_documents(
         WHERE source_url=? OR source_url LIKE ?
         ORDER BY CASE
           WHEN source_url=? THEN 0
-          WHEN source_url LIKE '%.txt' THEN 1
-          WHEN source_url LIKE '%.htm%' THEN 2
+          WHEN source_url LIKE '%%.txt' THEN 1
+          WHEN source_url LIKE '%%.htm%%' THEN 2
           ELSE 3
         END,first_collected_at,content_hash
         LIMIT 8

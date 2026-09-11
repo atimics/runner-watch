@@ -1563,10 +1563,10 @@ def settle_picks() -> int:
             WHERE p.status='open' AND (
                 e.completed=1 OR lower(e.status)='post' OR
                 lower(e.status) IN ('cancelled','canceled','abandoned','no contest') OR
-                lower(e.status_detail) LIKE '%cancelled%' OR
-                lower(e.status_detail) LIKE '%canceled%' OR
-                lower(e.status_detail) LIKE '%abandoned%' OR
-                lower(e.status_detail) LIKE '%no contest%'
+                lower(e.status_detail) LIKE '%%cancelled%%' OR
+                lower(e.status_detail) LIKE '%%canceled%%' OR
+                lower(e.status_detail) LIKE '%%abandoned%%' OR
+                lower(e.status_detail) LIKE '%%no contest%%'
             )
             """
         ).fetchall()
