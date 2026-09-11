@@ -1597,7 +1597,6 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
 
     """Read pending updates and let the cheetah answer, react, or stay quiet."""
 
-    now = at or datetime.now(UTC)
     counts = {"seen": 0, "replied": 0, "reacted": 0, "held": 0, "skipped": 0}
     identity = _telegram_identity()
     if identity is None:
@@ -1607,6 +1606,10 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
     with connection() as database:
         updates = telegram_pending_updates(database)
     for row in updates:
+        # Each update is judged at the moment it is read. Sharing one timestamp
+        # across the batch made every message after the first look simultaneous
+        # with the reply that preceded it, so the cooldown swallowed all of them.
+        now = at or datetime.now(UTC)
         update_id = int(row["update_id"])
         try:
             payload = json.loads(str(row["payload_json"]))
@@ -1617,7 +1620,9 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
         message = telegram_parse_update(payload, bot_username=bot_username, bot_id=bot_id)
         if message is None:
             with connection() as database:
-                telegram_finish_update(database, update_id, "skipped", now=now)
+                telegram_finish_update(
+                    database, update_id, "skipped", error="unreadable_message", now=now
+                )
             counts["skipped"] += 1
             continue
         counts["seen"] += 1
@@ -1628,7 +1633,9 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
             transcript = telegram_recent_transcript(database, message.chat_id)
         if not attention.consider:
             with connection() as database:
-                telegram_finish_update(database, update_id, "skipped", now=now)
+                telegram_finish_update(
+                    database, update_id, "skipped", error=attention.reason, now=now
+                )
             counts["skipped"] += 1
             continue
         try:

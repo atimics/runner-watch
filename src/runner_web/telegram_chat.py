@@ -225,12 +225,16 @@ def attention_for(
     if recent_reply_count(database, message.chat_id, current) >= REPLIES_PER_HOUR:
         return Attention(consider=False, reason="hourly_budget")
 
+    if message.addressed:
+        # Someone spoke to him directly. The cooldown is there to stop him talking
+        # over a room that is not talking to him, and it must not turn into ignoring
+        # a question: a backlog draining at once would otherwise swallow every
+        # mention after the first one.
+        return Attention(consider=True, reason="addressed", engaged=True)
+
     spoke_at = last_reply_at(database, message.chat_id)
     if spoke_at and (current - spoke_at).total_seconds() < REPLY_COOLDOWN_SECONDS:
         return Attention(consider=False, reason="cooldown")
-
-    if message.addressed:
-        return Attention(consider=True, reason="addressed", engaged=True)
 
     if engagement:
         expires_at = _stamp(engagement.get("expires_at"))
@@ -254,6 +258,8 @@ CHEETAH_PERSONA = (
     "You have your own Flash allowance and your own public record. A Call you open "
     "is scored in public next to everyone else's, so open one because you looked and "
     "believed it, not because somebody asked you to. "
+    "If you do speak, say something: an ellipsis or a bare acknowledgement reads "
+    "as being ignored, so either answer the person or hold and say nothing. "
     "Keep it under about forty words unless someone asked for detail."
 )
 
