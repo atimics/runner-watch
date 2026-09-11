@@ -268,6 +268,19 @@ from runner_web.sports import (
     validate_sports_ai_forecast,
 )
 from runner_web.swarm_runtime import maintain_swarm_runtime, open_swarm_runtime
+from runner_web.telegram import (
+    alerts_enabled as telegram_alerts_enabled,
+)
+from runner_web.telegram import (
+    config_from_env as telegram_config_from_env,
+)
+from runner_web.telegram import (
+    format_runner_digest,
+    select_new_runners,
+)
+from runner_web.telegram import (
+    send_message as send_telegram_message,
+)
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
 from runner_web.worker_supervisor import run_supervised
 
@@ -10412,6 +10425,178 @@ def _record_pulse_entries_for_run(
     return max(0, inserted.rowcount)
 
 
+TELEGRAM_ALERT_MAX_ATTEMPTS = 3
+
+
+def _take_telegram_alert_baseline(database: Any, *, current_run_id: str | None) -> bool:
+    """Mark every runner already on the board as seen, once.
+
+    The baseline is taken the first time a dispatch runs, so enabling alerts
+    does not backfill the whole board. Entries from the scan run that triggered
+    this dispatch stay pending so its new runners are still delivered.
+    Returns True when the baseline was created by this call.
+    """
+
+    if database.execute("SELECT id FROM telegram_alert_state WHERE id=1").fetchone():
+        return False
+    timestamp = iso()
+    database.execute(
+        """
+        INSERT INTO telegram_alert_deliveries(
+            ticker,entered_at,status,attempts,detail,created_at,updated_at
+        )
+        SELECT ticker,entered_at,'baseline',0,'pre-existing entry',?,?
+        FROM pulse_entries
+        WHERE CAST(? AS TEXT) IS NULL OR scan_run_id<>?
+        ON CONFLICT(ticker,entered_at) DO NOTHING
+        """,
+        (timestamp, timestamp, current_run_id, current_run_id),
+    )
+    database.execute(
+        """
+        INSERT INTO telegram_alert_state(id,created_at,updated_at)
+        VALUES(1,?,?)
+        ON CONFLICT(id) DO NOTHING
+        """,
+        (timestamp, timestamp),
+    )
+    return True
+
+
+def _pending_runner_alert_rows(database: Any, *, limit: int) -> list[dict[str, Any]]:
+    """Return runners that have not been delivered yet, best score first."""
+
+    rows = database.execute(
+        """
+        SELECT p.ticker,p.entered_at,p.price,
+               s.score,s.change_pct,s.relative_volume
+        FROM pulse_entries p
+        LEFT JOIN scan_snapshots s ON s.id=p.snapshot_id
+        LEFT JOIN telegram_alert_deliveries d
+          ON d.ticker=p.ticker AND d.entered_at=p.entered_at
+        WHERE d.ticker IS NULL
+           OR (d.status='failed' AND d.attempts<?)
+        ORDER BY COALESCE(s.score,0) DESC,p.entered_at DESC
+        LIMIT ?
+        """,
+        (TELEGRAM_ALERT_MAX_ATTEMPTS, max(1, limit)),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _record_runner_alert_delivery(
+    database: Any,
+    entries: list[dict[str, Any]],
+    *,
+    status: str,
+    detail: str | None = None,
+) -> None:
+    """Record the outcome of one digest for its entries.
+
+    A repeated outcome only adds an attempt, so restarts and the scan cache
+    cannot produce a duplicate send for the same entry.
+    """
+
+    timestamp = iso()
+    database.executemany(
+        """
+        INSERT INTO telegram_alert_deliveries(
+            ticker,entered_at,status,attempts,detail,created_at,updated_at
+        ) VALUES(?,?,?,1,?,?,?)
+        ON CONFLICT(ticker,entered_at) DO UPDATE SET
+            status=excluded.status,
+            attempts=telegram_alert_deliveries.attempts+1,
+            detail=excluded.detail,
+            updated_at=excluded.updated_at
+        """,
+        [
+            (
+                str(entry.get("ticker") or "").upper(),
+                str(entry.get("entered_at") or ""),
+                status,
+                detail,
+                timestamp,
+                timestamp,
+            )
+            for entry in entries
+        ],
+    )
+
+
+def dispatch_new_runner_alerts(*, scan_run_id: str | None = None) -> dict[str, Any]:
+    """Post the pending new runners to Telegram.
+
+    Returns a small summary for logging. It never raises, because a delivery
+    problem must not change the outcome of a scan.
+    """
+
+    result: dict[str, Any] = {
+        "enabled": False,
+        "baseline": False,
+        "candidates": 0,
+        "selected": 0,
+        "status": "disabled",
+    }
+    try:
+        if not telegram_alerts_enabled():
+            return result
+        result["enabled"] = True
+        config = telegram_config_from_env()
+        if not config.configured:
+            LOG.warning(
+                "TELEGRAM_RUNNER_ALERTS is on but the bot token or chat id is missing"
+            )
+            result["status"] = "unconfigured"
+            return result
+        with connection() as database:
+            result["baseline"] = _take_telegram_alert_baseline(
+                database, current_run_id=scan_run_id
+            )
+            candidates = _pending_runner_alert_rows(database, limit=config.max_per_run)
+            result["candidates"] = len(candidates)
+            selected = select_new_runners(
+                candidates,
+                min_score=config.min_score,
+                limit=config.max_per_run,
+            )
+            result["selected"] = len(selected)
+            if not selected:
+                result["status"] = "empty"
+                return result
+            try:
+                send_telegram_message(
+                    config,
+                    format_runner_digest(selected, origin=RUNNERS_ORIGIN),
+                )
+            except Exception as exc:
+                _record_runner_alert_delivery(
+                    database, selected, status="failed", detail=str(exc)[:500]
+                )
+                result["status"] = "failed"
+                LOG.warning("Telegram runner alert delivery failed: %s", exc)
+                return result
+            _record_runner_alert_delivery(database, selected, status="sent")
+            result["status"] = "sent"
+            return result
+    except Exception:
+        LOG.exception("Telegram runner alerts failed")
+        result["status"] = "error"
+        return result
+
+
+def _spawn_runner_alert_dispatch(scan_run_id: str | None = None) -> None:
+    """Run the alert dispatch off the scan thread when the feature is on."""
+
+    if not telegram_alerts_enabled():
+        return
+    threading.Thread(
+        target=dispatch_new_runner_alerts,
+        kwargs={"scan_run_id": scan_run_id},
+        name="telegram-runner-alerts",
+        daemon=True,
+    ).start()
+
+
 def run_scan(mode: str = "penny") -> dict[str, Any]:
     with SCAN_LOCK:
         return _run_scan(mode)
@@ -10702,6 +10887,7 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
             expected_candidates=len(all_rows),
         )
         _record_pulse_entries_for_run(db, scan_run_id, captured_at)
+    _spawn_runner_alert_dispatch(scan_run_id)
 
     prediction = predict_and_store(scan_run_id)
     kol_result: dict[str, Any] = {
