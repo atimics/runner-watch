@@ -14,6 +14,12 @@
         <a class="avatar-button signed-out" href="/login">Log in</a>
       {% endif %}
     </header>
+    <section class="media-game-intro" aria-label="How to play">
+      <span class="rati-product">A PLAYABLE MEDIA FEED</span>
+      <h2>Pick a story. Meet your avatar.</h2>
+      <p>Explore the stories below, summon a reaction, and follow Flash’s results as the story unfolds.</p>
+      <a href="/flash/record">Follow Flash’s scorecard <span aria-hidden="true">→</span></a>
+    </section>
     {% set flash_record = pulse.flash_record %}
     <a class="kol-score-strip" id="kolScoreStrip" href="/flash/record" aria-label="Open the Flash forecast record"{% if not flash_record %} hidden{% endif %}>
       <span class="kol-avatar" data-kol-avatar aria-hidden="true">⚡</span>
@@ -121,12 +127,21 @@ function renderPulseContext() {
   updated.title = pulse.updated_at ? new Date(pulse.updated_at).toLocaleString() : '';
 }
 
-function render() {
-  const rows = pulse.rows || [];
+let focusedTickers = null;
+
+function render(_next, keys) {
+  if (keys !== undefined) focusedTickers = keys && keys.length ? keys : null;
+  const all = pulse.rows || [];
+  const rows = focusedTickers
+    ? all.filter(row => focusedTickers.includes(tickerKey(row)))
+    : all;
   list.innerHTML = rows.length
     ? `<div class="token-list">${rows.map(row => TickerRow.render(row)).join('')}</div>`
-    : `<div class="empty-list pulse-empty"><span class="empty-seal" aria-hidden="true"></span><strong>No verified movement</strong><p>The tape is quiet. New evidence will appear here.</p></div>`;
-  more.hidden = !pulse.has_more;
+    : focusedTickers
+      ? `<div class="empty-list pulse-empty"><span class="empty-seal" aria-hidden="true"></span><strong>The new tickers moved on</strong><p>They left the board before you tapped. Tap the pill again for the full list.</p></div>`
+      : `<div class="empty-list pulse-empty"><span class="empty-seal" aria-hidden="true"></span><strong>No verified movement</strong><p>The tape is quiet. New evidence will appear here.</p></div>`;
+  list.dataset.filtered = focusedTickers ? 'new' : '';
+  more.hidden = !pulse.has_more || Boolean(focusedTickers);
   renderKolScorecard();
   renderPulseContext();
   TickerRow.paintCharts();
@@ -169,11 +184,15 @@ new IntersectionObserver(entries => {
   if (moreVisible) loadMore();
 }, {rootMargin: '240px'}).observe(more);
 
-function newPulseCount(current, next) {
+function newPulseRows(current, next) {
   const currentEntries = new Set(
     (current.rows || []).flatMap(row => [tickerKey(row), entryKey(row)]).filter(Boolean),
   );
-  return (next.rows || []).filter(row => !currentEntries.has(entryKey(row))).length;
+  return (next.rows || []).filter(row => !currentEntries.has(entryKey(row)));
+}
+
+function newPulseCount(current, next) {
+  return newPulseRows(current, next).length;
 }
 
 window.pulseLive = RatiLiveList.mount({
@@ -187,7 +206,9 @@ window.pulseLive = RatiLiveList.mount({
   },
   changed: (current, next) => newPulseCount(current, next) > 0,
   changeCount: newPulseCount,
+  newKeys: (current, next) => newPulseRows(current, next).map(tickerKey).filter(Boolean),
   label: count => count === 1 ? '1 new ticker' : `${count} new tickers`,
+  focusLabel: count => count === 1 ? 'Showing 1 new · tap for all' : `Showing ${count} new · tap for all`,
   apply: (current, next) => ({
     ...next,
     rows: mergeUniqueTickers(next.rows || [], current.rows || []),

@@ -42,7 +42,38 @@
     if (market.refresh_failed) return 'Saved prices · The source refresh will retry shortly.';
     return '';
   };
+  const evidenceUrl = (value) => typeof value === 'string' && /^https:\/\/solscan\.io\/tx\/[A-Za-z0-9]+$/.test(value) ? value : '#';
+  function renderIntegrity(market) {
+    const list = find('[data-integrity-alerts]'); if (!list) return;
+    const alerts = market.integrity_alerts || [];
+    const fragment = document.createDocumentFragment();
+    alerts.forEach((alert) => {
+      const row = element('li');
+      const link = element('a', `${alert.title}${alert.net_token_amount ? ` · ${alert.net_token_amount} tokens` : ''} ↗`);
+      link.href = evidenceUrl(alert.source_url); link.target = '_blank'; link.rel = 'noopener noreferrer';
+      const evidence = element('a', 'Pool creation link ↗');
+      evidence.href = evidenceUrl(alert.relationship_source_url || alert.source_url); evidence.target = '_blank'; evidence.rel = 'noopener noreferrer';
+      row.append(link, element('p', `${alert.wallet} · ${alert.token_address}`), element('small', `${time(alert.observed_at)} · ${alert.role_label || alert.basis || 'Observation'} · `), evidence);
+      if (alert.related_wallets?.length) row.append(element('p', alert.related_wallets.join(' · ')));
+      if (alert.explanation) row.append(element('p', alert.explanation));
+      if (!alert.relationship_source_url) evidence.remove();
+      (alert.evidence || []).slice(0, 6).forEach((proof) => {
+        const link = element('a', ` ${proof.kind} ↗`); link.href = evidenceUrl(proof.source_url);
+        link.target = '_blank'; link.rel = 'noopener noreferrer'; row.append(link);
+      });
+      fragment.append(row);
+    });
+    list.replaceChildren(fragment);
+    const budget = market.integrity_coverage?.budget;
+    put('[data-integrity-budget]', budget ? `${budget.reserved_credits} / ${budget.daily_limit} credits reserved today` : '');
+    const gaps = market.integrity_coverage?.recorded_coverage_gaps || 0;
+    const gapNote = find('[data-integrity-gaps]');
+    if (gapNote) { gapNote.hidden = !gaps; gapNote.textContent = `${gaps} recorded coverage gaps. Source progress is available in the data feed.`; }
+    const empty = find('[data-integrity-empty]'); if (empty) empty.hidden = alerts.length > 0;
+    put('[data-integrity-coverage]', market.integrity_coverage?.checked_at ? `Checked ${time(market.integrity_coverage.checked_at)}` : 'First check pending');
+  }
   function renderMarket(market) {
+    renderIntegrity(market);
     const list = find('[data-coin-list]');
     if (!list) return;
     const focused = list.contains(document.activeElement) ? document.activeElement?.closest('[data-coin-id]')?.dataset.coinId : null;
@@ -64,7 +95,7 @@
     });
     list.replaceChildren(fragment);
     if (focused) Array.from(list.children).find((row) => row.dataset.coinId === focused)?.focus({preventScroll: true});
-    put('[data-market-scope]', marketView(market) === 'pulse' ? 'Fresh quotes · up to 20 coins' : 'Full CoinGecko snapshot');
+    put('[data-market-scope]', marketView(market) === 'pulse' ? 'Fresh quotes · up to 20 coins' : 'Helius pool discoveries');
     put('[data-coin-count]', `${market.rows.length} of ${market.total} coins`);
     put('[data-market-updated]', market.collected_at ? `Collected ${time(market.collected_at)}` : 'First collection pending');
     showStatus('[data-market-status]', marketMessage(market));
@@ -73,8 +104,9 @@
     if (!market.rows.length) {
       const messages = {
         disabled: ['Memecoin feed paused', 'The feed will return when collection resumes.'],
-        unavailable: ['Waiting for CoinGecko', 'The source refresh will retry shortly.'],
-        pending: ['First prices are on the way', 'The next collection will fill this list.']
+        unavailable: ['Waiting for pool data', 'The source refresh will retry shortly.'],
+        pending: ['First prices are on the way', 'The next collection will fill this list.'],
+        ...(market.total === 0 && market.collected_at ? {ok: ['Waiting for active pools', 'The next collection checks new pools for liquidity and trades.']} : {})
       };
       const waitingForFresh = marketView(market) === 'pulse' && market.status === 'stale';
       const message = waitingForFresh ? ['Waiting for fresh quotes', 'Radar has the saved prices from the latest collection.'] : messages[market.status] || ['Try another name or symbol', `Search covers the ${market.total} coins in this snapshot.`];
@@ -140,10 +172,16 @@
     put('[data-quote-time]', time(coin.observed_at)); put('[data-coin-volume]', coin.volume_label); put('[data-coin-cap]', coin.market_cap_label);
     document.querySelectorAll('[data-coin-metric]').forEach((node) => { const key = node.dataset.coinMetric, value = coin[key]; node.textContent = key.endsWith('24h') ? price(value) : finite(value) ? value.toLocaleString('en-US', {maximumFractionDigits: 2}) : 'unknown'; });
     put('[data-evidence-time]', time(coin.observed_at)); put('[data-collected-time]', time(detail.collected_at));
+    if (coin.network) {
+      put('[data-pool-address]', coin.pool_address);
+      put('[data-pool-liquidity]', price(coin.liquidity_usd));
+      put('[data-pool-trades]', `${coin.buys_24h} buys · ${coin.sells_24h} sells`);
+      const source = find('[data-pool-source]'); if (source) source.href = coin.source_url;
+    }
     let message = '';
     if (detail.status === 'disabled') message = 'Collection paused · Showing the saved quote.';
     else if (old || detail.status === 'stale') message = 'Saved quote · Waiting for a fresh source time.';
-    else if (!detail.in_current_snapshot) message = 'Saved coin · Outside the latest top-100 snapshot.';
+    else if (!detail.in_current_snapshot) message = 'Saved coin · Outside the latest discovery snapshot.';
     else if (detail.refresh_failed) message = 'Saved quote · The source refresh will retry shortly.';
     showStatus('[data-detail-status]', message);
     const canCall = !old && detail.status === 'ok' && detail.can_call !== false;

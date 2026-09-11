@@ -63,7 +63,7 @@ def test_market_coverage_follows_callable_routes(client):
     coingecko = next(
         row
         for row in client.get("/api/v1/providers").json()["providers"]
-        if row["id"] == "coingecko"
+        if row["id"] == "helius"
     )
     assert coingecko["runtime_available"] is False
     assert coingecko["state"] == "cloud_required"

@@ -15,7 +15,7 @@ pytestmark = [pytest.mark.browser, pytest.mark.usefixtures("notice_db")]
 
 
 @pytest.mark.parametrize("width,corrected", [(390, False), (1280, True)])
-def test_first_disclosure_updates_real_report_metadata_and_share_without_reload(
+def test_operator_notice_is_visible_in_report_and_share(
     page: Page, monkeypatch, width: int, corrected: bool
 ) -> None:
     page.set_viewport_size({"width": width, "height": 844})
@@ -36,15 +36,15 @@ def test_first_disclosure_updates_real_report_metadata_and_share_without_reload(
         )
     client = TestClient(web_main.app, base_url=web_main.APP_ORIGIN)
     client.cookies.set(web_main.SESSION_COOKIE, "alice")
-    saved = []
+    record_content_notice(
+        "report", "public-stock", kind="sponsorship", text="RATi commissioned this story."
+    )
 
     def serve(route: Route) -> None:
         request = route.request
         response = client.request(
             request.method, request.url, headers=request.headers, content=request.post_data_buffer
         )
-        if request.url.endswith("/disclosures"):
-            saved.append(response.json())
         headers = {
             key: value
             for key, value in response.headers.items()
@@ -61,15 +61,7 @@ def test_first_disclosure_updates_real_report_metadata_and_share_without_reload(
         page.goto(f"{web_main.APP_ORIGIN}/research/public-stock", wait_until="networkidle")
         page.get_by_role("button", name="Close announcement", exact=True).click()
         expect(page.locator('meta[name="description"]')).to_have_count(1)
-        initial = page.locator('meta[property="og:title"]').get_attribute("content")
-        assert "Disclosure" not in initial
-        page.evaluate("window.sameReportPage = 'original-page'")
-        page.get_by_text("Add a disclosure", exact=True).click()
-        page.get_by_label("Relationship", exact=True).select_option("sponsorship")
-        page.get_by_label("Disclosure", exact=True).fill("The issuer paid me for this report.")
-        page.get_by_role("button", name="Save disclosure").click()
-        expect(page.locator("[data-disclosure-status]")).to_have_text("Disclosure saved.")
-        assert len(saved) == 1
+        expect(page.locator("textarea, [data-report-disclosure]")).to_have_count(0)
         expected_title = (
             "FIX · Correction · Disclosure" if corrected else "FIX · Disclosure · Original headline"
         )
@@ -78,8 +70,6 @@ def test_first_disclosure_updates_real_report_metadata_and_share_without_reload(
             if corrected
             else "Disclosure: Original summary"
         )
-        assert saved[0]["share_title"] == expected_title
-        assert saved[0]["share_summary"] == expected_summary
         for selector in ['meta[property="og:title"]', 'meta[name="twitter:title"]']:
             expect(page.locator(selector)).to_have_attribute("content", expected_title)
         for selector in [
@@ -94,8 +84,6 @@ def test_first_disclosure_updates_real_report_metadata_and_share_without_reload(
             "text": expected_summary,
             "url": f"{web_main.APP_ORIGIN}/research/public-stock",
         }
-        assert page.evaluate("window.sameReportPage") == "original-page"
-        expect(page.locator("[data-disclosure-status]")).to_have_text("Disclosure saved.")
         expect(page.locator("h1")).to_have_text("Original headline")
     finally:
         client.close()

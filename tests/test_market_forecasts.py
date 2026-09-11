@@ -14,6 +14,7 @@ from runner_web.db import connection, init_db
 from runner_web.ingestion import register_source
 from runner_web.market_forecasts import (
     CONTRACT_VERSION,
+    NO_PRICE_BY_OPEN,
     generate_market_forecasts,
     queue_market_forecasts,
     settle_market_forecasts,
@@ -60,6 +61,34 @@ def _leader(ticker: str, **overrides):
         "relative_volume": 3.0,
         **overrides,
     }
+
+
+def _insert_scan_price(ticker: str, price: float, at) -> None:
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO scan_runs(
+                id,mode,label,feature_schema_version,requested_symbols,liquid_symbols,
+                scanned_symbols,candidate_rows,failed_symbols_json,warnings_json,
+                started_at,finished_at,captured_at
+            ) VALUES(?,?,?,?,?,?,?,?,'[]','[]',?,?,?)
+            """,
+            (f"run-{ticker}-{at.isoformat()}", "penny", "Penny", "test", 1, 1, 1, 1,
+             at.isoformat(), at.isoformat(), at.isoformat()),
+        )
+        database.execute(
+            """
+            INSERT INTO scan_snapshots(
+                id,ticker,score,stage,session,price,change_pct,momentum_5m_pct,
+                momentum_15m_pct,relative_volume,recent_relative_volume,breakout_pct,
+                dollar_volume,quote_time,signals_json,risks_json,captured_at,
+                scan_run_id,baseline_rank,trade_state
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'[]','[]',?,?,?,?)
+            """,
+            (f"snap-{ticker}-{at.isoformat()}", ticker, 70.0, "BUILDING", "pre", price, 5.0,
+             1.0, 2.0, 3.0, 3.0, 0.5, 500_000, at.isoformat(), at.isoformat(),
+             f"run-{ticker}-{at.isoformat()}", 1, "WATCH"),
+        )
 
 
 def _generate(request):
@@ -116,7 +145,7 @@ def test_frozen_targets_use_saved_evidence_and_model(monkeypatch):
         return _generate(request)
 
     result = generate_market_forecasts(generate, PRE)
-    assert result == {"completed": 1, "expired": 0, "failed": 0}
+    assert result == {"completed": 1, "expired": 0, "failed": 0, "waiting": 0}
     assert len(requests) == 1
     assert requests[0]["evidence_as_of"] == PRE.isoformat()
     assert requests[0]["horizon"] == "the regular-session closing price on report_day"
@@ -231,13 +260,22 @@ def test_failed_fetch_uses_completed_archive(monkeypatch):
 
 
 @pytest.mark.parametrize("price", [None, 0, -1, float("nan"), float("inf"), True])
-def test_bad_reference_prices_receive_a_pass(price):
+def test_bad_reference_prices_wait_and_then_pass_at_the_open(price):
     _report(leaders=[_leader("UP", price=price)])
-    assert generate_market_forecasts(None, PRE)["completed"] == 1
-    assert _forecasts()["UP"]["status"] == "pass"
+
+    waiting = generate_market_forecasts(None, PRE)
+
+    assert waiting == {"completed": 0, "expired": 0, "failed": 0, "waiting": 1}
+    assert _forecasts()["UP"] is None
+
+    at_open = datetime(2026, 9, 2, 13, 30, tzinfo=UTC)
+    assert generate_market_forecasts(None, at_open)["expired"] == 1
+    settled = _forecasts()["UP"]
+    assert settled["status"] == "pass"
+    assert settled["reason"] == NO_PRICE_BY_OPEN
 
 
-def test_risk_states_and_stale_prices_receive_a_pass():
+def test_a_risk_state_passes_at_once_while_a_stale_price_waits():
     _report(
         leaders=[
             _leader("UP", trade_state="AVOID"),
@@ -245,8 +283,42 @@ def test_risk_states_and_stale_prices_receive_a_pass():
             _leader("OLD", quote_time=f"{DAY}T10:00:00+00:00"),
         ]
     )
-    assert generate_market_forecasts(None, PRE)["completed"] == 1
-    assert all(row["status"] == "pass" for row in _forecasts().values())
+
+    result = generate_market_forecasts(None, PRE)
+
+    assert result["completed"] == 0
+    assert result["waiting"] == 1
+    saved = _forecasts()
+    assert saved["UP"]["status"] == "pass"
+    assert saved["EXIT"]["status"] == "pass"
+    assert saved["OLD"] is None
+
+
+def test_a_late_pre_market_print_earns_a_target_after_waiting():
+    _report(leaders=[_leader("LATE", price=None, quote_time=None)])
+
+    assert generate_market_forecasts(_generate, PRE)["waiting"] == 1
+    assert _forecasts()["LATE"] is None
+
+    later = PRE + timedelta(minutes=10)
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO ticker_quotes(
+                ticker,price,observed_at,session,source,status,requested_at,collected_at
+            ) VALUES('LATE',2.5,?,'PRE-MARKET','yahoo','ok',?,?)
+            """,
+            (later.isoformat(), later.isoformat(), later.isoformat()),
+        )
+
+    result = generate_market_forecasts(_generate, later + timedelta(minutes=1))
+
+    assert result["completed"] == 1
+    assert result["waiting"] == 0
+    saved = _forecasts()["LATE"]
+    assert saved["status"] == "pending"
+    assert saved["reference_price"] == 2.5
+    assert saved["reference_source"] == "quote"
 
 
 def test_flash_can_pass_on_thin_evidence():
@@ -326,7 +398,10 @@ def test_expiry_at_open_and_server_key_wait():
     assert market_report(DAY, "pre_market")["forecast_state"] == "queued"
     at = datetime(2026, 9, 2, 13, 30, tzinfo=UTC)
     assert generate_market_forecasts(_generate, at)["expired"] == 1
-    assert _forecasts()["UP"] is None
+    settled = _forecasts()["UP"]
+    assert settled["status"] == "pass"
+    assert settled["reason"] == NO_PRICE_BY_OPEN
+    assert settled["target_price"] is None
 
 
 def test_corporate_action_enters_price_review():
@@ -484,6 +559,7 @@ def test_openrouter_request_contains_the_approved_public_fields(monkeypatch):
             },
             {**_leader("PASS", trade_state="AVOID"), "pass_reason": "Saved risk state."},
         ],
+        "waiting": ["NOPRICE"],
     }
     response = {
         "id": "generation-1",
@@ -534,6 +610,7 @@ def test_openrouter_request_contains_the_approved_public_fields(monkeypatch):
     assert captured["authorization"] == "Bearer server-key"
     sent = json.loads(captured["body"]["messages"][1]["content"])
     assert [row["ticker"] for row in sent["leaders"]] == ["UP"]
+    assert "waiting" not in sent
     assert set(sent["leaders"][0]) == {
         "ticker",
         "rank",
@@ -561,3 +638,65 @@ def test_openrouter_request_contains_the_approved_public_fields(monkeypatch):
         "model": FLASH.model,
         "request_id": "generation-1",
     }
+
+
+def test_targets_fill_in_over_several_rounds_as_prices_arrive():
+    _report(leaders=[_leader("EARLY"), _leader("LATE", price=None, quote_time=None)])
+
+    first = generate_market_forecasts(_generate, PRE)
+
+    assert first["completed"] == 0
+    assert first["waiting"] == 1
+    saved = _forecasts()
+    assert saved["EARLY"]["status"] == "pending"
+    assert saved["EARLY"]["reference_source"] == "report"
+    assert saved["LATE"] is None
+    with connection() as database:
+        job = database.execute("SELECT status,rounds FROM market_report_forecast_jobs").fetchone()
+    assert job["status"] == "queued"
+    assert job["rounds"] == 1
+
+    later = PRE + timedelta(minutes=5)
+    _insert_scan_price("LATE", 3.0, later)
+
+    second = generate_market_forecasts(_generate, later + timedelta(minutes=1))
+
+    assert second["completed"] == 1
+    assert second["waiting"] == 0
+    filled = _forecasts()["LATE"]
+    assert filled["status"] == "pending"
+    assert filled["reference_price"] == 3.0
+    assert filled["reference_source"] == "scan"
+    with connection() as database:
+        job = database.execute("SELECT status,rounds FROM market_report_forecast_jobs").fetchone()
+    assert job["status"] == "complete"
+    assert job["rounds"] == 2
+
+
+def test_an_already_decided_ticker_is_never_asked_about_again():
+    _report(leaders=[_leader("EARLY"), _leader("LATE", price=None, quote_time=None)])
+    generate_market_forecasts(_generate, PRE)
+    later = PRE + timedelta(minutes=5)
+    _insert_scan_price("LATE", 3.0, later)
+    seen = []
+
+    def generate(request):
+        seen.append([row["ticker"] for row in request["leaders"]])
+        return _generate(request)
+
+    generate_market_forecasts(generate, later + timedelta(minutes=1))
+
+    assert seen == [["LATE"]]
+    assert _forecasts()["EARLY"]["reference_price"] == 1.0
+
+
+def test_a_fresher_scan_price_supersedes_the_frozen_board_price():
+    stale = PRE - timedelta(minutes=45)
+    _report(leaders=[_leader("MOVER", price=1.0, quote_time=stale.isoformat())])
+    _insert_scan_price("MOVER", 1.8, PRE - timedelta(minutes=2))
+
+    assert generate_market_forecasts(_generate, PRE)["completed"] == 1
+
+    saved = _forecasts()["MOVER"]
+    assert saved["reference_price"] == 1.8
+    assert saved["reference_source"] == "scan"

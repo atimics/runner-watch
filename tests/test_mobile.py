@@ -197,7 +197,7 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert template.count("<textarea") == 0
     assert "flash_comments('stock', detail.ticker" in template
     assert 'id="generateComment"' in comments
-    assert "Post with avatar" in comments
+    assert "Summon avatar" in comments
     assert "Persistent avatars · public across tickers" not in template
     assert "ability guides a short Flash draft" not in template
     assert "Start the read" not in template
@@ -425,7 +425,18 @@ def test_pulse_ticker_search_uses_native_validation() -> None:
     assert "Movement is only the first clue." not in pulse_template
 
 
-def test_public_call_requires_a_fresh_market_snapshot(monkeypatch: MonkeyPatch) -> None:
+def _call_mark_database(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    from runner_web import quotes
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "call-mark.db")
+    init_db()
+    monkeypatch.setattr(quotes, "ticker_quote", lambda *args, **kwargs: None)
+
+
+def test_public_call_requires_a_fresh_market_snapshot(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    _call_mark_database(tmp_path, monkeypatch)
     monkeypatch.setattr(
         web_main,
         "ticker_detail_data",
@@ -438,7 +449,7 @@ def test_public_call_requires_a_fresh_market_snapshot(monkeypatch: MonkeyPatch) 
         },
     )
 
-    with pytest.raises(HTTPException, match="within the last two hours"):
+    with pytest.raises(HTTPException, match="stamped at the current market price"):
         web_main._current_call_mark("OLD")
 
     monkeypatch.setattr(
@@ -453,8 +464,79 @@ def test_public_call_requires_a_fresh_market_snapshot(monkeypatch: MonkeyPatch) 
             },
         },
     )
-    with pytest.raises(HTTPException, match="within the last two hours"):
+    with pytest.raises(HTTPException, match="stamped at the current market price"):
         web_main._current_call_mark("OLD")
+
+
+def test_a_call_will_not_stamp_at_a_price_from_an_hour_ago(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    _call_mark_database(tmp_path, monkeypatch)
+    stale_at = datetime.now(UTC) - timedelta(minutes=45)
+    monkeypatch.setattr(
+        web_main,
+        "ticker_detail_data",
+        lambda _ticker: {
+            "can_publish": True,
+            "current": {"price": 1.0, "quote_time": stale_at.isoformat()},
+        },
+    )
+
+    with pytest.raises(HTTPException, match="stamped at the current market price"):
+        web_main._current_call_mark("SLOW")
+
+
+def test_a_call_is_stamped_at_the_freshest_price_not_the_last_scan(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    _call_mark_database(tmp_path, monkeypatch)
+    now = datetime.now(UTC)
+    scan_at = now - timedelta(minutes=90)
+    quote_at = now - timedelta(seconds=20)
+    monkeypatch.setattr(
+        web_main,
+        "ticker_detail_data",
+        lambda _ticker: {
+            "can_publish": True,
+            "current": {"price": 1.00, "quote_time": scan_at.isoformat()},
+        },
+    )
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO ticker_quotes(
+                ticker,price,observed_at,session,source,status,requested_at,collected_at
+            ) VALUES('RUN',1.87,?,'REGULAR','yahoo','ok',?,?)
+            """,
+            (quote_at.isoformat(), now.isoformat(), now.isoformat()),
+        )
+
+    mark = web_main._current_call_mark("RUN")
+
+    assert mark["price"] == 1.87
+    assert mark["source"] == "quote"
+    assert mark["observed_at"] == quote_at.isoformat()
+    assert mark["age_seconds"] is not None and mark["age_seconds"] < 120
+
+
+def test_a_call_falls_back_to_the_scan_when_no_quote_exists(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    _call_mark_database(tmp_path, monkeypatch)
+    scan_at = datetime.now(UTC) - timedelta(minutes=4)
+    monkeypatch.setattr(
+        web_main,
+        "ticker_detail_data",
+        lambda _ticker: {
+            "can_publish": True,
+            "current": {"price": 2.5, "quote_time": scan_at.isoformat()},
+        },
+    )
+
+    mark = web_main._current_call_mark("RUN")
+
+    assert mark["price"] == 2.5
+    assert mark["source"] == "scan"
 
 
 def test_passkey_signup_needs_no_profile_fields(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -1778,6 +1860,10 @@ def test_alpha_ranks_public_calls_and_shows_pnl(tmp_path: Path, monkeypatch: Mon
     assert board["total_comments"] == 1
 
 
+async def _empty_comment_body() -> dict[str, Any]:
+    return {"type": "http.request", "body": b"", "more_body": False}
+
+
 def test_ticker_feedback_tracks_signed_in_public_comments(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
@@ -1824,9 +1910,13 @@ def test_ticker_feedback_tracks_signed_in_public_comments(
         ],
         "client": ("127.0.0.78", 4780),
     }
-    comment_request = Request(request_scope)
+    comment_request = Request(request_scope, receive=_empty_comment_body)
     result = asyncio.run(create_ticker_comment("ONE", comment_request, raw_session))
-    replay = asyncio.run(create_ticker_comment("ONE", Request(request_scope), raw_session))
+    replay = asyncio.run(
+        create_ticker_comment(
+            "ONE", Request(request_scope, receive=_empty_comment_body), raw_session
+        )
+    )
     payload = json.loads(result.body)
     replay_payload = json.loads(replay.body)
 
@@ -1983,7 +2073,11 @@ def test_failed_ticker_comment_request_refunds_once_and_replays_the_error(
 
     for _attempt in range(2):
         with pytest.raises(HTTPException) as error:
-            asyncio.run(create_ticker_comment("ONE", Request(request_scope), raw_session))
+            asyncio.run(
+                create_ticker_comment(
+                    "ONE", Request(request_scope, receive=_empty_comment_body), raw_session
+                )
+            )
         assert error.value.status_code == 502
         assert error.value.detail == "AI comment generation failed. Your Flash was returned."
 

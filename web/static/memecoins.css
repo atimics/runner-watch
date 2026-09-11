@@ -75,3 +75,7 @@
 .meme-call-list small { font-size: 10px; color: var(--muted); line-height: 1.7; }
 @media (min-width: 760px) { .meme-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .meme-chart { grid-column: 1 / -1; } }
 @media (max-width: 360px) { .meme-market, .meme-detail-body { padding-left: 12px; padding-right: 12px; } .meme-row { grid-template-columns: 36px minmax(0, 1fr) minmax(60px, auto); gap: 7px; } .meme-row .coin { width: 34px; height: 34px; } .meme-section { padding: 16px 0; } }
+
+[data-integrity-alerts] { list-style: none; padding: 0; overflow-wrap: anywhere; }
+[data-integrity-alerts] li { margin: 14px 0; font-size: 12px; }
+[data-integrity-alerts] p { margin: 5px 0; color: var(--muted); }
