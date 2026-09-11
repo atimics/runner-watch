@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import urllib.error
+from datetime import UTC, datetime
 
 import pytest
 from pytest import MonkeyPatch
@@ -214,6 +215,46 @@ def test_format_runner_digest_counts_several_runners() -> None:
     assert "https://runners.rati.chat/t/BBBB" in text
 
 
+def test_format_market_report_post_includes_leaders_and_link() -> None:
+    text = telegram.format_market_report_post(
+        {
+            "report_type": "pre_market",
+            "label": "Pre-market briefing",
+            "headline": "MSGM leads the pre-market board",
+            "summary": "12 names cleared the scanner. 8 were green.",
+            "report_day": "2026-09-11",
+            "path": "/reports/2026-09-11/pre",
+            "leaders": [
+                {"ticker": "msgm", "change_pct": 12.4, "score": 72},
+                {"ticker": "VTAK", "change_pct": 8.1, "score": 65},
+            ],
+        },
+        origin="https://runners.rati.chat",
+    )
+
+    assert text.startswith("📋 Pre-market briefing")
+    assert "MSGM leads the pre-market board" in text
+    assert "$MSGM · +12.40% · score 72" in text
+    assert "$VTAK · +8.10% · score 65" in text
+    assert "https://runners.rati.chat/reports/2026-09-11/pre" in text
+
+
+def test_format_public_report_post_includes_ticker_and_report_links() -> None:
+    text = telegram.format_public_report_post(
+        {
+            "ticker": "cast",
+            "headline": "A quiet tape with a loud filing",
+            "public_id": "rep-cast",
+        },
+        origin="https://runners.rati.chat/",
+    )
+
+    assert "📄 New public report · $CAST" in text
+    assert "A quiet tape with a loud filing" in text
+    assert "https://runners.rati.chat/t/CAST" in text
+    assert "https://runners.rati.chat/research/rep-cast" in text
+
+
 def test_send_message_requires_configuration() -> None:
     with pytest.raises(RuntimeError):
         telegram.send_message(telegram.TelegramConfig(bot_token="", chat_id=""), "hello")
@@ -321,6 +362,84 @@ def test_dispatch_never_backfills_the_existing_board(
     assert sent == []
 
 
+def test_a_sweep_with_no_scan_still_delivers_a_stranded_runner(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    """A runner must not be stranded because its scan never finished.
+
+    The dispatch used to be reachable only at the end of a completed scan. A
+    scan takes the better part of an hour and only writes its row once it
+    finishes, so a worker restart part way through lost the run and the alert
+    with it. Called with no scan id at all, the dispatch still has to deliver.
+    """
+
+    sent: list[str] = []
+    monkeypatch.setattr(web_main, "send_telegram_message", lambda config, text: sent.append(text))
+    _insert_runner("run-old", "OLD1", score=95, entered_at="2026-09-01T14:00:00+00:00")
+    web_main.dispatch_new_runner_alerts(scan_run_id="run-nothing-new")
+    assert sent == []
+
+    _insert_runner("run-lost", "LOUD", score=80, entered_at="2026-09-10T14:00:00+00:00")
+
+    swept = web_main.dispatch_new_runner_alerts()
+
+    assert swept["status"] == "sent"
+    assert swept["selected"] == 1
+    assert len(sent) == 1
+    assert "LOUD" in sent[0]
+
+    assert web_main.dispatch_new_runner_alerts()["status"] == "empty"
+    assert len(sent) == 1
+
+
+def test_two_dispatches_at_once_post_once(alert_environment, monkeypatch: MonkeyPatch) -> None:
+    """The scan tail and the sweep can both arrive at the dispatch.
+
+    The gap between choosing runners and recording them as sent is wide enough
+    for a second dispatch to choose the same ones, which would post the digest
+    to the channel twice.
+    """
+
+    import threading
+
+    sent: list[str] = []
+    second: dict[str, object] = {}
+    started = threading.Event()
+    release = threading.Event()
+
+    def _send(config: object, text: str) -> None:
+        first_call = not sent
+        sent.append(text)
+        if first_call:
+            # Hold the first dispatch inside the send so the second one arrives
+            # while the runners it would pick are chosen but not yet recorded.
+            started.set()
+            release.wait(timeout=5)
+
+    monkeypatch.setattr(web_main, "send_telegram_message", _send)
+    _insert_runner("run-1", "LOUD", score=80, entered_at="2026-09-10T14:00:00+00:00")
+
+    worker = threading.Thread(target=lambda: second.update(web_main.dispatch_new_runner_alerts()))
+    first_result: dict[str, object] = {}
+    holder = threading.Thread(
+        target=lambda: first_result.update(web_main.dispatch_new_runner_alerts(scan_run_id="run-1"))
+    )
+    holder.start()
+    assert started.wait(timeout=5), "the first dispatch never reached the send"
+    worker.start()
+    worker.join(timeout=5)
+    release.set()
+    holder.join(timeout=5)
+
+    assert second, (
+        "the second dispatch never returned: it was not turned away and is "
+        "sitting behind the first one instead"
+    )
+    assert second["status"] == "busy"
+    assert first_result["status"] == "sent"
+    assert len(sent) == 1
+
+
 def test_dispatch_applies_the_score_floor(alert_environment, monkeypatch: MonkeyPatch) -> None:
     sent: list[str] = []
     monkeypatch.setattr(web_main, "send_telegram_message", lambda config, text: sent.append(text))
@@ -392,3 +511,194 @@ def test_delivery_failure_does_not_roll_back_the_recorded_entries(
     assert int(entries["count"]) == 1
     assert deliveries["status"] == "failed"
     assert int(deliveries["attempts"]) == 1
+
+
+def _insert_market_report(
+    report_id: str,
+    *,
+    report_day: str = "2026-09-11",
+    report_type: str = "pre_market",
+    headline: str = "MSGM leads the pre-market board",
+    created_at: str = "2026-09-11T08:15:00+00:00",
+) -> None:
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO market_session_reports(
+                id,report_day,report_type,source_scan_run_id,comparison_scan_run_id,
+                as_of,headline,summary,metrics_json,leaders_json,turns_json,
+                created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                report_id,
+                report_day,
+                report_type,
+                "scan-1",
+                None,
+                created_at,
+                headline,
+                "12 names cleared the scanner. 8 were green.",
+                '{"candidates":12,"green":8}',
+                json.dumps([{"ticker": "MSGM", "change_pct": 12.4, "score": 72, "rank": 1}]),
+                "[]",
+                created_at,
+                created_at,
+            ),
+        )
+
+
+def _insert_public_report(
+    report_id: str,
+    ticker: str,
+    *,
+    visibility: str = "public",
+    customer_inference: int = 0,
+    created_at: str = "2026-09-11T16:00:00+00:00",
+) -> None:
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(id) DO NOTHING",
+            ("flash-user", "flash_user", "Flash user", "active", created_at),
+        )
+        database.execute(
+            """
+            INSERT INTO research_commissions(
+                id,public_id,user_id,ticker,evidence_key,status,requested_model,model,
+                headline,summary,visibility,customer_inference,created_at,updated_at,
+                completed_at,published_at
+            ) VALUES(?,?,?,?,?,'complete',?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                report_id,
+                f"pub-{report_id}",
+                "flash-user",
+                ticker,
+                f"evidence-{report_id}",
+                "test-model",
+                "test-model",
+                f"{ticker} report",
+                "A public note.",
+                visibility,
+                customer_inference,
+                created_at,
+                created_at,
+                created_at,
+                created_at if visibility == "public" else None,
+            ),
+        )
+
+
+def test_dispatch_posts_a_new_market_report_and_skips_the_old_one(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    sent: list[str] = []
+    monkeypatch.setattr(web_main, "send_telegram_message", lambda config, text: sent.append(text))
+    _insert_market_report(
+        "old-pre", created_at="2026-09-10T08:15:00+00:00", report_day="2026-09-10"
+    )
+
+    first = web_main.dispatch_telegram_posts()
+
+    assert first["market_reports"]["baseline"] is True
+    assert first["market_reports"]["status"] == "empty"
+    assert sent == []
+
+    _insert_market_report("new-pre", headline="CAST leads the pre-market board")
+    second = web_main.dispatch_telegram_posts()
+
+    assert second["status"] == "sent"
+    assert second["market_reports"]["status"] == "sent"
+    assert len(sent) == 1
+    assert "Pre-market briefing" in sent[0]
+    assert "CAST leads the pre-market board" in sent[0]
+    assert f"{web_main.RUNNERS_ORIGIN}/reports/2026-09-11/pre" in sent[0]
+    assert web_main.dispatch_telegram_posts()["market_reports"]["status"] == "empty"
+    assert len(sent) == 1
+
+
+def test_dispatch_posts_a_new_public_report_and_ignores_private_ones(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    sent: list[str] = []
+    monkeypatch.setattr(web_main, "send_telegram_message", lambda config, text: sent.append(text))
+    _insert_public_report("old", "OLD1")
+    first = web_main.dispatch_telegram_posts()
+    assert first["research_reports"]["baseline"] is True
+    assert sent == []
+
+    _insert_public_report("private", "HIDE", visibility="private")
+    _insert_public_report("own-model", "OWN", customer_inference=1)
+    _insert_public_report("fresh", "CAST")
+    result = web_main.dispatch_telegram_posts()
+
+    assert result["research_reports"]["status"] == "sent"
+    assert len(sent) == 1
+    assert "$CAST" in sent[0]
+    assert f"{web_main.RUNNERS_ORIGIN}/research/pub-fresh" in sent[0]
+    assert "HIDE" not in sent[0]
+    assert "OWN" not in sent[0]
+
+
+def test_dispatch_queues_a_free_report_for_each_new_runner(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TELEGRAM_RUNNER_REPORTS_PER_DAY", "20")
+    monkeypatch.setattr(web_main, "TELEGRAM_RUNNER_REPORTS_PER_DAY", 20)
+    monkeypatch.setattr(web_main, "send_telegram_message", lambda config, text: None)
+    monkeypatch.setattr(web_main, "_flash_provider_ready", lambda *args, **kwargs: True)
+    created: list[str] = []
+
+    def fake_create(user_id, ticker, **kwargs):
+        created.append(ticker)
+        assert user_id == web_main.MACHINE_USER_ID
+        assert kwargs["charge"] is False
+        assert kwargs["trigger"] == "telegram_runner"
+        return {"id": f"rep-{ticker}"}, True
+
+    monkeypatch.setattr(web_main, "_create_research_commission", fake_create)
+    enqueued: list[str] = []
+    monkeypatch.setattr(web_main, "_enqueue_research_job_sync", enqueued.append)
+    monkeypatch.setattr(web_main, "ensure_machine_trader", lambda: None)
+    _insert_runner("run-1", "CAST", score=80, entered_at="2026-09-10T14:00:00+00:00")
+    _insert_runner("run-1", "QUIET", score=20, entered_at="2026-09-10T14:01:00+00:00")
+
+    result = web_main.dispatch_new_runner_alerts(scan_run_id="run-1")
+
+    assert result["status"] == "sent"
+    assert created == ["CAST"]
+    assert enqueued == ["rep-CAST"]
+    assert result["reports"] == {"queued": 1, "skipped": 0, "tickers": ["CAST"]}
+
+
+def test_runner_report_queue_respects_the_daily_cap(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TELEGRAM_RUNNER_REPORTS_PER_DAY", "1")
+    monkeypatch.setattr(web_main, "TELEGRAM_RUNNER_REPORTS_PER_DAY", 1)
+    monkeypatch.setattr(web_main, "_flash_provider_ready", lambda *args, **kwargs: True)
+    monkeypatch.setattr(web_main, "ensure_machine_trader", lambda: None)
+    day = "2026-09-11"
+    monkeypatch.setattr(web_main, "now", lambda: datetime(2026, 9, 11, tzinfo=UTC))
+    _insert_public_report("used", "OLD1", created_at=f"{day}T12:00:00+00:00")
+    with connection() as database:
+        database.execute(
+            "UPDATE research_commissions SET trigger='telegram_runner', "
+            "report_day=? WHERE id='used'",
+            (day,),
+        )
+    created: list[str] = []
+
+    def fake_create(user_id, ticker, **kwargs):
+        created.append(ticker)
+        return {"id": f"rep-{ticker}"}, True
+
+    monkeypatch.setattr(web_main, "_create_research_commission", fake_create)
+    monkeypatch.setattr(web_main, "_enqueue_research_job_sync", lambda report_id: None)
+
+    result = web_main._queue_telegram_runner_reports(["AAAA", "BBBB"])
+
+    assert result["queued"] == 0
+    assert result["skipped"] == 2
+    assert created == []

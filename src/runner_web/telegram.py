@@ -1,12 +1,9 @@
-"""Telegram delivery for newly detected runners.
+"""Telegram delivery for public channel posts.
 
-The scanner records every ticker that enters the board for the first time in
-``pulse_entries``. This module turns those entries into a single digest message
-and posts it to a configured chat.
-
-The module is deliberately free of database imports so the formatting and
-selection rules can be tested on their own. The scan worker in ``main`` loads
-the candidate rows and records delivery outcomes.
+The channel gets a message when a new runner clears the score floor, when a
+pre-market or post-market report is frozen, and when a research report becomes
+public. Formatting lives here so the rules can be tested without a database.
+The worker in ``main`` loads the rows and records delivery outcomes.
 """
 
 from __future__ import annotations
@@ -24,9 +21,11 @@ LOG = logging.getLogger(__name__)
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 SEND_TIMEOUT_SECONDS = 10
-DEFAULT_MIN_SCORE = 60.0
+DEFAULT_MIN_SCORE = 37.0
 DEFAULT_MAX_PER_RUN = 10
+DEFAULT_MAX_REPORTS_PER_RUN = 5
 MAX_MESSAGE_CHARS = 4096
+MARKET_REPORT_LEADER_LIMIT = 3
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
@@ -75,8 +74,7 @@ def bot_token_from_env() -> str:
     older TELEGRAM_BOT_TOKEN is still accepted."""
 
     return (
-        os.getenv("TELEGRAM_API_TOKEN", "").strip()
-        or os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+        os.getenv("TELEGRAM_API_TOKEN", "").strip() or os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     )
 
 
@@ -168,6 +166,70 @@ def format_runner_digest(entries: Iterable[Mapping[str, Any]], *, origin: str) -
     return message[:MAX_MESSAGE_CHARS]
 
 
+def format_market_report_post(report: Mapping[str, Any], *, origin: str) -> str:
+    """Build one Telegram message for a frozen pre-market or post-market report."""
+
+    report_type = str(report.get("report_type") or "")
+    label = str(
+        report.get("label")
+        or ("Pre-market briefing" if report_type == "pre_market" else "Post-market recap")
+    )
+    header = f"📋 {label}"
+    headline = str(report.get("headline") or "").strip()
+    summary = str(report.get("summary") or "").strip()
+    blocks = [header]
+    if headline:
+        blocks.append(headline)
+    if summary and summary != headline:
+        blocks.append(summary)
+    leaders: list[str] = []
+    raw_leaders = report.get("leaders") or []
+    if isinstance(raw_leaders, list):
+        for leader in raw_leaders[:MARKET_REPORT_LEADER_LIMIT]:
+            if not isinstance(leader, Mapping):
+                continue
+            ticker = str(leader.get("ticker") or "").strip().upper()
+            if not ticker:
+                continue
+            facts = [f"${ticker}"]
+            change = _change_label(leader.get("change_pct"))
+            if change:
+                facts.append(change)
+            if leader.get("score") is not None:
+                facts.append(f"score {_score(leader):.0f}")
+            leaders.append(" · ".join(facts))
+    if leaders:
+        blocks.append("\n".join(leaders))
+    path = str(report.get("path") or "").strip()
+    if not path:
+        day = str(report.get("report_day") or "").strip()
+        slug = "pre" if report_type == "pre_market" else "post"
+        path = f"/reports/{day}/{slug}" if day else ""
+    if path:
+        blocks.append(f"{origin.rstrip('/')}{path}")
+    return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
+
+
+def format_public_report_post(report: Mapping[str, Any], *, origin: str) -> str:
+    """Build one Telegram message for a research report that just went public."""
+
+    ticker = str(report.get("ticker") or "").strip()
+    sports = ticker.lower().startswith("sports:")
+    symbol = ticker.upper().lstrip("$")
+    header = "📄 New public report" if sports or not symbol else f"📄 New public report · ${symbol}"
+    blocks = [header]
+    headline = str(report.get("headline") or "").strip()
+    if headline:
+        blocks.append(headline)
+    base = origin.rstrip("/")
+    public_id = str(report.get("public_id") or "").strip()
+    if not sports and symbol:
+        blocks.append(f"{base}/t/{symbol}")
+    if public_id:
+        blocks.append(f"{base}/research/{public_id}")
+    return "\n".join(blocks)[:MAX_MESSAGE_CHARS]
+
+
 def _api_call(
     config: TelegramConfig,
     method: str,
@@ -175,7 +237,6 @@ def _api_call(
     *,
     opener: Callable[..., Any] = urllib.request.urlopen,
 ) -> Any:
-
     """Call one Bot API method.
 
     The endpoint carries the bot token, so nothing here puts the URL into an error
@@ -210,7 +271,6 @@ def send_reply(
     reply_to_message_id: int | None = None,
     opener: Callable[..., Any] = urllib.request.urlopen,
 ) -> Any:
-
     """Reply in a chat, threaded onto the message being answered when given."""
 
     payload: dict[str, Any] = {
@@ -234,7 +294,6 @@ def set_reaction(
     *,
     opener: Callable[..., Any] = urllib.request.urlopen,
 ) -> Any:
-
     """React to a message instead of speaking over the room."""
 
     return _api_call(

@@ -75,7 +75,12 @@ from runner_web.billing import (
     delete_customer,
     process_webhook_event,
 )
-from runner_web.caller_ids import MACHINE_HANDLE, MACHINE_USER_ID, ensure_caller_identity
+from runner_web.caller_ids import (
+    MACHINE_HANDLE,
+    MACHINE_USER_ID,
+    ensure_caller_identity,
+    ensure_machine_trader,
+)
 from runner_web.calls import (
     active_call_for_user,
     call_for_user,
@@ -159,6 +164,7 @@ from runner_web.market_clock import market_clock
 from runner_web.market_commentary import generate_report_commentary
 from runner_web.market_forecasts import generate_market_forecasts, settle_market_forecasts
 from runner_web.market_reports import (
+    REPORT_LABELS,
     REPORT_SLUGS,
     REPORT_TYPE_SLUGS,
     ReportType,
@@ -292,6 +298,8 @@ from runner_web.telegram import (
     config_from_env as telegram_config_from_env,
 )
 from runner_web.telegram import (
+    format_market_report_post,
+    format_public_report_post,
     format_runner_digest,
     select_new_runners,
 )
@@ -417,6 +425,7 @@ OPENROUTER_RESEARCH_TIMEOUT_SECONDS = max(
 )
 EDGE_JOB_LEASE_MINUTES = 10
 FLASH_GLOBAL_DAILY_LIMIT = max(1, int(os.getenv("FLASH_GLOBAL_DAILY_LIMIT", "50")))
+TELEGRAM_RUNNER_REPORTS_PER_DAY = max(0, int(os.getenv("TELEGRAM_RUNNER_REPORTS_PER_DAY", "20")))
 FLASH_REPORT_FAILURE_STREAK_LIMIT = max(2, int(os.getenv("FLASH_REPORT_FAILURE_STREAK_LIMIT", "3")))
 FLASH_REPORT_FAILURE_WINDOW_MINUTES = max(
     5, int(os.getenv("FLASH_REPORT_FAILURE_WINDOW_MINUTES", "30"))
@@ -689,6 +698,7 @@ def _start_worker_tasks(
         asyncio.create_task(market_report_worker(), name="market-reports"),
         asyncio.create_task(hot_quote_worker(), name="hot-quotes"),
         asyncio.create_task(telegram_chat_worker(), name="telegram-chat"),
+        asyncio.create_task(telegram_alert_sweep_worker(), name="telegram-alert-sweep"),
         asyncio.create_task(massive_backfill_worker(), name="massive-backfill"),
         asyncio.create_task(research_job_worker(), name="research-jobs"),
         asyncio.create_task(report_release_worker(), name="report-release"),
@@ -1304,9 +1314,7 @@ def _board_base_path(nav_product: str, sports_path_prefix: str) -> str:
 def _board_view_links(nav_product: str, sports_path_prefix: str) -> dict[str, str]:
     base = _board_base_path(nav_product, sports_path_prefix)
     separator = "&" if "?" in base else "?"
-    return {
-        view: f"{base}{separator}{urlencode({'view': view})}" for view in BOARD_VIEWS
-    }
+    return {view: f"{base}{separator}{urlencode({'view': view})}" for view in BOARD_VIEWS}
 
 
 def page_context(
@@ -1488,7 +1496,6 @@ HOT_QUOTE_INTERVAL_SECONDS = max(20, int(os.getenv("HOT_QUOTE_INTERVAL_SECONDS",
 
 
 def _hot_set() -> list[str]:
-
     """The names a reader is most likely to be looking at right now."""
 
     with connection() as db:
@@ -1511,7 +1518,6 @@ def _hot_set() -> list[str]:
 
 
 async def hot_quote_worker() -> None:
-
     """Keep the top of the board on the quote lane between scanner sweeps.
 
     The sweep reads five-minute bars every few minutes across the whole universe. The
@@ -1539,10 +1545,10 @@ async def hot_quote_worker() -> None:
 
 
 TELEGRAM_CHAT_INTERVAL_SECONDS = max(3, int(os.getenv("TELEGRAM_CHAT_INTERVAL_SECONDS", "5")))
+TELEGRAM_ALERT_SWEEP_SECONDS = max(60, int(os.getenv("TELEGRAM_ALERT_SWEEP_SECONDS", "600")))
 
 
 def _telegram_identity() -> tuple[str, int] | None:
-
     """The bot's own handle and id, needed to tell being addressed from chatter."""
 
     config = telegram_config_from_env()
@@ -1567,7 +1573,6 @@ def _act_on_telegram_message(
     decision: dict[str, Any],
     now: datetime,
 ) -> str:
-
     """Carry out one decision and write down that it happened."""
 
     action = str(decision.get("action") or "hold")
@@ -1594,7 +1599,6 @@ def _act_on_telegram_message(
 
 
 def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[str, int]:
-
     """Read pending updates and let the cheetah answer, react, or stay quiet."""
 
     counts = {"seen": 0, "replied": 0, "reacted": 0, "held": 0, "skipped": 0}
@@ -1658,7 +1662,6 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
 
 
 def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dict[str, Any]:
-
     """Ask the model what the cheetah does with one message.
 
     The model chooses a tool rather than writing free text, so "say nothing" is a
@@ -1731,9 +1734,7 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
         elif name == "close_call":
             looked = dash_close_call(str(args.get("ticker") or ""))
         elif name == "comment_on_ticker":
-            looked = dash_comment(
-                str(args.get("ticker") or ""), str(args.get("body") or "")
-            )
+            looked = dash_comment(str(args.get("ticker") or ""), str(args.get("body") or ""))
         if looked is not None:
             messages.append(choice)
             messages.append(
@@ -1774,11 +1775,42 @@ async def telegram_chat_worker() -> None:
         await asyncio.sleep(TELEGRAM_CHAT_INTERVAL_SECONDS)
 
 
+async def telegram_alert_sweep_worker() -> None:
+    """Post pending channel messages even when no scan has just finished.
+
+    Runners, frozen session reports, and newly public research reports all go
+    through the same dispatch. A scan takes the better part of an hour and its
+    row is only written once it finishes, so a worker restart part way through
+    used to lose the run and the alert with it. Sweeping on a timer closes that
+    gap for every kind of post: the delivery tables already record what has been
+    sent, and a baseline still covers everything that predates the feature.
+    """
+
+    await asyncio.sleep(90)
+    while True:
+        try:
+            if telegram_alerts_enabled():
+                result = await run_in_threadpool(dispatch_telegram_posts)
+                worker_state(
+                    "telegram_alert_sweep_last_run", json.dumps(result, separators=(",", ":"))
+                )
+                worker_state("telegram_alert_sweep_last_error", "")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            worker_state("telegram_alert_sweep_last_error", str(exc)[:500])
+        await asyncio.sleep(TELEGRAM_ALERT_SWEEP_SECONDS)
+
+
 async def market_report_worker() -> None:
     await asyncio.sleep(25)
     while True:
         try:
             result = await run_in_threadpool(refresh_market_reports)
+            if telegram_alerts_enabled() and any(
+                item.get("status") == "created" for item in result.get("results") or []
+            ):
+                await run_in_threadpool(dispatch_telegram_posts)
             result["forecasts"] = await run_in_threadpool(
                 generate_market_forecasts,
                 _generate_market_report_targets if OPENROUTER_API_KEY else None,
@@ -1805,9 +1837,9 @@ async def market_report_worker() -> None:
 
 def _generate_market_report_targets(evidence: dict[str, Any]) -> dict[str, Any]:
 
-    public_evidence = {
-        key: value for key, value in evidence.items() if key != "waiting"
-    } | {"leaders": [row for row in evidence["leaders"] if not row["pass_reason"]]}
+    public_evidence = {key: value for key, value in evidence.items() if key != "waiting"} | {
+        "leaders": [row for row in evidence["leaders"] if not row["pass_reason"]]
+    }
     body = {
         "model": evidence["actor"]["model"],
         "messages": [
@@ -2719,7 +2751,6 @@ TELEGRAM_WEBHOOK_MAX_BYTES = 1_048_576
 
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request) -> JSONResponse:
-
     """Take one update from Telegram and store it for the chat worker.
 
     This answers quickly and does no thinking, because Telegram retries anything
@@ -2782,9 +2813,7 @@ def market_reports_api(request: Request) -> Response:
     return _conditional_json_response(request, market_reports_overview(history_limit=14))
 
 
-def _market_report_address(
-    report_day: str, slug: str
-) -> tuple[calendar_date, str, ReportType]:
+def _market_report_address(report_day: str, slug: str) -> tuple[calendar_date, str, ReportType]:
 
     report_type = REPORT_SLUGS.get(slug)
     if report_type is None or not MARKET_REPORT_DAY_RE.fullmatch(report_day):
@@ -2854,7 +2883,6 @@ def _card_text(value: Any) -> str:
 
 
 def ticker_share(detail: dict[str, Any]) -> dict[str, Any]:
-
     """What a shared ticker link should say about itself.
 
     A link to a ticker used to unfurl with the site's generic blurb, so every
@@ -2968,9 +2996,7 @@ def _ticker_card_png(detail: dict[str, Any]) -> bytes:
             },
         ],
     )
-    draw.text(
-        (95, 543), _card_text("runners.rati.chat · Research only"), "#65716b", font=font(21)
-    )
+    draw.text((95, 543), _card_text("runners.rati.chat · Research only"), "#65716b", font=font(21))
     buffer = io.BytesIO()
     image.save(buffer, format="PNG", optimize=True)
     return buffer.getvalue()
@@ -3035,15 +3061,11 @@ def _market_report_card_png(report: dict[str, Any]) -> bytes:
     lines = textwrap.wrap(lead, width=62)[:2]
     if len(textwrap.wrap(lead, width=62)) > 2:
         lines[-1] = lines[-1].rstrip(" .") + "…"
-    draw.multiline_text(
-        (95, 340), "\n".join(lines), fill="#9fb2a8", font=font(26), spacing=10
-    )
+    draw.multiline_text((95, 340), "\n".join(lines), fill="#9fb2a8", font=font(26), spacing=10)
 
     cards = report["record_cards"] if is_post else report["metric_cards"]
     _draw_scorecard(draw, cards)
-    draw.text(
-        (95, 543), _card_text("runners.rati.chat · Research only"), "#65716b", font=font(21)
-    )
+    draw.text((95, 543), _card_text("runners.rati.chat · Research only"), "#65716b", font=font(21))
     buffer = io.BytesIO()
     image.save(buffer, format="PNG", optimize=True)
     return buffer.getvalue()
@@ -3175,6 +3197,7 @@ def _score(value: Any) -> str:
     except (TypeError, ValueError):
         return "0"
 
+
 def _sports_calls_for_caller(caller_handle: str) -> list[dict[str, Any]] | None:
     with connection() as database:
         identity = database.execute(
@@ -3253,15 +3276,12 @@ def _stock_day_record(rows: list[Any] | None, *, day_start: str) -> dict[str, An
         (
             row
             for row in rows or []
-            if str(row["status"]) == "closed"
-            and str(row["exit_at"] or "") >= day_start
+            if str(row["status"]) == "closed" and str(row["exit_at"] or "") >= day_start
         ),
         key=lambda row: str(row["exit_at"]),
         reverse=True,
     )
-    returns = [
-        (float(row["exit_price"]) / float(row["entry_price"]) - 1) * 100 for row in settled
-    ]
+    returns = [(float(row["exit_price"]) / float(row["entry_price"]) - 1) * 100 for row in settled]
     streak = 0
     for row in sorted(
         (row for row in rows or [] if str(row["status"]) == "closed"),
@@ -3391,9 +3411,11 @@ def _unified_caller_page_data(caller_handle: str) -> dict[str, Any]:
         key=lambda item: (str(item["updated_at"]), str(item["subject"])),
         reverse=True,
     )
-    day_start = datetime.combine(
-        now().astimezone(EASTERN).date(), clock_time(0), tzinfo=EASTERN
-    ).astimezone(UTC).isoformat()
+    day_start = (
+        datetime.combine(now().astimezone(EASTERN).date(), clock_time(0), tzinfo=EASTERN)
+        .astimezone(UTC)
+        .isoformat()
+    )
     your_day = _stock_day_record(stock_rows, day_start=day_start)
     machine_rows = (
         stock_rows if caller_handle == MACHINE_HANDLE else caller_call_rows(MACHINE_HANDLE)
@@ -4075,7 +4097,6 @@ def _attach_pulse_entries(rows: list[dict[str, Any]]) -> None:
 
 
 def _apply_market_marks(rows: list[dict[str, Any]]) -> int:
-
     """Overlay a fresher observed price on board rows, all of a row's fields or none.
 
     The scanner's price and change come from the same five-minute bar, so replacing one
@@ -4648,6 +4669,7 @@ def _release_expired_reports_once() -> int:
             _invalidate_public_screen_data("ticker", ticker)
             if ticker.startswith("sports:"):
                 _invalidate_public_screen_data("sports-game", ticker.removeprefix("sports:"))
+        _spawn_telegram_dispatch()
     return released
 
 
@@ -5934,6 +5956,8 @@ def _create_research_commission(
     *,
     actor: AIKol = FLASH,
     case_id: str | None = None,
+    trigger: str = "commission",
+    charge: bool = True,
 ) -> tuple[dict[str, Any], bool]:
 
     current_time = now()
@@ -6025,7 +6049,7 @@ def _create_research_commission(
                     actor.id,
                     json.dumps(actor_snapshot(actor), separators=(",", ":")),
                     case_id,
-                    "commission",
+                    trigger,
                     json.dumps(evidence, separators=(",", ":"), default=str),
                     timestamp,
                     timestamp,
@@ -6060,13 +6084,14 @@ def _create_research_commission(
                         "Today's alpha is private for one hour. It may be published sooner.",
                     )
                 raise HTTPException(409, "This report is already running.")
-            spend_flash(
-                db,
-                user_id,
-                REPORT_COST,
-                kind="report_generation",
-                reference_id=report_id,
-            )
+            if charge:
+                spend_flash(
+                    db,
+                    user_id,
+                    REPORT_COST,
+                    kind="report_generation",
+                    reference_id=report_id,
+                )
             row = db.execute(
                 "SELECT * FROM research_commissions WHERE id=?", (report_id,)
             ).fetchone()
@@ -7151,12 +7176,16 @@ def memecoin_detail_page(
     view = "radar" if view == "radar" else "pulse"
     list_path = "/memecoins"
     sort = sort if sort in {"volume", "market_cap", "gainers", "losers"} else "volume"
-    back_url = list_path + "?" + urlencode(
-        {
-            "q": q.strip()[:80],
-            "sort": sort,
-            "view": "changed" if view == "radar" else "pulse",
-        }
+    back_url = (
+        list_path
+        + "?"
+        + urlencode(
+            {
+                "q": q.strip()[:80],
+                "sort": sort,
+                "view": "changed" if view == "radar" else "pulse",
+            }
+        )
     )
     context = page_context(
         request,
@@ -9900,9 +9929,7 @@ def delete_ticker_comment(
     return JSONResponse({"deleted": True, "id": comment_id})
 
 
-CALL_MARK_MAX_AGE = timedelta(
-    seconds=max(60, int(os.getenv("CALL_MARK_MAX_AGE_SECONDS", "300")))
-)
+CALL_MARK_MAX_AGE = timedelta(seconds=max(60, int(os.getenv("CALL_MARK_MAX_AGE_SECONDS", "300"))))
 CALL_MARK_REQUIRED = (
     "A Call is stamped at the current market price, and the freshest price we have for "
     "this ticker is older than that. Open the ticker to pull a new quote and try again."
@@ -9910,7 +9937,6 @@ CALL_MARK_REQUIRED = (
 
 
 def _current_call_mark(ticker: str) -> dict[str, Any]:
-
     """Stamp a Call at the freshest price we know, not the last scan.
 
     Scanner coverage still gates the Call, because a name has to stay on the board for
@@ -10146,6 +10172,7 @@ def publish_research_report_api(
             balance = int(wallet["balance"]) if wallet else 0
     if newly_published:
         _invalidate_public_screen_data("research", public_id)
+        _spawn_telegram_dispatch()
     return JSONResponse(
         {
             "published": newly_published,
@@ -10913,6 +10940,10 @@ def _record_pulse_entries_for_run(
 
 TELEGRAM_ALERT_MAX_ATTEMPTS = 3
 
+# The scan tail and the sweep can both reach the dispatch, and the gap between
+# choosing runners and recording them as sent is wide enough to post twice.
+TELEGRAM_ALERT_DISPATCH_LOCK = threading.Lock()
+
 
 def _take_telegram_alert_baseline(database: Any, *, current_run_id: str | None) -> bool:
     """Mark every runner already on the board as seen, once.
@@ -11027,17 +11058,35 @@ def dispatch_new_runner_alerts(*, scan_run_id: str | None = None) -> dict[str, A
         if not telegram_alerts_enabled():
             return result
         result["enabled"] = True
+        if not TELEGRAM_ALERT_DISPATCH_LOCK.acquire(blocking=False):
+            # Another dispatch is mid-flight. Whatever it does not take stays
+            # pending for the next one, so there is nothing to wait around for.
+            result["status"] = "busy"
+            return result
+        try:
+            return _dispatch_new_runner_alerts_locked(result, scan_run_id)
+        finally:
+            TELEGRAM_ALERT_DISPATCH_LOCK.release()
+    except Exception:
+        LOG.exception("Telegram runner alerts failed")
+        result["status"] = "error"
+        return result
+
+
+def _dispatch_new_runner_alerts_locked(
+    result: dict[str, Any], scan_run_id: str | None
+) -> dict[str, Any]:
+    """The body of the dispatch, run with the dispatch lock held."""
+
+    try:
         config = telegram_config_from_env()
         if not config.configured:
-            LOG.warning(
-                "TELEGRAM_RUNNER_ALERTS is on but the bot token or chat id is missing"
-            )
+            LOG.warning("TELEGRAM_RUNNER_ALERTS is on but the bot token or chat id is missing")
             result["status"] = "unconfigured"
             return result
+        selected: list[dict[str, Any]] = []
         with connection() as database:
-            result["baseline"] = _take_telegram_alert_baseline(
-                database, current_run_id=scan_run_id
-            )
+            result["baseline"] = _take_telegram_alert_baseline(database, current_run_id=scan_run_id)
             candidates = _pending_runner_alert_rows(database, limit=config.max_per_run)
             result["candidates"] = len(candidates)
             selected = select_new_runners(
@@ -11060,27 +11109,389 @@ def dispatch_new_runner_alerts(*, scan_run_id: str | None = None) -> dict[str, A
                 )
                 result["status"] = "failed"
                 LOG.warning("Telegram runner alert delivery failed: %s", exc)
-                return result
-            _record_runner_alert_delivery(database, selected, status="sent")
-            result["status"] = "sent"
-            return result
+            else:
+                _record_runner_alert_delivery(database, selected, status="sent")
+                result["status"] = "sent"
+        result["reports"] = _queue_telegram_runner_reports(
+            [str(entry.get("ticker") or "") for entry in selected]
+        )
+        return result
     except Exception:
         LOG.exception("Telegram runner alerts failed")
         result["status"] = "error"
         return result
 
 
-def _spawn_runner_alert_dispatch(scan_run_id: str | None = None) -> None:
-    """Run the alert dispatch off the scan thread when the feature is on."""
+def _enqueue_research_job_sync(report_id: str) -> None:
+    if not redis_configured():
+        return
+    enqueue_research_job(report_id)
+
+
+def _queue_telegram_runner_reports(tickers: list[str]) -> dict[str, Any]:
+    """Commission a free Flash report for each new runner, up to the daily cap.
+
+    The first Telegram ping is the runner itself. An hour later the report goes
+    public and the channel gets a second ping. Nobody is charged; these are house
+    reports on the machine account, capped so a hot day cannot eat Flash's paid
+    capacity.
+    """
+
+    result = {"queued": 0, "skipped": 0, "tickers": []}
+    unique = list(
+        dict.fromkeys(str(ticker).strip().upper() for ticker in tickers if str(ticker).strip())
+    )
+    if TELEGRAM_RUNNER_REPORTS_PER_DAY <= 0 or not unique:
+        result["skipped"] = len(unique)
+        return result
+    if not _flash_provider_ready():
+        result["skipped"] = len(unique)
+        return result
+    try:
+        ensure_machine_trader()
+        report_day = now().date().isoformat()
+        with connection() as database:
+            used = database.execute(
+                """
+                SELECT COUNT(*) FROM research_commissions
+                WHERE trigger='telegram_runner' AND report_day=?
+                  AND status IN ('running','complete')
+                """,
+                (report_day,),
+            ).fetchone()[0]
+        slots = max(0, TELEGRAM_RUNNER_REPORTS_PER_DAY - int(used))
+        for ticker in unique:
+            if slots <= 0:
+                result["skipped"] += 1
+                continue
+            try:
+                report, created = _create_research_commission(
+                    MACHINE_USER_ID,
+                    ticker,
+                    trigger="telegram_runner",
+                    charge=False,
+                )
+            except HTTPException:
+                result["skipped"] += 1
+                continue
+            except Exception:
+                LOG.warning("Could not commission a runner report for %s", ticker)
+                result["skipped"] += 1
+                continue
+            if not created:
+                result["skipped"] += 1
+                continue
+            try:
+                _enqueue_research_job_sync(str(report["id"]))
+            except Exception:
+                LOG.warning("Could not enqueue runner report %s", report.get("id"))
+                result["skipped"] += 1
+                continue
+            result["queued"] += 1
+            result["tickers"].append(ticker)
+            slots -= 1
+    except Exception:
+        LOG.exception("Telegram runner report queue failed")
+    return result
+
+
+TELEGRAM_CHANNEL_POST_MAX_ATTEMPTS = 3
+TELEGRAM_CHANNEL_POSTS_PER_RUN = 5
+
+
+def _empty_channel_post_result() -> dict[str, Any]:
+    return {"baseline": False, "selected": 0, "status": "disabled"}
+
+
+def _take_channel_post_baseline(
+    database: Any,
+    kind: str,
+    source_sql: str,
+    parameters: tuple[Any, ...] = (),
+) -> bool:
+    """Mark every existing item of this kind as seen, once."""
+
+    if database.execute("SELECT kind FROM telegram_channel_state WHERE kind=?", (kind,)).fetchone():
+        return False
+    timestamp = iso()
+    database.execute(
+        f"""
+        INSERT INTO telegram_channel_posts(
+            kind,subject,status,attempts,detail,created_at,updated_at
+        )
+        {source_sql}
+        ON CONFLICT(kind,subject) DO NOTHING
+        """,
+        (*parameters, timestamp, timestamp),
+    )
+    database.execute(
+        """
+        INSERT INTO telegram_channel_state(kind,created_at,updated_at)
+        VALUES(?,?,?)
+        ON CONFLICT(kind) DO NOTHING
+        """,
+        (kind, timestamp, timestamp),
+    )
+    return True
+
+
+def _record_channel_post(
+    database: Any,
+    kind: str,
+    subject: str,
+    *,
+    status: str,
+    detail: str | None = None,
+) -> None:
+    timestamp = iso()
+    database.execute(
+        """
+        INSERT INTO telegram_channel_posts(
+            kind,subject,status,attempts,detail,created_at,updated_at
+        ) VALUES(?,?,?,1,?,?,?)
+        ON CONFLICT(kind,subject) DO UPDATE SET
+            status=excluded.status,
+            attempts=telegram_channel_posts.attempts+1,
+            detail=excluded.detail,
+            updated_at=excluded.updated_at
+        """,
+        (kind, subject, status, detail, timestamp, timestamp),
+    )
+
+
+def _pending_market_report_rows(database: Any, *, limit: int) -> list[dict[str, Any]]:
+    rows = database.execute(
+        """
+        SELECT r.id,r.report_day,r.report_type,r.headline,r.summary,r.leaders_json,r.created_at
+        FROM market_session_reports r
+        LEFT JOIN telegram_channel_posts p
+          ON p.kind='market_report' AND p.subject=r.id
+        WHERE p.subject IS NULL
+           OR (p.status='failed' AND p.attempts<?)
+        ORDER BY r.created_at DESC,r.id DESC
+        LIMIT ?
+        """,
+        (TELEGRAM_CHANNEL_POST_MAX_ATTEMPTS, max(1, limit)),
+    ).fetchall()
+    pending: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        report_type = str(item.get("report_type") or "")
+        try:
+            leaders = json.loads(str(item.get("leaders_json") or "[]"))
+        except (TypeError, ValueError):
+            leaders = []
+        item["leaders"] = leaders if isinstance(leaders, list) else []
+        item["label"] = REPORT_LABELS.get(report_type, report_type.replace("_", " "))
+        slug = REPORT_TYPE_SLUGS.get(report_type)
+        day = str(item.get("report_day") or "")
+        item["path"] = f"/reports/{day}/{slug}" if day and slug else ""
+        pending.append(item)
+    return pending
+
+
+def _pending_research_report_rows(database: Any, *, limit: int) -> list[dict[str, Any]]:
+    rows = database.execute(
+        """
+        SELECT r.public_id,r.ticker,r.headline,r.summary,r.published_at,r.completed_at
+        FROM research_commissions r
+        LEFT JOIN telegram_channel_posts p
+          ON p.kind='research_report' AND p.subject=r.public_id
+        WHERE r.status='complete'
+          AND r.visibility='public'
+          AND COALESCE(r.customer_inference,0)=0
+          AND (p.subject IS NULL OR (p.status='failed' AND p.attempts<?))
+        ORDER BY COALESCE(r.published_at,r.completed_at,r.created_at) DESC,r.public_id DESC
+        LIMIT ?
+        """,
+        (TELEGRAM_CHANNEL_POST_MAX_ATTEMPTS, max(1, limit)),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _dispatch_market_report_posts(config: Any) -> dict[str, Any]:
+    result = _empty_channel_post_result()
+    try:
+        with connection() as database:
+            result["baseline"] = _take_channel_post_baseline(
+                database,
+                "market_report",
+                "SELECT 'market_report',id,'baseline',0,'pre-existing report',?,? "
+                "FROM market_session_reports WHERE 1=1",
+            )
+            pending = _pending_market_report_rows(database, limit=TELEGRAM_CHANNEL_POSTS_PER_RUN)
+        result["selected"] = len(pending)
+        if not pending:
+            result["status"] = "empty"
+            return result
+        sent = 0
+        failed = 0
+        for report in pending:
+            subject = str(report.get("id") or "")
+            try:
+                send_telegram_message(
+                    config,
+                    format_market_report_post(report, origin=RUNNERS_ORIGIN),
+                )
+            except Exception as exc:
+                with connection() as database:
+                    _record_channel_post(
+                        database,
+                        "market_report",
+                        subject,
+                        status="failed",
+                        detail=str(exc)[:500],
+                    )
+                failed += 1
+                LOG.warning("Telegram market report post failed: %s", exc)
+                continue
+            with connection() as database:
+                _record_channel_post(database, "market_report", subject, status="sent")
+            sent += 1
+        result["selected"] = sent
+        result["status"] = "sent" if sent else "failed" if failed else "empty"
+        return result
+    except Exception:
+        LOG.exception("Telegram market report posts failed")
+        result["status"] = "error"
+        return result
+
+
+def _dispatch_research_report_posts(config: Any) -> dict[str, Any]:
+    result = _empty_channel_post_result()
+    try:
+        with connection() as database:
+            result["baseline"] = _take_channel_post_baseline(
+                database,
+                "research_report",
+                "SELECT 'research_report',public_id,'baseline',0,'pre-existing report',?,? "
+                "FROM research_commissions "
+                "WHERE status='complete' AND visibility='public' "
+                "AND COALESCE(customer_inference,0)=0",
+            )
+            pending = _pending_research_report_rows(database, limit=TELEGRAM_CHANNEL_POSTS_PER_RUN)
+        result["selected"] = len(pending)
+        if not pending:
+            result["status"] = "empty"
+            return result
+        sent = 0
+        failed = 0
+        for report in pending:
+            subject = str(report.get("public_id") or "")
+            ticker = str(report.get("ticker") or "")
+            origin = SPORTS_ORIGIN if ticker.lower().startswith("sports:") else RUNNERS_ORIGIN
+            try:
+                send_telegram_message(
+                    config,
+                    format_public_report_post(report, origin=origin),
+                )
+            except Exception as exc:
+                with connection() as database:
+                    _record_channel_post(
+                        database,
+                        "research_report",
+                        subject,
+                        status="failed",
+                        detail=str(exc)[:500],
+                    )
+                failed += 1
+                LOG.warning("Telegram public report post failed: %s", exc)
+                continue
+            with connection() as database:
+                _record_channel_post(database, "research_report", subject, status="sent")
+            sent += 1
+        result["selected"] = sent
+        result["status"] = "sent" if sent else "failed" if failed else "empty"
+        return result
+    except Exception:
+        LOG.exception("Telegram public report posts failed")
+        result["status"] = "error"
+        return result
+
+
+def _combine_telegram_status(parts: list[dict[str, Any]]) -> str:
+    statuses = [str(part.get("status") or "") for part in parts]
+    if "sent" in statuses:
+        return "sent"
+    if "failed" in statuses:
+        return "failed"
+    if "error" in statuses:
+        return "error"
+    if "unconfigured" in statuses:
+        return "unconfigured"
+    if all(status in {"", "disabled"} for status in statuses):
+        return "disabled"
+    return "empty"
+
+
+def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]:
+    """Post pending runners, session reports, and public research reports."""
+
+    result: dict[str, Any] = {
+        "enabled": False,
+        "status": "disabled",
+        "runners": {
+            "enabled": False,
+            "baseline": False,
+            "candidates": 0,
+            "selected": 0,
+            "status": "disabled",
+        },
+        "market_reports": _empty_channel_post_result(),
+        "research_reports": _empty_channel_post_result(),
+    }
+    try:
+        if not telegram_alerts_enabled():
+            return result
+        result["enabled"] = True
+        if not TELEGRAM_ALERT_DISPATCH_LOCK.acquire(blocking=False):
+            result["status"] = "busy"
+            return result
+        try:
+            config = telegram_config_from_env()
+            if not config.configured:
+                LOG.warning("TELEGRAM_RUNNER_ALERTS is on but the bot token or chat id is missing")
+                result["status"] = "unconfigured"
+                return result
+            runners = {
+                "enabled": True,
+                "baseline": False,
+                "candidates": 0,
+                "selected": 0,
+                "status": "empty",
+            }
+            result["runners"] = _dispatch_new_runner_alerts_locked(runners, scan_run_id)
+            result["market_reports"] = _dispatch_market_report_posts(config)
+            result["research_reports"] = _dispatch_research_report_posts(config)
+            result["status"] = _combine_telegram_status(
+                [result["runners"], result["market_reports"], result["research_reports"]]
+            )
+            return result
+        finally:
+            TELEGRAM_ALERT_DISPATCH_LOCK.release()
+    except Exception:
+        LOG.exception("Telegram channel posts failed")
+        result["status"] = "error"
+        return result
+
+
+def _spawn_telegram_dispatch(*, scan_run_id: str | None = None) -> None:
+    """Run the channel dispatch off the calling thread when the feature is on."""
 
     if not telegram_alerts_enabled():
         return
     threading.Thread(
-        target=dispatch_new_runner_alerts,
+        target=dispatch_telegram_posts,
         kwargs={"scan_run_id": scan_run_id},
-        name="telegram-runner-alerts",
+        name="telegram-posts",
         daemon=True,
     ).start()
+
+
+def _spawn_runner_alert_dispatch(scan_run_id: str | None = None) -> None:
+    """Run the channel dispatch off the scan thread when the feature is on."""
+
+    _spawn_telegram_dispatch(scan_run_id=scan_run_id)
 
 
 def run_scan(mode: str = "penny") -> dict[str, Any]:
@@ -11498,7 +11909,7 @@ def callers_leaderboard(
                    COUNT(*) AS win_count
             FROM flash_transactions ft
             JOIN caller_identities ci ON ci.user_id=ft.user_id AND ci.status='active'
-            WHERE ft.kind IN ({','.join('?' for _ in CALL_WIN_KINDS)})
+            WHERE ft.kind IN ({",".join("?" for _ in CALL_WIN_KINDS)})
               AND ft.amount>0 AND ft.created_at>=?
             GROUP BY ft.user_id,ci.handle
             ORDER BY flash_earned DESC, ci.handle
@@ -11526,8 +11937,8 @@ def callers_leaderboard(
         ).fetchall()
     settled_counts: dict[str, int] = {}
     for row in settled_rows:
-        settled_counts[str(row["user_id"])] = (
-            settled_counts.get(str(row["user_id"]), 0) + int(row["settled"])
+        settled_counts[str(row["user_id"])] = settled_counts.get(str(row["user_id"]), 0) + int(
+            row["settled"]
         )
     rows: list[dict[str, Any]] = []
     for rank, row in enumerate(earn_rows, start=1):
@@ -11545,8 +11956,7 @@ def callers_leaderboard(
         if len(rows) >= limit:
             break
     machine_returns = [
-        (float(row["exit_price"]) / float(row["entry_price"]) - 1) * 100
-        for row in machine_rows
+        (float(row["exit_price"]) / float(row["entry_price"]) - 1) * 100 for row in machine_rows
     ]
     machine = {
         "settled": len(machine_rows),

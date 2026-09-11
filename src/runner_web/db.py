@@ -3060,6 +3060,31 @@ def _migration_064_company_sectors(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_065_telegram_channel_posts(db: DatabaseConnection) -> None:
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS telegram_channel_state (
+            kind TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS telegram_channel_posts (
+            kind TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            status TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            detail TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(kind, subject)
+        );
+        CREATE INDEX IF NOT EXISTS telegram_channel_posts_status
+            ON telegram_channel_posts(kind, status, updated_at DESC);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -3136,6 +3161,7 @@ MIGRATIONS = (
     Migration(62, "telegram_runner_alerts", _migration_062_telegram_runner_alerts),
     Migration(63, "telegram_chat", _migration_063_telegram_chat),
     Migration(64, "company_sectors", _migration_064_company_sectors),
+    Migration(65, "telegram_channel_posts", _migration_065_telegram_channel_posts),
 )
 
 
