@@ -10949,6 +10949,10 @@ def _record_pulse_entries_for_run(
 
 TELEGRAM_ALERT_MAX_ATTEMPTS = 3
 
+# The scan tail and the sweep can both reach the dispatch, and the gap between
+# choosing runners and recording them as sent is wide enough to post twice.
+TELEGRAM_ALERT_DISPATCH_LOCK = threading.Lock()
+
 
 def _take_telegram_alert_baseline(database: Any, *, current_run_id: str | None) -> bool:
     """Mark every runner already on the board as seen, once.
@@ -11063,6 +11067,27 @@ def dispatch_new_runner_alerts(*, scan_run_id: str | None = None) -> dict[str, A
         if not telegram_alerts_enabled():
             return result
         result["enabled"] = True
+        if not TELEGRAM_ALERT_DISPATCH_LOCK.acquire(blocking=False):
+            # Another dispatch is mid-flight. Whatever it does not take stays
+            # pending for the next one, so there is nothing to wait around for.
+            result["status"] = "busy"
+            return result
+        try:
+            return _dispatch_new_runner_alerts_locked(result, scan_run_id)
+        finally:
+            TELEGRAM_ALERT_DISPATCH_LOCK.release()
+    except Exception:
+        LOG.exception("Telegram runner alerts failed")
+        result["status"] = "error"
+        return result
+
+
+def _dispatch_new_runner_alerts_locked(
+    result: dict[str, Any], scan_run_id: str | None
+) -> dict[str, Any]:
+    """The body of the dispatch, run with the dispatch lock held."""
+
+    try:
         config = telegram_config_from_env()
         if not config.configured:
             LOG.warning(

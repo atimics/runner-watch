@@ -351,6 +351,58 @@ def test_a_sweep_with_no_scan_still_delivers_a_stranded_runner(
     assert len(sent) == 1
 
 
+def test_two_dispatches_at_once_post_once(alert_environment, monkeypatch: MonkeyPatch) -> None:
+    """The scan tail and the sweep can both arrive at the dispatch.
+
+    The gap between choosing runners and recording them as sent is wide enough
+    for a second dispatch to choose the same ones, which would post the digest
+    to the channel twice.
+    """
+
+    import threading
+
+    sent: list[str] = []
+    second: dict[str, object] = {}
+    started = threading.Event()
+    release = threading.Event()
+
+    def _send(config: object, text: str) -> None:
+        first_call = not sent
+        sent.append(text)
+        if first_call:
+            # Hold the first dispatch inside the send so the second one arrives
+            # while the runners it would pick are chosen but not yet recorded.
+            started.set()
+            release.wait(timeout=5)
+
+    monkeypatch.setattr(web_main, "send_telegram_message", _send)
+    _insert_runner("run-1", "LOUD", score=80, entered_at="2026-09-10T14:00:00+00:00")
+
+    worker = threading.Thread(
+        target=lambda: second.update(web_main.dispatch_new_runner_alerts())
+    )
+    first_result: dict[str, object] = {}
+    holder = threading.Thread(
+        target=lambda: first_result.update(
+            web_main.dispatch_new_runner_alerts(scan_run_id="run-1")
+        )
+    )
+    holder.start()
+    assert started.wait(timeout=5), "the first dispatch never reached the send"
+    worker.start()
+    worker.join(timeout=5)
+    release.set()
+    holder.join(timeout=5)
+
+    assert second, (
+        "the second dispatch never returned: it was not turned away and is "
+        "sitting behind the first one instead"
+    )
+    assert second["status"] == "busy"
+    assert first_result["status"] == "sent"
+    assert len(sent) == 1
+
+
 def test_dispatch_applies_the_score_floor(alert_environment, monkeypatch: MonkeyPatch) -> None:
     sent: list[str] = []
     monkeypatch.setattr(web_main, "send_telegram_message", lambda config, text: sent.append(text))
