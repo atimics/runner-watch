@@ -55,8 +55,8 @@
             </div>
             {% if is_post %}
             <p class="market-board-close">
-              {% if leader.board_status == 'held' %}Still on the board at #{{ leader.close_rank }}{% if leader.close_price is not none %} · ${{ '%.4f'|format(leader.close_price) }}{% endif %}
-              {% else %}Dropped off the board{% if leader.close_price is not none %} · closed ${{ '%.4f'|format(leader.close_price) }}{% endif %}{% endif %}
+              {% if leader.board_status == 'held' %}Still on the board at #{{ leader.close_rank }}{% if leader.close_price|default(none) is not none %} · ${{ '%.4f'|format(leader.close_price) }}{% endif %}
+              {% else %}Dropped off the board{% if leader.close_price|default(none) is not none %} · closed ${{ '%.4f'|format(leader.close_price) }}{% endif %}{% endif %}
               {% if leader.session_return_pct is not none %} · <b class="{{ 'up' if leader.session_return_pct > 0 else 'down' if leader.session_return_pct < 0 else 'flat' }}">{{ '%+.1f'|format(leader.session_return_pct) }}% from the watch price</b>{% endif %}
             </p>
             {% endif %}
