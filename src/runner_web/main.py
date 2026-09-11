@@ -269,6 +269,9 @@ from runner_web.sports import (
 )
 from runner_web.swarm_runtime import maintain_swarm_runtime, open_swarm_runtime
 from runner_web.telegram import (
+    _api_call as telegram_api_call,
+)
+from runner_web.telegram import (
     alerts_enabled as telegram_alerts_enabled,
 )
 from runner_web.telegram import (
@@ -280,6 +283,51 @@ from runner_web.telegram import (
 )
 from runner_web.telegram import (
     send_message as send_telegram_message,
+)
+from runner_web.telegram import (
+    send_reply as send_telegram_reply,
+)
+from runner_web.telegram import (
+    set_reaction as set_telegram_reaction,
+)
+from runner_web.telegram_chat import (
+    CHEETAH_PERSONA,
+)
+from runner_web.telegram_chat import (
+    TOOL_SCHEMA as TELEGRAM_TOOL_SCHEMA,
+)
+from runner_web.telegram_chat import (
+    attention_for as telegram_attention_for,
+)
+from runner_web.telegram_chat import (
+    finish_update as telegram_finish_update,
+)
+from runner_web.telegram_chat import (
+    look_up_ticker as telegram_look_up_ticker,
+)
+from runner_web.telegram_chat import (
+    mute_engagement as telegram_mute_engagement,
+)
+from runner_web.telegram_chat import (
+    open_engagement as telegram_open_engagement,
+)
+from runner_web.telegram_chat import (
+    parse_update as telegram_parse_update,
+)
+from runner_web.telegram_chat import (
+    pending_updates as telegram_pending_updates,
+)
+from runner_web.telegram_chat import (
+    recent_transcript as telegram_recent_transcript,
+)
+from runner_web.telegram_chat import (
+    record_action as telegram_record_action,
+)
+from runner_web.telegram_chat import (
+    record_update as telegram_record_update,
+)
+from runner_web.telegram_chat import (
+    spend_engagement as telegram_spend_engagement,
 )
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
 from runner_web.worker_supervisor import run_supervised
@@ -626,6 +674,7 @@ def _start_worker_tasks(
         asyncio.create_task(scan_collection_worker(), name="scan-collection"),
         asyncio.create_task(market_report_worker(), name="market-reports"),
         asyncio.create_task(hot_quote_worker(), name="hot-quotes"),
+        asyncio.create_task(telegram_chat_worker(), name="telegram-chat"),
         asyncio.create_task(massive_backfill_worker(), name="massive-backfill"),
         asyncio.create_task(research_job_worker(), name="research-jobs"),
         asyncio.create_task(report_release_worker(), name="report-release"),
@@ -1471,6 +1520,212 @@ async def hot_quote_worker() -> None:
         except Exception as exc:
             worker_state("hot_quotes_last_error", str(exc)[:500])
         await asyncio.sleep(delay)
+
+
+TELEGRAM_CHAT_INTERVAL_SECONDS = max(3, int(os.getenv("TELEGRAM_CHAT_INTERVAL_SECONDS", "5")))
+
+
+def _telegram_identity() -> tuple[str, int] | None:
+
+    """The bot's own handle and id, needed to tell being addressed from chatter."""
+
+    config = telegram_config_from_env()
+    if not config.configured:
+        return None
+    try:
+        result = telegram_api_call(config, "getMe", {})
+    except Exception:
+        LOG.warning("Could not read the Telegram bot identity")
+        return None
+    bot = (result or {}).get("result") or {}
+    username, bot_id = bot.get("username"), bot.get("id")
+    if not username or not isinstance(bot_id, int):
+        return None
+    return str(username), bot_id
+
+
+def _act_on_telegram_message(
+    database: Any,
+    config: Any,
+    message: Any,
+    decision: dict[str, Any],
+    now: datetime,
+) -> str:
+
+    """Carry out one decision and write down that it happened."""
+
+    action = str(decision.get("action") or "hold")
+    if action == "reply":
+        text = str(decision.get("text") or "").strip()
+        if not text:
+            action = "hold"
+        else:
+            send_telegram_reply(
+                config, message.chat_id, text, reply_to_message_id=message.message_id
+            )
+            telegram_record_action(database, message, "reply", text[:200], now)
+            telegram_spend_engagement(database, message.chat_id, message.user_id, now)
+            return "reply"
+    if action == "react":
+        emoji = str(decision.get("emoji") or "🐆")
+        set_telegram_reaction(config, message.chat_id, message.message_id, emoji)
+        telegram_record_action(database, message, "react", emoji, now)
+        return "react"
+    telegram_record_action(database, message, "hold", str(decision.get("why") or ""), now)
+    if decision.get("stop"):
+        telegram_mute_engagement(database, message.chat_id, message.user_id, now)
+    return "hold"
+
+
+def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[str, int]:
+
+    """Read pending updates and let the cheetah answer, react, or stay quiet."""
+
+    now = at or datetime.now(UTC)
+    counts = {"seen": 0, "replied": 0, "reacted": 0, "held": 0, "skipped": 0}
+    identity = _telegram_identity()
+    if identity is None:
+        return counts
+    bot_username, bot_id = identity
+    config = telegram_config_from_env()
+    with connection() as database:
+        updates = telegram_pending_updates(database)
+    for row in updates:
+        update_id = int(row["update_id"])
+        try:
+            payload = json.loads(str(row["payload_json"]))
+        except (TypeError, ValueError):
+            with connection() as database:
+                telegram_finish_update(database, update_id, "skipped", error="unreadable")
+            continue
+        message = telegram_parse_update(payload, bot_username=bot_username, bot_id=bot_id)
+        if message is None:
+            with connection() as database:
+                telegram_finish_update(database, update_id, "skipped", now=now)
+            counts["skipped"] += 1
+            continue
+        counts["seen"] += 1
+        with connection() as database:
+            attention = telegram_attention_for(database, message, now)
+            if attention.consider and message.addressed and message.user_id is not None:
+                telegram_open_engagement(database, message.chat_id, message.user_id, now)
+            transcript = telegram_recent_transcript(database, message.chat_id)
+        if not attention.consider:
+            with connection() as database:
+                telegram_finish_update(database, update_id, "skipped", now=now)
+            counts["skipped"] += 1
+            continue
+        try:
+            decision = (
+                generate(message, transcript)
+                if generate
+                else {"action": "hold", "why": "no model configured"}
+            )
+            with connection() as database:
+                outcome = _act_on_telegram_message(database, config, message, decision, now)
+                telegram_finish_update(database, update_id, "handled", now=now)
+            counts[{"reply": "replied", "react": "reacted", "hold": "held"}[outcome]] += 1
+        except Exception as exc:
+            LOG.warning("Telegram chat turn failed: %s", type(exc).__name__)
+            with connection() as database:
+                telegram_finish_update(
+                    database, update_id, "pending", error=type(exc).__name__, now=now
+                )
+    return counts
+
+
+def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dict[str, Any]:
+
+    """Ask the model what the cheetah does with one message.
+
+    The model chooses a tool rather than writing free text, so "say nothing" is a
+    real answer it can give. Ticker lookups resolve here and go back for a second
+    pass, which is what keeps a quoted number attached to the app's own evidence.
+    """
+
+    tools = [{"type": "function", "function": dict(tool)} for tool in TELEGRAM_TOOL_SCHEMA]
+    context = {
+        "room": "RATi Runners",
+        "speaker": message.user_name,
+        "said": message.text,
+        "tickers_mentioned": list(message.tickers),
+        "addressed_you": message.addressed,
+        "recent": transcript,
+    }
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": CHEETAH_PERSONA},
+        {"role": "user", "content": json.dumps(context, separators=(",", ":"))},
+    ]
+    for _round in range(3):
+        body = {
+            "model": FLASH.model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "required",
+            "provider": {"require_parameters": True, "zdr": True},
+            "max_tokens": 700,
+        }
+        api_request = urllib.request.Request(
+            "https://openrouter.ai/api/v1/chat/completions",
+            data=json.dumps(body, separators=(",", ":")).encode(),
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": APP_ORIGIN,
+                "X-OpenRouter-Title": "RATi Runners chat",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(api_request, timeout=30) as response:
+            result = json.loads(response.read(262_145))
+        choice = (result.get("choices") or [{}])[0].get("message") or {}
+        calls = choice.get("tool_calls") or []
+        if not calls:
+            return {"action": "hold", "why": "no tool chosen"}
+        call = calls[0]
+        name = str(((call.get("function") or {}).get("name")) or "")
+        try:
+            args = json.loads((call.get("function") or {}).get("arguments") or "{}")
+        except (TypeError, ValueError):
+            args = {}
+        if name == "look_up_ticker":
+            looked = telegram_look_up_ticker(str(args.get("ticker") or ""))
+            messages.append(choice)
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call.get("id"),
+                    "content": json.dumps(looked, separators=(",", ":")),
+                }
+            )
+            continue
+        if name == "reply":
+            return {"action": "reply", "text": str(args.get("text") or "")}
+        if name == "react":
+            return {"action": "react", "emoji": str(args.get("emoji") or "🐆")}
+        return {
+            "action": "hold",
+            "why": str(args.get("why") or ""),
+            "stop": bool(args.get("stop")),
+        }
+    return {"action": "hold", "why": "ran out of lookups"}
+
+
+async def telegram_chat_worker() -> None:
+    await asyncio.sleep(30)
+    while True:
+        try:
+            result = await run_in_threadpool(
+                run_telegram_chat,
+                _generate_telegram_turn if OPENROUTER_API_KEY else None,
+            )
+            worker_state("telegram_chat_last_run", json.dumps(result, separators=(",", ":")))
+            worker_state("telegram_chat_last_error", "")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            worker_state("telegram_chat_last_error", str(exc)[:500])
+        await asyncio.sleep(TELEGRAM_CHAT_INTERVAL_SECONDS)
 
 
 async def market_report_worker() -> None:
@@ -2410,6 +2665,44 @@ def roadmap_page(
 def roadmap_api(request: Request) -> dict[str, Any]:
     enforce_rate(request, "roadmap", limit=120, seconds=60)
     return roadmap_snapshot()
+
+
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
+TELEGRAM_WEBHOOK_MAX_BYTES = 1_048_576
+
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request) -> JSONResponse:
+
+    """Take one update from Telegram and store it for the chat worker.
+
+    This answers quickly and does no thinking, because Telegram retries anything
+    it is not answered promptly and a slow handler turns into duplicate replies.
+    The secret header is the only thing standing between this public path and
+    anyone posting forged updates, so an unset secret closes the door entirely.
+    """
+
+    if not TELEGRAM_WEBHOOK_SECRET:
+        raise HTTPException(404, "Not found")
+    supplied = request.headers.get("x-telegram-bot-api-secret-token", "")
+    if not secrets.compare_digest(supplied, TELEGRAM_WEBHOOK_SECRET):
+        raise HTTPException(404, "Not found")
+    raw = await request.body()
+    if len(raw) > TELEGRAM_WEBHOOK_MAX_BYTES:
+        raise HTTPException(413, "Update too large")
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, "Malformed update") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "Malformed update")
+    await run_in_threadpool(_store_telegram_update, payload)
+    return JSONResponse({"ok": True})
+
+
+def _store_telegram_update(payload: dict[str, Any]) -> None:
+    with connection() as database:
+        telegram_record_update(database, payload)
 
 
 @app.get("/api/market-clock")
