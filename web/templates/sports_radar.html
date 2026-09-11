@@ -1,7 +1,7 @@
 {% extends "mobile_base.html" %}
 {% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
 {% block app_class %}workspace-app sports-radar-app{% endblock %}
-{% block title %}Radar · RATi Sports{% endblock %}
+{% block title %}Changed · RATi Sports{% endblock %}
 {% block product_head %}{% include "_sports_styles.html" %}{% endblock %}
 {% block content %}
 {% macro radar_card(event, compact=false) -%}
@@ -31,7 +31,7 @@
     <header class="screen-head">
       <div>
         <span class="rati-product">RATi SPORTS</span>
-        <h1>Radar</h1>
+        <h1>Changed</h1>
         <span class="head-meta"><b id="sportsRadarCount">{{ radar.display_count }}</b> changed matchup{% if radar.display_count != 1 %}s{% endif %} from {{ radar.change_count }} material change{% if radar.change_count != 1 %}s{% endif %} <i></i><span id="sportsRadarStatus">Update pending</span></span>
       </div>
       {% if user %}
@@ -42,8 +42,8 @@
     </header>
 
     <nav class="league-tabs" aria-label="League filter">
-      <a class="{% if radar.league == 'all' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/radar?league=all">All</a>
-      {% for league in radar.leagues %}<a class="{% if radar.league == league.key %}active{% endif %}" href="{{ sports_path_prefix or '' }}/radar?league={{ league.key }}">{{ league.name }}</a>{% endfor %}
+      <a class="{% if radar.league == 'all' %}active{% endif %}" href="{{ sports_path_prefix or '' }}/?view=changed&league=all">All</a>
+      {% for league in radar.leagues %}<a class="{% if radar.league == league.key %}active{% endif %}" href="{{ sports_path_prefix or '' }}/?view=changed&league={{ league.key }}">{{ league.name }}</a>{% endfor %}
     </nav>
     <button class="pulse-refresh radar-refresh sports-live-refresh" id="sportsRadarRefresh" type="button" aria-live="polite" hidden>Radar updated</button>
 
@@ -58,7 +58,7 @@
           </details>
           {% endif %}
         {% else %}
-        <div class="sports-empty radar-empty-state"><span class="empty-radar" aria-hidden="true"></span><strong>No material change yet.</strong><p>Radar will light up when a Pulse signal moves by at least half a point or goes live.</p><a class="sports-empty-action" href="{{ sports_path_prefix or '' }}/">Back to Pulse</a></div>
+        <div class="sports-empty radar-empty-state"><span class="empty-radar" aria-hidden="true"></span><strong>No material change yet.</strong><p>Changed will light up when a board signal moves by at least half a point or goes live.</p><a class="sports-empty-action" href="{{ sports_path_prefix or '' }}/?view=pulse">Back to the board</a></div>
         {% endfor %}
       </div>
     </main>
