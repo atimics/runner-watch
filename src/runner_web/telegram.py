@@ -70,11 +70,21 @@ def _int_env(name: str, default: int) -> int:
     return max(1, int(_float_env(name, float(default))))
 
 
+def bot_token_from_env() -> str:
+    """Read the bot token. TELEGRAM_API_TOKEN is the canonical name; the
+    older TELEGRAM_BOT_TOKEN is still accepted."""
+
+    return (
+        os.getenv("TELEGRAM_API_TOKEN", "").strip()
+        or os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    )
+
+
 def config_from_env() -> TelegramConfig:
     """Read alert settings from the environment at call time."""
 
     return TelegramConfig(
-        bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
+        bot_token=bot_token_from_env(),
         chat_id=os.getenv("TELEGRAM_CHAT_ID", "").strip(),
         min_score=_float_env("TELEGRAM_MIN_SCORE", DEFAULT_MIN_SCORE),
         max_per_run=_int_env("TELEGRAM_MAX_PER_RUN", DEFAULT_MAX_PER_RUN),

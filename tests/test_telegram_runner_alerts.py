@@ -104,7 +104,8 @@ def _insert_runner(
 def alert_environment(tmp_path, monkeypatch: MonkeyPatch):
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "telegram-alerts.db")
     monkeypatch.setenv("TELEGRAM_RUNNER_ALERTS", "1")
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("TELEGRAM_API_TOKEN", "test-token")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "test-chat")
     monkeypatch.setenv("TELEGRAM_MIN_SCORE", "60")
     monkeypatch.setenv("TELEGRAM_MAX_PER_RUN", "10")
@@ -126,18 +127,33 @@ def test_alerts_parse_truthy_values(monkeypatch: MonkeyPatch, value: str) -> Non
 
 
 def test_config_reads_environment(monkeypatch: MonkeyPatch) -> None:
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", " token ")
+    monkeypatch.setenv("TELEGRAM_API_TOKEN", " api-token ")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.setenv("TELEGRAM_CHAT_ID", " chat ")
     monkeypatch.setenv("TELEGRAM_MIN_SCORE", "72.5")
     monkeypatch.setenv("TELEGRAM_MAX_PER_RUN", "4")
 
     config = telegram.config_from_env()
 
-    assert config.bot_token == "token"
+    assert config.bot_token == "api-token"
     assert config.chat_id == "chat"
     assert config.min_score == 72.5
     assert config.max_per_run == 4
     assert config.configured is True
+
+
+def test_api_token_takes_precedence_over_the_legacy_name(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_API_TOKEN", "api-token")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "legacy-token")
+
+    assert telegram.bot_token_from_env() == "api-token"
+
+
+def test_legacy_bot_token_is_still_accepted(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.delenv("TELEGRAM_API_TOKEN", raising=False)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "legacy-token")
+
+    assert telegram.bot_token_from_env() == "legacy-token"
 
 
 def test_config_ignores_invalid_numbers(monkeypatch: MonkeyPatch) -> None:
@@ -257,6 +273,7 @@ def test_dispatch_is_a_noop_when_alerts_are_disabled(
 def test_dispatch_reports_missing_configuration(
     alert_environment, monkeypatch: MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("TELEGRAM_API_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
 
     result = web_main.dispatch_new_runner_alerts(scan_run_id="run-1")
