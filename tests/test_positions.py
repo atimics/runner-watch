@@ -144,4 +144,4 @@ def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
     assert '@app.post("/api/positions/' not in app_source
     assert '@app.post("/api/heart/{ticker}")' not in app_source
     assert "My Radar" not in radar
-    assert "events from Pulse" in radar
+    assert "events from the board" in radar
