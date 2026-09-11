@@ -239,9 +239,9 @@ DEFAULT_SOURCE_POLICIES = (
         stale_after_seconds=2_700,
         schedule="always",
         storage_policy="normalized_aggregates_only",
-        display_policy="internal_review_only",
+        display_policy="source_link_with_attribution",
         attribution="ApeWisdom / Reddit",
-        review_status="poc_only",
+        review_status="approved",
         enabled=(
             _enabled_by_default("DISCOVERY_SOURCES_ENABLED")
             and _enabled_by_default("APEWISDOM_SOCIAL_ENABLED")
