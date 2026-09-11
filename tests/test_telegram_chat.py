@@ -147,6 +147,7 @@ def test_holding_with_stop_mutes_that_person():
 
 def test_a_mute_lifts_after_its_window():
     with connection() as database:
+        chat.open_engagement(database, CHAT, ALICE, NOW)
         chat.mute_engagement(database, CHAT, ALICE, NOW)
         after = NOW + timedelta(minutes=chat.MUTE_MINUTES + 1)
         lifted = chat.attention_for(
@@ -162,13 +163,31 @@ def _log_reply(database, update_id: int, at: datetime) -> None:
 
 def test_a_cooldown_holds_the_cheetah_back_right_after_it_speaks():
     with connection() as database:
+        chat.open_engagement(database, CHAT, ALICE, NOW)
         _log_reply(database, 100, NOW)
         straight_after = NOW + timedelta(seconds=max(1, chat.REPLY_COOLDOWN_SECONDS - 5))
         blocked = chat.attention_for(
-            database, _parse(_update("again", mention=True, update_id=6)), straight_after
+            database, _parse(_update("again", update_id=6)), straight_after
         )
     assert blocked.consider is False
     assert blocked.reason == "cooldown"
+
+
+def test_a_direct_mention_outranks_the_cooldown():
+    """Two people asking at once must both get a look.
+
+    The cooldown exists to stop the cheetah talking over a room that is not
+    talking to him. Applied to a mention it turns into ignoring a question.
+    """
+
+    with connection() as database:
+        _log_reply(database, 101, NOW)
+        straight_after = NOW + timedelta(seconds=1)
+        asked = chat.attention_for(
+            database, _parse(_update("are you online", mention=True, update_id=7)), straight_after
+        )
+    assert asked.consider is True
+    assert asked.reason == "addressed"
 
 
 def test_an_hourly_budget_caps_the_cheetah():
@@ -355,6 +374,45 @@ def test_being_addressed_earns_a_reply_and_opens_a_run(wired):
     with connection() as database:
         run = chat.engagement_for(database, CHAT, ALICE)
     assert run["replies_left"] == chat.ENGAGEMENT_REPLIES - 1
+
+
+def test_every_mention_in_one_backlog_gets_an_answer(wired):
+    """A batch of updates is not one instant.
+
+    Telegram delivers a backlog in a burst, so a tick can carry several
+    messages. Judging them all against a single timestamp made each one look
+    simultaneous with the reply before it, and the cooldown ate the lot.
+    """
+
+    from runner_web import main as web_main
+
+    with connection() as database:
+        chat.record_update(database, _update("whats up", mention=True, update_id=1), NOW)
+        chat.record_update(database, _update("you there", update_id=2), NOW)
+        chat.record_update(database, _update("are you online", mention=True, update_id=3), NOW)
+
+    result = web_main.run_telegram_chat(
+        lambda message, transcript: {"action": "reply", "text": f"hiss at {message.update_id}"}
+    )
+
+    assert result["replied"] == 2
+    assert [text for _, text, _ in wired.replies] == ["hiss at 1", "hiss at 3"]
+
+
+def test_a_passed_over_message_records_why(wired):
+    from runner_web import main as web_main
+
+    with connection() as database:
+        chat.record_update(database, _update("nothing to do with the bot"), NOW)
+
+    web_main.run_telegram_chat(lambda *args: {"action": "hold"}, at=NOW)
+
+    with connection() as database:
+        row = database.execute(
+            "SELECT status,last_error FROM telegram_updates WHERE update_id=1"
+        ).fetchone()
+    assert row["status"] == "skipped"
+    assert row["last_error"] == "not_addressed"
 
 
 def test_the_cheetah_can_react_instead_of_speaking(wired):
