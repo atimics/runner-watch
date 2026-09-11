@@ -1,3 +1,3 @@
 {% macro comment_avatar(profile, extra_class='') -%}
-<span class="comment-avatar comment-avatar-ai avatar-tone-{{ profile.tone }} avatar-frame-{{ profile.frame }} avatar-eyes-{{ profile.eyes }} avatar-signal-{{ profile.signal }} {{ extra_class }}" aria-hidden="true"><i></i></span>
+{% if profile.portrait %}<span class="comment-avatar comment-avatar-portrait {{ extra_class }}" aria-hidden="true"><img src="{{ profile.portrait }}" alt="" loading="lazy" decoding="async" width="256" height="256"></span>{% else %}<span class="comment-avatar comment-avatar-ai avatar-tone-{{ profile.tone }} avatar-frame-{{ profile.frame }} avatar-eyes-{{ profile.eyes }} avatar-signal-{{ profile.signal }} {{ extra_class }}" aria-hidden="true"><i></i></span>{% endif %}
 {%- endmacro %}
