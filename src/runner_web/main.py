@@ -2807,6 +2807,152 @@ def _card_text(value: Any) -> str:
     return str(value).translate(CARD_GLYPHS)
 
 
+def ticker_share(detail: dict[str, Any]) -> dict[str, Any]:
+
+    """What a shared ticker link should say about itself.
+
+    A link to a ticker used to unfurl with the site's generic blurb, so every
+    alert and every link anyone pasted looked identical. This gives the page its
+    own identity: the symbol, what it is doing, and what the scanner makes of it.
+    """
+
+    ticker = str(detail.get("ticker") or "")
+    current = detail.get("current") or {}
+    gate = detail.get("evidence_gate") or {}
+    company = str(detail.get("company") or "").strip()
+    change = _number(current.get("change_pct"))
+    price = _card_price(current.get("price"))
+    move = f"{change:+.1f}%" if change is not None else None
+    headline = " · ".join(part for part in (f"${ticker}", price, move) if part)
+    summary_parts = [part for part in (company, gate.get("summary")) if part]
+    signals = [str(item) for item in (current.get("signals") or [])[:2]]
+    if not summary_parts and signals:
+        summary_parts.append(" · ".join(signals))
+    summary = " · ".join(summary_parts) or "Scanner coverage and source evidence."
+    version = hashlib.sha256(
+        "|".join(
+            str(value)
+            for value in (
+                current.get("price"),
+                current.get("change_pct"),
+                current.get("trade_state"),
+                current.get("quote_time"),
+            )
+        ).encode()
+    ).hexdigest()[:10]
+    return {
+        "title": headline,
+        "summary": summary[:200],
+        "path": f"/t/{ticker}",
+        "card_path": f"/t/{ticker}/card.png?v={version}",
+    }
+
+
+@app.get("/t/{ticker}/card.png")
+def ticker_card(ticker: str, request: Request) -> Response:
+    enforce_rate(request, "ticker-card", limit=60, seconds=60)
+    normalized = _clean_ticker(ticker)
+    detail = _public_ticker_detail_data(normalized)
+    if detail is None:
+        raise HTTPException(404, "Ticker not found")
+    return Response(
+        _ticker_card_png(detail),
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+def _ticker_card_png(detail: dict[str, Any]) -> bytes:
+
+    current = detail.get("current") or {}
+    gate = detail.get("evidence_gate") or {}
+    ticker = str(detail.get("ticker") or "")
+    change = _number(current.get("change_pct"))
+    image = Image.new("RGB", (1200, 630), "#090b0b")
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle(
+        (55, 55, 1145, 575), radius=34, fill="#111514", outline="#57e389", width=3
+    )
+    draw.text((95, 88), _card_text("RATi RUNNERS · TICKER"), "#87e8a9", font=font(27, True))
+    company = _card_text(detail.get("company") or "")[:44]
+    if company:
+        draw.text(
+            (1105 - draw.textlength(company, font=font(23)), 92),
+            company,
+            "#7e8b86",
+            font=font(23),
+        )
+
+    draw.text((95, 152), _card_text(f"${ticker}"), "#f4f8f6", font=font(84, True))
+    move = f"{change:+.1f}%" if change is not None else "—"
+    tone = "#87e8a9" if (change or 0) > 0 else "#f2a3ac" if (change or 0) < 0 else "#9fb2a8"
+    move_font = font(58, True)
+    draw.text((1105 - draw.textlength(move, font=move_font), 170), move, tone, font=move_font)
+
+    price = _card_price(current.get("price")) or "No price"
+    draw.text((95, 258), _card_text(price), "#cfe0d7", font=font(34))
+    _draw_ticker_badge(draw, current)
+
+    lead = _card_text(gate.get("summary") or "Scanner coverage and source evidence.")
+    lines = textwrap.wrap(lead, width=62)[:2]
+    if len(textwrap.wrap(lead, width=62)) > 2:
+        lines[-1] = lines[-1].rstrip(" .") + "…"
+    draw.multiline_text((95, 330), "\n".join(lines), fill="#9fb2a8", font=font(26), spacing=10)
+
+    relative_volume = _number(current.get("relative_volume"))
+    rug = _number(current.get("rug_score"))
+    _draw_scorecard(
+        draw,
+        [
+            {"label": "Price", "value": price, "tone": "flat"},
+            {
+                "label": "Change",
+                "value": move,
+                "tone": _tone_word(change),
+            },
+            {
+                "label": "RVOL",
+                "value": f"{relative_volume:.1f}x" if relative_volume is not None else "—",
+                "tone": "flat",
+            },
+            {
+                "label": "Risk",
+                "value": f"{rug:.0f}" if rug is not None else "—",
+                "tone": "down" if rug is not None and rug >= 60 else "flat",
+            },
+        ],
+    )
+    draw.text(
+        (95, 543), _card_text("runners.rati.chat · Research only"), "#65716b", font=font(21)
+    )
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG", optimize=True)
+    return buffer.getvalue()
+
+
+def _tone_word(value: float | None) -> str:
+    if value is None:
+        return "flat"
+    return "up" if value > 0 else "down" if value < 0 else "flat"
+
+
+def _draw_ticker_badge(draw: Any, current: dict[str, Any]) -> None:
+    state = str(current.get("trade_state") or "").upper()
+    level = str(current.get("rug_level") or "").lower()
+    if level in {"high", "critical"}:
+        label, fill, ink = "HIGH RISK", "#331a1e", "#f2a3ac"
+    elif state in {"AVOID", "EXIT"}:
+        label, fill, ink = state, "#331a1e", "#f2a3ac"
+    elif state and state != "UNKNOWN":
+        label, fill, ink = state, "#123021", "#87e8a9"
+    else:
+        return
+    badge = font(25, True)
+    width = draw.textlength(label, font=badge) + 44
+    draw.rounded_rectangle((1105 - width, 262, 1105, 314), radius=13, fill=fill)
+    draw.text((1105 - width + 22, 273), label, ink, font=badge)
+
+
 def _market_report_card_png(report: dict[str, Any]) -> bytes:
 
     is_post = report["report_type"] == "post_market"
@@ -8363,6 +8509,7 @@ def ticker_page(
             runner_session,
             resolved_user=user,
             detail=detail,
+            share=ticker_share(detail),
             comments=comments,
             comment_count=comment_count,
             active_call=active_call,

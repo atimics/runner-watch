@@ -123,6 +123,7 @@ def _rendered_ticker(
             request,
             None,
             detail=detail,
+            share=web_main.ticker_share(detail),
             comments=comments or [],
             comment_count=len(comments or []),
             active_call=None,
