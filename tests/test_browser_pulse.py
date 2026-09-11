@@ -67,7 +67,7 @@ def _rendered_pulse(monkeypatch, payload: dict[str, Any]) -> str:
             "featured": None,
             "schedule": {
                 "next_label": "Pre-market briefing",
-                "schedule_note": "Weekdays · 9:00 ET and 4:15 ET",
+                "schedule_note": "Weekdays · 4:15 a.m. and 4:15 p.m. ET",
             },
         },
     )
@@ -329,6 +329,86 @@ def test_refresh_updates_flash_record_and_merges_new_ticker(page: Page, monkeypa
     assert page.locator("[data-kol-pnl]").text_content() == "View record ›"
     page.locator("#pulseRefresh").click()
     assert page.locator('[data-ticker-row="BBB"]').count() == 1
+    assert page.locator('[data-ticker-row="AAA"]').count() == 0
+    assert page.locator("#pulseRefresh").text_content() == "Showing 1 new · tap for all"
+    assert page.locator("#pulseRefresh").get_attribute("aria-pressed") == "true"
+
+    page.locator("#pulseRefresh").click()
+    assert page.locator('[data-ticker-row="BBB"]').count() == 1
     assert page.locator('[data-ticker-row="AAA"]').count() == 1
     assert page.locator("#pulseRefresh").is_hidden()
+    assert errors == []
+
+
+def test_new_ticker_filter_survives_a_quiet_poll_and_stacks_arrivals(
+    page: Page, monkeypatch
+) -> None:
+    initial = _pulse(_row("AAA", "2026-08-26T18:00:00+00:00"))
+    second = _pulse(
+        _row("BBB", "2026-08-26T18:05:00+00:00"),
+        _row("AAA", "2026-08-26T18:00:00+00:00"),
+    )
+    third = _pulse(
+        _row("CCC", "2026-08-26T18:10:00+00:00"),
+        _row("BBB", "2026-08-26T18:05:00+00:00"),
+        _row("AAA", "2026-08-26T18:00:00+00:00"),
+    )
+    html = _rendered_pulse(monkeypatch, initial)
+    errors = _load(page, html, [second, second, third])
+
+    page.evaluate("window.pulseLive.poll()")
+    page.locator("#pulseRefresh").click()
+    assert page.locator('[data-ticker-row="BBB"]').count() == 1
+    assert page.locator('[data-ticker-row="AAA"]').count() == 0
+
+    page.evaluate("window.pulseLive.poll()")
+    assert page.locator("#pulseRefresh").text_content() == "Showing 1 new · tap for all"
+    assert page.locator('[data-ticker-row="AAA"]').count() == 0
+
+    page.evaluate("window.pulseLive.poll()")
+    assert page.locator("#pulseRefresh").text_content() == "1 new ticker"
+    page.locator("#pulseRefresh").click()
+    assert page.locator("#pulseRefresh").text_content() == "Showing 2 new · tap for all"
+    assert page.locator('[data-ticker-row="CCC"]').count() == 1
+    assert page.locator('[data-ticker-row="BBB"]').count() == 1
+    assert page.locator('[data-ticker-row="AAA"]').count() == 0
+
+    page.locator("#pulseRefresh").click()
+    assert page.locator('[data-ticker-row="AAA"]').count() == 1
+    assert page.locator("#pulseRefresh").is_hidden()
+    assert errors == []
+
+
+def test_a_live_mark_shows_a_dot_and_a_stale_one_does_not(page: Page, monkeypatch) -> None:
+    live = {
+        **_row("LIVE", "2026-08-26T18:00:00+00:00"),
+        "section": "scored",
+        "quote_time": "2026-08-26T18:04:30+00:00",
+        "mark_source": "quote",
+        "mark_age_seconds": 30,
+    }
+    swept = {
+        **_row("SWEPT", "2026-08-26T18:00:00+00:00"),
+        "section": "scored",
+        "quote_time": "2026-08-26T18:00:00+00:00",
+    }
+    errors = _load(page, _rendered_pulse(monkeypatch, _pulse(live, swept)), [])
+
+    assert page.locator('[data-ticker-row="LIVE"] .ticker-age-live').count() == 1
+    assert page.locator('[data-ticker-row="SWEPT"] .ticker-age-live').count() == 0
+    assert page.locator('[data-ticker-row="SWEPT"] .ticker-age').count() == 1
+    assert errors == []
+
+
+def test_a_mark_that_has_gone_cold_loses_the_live_dot(page: Page, monkeypatch) -> None:
+    cold = {
+        **_row("COLD", "2026-08-26T18:00:00+00:00"),
+        "section": "scored",
+        "quote_time": "2026-08-26T18:00:00+00:00",
+        "mark_source": "quote",
+        "mark_age_seconds": 600,
+    }
+    errors = _load(page, _rendered_pulse(monkeypatch, _pulse(cold)), [])
+
+    assert page.locator('[data-ticker-row="COLD"] .ticker-age-live').count() == 0
     assert errors == []

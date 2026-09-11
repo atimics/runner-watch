@@ -594,3 +594,84 @@ def test_pending_avatar_request_stays_with_its_account(page: Page) -> None:
     )
     assert len(requests) == 3
     assert requests[0] == requests[2]
+
+
+def test_live_quote_replaces_the_scan_price_and_shows_the_previous_close(page: Page) -> None:
+    def quote(route: Route) -> None:
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "ticker": "TEST",
+                    "price": 0.8421,
+                    "observed_at": "2026-09-02T12:32:00+00:00",
+                    "session": "PRE-MARKET",
+                    "previous_close": 0.7,
+                    "change_pct": 20.3,
+                    "fresh": True,
+                }
+            ),
+        )
+
+    page.route("**/api/t/TEST/quote", quote)
+    page.set_content(
+        _rendered_ticker(inline_script=True),
+        wait_until="domcontentloaded",
+    )
+
+    page.wait_for_function(
+        "document.querySelector('[data-quote-price]').textContent === '$0.8421'"
+    )
+    block = page.locator("[data-quote-block]")
+    assert block.get_attribute("data-quote-fresh") == "true"
+    assert page.locator("[data-quote-change]").text_content() == "+20.3%"
+    assert page.locator("[data-quote-change]").get_attribute("class") == "up"
+    assert page.locator("[data-quote-anchor]").text_content() == "Prev close $0.7000"
+    meta = page.locator("[data-quote-meta]").text_content()
+    assert "Last trade" in meta and "pre market" in meta and "stale" not in meta
+
+
+def test_a_stale_quote_without_a_previous_close_hides_the_anchor(page: Page) -> None:
+    def quote(route: Route) -> None:
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "ticker": "TEST",
+                    "price": 1.25,
+                    "observed_at": "2026-09-01T20:00:00+00:00",
+                    "session": "CLOSED",
+                    "previous_close": None,
+                    "change_pct": None,
+                    "fresh": False,
+                }
+            ),
+        )
+
+    page.route("**/api/t/TEST/quote", quote)
+    page.set_content(
+        _rendered_ticker(inline_script=True),
+        wait_until="domcontentloaded",
+    )
+
+    page.wait_for_function(
+        "document.querySelector('[data-quote-block]').dataset.quoteFresh === 'false'"
+    )
+    assert page.locator("[data-quote-price]").text_content() == "$1.25"
+    assert page.locator("[data-quote-anchor]").is_hidden()
+    assert page.locator("[data-quote-change]").is_hidden()
+    assert "stale" in page.locator("[data-quote-meta]").text_content()
+
+
+def test_a_failed_quote_request_leaves_the_rendered_price_alone(page: Page) -> None:
+    page.route("**/api/t/TEST/quote", lambda route: route.fulfill(status=503, body=""))
+    page.set_content(
+        _rendered_ticker(inline_script=True),
+        wait_until="domcontentloaded",
+    )
+    page.wait_for_timeout(200)
+
+    assert page.locator("[data-quote-price]").text_content() == "$2.15"
+    assert page.locator("[data-quote-anchor]").is_hidden()

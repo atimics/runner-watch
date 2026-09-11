@@ -6,6 +6,7 @@ import threading
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from datetime import time as clock_time
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -20,12 +21,15 @@ from runner_watch.provider_contracts import (
     FetchBatch,
     ProviderProvenance,
     ProviderRequest,
+    Quote,
 )
 from runner_watch.provider_registry import ProviderRegistry, ProvidersExhaustedError
 
 ProgressCallback = Callable[[int, int, str], None]
 BarRecorder = Callable[[str, dict[str, pd.DataFrame]], None]
 EASTERN = ZoneInfo("America/New_York")
+QUOTE_INTERVAL = "1m"
+QUOTE_PERIOD = "1d"
 
 _DAILY_CACHE_LOCK = threading.Lock()
 _DAILY_CACHE_DAY: date | None = None
@@ -210,6 +214,21 @@ class YahooMarketData:
             label="5-minute history",
         )
 
+    def minutes(
+        self, tickers: list[str], progress: ProgressCallback | None = None
+    ) -> DownloadResult:
+
+        """One-minute bars for a small hot set, in one batched request."""
+
+        return self._download(
+            tickers,
+            period=QUOTE_PERIOD,
+            interval=QUOTE_INTERVAL,
+            prepost=True,
+            progress=progress,
+            label="1-minute history",
+        )
+
 
 def _optional_number(value: Any) -> float | None:
     try:
@@ -314,6 +333,190 @@ class YahooBarAdapter:
             ),
             bars=bars,
             error="Yahoo returned no usable bars" if not bars else None,
+        )
+
+
+def session_label(now_et: datetime) -> str:
+
+    if now_et.weekday() >= 5:
+        return "CLOSED"
+    clock = now_et.time().replace(tzinfo=None)
+    if clock_time(4) <= clock < clock_time(9, 30):
+        return "PRE-MARKET"
+    if clock_time(9, 30) <= clock < clock_time(16):
+        return "REGULAR"
+    if clock_time(16) <= clock < clock_time(20):
+        return "AFTER-HOURS"
+    return "CLOSED"
+
+
+def _quote_number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _last_print(frame: pd.DataFrame) -> tuple[datetime, dict[str, Any]] | None:
+
+    if frame is None or frame.empty:
+        return None
+    columns = {str(name).strip().lower(): name for name in frame.columns}
+    close_column = columns.get("close")
+    if close_column is None:
+        return None
+    usable = frame[frame[close_column].notna()]
+    if usable.empty:
+        return None
+    stamp = usable.index[-1]
+    row = usable.iloc[-1]
+    moment = stamp.to_pydatetime()
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=EASTERN)
+    return moment.astimezone(UTC), {
+        "last": _quote_number(row.get(close_column)),
+        "day_high": _quote_number(usable[columns["high"]].max()) if "high" in columns else None,
+        "day_low": _quote_number(usable[columns["low"]].min()) if "low" in columns else None,
+        "volume": (
+            _quote_number(usable[columns["volume"]].sum()) if "volume" in columns else None
+        ),
+    }
+
+
+class YahooQuoteAdapter:
+
+    name = "yahoo"
+    capabilities = frozenset({DataKind.QUOTES})
+
+    def __init__(
+        self,
+        fetch_recorder: SourceFetchRecorder | None = None,
+        timeout: float = 10.0,
+    ) -> None:
+        self.fetch_recorder = fetch_recorder
+        self.timeout = timeout
+
+    def _record(self, fetch: SourceFetch, warnings: list[str]) -> None:
+        if self.fetch_recorder is None:
+            return
+        try:
+            self.fetch_recorder(fetch)
+        except Exception as exc:
+            warnings.append(f"Could not record {fetch.source} {fetch.feed} fetch: {exc}")
+
+    def _previous_close(self, handle: Any, warnings: list[str]) -> float | None:
+
+        info = getattr(handle, "fast_info", None)
+        if info is None:
+            return None
+        readers = (
+            lambda: info.previous_close,
+            lambda: info.get("previousClose"),
+            lambda: info["previousClose"],
+        )
+        for reader in readers:
+            try:
+                value = _quote_number(reader())
+            except Exception:
+                continue
+            if value is not None:
+                return value
+        warnings.append("Yahoo did not report a previous close")
+        return None
+
+    def fetch(
+        self,
+        request: ProviderRequest,
+        progress: ProgressCallback | None = None,
+    ) -> FetchBatch:
+        if request.kind != DataKind.QUOTES:
+            raise ValueError("YahooQuoteAdapter only supports quote requests")
+        _ = progress
+        started_at = datetime.now(UTC)
+        warnings: list[str] = []
+        quotes: list[Quote] = []
+        failed: list[str] = []
+        locator = f"yfinance://quote/{QUOTE_INTERVAL}"
+        for symbol in request.symbols:
+            try:
+                handle = yf.Ticker(symbol)
+                frame = handle.history(
+                    period=QUOTE_PERIOD,
+                    interval=QUOTE_INTERVAL,
+                    prepost=True,
+                    auto_adjust=False,
+                    timeout=self.timeout,
+                )
+                print_row = _last_print(frame)
+            except Exception as exc:
+                warnings.append(f"Yahoo quote for {symbol} failed: {exc}")
+                failed.append(symbol)
+                continue
+            if print_row is None:
+                failed.append(symbol)
+                continue
+            observed_at, values = print_row
+            quotes.append(
+                Quote(
+                    symbol=symbol,
+                    observed_at=observed_at,
+                    previous_close=self._previous_close(handle, warnings),
+                    session=session_label(observed_at.astimezone(EASTERN)),
+                    **values,
+                )
+            )
+        collected_at = datetime.now(UTC)
+        status = "success" if quotes and not failed else "partial" if quotes else "error"
+        as_of = max((quote.observed_at for quote in quotes), default=collected_at)
+        fetch = (
+            SourceFetch.success(
+                source=self.name,
+                feed="ticker_quote",
+                locator=locator,
+                started_at=started_at,
+                payload={quote.symbol: quote.model_dump(mode="json") for quote in quotes},
+                content_type="application/json",
+                metadata={
+                    "requested_tickers": list(request.symbols),
+                    "returned_tickers": [quote.symbol for quote in quotes],
+                    "missing_tickers": failed,
+                },
+            )
+            if quotes
+            else SourceFetch.failure(
+                source=self.name,
+                feed="ticker_quote",
+                locator=locator,
+                started_at=started_at,
+                error="Yahoo returned no usable quote",
+                metadata={"requested_tickers": list(request.symbols)},
+            )
+        )
+        self._record(fetch, warnings)
+        return FetchBatch(
+            request=request,
+            status=status,
+            provenance=ProviderProvenance(
+                provider=self.name,
+                feed="ticker_quote",
+                locator=locator,
+                observed_at=as_of if quotes else None,
+                as_of=as_of,
+                collected_at=collected_at,
+                delayed=True,
+                warnings=tuple(warnings),
+                quality={
+                    "requested_symbols": len(request.symbols),
+                    "returned_symbols": len(quotes),
+                    "failed_symbols": failed,
+                    "started_at": started_at.isoformat(),
+                },
+            ),
+            quotes=tuple(quotes),
+            error="Yahoo returned no usable quote" if not quotes else None,
         )
 
 

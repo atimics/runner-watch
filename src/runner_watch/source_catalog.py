@@ -196,6 +196,21 @@ DEFAULT_SOURCE_POLICIES = (
     ),
     SourcePolicy(
         source="yahoo",
+        feed="ticker_quote",
+        title="Yahoo on-demand ticker quote",
+        owner="Yahoo",
+        terms_url="https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html",
+        credential_env=None,
+        expected_cadence_seconds=30,
+        stale_after_seconds=300,
+        schedule="us_extended_weekdays",
+        storage_policy="normalized_only",
+        display_policy="review_required",
+        attribution="Yahoo Finance",
+        review_status="review_required",
+    ),
+    SourcePolicy(
+        source="yahoo",
         feed="news_search",
         title="Yahoo Finance ticker news search",
         owner="Yahoo",
@@ -224,9 +239,9 @@ DEFAULT_SOURCE_POLICIES = (
         stale_after_seconds=2_700,
         schedule="always",
         storage_policy="normalized_aggregates_only",
-        display_policy="internal_review_only",
+        display_policy="source_link_with_attribution",
         attribution="ApeWisdom / Reddit",
-        review_status="poc_only",
+        review_status="approved",
         enabled=(
             _enabled_by_default("DISCOVERY_SOURCES_ENABLED")
             and _enabled_by_default("APEWISDOM_SOCIAL_ENABLED")
@@ -298,9 +313,9 @@ DEFAULT_SOURCE_POLICIES = (
         stale_after_seconds=180,
         schedule="us_extended_weekdays",
         storage_policy="archive_raw_and_normalized",
-        display_policy="internal_review_only",
+        display_policy="source_link_with_attribution",
         attribution="Nasdaq Trader",
-        review_status="poc_only",
+        review_status="approved",
         enabled=_enabled("NASDAQ_TRADE_HALTS_ENABLED"),
     ),
     SourcePolicy(

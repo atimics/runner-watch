@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 import statistics
@@ -8,11 +9,16 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from runner_web.db import connection
-from runner_web.market_forecasts import attach_market_forecasts, queue_market_forecasts
+from runner_web.market_commentary import attach_report_commentary, queue_report_commentary
+from runner_web.market_forecasts import (
+    attach_market_forecasts,
+    forecast_record,
+    queue_market_forecasts,
+)
 
 EASTERN = ZoneInfo("America/New_York")
 PRE_MARKET_START = time(4, 0)
-PRE_MARKET_REPORT_AT = time(9, 0)
+PRE_MARKET_REPORT_AT = time(4, 15)
 PRE_MARKET_CUTOFF = time(9, 15)
 REGULAR_OPEN = time(9, 30)
 REGULAR_CLOSE = time(16, 0)
@@ -24,6 +30,9 @@ REPORT_LABELS: dict[ReportType, str] = {
     "pre_market": "Pre-market briefing",
     "post_market": "Post-market recap",
 }
+REPORT_SLUGS: dict[str, ReportType] = {"pre": "pre_market", "post": "post_market"}
+REPORT_TYPE_SLUGS: dict[str, str] = {value: key for key, value in REPORT_SLUGS.items()}
+SHARE_SUMMARY_MAX_CHARS = 200
 
 
 def _as_eastern(moment: datetime | None) -> datetime:
@@ -80,7 +89,7 @@ def market_report_schedule(moment: datetime | None = None) -> dict[str, Any]:
         "next_label": REPORT_LABELS[next_type],
         "next_at": _iso_utc(next_at),
         "seconds_to_next": max(0, int((next_at - current).total_seconds())),
-        "schedule_note": "Weekdays · 9:00 ET and 4:15 ET",
+        "schedule_note": "Weekdays · 4:15 a.m. and 4:15 p.m. ET",
     }
 
 
@@ -205,10 +214,10 @@ def _pre_market_payload(database: Any, day: date, current: datetime) -> dict[str
 
 
 def _post_market_turns(
-    opening: list[dict[str, Any]],
+    watch: list[dict[str, Any]],
     closing: list[dict[str, Any]],
 ) -> tuple[dict[str, int], list[dict[str, Any]]]:
-    open_by_ticker = {row["ticker"]: row for row in opening}
+    open_by_ticker = {row["ticker"]: row for row in watch}
     close_by_ticker = {row["ticker"]: row for row in closing}
     held = sorted(set(open_by_ticker) & set(close_by_ticker))
     joined = sorted(set(close_by_ticker) - set(open_by_ticker))
@@ -269,42 +278,130 @@ def _post_market_turns(
     return {"held": len(held), "joined": len(joined), "dropped": len(dropped)}, turns[:12]
 
 
+def _watch_board(database: Any, day: date) -> dict[str, Any] | None:
+
+    row = database.execute(
+        "SELECT source_scan_run_id,metrics_json,leaders_json FROM market_session_reports "
+        "WHERE report_day=? AND report_type='pre_market'",
+        (day.isoformat(),),
+    ).fetchone()
+    if not row:
+        return None
+    leaders = [dict(item) for item in _json_list(row["leaders_json"]) if isinstance(item, dict)]
+    if not leaders:
+        return None
+    try:
+        metrics = json.loads(str(row["metrics_json"] or "{}"))
+    except (TypeError, ValueError):
+        metrics = {}
+    return {
+        "leaders": leaders,
+        "metrics": metrics if isinstance(metrics, dict) else {},
+        "scan_run_id": str(row["source_scan_run_id"]),
+    }
+
+
+def _closing_board(
+    watch: list[dict[str, Any]],
+    closing: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+
+    close_by_ticker = {row["ticker"]: row for row in closing}
+    board: list[dict[str, Any]] = []
+    for row in watch:
+        last = close_by_ticker.get(row["ticker"])
+        watch_price = row.get("price")
+        close_price = last.get("price") if last else None
+        session_return = None
+        if watch_price and close_price:
+            session_return = round((float(close_price) / float(watch_price) - 1) * 100, 2)
+        board.append(
+            {
+                **row,
+                "board_status": "held" if last else "dropped",
+                "close_rank": last["rank"] if last else None,
+                "close_score": last["score"] if last else None,
+                "close_price": close_price,
+                "close_change_pct": last.get("change_pct") if last else None,
+                "close_relative_volume": last.get("relative_volume") if last else None,
+                "close_trade_state": last["trade_state"] if last else None,
+                "session_return_pct": session_return,
+            }
+        )
+    return board
+
+
+def _session_results(board: list[dict[str, Any]]) -> dict[str, Any]:
+    returns = [
+        float(row["session_return_pct"])
+        for row in board
+        if row.get("session_return_pct") is not None
+    ]
+    return {
+        "winners": sum(value > 0 for value in returns),
+        "losers": sum(value < 0 for value in returns),
+        "average_session_return_pct": (
+            round(statistics.fmean(returns), 2) if returns else None
+        ),
+    }
+
+
 def _post_market_payload(database: Any, day: date, current: datetime) -> dict[str, Any] | None:
     cutoff = min(current, _at(day, POST_MARKET_CUTOFF))
-    opening_run = _scan_run(
-        database,
-        _at(day, REGULAR_OPEN),
-        _at(day, REGULAR_CLOSE),
-        latest=False,
-    )
     closing_run = _scan_run(
         database,
         _at(day, time(15, 30)),
         cutoff,
         latest=True,
     )
-    if not opening_run or not closing_run:
+    if not closing_run:
         return None
-    opening = _snapshots(database, str(opening_run["id"]))
     closing = _snapshots(database, str(closing_run["id"]))
-    if not opening or not closing:
+    if not closing:
         return None
-    membership, turns = _post_market_turns(opening, closing)
-    metrics = {**_market_breadth(closing), **membership}
-    leader = closing[0]
+    briefing = _watch_board(database, day)
+    if briefing is None:
+        opening_run = _scan_run(
+            database,
+            _at(day, REGULAR_OPEN),
+            _at(day, REGULAR_CLOSE),
+            latest=False,
+        )
+        if not opening_run:
+            return None
+        opening = _snapshots(database, str(opening_run["id"]))
+        if not opening:
+            return None
+        briefing = {
+            "leaders": opening[:8],
+            "metrics": _market_breadth(opening),
+            "scan_run_id": str(opening_run["id"]),
+        }
+    watch = briefing["leaders"]
+    membership, turns = _post_market_turns(watch, closing)
+    board = _closing_board(watch, closing)
+    metrics = {**briefing["metrics"], **membership, **_session_results(board)}
+    ranked = [row for row in board if row.get("session_return_pct") is not None]
+    best = max(ranked, key=lambda row: float(row["session_return_pct"])) if ranked else None
+    headline = (
+        f"{best['ticker']} led the watch board at {float(best['session_return_pct']):+.1f}%"
+        if best
+        else f"{closing[0]['ticker']} finishes on top"
+    )
     summary = (
-        f"{metrics['candidates']} names finished on the close board. "
-        f"{metrics['held']} held from the first regular-hours scan, "
-        f"{metrics['joined']} joined, and {metrics['dropped']} dropped off."
+        f"{metrics['candidates']} names carried over from the watch board. "
+        f"{metrics['held']} were still on the board at the close, "
+        f"{metrics['dropped']} dropped off, and {metrics['joined']} joined. "
+        f"{metrics['winners']} finished above the watch price."
     )
     return {
         "source_scan_run_id": str(closing_run["id"]),
-        "comparison_scan_run_id": str(opening_run["id"]),
+        "comparison_scan_run_id": briefing["scan_run_id"],
         "as_of": str(closing_run["captured_at"]),
-        "headline": f"{leader['ticker']} finishes on top",
+        "headline": headline,
         "summary": summary,
         "metrics": metrics,
-        "leaders": closing[:8],
+        "leaders": board,
         "turns": turns,
     }
 
@@ -319,25 +416,57 @@ def _report_record(row: Any) -> dict[str, Any] | None:
         except (TypeError, ValueError):
             report[key.removesuffix("_json")] = {} if key == "metrics_json" else []
         report.pop(key, None)
+    try:
+        analysis = json.loads(str(report.pop("analysis_json", None) or "null"))
+    except (TypeError, ValueError):
+        analysis = None
+    report["analysis"] = analysis if isinstance(analysis, dict) else None
     report["label"] = REPORT_LABELS.get(report["report_type"], str(report["report_type"]))
     try:
         local_as_of = _as_eastern(datetime.fromisoformat(str(report["as_of"])))
         report["as_of_label"] = local_as_of.strftime("%-I:%M %p ET")
     except (TypeError, ValueError):
         report["as_of_label"] = "Time unavailable"
-    report["metric_cards"] = _metric_cards(report)
     return report
+
+
+def _apply_settled_closes(report: dict[str, Any]) -> None:
+
+    if report["report_type"] != "post_market":
+        return
+    for leader in report["leaders"]:
+        forecast = leader.get("eod_forecast") or {}
+        close_price = _round(forecast.get("close_price"), 4)
+        watch_price = leader.get("price")
+        if leader.get("close_price") is not None or close_price is None or not watch_price:
+            continue
+        leader["close_price"] = close_price
+        leader["close_is_settled"] = True
+        leader["session_return_pct"] = round(
+            (float(close_price) / float(watch_price) - 1) * 100, 2
+        )
+    report["metrics"] = {**report["metrics"], **_session_results(report["leaders"])}
+
+
+def _decorate(database: Any, reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+
+    attach_market_forecasts(database, reports)
+    attach_report_commentary(database, reports)
+    for report in reports:
+        _apply_settled_closes(report)
+        report["forecast_record"] = forecast_record(report["leaders"])
+        report["metric_cards"] = _metric_cards(report)
+        report["record_cards"] = (
+            _record_cards(report) if report["report_type"] == "post_market" else []
+        )
+        report["share"] = _share(report)
+        report["slug"] = report["share"]["slug"]
+        report["permalink"] = report["share"]["path"]
+    return reports
 
 
 def _metric_cards(report: dict[str, Any]) -> list[dict[str, Any]]:
     metrics = report.get("metrics") or {}
-    if report.get("report_type") == "post_market":
-        return [
-            {"label": "Close board", "value": metrics.get("candidates", 0)},
-            {"label": "Held", "value": metrics.get("held", 0)},
-            {"label": "Joined", "value": metrics.get("joined", 0)},
-            {"label": "Dropped", "value": metrics.get("dropped", 0)},
-        ]
     median_volume = metrics.get("median_relative_volume")
     return [
         {"label": "Watching", "value": metrics.get("candidates", 0)},
@@ -350,6 +479,137 @@ def _metric_cards(report: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _tone(value: float | None, threshold: float = 0.0) -> str:
+    if value is None:
+        return "flat"
+    return "up" if value > threshold else "down" if value < threshold else "flat"
+
+
+def _record_cards(report: dict[str, Any]) -> list[dict[str, Any]]:
+    metrics = report.get("metrics") or {}
+    record = report.get("forecast_record") or {}
+    win_rate = record.get("win_rate")
+    winners, losers = metrics.get("winners", 0), metrics.get("losers", 0)
+    average = metrics.get("average_session_return_pct")
+    target_tone = _tone(win_rate, 50.0) if record.get("decided") else "flat"
+    return [
+        {
+            "label": "Flash record",
+            "value": record.get("label") or "—",
+            "tone": target_tone,
+        },
+        {
+            "label": "Hit rate",
+            "value": f"{win_rate:.0f}%" if win_rate is not None else "—",
+            "tone": target_tone,
+        },
+        {
+            "label": "Board W–L",
+            "value": f"{winners}–{losers}",
+            "tone": _tone(winners - losers),
+        },
+        {
+            "label": "Avg move",
+            "value": f"{average:+.1f}%" if average is not None else "—",
+            "tone": _tone(average),
+        },
+    ]
+
+
+def _price_label(value: Any) -> str | None:
+    price = _round(value, 4)
+    if price is None:
+        return None
+    text = f"{price:.4f}".rstrip("0").rstrip(".")
+    return f"${text or '0'}"
+
+
+def _top_pick(report: dict[str, Any]) -> dict[str, Any] | None:
+
+    leaders = report.get("leaders") or []
+    if not leaders:
+        return None
+    directional = [
+        row
+        for row in leaders
+        if (row.get("eod_forecast") or {}).get("direction") in {"up", "down"}
+    ]
+    pick = min(directional or leaders, key=lambda row: int(row.get("rank") or 1_000_000))
+    forecast = pick.get("eod_forecast") or {}
+    return {
+        "ticker": str(pick["ticker"]),
+        "rank": pick.get("rank"),
+        "score": pick.get("score"),
+        "change_pct": pick.get("change_pct"),
+        "relative_volume": pick.get("relative_volume"),
+        "reference_price": forecast.get("reference_price", pick.get("price")),
+        "target_price": forecast.get("target_price"),
+        "direction": forecast.get("direction"),
+        "status": forecast.get("status"),
+        "reason": forecast.get("reason"),
+        "close_price": forecast.get("close_price", pick.get("close_price")),
+        "board_status": pick.get("board_status"),
+        "session_return_pct": pick.get("session_return_pct"),
+    }
+
+
+def _share_title(report: dict[str, Any], pick: dict[str, Any] | None) -> str:
+    if report["report_type"] == "pre_market":
+        target = _price_label(pick["target_price"]) if pick else None
+        if pick and target:
+            return f"${pick['ticker']} · Flash targets {target} by the close"
+        return f"Pre-market briefing · {report['headline']}"
+    record = report.get("forecast_record") or {}
+    if pick and pick.get("status") in {"hit", "miss"}:
+        verdict = "hit" if pick["status"] == "hit" else "missed"
+        label = record.get("label") or "0–0"
+        return f"${pick['ticker']} target {verdict} · Flash {label} on the day"
+    return f"Post-market recap · {report['headline']}"
+
+
+def _share_summary(report: dict[str, Any]) -> str:
+    analysis = report.get("analysis") or {}
+    lead = str(analysis.get("headline") or "").strip() or str(report["summary"])
+    parts = [str(report["report_day"])]
+    if report["report_type"] == "post_market":
+        metrics = report.get("metrics") or {}
+        record = report.get("forecast_record") or {}
+        parts.append(
+            f"Flash {record.get('label') or '0–0'} on targets, "
+            f"board {metrics.get('winners', 0)}–{metrics.get('losers', 0)}"
+        )
+    parts.append(lead)
+    summary = " · ".join(parts)
+    if len(summary) <= SHARE_SUMMARY_MAX_CHARS:
+        return summary
+    return summary[: SHARE_SUMMARY_MAX_CHARS - 1].rstrip(" ·,.") + "…"
+
+
+def _share(report: dict[str, Any]) -> dict[str, Any]:
+
+    pick = _top_pick(report)
+    slug = REPORT_TYPE_SLUGS[str(report["report_type"])]
+    path = f"/reports/{report['report_day']}/{slug}"
+    stamp = "|".join(
+        str(value)
+        for value in (
+            report.get("updated_at"),
+            (report.get("forecast_record") or {}).get("label"),
+            (report.get("analysis") or {}).get("headline"),
+            pick["status"] if pick else "",
+        )
+    )
+    version = hashlib.sha256(stamp.encode()).hexdigest()[:10]
+    return {
+        "title": _share_title(report, pick),
+        "summary": _share_summary(report),
+        "top_pick": pick,
+        "slug": slug,
+        "path": path,
+        "card_path": f"{path}/card.png?v={version}",
+    }
+
+
 def market_report(report_day: str, report_type: ReportType) -> dict[str, Any] | None:
     with connection() as database:
         row = database.execute(
@@ -358,7 +618,7 @@ def market_report(report_day: str, report_type: ReportType) -> dict[str, Any] | 
         ).fetchone()
         report = _report_record(row)
         if report:
-            attach_market_forecasts(database, [report])
+            _decorate(database, [report])
     return report
 
 
@@ -373,7 +633,8 @@ def _create_report(
             (report_day.isoformat(), report_type),
         ).fetchone()
         if existing:
-            return _report_record(existing)
+            report = _report_record(existing)
+            return _decorate(database, [report])[0] if report else None
         payload = (
             _pre_market_payload(database, report_day, current)
             if report_type == "pre_market"
@@ -408,15 +669,22 @@ def _create_report(
                 timestamp,
             ),
         ).rowcount
-        if inserted and report_type == "pre_market":
-            queue_market_forecasts(
-                database, report_id, report_day.isoformat(), payload["leaders"], current
+        if inserted:
+            if report_type == "pre_market":
+                queue_market_forecasts(
+                    database, report_id, report_day.isoformat(), payload["leaders"], current
+                )
+            queue_report_commentary(
+                database, report_id, report_day.isoformat(), report_type, current
             )
         row = database.execute(
             "SELECT * FROM market_session_reports WHERE report_day=? AND report_type=?",
             (report_day.isoformat(), report_type),
         ).fetchone()
-    return _report_record(row)
+        report = _report_record(row)
+        if report:
+            _decorate(database, [report])
+    return report
 
 
 def refresh_market_reports(moment: datetime | None = None) -> dict[str, Any]:
@@ -456,8 +724,9 @@ def market_reports_overview(
             """,
             (max(2, min(history_limit, 30)),),
         ).fetchall()
-        reports = [report for row in rows if (report := _report_record(row))]
-        attach_market_forecasts(database, reports)
+        reports = _decorate(
+            database, [report for row in rows if (report := _report_record(row))]
+        )
     latest = {
         report_type: next(
             (report for report in reports if report["report_type"] == report_type),
