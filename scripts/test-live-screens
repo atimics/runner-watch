@@ -43,13 +43,15 @@ class Result:
 SCREENS = (
     Screen("runners_pulse", "Runners · Pulse", "runners", "/", r"^Pulse$"),
     Screen("ticker", "Runners · Ticker", "runners", None, r"\S+", "ticker"),
-    Screen("runners_radar", "Runners · Radar", "runners", "/radar", r"^Radar$"),
+    Screen("runners_radar", "Runners · Changed", "runners", "/?view=changed", r"^Changed$"),
     Screen("market_reports", "Runners · Market turns", "runners", "/reports", r"^Market turns$"),
     Screen("memecoins", "Markets · Memecoins", "runners", "/memecoins", r"^Memecoins$"),
     Screen("memecoin", "Memecoins · Coin", "runners", None, r"\S+", "memecoin"),
-    Screen("memecoin_radar", "Memecoins · Radar", "runners", "/memecoins/radar", r"^Radar$"),
-    Screen("memecoin_alpha", "Memecoins · Alpha", "runners", "/memecoins/alpha", r"^Alpha$"),
-    Screen("runners_alpha", "Runners · Alpha", "runners", "/community", r"^Alpha$"),
+    Screen(
+        "memecoin_radar", "Memecoins · Changed", "runners", "/memecoins?view=changed", r"^Changed$"
+    ),
+    Screen("memecoin_alpha", "Memecoins · Calls", "runners", "/memecoins?view=calls", r"^Calls$"),
+    Screen("runners_alpha", "Runners · Calls", "runners", "/?view=calls", r"^Calls$"),
     Screen("caller", "Runners · Caller", "runners", None, r"\S+", "caller"),
     Screen("research", "Runners · Research", "runners", None, r"\S+", "research"),
     Screen(
@@ -61,8 +63,8 @@ SCREENS = (
     ),
     Screen("sports_pulse", "Sports · Pulse", "sports", "/", r"^Pulse$"),
     Screen("sports_game", "Sports · Game", "sports", None, r"\S+", "sports_game"),
-    Screen("sports_radar", "Sports · Radar", "sports", "/radar", r"^Radar$"),
-    Screen("sports_alpha", "Sports · Alpha", "sports", "/alpha", r"^Alpha$"),
+    Screen("sports_radar", "Sports · Changed", "sports", "/?view=changed", r"^Changed$"),
+    Screen("sports_alpha", "Sports · Calls", "sports", "/?view=calls", r"^Calls$"),
     Screen("login", "Account · Login", "runners", "/login", r"^Create your passkey$"),
     Screen(
         "backup_passkey",
@@ -167,7 +169,7 @@ async def _check_screen(
             if not re.search(screen.heading, heading_text):
                 raise RuntimeError(f"unexpected heading {heading_text!r}")
 
-            expected_path = screen.final_path or path
+            expected_path = screen.final_path or urlsplit(path).path
             actual_path = urlsplit(page.url).path
             if actual_path != expected_path:
                 raise RuntimeError(f"ended at {actual_path!r}, expected {expected_path!r}")
