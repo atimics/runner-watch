@@ -2969,6 +2969,39 @@ def _migration_061_forecast_rounds(db: DatabaseConnection) -> None:
     _ensure_column(db, "market_report_forecasts", "reference_source TEXT")
 
 
+def _migration_062_telegram_runner_alerts(db: DatabaseConnection) -> None:
+
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS telegram_alert_state (
+            id INTEGER PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS telegram_alert_deliveries (
+            ticker TEXT NOT NULL,
+            entered_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            detail TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(ticker,entered_at)
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS telegram_alert_deliveries_status
+            ON telegram_alert_deliveries(status,updated_at DESC)
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -3042,6 +3075,7 @@ MIGRATIONS = (
     Migration(59, "market_report_commentary", _migration_059_market_report_commentary),
     Migration(60, "ticker_quotes", _migration_060_ticker_quotes),
     Migration(61, "forecast_rounds", _migration_061_forecast_rounds),
+    Migration(62, "telegram_runner_alerts", _migration_062_telegram_runner_alerts),
 )
 
 
