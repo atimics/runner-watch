@@ -1204,6 +1204,34 @@ def take_challenge(token: str, kind: str) -> dict[str, Any]:
 
 _UNRESOLVED_USER = object()
 
+# The board is one screen. Pulse, Radar, and Alpha are views of that screen,
+# selected by a query parameter instead of a separate tab and route.
+BOARD_VIEWS = ("pulse", "changed", "calls")
+BOARD_VIEW_TABS = {"pulse": "pulse", "changed": "radar", "calls": "alpha"}
+DEFAULT_BOARD_VIEW = "pulse"
+
+
+def board_view(value: str | None) -> str:
+    """Normalise a requested board view, falling back to Pulse."""
+
+    return value if value in BOARD_VIEWS else DEFAULT_BOARD_VIEW
+
+
+def _board_base_path(nav_product: str, sports_path_prefix: str) -> str:
+    if nav_product == "memecoins":
+        return "/memecoins"
+    if nav_product == "sports":
+        return f"{sports_path_prefix}/"
+    return "/"
+
+
+def _board_view_links(nav_product: str, sports_path_prefix: str) -> dict[str, str]:
+    base = _board_base_path(nav_product, sports_path_prefix)
+    separator = "&" if "?" in base else "?"
+    return {
+        view: f"{base}{separator}{urlencode({'view': view})}" for view in BOARD_VIEWS
+    }
+
 
 def page_context(
     request: Request,
@@ -1218,6 +1246,9 @@ def page_context(
     if user_id:
         with connection() as db:
             comment_avatar = ensure_comment_avatar(db, user_id)
+    product = product_for_request(request)
+    sports_path_prefix = "" if product == "sports" else "/sports"
+    nav_product = str(extra.get("nav_product") or product)
     return {
         "request": request,
         "user": user,
@@ -1226,12 +1257,15 @@ def page_context(
         "caller_summary": caller_summary_for_user(user_id) if user_id else None,
         "release_announcement_id": f"rati-runners-{APP_VERSION}",
         "app_origin": origin_for_request(request),
-        "product": product_for_request(request),
+        "product": product,
+        "nav_product": nav_product,
         "runners_origin": RUNNERS_ORIGIN,
         "sports_origin": SPORTS_ORIGIN,
         "registration_invite_required": REGISTRATION_MODE == "invite",
         "legacy_passkey_migration_available": legacy_passkey_migration_available(request),
-        "sports_path_prefix": "" if product_for_request(request) == "sports" else "/sports",
+        "sports_path_prefix": sports_path_prefix,
+        "board_base": _board_base_path(nav_product, sports_path_prefix),
+        "board_links": _board_view_links(nav_product, sports_path_prefix),
         "market_clock": market_clock(),
         "flash": actor_snapshot(),
         "call_close_reward_multiplier": CALL_CLOSE_REWARD_MULTIPLIER,
@@ -2592,6 +2626,14 @@ def _draw_scorecard(draw: Any, cards: list[dict[str, Any]]) -> None:
 
 
 @app.get("/community", response_class=HTMLResponse)
+def community_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> RedirectResponse:
+    _ = runner_session
+    return RedirectResponse("/?view=calls", status_code=307)
+
+
 def community(
     request: Request,
     runner_session: str | None = Cookie(default=None),
@@ -2604,7 +2646,7 @@ def community(
             request,
             runner_session,
             board=board,
-            active_tab="alpha",
+            active_tab=BOARD_VIEW_TABS["calls"],
         ),
     )
 
@@ -2929,11 +2971,11 @@ def caller_page(
                 if market in {"memecoins", "sports"}
                 else product_for_request(request)
             ),
-            caller_back_url="/memecoins/alpha"
+            caller_back_url="/memecoins?view=calls"
             if market == "memecoins"
-            else f"{SPORTS_ORIGIN}/alpha"
+            else f"{SPORTS_ORIGIN}/?view=calls"
             if market == "sports" or (not market and product_for_request(request) == "sports")
-            else f"{RUNNERS_ORIGIN}/community",
+            else f"{RUNNERS_ORIGIN}/?view=calls",
         ),
     )
 
@@ -4040,7 +4082,7 @@ def _commission_record(
         report["coin_tone"] = summary["coin_tone"] if summary else _coin_tone(report["ticker"])
         report["subject_type"] = "ticker"
         report["asset_href"] = f"/t/{report['ticker']}"
-        report["back_href"] = "/community"
+        report["back_href"] = "/?view=calls"
         report["nav_product"] = "runners"
         report["profile_heading"] = "Company"
         report["risk_heading"] = "What could rug it"
@@ -6474,15 +6516,31 @@ async def alpha_report_worker() -> None:
 
 
 @app.get("/memecoins", response_class=HTMLResponse)
-@app.get("/memecoins/radar", response_class=HTMLResponse)
 def memecoins_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
     q: str = "",
     sort: str = "volume",
-):
+    view: str = DEFAULT_BOARD_VIEW,
+) -> Response:
+    selected_view = board_view(view)
+    if selected_view == "calls":
+        return memecoin_alpha_page(request, runner_session)
+    return memecoins_board_response(request, runner_session, selected_view, q, sort)
+
+
+def memecoins_board_response(
+    request: Request,
+    runner_session: str | None,
+    view: str,
+    q: str = "",
+    sort: str = "volume",
+) -> HTMLResponse:
+    """Render one view of the single memecoin board."""
+
     enforce_rate(request, "memecoins", limit=120, seconds=60)
-    radar = request.url.path == "/memecoins/radar"
+    radar = view == "changed"
+    list_view = "radar" if radar else "pulse"
     return templates.TemplateResponse(
         request,
         "memecoins.html",
@@ -6490,14 +6548,25 @@ def memecoins_page(
             request,
             runner_session,
             nav_product="memecoins",
-            active_tab="radar" if radar else "pulse",
-            list_path="/memecoins/radar" if radar else "/memecoins",
-            list_view="radar" if radar else "pulse",
-            list_title="Radar" if radar else "Memecoins",
+            active_tab=BOARD_VIEW_TABS[view],
+            list_path="/memecoins",
+            board_view=view,
+            list_view=list_view,
+            list_title="Changed" if radar else "Memecoins",
             back_url="/memecoins",
-            market=memecoin_market(query=q, sort=sort, view="radar" if radar else "pulse"),
+            market=memecoin_market(query=q, sort=sort, view=list_view),
         ),
     )
+
+
+@app.get("/memecoins/radar", response_class=HTMLResponse)
+def memecoins_radar_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+    league: str = "all",
+) -> RedirectResponse:
+    _ = request, runner_session, league
+    return RedirectResponse("/memecoins?view=changed", status_code=307)
 
 
 @app.get("/api/memecoins/evidence/{signature}")
@@ -6520,6 +6589,14 @@ def memecoins_api(request: Request, q: str = "", sort: str = "volume", view: str
 
 
 @app.get("/memecoins/alpha", response_class=HTMLResponse)
+def memecoin_alpha_redirect(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> RedirectResponse:
+    _ = request, runner_session
+    return RedirectResponse("/memecoins?view=calls", status_code=307)
+
+
 def memecoin_alpha_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
@@ -6532,7 +6609,7 @@ def memecoin_alpha_page(
             request,
             runner_session,
             nav_product="memecoins",
-            active_tab="alpha",
+            active_tab=BOARD_VIEW_TABS["calls"],
             calls=memecoin_calls(),
             back_url="/memecoins",
         ),
@@ -6574,9 +6651,15 @@ def memecoin_detail_page(
     enforce_rate(request, "memecoins", limit=120, seconds=60)
     detail = _memecoin_detail_payload(coin_id)
     view = "radar" if view == "radar" else "pulse"
-    list_path = "/memecoins/radar" if view == "radar" else "/memecoins"
+    list_path = "/memecoins"
     sort = sort if sort in {"volume", "market_cap", "gainers", "losers"} else "volume"
-    back_url = list_path + "?" + urlencode({"q": q.strip()[:80], "sort": sort})
+    back_url = list_path + "?" + urlencode(
+        {
+            "q": q.strip()[:80],
+            "sort": sort,
+            "view": "changed" if view == "radar" else "pulse",
+        }
+    )
     context = page_context(
         request,
         runner_session,
@@ -6648,10 +6731,34 @@ def home(
     request: Request,
     runner_session: str | None = Cookie(default=None),
     league: str = "all",
-    view: str = "signals",
+    view: str = DEFAULT_BOARD_VIEW,
 ) -> HTMLResponse:
+    selected_view = board_view(view)
     if product_for_request(request) == "sports":
-        return sports_home_response(request, runner_session, league, view)
+        return sports_board_response(request, runner_session, selected_view, league)
+    return runners_board_response(request, runner_session, selected_view)
+
+
+def runners_board_response(
+    request: Request,
+    runner_session: str | None,
+    view: str,
+) -> HTMLResponse:
+    """Render one view of the single stock board."""
+
+    if view == "changed":
+        return templates.TemplateResponse(
+            request=request,
+            name="radar.html",
+            context=page_context(
+                request,
+                runner_session,
+                watches=radar_data(),
+                active_tab=BOARD_VIEW_TABS[view],
+            ),
+        )
+    if view == "calls":
+        return community(request, runner_session)
     return templates.TemplateResponse(
         request=request,
         name="pulse.html",
@@ -6660,7 +6767,7 @@ def home(
             runner_session,
             pulse=_public_pulse_data(limit=20),
             market_reports=market_reports_overview(history_limit=0),
-            active_tab="pulse",
+            active_tab=BOARD_VIEW_TABS[view],
         ),
     )
 
@@ -6857,6 +6964,21 @@ def sports_home_response(
     )
 
 
+def sports_board_response(
+    request: Request,
+    runner_session: str | None,
+    view: str,
+    league: str = "all",
+) -> HTMLResponse:
+    """Render one view of the single sports board."""
+
+    if view == "changed":
+        return sports_radar_response(request, runner_session, league)
+    if view == "calls":
+        return sports_alpha_response(request, runner_session, league)
+    return sports_home_response(request, runner_session, league, "signals")
+
+
 @app.get("/sports", response_class=HTMLResponse)
 def sports_home(
     request: Request,
@@ -6903,7 +7025,7 @@ def sports_radar_page(
     league: str = "all",
 ) -> RedirectResponse:
     _ = request, runner_session, league
-    return RedirectResponse(f"{SPORTS_ORIGIN}/radar", status_code=307)
+    return RedirectResponse(f"{SPORTS_ORIGIN}/?view=changed", status_code=307)
 
 
 def _invalidate_sports_alpha_data() -> None:
@@ -6960,10 +7082,9 @@ def alpha_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
     league: str = "all",
-) -> HTMLResponse:
-    if product_for_request(request) == "sports":
-        return sports_alpha_response(request, runner_session, league)
-    return community(request, runner_session)
+) -> RedirectResponse:
+    _ = request, runner_session, league
+    return RedirectResponse("/?view=calls", status_code=307)
 
 
 @app.get("/api/alpha")
@@ -6986,7 +7107,7 @@ def sports_alpha_page(
     league: str = "all",
 ) -> RedirectResponse:
     _ = request, runner_session, league
-    return RedirectResponse(f"{SPORTS_ORIGIN}/alpha", status_code=307)
+    return RedirectResponse(f"{SPORTS_ORIGIN}/?view=calls", status_code=307)
 
 
 @app.get("/receipts", response_class=HTMLResponse)
@@ -6997,8 +7118,8 @@ def sports_receipts_page(
 ) -> Response:
     _ = runner_session, league
     if product_for_request(request) == "sports":
-        return RedirectResponse("/alpha", status_code=307)
-    return RedirectResponse(f"{SPORTS_ORIGIN}/alpha", status_code=307)
+        return RedirectResponse("/?view=calls", status_code=307)
+    return RedirectResponse(f"{SPORTS_ORIGIN}/?view=calls", status_code=307)
 
 
 @app.get("/sports/receipts", response_class=HTMLResponse)
@@ -7008,7 +7129,7 @@ def sports_receipts_legacy_page(
     league: str = "all",
 ) -> RedirectResponse:
     _ = request, runner_session, league
-    return RedirectResponse(f"{SPORTS_ORIGIN}/alpha", status_code=307)
+    return RedirectResponse(f"{SPORTS_ORIGIN}/?view=calls", status_code=307)
 
 
 @app.get("/api/sports/pulse")
@@ -8380,20 +8501,9 @@ def radar_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
     league: str = "all",
-) -> HTMLResponse:
-    if product_for_request(request) == "sports":
-        return sports_radar_response(request, runner_session, league)
-    watches = radar_data()
-    return templates.TemplateResponse(
-        request=request,
-        name="radar.html",
-        context=page_context(
-            request,
-            runner_session,
-            watches=watches,
-            active_tab="radar",
-        ),
-    )
+) -> RedirectResponse:
+    _ = request, runner_session, league
+    return RedirectResponse("/?view=changed", status_code=307)
 
 
 @app.get("/api/radar")
