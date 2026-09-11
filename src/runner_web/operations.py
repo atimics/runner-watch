@@ -42,6 +42,7 @@ BASE_REQUIRED_WORKER_NAMES = frozenset(
         "market-reports",
         "hot-quotes",
         "telegram-chat",
+        "telegram-alert-sweep",
         "massive-backfill",
         "research-jobs",
         "report-release",
