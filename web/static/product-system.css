@@ -419,36 +419,36 @@ html.embedded-pane .account-strip {
 }
 
 
-.runners-product .mobile-app {
+:is(.runners-product, .memecoins-product) .mobile-app {
   background: var(--bg);
   border-color: #171d19;
 }
 
-.runners-product .screen-head,
-.runners-product .detail-nav {
+:is(.runners-product, .memecoins-product) .screen-head,
+:is(.runners-product, .memecoins-product) .detail-nav {
   background: rgba(8, 11, 9, .96);
   border-color: var(--line);
   backdrop-filter: blur(16px);
 }
 
-.runners-product .screen-head {
+:is(.runners-product, .memecoins-product) .screen-head {
   height: 72px;
   padding: 11px 18px;
 }
 
-.runners-product .screen-head > div {
+:is(.runners-product, .memecoins-product) .screen-head > div {
   gap: 3px;
 }
 
-.runners-product .screen-head h1,
-.runners-product .asset-ticker h1,
+:is(.runners-product, .memecoins-product) .screen-head h1,
+:is(.runners-product, .memecoins-product) .asset-ticker h1,
 .runners-product .section-heading h2 {
   font-family: var(--app-font);
   font-weight: 720;
   letter-spacing: -.035em;
 }
 
-.runners-product .screen-head h1 {
+:is(.runners-product, .memecoins-product) .screen-head h1 {
   font-size: 27px;
 }
 
@@ -467,7 +467,7 @@ html.embedded-pane .account-strip {
   letter-spacing: 0;
 }
 
-.runners-product .avatar-button {
+:is(.runners-product, .memecoins-product) .avatar-button {
   width: auto;
   min-width: 34px;
   height: 34px;
@@ -478,7 +478,7 @@ html.embedded-pane .account-strip {
   box-shadow: none;
 }
 
-.runners-product .avatar-button.signed-out {
+:is(.runners-product, .memecoins-product) .avatar-button.signed-out {
   color: var(--soft);
   font-size: 9px;
   letter-spacing: .03em;
@@ -515,7 +515,7 @@ html.embedded-pane .account-strip {
 
 :is(.runners-product, .sports-product, .memecoins-product) .ticker-row .ticker-line strong,
 :is(.runners-product, .sports-product, .memecoins-product) .ticker-row .quote,
-.runners-product .price-block,
+:is(.runners-product, .memecoins-product) .price-block,
 .runners-product .market-metrics strong,
 .runners-product .risk-grid b,
 .runners-product .risk-facts,
@@ -623,7 +623,7 @@ html.embedded-pane .account-strip {
   border-radius: var(--radius-xs);
 }
 
-.runners-product .desktop-detail-empty {
+:is(.runners-product, .memecoins-product) .desktop-detail-empty {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -633,17 +633,17 @@ html.embedded-pane .account-strip {
   text-align: center;
 }
 
-.runners-product .desktop-detail-empty[hidden] {
+:is(.runners-product, .memecoins-product) .desktop-detail-empty[hidden] {
   display: none;
 }
 
-.runners-product .desktop-detail-empty strong {
+:is(.runners-product, .memecoins-product) .desktop-detail-empty strong {
   color: var(--text);
   font-size: 14px;
   font-weight: 650;
 }
 
-.runners-product .desktop-detail-empty p {
+:is(.runners-product, .memecoins-product) .desktop-detail-empty p {
   max-width: 260px;
   margin: 0;
   font-size: 10px;
