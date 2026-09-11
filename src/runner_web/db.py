@@ -3047,6 +3047,19 @@ def _migration_063_telegram_chat(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_064_company_sectors(db: DatabaseConnection) -> None:
+
+    _ensure_column(db, "sec_companies", "sic TEXT")
+    _ensure_column(db, "sec_companies", "sic_description TEXT")
+    _ensure_column(db, "sec_companies", "sector_refreshed_at TEXT")
+    db.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS sec_companies_sector
+            ON sec_companies(sic_description,ticker);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -3122,6 +3135,7 @@ MIGRATIONS = (
     Migration(61, "forecast_rounds", _migration_061_forecast_rounds),
     Migration(62, "telegram_runner_alerts", _migration_062_telegram_runner_alerts),
     Migration(63, "telegram_chat", _migration_063_telegram_chat),
+    Migration(64, "company_sectors", _migration_064_company_sectors),
 )
 
 

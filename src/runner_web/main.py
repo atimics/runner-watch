@@ -98,6 +98,9 @@ from runner_web.content_notices import (
     notices_for_content,
     report_share_metadata,
 )
+from runner_web.dash import dash_wallet
+from runner_web.dash import market_now as dash_market_now
+from runner_web.dash import sector_now as dash_sector_now
 from runner_web.db import connection, init_db
 from runner_web.flash_evaluations import (
     flash_record,
@@ -220,6 +223,7 @@ from runner_web.research_pipeline import (
     run_verified_pipeline,
     verified_public_citations,
 )
+from runner_web.sectors import refresh_company_sectors
 from runner_web.shared_state import (
     acknowledge_research_job,
     dequeue_research_job,
@@ -1381,6 +1385,8 @@ async def edgar_worker() -> None:
     while True:
         try:
             await run_in_threadpool(refresh_edgar)
+            sectors = await run_in_threadpool(refresh_company_sectors)
+            worker_state("sector_backfill_last_run", json.dumps(sectors, separators=(",", ":")))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -1656,7 +1662,7 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
         {"role": "system", "content": CHEETAH_PERSONA},
         {"role": "user", "content": json.dumps(context, separators=(",", ":"))},
     ]
-    for _round in range(3):
+    for _round in range(4):
         body = {
             "model": FLASH.model,
             "messages": messages,
@@ -1688,14 +1694,20 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
             args = json.loads((call.get("function") or {}).get("arguments") or "{}")
         except (TypeError, ValueError):
             args = {}
+        looked: Any = None
         if name == "look_up_ticker":
             looked = telegram_look_up_ticker(str(args.get("ticker") or ""))
+        elif name == "market_now":
+            looked = dash_market_now()
+        elif name == "sector_now":
+            looked = dash_sector_now(args.get("sector"))
+        if looked is not None:
             messages.append(choice)
             messages.append(
                 {
                     "role": "tool",
                     "tool_call_id": call.get("id"),
-                    "content": json.dumps(looked, separators=(",", ":")),
+                    "content": json.dumps(looked, separators=(",", ":"), default=str),
                 }
             )
             continue
@@ -1715,6 +1727,7 @@ async def telegram_chat_worker() -> None:
     await asyncio.sleep(30)
     while True:
         try:
+            await run_in_threadpool(dash_wallet)
             result = await run_in_threadpool(
                 run_telegram_chat,
                 _generate_telegram_turn if OPENROUTER_API_KEY else None,
