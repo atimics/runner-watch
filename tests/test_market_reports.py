@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -554,3 +555,69 @@ def test_a_crafted_report_address_cannot_steer_the_sports_redirect(
     assert bad_slug.status_code == 404
     assert allowed.status_code == 307
     assert allowed.headers["location"] == f"{web_main.RUNNERS_ORIGIN}/reports/2026-08-24/post"
+
+
+def test_legacy_post_market_report_without_close_fields_still_renders(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Reports frozen before the close board existed must still render."""
+
+    from starlette.testclient import TestClient
+
+    from runner_web import main as web_main
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "legacy-report.db")
+    init_db()
+    # A leader row written before the close board carried no close fields. The
+    # report card formats leader.close_price, so a missing key used to raise.
+    legacy_leaders = [
+        {
+            "ticker": "AAA",
+            "company": "Alpha Co",
+            "price": 1.23,
+            "change_pct": 4.5,
+            "rank": 1,
+            "score": 80,
+            "relative_volume": 3.2,
+            "trade_state": "running",
+            "session": "regular",
+            "dollar_volume": 1_000_000,
+            "stage": "running",
+        }
+    ]
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO market_session_reports(
+                id,report_day,report_type,source_scan_run_id,comparison_scan_run_id,
+                as_of,headline,summary,metrics_json,leaders_json,turns_json,
+                created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                "legacy-post",
+                "2026-09-10",
+                "post_market",
+                "run-close",
+                "run-watch",
+                "2026-09-10T20:15:00+00:00",
+                "Legacy headline",
+                "Legacy summary",
+                '{"candidates":1}',
+                json.dumps(legacy_leaders),
+                "[]",
+                "2026-09-10T20:15:00+00:00",
+                "2026-09-10T20:15:00+00:00",
+            ),
+        )
+    client = TestClient(web_main.app, base_url=web_main.APP_ORIGIN)
+    try:
+        listing = client.get("/reports")
+        detail = client.get("/reports/2026-09-10/post")
+    finally:
+        client.close()
+
+    assert listing.status_code == 200
+    assert "Dropped off the board" in listing.text
+    assert detail.status_code == 200
