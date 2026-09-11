@@ -111,7 +111,7 @@
       const waitingForFresh = marketView(market) === 'pulse' && market.status === 'stale';
       const message = waitingForFresh ? ['Waiting for fresh quotes', 'Radar has the saved prices from the latest collection.'] : messages[market.status] || ['Try another name or symbol', `Search covers the ${market.total} coins in this snapshot.`];
       empty.replaceChildren(element('strong', message[0]), element('p', message[1]));
-      if (waitingForFresh) { const link = element('a', 'View saved prices in Radar'); link.href = `/memecoins/radar?${new URLSearchParams({q: market.query || '', sort: market.sort || 'volume'})}`; empty.append(link); }
+      if (waitingForFresh) { const link = element('a', 'View saved prices in Changed'); link.href = `/memecoins?${new URLSearchParams({view: 'changed', q: market.query || '', sort: market.sort || 'volume'})}`; empty.append(link); }
       else if (!messages[market.status]) { const link = element('a', 'Show all coins'); link.href = find('[data-list-path]').dataset.listPath; empty.append(link); }
     }
     find('[data-desktop-list]')?.dispatchEvent(new CustomEvent('desktop-rows-rendered', {bubbles: true}));
