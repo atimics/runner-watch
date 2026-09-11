@@ -246,6 +246,8 @@ CHEETAH_PERSONA = (
     "twenty: short bursts, present tense, quick asides. You hiss when something "
     "smells wrong and you chirp when something moves. You are not a help desk and "
     "you never list commands, because there are none. "
+    "The scanner's own words for a state are internal, so say what they mean rather "
+    "than reading MANAGE or GUARDED aloud. "
     "Say numbers only when a tool gave them to you. If you did not look something "
     "up, say you have not looked rather than guessing, because people here are "
     "keeping score. Never give financial advice or tell anyone what to buy. "
@@ -318,6 +320,35 @@ TOOL_SCHEMA = (
         },
     },
     {
+        "name": "recent_runners",
+        "description": (
+            "Names that entered the board in the last twelve hours, newest first. "
+            "Use this for what just showed up or what is new."
+        ),
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "community_now",
+        "description": (
+            "Where people are putting their names: which tickers have the most Calls "
+            "and the most comments. Use this for what the room is watching, as "
+            "opposed to what merely moved."
+        ),
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "session_report",
+        "description": (
+            "The frozen pre-market or post-market report: the watch board, Flash's "
+            "targets and how they scored, and the desk commentary. Pass pre or post, "
+            "or leave it out for whichever is current."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"which": {"type": "string", "enum": ["pre", "post"]}},
+        },
+    },
+    {
         "name": "make_call",
         "description": (
             "Open a public paper Call on a ticker in your own name. This goes on the "
@@ -365,9 +396,12 @@ TOOL_SCHEMA = (
     {
         "name": "look_up_ticker",
         "description": (
-            "Look up what the scanner knows about one ticker: the freshest price it "
-            "has, the move, relative volume, its trade state and risk reading. Use "
-            "this before saying any number about a ticker."
+            "Everything on one ticker: the freshest price and move, relative volume, "
+            "the scanner's trade state and risk reading in plain words, recent "
+            "filings, the published research if there is any, what other avatars "
+            "have already said about it, how many people have Called it, and Flash's "
+            "saved target for the day. Use this before saying anything about a "
+            "ticker, and read what other avatars said so you are not repeating them."
         ),
         "parameters": {
             "type": "object",
@@ -407,11 +441,163 @@ def look_up_ticker(ticker: str) -> dict[str, Any]:
         "price_source": (mark or {}).get("source", "scan"),
         "change_pct": current.get("change_pct"),
         "relative_volume": current.get("relative_volume"),
+        "momentum_15m_pct": current.get("momentum_15m_pct"),
+        "session": current.get("session"),
         "trade_state": current.get("trade_state"),
+        "trade_state_means": _TRADE_STATE_PLAIN.get(
+            str(current.get("trade_state") or "").upper()
+        ),
         "rug_level": current.get("rug_level"),
+        "rug_means": _RUG_PLAIN.get(str(current.get("rug_level") or "").lower()),
         "evidence_summary": gate.get("summary"),
-        "signals": list(current.get("signals") or [])[:3],
-        "risks": list(current.get("risks") or [])[:3],
+        "evidence_blockers": list(gate.get("blockers") or [])[:3],
+        "signals": list(current.get("signals") or [])[:4],
+        "risks": list(current.get("risks") or [])[:4],
+        "model_view": _model_view(detail),
+        "halted": bool((detail.get("external_context") or {}).get("active_halt")),
+        "filings": _recent_filings(detail),
+        "research_report": _research_report(symbol),
+        "avatar_comments": _avatar_comments(symbol),
+        "community": _community_for(symbol),
+        "todays_target": _todays_target(symbol),
+    }
+
+
+_TRADE_STATE_PLAIN = {
+    "WATCH": "worth watching, nothing decided",
+    "MANAGE": "already moving, handle with care",
+    "AVOID": "the scanner says stay out",
+    "EXIT": "the scanner says get out",
+    "UNKNOWN": "not enough to say",
+}
+_RUG_PLAIN = {
+    "low": "little sign of a trap",
+    "guarded": "some warning signs",
+    "high": "serious warning signs",
+    "critical": "treat as a trap",
+    "unknown": "not scored yet",
+}
+
+
+def _model_view(detail: dict[str, Any]) -> dict[str, Any] | None:
+    thesis = detail.get("directional_thesis") or {}
+    if not thesis.get("label"):
+        return None
+    return {
+        "label": thesis.get("label"),
+        "horizon": thesis.get("horizon"),
+        "expected_return_pct": thesis.get("expected_return_pct"),
+    }
+
+
+def _recent_filings(detail: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "form": event.get("form"),
+            "filed_at": event.get("filed_at"),
+            "what": event.get("evidence_text") or event.get("title"),
+        }
+        for event in (detail.get("events") or [])[:3]
+    ]
+
+
+def _research_report(ticker: str) -> dict[str, Any] | None:
+
+    """The published research on this name, if there is any to quote.
+
+    A locked report is one somebody paid for and has not released yet, so it is
+    reported as existing rather than read out.
+    """
+
+    from runner_web.main import daily_report_for_ticker
+
+    report = daily_report_for_ticker(ticker)
+    if not report:
+        return None
+    if report.get("locked"):
+        return {"exists": True, "readable": False, "note": "Someone has one, not public yet."}
+    return {
+        "exists": True,
+        "readable": True,
+        "headline": report.get("headline"),
+        "thesis": report.get("thesis"),
+        "catalysts": list(report.get("catalysts") or [])[:3],
+        "risks": list(report.get("risks") or [])[:3],
+        "unknowns": list(report.get("unknowns") or [])[:2],
+        "as_of": report.get("evidence_as_of"),
+    }
+
+
+def _avatar_comments(ticker: str) -> list[dict[str, Any]]:
+
+    """What other avatars have already said here, so Dash does not repeat them."""
+
+    from runner_web.main import comments_for_ticker
+
+    return [
+        {
+            "who": comment["avatar"]["name"],
+            "reads_for": comment["avatar"].get("ability"),
+            "said": comment["body"],
+            "when": comment["created_at"],
+        }
+        for comment in comments_for_ticker(ticker, limit=6)
+    ]
+
+
+def _community_for(ticker: str) -> dict[str, Any]:
+
+    """How many people have put a Call on this, and how those are going."""
+
+    from runner_web.db import connection as _connection
+
+    with _connection() as database:
+        row = database.execute(
+            """
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS open_calls,
+                   COUNT(DISTINCT user_id) AS callers
+            FROM community_calls WHERE ticker=?
+            """,
+            (ticker,),
+        ).fetchone()
+        comments = database.execute(
+            "SELECT COUNT(*) FROM ticker_comments "
+            "WHERE subject_kind='stock' AND subject_key=? AND status='public'",
+            (ticker,),
+        ).fetchone()[0]
+    return {
+        "calls": int((row["total"] if row else 0) or 0),
+        "open_calls": int((row["open_calls"] if row else 0) or 0),
+        "callers": int((row["callers"] if row else 0) or 0),
+        "comments": int(comments or 0),
+    }
+
+
+def _todays_target(ticker: str) -> dict[str, Any] | None:
+
+    """Flash's saved end-of-day target for this name, and how it is doing."""
+
+    from runner_web.db import connection as _connection
+
+    with _connection() as database:
+        row = database.execute(
+            """
+            SELECT target_price,direction,reason,status,close_price,reference_price
+            FROM market_report_forecasts
+            WHERE ticker=? ORDER BY report_day DESC,forecast_at DESC LIMIT 1
+            """,
+            (ticker,),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "target_price": row["target_price"],
+        "direction": row["direction"],
+        "why": row["reason"],
+        "status": row["status"],
+        "close_price": row["close_price"],
+        "reference_price": row["reference_price"],
     }
 
 

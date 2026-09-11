@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from runner_web.db import connection
@@ -390,4 +390,139 @@ def dash_comment(ticker: str, body: str, at: datetime | None = None) -> dict[str
         "comment_id": comment_id,
         "body": text,
         "spent": COMMENT_COST,
+    }
+
+
+def recent_runners(limit: int = 8, at: datetime | None = None) -> dict[str, Any]:
+
+    """Names that entered the board recently, newest first.
+
+    The scanner records a row the first time a ticker appears, which is what the
+    alert digest posts from. Dash reads the same record so "what just showed up"
+    and what got posted to the channel are the same list.
+    """
+
+    now = at or datetime.now(UTC)
+    since = (now - timedelta(hours=12)).isoformat()
+    with connection() as database:
+        rows = database.execute(
+            """
+            SELECT e.ticker,e.entered_at,e.price,
+                   (SELECT c.name FROM sec_companies c WHERE c.ticker=e.ticker LIMIT 1) AS company
+            FROM pulse_entries e WHERE e.entered_at>?
+            ORDER BY e.entered_at DESC LIMIT ?
+            """,
+            (since, max(1, min(limit, 20))),
+        ).fetchall()
+    return {
+        "window_hours": 12,
+        "count": len(rows),
+        "entries": [
+            {
+                "ticker": str(row["ticker"]),
+                "company": row["company"],
+                "entered_at": row["entered_at"],
+                "price_on_entry": row["price"],
+            }
+            for row in rows
+        ],
+    }
+
+
+def community_now(limit: int = 8) -> dict[str, Any]:
+
+    """Where people are actually putting their names, not just where price moved.
+
+    Calls and comments are the part of the board that is human rather than
+    scanned, so this is how Dash can tell the room what it is itself paying
+    attention to instead of only what the tape did.
+    """
+
+    with connection() as database:
+        calls = database.execute(
+            """
+            SELECT ticker,COUNT(*) AS total,
+                   SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS open_calls,
+                   COUNT(DISTINCT user_id) AS callers
+            FROM community_calls GROUP BY ticker ORDER BY total DESC LIMIT ?
+            """,
+            (max(1, min(limit, 20)),),
+        ).fetchall()
+        comments = database.execute(
+            """
+            SELECT subject_key AS ticker,COUNT(*) AS total
+            FROM ticker_comments
+            WHERE subject_kind='stock' AND status='public'
+            GROUP BY subject_key ORDER BY total DESC LIMIT ?
+            """,
+            (max(1, min(limit, 20)),),
+        ).fetchall()
+    return {
+        "most_called": [
+            {
+                "ticker": str(row["ticker"]),
+                "calls": int(row["total"] or 0),
+                "open_calls": int(row["open_calls"] or 0),
+                "callers": int(row["callers"] or 0),
+            }
+            for row in calls
+        ],
+        "most_discussed": [
+            {"ticker": str(row["ticker"]), "comments": int(row["total"] or 0)}
+            for row in comments
+        ],
+    }
+
+
+def session_report(which: str | None = None) -> dict[str, Any]:
+
+    """The frozen pre-market or post-market report, as the site shows it.
+
+    These are the two moments the product commits to something in writing: the
+    watch board and Flash's targets before the open, and the same board with the
+    win-loss after the close. Dash quotes them rather than recomputing, so what
+    he says in the room matches the page someone can go and read.
+    """
+
+    from runner_web.market_reports import market_reports_overview
+
+    wanted = str(which or "").strip().lower()
+    overview = market_reports_overview(history_limit=0)
+    latest = overview.get("latest") or {}
+    if wanted.startswith("pre"):
+        report = latest.get("pre_market")
+    elif wanted.startswith("post"):
+        report = latest.get("post_market")
+    else:
+        report = overview.get("featured")
+    if not report:
+        return {"found": False, "asked_for": which, "note": "No session report is frozen yet."}
+    analysis = report.get("analysis") or {}
+    record = report.get("forecast_record") or {}
+    return {
+        "found": True,
+        "label": report.get("label"),
+        "day": report.get("report_day"),
+        "as_of": report.get("as_of_label"),
+        "headline": report.get("headline"),
+        "summary": report.get("summary"),
+        "flash_take": analysis.get("headline"),
+        "flash_points": list(analysis.get("points") or [])[:3],
+        "target_record": record.get("label"),
+        "hit_rate": record.get("win_rate"),
+        "board": [
+            {
+                "ticker": leader.get("ticker"),
+                "change_pct": leader.get("change_pct"),
+                "relative_volume": leader.get("relative_volume"),
+                "target": (leader.get("eod_forecast") or {}).get("target_price"),
+                "result": (leader.get("eod_forecast") or {}).get("status"),
+                "session_return_pct": leader.get("session_return_pct"),
+            }
+            for leader in (report.get("leaders") or [])[:6]
+        ],
+        "desk_comments": [
+            {"who": comment.get("name"), "said": comment.get("body")}
+            for comment in (report.get("desk_comments") or [])[:3]
+        ],
     }
