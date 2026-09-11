@@ -463,8 +463,8 @@ def test_stale_pulse_links_to_saved_radar_prices(page: Page) -> None:
         ),
     )
     expect(page.locator("[data-coin-empty] strong")).to_have_text("Waiting for fresh quotes")
-    expect(page.get_by_role("link", name="View saved prices in Radar")).to_have_attribute(
-        "href", "/memecoins/radar?q=doge&sort=gainers"
+    expect(page.get_by_role("link", name="View saved prices in Changed")).to_have_attribute(
+        "href", "/memecoins?view=changed&q=doge&sort=gainers"
     )
 
 

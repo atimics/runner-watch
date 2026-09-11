@@ -12,6 +12,7 @@
   {% endif %}
   {% if show_coin_search %}
   <form class="account-ticker-search account-coin-search" id="coinSearch" action="{{ coin_search_path }}" method="get" role="search" data-coin-filters>
+    <input type="hidden" name="view" value="{{ board_view|default('pulse') }}">
     <label for="coinQuery">Find a coin</label>
     <input id="coinQuery" name="q" type="search" autocomplete="off" maxlength="80" value="{{ market.query }}" placeholder="Coin name or symbol" aria-label="Find a coin">
     <button type="submit" aria-label="Search coins">→</button>
