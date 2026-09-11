@@ -689,6 +689,7 @@ def _start_worker_tasks(
         asyncio.create_task(market_report_worker(), name="market-reports"),
         asyncio.create_task(hot_quote_worker(), name="hot-quotes"),
         asyncio.create_task(telegram_chat_worker(), name="telegram-chat"),
+        asyncio.create_task(telegram_alert_sweep_worker(), name="telegram-alert-sweep"),
         asyncio.create_task(massive_backfill_worker(), name="massive-backfill"),
         asyncio.create_task(research_job_worker(), name="research-jobs"),
         asyncio.create_task(report_release_worker(), name="report-release"),
@@ -1539,6 +1540,9 @@ async def hot_quote_worker() -> None:
 
 
 TELEGRAM_CHAT_INTERVAL_SECONDS = max(3, int(os.getenv("TELEGRAM_CHAT_INTERVAL_SECONDS", "5")))
+TELEGRAM_ALERT_SWEEP_SECONDS = max(
+    60, int(os.getenv("TELEGRAM_ALERT_SWEEP_SECONDS", "600"))
+)
 
 
 def _telegram_identity() -> tuple[str, int] | None:
@@ -1772,6 +1776,38 @@ async def telegram_chat_worker() -> None:
         except Exception as exc:
             worker_state("telegram_chat_last_error", str(exc)[:500])
         await asyncio.sleep(TELEGRAM_CHAT_INTERVAL_SECONDS)
+
+
+async def telegram_alert_sweep_worker() -> None:
+
+    """Post qualifying new runners even when no scan has just finished.
+
+    The dispatch used to have a single trigger: the end of a completed scan. A
+    scan takes the better part of an hour and its row is only written once it
+    finishes, so a worker restart part way through loses the whole run and the
+    alert with it. On a day of several deploys that can mean the channel stays
+    silent while qualifying runners sit undelivered.
+
+    Sweeping on a timer closes that gap. It is safe to run at any time: the
+    delivery table already records what has been sent, the baseline still covers
+    everything that predates the feature, and the score floor and per-run cap are
+    unchanged, so this only ever sends what the scan trigger would have sent.
+    """
+
+    await asyncio.sleep(90)
+    while True:
+        try:
+            if telegram_alerts_enabled():
+                result = await run_in_threadpool(dispatch_new_runner_alerts)
+                worker_state(
+                    "telegram_alert_sweep_last_run", json.dumps(result, separators=(",", ":"))
+                )
+                worker_state("telegram_alert_sweep_last_error", "")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            worker_state("telegram_alert_sweep_last_error", str(exc)[:500])
+        await asyncio.sleep(TELEGRAM_ALERT_SWEEP_SECONDS)
 
 
 async def market_report_worker() -> None:

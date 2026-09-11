@@ -321,6 +321,36 @@ def test_dispatch_never_backfills_the_existing_board(
     assert sent == []
 
 
+def test_a_sweep_with_no_scan_still_delivers_a_stranded_runner(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    """A runner must not be stranded because its scan never finished.
+
+    The dispatch used to be reachable only at the end of a completed scan. A
+    scan takes the better part of an hour and only writes its row once it
+    finishes, so a worker restart part way through lost the run and the alert
+    with it. Called with no scan id at all, the dispatch still has to deliver.
+    """
+
+    sent: list[str] = []
+    monkeypatch.setattr(web_main, "send_telegram_message", lambda config, text: sent.append(text))
+    _insert_runner("run-old", "OLD1", score=95, entered_at="2026-09-01T14:00:00+00:00")
+    web_main.dispatch_new_runner_alerts(scan_run_id="run-nothing-new")
+    assert sent == []
+
+    _insert_runner("run-lost", "LOUD", score=80, entered_at="2026-09-10T14:00:00+00:00")
+
+    swept = web_main.dispatch_new_runner_alerts()
+
+    assert swept["status"] == "sent"
+    assert swept["selected"] == 1
+    assert len(sent) == 1
+    assert "LOUD" in sent[0]
+
+    assert web_main.dispatch_new_runner_alerts()["status"] == "empty"
+    assert len(sent) == 1
+
+
 def test_dispatch_applies_the_score_floor(alert_environment, monkeypatch: MonkeyPatch) -> None:
     sent: list[str] = []
     monkeypatch.setattr(web_main, "send_telegram_message", lambda config, text: sent.append(text))
