@@ -1,6 +1,7 @@
 {% extends "mobile_base.html" %}
 {% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
 {% set list_path = list_path|default('/memecoins') %}
+{% set board_view = board_view|default('pulse') %}
 {% set list_title = list_title|default('Memecoins') %}
 {% set list_view = market.view|default(list_view|default('pulse')) %}
 {% block app_class %}workspace-app memecoins-app{% endblock %}
@@ -25,6 +26,7 @@
         <p class="meme-source">Entries link to the transactions behind observed actions and review signals. Coverage follows the saved ingestion progress.</p>
       </section>
       <form class="meme-filters" action="{{ list_path }}" method="get" role="search" data-coin-filters>
+        <input type="hidden" name="view" value="{{ board_view }}">
         <label>Find a coin<input type="search" name="q" value="{{ market.query }}" maxlength="80" placeholder="Name or symbol"></label>
         <label>Sort by<select name="sort">
           {% for value, label in [('volume', '24h volume'), ('market_cap', 'Market cap'), ('gainers', '24h gainers'), ('losers', '24h losers')] %}<option value="{{ value }}"{% if market.sort == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
@@ -43,7 +45,7 @@
         {% endfor %}
       </div>
       <div class="meme-empty" role="status" data-coin-empty{% if market.rows %} hidden{% endif %}>
-        {% if market.status == 'disabled' %}<strong>Memecoin feed paused</strong><p>The feed will return when collection resumes.</p>{% elif market.status == 'unavailable' %}<strong>Waiting for pool data</strong><p>The source refresh will retry shortly.</p>{% elif market.status == 'pending' %}<strong>First prices are on the way</strong><p>The next collection will fill this list.</p>{% elif list_view == 'pulse' and market.status == 'stale' %}<strong>Waiting for fresh quotes</strong><p>Radar has the saved prices from the latest collection.</p><a href="/memecoins/radar?q={{ market.query|urlencode }}&amp;sort={{ market.sort }}">View saved prices in Radar</a>{% elif market.total == 0 and market.collected_at %}<strong>Waiting for active pools</strong><p>The next collection checks new pools for liquidity and trades.</p>{% else %}<strong>Try another name or symbol</strong><p>Search covers the {{ market.total }} coins in this snapshot.</p><a href="{{ list_path }}">Show all coins</a>{% endif %}
+        {% if market.status == 'disabled' %}<strong>Memecoin feed paused</strong><p>The feed will return when collection resumes.</p>{% elif market.status == 'unavailable' %}<strong>Waiting for pool data</strong><p>The source refresh will retry shortly.</p>{% elif market.status == 'pending' %}<strong>First prices are on the way</strong><p>The next collection will fill this list.</p>{% elif list_view == 'pulse' and market.status == 'stale' %}<strong>Waiting for fresh quotes</strong><p>Changed has the saved prices from the latest collection.</p><a href="/memecoins?view=changed&amp;q={{ market.query|urlencode }}&amp;sort={{ market.sort }}">View saved prices in Changed</a>{% elif market.total == 0 and market.collected_at %}<strong>Waiting for active pools</strong><p>The next collection checks new pools for liquidity and trades.</p>{% else %}<strong>Try another name or symbol</strong><p>Search covers the {{ market.total }} coins in this snapshot.</p><a href="{{ list_path }}?view={{ board_view }}">Show all coins</a>{% endif %}
       </div>
       <p class="meme-source">Solana pool creation found through <a href="https://www.helius.dev" target="_blank" rel="noopener noreferrer">Helius ↗</a>. Pump, PumpSwap and Raydium coverage. Collection every five minutes. Active pools show USD quotes from <a href="https://www.geckoterminal.com" target="_blank" rel="noopener noreferrer">GeckoTerminal ↗</a>.</p>
     </main>

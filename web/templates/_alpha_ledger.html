@@ -2,7 +2,7 @@
 {% set alpha_prefix = alpha_path_prefix|default('') %}
 {% set alpha_rank_ready = alpha_rank_min_calls is not defined or board.total_calls >= alpha_rank_min_calls %}
 <header class="screen-head">
-  <div>{% if alpha_product_label is defined %}<span class="rati-product">{{ alpha_product_label }}</span>{% endif %}<h1>Alpha</h1><span class="head-meta"><b>{{ board.active_calls }}</b> open Calls <i></i><span>{{ board.total_calls }} total</span></span></div>
+  <div>{% if alpha_product_label is defined %}<span class="rati-product">{{ alpha_product_label }}</span>{% endif %}<h1>Calls</h1><span class="head-meta"><b>{{ board.active_calls }}</b> open Calls <i></i><span>{{ board.total_calls }} total</span></span></div>
   {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open {{ comment_avatar.name }} profile">{{ render_comment_avatar(comment_avatar) }}</button>{% else %}<a class="avatar-button signed-out" href="/login">Log in</a>{% endif %}
 </header>
 

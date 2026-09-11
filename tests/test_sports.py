@@ -23,12 +23,10 @@ from runner_web.flash_wallet import (
     wallet_for_user,
 )
 from runner_web.main import (
-    alpha_page,
     create_sports_comment,
     home,
     origin_for_request,
     product_for_request,
-    radar_page,
     sports_alpha_api,
     sports_alpha_page,
     sports_game_legacy_page,
@@ -1057,11 +1055,11 @@ def test_legacy_sports_routes_cannot_redirect_to_user_input(sports_db) -> None:
 
     page_redirects = (
         (sports_home(runners_request, None, league=untrusted, view=untrusted), "/"),
-        (sports_radar_page(runners_request, None, league=untrusted), "/radar"),
-        (sports_alpha_page(runners_request, None, league=untrusted), "/alpha"),
+        (sports_radar_page(runners_request, None, league=untrusted), "/?view=changed"),
+        (sports_alpha_page(runners_request, None, league=untrusted), "/?view=calls"),
         (
             sports_receipts_legacy_page(runners_request, None, league=untrusted),
-            "/alpha",
+            "/?view=calls",
         ),
     )
     for response, path in page_redirects:
@@ -1808,15 +1806,15 @@ def test_sports_host_uses_the_sports_shell_for_alpha(sports_db) -> None:
     for index in range(3):
         create_sports_pick(f"alpha-user-{index}", str(event["id"]), "home")
 
-    radar_response = radar_page(request(path="/radar"), None)
-    alpha_response = alpha_page(request(path="/alpha"), None)
+    radar_response = home(request(path="/"), None, view="changed")
+    alpha_response = home(request(path="/"), None, view="calls")
     receipts_response = sports_receipts_page(request(path="/receipts"), None)
     assert radar_response.status_code == 200
     assert b"RATi SPORTS" in radar_response.body
     assert b'id="sportsRadarRefresh"' in radar_response.body
     assert b'class="sports-hero' not in radar_response.body
     assert alpha_response.status_code == 200
-    assert b"<h1>Alpha</h1>" in alpha_response.body
+    assert b"<h1>Calls</h1>" in alpha_response.body
     assert b'class="alpha-sample-note"' in alpha_response.body
     assert b'class="desktop-workspace"' in alpha_response.body
     assert b"Four prediction slots" not in alpha_response.body
@@ -1825,15 +1823,15 @@ def test_sports_host_uses_the_sports_shell_for_alpha(sports_db) -> None:
     assert b"Activity is building" in alpha_response.body
     assert b'<span class="alpha-rank">1</span>' not in alpha_response.body
     assert b"open Calls" in alpha_response.body
-    assert b'href="/alpha"' in alpha_response.body
+    assert b'href="/?view=calls"' in alpha_response.body
     assert b'class="market-switcher" aria-label="Market"' in alpha_response.body
     assert b">Stocks</a>" in alpha_response.body
     assert b">Memecoins</a>" in alpha_response.body
     assert b'aria-current="true">Sports</a>' in alpha_response.body
-    assert b'aria-label="Sports navigation"' in alpha_response.body
+    assert b'aria-label="Sports board views"' in alpha_response.body
     assert b'class="skip-link"' in alpha_response.body
     assert receipts_response.status_code == 307
-    assert receipts_response.headers["location"] == "/alpha"
+    assert receipts_response.headers["location"] == "/?view=calls"
 
 
 def test_game_pages_reuse_the_cached_model_record(sports_db, monkeypatch) -> None:
@@ -1871,8 +1869,8 @@ def test_sports_alpha_page_reuses_warmed_result(sports_db, monkeypatch) -> None:
 
     monkeypatch.setattr(web_main, "sports_alpha_board", counted)
 
-    first = alpha_page(request(path="/alpha"), None)
-    second = alpha_page(request(path="/alpha"), None)
+    first = home(request(path="/"), None, view="calls")
+    second = home(request(path="/"), None, view="calls")
 
     assert first.status_code == 200
     assert second.body == first.body
