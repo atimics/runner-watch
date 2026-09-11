@@ -406,16 +406,56 @@ def _post_market_payload(database: Any, day: date, current: datetime) -> dict[st
     }
 
 
+_CLOSE_BOARD_DEFAULTS: dict[str, Any] = {
+    "board_status": None,
+    "close_rank": None,
+    "close_score": None,
+    "close_price": None,
+    "close_change_pct": None,
+    "close_relative_volume": None,
+    "close_trade_state": None,
+    "session_return_pct": None,
+    "close_is_settled": False,
+}
+
+
+def _leader_record(value: Any) -> dict[str, Any] | None:
+    """Normalise one leader, including rows frozen before the close board.
+
+    Reports written before the close board existed carry no close fields. The
+    report card reads ``leader.close_price``, and a missing key resolves to
+    Jinja's ``Undefined``, which passes an ``is not none`` guard and then fails
+    when it is formatted. An explicit ``None`` keeps those rows renderable.
+    """
+
+    if not isinstance(value, dict):
+        return None
+    return {**_CLOSE_BOARD_DEFAULTS, **value}
+
+
 def _report_record(row: Any) -> dict[str, Any] | None:
     if not row:
         return None
     report = dict(row)
     for key in ("metrics_json", "leaders_json", "turns_json"):
         try:
-            report[key.removesuffix("_json")] = json.loads(str(report.get(key) or "[]"))
+            parsed = json.loads(str(report.get(key) or ""))
         except (TypeError, ValueError):
-            report[key.removesuffix("_json")] = {} if key == "metrics_json" else []
+            parsed = None
+        report[key.removesuffix("_json")] = parsed
         report.pop(key, None)
+    report["metrics"] = report["metrics"] if isinstance(report["metrics"], dict) else {}
+    leaders: list[dict[str, Any]] = []
+    for item in report["leaders"] if isinstance(report["leaders"], list) else []:
+        leader = _leader_record(item)
+        if leader:
+            leaders.append(leader)
+    report["leaders"] = leaders
+    report["turns"] = (
+        [item for item in report["turns"] if isinstance(item, dict)]
+        if isinstance(report["turns"], list)
+        else []
+    )
     try:
         analysis = json.loads(str(report.pop("analysis_json", None) or "null"))
     except (TypeError, ValueError):
