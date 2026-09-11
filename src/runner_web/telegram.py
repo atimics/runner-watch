@@ -168,6 +168,88 @@ def format_runner_digest(entries: Iterable[Mapping[str, Any]], *, origin: str) -
     return message[:MAX_MESSAGE_CHARS]
 
 
+def _api_call(
+    config: TelegramConfig,
+    method: str,
+    payload: dict[str, Any],
+    *,
+    opener: Callable[..., Any] = urllib.request.urlopen,
+) -> Any:
+
+    """Call one Bot API method.
+
+    The endpoint carries the bot token, so nothing here puts the URL into an error
+    or a log line. Callers get the method name and the status, which is enough to
+    diagnose a failure without leaking the credential.
+    """
+
+    if not config.configured:
+        raise RuntimeError("Telegram bot token and chat id are required")
+    request = urllib.request.Request(
+        f"{TELEGRAM_API_BASE}/bot{config.bot_token}/{method}",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with opener(request, timeout=SEND_TIMEOUT_SECONDS) as response:
+        status = getattr(response, "status", 200)
+        body = response.read()
+        if status >= 400:
+            raise RuntimeError(f"Telegram {method} failed with status {status}")
+    try:
+        return json.loads(body)
+    except (TypeError, ValueError):
+        return {}
+
+
+def send_reply(
+    config: TelegramConfig,
+    chat_id: int,
+    text: str,
+    *,
+    reply_to_message_id: int | None = None,
+    opener: Callable[..., Any] = urllib.request.urlopen,
+) -> Any:
+
+    """Reply in a chat, threaded onto the message being answered when given."""
+
+    payload: dict[str, Any] = {
+        "chat_id": chat_id,
+        "text": text[:MAX_MESSAGE_CHARS],
+        "disable_notification": True,
+    }
+    if reply_to_message_id:
+        payload["reply_parameters"] = {
+            "message_id": reply_to_message_id,
+            "allow_sending_without_reply": True,
+        }
+    return _api_call(config, "sendMessage", payload, opener=opener)
+
+
+def set_reaction(
+    config: TelegramConfig,
+    chat_id: int,
+    message_id: int,
+    emoji: str,
+    *,
+    opener: Callable[..., Any] = urllib.request.urlopen,
+) -> Any:
+
+    """React to a message instead of speaking over the room."""
+
+    return _api_call(
+        config,
+        "setMessageReaction",
+        {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "reaction": [{"type": "emoji", "emoji": emoji}],
+            "is_big": False,
+        },
+        opener=opener,
+    )
+
+
 def send_message(
     config: TelegramConfig,
     text: str,
