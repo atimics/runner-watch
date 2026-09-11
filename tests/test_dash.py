@@ -17,6 +17,11 @@ from runner_web.sectors import (
 NOW = datetime(2026, 9, 11, 15, 0, tzinfo=UTC)
 
 
+def _fresh() -> str:
+    """A price observation the Call gate will accept, which it checks in real time."""
+    return datetime.now(UTC).isoformat()
+
+
 @pytest.fixture(autouse=True)
 def dash_db(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dash.db")
@@ -205,3 +210,200 @@ def test_the_chat_tools_offer_the_market_and_sector_lookups():
 
     names = {tool["name"] for tool in TOOL_SCHEMA}
     assert {"market_now", "sector_now", "look_up_ticker", "reply", "react", "hold"} <= names
+
+
+def _tradeable(ticker: str, price: float = 1.50) -> None:
+    """A ticker the scanner has seen recently enough to Call."""
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO sec_companies(cik,ticker,name,exchange,refreshed_at)
+            VALUES(?,?,?,'NASDAQ',?)
+            """,
+            (abs(hash(ticker)) % 10**6, ticker, f"{ticker} Inc", NOW.isoformat()),
+        )
+        database.execute(
+            """
+            INSERT INTO ticker_quotes(
+                ticker,price,observed_at,session,previous_close,change_pct,
+                source,status,requested_at,collected_at
+            ) VALUES(?,?,?,'REGULAR',1.0,?,'yahoo','ok',?,?)
+            """,
+            (ticker, price, _fresh(), 50.0, _fresh(), _fresh()),
+        )
+
+
+def _move_price(ticker: str, price: float) -> None:
+    """Move the price in the lane the shared resolver actually reads."""
+    with connection() as database:
+        database.execute(
+            "UPDATE ticker_quotes SET price=?,observed_at=?,collected_at=? WHERE ticker=?",
+            (price, _fresh(), _fresh(), ticker),
+        )
+
+
+@pytest.fixture
+def callable_market(monkeypatch):
+    """Make _current_call_mark succeed without touching the network."""
+    from runner_web import main as web_main
+    from runner_web import quotes
+
+    monkeypatch.setattr(quotes, "ticker_quote", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_main,
+        "ticker_detail_data",
+        lambda ticker: {
+            "can_publish": True,
+            "current": {"price": 1.50, "quote_time": _fresh()},
+        },
+    )
+
+
+def test_dash_opens_a_call_at_the_shared_mark(callable_market):
+    _tradeable("RUN")
+    dash.dash_wallet(at=NOW)
+
+    opened = dash.dash_make_call("$run", at=NOW)
+
+    assert opened["ok"] is True
+    assert opened["ticker"] == "RUN"
+    assert opened["entry_price"] == 1.5
+    with connection() as database:
+        row = database.execute(
+            "SELECT user_id,ticker,status FROM community_calls"
+        ).fetchone()
+    assert (row["user_id"], row["ticker"], row["status"]) == (dash.DASH_USER_ID, "RUN", "active")
+
+
+def test_dash_will_not_open_two_calls_on_one_ticker(callable_market):
+    _tradeable("RUN")
+    dash.dash_wallet(at=NOW)
+    dash.dash_make_call("RUN", at=NOW)
+
+    again = dash.dash_make_call("RUN", at=NOW)
+
+    assert again == {"ok": False, "reason": "already_open", "ticker": "RUN"}
+
+
+def test_dash_runs_out_of_calls_for_the_day(callable_market, monkeypatch):
+    monkeypatch.setattr(dash, "DAILY_CALL_LIMIT", 1)
+    _tradeable("RUN")
+    _tradeable("TWO")
+    dash.dash_wallet(at=NOW)
+    assert dash.dash_make_call("RUN", at=NOW)["ok"] is True
+
+    second = dash.dash_make_call("TWO", at=NOW)
+
+    assert second["ok"] is False
+    assert second["reason"] == "out_of_calls_today"
+
+
+def test_dash_closes_his_own_call_and_reports_the_move(callable_market):
+    _tradeable("RUN")
+    dash.dash_wallet(at=NOW)
+    dash.dash_make_call("RUN", at=NOW)
+
+    _move_price("RUN", 3.00)
+    closed = dash.dash_close_call("RUN", at=NOW)
+
+    assert closed["ok"] is True
+    assert closed["return_pct"] == 100.0
+
+
+def test_closing_nothing_says_so(callable_market):
+    dash.dash_wallet(at=NOW)
+    assert dash.dash_close_call("NONE", at=NOW)["reason"] == "nothing_open"
+
+
+def test_a_call_needs_a_price_the_site_would_show(monkeypatch):
+    from runner_web import main as web_main
+    from runner_web import quotes
+
+    monkeypatch.setattr(quotes, "ticker_quote", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        web_main,
+        "ticker_detail_data",
+        lambda ticker: {
+            "can_publish": True,
+            "current": {"price": 1.0, "quote_time": (NOW - timedelta(days=1)).isoformat()},
+        },
+    )
+    dash.dash_wallet(at=NOW)
+
+    refused = dash.dash_make_call("STALE", at=NOW)
+
+    assert refused["ok"] is False
+    assert refused["reason"] == "no_fresh_price"
+
+
+def test_dash_comments_under_his_own_avatar_and_pays_for_it():
+    dash.dash_wallet(at=NOW)
+
+    posted = dash.dash_comment("MSGM", "hiss. volume is real, float is not.", at=NOW)
+
+    assert posted["ok"] is True
+    assert posted["spent"] == 10
+    with connection() as database:
+        row = database.execute(
+            "SELECT user_id,ticker,source,body FROM ticker_comments"
+        ).fetchone()
+        balance = database.execute(
+            "SELECT balance FROM flash_wallets WHERE user_id=?", (dash.DASH_USER_ID,)
+        ).fetchone()[0]
+    assert row["user_id"] == dash.DASH_USER_ID
+    assert row["source"] == "ai_avatar"
+    assert row["ticker"] == "MSGM"
+    assert balance == 90
+
+
+def test_dash_stops_commenting_when_the_daily_run_is_used_up(monkeypatch):
+    monkeypatch.setattr(dash, "DAILY_COMMENT_LIMIT", 2)
+    dash.dash_wallet(at=NOW)
+    assert dash.dash_comment("AAA", "one", at=NOW)["ok"] is True
+    assert dash.dash_comment("BBB", "two", at=NOW)["ok"] is True
+
+    third = dash.dash_comment("CCC", "three", at=NOW)
+
+    assert third["ok"] is False
+    assert third["reason"] == "out_of_comments_today"
+
+
+def test_an_empty_comment_is_not_posted_or_paid_for():
+    dash.dash_wallet(at=NOW)
+    assert dash.dash_comment("AAA", "   ", at=NOW)["reason"] == "nothing_to_say"
+    with connection() as database:
+        assert database.execute("SELECT COUNT(*) FROM ticker_comments").fetchone()[0] == 0
+
+
+def test_dash_knows_what_he_can_still_afford():
+    dash.dash_wallet(at=NOW)
+    dash.dash_comment("AAA", "one", at=NOW)
+
+    budget = dash.dash_budget(at=NOW)
+
+    assert budget["balance"] == 90
+    assert budget["comments_today"] == 1
+    assert budget["comments_left"] == dash.DAILY_COMMENT_LIMIT - 1
+    assert budget["can_comment"] is True
+
+
+def test_dash_earns_flash_from_a_winning_call_so_he_ranks(callable_market):
+    """The caller board ranks on Flash earned from Calls, so this is what puts him on it."""
+    _tradeable("RUN")
+    dash.dash_wallet(at=NOW)
+    dash.dash_make_call("RUN", at=NOW)
+
+    _move_price("RUN", 3.00)
+    dash.dash_close_call("RUN", at=NOW)
+
+    with connection() as database:
+        earned = database.execute(
+            "SELECT COUNT(*) FROM flash_transactions "
+            "WHERE user_id=? AND kind='runner_call_win'",
+            (dash.DASH_USER_ID,),
+        ).fetchone()[0]
+        identity = database.execute(
+            "SELECT status FROM caller_identities WHERE user_id=?", (dash.DASH_USER_ID,)
+        ).fetchone()["status"]
+    assert earned == 1
+    assert identity == "active"

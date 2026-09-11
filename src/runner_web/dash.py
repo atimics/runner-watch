@@ -14,6 +14,8 @@ same places, rather than living in a parallel set of tables nobody audits.
 
 from __future__ import annotations
 
+import os
+import secrets
 from datetime import UTC, datetime
 from typing import Any
 
@@ -27,6 +29,7 @@ DASH_DISPLAY_NAME = "Dash"
 DASH_AVATAR_NAME = "Swift Amber Cheetah"
 DASH_AVATAR_SEED = "d45ha1cheetah7b2e9f04c6183ad5e27"
 DASH_AVATAR_ABILITY = "pattern_mapper"
+DASH_COMMENT_MODEL = "dash-cheetah"
 
 
 def _iso(value: datetime | None = None) -> str:
@@ -192,3 +195,199 @@ def sector_now(sector: str | None = None, at: datetime | None = None) -> dict[st
             "available": [group["sector"] for group in board],
         }
     return {"asked_for": None, "matched": bool(board), "sectors": board[:8]}
+
+
+DAILY_CALL_LIMIT = max(0, int(os.getenv("DASH_DAILY_CALL_LIMIT", "3")))
+DAILY_COMMENT_LIMIT = max(0, int(os.getenv("DASH_DAILY_COMMENT_LIMIT", "5")))
+
+
+def _acted_today(database: Any, kinds: tuple[str, ...], now: datetime) -> int:
+    day_start = datetime.combine(now.date(), datetime.min.time(), tzinfo=UTC).isoformat()
+    placeholders = ",".join("?" for _ in kinds)
+    return int(
+        database.execute(
+            f"SELECT COUNT(*) FROM flash_transactions "
+            f"WHERE user_id=? AND kind IN ({placeholders}) AND created_at>=?",
+            (DASH_USER_ID, *kinds, day_start),
+        ).fetchone()[0]
+    )
+
+
+def dash_budget(at: datetime | None = None) -> dict[str, Any]:
+
+    """What Dash can still afford and still allowed to do today.
+
+    The wallet alone would let him spend the whole allowance on the first thing
+    anybody asked for. These caps spread it across the day so being asked the
+    same question ten times does not empty him.
+    """
+
+    now = at or datetime.now(UTC)
+    wallet = dash_wallet(at=now)
+    with connection() as database:
+        comments = _acted_today(database, ("comment_generation",), now)
+        calls = database.execute(
+            "SELECT COUNT(*) FROM community_calls WHERE user_id=? AND entry_at>=?",
+            (
+                DASH_USER_ID,
+                datetime.combine(now.date(), datetime.min.time(), tzinfo=UTC).isoformat(),
+            ),
+        ).fetchone()[0]
+    return {
+        "balance": wallet["balance"],
+        "comments_today": comments,
+        "comments_left": max(0, DAILY_COMMENT_LIMIT - comments),
+        "calls_today": int(calls),
+        "calls_left": max(0, DAILY_CALL_LIMIT - int(calls)),
+        "can_comment": wallet["balance"] >= 10 and comments < DAILY_COMMENT_LIMIT,
+        "can_call": int(calls) < DAILY_CALL_LIMIT,
+    }
+
+
+def dash_make_call(ticker: str, at: datetime | None = None) -> dict[str, Any]:
+
+    """Open a public Call as Dash, on the same terms as anyone else.
+
+    It goes through the shared mark so he is stamped at the price the site would
+    show, and it settles and scores through the ordinary path. His Calls count on
+    the caller board because he earns Flash from them like a person does, which
+    is the whole reason the record is worth anything.
+    """
+
+    from runner_web.calls import active_call_for_user, create_call
+    from runner_web.main import _current_call_mark
+
+    now = at or datetime.now(UTC)
+    symbol = str(ticker).strip().upper().lstrip("$")
+    budget = dash_budget(at=now)
+    if not budget["can_call"]:
+        return {"ok": False, "reason": "out_of_calls_today", "budget": budget}
+    ensure_dash_account()
+    if active_call_for_user(DASH_USER_ID, symbol):
+        return {"ok": False, "reason": "already_open", "ticker": symbol}
+    try:
+        mark = _current_call_mark(symbol)
+    except Exception as exc:
+        return {"ok": False, "reason": "no_fresh_price", "detail": type(exc).__name__}
+    call = create_call(
+        DASH_USER_ID, symbol, entry_price=mark["price"], entry_at=mark["observed_at"]
+    )
+    if not call:
+        return {"ok": False, "reason": "not_created", "ticker": symbol}
+    return {
+        "ok": True,
+        "ticker": symbol,
+        "entry_price": mark["price"],
+        "entry_at": mark["observed_at"],
+        "price_age_seconds": mark.get("age_seconds"),
+        "public_id": call.get("public_id"),
+    }
+
+
+def dash_close_call(ticker: str, at: datetime | None = None) -> dict[str, Any]:
+
+    """Close Dash's open Call on a ticker at the current mark."""
+
+    from runner_web.calls import active_call_for_user, close_call
+    from runner_web.main import _current_call_mark
+
+    symbol = str(ticker).strip().upper().lstrip("$")
+    ensure_dash_account()
+    open_call = active_call_for_user(DASH_USER_ID, symbol)
+    if not open_call:
+        return {"ok": False, "reason": "nothing_open", "ticker": symbol}
+    try:
+        mark = _current_call_mark(symbol)
+    except Exception as exc:
+        return {"ok": False, "reason": "no_fresh_price", "detail": type(exc).__name__}
+    closed = close_call(
+        DASH_USER_ID,
+        str(open_call["public_id"]),
+        exit_price=mark["price"],
+        exit_at=mark["observed_at"],
+    )
+    if not closed:
+        return {"ok": False, "reason": "already_closed", "ticker": symbol}
+    return {
+        "ok": True,
+        "ticker": symbol,
+        "exit_price": mark["price"],
+        "return_pct": closed.get("return_pct"),
+        "flash_reward": closed.get("flash_reward"),
+    }
+
+
+def dash_open_calls() -> list[dict[str, Any]]:
+
+    """Dash's own open positions, so he can talk about what he is holding."""
+
+    from runner_web.calls import caller_call_rows, calls_from_rows
+
+    rows = [row for row in caller_call_rows(DASH_HANDLE) if row["status"] == "active"]
+    return [
+        {
+            "ticker": call.get("ticker"),
+            "entry_price": call.get("entry_price"),
+            "entry_at": call.get("entry_at"),
+            "return_pct": call.get("return_pct"),
+        }
+        for call in calls_from_rows(rows)
+    ]
+
+
+def dash_comment(ticker: str, body: str, at: datetime | None = None) -> dict[str, Any]:
+
+    """Post a public comment on a ticker as Dash, paid for out of his allowance.
+
+    It is written into the same table a person's avatar comment goes to, with the
+    same AI-avatar authorship label, so a reader can tell who is speaking and the
+    comment carries the usual disclosure the rest of the product applies.
+    """
+
+    from runner_web.flash_wallet import COMMENT_COST, InsufficientFlashError, spend_flash
+
+    now = at or datetime.now(UTC)
+    symbol = str(ticker).strip().upper().lstrip("$")
+    text = " ".join(str(body).split())[:240]
+    if not symbol or not text:
+        return {"ok": False, "reason": "nothing_to_say"}
+    budget = dash_budget(at=now)
+    if budget["comments_left"] <= 0:
+        return {"ok": False, "reason": "out_of_comments_today", "budget": budget}
+    ensure_dash_account()
+    comment_id = secrets.token_urlsafe(10)
+    try:
+        with connection() as database:
+            spend_flash(
+                database,
+                DASH_USER_ID,
+                COMMENT_COST,
+                kind="comment_generation",
+                reference_id=comment_id,
+            )
+            database.execute(
+                """
+                INSERT INTO ticker_comments(
+                    id,ticker,subject_kind,subject_key,user_id,body,status,created_at,
+                    source,generation_model
+                ) VALUES(?,?,'stock',?,?,?,'public',?,'ai_avatar',?)
+                """,
+                (
+                    comment_id,
+                    symbol,
+                    symbol,
+                    DASH_USER_ID,
+                    text,
+                    now.isoformat(),
+                    DASH_COMMENT_MODEL,
+                ),
+            )
+    except InsufficientFlashError:
+        return {"ok": False, "reason": "out_of_flash", "budget": budget}
+    return {
+        "ok": True,
+        "ticker": symbol,
+        "comment_id": comment_id,
+        "body": text,
+        "spent": COMMENT_COST,
+    }

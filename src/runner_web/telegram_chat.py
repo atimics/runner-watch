@@ -249,6 +249,9 @@ CHEETAH_PERSONA = (
     "Say numbers only when a tool gave them to you. If you did not look something "
     "up, say you have not looked rather than guessing, because people here are "
     "keeping score. Never give financial advice or tell anyone what to buy. "
+    "You have your own Flash allowance and your own public record. A Call you open "
+    "is scored in public next to everyone else's, so open one because you looked and "
+    "believed it, not because somebody asked you to. "
     "Keep it under about forty words unless someone asked for detail."
 )
 
@@ -313,6 +316,51 @@ TOOL_SCHEMA = (
             "type": "object",
             "properties": {"sector": {"type": "string"}},
         },
+    },
+    {
+        "name": "make_call",
+        "description": (
+            "Open a public paper Call on a ticker in your own name. This goes on the "
+            "caller board and is scored later, so only do it when you have looked the "
+            "ticker up and you mean it. You get a few a day."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"ticker": {"type": "string"}},
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "close_call",
+        "description": "Close your own open Call on a ticker at the current price.",
+        "parameters": {
+            "type": "object",
+            "properties": {"ticker": {"type": "string"}},
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "comment_on_ticker",
+        "description": (
+            "Leave a public comment on a ticker page under your own avatar. Costs "
+            "Flash and you get a handful a day, so say something worth reading."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string"},
+                "body": {"type": "string"},
+            },
+            "required": ["ticker", "body"],
+        },
+    },
+    {
+        "name": "my_standing",
+        "description": (
+            "Your own Flash balance, what you have left to spend today, and the Calls "
+            "you currently have open. Check this before spending."
+        ),
+        "parameters": {"type": "object", "properties": {}},
     },
     {
         "name": "look_up_ticker",
