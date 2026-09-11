@@ -685,3 +685,36 @@ def test_a_saved_target_comes_back_with_its_result():
     assert target["status"] == "hit"
     assert target["close_price"] == 1.98
     assert _todays_target("NONE") is None
+
+
+def test_dash_carries_a_drawn_portrait_and_others_do_not():
+    from runner_web.pseudonyms import AVATAR_PORTRAITS, comment_avatar_profile
+
+    portrait = dash.dash_avatar()["portrait"]
+    assert portrait == "/static/dash-cheetah.png"
+    assert AVATAR_PORTRAITS[dash.DASH_AVATAR_SEED] == portrait
+    assert comment_avatar_profile("Someone", "another-seed", "risk_sentinel")["portrait"] is None
+
+
+def test_the_portrait_file_ships_with_the_app():
+    from pathlib import Path
+
+    image = Path(__file__).parents[1] / "web/static/dash-cheetah.png"
+    assert image.exists()
+    assert image.stat().st_size < 400_000
+
+
+def test_the_avatar_macro_renders_a_picture_for_dash_and_a_face_for_everyone_else():
+    from runner_web.main import templates
+    from runner_web.pseudonyms import comment_avatar_profile
+
+    macro = templates.env.get_template("_comment_avatar.html").module.comment_avatar
+
+    drawn = str(macro(dash.dash_avatar()))
+    generated = str(macro(comment_avatar_profile("Someone", "another-seed", "risk_sentinel")))
+
+    assert "/static/dash-cheetah.png" in drawn
+    assert "comment-avatar-portrait" in drawn
+    assert "avatar-tone-" not in drawn
+    assert "<img" not in generated
+    assert "avatar-tone-" in generated

@@ -151,6 +151,14 @@ def comment_avatar_ability(ability_id: str) -> dict[str, str]:
     return {key: str(value) for key, value in ability.items()}
 
 
+# Avatars that have a drawn portrait rather than a generated face, keyed by seed so
+# the picture follows the identity wherever the profile is built - a comment, a
+# profile sheet, a report - without every call site having to know about it.
+AVATAR_PORTRAITS: dict[str, str] = {
+    "d45ha1cheetah7b2e9f04c6183ad5e27": "/static/dash-cheetah.png",
+}
+
+
 def comment_avatar_profile(
     name: str,
     seed: str,
@@ -161,6 +169,7 @@ def comment_avatar_profile(
     digest = sha256(seed.encode()).digest()
     ability = comment_avatar_ability(ability_id)
     return {
+        "portrait": AVATAR_PORTRAITS.get(seed),
         "name": name,
         "ability_id": ability["id"],
         "ability": ability["label"],
