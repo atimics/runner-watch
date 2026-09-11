@@ -293,6 +293,28 @@ TOOL_SCHEMA = (
         },
     },
     {
+        "name": "market_now",
+        "description": (
+            "What the board looks like right now: the session, how many names are "
+            "green against red, the biggest movers, and the latest session report. "
+            "Use this for questions about the market in general."
+        ),
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "sector_now",
+        "description": (
+            "The board grouped by sector, or one sector on its own. Pass a sector "
+            "name like biotech or software to narrow it. Names whose sector has not "
+            "been looked up yet come back as unclassified, and you should say so "
+            "rather than guessing what they are."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"sector": {"type": "string"}},
+        },
+    },
+    {
         "name": "look_up_ticker",
         "description": (
             "Look up what the scanner knows about one ticker: the freshest price it "
