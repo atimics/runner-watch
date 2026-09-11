@@ -98,9 +98,19 @@ from runner_web.content_notices import (
     notices_for_content,
     report_share_metadata,
 )
-from runner_web.dash import dash_wallet
+from runner_web.dash import community_now as dash_community_now
+from runner_web.dash import (
+    dash_budget,
+    dash_close_call,
+    dash_comment,
+    dash_make_call,
+    dash_open_calls,
+    dash_wallet,
+)
 from runner_web.dash import market_now as dash_market_now
+from runner_web.dash import recent_runners as dash_recent_runners
 from runner_web.dash import sector_now as dash_sector_now
+from runner_web.dash import session_report as dash_session_report
 from runner_web.db import connection, init_db
 from runner_web.flash_evaluations import (
     flash_record,
@@ -1662,7 +1672,7 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
         {"role": "system", "content": CHEETAH_PERSONA},
         {"role": "user", "content": json.dumps(context, separators=(",", ":"))},
     ]
-    for _round in range(4):
+    for _round in range(6):
         body = {
             "model": FLASH.model,
             "messages": messages,
@@ -1701,6 +1711,22 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
             looked = dash_market_now()
         elif name == "sector_now":
             looked = dash_sector_now(args.get("sector"))
+        elif name == "recent_runners":
+            looked = dash_recent_runners()
+        elif name == "community_now":
+            looked = dash_community_now()
+        elif name == "session_report":
+            looked = dash_session_report(args.get("which"))
+        elif name == "my_standing":
+            looked = {"budget": dash_budget(), "open_calls": dash_open_calls()}
+        elif name == "make_call":
+            looked = dash_make_call(str(args.get("ticker") or ""))
+        elif name == "close_call":
+            looked = dash_close_call(str(args.get("ticker") or ""))
+        elif name == "comment_on_ticker":
+            looked = dash_comment(
+                str(args.get("ticker") or ""), str(args.get("body") or "")
+            )
         if looked is not None:
             messages.append(choice)
             messages.append(
