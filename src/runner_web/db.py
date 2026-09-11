@@ -2860,6 +2860,115 @@ def _migration_057_content_notices(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_058_memecoin_chain_evidence(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        UPDATE source_registry SET enabled=0
+            WHERE feed='memecoins' AND source IN ('coingecko','geckoterminal');
+        CREATE TABLE IF NOT EXISTS memecoin_chain_transactions (
+            signature TEXT PRIMARY KEY, slot BIGINT NOT NULL, observed_at TEXT NOT NULL,
+            evidence_json TEXT NOT NULL, evidence_sha256 TEXT NOT NULL,
+            collected_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS memecoin_chain_transactions_time
+            ON memecoin_chain_transactions(observed_at,signature);
+        CREATE TABLE IF NOT EXISTS memecoin_chain_events (
+            event_id TEXT PRIMARY KEY, kind TEXT NOT NULL, token_address TEXT,
+            wallet TEXT, pool_address TEXT, observed_at TEXT NOT NULL,
+            signature TEXT NOT NULL, evidence_json TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS memecoin_chain_events_token
+            ON memecoin_chain_events(token_address,observed_at);
+        CREATE INDEX IF NOT EXISTS memecoin_chain_events_wallet
+            ON memecoin_chain_events(wallet,observed_at);
+        CREATE INDEX IF NOT EXISTS memecoin_chain_events_kind
+            ON memecoin_chain_events(kind,observed_at);
+        CREATE TABLE IF NOT EXISTS memecoin_chain_cursors (
+            stream TEXT PRIMARY KEY, state_json TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS memecoin_chain_gaps (
+            stream TEXT NOT NULL, start_time BIGINT NOT NULL, end_time BIGINT NOT NULL,
+            reason TEXT NOT NULL, recorded_at TEXT NOT NULL,
+            PRIMARY KEY(stream,start_time,end_time)
+        );
+        CREATE TABLE IF NOT EXISTS memecoin_helius_budget (
+            day TEXT PRIMARY KEY, reserved_credits INTEGER NOT NULL,
+            request_count INTEGER NOT NULL, updated_at TEXT NOT NULL
+        );
+        """
+    )
+
+
+def _migration_059_market_report_commentary(db: DatabaseConnection) -> None:
+
+    _ensure_column(db, "market_session_reports", "analysis_json TEXT")
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS market_report_commentary_jobs (
+            report_id TEXT PRIMARY KEY REFERENCES market_session_reports(id) ON DELETE CASCADE,
+            report_day TEXT NOT NULL,
+            report_type TEXT NOT NULL
+                CHECK(report_type IN ('pre_market','post_market')),
+            status TEXT NOT NULL
+                CHECK(status IN ('queued','running','complete','failed')),
+            attempts INTEGER NOT NULL DEFAULT 0,
+            lease_token TEXT,
+            lease_until TEXT,
+            request_json TEXT,
+            response_id TEXT,
+            last_error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS market_report_commentary_jobs_status
+            ON market_report_commentary_jobs(status,created_at);
+        CREATE TABLE IF NOT EXISTS market_report_comments (
+            report_id TEXT NOT NULL REFERENCES market_session_reports(id) ON DELETE CASCADE,
+            voice_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            body TEXT NOT NULL,
+            model TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(report_id,voice_id)
+        );
+        CREATE INDEX IF NOT EXISTS market_report_comments_order
+            ON market_report_comments(report_id,position);
+        """
+    )
+
+
+def _migration_060_ticker_quotes(db: DatabaseConnection) -> None:
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS ticker_quotes (
+            ticker TEXT PRIMARY KEY,
+            price REAL,
+            observed_at TEXT,
+            session TEXT,
+            previous_close REAL,
+            change_pct REAL,
+            day_high REAL,
+            day_low REAL,
+            volume DOUBLE PRECISION,
+            source TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('ok','empty','error')),
+            last_error TEXT,
+            requested_at TEXT NOT NULL,
+            collected_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS ticker_quotes_requested
+            ON ticker_quotes(requested_at DESC);
+        """
+    )
+
+
+def _migration_061_forecast_rounds(db: DatabaseConnection) -> None:
+
+    _ensure_column(db, "market_report_forecast_jobs", "rounds INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(db, "market_report_forecasts", "reference_source TEXT")
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -2929,6 +3038,10 @@ MIGRATIONS = (
     Migration(55, "memecoin_quote_history", _migration_055_memecoin_quote_history),
     Migration(56, "memecoin_calls", _migration_056_memecoin_calls),
     Migration(57, "content_notices", _migration_057_content_notices),
+    Migration(58, "memecoin_chain_evidence", _migration_058_memecoin_chain_evidence),
+    Migration(59, "market_report_commentary", _migration_059_market_report_commentary),
+    Migration(60, "ticker_quotes", _migration_060_ticker_quotes),
+    Migration(61, "forecast_rounds", _migration_061_forecast_rounds),
 )
 
 

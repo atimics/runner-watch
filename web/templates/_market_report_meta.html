@@ -1,0 +1,15 @@
+{% macro market_report_meta(report, app_origin) %}
+<meta property="og:site_name" content="RATi Runners">
+<meta property="og:type" content="article">
+<meta property="og:title" content="{{ report.share.title }}">
+<meta property="og:description" content="{{ report.share.summary }}">
+<meta property="og:url" content="{{ app_origin }}{{ report.share.path }}">
+<meta property="og:image" content="{{ app_origin }}{{ report.share.card_path }}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="{{ report.share.title }}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{{ report.share.title }}">
+<meta name="twitter:description" content="{{ report.share.summary }}">
+<meta name="twitter:image" content="{{ app_origin }}{{ report.share.card_path }}">
+{% endmacro %}

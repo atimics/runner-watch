@@ -101,6 +101,7 @@
     headline,
     headlineMeta = '',
     age = '',
+    ageLive = false,
     company,
     detailMarkup = '',
     catalyst,
@@ -125,7 +126,7 @@
     return `<a class="token-row ticker-row${rowClass}" href="${attr(href)}"${rowData} aria-label="${attr(ariaLabel)}">
       <span class="coin coin-${Number(coinTone) || 0}"><b>${esc(coinLabel)}</b><i></i></span>
       <span class="token-copy">
-        <span class="ticker-line"><strong>${esc(headline)}</strong>${headlineMeta}<small class="ticker-age">${esc(age)}</small></span>
+        <span class="ticker-line"><strong>${esc(headline)}</strong>${headlineMeta}<small class="ticker-age${ageLive ? ' ticker-age-live' : ''}">${esc(age)}</small></span>
         <span class="company-name">${esc(company)}</span>
         ${detailMarkup}
         <span class="catalyst${safeCatalystTone}">${esc(catalyst)}${catalystMarkup}</span>
@@ -151,6 +152,7 @@
     const age = ago(marketFreshness
       ? row.quote_time || row.event_at || row.entered_at
       : row.entered_at || row.event_at);
+    const ageLive = row.mark_source === 'quote' && Number(row.mark_age_seconds) < 120;
     const events = Number(row.event_count) > 1
       ? `<span class="event-count">+${Number(row.event_count) - 1}</span>`
       : '';
@@ -195,6 +197,7 @@
       headline: row.ticker,
       headlineMeta: badge,
       age,
+      ageLive,
       company,
       detailMarkup: `${caseSource}${thesis}${caseSocial}${trackPrompt}${comparison}`,
       catalyst: row.pulse_label || 'No recent event',

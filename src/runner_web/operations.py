@@ -40,6 +40,7 @@ BASE_REQUIRED_WORKER_NAMES = frozenset(
         "outcomes",
         "scan-collection",
         "market-reports",
+        "hot-quotes",
         "massive-backfill",
         "research-jobs",
         "report-release",
