@@ -10,6 +10,7 @@ from runner_web import main as web_main
 from runner_web.caller_ids import MACHINE_HANDLE, ensure_machine_trader
 from runner_web.calls import close_call, create_call
 from runner_web.db import connection, init_db
+from runner_web.market_clock import EASTERN
 
 
 def _database(tmp_path: Path, monkeypatch: MonkeyPatch) -> datetime:
@@ -25,6 +26,13 @@ def _database(tmp_path: Path, monkeypatch: MonkeyPatch) -> datetime:
         )
         ensure_machine_trader(database)
     return current
+
+
+def _session_day(current: datetime, *, days_back: int = 0) -> str:
+
+    """The Eastern session date, which is how the product groups a trading day."""
+
+    return (current.astimezone(EASTERN) - timedelta(days=days_back)).strftime("%Y-%m-%d")
 
 
 def _human_handle() -> str:
@@ -53,7 +61,7 @@ def _closed_call(
 
 def test_day_verdict_compares_settled_todays_stock_calls(tmp_path, monkeypatch) -> None:
     current = _database(tmp_path, monkeypatch)
-    today = current.strftime("%Y-%m-%d")
+    today = _session_day(current)
     _closed_call(
         "human", 10.0, 11.0,
         entry_at=f"{today}T14:00:00+00:00",
@@ -73,7 +81,7 @@ def test_day_verdict_compares_settled_todays_stock_calls(tmp_path, monkeypatch) 
         ticker="CCC",
     )
     # Yesterday's settlement does not count.
-    yesterday = (current - timedelta(days=1)).strftime("%Y-%m-%d")
+    yesterday = _session_day(current, days_back=1)
     _closed_call(
         MACHINE_HANDLE, 10.0, 20.0, entry_at=f"{yesterday}T14:00:00+00:00",
         exit_at=f"{yesterday}T19:00:00+00:00", ticker="DDD",
@@ -97,7 +105,7 @@ def test_day_verdict_reports_the_machine_when_the_user_has_not_settled(
     tmp_path, monkeypatch
 ) -> None:
     current = _database(tmp_path, monkeypatch)
-    today = current.strftime("%Y-%m-%d")
+    today = _session_day(current)
     _closed_call(
         MACHINE_HANDLE, 10.0, 11.0,
         entry_at=f"{today}T14:00:00+00:00",
@@ -115,7 +123,7 @@ def test_day_verdict_reports_the_machine_when_the_user_has_not_settled(
 
 def test_win_streak_counts_consecutive_settled_wins(tmp_path, monkeypatch) -> None:
     current = _database(tmp_path, monkeypatch)
-    today = current.strftime("%Y-%m-%d")
+    today = _session_day(current)
     _closed_call(
         "human", 10.0, 10.5,
         entry_at=f"{today}T14:00:00+00:00",
@@ -151,7 +159,7 @@ def test_win_streak_counts_consecutive_settled_wins(tmp_path, monkeypatch) -> No
 
 def test_the_machine_page_compares_itself_honestly(tmp_path, monkeypatch) -> None:
     current = _database(tmp_path, monkeypatch)
-    today = current.strftime("%Y-%m-%d")
+    today = _session_day(current)
     _closed_call(
         MACHINE_HANDLE, 10.0, 11.0,
         entry_at=f"{today}T14:00:00+00:00",

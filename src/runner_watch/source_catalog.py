@@ -313,9 +313,9 @@ DEFAULT_SOURCE_POLICIES = (
         stale_after_seconds=180,
         schedule="us_extended_weekdays",
         storage_policy="archive_raw_and_normalized",
-        display_policy="internal_review_only",
+        display_policy="source_link_with_attribution",
         attribution="Nasdaq Trader",
-        review_status="poc_only",
+        review_status="approved",
         enabled=_enabled("NASDAQ_TRADE_HALTS_ENABLED"),
     ),
     SourcePolicy(
