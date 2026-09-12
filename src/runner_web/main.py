@@ -68,6 +68,7 @@ from runner_web.account_routes import (
     CloudDataDeletePayload,
     create_account_routes,
 )
+from runner_web.actor_portraits import generate_actor_portrait, portrait_for_actor
 from runner_web.ai_kol import FLASH, AIKol, actor_snapshot, flash_version_snapshot
 from runner_web.base_rates import matched_market_base_rates
 from runner_web.billing import (
@@ -159,6 +160,14 @@ from runner_web.live_screens import public_dynamic_screen_paths
 from runner_web.llm_routing import (
     connector_token_hash,
     route_for_user,
+)
+from runner_web.market_actors import (
+    ACTOR_DERIVE_INTERVAL_SECONDS,
+    derive_market_actors,
+    market_actor_comment_budget,
+    market_actor_detail,
+    market_actor_map,
+    record_market_actor_comment,
 )
 from runner_web.market_clock import market_clock
 from runner_web.market_commentary import generate_report_commentary
@@ -699,6 +708,7 @@ def _start_worker_tasks(
         asyncio.create_task(case_monitor_worker(), name="case-monitor"),
         asyncio.create_task(kol_worker(), name="kol"),
         asyncio.create_task(memecoin_worker(), name="memecoins"),
+        asyncio.create_task(market_actor_worker(), name="market-actors"),
         asyncio.create_task(call_settlement_worker(), name="call-settlement"),
     ]
     if SPORTS_INGESTION_ENABLED:
@@ -1286,8 +1296,8 @@ _UNRESOLVED_USER = object()
 
 # The board is one screen. Pulse, Radar, and Alpha are views of that screen,
 # selected by a query parameter instead of a separate tab and route.
-BOARD_VIEWS = ("pulse", "changed", "calls")
-BOARD_VIEW_TABS = {"pulse": "pulse", "changed": "radar", "calls": "alpha"}
+BOARD_VIEWS = ("pulse", "changed", "map", "calls")
+BOARD_VIEW_TABS = {"pulse": "pulse", "changed": "radar", "map": "map", "calls": "alpha"}
 DEFAULT_BOARD_VIEW = "pulse"
 
 
@@ -1308,7 +1318,10 @@ def _board_base_path(nav_product: str, sports_path_prefix: str) -> str:
 def _board_view_links(nav_product: str, sports_path_prefix: str) -> dict[str, str]:
     base = _board_base_path(nav_product, sports_path_prefix)
     separator = "&" if "?" in base else "?"
-    return {view: f"{base}{separator}{urlencode({'view': view})}" for view in BOARD_VIEWS}
+    views = BOARD_VIEWS if nav_product != "sports" else tuple(
+        view for view in BOARD_VIEWS if view != "map"
+    )
+    return {view: f"{base}{separator}{urlencode({'view': view})}" for view in views}
 
 
 def page_context(
@@ -1981,6 +1994,20 @@ async def memecoin_worker() -> None:
         except Exception:
             LOG.exception("Memecoin refresh failed")
         await asyncio.sleep(REFRESH_SECONDS)
+
+
+async def market_actor_worker() -> None:
+    await asyncio.sleep(45)
+    while True:
+        try:
+            result = await run_in_threadpool(derive_market_actors)
+            worker_state("market_actor_last_run", json.dumps(result, separators=(",", ":")))
+            worker_state("market_actor_last_error", "")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            worker_state("market_actor_last_error", str(exc)[:500])
+        await asyncio.sleep(ACTOR_DERIVE_INTERVAL_SECONDS)
 
 
 async def call_settlement_worker() -> None:
@@ -6671,6 +6698,8 @@ def memecoins_board_response(
     """Render one view of the single memecoin board."""
 
     enforce_rate(request, "memecoins", limit=120, seconds=60)
+    if view == "map":
+        return _market_map_response(request, runner_session, "coin")
     radar = view == "changed"
     list_view = "radar" if radar else "pulse"
     return templates.TemplateResponse(
@@ -6815,6 +6844,122 @@ def memecoin_detail_page(
     return templates.TemplateResponse(request, "memecoin_detail.html", context)
 
 
+@app.get("/api/market-actors")
+def market_actors_api(request: Request, domain: str = "stock") -> dict[str, Any]:
+    enforce_rate(request, "market-map", limit=120, seconds=60)
+    return market_actor_map(domain)
+
+
+@app.get("/api/market-actors/{actor_id}")
+def market_actor_api(actor_id: str, request: Request) -> dict[str, Any]:
+    enforce_rate(request, "market-map", limit=120, seconds=60)
+    detail = market_actor_detail(actor_id)
+    if detail is None:
+        raise HTTPException(404, "Market actor not found")
+    return detail
+
+
+@app.get("/api/market-actors/{actor_id}/portrait")
+def market_actor_portrait_api(actor_id: str, request: Request) -> Response:
+    enforce_rate(request, "market-actor-portrait", limit=60, seconds=60)
+    existing = portrait_for_actor(actor_id)
+    if existing is None:
+        generate_actor_portrait(actor_id, api_key=_openrouter_api_key())
+        existing = portrait_for_actor(actor_id)
+    if existing is None:
+        raise HTTPException(404, "No portrait for this character")
+    return Response(
+        content=existing["bytes"],
+        media_type=existing["content_type"],
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+def _generate_market_actor_comment_text(
+    actor_id: str,
+    *,
+    avatar: dict[str, Any],
+) -> tuple[str, str]:
+    detail = market_actor_detail(actor_id)
+    if detail is None:
+        raise HTTPException(404, "Market actor not found")
+    actor = detail["actor"]
+    evidence = {
+        "actor": {
+            "character": actor["name"],
+            "kind": actor["kind"],
+            "domain": actor["domain"],
+            "roles": actor["roles"],
+        },
+        "subjects": actor["subjects"],
+        "evidence": detail["evidence"][:6],
+    }
+    return _generate_comment_from_evidence(
+        evidence,
+        subject_label="stock insider" if actor["domain"] == "stock" else "wallet cluster",
+        avatar=avatar,
+        thread={"actor_id": actor_id},
+        guidance=(
+            "You are a fictional character representing this market actor. Always "
+            "speak in the third person about the actor and the evidence. Never claim "
+            "to be the real person, never guess an identity, and never invent facts. "
+            "Name the role and the most recent filing or on-chain move."
+        ),
+    )
+
+
+@app.post("/api/market-actors/{actor_id}/comment")
+async def create_market_actor_comment_api(
+    actor_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    detail = market_actor_detail(actor_id)
+    if detail is None:
+        raise HTTPException(404, "Market actor not found")
+    if not _openrouter_api_key():
+        raise HTTPException(503, "AI comments are temporarily unavailable.")
+    await run_in_threadpool(
+        enforce_rate,
+        request,
+        "market-actor-comment",
+        limit=10,
+        seconds=3600,
+        subject=str(user["id"]),
+    )
+    budget = market_actor_comment_budget(actor_id)
+    if not budget["allowed"]:
+        raise HTTPException(429, "This character has posted enough for now.")
+    actor = detail["actor"]
+    body, model = await run_in_threadpool(
+        _generate_market_actor_comment_text,
+        actor_id,
+        avatar=actor["avatar"],
+    )
+    comment_id = secrets.token_urlsafe(10)
+    primary = detail["evidence"][0]["subject_key"] if detail["evidence"] else actor_id
+    with connection() as db:
+        db.execute(
+            """
+            INSERT INTO market_actor_comments(
+                id,actor_id,subject_key,body,generation_model,created_at
+            ) VALUES(?,?,?,?,?,?)
+            """,
+            (comment_id, actor_id, str(primary), body, model, iso()),
+        )
+    record_market_actor_comment()
+    updated = market_actor_detail(actor_id) or {"comments": []}
+    return JSONResponse(
+        {
+            "comment": updated["comments"][0] if updated["comments"] else None,
+            "budget": market_actor_comment_budget(actor_id),
+        },
+        status_code=201,
+    )
+
+
 @app.post("/api/memecoins/{coin_id}/calls")
 async def make_memecoin_call_api(
     coin_id: str,
@@ -6893,6 +7038,8 @@ def runners_board_response(
                 active_tab=BOARD_VIEW_TABS[view],
             ),
         )
+    if view == "map":
+        return _market_map_response(request, runner_session, "stock")
     if view == "calls":
         return community(request, runner_session)
     return templates.TemplateResponse(
@@ -6904,6 +7051,30 @@ def runners_board_response(
             pulse=_public_pulse_data(limit=20),
             market_reports=market_reports_overview(history_limit=0),
             active_tab=BOARD_VIEW_TABS[view],
+        ),
+    )
+
+
+def _market_map_response(
+    request: Request,
+    runner_session: str | None,
+    domain: str,
+) -> HTMLResponse:
+    """Render the actor map for stocks or memecoins."""
+
+    enforce_rate(request, "market-map", limit=120, seconds=60)
+    is_coin = domain == "coin"
+    return templates.TemplateResponse(
+        request=request,
+        name="market_map.html",
+        context=page_context(
+            request,
+            runner_session,
+            nav_product="memecoins" if is_coin else "runners",
+            active_tab="map",
+            board_view="map",
+            back_url="/memecoins" if is_coin else "/",
+            market_map=market_actor_map(domain),
         ),
     )
 
@@ -8944,6 +9115,7 @@ def _generate_comment_from_evidence(
     avatar: dict[str, Any],
     thread: dict[str, Any] | None = None,
     report: dict[str, Any] | None = None,
+    guidance: str | None = None,
 ) -> tuple[str, str]:
     if not _flash_provider_ready():
         raise HTTPException(503, "AI comments are temporarily unavailable.")
@@ -8971,6 +9143,7 @@ def _generate_comment_from_evidence(
             "language": "simple English",
             "grounding": "supplied context",
             "financial_advice": False,
+            **({"guidance": guidance} if guidance else {}),
         },
     }
     body = {

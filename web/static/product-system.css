@@ -608,6 +608,26 @@ html.embedded-pane .account-strip {
   line-height: 1;
 }
 
+.map-icon::before {
+  content: "";
+  position: absolute;
+  inset: 1px 0;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 22% 28%, currentColor 0 3px, transparent 3px),
+    radial-gradient(circle at 76% 40%, currentColor 0 3px, transparent 3px),
+    radial-gradient(circle at 46% 82%, currentColor 0 2.5px, transparent 2.5px);
+}
+
+.map-icon::after {
+  content: "";
+  position: absolute;
+  inset: 4px 2px;
+  border-top: 1.5px solid currentColor;
+  transform: rotate(26deg);
+  opacity: .75;
+}
+
 .runners-product .product-tab-link {
   color: #b99a82;
 }

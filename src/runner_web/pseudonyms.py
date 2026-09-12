@@ -144,6 +144,31 @@ def _comment_avatar_name() -> str:
     )
 
 
+def derive_actor_identity(stable_key: str) -> dict[str, str]:
+
+    """A stable fictional identity for a market actor.
+
+    Unlike a person's random avatar, this is derived from the actor's stable key,
+    so the same insider or wallet cluster keeps the same handle and face across
+    restarts. The handle is deliberately fictional; it never carries a real name.
+    """
+
+    digest = sha256(("market-actor:" + stable_key).encode()).digest()
+    name = " ".join(
+        (
+            AVATAR_TEMPERAMENTS[digest[0] % len(AVATAR_TEMPERAMENTS)].title(),
+            AVATAR_MATERIALS[digest[1] % len(AVATAR_MATERIALS)].title(),
+            AVATAR_FORMS[digest[2] % len(AVATAR_FORMS)].title(),
+        )
+    )
+    ability = COMMENT_AVATAR_ABILITIES[digest[3] % len(COMMENT_AVATAR_ABILITIES)]
+    return {
+        "name": name,
+        "seed": digest.hex(),
+        "ability_id": str(ability["id"]),
+    }
+
+
 def comment_avatar_ability(ability_id: str) -> dict[str, str]:
     ability = _COMMENT_AVATAR_ABILITY_BY_ID.get(ability_id)
     if ability is None:

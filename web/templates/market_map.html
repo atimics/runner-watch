@@ -1,0 +1,39 @@
+{% extends "mobile_base.html" %}
+{% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
+{% block app_class %}workspace-app market-map-app{% endblock %}
+{% block title %}{{ 'Wallet map' if market_map.domain == 'coin' else 'Insider map' }} · RATi{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/market-map.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+<section class="map-shell" data-market-map>
+  <header class="screen-head">
+    <div>
+      <span class="rati-product">{{ 'RATi MEMECOINS' if market_map.domain == 'coin' else 'RATi RUNNERS' }}</span>
+      <h1>{{ 'Wallet map' if market_map.domain == 'coin' else 'Insider map' }}</h1>
+    </div>
+    {% if user %}
+      <button class="avatar-button" type="button" data-profile aria-label="Open {{ comment_avatar.name }} profile">{{ render_comment_avatar(comment_avatar) }}</button>
+    {% else %}
+      <a class="avatar-button signed-out" href="/login">Log in</a>
+    {% endif %}
+  </header>
+  <p class="map-intro">
+    {% if market_map.domain == 'coin' %}
+      Each bubble is a fictional character standing in for a group of wallets that moved together. Links are observed funding or trading relationships, never identity claims.
+    {% else %}
+      Each bubble is a fictional character standing in for a real SEC filer. Names are hidden on purpose; open a character to see the role and the public filing behind it.
+    {% endif %}
+  </p>
+  <div class="map-stage">
+    <svg data-map-canvas viewBox="0 0 1000 700" role="img" aria-label="Market actor map" preserveAspectRatio="xMidYMid meet"></svg>
+    <p class="map-empty" data-map-empty hidden>No actors on the map yet. The next derivation run will fill it in.</p>
+  </div>
+</section>
+<aside class="map-panel" data-map-panel hidden aria-live="polite">
+  <button type="button" class="map-panel-close" data-map-close aria-label="Close character">×</button>
+  <div data-map-panel-body></div>
+</aside>
+{% endblock %}
+{% block scripts %}
+<script type="application/json" id="marketMapData" nonce="{{ request.state.csp_nonce }}">{{ market_map|tojson }}</script>
+<script src="/static/market-map.js?v={{ static_version }}" defer></script>
+{% endblock %}
