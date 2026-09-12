@@ -534,7 +534,7 @@ def test_openrouter_request_contains_the_approved_public_fields(monkeypatch):
     from runner_web import main as web_main
 
     request = {
-        "actor": {"model": FLASH.model, "model_label": "GLM 5.3"},
+        "actor": {"model": FLASH.model, "model_label": "DeepSeek V4.1 Flash"},
         "contract_version": CONTRACT_VERSION,
         "report_day": DAY,
         "evidence_as_of": PRE.isoformat(),

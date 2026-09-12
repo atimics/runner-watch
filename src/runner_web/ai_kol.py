@@ -6,10 +6,10 @@ import os
 from dataclasses import asdict, dataclass
 from typing import Any
 
-DEFAULT_FLASH_MODEL = "z-ai/glm-5.3"
+DEFAULT_FLASH_MODEL = "deepseek/deepseek-v4.1-flash"
 KOL_LADDER_SIZE = 4
-FLASH_VERSION_ID = os.getenv("FLASH_VERSION_ID", "flash-2026-09-b")
-FLASH_VERSION_LABEL = os.getenv("FLASH_VERSION_LABEL", "Flash 2026.09b")
+FLASH_VERSION_ID = os.getenv("FLASH_VERSION_ID", "flash-2026-09-c")
+FLASH_VERSION_LABEL = os.getenv("FLASH_VERSION_LABEL", "Flash 2026.09c")
 FLASH_PROMPT_VERSION = "daily-flash-v3"
 FLASH_CONTEXT_VERSION = "identity-thesis-v1"
 FLASH_RISK_POLICY_VERSION = "market_risk_v3"
@@ -21,6 +21,7 @@ SPORTS_FORECAST_CONTRACT_VERSION = "sports-moneyline-v1"
 
 def model_display_name(model: str) -> str:
     known = {
+        "deepseek/deepseek-v4.1-flash": "DeepSeek V4.1 Flash",
         "z-ai/glm-5.3": "GLM 5.3",
     }
     return known.get(model, model.rsplit("/", 1)[-1])

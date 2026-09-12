@@ -343,7 +343,7 @@ def test_migrations_are_numbered_and_idempotent(tmp_path: Path, monkeypatch: Mon
     assert flash["slot"] == "flash"
     assert flash["ladder_position"] == 1
     assert flash["inference_provider"] == "openrouter"
-    assert flash["inference_model"] == "z-ai/glm-5.3"
+    assert flash["inference_model"] == "deepseek/deepseek-v4.1-flash"
     assert {"actor_id", "actor_snapshot_json", "flash_version_id"} <= commission_columns
     assert {
         "case_id",
@@ -700,7 +700,7 @@ def test_flash_keeps_its_identity_when_its_model_assignment_changes(
     assert flash["ladder_position"] == 1
     assert flash["inference_model"] == "future/model"
     assert [(row["id"], row["status"], row["requested_model"]) for row in versions] == [
-        ("flash-2026-09-b", "retired", "z-ai/glm-5.3"),
+        ("flash-2026-09-c", "retired", "deepseek/deepseek-v4.1-flash"),
         ("flash-future-model", "active", "future/model"),
     ]
 

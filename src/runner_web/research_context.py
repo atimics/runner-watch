@@ -15,6 +15,7 @@ DEFAULT_CONTEXT_FILL_RATIO = 0.80
 DEFAULT_OUTPUT_RESERVE_TOKENS = 16_384
 EVIDENCE_FRESHNESS_HOURS = 24
 KNOWN_MODEL_CONTEXT_TOKENS = {
+    "deepseek/deepseek-v4.1-flash": 1_048_576,
     "gpt-5.6-terra": 1_050_000,
     "gpt-5.6-luna": 1_050_000,
     "gpt-5.6-sol": 1_050_000,
