@@ -11,7 +11,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import UTC, datetime
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from runner_web.db import connection
@@ -22,7 +23,9 @@ ACTOR_ID_PREFIX = "ma-"
 MAX_MAP_ACTORS = 160
 MAX_MAP_LINKS = 4_000
 MAX_SUBJECT_ACTORS = 14
-DEFAULT_DERIVE_LIMIT = 5_000
+DEFAULT_DERIVE_LIMIT = 500
+DEFAULT_DERIVE_DAYS = 365
+DERIVE_BATCH_SIZE = 80
 CLUSTER_MIN_WALLETS = 3
 ACTOR_COMMENT_PER_DAY = max(0, int(os.getenv("ACTOR_COMMENT_PER_ACTOR_DAILY", "3")))
 ACTOR_COMMENT_DAILY_LIMIT = max(0, int(os.getenv("ACTOR_COMMENT_DAILY_LIMIT", "300")))
@@ -70,12 +73,20 @@ def _ensure_actor(
     kind: str,
     domain: str,
     stable_key: str,
+    cache: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    if cache is not None:
+        cached = cache.get(stable_key)
+        if cached is not None:
+            return cached
     existing = db.execute(
         "SELECT * FROM market_actors WHERE stable_key=?", (stable_key,)
     ).fetchone()
     if existing:
-        return dict(existing)
+        actor = dict(existing)
+        if cache is not None:
+            cache[stable_key] = actor
+        return actor
     identity = derive_actor_identity(stable_key)
     actor_id = actor_id_for(stable_key)
     user_id = _actor_user_id(stable_key)
@@ -123,7 +134,10 @@ def _ensure_actor(
     row = db.execute(
         "SELECT * FROM market_actors WHERE stable_key=?", (stable_key,)
     ).fetchone()
-    return dict(row)
+    actor = dict(row)
+    if cache is not None:
+        cache[stable_key] = actor
+    return actor
 
 
 def _insert_tie(
@@ -222,63 +236,104 @@ def _stock_direction(row: Any) -> str:
     return "hold"
 
 
+def _process_stock_rows(
+    db: Any,
+    rows: list[Any],
+    timestamp: str,
+    cache: dict[str, dict[str, Any]],
+) -> int:
+    inserted = 0
+    for row in rows:
+        ticker = str(row["ticker"] or "").strip().upper()
+        if not ticker:
+            continue
+        owners = _stock_owners(row)
+        if not owners:
+            continue
+        direction = _stock_direction(row)
+        weight = _number(row["transaction_value"])
+        if weight is None:
+            weight = _number(row["beneficial_ownership_pct"])
+        as_of = str(row["filed_at"] or timestamp)
+        evidence_id = str(row["accession"] or "")
+        for name, role in owners:
+            actor = _ensure_actor(
+                db,
+                kind="person",
+                domain="stock",
+                stable_key=_stable_key("insider", _normalize_name(name)),
+                cache=cache,
+            )
+            if _insert_tie(
+                db,
+                str(actor["id"]),
+                subject_kind="stock",
+                subject_key=ticker,
+                role=role,
+                direction=direction,
+                weight=weight,
+                as_of=as_of,
+                evidence_kind="sec_filing",
+                evidence_id=evidence_id,
+                created_at=timestamp,
+            ):
+                inserted += 1
+    return inserted
+
+
 def derive_stock_actors(
     database: Any = None,
     *,
     at: datetime | None = None,
-    limit: int = DEFAULT_DERIVE_LIMIT,
+    limit: int | None = None,
+    tickers: Iterable[str] | None = None,
+    since_days: int | None = None,
+    batch_size: int = DERIVE_BATCH_SIZE,
 ) -> int:
-    """Turn recent Form 4 / SC 13 filings into actors and ties. Idempotent."""
+    """Turn Form 4 / SC 13 filings into actors and ties. Idempotent.
+
+    A run is bounded by tickers, a recency window, and a row limit, and commits
+    in batches so a long backfill never holds one transaction on the worker.
+    """
 
     timestamp = _iso(at)
-    connected = _connection(database)
+    selected_tickers = [
+        str(ticker).strip().upper() for ticker in (tickers or []) if str(ticker).strip()
+    ]
+    where = "form IN ('4','SC 13D','SC 13G')"
+    params: list[Any] = []
+    if selected_tickers:
+        placeholders = ",".join("?" for _ in selected_tickers)
+        where += f" AND ticker IN ({placeholders})"
+        params.extend(dict.fromkeys(selected_tickers))
+    window = DEFAULT_DERIVE_DAYS if since_days is None else int(since_days)
+    if window > 0:
+        cutoff = (at or datetime.now(UTC)) - timedelta(days=window)
+        where += " AND filed_at>=?"
+        params.append(cutoff.isoformat())
+    sql = (
+        "SELECT accession,ticker,form,actor,actor_title,reporting_person_types,"
+        " beneficial_owner_names,transaction_codes,transaction_value,"
+        " beneficial_ownership_pct,filed_at"
+        " FROM sec_filings"
+        f" WHERE {where} ORDER BY filed_at DESC"
+    )
+    bounded = DEFAULT_DERIVE_LIMIT if limit is None else int(limit)
+    if bounded > 0:
+        sql += " LIMIT ?"
+        params.append(bounded)
+    with connection() as db:
+        rows = db.execute(sql, tuple(params)).fetchall()
+    if not rows:
+        return 0
+    cache: dict[str, dict[str, Any]] = {}
+    if database is not None:
+        return _process_stock_rows(database, rows, timestamp, cache)
     inserted = 0
-    with connected as db:
-        rows = db.execute(
-            """
-            SELECT accession,ticker,form,actor,actor_title,reporting_person_types,
-                   beneficial_owner_names,transaction_codes,transaction_value,
-                   beneficial_ownership_pct,filed_at
-            FROM sec_filings
-            WHERE form IN ('4','SC 13D','SC 13G')
-            ORDER BY filed_at DESC LIMIT ?
-            """,
-            (max(1, int(limit)),),
-        ).fetchall()
-        for row in rows:
-            ticker = str(row["ticker"] or "").strip().upper()
-            if not ticker:
-                continue
-            owners = _stock_owners(row)
-            if not owners:
-                continue
-            direction = _stock_direction(row)
-            weight = _number(row["transaction_value"])
-            if weight is None:
-                weight = _number(row["beneficial_ownership_pct"])
-            as_of = str(row["filed_at"] or timestamp)
-            evidence_id = str(row["accession"] or "")
-            for name, role in owners:
-                actor = _ensure_actor(
-                    db,
-                    kind="person",
-                    domain="stock",
-                    stable_key=_stable_key("insider", _normalize_name(name)),
-                )
-                if _insert_tie(
-                    db,
-                    str(actor["id"]),
-                    subject_kind="stock",
-                    subject_key=ticker,
-                    role=role,
-                    direction=direction,
-                    weight=weight,
-                    as_of=as_of,
-                    evidence_kind="sec_filing",
-                    evidence_id=evidence_id,
-                    created_at=timestamp,
-                ):
-                    inserted += 1
+    step = max(1, int(batch_size))
+    for start in range(0, len(rows), step):
+        with connection() as db:
+            inserted += _process_stock_rows(db, rows[start : start + step], timestamp, cache)
     return inserted
 
 
@@ -298,83 +353,91 @@ def _finding_direction(kind: str) -> str:
     return "hold"
 
 
+def _process_coin_findings(
+    db: Any,
+    findings: list[dict[str, Any]],
+    timestamp: str,
+    cache: dict[str, dict[str, Any]],
+) -> int:
+    inserted = 0
+    for finding in findings:
+        token = str(finding.get("token_address") or "").strip()
+        kind = str(finding.get("kind") or "")
+        wallets = _finding_wallets(finding)
+        if not token or not wallets:
+            continue
+        is_creator = kind.startswith("creator")
+        if len(wallets) < CLUSTER_MIN_WALLETS and not is_creator:
+            continue
+        cluster_key = _stable_key("cluster", kind.split("_")[0] + "|" + "|".join(wallets))
+        actor = _ensure_actor(
+            db, kind="cluster", domain="coin", stable_key=cluster_key, cache=cache
+        )
+        actor_id = str(actor["id"])
+        role = "creator" if is_creator else "funder"
+        direction = _finding_direction(kind)
+        evidence_id = str(finding.get("signature") or "")
+        as_of = str(finding.get("observed_at") or timestamp)
+        for wallet in wallets:
+            _insert_cluster_member(
+                db, actor_id, wallet, "chain_event", evidence_id, timestamp
+            )
+        if _insert_tie(
+            db,
+            actor_id,
+            subject_kind="coin",
+            subject_key=coin_subject_key(token),
+            role=role,
+            direction=direction,
+            weight=None,
+            as_of=as_of,
+            evidence_kind="chain_event",
+            evidence_id=evidence_id,
+            created_at=timestamp,
+        ):
+            inserted += 1
+    return inserted
+
+
 def derive_coin_actors(
     database: Any = None,
     *,
     at: datetime | None = None,
     limit: int = 400,
+    batch_size: int = DERIVE_BATCH_SIZE,
 ) -> int:
     """Turn saved wallet-cluster findings into actors and ties. Idempotent."""
 
     timestamp = _iso(at)
-    connected = _connection(database)
-    inserted = 0
-    with connected as db:
-        row = db.execute(
+    if database is None:
+        with connection() as db:
+            row = db.execute(
+                "SELECT value FROM worker_state WHERE key='memecoin_forensics'"
+            ).fetchone()
+    else:
+        row = database.execute(
             "SELECT value FROM worker_state WHERE key='memecoin_forensics'"
         ).fetchone()
-        if row is None:
-            return 0
-        try:
-            forensics = json.loads(row["value"] or "{}")
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return 0
-        for finding in list(forensics.get("findings") or [])[: max(1, int(limit))]:
-            token = str(finding.get("token_address") or "").strip()
-            kind = str(finding.get("kind") or "")
-            wallets = _finding_wallets(finding)
-            if not token or not wallets:
-                continue
-            is_creator = kind.startswith("creator")
-            if len(wallets) < CLUSTER_MIN_WALLETS and not is_creator:
-                continue
-            cluster_key = _stable_key(
-                "cluster", kind.split("_")[0] + "|" + "|".join(wallets)
-            )
-            actor = _ensure_actor(db, kind="cluster", domain="coin", stable_key=cluster_key)
-            actor_id = str(actor["id"])
-            role = "creator" if is_creator else "funder"
-            direction = _finding_direction(kind)
-            evidence_id = str(finding.get("signature") or "")
-            as_of = str(finding.get("observed_at") or timestamp)
-            for wallet in wallets:
-                _insert_cluster_member(
-                    db, actor_id, wallet, "chain_event", evidence_id, timestamp
-                )
-            if _insert_tie(
-                db,
-                actor_id,
-                subject_kind="coin",
-                subject_key=coin_subject_key(token),
-                role=role,
-                direction=direction,
-                weight=None,
-                as_of=as_of,
-                evidence_kind="chain_event",
-                evidence_id=evidence_id,
-                created_at=timestamp,
-            ):
-                inserted += 1
-    return inserted
-
-
-def _connection(database: Any) -> Any:
+    if row is None:
+        return 0
+    try:
+        forensics = json.loads(row["value"] or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return 0
+    findings = list(forensics.get("findings") or [])[: max(1, int(limit))]
+    if not findings:
+        return 0
+    cache: dict[str, dict[str, Any]] = {}
     if database is not None:
-        return _ExistingConnection(database)
-    return connection()
-
-
-class _ExistingConnection:
-    """Adapt an already-open database for the ``with`` shape used here."""
-
-    def __init__(self, database: Any) -> None:
-        self._database = database
-
-    def __enter__(self) -> Any:
-        return self._database
-
-    def __exit__(self, *exc: Any) -> bool:
-        return False
+        return _process_coin_findings(database, findings, timestamp, cache)
+    inserted = 0
+    step = max(1, int(batch_size))
+    for start in range(0, len(findings), step):
+        with connection() as db:
+            inserted += _process_coin_findings(
+                db, findings[start : start + step], timestamp, cache
+            )
+    return inserted
 
 
 def _coin_labels(db: Any) -> dict[str, str]:
@@ -700,9 +763,12 @@ def record_market_actor_comment(*, at: datetime | None = None) -> None:
 
 
 def derive_market_actors(
-    database: Any = None, *, at: datetime | None = None
+    database: Any = None,
+    *,
+    at: datetime | None = None,
+    tickers: Iterable[str] | None = None,
 ) -> dict[str, int]:
     return {
-        "stock": derive_stock_actors(database, at=at),
+        "stock": derive_stock_actors(database, at=at, tickers=tickers),
         "coin": derive_coin_actors(database, at=at),
     }
