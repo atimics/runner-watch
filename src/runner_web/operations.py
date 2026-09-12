@@ -403,7 +403,6 @@ def runtime_capabilities(
                 "training_policy": manifest["ranker_training"],
             },
             "research": {
-                "openai_available": bool(os.getenv("OPENAI_API_KEY", "")),
                 "openrouter_available": (NODE_SERVICE.openrouter.status()["status"] == "connected"),
                 "provider": FLASH.provider,
                 "flash_model": FLASH.model,
@@ -411,11 +410,7 @@ def runtime_capabilities(
                 "browser_key_accepted": False,
                 "queue_payload": "report_id",
                 "visibility": "private_for_one_hour_or_until_owner_publishes",
-                "mode": (
-                    "one_shot_system_context"
-                    if FLASH.provider == "openrouter"
-                    else "verified_agent_pipeline"
-                ),
+                "mode": "one_shot_system_context",
                 "promotion_policy": manifest["research_promotion"],
             },
         },
