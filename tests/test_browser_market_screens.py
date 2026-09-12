@@ -68,7 +68,7 @@ def test_chart_renders_real_points_and_empty_history(page: Page):
         {"time": "2026-09-12T13:00:00Z", "value": 2},
     ]
     open_screen(page, screen)
-    expect(page.get_by_role("img", name="Price history")).to_be_visible()
+    expect(page.get_by_role("img", name=re.compile("Price history:"))).to_be_visible()
     assert page.locator(".chart-line").get_attribute("d").startswith("M")
     screen["series"] = []
     page.unroute("http://app.test/")
@@ -319,3 +319,88 @@ def test_call_record_keeps_choice_terms_and_reward_readable(page, market, width)
     expect(record.get_by_text(screen["call"]["terms"], exact=True)).to_be_visible()
     expect(record.get_by_text(screen["call"]["reward"], exact=True)).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("width", [320, 390, 1280])
+def test_map_keyboard_connections_overflow_and_detail(page, width):
+    items = [{**fixtures.sample("stocks"), "ticker": f"T{i}"} for i in range(9)]
+    screen = listing("stocks", items, view="map", graph=fixtures.connected_graph(9))
+    page.set_viewport_size({"width": width, "height": 844})
+    open_screen(page, screen)
+    summary = page.locator(".connection-node > summary")
+    expect(summary).to_have_count(1)
+    summary.focus()
+    page.keyboard.press("Enter")
+    expect(
+        page.get_by_text("Public filings connect this participant to these tickers.")
+    ).to_be_visible()
+    expect(page.get_by_role("link", name="View T8 Detail")).to_be_hidden()
+    page.locator(".more-connections > summary").focus()
+    page.keyboard.press("Enter")
+    target = page.get_by_role("link", name="View T8 Detail")
+    expect(target).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    page.route("http://app.test/t/T8", lambda r: r.fulfill(body="Detail opened"))
+    target.focus()
+    page.keyboard.press("Enter")
+    expect(page).to_have_url("http://app.test/t/T8")
+
+
+@pytest.mark.parametrize("width", [320, 1280])
+@pytest.mark.parametrize("end,expected", [(100.01, "+0.01%"), (200, "+100%"), (100, "+0%")])
+def test_chart_scopes_magnitude_and_period_separately_from_daily_quote(page, width, end, expected):
+    screen = detail("stocks", {"ticker": "OPK", "current": fixtures.sample("stocks")})
+    screen.pop("refresh_url")
+    screen.pop("chart_url")
+    screen["series"] = [
+        {"time": "2026-09-10T12:00:00Z", "value": 100},
+        {"time": "2026-09-12T12:00:00Z", "value": end},
+    ]
+    page.set_viewport_size({"width": width, "height": 844})
+    open_screen(page, screen)
+    expect(page.locator("[data-chart-summary]")).to_contain_text(expected)
+    expect(page.locator("[data-chart-summary]")).to_contain_text("$100.00 →")
+    expect(page.locator(".price-chart")).to_have_attribute(
+        "aria-label", re.compile(expected.replace("+", r"\+") + ".*Sep 10.*Sep 12")
+    )
+    expect(page.locator("[data-change]")).to_have_text("+5.4%")
+    expect(page.locator(".quote-scope")).to_contain_text("Daily change")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+def test_single_chart_point_and_empty_refresh_clear_old_period(page):
+    screen = detail("memecoins", {"coin": fixtures.sample("memecoins")})
+    screen.pop("refresh_url")
+    screen["series"] = [{"time": "2026-09-12T12:00:00Z", "value": 0.000018}]
+    open_screen(page, screen)
+    expect(page.locator(".chart-point")).to_be_visible()
+    expect(page.locator("[data-chart-summary]")).to_have_text("One saved price: $0.000018")
+    expect(page.locator("[data-chart-end]")).to_be_empty()
+    expect(page.locator(".price-chart")).to_have_attribute(
+        "aria-label", re.compile("One saved price.*Sep 12")
+    )
+    screen["series"] = []
+    page.unroute("http://app.test/")
+    open_screen(page, screen)
+    expect(page.locator("[data-chart-start]")).to_be_empty()
+    expect(page.locator("[data-chart-end]")).to_be_empty()
+    expect(page.locator("[data-chart-summary]")).to_be_empty()
+
+
+def test_map_missing_cached_portrait_uses_initials(page):
+    graph = fixtures.connected_graph()
+    graph["actors"][0]["portrait_ready"] = True
+    screen = listing(
+        "stocks", [{**fixtures.sample("stocks"), "ticker": "T0"}], view="map", graph=graph
+    )
+    requested = []
+
+    def missing(route):
+        requested.append(route.request.url)
+        route.fulfill(status=404)
+
+    page.route("**/api/market-actors/**", missing)
+    open_screen(page, screen)
+    expect(page.locator("[data-portrait]")).to_be_hidden()
+    expect(page.locator(".participant-mark")).to_have_text("CO")
+    assert requested == ["http://app.test/api/market-actors/actor-one/portrait?cached=true"]

@@ -2,6 +2,7 @@
   'use strict';
   const node = document.getElementById('screenData');
   let screen = node ? JSON.parse(node.textContent) : null;
+  document.addEventListener('error', event => { if (event.target.matches?.('[data-portrait]')) event.target.hidden = true; }, true);
   const chart = document.querySelector('.price-chart');
   const status = document.querySelector('[data-chart-status]');
   const put = (selector, value) => { const el = document.querySelector(selector); if (el) el.textContent = value || ''; };
@@ -10,16 +11,29 @@
     const ordered = new Map();
     (points || []).forEach(p => { const t = Date.parse(p.time); if (Number.isFinite(t) && Number.isFinite(p.value) && p.value > 0) ordered.set(t,p.value); });
     const data = [...ordered].sort((a,b)=>a[0]-b[0]);
-    if (data.length < 2) { status.hidden = false; status.textContent = 'Price history will appear here.'; chart.setAttribute('hidden', ''); return; }
+    const money = value => '$' + value.toLocaleString('en-US', value < 1 ? {maximumSignificantDigits: 6} : {minimumFractionDigits: 2, maximumFractionDigits: 6});
+    const label = t => new Date(t).toLocaleString('en-US', {year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'UTC'}) + ' UTC';
+    const dot = chart.querySelector('.chart-point');
+    put('[data-chart-start]', ''); put('[data-chart-end]', ''); put('[data-chart-summary]', '');
+    if (!data.length) {
+      status.hidden = false; status.textContent = 'Price history will appear here.';
+      chart.setAttribute('hidden', ''); chart.setAttribute('aria-label', 'Price history is pending.'); return;
+    }
     const low = Math.min(...data.map(p=>p[1])), high = Math.max(...data.map(p=>p[1]));
     const start = data[0][0], end = data[data.length-1][0];
-    const coords = data.map(p=>[8 + (p[0]-start)/(end-start)*784, high===low ? 140 : 260-(p[1]-low)/(high-low)*240]);
+    const first = data[0][1], last = data[data.length-1][1];
+    const move = ((last / first - 1) * 100).toLocaleString('en-US', {signDisplay:'always', maximumFractionDigits:6});
+    const summary = data.length === 1 ? `One saved price: ${money(first)}` : `${money(first)} → ${money(last)} · ${move}% over this period`;
+    put('[data-chart-summary]', summary);
+    put('[data-chart-start]', label(start));
+    if (data.length > 1) put('[data-chart-end]', label(end));
+    chart.setAttribute('aria-label', `Price history: ${summary}. ${label(start)}${data.length > 1 ? ' to ' + label(end) : ''}.`);
+    const coords = data.map(p=>[end===start ? 400 : 8 + (p[0]-start)/(end-start)*784, high===low ? 140 : 260-(p[1]-low)/(high-low)*240]);
     const line = coords.map((p,i)=>`${i?'L':'M'}${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ');
     chart.querySelector('.chart-line').setAttribute('d',line);
-    chart.querySelector('.chart-area').setAttribute('d',`${line} L792,280 L8,280 Z`);
+    chart.querySelector('.chart-area').setAttribute('d',data.length === 1 ? '' : `${line} L792,280 L8,280 Z`);
+    dot.toggleAttribute('hidden', data.length !== 1); dot.setAttribute('cx', '400'); dot.setAttribute('cy', '140');
     chart.removeAttribute('hidden'); status.hidden = true;
-    const label = t => new Date(t).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
-    put('[data-chart-start]',label(start)); put('[data-chart-end]',label(end));
   }
   draw(screen?.series);
   const pageKey = () => location.pathname + location.search;
@@ -100,7 +114,11 @@
       const next = new DOMParser().parseFromString(await response.text(), 'text/html');
       const content = next.querySelector('[data-live-surface]');
       if (!content || document.querySelector('dialog[open]') || surface.contains(document.activeElement)) return;
-      if (content.innerHTML !== surface.innerHTML) surface.replaceWith(content);
+      if (content.innerHTML !== surface.innerHTML) {
+        const opened = new Map([...surface.querySelectorAll('[data-connection][open]')].map(el => [el.dataset.connection, !!el.querySelector('.more-connections[open]')]));
+        content.querySelectorAll('[data-connection]').forEach(el => { if (opened.has(el.dataset.connection)) { el.open = true; const more = el.querySelector('.more-connections'); if (more) more.open = opened.get(el.dataset.connection); } });
+        surface.replaceWith(content);
+      }
     } catch (_) { /* Keep the saved view during connection recovery. */ }
   }
   if (screen?.refresh_url) refreshDetail();

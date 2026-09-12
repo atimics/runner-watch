@@ -363,3 +363,93 @@ def test_call_preview_price_has_a_strict_numeric_shape(screen_client, changing_d
         screen_client.post("/api/calls/stock/OPK", json={"expected_price": price}).status_code
         == 422
     )
+
+
+def connected_graph(count=2):
+    return {
+        "actors": [
+            {
+                "id": "actor-one",
+                "name": "Cedar Owl",
+                "portrait_ready": False,
+                "evidence_id": SENTINEL,
+            }
+        ],
+        "subjects": [{"key": f"T{i}", "label": f"T{i}"} for i in range(count)],
+        "links": [
+            {
+                "actor_id": "actor-one",
+                "subject_key": f"T{i}",
+                "direction": "buy",
+                "as_of": "2026-09-12T12:00:00Z",
+                "evidence_id": SENTINEL,
+            }
+            for i in range(count)
+        ],
+    }
+
+
+def test_shared_actor_retains_identity_related_subjects_and_overflow():
+    graph = connected_graph(9)
+    items = [{**sample("stocks"), "ticker": f"T{i}"} for i in range(9)]
+    screen = listing("stocks", items, view="map", query="T0", graph=graph)
+    assert len(screen["connections"]) == 1
+    node = screen["connections"][0]
+    assert node["id"] == "actor-one"
+    assert len(node["visible_links"]) == 6
+    assert len(node["more_links"]) == 3
+    assert node["links"][0]["item"]["id"] == "T0"
+    assert node["links"][1]["label"] == "Reported purchase · filed"
+    assert node["links"][1]["time"] == "Sep 12 · 12:00 UTC"
+    assert node["portrait"] == ""
+    assert SENTINEL not in json.dumps(screen)
+    assert 'href="/t/T8"' in render(screen)
+
+
+def test_coin_connections_keep_uncertainty_and_safe_portrait_url():
+    graph = connected_graph()
+    graph["actors"][0].update(portrait_ready=True, portrait_url="https://secret.invalid")
+    coin = {**sample("memecoins"), "id": "T0"}
+    screen = listing("memecoins", [coin], view="map", graph=graph)
+    node = screen["connections"][0]
+    assert node["label"] == "Possible wallet link"
+    assert "possible" in node["explanation"]
+    assert node["links"][0]["label"] == "Possible wallet activity · observed"
+    assert node["portrait"] == "/api/market-actors/actor-one/portrait?cached=true"
+    assert node["links"][1]["item"]["href"] == "/memecoins/coin/T1"
+    assert "secret.invalid" not in render(screen)
+
+
+def test_sports_shared_team_identity_is_scoped_to_league():
+    first = {**sample("sports"), "away_team_id": "2", "home_team_id": "3"}
+    second = {**first, "id": "nba:456", "away_team_id": "4", "away_team_name": "Other Team"}
+    third = {**first, "id": "wnba:123", "league": "wnba"}
+    screen = listing("sports", [first, second, third], view="map")
+    shared = next(node for node in screen["connections"] if node["id"] == "team:nba:3")
+    assert len(shared["links"]) == 2
+    assert shared["links"][0]["label"] == "Game time"
+    assert shared["links"][0]["time"] == "Sep 12 · 18:00 UTC"
+    assert len(next(n for n in screen["connections"] if n["id"] == "team:wnba:3")["links"]) == 1
+
+
+def test_sparse_map_keeps_subject_and_discovery_hint():
+    screen = listing("stocks", [sample("stocks")], view="map")
+    assert screen["connections"] == []
+    assert screen["unlinked"][0]["id"] == "OPK"
+    assert "More connections to discover" in render(screen)
+
+
+def test_map_cached_portraits_read_saved_images_only(screen_client, monkeypatch):
+    def unexpected_generation(*a, **kw):
+        pytest.fail("Map browsing must use saved portraits")
+
+    monkeypatch.setattr(web, "generate_actor_portrait", unexpected_generation)
+    monkeypatch.setattr(web, "portrait_for_actor", lambda *a: None)
+    url = "/api/market-actors/actor-one/portrait?cached=true"
+    assert screen_client.get(url).status_code == 404
+    monkeypatch.setattr(
+        web, "portrait_for_actor", lambda *a: {"bytes": b"saved-image", "content_type": "image/png"}
+    )
+    response = screen_client.get(url)
+    assert response.status_code == 200
+    assert response.content == b"saved-image"
