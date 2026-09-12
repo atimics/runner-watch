@@ -4,6 +4,8 @@ Design proposal, 12 September 2026. Based on PR #229 at `a5810f52322a1a36afa1523
 
 This is the first proposal. The [revised assessment](research/game-pattern-assessment.md) follows a source review across the games in `~/develop`. It replaces the Finish chapter step with a lasting result record, adds explicit story questions and follows, and places cosmetic progression behind a product study. The current delivery scope lives in [backlog #232](https://github.com/atimics/runner-watch/issues/232).
 
+The [pseudonymous identity revision](research/pseudonymous-identity-design.md) defines the shared cast across all three markets. It adds supported public associations, distinct relationship types, reversible identity grouping and dated story reveals while preserving familiar avatars and earlier reports.
+
 The core loop is **spot a story → read Flash → make a Call or React → return for the outcome → finish a chapter**. A ticker becomes a story with a beginning and an ending. Its price or score remains the main visual.
 
 This proposal includes a clickable sample and a separate [adversarial review of the base](reviews/pr-229-base-design.md). It describes future work. The production app is unchanged by this document and preview.

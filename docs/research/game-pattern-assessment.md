@@ -4,6 +4,8 @@
 
 **The strongest direction is a short story with a question, a player choice, and a remembered outcome.** The existing three screens can carry that whole experience. The next design should make the result feel worth returning for. Character milestones follow a useful story record.
 
+**Pseudonymity supplies the shared cast.** A familiar avatar can appear across markets while research learns more about the participant behind it. The [identity design](pseudonymous-identity-design.md) adds public wallet attribution, shared control, accepted aliases and later corrections. A reveal becomes a material story update. Stable faces and preserved history give that update meaning.
+
 ## What changed in the assessment
 
 | First proposal | Revised decision | Reason |
@@ -112,7 +114,7 @@ The result view itself is the first keepsake: a chart or score, original choice,
 
 The six base findings remain the first repair group. The story contract can be designed alongside them. Then deliver the shared reports, coin support and reactions, followed by explicit follows, return cues and lasting result records. Character progression and matched competition follow evidence from the first complete loop.
 
-The [backlog index](../playable-ticker-backlog.md) links all fifteen child issues. It puts the story contract in #245, follows and return cues in #242, lasting records in #243, the player study in #246, and the reaction-purpose experiment in #247. Individual issues own implementation scope and dependencies. This document owns the design decision. The newsroom proposal [#231](https://github.com/atimics/runner-watch/issues/231) can supply recurring reporters and assignments. Its stories should arrive through this shared surface; its operational controls retain their separate operator audience.
+The [backlog index](../playable-ticker-backlog.md) links the child issues, including the identity foundation. It puts the story contract in #245, follows and return cues in #242, lasting records in #243, the player study in #246, and the reaction-purpose experiment in #247. Individual issues own implementation scope and dependencies. This document owns the design decision. The newsroom proposal [#231](https://github.com/atimics/runner-watch/issues/231) can supply recurring reporters and assignments. Its stories should arrive through this shared surface; its operational controls retain their separate operator audience.
 
 The first product study should use two small waves with clear stop points. Wave A tests the first visit and explanation of a result. Improve the earliest repeated confusion before Wave B. The return exercise includes both a material update and a resolved Call. Ask players to identify the original choice and explain what changed. Report raw counts and observed friction. The existing privacy model decides which aggregate events are available.
 

@@ -15,16 +15,28 @@ Groomed 12 September 2026. The live parent is [#232](https://github.com/atimics/
 
 These are the six P2 findings from the [independent base review](reviews/pr-229-base-design.md).
 
+## Establish pseudonymous identity
+
+The [identity design](research/pseudonymous-identity-design.md) makes pseudonyms the shared cast. Public associations, accepted aliases and later corrections become story updates. Same-participant, shared control and possible links retain distinct meanings.
+
+| Issue | Work | Dependency |
+| --- | --- | --- |
+| [#248](https://github.com/atimics/runner-watch/issues/248) | Stable avatars, entity references, dated claims and legacy migration | Define alongside #245 and the base repairs |
+| [#249](https://github.com/atimics/runner-watch/issues/249) | Add Helius wallet attribution with caching and shared budget limits | #248 and the existing Helius budget ledger |
+| [#250](https://github.com/atimics/runner-watch/issues/250) | Reversible identity reveals, corrections and shared Map treatment | #248, #245 and the base Map in #237; #249 supplies wallet claims |
+
+Identity grouping preserves earlier aliases, reports, authors and account ownership. The proposed attribution sublimit is 1,000 credits within the existing 10,000-credit daily Helius ceiling. Source evidence and internal attribution details stay in the service layer.
+
 ## Complete the shared story
 
 | Issue | Work | Dependency |
 | --- | --- | --- |
-| [#245](https://github.com/atimics/runner-watch/issues/245) | Define story question, revisit trigger, versions and outcome | Can be designed alongside the base repairs |
+| [#245](https://github.com/atimics/runner-watch/issues/245) | Define story question, revisit trigger, versions and outcome | Define alongside the base repairs and #248; retain identity revisions |
 | [#240](https://github.com/atimics/runner-watch/issues/240) | Add coin report subjects | #245 |
 | [#239](https://github.com/atimics/runner-watch/issues/239) | Read and commission reports in shared Detail | #240, #245 |
 | [#241](https://github.com/atimics/runner-watch/issues/241) | Restore durable avatar reactions across markets | #240 |
 | [#242](https://github.com/atimics/runner-watch/issues/242) | Follow stories and review outcomes in List and Detail | #236, #239, #245 |
-| [#243](https://github.com/atimics/runner-watch/issues/243) | Keep resolved stories as lasting records | #242, #245 |
+| [#243](https://github.com/atimics/runner-watch/issues/243) | Keep resolved stories as lasting records | #242, #245; identity-reveal extension uses #250 |
 
 The existing newsroom proposal [#231](https://github.com/atimics/runner-watch/issues/231) can supply recurring voices, reports and updates through this same story contract. Its operator work keeps its own audience.
 
@@ -32,7 +44,7 @@ The existing newsroom proposal [#231](https://github.com/atimics/runner-watch/is
 
 | Issue | Work | Dependency |
 | --- | --- | --- |
-| [#246](https://github.com/atimics/runner-watch/issues/246) | Observe the first visit and return journey | #236, #239, #242 |
+| [#246](https://github.com/atimics/runner-watch/issues/246) | Observe the first visit and return journey | #236, #239, #242; reveal study follows #250 |
 | [#247](https://github.com/atimics/runner-watch/issues/247) | Test two useful purposes for a reaction | #241, #245; informed by #246 |
 | [#244](https://github.com/atimics/runner-watch/issues/244) | Define fair matched player-versus-Flash Calls | #242; product decision after #246 |
 
