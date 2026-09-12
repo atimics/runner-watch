@@ -37,8 +37,22 @@ jobs:
             node --check "$script"
           done
       - run: uv run pip-audit --local --skip-editable --progress-spinner off --timeout 10 --vulnerability-service osv
-      - run: uv run pytest -q --cov-fail-under=68
-      - run: uv run pytest -q -m browser -o addopts=
+      - run: uv run pytest -q --cov-fail-under=68 --junitxml=replay-unit-results.xml
+      - run: uv run pytest -q -m browser -o addopts= --junitxml=replay-browser-results.xml
+      - name: Record replay quality evidence
+        if: always()
+        run: uv run python scripts/record-replay-quality.py --reports replay-unit-results.xml replay-browser-results.xml --output replay-quality.json
+        env:
+          REPLAY_REVIEWED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Save replay quality evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: memecoin-replay-quality
+          path: |
+            replay-quality.json
+            replay-unit-results.xml
+            replay-browser-results.xml
       - run: docker compose -f compose.local.yml config --quiet
       - run: docker build --target test --tag runner-watch:test .
 

@@ -1,0 +1,14 @@
+<section class="meme-section token-replay" id="token-replay" aria-labelledby="replayTitle" data-token-replay data-coin-id="{{ coin.id }}">
+  <header><div><span>FROM THE LAUNCH, OUTWARD</span><h2 id="replayTitle">Token network</h2></div><span class="replay-badge" data-replay-badge>Saved evidence</span></header>
+  <p role="status" data-replay-status>Loading the saved token history…</p>
+  <div data-replay-content hidden>
+    <div class="replay-stage"><svg viewBox="0 0 800 540" data-replay-graph role="group" aria-label="Token launch and connected wallets"></svg></div>
+    <div class="replay-legend"><span>● Launch</span><span>● Wallet</span><span>● Token</span><span>● Pool</span></div>
+    <div class="replay-controls"><button type="button" data-replay-play>Replay events</button><button type="button" data-replay-origin>Launch</button><button type="button" data-replay-latest>Latest</button><label><input type="checkbox" data-replay-loop checked> Loop</label><a data-replay-gif download>Save GIF ↗</a></div>
+    <label class="replay-position">Event position <input type="range" min="0" max="1" value="0" data-replay-position></label>
+    <p class="replay-time" data-replay-time></p>
+    <p data-replay-coverage></p>
+    <details class="replay-evidence"><summary>Connections and source evidence</summary><div data-replay-selection>Choose a bubble to view its recorded connections.</div><a data-replay-evidence>Download evidence package ↗</a></details>
+  </div>
+  <noscript><p>Enable JavaScript to replay the collected token events.</p></noscript>
+</section>

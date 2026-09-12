@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from runner_web.db import connection
+from runner_web.memecoin_replay_store import queue_replay
 
 HISTORY_DAYS = 7
 MAX_HISTORY_POINTS = 250_000
@@ -28,6 +29,7 @@ def save_memecoin_snapshot(
                 """,
                 (row["id"], json.dumps(row, allow_nan=False), collected, run_id),
             )
+            queue_replay(database, row, collected)
             observed = row.get("observed_at")
             if observed is None:
                 continue

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterable, Mapping
@@ -56,6 +57,88 @@ def alerts_enabled(value: str | None = None) -> bool:
 
     raw = os.getenv("TELEGRAM_RUNNER_ALERTS", "0") if value is None else value
     return str(raw).strip().lower() in _TRUE_VALUES
+
+
+def memecoin_alerts_enabled() -> bool:
+    """The integration team enables new-token GIF delivery explicitly."""
+    return alerts_enabled(os.getenv("TELEGRAM_MEMECOIN_ALERTS", "0"))
+
+
+class AnimationDeliveryError(RuntimeError):
+    def __init__(self, status: str, *, retry_after: int = 60):
+        super().__init__("Telegram animation " + status)
+        self.status = status
+        self.retry_after = max(30, min(retry_after, 86400))
+
+
+def send_animation(
+    config: TelegramConfig,
+    gif: bytes,
+    caption: str,
+    *,
+    opener: Callable[..., Any] = urllib.request.urlopen,
+) -> int:
+    """Upload one GIF and caption after the caller enables the media feature."""
+    if not memecoin_alerts_enabled() or not config.configured:
+        raise AnimationDeliveryError("failed")
+    if not gif.startswith((b"GIF87a", b"GIF89a")) or len(gif) > 8 * 1024 * 1024:
+        raise AnimationDeliveryError("failed")
+    boundary = "rati-" + secrets.token_hex(16)
+    caption = caption.encode("utf-16-le")[:2048].decode("utf-16-le", errors="ignore")
+    fields = {"chat_id": config.chat_id, "caption": caption, "disable_notification": "false"}
+    parts = []
+    for name, value in fields.items():
+        parts.append(
+            (
+                f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'
+                + value
+                + "\r\n"
+            ).encode()
+        )
+    parts.extend(
+        [
+            (
+                f'--{boundary}\r\nContent-Disposition: form-data; name="animation"; '
+                'filename="token-replay.gif"\r\nContent-Type: image/gif\r\n\r\n'
+            ).encode(),
+            gif,
+            f"\r\n--{boundary}--\r\n".encode(),
+        ]
+    )
+    request = urllib.request.Request(
+        f"{TELEGRAM_API_BASE}/bot{config.bot_token}/sendAnimation",
+        data=b"".join(parts),
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    try:
+        with opener(request, timeout=30) as response:
+            body = json.loads(response.read(64 * 1024))
+    except urllib.error.HTTPError as exc:
+        try:
+            body = json.loads(exc.read(64 * 1024))
+        except (ValueError, OSError):
+            body = {}
+        finally:
+            exc.close()
+        if exc.code == 429:
+            delay = (body.get("parameters") or {}).get("retry_after", 60)
+            raise AnimationDeliveryError("retry", retry_after=int(delay)) from None
+        raise AnimationDeliveryError("failed" if 400 <= exc.code < 500 else "uncertain") from None
+    except (OSError, ValueError):
+        raise AnimationDeliveryError("uncertain") from None
+    if not isinstance(body, dict):
+        raise AnimationDeliveryError("uncertain")
+    if body.get("ok") is False:
+        if body.get("error_code") == 429:
+            raise AnimationDeliveryError(
+                "retry", retry_after=int((body.get("parameters") or {}).get("retry_after", 60))
+            )
+        raise AnimationDeliveryError("failed")
+    message_id = (body.get("result") or {}).get("message_id")
+    if body.get("ok") is not True or type(message_id) is not int or message_id <= 0:
+        raise AnimationDeliveryError("uncertain")
+    return message_id
 
 
 def release_announcements_enabled(value: str | None = None) -> bool:
@@ -248,7 +331,6 @@ def announcement_batch_ready(
     min_items: int = DEFAULT_ANNOUNCE_BATCH_MIN,
     debounce_minutes: int = DEFAULT_ANNOUNCE_DEBOUNCE_MINUTES,
 ) -> bool:
-
     """Decide whether enough has piled up to announce it.
 
     A batch goes out as soon as it reaches the floor. A lone item waits for more
@@ -264,7 +346,6 @@ def announcement_batch_ready(
 
 
 def format_update_announcement(activity: Mapping[str, Any], *, origin: str) -> str:
-
     """One message for everything that just landed, in the room's plain voice.
 
     Used when no model writes the announcement, and as the fallback when one
@@ -306,7 +387,6 @@ def format_update_announcement(activity: Mapping[str, Any], *, origin: str) -> s
 def format_release_announcement(
     version: str, build_sha: str, notes: str | None, *, origin: str
 ) -> str:
-
     """One message announcing that a new build is live."""
 
     blocks = [f"🐆 Fresh build is live — RATi Runners {version}"]

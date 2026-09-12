@@ -15,5 +15,6 @@ os.environ.setdefault("BACKGROUND_WORKERS_ENABLED", "0")
 # connection helper. Left on, a test that runs a scan could post outward and land rows in
 # whichever database the next test points at.
 os.environ.setdefault("TELEGRAM_RUNNER_ALERTS", "0")
+os.environ.setdefault("TELEGRAM_MEMECOIN_ALERTS", "0")
 os.environ.setdefault("TELEGRAM_RUNNER_REPORTS_PER_DAY", "0")
 os.environ.setdefault("TELEGRAM_WEBHOOK_SECRET", "")
