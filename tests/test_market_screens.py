@@ -150,3 +150,77 @@ def test_search_applies_to_map_and_list():
     for view in ["list", "map"]:
         assert len(listing("stocks", [sample("stocks")], query="opko", view=view)["rows"]) == 1
         assert listing("stocks", [sample("stocks")], query="missing", view=view)["rows"] == []
+
+
+@pytest.fixture
+def screen_client(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from runner_web import db
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "screens.db")
+    monkeypatch.setattr(db, "DATABASE_URL", "")
+    monkeypatch.setattr(db, "REQUIRE_DATABASE_URL", False)
+    db.init_db()
+    monkeypatch.setattr(web, "enforce_rate", lambda *a, **kw: None)
+    monkeypatch.setattr(web, "current_user", lambda *a: None)
+    monkeypatch.setattr(web, "_public_screen_data", lambda kind, key, build: build())
+    client = TestClient(web.app)
+    yield client
+    client.close()
+
+
+@pytest.mark.parametrize(
+    "path", ["/memecoins", "/memecoins?view=map", "/memecoins/coin/solana-test"]
+)
+def test_coin_routes_preserve_paused_price_and_recover(screen_client, monkeypatch, path):
+    coin = {**sample("memecoins"), "stale": True}
+    monkeypatch.setattr(web, "memecoin_market", lambda **kw: {"rows": [coin]})
+    monkeypatch.setattr(web, "market_actor_map", lambda *a: {})
+    monkeypatch.setattr(
+        web,
+        "_memecoin_detail_payload",
+        lambda *a: {"coin": coin, "calls": [], "can_call": not coin["stale"]},
+    )
+    for stale in (True, False, True):
+        coin["stale"] = stale
+        response = screen_client.get(path)
+        assert response.status_code == 200
+        assert ("Price paused" in response.text) == stale
+        assert SENTINEL not in response.text
+        quote = screen_client.get("/api/screens/memecoins/solana-test/quote").json()
+        assert quote["freshness"] == ("paused" if stale else "current")
+        assert quote["change"] == ("Price paused" if stale else "+4.2%")
+        assert quote["tone"] == ("neutral" if stale else "up")
+        assert quote["time"]
+        assert SENTINEL not in json.dumps(quote)
+
+
+@pytest.mark.parametrize("path", ["/?league=nba", "/?league=nba&view=map", "/game/nba:123"])
+def test_sports_routes_follow_confirmed_scores(screen_client, monkeypatch, path):
+    from runner_web.sports import _game_view_state
+
+    event = sample("sports")
+    monkeypatch.setattr(web, "product_for_request", lambda *a: "sports")
+    monkeypatch.setattr(web, "sports_slate", lambda *a: {"events": [event]})
+    monkeypatch.setattr(web, "sports_event", lambda *a: event)
+    for status, now, away, home, expected in [
+        ("pre", "2026-09-12T17:00:00+00:00", 0, 0, "Sep 12 · 18:00 UTC"),
+        ("pre", "2026-09-12T19:00:00+00:00", 0, 0, "Score pending"),
+        ("in", "2026-09-12T19:01:00+00:00", None, None, "Score pending"),
+        ("in", "2026-09-12T19:02:00+00:00", 0, 0, "0 – 0"),
+        ("in", "2026-09-12T19:03:00+00:00", 72, 68, "72 – 68"),
+        ("post", "2026-09-12T21:00:00+00:00", 102, 98, "102 – 98"),
+    ]:
+        event.update(status=status, away_score=away, home_score=home)
+        event["view_state"] = _game_view_state(event, datetime.fromisoformat(now))
+        response = screen_client.get(path)
+        assert response.status_code == 200
+        assert expected in response.text
+        assert SENTINEL not in response.text
+        screen = detail("sports", event)
+        if not event["view_state"]["score_available"]:
+            assert "0 – 0" not in response.text
+            assert all(team["score"] == "—" for team in screen["teams"])
+        else:
+            assert screen["teams"][0]["score"] == str(away)

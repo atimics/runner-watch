@@ -96,3 +96,72 @@ def test_call_requires_confirmation_and_keeps_internal_error_private(page: Page)
     expect(page.get_by_role("status")).to_have_text("Please try again when the price is current.")
     assert submitted == [{}]
     expect(page.get_by_text(fixtures.SENTINEL)).to_have_count(0)
+
+
+screen_client = fixtures.screen_client
+
+
+@pytest.mark.parametrize("market", ["memecoins", "sports"])
+@pytest.mark.parametrize("view", ["list", "map", "detail"])
+@pytest.mark.parametrize("width", [390, 1280])
+def test_actual_routes_refresh_pending_values(
+    page: Page, screen_client, monkeypatch, market, view, width
+):
+    from urllib.parse import urlsplit
+
+    from runner_web import main as web
+
+    coin = {**fixtures.sample("memecoins"), "stale": True}
+    event = fixtures.sample("sports")
+    event.update(status="pre", away_score=0, home_score=0)
+    event["view_state"].update(score_available=False, label="Game started")
+    monkeypatch.setattr(web, "memecoin_market", lambda **kw: {"rows": [coin]})
+    monkeypatch.setattr(web, "market_actor_map", lambda *a: {})
+    monkeypatch.setattr(
+        web,
+        "_memecoin_detail_payload",
+        lambda *a: {"coin": coin, "calls": [], "can_call": not coin["stale"]},
+    )
+    monkeypatch.setattr(web, "product_for_request", lambda *a: market)
+    monkeypatch.setattr(web, "sports_slate", lambda *a: {"events": [event]})
+    monkeypatch.setattr(web, "sports_event", lambda *a: event)
+
+    def serve(route):
+        url = urlsplit(route.request.url)
+        response = screen_client.get(url.path + ("?" + url.query if url.query else ""))
+        route.fulfill(
+            status=response.status_code,
+            headers=dict(response.headers),
+            body=response.content,
+        )
+
+    page.route("http://app.test/**", serve)
+    page.set_viewport_size({"width": width, "height": 844})
+    page.clock.install()
+    path = (
+        "/memecoins/coin/solana-test"
+        if market == "memecoins" and view == "detail"
+        else "/game/nba:123"
+        if view == "detail"
+        else f"/memecoins?view={view}"
+        if market == "memecoins"
+        else f"/?league=nba&view={view}"
+    )
+    page.goto("http://app.test" + path)
+    surface = page.locator("[data-live-surface]")
+    pending = "Price paused" if market == "memecoins" else "Score pending"
+    expect(surface.get_by_text(pending, exact=True).first).to_be_visible()
+    for price, away, home in [(0.000020, 72, 68), (0.000021, 74, 70)]:
+        coin.update(stale=False, price=price)
+        event.update(status="in", away_score=away, home_score=home)
+        event["view_state"].update(score_available=True, label="Live")
+        page.clock.fast_forward(60000)
+        expected = f"${price:.6f}".rstrip("0") if market == "memecoins" else f"{away} – {home}"
+        expect(
+            page.locator("[data-live-surface]").get_by_text(expected, exact=True)
+        ).to_be_visible()
+        expect(page.locator("[data-live-surface]").get_by_text(pending, exact=True)).to_have_count(
+            0
+        )
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    expect(page.get_by_text(fixtures.SENTINEL)).to_have_count(0)

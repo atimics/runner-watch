@@ -66,7 +66,9 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         scores = [item.get(f"{side}_score") for side in ("away", "home")]
         value = (
             " – ".join(str(int(float(s))) for s in scores)
-            if started and all(number(s) is not None for s in scores)
+            if state.get("score_available") and all(number(s) is not None for s in scores)
+            else "—"
+            if started
             else "vs"
         )
         return {
@@ -74,8 +76,14 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
             "name": f"{away} · {home}",
             "subtitle": str(item.get("league") or "Sports").upper(),
             "value": value,
-            "change": state.get("label")
-            or {"in": "Live", "post": "Final"}.get(item.get("status"), "Upcoming"),
+            "change": (
+                "Score pending"
+                if value == "—"
+                else stamp(item.get("start_time")) or "Upcoming"
+                if not started
+                else state.get("label")
+                or {"in": "Live", "post": "Final"}.get(item.get("status"), "Upcoming")
+            ),
             "tone": "neutral",
             "time": stamp(item.get("start_time")),
             "href": "/game/" + quote(str(item["id"]), safe=":"),
@@ -85,6 +93,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
     identifier = str(item.get("id") if coin else item.get("ticker") or "")
     name = str(item.get("symbol") if coin else item.get("ticker") or "")
     move = number(item.get("change_24h") if coin else item.get("change_pct"))
+    paused = coin and bool(item.get("stale"))
     return {
         "id": identifier,
         "name": name,
@@ -92,8 +101,15 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
             item.get("name") if coin else item.get("company") or item.get("name") or ""
         ),
         "value": money(item.get("price")),
-        "change": change(move),
-        "tone": "up" if move and move > 0 else "down" if move and move < 0 else "neutral",
+        "change": "Price paused" if paused else change(move),
+        "tone": "neutral"
+        if paused
+        else "up"
+        if move and move > 0
+        else "down"
+        if move and move < 0
+        else "neutral",
+        **({"freshness": "paused" if paused else "current"} if coin else {}),
         "time": stamp(
             item.get("observed_at") if coin else item.get("quote_time") or item.get("event_at")
         ),
@@ -229,7 +245,7 @@ def detail(
             }
             for s in ("away", "home")
         ]
-        result["note"] = str(state.get("label") or item["change"])
+        result["note"] = str(item["change"])
         if data.get("venue"):
             result["facts"].append({"label": "Venue", "value": str(data["venue"])})
         if my_pick:
