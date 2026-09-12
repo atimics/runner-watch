@@ -726,6 +726,7 @@ def _start_worker_tasks(
         asyncio.create_task(case_monitor_worker(), name="case-monitor"),
         asyncio.create_task(kol_worker(), name="kol"),
         asyncio.create_task(memecoin_worker(), name="memecoins"),
+        asyncio.create_task(memecoin_replay_worker(), name="memecoin-replays"),
         asyncio.create_task(market_actor_worker(), name="market-actors"),
         asyncio.create_task(call_settlement_worker(), name="call-settlement"),
     ]
@@ -2066,6 +2067,20 @@ async def memecoin_worker() -> None:
         except Exception:
             LOG.exception("Memecoin refresh failed")
         await asyncio.sleep(REFRESH_SECONDS)
+
+
+async def memecoin_replay_worker() -> None:
+    """Prepare local replay artifacts from receipts already in the database."""
+    from runner_web.memecoin_replay_store import render_pending_replays
+
+    while True:
+        try:
+            await run_in_threadpool(render_pending_replays)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOG.warning("Memecoin replay rendering will retry")
+        await asyncio.sleep(15)
 
 
 async def market_actor_worker() -> None:
@@ -6864,6 +6879,66 @@ def _memecoin_detail_payload(coin_id: str) -> dict[str, Any]:
 def memecoin_detail_api(coin_id: str, request: Request) -> dict[str, Any]:
     enforce_rate(request, "memecoins", limit=120, seconds=60)
     return _memecoin_detail_payload(coin_id)
+
+
+@app.get("/api/memecoins/{coin_id}/replay")
+def memecoin_replay_api(coin_id: str, request: Request, revision: str | None = None):
+    from runner_web.memecoin_replay_store import replay_status
+
+    enforce_rate(request, "memecoin_replay", limit=30, seconds=60)
+    if memecoin_detail(coin_id) is None or (
+        revision and not re.fullmatch(r"[a-f0-9]{64}", revision)
+    ):
+        raise HTTPException(404, "Replay not found")
+    try:
+        status = replay_status(coin_id, revision)
+    except ValueError:
+        raise HTTPException(409, "Saved replay needs an evidence review") from None
+    if revision and status["status"] != "ready":
+        raise HTTPException(404, "Replay not found")
+    return status
+
+
+def _memecoin_replay_artifact(coin_id: str, replay_id: str, request: Request, *, gif: bool):
+    from runner_web.memecoin_replay_store import saved_replay
+
+    enforce_rate(request, "memecoin_replay", limit=30, seconds=60)
+    if (not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", coin_id)
+            or not re.fullmatch(r"[a-f0-9]{64}", replay_id)):
+        raise HTTPException(404, "Replay not found")
+    try:
+        record = saved_replay(coin_id, replay_id, with_gif=gif)
+    except ValueError:
+        raise HTTPException(409, "Saved replay needs an evidence review") from None
+    if record is None:
+        raise HTTPException(404, "Replay not found")
+    content = record["gif"] if gif else json.dumps(record["payload"], allow_nan=False).encode()
+    suffix = "gif" if gif else "json"
+    return Response(content, media_type="image/gif" if gif else "application/json", headers={
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "ETag": '"' + (record["gif_sha256"] if gif else replay_id) + '"',
+        "Content-Disposition": f'inline; filename="token-replay-{replay_id[:12]}.{suffix}"',
+    })
+
+
+@app.get("/api/memecoins/{coin_id}/replays/{replay_id}.gif")
+def memecoin_replay_gif_api(coin_id: str, replay_id: str, request: Request):
+    return _memecoin_replay_artifact(coin_id, replay_id, request, gif=True)
+
+
+@app.get("/api/memecoins/{coin_id}/replays/{replay_id}.json")
+def memecoin_replay_evidence_api(coin_id: str, replay_id: str, request: Request):
+    return _memecoin_replay_artifact(coin_id, replay_id, request, gif=False)
+
+
+@app.get("/api/memecoins/{coin_id}/replays/{replay_id}/receipts/{signature}")
+def memecoin_replay_receipt_api(coin_id: str, replay_id: str, signature: str, request: Request):
+    package = _memecoin_replay_artifact(coin_id, replay_id, request, gif=False)
+    payload = json.loads(package.body)
+    receipt = next((row for row in payload["receipts"] if row["signature"] == signature), None)
+    if receipt is None:
+        raise HTTPException(404, "Receipt not found")
+    return JSONResponse(receipt, headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
 
 @app.get("/memecoins/coin/{coin_id}", response_class=HTMLResponse)

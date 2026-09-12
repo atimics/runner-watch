@@ -3154,6 +3154,41 @@ def _migration_066_market_actors(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_068_memecoin_replays(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS memecoin_replay_cases (
+            coin_id TEXT PRIMARY KEY REFERENCES memecoin_assets(coin_id),
+            requested_at TEXT NOT NULL, processed_at TEXT, latest_id TEXT,
+            lease_token TEXT, lease_until TEXT, last_error TEXT
+        );
+        CREATE TABLE IF NOT EXISTS memecoin_replays (
+            id TEXT PRIMARY KEY,
+            coin_id TEXT NOT NULL REFERENCES memecoin_assets(coin_id),
+            payload_json TEXT NOT NULL, gif_bytes BLOB NOT NULL,
+            gif_sha256 TEXT NOT NULL, created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS memecoin_replays_coin ON memecoin_replays(coin_id,created_at);
+        CREATE TABLE IF NOT EXISTS memecoin_replay_posts (
+            coin_id TEXT PRIMARY KEY REFERENCES memecoin_assets(coin_id),
+            replay_id TEXT REFERENCES memecoin_replays(id), chat_id TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN
+                ('baseline','pending','sending','sent','retry','uncertain','failed')),
+            attempts INTEGER NOT NULL DEFAULT 0, message_id BIGINT,
+            retry_at TEXT, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS memecoin_replay_posts_queue
+            ON memecoin_replay_posts(status,created_at);
+        INSERT INTO memecoin_replay_cases(coin_id,requested_at)
+            SELECT coin_id,collected_at FROM memecoin_assets WHERE 1=1
+            ON CONFLICT(coin_id) DO NOTHING;
+        INSERT INTO memecoin_replay_posts(coin_id,chat_id,status,created_at,updated_at)
+            SELECT coin_id,'','baseline',collected_at,collected_at FROM memecoin_assets WHERE 1=1
+            ON CONFLICT(coin_id) DO NOTHING;
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -3246,6 +3281,7 @@ MIGRATIONS = (
     Migration(65, "telegram_channel_posts", _migration_065_telegram_channel_posts),
     Migration(66, "market_actors", _migration_066_market_actors),
     Migration(67, "coin_evidence_pruning", _migration_067_coin_evidence_pruning),
+    Migration(68, "memecoin_replays", _migration_068_memecoin_replays),
 )
 
 

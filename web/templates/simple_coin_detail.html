@@ -1,2 +1,5 @@
 {% extends "market_screen.html" %}
 {% set screen = simple_market_detail('memecoins', detail, active_call=active_call) %}
+{% block detail_head %}<link rel="stylesheet" href="/static/memecoin-replay.css?v={{ static_version }}">{% endblock %}
+{% block detail_extra %}{% set coin = detail.coin %}{% include "_memecoin_replay.html" %}{% endblock %}
+{% block detail_scripts %}<script src="/static/memecoin-replay.js?v={{ static_version }}" defer></script>{% endblock %}

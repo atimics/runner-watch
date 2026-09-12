@@ -5,6 +5,7 @@
   <meta name="theme-color" content="#0b100e"><title>{{ screen.item.name ~ ' · ' if screen.kind == 'detail' else '' }}{{ screen.label }} · RATi</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/market-screen.css?v={{ static_version }}">
+  {% block detail_head %}{% endblock %}
   {% if share %}<meta name="description" content="{{ screen.item.subtitle }}"><meta property="og:title" content="{{ share.title }}"><meta property="og:description" content="{{ screen.item.subtitle }}"><meta property="og:image" content="{{ app_origin }}{{ share.card_path }}"><meta name="twitter:card" content="summary_large_image">{% endif %}
 </head>
 <body>
@@ -50,9 +51,11 @@
       <p class="action-status" role="status" data-action-status></p>
       <dialog class="call-confirm"><h2 data-confirm-title>Make Call</h2><p data-confirm-terms>This records a paper Call on your public profile.</p><p role="status" data-confirm-status></p><div class="actions"><button type="button" data-confirm>Confirm Call</button><button class="secondary" type="button" data-cancel>Cancel</button></div></dialog>
     </article>
+    {% block detail_extra %}{% endblock %}
   {% endif %}
   </main>
 </div>
 {% if screen.kind == 'detail' %}<script type="application/json" nonce="{{ request.state.csp_nonce }}" id="screenData">{{ screen|tojson }}</script>{% endif %}<script src="/static/market-screen.js?v={{ static_version }}" defer></script>
+{% block detail_scripts %}{% endblock %}
 </body>
 </html>
