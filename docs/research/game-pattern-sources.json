@@ -1,0 +1,207 @@
+{
+  "review_date": "2026-09-12",
+  "scope": "Local committed snapshots. Tests and design records were read; runtime and retention outcomes were not measured.",
+  "projects": [
+    {
+      "project": "app-ruby-high",
+      "head": "7ca0c5e9cdefaa2b67a9633c1bc60b3e575ac942",
+      "branch": "main",
+      "remote": "https://github.com/cenetex/app-ruby-high",
+      "tracked_changes": true,
+      "sources": [
+        {
+          "path": "docs/game-redesign-class-spine.md",
+          "line": 8,
+          "sha256": "f617532a82071285db0d910dd48c47f91f32c421b3606800e1cc730645e43db9"
+        },
+        {
+          "path": "src/__tests__/ruby-high-service.test.ts",
+          "line": 5326,
+          "sha256": "3723054e1209c5e7fea00972c87096850cd595e5b77484624d0366314bc9d809"
+        },
+        {
+          "path": "src/services/ruby-high-service.ts",
+          "line": 8062,
+          "sha256": "2d2ac22d0cd6d4f9e9fb2ec845bdf496d97942bd5402f7f9ad41f1c0e733d10f"
+        },
+        {
+          "path": "ruby2/visual-scene/VISUAL_LANGUAGE.md",
+          "line": 7,
+          "sha256": "fac11614f8c5472d734d0ed062fb6aa645a72471bd70ac7f08f3dfb714e2b9bb"
+        },
+        {
+          "path": "ruby2/c/src/ruby2_ui.c",
+          "line": 783,
+          "sha256": "3dc2ba8e033f7db37b254e720d5d46bea56dc53fc49b5fe140c4811c790eb973"
+        },
+        {
+          "path": "docs/activation-playtest.md",
+          "line": 38,
+          "sha256": "5546dbe960ec1b37d7c0078c62ea27952febf721e903c4ce08b2a243d7d2a7eb"
+        }
+      ]
+    },
+    {
+      "project": "cosyworld",
+      "head": "d76defb4e6644d5f6d0718906789da7ef211c839",
+      "branch": "codex/void-vision-quests-backlog",
+      "remote": "https://github.com/cenetex/cosyworld",
+      "tracked_changes": false,
+      "sources": [
+        {
+          "path": "v2/orchestrator-rust/src/tests/action_hand_tests.rs",
+          "line": 2197,
+          "sha256": "17cb790bfcfc80211abc571998d48c9fb6cf4032c6aee92a5190d5a9a7b63cc4"
+        },
+        {
+          "path": "v2/orchestrator-rust/src/daily_journal.rs",
+          "line": 252,
+          "sha256": "736e122d98d34f08e5a6852903e7af5fd601c71f97ea83bd61aacfa137d9eb23"
+        },
+        {
+          "path": "v2/docs/story-metrics.md",
+          "line": 1,
+          "sha256": "f7d75455a82ad85daa2dc569f9e5042ac5b2d42931dafa888177c1262ab65c2b"
+        }
+      ],
+      "historical_snapshots": [
+        {
+          "revision": "ba3ca425d296a9f8bcc2b81a7f81626082ca9005",
+          "commit_date": "2025-08-07",
+          "purpose": "Old breeding flow: combine descriptions, personalities and memories, then create and introduce a character. RATi adds explicit durable avatar ancestry.",
+          "sources": [
+            {
+              "path": "src/services/tools/tools/BreedTool.mjs",
+              "line": 82,
+              "sha256": "81096e66663395ffa54a22bb3a950f4d634a73e41fcddb0dcf72553173f7d4df"
+            },
+            {
+              "path": "src/services/tools/tools/SummonTool.mjs",
+              "line": 175,
+              "sha256": "c526b1703cf11449b6b5514c148793be460aa285f2f92ab805c9be02bc822ff1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "project": "signal",
+      "head": "b8235a1236f7c5a391912b4e3225ef0eb659febd",
+      "branch": "enable-station-strategy",
+      "remote": "https://github.com/cenetex/signal",
+      "tracked_changes": false,
+      "sources": [
+        {
+          "path": "shared/story_loop.c",
+          "line": 22,
+          "sha256": "d1ed5989b0652371967708640bd30a1e5c03f28ed0b8c7a5c18d6a82f4fcada8"
+        },
+        {
+          "path": "tests/c/test_story_loop.c",
+          "line": 58,
+          "sha256": "ba3d0a6c3647f77725a56ee3510d76b2b023af37bdd3f9644343717949edc5dd"
+        },
+        {
+          "path": "shared/story_loop.c",
+          "line": 106,
+          "sha256": "d1ed5989b0652371967708640bd30a1e5c03f28ed0b8c7a5c18d6a82f4fcada8"
+        }
+      ]
+    },
+    {
+      "project": "crownless",
+      "head": "e5251dc6d582673e3481fce4f3ad35e52a077619",
+      "branch": "dragons-slain-metric",
+      "remote": "https://github.com/atimics/crownlesscarriage",
+      "tracked_changes": false,
+      "sources": [
+        {
+          "path": "docs/design/interaction-ux-implementation.md",
+          "line": 19,
+          "sha256": "f71c101c5d3b08edd92e63afe5b6fdeaecabb60e8f64bfc5286f2f5870412944"
+        },
+        {
+          "path": "src/client/cc_adventure.inc",
+          "line": 580,
+          "sha256": "8291157faf126b12c8a8c8577c17a0ae7ef5da0348f2373581c3a7ba0de58495"
+        },
+        {
+          "path": "docs/design/the-last-fare.md",
+          "line": 1,
+          "sha256": "5bcd14c2a560905eb292ded8abfd9c828f75ff73e79c11b26f662e7f4c0ca719"
+        }
+      ]
+    },
+    {
+      "project": "glm-roguelike",
+      "head": "74a87487cf6b981d9a969c905ee41ac4020f8d33",
+      "branch": "master",
+      "remote": null,
+      "tracked_changes": true,
+      "sources": [
+        {
+          "path": "roguelike.c",
+          "line": 337,
+          "end_line": 365,
+          "sha256": "fe2f7f3100f54bd231f45a7bfd98c9f81e04788b3c249896d9b3d826472ef787"
+        }
+      ]
+    },
+    {
+      "project": "app-sector-one-local",
+      "head": "25c78f10daca075dc38469dcfddd7380418762a1",
+      "branch": "feat/autopilot",
+      "remote": "https://github.com/cenetex/app-sector-one",
+      "tracked_changes": false,
+      "sources": [
+        {
+          "path": "README.md",
+          "line": 5,
+          "sha256": "e4cb7a3626bab88c088213f07d9fa3ec3761c61dd6983fce12a0af03b1c68b1d"
+        }
+      ]
+    },
+    {
+      "project": "swarm",
+      "head": "0db9fb402cf20c222537e04f513ef99c63332cd1",
+      "branch": "feat/issue-1852-receipt-explorer",
+      "remote": "https://github.com/cenetex/swarm",
+      "tracked_changes": false,
+      "sources": [
+        {
+          "path": "docs/design-philosophy.md",
+          "line": 175,
+          "sha256": "405fb6bb4abac7528f0a06cf586c4b6b4570a7cb8aa3a0da311a6ce907e45d3e"
+        }
+      ]
+    },
+    {
+      "project": "trebuchet",
+      "head": "84061b1cfe58a1ac9b9b77e4cd11bcf3f1c7d52d",
+      "branch": "codex/v2-wallet-app-mockup",
+      "remote": "https://github.com/atimics/Trebuchet",
+      "tracked_changes": false,
+      "sources": [
+        {
+          "path": "CLI_UX_GAP_ANALYSIS.md",
+          "line": 15,
+          "sha256": "566a9a1dc24e2e165539302e1860a497066cb5687d3484a4b02cdcf35d84bb56"
+        }
+      ]
+    },
+    {
+      "project": "grimoire",
+      "head": "b85e2e04c6fd2f47c2d498c10e453f78f3d0843b",
+      "branch": "main",
+      "remote": "https://github.com/atimics/grimoire",
+      "tracked_changes": true,
+      "sources": [
+        {
+          "path": "EGREGOREGRAMMING_101.md",
+          "line": 145,
+          "sha256": "9feab3d71274046f80f0594fbf8d8be7889ead668ea8c87e6208ad2759414b28"
+        }
+      ]
+    }
+  ]
+}
