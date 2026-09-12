@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -74,6 +75,59 @@ def test_tickers_are_picked_out_of_the_text():
     message = _parse(_update("what about $msgm and $VTAK and $msgm again"))
 
     assert message.tickers == ("MSGM", "VTAK")
+
+
+def test_a_bare_known_symbol_resolves_like_a_cashtag():
+    with connection() as database:
+        database.execute(
+            "INSERT INTO sec_companies(cik,ticker,name,exchange,refreshed_at) "
+            "VALUES(?,?,?,'NASDAQ',?)",
+            (1, "MSGM", "Motorsport Games", NOW.isoformat()),
+        )
+        assert chat.resolve_tickers(database, "what is MSGM doing") == ["MSGM"]
+        assert chat.resolve_tickers(database, "$msgm again") == ["MSGM"]
+
+
+def test_bare_words_that_are_not_known_symbols_are_left_alone():
+    with connection() as database:
+        assert chat.resolve_tickers(database, "the CEO said IT and DD were fine") == []
+        assert chat.resolve_tickers(database, "watching ZZZZ") == []
+
+
+def test_prefetch_looks_up_a_named_ticker(monkeypatch):
+    from runner_web import telegram_chat
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        telegram_chat,
+        "look_up_ticker",
+        lambda symbol: calls.append(symbol) or {"ticker": symbol, "known": True},
+    )
+    message = _parse(_update("$msgm is moving"))
+
+    with connection() as database:
+        grounded = telegram_chat.prefetch_for(message, database)
+
+    assert calls == ["MSGM"]
+    assert grounded["looked_up"] == [{"ticker": "MSGM", "known": True}]
+    assert "market" not in grounded
+
+
+def test_prefetch_hands_over_the_board_when_no_ticker_is_named(monkeypatch):
+    from runner_web import dash, telegram_chat
+
+    monkeypatch.setattr(dash, "market_now", lambda: {"session": "Pre-market"})
+    monkeypatch.setattr(
+        dash, "recent_runners", lambda limit=8: {"count": 0, "entries": []}
+    )
+    message = _parse(_update("whats moving"))
+
+    with connection() as database:
+        grounded = telegram_chat.prefetch_for(message, database)
+
+    assert grounded["looked_up"] == []
+    assert grounded["market"] == {"session": "Pre-market"}
+    assert grounded["recent_runners"] == {"count": 0, "entries": []}
 
 
 @pytest.mark.parametrize(
@@ -480,3 +534,85 @@ def test_without_a_model_the_cheetah_holds(wired):
 
     assert result["held"] == 1
     assert wired.replies == []
+
+
+def _tool_turn(name: str, arguments: dict[str, Any], call_id: str = "call-1") -> dict[str, Any]:
+    return {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": json.dumps(arguments),
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+
+
+def test_the_turn_hands_the_model_what_was_prefetched(monkeypatch):
+    from runner_web import main as web_main
+
+    monkeypatch.setattr(
+        web_main,
+        "telegram_prefetch_for",
+        lambda message, database: {
+            "resolved_tickers": ["MSGM"],
+            "looked_up": [{"ticker": "MSGM", "known": True}],
+        },
+    )
+    calls: list[dict[str, Any]] = []
+
+    def completion(body):
+        calls.append(body)
+        return _tool_turn("reply", {"text": "MSGM is moving."})
+
+    monkeypatch.setattr(web_main, "_telegram_chat_completion", completion)
+
+    decision = web_main._generate_telegram_turn(_parse(_update("$msgm", mention=True)), [])
+
+    assert decision == {"action": "reply", "text": "MSGM is moving."}
+    assert len(calls) == 1
+    assert "already_looked_up" in calls[0]["messages"][1]["content"]
+
+
+def test_a_reply_that_names_an_unlooked_ticker_gets_one_chance_to_correct(monkeypatch):
+    from runner_web import main as web_main
+
+    with connection() as database:
+        database.execute(
+            "INSERT INTO sec_companies(cik,ticker,name,exchange,refreshed_at) "
+            "VALUES(?,?,?,'NASDAQ',?)",
+            (1, "MSGM", "Motorsport Games", NOW.isoformat()),
+        )
+    monkeypatch.setattr(
+        web_main,
+        "telegram_prefetch_for",
+        lambda message, database: {"resolved_tickers": [], "looked_up": []},
+    )
+    scripted = [
+        _tool_turn("reply", {"text": "MSGM is up 30%."}),
+        _tool_turn("reply", {"text": "I have not looked at MSGM."}, call_id="call-2"),
+    ]
+    calls: list[dict[str, Any]] = []
+
+    def completion(body):
+        calls.append(body)
+        return scripted.pop(0)
+
+    monkeypatch.setattr(web_main, "_telegram_chat_completion", completion)
+
+    decision = web_main._generate_telegram_turn(
+        _parse(_update("what about that one", mention=True)), []
+    )
+
+    assert decision == {"action": "reply", "text": "I have not looked at MSGM."}
+    assert len(calls) == 2

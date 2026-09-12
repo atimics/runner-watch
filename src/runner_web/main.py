@@ -345,6 +345,9 @@ from runner_web.telegram_chat import (
     pending_updates as telegram_pending_updates,
 )
 from runner_web.telegram_chat import (
+    prefetch_for as telegram_prefetch_for,
+)
+from runner_web.telegram_chat import (
     recent_transcript as telegram_recent_transcript,
 )
 from runner_web.telegram_chat import (
@@ -352,6 +355,9 @@ from runner_web.telegram_chat import (
 )
 from runner_web.telegram_chat import (
     record_update as telegram_record_update,
+)
+from runner_web.telegram_chat import (
+    resolve_tickers as telegram_resolve_tickers,
 )
 from runner_web.telegram_chat import (
     spend_engagement as telegram_spend_engagement,
@@ -1663,27 +1669,61 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
     return counts
 
 
+def _telegram_chat_completion(body: dict[str, Any]) -> dict[str, Any]:
+    """One chat-completions call, kept separate so a turn can be tested."""
+
+    api_request = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=json.dumps(body, separators=(",", ":")).encode(),
+        headers={
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": APP_ORIGIN,
+            "X-OpenRouter-Title": "RATi Runners chat",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(api_request, timeout=30) as response:
+        return json.loads(response.read(262_145))
+
+
 def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dict[str, Any]:
     """Ask the model what the cheetah does with one message.
 
     The model chooses a tool rather than writing free text, so "say nothing" is a
-    real answer it can give. Ticker lookups resolve here and go back for a second
-    pass, which is what keeps a quoted number attached to the app's own evidence.
+    real answer it can give. What the message points at is looked up first and
+    handed over as already_looked_up, so a named ticker costs one model call
+    instead of two and the model has a fixed list of what it is allowed to quote.
+    A reply that names a ticker with nothing behind it gets one more chance to
+    look it up or to say it has not.
     """
 
     tools = [{"type": "function", "function": dict(tool)} for tool in TELEGRAM_TOOL_SCHEMA]
+    with connection() as database:
+        grounded = telegram_prefetch_for(message, database)
+    looked_symbols = {
+        str(item.get("ticker") or "").strip().upper().lstrip("$")
+        for item in grounded.get("looked_up") or []
+        if item.get("ticker")
+    }
+    looked_symbols.discard("")
     context = {
         "room": "RATi Runners",
         "speaker": message.user_name,
         "said": message.text,
         "tickers_mentioned": list(message.tickers),
+        "already_looked_up": grounded,
         "addressed_you": message.addressed,
         "recent": transcript,
     }
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": CHEETAH_PERSONA},
-        {"role": "user", "content": json.dumps(context, separators=(",", ":"))},
+        {
+            "role": "user",
+            "content": json.dumps(context, separators=(",", ":"), default=str),
+        },
     ]
+    corrected = False
     for _round in range(6):
         body = {
             "model": FLASH.model,
@@ -1693,19 +1733,7 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
             "provider": {"require_parameters": True, "zdr": True},
             "max_tokens": 700,
         }
-        api_request = urllib.request.Request(
-            "https://openrouter.ai/api/v1/chat/completions",
-            data=json.dumps(body, separators=(",", ":")).encode(),
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": APP_ORIGIN,
-                "X-OpenRouter-Title": "RATi Runners chat",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(api_request, timeout=30) as response:
-            result = json.loads(response.read(262_145))
+        result = _telegram_chat_completion(body)
         choice = (result.get("choices") or [{}])[0].get("message") or {}
         calls = choice.get("tool_calls") or []
         if not calls:
@@ -1738,6 +1766,10 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
         elif name == "comment_on_ticker":
             looked = dash_comment(str(args.get("ticker") or ""), str(args.get("body") or ""))
         if looked is not None:
+            if name == "look_up_ticker":
+                symbol = str(args.get("ticker") or "").strip().upper().lstrip("$")
+                if symbol:
+                    looked_symbols.add(symbol)
             messages.append(choice)
             messages.append(
                 {
@@ -1748,7 +1780,35 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
             )
             continue
         if name == "reply":
-            return {"action": "reply", "text": str(args.get("text") or "")}
+            text = str(args.get("text") or "")
+            if not corrected:
+                with connection() as database:
+                    cited = telegram_resolve_tickers(database, text, limit=8)
+                unbacked = [symbol for symbol in cited if symbol not in looked_symbols]
+                if unbacked:
+                    corrected = True
+                    messages.append(choice)
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call.get("id"),
+                            "content": json.dumps({"held": "no lookup behind this reply"}),
+                        }
+                    )
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "You were about to name "
+                                + ", ".join(unbacked)
+                                + " without having looked it up. Call look_up_ticker "
+                                "for it now, or reply saying you have not looked it up. "
+                                "Do not state numbers you did not fetch."
+                            ),
+                        }
+                    )
+                    continue
+            return {"action": "reply", "text": text}
         if name == "react":
             return {"action": "react", "emoji": str(args.get("emoji") or "🐆")}
         return {

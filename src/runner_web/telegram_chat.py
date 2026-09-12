@@ -32,6 +32,85 @@ MAX_TEXT_CHARS = 3500
 MAX_UPDATE_ATTEMPTS = 3
 
 TICKER_PATTERN = re.compile(r"\$([A-Za-z]{1,6})\b")
+# A bare word only counts as a ticker when it is written in capitals and the
+# market's own company map knows the symbol. "what is MSGM doing" then prefetches
+# the same lookup "$MSGM" always did, while ordinary prose stays prose.
+BARE_TICKER_PATTERN = re.compile(r"\b([A-Z]{3,6})\b")
+TICKER_STOPWORDS = frozenset(
+    {
+        "CEO",
+        "CFO",
+        "COO",
+        "CTO",
+        "DD",
+        "DM",
+        "DUE",
+        "EOD",
+        "EOW",
+        "EPS",
+        "ETF",
+        "FA",
+        "FDA",
+        "FED",
+        "FOMO",
+        "FYI",
+        "GDP",
+        "HOD",
+        "IMO",
+        "IMHO",
+        "IPO",
+        "IRS",
+        "LOD",
+        "LOL",
+        "NASDAQ",
+        "NGL",
+        "NYSE",
+        "OMG",
+        "PLZ",
+        "RVOL",
+        "SEC",
+        "SMH",
+        "TA",
+        "TBH",
+        "USA",
+        "WTF",
+        "YOLO",
+    }
+)
+PREFETCH_LIMIT = max(0, int(os.getenv("TELEGRAM_PREFETCH_TICKERS", "2")))
+
+
+def resolve_tickers(database: Any, text: str, *, limit: int | None = None) -> list[str]:
+
+    """The tickers a message points at, cashtag or bare symbol.
+
+    A cashtag is explicit and always counts. A bare capitalised word only counts
+    when the SEC company map already knows it, so a message that names a ticker
+    without the dollar sign is grounded the same way and ordinary prose is not.
+    Chat shorthand that happens to collide with a symbol (CEO, DD, RVOL) is left
+    alone.
+    """
+
+    budget = PREFETCH_LIMIT if limit is None else max(0, limit)
+    if budget <= 0:
+        return []
+    found: list[str] = []
+    for match in TICKER_PATTERN.findall(text):
+        symbol = match.upper()
+        if symbol not in found:
+            found.append(symbol)
+    for token in BARE_TICKER_PATTERN.findall(text):
+        if len(found) >= budget:
+            break
+        if token in TICKER_STOPWORDS or token in found:
+            continue
+        known = database.execute(
+            "SELECT 1 FROM sec_companies WHERE UPPER(ticker)=? LIMIT 1",
+            (token,),
+        ).fetchone()
+        if known:
+            found.append(token)
+    return found[:budget]
 
 
 def _utc(value: datetime | None = None) -> datetime:
@@ -252,9 +331,11 @@ CHEETAH_PERSONA = (
     "you never list commands, because there are none. "
     "The scanner's own words for a state are internal, so say what they mean rather "
     "than reading MANAGE or GUARDED aloud. "
-    "Say numbers only when a tool gave them to you. If you did not look something "
-    "up, say you have not looked rather than guessing, because people here are "
-    "keeping score. Never give financial advice or tell anyone what to buy. "
+    "Say numbers only when a tool gave them to you or they are in the "
+    "already_looked_up block you were handed. If you did not look something up "
+    "and it is not in that block, say you have not looked rather than guessing, "
+    "because people here are keeping score. Never give financial advice or tell "
+    "anyone what to buy. "
     "You have your own Flash allowance and your own public record. A Call you open "
     "is scored in public next to everyone else's, so open one because you looked and "
     "believed it, not because somebody asked you to. "
@@ -467,6 +548,31 @@ def look_up_ticker(ticker: str) -> dict[str, Any]:
         "community": _community_for(symbol),
         "todays_target": _todays_target(symbol),
     }
+
+
+def prefetch_for(message: InboundMessage, database: Any) -> dict[str, Any]:
+
+    """Gather what the message points at before the model is asked anything.
+
+    Every evidence tool is a round trip. A question that names a ticker always
+    needs the same lookup first, so resolving it here turns the common question
+    into one model call instead of two. When no ticker is named, the board and
+    the newest entrants come back instead, which is what lets him point at a
+    name rather than stall.
+    """
+
+    symbols = resolve_tickers(database, message.text)
+    looked = [look_up_ticker(symbol) for symbol in symbols]
+    grounded: dict[str, Any] = {"resolved_tickers": symbols, "looked_up": looked}
+    if not looked:
+        try:
+            from runner_web.dash import market_now, recent_runners
+
+            grounded["market"] = market_now()
+            grounded["recent_runners"] = recent_runners(limit=6)
+        except Exception:  # pragma: no cover - prefetch is optional grounding
+            pass
+    return grounded
 
 
 _TRADE_STATE_PLAIN = {
