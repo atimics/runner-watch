@@ -154,7 +154,6 @@ def test_stock_derivation_can_be_bounded_to_board_tickers(
     assert {subject["key"] for subject in board["subjects"]} == {"RUNR", "OTHR"}
 
 
-
 def test_coin_derivation_groups_wallets_into_one_cluster(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
@@ -228,9 +227,7 @@ def test_portrait_generation_caches_the_image_and_respects_budget(
     def transport(key: str, payload: dict[str, object]) -> dict[str, object]:
         calls.append(key)
         assert payload["modalities"] == ["image", "text"]
-        return {
-            "choices": [{"message": {"images": [{"image_url": {"url": _png_data_url()}}]}}]
-        }
+        return {"choices": [{"message": {"images": [{"image_url": {"url": _png_data_url()}}]}}]}
 
     first = actor_portraits.generate_actor_portrait(
         actors[0]["id"], api_key="sk-or-test", transport=transport, at=AT
@@ -255,9 +252,7 @@ def test_portrait_generation_caches_the_image_and_respects_budget(
     assert second["reason"] == "budget"
 
 
-def test_portrait_falls_back_without_a_key(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_portrait_falls_back_without_a_key(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     _use_database(tmp_path, monkeypatch, "actor-portraits-nokey.db")
     _insert_filing("acc-one", "RUNR", actor="Jane Q. Officer")
     derive_stock_actors(at=AT)
@@ -316,9 +311,7 @@ def test_portrait_images_are_downscaled_before_storage(
             "choices": [
                 {
                     "message": {
-                        "images": [
-                            {"image_url": {"url": f"data:image/png;base64,{encoded}"}}
-                        ]
+                        "images": [{"image_url": {"url": f"data:image/png;base64,{encoded}"}}]
                     }
                 }
             ]
@@ -416,3 +409,24 @@ def test_market_actor_api_serializes_the_map_and_detail(
         assert missing.status_code == 404
     finally:
         client.close()
+
+
+def test_map_keeps_purchase_sale_history_and_mixed_filings(tmp_path, monkeypatch):
+    _use_database(tmp_path, monkeypatch, "activity.db")
+    _insert_filing("buy", "RUNR", actor="Jane Officer", filed_at="2026-09-10T12:00:00Z")
+    _insert_filing(
+        "sell",
+        "RUNR",
+        actor="Jane Officer",
+        transaction_codes="S",
+        filed_at="2026-09-11T12:00:00Z",
+        transaction_value=400,
+    )
+    _insert_filing("both", "RUNR", actor="Jane Officer", transaction_codes="P,S")
+    derive_stock_actors(at=AT)
+    link = market_actor_map("stock", at=AT)["links"][0]
+    assert link["direction"] == "mixed"
+    assert [entry["direction"] for entry in link["activity"]] == ["mixed", "sell", "buy"]
+    assert link["activity"][0]["value"] is None
+    assert link["activity"][1]["value"] == 400
+    assert link["activity"][1]["url"] == "https://www.sec.gov/sell"
