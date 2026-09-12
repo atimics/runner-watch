@@ -293,6 +293,48 @@ def test_portrait_fallback_enforces_a_retry_cooldown(
     assert len(calls) == 1
 
 
+def test_portrait_images_are_downscaled_before_storage(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    import io
+
+    from PIL import Image
+
+    _use_database(tmp_path, monkeypatch, "actor-portraits-resize.db")
+    _insert_filing("acc-one", "RUNR", actor="Jane Q. Officer")
+    derive_stock_actors(at=AT)
+    actor = market_actor_map("stock", at=AT)["actors"][0]
+    monkeypatch.setattr(actor_portraits, "DAILY_LIMIT", 5)
+    monkeypatch.setattr(actor_portraits, "PORTRAIT_EDGE", 128)
+    buffer = io.BytesIO()
+    Image.new("RGB", (1024, 1024), (200, 40, 40)).save(buffer, format="PNG")
+    big = buffer.getvalue()
+
+    def transport(key: str, payload: dict[str, object]) -> dict[str, object]:
+        encoded = base64.b64encode(big).decode()
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "images": [
+                            {"image_url": {"url": f"data:image/png;base64,{encoded}"}}
+                        ]
+                    }
+                }
+            ]
+        }
+
+    result = actor_portraits.generate_actor_portrait(
+        actor["id"], api_key="sk-or-test", transport=transport, at=AT
+    )
+    assert result == {"status": "ready"}
+    stored = actor_portraits.portrait_for_actor(actor["id"])
+    assert stored is not None
+    assert len(stored["bytes"]) < len(big)
+    with Image.open(io.BytesIO(stored["bytes"])) as image:
+        assert max(image.size) <= 128
+
+
 async def _empty_body() -> dict[str, object]:
     return {"type": "http.request", "body": b"", "more_body": False}
 
