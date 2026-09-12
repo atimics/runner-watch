@@ -1971,7 +1971,7 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
                             }
                         }
                     ],
-                    "model": "z-ai/glm-5.3",
+                    "model": "deepseek/deepseek-v4.1-flash",
                 }
             ).encode()
         )
@@ -2003,7 +2003,7 @@ def test_ticker_comment_generator_accepts_plain_text_from_openrouter(
     )
 
     assert comment == "My read is constructive, but thin volume is the risk."
-    assert model == "z-ai/glm-5.3"
+    assert model == "deepseek/deepseek-v4.1-flash"
     assert captured["body"]["models"] == list(web_main.OPENROUTER_COMMENT_MODELS)
     assert len(captured["body"]["models"]) <= web_main.OPENROUTER_COMMENT_MODEL_LIMIT
     assert "model" not in captured["body"]
@@ -2314,7 +2314,7 @@ def test_commissioned_report_stays_private_without_storing_the_openrouter_key(
                 "watch": ["Volume"],
                 "forecast": _test_flash_forecast(),
             },
-            "z-ai/glm-5.3",
+            "deepseek/deepseek-v4.1-flash",
             {"total_tokens": 321},
         ),
     )
@@ -2327,7 +2327,7 @@ def test_commissioned_report_stays_private_without_storing_the_openrouter_key(
     assert report["research_mode"] == "one_shot_system_context"
     assert report["actor"]["id"] == "kol-flash"
     assert report["actor"]["display_name"] == "Flash"
-    assert report["actor"]["model"] == "z-ai/glm-5.3"
+    assert report["actor"]["model"] == "deepseek/deepseek-v4.1-flash"
     assert report["actor"]["ladder_position"] == 1
     assert report["actor"]["ladder_size"] == 4
     assert get_commission(report["public_id"])["summary"] == "A source-bound summary."
@@ -2375,7 +2375,7 @@ def test_browser_commission_uses_the_server_openrouter_key(
                 "sources": context["sources"],
                 "forecast": _test_flash_forecast(),
             },
-            "z-ai/glm-5.3",
+            "deepseek/deepseek-v4.1-flash",
             {},
         )
 
@@ -2467,7 +2467,7 @@ def test_verified_pipeline_freezes_every_stage(tmp_path: Path, monkeypatch: Monk
             (commission["id"],),
         ).fetchall()
     assert report["headline"] == "ONE remains a watch"
-    assert model == "z-ai/glm-5.3"
+    assert model == "deepseek/deepseek-v4.1-flash"
     assert usage["pipeline_version"] == "verified-research-v2"
     assert [row["stage"] for row in stages] == [
         "catalyst_researcher",
@@ -2667,7 +2667,7 @@ def test_legacy_commission_request_uses_flash_model_with_a_minimal_prompt(
             json.dumps(
                 {
                     "choices": [{"message": {"content": json.dumps(generated)}}],
-                    "model": "z-ai/glm-5.3",
+                    "model": "deepseek/deepseek-v4.1-flash",
                     "usage": {"total_tokens": 123},
                 }
             ).encode()
@@ -2679,11 +2679,11 @@ def test_legacy_commission_request_uses_flash_model_with_a_minimal_prompt(
     )
 
     body = captured["body"]
-    assert body["model"] == "z-ai/glm-5.3"
+    assert body["model"] == "deepseek/deepseek-v4.1-flash"
     assert body["messages"][0]["content"].startswith("You are Flash")
     request_payload = json.loads(body["messages"][1]["content"])
     assert request_payload["actor"]["id"] == "kol-flash"
-    assert request_payload["actor"]["model"] == "z-ai/glm-5.3"
+    assert request_payload["actor"]["model"] == "deepseek/deepseek-v4.1-flash"
     assert body["response_format"] == {"type": "json_object"}
     assert body["plugins"] == [{"id": "response-healing"}]
     assert body["provider"] == {"require_parameters": True, "zdr": True}
@@ -2695,7 +2695,7 @@ def test_legacy_commission_request_uses_flash_model_with_a_minimal_prompt(
     assert "evaluation_contract" in request_payload
     assert request_payload["output"]["forecast"]["direction"] == "up, down, or no_call"
     assert report == generated
-    assert model == "z-ai/glm-5.3"
+    assert model == "deepseek/deepseek-v4.1-flash"
     assert usage["total_tokens"] == 123
     assert usage["generation"]["normalized_fields"] == []
     assert usage["generation"]["content_chars"] > 0
@@ -2723,7 +2723,7 @@ def test_commission_normalizes_recoverable_glm_output(
                             },
                         }
                     ],
-                    "model": "z-ai/glm-5.3",
+                    "model": "deepseek/deepseek-v4.1-flash",
                 }
             ).encode()
         )
@@ -2786,7 +2786,7 @@ def test_flash_keeps_only_citations_from_the_frozen_context(
             json.dumps(
                 {
                     "choices": [{"message": {"content": json.dumps(generated)}}],
-                    "model": "z-ai/glm-5.3",
+                    "model": "deepseek/deepseek-v4.1-flash",
                 }
             ).encode()
         )
@@ -2850,7 +2850,7 @@ def test_commission_unwraps_glm_report_envelope(
                             "message": {"content": json.dumps({wrapper: wrapped_report})},
                         }
                     ],
-                    "model": "z-ai/glm-5.3",
+                    "model": "deepseek/deepseek-v4.1-flash",
                 }
             ).encode()
         )
@@ -2861,7 +2861,7 @@ def test_commission_unwraps_glm_report_envelope(
     )
 
     assert report == generated
-    assert model == "z-ai/glm-5.3"
+    assert model == "deepseek/deepseek-v4.1-flash"
     assert usage["generation"]["normalized_fields"] == []
 
 
@@ -2879,7 +2879,7 @@ def test_commission_reports_cut_off_glm_output_without_storing_content(
                             "message": {"content": '{"summary":"EU started but'},
                         }
                     ],
-                    "model": "z-ai/glm-5.3",
+                    "model": "deepseek/deepseek-v4.1-flash",
                     "usage": {"completion_tokens": 12000},
                 }
             ).encode()
@@ -3069,7 +3069,7 @@ def test_owner_can_publish_report_once_and_earn_flash(
                 "sources": [],
                 "forecast": _test_flash_forecast(),
             },
-            "z-ai/glm-5.3",
+            "deepseek/deepseek-v4.1-flash",
             {},
         ),
     )
@@ -3117,7 +3117,11 @@ def test_owner_can_publish_report_once_and_earn_flash(
     )
 
     assert "Shareable ONE report" in html
-    assert '<strong>Flash <span class="flash-model-label">z-ai/glm-5.3</span>' in html
+    assert (
+        '<strong>Flash <span class="flash-model-label">'
+        "deepseek/deepseek-v4.1-flash</span>"
+        in html
+    )
     assert "#1 of 4" in html
     assert f"/research/{report['public_id']}/card.png" in html
     assert "sk-or-share-test-key" not in html

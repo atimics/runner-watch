@@ -196,7 +196,7 @@ def test_ticker_row_escapes_external_text_in_html_attributes(page: Page, monkeyp
 def test_pulse_header_is_one_compact_stack(page: Page, monkeypatch, width: int) -> None:
     record = {
         "label": "Flash 2026.09",
-        "model_label": "GLM 5.3",
+        "model_label": "DeepSeek V4.1 Flash",
         "hits": 1,
         "misses": 0,
         "settled": 1,
@@ -308,7 +308,7 @@ def test_refresh_updates_flash_record_and_merges_new_ticker(page: Page, monkeypa
     initial = _pulse(_row("AAA", "2026-08-26T18:00:00+00:00"))
     record = {
         "label": "Flash 2026.09",
-        "model_label": "GLM 5.3",
+        "model_label": "DeepSeek V4.1 Flash",
         "hits": 12,
         "misses": 8,
         "settled": 20,

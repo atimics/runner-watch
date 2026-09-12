@@ -1534,7 +1534,7 @@ def test_sports_flash_uses_a_sports_only_contract_and_frozen_numbers(monkeypatch
             json.dumps(
                 {
                     "choices": [{"message": {"content": json.dumps(generated)}}],
-                    "model": "z-ai/glm-5.3",
+                    "model": "deepseek/deepseek-v4.1-flash",
                 }
             ).encode()
         )

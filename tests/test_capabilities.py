@@ -32,7 +32,7 @@ def test_runtime_capabilities_reports_live_modes_without_secrets(
     assert result["analysis"]["ranker"]["training_policy"]["minimum_groups"] == 160
     assert result["analysis"]["research"]["promotion_policy"]["promotion_cases"] == 50
     assert result["analysis"]["research"]["provider"] == "openrouter"
-    assert result["analysis"]["research"]["flash_model"] == "z-ai/glm-5.3"
+    assert result["analysis"]["research"]["flash_model"] == "deepseek/deepseek-v4.1-flash"
     assert result["analysis"]["research"]["openrouter_available"] is True
     assert result["analysis"]["research"]["mode"] == "one_shot_system_context"
     assert result["features"]["billing"] == {

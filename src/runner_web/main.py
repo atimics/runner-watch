@@ -407,9 +407,9 @@ OPENROUTER_COMMENT_OUTPUT_TOKENS = max(
     1_200, int(os.getenv("OPENROUTER_COMMENT_OUTPUT_TOKENS", "1200"))
 )
 _COMMENT_FALLBACK_MODELS = (
+    "deepseek/deepseek-v4.1-flash",
     "z-ai/glm-5.3-flash",
     "nvidia/nemotron-3.5-lightning",
-    "deepseek/deepseek-v4-flash-0731",
 )
 OPENROUTER_COMMENT_MODEL_LIMIT = 3
 _configured_comment_models = tuple(
