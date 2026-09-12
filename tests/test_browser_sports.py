@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from playwright.sync_api import Page, Route
+from playwright.sync_api import Page, Route, expect
 from starlette.requests import Request
 
 from runner_web import main as web_main
@@ -134,6 +134,7 @@ def _inline_static_assets(html: str) -> str:
     )
 
     scripts = {
+        "market-screen.js": (ROOT / "web/static/market-screen.js").read_text(),
         "desktop-workspace.js": (ROOT / "web/static/desktop-workspace.js").read_text(),
         "live-list.js": (ROOT / "web/static/live-list.js").read_text(),
         "ticker-row.js": (ROOT / "web/static/ticker-row.js").read_text(),
@@ -157,29 +158,20 @@ def _inline_static_assets(html: str) -> str:
 
 
 def _rendered_pulse(monkeypatch, payload: dict[str, Any]) -> str:
-    pick_stats = {
-        "settled": 12,
-        "wins": 7,
-        "losses": 5,
-        "pushes": 0,
-        "units": 1.4,
-        "roi_pct": 11.7,
-    }
+    monkeypatch.setattr(web_main, "sports_slate", lambda *_: payload)
+    monkeypatch.setattr(web_main, "_public_screen_data", lambda area, key, build: build())
+    monkeypatch.setattr(web_main, "_public_golf_data", lambda: {"events": []})
+    monkeypatch.setattr(web_main, "enforce_rate", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         web_main,
-        "_public_sports_pulse_data",
-        lambda *_args, **_kwargs: {"pulse": payload, "pick_stats": pick_stats},
-    )
-    monkeypatch.setattr(
-        web_main,
-        "_public_golf_data",
-        lambda: {
-            "events": [],
-            "display_count": 0,
-            "entrant_count": 0,
-            "source_status": "success",
-            "source_error": "",
-            "updated_at": None,
+        "page_context",
+        lambda request, session, **values: {
+            "request": request,
+            "user": None,
+            "runners_origin": "http://app.test",
+            "sports_origin": "http://sports.test",
+            "static_version": "test",
+            **values,
         },
     )
     return _inline_static_assets(web_main.home(_request(), None).body.decode())
@@ -360,8 +352,14 @@ def _rendered_open_game_with_slip(
         "model_winner_team_name": "Chicago Cubs",
         "model_winner_probability_pct": 58.7,
         "edge_history": None,
-        "context": {"headline": "Recent team form", "back_to_back": False, "series_game_count": 1,
-                    "previous_meeting": None, "head_to_head": {"meetings": 0}, "recent_form": []},
+        "context": {
+            "headline": "Recent team form",
+            "back_to_back": False,
+            "series_game_count": 1,
+            "previous_meeting": None,
+            "head_to_head": {"meetings": 0},
+            "recent_form": [],
+        },
         "matchup_players": [],
         "news": [],
         "picks": [],
@@ -497,43 +495,27 @@ def _load(
     return errors
 
 
-def test_sports_pulse_applies_updates_without_reloading_or_losing_detail(
-    page: Page, monkeypatch
-) -> None:
+def test_sports_list_refresh_preserves_search_and_page(page: Page, monkeypatch) -> None:
+    page.clock.install()
     old = _event("old-game", "OLD", "HME")
     new = _event("new-game", "NEW", "NOW")
-    page.set_viewport_size({"width": 1280, "height": 800})
-    errors = _load(page, _rendered_pulse(monkeypatch, _pulse(old)), [_pulse(new, old)])
-    frame = page.locator("[data-desktop-frame]")
-    original_detail = frame.get_attribute("src")
-
-    page.evaluate("window.sportsPulseLive.poll()")
-
-    refresh = page.locator("#sportsPulseRefresh")
-    assert refresh.is_visible()
-    assert refresh.text_content() == "1 new matchup"
-    assert frame.get_attribute("src") == original_detail
-    assert page.locator('a[href="/game/new-game"]').count() == 0
-
-    refresh.click()
-
-    assert page.locator('a[href="/game/new-game"]').count() == 1
-    assert frame.get_attribute("src") == original_detail
-    assert (
-        page.locator('a[href="/game/old-game"]')
-        .get_attribute("class")
-        .endswith("desktop-panel-selected")
-    )
+    errors = _load(page, _rendered_pulse(monkeypatch, _pulse(old)), [])
+    html = _rendered_pulse(monkeypatch, _pulse(new, old))
+    page.route("http://app.test/", lambda route: route.fulfill(content_type="text/html", body=html))
+    page.get_by_role("searchbox").fill("a search in progress")
+    page.clock.fast_forward(60000)
+    expect(page.locator(".ticker")).to_have_count(2)
+    expect(page.get_by_role("searchbox")).to_have_value("a search in progress")
+    expect(page.get_by_role("searchbox")).to_be_focused()
+    expect(page).to_have_url("http://app.test/")
     assert errors == []
 
 
-def test_sports_pulse_keeps_missing_update_time_pending(page: Page, monkeypatch) -> None:
-    pulse = _pulse()
-    pulse["updated_at"] = None
-    errors = _load(page, _rendered_pulse(monkeypatch, pulse), [])
-
-    assert page.locator("#sportsPulseStatus").text_content() == "Update pending"
-    assert page.locator("#sportsPulseUpdated").text_content() == "pending"
+def test_sports_list_empty_state_is_simple(page: Page, monkeypatch) -> None:
+    payload = {**_pulse(), "updated_at": None, "source_error": "internal log"}
+    errors = _load(page, _rendered_pulse(monkeypatch, payload), [])
+    expect(page.get_by_role("heading", name="A quiet moment")).to_be_visible()
+    expect(page.get_by_text("internal log")).to_have_count(0)
     assert errors == []
 
 
@@ -569,38 +551,11 @@ def test_sports_radar_applies_changes_without_reloading_or_losing_detail(
     assert errors == []
 
 
-def test_sports_detail_panel_stays_dark_while_a_game_loads(page: Page, monkeypatch) -> None:
-    first = _event("first-game", "ONE", "HME")
-    second = _event("second-game", "TWO", "HME")
-    page.set_viewport_size({"width": 1280, "height": 800})
-    errors = _load(page, _rendered_pulse(monkeypatch, _pulse(first, second)), [])
-    frame = page.locator("[data-desktop-frame]")
-    loading = page.locator("[data-desktop-loading]")
-
-    frame.wait_for(state="visible")
-    assert loading.is_hidden()
-
-    loading_state = page.evaluate(
-        """() => {
-          document.querySelector('a[href="/game/second-game"]').click();
-          const frame = document.querySelector('[data-desktop-frame]');
-          const loading = document.querySelector('[data-desktop-loading]');
-          return {
-            frameHidden: frame.hidden,
-            loadingHidden: loading.hidden,
-            loadingBackground: getComputedStyle(loading).backgroundColor,
-          };
-        }"""
-    )
-
-    assert loading_state == {
-        "frameHidden": True,
-        "loadingHidden": False,
-        "loadingBackground": "rgb(9, 12, 10)",
-    }
-    frame.wait_for(state="visible")
-    assert frame.get_attribute("src") == "/game/second-game"
-    assert loading.is_hidden()
+def test_sports_list_opens_a_single_detail_screen(page: Page, monkeypatch) -> None:
+    errors = _load(page, _rendered_pulse(monkeypatch, _pulse(_event("game-1", "ONE", "TWO"))), [])
+    page.locator(".ticker").click()
+    expect(page).to_have_url("http://app.test/game/game-1")
+    expect(page.get_by_text("Game detail")).to_be_visible()
     assert errors == []
 
 
@@ -674,170 +629,55 @@ def test_game_detail_prioritizes_actions_and_closes_started_actions(page: Page) 
 
 
 @pytest.mark.parametrize("width", [390, 900, 1280])
-def test_sports_pulse_respects_shared_responsive_breakpoints(
+def test_sports_list_respects_shared_responsive_breakpoints(
     page: Page, monkeypatch, width: int
 ) -> None:
     page.set_viewport_size({"width": width, "height": 800})
     errors = _load(page, _rendered_pulse(monkeypatch, _pulse(_event("game-1", "AWY", "HME"))), [])
-
-    assert page.locator(".screen-head").is_visible()
-    assert page.locator(".tab-bar").is_visible()
-    assert page.get_by_role("navigation", name="Market", exact=True).is_visible()
-    assert page.locator(".market-switcher a").count() == 3
-    if width >= 900:
-        assert page.locator(".desktop-workspace").evaluate(
-            "node => node.getBoundingClientRect().bottom <= window.innerHeight"
-        )
-    navigation = page.locator(".tab-bar")
-    navigation_box = navigation.bounding_box()
-    assert navigation_box is not None
-    assert (
-        page.evaluate(
-            "getComputedStyle(document.querySelector('.tab-bar'))"
-            ".gridTemplateColumns.split(' ').length"
-        )
-        == 3
-    )
-    links = navigation.locator(".tab-link")
-    assert links.count() == 3
-    for index in range(links.count()):
-        link_box = links.nth(index).bounding_box()
-        assert link_box is not None
-        assert link_box["y"] >= navigation_box["y"]
-        assert link_box["y"] + link_box["height"] <= navigation_box["y"] + navigation_box["height"]
-    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-    assert (
-        page.locator(".sports-record-strip").evaluate("node => getComputedStyle(node).borderRadius")
-        == "0px"
-    )
-    assert (
-        page.locator(".league-tabs a").first.evaluate("node => getComputedStyle(node).borderRadius")
-        == "2px"
-    )
-    if width < 900:
-        assert page.locator(".desktop-detail-panel").is_hidden()
-    else:
-        assert page.locator(".desktop-detail-panel").is_visible()
-        assert page.locator("[data-desktop-frame]").get_attribute("src") == "/game/game-1"
+    expect(page.get_by_role("navigation", name="Market").get_by_role("link")).to_have_count(3)
+    expect(page.get_by_role("navigation", name="View").get_by_role("link")).to_have_count(2)
+    expect(page.locator(".ticker")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert errors == []
 
 
-def test_sports_pulse_uses_the_exact_ticker_row_contract(page: Page, monkeypatch) -> None:
+def test_sports_list_shows_real_scores_in_the_shared_ticker_row(page: Page, monkeypatch) -> None:
     event = {
-        **_event("split-decision", "AWY", "HME"),
-        "signal_abbreviation": "HME",
-        "signal_team_name": "HME Club",
-        "model_probability_pct": 41.8,
-        "market_probability_pct": 34.0,
-        "prediction": {"signal": "watch", "edge_pct": 7.8},
+        **_event("game-1", "AWY", "HME"),
+        "status": "in",
+        "away_score": 5,
+        "home_score": 2,
     }
-    page.set_viewport_size({"width": 390, "height": 800})
     errors = _load(page, _rendered_pulse(monkeypatch, _pulse(event)), [])
-
-    row = page.locator('[data-sports-pulse-row="split-decision"]')
-    copy = row.text_content()
-    assert "PROJECTED" in copy
-    assert "58%" in copy
-    assert "Value HME +7.8pp" in copy
-    assert "MODEL41.8%MARKET34.0%" in copy
-    assert "vs HME · MLB" in copy
-    assert row.get_attribute("class") == "token-row ticker-row sports-pulse-row"
-    assert row.locator(".coin").count() == 1
-    assert row.locator(".ticker-line strong").text_content() == "AWY"
-    assert row.locator(".company-name").text_content() == "AWY Club"
-    assert row.locator(".mini-chart.loaded").count() == 1
-    assert page.locator(".winner-card").count() == 0
-    assert page.locator(".winner-quote").count() == 0
-    assert page.locator(".model-favorite").count() == 0
-    assert row.get_attribute("aria-label") == (
-        "AWY Club is projected to beat HME Club with a 58 percent win chance; "
-        "value side HME with a +7.8 percentage-point model edge, model 41.8 percent "
-        "versus market 34.0 percent"
-    )
-    assert page.evaluate(
-        """() => {
-          const row = document.querySelector('[data-sports-pulse-row="split-decision"]');
-          const coin = row.querySelector('.coin');
-          const chart = row.querySelector('.mini-chart');
-          const quote = row.querySelector('.quote');
-          const style = getComputedStyle(row);
-          return {
-            display: style.display,
-            minHeight: style.minHeight,
-            padding: style.padding,
-            radius: style.borderRadius,
-            coinWidth: getComputedStyle(coin).width,
-            chartWidth: getComputedStyle(chart).width,
-            chartHeight: getComputedStyle(chart).height,
-            quoteAlign: getComputedStyle(quote).textAlign,
-          };
-        }"""
-    ) == {
-        "display": "grid",
-        "minHeight": "94px",
-        "padding": "9px 8px",
-        "radius": "0px",
-        "coinWidth": "42px",
-        "chartWidth": "64px",
-        "chartHeight": "18px",
-        "quoteAlign": "right",
-    }
+    expect(page.locator(".ticker-name strong")).to_have_text("AWY · HME")
+    expect(page.locator(".ticker-value strong")).to_have_text("5 – 2")
+    expect(page.locator(".ticker-value small")).to_have_text("In progress")
     assert errors == []
 
 
-def test_sports_pulse_calls_a_close_projection_a_slight_edge(page: Page, monkeypatch) -> None:
-    event = {
-        **_event("close-game", "AWY", "HME"),
-        "model_winner_probability_pct": 51.2,
-        "model_winner_label": "SLIGHT EDGE",
-        "model_winner_detail_label": "BASELINE LEAN",
-        "model_winner_aria_action": "has a slight model edge over",
-    }
-    page.set_viewport_size({"width": 390, "height": 800})
+def test_sports_list_keeps_operator_predictions_private(page: Page, monkeypatch) -> None:
+    event = {**_event("game-1", "AWY", "HME"), "model_winner_label": "internal model detail"}
     errors = _load(page, _rendered_pulse(monkeypatch, _pulse(event)), [])
-
-    row = page.locator('[data-sports-pulse-row="close-game"]')
-    assert "SLIGHT EDGE" in row.text_content()
-    assert "51%" in row.text_content()
-    assert "Value AWY +2.6pp" in row.text_content()
-    assert row.get_attribute("aria-label") == (
-        "AWY Club has a slight model edge over HME Club with a 51 percent win chance; "
-        "value side AWY with a +2.6 percentage-point model edge, model 58.2 percent "
-        "versus market 55.6 percent"
-    )
+    expect(page.get_by_text("internal model detail")).to_have_count(0)
+    expect(page.locator(".ticker-value strong")).to_have_text("—")
+    expect(page.locator(".ticker-value small")).to_have_text("Score pending")
     assert errors == []
 
 
-def test_nba_pulse_renders_a_clear_between_seasons_state(page: Page, monkeypatch) -> None:
-    pulse = {
-        **_pulse(),
-        "league": "nba",
-        "scanned_count": 12,
-        "empty_state": {
-            "kind": "season-break",
-            "title": "NBA is between seasons.",
-            "detail": (
-                "The next scheduled game is MIA at TOR. Pulse will wait for regular-season "
-                "records and fresh market consensus before publishing a projection."
-            ),
-            "next_start_time": "2026-10-03T23:00:00+00:00",
-            "status_label": "Next NBA game scheduled",
-        },
-    }
-    page.set_viewport_size({"width": 390, "height": 800})
-    errors = _load(page, _rendered_pulse(monkeypatch, _pulse()), [pulse])
-
-    page.evaluate("window.sportsPulseLive.poll()")
-    refresh = page.locator("#sportsPulseRefresh")
-    assert refresh.is_visible()
-    refresh.click()
-
-    empty = page.locator(".sports-season-break")
-    assert empty.is_visible()
-    assert "NBA is between seasons." in empty.text_content()
-    assert "MIA at TOR" in empty.text_content()
-    assert "Next tipoff" in empty.text_content()
-    assert page.locator("#sportsPulseMaturity").text_content() == "Next NBA game scheduled"
+def test_sports_refresh_keeps_keyboard_focus_on_a_ticker(page: Page, monkeypatch) -> None:
+    page.clock.install()
+    event = _event("game-1", "AWY", "HME")
+    errors = _load(page, _rendered_pulse(monkeypatch, _pulse(event)), [])
+    page.locator(".ticker").focus()
+    empty = _rendered_pulse(monkeypatch, _pulse())
+    page.route(
+        "http://app.test/", lambda route: route.fulfill(content_type="text/html", body=empty)
+    )
+    page.clock.fast_forward(60000)
+    expect(page.locator(".ticker")).to_be_focused()
+    page.get_by_role("searchbox").focus()
+    page.clock.fast_forward(60000)
+    expect(page.get_by_role("heading", name="A quiet moment")).to_be_visible()
     assert errors == []
 
 

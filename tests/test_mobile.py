@@ -826,7 +826,7 @@ def test_ticker_page_does_not_add_a_guest_research_action(
 
     assert response.status_code == 200
     assert "Ask Flash" not in response.body.decode()
-    assert "Report unavailable" in response.body.decode()
+    assert "Report unavailable" not in response.body.decode()
     assert "Log in to generate" not in response.body.decode()
     assert "Connect OpenRouter" not in response.body.decode()
 
@@ -3028,9 +3028,7 @@ def test_owner_can_publish_report_once_and_earn_flash(
 
     assert "Shareable ONE report" in html
     assert (
-        '<strong>Flash <span class="flash-model-label">'
-        "deepseek/deepseek-v4.1-flash</span>"
-        in html
+        '<strong>Flash <span class="flash-model-label">deepseek/deepseek-v4.1-flash</span>' in html
     )
     assert "#1 of 4" in html
     assert f"/research/{report['public_id']}/card.png" in html

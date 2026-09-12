@@ -41,17 +41,17 @@ class Result:
 
 
 SCREENS = (
-    Screen("runners_pulse", "Runners · Pulse", "runners", "/", r"^Pulse$"),
+    Screen("runners_pulse", "Stocks · List", "runners", "/", r"^List$"),
     Screen("ticker", "Runners · Ticker", "runners", None, r"\S+", "ticker"),
-    Screen("runners_radar", "Runners · Changed", "runners", "/?view=changed", r"^Changed$"),
+    Screen("runners_radar", "Stocks · Map", "runners", "/?view=map", r"^Map$"),
     Screen("market_reports", "Runners · Market turns", "runners", "/reports", r"^Market turns$"),
-    Screen("memecoins", "Markets · Memecoins", "runners", "/memecoins", r"^Memecoins$"),
+    Screen("memecoins", "Memecoins · List", "runners", "/memecoins", r"^List$"),
     Screen("memecoin", "Memecoins · Coin", "runners", None, r"\S+", "memecoin"),
+    Screen("memecoin_radar", "Memecoins · Map", "runners", "/memecoins?view=map", r"^Map$"),
     Screen(
-        "memecoin_radar", "Memecoins · Changed", "runners", "/memecoins?view=changed", r"^Changed$"
+        "memecoin_alpha", "Memecoins · Saved link", "runners", "/memecoins?view=calls", r"^List$"
     ),
-    Screen("memecoin_alpha", "Memecoins · Calls", "runners", "/memecoins?view=calls", r"^Calls$"),
-    Screen("runners_alpha", "Runners · Calls", "runners", "/?view=calls", r"^Calls$"),
+    Screen("runners_alpha", "Stocks · Saved link", "runners", "/?view=calls", r"^List$"),
     Screen("caller", "Runners · Caller", "runners", None, r"\S+", "caller"),
     Screen("research", "Runners · Research", "runners", None, r"\S+", "research"),
     Screen(
@@ -61,10 +61,10 @@ SCREENS = (
         "/flash/record",
         r"^Forecast record$",
     ),
-    Screen("sports_pulse", "Sports · Pulse", "sports", "/", r"^Pulse$"),
+    Screen("sports_pulse", "Sports · List", "sports", "/", r"^List$"),
     Screen("sports_game", "Sports · Game", "sports", None, r"\S+", "sports_game"),
-    Screen("sports_radar", "Sports · Changed", "sports", "/?view=changed", r"^Changed$"),
-    Screen("sports_alpha", "Sports · Calls", "sports", "/?view=calls", r"^Calls$"),
+    Screen("sports_radar", "Sports · Map", "sports", "/?view=map", r"^Map$"),
+    Screen("sports_alpha", "Sports · Saved link", "sports", "/?view=calls", r"^List$"),
     Screen("login", "Account · Login", "runners", "/login", r"^Create your passkey$"),
     Screen(
         "backup_passkey",

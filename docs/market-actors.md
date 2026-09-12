@@ -1,5 +1,7 @@
 # Market Actors: insider map and AI characters
 
+Design update, 12 September 2026: the [pseudonymous identity design](research/pseudonymous-identity-design.md) governs the next version. It covers Sports, Stocks and Memecoins; public entity associations; stable identities; and reversible grouping and corrections. The [shared three-screen design](research/game-pattern-assessment.md) governs public presentation. Source receipts and internal evidence remain in the service layer. The sections below preserve the earlier v1 design record; their evidence panels, identity formulas and navigation proposals belong to that earlier scope. The identity revision documents the current implementation's name-based stock key and wallet-set coin key.
+
 Status: v1 implemented 2026-09-12. Design agreed 2026-09-12.
 
 v1 ships the stock insider map and memecoin wallet-cluster map, deterministic

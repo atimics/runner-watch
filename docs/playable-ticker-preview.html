@@ -1,0 +1,196 @@
+<div id="rati-playable-tickers" aria-label="RATi ticker design">
+  <style>
+    #rati-playable-tickers{--rw-bg:light-dark(#f5f8f5,#0b100e);--rw-panel:light-dark(#e8efe9,#17221b);--rw-text:light-dark(#16271c,#f0f4f1);--rw-muted:light-dark(#526459,#a6b5ac);--rw-line:light-dark(#d5e0d7,#2a3a30);--rw-green:light-dark(#176638,#a5e5b9);--rw-button:light-dark(#176638,#a5e5b9);--rw-onbutton:light-dark(#ffffff,#14231a);--rw-red:light-dark(#a92d42,#ef99a4);font:15px/1.5 Inter,ui-sans-serif,system-ui,sans-serif;color:var(--rw-text);background:var(--rw-bg);padding:0 36px;min-height:640px;color-scheme:light dark}
+    #rati-playable-tickers *{box-sizing:border-box}
+    #rati-playable-tickers button{font:inherit;cursor:pointer;color:inherit;background:none;border:0;padding:10px 14px;border-radius:24px;min-height:44px}
+    #rati-playable-tickers button:disabled{opacity:.5;cursor:default}
+    #rati-playable-tickers .rw-top{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--rw-line);padding:18px 0}
+    #rati-playable-tickers .rw-brand{font-size:25px;letter-spacing:-1px;padding-left:0;font-weight:500}
+    #rati-playable-tickers .rw-market{display:flex;gap:4px}
+    #rati-playable-tickers .rw-market button{font-size:13px;color:var(--rw-muted)}
+    #rati-playable-tickers button[aria-pressed=true]{background:var(--rw-panel);color:var(--rw-text)}
+    #rati-playable-tickers .rw-account{display:flex;align-items:center;gap:8px;padding-right:0;font-size:13px;white-space:nowrap}
+    #rati-playable-tickers .rw-face{width:32px;height:32px;display:inline-grid;place-items:center;border-radius:50%;background:var(--rw-panel);color:var(--rw-green);font-size:11px;flex-shrink:0}
+    #rati-playable-tickers .rw-face.rw-earned{box-shadow:0 0 0 2px var(--rw-green),0 0 0 5px var(--rw-bg)}
+    #rati-playable-tickers main{max-width:760px;margin:auto;padding:32px 0 50px}
+    #rati-playable-tickers h1{font-size:32px;font-weight:500;letter-spacing:-1.1px;line-height:1.16;margin:0}
+    #rati-playable-tickers h2{font-size:23px;font-weight:500;line-height:1.3;letter-spacing:-.4px;margin:12px 0}
+    #rati-playable-tickers h3{font-size:15px;font-weight:500;margin:22px 0 5px}
+    #rati-playable-tickers p{margin:8px 0 16px}
+    #rati-playable-tickers .rw-muted{color:var(--rw-muted);font-size:13px}
+    #rati-playable-tickers .rw-up{color:var(--rw-green)}
+    #rati-playable-tickers .rw-down{color:var(--rw-red)}
+    #rati-playable-tickers .rw-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:22px}
+    #rati-playable-tickers .rw-switch{display:flex;padding:3px;background:var(--rw-panel);border-radius:30px;flex-shrink:0}
+    #rati-playable-tickers .rw-switch button{font-size:13px;padding:8px 16px}
+    #rati-playable-tickers .rw-switch button[aria-pressed=true]{background:var(--rw-bg)}
+    #rati-playable-tickers .rw-search{border-bottom:1px solid var(--rw-line);display:flex;align-items:center;gap:12px;margin:10px 0}
+    #rati-playable-tickers input{font:inherit;font-size:16px;color:var(--rw-text);background:transparent;border:0;width:100%;min-width:0;padding:14px 0}
+    #rati-playable-tickers .rw-row{width:100%;display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:16px;text-align:left;border-radius:0;border-bottom:1px solid var(--rw-line);padding:19px 0}
+    #rati-playable-tickers .rw-row:hover{background:var(--rw-panel)}
+    #rati-playable-tickers .rw-mark{width:42px;height:42px;display:grid;place-items:center;background:var(--rw-panel);border-radius:50%;font-size:12px;color:var(--rw-green)}
+    #rati-playable-tickers .rw-identity{min-width:0;display:grid;gap:3px}
+    #rati-playable-tickers .rw-identity strong{font-size:16px;font-weight:500}
+    #rati-playable-tickers .rw-identity small{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--rw-muted);font-size:12px}
+    #rati-playable-tickers .rw-numbers{text-align:right;display:grid;gap:3px;font-variant-numeric:tabular-nums}
+    #rati-playable-tickers .rw-numbers strong{font-weight:500;font-size:16px}
+    #rati-playable-tickers .rw-numbers small{font-size:12px}
+    #rati-playable-tickers .rw-back{color:var(--rw-muted);font-size:13px;padding-left:0;margin-bottom:12px}
+    #rati-playable-tickers .rw-title{display:flex;gap:13px;align-items:center}
+    #rati-playable-tickers .rw-title h1{font-size:29px}
+    #rati-playable-tickers .rw-price{font-size:39px;letter-spacing:-1px;font-weight:500;margin:18px 0 0;font-variant-numeric:tabular-nums}
+    #rati-playable-tickers .rw-price span{font-size:15px;letter-spacing:0;margin-left:12px;font-weight:400}
+    #rati-playable-tickers .rw-plot{height:168px;position:relative;margin:10px 0 0}
+    #rati-playable-tickers .rw-plot svg{height:100%;width:100%;overflow:visible}
+    #rati-playable-tickers .rw-chart-line{fill:none;stroke:var(--rw-green);stroke-width:2.5;vector-effect:non-scaling-stroke}
+    #rati-playable-tickers .rw-chart-grid{stroke:var(--rw-line);stroke-width:1;vector-effect:non-scaling-stroke}
+    #rati-playable-tickers .rw-chart-labels{display:flex;justify-content:space-between;color:var(--rw-muted);font-size:12px;font-variant-numeric:tabular-nums;gap:16px;margin-bottom:23px}
+    #rati-playable-tickers .rw-teams{display:grid;grid-template-columns:1fr auto 1fr;gap:18px;text-align:center;align-items:center;padding:20px 0 26px;margin:12px 0;border-bottom:1px solid var(--rw-line)}
+    #rati-playable-tickers .rw-teams strong{display:block;font-size:42px;font-weight:500}
+    #rati-playable-tickers .rw-story{border-top:1px solid var(--rw-line);padding-top:18px}
+    #rati-playable-tickers .rw-byline{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--rw-muted)}
+    #rati-playable-tickers .rw-story h2{font-size:20px;margin:10px 0 4px}
+    #rati-playable-tickers .rw-inline{padding-left:0;color:var(--rw-muted);font-size:13px;text-align:left}
+    #rati-playable-tickers .rw-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:16px}
+    #rati-playable-tickers .rw-primary{background:var(--rw-button);color:var(--rw-onbutton);padding:12px 25px;font-weight:500}
+    #rati-playable-tickers .rw-secondary{background:var(--rw-panel);padding:12px 20px}
+    #rati-playable-tickers .rw-call{border-top:1px solid var(--rw-line);margin-top:18px;padding-top:16px}
+    #rati-playable-tickers .rw-call h2{font-size:22px;margin:8px 0}
+    #rati-playable-tickers .rw-call p{margin:5px 0}
+    #rati-playable-tickers .rw-reaction{display:flex;gap:12px;align-items:flex-start;margin-top:18px;max-width:610px}
+    #rati-playable-tickers .rw-reaction p{font-size:14px;margin:4px 0}
+    #rati-playable-tickers .rw-reader{max-width:640px;padding-top:16px}
+    #rati-playable-tickers .rw-reader h2{font-size:30px;line-height:1.2;margin:14px 0 20px}
+    #rati-playable-tickers .rw-reader p{line-height:1.7}
+    #rati-playable-tickers .rw-reader .rw-lead{font-size:18px}
+    #rati-playable-tickers .rw-graph{position:relative;display:grid;grid-template-rows:90px 100px 100px;align-items:center;margin:20px 0}
+    #rati-playable-tickers .rw-graph svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+    #rati-playable-tickers .rw-graph line{stroke:var(--rw-line);stroke-width:1.5;vector-effect:non-scaling-stroke}
+    #rati-playable-tickers .rw-graph-row{display:flex;justify-content:center;position:relative;gap:12px}
+    #rati-playable-tickers .rw-graph-row.rw-branches{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+    #rati-playable-tickers .rw-node{background:var(--rw-bg);border:1px solid var(--rw-line);border-radius:18px;padding:10px 12px;display:grid;gap:3px;min-width:0;font-size:14px}
+    #rati-playable-tickers .rw-node small{font-size:11px;color:var(--rw-muted)}
+    #rati-playable-tickers .rw-node.rw-center{background:var(--rw-panel);min-width:100px}
+    #rati-playable-tickers .rw-graph-note{text-align:center;color:var(--rw-muted);font-size:13px;max-width:510px;margin:0 auto 15px}
+    #rati-playable-tickers dialog{background:var(--rw-bg);color:var(--rw-text);border:1px solid var(--rw-line);border-radius:22px;padding:25px;width:calc(100% - 36px);max-width:440px;max-height:90%;overflow-y:auto}
+    #rati-playable-tickers dialog::backdrop{background:light-dark(#182b2077,#00000099)}
+    #rati-playable-tickers .rw-dialog-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    #rati-playable-tickers .rw-dialog-top h2{margin:0}
+    #rati-playable-tickers .rw-terms{margin:18px 0;border-top:1px solid var(--rw-line)}
+    #rati-playable-tickers .rw-term{display:flex;justify-content:space-between;gap:20px;padding:10px 0;border-bottom:1px solid var(--rw-line);font-size:13px}
+    #rati-playable-tickers .rw-term span:first-child{color:var(--rw-muted)}
+    #rati-playable-tickers .rw-term span:last-child{text-align:right}
+    #rati-playable-tickers .rw-account-link{display:block;width:100%;text-align:left;border-bottom:1px solid var(--rw-line);border-radius:0;padding:15px 0}
+    #rati-playable-tickers .rw-empty{padding:60px 0;color:var(--rw-muted);text-align:center}
+    #rati-playable-tickers .rw-brief{border-bottom:1px solid var(--rw-line);padding:12px 0 18px;margin-bottom:10px}
+    #rati-playable-tickers .rw-live{color:var(--rw-green);font-size:13px;min-height:22px;padding-top:12px}
+    @media(max-width:620px){#rati-playable-tickers{padding:0 18px}#rati-playable-tickers .rw-top{flex-wrap:wrap;gap:8px}#rati-playable-tickers .rw-market{order:3;width:100%;justify-content:center}#rati-playable-tickers .rw-market button{flex:1}#rati-playable-tickers main{padding-top:24px}#rati-playable-tickers .rw-head{gap:10px}#rati-playable-tickers h1{font-size:28px}#rati-playable-tickers .rw-row{grid-template-columns:34px minmax(0,1fr) auto;gap:10px}#rati-playable-tickers .rw-mark{width:34px;height:34px;font-size:10px}#rati-playable-tickers .rw-numbers strong,#rati-playable-tickers .rw-identity strong{font-size:14px}#rati-playable-tickers .rw-switch button{padding:8px 12px}#rati-playable-tickers .rw-plot{height:145px}#rati-playable-tickers .rw-price{font-size:33px}#rati-playable-tickers .rw-reader h2{font-size:27px}#rati-playable-tickers .rw-node{font-size:12px;padding:9px 5px}#rati-playable-tickers .rw-node small{font-size:11px}#rati-playable-tickers .rw-graph-row.rw-branches{gap:6px}}
+  </style>
+  <header class="rw-top">
+    <button class="rw-brand" data-action="home" aria-label="RATi ticker list">RATi<span class="rw-up">.</span></button>
+    <nav class="rw-market" aria-label="Markets"></nav>
+    <button class="rw-account" data-action="account" aria-label="Your Flash and chapters"></button>
+  </header>
+  <main></main>
+  <div class="rw-live" role="status" aria-live="polite"></div>
+  <dialog aria-labelledby="rw-dialog-title"><div class="rw-dialog-content"></div></dialog>
+  <script>
+    (() => {
+      const root = document.getElementById('rati-playable-tickers');
+      const main = root.querySelector('main');
+      const dialog = root.querySelector('dialog');
+      const state = {market:'Stocks',screen:'list',mode:'chart',scope:'Market',selected:0,balance:120,chapters:0,claimed:false,brief:false,query:'',cue:'Story headline'};
+      const fixtures = {
+        Stocks:[
+          {symbol:'LUMA',name:'Luma Works',price:'$4.20',start:'$4.00',change:'+5.0%',headline:'The rise held through the close.',take:'Buyers kept most of the morning gain. The next chapter is whether that strength lasts.',risk:'A drop back through the opening price would weaken this take.',watch:'The next market open.',reply:'The gain held, but the closing stretch was quieter. I would watch the next open for a fresh test.',reward:50,result:'Your rising-price Call won.',entry:'Price rises · $4.00',deadline:'At today’s market close',status:'result',report:true},
+          {symbol:'ORBT',name:'Orbit Systems',price:'$2.36',start:'$2.30',change:'+2.6%',headline:'A fast start is meeting resistance.',take:'The first move attracted buyers. Follow-through is becoming the more useful test.',risk:'A fading move on heavier selling would change this take.',watch:'Today’s close.',reply:'The first burst was strong. Now the useful question is whether buyers stay for the second move.',reward:0,status:'idle',report:true},
+          {symbol:'KITE',name:'Kite Labs',price:'$7.84',start:'$8.01',change:'−2.1%',headline:'Sellers eased after the opening dip.',take:'The early decline slowed. A recovery still needs buyers to hold the next rise.',risk:'A fresh low would weaken the recovery idea.',watch:'The next trading session.',reply:'A slower decline is a change worth watching. A held recovery would tell us more.',reward:0,status:'idle',report:true},
+          {symbol:'FERN',name:'Fern Electric',price:'$1.58',start:'$1.57',change:'+0.6%',headline:'A quiet session is taking shape.',take:'The price is holding near its opening level. The next clear move sets the story.',risk:'A larger move could change the picture quickly.',watch:'Today’s close.',reply:'Quiet sessions can still set up an interesting next chapter. I am watching the range.',reward:0,status:'idle',report:false}
+        ],
+        Memecoins:[
+          {symbol:'MOSS',name:'Moss',price:'$0.002100',start:'$0.002000',change:'+5.0%',headline:'Early linked wallets reduced holdings.',take:'A wallet group with a possible common funder sold part of its position while the price rose.',risk:'The link is a funding clue. Shared control remains uncertain.',watch:'Whether selling continues as the price changes.',reply:'The possible funding link gives us a group to watch. Its next move may help explain the selling.',reward:5,result:'Your rising-price Call won.',entry:'Price rises · $0.002000',deadline:'Closed at your request',status:'result',report:true},
+          {symbol:'PEBBLE',name:'Pebble',price:'$0.000420',start:'$0.000400',change:'+5.0%',headline:'More wallets joined the buying.',take:'Recent buying spread across more wallets while available pool liquidity held steady.',risk:'Coordinated wallets can resemble broad participation.',watch:'Whether liquidity holds through the next move.',reply:'More buyers is an interesting sign. I would pair it with how much liquidity stays in the pool.',reward:0,status:'idle',report:true},
+          {symbol:'BEAN',name:'Bean',price:'$0.003200',start:'$0.003300',change:'−3.0%',headline:'Selling increased as liquidity thinned.',take:'The same trade size can move this pool further after the recent liquidity change.',risk:'A thin pool can amplify both directions.',watch:'The next liquidity change.',reply:'The pool is thinner now. Price moves deserve more context at this size.',reward:0,status:'idle',report:true},
+          {symbol:'CLOVER',name:'Clover',price:'$0.001700',start:'$0.001680',change:'+1.2%',headline:'Trading settled into a narrow range.',take:'Recent swaps stayed close to the same price. The next move is still taking shape.',risk:'A single large swap could change a small pool quickly.',watch:'The next change in pool liquidity.',reply:'The range is quiet. Pool depth will help explain the next move.',reward:0,status:'idle',report:false}
+        ],
+        Sports:[
+          {symbol:'OWLS · FOXES',name:'Owls vs Foxes',price:'3 – 2',start:'7:00 pm',change:'Final',headline:'The Owls found the late winner.',take:'The Owls turned a close finish into a win after spending more of the final stretch on the attack.',risk:'A single late goal decided a closely matched game.',watch:'The Owls’ next fixture.',reply:'That was a narrow finish. The late pressure helped, and the margin stayed small.',reward:30,result:'Your Owls Call won.',entry:'Owls to win · +120',deadline:'At the final result',status:'result',report:true,teams:['Owls','Foxes']},
+          {symbol:'OWLS · BEARS',name:'Owls vs Bears',price:'8:00 pm',start:'8:00 pm',change:'Tomorrow',headline:'A close contest has a clear form test.',take:'The Owls enter with stronger recent form. The Bears have kept their last few games close.',risk:'A late lineup change could shift this take.',watch:'The confirmed lineup before the start.',reply:'Recent form leans toward the Owls. The Bears’ close finishes make the opening stretch interesting.',reward:0,status:'idle',report:true,teams:['Owls','Bears']},
+          {symbol:'LYNX · OWLS',name:'Lynx vs Owls',price:'9:00 pm',start:'9:00 pm',change:'Friday',headline:'The home side has momentum to test.',take:'The Lynx have started recent games well. The Owls have often improved after the break.',risk:'A slow opening could change the Lynx’s path.',watch:'The first scoring chance.',reply:'The two sides have been strongest at different moments. The opening period should set the pace.',reward:0,status:'idle',report:true,teams:['Lynx','Owls']},
+          {symbol:'OWLS · STAGS',name:'Owls vs Stags',price:'7:30 pm',start:'7:30 pm',change:'Saturday',headline:'A fresh matchup is on the board.',take:'The next lineup update will give this story a clearer starting point.',risk:'Team availability may change before the game.',watch:'The pregame lineup.',reply:'The lineup is the next useful piece of this story.',reward:0,status:'idle',report:false,teams:['Owls','Stags']}
+        ]
+      };
+      const all = () => fixtures[state.market];
+      const item = () => all()[state.selected];
+      const esc = s => String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+      const btn = (label,action,cls='',extra='') => `<button type="button" class="${cls}" data-action="${action}" ${extra}>${label}</button>`;
+      const up = x => x.change.startsWith('−') ? 'rw-down' : 'rw-up';
+      const mark = x => state.market==='Sports' ? x.teams[0].slice(0,2).toUpperCase() : x.symbol.slice(0,2);
+      const status = x => x.status;
+      const caption = x => status(x)==='result' ? 'Your result is ready' : status(x)==='reviewed' ? 'Chapter complete' : status(x)==='open' ? `Your Call · ${x.entry}` : state.cue==='Report label' ? (x.report ? 'Flash report ready' : x.name) : x.headline;
+      function announce(message){root.querySelector('.rw-live').textContent=message;}
+      function setScreen(screen){state.screen=screen;state.mode='chart';state.query='';render();}
+      function title(x){return `<div class="rw-title"><span class="rw-mark">${mark(x)}</span><div><h1>${esc(x.symbol)}</h1><div class="rw-muted">${esc(x.name)}</div></div></div>`;}
+      function rows(){
+        const entries=all().map((x,i)=>({x,i})).filter(({x})=>(state.scope==='Market'||state.scope==='My Calls'&&x.status!=='idle'||state.scope==='Chapters'&&x.status==='reviewed')&&`${x.name} ${x.symbol}`.toLowerCase().includes(state.query.toLowerCase()));
+        return entries.length?entries.map(({x,i})=>btn(`<span class="rw-mark">${mark(x)}</span><span class="rw-identity"><strong>${esc(x.symbol)}</strong><small>${esc(caption(x))}</small></span><span class="rw-numbers"><strong>${esc(x.price)}</strong><small class="${up(x)}">${esc(x.change)}</small></span>`,'detail','rw-row',`data-index="${i}" aria-label="${esc(x.name+', '+x.price+', '+caption(x))}"`)).join(''):'<p class="rw-empty">Your next story starts in the market.</p>';
+      }
+      function list(){return `${state.scope!=='Market'?btn('← Market','market','rw-back'):''}<div class="rw-head"><div><div class="rw-muted">${state.scope==='Market'?'Today’s stories':state.market}</div><h1>${state.scope==='Market'?state.market:state.scope}</h1></div><div class="rw-switch" aria-label="View">${btn('List','list','','aria-pressed="true"')}${btn('Map','map','','aria-pressed="false"')}</div></div>${state.scope==='Market'?`<label class="rw-search"><i data-lucide="search" aria-hidden="true"></i><input aria-label="Find a ticker" placeholder="Find a ticker" value="${esc(state.query)}"></label>${btn('Today’s Flash brief '+(state.brief?'−':'+'),'brief','rw-inline')}${state.brief?'<div class="rw-brief"><p>The next chapter starts with the strongest change. Open a ticker for Flash’s take, then return for its outcome.</p></div>':''}`:''}<div class="rw-rows">${rows()}</div>`;}
+      function chart(x){
+        if(state.market==='Sports'){const finished=['result','reviewed'].includes(status(x));return `<div class="rw-muted" style="margin-top:20px">${finished?'Final':esc(x.start)+' · '+esc(x.change)}</div><div class="rw-teams"><div>${esc(x.teams[0])}<strong>${finished?'3':'—'}</strong></div><span class="rw-muted">vs</span><div>${esc(x.teams[1])}<strong>${finished?'2':'—'}</strong></div></div>`;}
+        const down=x.change.startsWith('−');const samples=down?[90,86,94,83,72,79,60,65,46,48,29,32]:[29,36,30,47,43,60,52,66,79,72,91,87];
+        const path=samples.map((y,i)=>`${i?'L':'M'}${4+i*90},${130-y}`).join(' ');
+        return `<div class="rw-price">${esc(x.price)}<span class="${up(x)}">${esc(x.change)}</span></div><div class="rw-muted">${state.market==='Stocks'?'Session':'Last 24 hours'} · Updated just now</div><div class="rw-plot"><svg viewBox="0 0 1000 145" preserveAspectRatio="none" role="img" aria-label="${esc(x.symbol+': '+x.start+' to '+x.price+', '+x.change+' over the displayed period')}"><line class="rw-chart-grid" x1="0" y1="130" x2="1000" y2="130"/><path class="rw-chart-line" d="${path}"/></svg></div><div class="rw-chart-labels"><span>${state.market==='Stocks'?'Open':'24h ago'} · ${esc(x.start)}</span><span>Now · ${esc(x.price)}</span></div>`;
+      }
+      function callArea(x){
+        const phase=status(x);
+        if(phase==='idle')return `<div class="rw-actions">${btn('Make a Call','call','rw-primary')}${btn('React · 10 Flash','react','rw-inline')}</div>`;
+        if(phase==='open')return `<section class="rw-call"><div class="rw-muted">Your Call · Open</div><h2>${esc(x.entry)}</h2><p class="rw-muted">${esc(x.deadline)}</p><div class="rw-actions">${state.market==='Sports'?btn('View Call','call-info','rw-secondary'):btn('Close Call','close-call','rw-primary')}${btn('React · 10 Flash','react','rw-inline')}</div></section>`;
+        const reviewed=phase==='reviewed';
+        return `<section class="rw-call"><div class="rw-byline">Your Call · ${reviewed?'Chapter complete':'Result ready'}</div><h2>${esc(x.result||'Your Call finished level.')}</h2><p>${esc(x.entry)}${state.market==='Sports'?'':` → ${esc(x.price)}`} <span class="rw-up">${x.reward?` · +${x.reward} Flash`:''}</span></p><p class="rw-muted">${esc(x.deadline)}${x.reward?' · Reward added to your balance':''}</p><div class="rw-actions">${btn(reviewed?'Next story':'Finish chapter',reviewed?'next':'finish','rw-primary')}${btn('React · 10 Flash','react','rw-inline')}</div></section>`;
+      }
+      function reaction(x){return x.reacted?`<div class="rw-reaction"><span class="rw-face ${state.chapters>=5?'rw-earned':''}">CL</span><div><div class="rw-byline">Copper Lens · AI avatar · Just now</div><p>${esc(x.reply)}</p></div></div>`:'';}
+      function detail(){const x=item();return `${btn('← '+(state.scope==='Market'?state.market:state.scope),'list','rw-back')}${title(x)}${state.mode==='report'?`<article class="rw-reader">${btn('← Back to '+(state.market==='Sports'?'score':'chart'),'chart','rw-back')}<div class="rw-byline">Flash · AI report · ${x.private?'Yours for 1 hour':'Public · Today'}</div><h2>${esc(x.headline)}</h2><p class="rw-lead">${esc(x.take)}</p><h3>What could change the take</h3><p>${esc(x.risk)}</p><h3>Next chapter</h3><p>${esc(x.watch)}</p>${x.private?btn('Publish now · +50 Flash','publish','rw-secondary'):''}</article>`:`${chart(x)}<section class="rw-story"><div class="rw-byline"><i data-lucide="zap" aria-hidden="true"></i> Flash · AI take</div><h2>${esc(x.headline)}</h2>${btn(x.report?'Read report →':'Ask Flash · 100',x.report?'report':'commission','rw-inline')}</section>`}${reaction(x)}${callArea(x)}`;}
+      function map(){const x=item();const link=state.market==='Stocks'?['Harbor Fund','Disclosed holder','A disclosed holder connects these companies.']:state.market==='Memecoins'?['Wallet group A','Possible funding link','These wallets may share an initial funder. Shared control is uncertain.']:['Owls','Shared team','The Owls connect these fixtures.'];const related=all().map((v,i)=>({symbol:v.symbol,index:i})).filter(v=>v.index!==state.selected);return `<div class="rw-head"><div><div class="rw-muted">Connected stories</div><h1>${state.market}</h1></div><div class="rw-switch" aria-label="View">${btn('List','list','','aria-pressed="false"')}${btn('Map','map','','aria-pressed="true"')}</div></div><div class="rw-graph"><svg viewBox="0 0 600 290" preserveAspectRatio="none" aria-hidden="true"><line x1="300" y1="45" x2="300" y2="140"/><line x1="300" y1="140" x2="100" y2="240"/><line x1="300" y1="140" x2="300" y2="240"/><line x1="300" y1="140" x2="500" y2="240"/></svg><div class="rw-graph-row">${btn(esc(x.symbol),'detail','rw-node rw-center',`data-index="${state.selected}"`)}</div><div class="rw-graph-row">${btn(esc(link[0])+'<small>'+esc(link[1])+'</small>','connection','rw-node')}</div><div class="rw-graph-row rw-branches">${related.map(v=>btn(esc(v.symbol)+'<small>Open story →</small>','related','rw-node',`data-index="${v.index}"`)).join('')}</div></div><p class="rw-graph-note">${esc(link[2])}</p><p class="rw-graph-note">${state.market==='Sports'?'Recent and upcoming fixtures':'Updated today'}</p>`;}
+      function render(){
+        root.querySelector('.rw-market').innerHTML=Object.keys(fixtures).map(m=>btn(m,'market-tab','',`data-market="${m}" aria-pressed="${m===state.market}"`)).join('');
+        root.querySelector('.rw-account').innerHTML=`<span class="rw-face ${state.chapters>=5?'rw-earned':''}">CL</span><span>${state.balance} Flash</span>`;
+        main.innerHTML=state.screen==='list'?list():state.screen==='map'?map():detail();
+        if(globalThis.lucide)lucide.createIcons({attrs:{width:16,height:16}});
+      }
+      function modal(heading,body){root.querySelector('.rw-dialog-content').innerHTML=`<div class="rw-dialog-top"><h2 id="rw-dialog-title">${heading}</h2>${btn('×','dismiss','','aria-label="Close"')}</div>${body}`;if(!dialog.open)dialog.showModal();}
+      function terms(pairs){return '<div class="rw-terms">'+pairs.map(([a,b])=>`<div class="rw-term"><span>${esc(a)}</span><span>${esc(b)}</span></div>`).join('')+'</div>';}
+      function callPreview(team){const x=item();x.proposedTeam=team;const sports=state.market==='Sports';modal('Your Call',terms([['Choice',sports?team+' to win':'Price rises'],['Entry',sports?'+120':x.price],['Settles',sports?'At the final result':state.market==='Stocks'?'At today’s market close':'In 7 days, with a current price'],['Reward',sports?'30 Flash for a win':state.market==='Stocks'?'10 Flash per 1% gain · up to 50':'1 Flash per 1% gain · up to 50']])+'<p class="rw-muted">A paper Call on your public record.</p>'+btn('Confirm Call','confirm-call','rw-primary'));}
+      root.addEventListener('input',e=>{if(e.target.matches('input')){state.query=e.target.value;root.querySelector('.rw-rows').innerHTML=rows();}});
+      root.addEventListener('click',e=>{
+        const button=e.target.closest('button[data-action]');if(!button)return;const action=button.dataset.action;const x=item();announce('');
+        if(action==='dismiss'){dialog.close();return;}
+        if(action==='home'||action==='market'){state.scope='Market';setScreen('list');return;}
+        if(action==='market-tab'){state.market=button.dataset.market;state.selected=0;state.scope='Market';state.mode='chart';render();return;}
+        if(action==='list'||action==='map'){setScreen(action);return;}
+        if(action==='detail'||action==='related'){state.selected=Number(button.dataset.index);setScreen('detail');return;}
+        if(action==='brief'){state.brief=!state.brief;render();return;}
+        if(action==='report'||action==='chart'){state.mode=action==='report'?'report':'chart';render();return;}
+        if(action==='next'){state.selected=(state.selected+1)%all().length;state.mode='chart';render();return;}
+        if(action==='account'){modal('Copper Lens',`<p class="rw-muted">AI avatar · ${state.chapters} chapters finished</p>${terms([['Balance',state.balance+' Flash'],['Next milestone',state.chapters>=5?'Avatar frame unlocked':(5-state.chapters)+' more to your first frame']])}${btn(state.claimed?'Daily Flash collected':'Collect daily Flash · +100','claim','rw-primary',state.claimed?'disabled':'')}${btn('My Calls','my-calls','rw-account-link')}${btn('Completed chapters','chapters','rw-account-link')}`);return;}
+        if(action==='claim'){if(!state.claimed){state.claimed=true;state.balance+=100;}dialog.close();render();announce('100 Flash added.');return;}
+        if(action==='my-calls'||action==='chapters'){state.scope=action==='my-calls'?'My Calls':'Chapters';dialog.close();setScreen('list');return;}
+        if(action==='react'||action==='commission'){const cost=action==='react'?10:100;modal(action==='react'?'React with Copper Lens':'Ask Flash',`<p>${action==='react'?'Your AI avatar will post a public reply to this story.':'Flash will write a report for this ticker. It is yours for one hour, then becomes public.'}</p>${terms([['Cost',cost+' Flash'],['Your balance',state.balance+' Flash']])}${state.balance>=cost?btn(action==='react'?'Post reaction · 10 Flash':'Create report · 100 Flash',action==='react'?'confirm-react':'confirm-commission','rw-primary'):'<p>Collect your daily Flash in your account.</p>'}`);return;}
+        if(action==='confirm-react'){if(state.balance>=10){state.balance-=10;x.reacted=true;}dialog.close();render();announce('Copper Lens posted a reaction.');return;}
+        if(action==='confirm-commission'){if(state.balance>=100){state.balance-=100;x.report=true;x.private=true;state.mode='report';}dialog.close();render();announce('Your sample report is ready.');return;}
+        if(action==='publish'){modal('Publish this report',`<p>Everyone can read this report as soon as you publish it.</p>${btn('Publish · +50 Flash','confirm-publish','rw-primary')}`);return;}
+        if(action==='confirm-publish'){if(x.private){x.private=false;state.balance+=50;}dialog.close();render();announce('Published. 50 Flash added.');return;}
+        if(action==='call'){if(state.market==='Sports'){modal('Choose your Call',`<p>${esc(x.name)} · ${esc(x.start)}</p><div class="rw-actions">${x.teams.map(t=>btn(esc(t)+' to win','choose-team','rw-secondary',`data-team="${esc(t)}"`)).join('')}</div>`);}else callPreview();return;}
+        if(action==='choose-team'){callPreview(button.dataset.team);return;}
+        if(action==='confirm-call'){x.status='open';x.entry=state.market==='Sports'?x.proposedTeam+' to win · +120':'Price rises · '+x.price;x.deadline=state.market==='Sports'?'At the final result':state.market==='Stocks'?'At today’s market close':'In 7 days, with a current price';x.reward=0;dialog.close();render();announce('Your Call is on the record.');return;}
+        if(action==='call-info'){modal('Your open Call',terms([['Choice',x.entry],['Settles',x.deadline]])+'<p>The result will appear here when the game ends.</p>');return;}
+        if(action==='close-call'){modal('Close your Call',terms([['Your Call',x.entry],['Current price',x.price],['Result','Level · 0 Flash']])+btn('Confirm close','confirm-close','rw-primary'));return;}
+        if(action==='confirm-close'){x.status='result';x.result='Your Call finished level.';x.deadline='Closed at your request';dialog.close();render();announce('Your result is ready.');return;}
+        if(action==='finish'){if(status(x)==='result'){x.status='reviewed';state.chapters++;}render();announce(state.chapters===5?'Chapter 5 complete. Your avatar frame is unlocked.':'Chapter complete.');return;}
+        if(action==='connection'){announce(state.market==='Memecoins'?'Possible common funding is a clue. Shared control remains uncertain.':'This shared connection links the stories shown on the map.');}
+      });
+      render();
+      if(globalThis.Tweak){const tweak=new Tweak({container:root,onChange:render});tweak.addSelect(state,'cue',{label:'List cue',options:['Story headline','Report label']});}
+    })();
+  </script>
+</div>
