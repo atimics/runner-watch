@@ -6,8 +6,10 @@ from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page, expect
+from starlette.requests import Request
 
-from tests.test_browser_memecoins import _detail, _html
+from runner_web import main
+from tests.test_browser_memecoins import _detail
 from tests.test_memecoin_replay import COIN, payload
 
 pytestmark = pytest.mark.browser
@@ -29,13 +31,48 @@ def open_replay(page: Page, *, width: int = 390, launch: bool = True) -> dict:
         "gif_url": "/saved.gif",
         "evidence_url": "/saved.json",
     }
-    html = _html("detail", detail=_detail(coin={**_detail()["coin"], **COIN}))
-    script = (ROOT / "web/static/memecoin-replay.js").read_text()
-    html = html.replace("</body>", f"<script>{script}</script></body>")
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/memecoins/coin/" + COIN["id"],
+            "headers": [(b"host", b"app.test")],
+            "scheme": "http",
+            "server": ("app.test", 80),
+            "query_string": b"",
+        }
+    )
+    request.state.csp_nonce = "browser-test"
+    detail = _detail(coin={**_detail()["coin"], **COIN})
+    html = main.templates.TemplateResponse(
+        request,
+        "simple_coin_detail.html",
+        main.page_context(
+            request,
+            None,
+            resolved_user=None,
+            detail=detail,
+            active_call=None,
+        ),
+    ).body.decode()
+    html = re.sub(
+        r'<link rel="stylesheet" href="/static/([^"?]+)[^"]*">',
+        lambda match: "<style>" + (ROOT / "web/static" / match[1]).read_text() + "</style>",
+        html,
+    )
+    html = re.sub(
+        r'<script src="/static/([^"?]+)[^"]*"[^>]*></script>',
+        lambda match: "<script>" + (ROOT / "web/static" / match[1]).read_text() + "</script>",
+        html,
+    )
     page.route(
         "http://app.test/**", lambda route: route.fulfill(body=html, content_type="text/html")
     )
     page.route("**/api/memecoins/*/replay*", lambda route: route.fulfill(json=record))
+    page.route(
+        "**/api/screens/**",
+        lambda route: route.fulfill(json=main.simple_market_detail("memecoins", detail)),
+    )
     page.goto("http://app.test/memecoins/coin/" + COIN["id"])
     expect(page.locator("[data-replay-content]")).to_be_visible()
     return data

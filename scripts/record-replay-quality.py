@@ -21,8 +21,14 @@ modules = {
 }
 outcomes = {}
 seen = set()
+errors = []
 for path in args.reports:
-    for test in ElementTree.parse(path).iter("testcase"):
+    try:
+        report_xml = ElementTree.parse(path)
+    except (OSError, ElementTree.ParseError):
+        errors.append("Report unavailable: " + Path(path).name)
+        continue
+    for test in report_xml.iter("testcase"):
         module = test.get("classname", "")
         if module not in modules:
             continue
@@ -40,8 +46,9 @@ sources = [
     Path("src/runner_web/main.py"),
     Path("src/runner_web/memecoin_store.py"),
     Path("web/static/memecoin-replay.js"),
-    Path("web/static/memecoins.css"),
-    Path("web/templates/memecoin_detail.html"),
+    Path("web/static/memecoin-replay.css"),
+    Path("web/templates/simple_coin_detail.html"),
+    Path("web/templates/market_screen.html"),
     Path("web/templates/_memecoin_replay.html"),
     Path(__file__),
     *Path("tests").glob("test*memecoin_replay*.py"),
@@ -56,7 +63,11 @@ report = {
     "source_digest": digest(hashes),
     "outcomes": outcomes,
     "tests_run": len(outcomes),
-    "passed": seen == modules and len(outcomes) >= 37 and set(outcomes.values()) == {"passed"},
+    "errors": errors,
+    "passed": not errors
+    and seen == modules
+    and len(outcomes) >= 37
+    and set(outcomes.values()) == {"passed"},
 }
 Path(args.output).write_text(json.dumps(report, indent=2) + "\n")
 print(

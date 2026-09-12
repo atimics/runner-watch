@@ -41,30 +41,6 @@
 .meme-detail-tools p { flex-basis: 100%; color: var(--muted); font-size: 12px; margin: 0; overflow-wrap: anywhere; }
 .meme-detail-tools p:empty { display: none; }
 .meme-detail-grid { display: grid; gap: 0 24px; }
-.token-replay { margin-top: 22px; }
-.token-replay [hidden] { display: none; }
-.token-replay .replay-stage { background: #131c22; border-radius: 14px; overflow: hidden; }
-.token-replay svg { display: block; width: 100%; height: auto; }
-.token-replay svg text { fill: #e5edef; font-size: 12px; pointer-events: none; }
-.token-replay svg .replay-origin-state { fill: #bfcacb; font-size: 9px; }
-.token-replay svg [role="button"] { cursor: pointer; outline: none; }
-.token-replay svg [role="button"]:focus circle { stroke: #fff; stroke-width: 4; }
-.replay-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 16px 0; }
-.replay-controls button, .replay-controls a { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; color: var(--text); background: var(--panel); font: inherit; font-size: 12px; cursor: pointer; text-decoration: none; }
-.replay-controls label { display: flex; gap: 5px; align-items: center; font-size: 12px; }
-.replay-controls input { width: 16px; height: 16px; }
-.replay-position { display: flex; align-items: center; gap: 12px; font-size: 11px; color: var(--muted); }
-.replay-position input { flex: 1; min-width: 0; accent-color: #809638; }
-.replay-time, .token-replay [data-replay-coverage] { font-size: 11px; color: var(--muted); line-height: 1.5; }
-.replay-badge { text-align: right; max-width: 45%; }
-.replay-legend { display: flex; gap: 14px; padding: 9px 0; font-size: 10px; color: var(--muted); }
-.replay-legend span:nth-child(1) { color: #d3eb86; }
-.replay-legend span:nth-child(2) { color: #77c9ce; }
-.replay-legend span:nth-child(3) { color: #c8d284; }
-.replay-legend span:nth-child(4) { color: #b69be4; }
-.replay-evidence { padding-top: 14px; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
-.replay-evidence summary { cursor: pointer; }
-.replay-evidence a { color: var(--text); }
 .meme-section { min-width: 0; padding: 20px 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; }
 .meme-section > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .meme-section header h2 { font-size: 13px; margin: 3px 0 0; letter-spacing: -.01em; }
