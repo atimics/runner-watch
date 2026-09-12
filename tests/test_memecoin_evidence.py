@@ -229,3 +229,112 @@ def test_live_helius_transaction_fixture_decodes_the_observed_swap():
     assert swaps[0]["direction"] == "buy"
     assert swaps[0]["net_token_amount"] == "0.010227"
     assert swaps[0]["signature"] == entry["transaction"]["signatures"][0]
+
+
+def test_retention_cap_uses_small_batches_and_keeps_latest_receipts(monkeypatch):
+    monkeypatch.setattr(evidence, "MAX_TRANSACTIONS", 3)
+    monkeypatch.setattr(evidence, "PRUNE_BATCH_SIZE", 2)
+    for index, letter in enumerate("ABCDEFGH"):
+        tx = transaction()
+        tx["transaction"]["signatures"] = [letter * 64]
+        tx["blockTime"] = int(AT.timestamp()) - 100 + index
+        evidence.save_batch("program:test", [tx], parse_events(tx), {}, at=AT)
+
+    def counts():
+        with db.connection() as database:
+            receipts = database.execute(
+                "SELECT signature FROM memecoin_chain_transactions"
+            ).fetchall()
+            orphaned = database.execute(
+                "SELECT event_id FROM memecoin_chain_events e WHERE NOT EXISTS "
+                "(SELECT 1 FROM memecoin_chain_transactions t WHERE t.signature=e.signature)"
+            ).fetchall()
+        assert orphaned == []
+        return {row["signature"] for row in receipts}
+
+    for expected_count in (6, 4, 3, 3):
+        evidence.prune_evidence(at=AT)
+        remaining = counts()
+        assert len(remaining) == expected_count
+        assert {letter * 64 for letter in "FGH"} <= remaining
+
+
+def test_retention_cap_breaks_timestamp_ties_consistently(monkeypatch):
+    monkeypatch.setattr(evidence, "MAX_TRANSACTIONS", 2)
+    for letter in "DCBA":
+        tx = transaction()
+        tx["transaction"]["signatures"] = [letter * 64]
+        evidence.save_batch("program:test", [tx], parse_events(tx), {}, at=AT)
+    evidence.prune_evidence(at=AT)
+    with db.connection() as database:
+        remaining = database.execute("SELECT signature FROM memecoin_chain_transactions").fetchall()
+    assert {r["signature"] for r in remaining} == {letter * 64 for letter in "CD"}
+
+
+def test_prune_timeout_rolls_back_receipts_and_events_together(monkeypatch):
+    from contextlib import contextmanager
+
+    from psycopg.errors import QueryCanceled
+
+    monkeypatch.setattr(evidence, "MAX_TRANSACTIONS", 0)
+    tx = transaction()
+    evidence.save_batch("program:test", [tx], parse_events(tx), {}, at=AT)
+    original = evidence.connection
+
+    @contextmanager
+    def cancelled():
+        with original() as database:
+
+            class Limited:
+                backend = "sqlite"
+
+                def execute(self, statement, parameters=()):
+                    if statement.startswith("DELETE FROM memecoin_chain_transactions"):
+                        raise QueryCanceled("cleanup time limit")
+                    return database.execute(statement, parameters)
+
+            yield Limited()
+
+    monkeypatch.setattr(evidence, "connection", cancelled)
+    evidence.prune_evidence(at=AT)
+    assert evidence.transaction_receipt("1" * 64)
+    assert evidence.recent_events(at=AT)
+
+
+def test_busy_postgres_pruner_skips_a_competing_cleanup(monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    statements = []
+
+    @contextmanager
+    def busy():
+        class Busy:
+            backend = "postgres"
+
+            def execute(self, statement, parameters=()):
+                statements.append(statement)
+                return SimpleNamespace(fetchone=lambda: {"acquired": False})
+
+        yield Busy()
+
+    monkeypatch.setattr(evidence, "connection", busy)
+    evidence.prune_evidence(at=AT)
+    assert any("pg_try_advisory_xact_lock" in sql for sql in statements)
+    assert not any(sql.startswith("DELETE") for sql in statements)
+
+
+def test_prune_indexes_survive_migration_restart():
+    db.init_db()
+    with db.connection() as database:
+        indexes = {
+            row["name"]
+            for row in database.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            ).fetchall()
+        }
+    assert {
+        "memecoin_chain_events_signature",
+        "memecoin_chain_events_time",
+        "memecoin_chain_gaps_time",
+    } <= indexes

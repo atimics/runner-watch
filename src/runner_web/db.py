@@ -3161,6 +3161,19 @@ class Migration:
     apply: Callable[[DatabaseConnection], None]
 
 
+def _migration_067_coin_evidence_pruning(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS memecoin_chain_events_signature
+            ON memecoin_chain_events(signature);
+        CREATE INDEX IF NOT EXISTS memecoin_chain_events_time
+            ON memecoin_chain_events(observed_at,event_id);
+        CREATE INDEX IF NOT EXISTS memecoin_chain_gaps_time
+            ON memecoin_chain_gaps(recorded_at);
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3232,6 +3245,7 @@ MIGRATIONS = (
     Migration(64, "company_sectors", _migration_064_company_sectors),
     Migration(65, "telegram_channel_posts", _migration_065_telegram_channel_posts),
     Migration(66, "market_actors", _migration_066_market_actors),
+    Migration(67, "coin_evidence_pruning", _migration_067_coin_evidence_pruning),
 )
 
 

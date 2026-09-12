@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -13,6 +14,9 @@ from runner_web.db import connection
 DAILY_CREDIT_CAP = 10_000
 RETENTION_DAYS = 30
 MAX_TRANSACTIONS = 250_000
+PRUNE_BATCH_SIZE = 500
+PRUNE_LOCK_ID = 728416203
+LOG = logging.getLogger(__name__)
 
 
 class CreditBudgetReached(ValueError):
@@ -173,21 +177,61 @@ def evidence_status(*, at: datetime) -> dict[str, Any]:
 
 
 def prune_evidence(*, at: datetime) -> None:
+    """Trim a bounded batch using indexed receipt keys and one PostgreSQL worker."""
+    from psycopg.errors import LockNotAvailable, QueryCanceled
+
     oldest = (at - timedelta(days=RETENTION_DAYS)).isoformat()
-    with connection() as database:
-        database.execute("DELETE FROM memecoin_chain_gaps WHERE recorded_at<?", (oldest,))
-        database.execute("DELETE FROM memecoin_chain_events WHERE observed_at<?", (oldest,))
-        database.execute("DELETE FROM memecoin_chain_transactions WHERE observed_at<?", (oldest,))
-        database.execute(
-            "DELETE FROM memecoin_chain_transactions WHERE signature NOT IN "
-            "(SELECT signature FROM memecoin_chain_transactions "
-            "ORDER BY observed_at DESC,signature LIMIT ?)",
-            (MAX_TRANSACTIONS,),
-        )
-        database.execute(
-            "DELETE FROM memecoin_chain_events WHERE signature NOT IN "
-            "(SELECT signature FROM memecoin_chain_transactions)"
-        )
+    try:
+        with connection() as database:
+            if database.backend == "postgres":
+                database.execute("SET LOCAL statement_timeout = '5s'")
+                database.execute("SET LOCAL lock_timeout = '1s'")
+                acquired = database.execute(
+                    "SELECT pg_try_advisory_xact_lock(?) AS acquired", (PRUNE_LOCK_ID,)
+                ).fetchone()
+                if not acquired["acquired"]:
+                    return
+            database.execute(
+                "DELETE FROM memecoin_chain_gaps WHERE (stream,start_time,end_time) IN "
+                "(SELECT stream,start_time,end_time FROM memecoin_chain_gaps "
+                "WHERE recorded_at<? ORDER BY recorded_at LIMIT ?)",
+                (oldest, PRUNE_BATCH_SIZE),
+            )
+            database.execute(
+                "DELETE FROM memecoin_chain_events WHERE event_id IN "
+                "(SELECT event_id FROM memecoin_chain_events WHERE observed_at<? "
+                "ORDER BY observed_at,event_id LIMIT ?)",
+                (oldest, PRUNE_BATCH_SIZE),
+            )
+            expired = database.execute(
+                "SELECT signature FROM memecoin_chain_transactions WHERE observed_at<? "
+                "ORDER BY observed_at,signature LIMIT ?",
+                (oldest, PRUNE_BATCH_SIZE),
+            ).fetchall()
+            _delete_receipts(database, [row["signature"] for row in expired])
+            remaining = PRUNE_BATCH_SIZE - len(expired)
+            if remaining:
+                overflow = database.execute(
+                    "SELECT signature FROM memecoin_chain_transactions "
+                    "ORDER BY observed_at DESC,signature DESC LIMIT ? OFFSET ?",
+                    (remaining, MAX_TRANSACTIONS),
+                ).fetchall()
+                _delete_receipts(database, [row["signature"] for row in overflow])
+    except (LockNotAvailable, QueryCanceled):
+        LOG.warning("Coin evidence cleanup deferred after its database time limit")
+
+
+def _delete_receipts(database: Any, signatures: list[str]) -> None:
+    if not signatures:
+        return
+    placeholders = ",".join("?" for _ in signatures)
+    # Delete each receipt's decoded events in the same transaction as its receipt.
+    database.execute(
+        f"DELETE FROM memecoin_chain_events WHERE signature IN ({placeholders})", signatures
+    )
+    database.execute(
+        f"DELETE FROM memecoin_chain_transactions WHERE signature IN ({placeholders})", signatures
+    )
 
 
 def transaction_receipt(signature: str) -> dict[str, Any] | None:
