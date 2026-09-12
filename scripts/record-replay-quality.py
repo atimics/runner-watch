@@ -50,7 +50,7 @@ sources = [
     Path("web/templates/simple_coin_detail.html"),
     Path("web/templates/market_screen.html"),
     Path("web/templates/_memecoin_replay.html"),
-    Path(__file__),
+    Path(__file__).resolve().relative_to(Path.cwd()),
     *Path("tests").glob("test*memecoin_replay*.py"),
 ]
 hashes = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(sources)}

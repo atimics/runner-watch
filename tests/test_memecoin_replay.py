@@ -358,6 +358,46 @@ def test_channel_opt_in_and_destination_are_bound_to_the_new_detection(monkeypat
     )
 
 
+def test_concurrent_channel_claims_send_one_gif(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_MEMECOIN_ALERTS", "1")
+    collect()
+    store.render_pending_replays(at=AT)
+    entered, finish = Event(), Event()
+    calls = []
+
+    def receiver(*args):
+        calls.append(args)
+        entered.set()
+        assert finish.wait(10)
+        return 42
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(
+            dispatch_memecoin_replays, origin="https://app.test", at=AT, sender=receiver
+        )
+        assert entered.wait(10)
+        assert (
+            dispatch_memecoin_replays(origin="https://app.test", at=AT, sender=receiver)["sent"]
+            == 0
+        )
+        finish.set()
+        assert first.result()["sent"] == 1
+    assert len(calls) == 1
+
+
+def test_archive_capacity_retains_the_saved_version_and_new_source_evidence(monkeypatch):
+    collect()
+    store.render_pending_replays(at=AT)
+    original = store.saved_replay(COIN["id"])["payload"]["id"]
+    monkeypatch.setattr(store, "MAX_REVISIONS_PER_COIN", 1)
+    later = AT + timedelta(minutes=5)
+    collect(at=later, txs=[transaction("buy", 3)])
+    assert store.render_pending_replays(at=later)["deferred"] == 1
+    status = store.replay_status(COIN["id"])
+    assert status["id"] == original and status["collection_status"] == "archive_capacity"
+    assert evidence.transaction_receipt(transaction("buy", 3)["transaction"]["signatures"][0])
+
+
 @pytest.mark.parametrize(
     "outcome,expected", [("retry", "retry"), ("uncertain", "uncertain"), ("failed", "failed")]
 )
