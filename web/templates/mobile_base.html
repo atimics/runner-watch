@@ -25,7 +25,7 @@
     {% block content %}{% endblock %}
     {% block bottom_nav %}
     {% set board_base = board_base|default('/memecoins' if current_product == 'memecoins' else ((sports_prefix or '') ~ '/' if current_product == 'sports' else '/')) %}
-    {% set board_links = board_links|default({'pulse': board_base ~ '?view=pulse', 'changed': board_base ~ '?view=changed', 'calls': board_base ~ '?view=calls'}) %}
+    {% set board_links = board_links|default({'pulse': board_base ~ '?view=pulse', 'changed': board_base ~ '?view=changed', 'map': board_base ~ '?view=map', 'calls': board_base ~ '?view=calls'}) %}
     <nav class="tab-bar board-view-bar" aria-label="{{ 'Memecoins' if current_product == 'memecoins' else 'Sports' if current_product == 'sports' else 'Stocks' }} board views">
       <a class="tab-link {% if active_tab == 'pulse' %}active{% endif %}" href="{{ board_links.pulse }}"{% if active_tab == 'pulse' %} aria-current="page"{% endif %}>
         <span class="tab-icon pulse-icon" aria-hidden="true"></span>
@@ -35,6 +35,12 @@
         <span class="tab-icon radar-icon" aria-hidden="true"></span>
         <span>Changed</span>
       </a>
+      {% if current_product != 'sports' %}
+      <a class="tab-link {% if active_tab == 'map' %}active{% endif %}" href="{{ board_links.map }}"{% if active_tab == 'map' %} aria-current="page"{% endif %}>
+        <span class="tab-icon map-icon" aria-hidden="true"></span>
+        <span>Map</span>
+      </a>
+      {% endif %}
       <a class="tab-link {% if active_tab == 'alpha' %}active{% endif %}" href="{{ board_links.calls }}"{% if active_tab == 'alpha' %} aria-current="page"{% endif %}>
         <span class="tab-icon alpha-icon" aria-hidden="true"></span>
         <span>Calls</span>

@@ -49,6 +49,7 @@ BASE_REQUIRED_WORKER_NAMES = frozenset(
         "case-monitor",
         "kol",
         "memecoins",
+        "market-actors",
         "call-settlement",
     }
 )

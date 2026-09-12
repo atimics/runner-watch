@@ -38,6 +38,8 @@ check_endpoint /api/memecoin-calls
 check_endpoint '/api/pulse?limit=1'
 check_endpoint '/api/radar?limit=1'
 check_endpoint '/api/sports/pulse?limit=1'
+check_endpoint '/api/market-actors?domain=stock'
+check_endpoint '/?view=map'
 
 version_payload=$(curl --fail --silent --show-error --location --max-time 20 \
     "${origin}/api/version")

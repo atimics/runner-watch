@@ -3085,6 +3085,75 @@ def _migration_065_telegram_channel_posts(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_066_market_actors(db: DatabaseConnection) -> None:
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS market_actors (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL CHECK(kind IN ('person','cluster')),
+            domain TEXT NOT NULL CHECK(domain IN ('stock','coin')),
+            stable_key TEXT NOT NULL UNIQUE,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            display_name TEXT NOT NULL,
+            ability_id TEXT NOT NULL,
+            avatar_seed TEXT NOT NULL UNIQUE,
+            portrait_status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS market_actors_domain
+            ON market_actors(domain,updated_at DESC);
+        CREATE TABLE IF NOT EXISTS actor_ties (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL REFERENCES market_actors(id) ON DELETE CASCADE,
+            subject_kind TEXT NOT NULL CHECK(subject_kind IN ('stock','coin')),
+            subject_key TEXT NOT NULL,
+            role TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            weight REAL,
+            as_of TEXT NOT NULL,
+            evidence_kind TEXT NOT NULL,
+            evidence_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(actor_id,subject_kind,subject_key,role,direction,evidence_kind,evidence_id)
+        );
+        CREATE INDEX IF NOT EXISTS actor_ties_subject
+            ON actor_ties(subject_kind,subject_key,as_of DESC);
+        CREATE INDEX IF NOT EXISTS actor_ties_actor
+            ON actor_ties(actor_id,as_of DESC);
+        CREATE TABLE IF NOT EXISTS actor_cluster_members (
+            actor_id TEXT NOT NULL REFERENCES market_actors(id) ON DELETE CASCADE,
+            wallet TEXT NOT NULL,
+            evidence_kind TEXT NOT NULL,
+            evidence_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(actor_id,wallet)
+        );
+        CREATE INDEX IF NOT EXISTS actor_cluster_members_wallet
+            ON actor_cluster_members(wallet);
+        CREATE TABLE IF NOT EXISTS market_actor_portraits (
+            actor_id TEXT PRIMARY KEY REFERENCES market_actors(id) ON DELETE CASCADE,
+            content_type TEXT NOT NULL,
+            bytes BLOB NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS market_actor_comments (
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL REFERENCES market_actors(id) ON DELETE CASCADE,
+            subject_key TEXT NOT NULL DEFAULT '',
+            body TEXT NOT NULL,
+            generation_model TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS market_actor_comments_actor
+            ON market_actor_comments(actor_id,created_at DESC);
+        CREATE INDEX IF NOT EXISTS market_actor_comments_day
+            ON market_actor_comments(created_at);
+        """
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -3162,6 +3231,7 @@ MIGRATIONS = (
     Migration(63, "telegram_chat", _migration_063_telegram_chat),
     Migration(64, "company_sectors", _migration_064_company_sectors),
     Migration(65, "telegram_channel_posts", _migration_065_telegram_channel_posts),
+    Migration(66, "market_actors", _migration_066_market_actors),
 )
 
 

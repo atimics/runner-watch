@@ -1,7 +1,12 @@
 # Market Actors: insider map and AI characters
 
-Status: draft design. Direction agreed 2026-09-12.
-No implementation yet.
+Status: v1 implemented 2026-09-12. Design agreed 2026-09-12.
+
+v1 ships the stock insider map and memecoin wallet-cluster map, deterministic
+pseudonyms, on-demand AI portraits cached through OpenRouter, and on-demand
+third-person character comments. Deferred: background event-driven comments,
+and reading clusters from `memecoin_chain_events` directly instead of the saved
+forensics snapshot.
 
 ## Goal
 

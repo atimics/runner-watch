@@ -31,7 +31,7 @@ class Navigation(HTMLParser):
             self.nav = ""
 
 
-@pytest.mark.parametrize("active_tab", ["pulse", "radar", "alpha"])
+@pytest.mark.parametrize("active_tab", ["pulse", "radar", "map", "alpha"])
 def test_coin_navigation_keeps_market_context_on_each_host(active_tab: str) -> None:
     templates = Environment(loader=FileSystemLoader(Path(__file__).parents[1] / "web/templates"))
     html = templates.get_template("mobile_base.html").render(
@@ -58,9 +58,10 @@ def test_coin_navigation_keeps_market_context_on_each_host(active_tab: str) -> N
     assert [link["href"] for link in tabs] == [
         "/memecoins?view=pulse",
         "/memecoins?view=changed",
+        "/memecoins?view=map",
         "/memecoins?view=calls",
     ]
-    assert tabs[["pulse", "radar", "alpha"].index(active_tab)]["aria-current"] == "page"
+    assert tabs[["pulse", "radar", "map", "alpha"].index(active_tab)]["aria-current"] == "page"
     assert 'class="memecoins-product"' in html
 
 
@@ -71,7 +72,7 @@ def test_coin_navigation_keeps_market_context_on_each_host(active_tab: str) -> N
             "runners",
             "/sports",
             "Stocks",
-            ["/?view=pulse", "/?view=changed", "/?view=calls"],
+            ["/?view=pulse", "/?view=changed", "/?view=map", "/?view=calls"],
         ),
         (
             "sports",
@@ -108,6 +109,7 @@ def test_board_view_links_share_one_screen(
     [
         ("pulse", "pulse"),
         ("changed", "changed"),
+        ("map", "map"),
         ("calls", "calls"),
         ("radar", "pulse"),
         ("alpha", "pulse"),
@@ -123,11 +125,13 @@ def test_board_view_links_preserve_the_market() -> None:
     assert web_main._board_view_links("stocks", "/sports") == {
         "pulse": "/?view=pulse",
         "changed": "/?view=changed",
+        "map": "/?view=map",
         "calls": "/?view=calls",
     }
     assert web_main._board_view_links("memecoins", "/sports") == {
         "pulse": "/memecoins?view=pulse",
         "changed": "/memecoins?view=changed",
+        "map": "/memecoins?view=map",
         "calls": "/memecoins?view=calls",
     }
     assert web_main._board_view_links("sports", "") == {
@@ -162,10 +166,12 @@ def board_client(tmp_path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     [
         ("/", "Pulse · RATi Runners"),
         ("/?view=changed", "Changed · RATi Runners"),
+        ("/?view=map", "Insider map · RATi"),
         ("/?view=calls", "Calls · RATi Runners"),
         ("/?view=radar", "Pulse · RATi Runners"),
         ("/memecoins", "Memecoins · RATi Memecoins"),
         ("/memecoins?view=changed", "Changed · RATi Memecoins"),
+        ("/memecoins?view=map", "Wallet map · RATi"),
         ("/memecoins?view=calls", "Calls · RATi Memecoins"),
     ],
 )
