@@ -27,7 +27,20 @@
     <div data-live-surface>
     {% if screen.rows %}
       {% if screen.kind == 'map' %}
-      <div class="connection-map" aria-label="Ticker map">{% for group in screen.groups %}<a class="map-item {{ group.item.tone }}" href="{{ group.item.href }}" aria-label="Open {{ group.item.name }}"><svg viewBox="0 0 300 300" aria-hidden="true">{% for satellite in group.satellites %}<line x1="150" y1="145" x2="{{ satellite.x }}" y2="{{ satellite.y }}"/><circle class="satellite" cx="{{ satellite.x }}" cy="{{ satellite.y }}" r="{{ 22 if satellite.label else 7 }}"/>{% if satellite.label %}<text x="{{ satellite.x }}" y="{{ satellite.y + 4 }}">{{ satellite.label }}</text>{% endif %}{% endfor %}<circle class="map-centre" cx="150" cy="145" r="49"/><text class="map-symbol" x="150" y="150">{{ group.symbol }}</text></svg><strong>{{ group.item.value }}</strong><span>{{ group.item.change }}</span></a>{% endfor %}</div>
+      {% macro related(link) %}<a class="connection-target" href="{{ link.item.href }}" aria-label="View {{ link.item.name }} Detail"><span class="connection-dot" aria-hidden="true"></span><span><strong>{{ link.item.name }}</strong><small>{{ link.label }} · {{ link.time or 'Date pending' }}</small></span><span class="row-arrow" aria-hidden="true">↗</span></a>{% endmacro %}
+      <div class="map-subjects">{% for item in screen.rows %}<a class="map-subject" href="{{ item.href }}" aria-label="Open {{ item.name }}"><strong>{{ item.name }}</strong><span>{{ item.value }}</span><small class="{{ item.tone }}">{{ item.change }}</small></a>{% endfor %}</div>
+      <p class="map-guide">Select a participant to explore its connections. Open a ticker to see its story.</p>
+      <div class="connection-map" aria-label="Ticker map">
+      {% for connection in screen.connections %}
+        <details class="connection-node" data-connection="{{ connection.id }}">
+          <summary><span class="participant-mark" aria-hidden="true">{{ connection.mark }}{% if connection.portrait %}<img data-portrait src="{{ connection.portrait }}" alt="" loading="lazy">{% endif %}</span><span><strong>{{ connection.name }}</strong><small>{{ connection.label }} · {{ connection.links|length }} {{ 'story' if connection.links|length == 1 else 'stories' }}</small></span></summary>
+          <p class="connection-explanation">{{ connection.explanation }}</p>
+          <div class="connection-links">{% for link in connection.visible_links %}{{ related(link) }}{% endfor %}</div>
+          {% if connection.more_links %}<details class="more-connections"><summary>Show {{ connection.more_links|length }} more connections</summary><div class="connection-links">{% for link in connection.more_links %}{{ related(link) }}{% endfor %}</div></details>{% endif %}
+        </details>
+      {% endfor %}
+      </div>
+      {% if screen.unlinked %}<section class="map-unlinked"><h2>More connections to discover</h2><p>Saved connections for {{ screen.unlinked|map(attribute='name')|join(', ') }} will appear as participants are found. Open a story above to explore its latest activity.</p></section>{% endif %}
       {% else %}
       <div class="ticker-list" aria-label="Tickers">{% for item in screen.rows %}<a class="ticker" href="{{ item.href }}"><span class="ticker-mark tone-{{ loop.index0 % 5 }}" aria-hidden="true">{{ item.mark }}</span><span class="ticker-name"><strong>{{ item.name }}</strong><small>{{ item.subtitle }}</small></span><span class="ticker-value"><strong>{{ item.value }}</strong><small class="{{ item.tone }}">{{ item.change }}</small></span><span class="row-arrow" aria-hidden="true">↗</span></a>{% endfor %}</div>
       {% endif %}
@@ -36,10 +49,10 @@
   {% else %}
     <a class="back" href="{{ base }}">← {{ screen.label }}</a>
     <article class="detail" data-live-surface><header class="asset-heading"><span class="ticker-mark tone-0" aria-hidden="true">{{ screen.item.mark }}</span><div><p class="eyebrow">{{ screen.item.subtitle }}</p><h1>{{ screen.item.name }}</h1></div></header>
-      <div class="asset-value"><strong data-value>{{ screen.item.value }}</strong><span data-change class="{{ screen.item.tone }}">{{ screen.item.change }}</span></div><p class="quote-time" data-time>{{ screen.item.time }}</p>
+      <div class="asset-value"><strong data-value>{{ screen.item.value }}</strong><span data-change class="{{ screen.item.tone }}">{{ screen.item.change }}</span></div><p class="quote-scope">{% if screen.market != 'sports' %}{{ '24h change' if screen.market == 'memecoins' else 'Daily change' }} · {% endif %}<span class="quote-time" data-time>{{ screen.item.time }}</span></p>
       <section class="visual" aria-label="{{ 'Game' if screen.teams else 'Price history' }}">
       {% if screen.teams %}<div class="teams">{% for team in screen.teams %}<div><span class="team-mark">{{ team.mark }}</span><h2>{{ team.name }}</h2><strong>{{ team.score }}</strong></div>{% endfor %}</div><p class="visual-caption" data-game-note>{{ screen.note }}</p>
-      {% else %}<svg class="price-chart" viewBox="0 0 800 280" role="img" aria-label="Price history" hidden><path class="chart-area"/><path class="chart-line"/></svg><p class="chart-status" data-chart-status>Price history is loading.</p><div class="chart-labels"><span data-chart-start></span><span data-chart-end></span></div>{% endif %}
+      {% else %}<svg class="price-chart" viewBox="0 0 800 280" role="img" aria-label="Price history" hidden><path class="chart-area"/><path class="chart-line"/><circle class="chart-point" r="4" hidden/></svg><p class="chart-status" data-chart-status>Price history is loading.</p><p class="chart-summary" data-chart-summary></p><div class="chart-labels"><span data-chart-start></span><span data-chart-end></span></div>{% endif %}
       </section>
       <section class="call-record" data-call-record{% if not screen.call or screen.call.status == 'none' %} hidden{% endif %} aria-label="Your Call">
         <h2>Your Call</h2><dl class="facts">

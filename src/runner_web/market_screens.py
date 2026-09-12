@@ -138,45 +138,110 @@ def listing(
         rows = [r for r in rows if query.casefold() in (r["name"] + " " + r["subtitle"]).casefold()]
     screen = {"kind": view, "market": market, "label": LABELS[market], "rows": rows, "query": query}
     if view == "map":
-        screen["groups"] = map_groups(market, rows, items, graph or {})
+        screen.update(map_connections(market, rows, items, graph or {}))
     return screen
 
 
-def map_groups(
+def map_connections(
     market: str, rows: list[dict[str, Any]], items: list[dict[str, Any]], graph: dict[str, Any]
-) -> list[dict[str, Any]]:
-    """Each item is a selectable centre; satellites represent saved relationships."""
-    subjects = {str(s["key"]): s for s in graph.get("subjects", [])}
-    raw = {str(i.get("id")): i for i in items}
-    groups = []
-    for r in rows:
-        subject = subjects.get(r["id"]) or subjects.get(r["name"]) or {}
-        count = len(subject.get("actor_ids") or [])
-        labels = []
-        if market == "sports" and not r["id"].startswith("golf:"):
-            game = raw.get(r["id"], {})
-            labels = [
-                str(game.get(f"{side}_abbreviation") or side.title()) for side in ("away", "home")
-            ]
-            count = 2
-        satellites = []
-        for i in range(min(count, 12)):
-            angle = 2 * math.pi * i / min(count, 12) - math.pi / 2
-            satellites.append(
+) -> dict[str, Any]:
+    """Keep one public node per saved participant and link it to its subjects."""
+    from runner_web.market_actors import public_relationship
+
+    selected = {r["id"] for r in rows}
+    targets = {r["id"]: r for r in (row(market, item) for item in items)}
+    nodes: dict[str, dict[str, Any]] = {}
+    if market == "sports":
+        for game in items:
+            key = str(game["id"])
+            if key.startswith("golf:"):
+                continue
+            for side in ("away", "home"):
+                name = game.get(f"{side}_team_name") or game.get(f"{side}_abbreviation")
+                identity = game.get(f"{side}_team_id") or name
+                if not identity:
+                    continue
+                actor_id = f"team:{game.get('league') or key.split(':')[0]}:{identity}"
+                node = nodes.setdefault(
+                    actor_id,
+                    {
+                        "id": actor_id,
+                        "name": str(name or identity),
+                        "portrait": "",
+                        "label": "Team",
+                        "explanation": "This team plays in these games.",
+                        "links": [],
+                    },
+                )
+                node["links"].append(
+                    {
+                        "item": targets[key],
+                        "time": stamp(game.get("start_time")),
+                        "label": "Game time",
+                    }
+                )
+    else:
+        for subject in graph.get("subjects", []):
+            key = str(subject["key"])
+            targets.setdefault(
+                key,
                 {
-                    "x": round(150 + 104 * math.cos(angle), 2),
-                    "y": round(145 + 104 * math.sin(angle), 2),
-                    "label": labels[i] if i < len(labels) else "",
+                    "id": key,
+                    "name": str(subject.get("label") or key),
+                    "href": ("/t/" if market == "stocks" else "/memecoins/coin/")
+                    + quote(key, safe=""),
+                    "value": "",
+                    "change": "",
+                    "tone": "neutral",
+                },
+            )
+        actors = {str(actor["id"]): actor for actor in graph.get("actors", [])}
+        seen = set()
+        for link in graph.get("links", []):
+            actor_id, key = str(link["actor_id"]), str(link["subject_key"])
+            if actor_id not in actors or key not in targets or (actor_id, key) in seen:
+                continue
+            seen.add((actor_id, key))
+            actor = actors[actor_id]
+            node = nodes.setdefault(
+                actor_id,
+                {
+                    "id": actor_id,
+                    "name": str(actor.get("name") or "Participant"),
+                    "portrait": (
+                        f"/api/market-actors/{quote(actor_id, safe='')}/portrait?cached=true"
+                    )
+                    if actor.get("portrait_ready")
+                    else "",
+                    "label": "Possible wallet link" if market == "memecoins" else "Participant",
+                    "explanation": "Saved wallet activity suggests a possible connection."
+                    if market == "memecoins"
+                    else "Public filings connect this participant to these tickers.",
+                    "links": [],
+                },
+            )
+            node["links"].append(
+                {
+                    "item": targets[key],
+                    "time": stamp(link.get("as_of")),
+                    "label": public_relationship(market, link.get("direction")),
                 }
             )
-        groups.append(
-            {
-                "item": r,
-                "symbol": r["name"] if len(r["name"]) <= 12 else r["name"][:10] + "…",
-                "satellites": satellites,
-            }
+    connections = []
+    connected = set()
+    for node in nodes.values():
+        if not any(link["item"]["id"] in selected for link in node["links"]):
+            continue
+        node["mark"] = "".join(word[0] for word in node["name"].split()[:2]).upper()
+        node["links"].sort(
+            key=lambda link: (link["item"]["id"] not in selected, link["item"]["name"])
         )
-    return groups
+        connected.update(link["item"]["id"] for link in node["links"])
+        node["visible_links"] = node["links"][:6]
+        node["more_links"] = node["links"][6:]
+        connections.append(node)
+    connections.sort(key=lambda node: (-len(node["links"]), node["name"], node["id"]))
+    return {"connections": connections, "unlinked": [r for r in rows if r["id"] not in connected]}
 
 
 def series(points: list[dict[str, Any]]) -> list[dict[str, Any]]:

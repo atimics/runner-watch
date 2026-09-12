@@ -7019,10 +7019,12 @@ def market_actor_api(actor_id: str, request: Request) -> dict[str, Any]:
 
 
 @app.get("/api/market-actors/{actor_id}/portrait")
-def market_actor_portrait_api(actor_id: str, request: Request) -> Response:
+def market_actor_portrait_api(
+    actor_id: str, request: Request, cached: bool = False
+) -> Response:
     enforce_rate(request, "market-actor-portrait", limit=60, seconds=60)
     existing = portrait_for_actor(actor_id)
-    if existing is None:
+    if existing is None and not cached:
         generate_actor_portrait(actor_id, api_key=_openrouter_api_key())
         existing = portrait_for_actor(actor_id)
     if existing is None:
