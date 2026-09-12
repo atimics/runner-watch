@@ -1,9 +1,11 @@
 """Telegram delivery for public channel posts.
 
-The channel gets a message when a new runner clears the score floor, when a
-pre-market or post-market report is frozen, and when a research report becomes
-public. Formatting lives here so the rules can be tested without a database.
-The worker in ``main`` loads the rows and records delivery outcomes.
+The room gets one batched update announcement when enough has landed: new
+runners, a frozen pre-market or post-market report, and a research report that
+went public are gathered into the same message rather than posted one at a time.
+A new build can also announce itself once. Formatting and the batch rule live
+here so they can be tested without a database; the worker in ``main`` loads the
+rows, writes the announcement, and records the outcome.
 """
 
 from __future__ import annotations
@@ -24,6 +26,8 @@ SEND_TIMEOUT_SECONDS = 10
 DEFAULT_MIN_SCORE = 37.0
 DEFAULT_MAX_PER_RUN = 10
 DEFAULT_MAX_REPORTS_PER_RUN = 5
+DEFAULT_ANNOUNCE_BATCH_MIN = 2
+DEFAULT_ANNOUNCE_DEBOUNCE_MINUTES = 30
 MAX_MESSAGE_CHARS = 4096
 MARKET_REPORT_LEADER_LIMIT = 3
 
@@ -51,6 +55,13 @@ def alerts_enabled(value: str | None = None) -> bool:
     """Report whether the feature flag is on. Defaults to off."""
 
     raw = os.getenv("TELEGRAM_RUNNER_ALERTS", "0") if value is None else value
+    return str(raw).strip().lower() in _TRUE_VALUES
+
+
+def release_announcements_enabled(value: str | None = None) -> bool:
+    """Report whether build-change announcements to the chat are on."""
+
+    raw = os.getenv("TELEGRAM_RELEASE_ANNOUNCEMENTS", "0") if value is None else value
     return str(raw).strip().lower() in _TRUE_VALUES
 
 
@@ -228,6 +239,84 @@ def format_public_report_post(report: Mapping[str, Any], *, origin: str) -> str:
     if public_id:
         blocks.append(f"{base}/research/{public_id}")
     return "\n".join(blocks)[:MAX_MESSAGE_CHARS]
+
+
+def announcement_batch_ready(
+    count: int,
+    oldest_age_minutes: float,
+    *,
+    min_items: int = DEFAULT_ANNOUNCE_BATCH_MIN,
+    debounce_minutes: int = DEFAULT_ANNOUNCE_DEBOUNCE_MINUTES,
+) -> bool:
+
+    """Decide whether enough has piled up to announce it.
+
+    A batch goes out as soon as it reaches the floor. A lone item waits for more
+    to arrive, so a single runner does not cost a message, but it is not stranded
+    either: once it is older than the debounce window it goes out on its own.
+    """
+
+    if count <= 0:
+        return False
+    if count >= max(1, min_items):
+        return True
+    return oldest_age_minutes >= max(0, debounce_minutes)
+
+
+def format_update_announcement(activity: Mapping[str, Any], *, origin: str) -> str:
+
+    """One message for everything that just landed, in the room's plain voice.
+
+    Used when no model writes the announcement, and as the fallback when one
+    fails. Everything named here came from a stored row, so the links and numbers
+    are the ones the site already shows.
+    """
+
+    base = origin.rstrip("/")
+    runners = [row for row in activity.get("runners") or [] if row.get("ticker")]
+    reports = list(activity.get("reports") or [])
+    total = len(runners) + len(reports)
+    if total == 0:
+        return ""
+    header = "🐆 1 new on the board" if total == 1 else f"🐆 {total} new on the board"
+    blocks = [header]
+    for entry in runners:
+        symbol = str(entry.get("ticker") or "").strip().upper()
+        facts = [f"${symbol}"]
+        change = _change_label(entry.get("change_pct"))
+        if change:
+            facts.append(change)
+        relative_volume = _relative_volume_label(entry.get("relative_volume"))
+        if relative_volume:
+            facts.append(relative_volume)
+        line = " · ".join(facts)
+        if entry.get("path"):
+            line += f"\n{base}{entry['path']}"
+        blocks.append(line)
+    for report in reports:
+        label = str(report.get("label") or "Report").strip()
+        headline = str(report.get("headline") or "").strip()
+        line = f"{label}: {headline}" if headline else label
+        if report.get("path"):
+            line += f"\n{base}{report['path']}"
+        blocks.append(line)
+    return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
+
+
+def format_release_announcement(
+    version: str, build_sha: str, notes: str | None, *, origin: str
+) -> str:
+
+    """One message announcing that a new build is live."""
+
+    blocks = [f"🐆 Fresh build is live — RATi Runners {version}"]
+    text = " ".join(str(notes or "").split())
+    if text:
+        blocks.append(text[:1000])
+    if build_sha and build_sha != "dev":
+        blocks.append(f"build {build_sha}")
+    blocks.append(origin.rstrip("/"))
+    return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
 
 
 def _api_call(

@@ -300,13 +300,16 @@ from runner_web.telegram import (
     alerts_enabled as telegram_alerts_enabled,
 )
 from runner_web.telegram import (
+    announcement_batch_ready,
+    format_release_announcement,
+    format_update_announcement,
+    select_new_runners,
+)
+from runner_web.telegram import (
     config_from_env as telegram_config_from_env,
 )
 from runner_web.telegram import (
-    format_market_report_post,
-    format_public_report_post,
-    format_runner_digest,
-    select_new_runners,
+    release_announcements_enabled as telegram_release_announcements_enabled,
 )
 from runner_web.telegram import (
     send_message as send_telegram_message,
@@ -1838,14 +1841,15 @@ async def telegram_chat_worker() -> None:
 
 
 async def telegram_alert_sweep_worker() -> None:
-    """Post pending channel messages even when no scan has just finished.
+    """Post pending chat announcements even when no scan has just finished.
 
     Runners, frozen session reports, and newly public research reports all go
-    through the same dispatch. A scan takes the better part of an hour and its
-    row is only written once it finishes, so a worker restart part way through
-    used to lose the run and the alert with it. Sweeping on a timer closes that
-    gap for every kind of post: the delivery tables already record what has been
-    sent, and a baseline still covers everything that predates the feature.
+    through the same batched dispatch, and a changed build can announce itself.
+    A scan takes the better part of an hour and its row is only written once it
+    finishes, so a worker restart part way through used to lose the run and the
+    alert with it. Sweeping on a timer closes that gap for every kind of post:
+    the delivery tables already record what has been sent, and a baseline still
+    covers everything that predates the feature.
     """
 
     await asyncio.sleep(90)
@@ -1853,6 +1857,7 @@ async def telegram_alert_sweep_worker() -> None:
         try:
             if telegram_alerts_enabled():
                 result = await run_in_threadpool(dispatch_telegram_posts)
+                result["release"] = await run_in_threadpool(dispatch_release_announcement)
                 worker_state(
                     "telegram_alert_sweep_last_run", json.dumps(result, separators=(",", ":"))
                 )
@@ -10889,85 +10894,30 @@ def _record_runner_alert_delivery(
 
 
 def dispatch_new_runner_alerts(*, scan_run_id: str | None = None) -> dict[str, Any]:
-    """Post the pending new runners to Telegram.
+    """Deliver the pending runners through the batched announcement.
 
-    Returns a small summary for logging. It never raises, because a delivery
-    problem must not change the outcome of a scan.
+    Kept as the runner-shaped entry point: callers get the runner summary, while
+    the one message that goes to the room is owned by dispatch_telegram_posts.
     """
 
-    result: dict[str, Any] = {
-        "enabled": False,
-        "baseline": False,
-        "candidates": 0,
-        "selected": 0,
-        "status": "disabled",
+    result = dispatch_telegram_posts(scan_run_id=scan_run_id)
+    runners = result.get("runners") or {}
+    top = str(result.get("status") or "empty")
+    status = (
+        top
+        if top in {"busy", "unconfigured", "disabled", "error"}
+        else str(runners.get("status") or top)
+    )
+    summary = {
+        "enabled": bool(result.get("enabled")),
+        "baseline": bool(runners.get("baseline")),
+        "candidates": int(runners.get("candidates") or 0),
+        "selected": int(runners.get("selected") or 0),
+        "status": status,
     }
-    try:
-        if not telegram_alerts_enabled():
-            return result
-        result["enabled"] = True
-        if not TELEGRAM_ALERT_DISPATCH_LOCK.acquire(blocking=False):
-            # Another dispatch is mid-flight. Whatever it does not take stays
-            # pending for the next one, so there is nothing to wait around for.
-            result["status"] = "busy"
-            return result
-        try:
-            return _dispatch_new_runner_alerts_locked(result, scan_run_id)
-        finally:
-            TELEGRAM_ALERT_DISPATCH_LOCK.release()
-    except Exception:
-        LOG.exception("Telegram runner alerts failed")
-        result["status"] = "error"
-        return result
-
-
-def _dispatch_new_runner_alerts_locked(
-    result: dict[str, Any], scan_run_id: str | None
-) -> dict[str, Any]:
-    """The body of the dispatch, run with the dispatch lock held."""
-
-    try:
-        config = telegram_config_from_env()
-        if not config.configured:
-            LOG.warning("TELEGRAM_RUNNER_ALERTS is on but the bot token or chat id is missing")
-            result["status"] = "unconfigured"
-            return result
-        selected: list[dict[str, Any]] = []
-        with connection() as database:
-            result["baseline"] = _take_telegram_alert_baseline(database, current_run_id=scan_run_id)
-            candidates = _pending_runner_alert_rows(database, limit=config.max_per_run)
-            result["candidates"] = len(candidates)
-            selected = select_new_runners(
-                candidates,
-                min_score=config.min_score,
-                limit=config.max_per_run,
-            )
-            result["selected"] = len(selected)
-            if not selected:
-                result["status"] = "empty"
-                return result
-            try:
-                send_telegram_message(
-                    config,
-                    format_runner_digest(selected, origin=RUNNERS_ORIGIN),
-                )
-            except Exception as exc:
-                _record_runner_alert_delivery(
-                    database, selected, status="failed", detail=str(exc)[:500]
-                )
-                result["status"] = "failed"
-                LOG.warning("Telegram runner alert delivery failed: %s", exc)
-            else:
-                _record_runner_alert_delivery(database, selected, status="sent")
-                result["status"] = "sent"
-        result["reports"] = _queue_telegram_runner_reports(
-            [str(entry.get("ticker") or "") for entry in selected]
-        )
-        return result
-    except Exception:
-        LOG.exception("Telegram runner alerts failed")
-        result["status"] = "error"
-        return result
+    if "reports" in result:
+        summary["reports"] = result["reports"]
+    return summary
 
 
 def _enqueue_research_job_sync(report_id: str) -> None:
@@ -11157,127 +11107,187 @@ def _pending_research_report_rows(database: Any, *, limit: int) -> list[dict[str
     return [dict(row) for row in rows]
 
 
-def _dispatch_market_report_posts(config: Any) -> dict[str, Any]:
-    result = _empty_channel_post_result()
+TELEGRAM_ANNOUNCE_BATCH_MIN = max(1, int(os.getenv("TELEGRAM_ANNOUNCE_BATCH_MIN", "2")))
+TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES = max(
+    0, int(os.getenv("TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES", "30"))
+)
+
+_MARKET_REPORT_BASELINE_SQL = (
+    "SELECT 'market_report',id,'baseline',0,'pre-existing report',?,? "
+    "FROM market_session_reports WHERE 1=1"
+)
+_RESEARCH_REPORT_BASELINE_SQL = (
+    "SELECT 'research_report',public_id,'baseline',0,'pre-existing report',?,? "
+    "FROM research_commissions "
+    "WHERE status='complete' AND visibility='public' "
+    "AND COALESCE(customer_inference,0)=0"
+)
+
+ANNOUNCEMENT_TOOL = {
+    "name": "announce",
+    "description": "Post one short update to the room about what just landed.",
+    "parameters": {
+        "type": "object",
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"],
+    },
+}
+
+
+def _stamp(value: Any) -> datetime | None:
+    """Parse a stored timestamp, or None when it is missing or malformed."""
+
     try:
-        with connection() as database:
-            result["baseline"] = _take_channel_post_baseline(
-                database,
-                "market_report",
-                "SELECT 'market_report',id,'baseline',0,'pre-existing report',?,? "
-                "FROM market_session_reports WHERE 1=1",
-            )
-            pending = _pending_market_report_rows(database, limit=TELEGRAM_CHANNEL_POSTS_PER_RUN)
-        result["selected"] = len(pending)
-        if not pending:
-            result["status"] = "empty"
-            return result
-        sent = 0
-        failed = 0
-        for report in pending:
-            subject = str(report.get("id") or "")
-            try:
-                send_telegram_message(
-                    config,
-                    format_market_report_post(report, origin=RUNNERS_ORIGIN),
-                )
-            except Exception as exc:
-                with connection() as database:
-                    _record_channel_post(
-                        database,
-                        "market_report",
-                        subject,
-                        status="failed",
-                        detail=str(exc)[:500],
-                    )
-                failed += 1
-                LOG.warning("Telegram market report post failed: %s", exc)
-                continue
-            with connection() as database:
-                _record_channel_post(database, "market_report", subject, status="sent")
-            sent += 1
-        result["selected"] = sent
-        result["status"] = "sent" if sent else "failed" if failed else "empty"
-        return result
-    except Exception:
-        LOG.exception("Telegram market report posts failed")
-        result["status"] = "error"
-        return result
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
-def _dispatch_research_report_posts(config: Any) -> dict[str, Any]:
-    result = _empty_channel_post_result()
+def _age_minutes(value: Any, current: datetime) -> float:
+    parsed = _stamp(value)
+    if parsed is None:
+        return 0.0
+    return max(0.0, (current - parsed).total_seconds() / 60.0)
+
+
+def _activity_payload(
+    runners: list[dict[str, Any]],
+    market_reports: list[dict[str, Any]],
+    research_reports: list[dict[str, Any]],
+) -> dict[str, Any]:
+
+    """Fold the three pending kinds into one list of things that just landed."""
+
+    activity_runners = [
+        {
+            "ticker": str(entry.get("ticker") or "").upper(),
+            "change_pct": entry.get("change_pct"),
+            "relative_volume": entry.get("relative_volume"),
+            "path": f"/t/{str(entry.get('ticker') or '').upper()}",
+            "at": entry.get("entered_at"),
+        }
+        for entry in runners
+        if entry.get("ticker")
+    ]
+    reports: list[dict[str, Any]] = []
+    for report in market_reports:
+        reports.append(
+            {
+                "ticker": "",
+                "label": report.get("label"),
+                "headline": report.get("headline"),
+                "path": report.get("path"),
+                "at": report.get("created_at"),
+            }
+        )
+    for report in research_reports:
+        ticker = str(report.get("ticker") or "")
+        symbol = ticker.upper().lstrip("$")
+        public_id = str(report.get("public_id") or "")
+        reports.append(
+            {
+                "ticker": symbol,
+                "label": f"New research on ${symbol}" if symbol else "New research",
+                "headline": report.get("headline"),
+                "path": f"/research/{public_id}" if public_id else "",
+                "at": report.get("published_at") or report.get("completed_at"),
+            }
+        )
+    return {"runners": activity_runners, "reports": reports}
+
+
+def _generate_telegram_announcement(activity: dict[str, Any]) -> str | None:
+    """Let Dash write the batch announcement, grounded in what actually landed."""
+
+    if not OPENROUTER_API_KEY:
+        return None
+    messages = [
+        {"role": "system", "content": CHEETAH_PERSONA},
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "task": (
+                        "Announce what just landed on the board. One short message, two "
+                        "sentences at most, present tense. Name only the tickers and "
+                        "reports in the batch, and repeat the links you were given. Do "
+                        "not tell anyone what to buy."
+                    ),
+                    "landed": activity,
+                },
+                separators=(",", ":"),
+                default=str,
+            ),
+        },
+    ]
+    result = _telegram_chat_completion(
+        {
+            "model": FLASH.model,
+            "messages": messages,
+            "tools": [{"type": "function", "function": ANNOUNCEMENT_TOOL}],
+            "tool_choice": "required",
+            "provider": {"require_parameters": True, "zdr": True},
+            "max_tokens": 300,
+        }
+    )
+    choice = (result.get("choices") or [{}])[0].get("message") or {}
+    calls = choice.get("tool_calls") or []
+    if not calls:
+        return None
+    function = calls[0].get("function") or {}
     try:
-        with connection() as database:
-            result["baseline"] = _take_channel_post_baseline(
-                database,
-                "research_report",
-                "SELECT 'research_report',public_id,'baseline',0,'pre-existing report',?,? "
-                "FROM research_commissions "
-                "WHERE status='complete' AND visibility='public' "
-                "AND COALESCE(customer_inference,0)=0",
-            )
-            pending = _pending_research_report_rows(database, limit=TELEGRAM_CHANNEL_POSTS_PER_RUN)
-        result["selected"] = len(pending)
-        if not pending:
-            result["status"] = "empty"
-            return result
-        sent = 0
-        failed = 0
-        for report in pending:
-            subject = str(report.get("public_id") or "")
-            ticker = str(report.get("ticker") or "")
-            origin = SPORTS_ORIGIN if ticker.lower().startswith("sports:") else RUNNERS_ORIGIN
-            try:
-                send_telegram_message(
-                    config,
-                    format_public_report_post(report, origin=origin),
-                )
-            except Exception as exc:
-                with connection() as database:
-                    _record_channel_post(
-                        database,
-                        "research_report",
-                        subject,
-                        status="failed",
-                        detail=str(exc)[:500],
-                    )
-                failed += 1
-                LOG.warning("Telegram public report post failed: %s", exc)
-                continue
-            with connection() as database:
-                _record_channel_post(database, "research_report", subject, status="sent")
-            sent += 1
-        result["selected"] = sent
-        result["status"] = "sent" if sent else "failed" if failed else "empty"
-        return result
+        args = json.loads(function.get("arguments") or "{}")
+    except (TypeError, ValueError):
+        return None
+    text = str(args.get("text") or "").strip()
+    return text or None
+
+
+def _compose_update_announcement(activity: dict[str, Any]) -> str:
+    """Dash's announcement when the model is available, the plain one otherwise."""
+
+    fallback = format_update_announcement(activity, origin=RUNNERS_ORIGIN)
+    if not OPENROUTER_API_KEY:
+        return fallback
+    try:
+        text = _generate_telegram_announcement(activity)
     except Exception:
-        LOG.exception("Telegram public report posts failed")
-        result["status"] = "error"
-        return result
-
-
-def _combine_telegram_status(parts: list[dict[str, Any]]) -> str:
-    statuses = [str(part.get("status") or "") for part in parts]
-    if "sent" in statuses:
-        return "sent"
-    if "failed" in statuses:
-        return "failed"
-    if "error" in statuses:
-        return "error"
-    if "unconfigured" in statuses:
-        return "unconfigured"
-    if all(status in {"", "disabled"} for status in statuses):
-        return "disabled"
-    return "empty"
+        LOG.warning("Telegram announcement generation failed")
+        return fallback
+    if not text:
+        return fallback
+    rows = [*(activity.get("runners") or []), *(activity.get("reports") or [])]
+    allowed = {
+        str(row.get("ticker") or "").upper()
+        for row in rows
+        if row.get("ticker")
+    }
+    cited = {match.upper() for match in re.findall(r"\$([A-Za-z]{1,6})\b", text)}
+    if cited - allowed:
+        # The model named something that was not in the batch. The stored rows
+        # are the only source of truth here, so use them instead.
+        return fallback
+    return text
 
 
 def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]:
-    """Post pending runners, session reports, and public research reports."""
+    """Post one batched update announcement for everything that has landed.
+
+    Runners, frozen session reports, and newly public research reports used to go
+    out as separate messages, which turned a busy morning into a wall of pings.
+    They are gathered into one activity list now, and the room gets a single
+    announcement once it is worth making. A lone item waits for company but is
+    flushed on its own after the debounce window, so nothing is stranded.
+    """
 
     result: dict[str, Any] = {
         "enabled": False,
         "status": "disabled",
+        "baseline": False,
+        "pending": 0,
         "runners": {
             "enabled": False,
             "baseline": False,
@@ -11287,12 +11297,15 @@ def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]
         },
         "market_reports": _empty_channel_post_result(),
         "research_reports": _empty_channel_post_result(),
+        "announcement": {"status": "disabled", "count": 0},
     }
     try:
         if not telegram_alerts_enabled():
             return result
         result["enabled"] = True
         if not TELEGRAM_ALERT_DISPATCH_LOCK.acquire(blocking=False):
+            # Another dispatch is mid-flight. Whatever it does not take stays
+            # pending for the next one, so there is nothing to wait around for.
             result["status"] = "busy"
             return result
         try:
@@ -11301,18 +11314,120 @@ def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]
                 LOG.warning("TELEGRAM_RUNNER_ALERTS is on but the bot token or chat id is missing")
                 result["status"] = "unconfigured"
                 return result
-            runners = {
+            current = now()
+            with connection() as database:
+                runner_baseline = _take_telegram_alert_baseline(
+                    database, current_run_id=scan_run_id
+                )
+                candidates = _pending_runner_alert_rows(database, limit=config.max_per_run)
+                runners = select_new_runners(
+                    candidates,
+                    min_score=config.min_score,
+                    limit=config.max_per_run,
+                )
+                market_baseline = _take_channel_post_baseline(
+                    database, "market_report", _MARKET_REPORT_BASELINE_SQL
+                )
+                research_baseline = _take_channel_post_baseline(
+                    database, "research_report", _RESEARCH_REPORT_BASELINE_SQL
+                )
+                market = _pending_market_report_rows(
+                    database, limit=TELEGRAM_CHANNEL_POSTS_PER_RUN
+                )
+                research = _pending_research_report_rows(
+                    database, limit=TELEGRAM_CHANNEL_POSTS_PER_RUN
+                )
+            result["baseline"] = runner_baseline or market_baseline or research_baseline
+            result["runners"] = {
                 "enabled": True,
-                "baseline": False,
-                "candidates": 0,
-                "selected": 0,
-                "status": "empty",
+                "baseline": runner_baseline,
+                "candidates": len(candidates),
+                "selected": len(runners),
+                "status": "pending" if runners else "empty",
             }
-            result["runners"] = _dispatch_new_runner_alerts_locked(runners, scan_run_id)
-            result["market_reports"] = _dispatch_market_report_posts(config)
-            result["research_reports"] = _dispatch_research_report_posts(config)
-            result["status"] = _combine_telegram_status(
-                [result["runners"], result["market_reports"], result["research_reports"]]
+            result["market_reports"] = {
+                "baseline": market_baseline,
+                "selected": len(market),
+                "status": "pending" if market else "empty",
+            }
+            result["research_reports"] = {
+                "baseline": research_baseline,
+                "selected": len(research),
+                "status": "pending" if research else "empty",
+            }
+            activity = _activity_payload(runners, market, research)
+            count = len(activity["runners"]) + len(activity["reports"])
+            result["pending"] = count
+            result["announcement"]["count"] = count
+            if count == 0:
+                result["status"] = "empty"
+                result["announcement"]["status"] = "empty"
+                return result
+            ages = [
+                _age_minutes(row.get("at"), current)
+                for row in [*activity["runners"], *activity["reports"]]
+            ]
+            oldest = max(ages) if ages else 0.0
+            if not announcement_batch_ready(
+                count,
+                oldest,
+                min_items=TELEGRAM_ANNOUNCE_BATCH_MIN,
+                debounce_minutes=TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES,
+            ):
+                result["status"] = "waiting"
+                result["announcement"]["status"] = "waiting"
+                return result
+            text = _compose_update_announcement(activity)
+            try:
+                send_telegram_message(config, text)
+            except Exception as exc:
+                result["status"] = "failed"
+                result["announcement"]["status"] = "failed"
+                for key in ("runners", "market_reports", "research_reports"):
+                    if result[key]["status"] == "pending":
+                        result[key]["status"] = "failed"
+                with connection() as database:
+                    _record_runner_alert_delivery(
+                        database, runners, status="failed", detail=str(exc)[:500]
+                    )
+                    for report in market:
+                        _record_channel_post(
+                            database,
+                            "market_report",
+                            str(report.get("id") or ""),
+                            status="failed",
+                            detail=str(exc)[:500],
+                        )
+                    for report in research:
+                        _record_channel_post(
+                            database,
+                            "research_report",
+                            str(report.get("public_id") or ""),
+                            status="failed",
+                            detail=str(exc)[:500],
+                        )
+                LOG.warning("Telegram update announcement failed: %s", exc)
+                return result
+            result["status"] = "sent"
+            result["announcement"]["status"] = "sent"
+            with connection() as database:
+                _record_runner_alert_delivery(database, runners, status="sent")
+                for report in market:
+                    _record_channel_post(
+                        database, "market_report", str(report.get("id") or ""), status="sent"
+                    )
+                for report in research:
+                    _record_channel_post(
+                        database,
+                        "research_report",
+                        str(report.get("public_id") or ""),
+                        status="sent",
+                    )
+            for key in ("runners", "market_reports", "research_reports"):
+                if result[key]["status"] == "pending":
+                    result[key]["status"] = "sent"
+            result["reports"] = _queue_telegram_runner_reports(
+                [str(entry.get("ticker") or "") for entry in runners]
             )
             return result
         finally:
@@ -11321,6 +11436,64 @@ def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]
         LOG.exception("Telegram channel posts failed")
         result["status"] = "error"
         return result
+
+
+def dispatch_release_announcement() -> dict[str, Any]:
+    """Tell the room once when a new build goes live.
+
+    The first build seen records itself without speaking, so turning this on does
+    not announce whatever was already running. After that, a changed build sha
+    posts one message. The stored row is the identity, so a restart or a second
+    machine cannot repeat it.
+    """
+
+    if not telegram_alerts_enabled():
+        return {"status": "disabled"}
+    if not telegram_release_announcements_enabled():
+        return {"status": "off"}
+    sha = APP_BUILD_SHA
+    if not sha or sha == "dev":
+        return {"status": "skipped"}
+    config = telegram_config_from_env()
+    if not config.configured:
+        return {"status": "unconfigured"}
+    if not TELEGRAM_ALERT_DISPATCH_LOCK.acquire(blocking=False):
+        return {"status": "busy"}
+    try:
+        with connection() as database:
+            row = database.execute(
+                "SELECT status,attempts FROM telegram_channel_posts "
+                "WHERE kind='release' AND subject=?",
+                (sha,),
+            ).fetchone()
+            if row and str(row["status"]) in {"sent", "baseline"}:
+                return {"status": "already"}
+            if row and int(row["attempts"] or 0) >= TELEGRAM_CHANNEL_POST_MAX_ATTEMPTS:
+                return {"status": "exhausted"}
+            seen = database.execute(
+                "SELECT subject FROM telegram_channel_posts WHERE kind='release' LIMIT 1"
+            ).fetchone()
+            if seen is None:
+                _record_channel_post(database, "release", sha, status="baseline")
+                return {"status": "baseline"}
+        notes = os.getenv("TELEGRAM_RELEASE_NOTES", "")
+        try:
+            send_telegram_message(
+                config,
+                format_release_announcement(APP_VERSION, sha, notes, origin=RUNNERS_ORIGIN),
+            )
+        except Exception as exc:
+            with connection() as database:
+                _record_channel_post(
+                    database, "release", sha, status="failed", detail=str(exc)[:500]
+                )
+            LOG.warning("Telegram release announcement failed: %s", exc)
+            return {"status": "failed"}
+        with connection() as database:
+            _record_channel_post(database, "release", sha, status="sent")
+        return {"status": "sent", "sha": sha}
+    finally:
+        TELEGRAM_ALERT_DISPATCH_LOCK.release()
 
 
 def _spawn_telegram_dispatch(*, scan_run_id: str | None = None) -> None:

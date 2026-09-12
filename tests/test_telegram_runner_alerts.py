@@ -110,6 +110,8 @@ def alert_environment(tmp_path, monkeypatch: MonkeyPatch):
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "test-chat")
     monkeypatch.setenv("TELEGRAM_MIN_SCORE", "60")
     monkeypatch.setenv("TELEGRAM_MAX_PER_RUN", "10")
+    monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_BATCH_MIN", 1)
+    monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES", 0)
     init_db()
     return tmp_path
 
@@ -702,3 +704,223 @@ def test_runner_report_queue_respects_the_daily_cap(
     assert result["queued"] == 0
     assert result["skipped"] == 2
     assert created == []
+
+
+def _announce_reply(text: str) -> dict:
+    return {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {
+                                "name": "announce",
+                                "arguments": json.dumps({"text": text}),
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+
+
+def test_a_lone_runner_waits_for_a_batch_then_goes_out_with_it(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_BATCH_MIN", 2)
+    monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES", 30)
+    sent: list[str] = []
+    monkeypatch.setattr(web_main, "send_telegram_message", lambda config, text: sent.append(text))
+    recent = datetime.now(UTC).isoformat()
+    _insert_runner("run-1", "AAAA", score=80, entered_at=recent)
+
+    waiting = web_main.dispatch_telegram_posts(scan_run_id="run-1")
+
+    assert waiting["status"] == "waiting"
+    assert waiting["announcement"]["status"] == "waiting"
+    assert sent == []
+
+    _insert_runner("run-1", "BBBB", score=81, entered_at=recent)
+    sent_batch = web_main.dispatch_telegram_posts(scan_run_id="run-1")
+
+    assert sent_batch["status"] == "sent"
+    assert sent_batch["announcement"]["count"] == 2
+    assert len(sent) == 1
+    assert "AAAA" in sent[0]
+    assert "BBBB" in sent[0]
+
+
+def test_a_report_batch_goes_out_as_one_message_not_one_per_report(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_BATCH_MIN", 2)
+    monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES", 30)
+    sent: list[str] = []
+    monkeypatch.setattr(web_main, "send_telegram_message", lambda config, text: sent.append(text))
+    web_main.dispatch_telegram_posts()  # baseline the empty board
+    recent = datetime.now(UTC).isoformat()
+    _insert_market_report("pre-1", created_at=recent)
+    _insert_public_report("one", "CAST", created_at=recent)
+
+    result = web_main.dispatch_telegram_posts()
+
+    assert result["status"] == "sent"
+    assert result["announcement"]["count"] == 2
+    assert len(sent) == 1
+    assert "Pre-market briefing" in sent[0]
+    assert "$CAST" in sent[0]
+    assert f"{web_main.RUNNERS_ORIGIN}/reports/2026-09-11/pre" in sent[0]
+    assert f"{web_main.RUNNERS_ORIGIN}/research/pub-one" in sent[0]
+
+
+def test_the_announcement_uses_dash_when_the_model_answers(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(
+        web_main,
+        "_telegram_chat_completion",
+        lambda body: _announce_reply("two names just landed"),
+    )
+    sent: list[str] = []
+    monkeypatch.setattr(web_main, "send_telegram_message", lambda config, text: sent.append(text))
+    _insert_runner("run-1", "AAAA", score=80, entered_at=datetime.now(UTC).isoformat())
+
+    web_main.dispatch_telegram_posts(scan_run_id="run-1")
+
+    assert sent == ["two names just landed"]
+
+
+def test_the_announcement_falls_back_when_the_model_fails(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "test-key")
+
+    def boom(body):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(web_main, "_telegram_chat_completion", boom)
+    sent: list[str] = []
+    monkeypatch.setattr(web_main, "send_telegram_message", lambda config, text: sent.append(text))
+    _insert_runner("run-1", "AAAA", score=80, entered_at=datetime.now(UTC).isoformat())
+
+    web_main.dispatch_telegram_posts(scan_run_id="run-1")
+
+    assert len(sent) == 1
+    assert "$AAAA" in sent[0]
+
+
+def test_a_new_build_announces_itself_once(alert_environment, monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_RELEASE_ANNOUNCEMENTS", "1")
+    monkeypatch.setattr(web_main, "APP_BUILD_SHA", "sha-one")
+    sent: list[str] = []
+    monkeypatch.setattr(web_main, "send_telegram_message", lambda config, text: sent.append(text))
+
+    assert web_main.dispatch_release_announcement()["status"] == "baseline"
+    assert sent == []
+
+    monkeypatch.setattr(web_main, "APP_BUILD_SHA", "sha-two")
+    second = web_main.dispatch_release_announcement()
+
+    assert second["status"] == "sent"
+    assert len(sent) == 1
+    assert "sha-two" in sent[0]
+    assert web_main.dispatch_release_announcement()["status"] == "already"
+    assert len(sent) == 1
+
+
+def test_release_announcements_stay_off_until_enabled(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.delenv("TELEGRAM_RELEASE_ANNOUNCEMENTS", raising=False)
+
+    assert web_main.dispatch_release_announcement()["status"] == "off"
+
+
+def test_batch_readiness_waits_for_a_batch_or_the_debounce() -> None:
+    assert telegram.announcement_batch_ready(0, 999) is False
+    assert telegram.announcement_batch_ready(2, 0, min_items=2) is True
+    assert telegram.announcement_batch_ready(1, 5, min_items=2, debounce_minutes=30) is False
+    assert telegram.announcement_batch_ready(1, 31, min_items=2, debounce_minutes=30) is True
+
+
+def test_a_plain_announcement_names_what_landed_and_links_it() -> None:
+    text = telegram.format_update_announcement(
+        {
+            "runners": [
+                {
+                    "ticker": "MSGM",
+                    "change_pct": 34.0,
+                    "relative_volume": 8.4,
+                    "path": "/t/MSGM",
+                }
+            ],
+            "reports": [
+                {
+                    "label": "Pre-market briefing",
+                    "headline": "CAST leads",
+                    "path": "/reports/2026-09-11/pre",
+                }
+            ],
+        },
+        origin="https://runners.example",
+    )
+
+    assert "2 new on the board" in text
+    assert "$MSGM" in text
+    assert "+34.00%" in text
+    assert "RVOL 8.4x" in text
+    assert "https://runners.example/t/MSGM" in text
+    assert "Pre-market briefing: CAST leads" in text
+    assert "https://runners.example/reports/2026-09-11/pre" in text
+
+
+def test_a_failed_release_announcement_retries_then_stays_sent(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TELEGRAM_RELEASE_ANNOUNCEMENTS", "1")
+    monkeypatch.setattr(web_main, "APP_BUILD_SHA", "sha-one")
+    monkeypatch.setattr(web_main, "send_telegram_message", lambda config, text: None)
+    web_main.dispatch_release_announcement()
+
+    monkeypatch.setattr(web_main, "APP_BUILD_SHA", "sha-two")
+    attempts: list[str] = []
+
+    def failing(config, text):
+        attempts.append(text)
+        raise RuntimeError("telegram is unreachable")
+
+    monkeypatch.setattr(web_main, "send_telegram_message", failing)
+    assert web_main.dispatch_release_announcement()["status"] == "failed"
+    assert web_main.dispatch_release_announcement()["status"] == "failed"
+
+    monkeypatch.setattr(
+        web_main, "send_telegram_message", lambda config, text: attempts.append(text)
+    )
+    assert web_main.dispatch_release_announcement()["status"] == "sent"
+    assert len(attempts) == 3
+    assert web_main.dispatch_release_announcement()["status"] == "already"
+
+
+def test_a_model_announcement_that_names_a_stray_ticker_is_rejected(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(
+        web_main,
+        "_telegram_chat_completion",
+        lambda body: _announce_reply("$NVDA is flying"),
+    )
+    sent: list[str] = []
+    monkeypatch.setattr(web_main, "send_telegram_message", lambda config, text: sent.append(text))
+    _insert_runner("run-1", "AAAA", score=80, entered_at=datetime.now(UTC).isoformat())
+
+    web_main.dispatch_telegram_posts(scan_run_id="run-1")
+
+    assert len(sent) == 1
+    assert "$NVDA" not in sent[0]
+    assert "$AAAA" in sent[0]
