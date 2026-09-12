@@ -8522,7 +8522,7 @@ def screen_coin_quote(coin_id: str, request: Request) -> dict[str, Any]:
     enforce_rate(request, "memecoins", limit=120, seconds=60)
     detail = _memecoin_detail_payload(coin_id)
     item = row("memecoins", detail["coin"])
-    return {key: item[key] for key in ("value", "change", "tone", "time")}
+    return {key: item[key] for key in ("value", "change", "tone", "time", "freshness")}
 
 
 @app.get("/api/t/{ticker}/chart")

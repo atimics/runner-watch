@@ -642,11 +642,16 @@ def test_sports_list_respects_shared_responsive_breakpoints(
 
 
 def test_sports_list_shows_real_scores_in_the_shared_ticker_row(page: Page, monkeypatch) -> None:
-    event = {**_event("game-1", "AWY", "HME"), "status": "in", "away_score": 5, "home_score": 2}
+    event = {
+        **_event("game-1", "AWY", "HME"),
+        "status": "in",
+        "away_score": 5,
+        "home_score": 2,
+    }
     errors = _load(page, _rendered_pulse(monkeypatch, _pulse(event)), [])
     expect(page.locator(".ticker-name strong")).to_have_text("AWY · HME")
     expect(page.locator(".ticker-value strong")).to_have_text("5 – 2")
-    expect(page.locator(".ticker-value small")).to_have_text("Live")
+    expect(page.locator(".ticker-value small")).to_have_text("In progress")
     assert errors == []
 
 
@@ -654,7 +659,8 @@ def test_sports_list_keeps_operator_predictions_private(page: Page, monkeypatch)
     event = {**_event("game-1", "AWY", "HME"), "model_winner_label": "internal model detail"}
     errors = _load(page, _rendered_pulse(monkeypatch, _pulse(event)), [])
     expect(page.get_by_text("internal model detail")).to_have_count(0)
-    expect(page.locator(".ticker-value strong")).to_have_text("vs")
+    expect(page.locator(".ticker-value strong")).to_have_text("—")
+    expect(page.locator(".ticker-value small")).to_have_text("Score pending")
     assert errors == []
 
 
