@@ -1889,3 +1889,54 @@ def test_golf_uses_shared_detail_and_canonical_link(sports_db):
     )
     assert redirect.status_code == 307
     assert redirect.headers["location"] == f"{web_main.SPORTS_ORIGIN}/game/{event['id']}"
+
+
+def test_sports_call_preview_line_and_saved_result_on_actual_routes(sports_db, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    event = normalize_event("mlb", sample_event())
+    store_events([event])
+    with connection() as database:
+        for user in ("home-player", "away-player"):
+            database.execute(
+                "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+                (user, user, user, "active", datetime.now(UTC).isoformat()),
+            )
+    current = {"id": "home-player", "username": "home-player", "display_name": "Player"}
+    monkeypatch.setattr(web_main, "current_user", lambda *a: current)
+    monkeypatch.setattr(web_main, "require_user", lambda *a: current)
+    monkeypatch.setattr(web_main, "require_origin", lambda *a: None)
+    monkeypatch.setattr(web_main, "enforce_rate", lambda *a, **kw: None)
+    monkeypatch.setattr(web_main, "_public_screen_data", lambda kind, key, build: build())
+    client = TestClient(web_main.app, base_url=web_main.SPORTS_ORIGIN)
+    endpoint = f"/api/screens/sports/{event['id']}/detail"
+    route = f"/api/calls/game/{event['id']}"
+    try:
+        for side, user in [("home", "home-player"), ("away", "away-player")]:
+            current["id"] = user
+            preview = client.get(endpoint).json()
+            action = next(a for a in preview["actions"] if a["body"]["selection"] == side)
+            wrong = {**action["body"], "expected_odds": 999}
+            assert client.post(route, json=wrong).status_code == 409
+            assert client.get(endpoint).json()["call"]["status"] == "none"
+            assert client.post(route, json=action["body"]).status_code == 201
+            record = client.get(endpoint).json()["call"]
+            assert record["choice"] == f"{sports_event(event['id'])[side + '_team_name']} wins"
+            assert str(action["body"]["expected_odds"]) in record["entry"]
+            assert record["choice"] in client.get(f"/game/{event['id']}").text
+        store_events([normalize_event("mlb", sample_event(completed=True))])
+        assert settle_picks() == 2
+        for user, result in [("home-player", "Win"), ("away-player", "Loss")]:
+            current["id"] = user
+            for _ in range(2):
+                record = client.get(endpoint).json()["call"]
+                assert record["outcome"] == result
+                assert record["status"] == "closed"
+                assert (
+                    record["reward"]
+                    == f"{sports_call_reward(-130) if result == 'Win' else 0} Flash"
+                )
+                assert record["reward"] in client.get(f"/game/{event['id']}").text
+        assert settle_picks() == 0
+    finally:
+        client.close()

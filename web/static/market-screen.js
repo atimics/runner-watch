@@ -33,6 +33,11 @@
     put('[data-time]', next.item.time);
     const move = document.querySelector('[data-change]');
     if (move) move.className = ['up','down','neutral'].includes(next.item.tone) ? next.item.tone : 'neutral';
+    const record = document.querySelector('[data-call-record]');
+    if (record) {
+      record.hidden = !next.call || next.call.status === 'none';
+      ['choice','entry','terms','outcome','reward'].forEach(key => put(`[data-call-${key}]`, next.call?.[key]));
+    }
     const facts = document.querySelector('[data-facts]');
     if (facts) {
       facts.replaceChildren(...next.facts.map(fact => {
@@ -104,15 +109,21 @@
   function showTerms(selected) {
     put('[data-confirm-title]', selected.label);
     const price = selected.body?.expected_price;
-    put('[data-confirm-terms]', price ? `${selected.label} at $${price}. This records a paper Call on your public profile.` : 'This records a paper Call on your public profile.');
+    put('[data-confirm-terms]', selected.preview || (price ? `${selected.label} at $${price}. This records a paper Call on your public profile.` : 'This records a paper Call on your public profile.'));
   }
   document.addEventListener('click', async event => {
     const button = event.target.closest('button');
     if (!button) return;
     const dialog = document.querySelector('.call-confirm');
     if (button.matches('[data-action]')) {
-      action = screen.actions[Number(button.dataset.action)];
-      if (!action) return;
+      const selected = screen.actions[Number(button.dataset.action)], key = pageKey();
+      if (!selected) return;
+      if (screen.refresh_url) {
+        const next = await refreshDetail();
+        if (pageKey() !== key) return;
+        action = next?.actions.find(item => actionKey(item) === actionKey(selected));
+        if (!action) { put('[data-action-status]', 'Please review the current Call state and try again.'); return; }
+      } else action = selected;
       showTerms(action); put('[data-confirm-status]', ''); dialog.showModal(); return;
     }
     if (button.matches('[data-cancel]')) { action = null; dialog.close(); return; }
@@ -128,7 +139,7 @@
         if (!current) { put('[data-confirm-status]', 'This Call has changed. Close this window to see its current state.'); return; }
         if (JSON.stringify(current.body) !== JSON.stringify(chosen.body)) {
           action = current; showTerms(current);
-          put('[data-confirm-status]', 'The price changed. Review these terms and confirm again.'); return;
+          put('[data-confirm-status]', 'The terms changed. Review them and confirm again.'); return;
         }
       }
       if (pageKey() !== key || !dialog.open || action !== chosen) return;
