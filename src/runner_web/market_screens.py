@@ -220,6 +220,7 @@ def detail(
         "series": [],
         "note": "",
         "query": "",
+        "refresh_url": f"/api/screens/{market}/{quote(item['id'], safe='')}/detail",
     }
     identifier = quote(item["id"], safe="")
     if market == "sports" and item["id"].startswith("golf:"):
@@ -236,9 +237,11 @@ def detail(
             result["teams"] = [{"name": "Field opens soon", "mark": "PGA", "score": "—"}]
         if data.get("venue"):
             result["facts"].append({"label": "Venue", "value": str(data["venue"])})
+        result.pop("refresh_url")
         return result
     if market == "sports":
         state = sports_state(data)
+        result["call"] = {"status": str(my_pick.get("result") or "active") if my_pick else "none"}
         result["teams"] = [
             {
                 "name": str(
@@ -267,6 +270,10 @@ def detail(
                 )
     else:
         result["series"] = series(data.get("history") or [])
+        result["chart_period"] = {
+            "start": result["series"][0]["time"] if result["series"] else None,
+            "end": result["series"][-1]["time"] if result["series"] else None,
+        }
         result["note"] = "Price history"
         if market == "stocks":
             result["chart_url"] = f"/api/screens/stocks/{identifier}/chart"
@@ -277,12 +284,22 @@ def detail(
         if volume:
             result["facts"].append({"label": "24h volume", "value": volume})
         can_call = (
-            bool(data.get("can_call")) if market == "memecoins" else bool(source.get("price"))
+            bool(data.get("can_call"))
+            if "can_call" in data or market == "memecoins"
+            else bool(source.get("price"))
         )
+        result["call"] = {"status": "active" if active_call else "none"}
         if active_call:
-            result["facts"].append(
-                {"label": "Your Call", "value": change(active_call.get("return_pct"))}
+            entry = number(active_call.get("entry_price"))
+            price = number(source.get("price"))
+            paused = item.get("freshness") == "paused"
+            call_return = (
+                (price / entry - 1) * 100
+                if entry and entry > 0 and price is not None and not paused
+                else None
             )
+            result["call"]["return"] = change(call_return)
+            result["facts"].append({"label": "Your Call", "value": change(call_return)})
         if can_call:
             endpoint = (
                 (
@@ -301,7 +318,7 @@ def detail(
                 {
                     "label": "Close Call" if active_call else "Make Call",
                     "endpoint": endpoint,
-                    "body": {},
+                    "body": {"expected_price": number(source.get("price"))},
                 }
             )
     return result

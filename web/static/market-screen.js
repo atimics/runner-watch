@@ -22,47 +22,119 @@
     put('[data-chart-start]',label(start)); put('[data-chart-end]',label(end));
   }
   draw(screen?.series);
-  if (screen?.chart_url) fetch(screen.chart_url).then(r=>{if(!r.ok) throw new Error(); return r.json();}).then(p=>draw(p.points)).catch(()=>draw(screen.series));
-  async function refreshQuote() {
-    if (!screen?.quote_url || document.hidden) return;
+  const pageKey = () => location.pathname + location.search;
+  let requestNumber = 0;
+  let action = null;
+  const actionKey = a => a ? a.endpoint + ':' + (a.body?.selection || '') : '';
+  const sameSubject = next => next?.market === screen?.market && next?.item?.id === screen?.item?.id;
+  function renderDetail(next) {
+    put('[data-value]', next.item.value);
+    put('[data-change]', next.item.change);
+    put('[data-time]', next.item.time);
+    const move = document.querySelector('[data-change]');
+    if (move) move.className = ['up','down','neutral'].includes(next.item.tone) ? next.item.tone : 'neutral';
+    const facts = document.querySelector('[data-facts]');
+    if (facts) {
+      facts.replaceChildren(...next.facts.map(fact => {
+        const row = document.createElement('div'), label = document.createElement('dt'), value = document.createElement('dd');
+        label.textContent = fact.label; value.textContent = fact.value; row.append(label, value); return row;
+      }));
+      facts.hidden = next.facts.length === 0;
+    }
+    (next.teams || []).forEach((team, index) => {
+      const el = document.querySelectorAll('.teams > div')[index];
+      if (el) el.querySelector('strong').textContent = team.score;
+    });
+    put('[data-game-note]', next.note);
+    const actions = document.querySelector('[data-screen-actions]');
+    if (actions) {
+      next.actions.forEach((item, index) => {
+        let control = actions.children[index];
+        if (!control) {
+          control = document.createElement(actions.dataset.authenticated === 'true' ? 'button' : 'a');
+          if (control.tagName === 'BUTTON') control.type = 'button';
+          else { control.href = actions.dataset.loginUrl; control.className = 'primary'; }
+          actions.append(control);
+        }
+        control.textContent = item.label;
+        if (control.tagName === 'BUTTON') control.dataset.action = String(index);
+      });
+      while (actions.children.length > next.actions.length) {
+        const last = actions.lastElementChild;
+        if (last === document.activeElement) {
+          const message = document.querySelector('[data-action-status]');
+          message.tabIndex = -1; message.focus();
+        }
+        last.remove();
+      }
+    }
+    screen = next;
+    draw(next.series);
+  }
+  async function refreshDetail() {
+    if (!screen?.refresh_url) return null;
+    const key = pageKey(), subject = screen.item.id, market = screen.market, version = ++requestNumber;
     try {
-      const r = await fetch(screen.quote_url); if (!r.ok) return;
-      const item = await r.json(); put('[data-value]',item.value); put('[data-change]',item.change); put('[data-time]',item.time);
-      const change = document.querySelector('[data-change]'); if(change) change.className = ['up','down','neutral'].includes(item.tone) ? item.tone : 'neutral';
-    } catch (_) { /* Preserve the last visible quote and its time. */ }
+      const response = await fetch(screen.refresh_url, {cache:'no-store'});
+      if (!response.ok || response.redirected) return null;
+      const next = await response.json();
+      if (pageKey() !== key || version !== requestNumber || screen.item.id !== subject || screen.market !== market || !sameSubject(next)) return null;
+      renderDetail(next);
+      return next;
+    } catch (_) { return null; }
   }
   async function refreshSurface() {
-    if (document.hidden || (screen && screen.market !== 'sports')) return;
+    if (document.hidden) return;
+    if (screen?.refresh_url) { await refreshDetail(); return; }
     const surface = document.querySelector('[data-live-surface]');
     if (!surface || surface.contains(document.activeElement) || document.querySelector('dialog[open]')) return;
+    const key = pageKey();
     try {
       const response = await fetch(location.href);
-      if (!response.ok || response.redirected) return;
+      if (!response.ok || response.redirected || pageKey() !== key) return;
       const next = new DOMParser().parseFromString(await response.text(), 'text/html');
       const content = next.querySelector('[data-live-surface]');
       if (!content || document.querySelector('dialog[open]') || surface.contains(document.activeElement)) return;
       if (content.innerHTML !== surface.innerHTML) surface.replaceWith(content);
-      const data = next.getElementById('screenData');
-      if (data) screen = JSON.parse(data.textContent);
-    } catch (_) { /* Keep the current screen available while the connection recovers. */ }
+    } catch (_) { /* Keep the saved view during connection recovery. */ }
   }
-  refreshQuote();
-  setInterval(() => { refreshQuote(); refreshSurface(); }, 60000);
-  let action = null;
+  if (screen?.refresh_url) refreshDetail();
+  else if (screen?.chart_url) fetch(screen.chart_url).then(r=>r.json()).then(p=>draw(p.points)).catch(()=>draw(screen.series));
+  setInterval(refreshSurface, 60000);
+  function showTerms(selected) {
+    put('[data-confirm-title]', selected.label);
+    const price = selected.body?.expected_price;
+    put('[data-confirm-terms]', price ? `${selected.label} at $${price}. This records a paper Call on your public profile.` : 'This records a paper Call on your public profile.');
+  }
   document.addEventListener('click', async event => {
     const button = event.target.closest('button');
     if (!button) return;
     const dialog = document.querySelector('.call-confirm');
     if (button.matches('[data-action]')) {
       action = screen.actions[Number(button.dataset.action)];
-      put('[data-confirm-title]', action.label); dialog.showModal(); return;
+      if (!action) return;
+      showTerms(action); put('[data-confirm-status]', ''); dialog.showModal(); return;
     }
-    if (button.matches('[data-cancel]')) { dialog.close(); return; }
+    if (button.matches('[data-cancel]')) { action = null; dialog.close(); return; }
     if (!button.matches('[data-confirm]') || !action) return;
     button.disabled = true;
+    const chosen = action, key = pageKey();
     try {
-      const r = await fetch(action.endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(action.body)});
-      if (!r.ok) { put('[data-action-status]',r.status===401 ? 'Log in to make a Call.' : 'Please try again when the price is current.'); dialog.close(); return; }
+      if (screen.refresh_url) {
+        const next = await refreshDetail();
+        if (!dialog.open || pageKey() !== key || action !== chosen) return;
+        if (!next) { put('[data-confirm-status]', 'Please try again to check the current terms.'); return; }
+        const current = next.actions.find(a => actionKey(a) === actionKey(chosen));
+        if (!current) { put('[data-confirm-status]', 'This Call has changed. Close this window to see its current state.'); return; }
+        if (JSON.stringify(current.body) !== JSON.stringify(chosen.body)) {
+          action = current; showTerms(current);
+          put('[data-confirm-status]', 'The price changed. Review these terms and confirm again.'); return;
+        }
+      }
+      if (pageKey() !== key || !dialog.open || action !== chosen) return;
+      const r = await fetch(chosen.endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(chosen.body)});
+      if (pageKey() !== key) return;
+      if (!r.ok) { put('[data-action-status]',r.status===401 ? 'Log in to make a Call.' : 'Please try again when the price is current.'); dialog.close(); await refreshDetail(); return; }
       location.reload();
     } catch (_) { put('[data-action-status]','Please try again in a moment.'); dialog.close(); }
     finally { button.disabled = false; }

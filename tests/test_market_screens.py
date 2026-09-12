@@ -237,3 +237,129 @@ def test_slate_rows_derive_score_state_when_detail_state_is_absent(status, expec
     assert all(team["score"] == ("—" if status == "pre" else "0") for team in screen["teams"])
     if status == "pre":
         assert screen["item"]["change"] == "Score pending"
+
+
+@pytest.fixture
+def changing_detail(screen_client, monkeypatch):
+    from runner_web.db import connection
+
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("reader", "reader", "Reader", "active", datetime.now(UTC).isoformat()),
+        )
+    state = {"price": 1.56, "paused": False, "active": True}
+    user = {"id": "reader", "username": "reader", "display_name": "Reader"}
+    monkeypatch.setattr(web, "current_user", lambda *a: user)
+    monkeypatch.setattr(web, "require_user", lambda *a: user)
+    monkeypatch.setattr(web, "require_origin", lambda *a: None)
+    monkeypatch.setattr(web, "_known_ticker", lambda *a: True)
+
+    def coin_data(*a):
+        coin = {**sample("memecoins"), "price": state["price"], "stale": state["paused"]}
+        return {"coin": coin, "history": [], "can_call": not state["paused"], "calls": []}
+
+    def stock_data(*a):
+        return {
+            "ticker": "OPK",
+            "company": "OPKO Health",
+            "can_publish": True,
+            "current": {**sample("stocks"), "price": 1.56},
+        }
+
+    def active(*a, **kw):
+        return (
+            {
+                "public_id": "call-one",
+                "entry_price": 1.5,
+                "return_pct": 4,
+                "status": "active",
+                "ticker": "OPK",
+            }
+            if state["active"]
+            else None
+        )
+
+    def mark(*a, **kw):
+        return {
+            "price": state["price"],
+            "observed_at": datetime.now(UTC).isoformat(),
+            "source": SENTINEL,
+            "age_seconds": 0,
+            "session": "regular",
+        }
+
+    monkeypatch.setattr(web, "ticker_detail_data", stock_data)
+    monkeypatch.setattr(web, "_public_ticker_detail_data", stock_data)
+    monkeypatch.setattr(web, "ticker_quote", lambda *a: {})
+    monkeypatch.setattr(web, "market_mark", mark)
+    monkeypatch.setattr(web, "_current_call_mark", mark)
+    monkeypatch.setattr(
+        web,
+        "ticker_chart_detail_payload",
+        lambda *a: {
+            "points": [
+                {"time": "2026-09-12T12:00:00Z", "close": 1.5},
+                {"time": "2026-09-12T13:00:00Z", "close": state["price"]},
+            ]
+        },
+    )
+    monkeypatch.setattr(web, "_memecoin_detail_payload", coin_data)
+    monkeypatch.setattr(web, "active_call_for_user", active)
+    monkeypatch.setattr(web, "active_memecoin_call", active)
+    # The actual page routes retain their existing account context builders.
+    monkeypatch.setattr(web, "wallet_for_user", lambda *a: {"balance": 100})
+    return state
+
+
+@pytest.mark.parametrize("market,subject", [("stocks", "OPK"), ("memecoins", "solana-test")])
+def test_detail_refresh_uses_one_quote_for_return_and_actions(
+    screen_client, changing_detail, market, subject
+):
+    endpoint = f"/api/screens/{market}/{subject}/detail"
+    for price in (3, 4.5):
+        changing_detail["price"] = price
+        response = screen_client.get(endpoint)
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "private, no-store"
+        screen = response.json()
+        assert screen["item"]["value"] == f"${price:.2f}"
+        assert screen["call"]["return"] == ("+100.0%" if price == 3 else "+200.0%")
+        assert screen["actions"][0]["body"] == {"expected_price": price}
+        assert screen["actions"][0]["label"] == "Close Call"
+        assert SENTINEL not in response.text
+    changing_detail["active"] = False
+    screen = screen_client.get(endpoint).json()
+    assert screen["call"]["status"] == "none"
+    assert screen["actions"][0]["label"] == "Make Call"
+    if market == "memecoins":
+        changing_detail["paused"] = True
+        assert screen_client.get(endpoint).json()["actions"] == []
+        changing_detail["paused"] = False
+        assert screen_client.get(endpoint).json()["actions"][0]["label"] == "Make Call"
+
+
+@pytest.mark.parametrize("closing", [False, True])
+def test_stock_commit_checks_the_price_it_will_save(
+    screen_client, changing_detail, monkeypatch, closing
+):
+    saved = []
+    monkeypatch.setattr(web, "create_call", lambda *a, **kw: saved.append(kw) or {})
+    monkeypatch.setattr(
+        web, "close_call", lambda *a, **kw: saved.append(kw) or {"status": "closed"}
+    )
+    monkeypatch.setattr(web, "call_for_user", lambda *a: {"status": "active", "ticker": "OPK"})
+    endpoint = "/api/calls/stock/call-one/close" if closing else "/api/calls/stock/OPK"
+    changing_detail["price"] = 3
+    assert screen_client.post(endpoint, json={"expected_price": 1.56}).status_code == 409
+    assert saved == []
+    assert screen_client.post(endpoint, json={"expected_price": 3}).status_code in (200, 201)
+    assert saved[0]["exit_price" if closing else "entry_price"] == 3
+
+
+@pytest.mark.parametrize("price", [None, True, "3", -1, 0])
+def test_call_preview_price_has_a_strict_numeric_shape(screen_client, changing_detail, price):
+    assert (
+        screen_client.post("/api/calls/stock/OPK", json={"expected_price": price}).status_code
+        == 422
+    )
