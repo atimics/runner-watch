@@ -44,6 +44,12 @@ def stamp(value: Any) -> str:
         return ""
 
 
+def sports_state(item: dict[str, Any]) -> dict[str, Any]:
+    from runner_web.sports import _game_view_state
+
+    return item.get("view_state") or _game_view_state(item)
+
+
 def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
     if market == "sports" and str(item.get("id", "")).startswith("golf:"):
         leader = item.get("leader") or {}
@@ -61,7 +67,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
     if market == "sports":
         away = str(item.get("away_abbreviation") or item.get("away_team_name") or "Away")
         home = str(item.get("home_abbreviation") or item.get("home_team_name") or "Home")
-        state = item.get("view_state") or {}
+        state = sports_state(item)
         started = state.get("started") or item.get("status") in {"in", "post"}
         scores = [item.get(f"{side}_score") for side in ("away", "home")]
         value = (
@@ -232,7 +238,7 @@ def detail(
             result["facts"].append({"label": "Venue", "value": str(data["venue"])})
         return result
     if market == "sports":
-        state = data.get("view_state") or {}
+        state = sports_state(data)
         result["teams"] = [
             {
                 "name": str(

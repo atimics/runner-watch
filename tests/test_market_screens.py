@@ -224,3 +224,16 @@ def test_sports_routes_follow_confirmed_scores(screen_client, monkeypatch, path)
             assert all(team["score"] == "—" for team in screen["teams"])
         else:
             assert screen["teams"][0]["score"] == str(away)
+
+
+@pytest.mark.parametrize("status,expected", [("pre", "—"), ("in", "0 – 0"), ("post", "0 – 0")])
+def test_slate_rows_derive_score_state_when_detail_state_is_absent(status, expected):
+    event = sample("sports")
+    event.pop("view_state")
+    event.update(status=status, away_score=0, home_score=0, start_time="2020-01-01T18:00:00Z")
+    screen = detail("sports", event)
+    assert screen["item"]["value"] == expected
+    assert listing("sports", [event])["rows"][0] == screen["item"]
+    assert all(team["score"] == ("—" if status == "pre" else "0") for team in screen["teams"])
+    if status == "pre":
+        assert screen["item"]["change"] == "Score pending"
