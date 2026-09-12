@@ -468,12 +468,12 @@ def test_multi_book_consensus_drives_model_and_bovada_drives_paper_pick(
         None,
     )
     assert response.status_code == 200
-    assert b"Consensus and Bovada" in response.body
-    assert b"BOVADA DIVERGENCE" in response.body
-    assert b"BEST DISPLAYED PRICE" in response.body
-    assert b"Pricing differences are not picks" in response.body
-    assert b"CAPTURED LINE" in response.body
-    assert b"No-vig consensus via The Odds API" in response.body
+    assert b"Consensus and Bovada" not in response.body
+    assert b"BOVADA DIVERGENCE" not in response.body
+    assert b"BEST DISPLAYED PRICE" not in response.body
+    assert b"Pricing differences are not picks" not in response.body
+    assert b"CAPTURED LINE" not in response.body
+    assert b"No-vig consensus via The Odds API" not in response.body
 
     pick = sports.create_sports_pick("multi-user", str(event["id"]), "home")
     assert pick["sportsbook"] == "Bovada"

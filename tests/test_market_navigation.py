@@ -54,14 +54,8 @@ def test_coin_navigation_keeps_market_context_on_each_host(active_tab: str) -> N
     assert [link["href"] for link in markets if link.get("aria-current")] == [
         "https://runners.rati.chat/memecoins"
     ]
-    tabs = navigation.links["Memecoins board views"]
-    assert [link["href"] for link in tabs] == [
-        "/memecoins?view=pulse",
-        "/memecoins?view=changed",
-        "/memecoins?view=map",
-        "/memecoins?view=calls",
-    ]
-    assert tabs[["pulse", "radar", "map", "alpha"].index(active_tab)]["aria-current"] == "page"
+    tabs = navigation.links["View"]
+    assert [link["href"] for link in tabs] == ["/memecoins?view=list", "/memecoins?view=map"]
     assert 'class="memecoins-product"' in html
 
 
@@ -72,19 +66,19 @@ def test_coin_navigation_keeps_market_context_on_each_host(active_tab: str) -> N
             "runners",
             "/sports",
             "Stocks",
-            ["/?view=pulse", "/?view=changed", "/?view=map", "/?view=calls"],
+            ["/?view=list", "/?view=map"],
         ),
         (
             "sports",
             "",
             "Sports",
-            ["/?view=pulse", "/?view=changed", "/?view=calls"],
+            ["/?view=list", "/?view=map"],
         ),
         (
             "sports",
             "/sports",
             "Sports",
-            ["/sports/?view=pulse", "/sports/?view=changed", "/sports/?view=calls"],
+            ["/sports/?view=list", "/sports/?view=map"],
         ),
     ],
 )
@@ -101,7 +95,7 @@ def test_board_view_links_share_one_screen(
     )
     navigation = Navigation()
     navigation.feed(html)
-    assert [link["href"] for link in navigation.links[f"{label} board views"]] == routes
+    assert [link["href"] for link in navigation.links["View"]] == routes
 
 
 @pytest.mark.parametrize(
@@ -111,10 +105,10 @@ def test_board_view_links_share_one_screen(
         ("changed", "changed"),
         ("map", "map"),
         ("calls", "calls"),
-        ("radar", "pulse"),
-        ("alpha", "pulse"),
-        ("", "pulse"),
-        (None, "pulse"),
+        ("radar", "list"),
+        ("alpha", "list"),
+        ("", "list"),
+        (None, "list"),
     ],
 )
 def test_board_view_normalises_unknown_values(requested: str | None, expected: str) -> None:
@@ -122,23 +116,11 @@ def test_board_view_normalises_unknown_values(requested: str | None, expected: s
 
 
 def test_board_view_links_preserve_the_market() -> None:
-    assert web_main._board_view_links("stocks", "/sports") == {
-        "pulse": "/?view=pulse",
-        "changed": "/?view=changed",
-        "map": "/?view=map",
-        "calls": "/?view=calls",
-    }
-    assert web_main._board_view_links("memecoins", "/sports") == {
-        "pulse": "/memecoins?view=pulse",
-        "changed": "/memecoins?view=changed",
-        "map": "/memecoins?view=map",
-        "calls": "/memecoins?view=calls",
-    }
-    assert web_main._board_view_links("sports", "") == {
-        "pulse": "/?view=pulse",
-        "changed": "/?view=changed",
-        "calls": "/?view=calls",
-    }
+    for market, base in [("stocks", "/"), ("memecoins", "/memecoins"), ("sports", "/")]:
+        assert web_main._board_view_links(market, "") == {
+            "list": base + "?view=list",
+            "map": base + "?view=map",
+        }
 
 
 def _assert_redirect(response, location: str) -> None:
@@ -164,15 +146,15 @@ def board_client(tmp_path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 @pytest.mark.parametrize(
     ("path", "title"),
     [
-        ("/", "Pulse · RATi Runners"),
-        ("/?view=changed", "Changed · RATi Runners"),
-        ("/?view=map", "Insider map · RATi"),
-        ("/?view=calls", "Calls · RATi Runners"),
-        ("/?view=radar", "Pulse · RATi Runners"),
-        ("/memecoins", "Memecoins · RATi Memecoins"),
-        ("/memecoins?view=changed", "Changed · RATi Memecoins"),
-        ("/memecoins?view=map", "Wallet map · RATi"),
-        ("/memecoins?view=calls", "Calls · RATi Memecoins"),
+        ("/", "Stocks · RATi"),
+        ("/?view=changed", "Stocks · RATi"),
+        ("/?view=map", "Stocks · RATi"),
+        ("/?view=calls", "Stocks · RATi"),
+        ("/?view=radar", "Stocks · RATi"),
+        ("/memecoins", "Memecoins · RATi"),
+        ("/memecoins?view=changed", "Memecoins · RATi"),
+        ("/memecoins?view=map", "Memecoins · RATi"),
+        ("/memecoins?view=calls", "Memecoins · RATi"),
     ],
 )
 def test_the_board_renders_every_view_on_one_screen(
@@ -217,3 +199,58 @@ def test_retired_routes_redirect_to_the_board() -> None:
         web_main.sports_alpha_page(request, None),
         f"{web_main.SPORTS_ORIGIN}/?view=calls",
     )
+
+
+def test_stock_search_reaches_rows_after_the_first_page(board_client, monkeypatch):
+    pages = []
+
+    def feed(*, offset=0, limit=50):
+        pages.append(offset)
+        if not offset:
+            return {"rows": [{"ticker": "FIRST", "price": 1}], "has_more": True}
+        return {
+            "rows": [{"ticker": "FOUND", "company": "Found Company", "price": 2}],
+            "has_more": False,
+        }
+
+    monkeypatch.setattr(web_main, "_public_pulse_data", feed)
+    response = board_client.get("/?q=found")
+    assert response.status_code == 200
+    assert 'href="/t/FOUND"' in response.text
+    assert 'href="/t/FIRST"' not in response.text
+    assert pages == [0, 1]
+
+
+def test_screen_quote_and_chart_keep_provider_details_private(board_client, monkeypatch):
+    secret = "private-provider-log"
+    monkeypatch.setattr(web_main, "_known_ticker", lambda _: True)
+    monkeypatch.setattr(web_main, "_ticker_exists", lambda _: True)
+    monkeypatch.setattr(
+        web_main,
+        "ticker_quote",
+        lambda _: {
+            "price": 2.5,
+            "change_pct": 3.2,
+            "observed_at": "2026-09-12T12:00:00Z",
+            "source": secret,
+            "last_error": secret,
+        },
+    )
+    monkeypatch.setattr(
+        web_main,
+        "ticker_chart_detail_payload",
+        lambda _: {
+            "points": [{"time": "2026-09-12T12:00:00Z", "close": 2.5, "source": secret}],
+            "freshness": {"error": secret},
+            "annotations": [secret],
+        },
+    )
+    quote = board_client.get("/api/screens/stocks/ABC/quote").json()
+    assert quote == {
+        "value": "$2.50",
+        "change": "+3.2%",
+        "tone": "up",
+        "time": "Sep 12 · 12:00 UTC",
+    }
+    chart = board_client.get("/api/screens/stocks/ABC/chart").json()
+    assert chart == {"points": [{"value": 2.5, "time": "2026-09-12T12:00:00Z"}]}

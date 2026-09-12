@@ -49,7 +49,8 @@ def test_general_interface_keeps_its_editorial_edge() -> None:
     assert "#1 by open Calls" in community
     assert "Open Calls first · total Calls break ties" in community
     assert "🐺" in community
-    assert '<span class="tab-icon alpha-icon" aria-hidden="true"></span>' in navigation
+    assert "<span>List</span>" in navigation
+    assert "<span>Map</span>" in navigation
 
 
 def test_sports_pulse_is_locked_to_the_shared_ticker_row() -> None:

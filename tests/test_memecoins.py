@@ -195,7 +195,7 @@ def test_public_routes_render_prices_and_escape_provider_text(market_db, monkeyp
         assert "$0.12" in response.text
         assert '<script>alert("coin")</script>' not in response.text
         assert "&lt;script&gt;" in response.text
-        assert 'href="/memecoins?view=pulse" aria-current="page"' in response.text
+        assert 'href="/memecoins?view=list" aria-current="page"' in response.text
         assert response.headers["X-Frame-Options"] == "DENY"
         detail = client.get("/memecoins/coin/dogecoin")
         assert detail.status_code == 200

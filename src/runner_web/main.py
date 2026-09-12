@@ -7089,11 +7089,16 @@ def runners_board_response(
     runner_session: str | None,
     view: str,
 ) -> HTMLResponse:
+    page = _public_pulse_data(limit=50)
+    rows = list(page["rows"])
+    while page.get("has_more") and page["rows"]:
+        page = _public_pulse_data(offset=len(rows), limit=50)
+        rows.extend(page["rows"])
     return _simple_board(
         request,
         runner_session,
         "stocks",
-        _public_pulse_data(limit=50)["rows"],
+        rows,
         view,
         request.query_params.get("q", ""),
     )
@@ -7334,14 +7339,15 @@ def sports_board_response(
     league: str = "all",
 ) -> HTMLResponse:
     enforce_rate(request, "sports", limit=120, seconds=60)
-    slate = _public_screen_data("simple-sports", league, lambda: sports_slate(league, 80))
+    selected_league = league if league in SPORTS_LEAGUES or league == "golf" else "all"
+    slate = _public_screen_data(
+        "simple-sports", selected_league, lambda: sports_slate(selected_league, 80)
+    )
+    events = list(slate.get("events", [])) if selected_league != "golf" else []
+    if selected_league in {"all", "golf"}:
+        events.extend(_public_golf_data().get("events", []))
     return _simple_board(
-        request,
-        runner_session,
-        "sports",
-        slate.get("events", []),
-        view,
-        request.query_params.get("q", ""),
+        request, runner_session, "sports", events, view, request.query_params.get("q", "")
     )
 
 
@@ -7568,7 +7574,13 @@ def sports_game_legacy_page(event_id: str) -> RedirectResponse:
 
 
 def _sports_game_location(event_id: str) -> str:
-    event = sports_event(event_id)
+    if event_id.startswith("golf:"):
+        with connection() as database:
+            event = database.execute(
+                "SELECT id FROM sports_golf_events WHERE id=?", (event_id,)
+            ).fetchone()
+    else:
+        event = sports_event(event_id)
     if not event:
         raise HTTPException(404, "Game not found")
     canonical_id = quote(str(event["id"]), safe=":")
@@ -7583,6 +7595,34 @@ def sports_game_page(
 ) -> Response:
     if product_for_request(request) != "sports" and SPORTS_ORIGIN != APP_ORIGIN:
         return RedirectResponse(_sports_game_location(event_id), status_code=307)
+    if event_id.startswith("golf:"):
+        with connection() as database:
+            event_row = database.execute(
+                "SELECT * FROM sports_golf_events WHERE id=?", (event_id,)
+            ).fetchone()
+            if not event_row:
+                raise HTTPException(404, "Game not found")
+            golf = dict(event_row)
+            golf["leaderboard"] = [
+                dict(r)
+                for r in database.execute(
+                    "SELECT * FROM sports_golf_leaderboard WHERE event_id=? "
+                    "ORDER BY CASE WHEN position IS NULL THEN 1 ELSE 0 END, "
+                    "position,player_name LIMIT 2",
+                    (event_id,),
+                ).fetchall()
+            ]
+        golf["leader"] = next(iter(golf["leaderboard"]), None)
+        return templates.TemplateResponse(
+            request,
+            "market_screen.html",
+            page_context(
+                request,
+                runner_session,
+                nav_product="sports",
+                screen=simple_market_detail("sports", golf),
+            ),
+        )
     public_data = _public_screen_data(
         "sports-game",
         event_id,

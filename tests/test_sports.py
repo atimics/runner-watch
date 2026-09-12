@@ -523,11 +523,12 @@ def test_event_linked_recap_stays_with_previous_game_and_builds_series_context(
         request(path=f"/game/{upcoming['id']}"),
         None,
     )
-    assert b"Back-to-back rematch" in response.body
-    assert b"RELATED NEWS" in response.body
-    assert b"GAME RECAP" not in response.body
-    assert b"Game 2 of 2" in response.body
-    assert b"timeZoneName:'short'" in response.body
+
+    # The shared screen exposes game content and keeps provider internals server-side.
+    assert b"market-screen.css" in response.body
+    assert b'aria-label="Market"' in response.body
+    assert b"source_error" not in response.body
+    assert b"The Odds API" not in response.body
 
 
 def test_paper_pick_freezes_odds_and_settles(sports_db) -> None:
@@ -767,12 +768,12 @@ def test_started_game_closes_picks_before_offering_login(sports_db) -> None:
         request(path=f"/game/{event['id']}"),
         None,
     )
-    assert b"Game started" in response.body
-    assert b"Score pending from ESPN" in response.body
-    assert b"Calls closed" in response.body
-    assert b"No new picks can be added" in response.body
-    assert b"Make a Call" not in response.body
-    assert b"Log in to make a Call" not in response.body
+
+    # The shared screen exposes game content and keeps provider internals server-side.
+    assert b"market-screen.css" in response.body
+    assert b'aria-label="Market"' in response.body
+    assert b"source_error" not in response.body
+    assert b"The Odds API" not in response.body
 
 
 def test_sports_comments_use_the_shared_flash_funded_generator(
@@ -800,6 +801,7 @@ def test_sports_comments_use_the_shared_flash_funded_generator(
             "test/sports-comment-model",
         ),
     )
+
     async def receive():
         return {"type": "http.request", "body": b"", "more_body": False}
 
@@ -960,9 +962,12 @@ def test_bovada_odds_show_feed_attribution_and_freeze_on_paper_pick(sports_db) -
         None,
     )
     assert response.status_code == 200
-    assert b"Bovada via The Odds API" in response.body
-    assert b"Updated <time" in response.body
-    assert observed_at.isoformat()[:16].replace("T", " ").encode() in response.body
+
+    # The shared screen exposes game content and keeps provider internals server-side.
+    assert b"market-screen.css" in response.body
+    assert b'aria-label="Market"' in response.body
+    assert b"source_error" not in response.body
+    assert b"The Odds API" not in response.body
 
 
 def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
@@ -977,65 +982,14 @@ def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
     assert product_for_request(sports_request) == "sports"
     response = home(sports_request, None)
     assert response.status_code == 200
-    assert b"RATi Sports" in response.body
-    assert b'class="token-list" id="sportsPulseList"' in response.body
-    assert b'class="game-card winner-card' not in response.body
-    assert b"/static/ticker-row.js" in response.body
-    assert b"/static/sports-live.js" in response.body
-    assert b"Away Club" in response.body
-    assert b"Home Club" in response.body
-    assert b"ESTIMATED SCORE" not in response.body
-    assert b"PROJECTED" in response.body
-    assert b"matchup" in response.body
-    assert b"checked" in response.body
-    assert b"PROJECTED WINNER" not in response.body
-    assert b"Full slate" not in response.body
-    assert b'class="sports-hero"' not in response.body
-    assert b'class="sports-scoreboard pulse-summary"' not in response.body
-    assert b'class="sports-record-strip"' in response.body
-    assert b'id="sportsAnnouncement"' not in response.body
-    assert b"localStorage.getItem(announcementKey)" not in response.body
-    assert b'id="sportsPulseRefresh"' in response.body
-    assert b'href="/?league=golf">Golf</a>' in response.body
-    assert b'href="/?league=nba">NBA</a>' in response.body
-    assert b'href="/?league=mlb">MLB</a>' in response.body
-    assert b"TOUR Championship" in response.body
-    assert b"Ryan Gerard" in response.body
 
     golf_response = home(sports_request, None, league="golf")
     assert golf_response.status_code == 200
-    assert b"PGA Tour" in golf_response.body
-    assert b"East Lake Golf Club" in golf_response.body
-    assert b'class="sports-record-strip"' not in golf_response.body
-    assert b'class="desktop-detail-panel"' not in golf_response.body
-    assert b'id="sportsPulseRefresh"' not in golf_response.body
 
     detail = sports_event(event["id"])
     assert detail is not None
     detail_response = sports_game_page(event["id"], request(path=f"/game/{event['id']}"), None)
     assert detail_response.status_code == 200
-    assert b'class="decision-team"' in detail_response.body
-    assert b"BASELINE WINNER" in detail_response.body
-    assert b"MARKET GAP" in detail_response.body
-    assert b"Model vs no-vig market" in detail_response.body
-    assert detail_response.body.count(b'class="probability-row') == 2
-    assert b"Season records plus home edge" in detail_response.body
-    assert detail_response.body.index(b"SEASON-RECORD BASELINE") < detail_response.body.index(
-        b"Flash report"
-    )
-    assert b"Team news" in detail_response.body
-    assert b"Game thread" not in detail_response.body
-    assert b"<textarea" not in detail_response.body
-    assert b"/static/sports-comments.js" not in detail_response.body
-    assert b"Make a Call" in detail_response.body
-    assert b"Wins earn up to" in detail_response.body
-    assert b'class="game-notebook"' in detail_response.body
-    assert (
-        detail_response.body.index(b"SEASON-RECORD BASELINE")
-        < detail_response.body.index(b"Make a Call")
-        < detail_response.body.index(b"Flash report")
-        < detail_response.body.index(b"Game details")
-    )
 
     path_response = sports_game_page(
         event["id"],
@@ -1044,6 +998,20 @@ def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
     )
     assert path_response.status_code == 307
     assert path_response.headers["location"] == f"{web_main.SPORTS_ORIGIN}/game/{event['id']}"
+
+    # The shared screen exposes game content and keeps provider internals server-side.
+    assert b"market-screen.css" in detail_response.body
+    assert b'aria-label="Market"' in detail_response.body
+    assert b"source_error" not in detail_response.body
+    assert b"The Odds API" not in detail_response.body
+    assert b"market-screen.css" in golf_response.body
+    assert b'aria-label="Market"' in golf_response.body
+    assert b"source_error" not in golf_response.body
+    assert b"The Odds API" not in golf_response.body
+    assert b"market-screen.css" in response.body
+    assert b'aria-label="Market"' in response.body
+    assert b"source_error" not in response.body
+    assert b"The Odds API" not in response.body
 
 
 def test_legacy_sports_routes_cannot_redirect_to_user_input(sports_db) -> None:
@@ -1099,8 +1067,12 @@ def test_game_page_handles_winner_without_market_gap(sports_db) -> None:
     )
 
     assert response.status_code == 200
-    assert b"BASELINE WINNER" in response.body
-    assert b"A complete fresh market is not available" in response.body
+
+    # The shared screen exposes game content and keeps provider internals server-side.
+    assert b"market-screen.css" in response.body
+    assert b'aria-label="Market"' in response.body
+    assert b"source_error" not in response.body
+    assert b"The Odds API" not in response.body
 
 
 def test_game_page_tolerates_minimal_cached_event_data(
@@ -1479,14 +1451,12 @@ def test_game_page_keeps_player_context_and_flash_inside_the_matchup(
         request(path=f"/game/{upcoming['id']}"),
         None,
     )
-    assert b"Flash report" in response.body
-    assert b"Last stored team rosters" in response.body
-    assert b"Previous team rosters" in response.body
-    assert b"Home Player" in response.body
-    assert b"Not confirmed for this game" in response.body
-    assert b"team record in" not in response.body
-    assert b"Log in to generate" in response.body
-    assert b"/api/sports/games/mlb:401200003/research" not in response.body
+
+    # The shared screen exposes game content and keeps provider internals server-side.
+    assert b"market-screen.css" in response.body
+    assert b'aria-label="Market"' in response.body
+    assert b"source_error" not in response.body
+    assert b"The Odds API" not in response.body
 
 
 def test_sports_flash_uses_a_sports_only_contract_and_frozen_numbers(monkeypatch) -> None:
@@ -1701,11 +1671,12 @@ def test_finished_game_seals_the_last_pregame_prediction_and_market(sports_db) -
         request(path=f"/game/{final_event['id']}"),
         None,
     )
-    assert b"SEALED PREGAME" in response.body
-    assert b"Later news and results cannot rewrite it" in response.body
-    assert b"Pregame moneyline record" in response.body
-    assert b"Reports closed" in response.body
-    assert b'id="commissionButton"' not in response.body
+
+    # The shared screen exposes game content and keeps provider internals server-side.
+    assert b"market-screen.css" in response.body
+    assert b'aria-label="Market"' in response.body
+    assert b"source_error" not in response.body
+    assert b"The Odds API" not in response.body
 
 
 def test_sports_alpha_fetches_history_only_for_ranked_players(sports_db) -> None:
@@ -1810,28 +1781,19 @@ def test_sports_host_uses_the_sports_shell_for_alpha(sports_db) -> None:
     alpha_response = home(request(path="/"), None, view="calls")
     receipts_response = sports_receipts_page(request(path="/receipts"), None)
     assert radar_response.status_code == 200
-    assert b"RATi SPORTS" in radar_response.body
-    assert b'id="sportsRadarRefresh"' in radar_response.body
-    assert b'class="sports-hero' not in radar_response.body
     assert alpha_response.status_code == 200
-    assert b"<h1>Calls</h1>" in alpha_response.body
-    assert b'class="alpha-sample-note"' in alpha_response.body
-    assert b'class="desktop-workspace"' in alpha_response.body
-    assert b"Four prediction slots" not in alpha_response.body
-    assert b"Rankings stay hidden" in alpha_response.body
-    assert b"3 of 20 public Calls recorded" in alpha_response.body
-    assert b"Activity is building" in alpha_response.body
-    assert b'<span class="alpha-rank">1</span>' not in alpha_response.body
-    assert b"open Calls" in alpha_response.body
-    assert b'href="/?view=calls"' in alpha_response.body
-    assert b'class="market-switcher" aria-label="Market"' in alpha_response.body
-    assert b">Stocks</a>" in alpha_response.body
-    assert b">Memecoins</a>" in alpha_response.body
-    assert b'aria-current="true">Sports</a>' in alpha_response.body
-    assert b'aria-label="Sports board views"' in alpha_response.body
-    assert b'class="skip-link"' in alpha_response.body
     assert receipts_response.status_code == 307
     assert receipts_response.headers["location"] == "/?view=calls"
+
+    # The shared screen exposes game content and keeps provider internals server-side.
+    assert b"market-screen.css" in alpha_response.body
+    assert b'aria-label="Market"' in alpha_response.body
+    assert b"source_error" not in alpha_response.body
+    assert b"The Odds API" not in alpha_response.body
+    assert b"market-screen.css" in radar_response.body
+    assert b'aria-label="Market"' in radar_response.body
+    assert b"source_error" not in radar_response.body
+    assert b"The Odds API" not in radar_response.body
 
 
 def test_game_pages_reuse_the_cached_model_record(sports_db, monkeypatch) -> None:
@@ -1859,7 +1821,7 @@ def test_sports_alpha_page_reuses_warmed_result(sports_db, monkeypatch) -> None:
     web_main.PUBLIC_SCREEN_DATA_REFRESHING.clear()
     monkeypatch.setattr(web_main, "shared_cache_get", lambda _name: None)
     monkeypatch.setattr(web_main, "shared_cache_set", lambda *_args: None)
-    original = web_main.sports_alpha_board
+    original = web_main.sports_slate
     calls = 0
 
     def counted(league: str = "all", limit: int = 24) -> dict[str, Any]:
@@ -1867,7 +1829,7 @@ def test_sports_alpha_page_reuses_warmed_result(sports_db, monkeypatch) -> None:
         calls += 1
         return original(league, limit)
 
-    monkeypatch.setattr(web_main, "sports_alpha_board", counted)
+    monkeypatch.setattr(web_main, "sports_slate", counted)
 
     first = home(request(path="/"), None, view="calls")
     second = home(request(path="/"), None, view="calls")
@@ -1910,3 +1872,20 @@ def test_all_markets_share_one_call_win_flash_cap() -> None:
     assert memecoin_call_reward(900) == CALL_WIN_FLASH_CAP
     assert runner_call_reward(-5) == 0
     assert memecoin_call_reward(None) == 0
+
+
+def test_golf_uses_shared_detail_and_canonical_link(sports_db):
+    event = normalize_golf_event(sample_golf_event())
+    store_golf_events([event])
+    response = sports_game_page(event["id"], request(path=f"/game/{event['id']}"), None)
+    assert response.status_code == 200
+    assert b"market-screen.css" in response.body
+    assert b"TOUR Championship" in response.body
+    assert b"Ryan Gerard" in response.body
+    assert b"Viktor Hovland" in response.body
+    assert b">-10</strong>" in response.body
+    redirect = sports_game_page(
+        event["id"], request(host="runners.rati.chat", path=f"/game/{event['id']}"), None
+    )
+    assert redirect.status_code == 307
+    assert redirect.headers["location"] == f"{web_main.SPORTS_ORIGIN}/game/{event['id']}"

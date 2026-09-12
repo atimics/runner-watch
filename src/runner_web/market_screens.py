@@ -11,6 +11,8 @@ LABELS = {"stocks": "Stocks", "memecoins": "Memecoins", "sports": "Sports"}
 
 
 def number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
     try:
         result = float(value)
         return result if math.isfinite(result) else None
@@ -22,7 +24,9 @@ def money(value: Any) -> str:
     n = number(value)
     if n is None:
         return "—"
-    return f"${n:,.2f}" if abs(n) >= 1 else f"${n:.6f}".rstrip("0").rstrip(".")
+    if abs(n) >= 1:
+        return f"${n:,.2f}"
+    return "$" + (f"{n:.6f}".rstrip("0").rstrip(".") if abs(n) >= 0.000001 else f"{n:.6g}")
 
 
 def change(value: Any) -> str:
@@ -41,6 +45,19 @@ def stamp(value: Any) -> str:
 
 
 def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
+    if market == "sports" and str(item.get("id", "")).startswith("golf:"):
+        leader = item.get("leader") or {}
+        return {
+            "id": str(item["id"]),
+            "name": str(item.get("name") or "Tournament"),
+            "subtitle": "PGA Tour",
+            "value": str(leader.get("score_display") or leader.get("score") or "—"),
+            "change": str(item.get("display_status") or item.get("status_detail") or "Upcoming"),
+            "tone": "neutral",
+            "time": stamp(item.get("start_time")),
+            "href": "/game/" + quote(str(item["id"]), safe=":"),
+            "mark": "PG",
+        }
     if market == "sports":
         away = str(item.get("away_abbreviation") or item.get("away_team_name") or "Away")
         home = str(item.get("home_abbreviation") or item.get("home_team_name") or "Home")
@@ -114,7 +131,7 @@ def map_groups(
         subject = subjects.get(r["id"]) or subjects.get(r["name"]) or {}
         count = len(subject.get("actor_ids") or [])
         labels = []
-        if market == "sports":
+        if market == "sports" and not r["id"].startswith("golf:"):
             game = raw.get(r["id"], {})
             labels = [
                 str(game.get(f"{side}_abbreviation") or side.title()) for side in ("away", "home")
@@ -130,7 +147,13 @@ def map_groups(
                     "label": labels[i] if i < len(labels) else "",
                 }
             )
-        groups.append({"item": r, "satellites": satellites})
+        groups.append(
+            {
+                "item": r,
+                "symbol": r["name"] if len(r["name"]) <= 12 else r["name"][:10] + "…",
+                "satellites": satellites,
+            }
+        )
     return groups
 
 
@@ -178,6 +201,21 @@ def detail(
         "query": "",
     }
     identifier = quote(item["id"], safe="")
+    if market == "sports" and item["id"].startswith("golf:"):
+        result["teams"] = [
+            {
+                "name": str(player.get("player_name") or "Player"),
+                "mark": str(player.get("position") or "—"),
+                "score": str(player.get("score_display") or player.get("score") or "—"),
+            }
+            for player in (data.get("leaderboard") or [])[:2]
+        ]
+        result["note"] = item["change"]
+        if not result["teams"]:
+            result["teams"] = [{"name": "Field opens soon", "mark": "PGA", "score": "—"}]
+        if data.get("venue"):
+            result["facts"].append({"label": "Venue", "value": str(data["venue"])})
+        return result
     if market == "sports":
         state = data.get("view_state") or {}
         result["teams"] = [
