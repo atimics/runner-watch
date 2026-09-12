@@ -4149,10 +4149,27 @@ def sports_ai_tournament(league: str = "all") -> dict[str, Any]:
     }
 
 
+def sports_pick_for_user(user_id: str, event_id: str) -> dict[str, Any] | None:
+    with connection() as database:
+        row = database.execute(
+            """
+            SELECT p.*,COALESCE(ft.amount,0) AS reward_flash
+            FROM sports_picks p
+            LEFT JOIN flash_transactions ft
+              ON ft.user_id=p.user_id AND ft.kind='sports_call_win' AND ft.reference_id=p.id
+            WHERE p.user_id=? AND p.event_id=? AND p.market='moneyline'
+            """,
+            (user_id, event_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def create_sports_pick(
     user_id: str,
     event_id: str,
     selection: str,
+    *,
+    expected_odds: int | None = None,
 ) -> dict[str, Any]:
     if selection not in {"home", "away"}:
         raise ValueError("Pick must be home or away")
@@ -4186,6 +4203,8 @@ def create_sports_pick(
         american_odds = odds[f"{selection}_odds"]
         if american_odds is None:
             raise ValueError("Moneyline odds are not available for that side")
+        if expected_odds is not None and expected_odds != american_odds:
+            raise ValueError("The line changed. Please review the current Call terms.")
         identity = ensure_caller_identity_with_database(database, user_id)
         prediction = _latest_prediction(database, event_id)
         pick_id = str(uuid.uuid4())

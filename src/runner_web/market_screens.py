@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 
@@ -189,6 +189,69 @@ def series(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return clean[-360:]
 
 
+def settlement_terms(market: str, entered: Any) -> str:
+    if market == "sports":
+        return "Settles on the confirmed game result. A cancelled game is void."
+    try:
+        moment = datetime.fromisoformat(str(entered).replace("Z", "+00:00"))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        if market == "stocks":
+            from runner_web.data_health import stock_settlement_close
+
+            due = stock_settlement_close(moment)
+            return f"Settles after session close · {stamp(due)}. You can close early."
+        from runner_web.memecoin_calls import MEMECOIN_CALL_MAX_AGE_DAYS
+
+        due = moment + timedelta(days=MEMECOIN_CALL_MAX_AGE_DAYS)
+        return f"Settles after {stamp(due)} at the latest saved price. You can close early."
+    except (ValueError, TypeError):
+        return (
+            "Settles after session close. You can close early."
+            if market == "stocks"
+            else "Settles after seven days at the latest saved price. You can close early."
+        )
+
+
+def call_record(
+    market: str, source: dict[str, Any], saved: dict[str, Any] | None
+) -> dict[str, Any]:
+    if not saved:
+        return {"status": "none"}
+    closed = saved.get("status") in {"closed", "settled"} or bool(saved.get("result"))
+    if market == "sports":
+        side = saved.get("selection")
+        team = source.get(f"{side}_team_name") or source.get(f"{side}_abbreviation") or "Team"
+        odds = number(saved.get("american_odds"))
+        entry = f"Moneyline {int(odds):+d}" if odds is not None else "Moneyline pending"
+        outcome = str(saved.get("result") or "Open").title()
+        reward = int(saved.get("reward_flash") or 0)
+        entered = saved.get("created_at")
+        choice = f"{team} wins"
+        change_label = ""
+    else:
+        entry = money(saved.get("entry_price"))
+        entered = saved.get("entry_at")
+        choice = f"{source.get('ticker') or source.get('symbol') or 'Price'} rises"
+        price = number(saved.get("exit_price") if closed else source.get("price"))
+        base = number(saved.get("entry_price"))
+        current = (price / base - 1) * 100 if price is not None and base and base > 0 else None
+        if not closed and source.get("stale"):
+            current = None
+        change_label = change(current)
+        outcome = f"{'Closed' if closed else 'Open'} · {change_label}"
+        reward = int(saved.get("flash_reward") or 0)
+    return {
+        "status": "closed" if closed else "active",
+        "choice": choice,
+        "entry": entry + (f" · {stamp(entered)}" if stamp(entered) else ""),
+        "terms": settlement_terms(market, entered),
+        "outcome": outcome,
+        "return": change_label,
+        "reward": f"{reward} Flash" if closed else "Awarded at settlement",
+    }
+
+
 def detail(
     market: str,
     data: dict[str, Any],
@@ -241,7 +304,7 @@ def detail(
         return result
     if market == "sports":
         state = sports_state(data)
-        result["call"] = {"status": str(my_pick.get("result") or "active") if my_pick else "none"}
+        result["call"] = call_record(market, data, my_pick)
         result["teams"] = [
             {
                 "name": str(
@@ -257,15 +320,27 @@ def detail(
         result["note"] = str(item["change"])
         if data.get("venue"):
             result["facts"].append({"label": "Venue", "value": str(data["venue"])})
-        if my_pick:
-            result["note"] = "Your Call · " + str(my_pick.get("result") or "Open").title()
-        elif state.get("pick_state") == "open":
+        if not my_pick and state.get("pick_state") == "open":
             for side in ("away", "home"):
+                odds = number((data.get("paper_odds") or {}).get(f"{side}_odds"))
+                team = (
+                    data.get(f"{side}_team_name")
+                    or data.get(f"{side}_abbreviation")
+                    or side.title()
+                )
+                line = f"{int(odds):+d}" if odds is not None else "pending"
                 result["actions"].append(
                     {
                         "label": f"Call {data.get(side + '_abbreviation') or side.title()}",
                         "endpoint": f"/api/calls/game/{identifier}",
-                        "body": {"selection": side},
+                        "body": {
+                            "selection": side,
+                            **({"expected_odds": int(odds)} if odds is not None else {}),
+                        },
+                        "preview": (
+                            f"Call {team} to win · Moneyline {line}. "
+                            + settlement_terms(market, data.get("start_time"))
+                        ),
                     }
                 )
     else:
@@ -288,18 +363,9 @@ def detail(
             if "can_call" in data or market == "memecoins"
             else bool(source.get("price"))
         )
-        result["call"] = {"status": "active" if active_call else "none"}
-        if active_call:
-            entry = number(active_call.get("entry_price"))
-            price = number(source.get("price"))
-            paused = item.get("freshness") == "paused"
-            call_return = (
-                (price / entry - 1) * 100
-                if entry and entry > 0 and price is not None and not paused
-                else None
-            )
-            result["call"]["return"] = change(call_return)
-            result["facts"].append({"label": "Your Call", "value": change(call_return)})
+        result["call"] = call_record(market, source, active_call)
+        if active_call and active_call.get("status") == "closed":
+            active_call = None
         if can_call:
             endpoint = (
                 (
@@ -319,6 +385,18 @@ def detail(
                     "label": "Close Call" if active_call else "Make Call",
                     "endpoint": endpoint,
                     "body": {"expected_price": number(source.get("price"))},
+                    "preview": (
+                        f"Close your Call at {money(source.get('price'))}. "
+                        "Your result uses this price."
+                        if active_call
+                        else f"Call {item['name']} to rise from {money(source.get('price'))}. "
+                        + settlement_terms(
+                            market,
+                            source.get("quote_time")
+                            or source.get("observed_at")
+                            or source.get("event_at"),
+                        )
+                    ),
                 }
             )
     return result

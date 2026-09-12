@@ -90,6 +90,7 @@ from runner_web.calls import (
     calls_from_rows,
     close_call,
     create_call,
+    latest_closed_call_for_user,
     open_machine_slate,
     recent_calls,
     settle_stock_calls,
@@ -287,6 +288,7 @@ from runner_web.sports import (
     sports_call_reward,
     sports_event,
     sports_flash_evidence,
+    sports_pick_for_user,
     sports_pick_stats,
     sports_pulse,
     sports_radar,
@@ -2192,6 +2194,7 @@ class ReportSignal(BaseModel):
 
 class SportsPickPayload(BaseModel):
     selection: Literal["home", "away"]
+    expected_odds: int | None = Field(default=None, strict=True)
 
 
 class LLMRoutePayload(BaseModel):
@@ -6902,7 +6905,15 @@ def memecoin_detail_page(
         sort=sort,
     )
     context["active_call"] = (
-        active_memecoin_call(str(context["user"]["id"]), coin_id) if context["user"] else None
+        (
+            active_memecoin_call(str(context["user"]["id"]), coin_id)
+            or next(
+                iter(memecoin_calls(user_id=str(context["user"]["id"]), coin_id=coin_id, limit=1)),
+                None,
+            )
+        )
+        if context["user"]
+        else None
     )
     return templates.TemplateResponse(request, "simple_coin_detail.html", context)
 
@@ -7638,18 +7649,7 @@ def sports_game_page(
         raise HTTPException(404, "Game not found")
     user = current_user(runner_session)
     user_id = str(user["id"]) if user else None
-    my_pick = None
-    if user_id:
-        my_handle = caller_summary_for_user(user_id).get("handle")
-        if my_handle:
-            my_pick = next(
-                (
-                    pick
-                    for pick in event.get("picks") or []
-                    if pick.get("caller_handle") == my_handle
-                ),
-                None,
-            )
+    my_pick = sports_pick_for_user(user_id, event_id) if user_id else None
     quote = event.get("paper_odds") or {}
     pick_rewards = {
         "away": sports_call_reward(quote.get("away_odds")),
@@ -7731,6 +7731,11 @@ def create_sports_pick_api(
             str(user["id"]),
             event_id,
             payload.selection,
+            **(
+                {"expected_odds": payload.expected_odds}
+                if payload.expected_odds is not None
+                else {}
+            ),
         )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -8443,7 +8448,9 @@ def ticker_page(
         )
         current_price = detail.get("current", {}).get("price")
         mark = float(current_price) if current_price is not None else None
-        active_call = active_call_for_user(str(user["id"]), normalized, current_price=mark)
+        active_call = active_call_for_user(
+            str(user["id"]), normalized, current_price=mark
+        ) or latest_closed_call_for_user(str(user["id"]), normalized)
         comment_count = comment_count_for_ticker(normalized)
         calls = community_calls_for_ticker(normalized, current_price=mark, limit=20)
         latest_report = daily_report_for_ticker(normalized, str(user["id"]))
@@ -8519,18 +8526,21 @@ def screen_detail_state(
             "history": ticker_chart_detail_payload(subject).get("points") or [],
         }
         if user_id:
-            active = active_call_for_user(user_id, subject, current_price=current.get("price"))
+            active = active_call_for_user(
+                user_id, subject, current_price=current.get("price")
+            ) or latest_closed_call_for_user(user_id, subject)
     elif market == "memecoins":
         data = _memecoin_detail_payload(subject)
         if user_id:
-            active = active_memecoin_call(user_id, subject)
+            active = active_memecoin_call(user_id, subject) or next(
+                iter(memecoin_calls(user_id=user_id, coin_id=subject, limit=1)), None
+            )
     elif market == "sports":
         data = sports_event(subject)
         if data is None:
             raise HTTPException(404, "Game not found")
-        handle = caller_summary_for_user(user_id).get("handle") if user_id else None
-        pick = next((p for p in data.get("picks", []) if p.get("caller_handle") == handle), None)
-        screen = simple_market_detail(market, data, my_pick=pick if handle else None)
+        pick = sports_pick_for_user(user_id, subject) if user_id else None
+        screen = simple_market_detail(market, data, my_pick=pick)
     else:
         raise HTTPException(404, "Market not found")
     if market != "sports":

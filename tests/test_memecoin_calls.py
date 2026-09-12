@@ -513,3 +513,85 @@ def test_coin_commit_validates_the_saved_mark(calls_db):
     closed = call_service.close_memecoin_call("alice", opened["public_id"], expected_price=0.24)
     assert closed["exit_price"] == 0.24
     assert len(_flash_rows("alice")) == 1
+
+
+@pytest.mark.parametrize("market", ["stocks", "memecoins"])
+def test_own_call_record_survives_close_and_reload(calls_db, monkeypatch, market):
+    _refresh(calls_db)
+    if market == "stocks":
+        subject, page = "RUN", "/t/RUN"
+        create_url = "/api/calls/stock/RUN"
+        close_prefix = "/api/calls/stock/"
+        current = {"price": 1.5, "quote_time": calls_db["now"].isoformat()}
+        data = {"ticker": "RUN", "company": "Runner", "current": current, "can_publish": True}
+        monkeypatch.setattr(web_main, "_known_ticker", lambda *a: True)
+        monkeypatch.setattr(web_main, "ticker_detail_data", lambda *a: data)
+        monkeypatch.setattr(web_main, "_public_ticker_detail_data", lambda *a: data)
+        monkeypatch.setattr(web_main, "ticker_quote", lambda *a: {})
+        monkeypatch.setattr(
+            web_main,
+            "market_mark",
+            lambda *a, **kw: {
+                "price": current["price"],
+                "observed_at": current["quote_time"],
+                "source": "test",
+                "age_seconds": 0,
+                "session": "regular",
+            },
+        )
+        monkeypatch.setattr(web_main, "ticker_chart_detail_payload", lambda *a: {"points": []})
+    else:
+        subject, page = "dogecoin", "/memecoins/coin/dogecoin"
+        create_url = "/api/memecoins/dogecoin/calls"
+        close_prefix = "/api/memecoin-calls/"
+    monkeypatch.setattr(web_main, "enforce_rate", lambda *a, **kw: None)
+    client = TestClient(web_main.app, base_url=web_main.RUNNERS_ORIGIN)
+    client.cookies.set(web_main.SESSION_COOKIE, "alice-session")
+    headers = {"Origin": web_main.RUNNERS_ORIGIN}
+    endpoint = f"/api/screens/{market}/{subject}/detail"
+    try:
+        preview = client.get(endpoint).json()
+        assert preview["call"]["status"] == "none"
+        action = preview["actions"][0]
+        assert "rise" in action["preview"]
+        response = client.post(create_url, json=action["body"], headers=headers)
+        assert response.status_code == 201
+        call_id = response.json()["call"]["public_id"]
+        for _ in range(2):
+            record = client.get(endpoint).json()["call"]
+            assert record["status"] == "active"
+            assert record["choice"].endswith("rises")
+            assert "$1.50" in record["entry"] if market == "stocks" else "$0.12" in record["entry"]
+            assert "Settles after" in record["terms"]
+            html = client.get(page)
+            assert html.status_code == 200
+            assert record["entry"] in html.text
+        calls_db["now"] += timedelta(minutes=6)
+        if market == "stocks":
+            current.update(price=3, quote_time=calls_db["now"].isoformat())
+            # The stock freshness clock follows the controlled quote.
+            monkeypatch.setattr(web_main, "now", lambda: calls_db["now"])
+        else:
+            _refresh(calls_db, _coin(calls_db, current_price=0.24))
+        preview = client.get(endpoint).json()
+        assert preview["call"]["return"] == "+100.0%"
+        assert preview["actions"][0]["preview"].startswith("Close your Call")
+        closed = client.post(
+            close_prefix + call_id + "/close", json=preview["actions"][0]["body"], headers=headers
+        )
+        assert closed.status_code == 200
+        earned = closed.json()["reward"]
+        assert earned > 0
+        count = len(_flash_rows("alice"))
+        for _ in range(2):
+            record = client.get(endpoint).json()["call"]
+            assert record["status"] == "closed"
+            assert record["return"] == "+100.0%"
+            assert record["reward"] == f"{earned} Flash"
+            html = client.get(page)
+            assert record["reward"] in html.text
+        assert len(_flash_rows("alice")) == count
+        client.cookies.set(web_main.SESSION_COOKIE, "bob-session")
+        assert client.get(endpoint).json()["call"]["status"] == "none"
+    finally:
+        client.close()

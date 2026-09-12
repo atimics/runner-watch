@@ -212,12 +212,12 @@ def test_actual_detail_refresh_keeps_call_confirmation_and_focus(
 
     page.route("**/api/*calls/**/close", commit)
     page.goto("http://app.test" + path)
-    expect(page.locator("[data-facts] dd")).to_contain_text(["+4.0%"])
+    expect(page.locator("[data-call-outcome]")).to_contain_text(["+4.0%"])
     for price, value in [(3, "+100.0%"), (4.5, "+200.0%")]:
         changing_detail["price"] = price
         page.clock.fast_forward(60000)
         expect(page.locator("[data-value]")).to_have_text(f"${price:.2f}")
-        expect(page.locator("[data-facts] dd")).to_contain_text([value])
+        expect(page.locator("[data-call-outcome]")).to_contain_text([value])
     page.get_by_role("button", name="Close Call", exact=True).click()
     confirm = page.get_by_role("button", name="Confirm Call", exact=True)
     expect(confirm).to_be_focused()
@@ -249,6 +249,7 @@ def test_coin_paused_action_recovers_and_settlement_preserves_dialog(
     changing_detail["paused"] = False
     page.clock.fast_forward(60000)
     page.get_by_role("button", name="Close Call", exact=True).click()
+    expect(page.locator(".call-confirm")).to_be_visible()
     changing_detail["active"] = False
     page.clock.fast_forward(60000)
     expect(page.get_by_role("button", name="Make Call", exact=True)).to_be_visible()
@@ -269,7 +270,7 @@ def test_late_detail_response_is_discarded_after_navigation(
 ):
     page = live_detail_page
     page.goto("http://app.test" + path)
-    expect(page.locator("[data-facts] dd")).to_contain_text(["+4.0%"])
+    expect(page.locator("[data-call-outcome]")).to_contain_text(["+4.0%"])
     held = []
     endpoint = f"/api/screens/{market}/{subject}/detail"
     page.route("http://app.test" + endpoint, lambda route: held.append(route))
@@ -282,4 +283,39 @@ def test_late_detail_response_is_discarded_after_navigation(
     # Yield through a frame after the fetch continuation.
     page.clock.run_for(20)
     expect(page.locator("[data-value]")).to_have_text("$1.56")
-    expect(page.locator("[data-facts] dd")).to_contain_text(["+4.0%"])
+    expect(page.locator("[data-call-outcome]")).to_contain_text(["+4.0%"])
+
+
+@pytest.mark.parametrize("market", ["stocks", "memecoins", "sports"])
+@pytest.mark.parametrize("width", [390, 1280])
+def test_call_record_keeps_choice_terms_and_reward_readable(page, market, width):
+    raw = fixtures.sample(market)
+    saved = {
+        "status": "closed",
+        "entry_price": 1.5,
+        "exit_price": 3,
+        "entry_at": "2026-09-11T18:00:00Z",
+        "flash_reward": 100,
+    }
+    if market == "sports":
+        saved = {
+            "status": "settled",
+            "selection": "away",
+            "american_odds": 130,
+            "created_at": "2026-09-11T18:00:00Z",
+            "result": "loss",
+            "reward_flash": 0,
+        }
+        screen = detail(market, raw, my_pick=saved)
+    else:
+        data = {"coin": raw} if market == "memecoins" else {"ticker": "OPK", "current": raw}
+        screen = detail(market, data, active_call=saved)
+    page.set_viewport_size({"width": width, "height": 844})
+    open_screen(page, screen)
+    record = page.get_by_role("region", name="Your Call")
+    expect(record).to_be_visible()
+    expect(record.get_by_text(screen["call"]["choice"], exact=True)).to_be_visible()
+    expect(record.get_by_text(screen["call"]["entry"], exact=True)).to_be_visible()
+    expect(record.get_by_text(screen["call"]["terms"], exact=True)).to_be_visible()
+    expect(record.get_by_text(screen["call"]["reward"], exact=True)).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

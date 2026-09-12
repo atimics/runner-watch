@@ -3,3 +3,6 @@
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.detail .asset-heading .ticker-mark{width:48px;height:48px}.detail .asset-heading h1{font-size:30px}main:has(.detail) .back{margin-bottom:22px}.detail .asset-value{margin-top:18px}.detail .asset-value>strong{font-size:40px}.detail .quote-time{margin:4px 0 12px}.detail .visual{margin:16px 0;min-height:200px}.detail .price-chart{height:200px}.detail .chart-status{height:200px}.detail .facts{padding-top:14px;margin:18px 0;gap:32px}.detail .facts dd{font-size:16px}.detail .actions{margin-top:22px}.detail .actions button,.detail .actions .primary{padding:12px 26px}.detail .teams{padding:20px 0}.detail .teams strong{font-size:42px}
 @media(max-width:650px){body:has(.detail) .topbar{min-height:120px}.detail .asset-value>strong{font-size:36px}.detail .price-chart,.detail .chart-status{height:180px}.detail .visual{min-height:180px}}
+
+.call-record{border-top:1px solid var(--line);margin-top:24px;padding-top:16px}.call-record h2{font-size:18px;margin:0}.call-record .facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;border:0}.call-record [data-call-terms]{max-width:34em}.call-record .facts>div:nth-child(3){grid-column:1/-1}
+@media(max-width:650px){.call-record .facts{grid-template-columns:1fr}}

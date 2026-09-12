@@ -164,6 +164,23 @@ def active_call_for_user(
     return _call(row, current_price) if row else None
 
 
+def latest_closed_call_for_user(user_id: str, ticker: str) -> dict[str, Any] | None:
+    with connection() as db:
+        row = db.execute(
+            """
+            SELECT c.*,ci.handle AS caller_handle,COALESCE(ft.amount,0) AS flash_reward
+            FROM community_calls c
+            JOIN caller_identities ci ON ci.id=c.caller_identity_id
+            LEFT JOIN flash_transactions ft
+              ON ft.user_id=c.user_id AND ft.kind='runner_call_win' AND ft.reference_id=c.id
+            WHERE c.user_id=? AND c.ticker=? AND c.status='closed'
+            ORDER BY c.created_at DESC,c.id DESC LIMIT 1
+            """,
+            (user_id, ticker),
+        ).fetchone()
+    return _call(row) if row else None
+
+
 def call_for_user(user_id: str, public_id: str) -> dict[str, Any] | None:
     with connection() as db:
         row = db.execute(
@@ -480,6 +497,7 @@ def settle_stock_calls(at: datetime | None = None) -> list[str]:
                     at=current,
                 )
     return handles
+
 
 MACHINE_SLATE_LIMIT = 5
 MACHINE_OPEN_WINDOW = timedelta(hours=1)

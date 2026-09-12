@@ -143,7 +143,7 @@ def test_sports_closed_game_has_score_and_existing_call():
     screen = detail("sports", sample("sports"), my_pick={"result": "win"})
     assert screen["actions"] == []
     assert screen["teams"][0]["score"] == "72"
-    assert screen["note"] == "Your Call · Win"
+    assert screen["call"]["outcome"] == "Win"
 
 
 def test_search_applies_to_map_and_list():
