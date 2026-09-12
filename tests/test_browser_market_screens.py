@@ -62,6 +62,7 @@ def test_map_items_are_clickable(page: Page, market):
 def test_chart_renders_real_points_and_empty_history(page: Page):
     screen = detail("memecoins", {"coin": fixtures.sample("memecoins"), "history": []})
     screen.pop("quote_url")
+    screen.pop("refresh_url")
     screen["series"] = [
         {"time": "2026-09-12T12:00:00Z", "value": 1},
         {"time": "2026-09-12T13:00:00Z", "value": 2},
@@ -79,6 +80,7 @@ def test_chart_renders_real_points_and_empty_history(page: Page):
 def test_call_requires_confirmation_and_keeps_internal_error_private(page: Page):
     screen = detail("memecoins", {"coin": fixtures.sample("memecoins"), "can_call": True})
     screen.pop("quote_url")
+    screen.pop("refresh_url")
     submitted = []
 
     def record(route):
@@ -93,8 +95,10 @@ def test_call_requires_confirmation_and_keeps_internal_error_private(page: Page)
     assert submitted == []
     page.get_by_role("button", name="Make Call", exact=True).click()
     page.get_by_role("button", name="Confirm Call", exact=True).click()
-    expect(page.get_by_role("status")).to_have_text("Please try again when the price is current.")
-    assert submitted == [{}]
+    expect(page.locator("[data-action-status]")).to_have_text(
+        "Please try again when the price is current."
+    )
+    assert submitted == [{"expected_price": fixtures.sample("memecoins")["price"]}]
     expect(page.get_by_text(fixtures.SENTINEL)).to_have_count(0)
 
 
@@ -165,3 +169,117 @@ def test_actual_routes_refresh_pending_values(
         )
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     expect(page.get_by_text(fixtures.SENTINEL)).to_have_count(0)
+
+
+changing_detail = fixtures.changing_detail
+
+
+@pytest.fixture
+def live_detail_page(page, screen_client, changing_detail):
+    from urllib.parse import urlsplit
+
+    def serve(route):
+        url = urlsplit(route.request.url)
+        response = screen_client.get(url.path + ("?" + url.query if url.query else ""))
+        route.fulfill(
+            status=response.status_code, headers=dict(response.headers), body=response.content
+        )
+
+    page.route("http://app.test/**", serve)
+    page.clock.install()
+    return page
+
+
+@pytest.mark.parametrize(
+    "market,subject,path",
+    [
+        ("stocks", "OPK", "/t/OPK"),
+        ("memecoins", "solana-test", "/memecoins/coin/solana-test"),
+    ],
+)
+@pytest.mark.parametrize("width", [390, 1280])
+def test_actual_detail_refresh_keeps_call_confirmation_and_focus(
+    live_detail_page, changing_detail, market, subject, path, width
+):
+    page = live_detail_page
+    page.set_viewport_size({"width": width, "height": 844})
+    submissions = []
+
+    def commit(route):
+        submissions.append(route.request.post_data_json)
+        changing_detail["active"] = False
+        route.fulfill(json={"call": {"status": "closed"}})
+
+    page.route("**/api/*calls/**/close", commit)
+    page.goto("http://app.test" + path)
+    expect(page.locator("[data-facts] dd")).to_contain_text(["+4.0%"])
+    for price, value in [(3, "+100.0%"), (4.5, "+200.0%")]:
+        changing_detail["price"] = price
+        page.clock.fast_forward(60000)
+        expect(page.locator("[data-value]")).to_have_text(f"${price:.2f}")
+        expect(page.locator("[data-facts] dd")).to_contain_text([value])
+    page.get_by_role("button", name="Close Call", exact=True).click()
+    confirm = page.get_by_role("button", name="Confirm Call", exact=True)
+    expect(confirm).to_be_focused()
+    changing_detail["price"] = 6
+    page.clock.fast_forward(60000)
+    expect(page.locator("[data-value]")).to_have_text("$6.00")
+    expect(page.locator(".call-confirm")).to_be_visible()
+    expect(confirm).to_be_focused()
+    expect(page.locator("[data-confirm-terms]")).to_contain_text("$4.5")
+    confirm.click()
+    expect(page.locator("[data-confirm-status]")).to_contain_text("confirm again")
+    assert submissions == []
+    expect(page.locator("[data-confirm-terms]")).to_contain_text("$6")
+    confirm.click()
+    expect(page.get_by_role("button", name="Make Call", exact=True)).to_be_visible()
+    assert submissions == [{"expected_price": 6}]
+    expect(page.get_by_role("button", name="Close Call", exact=True)).to_have_count(0)
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+def test_coin_paused_action_recovers_and_settlement_preserves_dialog(
+    live_detail_page, changing_detail
+):
+    page = live_detail_page
+    changing_detail["paused"] = True
+    page.goto("http://app.test/memecoins/coin/solana-test")
+    expect(page.get_by_text("Price paused", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Close Call", exact=True)).to_have_count(0)
+    changing_detail["paused"] = False
+    page.clock.fast_forward(60000)
+    page.get_by_role("button", name="Close Call", exact=True).click()
+    changing_detail["active"] = False
+    page.clock.fast_forward(60000)
+    expect(page.get_by_role("button", name="Make Call", exact=True)).to_be_visible()
+    expect(page.locator(".call-confirm")).to_be_visible()
+    page.get_by_role("button", name="Confirm Call", exact=True).click()
+    expect(page.locator("[data-confirm-status]")).to_contain_text("This Call has changed")
+
+
+@pytest.mark.parametrize(
+    "market,subject,path",
+    [
+        ("stocks", "OPK", "/t/OPK"),
+        ("memecoins", "solana-test", "/memecoins/coin/solana-test"),
+    ],
+)
+def test_late_detail_response_is_discarded_after_navigation(
+    live_detail_page, screen_client, changing_detail, market, subject, path
+):
+    page = live_detail_page
+    page.goto("http://app.test" + path)
+    expect(page.locator("[data-facts] dd")).to_contain_text(["+4.0%"])
+    held = []
+    endpoint = f"/api/screens/{market}/{subject}/detail"
+    page.route("http://app.test" + endpoint, lambda route: held.append(route))
+    changing_detail["price"] = 9
+    with page.expect_request("http://app.test" + endpoint):
+        page.clock.fast_forward(60000)
+    page.evaluate("history.pushState({}, '', '/t/OTHER')")
+    with page.expect_response("http://app.test" + endpoint):
+        held[0].fulfill(json=screen_client.get(endpoint).json())
+    # Yield through a frame after the fetch continuation.
+    page.clock.run_for(20)
+    expect(page.locator("[data-value]")).to_have_text("$1.56")
+    expect(page.locator("[data-facts] dd")).to_contain_text(["+4.0%"])

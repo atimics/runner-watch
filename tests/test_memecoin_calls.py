@@ -496,3 +496,20 @@ def test_open_memecoin_call_projection_and_reward_cap(calls_db):
     record = web_main._unified_caller_page_data(opened["caller_handle"])
     coin = next(call for call in record["calls"] if call["kind"] == "memecoin")
     assert coin["reward_label"] == "Up to +50 Flash"
+
+
+def test_coin_commit_validates_the_saved_mark(calls_db):
+    _refresh(calls_db)
+    with pytest.raises(ValueError, match="price changed"):
+        call_service.create_memecoin_call("alice", "dogecoin", expected_price=0.10)
+    assert _rows() == []
+    opened = call_service.create_memecoin_call("alice", "dogecoin", expected_price=0.12)
+    calls_db["now"] += timedelta(minutes=6)
+    _refresh(calls_db, _coin(calls_db, current_price=0.24))
+    with pytest.raises(ValueError, match="price changed"):
+        call_service.close_memecoin_call("alice", opened["public_id"], expected_price=0.12)
+    assert _rows()[0]["status"] == "active"
+    assert _flash_rows("alice") == []
+    closed = call_service.close_memecoin_call("alice", opened["public_id"], expected_price=0.24)
+    assert closed["exit_price"] == 0.24
+    assert len(_flash_rows("alice")) == 1

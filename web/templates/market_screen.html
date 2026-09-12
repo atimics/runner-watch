@@ -37,13 +37,13 @@
     <article class="detail" data-live-surface><header class="asset-heading"><span class="ticker-mark tone-0" aria-hidden="true">{{ screen.item.mark }}</span><div><p class="eyebrow">{{ screen.item.subtitle }}</p><h1>{{ screen.item.name }}</h1></div></header>
       <div class="asset-value"><strong data-value>{{ screen.item.value }}</strong><span data-change class="{{ screen.item.tone }}">{{ screen.item.change }}</span></div><p class="quote-time" data-time>{{ screen.item.time }}</p>
       <section class="visual" aria-label="{{ 'Game' if screen.teams else 'Price history' }}">
-      {% if screen.teams %}<div class="teams">{% for team in screen.teams %}<div><span class="team-mark">{{ team.mark }}</span><h2>{{ team.name }}</h2><strong>{{ team.score }}</strong></div>{% endfor %}</div><p class="visual-caption">{{ screen.note }}</p>
+      {% if screen.teams %}<div class="teams">{% for team in screen.teams %}<div><span class="team-mark">{{ team.mark }}</span><h2>{{ team.name }}</h2><strong>{{ team.score }}</strong></div>{% endfor %}</div><p class="visual-caption" data-game-note>{{ screen.note }}</p>
       {% else %}<svg class="price-chart" viewBox="0 0 800 280" role="img" aria-label="Price history" hidden><path class="chart-area"/><path class="chart-line"/></svg><p class="chart-status" data-chart-status>Price history is loading.</p><div class="chart-labels"><span data-chart-start></span><span data-chart-end></span></div>{% endif %}
       </section>
-      {% if screen.facts %}<dl class="facts">{% for fact in screen.facts %}<div><dt>{{ fact.label }}</dt><dd>{{ fact.value }}</dd></div>{% endfor %}</dl>{% endif %}
-      <div class="actions">{% for action in screen.actions %}{% if user %}<button type="button" data-action="{{ loop.index0 }}">{{ action.label }}</button>{% else %}<a class="primary" href="/login?next={{ request.url.path|urlencode }}">{{ action.label }}</a>{% endif %}{% endfor %}</div>
+      <dl class="facts" data-facts{% if not screen.facts %} hidden{% endif %}>{% for fact in screen.facts %}<div><dt>{{ fact.label }}</dt><dd>{{ fact.value }}</dd></div>{% endfor %}</dl>
+      <div class="actions" data-screen-actions data-authenticated="{{ 'true' if user else 'false' }}" data-login-url="/login?next={{ request.url.path|urlencode }}">{% for action in screen.actions %}{% if user %}<button type="button" data-action="{{ loop.index0 }}">{{ action.label }}</button>{% else %}<a class="primary" href="/login?next={{ request.url.path|urlencode }}">{{ action.label }}</a>{% endif %}{% endfor %}</div>
       <p class="action-status" role="status" data-action-status></p>
-      <dialog class="call-confirm"><h2 data-confirm-title>Make Call</h2><p>This records a paper Call on your public profile.</p><div class="actions"><button type="button" data-confirm>Confirm Call</button><button class="secondary" type="button" data-cancel>Cancel</button></div></dialog>
+      <dialog class="call-confirm"><h2 data-confirm-title>Make Call</h2><p data-confirm-terms>This records a paper Call on your public profile.</p><p role="status" data-confirm-status></p><div class="actions"><button type="button" data-confirm>Confirm Call</button><button class="secondary" type="button" data-cancel>Cancel</button></div></dialog>
     </article>
   {% endif %}
   </main>

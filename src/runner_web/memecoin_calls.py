@@ -82,14 +82,10 @@ def _call(row: Any, mark: dict[str, Any] | None = None) -> dict[str, Any]:
     flash_reward = int(saved.get("flash_reward") or 0)
     item["flash_reward"] = flash_reward
     item["projected_flash_reward"] = (
-        memecoin_call_reward(item["return_pct"])
-        if item["status"] == "active"
-        else flash_reward
+        memecoin_call_reward(item["return_pct"]) if item["status"] == "active" else flash_reward
     )
     item["reward_label"] = (
-        f"+{flash_reward} Flash"
-        if item["status"] == "closed" and flash_reward > 0
-        else None
+        f"+{flash_reward} Flash" if item["status"] == "closed" and flash_reward > 0 else None
     )
     return item
 
@@ -106,8 +102,12 @@ _SELECT = """
 """
 
 
-def create_memecoin_call(user_id: str, coin_id: str) -> dict[str, Any]:
+def create_memecoin_call(
+    user_id: str, coin_id: str, *, expected_price: float | None = None
+) -> dict[str, Any]:
     mark = _fresh_mark(coin_id)
+    if expected_price is not None and expected_price != mark["price"]:
+        raise ValueError("The price changed. Please review the current Call terms.")
     timestamp = _now()
     with connection() as database:
         identity = ensure_caller_identity_with_database(database, user_id)
@@ -139,7 +139,9 @@ def create_memecoin_call(user_id: str, coin_id: str) -> dict[str, Any]:
     return _call(row, {**mark, "stale": False})
 
 
-def close_memecoin_call(user_id: str, public_id: str) -> dict[str, Any] | None:
+def close_memecoin_call(
+    user_id: str, public_id: str, *, expected_price: float | None = None
+) -> dict[str, Any] | None:
     with connection() as database:
         existing = database.execute(
             _SELECT + " WHERE c.user_id=? AND c.public_id=?", (user_id, public_id)
@@ -149,6 +151,8 @@ def close_memecoin_call(user_id: str, public_id: str) -> dict[str, Any] | None:
     if existing["status"] == "closed":
         return _call(existing)
     mark = _fresh_mark(str(existing["coin_id"]))
+    if expected_price is not None and expected_price != mark["price"]:
+        raise ValueError("The price changed. Please review the current Call terms.")
     if datetime.fromisoformat(mark["observed_at"]) < datetime.fromisoformat(existing["entry_at"]):
         raise ValueError(
             "A source quote at or after the entry time is required to close this Call."

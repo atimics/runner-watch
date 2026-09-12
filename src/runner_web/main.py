@@ -7032,8 +7032,11 @@ async def make_memecoin_call_api(
     require_origin(request)
     user = require_user(runner_session)
     enforce_rate(request, "call-create", limit=12, seconds=3600, subject=user["id"])
+    expected = await _expected_call_price(request)
     try:
-        call = await run_in_threadpool(create_memecoin_call, str(user["id"]), coin_id)
+        call = await run_in_threadpool(
+            create_memecoin_call, str(user["id"]), coin_id, expected_price=expected
+        )
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
@@ -7051,8 +7054,11 @@ async def close_memecoin_call_api(
     require_origin(request)
     user = require_user(runner_session)
     enforce_rate(request, "call-close", limit=12, seconds=3600, subject=user["id"])
+    expected = await _expected_call_price(request)
     try:
-        call = await run_in_threadpool(close_memecoin_call, str(user["id"]), public_id)
+        call = await run_in_threadpool(
+            close_memecoin_call, str(user["id"]), public_id, expected_price=expected
+        )
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
@@ -8479,6 +8485,81 @@ def ticker_page(
             active_tab="pulse",
         ),
     )
+
+
+@app.get("/api/screens/{market}/{subject}/detail")
+def screen_detail_state(
+    market: str,
+    subject: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    enforce_rate(request, "screen-detail", limit=120, seconds=60)
+    user = current_user(runner_session)
+    user_id = str(user["id"]) if user else None
+    active = None
+    if market == "stocks":
+        subject = _clean_ticker(subject)
+        data = ticker_detail_data(subject)
+        if data is None:
+            raise HTTPException(404, "Ticker not found")
+        current = {**data.get("current", {}), **(ticker_quote(subject) or {})}
+        mark = market_mark(subject, refresh=False)
+        if mark:
+            current.update(price=mark["price"], quote_time=mark["observed_at"])
+        data = {
+            **data,
+            "current": current,
+            "can_call": bool(data.get("can_publish"))
+            and bool(current.get("price"))
+            and _recent_observation(
+                current.get("quote_time") or current.get("observed_at") or current.get("event_at"),
+                maximum_age=CALL_MARK_MAX_AGE,
+            ),
+            "history": ticker_chart_detail_payload(subject).get("points") or [],
+        }
+        if user_id:
+            active = active_call_for_user(user_id, subject, current_price=current.get("price"))
+    elif market == "memecoins":
+        data = _memecoin_detail_payload(subject)
+        if user_id:
+            active = active_memecoin_call(user_id, subject)
+    elif market == "sports":
+        data = sports_event(subject)
+        if data is None:
+            raise HTTPException(404, "Game not found")
+        handle = caller_summary_for_user(user_id).get("handle") if user_id else None
+        pick = next((p for p in data.get("picks", []) if p.get("caller_handle") == handle), None)
+        screen = simple_market_detail(market, data, my_pick=pick if handle else None)
+    else:
+        raise HTTPException(404, "Market not found")
+    if market != "sports":
+        screen = simple_market_detail(market, data, active_call=active)
+    return JSONResponse(screen, headers={"Cache-Control": "private, no-store"})
+
+
+async def _expected_call_price(request: Request) -> float | None:
+    if not await request.body():
+        return None
+    try:
+        payload = await request.json()
+    except ValueError as exc:
+        raise HTTPException(422, "Please review the current Call terms.") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(422, "Please review the current Call terms.")
+    expected = payload.get("expected_price")
+    if expected is None and "expected_price" not in payload:
+        return None
+    if isinstance(expected, bool) or not isinstance(expected, (int, float)):
+        raise HTTPException(422, "Please review the current Call price.")
+    if not math.isfinite(expected) or expected <= 0:
+        raise HTTPException(422, "Please review the current Call price.")
+    return float(expected)
+
+
+def _check_call_price(expected: float | None, current: float) -> None:
+    if expected is not None and expected != current:
+        raise HTTPException(409, "The price changed. Please review the current Call terms.")
 
 
 @app.get("/api/screens/stocks/{ticker}/chart")
@@ -9913,7 +9994,9 @@ async def create_community_call(
     normalized = _clean_ticker(ticker)
     if not _known_ticker(normalized):
         raise HTTPException(404, "Ticker not found")
+    expected = await _expected_call_price(request)
     mark = await run_in_threadpool(_current_call_mark, normalized)
+    _check_call_price(expected, mark["price"])
     call = await run_in_threadpool(
         create_call,
         str(user["id"]),
@@ -9945,7 +10028,9 @@ async def close_community_call(
     existing = call_for_user(str(user["id"]), public_id)
     if not existing or existing["status"] != "active":
         raise HTTPException(404, "Open Call not found")
+    expected = await _expected_call_price(request)
     mark = await run_in_threadpool(_current_call_mark, str(existing["ticker"]))
+    _check_call_price(expected, mark["price"])
     try:
         call = await run_in_threadpool(
             close_call,
