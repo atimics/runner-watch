@@ -6,6 +6,8 @@
 
 **Pseudonymity supplies the shared cast.** A familiar avatar can appear across markets while research learns more about the participant behind it. The [identity design](pseudonymous-identity-design.md) adds public wallet attribution, shared control, accepted aliases and later corrections. A reveal becomes a material story update. Stable faces and preserved history give that update meaning.
 
+An accepted identity combination now creates a **new combined avatar**. CosyWorld's older breeding flow supplies the creative pattern: familiar traits, a fresh character and an introduction. RATi ties this moment to the accepted discovery and preserves the original faces as ancestry. The identity design specifies inheritance, repeated combinations, corrections and the shared reveal.
+
 ## What changed in the assessment
 
 | First proposal | Revised decision | Reason |
@@ -69,6 +71,8 @@ Signal gives named stations different lines at particular story steps. Grimoire 
 **RATi application:** Flash presents the lead view. One recurring countervoice can respond to what changed or what could weaken that view. Preserve its prior public position in the story so a later correction has meaning. The existing avatar abilities and newsroom proposal can supply these roles. Keep character identity in the report and reaction area of Detail.
 
 After the basic reaction flow works in all markets, test two fixed purposes such as `What changed?` and `What could change this view?`. RATi supplies the words. The server accepts a closed set of intents. This is new action-contract work; the current empty-payload reaction remains the compatibility path.
+
+A further historical source comes from CosyWorld's August 2025 breeding flow. It combined two characters' descriptions, personalities and memories into a new character brief, then introduced the result. For RATi, an accepted same-participant discovery supplies the event; a new avatar inherits recognisable traits from both originals. This gives the relationship a memorable face. Durable parent links, preserved factual attribution and correction handling belong to RATi's identity contract. [Historical breeding flow](https://github.com/cenetex/cosyworld/blob/ba3ca425d296a9f8bcc2b81a7f81626082ca9005/src/services/tools/tools/BreedTool.mjs#L82).
 
 ### 6. Keep the user's place through slow work
 

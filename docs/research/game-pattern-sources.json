@@ -63,6 +63,25 @@
           "line": 1,
           "sha256": "f7d75455a82ad85daa2dc569f9e5042ac5b2d42931dafa888177c1262ab65c2b"
         }
+      ],
+      "historical_snapshots": [
+        {
+          "revision": "ba3ca425d296a9f8bcc2b81a7f81626082ca9005",
+          "commit_date": "2025-08-07",
+          "purpose": "Old breeding flow: combine descriptions, personalities and memories, then create and introduce a character. RATi adds explicit durable avatar ancestry.",
+          "sources": [
+            {
+              "path": "src/services/tools/tools/BreedTool.mjs",
+              "line": 82,
+              "sha256": "81096e66663395ffa54a22bb3a950f4d634a73e41fcddb0dcf72553173f7d4df"
+            },
+            {
+              "path": "src/services/tools/tools/SummonTool.mjs",
+              "line": 175,
+              "sha256": "c526b1703cf11449b6b5514c148793be460aa285f2f92ab805c9be02bc822ff1"
+            }
+          ]
+        }
       ]
     },
     {

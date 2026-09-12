@@ -2,7 +2,7 @@
 
 Design revision, 12 September 2026. Part of [PR #230](https://github.com/atimics/runner-watch/pull/230) and [backlog #232](https://github.com/atimics/runner-watch/issues/232). This extends the [game-pattern assessment](game-pattern-assessment.md). The work below is planned.
 
-**A pseudonym is the face a reader remembers. Our understanding of the participant behind it can change.** This applies to Stocks, Memecoins and Sports. A discovery can connect two familiar characters, associate one with a public organization, or correct an earlier connection. Those changes become part of the story.
+**A pseudonym is the face a reader remembers. Our understanding of the participant behind it can change.** This applies to Stocks, Memecoins and Sports. A discovery can connect two familiar characters, associate one with a public organization, or correct an earlier connection. When two avatars resolve to the same participant, a new combined avatar gives that discovery a lasting face. The original characters remain part of its history.
 
 ## Five separate things
 
@@ -24,7 +24,7 @@ Keep three avatar roles clear: the player's chosen identity, the AI reporter who
 
 | Finding | Meaning | Shared Map treatment |
 | --- | --- | --- |
-| Same participant | Two records describe one entity | One current entity node, with both familiar aliases available |
+| Same participant | Two records describe one entity | One current entity node with a new combined avatar; both original faces remain in its history |
 | Shared operator | Separate participants have a supported control relationship | Separate nodes joined by `Shared operator` |
 | Possible link | Evidence suggests a relationship that remains open | Separate nodes; a qualified connection appears when useful to the story |
 
@@ -60,7 +60,7 @@ Each claim stores its subject, relationship, object, evidence references, origin
 
 Use proposed, accepted, disputed and retracted states. A deterministic acceptance policy can handle well-supported cases; unresolved conflicts stay in the research queue. Record the policy version and reason internally. Public wording follows the accepted relationship and its uncertainty.
 
-An accepted same-participant claim creates a reversible grouping of existing records. Preserve original IDs, handles, portraits, observations and report versions. Choose a stable primary alias when forming the group. Older links resolve through alias records. A later correction can split the group and restore the earlier identities.
+An accepted same-participant claim creates a reversible grouping of existing records and a new combined avatar. Preserve original IDs, handles, portraits, observations and report versions. Give the combined avatar its own persistent ID and name, attached to that group revision. Older links retain their original avatar context and show the current relationship. A later correction can split the group and restore the earlier identities.
 
 Apply equivalence only to compatible entity types supported by active same-participant claims. Other relationship edges keep their own meaning. On retraction, rebuild the affected group from its remaining accepted claims. Version the resulting view so caches and readers use the same revision. An expiring control relationship preserves its historical period; a mistaken identity requires retraction and correction.
 
@@ -73,10 +73,44 @@ Fictional example: Copper Lens appears in a stock story. Glass Fox appears in a 
 This gives the reader a reason to return: familiar characters now have a meaningful connection. A public name can arrive later. Resolving two aliases already has value while the entity stays pseudonymous.
 
 - **Ticker List:** one material cue, such as `Two characters are connected`, in the existing story position. The shared priority rule chooses between this update and the player's Call result.
-- **Ticker Detail:** one short update with the two familiar faces, the precise relationship and its date. Opening it uses the existing report body. A quiet alias line preserves recognition after grouping.
-- **Ticker Map:** accepted aliases share one current entity node. Shared operators and possible links use separate nodes. A selected link gets one plain explanation. Related tickers open the usual Detail.
+- **Ticker Detail:** one reveal presents the two familiar faces and their combined avatar, with the precise relationship and date. Opening the update uses the existing report body. A quiet `Formed from` line preserves recognition after grouping.
+- **Ticker Map:** accepted aliases share one current entity node with the combined avatar. Shared operators and possible links use separate nodes. A selected link gets one plain explanation. Related tickers open the usual Detail.
 
 Use the same components and transitions in every market. Identity context stays inside the story or selected Map area. Keep source receipts, provider tags, confidence scores, wallet dumps and review controls in the service layer. The public presenter selects useful story facts, including a meaningful correction or uncertainty.
+
+## Combined avatars: the CosyWorld breeding pattern
+
+The old CosyWorld `BreedTool` took two characters' descriptions, personalities and memories, asked for a combined character and backstory, and passed the result into character creation. The creation flow then gave the new character an image and introduction. This historical implementation is visible at commit `ba3ca425d296a9f8bcc2b81a7f81626082ca9005`, dated 7 August 2025. [Combination prompt](https://github.com/cenetex/cosyworld/blob/ba3ca425d296a9f8bcc2b81a7f81626082ca9005/src/services/tools/tools/BreedTool.mjs#L82), [creation and introduction](https://github.com/cenetex/cosyworld/blob/ba3ca425d296a9f8bcc2b81a7f81626082ca9005/src/services/tools/tools/SummonTool.mjs#L175).
+
+RATi can use the same creative pattern for an accepted identity discovery. **Two familiar characters become a new character with visible ancestry.** The avatar represents our newly combined understanding of one existing participant. The real-world participant keeps its own identity and history.
+
+Fictional example: **Copper Lens + Glass Fox → Copper Fox.** The result carries Copper Lens's round copper glasses and Glass Fox's ears and pale markings. It has one coherent face, its own name and a short voice description. Its introduction says: `Two trails led to the same fund. Meet Copper Fox.`
+
+### What the new character inherits
+
+| Part | Rule |
+| --- | --- |
+| Appearance | Carry one clear visual feature from each original into a shared art style. Save the selected traits and portrait version. |
+| Name | Create a distinct fictional name with a hint of the originals. Save it once and handle display-name collisions through the stable ID. |
+| Voice | Combine a few saved style traits, such as patience and curiosity. Keep the resulting voice short and recognisable. |
+| Story memory | Link the originals' public story events and preserve who said what. Approved facts, times and corrections remain attached to each event. |
+| Ancestry | Store both parent avatar IDs, the resolution event, creation time and the current status. The public view shows `Formed from Copper Lens and Glass Fox`. |
+
+Creative generation receives a small brief of approved visual traits, voice traits and public story facts. Private reports, account memories and internal research stay within their existing access rules. Factual claims and measured performance keep their evidence and original author; appearance and voice provide the creative freedom.
+
+The old tool passed parent IDs to `SummonTool`, while the inspected creation path built its saved avatar from the prompt and channel. RATi's parent links therefore need explicit persistence and recovery tests. Store the lineage and creation event together so restarts preserve the result. The source review establishes the old creative flow; the new design defines durable ancestry.
+
+### One reveal, then a lasting character
+
+Publish the combined avatar after the same-participant decision is accepted. Shared operators and possible links retain their relationship treatment. The reader opens the story update to see the reveal. Their follow then continues through that story with its new face.
+
+In Detail, two small original portraits lead into one main combined portrait and one sentence about what changed. Use a brief transition on the first explicit open, with a static view for reduced motion. Reopening shows the settled character. Parent faces remain available through a compact ancestry view inside the same Detail or selected Map area. The shape of this moment stays the same across all three markets.
+
+Key creation to the accepted resolution event and its parent records. Repeated ingestion, reverse parent order, refreshes and job retries reuse that result. When an existing combination joins another participant, record the two current parent avatars and their original ancestors. Routine wallet membership changes retain the current character.
+
+Corrections preserve the lineage record and mark the affected combination as superseded. Restore valid prior avatars where possible. If the corrected group is new, create its own combined avatar under a new accepted event. Historical reports keep the faces and authors present at publication, with their current correction status beside them. Reaccepting the exact same supported group can reuse its saved portrait; the correction and later acceptance retain separate dates.
+
+A saved procedural portrait can supply the first reveal. Any later generated portrait uses a separate bounded media job and the existing approved media allowance. Store one result per brief version, reserve cost before each attempt, and reuse it across stories and markets. Media completion can refine the saved portrait while the identity update is already readable. Helius credits remain assigned to chain and identity data.
 
 ## Reporters and interviews
 
@@ -101,7 +135,7 @@ Deduplicate economic events before computing entity totals. On Solana, use chain
 
 ## Delivery and proof
 
-The backlog adds three slices: [stable identity and claim records #248](https://github.com/atimics/runner-watch/issues/248); [budgeted Helius attribution #249](https://github.com/atimics/runner-watch/issues/249); and [reversible resolution and story reveals #250](https://github.com/atimics/runner-watch/issues/250). Reports store their identity revision. The Map, lasting record, newsroom and return study use the same contract.
+The backlog adds three slices: [stable identity and claim records #248](https://github.com/atimics/runner-watch/issues/248), including avatar ancestry; [budgeted Helius attribution #249](https://github.com/atimics/runner-watch/issues/249); and [reversible resolution and combined-avatar reveals #250](https://github.com/atimics/runner-watch/issues/250). Reports store their identity revision. The Map, lasting record, newsroom and return study use the same contract.
 
 Implementation fixtures must cover:
 
@@ -112,6 +146,9 @@ Implementation fixtures must cover:
 - One economic event reached through two aliases, with correct totals after grouping and splitting.
 - An old report opened after correction, with original authorship and current status visible.
 - A followed story spanning a reveal, one update cue, and preserved Call terms and account balances.
+- A combined avatar with a recognisable trait from each parent, persisted ancestry and one identity across retries, reversed parent order and concurrent jobs.
+- A combined avatar joining another avatar; a partial split; restoration and later reacceptance, with correct historical faces and authors.
+- A delayed or failed portrait job, a cached procedural fallback and a bounded approved media allowance; private parent context remains within its access rules.
 - Budget exhaustion, retry charges, cached unknowns and changed provider responses.
 - Reveal and correction journeys in all three markets, with keyboard access, small screens and reduced motion. Public responses contain only selected story facts.
 

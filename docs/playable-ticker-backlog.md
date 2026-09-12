@@ -21,11 +21,13 @@ The [identity design](research/pseudonymous-identity-design.md) makes pseudonyms
 
 | Issue | Work | Dependency |
 | --- | --- | --- |
-| [#248](https://github.com/atimics/runner-watch/issues/248) | Stable avatars, entity references, dated claims and legacy migration | Define alongside #245 and the base repairs |
+| [#248](https://github.com/atimics/runner-watch/issues/248) | Stable avatars, ancestry, entity references, dated claims and legacy migration | Define alongside #245 and the base repairs |
 | [#249](https://github.com/atimics/runner-watch/issues/249) | Add Helius wallet attribution with caching and shared budget limits | #248 and the existing Helius budget ledger |
-| [#250](https://github.com/atimics/runner-watch/issues/250) | Reversible identity reveals, corrections and shared Map treatment | #248, #245 and the base Map in #237; #249 supplies wallet claims |
+| [#250](https://github.com/atimics/runner-watch/issues/250) | Combined-avatar reveals, reversible identity grouping and shared Map treatment | #248, #245 and the base Map in #237; #249 supplies wallet claims |
 
 Identity grouping preserves earlier aliases, reports, authors and account ownership. The proposed attribution sublimit is 1,000 credits within the existing 10,000-credit daily Helius ceiling. Source evidence and internal attribution details stay in the service layer.
+
+An accepted combination creates a new fictional avatar with recognisable traits from both originals. CosyWorld's old breeding flow provides the creative reference. Parent links preserve ancestry, and corrections restore valid earlier characters. The reveal uses the existing Detail and Map; #246 tests whether readers recognise the inherited traits and understand the discovery.
 
 ## Complete the shared story
 
