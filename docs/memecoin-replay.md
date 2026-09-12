@@ -5,8 +5,8 @@ memecoin announcements. The runner-watch team owns review, integration, and
 channel activation. Development validation uses local fixtures and fake Telegram
 receivers.
 
-`TELEGRAM_MEMECOIN_ALERTS=1` enables this delivery path after integration. It
-defaults to off and also requires the existing `TELEGRAM_API_TOKEN` (or
+Production enables this delivery path with `TELEGRAM_MEMECOIN_ALERTS=1` in
+`fly.toml`. Other environments default to off. Delivery requires `TELEGRAM_API_TOKEN` (or
 `TELEGRAM_BOT_TOKEN`) and `TELEGRAM_CHAT_ID`. The configured chat is captured when
 a new token enters the saved market. Existing tokens form a quiet baseline.
 
@@ -76,10 +76,13 @@ original queued destination intact.
 
 ## Team integration
 
-The delivery adapter is prepared and tested with a fake receiver. Scheduling
-channel delivery awaits approval in this PR. The rendering worker is connected
-to the existing worker process. After approval, its integration point is
-`dispatch_memecoin_replays(origin=RUNNERS_ORIGIN)` after rendering.
+The replay worker renders saved evidence, dispatches up to two queued GIFs,
+then waits 15 seconds before its next cycle. Saved GIF delivery continues when
+a rendering cycle fails. Each delivery cycle records its result under
+`memecoin_replay_last_delivery` and its error under
+`memecoin_replay_delivery_error` in worker state. The worker is included in the
+required process heartbeat. Per-token records retain the actual delivery outcome
+and Telegram message ID. Setting `TELEGRAM_MEMECOIN_ALERTS=0` pauses delivery.
 
 Validation uses the existing Python/Pillow stack and the repository's browser
 test suite. [Telegram's sendAnimation API](https://core.telegram.org/bots/api#sendanimation)
