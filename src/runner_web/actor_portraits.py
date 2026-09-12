@@ -10,6 +10,7 @@ still renders.
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
 import urllib.error
@@ -27,7 +28,8 @@ PORTRAIT_MODEL = os.getenv("ACTOR_PORTRAIT_MODEL", DEFAULT_PORTRAIT_MODEL)
 DAILY_LIMIT = max(0, int(os.getenv("ACTOR_PORTRAIT_DAILY_LIMIT", "200")))
 TIMEOUT_SECONDS = max(20, int(os.getenv("ACTOR_PORTRAIT_TIMEOUT_SECONDS", "120")))
 RETRY_MINUTES = max(1, int(os.getenv("ACTOR_PORTRAIT_RETRY_MINUTES", "15")))
-MAX_PORTRAIT_BYTES = 600_000
+MAX_SOURCE_BYTES = 6_000_000
+PORTRAIT_EDGE = max(128, int(os.getenv("ACTOR_PORTRAIT_EDGE", "512")))
 
 PortraitTransport = Callable[[str, dict[str, Any]], dict[str, Any]]
 
@@ -87,6 +89,25 @@ def _bump_daily_count(db: Any, day: str, *, at: datetime | None = None) -> None:
     )
 
 
+def _shrink_image(binary: bytes, content_type: str) -> tuple[bytes, str]:
+    """Downscale a generated portrait so stored images stay small."""
+
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(binary)) as image:
+            image = image.convert("RGB")
+            image.thumbnail((PORTRAIT_EDGE, PORTRAIT_EDGE))
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG", optimize=True)
+        shrunk = buffer.getvalue()
+    except Exception:
+        return binary, content_type
+    if 0 < len(shrunk) < len(binary):
+        return shrunk, "image/png"
+    return binary, content_type
+
+
 def _image_from_result(result: dict[str, Any]) -> tuple[bytes, str] | None:
     choices = result.get("choices") or []
     if not choices:
@@ -118,8 +139,8 @@ def _image_from_result(result: dict[str, Any]) -> tuple[bytes, str] | None:
             binary = base64.b64decode(data, validate=True)
         except (ValueError, TypeError):
             continue
-        if 0 < len(binary) <= MAX_PORTRAIT_BYTES:
-            return binary, content_type
+        if 0 < len(binary) <= MAX_SOURCE_BYTES:
+            return _shrink_image(binary, content_type)
     return None
 
 
