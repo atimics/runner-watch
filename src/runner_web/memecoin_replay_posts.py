@@ -1,8 +1,4 @@
-"""Channel delivery adapter. Scheduling requires the team's integration approval.
-
-This module is tested through injected receivers. It is not registered as a
-background task. The prepared GIF and caption are available for review in the PR.
-"""
+"""Deliver queued memecoin GIFs during the replay worker's scheduled cycle."""
 
 from __future__ import annotations
 

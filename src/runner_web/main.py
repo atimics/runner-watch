@@ -2070,7 +2070,8 @@ async def memecoin_worker() -> None:
 
 
 async def memecoin_replay_worker() -> None:
-    """Prepare local replay artifacts from receipts already in the database."""
+    """Render saved evidence and deliver queued GIFs to the configured channel."""
+    from runner_web.memecoin_replay_posts import dispatch_memecoin_replays
     from runner_web.memecoin_replay_store import render_pending_replays
 
     while True:
@@ -2080,6 +2081,15 @@ async def memecoin_replay_worker() -> None:
             raise
         except Exception:
             LOG.warning("Memecoin replay rendering will retry")
+        try:
+            result = await run_in_threadpool(dispatch_memecoin_replays, origin=RUNNERS_ORIGIN)
+            worker_state("memecoin_replay_last_delivery", json.dumps(result, separators=(",", ":")))
+            worker_state("memecoin_replay_delivery_error", "")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOG.warning("Memecoin replay delivery will retry")
+            worker_state("memecoin_replay_delivery_error", "delivery_cycle_failed")
         await asyncio.sleep(15)
 
 

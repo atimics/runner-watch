@@ -44,6 +44,8 @@ sources = [
     Path("src/runner_web/telegram.py"),
     Path("src/runner_web/db.py"),
     Path("src/runner_web/main.py"),
+    Path("src/runner_web/operations.py"),
+    Path("fly.toml"),
     Path("src/runner_web/memecoin_store.py"),
     Path("web/static/memecoin-replay.js"),
     Path("web/static/memecoin-replay.css"),
@@ -66,7 +68,7 @@ report = {
     "errors": errors,
     "passed": not errors
     and seen == modules
-    and len(outcomes) >= 37
+    and len(outcomes) >= 45
     and set(outcomes.values()) == {"passed"},
 }
 Path(args.output).write_text(json.dumps(report, indent=2) + "\n")

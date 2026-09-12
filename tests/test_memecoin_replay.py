@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import hashlib
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
@@ -383,6 +385,127 @@ def test_concurrent_channel_claims_send_one_gif(monkeypatch):
         finish.set()
         assert first.result()["sent"] == 1
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("render_fails", [False, True])
+def test_scheduled_worker_delivers_saved_gif_and_records_its_result(monkeypatch, render_fails):
+    from runner_web import main
+    from runner_web import memecoin_replay_posts as posts
+
+    monkeypatch.setenv("TELEGRAM_MEMECOIN_ALERTS", "1")
+    collect()
+    if render_fails:
+        store.render_pending_replays(at=AT)
+    stages, messages = [], []
+    original_render = store.render_pending_replays
+
+    def render():
+        stages.append("render")
+        if render_fails:
+            raise RuntimeError("temporary renderer failure")
+        return original_render(at=AT)
+
+    def receiver(config, gif, caption):
+        messages.append((config.chat_id, gif, caption))
+        return 73
+
+    def deliver(*, origin):
+        stages.append("deliver")
+        assert origin == main.RUNNERS_ORIGIN
+        return dispatch_memecoin_replays(origin=origin, at=AT, sender=receiver)
+
+    async def inline(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    async def stop(seconds):
+        assert seconds == 15
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(store, "render_pending_replays", render)
+    monkeypatch.setattr(posts, "dispatch_memecoin_replays", deliver)
+    monkeypatch.setattr(main, "run_in_threadpool", inline)
+    monkeypatch.setattr(main.asyncio, "sleep", stop)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(main.memecoin_replay_worker())
+    assert stages == ["render", "deliver"]
+    assert len(messages) == 1 and messages[0][1].startswith(b"GIF")
+    with db.connection() as database:
+        row = database.execute("SELECT status,message_id FROM memecoin_replay_posts").fetchone()
+        state = dict(
+            database.execute(
+                "SELECT key,value FROM worker_state WHERE key LIKE ?", ("memecoin_replay_%",)
+            ).fetchall()
+        )
+    assert row["status"] == "sent" and row["message_id"] == 73
+    assert json.loads(state["memecoin_replay_last_delivery"]) == {"status": "checked", "sent": 1}
+    assert state["memecoin_replay_delivery_error"] == ""
+
+
+def test_scheduled_delivery_recovers_after_a_failed_cycle(monkeypatch):
+    from runner_web import main
+    from runner_web import memecoin_replay_posts as posts
+
+    outcomes, errors = [], []
+
+    def deliver(**kwargs):
+        outcomes.append(kwargs)
+        if len(outcomes) == 1:
+            raise RuntimeError("temporary database failure")
+        return {"status": "checked", "sent": 0}
+
+    async def inline(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    async def next_cycle(seconds):
+        with db.connection() as database:
+            errors.append(
+                database.execute(
+                    "SELECT value FROM worker_state WHERE key='memecoin_replay_delivery_error'"
+                ).fetchone()[0]
+            )
+        if len(outcomes) == 2:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(store, "render_pending_replays", lambda: {})
+    monkeypatch.setattr(posts, "dispatch_memecoin_replays", deliver)
+    monkeypatch.setattr(main, "run_in_threadpool", inline)
+    monkeypatch.setattr(main.asyncio, "sleep", next_cycle)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(main.memecoin_replay_worker())
+    assert errors == ["delivery_cycle_failed", ""]
+
+
+@pytest.mark.parametrize("cancel_at", ["render", "deliver"])
+def test_scheduled_worker_propagates_cancellation(monkeypatch, cancel_at):
+    from runner_web import main
+    from runner_web import memecoin_replay_posts as posts
+
+    calls = []
+
+    def action(name):
+        calls.append(name)
+        if name == cancel_at:
+            raise asyncio.CancelledError
+        return {}
+
+    async def inline(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(store, "render_pending_replays", lambda: action("render"))
+    monkeypatch.setattr(posts, "dispatch_memecoin_replays", lambda **_: action("deliver"))
+    monkeypatch.setattr(main, "run_in_threadpool", inline)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(main.memecoin_replay_worker())
+    assert calls == (["render"] if cancel_at == "render" else ["render", "deliver"])
+
+
+def test_replay_worker_is_required_for_process_health():
+    from runner_web.main import _worker_heartbeat_detail
+
+    detail = _worker_heartbeat_detail([])
+    assert "memecoin-replays" in detail["required_workers"]
+    assert "memecoin-replays" in detail["missing_workers"]
+    assert detail["status"] == "degraded"
 
 
 def test_archive_capacity_retains_the_saved_version_and_new_source_evidence(monkeypatch):
