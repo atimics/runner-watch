@@ -41,7 +41,7 @@
       {% else %}<svg class="price-chart" viewBox="0 0 800 280" role="img" aria-label="Price history" hidden><path class="chart-area"/><path class="chart-line"/></svg><p class="chart-status" data-chart-status>Price history is loading.</p><div class="chart-labels"><span data-chart-start></span><span data-chart-end></span></div>{% endif %}
       </section>
       {% if screen.facts %}<dl class="facts">{% for fact in screen.facts %}<div><dt>{{ fact.label }}</dt><dd>{{ fact.value }}</dd></div>{% endfor %}</dl>{% endif %}
-      <div class="actions">{% for action in screen.actions %}{% if user %}<button type="button" data-action="{{ loop.index0 }}">{{ action.label }}</button>{% else %}<a class="primary" href="/login?next={{ request.url.path|urlencode }}">{{ action.label }}</a>{% endif %}{% endfor %}{% if screen.report_url %}<a href="{{ screen.report_url }}">Read story ↗</a>{% endif %}</div>
+      <div class="actions">{% for action in screen.actions %}{% if user %}<button type="button" data-action="{{ loop.index0 }}">{{ action.label }}</button>{% else %}<a class="primary" href="/login?next={{ request.url.path|urlencode }}">{{ action.label }}</a>{% endif %}{% endfor %}</div>
       <p class="action-status" role="status" data-action-status></p>
       <dialog class="call-confirm"><h2 data-confirm-title>Make Call</h2><p>This records a paper Call on your public profile.</p><div class="actions"><button type="button" data-confirm>Confirm Call</button><button class="secondary" type="button" data-cancel>Cancel</button></div></dialog>
     </article>

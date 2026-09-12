@@ -172,7 +172,6 @@ def detail(
     data: dict[str, Any],
     *,
     active_call: dict[str, Any] | None = None,
-    report: dict[str, Any] | None = None,
     my_pick: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     source = (
@@ -283,6 +282,4 @@ def detail(
                     "body": {},
                 }
             )
-    if report and report.get("href"):
-        result["report_url"] = report["href"]
     return result

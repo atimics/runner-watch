@@ -1312,8 +1312,7 @@ def take_challenge(token: str, kind: str) -> dict[str, Any]:
 
 _UNRESOLVED_USER = object()
 
-# The board is one screen. Pulse, Radar, and Alpha are views of that screen,
-# selected by a query parameter instead of a separate tab and route.
+# List and Map share one board; earlier view links resolve to List.
 BOARD_VIEWS = ("list", "pulse", "changed", "map", "calls")
 BOARD_VIEW_TABS = {"pulse": "pulse", "changed": "radar", "map": "map", "calls": "alpha"}
 DEFAULT_BOARD_VIEW = "list"
@@ -8503,7 +8502,7 @@ async def screen_stock_quote(ticker: str, request: Request) -> dict[str, Any]:
     if not _known_ticker(normalized):
         raise HTTPException(404, "Ticker not found")
     current = await run_in_threadpool(ticker_quote, normalized)
-    if not current:
+    if not current or current.get("price") is None:
         raise HTTPException(404, "Price pending")
     item = row(
         "stocks",
