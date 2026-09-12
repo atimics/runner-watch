@@ -586,6 +586,7 @@ def test_own_call_record_survives_close_and_reload(calls_db, monkeypatch, market
         for _ in range(2):
             record = client.get(endpoint).json()["call"]
             assert record["status"] == "closed"
+            assert "Closed at" in record["outcome"]
             assert record["return"] == "+100.0%"
             assert record["reward"] == f"{earned} Flash"
             html = client.get(page)

@@ -239,7 +239,12 @@ def call_record(
         if not closed and source.get("stale"):
             current = None
         change_label = change(current)
-        outcome = f"{'Closed' if closed else 'Open'} · {change_label}"
+        outcome = (
+            f"Closed at {money(price)} · {change_label}"
+            + (f" · {stamp(saved.get('exit_at'))}" if stamp(saved.get("exit_at")) else "")
+            if closed
+            else f"Open · {change_label}"
+        )
         reward = int(saved.get("flash_reward") or 0)
     return {
         "status": "closed" if closed else "active",
