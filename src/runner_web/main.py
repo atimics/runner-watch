@@ -438,6 +438,12 @@ OPENROUTER_RESEARCH_TIMEOUT_SECONDS = max(
 EDGE_JOB_LEASE_MINUTES = 10
 FLASH_GLOBAL_DAILY_LIMIT = max(1, int(os.getenv("FLASH_GLOBAL_DAILY_LIMIT", "50")))
 TELEGRAM_RUNNER_REPORTS_PER_DAY = max(0, int(os.getenv("TELEGRAM_RUNNER_REPORTS_PER_DAY", "20")))
+# Only the best few new runners get a free house report, and they go public on a
+# short stagger instead of waiting out the paid window together.
+TELEGRAM_RUNNER_REPORTS_PER_RUN = max(1, int(os.getenv("TELEGRAM_RUNNER_REPORTS_PER_RUN", "3")))
+TELEGRAM_RUNNER_REPORT_STAGGER_MINUTES = max(
+    0, int(os.getenv("TELEGRAM_RUNNER_REPORT_STAGGER_MINUTES", "10"))
+)
 FLASH_REPORT_FAILURE_STREAK_LIMIT = max(2, int(os.getenv("FLASH_REPORT_FAILURE_STREAK_LIMIT", "3")))
 FLASH_REPORT_FAILURE_WINDOW_MINUTES = max(
     5, int(os.getenv("FLASH_REPORT_FAILURE_WINDOW_MINUTES", "30"))
@@ -6037,6 +6043,22 @@ def _fallback_filings_from_evidence(evidence: dict[str, Any]) -> list[dict[str, 
     ]
 
 
+def _exclusive_until_for(
+    current_time: datetime, exclusive_minutes: int | None = None
+) -> str:
+
+    """When a managed report turns public.
+
+    A paid customer report uses the standard private window. A free house report
+    can pass its own short deadline, so a staggered batch does not sit out the
+    paid hour and then land together.
+    """
+
+    if exclusive_minutes is None:
+        return iso(current_time + timedelta(hours=REPORT_EXCLUSIVE_HOURS))
+    return iso(current_time + timedelta(minutes=max(0, exclusive_minutes)))
+
+
 def _create_research_commission(
     user_id: str,
     ticker: str,
@@ -6045,12 +6067,13 @@ def _create_research_commission(
     case_id: str | None = None,
     trigger: str = "commission",
     charge: bool = True,
+    exclusive_minutes: int | None = None,
 ) -> tuple[dict[str, Any], bool]:
 
     current_time = now()
     timestamp = iso(current_time)
     report_day = current_time.date().isoformat()
-    exclusive_until = iso(current_time + timedelta(hours=REPORT_EXCLUSIVE_HOURS))
+    exclusive_until = _exclusive_until_for(current_time, exclusive_minutes)
     if ticker.startswith("sports:"):
         event_id = ticker.removeprefix("sports:")
         try:
@@ -10932,13 +10955,15 @@ def _queue_telegram_runner_reports(tickers: list[str]) -> dict[str, Any]:
     The first Telegram ping is the runner itself. An hour later the report goes
     public and the channel gets a second ping. Nobody is charged; these are house
     reports on the machine account, capped so a hot day cannot eat Flash's paid
-    capacity.
+    capacity. Only the best few runners of the batch are worth a report, and they
+    go public on a short stagger rather than sitting out the paid one-hour window
+    together.
     """
 
     result = {"queued": 0, "skipped": 0, "tickers": []}
     unique = list(
         dict.fromkeys(str(ticker).strip().upper() for ticker in tickers if str(ticker).strip())
-    )
+    )[:TELEGRAM_RUNNER_REPORTS_PER_RUN]
     if TELEGRAM_RUNNER_REPORTS_PER_DAY <= 0 or not unique:
         result["skipped"] = len(unique)
         return result
@@ -10958,7 +10983,7 @@ def _queue_telegram_runner_reports(tickers: list[str]) -> dict[str, Any]:
                 (report_day,),
             ).fetchone()[0]
         slots = max(0, TELEGRAM_RUNNER_REPORTS_PER_DAY - int(used))
-        for ticker in unique:
+        for index, ticker in enumerate(unique):
             if slots <= 0:
                 result["skipped"] += 1
                 continue
@@ -10968,6 +10993,7 @@ def _queue_telegram_runner_reports(tickers: list[str]) -> dict[str, Any]:
                     ticker,
                     trigger="telegram_runner",
                     charge=False,
+                    exclusive_minutes=index * TELEGRAM_RUNNER_REPORT_STAGGER_MINUTES,
                 )
             except HTTPException:
                 result["skipped"] += 1

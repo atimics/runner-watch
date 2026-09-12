@@ -924,3 +924,50 @@ def test_a_model_announcement_that_names_a_stray_ticker_is_rejected(
     assert len(sent) == 1
     assert "$NVDA" not in sent[0]
     assert "$AAAA" in sent[0]
+
+
+def _runner_report_queue(monkeypatch: MonkeyPatch) -> list[tuple[str, int | None]]:
+    calls: list[tuple[str, int | None]] = []
+
+    def fake_create(user_id, ticker, **kwargs):
+        calls.append((ticker, kwargs.get("exclusive_minutes")))
+        return {"id": f"rep-{ticker}"}, True
+
+    monkeypatch.setattr(web_main, "TELEGRAM_RUNNER_REPORTS_PER_DAY", 20)
+    monkeypatch.setattr(web_main, "_flash_provider_ready", lambda *args, **kwargs: True)
+    monkeypatch.setattr(web_main, "ensure_machine_trader", lambda: None)
+    monkeypatch.setattr(web_main, "_enqueue_research_job_sync", lambda report_id: None)
+    monkeypatch.setattr(web_main, "_create_research_commission", fake_create)
+    return calls
+
+
+def test_only_the_best_few_runners_get_a_free_report(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    calls = _runner_report_queue(monkeypatch)
+    monkeypatch.setattr(web_main, "TELEGRAM_RUNNER_REPORTS_PER_RUN", 3)
+
+    result = web_main._queue_telegram_runner_reports(["A1", "B2", "C3", "D4", "E5"])
+
+    assert [ticker for ticker, _ in calls] == ["A1", "B2", "C3"]
+    assert result["queued"] == 3
+
+
+def test_free_reports_are_staggered_so_they_do_not_land_together(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    calls = _runner_report_queue(monkeypatch)
+    monkeypatch.setattr(web_main, "TELEGRAM_RUNNER_REPORTS_PER_RUN", 3)
+    monkeypatch.setattr(web_main, "TELEGRAM_RUNNER_REPORT_STAGGER_MINUTES", 10)
+
+    web_main._queue_telegram_runner_reports(["A1", "B2", "C3"])
+
+    assert calls == [("A1", 0), ("B2", 10), ("C3", 20)]
+
+
+def test_a_free_report_can_skip_the_paid_private_window() -> None:
+    start = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)
+
+    assert web_main._exclusive_until_for(start) == "2026-09-11T13:00:00+00:00"
+    assert web_main._exclusive_until_for(start, 0) == "2026-09-11T12:00:00+00:00"
+    assert web_main._exclusive_until_for(start, 10) == "2026-09-11T12:10:00+00:00"
