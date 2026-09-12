@@ -2060,7 +2060,13 @@ async def market_actor_worker() -> None:
     await asyncio.sleep(45)
     while True:
         try:
-            result = await run_in_threadpool(derive_market_actors)
+            board = await run_in_threadpool(_public_pulse_data, limit=40)
+            tickers = [
+                str(row.get("ticker"))
+                for row in board.get("rows", [])
+                if row.get("ticker")
+            ]
+            result = await run_in_threadpool(derive_market_actors, tickers=tickers)
             worker_state("market_actor_last_run", json.dumps(result, separators=(",", ":")))
             worker_state("market_actor_last_error", "")
         except asyncio.CancelledError:

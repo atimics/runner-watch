@@ -138,6 +138,23 @@ def test_beneficial_owner_gets_a_role_and_ownership_direction(
     assert {link["direction"] for link in board["links"]} == {"own"}
 
 
+def test_stock_derivation_can_be_bounded_to_board_tickers(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    _use_database(tmp_path, monkeypatch, "stock-tickers.db")
+    _insert_filing("acc-one", "RUNR", actor="Jane Q. Officer")
+    _insert_filing("acc-two", "OTHR", actor="Jane Q. Officer")
+
+    assert derive_stock_actors(at=AT, tickers=["RUNR"]) == 1
+    board = market_actor_map("stock", at=AT)
+    assert {subject["key"] for subject in board["subjects"]} == {"RUNR"}
+
+    assert derive_stock_actors(at=AT, tickers=["OTHR"]) == 1
+    board = market_actor_map("stock", at=AT)
+    assert {subject["key"] for subject in board["subjects"]} == {"RUNR", "OTHR"}
+
+
+
 def test_coin_derivation_groups_wallets_into_one_cluster(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
