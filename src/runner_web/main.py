@@ -181,6 +181,7 @@ from runner_web.market_reports import (
     market_reports_overview,
     refresh_market_reports,
 )
+from runner_web.market_screens import detail as simple_market_detail
 from runner_web.memecoin_calls import (
     active_memecoin_call,
     close_memecoin_call,
@@ -891,6 +892,8 @@ if SWARM_RUNTIME is not None and PROCESS_ROLE in {"all", "web"}:
     app.include_router(SWARM_RUNTIME.router)
 app.include_router(create_node_router(NODE_SERVICE))
 templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
+
+templates.env.globals["simple_market_detail"] = simple_market_detail
 templates.env.globals["static_version"] = STATIC_VERSION
 app.mount("/static", StaticFiles(directory=str(ROOT / "web" / "static")), name="static")
 DESKTOP_RENDERER_ROOT = ROOT / "desktop" / "dist" / "renderer"
@@ -1311,9 +1314,9 @@ _UNRESOLVED_USER = object()
 
 # The board is one screen. Pulse, Radar, and Alpha are views of that screen,
 # selected by a query parameter instead of a separate tab and route.
-BOARD_VIEWS = ("pulse", "changed", "map", "calls")
+BOARD_VIEWS = ("list", "pulse", "changed", "map", "calls")
 BOARD_VIEW_TABS = {"pulse": "pulse", "changed": "radar", "map": "map", "calls": "alpha"}
-DEFAULT_BOARD_VIEW = "pulse"
+DEFAULT_BOARD_VIEW = "list"
 
 
 def board_view(value: str | None) -> str:
@@ -1333,10 +1336,7 @@ def _board_base_path(nav_product: str, sports_path_prefix: str) -> str:
 def _board_view_links(nav_product: str, sports_path_prefix: str) -> dict[str, str]:
     base = _board_base_path(nav_product, sports_path_prefix)
     separator = "&" if "?" in base else "?"
-    views = BOARD_VIEWS if nav_product != "sports" else tuple(
-        view for view in BOARD_VIEWS if view != "map"
-    )
-    return {view: f"{base}{separator}{urlencode({'view': view})}" for view in views}
+    return {view: f"{base}{separator}{urlencode({'view': view})}" for view in ("list", "map")}
 
 
 def page_context(
@@ -2072,11 +2072,7 @@ async def market_actor_worker() -> None:
     while True:
         try:
             board = await run_in_threadpool(_public_pulse_data, limit=40)
-            tickers = [
-                str(row.get("ticker"))
-                for row in board.get("rows", [])
-                if row.get("ticker")
-            ]
+            tickers = [str(row.get("ticker")) for row in board.get("rows", []) if row.get("ticker")]
             result = await run_in_threadpool(derive_market_actors, tickers=tickers)
             worker_state("market_actor_last_run", json.dumps(result, separators=(",", ":")))
             worker_state("market_actor_last_error", "")
@@ -6043,10 +6039,7 @@ def _fallback_filings_from_evidence(evidence: dict[str, Any]) -> list[dict[str, 
     ]
 
 
-def _exclusive_until_for(
-    current_time: datetime, exclusive_minutes: int | None = None
-) -> str:
-
+def _exclusive_until_for(current_time: datetime, exclusive_minutes: int | None = None) -> str:
     """When a managed report turns public.
 
     A paid customer report uses the standard private window. A free house report
@@ -6776,10 +6769,7 @@ def memecoins_page(
     sort: str = "volume",
     view: str = DEFAULT_BOARD_VIEW,
 ) -> Response:
-    selected_view = board_view(view)
-    if selected_view == "calls":
-        return memecoin_alpha_page(request, runner_session)
-    return memecoins_board_response(request, runner_session, selected_view, q, sort)
+    return memecoins_board_response(request, runner_session, board_view(view), q, sort)
 
 
 def memecoins_board_response(
@@ -6789,29 +6779,9 @@ def memecoins_board_response(
     q: str = "",
     sort: str = "volume",
 ) -> HTMLResponse:
-    """Render one view of the single memecoin board."""
-
     enforce_rate(request, "memecoins", limit=120, seconds=60)
-    if view == "map":
-        return _market_map_response(request, runner_session, "coin")
-    radar = view == "changed"
-    list_view = "radar" if radar else "pulse"
-    return templates.TemplateResponse(
-        request,
-        "memecoins.html",
-        page_context(
-            request,
-            runner_session,
-            nav_product="memecoins",
-            active_tab=BOARD_VIEW_TABS[view],
-            list_path="/memecoins",
-            board_view=view,
-            list_view=list_view,
-            list_title="Changed" if radar else "Memecoins",
-            back_url="/memecoins",
-            market=memecoin_market(query=q, sort=sort, view=list_view),
-        ),
-    )
+    market = memecoin_market(query=q, sort=sort, view="radar")
+    return _simple_board(request, runner_session, "memecoins", market["rows"], view, q)
 
 
 @app.get("/memecoins/radar", response_class=HTMLResponse)
@@ -6935,7 +6905,7 @@ def memecoin_detail_page(
     context["active_call"] = (
         active_memecoin_call(str(context["user"]["id"]), coin_id) if context["user"] else None
     )
-    return templates.TemplateResponse(request, "memecoin_detail.html", context)
+    return templates.TemplateResponse(request, "simple_coin_detail.html", context)
 
 
 @app.get("/api/market-actors")
@@ -7119,32 +7089,38 @@ def runners_board_response(
     runner_session: str | None,
     view: str,
 ) -> HTMLResponse:
-    """Render one view of the single stock board."""
+    return _simple_board(
+        request,
+        runner_session,
+        "stocks",
+        _public_pulse_data(limit=50)["rows"],
+        view,
+        request.query_params.get("q", ""),
+    )
 
-    if view == "changed":
-        return templates.TemplateResponse(
-            request=request,
-            name="radar.html",
-            context=page_context(
-                request,
-                runner_session,
-                watches=radar_data(),
-                active_tab=BOARD_VIEW_TABS[view],
-            ),
-        )
-    if view == "map":
-        return _market_map_response(request, runner_session, "stock")
-    if view == "calls":
-        return community(request, runner_session)
+
+def _simple_board(
+    request: Request,
+    session: str | None,
+    market: str,
+    items: list[dict[str, Any]],
+    view: str,
+    query: str = "",
+) -> HTMLResponse:
+    from runner_web.market_screens import listing
+
+    selected = "map" if view == "map" else "list"
+    graph = (
+        market_actor_map("coin" if market == "memecoins" else "stock")
+        if selected == "map" and market != "sports"
+        else None
+    )
+    screen = listing(market, items, view=selected, query=query, graph=graph)
     return templates.TemplateResponse(
-        request=request,
-        name="pulse.html",
-        context=page_context(
-            request,
-            runner_session,
-            pulse=_public_pulse_data(limit=20),
-            market_reports=market_reports_overview(history_limit=0),
-            active_tab=BOARD_VIEW_TABS[view],
+        request,
+        "market_screen.html",
+        page_context(
+            request, session, nav_product="runners" if market == "stocks" else market, screen=screen
         ),
     )
 
@@ -7154,23 +7130,9 @@ def _market_map_response(
     runner_session: str | None,
     domain: str,
 ) -> HTMLResponse:
-    """Render the actor map for stocks or memecoins."""
-
-    enforce_rate(request, "market-map", limit=120, seconds=60)
-    is_coin = domain == "coin"
-    return templates.TemplateResponse(
-        request=request,
-        name="market_map.html",
-        context=page_context(
-            request,
-            runner_session,
-            nav_product="memecoins" if is_coin else "runners",
-            active_tab="map",
-            board_view="map",
-            back_url="/memecoins" if is_coin else "/",
-            market_map=market_actor_map(domain),
-        ),
-    )
+    if domain == "coin":
+        return memecoins_board_response(request, runner_session, "map")
+    return runners_board_response(request, runner_session, "map")
 
 
 SPORTS_PULSE_EVENT_FIELDS = (
@@ -7371,13 +7333,16 @@ def sports_board_response(
     view: str,
     league: str = "all",
 ) -> HTMLResponse:
-    """Render one view of the single sports board."""
-
-    if view == "changed":
-        return sports_radar_response(request, runner_session, league)
-    if view == "calls":
-        return sports_alpha_response(request, runner_session, league)
-    return sports_home_response(request, runner_session, league, "signals")
+    enforce_rate(request, "sports", limit=120, seconds=60)
+    slate = _public_screen_data("simple-sports", league, lambda: sports_slate(league, 80))
+    return _simple_board(
+        request,
+        runner_session,
+        "sports",
+        slate.get("events", []),
+        view,
+        request.query_params.get("q", ""),
+    )
 
 
 @app.get("/sports", response_class=HTMLResponse)
@@ -7650,7 +7615,7 @@ def sports_game_page(
     sports_path_prefix = ""
     return templates.TemplateResponse(
         request=request,
-        name="sports_game.html",
+        name="simple_sports_detail.html",
         context=page_context(
             request,
             runner_session,
@@ -8452,7 +8417,7 @@ def ticker_page(
     user_id = str(user["id"]) if user else None
     return templates.TemplateResponse(
         request=request,
-        name="ticker.html",
+        name="simple_stock_detail.html",
         context=page_context(
             request,
             runner_session,
@@ -8475,6 +8440,50 @@ def ticker_page(
             active_tab="pulse",
         ),
     )
+
+
+@app.get("/api/screens/stocks/{ticker}/chart")
+async def screen_stock_chart(ticker: str, request: Request) -> dict[str, Any]:
+    from runner_web.market_screens import series
+
+    enforce_rate(request, "ticker-chart", limit=90, seconds=60)
+    normalized = _clean_ticker(ticker)
+    if not _ticker_exists(normalized):
+        raise HTTPException(404, "Ticker not found")
+    payload = await run_in_threadpool(ticker_chart_detail_payload, normalized)
+    return {"points": series(payload.get("points") or [])}
+
+
+@app.get("/api/screens/stocks/{ticker}/quote")
+async def screen_stock_quote(ticker: str, request: Request) -> dict[str, Any]:
+    from runner_web.market_screens import row
+
+    enforce_rate(request, "ticker-quote", limit=60, seconds=60)
+    normalized = _clean_ticker(ticker)
+    if not _known_ticker(normalized):
+        raise HTTPException(404, "Ticker not found")
+    current = await run_in_threadpool(ticker_quote, normalized)
+    if not current:
+        raise HTTPException(404, "Price pending")
+    item = row(
+        "stocks",
+        {
+            **current,
+            "ticker": normalized,
+            "quote_time": current.get("observed_at") or current.get("quote_time"),
+        },
+    )
+    return {key: item[key] for key in ("value", "change", "tone", "time")}
+
+
+@app.get("/api/screens/memecoins/{coin_id}/quote")
+def screen_coin_quote(coin_id: str, request: Request) -> dict[str, Any]:
+    from runner_web.market_screens import row
+
+    enforce_rate(request, "memecoins", limit=120, seconds=60)
+    detail = _memecoin_detail_payload(coin_id)
+    item = row("memecoins", detail["coin"])
+    return {key: item[key] for key in ("value", "change", "tone", "time")}
 
 
 @app.get("/api/t/{ticker}/chart")
@@ -11184,7 +11193,6 @@ def _activity_payload(
     market_reports: list[dict[str, Any]],
     research_reports: list[dict[str, Any]],
 ) -> dict[str, Any]:
-
     """Fold the three pending kinds into one list of things that just landed."""
 
     activity_runners = [
@@ -11286,11 +11294,7 @@ def _compose_update_announcement(activity: dict[str, Any]) -> str:
     if not text:
         return fallback
     rows = [*(activity.get("runners") or []), *(activity.get("reports") or [])]
-    allowed = {
-        str(row.get("ticker") or "").upper()
-        for row in rows
-        if row.get("ticker")
-    }
+    allowed = {str(row.get("ticker") or "").upper() for row in rows if row.get("ticker")}
     cited = {match.upper() for match in re.findall(r"\$([A-Za-z]{1,6})\b", text)}
     if cited - allowed:
         # The model named something that was not in the batch. The stored rows
@@ -11357,9 +11361,7 @@ def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]
                 research_baseline = _take_channel_post_baseline(
                     database, "research_report", _RESEARCH_REPORT_BASELINE_SQL
                 )
-                market = _pending_market_report_rows(
-                    database, limit=TELEGRAM_CHANNEL_POSTS_PER_RUN
-                )
+                market = _pending_market_report_rows(database, limit=TELEGRAM_CHANNEL_POSTS_PER_RUN)
                 research = _pending_research_report_rows(
                     database, limit=TELEGRAM_CHANNEL_POSTS_PER_RUN
                 )
