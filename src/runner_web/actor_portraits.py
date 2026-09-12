@@ -15,7 +15,7 @@ import os
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from runner_web.db import connection
@@ -26,6 +26,7 @@ DEFAULT_PORTRAIT_MODEL = "google/gemini-3.1-flash-image"
 PORTRAIT_MODEL = os.getenv("ACTOR_PORTRAIT_MODEL", DEFAULT_PORTRAIT_MODEL)
 DAILY_LIMIT = max(0, int(os.getenv("ACTOR_PORTRAIT_DAILY_LIMIT", "200")))
 TIMEOUT_SECONDS = max(20, int(os.getenv("ACTOR_PORTRAIT_TIMEOUT_SECONDS", "120")))
+RETRY_MINUTES = max(1, int(os.getenv("ACTOR_PORTRAIT_RETRY_MINUTES", "15")))
 MAX_PORTRAIT_BYTES = 600_000
 
 PortraitTransport = Callable[[str, dict[str, Any]], dict[str, Any]]
@@ -133,12 +134,24 @@ def portrait_for_actor(actor_id: str) -> dict[str, Any] | None:
     return {"content_type": str(row["content_type"]), "bytes": bytes(row["bytes"])}
 
 
-def _mark_status(actor_id: str, status: str) -> None:
+def _mark_status(actor_id: str, status: str, *, at: datetime | None = None) -> None:
     with connection() as db:
         db.execute(
             "UPDATE market_actors SET portrait_status=?,updated_at=? WHERE id=?",
-            (status, _iso(), actor_id),
+            (status, _iso(at), actor_id),
         )
+
+
+def _in_retry_cooldown(actor: Any, at: datetime | None) -> bool:
+    if str(actor["portrait_status"]) != "fallback":
+        return False
+    try:
+        last = datetime.fromisoformat(str(actor["updated_at"]))
+    except (TypeError, ValueError):
+        return False
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    return (at or datetime.now(UTC)) - last < timedelta(minutes=RETRY_MINUTES)
 
 
 def generate_actor_portrait(
@@ -154,19 +167,22 @@ def generate_actor_portrait(
     if existing is not None:
         return {"status": "ready"}
     if not api_key:
-        _mark_status(actor_id, "fallback")
+        _mark_status(actor_id, "fallback", at=at)
         return {"status": "fallback", "reason": "no_key"}
     day = _day(at)
     with connection() as db:
         actor = db.execute(
-            "SELECT display_name,ability_id,portrait_status FROM market_actors WHERE id=?",
+            "SELECT display_name,ability_id,portrait_status,updated_at "
+            "FROM market_actors WHERE id=?",
             (actor_id,),
         ).fetchone()
         if actor is None:
             return {"status": "missing"}
         count = _daily_count(db, day)
+    if _in_retry_cooldown(actor, at):
+        return {"status": "fallback", "reason": "cooldown"}
     if DAILY_LIMIT <= 0 or count >= DAILY_LIMIT:
-        _mark_status(actor_id, "fallback")
+        _mark_status(actor_id, "fallback", at=at)
         return {"status": "fallback", "reason": "budget"}
     ability = comment_avatar_ability(str(actor["ability_id"]))
     payload = {
@@ -178,17 +194,16 @@ def generate_actor_portrait(
                 "content": _PROMPT.format(ability=str(ability["description"])),
             }
         ],
-        "max_tokens": 64,
     }
     call = transport or _request_openrouter
     try:
         result = call(api_key, payload)
     except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
-        _mark_status(actor_id, "fallback")
+        _mark_status(actor_id, "fallback", at=at)
         return {"status": "fallback", "reason": "transport", "error": str(exc)[:200]}
     image = _image_from_result(result if isinstance(result, dict) else {})
     if image is None:
-        _mark_status(actor_id, "fallback")
+        _mark_status(actor_id, "fallback", at=at)
         return {"status": "fallback", "reason": "no_image"}
     binary, content_type = image
     timestamp = _iso(at)

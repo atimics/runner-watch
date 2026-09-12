@@ -268,6 +268,31 @@ def test_portrait_falls_back_without_a_key(
     assert actor_portraits.portrait_for_actor(actor["id"]) is None
 
 
+def test_portrait_fallback_enforces_a_retry_cooldown(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    _use_database(tmp_path, monkeypatch, "actor-portraits-cooldown.db")
+    _insert_filing("acc-one", "RUNR", actor="Jane Q. Officer")
+    derive_stock_actors(at=AT)
+    actor = market_actor_map("stock", at=AT)["actors"][0]
+    monkeypatch.setattr(actor_portraits, "DAILY_LIMIT", 5)
+    calls: list[str] = []
+
+    def transport(key: str, payload: dict[str, object]) -> dict[str, object]:
+        calls.append(key)
+        return {"choices": [{"message": {"content": "no image here"}}]}
+
+    first = actor_portraits.generate_actor_portrait(
+        actor["id"], api_key="sk-or-test", transport=transport, at=AT
+    )
+    assert first["status"] == "fallback"
+    again = actor_portraits.generate_actor_portrait(
+        actor["id"], api_key="sk-or-test", transport=transport, at=AT
+    )
+    assert again == {"status": "fallback", "reason": "cooldown"}
+    assert len(calls) == 1
+
+
 async def _empty_body() -> dict[str, object]:
     return {"type": "http.request", "body": b"", "more_body": False}
 
