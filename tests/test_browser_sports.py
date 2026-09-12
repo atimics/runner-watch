@@ -659,7 +659,8 @@ def test_sports_list_keeps_operator_predictions_private(page: Page, monkeypatch)
     event = {**_event("game-1", "AWY", "HME"), "model_winner_label": "internal model detail"}
     errors = _load(page, _rendered_pulse(monkeypatch, _pulse(event)), [])
     expect(page.get_by_text("internal model detail")).to_have_count(0)
-    expect(page.locator(".ticker-value strong")).to_have_text("vs")
+    expect(page.locator(".ticker-value strong")).to_have_text("—")
+    expect(page.locator(".ticker-value small")).to_have_text("Score pending")
     assert errors == []
 
 
