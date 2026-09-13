@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RATi · tight list redesign preview</title>
+<title>RATi · tight list + score preview</title>
 <style>
   :root{
     color-scheme:dark;
@@ -21,7 +21,7 @@
   .preview-note code{color:var(--green)}
   .wrap{max-width:960px;margin:0 auto;padding:0 24px}
 
-  /* ---------- top bar ---------- */
+  /* top bar */
   .topbar{position:sticky;top:0;z-index:5;background:rgba(11,16,14,.94);
     backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
   .topbar-inner{display:flex;align-items:center;gap:14px;min-height:64px;flex-wrap:wrap}
@@ -46,12 +46,12 @@
   .avatar{width:34px;height:34px;border-radius:50%;border:1px solid #33413b;background:#1b2420;
     display:grid;place-items:center;font-size:12px;font-weight:800;color:var(--green)}
 
-  /* ---------- list ---------- */
   main{padding:18px 0 80px}
   .board-head{display:flex;align-items:baseline;justify-content:space-between;color:var(--muted);
     font-size:12px;padding:4px 6px 10px}
   .rows{border-top:1px solid var(--line)}
-  .row{display:grid;grid-template-columns:104px minmax(0,1fr) 128px 72px 132px;
+
+  .row{display:grid;grid-template-columns:104px minmax(0,1fr) 120px 76px 86px;
     align-items:center;gap:14px;min-height:66px;padding:9px 6px;border-bottom:1px solid var(--line)}
   .row:hover{background:#111b15}
   .tag{justify-self:start;display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:850;
@@ -62,31 +62,46 @@
   .tag.extended{color:#1d1004;background:var(--orange);border-color:var(--orange)}
   .tag.avoid{color:#1e070a;background:var(--red);border-color:var(--red)}
   .tag.watch{color:var(--muted);background:transparent;border-color:#38443d}
-  .identity{min-width:0}
+  .identity{min-width:0;cursor:pointer}
   .identity strong{font-size:16px;font-weight:700;letter-spacing:-.2px}
   .identity small{display:block;color:var(--muted);font-size:12px;white-space:nowrap;
     overflow:hidden;text-overflow:ellipsis}
+  .identity:focus-visible{outline:2px solid var(--green);outline-offset:3px;border-radius:4px}
   .quote{text-align:right;font-variant-numeric:tabular-nums}
   .quote strong{display:block;font-size:15px}
   .quote small{font-size:12.5px;font-weight:700}
-  .spark{width:72px;height:26px}
+  .spark{width:76px;height:26px}
   .spark path{fill:none;stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-linecap:round;stroke-linejoin:round}
   .spark.up path{stroke:var(--green)} .spark.down path{stroke:var(--red)}
-  .metrics{display:flex;gap:14px;justify-content:flex-end;font-variant-numeric:tabular-nums}
-  .metrics span{font-size:12px;color:var(--muted);text-align:right}
-  .metrics b{display:block;color:var(--text);font-size:12.5px;font-weight:650}
-  .metrics b.up{color:var(--green)} .metrics b.down{color:var(--red)}
+  .score{text-align:right}
+  .score b{font-size:17px;font-variant-numeric:tabular-nums}
+  .meter{display:block;height:3px;border-radius:2px;background:#25322b;margin-top:5px;overflow:hidden}
+  .meter i{display:block;height:100%;border-radius:2px;background:var(--green)}
+  .score.building .meter i{background:var(--blue)} .score.weak .meter i{background:#6f7d75}
   .age{color:#6f7d75;font-size:11px;text-align:right;min-width:34px}
-  .row .identity{cursor:pointer}
-  .row .identity:focus-visible{outline:2px solid var(--green);outline-offset:3px;border-radius:4px}
+  .up{color:var(--green)} .down{color:var(--red)}
 
-  /* ---------- universe ---------- */
-  .universe{margin-top:20px;border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--panel)}
-  .universe-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:20px 22px}
-  .universe-head h2{margin:0;font-size:20px;font-weight:600;letter-spacing:-.4px}
-  .universe-head p{margin:3px 0 0;color:var(--muted);font-size:12px}
-  .back{border:1px solid var(--line);border-radius:20px;padding:7px 14px;color:var(--muted);font-size:12px}
-  .universe-canvas{padding:0 10px 14px;background:radial-gradient(ellipse at center,#1b2b2088,transparent 62%)}
+  /* ticker page */
+  .ticker-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;
+    border-top:1px solid var(--line);padding:20px 4px;margin-top:6px}
+  .ticker-head h1{margin:0;font-size:30px;letter-spacing:-1px;font-weight:650}
+  .ticker-head p{margin:2px 0 0;color:var(--muted);font-size:13px}
+  .ticker-price{text-align:right;font-variant-numeric:tabular-nums}
+  .ticker-price strong{display:block;font-size:30px;font-weight:600}
+  .ticker-price small{font-size:15px;font-weight:700}
+  .back{color:var(--muted);font-size:13px;display:inline-block;margin:14px 0 0}
+  .section{border-top:1px solid var(--line);padding:22px 0}
+  .section>header{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px}
+  .section h2{margin:0;font-size:19px;font-weight:600;letter-spacing:-.3px}
+  .section header span{color:var(--muted);font-size:12px}
+  .price-chart{width:100%;height:220px;display:block}
+  .chart-line{fill:none;stroke:var(--green);stroke-width:2.2;vector-effect:non-scaling-stroke}
+  .chart-area{fill:#16261c}
+  .chart-marker{stroke:var(--amber);stroke-dasharray:4 4;stroke-width:1.4}
+  .chart-notes{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin-top:8px}
+
+  .universe{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:var(--panel)}
+  .universe-canvas{padding:8px 8px 0;background:radial-gradient(ellipse at center,#1b2b2088,transparent 62%)}
   .universe-canvas svg{display:block;width:100%;height:auto}
   .map-link{stroke:#42584b;stroke-width:1.4}
   .map-link.up{stroke:var(--green)} .map-link.down{stroke:var(--red)}
@@ -95,45 +110,73 @@
   .actor text{fill:var(--text);font-size:12px;text-anchor:middle;pointer-events:none}
   .actor .sub{fill:var(--muted);font-size:9px}
   .core circle{fill:#253e2d;stroke:#7ea98a;stroke-width:1.2}
-  .core text{fill:var(--text);font-size:19px;font-weight:750;text-anchor:middle}
-  .key{display:flex;gap:16px;color:var(--muted);font-size:11px;padding:0 22px 18px}
-  .key b{font-weight:600}
+  .core text{fill:var(--text);text-anchor:middle}
+  .key{display:flex;gap:16px;color:var(--muted);font-size:11px;padding:0 18px 16px}
   .key i{display:inline-block;width:8px;height:8px;border-radius:50%;background:currentColor;margin-right:5px}
+
+  /* score breakdown */
+  .breakdown{border:1px solid var(--line);border-radius:16px;overflow:hidden}
+  .part{display:grid;grid-template-columns:130px minmax(0,1fr) 150px 52px 64px;
+    align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line)}
+  .part:last-of-type{border-bottom:0}
+  .part .name{font-size:13px;font-weight:600}
+  .part .bar{height:6px;border-radius:3px;background:#25322b;overflow:hidden}
+  .part .bar i{display:block;height:100%;background:var(--blue)}
+  .part .raw{color:var(--muted);font-size:12px;text-align:right;font-variant-numeric:tabular-nums}
+  .part .weight{color:var(--muted);font-size:12px;text-align:right}
+  .part .contrib{font-size:13px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+  .part.future .name{color:var(--muted)}
+  .part.future .bar i{background:#33413a}
+  .formula{padding:14px 16px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.7}
+  .formula b{color:var(--text)}
+  .total{display:flex;align-items:baseline;justify-content:space-between;padding:16px;
+    background:var(--panel-2);border-top:1px solid var(--line)}
+  .total span{color:var(--muted);font-size:12px}
+  .total b{font-size:28px;letter-spacing:-1px}
+  .signals{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:18px}
+  .signals h3{font-size:13px;margin:0 0 8px;color:var(--muted);letter-spacing:.05em;text-transform:uppercase}
+  .signals ul{margin:0;padding:0;list-style:none}
+  .signals li{font-size:13px;padding:5px 0;border-bottom:1px solid var(--line)}
+  .signals .good li:before{content:"+ ";color:var(--green)}
+  .signals .bad li:before{content:"− ";color:var(--red)}
 
   @media(max-width:760px){
     .row{grid-template-columns:92px minmax(0,1fr) auto;grid-template-areas:"tag id quote" "meta meta spark";
       row-gap:2px;min-height:74px}
     .tag{grid-area:tag}.identity{grid-area:id}.quote{grid-area:quote}
     .spark{grid-area:spark;justify-self:end;width:64px}
-    .metrics{grid-area:meta;justify-content:flex-start;gap:12px}
+    .score{grid-area:meta;text-align:left;display:flex;align-items:center;gap:8px}
+    .meter{width:80px;margin:0}
     .age{display:none}
     .status .session,.status .fresh{display:none}
-    .chip{padding:4px 9px}
+    .part{grid-template-columns:104px minmax(0,1fr) 54px;grid-template-areas:"name bar contrib" "raw raw weight";row-gap:4px}
+    .part .name{grid-area:name}.part .bar{grid-area:bar}.part .raw{grid-area:raw;text-align:left}
+    .part .weight{grid-area:weight}.part .contrib{grid-area:contrib}
+    .signals{grid-template-columns:1fr}
   }
 </style>
 </head>
 <body>
 <div class="preview-note">
   <b>Design preview</b>
-  <span>tight list · colored action tags · top-bar breadth filters · per-ticker universe</span>
+  <span>tight list · action tag + one score · ticker = chart → map → metrics</span>
   <span style="margin-left:auto">spec: <code>docs/market-list-ux.md</code></span>
 </div>
 
 <header class="topbar">
   <div class="wrap topbar-inner">
-    <a class="brand" href="#">RATi<span>●</span></a>
+    <a class="brand" href="#" onclick="showList();return false">RATi<span>●</span></a>
     <nav class="switch" aria-label="Market">
-      <a href="#" aria-current="page">Stocks</a>
-      <a href="#">Memecoins</a>
-      <a href="#">Sports</a>
+      <a href="#" aria-current="page">Stocks</a><a href="#">Memecoins</a><a href="#">Sports</a>
     </nav>
     <div class="status">
       <span class="session"><i class="dot"></i><span class="live">REG</span> 15:42 ET</span>
       <span class="fresh">Updated 2m ago</span>
       <div class="chips" id="chips" aria-label="Filter by state">
-        <button class="chip running" data-tag="running"><i></i>3 running</button>
-        <button class="chip setup" data-tag="setup"><i></i>2 setup</button>
-        <button class="chip avoid" data-tag="avoid"><i></i>1 avoid</button>
+        <button class="chip running" data-tag="running"><i></i><b id="c-running">0</b> running</button>
+        <button class="chip setup" data-tag="setup"><i></i><b id="c-setup">0</b> setup</button>
+        <button class="chip avoid" data-tag="avoid"><i></i><b id="c-avoid">0</b> avoid</button>
       </div>
       <label class="search" aria-label="Search tickers">⌕<input id="q" type="search" placeholder="Find a ticker"></label>
       <span class="avatar" title="Account">RW</span>
@@ -142,60 +185,140 @@
 </header>
 
 <main class="wrap">
-  <div class="board-head"><span id="count">8 names on the board</span><span>Ranked by Pulse score</span></div>
-  <div class="rows" id="rows" aria-label="Tickers"></div>
+  <div id="listView">
+    <div class="board-head"><span id="count"></span><span>Ranked by score</span></div>
+    <div class="rows" id="rows" aria-label="Tickers"></div>
+  </div>
 
-  <section class="universe" id="universe" hidden aria-label="Ticker universe">
-    <div class="universe-head">
-      <div><h2 id="uni-title">SOUN universe</h2><p>People and filings reported around this ticker. Bubble size is report weight; color is the latest reported action.</p></div>
-      <button class="back" id="uni-back">← Back to list</button>
+  <div id="tickerView" hidden>
+    <a class="back" href="#" id="back">← All stocks</a>
+    <div class="ticker-head">
+      <div><h1 id="t-title">SOUN</h1><p id="t-company">SoundHound AI</p></div>
+      <div class="ticker-price"><strong id="t-price">$8.42</strong>
+        <small id="t-change" class="up">+18.3%</small></div>
     </div>
-    <div class="universe-canvas">
-      <svg viewBox="0 0 900 420" role="group" aria-label="SOUN actor universe">
-        <line class="map-link up" x1="450" y1="210" x2="450" y2="80"/>
-        <line class="map-link down" x1="450" y1="210" x2="690" y2="120"/>
-        <line class="map-link up" x1="450" y1="210" x2="740" y2="250"/>
-        <line class="map-link" x1="450" y1="210" x2="620" y2="350"/>
-        <line class="map-link up" x1="450" y1="210" x2="280" y2="340"/>
-        <line class="map-link" x1="450" y1="210" x2="170" y2="180"/>
-        <line class="map-link down" x1="450" y1="210" x2="250" y2="70"/>
-        <line class="map-link" x1="450" y1="210" x2="300" y2="210" stroke-dasharray="4 4"/>
-        <g class="core">
-          <circle cx="450" cy="210" r="46"/>
-          <text x="450" y="205">SOUN</text>
-          <text x="450" y="224" class="sub" style="fill:var(--muted);font-size:10px;font-weight:500">$8.42 · +18.3%</text>
-        </g>
-        <g class="actor up"><circle cx="450" cy="80" r="30"/><text x="450" y="84">CEO</text><text x="450" y="120" class="sub">Bought $1.2M</text></g>
-        <g class="actor down"><circle cx="690" cy="120" r="26"/><text x="690" y="124">Fund</text><text x="690" y="156" class="sub">13G · sold</text></g>
-        <g class="actor up"><circle cx="740" cy="250" r="24"/><text x="740" y="254">Dir</text><text x="740" y="284" class="sub">Bought $340K</text></g>
-        <g class="actor"><circle cx="620" cy="350" r="22"/><text x="620" y="354">8-K</text><text x="620" y="382" class="sub">Filed yesterday</text></g>
-        <g class="actor up"><circle cx="280" cy="340" r="28"/><text x="280" y="344">Holder</text><text x="280" y="378" class="sub">Added 2.1%</text></g>
-        <g class="actor"><circle cx="170" cy="180" r="22"/><text x="170" y="184">News</text><text x="170" y="212" class="sub">3 sources</text></g>
-        <g class="actor down"><circle cx="250" cy="70" r="24"/><text x="250" y="74">Short</text><text x="250" y="102" class="sub">Float 14%</text></g>
-        <circle cx="300" cy="210" r="14" fill="#243329" stroke="#3d5144"/>
-        <text x="300" y="214" style="fill:var(--muted);font-size:9px;text-anchor:middle">+4</text>
-      </svg>
-    </div>
-    <div class="key">
-      <span><i style="color:var(--green)"></i><b>Bought</b> / added</span>
-      <span><i style="color:var(--red)"></i><b>Sold</b> / reduced</span>
-      <span><i style="color:#789681"></i><b>Other</b> reported action</span>
-      <span style="margin-left:auto">Reuses <b>_stock_map.html</b> + <b>ticker-map.js</b></span>
-    </div>
-  </section>
+
+    <section class="section">
+      <header><h2>Chart</h2><span id="t-chart-note">60 days · SEC filing marked</span></header>
+      <svg class="price-chart" id="t-chart" viewBox="0 0 900 220" role="img" aria-label="Price history"></svg>
+      <div class="chart-notes"><span id="t-chart-start"></span><span id="t-chart-end"></span></div>
+    </section>
+
+    <section class="section">
+      <header><h2>Map</h2><span>People and filings reported around this ticker</span></header>
+      <div class="universe">
+        <div class="universe-canvas">
+          <svg viewBox="0 0 900 420" role="group" aria-label="Actor universe">
+            <line class="map-link up" x1="450" y1="210" x2="450" y2="80"/>
+            <line class="map-link down" x1="450" y1="210" x2="690" y2="120"/>
+            <line class="map-link up" x1="450" y1="210" x2="740" y2="250"/>
+            <line class="map-link" x1="450" y1="210" x2="620" y2="350"/>
+            <line class="map-link up" x1="450" y1="210" x2="280" y2="340"/>
+            <line class="map-link" x1="450" y1="210" x2="170" y2="180"/>
+            <line class="map-link down" x1="450" y1="210" x2="250" y2="70"/>
+            <line class="map-link" x1="450" y1="210" x2="300" y2="210" stroke-dasharray="4 4"/>
+            <g class="core"><circle cx="450" cy="210" r="46"/>
+              <text x="450" y="205" style="font-size:19px;font-weight:750" id="u-core">SOUN</text>
+              <text x="450" y="224" style="fill:var(--muted);font-size:10px">$8.42 · +18.3%</text></g>
+            <g class="actor up"><circle cx="450" cy="80" r="30"/><text x="450" y="84">CEO</text><text x="450" y="120" class="sub">Bought $1.2M</text></g>
+            <g class="actor down"><circle cx="690" cy="120" r="26"/><text x="690" y="124">Fund</text><text x="690" y="156" class="sub">13G · sold</text></g>
+            <g class="actor up"><circle cx="740" cy="250" r="24"/><text x="740" y="254">Dir</text><text x="740" y="284" class="sub">Bought $340K</text></g>
+            <g class="actor"><circle cx="620" cy="350" r="22"/><text x="620" y="354">8-K</text><text x="620" y="382" class="sub">Filed yesterday</text></g>
+            <g class="actor up"><circle cx="280" cy="340" r="28"/><text x="280" y="344">Holder</text><text x="280" y="378" class="sub">Added 2.1%</text></g>
+            <g class="actor"><circle cx="170" cy="180" r="22"/><text x="170" y="184">News</text><text x="170" y="212" class="sub">3 sources</text></g>
+            <g class="actor down"><circle cx="250" cy="70" r="24"/><text x="250" y="74">Short</text><text x="250" y="102" class="sub">Float 14%</text></g>
+            <circle cx="300" cy="210" r="14" fill="#243329" stroke="#3d5144"/>
+            <text x="300" y="214" style="fill:var(--muted);font-size:9px;text-anchor:middle">+4</text>
+          </svg>
+        </div>
+        <div class="key">
+          <span><i style="color:var(--green)"></i>Bought / added</span>
+          <span><i style="color:var(--red)"></i>Sold / reduced</span>
+          <span><i style="color:#789681"></i>Other reported action</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <header><h2>Metrics = score</h2><span id="t-formula-version">score policy v1</span></header>
+      <div class="breakdown" id="breakdown"></div>
+      <div class="signals">
+        <div class="good"><h3>Signals</h3><ul id="signals"></ul></div>
+        <div class="bad"><h3>Risks</h3><ul id="risks"></ul></div>
+      </div>
+    </section>
+  </div>
 </main>
 
 <script>
   const rows = [
-    {tag:'RUNNING', tone:'running', ticker:'SOUN', company:'SoundHound AI', price:8.42, change:18.3, rvol:3.4, m15:7.1, age:'2m', spark:[3,4,4,6,5,8,7,10,9,12]},
-    {tag:'SETUP',   tone:'setup',   ticker:'RGTI', company:'Rigetti Computing', price:1.87, change:4.2,  rvol:2.1, m15:1.8, age:'6m', spark:[5,5,6,6,7,7,9,8,10,11]},
-    {tag:'RUNNING', tone:'running', ticker:'LAES', company:'SEALSQ', price:3.15, change:11.6, rvol:2.8, m15:4.9, age:'11m', spark:[4,5,5,7,6,9,9,11,11,13]},
-    {tag:'EXTENDED',tone:'extended',ticker:'IONQ', company:'IonQ', price:24.10, change:26.4, rvol:4.6, m15:12.3, age:'14m', spark:[2,3,4,6,8,9,12,14,15,16]},
-    {tag:'SETUP',   tone:'setup',   ticker:'HOLO', company:'MicroCloud Hologram', price:0.94, change:2.1, rvol:1.6, m15:0.9, age:'22m', spark:[6,6,5,7,6,7,7,8,8,9]},
-    {tag:'WATCH',   tone:'watch',   ticker:'BBAI', company:'BigBear.ai', price:2.63, change:-1.4, rvol:0.8, m15:-0.6, age:'31m', spark:[9,9,8,8,7,7,8,7,7,6]},
-    {tag:'AVOID',   tone:'avoid',   ticker:'KULR', company:'KULR Technology', price:0.71, change:-8.9, rvol:3.1, m15:-5.4, age:'38m', spark:[10,9,9,8,7,6,5,4,3,2], risk:true},
-    {tag:'WATCH',   tone:'watch',   ticker:'COSM', company:'Cosmos Health', price:1.12, change:0.4,  rvol:0.6, m15:0.2, age:'1h', spark:[6,6,6,7,6,6,7,6,6,6]},
+    {tag:'RUNNING', tone:'running', ticker:'SOUN', company:'SoundHound AI', price:8.42, change:18.3, age:'2m',
+      spark:[3,4,4,6,5,8,7,10,9,12], rvol:3.4, m15:7.1, liquidity:90, catalyst:80,
+      chart:[4.1,4.3,4.2,4.6,4.5,5.0,4.9,5.4,5.9,5.7,6.4,7.0,6.8,7.6,8.4],
+      signals:['3.4× same-time volume','+7.1% in 15m','above prior high','holding above VWAP'],
+      risks:['already extended']},
+    {tag:'SETUP', tone:'setup', ticker:'RGTI', company:'Rigetti Computing', price:1.87, change:4.2, age:'6m',
+      spark:[5,5,6,6,7,7,9,8,10,11], rvol:2.1, m15:1.8, liquidity:74, catalyst:55,
+      chart:[1.5,1.52,1.5,1.55,1.6,1.58,1.64,1.68,1.7,1.75,1.8,1.78,1.83,1.85,1.87],
+      signals:['2.1× same-time volume','+1.8% in 15m','near session high'],
+      risks:['thin dollar volume']},
+    {tag:'RUNNING', tone:'running', ticker:'LAES', company:'SEALSQ', price:3.15, change:11.6, age:'11m',
+      spark:[4,5,5,7,6,9,9,11,11,13], rvol:2.8, m15:4.9, liquidity:68, catalyst:70,
+      chart:[2.3,2.4,2.35,2.5,2.6,2.55,2.7,2.8,2.85,2.95,3.0,2.98,3.05,3.1,3.15],
+      signals:['2.8× same-time volume','+4.9% in 15m','momentum is accelerating'],
+      risks:['pulling back from session high']},
+    {tag:'EXTENDED', tone:'extended', ticker:'IONQ', company:'IonQ', price:24.10, change:26.4, age:'14m',
+      spark:[2,3,4,6,8,9,12,14,15,16], rvol:4.6, m15:12.3, liquidity:95, catalyst:60,
+      chart:[16,17,18,19,18.5,20,21,23,22,24,25,24.5,26,25,24.1],
+      signals:['4.6× same-time volume','+12.3% in 15m','above prior high'],
+      risks:['already extended','parabolic 15m move']},
+    {tag:'SETUP', tone:'setup', ticker:'HOLO', company:'MicroCloud Hologram', price:0.94, change:2.1, age:'22m',
+      spark:[6,6,5,7,6,7,7,8,8,9], rvol:1.6, m15:0.9, liquidity:38, catalyst:35,
+      chart:[0.86,0.87,0.86,0.88,0.89,0.88,0.9,0.91,0.9,0.92,0.93,0.92,0.93,0.93,0.94],
+      signals:['above prior high'], risks:['thin dollar volume','not enough volume history']},
+    {tag:'WATCH', tone:'watch', ticker:'BBAI', company:'BigBear.ai', price:2.63, change:-1.4, age:'31m',
+      spark:[9,9,8,8,7,7,8,7,7,6], rvol:0.8, m15:-0.6, liquidity:72, catalyst:40,
+      chart:[2.75,2.74,2.72,2.7,2.71,2.68,2.66,2.67,2.65,2.64,2.66,2.65,2.64,2.63,2.63],
+      signals:['near session high'], risks:['short-term momentum is falling','below VWAP']},
+    {tag:'AVOID', tone:'avoid', ticker:'KULR', company:'KULR Technology', price:0.71, change:-8.9, age:'38m', risk:true,
+      spark:[10,9,9,8,7,6,5,4,3,2], rvol:3.1, m15:-5.4, liquidity:44, catalyst:30,
+      chart:[0.82,0.81,0.8,0.79,0.78,0.79,0.77,0.76,0.78,0.76,0.74,0.75,0.73,0.72,0.71],
+      signals:['3.1× same-time volume'], risks:['rug risk HIGH (78)','short-term momentum is falling','below VWAP']},
+    {tag:'WATCH', tone:'watch', ticker:'COSM', company:'Cosmos Health', price:1.12, change:0.4, age:'1h',
+      spark:[6,6,6,7,6,6,7,6,6,6], rvol:0.6, m15:0.2, liquidity:41, catalyst:20,
+      chart:[1.1,1.11,1.1,1.12,1.11,1.12,1.13,1.12,1.11,1.12,1.12,1.11,1.12,1.12,1.12],
+      signals:['near session high'], risks:['thin dollar volume','quote is about 1h old']},
   ];
+
+  const WEIGHTS = [
+    {key:'volume',    name:'Volume',       weight:25},
+    {key:'momentum',  name:'Momentum',     weight:25},
+    {key:'move',      name:'Move quality', weight:20},
+    {key:'liquidity', name:'Liquidity',    weight:15},
+    {key:'catalyst',  name:'Catalyst',     weight:15},
+  ];
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+  function partsFor(r) {
+    const volume = clamp(r.rvol / 5 * 100, 0, 100);
+    const momentum = clamp(50 + r.m15 * 4, 0, 100);
+    const move = r.change <= 0 ? 0 : r.change <= 12 ? clamp(r.change * 8, 0, 100) : clamp(100 - (r.change - 12) * 5, 0, 100);
+    return {
+      volume:    {value: volume,    raw: r.rvol.toFixed(1) + '×'},
+      momentum:  {value: momentum,  raw: (r.m15 >= 0 ? '+' : '') + r.m15.toFixed(1) + '% 15m'},
+      move:      {value: move,      raw: (r.change >= 0 ? '+' : '') + r.change.toFixed(1) + '%'},
+      liquidity: {value: r.liquidity, raw: '$' + Math.round(r.liquidity * 0.5) + 'M'},
+      catalyst:  {value: r.catalyst,  raw: r.catalyst >= 60 ? '8-K · recent' : r.catalyst >= 30 ? 'No new filing' : 'Quiet'},
+    };
+  }
+  function scoreFor(r) {
+    const p = partsFor(r);
+    const subtotal = WEIGHTS.reduce((sum, c) => sum + c.weight * p[c.key].value / 100, 0);
+    const penalty = clamp(Math.max(0, r.change - 15) * 0.55, 0, 16) + clamp(Math.max(0, r.m15 - 12) * 0.5, 0, 7);
+    const fresh = r.age === '1h' ? 0.78 : r.age.endsWith('m') && parseInt(r.age) > 15 ? 0.92 : 1.0;
+    return {parts: p, subtotal, penalty, fresh, score: Math.round(clamp((subtotal - penalty) * fresh, 0, 100))};
+  }
+  function band(score) { return score >= 65 ? '' : score >= 45 ? 'building' : 'weak'; }
 
   const list = document.getElementById('rows');
   const count = document.getElementById('count');
@@ -204,13 +327,8 @@
 
   const sparkPath = values => {
     const min = Math.min(...values), max = Math.max(...values), span = max - min || 1;
-    return values.map((v, i) => {
-      const x = 1 + i / (values.length - 1) * 70;
-      const y = 24 - (v - min) / span * 22;
-      return `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`;
-    }).join(' ');
+    return values.map((v, i) => `${i ? 'L' : 'M'}${(1 + i / (values.length - 1) * 70).toFixed(1)} ${(24 - (v - min) / span * 22).toFixed(1)}`).join(' ');
   };
-
   const sign = v => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
 
   function render() {
@@ -218,54 +336,95 @@
     const shown = rows.filter(r =>
       (!activeTag || r.tone === activeTag) &&
       (!needle || (r.ticker + ' ' + r.company).toLowerCase().includes(needle)));
-    list.innerHTML = shown.map(r => `
+    list.innerHTML = shown.map(r => {
+      const s = scoreFor(r).score;
+      return `
       <div class="row">
         <span class="tag ${r.tone}${r.risk ? ' risk' : ''}">${r.tag}</span>
-        <span class="identity" tabindex="0" role="button" data-ticker="${r.ticker}" aria-label="Open ${r.ticker} universe">
-          <strong>${r.ticker}</strong><small>${r.company}</small>
-        </span>
+        <span class="identity" tabindex="0" role="button" data-ticker="${r.ticker}" aria-label="Open ${r.ticker}">
+          <strong>${r.ticker}</strong><small>${r.company}</small></span>
         <span class="quote"><strong>$${r.price.toFixed(2)}</strong>
           <small class="${r.change >= 0 ? 'up' : 'down'}">${sign(r.change)}</small></span>
-        <svg class="spark ${r.change >= 0 ? 'up' : 'down'}" viewBox="0 0 72 26" aria-hidden="true">
-          <path d="${sparkPath(r.spark)}"/></svg>
-        <span class="metrics">
-          <span>RVOL<b>${r.rvol.toFixed(1)}×</b></span>
-          <span>15m<b class="${r.m15 >= 0 ? 'up' : 'down'}">${sign(r.m15)}</b></span>
-          <span class="age">${r.age}</span>
-        </span>
-      </div>`).join('');
+        <svg class="spark ${r.change >= 0 ? 'up' : 'down'}" viewBox="0 0 72 26" aria-hidden="true"><path d="${sparkPath(r.spark)}"/></svg>
+        <span class="score ${band(s)}"><b>${s}</b><span class="meter"><i style="width:${s}%"></i></span></span>
+      </div>`;
+    }).join('');
     count.textContent = `${shown.length} of ${rows.length} names on the board`;
   }
 
   document.getElementById('chips').addEventListener('click', event => {
     const chip = event.target.closest('.chip');
     if (!chip) return;
-    const tag = chip.dataset.tag;
-    activeTag = activeTag === tag ? null : tag;
+    activeTag = activeTag === chip.dataset.tag ? null : chip.dataset.tag;
     document.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.tag === activeTag)));
     render();
   });
   q.addEventListener('input', render);
+  for (const tag of ['running', 'setup', 'avoid']) {
+    document.getElementById('c-' + tag).textContent = rows.filter(r => r.tone === tag).length;
+  }
 
-  function openUniverse(ticker) {
-    document.getElementById('uni-title').textContent = `${ticker} universe`;
-    document.getElementById('universe').hidden = false;
-    document.querySelector('.rows').hidden = true;
-    document.querySelector('.board-head').hidden = true;
+  function showList() {
+    document.getElementById('tickerView').hidden = true;
+    document.getElementById('listView').hidden = false;
+    window.scrollTo({top: 0});
+  }
+  function showTicker(ticker) {
+    const r = rows.find(x => x.ticker === ticker);
+    if (!r) return;
+    const s = scoreFor(r);
+    document.getElementById('t-title').textContent = r.ticker;
+    document.getElementById('t-company').textContent = r.company;
+    document.getElementById('t-price').textContent = '$' + r.price.toFixed(2);
+    const ch = document.getElementById('t-change');
+    ch.textContent = sign(r.change); ch.className = r.change >= 0 ? 'up' : 'down';
+    document.getElementById('u-core').textContent = r.ticker;
+    document.getElementById('t-chart-note').textContent = `60 days · ${r.tag.toLowerCase()} · score ${s.score}`;
+
+    const C = 900, H = 220, pad = 12, min = Math.min(...r.chart), max = Math.max(...r.chart), span = max - min || 1;
+    const coords = r.chart.map((v, i) => [pad + i / (r.chart.length - 1) * (C - pad * 2), H - 34 - (v - min) / span * (H - 70)]);
+    const line = coords.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
+    const mi = Math.round((r.chart.length - 1) * 0.72), mx = coords[mi][0];
+    document.getElementById('t-chart').innerHTML = `
+      <path class="chart-area" d="${line} L${(C - pad).toFixed(1)},${H - 34} L${pad},${H - 34} Z"/>
+      <path class="chart-line" d="${line}"/>
+      <line class="chart-marker" x1="${mx.toFixed(1)}" y1="14" x2="${mx.toFixed(1)}" y2="${H - 34}"/>`;
+    document.getElementById('t-chart-start').textContent = '60 days ago';
+    document.getElementById('t-chart-end').textContent = 'SEC filing · ' + (r.catalyst >= 60 ? 'yesterday' : 'older');
+
+    document.getElementById('breakdown').innerHTML = WEIGHTS.map(c => {
+      const p = s.parts[c.key];
+      return `<div class="part"><span class="name">${c.name}</span>
+        <span class="bar"><i style="width:${p.value.toFixed(0)}%"></i></span>
+        <span class="raw">${p.raw}</span>
+        <span class="weight">${c.weight}%</span>
+        <span class="contrib">${(c.weight * p.value / 100).toFixed(1)}</span></div>`;
+    }).join('') + `
+      <div class="part future"><span class="name">LLM sentiment</span>
+        <span class="bar"><i style="width:0%"></i></span>
+        <span class="raw">not yet weighted</span><span class="weight">—</span><span class="contrib">—</span></div>
+      <div class="formula">
+        subtotal = Σ(weight × component) = <b>${s.subtotal.toFixed(1)}</b><br>
+        penalties = <b>−${s.penalty.toFixed(1)}</b> (extension / parabola / structure)<br>
+        freshness = <b>×${s.fresh.toFixed(2)}</b><br>
+        <span style="color:var(--text);font-weight:700">score = (${s.subtotal.toFixed(1)} − ${s.penalty.toFixed(1)}) × ${s.fresh.toFixed(2)} = ${s.score}</span>
+      </div>
+      <div class="total"><span>${r.tag} · score</span><b>${s.score}</b></div>`;
+
+    document.getElementById('signals').innerHTML = r.signals.map(x => `<li>${x}</li>`).join('');
+    document.getElementById('risks').innerHTML = r.risks.map(x => `<li>${x}</li>`).join('');
+
+    document.getElementById('listView').hidden = true;
+    document.getElementById('tickerView').hidden = false;
     window.scrollTo({top: 0, behavior: 'smooth'});
   }
-  function closeUniverse() {
-    document.getElementById('universe').hidden = true;
-    document.querySelector('.rows').hidden = false;
-    document.querySelector('.board-head').hidden = false;
-  }
-  list.addEventListener('click', e => { const id = e.target.closest('[data-ticker]'); if (id) openUniverse(id.dataset.ticker); });
+  list.addEventListener('click', e => { const id = e.target.closest('[data-ticker]'); if (id) showTicker(id.dataset.ticker); });
   list.addEventListener('keydown', e => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const id = e.target.closest('[data-ticker]'); if (!id) return;
-    e.preventDefault(); openUniverse(id.dataset.ticker);
+    e.preventDefault(); showTicker(id.dataset.ticker);
   });
-  document.getElementById('uni-back').addEventListener('click', closeUniverse);
+  document.getElementById('back').addEventListener('click', e => { e.preventDefault(); showList(); });
 
   render();
 </script>

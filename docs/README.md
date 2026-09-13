@@ -24,7 +24,7 @@ pull request as the source of truth for current status.
 | Document | Status |
 | --- | --- |
 | [media-game.md](media-game.md) | Product framing for the playable media service |
-| [market-list-ux.md](market-list-ux.md) | Redesign: tight tagged list, top-bar breadth filters, per-ticker universe ([preview](market-list-preview.html)) |
+| [market-list-ux.md](market-list-ux.md) | Redesign: tight tagged list, one composite score, top-bar breadth filters, ticker = chart → map → metrics ([preview](market-list-preview.html)) |
 | [playable-ticker-design.md](playable-ticker-design.md) | First game design proposal, superseded by the assessment below |
 | [research/game-pattern-assessment.md](research/game-pattern-assessment.md) | Revised design assessment; governs public presentation |
 | [research/pseudonymous-identity-design.md](research/pseudonymous-identity-design.md) | Planned identity revision; governs `market-actors.md` going forward |
