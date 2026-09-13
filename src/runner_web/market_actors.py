@@ -227,6 +227,8 @@ def _stock_owners(row: Any) -> list[tuple[str, str]]:
 
 def _stock_direction(row: Any) -> str:
     codes = str(row["transaction_codes"] or "").upper()
+    if "P" in codes and "S" in codes:
+        return "mixed"
     if "P" in codes:
         return "buy"
     if "S" in codes:
@@ -481,6 +483,7 @@ def public_relationship(market: str, direction: Any) -> str:
     if market == "memecoins":
         return "Possible wallet activity · observed"
     return {
+        "mixed": "Reported purchases and sales · filed",
         "buy": "Reported purchase · filed",
         "sell": "Reported sale · filed",
         "own": "Reported ownership · filed",
@@ -496,9 +499,12 @@ def market_actor_map(domain: str, *, at: datetime | None = None) -> dict[str, An
             """
             SELECT t.actor_id,t.subject_kind,t.subject_key,t.role,t.direction,
                    t.weight,t.as_of,t.evidence_kind,t.evidence_id,
-                   a.kind,a.display_name,a.ability_id,a.avatar_seed,a.portrait_status
+                   a.kind,a.display_name,a.ability_id,a.avatar_seed,a.portrait_status,
+                   f.transaction_codes,f.transaction_value,f.filing_url
             FROM actor_ties t
             JOIN market_actors a ON a.id=t.actor_id
+            LEFT JOIN sec_filings f ON t.evidence_kind='sec_filing'
+                AND f.accession=t.evidence_id
             WHERE a.domain=?
             ORDER BY t.as_of DESC
             LIMIT ?
@@ -513,6 +519,10 @@ def market_actor_map(domain: str, *, at: datetime | None = None) -> dict[str, An
         subject_kind = str(row["subject_kind"])
         subject_key = str(row["subject_key"])
         weight = _number(row["weight"]) or 0.0
+        direction = str(row["direction"])
+        codes = str(row["transaction_codes"] or "").split(",")
+        if "P" in codes and "S" in codes:
+            direction = "mixed"
         actor = actors.setdefault(
             actor_id,
             {
@@ -553,13 +563,23 @@ def market_actor_map(domain: str, *, at: datetime | None = None) -> dict[str, An
             {
                 "actor_id": actor_id,
                 "subject_key": subject_key,
-                "direction": str(row["direction"]),
+                "direction": direction,
+                "activity": [],
                 "weight": 0.0,
                 "as_of": "",
                 "evidence_kind": str(row["evidence_kind"]),
                 "evidence_id": str(row["evidence_id"]),
             },
         )
+        activity = {
+            "direction": direction,
+            "as_of": str(row["as_of"]),
+            "role": str(row["role"]),
+            "value": _number(row["transaction_value"]) if direction in {"buy", "sell"} else None,
+            "url": str(row["filing_url"] or ""),
+        }
+        if activity not in link["activity"]:
+            link["activity"].append(activity)
         link["weight"] += weight
         link["as_of"] = max(link["as_of"], str(row["as_of"]))
     ranked = sorted(

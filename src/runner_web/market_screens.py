@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 LABELS = {"stocks": "Stocks", "memecoins": "Memecoins", "sports": "Sports"}
 
@@ -142,6 +142,39 @@ def listing(
     return screen
 
 
+def stock_activity(link: dict[str, Any]) -> list[dict[str, str]]:
+    words = {
+        "buy": "Bought",
+        "sell": "Sold",
+        "mixed": "Bought and sold",
+        "own": "Disclosed ownership",
+        "hold": "Updated holding",
+    }
+    result = []
+    for entry in link.get("activity") or [link]:
+        direction = str(entry.get("direction") or "")
+        url = str(entry.get("url") or "")
+        try:
+            parsed = urlsplit(url)
+            safe = parsed.scheme == "https" and parsed.hostname in {"www.sec.gov", "sec.gov"}
+        except ValueError:
+            safe = False
+        value = number(entry.get("value"))
+        result.append(
+            {
+                "action": words.get(direction, "Filed update"),
+                "tone": {"buy": "up", "sell": "down"}.get(direction, "neutral"),
+                "time": stamp(entry.get("as_of")),
+                "value": money(value)
+                if value is not None and value > 0 and direction in {"buy", "sell"}
+                else "",
+                "role": str(entry.get("role") or "").replace("_", " "),
+                "url": url if safe else "",
+            }
+        )
+    return result
+
+
 def map_connections(
     market: str, rows: list[dict[str, Any]], items: list[dict[str, Any]], graph: dict[str, Any]
 ) -> dict[str, Any]:
@@ -213,10 +246,15 @@ def map_connections(
                     )
                     if actor.get("portrait_ready")
                     else "",
-                    "label": "Possible wallet link" if market == "memecoins" else "Participant",
+                    "label": "Possible wallet link"
+                    if market == "memecoins"
+                    else "Filing character",
                     "explanation": "Saved wallet activity suggests a possible connection."
                     if market == "memecoins"
-                    else "Public filings connect this participant to these tickers.",
+                    else (
+                        "This fictional character represents a public filer. "
+                        "Dates show when each filing was reported."
+                    ),
                     "links": [],
                 },
             )
@@ -225,6 +263,7 @@ def map_connections(
                     "item": targets[key],
                     "time": stamp(link.get("as_of")),
                     "label": public_relationship(market, link.get("direction")),
+                    "activity": stock_activity(link) if market == "stocks" else [],
                 }
             )
     connections = []
@@ -239,6 +278,11 @@ def map_connections(
         connected.update(link["item"]["id"] for link in node["links"])
         node["visible_links"] = node["links"][:6]
         node["more_links"] = node["links"][6:]
+        node["action_summary"] = " · ".join(
+            f"{link['activity'][0]['action']} {link['item']['name']}"
+            for link in node["visible_links"][:3]
+            if link.get("activity")
+        )
         connections.append(node)
     connections.sort(key=lambda node: (-len(node["links"]), node["name"], node["id"]))
     return {"connections": connections, "unlinked": [r for r in rows if r["id"] not in connected]}

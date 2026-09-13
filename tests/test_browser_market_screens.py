@@ -332,7 +332,10 @@ def test_map_keyboard_connections_overflow_and_detail(page, width):
     summary.focus()
     page.keyboard.press("Enter")
     expect(
-        page.get_by_text("Public filings connect this participant to these tickers.")
+        page.get_by_text(
+            "This fictional character represents a public filer. "
+            "Dates show when each filing was reported."
+        )
     ).to_be_visible()
     expect(page.get_by_role("link", name="View T8 Detail")).to_be_hidden()
     page.locator(".more-connections > summary").focus()

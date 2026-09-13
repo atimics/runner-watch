@@ -453,3 +453,31 @@ def test_map_cached_portraits_read_saved_images_only(screen_client, monkeypatch)
     response = screen_client.get(url)
     assert response.status_code == 200
     assert response.content == b"saved-image"
+
+
+def test_stock_map_shows_actions_history_and_safe_sources():
+    graph = connected_graph(1)
+    graph["links"][0]["activity"] = [
+        {
+            "direction": "sell",
+            "value": 400,
+            "as_of": "2026-09-12T12:00:00Z",
+            "url": "https://www.sec.gov/Archives/example",
+            "role": "officer",
+        },
+        {
+            "direction": "mixed",
+            "value": 999,
+            "as_of": "2026-09-11T12:00:00Z",
+            "url": "javascript:alert(1)",
+        },
+    ]
+    screen = listing("stocks", [{**sample("stocks"), "ticker": "T0"}], view="map", graph=graph)
+    assert screen["connections"][0]["action_summary"] == "Sold T0"
+    html = render(screen)
+    assert "Sold · $400.00" in html
+    assert "Bought and sold" in html
+    assert "Filed Sep 12" in html
+    assert 'href="https://www.sec.gov/Archives/example"' in html
+    assert "javascript:" not in html
+    assert "$999" not in html
