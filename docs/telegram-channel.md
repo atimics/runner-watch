@@ -23,13 +23,26 @@ document is the thing to update first.
 
 ## Kinds and triggers
 
-| Post | Trigger | Dedupe key | Format helper |
+Everything pending is folded into **one batched announcement** by
+`dispatch_telegram_posts` and rendered by `format_update_announcement_md`.
+Each kind keeps its own dedupe key, so a failed batch redelivers only what
+did not land:
+
+| Post | Trigger | Dedupe key | Rendered by |
 |---|---|---|---|
-| New runner alert | pulse entry without a delivery row, score ≥ `TELEGRAM_MIN_SCORE` | `telegram_alert_deliveries(ticker, entered_at)` | `format_runner_digest_md` |
+| New runner alert | pulse entry without a delivery row, score ≥ `TELEGRAM_MIN_SCORE` | `telegram_alert_deliveries(ticker, entered_at)` | runner card inside `format_update_announcement_md` |
 | 4:20 Blaze Report (pre- or post-market) | frozen session report without a channel post for its id | `telegram_channel_posts(kind="market_report", subject=id)` | `format_market_report_post_md` |
-| Event on tracked ticker | new SEC/NDX/news on a ticker tracked by the pulse | per-event delivery row keyed by `(kind, subject_key)` | `format_event_post_md` |
 | Public Flash report | research commission in `visible=public` without a channel post | `telegram_channel_posts(kind="research_report", subject=public_id)` | `format_public_report_post_md` |
 | New build | `APP_BUILD_SHA` changed and `TELEGRAM_RELEASE_ANNOUNCEMENTS=1` | `telegram_channel_posts(kind="release", subject=sha)` | `format_release_announcement_md` |
+
+`format_event_post_md` renders a filing/news card and is wired into the batch
+builder, but nothing dispatches events yet: `_activity_payload` does not emit
+them. That row stays out of the table until a trigger and a dedupe key exist.
+
+Memecoin replay GIFs are delivered by `dispatch_memecoin_replays` with a
+Markdown V2 caption (`🪙 SYMBOL — new coin detected`, launch state, saved
+events, and the coin page link). The raw token address stays on the coin page,
+not in the chat.
 
 The daily report cap (Flash runs per runner) lives in
 `TELEGRAM_RUNNER_REPORTS_PER_DAY` and is enforced before the queue.
@@ -70,9 +83,9 @@ SETUP blue, EXTENDED orange, AVOID red, WATCH neutral, PAUSED muted).
 | WATCH | ⚪ |
 | PAUSED | ⏸ |
 
-The batched update header is 🦁 (the channel mascot emoji). Runner digests are
-🟢 (a runner). Briefing posts are 🧭. Public research is 📄. Events are
-📰.
+The batched update and release headers are 🐆 — the channel mascot is the
+cheetah, matching the reactions and the chat persona. Briefing posts are 🧭.
+Public research is 📄. Events are 📰. Memecoin replays are 🪙.
 
 ## How to turn a kind on or off
 

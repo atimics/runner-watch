@@ -10,21 +10,34 @@ from runner_web.memecoin_replay_store import saved_replay
 from runner_web.telegram import (
     AnimationDeliveryError,
     config_from_env,
+    escape_markdown_v2,
     memecoin_alerts_enabled,
     send_animation,
 )
 
 
 def caption(payload: dict, *, origin: str) -> str:
-    launch = "Launch recorded on chain" if payload["launch"] else "Launch evidence pending"
-    label = str(payload["symbol"] or payload["token_address"][:8])
-    return (
-        f"New memecoin detected · {label}\n\n{payload['token_address']}\n"
-        f"{launch}\n{len(payload['events'])} saved events · "
-        f"{len(payload['frames'])} replay keyframes\n"
-        "Coverage follows collected transactions.\n\n"
-        f"Replay the network: {origin.rstrip('/')}/memecoins/coin/"
+    """One tight Markdown V2 card under the replay GIF.
+
+    The coin page URL carries the identity, so the raw token address stays on
+    the page instead of in the chat.
+    """
+
+    label = escape_markdown_v2(
+        str(payload["symbol"] or payload["token_address"][:8]).strip().upper()
+    )
+    launch = escape_markdown_v2(
+        "Launch recorded on chain" if payload["launch"] else "Launch evidence pending"
+    )
+    events = escape_markdown_v2(f"{len(payload['events'])} saved events")
+    link = (
+        f"{origin.rstrip('/')}/memecoins/coin/"
         f"{quote(payload['coin_id'], safe='')}?replay={payload['id']}#token-replay"
+    )
+    return (
+        f"\U0001FA99 *{label}* — new coin detected\n\n"
+        f"{launch} · {events}\n\n"
+        f"{link}"
     )
 
 

@@ -154,33 +154,33 @@ def _url_payload(request: urllib.request.Request) -> dict[str, Any]:
     return json.loads(body)
 
 
-def test_runner_digest_renders_tag_metrics_and_first_link() -> None:
-    message = telegram.format_runner_digest_md(
-        [
-            {
-                "ticker": "SOUN",
-                "tag": "RUNNING",
-                "price": 8.42,
-                "change_pct": 18.3,
-                "relative_volume": 3.4,
-                "score": 84,
-            }
-        ],
+def test_batched_update_renders_cheetah_state_price_and_link() -> None:
+    message = telegram.format_update_announcement_md(
+        {
+            "runners": [
+                {
+                    "ticker": "SOUN",
+                    "tag": "RUNNING",
+                    "price": 8.42,
+                    "change_pct": 18.3,
+                    "relative_volume": 3.4,
+                    "score": 88,
+                }
+            ],
+            "reports": [],
+            "events": [],
+        },
         origin="https://runners.rati.chat",
     )
     lines = message.split("\n")
-    assert lines[0] == "\U0001F7E2 *1 new runner detected*"
-    assert "*SOUN*  \u2014  *RUNNING*" in message, message
-    assert "*3.4\u00D7*" in message, message
-    assert "score *84*" in message, message
+    assert lines[0] == "\U0001F406 *1 new on the board*"
+    assert "\u26A1 *SOUN*  \u2014  RUNNING" in message, message
+    assert "$8.42" in message, message
+    assert "*+18.3%" in message and "*3.4\u00D7*" in message and "score *88*" in message
     assert message.endswith("https://runners.rati.chat/t/SOUN"), message
 
 
-def test_batched_update_changes_emoji_and_count() -> None:
-    one = telegram.format_update_announcement_md(
-        {"runners": [{"ticker": "A", "tag": "RUNNING", "score": 88}], "reports": [], "events": []},
-        origin="http://app.test",
-    )
+def test_batched_update_counts_and_links_every_runner() -> None:
     two = telegram.format_update_announcement_md(
         {
             "runners": [
@@ -192,7 +192,6 @@ def test_batched_update_changes_emoji_and_count() -> None:
         },
         origin="http://app.test",
     )
-    assert "1 new on the board" in one
     assert "2 new on the board" in two
     assert "/t/B" in two and "/t/A" in two
 
@@ -236,3 +235,10 @@ def test_event_post_lists_origin_and_source() -> None:
 
 def test_release_announcement_returns_empty_without_notes() -> None:
     assert telegram.format_release_announcement_md("1.2.3", "   ", origin="x") == ""
+
+
+def test_release_announcement_leads_with_the_cheetah() -> None:
+    message = telegram.format_release_announcement_md(
+        "1.0.1", "Calls page ships.", origin="https://runners.rati.chat"
+    )
+    assert message.startswith("\U0001F406 *RATi Runners 1.0.1*"), message

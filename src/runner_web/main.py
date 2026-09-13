@@ -11257,6 +11257,7 @@ def _activity_payload(
     activity_runners = [
         {
             "ticker": str(entry.get("ticker") or "").upper(),
+            "price": entry.get("price"),
             "change_pct": entry.get("change_pct"),
             "relative_volume": entry.get("relative_volume"),
             "score": entry.get("score"),

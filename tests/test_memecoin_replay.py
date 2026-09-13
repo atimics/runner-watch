@@ -341,7 +341,8 @@ def test_new_detection_queues_one_frozen_gif_and_delivers_once(monkeypatch):
     assert len(sent) == 1
     assert sent[0][0] == "test-channel"
     assert sent[0][1] == store.saved_replay(COIN["id"], with_gif=True)["gif"]
-    assert MINT in sent[0][2] and "?replay=" in sent[0][2]
+    assert MINT not in sent[0][2]
+    assert "new coin detected" in sent[0][2] and "?replay=" in sent[0][2]
     collect(at=AT + timedelta(minutes=5))
     store.render_pending_replays(at=AT + timedelta(minutes=5))
     assert dispatch_memecoin_replays(origin="https://app.test", at=AT, sender=receiver)["sent"] == 0

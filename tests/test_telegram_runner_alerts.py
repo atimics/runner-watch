@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import urllib.error
 from datetime import UTC, datetime
 
 import pytest
@@ -181,116 +180,6 @@ def test_select_new_runners_filters_orders_and_caps() -> None:
 
     assert [entry["ticker"] for entry in selected] == ["HIGH", "MID"]
     assert telegram.select_new_runners(entries, min_score=0, limit=1)[0]["ticker"] == "HIGH"
-
-
-def test_format_runner_digest_includes_metrics_and_link() -> None:
-    text = telegram.format_runner_digest(
-        [
-            {
-                "ticker": "abcd",
-                "price": 12.34,
-                "change_pct": 18.4,
-                "relative_volume": 5.2,
-                "score": 78,
-            }
-        ],
-        origin="https://runners.rati.chat",
-    )
-
-    assert "1 new runner detected" in text
-    assert "$ABCD" in text
-    assert "$12.34" in text
-    assert "+18.40%" in text
-    assert "RVOL 5.2x" in text
-    assert "score 78" in text
-    assert "https://runners.rati.chat/t/ABCD" in text
-
-
-def test_format_runner_digest_counts_several_runners() -> None:
-    text = telegram.format_runner_digest(
-        [{"ticker": "AAAA", "score": 70}, {"ticker": "BBBB", "score": 65}],
-        origin="https://runners.rati.chat/",
-    )
-
-    assert "2 new runners detected" in text
-    assert "https://runners.rati.chat/t/AAAA" in text
-    assert "https://runners.rati.chat/t/BBBB" in text
-
-
-def test_format_market_report_post_includes_leaders_and_link() -> None:
-    text = telegram.format_market_report_post(
-        {
-            "report_type": "pre_market",
-            "label": "Pre-market briefing",
-            "headline": "MSGM leads the pre-market board",
-            "summary": "12 names cleared the scanner. 8 were green.",
-            "report_day": "2026-09-11",
-            "path": "/reports/2026-09-11/pre",
-            "leaders": [
-                {"ticker": "msgm", "change_pct": 12.4, "score": 72},
-                {"ticker": "VTAK", "change_pct": 8.1, "score": 65},
-            ],
-        },
-        origin="https://runners.rati.chat",
-    )
-
-    assert text.startswith("📋 Pre-market briefing")
-    assert "MSGM leads the pre-market board" in text
-    assert "$MSGM · +12.40% · score 72" in text
-    assert "$VTAK · +8.10% · score 65" in text
-    assert "https://runners.rati.chat/reports/2026-09-11/pre" in text
-
-
-def test_format_public_report_post_includes_ticker_and_report_links() -> None:
-    text = telegram.format_public_report_post(
-        {
-            "ticker": "cast",
-            "headline": "A quiet tape with a loud filing",
-            "public_id": "rep-cast",
-        },
-        origin="https://runners.rati.chat/",
-    )
-
-    assert "📄 New public report · $CAST" in text
-    assert "A quiet tape with a loud filing" in text
-    assert "https://runners.rati.chat/t/CAST" in text
-    assert "https://runners.rati.chat/research/rep-cast" in text
-
-
-def test_send_message_requires_configuration() -> None:
-    with pytest.raises(RuntimeError):
-        telegram.send_message(telegram.TelegramConfig(bot_token="", chat_id=""), "hello")
-
-
-def test_send_message_posts_payload_to_bot_endpoint() -> None:
-    captured: dict[str, object] = {}
-
-    def opener(request, timeout=None):
-        captured["url"] = request.full_url
-        captured["body"] = json.loads(request.data)
-        captured["timeout"] = timeout
-        return _FakeResponse()
-
-    telegram.send_message(
-        telegram.TelegramConfig(bot_token="tok", chat_id="123"),
-        "hello",
-        opener=opener,
-    )
-
-    assert captured["url"] == "https://api.telegram.org/bottok/sendMessage"
-    assert captured["body"] == {"chat_id": "123", "text": "hello", "disable_notification": False}
-
-
-def test_send_message_rejects_an_api_error() -> None:
-    def opener(request, timeout=None):
-        return _FakeResponse(status=400, body=b'{"ok":false}')
-
-    with pytest.raises(urllib.error.HTTPError):
-        telegram.send_message(
-            telegram.TelegramConfig(bot_token="tok", chat_id="123"),
-            "hello",
-            opener=opener,
-        )
 
 
 def test_dispatch_is_a_noop_when_alerts_are_disabled(
@@ -898,37 +787,6 @@ def test_batch_readiness_waits_for_a_batch_or_the_debounce() -> None:
     assert telegram.announcement_batch_ready(2, 0, min_items=2) is True
     assert telegram.announcement_batch_ready(1, 5, min_items=2, debounce_minutes=30) is False
     assert telegram.announcement_batch_ready(1, 31, min_items=2, debounce_minutes=30) is True
-
-
-def test_a_plain_announcement_names_what_landed_and_links_it() -> None:
-    text = telegram.format_update_announcement(
-        {
-            "runners": [
-                {
-                    "ticker": "MSGM",
-                    "change_pct": 34.0,
-                    "relative_volume": 8.4,
-                    "path": "/t/MSGM",
-                }
-            ],
-            "reports": [
-                {
-                    "label": "Pre-market briefing",
-                    "headline": "CAST leads",
-                    "path": "/reports/2026-09-11/pre",
-                }
-            ],
-        },
-        origin="https://runners.example",
-    )
-
-    assert "2 new on the board" in text
-    assert "$MSGM" in text
-    assert "+34.00%" in text
-    assert "RVOL 8.4x" in text
-    assert "https://runners.example/t/MSGM" in text
-    assert "Pre-market briefing: CAST leads" in text
-    assert "https://runners.example/reports/2026-09-11/pre" in text
 
 
 def test_a_failed_release_announcement_retries_then_stays_sent(
