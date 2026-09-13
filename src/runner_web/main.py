@@ -120,6 +120,7 @@ from runner_web.dash import sector_now as dash_sector_now
 from runner_web.dash import session_report as dash_session_report
 from runner_web.db import connection, init_db
 from runner_web.flash_evaluations import (
+    flash_open_calls,
     flash_record,
     forecast_for_report,
     prepare_forecast_evidence,
@@ -190,6 +191,7 @@ from runner_web.market_reports import (
     refresh_market_reports,
 )
 from runner_web.market_screens import detail as simple_market_detail
+from runner_web.market_screens import stamp as screen_stamp
 from runner_web.memecoin_calls import (
     active_memecoin_call,
     close_memecoin_call,
@@ -2904,12 +2906,166 @@ def my_calls_page(
     runner_session: str | None = Cookie(default=None),
     market: str = "",
 ) -> RedirectResponse:
+    _ = request, market
     user = require_user(runner_session)
-    identity = ensure_caller_identity(str(user["id"]))
-    suffix = (
-        "?" + urlencode({"market": market}) if market in {"stocks", "memecoins", "sports"} else ""
+    ensure_caller_identity(str(user["id"]))
+    return RedirectResponse("/calls", status_code=303)
+
+
+_FLASH_PICK_TAG_RANK = {"running": 0, "setup": 1, "extended": 2, "watch": 3, "avoid": 4}
+
+
+def _flash_stock_picks(*, limit: int = 6) -> list[dict[str, Any]]:
+    picks: list[dict[str, Any]] = []
+    for call in flash_open_calls(limit=limit)["calls"]:
+        start = call.get("start_price")
+        picks.append(
+            {
+                "ticker": call["ticker"],
+                "direction": call["direction"],
+                "confidence_pct": int(round(float(call["confidence"]) * 100)),
+                "reason": str(call["reason"] or "")[:180],
+                "settle_label": call["target_session_date"],
+                "start_label": (
+                    f"${start:.4f}" if start is not None and start < 1 else (
+                        f"${start:.2f}" if start is not None else None
+                    )
+                ),
+                "version_label": call["version_label"],
+            }
+        )
+    return picks
+
+
+def _flash_sports_picks(*, limit: int = 4) -> list[dict[str, Any]]:
+    slate = sports_slate("all", 24)
+    events = [
+        _compact_sports_event(event, radar=False)
+        for event in slate.get("events") or []
+        if isinstance(event, dict) and event.get("model_winner_abbreviation")
+    ]
+    events.sort(
+        key=lambda event: (
+            -float(event.get("model_probability_pct") or 0),
+            str(event.get("start_time") or ""),
+        )
     )
-    return RedirectResponse(f"/u/{identity['handle']}{suffix}", status_code=303)
+    picks: list[dict[str, Any]] = []
+    for event in events[:limit]:
+        prediction = event.get("prediction") if isinstance(event.get("prediction"), dict) else {}
+        picks.append(
+            {
+                "label": (
+                    f"{event.get('away_abbreviation')} @ {event.get('home_abbreviation')}"
+                ),
+                "league": str(event.get("league") or "").upper(),
+                "kickoff": screen_stamp(event.get("start_time")) or "",
+                "pick": str(event.get("model_winner_abbreviation")),
+                "confidence_pct": int(round(float(event.get("model_probability_pct") or 0))),
+                "edge_pct": prediction.get("edge_pct"),
+                "href": f"{SPORTS_ORIGIN}/game/{event.get('id')}",
+            }
+        )
+    return picks
+
+
+def _flash_memecoin_picks(*, limit: int = 6) -> list[dict[str, Any]]:
+    from runner_web.market_screens import row as screen_row
+
+    market = memecoin_market(sort="volume")
+    ranked: list[tuple[int, float, float, dict[str, Any]]] = []
+    for item in market.get("rows") or []:
+        if not isinstance(item, dict) or item.get("stale"):
+            continue
+        entry = screen_row("memecoins", item)
+        if not entry["tag"]:
+            continue
+        ranked.append(
+            (
+                _FLASH_PICK_TAG_RANK.get(str(entry["tag_tone"]), 9),
+                -abs(float(item.get("change_24h") or 0)),
+                -float(item.get("volume_24h") or 0),
+                entry,
+            )
+        )
+    ranked.sort(key=lambda value: value[:3])
+    return [
+        {
+            "symbol": entry["name"],
+            "company": entry["subtitle"],
+            "href": entry["href"],
+            "tag": entry["tag"],
+            "tag_tone": entry["tag_tone"],
+            "risk": entry["risk"],
+            "value": entry["value"],
+            "change": entry["change"],
+            "tone": entry["tone"],
+        }
+        for _, _, _, entry in ranked[:limit]
+    ]
+
+
+def _calls_flash_uncached() -> dict[str, Any]:
+    record = flash_record(recent_limit=1)
+    current = record.get("current_version") or {}
+    return {
+        "stock_picks": _flash_stock_picks(),
+        "sports_picks": _flash_sports_picks(),
+        "memecoin_picks": _flash_memecoin_picks(),
+        "record": {
+            "label": current.get("label"),
+            "model_label": current.get("model_label"),
+            "state": current.get("state"),
+            "hit_rate": current.get("hit_rate"),
+            "headline_rate_visible": current.get("headline_rate_visible"),
+            "settled": current.get("settled"),
+            "hits": current.get("hits"),
+            "misses": current.get("misses"),
+            "pending": current.get("pending"),
+        },
+    }
+
+
+def _calls_flash_picks() -> dict[str, Any]:
+    return _public_screen_data(
+        "calls-flash",
+        "",
+        _calls_flash_uncached,
+        ttl_seconds=60,
+    )
+
+
+def _calls_page_data(runner_session: str | None) -> dict[str, Any]:
+    user = current_user(runner_session)
+    mine: dict[str, Any] | None = None
+    if user:
+        identity = ensure_caller_identity(str(user["id"]))
+        unified = _unified_caller_page_data(identity["handle"])
+        mine = {
+            "handle": identity["handle"],
+            "calls": (unified.get("calls") or [])[:24],
+            "stats": dict(unified.get("stats") or {}),
+        }
+    return {"mine": mine, **_calls_flash_picks()}
+
+
+@app.get("/calls", response_class=HTMLResponse)
+def calls_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> Response:
+    enforce_rate(request, "calls", limit=120, seconds=60)
+    return templates.TemplateResponse(
+        request=request,
+        name="calls.html",
+        context=page_context(
+            request,
+            runner_session,
+            nav_product="runners",
+            active_tab="alpha",
+            calls_page=_calls_page_data(runner_session),
+        ),
+    )
 
 
 def _score(value: Any) -> str:

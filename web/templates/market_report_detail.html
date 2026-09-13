@@ -1,27 +1,31 @@
-{% extends "mobile_base.html" %}
-{% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
+{% extends "market_screen.html" %}
 {% from "_market_report_card.html" import market_report_card %}
 {% from "_market_report_meta.html" import market_report_meta %}
-{% block app_class %}market-reports-app{% endblock %}
-{% block title %}{{ report.label }} · {{ report.report_day }} · RATi Runners{% endblock %}
-{% block page_description %}<meta name="description" content="{{ report.share.summary }}">{% endblock %}
-{% block head %}
-<link rel="stylesheet" href="/static/market-reports.css?v={{ static_version }}">
+{% block screen_title %}{{ report.label }} · {{ report.report_day }} · RATi{% endblock %}
+{% block detail_head %}
 {{ market_report_meta(report, app_origin) }}
 {% endblock %}
-{% block content %}
-<header class="detail-nav">
-  <a href="/reports" aria-label="Back to market turns">‹</a>
-  <strong>{{ report.label }}</strong>
-  <span></span>
+{% block topbar %}
+<header class="topbar">
+  <a class="brand" href="{{ runners_origin }}/" aria-label="RATi home">RATi<span>●</span></a>
+  <nav aria-label="Market" class="markets">
+    <a href="{{ runners_origin }}/">Stocks</a>
+    <a href="{{ runners_origin }}/memecoins">Memecoins</a>
+    <a href="{{ sports_origin }}/">Sports</a>
+    <a href="{{ runners_origin }}/reports" aria-current="page">Reports</a>
+  </nav>
+  {% if user %}<a class="account" href="{{ runners_origin }}/calls">My Calls</a>
+  {% else %}<a class="account" href="/login?next={{ request.url.path|urlencode }}">Log in</a>{% endif %}
 </header>
-
-<main class="market-report-list market-report-single">
-  {{ market_report_card(report, report.id, linked=false) }}
-  <a class="market-report-all" href="/reports">See every market turn <span aria-hidden="true">›</span></a>
-</main>
 {% endblock %}
-{% block scripts %}
+{% block screen_main %}
+<a class="back" href="/reports">← Market turns</a>
+<article class="market-report-single">
+  {{ market_report_card(report, report.id, linked=false) }}
+  <a class="calls-more" href="/reports">See every market turn <span aria-hidden="true">›</span></a>
+</article>
+{% endblock %}
+{% block detail_scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
 document.querySelector('[data-share-report]')?.addEventListener('click', async event => {
   const button = event.currentTarget;
