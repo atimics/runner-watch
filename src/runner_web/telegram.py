@@ -64,11 +64,56 @@ def memecoin_alerts_enabled() -> bool:
     return alerts_enabled(os.getenv("TELEGRAM_MEMECOIN_ALERTS", "0"))
 
 
-class AnimationDeliveryError(RuntimeError):
+class TelegramDeliveryError(RuntimeError):
     def __init__(self, status: str, *, retry_after: int = 60):
-        super().__init__("Telegram animation " + status)
+        super().__init__("Telegram delivery " + status)
         self.status = status
         self.retry_after = max(30, min(retry_after, 86400))
+
+
+AnimationDeliveryError = TelegramDeliveryError
+
+
+def message_units(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _delivery_receipt(request, opener, *, timeout: int) -> int:
+    try:
+        with opener(request, timeout=timeout) as response:
+            body = json.loads(response.read(64 * 1024))
+    except urllib.error.HTTPError as exc:
+        try:
+            body = json.loads(exc.read(64 * 1024))
+        except (ValueError, OSError):
+            body = {}
+        finally:
+            exc.close()
+        if exc.code == 429:
+            delay = (body.get("parameters") or {}).get("retry_after", 60)
+            raise TelegramDeliveryError("retry", retry_after=_retry_seconds(delay)) from None
+        raise TelegramDeliveryError("failed" if 400 <= exc.code < 500 else "uncertain") from None
+    except (OSError, ValueError):
+        raise TelegramDeliveryError("uncertain") from None
+    if not isinstance(body, dict):
+        raise TelegramDeliveryError("uncertain")
+    if body.get("ok") is False:
+        if body.get("error_code") == 429:
+            delay = (body.get("parameters") or {}).get("retry_after", 60)
+            raise TelegramDeliveryError("retry", retry_after=_retry_seconds(delay))
+        raise TelegramDeliveryError("failed")
+    result = body.get("result")
+    message_id = result.get("message_id") if isinstance(result, dict) else None
+    if body.get("ok") is not True or type(message_id) is not int or message_id <= 0:
+        raise TelegramDeliveryError("uncertain")
+    return message_id
+
+
+def _retry_seconds(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return 60
 
 
 def send_animation(
@@ -111,34 +156,7 @@ def send_animation(
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
         method="POST",
     )
-    try:
-        with opener(request, timeout=30) as response:
-            body = json.loads(response.read(64 * 1024))
-    except urllib.error.HTTPError as exc:
-        try:
-            body = json.loads(exc.read(64 * 1024))
-        except (ValueError, OSError):
-            body = {}
-        finally:
-            exc.close()
-        if exc.code == 429:
-            delay = (body.get("parameters") or {}).get("retry_after", 60)
-            raise AnimationDeliveryError("retry", retry_after=int(delay)) from None
-        raise AnimationDeliveryError("failed" if 400 <= exc.code < 500 else "uncertain") from None
-    except (OSError, ValueError):
-        raise AnimationDeliveryError("uncertain") from None
-    if not isinstance(body, dict):
-        raise AnimationDeliveryError("uncertain")
-    if body.get("ok") is False:
-        if body.get("error_code") == 429:
-            raise AnimationDeliveryError(
-                "retry", retry_after=int((body.get("parameters") or {}).get("retry_after", 60))
-            )
-        raise AnimationDeliveryError("failed")
-    message_id = (body.get("result") or {}).get("message_id")
-    if body.get("ok") is not True or type(message_id) is not int or message_id <= 0:
-        raise AnimationDeliveryError("uncertain")
-    return message_id
+    return _delivery_receipt(request, opener, timeout=30)
 
 
 def release_announcements_enabled(value: str | None = None) -> bool:
@@ -379,9 +397,12 @@ def format_update_announcement(activity: Mapping[str, Any], *, origin: str) -> s
         headline = str(report.get("headline") or "").strip()
         line = f"{label}: {headline}" if headline else label
         if report.get("path"):
-            line += f"\n{base}{report['path']}"
+            report_origin = str(report.get("origin") or base).rstrip("/")
+            line += f"\n{report_origin}{report['path']}"
+            if report.get("asset_path"):
+                line += f"\n{report_origin}{report['asset_path']}"
         blocks.append(line)
-    return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
+    return "\n\n".join(blocks)
 
 
 def format_release_announcement(
@@ -483,28 +504,16 @@ def send_message(
     text: str,
     *,
     opener: Callable[..., Any] = urllib.request.urlopen,
-) -> None:
-    """Post one message. Raises on transport or API errors."""
-
-    if not config.configured:
-        raise RuntimeError("Telegram bot token and chat id are required")
-    payload = json.dumps(
-        {
-            "chat_id": config.chat_id,
-            "text": text,
-            "disable_notification": False,
-        }
-    ).encode()
+) -> int:
+    """Post a complete message and return Telegram's confirmed message ID."""
+    if not config.configured or not text or message_units(text) > MAX_MESSAGE_CHARS:
+        raise TelegramDeliveryError("failed")
     request = urllib.request.Request(
         config.endpoint(),
-        data=payload,
+        data=json.dumps(
+            {"chat_id": config.chat_id, "text": text, "disable_notification": False}
+        ).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with opener(request, timeout=SEND_TIMEOUT_SECONDS) as response:
-        status = getattr(response, "status", 200)
-        if status >= 400:
-            raise urllib.error.HTTPError(
-                config.endpoint(), status, "Telegram sendMessage failed", {}, None
-            )
-        response.read()
+    return _delivery_receipt(request, opener, timeout=SEND_TIMEOUT_SECONDS)

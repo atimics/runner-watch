@@ -3189,6 +3189,38 @@ def _migration_068_memecoin_replays(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_070_telegram_outbox(db: DatabaseConnection) -> None:
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS telegram_outbox (
+            id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, text TEXT NOT NULL,
+            status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+            message_id BIGINT, retry_at TEXT, last_error TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS telegram_outbox_pending
+            ON telegram_outbox(chat_id,status,created_at);
+        CREATE TABLE IF NOT EXISTS telegram_outbox_items (
+            kind TEXT NOT NULL, subject TEXT NOT NULL, ticker TEXT NOT NULL,
+            card_json TEXT NOT NULL, outbox_id TEXT REFERENCES telegram_outbox(id),
+            PRIMARY KEY(kind,subject)
+        );
+        CREATE INDEX IF NOT EXISTS telegram_outbox_items_message
+            ON telegram_outbox_items(outbox_id);
+        CREATE TABLE IF NOT EXISTS telegram_channel_schedule (
+            chat_id TEXT PRIMARY KEY, next_at TEXT NOT NULL, budget_day TEXT NOT NULL,
+            used INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS telegram_ticker_schedule (
+            chat_id TEXT NOT NULL, ticker TEXT NOT NULL, next_at TEXT NOT NULL,
+            PRIMARY KEY(chat_id,ticker)
+        );
+        CREATE TABLE IF NOT EXISTS telegram_sec_seen (accession TEXT PRIMARY KEY);
+        INSERT INTO telegram_sec_seen(accession) SELECT accession FROM sec_filings WHERE 1=1
+            ON CONFLICT(accession) DO NOTHING;
+    """)
+    _ensure_column(db, "memecoin_replay_posts", "caption_text TEXT")
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -3291,6 +3323,7 @@ MIGRATIONS = (
     Migration(67, "coin_evidence_pruning", _migration_067_coin_evidence_pruning),
     Migration(68, "memecoin_replays", _migration_068_memecoin_replays),
     Migration(69, "stock_map_evidence", _migration_069_stock_map_evidence),
+    Migration(70, "telegram_outbox", _migration_070_telegram_outbox),
 )
 
 
