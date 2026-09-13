@@ -47,6 +47,10 @@ stay visible where there is room to explain them: the ticker page.
 4. **One score from five metrics.** The list shows the score. The ticker page
    shows the five inputs and the formula behind it.
 5. **A map is a place, not a tab.** The bubble universe is entered from a ticker.
+6. **Avatars are the voice.** Every entity — stock, coin, insider, whale wallet —
+   gets an avatar. The avatars are the ones who speak on a ticker page, through
+   grounded, labelled commentary and Flash reports, and their track record feeds
+   **Avatar Sentiment**, the score's sixth component.
 
 ## Information architecture
 
@@ -55,13 +59,14 @@ Top bar        brand · market switcher · session clock · breadth filters · s
    │
 List           tight tagged rows + score            "should I look?"
    │
-Ticker page    chart · map · metrics = score        "should I act?" then "who is behind it?"
+Ticker page    chart · map · metrics = score · comments
+                                                    "what happened?", "who?", "why?", "what do they say?"
 ```
 
 Removed: the list-screen List/Map toggle, the `.map-subjects` gallery, and
 `?view=map` as a top-level screen.
 
-The ticker page is one ordered story, top to bottom:
+The ticker page is one ordered story, four screens top to bottom:
 
 1. **Chart** — price history, the filing marker, the movement period.
 2. **Map** — the bubble universe for this ticker (`_stock_map.html` /
@@ -69,6 +74,8 @@ The ticker page is one ordered story, top to bottom:
 3. **Metrics = score** — the five inputs, their weights and contributions, and
    the resulting score, followed by the Call action and the company/community
    support sections.
+4. **Comments** — avatar reactions and Flash reports, where each avatar speaks
+   for the entity it represents.
 
 This also fixes the current order, where the map block renders *above* the chart.
 
@@ -111,6 +118,7 @@ a weighted composite of five normalized components, each 0–100:
 | 3 | **Move quality** | change curve, breakout, range position, VWAP, close location | 20 |
 | 4 | **Liquidity** | session and recent dollar volume | 15 |
 | 5 | **Catalyst** | latest SEC filing / news event | 15 |
+| 6 | **Avatar Sentiment** *(planned)* | what this ticker's avatars are saying | TBD |
 
 ```
 score = round( Σ (weight_i × component_i / 100) × freshness − penalties , 0 … 100 )
@@ -120,9 +128,11 @@ score = round( Σ (weight_i × component_i / 100) × freshness − penalties , 0
 - `penalties` are the existing extension/parabola/VWAP-break terms, shown
   separately so the arithmetic is honest.
 - The five components are the same terms `score_runner` already uses, grouped and
-  named so a person can read them. Component 5 (Catalyst) is the slot where a
-  sixth source such as **LLM sentiment** later plugs in: add a component, add a
-  weight, bump the score policy version. Nothing else changes.
+  named so a person can read them. Component 6 (**Avatar Sentiment**) is the
+  planned extension: it reads what the ticker's avatars are saying on the
+  comments screen, weighted by each avatar's track record, and adds one more
+  weighted component. Add the component, add a weight, bump the score policy
+  version. Nothing else changes.
 
 The ticker page renders each component as a row: name, raw value, a 0–100 bar,
 the weight, and its contribution, then the subtotal, penalties, freshness and
@@ -204,6 +214,45 @@ Changes to make it a place rather than a section:
 - Selecting a bubble opens the existing evidence sheet.
 - A single **Explore the universe** affordance under the chart anchors the entry.
 
+## The comments screen (screen 4)
+
+The fourth screen is where the avatars speak. It already exists in pieces:
+`_flash_comments.html` renders **Avatar reactions**, `market_actors.py` stores
+per-actor portraits and comments, `ai_kol.py` holds Flash, and
+`flash_evaluations.py` settles Flash forecasts. The design names it as a screen
+and connects it to the score.
+
+- **One avatar per entity.** Stocks, memecoins, insiders, whale wallets and teams
+  each get a persistent avatar (`comment_avatars`, `derive_actor_identity`), with
+  a name, an ability and a portrait. The map shows *who* an actor is; the comments
+  screen shows *what they say*.
+- **Grounded, labelled commentary.** Every AI comment is generated from saved
+  evidence (filings, on-chain events, quotes) and carries its model label and the
+  sources it used, the way `content_notices` already labels disclosures and
+  corrections.
+- **Flash reports.** Flash's forecasts and their settled results appear as their
+  own card with the hit/miss history, so the reader can weigh the voice that made
+  them.
+- **Not slop.** Commentary is rate-limited per avatar and per ticker
+  (`market_actor_comment_budget`), only posts on new evidence, and is never
+  presented as a person. The goal is fewer, better, source-bound reactions.
+
+### Avatar Sentiment
+
+The comments screen is also an input. **Avatar Sentiment** (component 6)
+aggregates what the avatars are saying into one signed component:
+
+```
+avatar_sentiment = Σ (avatar_weight × avatar_view) / Σ avatar_weight
+```
+
+`avatar_view` is an avatar's current stance (−1 bearish … +1 bullish) and
+`avatar_weight` is its track record and evidence quality — **not its volume**. An
+insider's Form 4 or a whale's filed buy counts more than a chatty avatar with a
+weak record. That keeps the component from being gamed by posting more, and gives
+it a reason to exist beyond the price. Until it ships, it is shown in the score
+panel as *not yet weighted*, exactly as the preview does.
+
 ## Progressive disclosure
 
 | Layer | Question | Content | Budget |
@@ -213,6 +262,7 @@ Changes to make it a place rather than a section:
 | Ticker · chart | What happened? | price history, movement period, filing marker | one chart |
 | Ticker · map | Who is behind it? | actors, clusters, evidence, timeline | one screen |
 | Ticker · metrics | Why this score? | 5 components, weights, formula, signals/risks | one panel |
+| Ticker · comments | What do they say? | avatar reactions, Flash reports, Avatar Sentiment | one screen |
 | Ticker · Call | Should I act? | Call terms, entry, settlement, reward | one action |
 
 ## What we keep from each era
@@ -247,7 +297,10 @@ page-level title / View toggle / search block.
    extended`, `rug-*`) instead of inventing new colors.
 6. List rendering — reuse the `ticker-row.js` sparkline; delete the
    `scoredComparison` strip from the list path (it becomes the detail score panel).
-7. Tests — update `test_browser_market_screens.py`, `test_market_navigation.py`,
+7. Comments screen — promote `_flash_comments.html` to the fourth ticker section,
+   give every entity an avatar, and add the Avatar Sentiment term to the score
+   policy once avatars have a track record to weight them by.
+8. Tests — update `test_browser_market_screens.py`, `test_market_navigation.py`,
    `test_live_screens.py` and `docs/market-screens/README.md`.
 
 ## Open questions
@@ -265,3 +318,10 @@ page-level title / View toggle / search block.
   the active filter must survive it (the code already preserves search and focus).
 - **Chip counts.** Should the top-bar counts be "in the saved board" or "in the
   current filter"? Proposed: always the whole board, so the filter is honest.
+- **Avatar Sentiment weighting.** What is `avatar_weight`? Proposed: the avatar's
+  settled Flash/forecast hit rate times an evidence-quality factor, floored so a
+  new avatar has some voice but cannot dominate. Needs a calibration pass before
+  the component carries weight.
+- **Avatar coverage order.** Which entities get avatars first? Proposed: the
+  actors already on the map (SEC insiders, whale clusters), then the stock and
+  coin itself, then teams.

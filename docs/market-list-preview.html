@@ -141,6 +141,30 @@
   .signals .good li:before{content:"+ ";color:var(--green)}
   .signals .bad li:before{content:"− ";color:var(--red)}
 
+  /* comments */
+  .flash-report{border:1px solid var(--line);border-radius:14px;padding:16px;background:var(--panel);margin-bottom:8px}
+  .flash-report header{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .flash-report header strong{font-size:14px}
+  .flash-report .stat{margin-left:auto;color:var(--muted);font-size:12px}
+  .flash-report p{margin:10px 0 0;font-size:13.5px;color:#d7ded9}
+  .comment-list{list-style:none;margin:0;padding:0}
+  .comment{display:grid;grid-template-columns:42px minmax(0,1fr);gap:12px;padding:15px 0;border-bottom:1px solid var(--line)}
+  .avatar-mark{width:42px;height:42px;border-radius:50%;background:#253e2d;display:grid;place-items:center;
+    font-size:13px;font-weight:800;color:#d8f2df}
+  .avatar-mark.b{background:#313749;color:#cad8f4}
+  .avatar-mark.c{background:#42352e;color:#efd6b7}
+  .avatar-mark.d{background:#403247;color:#e6cdec}
+  .comment header{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .comment header strong{font-size:13.5px}
+  .ability{font-size:10px;color:var(--green);border:1px solid rgba(165,229,185,.3);border-radius:10px;padding:1px 7px}
+  .ai-label{font-size:10px;color:var(--muted);border:1px solid var(--line);border-radius:10px;padding:1px 7px}
+  .comment-meta{display:block;color:var(--muted);font-size:11px;margin:3px 0 6px}
+  .comment p{margin:0;font-size:13.5px;color:#d7ded9}
+  .comment .notice{font-size:11px;color:var(--muted);margin-top:7px}
+  .summon{display:flex;align-items:center;gap:12px;margin-top:16px;flex-wrap:wrap}
+  .summon button{background:var(--green);color:#14231a;font-weight:700;border-radius:20px;padding:9px 17px;font-size:13px}
+  .summon small{color:var(--muted);font-size:11px}
+
   @media(max-width:760px){
     .row{grid-template-columns:92px minmax(0,1fr) auto;grid-template-areas:"tag id quote" "meta meta spark";
       row-gap:2px;min-height:74px}
@@ -160,7 +184,7 @@
 <body>
 <div class="preview-note">
   <b>Design preview</b>
-  <span>tight list · action tag + one score · ticker = chart → map → metrics</span>
+  <span>tight list · action tag + one score · ticker = chart → map → metrics → comments</span>
   <span style="margin-left:auto">spec: <code>docs/market-list-ux.md</code></span>
 </div>
 
@@ -245,6 +269,21 @@
       <div class="signals">
         <div class="good"><h3>Signals</h3><ul id="signals"></ul></div>
         <div class="bad"><h3>Risks</h3><ul id="risks"></ul></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <header><h2>Comments</h2><span>Avatar reactions · Flash reports</span></header>
+      <div class="flash-report">
+        <header><span class="avatar-mark" style="width:34px;height:34px">⚡</span>
+          <strong>Flash</strong><span class="ability">Forecast record</span>
+          <span class="stat">62% hit · 38 settled · 10 Flash to summon a reaction</span></header>
+        <p id="flash-body"></p>
+      </div>
+      <ol class="comment-list" id="comments"></ol>
+      <div class="summon">
+        <button type="button">Summon avatar</button>
+        <small>One grounded reaction per avatar, on new evidence. AI-generated and labelled.</small>
       </div>
     </section>
   </div>
@@ -400,7 +439,7 @@
         <span class="weight">${c.weight}%</span>
         <span class="contrib">${(c.weight * p.value / 100).toFixed(1)}</span></div>`;
     }).join('') + `
-      <div class="part future"><span class="name">LLM sentiment</span>
+      <div class="part future"><span class="name">Avatar Sentiment</span>
         <span class="bar"><i style="width:0%"></i></span>
         <span class="raw">not yet weighted</span><span class="weight">—</span><span class="contrib">—</span></div>
       <div class="formula">
@@ -413,6 +452,37 @@
 
     document.getElementById('signals').innerHTML = r.signals.map(x => `<li>${x}</li>`).join('');
     document.getElementById('risks').innerHTML = r.risks.map(x => `<li>${x}</li>`).join('');
+
+    const dir = r.m15 >= 0 ? '+' : '';
+    document.getElementById('flash-body').textContent = r.tone === 'avoid'
+      ? `Flash's saved forecast leans cautious on ${r.ticker}: the move is real, but the risk gates (${r.risks[0]}) block a long entry. 62% hit over 38 settled forecasts.`
+      : r.tone === 'extended'
+        ? `Flash flagged ${r.ticker} as already extended. The forecast is no new entry until it holds a pullback. 62% hit over 38 settled forecasts.`
+        : `Flash's latest saved forecast is constructive on ${r.ticker} while ${r.rvol.toFixed(1)}× volume and the ${dir}${r.m15.toFixed(1)}% 15-minute move hold. 62% hit over 38 settled forecasts.`;
+
+    const comments = [
+      {mark: r.ticker.slice(0, 2), tone: 0, name: `${r.ticker} · entity avatar`,
+        ability: r.tag === 'AVOID' ? 'Risk' : 'Momentum',
+        when: '2m ago',
+        notice: '',
+        body: `${r.tag === 'AVOID' ? 'I am not a buyer here.' : r.tag === 'EXTENDED' ? 'I have already moved; I am not chasing.' : 'I am still building.'} Same-time volume ${r.rvol.toFixed(1)}×, 15-minute move ${dir}${r.m15.toFixed(1)}%.`},
+      {mark: 'IN', tone: 1, name: 'Form 4 Insider', ability: 'Filings', when: '18m ago',
+        notice: 'Sources: SEC Form 4, filing index · AI-generated · Not investment advice.',
+        body: `Latest reported action: ${r.tag === 'AVOID' ? 'reduction reported' : 'open-market buy'}. Cross-checked against the ${r.catalyst >= 60 ? '8-K filed recently' : 'latest filing index'}.`},
+      {mark: 'WH', tone: 2, name: 'Whale cluster · 4 wallets', ability: 'On-chain', when: '41m ago', notice: '',
+        body: `${r.tone === 'running' ? 'Cluster net added over the last 24h.' : r.tone === 'avoid' ? 'Cluster net reduced into the drop.' : 'Cluster flat; no new position.'}`},
+    ];
+    document.getElementById('comments').innerHTML = comments.map(c => `
+      <li class="comment">
+        <span class="avatar-mark ${['', 'b', 'c', 'd'][c.tone]}">${c.mark}</span>
+        <div>
+          <header><strong>${c.name}</strong><span class="ability">${c.ability}</span>
+            <span class="ai-label">AI · Flash</span></header>
+          <small class="comment-meta">${c.when}</small>
+          <p>${c.body}</p>
+          ${c.notice ? `<p class="notice">${c.notice}</p>` : ''}
+        </div>
+      </li>`).join('');
 
     document.getElementById('listView').hidden = true;
     document.getElementById('tickerView').hidden = false;
