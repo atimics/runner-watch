@@ -56,6 +56,19 @@ def test_tag_filter_chips_hide_and_show_rows(page: Page):
     expect(page.locator(".ticker:visible")).to_have_count(1)
     page.get_by_role("button", name=re.compile("running")).click()
     expect(page.locator(".ticker:visible")).to_have_count(2)
+
+
+def test_narrow_stock_rows_are_single_line(page: Page):
+    page.set_viewport_size({"width": 390, "height": 844})
+    open_screen(page, listing("stocks", [fixtures.scored_stock()]))
+    row = page.locator(".ticker").first
+    expect(row).to_be_visible()
+    box = row.bounding_box()
+    assert box is not None and box["height"] <= 62
+    selectors = (".tag", ".ticker-name", ".ticker-value", ".ticker-score")
+    children = [row.locator(selector).bounding_box() for selector in selectors]
+    children = [item for item in children if item is not None]
+    assert max(item["y"] for item in children) - min(item["y"] for item in children) <= 4
 def test_chart_renders_real_points_and_empty_history(page: Page):
     screen = detail("memecoins", {"coin": fixtures.sample("memecoins"), "history": []})
     screen.pop("quote_url")
