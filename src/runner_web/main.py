@@ -158,8 +158,15 @@ from runner_web.kol import (
     refresh_kol_calls,
 )
 from runner_web.live_screens import public_dynamic_screen_paths
+from runner_web.llm_edge_routes import (
+    EdgeConnectorPayload,
+    EdgeJobCompletePayload,
+    EdgeJobFailPayload,
+    LLMEdgeRouteDependencies,
+    LLMRoutePayload,
+    create_llm_edge_routes,
+)
 from runner_web.llm_routing import (
-    connector_token_hash,
     route_for_user,
 )
 from runner_web.market_actors import (
@@ -371,7 +378,16 @@ from runner_web.telegram_chat import (
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
 from runner_web.worker_supervisor import run_supervised
 
-__all__ = ["AccountDeletePayload", "CloudDataDeletePayload"]
+__all__ = [
+    "AccountDeletePayload",
+    "CloudDataDeletePayload",
+    # Re-exported for the local-model route tests; the handlers live in
+    # runner_web.llm_edge_routes.
+    "EdgeConnectorPayload",
+    "EdgeJobCompletePayload",
+    "EdgeJobFailPayload",
+    "LLMRoutePayload",
+]
 
 LOG = logging.getLogger(__name__)
 
@@ -2222,25 +2238,6 @@ class SportsPickPayload(BaseModel):
     expected_odds: int | None = Field(default=None, strict=True)
 
 
-class LLMRoutePayload(BaseModel):
-    policy: Literal["managed", "prefer_customer", "customer_only"]
-    route_kind: Literal["managed", "edge"]
-    model: str = Field(default="", max_length=160)
-    connector_id: str | None = Field(default=None, max_length=80)
-
-
-class EdgeConnectorPayload(BaseModel):
-    name: str = Field(default="Local model", min_length=1, max_length=80)
-
-
-class EdgeJobCompletePayload(BaseModel):
-    response: dict[str, Any]
-
-
-class EdgeJobFailPayload(BaseModel):
-    error: str = Field(min_length=1, max_length=500)
-
-
 def _public_flash_record_data() -> dict[str, Any]:
     return _public_screen_data("flash-record", "public", flash_record)
 
@@ -2321,432 +2318,36 @@ def claim_daily_flash_api(
     return JSONResponse({"claimed": claimed, "wallet": wallet})
 
 
-def _llm_settings_data(user_id: str) -> dict[str, Any]:
-    with connection() as database:
-        row = database.execute(
-            "SELECT * FROM user_llm_routes WHERE user_id=?",
-            (user_id,),
-        ).fetchone()
-        connectors = database.execute(
-            """
-            SELECT id,name,status,last_seen_at,created_at,updated_at
-            FROM llm_edge_connectors
-            WHERE user_id=? ORDER BY created_at DESC
-            """,
-            (user_id,),
-        ).fetchall()
-    route = (
-        {
-            "policy": str(row["policy"]),
-            "route_kind": str(row["route_kind"]),
-            "model": str(row["model"] or ""),
-            "connector_id": str(row["connector_id"] or "") or None,
-            "last_error": str(row["last_error"] or "") or None,
-        }
-        if row
-        else {
-            "policy": "managed",
-            "route_kind": "managed",
-            "model": "",
-            "connector_id": None,
-            "last_error": None,
-        }
-    )
-    return {"route": route, "connectors": [dict(connector) for connector in connectors]}
-
-
-@app.get("/settings/models", response_class=HTMLResponse)
-def model_settings_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> Response:
-    user = current_user(runner_session)
-    if not user:
-        return RedirectResponse("/login?next=/settings/models", status_code=303)
-    return templates.TemplateResponse(
-        request=request,
-        name="model_settings.html",
-        context=page_context(
-            request,
-            runner_session,
-            llm_settings=_llm_settings_data(str(user["id"])),
+llm_edge_routes = create_llm_edge_routes(
+    LLMEdgeRouteDependencies(
+        templates=templates,
+        page_context=lambda *args, **kwargs: page_context(*args, **kwargs),
+        current_user=lambda session: current_user(session),
+        require_user=lambda session: require_user(session),
+        require_origin=lambda request: require_origin(request),
+        enforce_rate=lambda *args, **kwargs: enforce_rate(*args, **kwargs),
+        now=lambda: now(),
+        iso=lambda value=None: iso(value),
+        json_container=lambda value, fallback: _json_container(value, fallback),
+        run_research_commission=lambda report_id, **kwargs: _run_research_commission(
+            report_id, **kwargs
         ),
+        commission_api_payload=lambda report, user_id=None: _commission_api_payload(
+            report, user_id
+        ),
+        edge_job_lease_minutes=EDGE_JOB_LEASE_MINUTES,
     )
-
-
-@app.get("/api/account/llm-route")
-def account_llm_route_api(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    user = require_user(runner_session)
-    enforce_rate(request, "llm-route-read", limit=60, seconds=60, subject=user["id"])
-    response = JSONResponse(_llm_settings_data(str(user["id"])))
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-@app.put("/api/account/llm-route")
-def update_account_llm_route_api(
-    payload: LLMRoutePayload,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    user_id = str(user["id"])
-    enforce_rate(request, "llm-route-write", limit=20, seconds=3600, subject=user_id)
-    model = payload.model.strip()
-    connector_id = payload.connector_id if payload.route_kind == "edge" else None
-    if payload.policy == "managed":
-        if payload.route_kind != "managed":
-            raise HTTPException(400, "Managed routing cannot use a local connector.")
-        model = ""
-    else:
-        if payload.route_kind != "edge":
-            raise HTTPException(400, "Choose a local connector for your model policy.")
-        if not model:
-            raise HTTPException(400, "Enter the model ID loaded by LM Studio or Unsloth.")
-        if not connector_id:
-            raise HTTPException(400, "Create and choose a local connector.")
-    timestamp = iso()
-    with connection() as database:
-        if connector_id:
-            connector = database.execute(
-                """
-                SELECT id FROM llm_edge_connectors
-                WHERE id=? AND user_id=? AND status='active'
-                """,
-                (connector_id, user_id),
-            ).fetchone()
-            if not connector:
-                raise HTTPException(404, "Local connector not found.")
-        database.execute(
-            """
-            INSERT INTO user_llm_routes(
-                user_id,policy,route_kind,model,connector_id,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                policy=excluded.policy,route_kind=excluded.route_kind,
-                model=excluded.model,connector_id=excluded.connector_id,
-                last_error=NULL,updated_at=excluded.updated_at
-            """,
-            (
-                user_id,
-                payload.policy,
-                payload.route_kind,
-                model,
-                connector_id,
-                timestamp,
-                timestamp,
-            ),
-        )
-    response = JSONResponse(_llm_settings_data(user_id))
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-@app.post("/api/account/llm-connectors")
-def create_llm_connector_api(
-    payload: EdgeConnectorPayload,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    user_id = str(user["id"])
-    enforce_rate(request, "llm-connector-create", limit=5, seconds=3600, subject=user_id)
-    connector_name = payload.name.strip()
-    if not connector_name:
-        raise HTTPException(400, "Enter a connector name.")
-    connector_id = str(uuid.uuid4())
-    token = f"rati_edge_{secrets.token_urlsafe(32)}"
-    timestamp = iso()
-    with connection() as database:
-        active_count = database.execute(
-            """
-            SELECT COUNT(*) FROM llm_edge_connectors
-            WHERE user_id=? AND status='active'
-            """,
-            (user_id,),
-        ).fetchone()[0]
-        if int(active_count) >= 5:
-            raise HTTPException(409, "Revoke an old connector before creating another one.")
-        database.execute(
-            """
-            INSERT INTO llm_edge_connectors(
-                id,user_id,name,token_hash,status,created_at,updated_at
-            ) VALUES(?,?,?,?,'active',?,?)
-            """,
-            (
-                connector_id,
-                user_id,
-                connector_name,
-                connector_token_hash(token),
-                timestamp,
-                timestamp,
-            ),
-        )
-    response = JSONResponse(
-        {
-            "connector": {
-                "id": connector_id,
-                "name": connector_name,
-                "status": "active",
-                "last_seen_at": None,
-            },
-            "token": token,
-            "token_notice": "This token is shown once. Keep it private.",
-        },
-        status_code=201,
-    )
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-@app.delete("/api/account/llm-connectors/{connector_id}")
-def revoke_llm_connector_api(
-    connector_id: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    user_id = str(user["id"])
-    enforce_rate(request, "llm-connector-revoke", limit=10, seconds=3600, subject=user_id)
-    timestamp = iso()
-    with connection() as database:
-        connector = database.execute(
-            """
-            SELECT id FROM llm_edge_connectors
-            WHERE id=? AND user_id=? AND status='active'
-            """,
-            (connector_id, user_id),
-        ).fetchone()
-        if not connector:
-            raise HTTPException(404, "Active local connector not found.")
-        jobs = database.execute(
-            """
-            SELECT commission_id FROM llm_edge_jobs
-            WHERE connector_id=? AND status IN ('pending','claimed')
-            """,
-            (connector_id,),
-        ).fetchall()
-        database.execute(
-            """
-            UPDATE llm_edge_jobs
-            SET status='failed',error=?,completed_at=?,updated_at=?
-            WHERE connector_id=? AND status IN ('pending','claimed')
-            """,
-            ("The local connector was revoked.", timestamp, timestamp, connector_id),
-        )
-        database.execute(
-            """
-            UPDATE user_llm_routes
-            SET policy='managed',route_kind='managed',model='',connector_id=NULL,
-                last_error=NULL,updated_at=?
-            WHERE user_id=? AND connector_id=?
-            """,
-            (timestamp, user_id, connector_id),
-        )
-        database.execute(
-            """
-            UPDATE llm_edge_connectors SET status='revoked',updated_at=?
-            WHERE id=?
-            """,
-            (timestamp, connector_id),
-        )
-    for job in jobs:
-        try:
-            _run_research_commission(str(job["commission_id"]))
-        except Exception:
-            pass
-    response = JSONResponse(_llm_settings_data(user_id))
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-def _edge_connector_for_request(request: Request) -> dict[str, Any]:
-    enforce_rate(request, "edge-auth", limit=180, seconds=60)
-    authorization = request.headers.get("authorization", "")
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        raise HTTPException(401, "Missing connector token.")
-    timestamp = iso()
-    with connection() as database:
-        row = database.execute(
-            """
-            SELECT * FROM llm_edge_connectors
-            WHERE token_hash=? AND status='active'
-            """,
-            (connector_token_hash(token),),
-        ).fetchone()
-        if not row:
-            raise HTTPException(401, "Invalid connector token.")
-        database.execute(
-            "UPDATE llm_edge_connectors SET last_seen_at=?,updated_at=? WHERE id=?",
-            (timestamp, timestamp, row["id"]),
-        )
-    return dict(row)
-
-
-@app.post("/api/llm/edge/jobs/claim")
-def claim_edge_job_api(request: Request) -> JSONResponse:
-    connector = _edge_connector_for_request(request)
-    connector_id = str(connector["id"])
-    enforce_rate(request, "edge-job-claim", limit=120, seconds=60, subject=connector_id)
-    current_time = now()
-    timestamp = iso(current_time)
-    lease_expires_at = iso(current_time + timedelta(minutes=EDGE_JOB_LEASE_MINUTES))
-    with connection() as database:
-        row = database.execute(
-            """
-            SELECT * FROM llm_edge_jobs
-            WHERE connector_id=? AND (
-                status='pending' OR (status='claimed' AND lease_expires_at<=?)
-            )
-            ORDER BY created_at LIMIT 1
-            """,
-            (connector_id, timestamp),
-        ).fetchone()
-        if not row:
-            return JSONResponse({"job": None})
-        claimed = database.execute(
-            """
-            UPDATE llm_edge_jobs
-            SET status='claimed',claimed_at=?,lease_expires_at=?,updated_at=?
-            WHERE id=? AND connector_id=? AND (
-                status='pending' OR (status='claimed' AND lease_expires_at<=?)
-            )
-            """,
-            (
-                timestamp,
-                lease_expires_at,
-                timestamp,
-                row["id"],
-                connector_id,
-                timestamp,
-            ),
-        )
-        if claimed.rowcount != 1:
-            return JSONResponse({"job": None})
-    response = JSONResponse(
-        {
-            "job": {
-                "id": str(row["id"]),
-                "model": str(row["model"]),
-                "request": _json_container(row["request_json"], {}),
-                "request_fingerprint": str(row["request_fingerprint"]),
-                "lease_expires_at": lease_expires_at,
-            }
-        }
-    )
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-@app.post("/api/llm/edge/jobs/{job_id}/heartbeat")
-def heartbeat_edge_job_api(job_id: str, request: Request) -> JSONResponse:
-    connector = _edge_connector_for_request(request)
-    connector_id = str(connector["id"])
-    enforce_rate(request, "edge-job-heartbeat", limit=120, seconds=60, subject=connector_id)
-    current_time = now()
-    with connection() as database:
-        updated = database.execute(
-            """
-            UPDATE llm_edge_jobs SET lease_expires_at=?,updated_at=?
-            WHERE id=? AND connector_id=? AND status='claimed'
-            """,
-            (
-                iso(current_time + timedelta(minutes=EDGE_JOB_LEASE_MINUTES)),
-                iso(current_time),
-                job_id,
-                connector_id,
-            ),
-        )
-    if updated.rowcount != 1:
-        raise HTTPException(404, "Claimed local model job not found.")
-    return JSONResponse({"ok": True})
-
-
-@app.post("/api/llm/edge/jobs/{job_id}/complete")
-async def complete_edge_job_api(
-    job_id: str,
-    payload: EdgeJobCompletePayload,
-    request: Request,
-) -> JSONResponse:
-    connector = _edge_connector_for_request(request)
-    connector_id = str(connector["id"])
-    enforce_rate(request, "edge-job-complete", limit=60, seconds=60, subject=connector_id)
-    response_json = json.dumps(payload.response, separators=(",", ":"))
-    if len(response_json.encode()) > 8 * 1024 * 1024:
-        raise HTTPException(413, "Local model response is too large.")
-    timestamp = iso()
-    with connection() as database:
-        row = database.execute(
-            """
-            SELECT commission_id FROM llm_edge_jobs
-            WHERE id=? AND connector_id=? AND status='claimed'
-            """,
-            (job_id, connector_id),
-        ).fetchone()
-        if not row:
-            raise HTTPException(404, "Claimed local model job not found.")
-        database.execute(
-            """
-            UPDATE llm_edge_jobs
-            SET status='complete',response_json=?,completed_at=?,updated_at=?
-            WHERE id=?
-            """,
-            (response_json, timestamp, timestamp, job_id),
-        )
-    try:
-        report = await run_in_threadpool(_run_research_commission, str(row["commission_id"]))
-    except Exception as exc:
-        LOG.warning("Local model report %s was rejected: %s", job_id, type(exc).__name__)
-        raise HTTPException(
-            422, "The local model response did not match the report contract."
-        ) from exc
-    return JSONResponse(
-        {
-            "ok": True,
-            "report": _commission_api_payload(report, str(connector["user_id"])),
-        }
-    )
-
-
-@app.post("/api/llm/edge/jobs/{job_id}/fail")
-async def fail_edge_job_api(
-    job_id: str,
-    payload: EdgeJobFailPayload,
-    request: Request,
-) -> JSONResponse:
-    connector = _edge_connector_for_request(request)
-    connector_id = str(connector["id"])
-    enforce_rate(request, "edge-job-fail", limit=60, seconds=60, subject=connector_id)
-    timestamp = iso()
-    with connection() as database:
-        row = database.execute(
-            """
-            SELECT commission_id FROM llm_edge_jobs
-            WHERE id=? AND connector_id=? AND status='claimed'
-            """,
-            (job_id, connector_id),
-        ).fetchone()
-        if not row:
-            raise HTTPException(404, "Claimed local model job not found.")
-        database.execute(
-            """
-            UPDATE llm_edge_jobs
-            SET status='failed',error=?,completed_at=?,updated_at=? WHERE id=?
-            """,
-            (payload.error[:500], timestamp, timestamp, job_id),
-        )
-    try:
-        await run_in_threadpool(_run_research_commission, str(row["commission_id"]))
-    except Exception:
-        pass
-    return JSONResponse({"ok": True})
+)
+app.include_router(llm_edge_routes.router)
+model_settings_page = llm_edge_routes.model_settings_page
+account_llm_route_api = llm_edge_routes.account_llm_route_api
+update_account_llm_route_api = llm_edge_routes.update_account_llm_route_api
+create_llm_connector_api = llm_edge_routes.create_llm_connector_api
+revoke_llm_connector_api = llm_edge_routes.revoke_llm_connector_api
+claim_edge_job_api = llm_edge_routes.claim_edge_job_api
+heartbeat_edge_job_api = llm_edge_routes.heartbeat_edge_job_api
+complete_edge_job_api = llm_edge_routes.complete_edge_job_api
+fail_edge_job_api = llm_edge_routes.fail_edge_job_api
 
 
 def _public_caller_handles_for_user(user_id: str) -> list[str]:
