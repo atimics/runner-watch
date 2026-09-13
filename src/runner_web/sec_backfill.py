@@ -4,6 +4,7 @@ import argparse
 import gzip
 import hashlib
 import json
+import logging
 import time
 import urllib.error
 import urllib.request
@@ -25,6 +26,8 @@ from runner_watch.ingestion import SourceFetch
 from runner_web import db
 from runner_web.ingestion import mark_source_item, record_source_fetch
 from runner_web.sec_facts import refresh_company_facts
+
+LOG = logging.getLogger(__name__)
 
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
 SUBMISSIONS_BASE = "https://data.sec.gov/submissions/"
@@ -430,7 +433,7 @@ def _parse_document(
         elif filing.form.startswith(("SC 13D", "SC 13G")):
             beneficial = parse_beneficial_ownership_xml(text)
     except Exception:
-        pass
+        LOG.debug("Ownership XML parse failed for %s", filing.accession, exc_info=True)
     return ownership, beneficial
 
 

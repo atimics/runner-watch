@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import re
@@ -17,6 +18,8 @@ from defusedxml import ElementTree as DefusedElementTree
 
 from runner_watch.ingestion import SourceFetch, SourceFetchRecorder
 from runner_watch.xml_security import read_limited, safe_xml_fromstring
+
+LOG = logging.getLogger(__name__)
 
 SEC_BASE = "https://www.sec.gov"
 COMPANY_MAP_URL = f"{SEC_BASE}/files/company_tickers_exchange.json"
@@ -114,7 +117,7 @@ class EdgarClient:
         try:
             self.fetch_recorder(fetch)
         except Exception:
-            pass
+            LOG.debug("SEC fetch recorder failed", exc_info=True)
 
     def _get(self, url: str) -> bytes:
         parsed = urlparse(url)
@@ -156,7 +159,7 @@ class EdgarClient:
                     try:
                         self.recorder(url, body)
                     except Exception:
-                        pass
+                        LOG.debug("SEC body recorder failed for %s", url, exc_info=True)
                 return body
             except (TimeoutError, urllib.error.URLError) as exc:
                 self._last_request = time.monotonic()

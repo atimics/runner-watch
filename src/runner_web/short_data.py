@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import urllib.error
@@ -14,6 +15,8 @@ from typing import Any
 
 from runner_watch.ingestion import SourceFetch, SourceFetchRecorder
 from runner_web.db import connection
+
+LOG = logging.getLogger(__name__)
 
 FINTEL_API_ROOT = "https://api.fintel.io"
 FINTEL_SECURITY_ROOT = "https://fintel.io/ss/us"
@@ -325,7 +328,7 @@ class FintelShortDataClient:
                 try:
                     self.fetch_recorder(fetch)
                 except Exception:
-                    pass
+                    LOG.debug("Short-data fetch recorder failed", exc_info=True)
         return output, warnings
 
 
