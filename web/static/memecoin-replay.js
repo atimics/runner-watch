@@ -16,7 +16,7 @@
     return node;
   };
   const stop = () => { playing = false; clearTimeout(timer); play.textContent = "Replay events"; };
-  function details(id) {
+  function details(id, eventId, focus = true) {
     stop();
     cancelAnimationFrame(animation); generation++;
     const frame = data.frames[index];
@@ -29,7 +29,7 @@
     heading.textContent = node.kind === "launch" ? `Token launch · ${data.launch ? "recorded on chain" : "evidence pending"}` : `${node.kind} · ${node.address}`;
     target.append(heading);
     const events = new Map(data.events.map(e => [e.event_id, e]));
-    for (const edge of frame.edges.filter(e => e.source === id || e.target === id)) {
+    for (const edge of frame.edges.filter(e => eventId ? e.event_id === eventId : e.source === id || e.target === id)) {
       const event = events.get(edge.event_id);
       const line = document.createElement("p"), link = document.createElement("a");
       link.href = `${receiptBase}${encodeURIComponent(edge.signature)}`;
@@ -39,9 +39,13 @@
       if (event.net_token_amount) line.append(` · ${event.net_token_amount} tokens (${event.amount_basis})`);
       if (event.balances) for (const b of event.balances) line.append(` · ${b.raw} raw units / ${b.decimals} decimals of ${b.mint}`);
       target.append(line);
+      if (event.observed_at) {
+        const when = document.createElement('p'); when.textContent = `Recorded ${event.observed_at}`; target.append(when);
+        document.dispatchEvent(new CustomEvent('rati:map-time', {detail:{time:event.observed_at,label:'Chain event'}}));
+      }
     }
-    root.querySelector(".replay-evidence").open = true;
-    graph.querySelector(`[data-node="${CSS.escape(id)}"]`)?.focus();
+    if (focus) graph.querySelector(`[data-node="${CSS.escape(id)}"]`)?.focus({preventScroll:true});
+    root.querySelectorAll('[data-replay-event]').forEach(button => button.setAttribute('aria-pressed',String(button.dataset.replayEvent === eventId)));
   }
   function draw(frame) {
     graph.replaceChildren();
@@ -64,6 +68,24 @@
     }
     shown = frame;
   }
+  function activity(frame) {
+    const list = $("events"); if (!list) return;
+    list.replaceChildren();
+    const seen = new Set();
+    for (const edge of [...frame.edges].reverse()) {
+      if (seen.has(edge.event_id)) continue; seen.add(edge.event_id);
+      const event = data.events.find(e => e.event_id === edge.event_id);
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'map-event';
+      button.dataset.replayEvent = edge.event_id; button.setAttribute('aria-pressed','false');
+      const dot = document.createElement('span'); dot.textContent = '●';
+      const description = document.createElement('span'), title = document.createElement('strong'), detail = document.createElement('small');
+      title.textContent = `${edge.role} · ${event.wallet || edge.source}`;
+      detail.textContent = `Slot ${edge.slot}${event.observed_at ? ' · ' + event.observed_at : ''}`;
+      description.append(title,detail); button.append(dot,description);
+      button.addEventListener('click',() => details(edge.source,edge.event_id,false)); list.append(button);
+    }
+    if (!seen.size) list.textContent = 'Move through the saved timeline to explore recorded events.';
+  }
   function blend(first, last, progress, reset) {
     const t = progress * progress * (3 - 2 * progress);
     const before = new Map(first.nodes.map(n => [n.id,n])), after = new Map(last.nodes.map(n => [n.id,n]));
@@ -85,6 +107,8 @@
     const target = data.frames[index], first = shown || target;
     $("time").textContent = `${target.label} · keyframe ${index + 1} of ${data.frames.length}`;
     $("selection").textContent = "Choose a bubble to view its recorded connections.";
+    activity(target);
+    document.dispatchEvent(new CustomEvent('rati:map-time', {detail:{time:null}}));
     const duration = animate && !motion.matches ? (reset ? data.timing.reset : data.timing.transition) : 0;
     const start = performance.now();
     graph.dataset.phase = reset ? "returning-to-launch" : "transition";
@@ -135,7 +159,7 @@
       position.max = String(data.frames.length-1);
       $("gif").href = record.gif_url; $("evidence").href = record.evidence_url;
       $("coverage").textContent = `${data.coverage.drawn_events} events shown from ${data.coverage.saved_events} saved events · ${data.coverage.drawn_nodes} bubbles · ${data.frames.length} keyframes. ${data.coverage.basis}${record.collection_status ? " Further collection is pending." : ""}`;
-      select(0, {animate:false});
+      select(data.frames.length-1, {animate:false});
     } catch (error) {if (error.name !== "AbortError") status.textContent = error.message;}
   }
   window.addEventListener("pagehide", () => {stop(); loadController?.abort(); cancelAnimationFrame(animation);});

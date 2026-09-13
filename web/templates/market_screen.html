@@ -27,20 +27,8 @@
     <div data-live-surface>
     {% if screen.rows %}
       {% if screen.kind == 'map' %}
-      {% macro related(link) %}<a class="connection-target" href="{{ link.item.href }}" aria-label="View {{ link.item.name }} Detail"><span class="connection-dot" aria-hidden="true"></span><span><strong>{{ link.item.name }}</strong><small>{{ link.label }} · {{ link.time or 'Date pending' }}</small></span><span class="row-arrow" aria-hidden="true">↗</span></a>{% if link.activity %}<ul class="connection-activity">{% for event in link.activity %}<li><strong class="{{ event.tone }}">{{ event.action }}{% if event.value %} · {{ event.value }}{% endif %}</strong><small>{{ event.role }} · Filed {{ event.time or 'date pending' }}</small>{% if event.url %}<a href="{{ event.url }}" target="_blank" rel="noopener noreferrer">Open SEC filing ↗</a>{% endif %}</li>{% endfor %}</ul>{% endif %}{% endmacro %}
-      <div class="map-subjects">{% for item in screen.rows %}<a class="map-subject" href="{{ item.href }}" aria-label="Open {{ item.name }}"><strong>{{ item.name }}</strong><span>{{ item.value }}</span><small class="{{ item.tone }}">{{ item.change }}</small></a>{% endfor %}</div>
-      <p class="map-guide">Select a participant to explore its connections. Open a ticker to see its story.</p>
-      <div class="connection-map" aria-label="Ticker map">
-      {% for connection in screen.connections %}
-        <details class="connection-node" data-connection="{{ connection.id }}">
-          <summary><span class="participant-mark" aria-hidden="true">{{ connection.mark }}{% if connection.portrait %}<img data-portrait src="{{ connection.portrait }}" alt="" loading="lazy">{% endif %}</span><span><strong>{{ connection.name }}</strong>{% if connection.action_summary %}<span class="connection-actions">{{ connection.action_summary }}</span>{% endif %}<small>{{ connection.label }} · {{ connection.links|length }} {{ 'story' if connection.links|length == 1 else 'stories' }}</small></span></summary>
-          <p class="connection-explanation">{{ connection.explanation }}</p>
-          <div class="connection-links">{% for link in connection.visible_links %}{{ related(link) }}{% endfor %}</div>
-          {% if connection.more_links %}<details class="more-connections"><summary>Show {{ connection.more_links|length }} more connections</summary><div class="connection-links">{% for link in connection.more_links %}{{ related(link) }}{% endfor %}</div></details>{% endif %}
-        </details>
-      {% endfor %}
-      </div>
-      {% if screen.unlinked %}<section class="map-unlinked"><h2>More connections to discover</h2><p>Saved connections for {{ screen.unlinked|map(attribute='name')|join(', ') }} will appear as participants are found. Open a story above to explore its latest activity.</p></section>{% endif %}
+      <p class="map-guide">{{ 'Open a game to see its teams, score, and Calls.' if screen.market == 'sports' else 'One map for each ticker. Open a ticker to explore its people, activity, and sources.' }}</p>
+      <div class="map-subjects">{% for item in screen.rows %}<a class="map-subject" href="{{ item.href }}" aria-label="Open {{ item.name }}"><span class="ticker-mark" aria-hidden="true">{{ item.mark }}</span><strong>{{ item.name }}</strong><small>{{ item.subtitle }}</small><span>{{ item.value }}</span><small class="{{ item.tone }}">{{ item.change }}</small><p>{{ 'Open game' if screen.market == 'sports' else 'Explore map' }} ↗</p></a>{% endfor %}</div>
       {% else %}
       <div class="ticker-list" aria-label="Tickers">{% for item in screen.rows %}<a class="ticker" href="{{ item.href }}"><span class="ticker-mark tone-{{ loop.index0 % 5 }}" aria-hidden="true">{{ item.mark }}</span><span class="ticker-name"><strong>{{ item.name }}</strong><small>{{ item.subtitle }}</small></span><span class="ticker-value"><strong>{{ item.value }}</strong><small class="{{ item.tone }}">{{ item.change }}</small></span><span class="row-arrow" aria-hidden="true">↗</span></a>{% endfor %}</div>
       {% endif %}
@@ -48,8 +36,9 @@
     </div>
   {% else %}
     <a class="back" href="{{ base }}">← {{ screen.label }}</a>
-    <article class="detail" data-live-surface><header class="asset-heading"><span class="ticker-mark tone-0" aria-hidden="true">{{ screen.item.mark }}</span><div><p class="eyebrow">{{ screen.item.subtitle }}</p><h1>{{ screen.item.name }}</h1></div></header>
-      <div class="asset-value"><strong data-value>{{ screen.item.value }}</strong><span data-change class="{{ screen.item.tone }}">{{ screen.item.change }}</span></div><p class="quote-scope">{% if screen.market != 'sports' %}{{ '24h change' if screen.market == 'memecoins' else 'Daily change' }} · {% endif %}<span class="quote-time" data-time>{{ screen.item.time }}</span></p>
+    <article class="detail" data-live-surface><div class="asset-overview"><header class="asset-heading"><span class="ticker-mark tone-0" aria-hidden="true">{{ screen.item.mark }}</span><div><p class="eyebrow">{{ screen.item.subtitle }}</p><h1>{{ screen.item.name }}</h1></div></header>
+      <div class="asset-quote"><div class="asset-value"><strong data-value>{{ screen.item.value }}</strong><span data-change class="{{ screen.item.tone }}">{{ screen.item.change }}</span></div><p class="quote-scope">{% if screen.market != 'sports' %}{{ '24h change' if screen.market == 'memecoins' else 'Daily change' }} · {% endif %}<span class="quote-time" data-time>{{ screen.item.time }}</span></p></div></div>
+      {% block detail_map %}{% endblock %}
       <section class="visual" aria-label="{{ 'Game' if screen.teams else 'Price history' }}">
       {% if screen.teams %}<div class="teams">{% for team in screen.teams %}<div><span class="team-mark">{{ team.mark }}</span><h2>{{ team.name }}</h2><strong>{{ team.score }}</strong></div>{% endfor %}</div><p class="visual-caption" data-game-note>{{ screen.note }}</p>
       {% else %}<svg class="price-chart" viewBox="0 0 800 280" role="img" aria-label="Price history" hidden><path class="chart-area"/><path class="chart-line"/><circle class="chart-point" r="4" hidden/></svg><p class="chart-status" data-chart-status>Price history is loading.</p><p class="chart-summary" data-chart-summary></p><div class="chart-labels"><span data-chart-start></span><span data-chart-end></span></div>{% endif %}

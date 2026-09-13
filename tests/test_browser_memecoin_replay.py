@@ -81,7 +81,9 @@ def open_replay(page: Page, *, width: int = 390, launch: bool = True) -> dict:
 @pytest.mark.parametrize("width", [320, 390, 1440])
 def test_replay_details_layout_history_and_downloads(page: Page, width: int):
     data = open_replay(page, width=width)
-    expect(page.locator("[data-node]")).to_have_count(1)
+    expect(page.locator("[data-node]")).to_have_count(len(data["frames"][-1]["nodes"]))
+    expect(page.locator("[data-replay-position]")).to_have_value(str(len(data["frames"])-1))
+    expect(page.locator("[data-replay-selection]")).to_be_visible()
     expect(page.locator("[data-replay-badge]")).to_have_text("Launch recorded")
     page.locator("[data-replay-latest]").click()
     expect(page.locator("[data-replay-graph]")).to_have_attribute("data-phase", "settled")

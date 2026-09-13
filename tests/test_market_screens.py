@@ -403,7 +403,8 @@ def test_shared_actor_retains_identity_related_subjects_and_overflow():
     assert node["links"][1]["time"] == "Sep 12 · 12:00 UTC"
     assert node["portrait"] == ""
     assert SENTINEL not in json.dumps(screen)
-    assert 'href="/t/T8"' in render(screen)
+    assert 'href="/t/T0"' in render(screen)
+    assert 'href="/t/T8"' not in render(screen)
 
 
 def test_coin_connections_keep_uncertainty_and_safe_portrait_url():
@@ -436,7 +437,7 @@ def test_sparse_map_keeps_subject_and_discovery_hint():
     screen = listing("stocks", [sample("stocks")], view="map")
     assert screen["connections"] == []
     assert screen["unlinked"][0]["id"] == "OPK"
-    assert "More connections to discover" in render(screen)
+    assert "One map for each ticker" in render(screen)
 
 
 def test_map_cached_portraits_read_saved_images_only(screen_client, monkeypatch):
@@ -475,9 +476,7 @@ def test_stock_map_shows_actions_history_and_safe_sources():
     screen = listing("stocks", [{**sample("stocks"), "ticker": "T0"}], view="map", graph=graph)
     assert screen["connections"][0]["action_summary"] == "Sold T0"
     html = render(screen)
-    assert "Sold · $400.00" in html
-    assert "Bought and sold" in html
-    assert "Filed Sep 12" in html
-    assert 'href="https://www.sec.gov/Archives/example"' in html
+    assert "Explore map" in html
+    assert 'href="/t/T0"' in html
     assert "javascript:" not in html
     assert "$999" not in html

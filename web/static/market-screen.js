@@ -6,11 +6,32 @@
   const chart = document.querySelector('.price-chart');
   const status = document.querySelector('[data-chart-status]');
   const put = (selector, value) => { const el = document.querySelector(selector); if (el) el.textContent = value || ''; };
+  let filingMarker = null, chartBounds = null;
+  function markFiling() {
+    if (!chart) return;
+    chart.querySelector('.chart-filing-marker')?.remove();
+    document.querySelector('.chart-filing-note')?.remove();
+    if (!filingMarker?.time) return;
+    const time = Date.parse(filingMarker.time);
+    if (!Number.isFinite(time)) return;
+    const note = document.createElement('p'); note.className = 'chart-filing-note';
+    const within = chartBounds && time >= chartBounds[0] && time <= chartBounds[1];
+    note.textContent = `${filingMarker.label || 'Selected filing'}${within ? ' · Marked on the chart' : ' · Price history for this date can be explored as more prices are saved.'}`;
+    chart.after(note);
+    if (within) {
+      const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+      const x = chartBounds[0] === chartBounds[1] ? 400 : 8+(time-chartBounds[0])/(chartBounds[1]-chartBounds[0])*784;
+      Object.entries({x1:x,x2:x,y1:0,y2:280,class:'chart-filing-marker'}).forEach(([key,value]) => line.setAttribute(key,value)); chart.append(line);
+    }
+  }
+  document.addEventListener('rati:map-time',event => {filingMarker = event.detail; markFiling();});
   function draw(points) {
     if (!chart) return;
     const ordered = new Map();
     (points || []).forEach(p => { const t = Date.parse(p.time); if (Number.isFinite(t) && Number.isFinite(p.value) && p.value > 0) ordered.set(t,p.value); });
     const data = [...ordered].sort((a,b)=>a[0]-b[0]);
+    chartBounds = data.length ? [data[0][0],data[data.length-1][0]] : null;
+    markFiling();
     const money = value => '$' + value.toLocaleString('en-US', value < 1 ? {maximumSignificantDigits: 6} : {minimumFractionDigits: 2, maximumFractionDigits: 6});
     const label = t => new Date(t).toLocaleString('en-US', {year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'UTC'}) + ' UTC';
     const dot = chart.querySelector('.chart-point');

@@ -26,3 +26,4 @@
 .replay-evidence { padding-top: 14px; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
 .replay-evidence summary { cursor: pointer; }
 .replay-evidence a { color: var(--text); }
+.token-replay{border-top:0;padding-top:0;margin-bottom:36px}.token-replay header h2{font-size:26px;font-weight:550}.token-replay .replay-stage{border-radius:0;display:flex;align-items:center}.token-replay .map-event{grid-template-columns:10px minmax(0,1fr);overflow-wrap:anywhere}.token-replay h3{font-size:17px;font-weight:550}.token-replay .map-source{padding:24px}

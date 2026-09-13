@@ -68,6 +68,8 @@ class OwnershipSummary:
     direct_ownership: bool | None = None
     footnotes: str = ""
     owner_cik: int | None = None
+    reporting_owners: tuple[dict[str, Any], ...] = ()
+    transactions: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +78,8 @@ class BeneficialOwnershipSummary:
     ownership_pct: float | None
     beneficial_shares: float | None
     reporting_person_types: tuple[str, ...]
+    positions: tuple[dict[str, Any], ...] = ()
+    issuer_cik: int | None = None
 
 
 class EdgarClient:
@@ -332,8 +336,89 @@ def _number(node: Any, path: str) -> float:
         return 0.0
 
 
+def _optional_number(node: Any, path: str) -> float | None:
+    value = node.findtext(path, default="").strip().replace(",", "")
+    try:
+        number = float(value)
+        return number if math.isfinite(number) else None
+    except ValueError:
+        return None
+
+
+def _ownership_records(root: Any) -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
+    owners = []
+    for node in root.findall("./reportingOwner"):
+        cik = node.findtext("./reportingOwnerId/rptOwnerCik", "").strip()
+        roles = []
+        rel = node.find("reportingOwnerRelationship")
+        if rel is not None:
+            for flag, title in (
+                ("isDirector", "Director"),
+                ("isTenPercentOwner", "10% owner"),
+                ("isOfficer", rel.findtext("officerTitle", "Officer")),
+                ("isOther", rel.findtext("otherText", "Other reporting person")),
+            ):
+                if rel.findtext(flag, "0").lower() in {"1", "true"}:
+                    roles.append(title)
+        owners.append(
+            {
+                "cik": int(cik) if cik.isdigit() and int(cik) else None,
+                "name": node.findtext("./reportingOwnerId/rptOwnerName", "").strip(),
+                "role": " · ".join(roles) or "Reporting person",
+            }
+        )
+    notes = {
+        n.get("id"): " ".join("".join(n.itertext()).split())
+        for n in root.findall("./footnotes/footnote")
+    }
+    transactions = []
+    for table in ("nonDerivative", "derivative"):
+        for ordinal, node in enumerate(root.findall(f"./{table}Table/{table}Transaction")):
+            shares = _optional_number(node, "./transactionAmounts/transactionShares/value")
+            price = _optional_number(node, "./transactionAmounts/transactionPricePerShare/value")
+            transactions.append(
+                {
+                    "line": f"{table}:{ordinal + 1}",
+                    "security_type": table,
+                    "security": node.findtext("./securityTitle/value", ""),
+                    "occurred_at": node.findtext("./transactionDate/value", "") or None,
+                    "code": node.findtext("./transactionCoding/transactionCode", ""),
+                    "direction": node.findtext(
+                        "./transactionAmounts/transactionAcquiredDisposedCode/value", ""
+                    ),
+                    "shares": shares,
+                    "price": price,
+                    "value": shares * price if shares is not None and price is not None else None,
+                    "post_shares": _optional_number(
+                        node, "./postTransactionAmounts/sharesOwnedFollowingTransaction/value"
+                    ),
+                    "ownership": node.findtext(
+                        "./ownershipNature/directOrIndirectOwnership/value", ""
+                    ),
+                    "ownership_detail": node.findtext(
+                        "./ownershipNature/natureOfOwnership/value", ""
+                    ),
+                    "underlying_security": node.findtext(
+                        "./underlyingSecurity/underlyingSecurityTitle/value", ""
+                    ),
+                    "underlying_shares": _optional_number(
+                        node, "./underlyingSecurity/underlyingSecurityShares/value"
+                    ),
+                    "footnotes": " ".join(
+                        dict.fromkeys(
+                            notes.get(n.get("id"), "") for n in node.findall(".//footnoteId")
+                        )
+                    ),
+                }
+            )
+    return tuple(owners), tuple(transactions)
+
+
 def parse_ownership_xml(text: str) -> OwnershipSummary:
     root = safe_xml_fromstring(text)
+    for node in root.iter():
+        node.tag = node.tag.rsplit("}", 1)[-1]
+    reporting_owners, transactions = _ownership_records(root)
     issuer_cik = int(root.findtext("./issuer/issuerCik", default="0"))
     ticker = root.findtext("./issuer/issuerTradingSymbol", default="").strip().upper()
     owner_name = root.findtext("./reportingOwner/reportingOwnerId/rptOwnerName", default="").strip()
@@ -420,6 +505,8 @@ def parse_ownership_xml(text: str) -> OwnershipSummary:
         direct_ownership=direct_ownership,
         footnotes=footnotes,
         owner_cik=owner_cik,
+        reporting_owners=reporting_owners,
+        transactions=transactions,
     )
 
 
@@ -441,9 +528,77 @@ def _first_number(values: list[str]) -> float | None:
     return None
 
 
+def _beneficial_positions(root: Any) -> tuple[dict[str, Any], ...]:
+    def numeric(values: list[str]) -> float | None:
+        text = values[0].strip().replace(",", "").removesuffix("%").strip()
+        if not re.fullmatch(r"\d+(?:\.\d+)?", text):
+            return None
+        result = float(text)
+        return result if math.isfinite(result) else None
+
+    def value(node: Any, *tags: str) -> str:
+        return next(
+            (
+                " ".join("".join(n.itertext()).split())
+                for n in node.iter()
+                if _local_tag(n) in tags and n.text and n.text.strip()
+            ),
+            "",
+        )
+
+    security = value(root, "securitiesclasstitle", "titleofclassofsecurities")
+    as_of = value(root, "dateofevent", "dateofeventwhichrequiresfiling") or None
+    positions = []
+    for node in root.iter():
+        if _local_tag(node) not in {"reportingpersoninfo", "coverpageheaderreportingpersondetails"}:
+            continue
+        name = value(
+            node, "nameofreportingperson", "reportingpersonname", "nameofreportingpersonfiling"
+        )
+        if not name:
+            continue
+        cik = value(node, "reportingpersoncik", "reportingcik")
+        # Each cover-page row belongs to one reporting person. Shared interests stay separate.
+        positions.append(
+            {
+                "name": name,
+                "cik": int(cik) if cik.isdigit() and int(cik) else None,
+                "role": "Beneficial owner",
+                "security": security,
+                "occurred_at": as_of,
+                "shares": numeric(
+                    [
+                        value(
+                            node,
+                            "aggregateamountbeneficiallyownedbyeachreportingperson",
+                            "amountbeneficiallyownedbyeachreportingperson",
+                            "aggregateamountowned",
+                            "reportingpersonbeneficiallyownedaggregatenumberofshares",
+                        )
+                    ]
+                ),
+                "percent": numeric(
+                    [
+                        value(
+                            node,
+                            "percentofclassrepresentedbyamount",
+                            "percentofclass",
+                            "percentofclassrepresented",
+                            "classpercent",
+                        )
+                    ]
+                ),
+                "person_type": value(node, "typeofreportingperson", "reportingpersontype"),
+                "footnotes": value(node, "commentcontent", "comments"),
+            }
+        )
+    return tuple(positions)
+
+
 def parse_beneficial_ownership_xml(text: str) -> BeneficialOwnershipSummary | None:
 
     root = safe_xml_fromstring(text)
+    positions = _beneficial_positions(root)
     values: dict[str, list[str]] = {}
     for node in root.iter():
         clean = " ".join("".join(node.itertext()).split()) if len(node) == 0 else ""
@@ -478,13 +633,22 @@ def parse_beneficial_ownership_xml(text: str) -> BeneficialOwnershipSummary | No
     person_types = tuple(
         dict.fromkeys(value[:40] for tag in type_tags for value in values.get(tag, []) if value)
     )
-    if not owners and not percentages and not shares:
+    if not owners and not percentages and not shares and not positions:
         return None
     return BeneficialOwnershipSummary(
-        owner_names=owners,
+        owner_names=tuple(p["name"] for p in positions) or owners,
         ownership_pct=max(percentages) if percentages else None,
         beneficial_shares=max(shares) if shares else None,
         reporting_person_types=person_types,
+        positions=positions,
+        issuer_cik=next(
+            (
+                int(n.text.strip())
+                for n in root.iter()
+                if _local_tag(n) == "issuercik" and n.text and n.text.strip().isdigit()
+            ),
+            None,
+        ),
     )
 
 
@@ -516,8 +680,13 @@ def classify_filing(form: str, ownership: OwnershipSummary | None = None) -> dic
         (("EFFECT",), "Registration became effective", "risk", 72),
         (("NT 10-Q", "NT 10-K"), "Late periodic report", "risk", 76),
         (("144",), "Proposed security sale", "risk", 62),
-        (("SC 13D",), "Active beneficial ownership · intent needs review", "neutral", 64),
-        (("SC 13G",), "Beneficial ownership update", "neutral", 58),
+        (
+            ("SC 13D", "SCHEDULE 13D"),
+            "Active beneficial ownership · intent needs review",
+            "neutral",
+            64,
+        ),
+        (("SC 13G", "SCHEDULE 13G"), "Beneficial ownership update", "neutral", 58),
         (("8-K", "6-K"), "New current report", "neutral", 68),
         (("10-Q", "10-K", "20-F", "40-F"), "Financial report", "neutral", 48),
     )
