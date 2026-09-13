@@ -125,7 +125,7 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width):
     expect(page.locator("[data-map-selection] h3")).to_have_text(name)
     expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(1)
     expect(page.locator("[data-map-selection] a")).to_have_attribute(
-        "href", re.compile("^https://www.sec.gov/Archives/edgar/data/")
+        "href", re.compile(r"^https://www\.sec\.gov/Archives/edgar/data/")
     )
     expect(page.locator(".chart-filing-marker")).to_have_count(1)
     page.get_by_role("button", name="Next people").click()
