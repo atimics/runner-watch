@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 LABELS = {"stocks": "Stocks", "memecoins": "Memecoins", "sports": "Sports"}
 
@@ -44,6 +44,23 @@ def stamp(value: Any) -> str:
         return ""
 
 
+def ago(value: Any) -> str:
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+    except (ValueError, TypeError):
+        return ""
+    seconds = max(0.0, (datetime.now(UTC) - dt.astimezone(UTC)).total_seconds())
+    if seconds < 90:
+        return "now"
+    if seconds < 5400:
+        return f"{round(seconds / 60)}m ago"
+    if seconds < 129600:
+        return f"{round(seconds / 3600)}h ago"
+    return f"{round(seconds / 86400)}d ago"
+
+
 def sports_state(item: dict[str, Any]) -> dict[str, Any]:
     from runner_web.sports import _game_view_state
 
@@ -63,6 +80,11 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
             "time": stamp(item.get("start_time")),
             "href": "/game/" + quote(str(item["id"]), safe=":"),
             "mark": "PG",
+            "tag": "",
+            "tag_tone": "",
+            "risk": False,
+            "score": None,
+            "score_detail": None,
         }
     if market == "sports":
         away = str(item.get("away_abbreviation") or item.get("away_team_name") or "Away")
@@ -94,12 +116,25 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
             "time": stamp(item.get("start_time")),
             "href": "/game/" + quote(str(item["id"]), safe=":"),
             "mark": away[:2],
+            "tag": "",
+            "tag_tone": "",
+            "risk": False,
+            "score": None,
+            "score_detail": None,
         }
     coin = market == "memecoins"
     identifier = str(item.get("id") if coin else item.get("ticker") or "")
     name = str(item.get("symbol") if coin else item.get("ticker") or "")
     move = number(item.get("change_24h") if coin else item.get("change_pct"))
     paused = coin and bool(item.get("stale"))
+    if market == "stocks":
+        tag, tag_tone, risk = state_tag(item)
+        score = number(item.get("score"))
+        score_detail = item.get("score_detail")
+    elif paused:
+        tag, tag_tone, risk, score, score_detail = "PAUSED", "watch", False, None, None
+    else:
+        tag, tag_tone, risk, score, score_detail = "", "", False, None, None
     return {
         "id": identifier,
         "name": name,
@@ -121,7 +156,36 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         ),
         "href": ("/memecoins/coin/" if coin else "/t/") + quote(identifier, safe=""),
         "mark": name[:2],
+        "tag": tag,
+        "tag_tone": tag_tone,
+        "risk": risk,
+        "score": score,
+        "score_detail": score_detail,
     }
+
+
+def state_tag(item: dict[str, Any]) -> tuple[str, str, bool]:
+    """Collapse stage, trade state and rug level into one action tag.
+
+    Precedence is AVOID > EXTENDED > RUNNING > SETUP > WATCH. Risk is returned
+    separately so the row can show one small mark without a second badge.
+    """
+
+    trade = str(item.get("trade_state") or "").upper()
+    stage = str(item.get("stage") or "").upper()
+    rug = str(item.get("rug_level") or "").lower()
+    risky = rug in {"high", "critical"}
+    if trade in {"AVOID", "EXIT"} or risky:
+        return "AVOID", "avoid", risky
+    if stage == "EXTENDED":
+        return "EXTENDED", "extended", rug == "guarded"
+    if trade in {"TRIGGERED", "MANAGE"} or stage == "RUNNING":
+        return "RUNNING", "running", rug == "guarded"
+    if trade == "ARMED" or stage in {"EARLY", "BUILDING"}:
+        return "SETUP", "setup", rug == "guarded"
+    if trade or stage:
+        return "WATCH", "watch", rug == "guarded"
+    return "", "", False
 
 
 def listing(
@@ -131,161 +195,31 @@ def listing(
     view: str = "list",
     query: str = "",
     graph: dict[str, Any] | None = None,
+    updated_at: str = "",
 ) -> dict[str, Any]:
+    """Build the tight list screen. The market-wide map view is retired."""
+
+    _ = view, graph  # Kept so saved links keep working; the map lives on the ticker page now.
     rows = [row(market, item) for item in items]
     query = query.strip()[:80]
     if query:
         rows = [r for r in rows if query.casefold() in (r["name"] + " " + r["subtitle"]).casefold()]
-    screen = {"kind": view, "market": market, "label": LABELS[market], "rows": rows, "query": query}
-    if view == "map":
-        screen.update(map_connections(market, rows, items, graph or {}))
-    return screen
-
-
-def stock_activity(link: dict[str, Any]) -> list[dict[str, str]]:
-    words = {
-        "buy": "Bought",
-        "sell": "Sold",
-        "mixed": "Bought and sold",
-        "own": "Disclosed ownership",
-        "hold": "Updated holding",
+    counts: dict[str, int] = {}
+    for item in rows:
+        tone = str(item.get("tag_tone") or "")
+        if tone:
+            counts[tone] = counts.get(tone, 0) + 1
+    return {
+        "kind": "list",
+        "market": market,
+        "label": LABELS[market],
+        "rows": rows,
+        "query": query,
+        "total": len(rows),
+        "counts": counts,
+        "updated_at": updated_at,
+        "updated_label": ago(updated_at) if updated_at else "",
     }
-    result = []
-    for entry in link.get("activity") or [link]:
-        direction = str(entry.get("direction") or "")
-        url = str(entry.get("url") or "")
-        try:
-            parsed = urlsplit(url)
-            safe = parsed.scheme == "https" and parsed.hostname in {"www.sec.gov", "sec.gov"}
-        except ValueError:
-            safe = False
-        value = number(entry.get("value"))
-        result.append(
-            {
-                "action": words.get(direction, "Filed update"),
-                "tone": {"buy": "up", "sell": "down"}.get(direction, "neutral"),
-                "time": stamp(entry.get("as_of")),
-                "value": money(value)
-                if value is not None and value > 0 and direction in {"buy", "sell"}
-                else "",
-                "role": str(entry.get("role") or "").replace("_", " "),
-                "url": url if safe else "",
-            }
-        )
-    return result
-
-
-def map_connections(
-    market: str, rows: list[dict[str, Any]], items: list[dict[str, Any]], graph: dict[str, Any]
-) -> dict[str, Any]:
-    """Keep one public node per saved participant and link it to its subjects."""
-    from runner_web.market_actors import public_relationship
-
-    selected = {r["id"] for r in rows}
-    targets = {r["id"]: r for r in (row(market, item) for item in items)}
-    nodes: dict[str, dict[str, Any]] = {}
-    if market == "sports":
-        for game in items:
-            key = str(game["id"])
-            if key.startswith("golf:"):
-                continue
-            for side in ("away", "home"):
-                name = game.get(f"{side}_team_name") or game.get(f"{side}_abbreviation")
-                identity = game.get(f"{side}_team_id") or name
-                if not identity:
-                    continue
-                actor_id = f"team:{game.get('league') or key.split(':')[0]}:{identity}"
-                node = nodes.setdefault(
-                    actor_id,
-                    {
-                        "id": actor_id,
-                        "name": str(name or identity),
-                        "portrait": "",
-                        "label": "Team",
-                        "explanation": "This team plays in these games.",
-                        "links": [],
-                    },
-                )
-                node["links"].append(
-                    {
-                        "item": targets[key],
-                        "time": stamp(game.get("start_time")),
-                        "label": "Game time",
-                    }
-                )
-    else:
-        for subject in graph.get("subjects", []):
-            key = str(subject["key"])
-            targets.setdefault(
-                key,
-                {
-                    "id": key,
-                    "name": str(subject.get("label") or key),
-                    "href": ("/t/" if market == "stocks" else "/memecoins/coin/")
-                    + quote(key, safe=""),
-                    "value": "",
-                    "change": "",
-                    "tone": "neutral",
-                },
-            )
-        actors = {str(actor["id"]): actor for actor in graph.get("actors", [])}
-        seen = set()
-        for link in graph.get("links", []):
-            actor_id, key = str(link["actor_id"]), str(link["subject_key"])
-            if actor_id not in actors or key not in targets or (actor_id, key) in seen:
-                continue
-            seen.add((actor_id, key))
-            actor = actors[actor_id]
-            node = nodes.setdefault(
-                actor_id,
-                {
-                    "id": actor_id,
-                    "name": str(actor.get("name") or "Participant"),
-                    "portrait": (
-                        f"/api/market-actors/{quote(actor_id, safe='')}/portrait?cached=true"
-                    )
-                    if actor.get("portrait_ready")
-                    else "",
-                    "label": "Possible wallet link"
-                    if market == "memecoins"
-                    else "Filing character",
-                    "explanation": "Saved wallet activity suggests a possible connection."
-                    if market == "memecoins"
-                    else (
-                        "This fictional character represents a public filer. "
-                        "Dates show when each filing was reported."
-                    ),
-                    "links": [],
-                },
-            )
-            node["links"].append(
-                {
-                    "item": targets[key],
-                    "time": stamp(link.get("as_of")),
-                    "label": public_relationship(market, link.get("direction")),
-                    "activity": stock_activity(link) if market == "stocks" else [],
-                }
-            )
-    connections = []
-    connected = set()
-    for node in nodes.values():
-        if not any(link["item"]["id"] in selected for link in node["links"]):
-            continue
-        node["mark"] = "".join(word[0] for word in node["name"].split()[:2]).upper()
-        node["links"].sort(
-            key=lambda link: (link["item"]["id"] not in selected, link["item"]["name"])
-        )
-        connected.update(link["item"]["id"] for link in node["links"])
-        node["visible_links"] = node["links"][:6]
-        node["more_links"] = node["links"][6:]
-        node["action_summary"] = " · ".join(
-            f"{link['activity'][0]['action']} {link['item']['name']}"
-            for link in node["visible_links"][:3]
-            if link.get("activity")
-        )
-        connections.append(node)
-    connections.sort(key=lambda node: (-len(node["links"]), node["name"], node["id"]))
-    return {"connections": connections, "unlinked": [r for r in rows if r["id"] not in connected]}
 
 
 def series(points: list[dict[str, Any]]) -> list[dict[str, Any]]:

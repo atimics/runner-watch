@@ -10,39 +10,54 @@
 </head>
 <body>
 <a class="skip-link" href="#content">Skip to content</a>
+{% set base = '/memecoins' if screen.market == 'memecoins' else '/' %}
 <div class="market-screen">
-  <header class="topbar"><a class="brand" href="{{ runners_origin }}/" aria-label="RATi home">RATi<span>●</span></a>
+  <header class="topbar">
+    <a class="brand" href="{{ runners_origin }}/" aria-label="RATi home">RATi<span>●</span></a>
     <nav aria-label="Market" class="markets">
-      {% for key,label,base in [('stocks','Stocks',runners_origin ~ '/'),('memecoins','Memecoins',runners_origin ~ '/memecoins'),('sports','Sports',sports_origin ~ '/')] %}<a href="{{ base }}{% if screen.kind == 'map' %}?view=map{% endif %}"{% if screen.market == key %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
+      {% for key,label,url in [('stocks','Stocks',runners_origin ~ '/'),('memecoins','Memecoins',runners_origin ~ '/memecoins'),('sports','Sports',sports_origin ~ '/')] %}<a href="{{ url }}"{% if screen.market == key %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
     </nav>
+    {% if market_clock %}
+    <span class="clock" title="{{ market_clock.label }} · {{ market_clock.data_note }}"><i class="{{ 'live' if market_clock.scanner_active else 'idle' }}"></i><b>{{ {'pre':'PRE','regular':'REG','after':'AH','overnight':'OVN'}.get(market_clock.session, 'CLOSED') }}</b><span>{{ market_clock.eastern_now[11:16] }} ET</span></span>
+    {% endif %}
+    {% if screen.updated_label %}<span class="fresh">Updated {{ screen.updated_label }}</span>{% endif %}
+    {% if screen.counts %}<div class="tag-filters" data-tag-filters aria-label="Filter by state">
+      {% for tone in ['running','setup','extended','avoid','watch'] %}{% if screen.counts.get(tone) %}<button type="button" class="chip chip-{{ tone }}" data-tag="{{ tone }}" aria-pressed="false"><i></i>{{ screen.counts[tone] }} {{ tone }}</button>{% endif %}{% endfor %}
+      <button type="button" class="chip chip-all" data-tag="" aria-pressed="true" hidden>All</button>
+    </div>{% endif %}
+    <form class="search" method="get" action="{{ base }}" role="search">
+      <input type="hidden" name="view" value="list">
+      <label for="marketSearch" class="sr-only">Find a ticker</label>
+      <input id="marketSearch" name="q" type="search" value="{{ screen.query }}" placeholder="Find a ticker" autocomplete="off">
+      <button type="submit" aria-label="Search">⌕</button>
+    </form>
     <a class="account" href="{{ '/my-calls?market=' ~ screen.market if user else '/login?next=' ~ request.url.path|urlencode }}">{{ 'My Calls' if user else 'Log in' }}</a>
   </header>
-  {% set base = '/memecoins' if screen.market == 'memecoins' else '/' %}
   <main id="content">
   {% if screen.kind != 'detail' %}
-    <div class="screen-heading"><div><p class="eyebrow">{{ screen.label }}</p><h1>{{ 'Map' if screen.kind == 'map' else 'List' }}</h1></div>
-      <nav class="views" aria-label="View"><a href="{{ base }}?view=list{% if screen.query %}&amp;q={{ screen.query|urlencode }}{% endif %}"{% if screen.kind == 'list' %} aria-current="page"{% endif %}>List</a><a href="{{ base }}?view=map{% if screen.query %}&amp;q={{ screen.query|urlencode }}{% endif %}"{% if screen.kind == 'map' %} aria-current="page"{% endif %}>Map</a></nav>
-    </div>
-    <form class="search" method="get" action="{{ base }}"><input type="hidden" name="view" value="{{ screen.kind }}"><label for="marketSearch">Find a ticker</label><input id="marketSearch" name="q" type="search" value="{{ screen.query }}" placeholder="Search {{ screen.label|lower }}" autocomplete="off"><button aria-label="Search" type="submit">⌕</button></form>
     <div data-live-surface>
     {% if screen.rows %}
-      {% if screen.kind == 'map' %}
-      <p class="map-guide">{{ 'Open a game to see its teams, score, and Calls.' if screen.market == 'sports' else 'One map for each ticker. Open a ticker to explore its people, activity, and sources.' }}</p>
-      <div class="map-subjects">{% for item in screen.rows %}<a class="map-subject" href="{{ item.href }}" aria-label="Open {{ item.name }}"><span class="ticker-mark" aria-hidden="true">{{ item.mark }}</span><strong>{{ item.name }}</strong><small>{{ item.subtitle }}</small><span>{{ item.value }}</span><small class="{{ item.tone }}">{{ item.change }}</small><p>{{ 'Open game' if screen.market == 'sports' else 'Explore map' }} ↗</p></a>{% endfor %}</div>
-      {% else %}
-      <div class="ticker-list" aria-label="Tickers">{% for item in screen.rows %}<a class="ticker" href="{{ item.href }}"><span class="ticker-mark tone-{{ loop.index0 % 5 }}" aria-hidden="true">{{ item.mark }}</span><span class="ticker-name"><strong>{{ item.name }}</strong><small>{{ item.subtitle }}</small></span><span class="ticker-value"><strong>{{ item.value }}</strong><small class="{{ item.tone }}">{{ item.change }}</small></span><span class="row-arrow" aria-hidden="true">↗</span></a>{% endfor %}</div>
-      {% endif %}
+      <div class="ticker-list market-{{ screen.market }}" data-tag-list aria-label="Tickers">{% for item in screen.rows %}<a class="ticker" href="{{ item.href }}" data-tag="{{ item.tag_tone }}">
+        {% if item.tag %}<span class="tag tag-{{ item.tag_tone }}{% if item.risk %} has-risk{% endif %}">{% if item.risk %}<i aria-hidden="true">▲</i>{% endif %}{{ item.tag }}</span>
+        {% else %}<span class="ticker-mark tone-{{ loop.index0 % 5 }}" aria-hidden="true">{{ item.mark }}</span>{% endif %}
+        <span class="ticker-name"><strong>{{ item.name }}</strong><small>{{ item.subtitle }}</small></span>
+        <span class="ticker-value"><strong>{{ item.value }}</strong><small class="{{ item.tone }}">{{ item.change }}</small></span>
+        {% if screen.market == 'stocks' %}<svg class="mini-chart" data-ticker="{{ item.name }}" viewBox="0 0 64 18" preserveAspectRatio="none" aria-hidden="true"><path class="chart-placeholder" d="M1 12 L13 10 L25 13 L39 8 L51 10 L63 7"/></svg>{% endif %}
+        <span class="ticker-score{% if item.score is none %} is-empty{% endif %}">{% if item.score is not none %}<b>{{ item.score|round|int }}</b><span class="score-track"><i style="width: {{ [item.score, 100]|min|round|int }}%"></i></span>{% endif %}</span>
+        <span class="row-arrow" aria-hidden="true">↗</span>
+      </a>{% endfor %}</div>
     {% else %}<div class="empty"><span aria-hidden="true">◌</span><h2>{{ 'Try another search' if screen.query else 'A quiet moment' }}</h2><p>{{ 'Search by name or symbol.' if screen.query else 'New activity will appear here.' }}</p></div>{% endif %}
     </div>
   {% else %}
     <a class="back" href="{{ base }}">← {{ screen.label }}</a>
     <article class="detail" data-live-surface><div class="asset-overview"><header class="asset-heading"><span class="ticker-mark tone-0" aria-hidden="true">{{ screen.item.mark }}</span><div><p class="eyebrow">{{ screen.item.subtitle }}</p><h1>{{ screen.item.name }}</h1></div></header>
       <div class="asset-quote"><div class="asset-value"><strong data-value>{{ screen.item.value }}</strong><span data-change class="{{ screen.item.tone }}">{{ screen.item.change }}</span></div><p class="quote-scope">{% if screen.market != 'sports' %}{{ '24h change' if screen.market == 'memecoins' else 'Daily change' }} · {% endif %}<span class="quote-time" data-time>{{ screen.item.time }}</span></p></div></div>
-      {% block detail_map %}{% endblock %}
       <section class="visual" aria-label="{{ 'Game' if screen.teams else 'Price history' }}">
       {% if screen.teams %}<div class="teams">{% for team in screen.teams %}<div><span class="team-mark">{{ team.mark }}</span><h2>{{ team.name }}</h2><strong>{{ team.score }}</strong></div>{% endfor %}</div><p class="visual-caption" data-game-note>{{ screen.note }}</p>
       {% else %}<svg class="price-chart" viewBox="0 0 800 280" role="img" aria-label="Price history" hidden><path class="chart-area"/><path class="chart-line"/><circle class="chart-point" r="4" hidden/></svg><p class="chart-status" data-chart-status>Price history is loading.</p><p class="chart-summary" data-chart-summary></p><div class="chart-labels"><span data-chart-start></span><span data-chart-end></span></div>{% endif %}
       </section>
+      {% block detail_map %}{% endblock %}
+      {% block detail_metrics %}{% endblock %}
       <section class="call-record" data-call-record{% if not screen.call or screen.call.status == 'none' %} hidden{% endif %} aria-label="Your Call">
         <h2>Your Call</h2><dl class="facts">
         {% for key,label in [('choice','Choice'),('entry','Entry'),('terms','Settlement'),('outcome','Result'),('reward','Earned Flash')] %}<div><dt>{{ label }}</dt><dd data-call-{{ key }}>{{ screen.call[key] if screen.call else '' }}</dd></div>{% endfor %}
@@ -53,11 +68,14 @@
       <p class="action-status" role="status" data-action-status></p>
       <dialog class="call-confirm"><h2 data-confirm-title>Make Call</h2><p data-confirm-terms>This records a paper Call on your public profile.</p><p role="status" data-confirm-status></p><div class="actions"><button type="button" data-confirm>Confirm Call</button><button class="secondary" type="button" data-cancel>Cancel</button></div></dialog>
     </article>
+    {% block detail_comments %}{% endblock %}
     {% block detail_extra %}{% endblock %}
   {% endif %}
   </main>
 </div>
-{% if screen.kind == 'detail' %}<script type="application/json" nonce="{{ request.state.csp_nonce }}" id="screenData">{{ screen|tojson }}</script>{% endif %}<script src="/static/market-screen.js?v={{ static_version }}" defer></script>
+{% if screen.kind == 'detail' %}<script type="application/json" nonce="{{ request.state.csp_nonce }}" id="screenData">{{ screen|tojson }}</script>{% endif %}
+<script src="/static/market-screen.js?v={{ static_version }}" defer></script>
+{% if screen.kind != 'detail' and screen.market == 'stocks' %}<script src="/static/ticker-row.js?v={{ static_version }}" defer></script><script nonce="{{ request.state.csp_nonce }}">window.addEventListener('DOMContentLoaded',()=>{if(window.TickerRow){window.TickerRow.loadCharts('/api/pulse/charts');}});</script>{% endif %}
 {% block detail_scripts %}{% endblock %}
 </body>
 </html>

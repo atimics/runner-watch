@@ -5,6 +5,28 @@
   document.addEventListener('error', event => { if (event.target.matches?.('[data-portrait]')) event.target.hidden = true; }, true);
   const chart = document.querySelector('.price-chart');
   const status = document.querySelector('[data-chart-status]');
+  let activeTag = null;
+  function applyTagFilter() {
+    const list = document.querySelector('[data-tag-list]');
+    if (!list) return;
+    list.querySelectorAll('.ticker').forEach(row => {
+      row.hidden = Boolean(activeTag) && (row.dataset.tag || '') !== activeTag;
+    });
+  }
+  const tagFilters = document.querySelector('[data-tag-filters]');
+  if (tagFilters) tagFilters.addEventListener('click', event => {
+    const chip = event.target.closest('.chip');
+    if (!chip) return;
+    const tag = chip.dataset.tag || '';
+    activeTag = (!tag || activeTag === tag) ? null : tag;
+    tagFilters.querySelectorAll('.chip').forEach(item => {
+      item.setAttribute('aria-pressed', String((item.dataset.tag || '') === (activeTag || '')));
+    });
+    const all = tagFilters.querySelector('.chip-all');
+    if (all) all.toggleAttribute('hidden', !activeTag);
+    applyTagFilter();
+  });
+  applyTagFilter();
   const put = (selector, value) => { const el = document.querySelector(selector); if (el) el.textContent = value || ''; };
   let filingMarker = null, chartBounds = null;
   function markFiling() {
@@ -140,6 +162,7 @@
         content.querySelectorAll('[data-connection]').forEach(el => { if (opened.has(el.dataset.connection)) { el.open = true; const more = el.querySelector('.more-connections'); if (more) more.open = opened.get(el.dataset.connection); } });
         surface.replaceWith(content);
       }
+      applyTagFilter();
     } catch (_) { /* Keep the saved view during connection recovery. */ }
   }
   if (screen?.refresh_url) refreshDetail();
