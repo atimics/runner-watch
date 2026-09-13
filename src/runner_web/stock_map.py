@@ -301,7 +301,14 @@ def restore_archived_map_evidence(limit: int = 20) -> int:
                             "transactions": [],
                             "positions": stake.positions,
                         }
-                except (ValueError, OSError, EOFError, UnicodeError, ParseError, DefusedXmlException):
+                except (
+                    ValueError,
+                    OSError,
+                    EOFError,
+                    UnicodeError,
+                    ParseError,
+                    DefusedXmlException,
+                ):
                     continue
                 db.execute(
                     "UPDATE sec_filings SET evidence_json=? WHERE accession=?",
