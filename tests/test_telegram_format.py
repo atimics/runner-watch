@@ -209,7 +209,9 @@ def test_market_report_link_falls_back_to_base_when_day_unknown() -> None:
     message = telegram.format_market_report_post_md(
         payload, origin="http://app.test"
     )
-    assert message.endswith("http://app.test")
+    # Exact block comparison; an endswith check on a bare origin trips
+    # CodeQL's incomplete URL substring sanitization rule.
+    assert message.split("\n\n")[-1] == "http://app.test"
 
 
 def test_public_report_includes_research_link_when_public_id_present() -> None:
