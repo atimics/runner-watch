@@ -3217,6 +3217,174 @@ def _migration_069_stock_map_evidence(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_070_story_and_identity(db: DatabaseConnection) -> None:
+    """Persistent story identity (#245) and participant identity claims (#248).
+
+    Opaque IDs stay fixed while names, portraits, membership and labels change
+    around them. Claims keep the period they describe separate from when RATi
+    learned them; an unknown start date stays unknown.
+    """
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS participant_entities (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL CHECK(kind IN ('person','organization','provisional_group')),
+            status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','merged','archived')),
+            revision INTEGER NOT NULL DEFAULT 1,
+            dedupe_key TEXT UNIQUE,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS participant_entities_kind
+            ON participant_entities(kind,updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS participant_references (
+            id TEXT PRIMARY KEY,
+            entity_id TEXT NOT NULL REFERENCES participant_entities(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL CHECK(kind IN
+                ('name','wallet','filing','league','tag','legacy_actor')),
+            value TEXT NOT NULL,
+            chain TEXT,
+            network TEXT,
+            issuing_system TEXT,
+            observed_from TEXT,
+            observed_until TEXT,
+            learned_at TEXT NOT NULL,
+            source_kind TEXT,
+            source_id TEXT,
+            review_status TEXT NOT NULL DEFAULT 'unreviewed'
+                CHECK(review_status IN ('unreviewed','reviewed','disputed')),
+            UNIQUE(id,entity_id,kind,value,chain,issuing_system)
+        );
+        CREATE INDEX IF NOT EXISTS participant_references_entity
+            ON participant_references(entity_id,kind);
+        CREATE INDEX IF NOT EXISTS participant_references_value
+            ON participant_references(kind,value);
+
+        CREATE TABLE IF NOT EXISTS participant_claims (
+            id TEXT PRIMARY KEY,
+            subject_entity_id TEXT NOT NULL REFERENCES participant_entities(id) ON DELETE CASCADE,
+            relationship TEXT NOT NULL CHECK(relationship IN (
+                'same_participant','shared_operator','control','ownership',
+                'custody','funding','employment','sponsorship')),
+            object_entity_id TEXT REFERENCES participant_entities(id) ON DELETE CASCADE,
+            object_reference_id TEXT REFERENCES participant_references(id) ON DELETE SET NULL,
+            state TEXT NOT NULL DEFAULT 'proposed'
+                CHECK(state IN ('proposed','accepted','disputed','retracted')),
+            valid_from TEXT,
+            valid_until TEXT,
+            learned_at TEXT NOT NULL,
+            evidence_kind TEXT,
+            evidence_id TEXT,
+            origin TEXT,
+            policy_version TEXT NOT NULL DEFAULT 'identity-claims-v1',
+            review_note TEXT,
+            supersedes_claim_id TEXT REFERENCES participant_claims(id),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(state IN ('accepted','disputed','retracted')
+                OR object_entity_id IS NOT NULL OR object_reference_id IS NOT NULL)
+        );
+        CREATE INDEX IF NOT EXISTS participant_claims_subject
+            ON participant_claims(subject_entity_id,state);
+        CREATE INDEX IF NOT EXISTS participant_claims_object
+            ON participant_claims(object_entity_id,state);
+
+        CREATE TABLE IF NOT EXISTS identity_resolution_events (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL CHECK(kind IN ('group','split','combined_avatar')),
+            result_entity_id TEXT REFERENCES participant_entities(id) ON DELETE SET NULL,
+            status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','superseded')),
+            note TEXT,
+            created_at TEXT NOT NULL,
+            learned_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS identity_resolution_events_result
+            ON identity_resolution_events(result_entity_id,status);
+
+        CREATE TABLE IF NOT EXISTS identity_resolution_members (
+            resolution_id TEXT NOT NULL REFERENCES identity_resolution_events(id) ON DELETE CASCADE,
+            entity_id TEXT NOT NULL REFERENCES participant_entities(id),
+            role TEXT NOT NULL CHECK(role IN ('parent','current')),
+            PRIMARY KEY(resolution_id,entity_id)
+        );
+        CREATE INDEX IF NOT EXISTS identity_resolution_members_entity
+            ON identity_resolution_members(entity_id);
+
+        CREATE TABLE IF NOT EXISTS ticker_stories (
+            id TEXT PRIMARY KEY,
+            market TEXT NOT NULL CHECK(market IN ('stocks','memecoins','sports')),
+            subject_kind TEXT NOT NULL CHECK(subject_kind IN ('ticker','coin','game')),
+            subject_key TEXT NOT NULL,
+            story_key TEXT NOT NULL UNIQUE,
+            question TEXT NOT NULL,
+            opened_at TEXT NOT NULL,
+            opening_reference_kind TEXT,
+            opening_reference_id TEXT,
+            revisit_trigger TEXT,
+            next_review_at TEXT,
+            status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','resolved')),
+            outcome TEXT,
+            resolved_at TEXT,
+            current_version INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK((status='open' AND outcome IS NULL AND resolved_at IS NULL)
+                OR (status='resolved' AND outcome IS NOT NULL AND resolved_at IS NOT NULL))
+        );
+        CREATE INDEX IF NOT EXISTS ticker_stories_subject
+            ON ticker_stories(market,subject_key,status,updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS ticker_story_updates (
+            id TEXT PRIMARY KEY,
+            story_id TEXT NOT NULL REFERENCES ticker_stories(id) ON DELETE CASCADE,
+            version INTEGER NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN
+                ('report','fact','correction','reveal','review','close')),
+            note TEXT,
+            reference_kind TEXT,
+            reference_id TEXT,
+            correction_of_update_id TEXT REFERENCES ticker_story_updates(id),
+            applies_from TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(story_id,version)
+        );
+        CREATE INDEX IF NOT EXISTS ticker_story_updates_story
+            ON ticker_story_updates(story_id,version DESC);
+
+        CREATE TABLE IF NOT EXISTS ticker_story_links (
+            story_id TEXT NOT NULL REFERENCES ticker_stories(id) ON DELETE CASCADE,
+            link_kind TEXT NOT NULL CHECK(link_kind IN ('call','follow')),
+            link_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(story_id,link_kind,link_id)
+        );
+        CREATE INDEX IF NOT EXISTS ticker_story_links_link
+            ON ticker_story_links(link_kind,link_id);
+        """
+    )
+    _ensure_column(db, "market_actors", "entity_id TEXT REFERENCES participant_entities(id)")
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS market_actors_entity ON market_actors(entity_id)"
+    )
+    _ensure_column(db, "research_commissions", "identity_revision INTEGER")
+    _backfill_participant_identity(db)
+
+
+def _backfill_participant_identity(db: DatabaseConnection) -> None:
+    """Give every existing market actor an entity and its observed references.
+
+    Deterministic IDs keep this idempotent across restarts, and existing
+    handles, avatars and deep links stay exactly where they are: the entity
+    layer attaches to `market_actors` without replacing it.
+    """
+
+    from runner_web.identity import link_market_actors
+
+    link_market_actors(db)
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3291,6 +3459,7 @@ MIGRATIONS = (
     Migration(67, "coin_evidence_pruning", _migration_067_coin_evidence_pruning),
     Migration(68, "memecoin_replays", _migration_068_memecoin_replays),
     Migration(69, "stock_map_evidence", _migration_069_stock_map_evidence),
+    Migration(70, "story_and_identity", _migration_070_story_and_identity),
 )
 
 

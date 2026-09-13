@@ -4,6 +4,19 @@ Design update, 12 September 2026: the [pseudonymous identity design](research/ps
 
 Status: v1 implemented 2026-09-12. Design agreed 2026-09-12.
 
+Update, 13 September 2026: migration 070 ships the identity persistence layer
+from the design revision. `participant_entities` hold opaque stable IDs;
+`participant_references` record dated wallets, identifiers and names (chain and
+network with an address, issuing system with a filing or league identifier);
+`participant_claims` carry the eight relationship verbs with
+proposed/accepted/disputed/retracted states, the period they describe kept
+separate from when RATi learned them, and the acceptance-policy version.
+Every `market_actors` row attaches to one entity (`entity_id`); handles,
+avatars and deep links are unchanged. Accepted same-participant claims group
+entities in `entity_group()`; name collisions and provisional groups surface
+through `identity_reconciliation_queue()`. Each `research_commissions` row
+reserves `identity_revision` for the revision a report was written against.
+
 v1 ships the stock insider map and memecoin wallet-cluster map, deterministic
 pseudonyms, on-demand AI portraits cached through OpenRouter, and on-demand
 third-person character comments. Deferred: background event-driven comments,

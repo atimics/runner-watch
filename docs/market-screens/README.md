@@ -19,9 +19,18 @@ change, a shared-scale sparkline, and the score. The tag collapses `stage`,
 `RUNNING`, `SETUP` or `WATCH` — highest precedence first. A high-risk rug shows a
 small mark on the tag, never a second badge.
 
-Lists and live games refresh every minute. Refresh keeps search text, the active
-filter and keyboard focus. The server selects public display fields before
+Lists and live games refresh every minute. Refresh keeps search text, the
+active filter and keyboard focus. The server selects public display fields before
 rendering the screen or returning a quote or chart.
+
+## Story
+
+A ticker can carry several stories (#245). Each story is one open question with
+a bounded review time. The shared presenter emits one public story block —
+`question`, `status`, `outcome`, `next_review_at`, `revisit_trigger`,
+`version`, `updated_at` — on matching List rows and on Detail. Story review
+time is independent of Call settlement. Internal story IDs, opening
+references and source receipts stay in the service layer.
 
 ## Ticker page
 

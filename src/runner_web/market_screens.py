@@ -196,6 +196,7 @@ def listing(
     query: str = "",
     graph: dict[str, Any] | None = None,
     updated_at: str = "",
+    stories: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the tight list screen. The market-wide map view is retired."""
 
@@ -209,6 +210,11 @@ def listing(
         tone = str(item.get("tag_tone") or "")
         if tone:
             counts[tone] = counts.get(tone, 0) + 1
+    if stories:
+        for entry in rows:
+            subject_stories = stories.get(str(entry["id"])) or []
+            if subject_stories:
+                entry["story"] = subject_stories[0]
     return {
         "kind": "list",
         "market": market,
