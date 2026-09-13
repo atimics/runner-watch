@@ -1,46 +1,54 @@
-{% extends "mobile_base.html" %}
-{% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
+{% extends "market_screen.html" %}
 {% from "_market_report_card.html" import market_report_card %}
 {% from "_market_report_meta.html" import market_report_meta %}
-{% block app_class %}market-reports-app{% endblock %}
-{% block title %}Market turns · RATi Runners{% endblock %}
-{% block page_description %}<meta name="description" content="{% if market_reports.featured %}{{ market_reports.featured.share.summary }}{% else %}Frozen pre-market and post-market boards with Flash's targets, the win-loss, and desk commentary.{% endif %}">{% endblock %}
-{% block head %}
-<link rel="stylesheet" href="/static/market-reports.css?v={{ static_version }}">
+{% block screen_title %}Market turns · RATi{% endblock %}
+{% block detail_head %}
 {% if market_reports.featured %}{{ market_report_meta(market_reports.featured, app_origin) }}{% endif %}
 {% endblock %}
-{% block content %}
-<header class="screen-head market-reports-head">
-  <div><span class="rati-product">RATi RUNNERS</span><h1>Market turns</h1></div>
-  {% if user %}
-    <button class="avatar-button" type="button" data-profile aria-label="Open profile">{{ render_comment_avatar(comment_avatar) }}</button>
-  {% else %}
-    <a class="avatar-button signed-out" href="/login">Log in</a>
-  {% endif %}
+{% block topbar %}
+<header class="topbar">
+  <a class="brand" href="{{ runners_origin }}/" aria-label="RATi home">RATi<span>●</span></a>
+  <nav aria-label="Market" class="markets">
+    <a href="{{ runners_origin }}/">Stocks</a>
+    <a href="{{ runners_origin }}/memecoins">Memecoins</a>
+    <a href="{{ sports_origin }}/">Sports</a>
+    <a href="{{ runners_origin }}/reports" aria-current="page">Reports</a>
+  </nav>
+  {% if user %}<a class="account" href="{{ runners_origin }}/calls">My Calls</a>
+  {% else %}<a class="account" href="/login?next=%2Freports">Log in</a>{% endif %}
+</header>
+{% endblock %}
+{% block screen_main %}
+<header class="page-head">
+  <p class="eyebrow">RATi RUNNERS</p>
+  <h1>Market turns</h1>
+  <p class="head-note">The board frozen twice a day, with Flash's targets, the win–loss and desk commentary.</p>
 </header>
 
-<section class="market-cycle" aria-label="Report schedule">
+<section class="report-cycle" aria-label="Report schedule">
   <div><span>Pre-market</span><strong>4:15 a.m. ET</strong><small>Watch board, Flash EOD targets and desk commentary</small></div>
   <i aria-hidden="true">→</i>
   <div><span>After the bell</span><strong>4:15 p.m. ET</strong><small>The same board with the win–loss and Flash's review</small></div>
 </section>
 
-<main class="market-report-list">
-  <header class="market-report-list-head">
+<div class="report-feed">
+  <header class="report-feed-head">
     <div><span>NEXT TURN</span><strong>{{ market_reports.schedule.next_label }}</strong></div>
     <time datetime="{{ market_reports.schedule.next_at }}">{{ market_reports.schedule.schedule_note }}</time>
   </header>
 
   {% if market_reports.reports %}
+  <div class="report-cards">
     {% for report in market_reports.reports %}
     {{ market_report_card(report, market_reports.featured.id if market_reports.featured else none) }}
     {% endfor %}
+  </div>
   {% else %}
-    <section class="market-report-empty">
-      <span aria-hidden="true">◷</span>
-      <strong>The first turn is not ready yet</strong>
-      <p>The worker will freeze a pre-market briefing after the first 4 a.m. ET scan.</p>
-    </section>
+  <section class="report-empty">
+    <span aria-hidden="true">◷</span>
+    <strong>The first turn is not ready yet</strong>
+    <p>The worker will freeze a pre-market briefing after the first 4 a.m. ET scan.</p>
+  </section>
   {% endif %}
-</main>
+</div>
 {% endblock %}

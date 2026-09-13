@@ -169,7 +169,7 @@ def test_signed_in_pages_show_flash_calls_and_the_release_claim_modal(
 
     assert 'class="account-strip runners-account-strip"' in html
     assert "My Calls" in html
-    assert "/my-calls?market=stocks" in html
+    assert "/calls" in html
     assert "<b>1–0</b>" in html
     assert "<small>0 open</small>" in html
     assert 'id="flashReleaseDialog"' in html

@@ -36,6 +36,24 @@ One ordered story, four screens top to bottom:
 
 The Call action sits after the metric panel.
 
+## Calls
+
+`/calls` renders on the same shell. One screen for all three markets:
+
+1. **My Calls** — the signed-in user's paper Calls across stocks, memecoins and
+   sports, most recent first, with entry, result and earned Flash. The full
+   record stays on the public caller page; `/my-calls` redirects here.
+2. **Flash** — the AI Caller's picks, always visible: open stock forecasts with
+   their direction confidence, today's graded sports slate by model probability,
+   and the scanner-tagged coins on the board. Every pick settles on the public
+   record; signed-out visitors see this section and a passkey prompt.
+
+## Reports
+
+`/reports`, report detail, `/research/{public_id}` and `/flash/record` render on
+the same shell with the same top bar. The market turns list keeps its schedule
+(`4:15 a.m. ET` / `4:15 p.m. ET`), report cards and Flash receipt panels.
+
 ## Removed
 
 The market-wide **Map** tab is retired. A map belongs to one ticker, so it lives

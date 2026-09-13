@@ -2,16 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#0b100e"><title>{{ screen.item.name ~ ' · ' if screen.kind == 'detail' else '' }}{{ screen.label }} · RATi</title>
+  <meta name="theme-color" content="#0b100e"><title>{% block screen_title %}{{ screen.item.name ~ ' · ' if screen.kind == 'detail' else '' }}{{ screen.label }} · RATi{% endblock %}</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/market-screen.css?v={{ static_version }}">
   {% block detail_head %}{% endblock %}
-  {% if share %}<meta name="description" content="{{ screen.item.subtitle }}"><meta property="og:title" content="{{ share.title }}"><meta property="og:description" content="{{ screen.item.subtitle }}"><meta property="og:image" content="{{ app_origin }}{{ share.card_path }}"><meta name="twitter:card" content="summary_large_image">{% endif %}
+  <meta name="description" content="{% block screen_description %}{% if share %}{{ screen.item.subtitle }}{% endif %}{% endblock %}">
+  {% if share %}<meta property="og:title" content="{{ share.title }}"><meta property="og:description" content="{{ share.summary }}"><meta property="og:image" content="{{ app_origin }}{{ share.card_path }}"><meta name="twitter:card" content="summary_large_image">{% endif %}
 </head>
 <body>
 <a class="skip-link" href="#content">Skip to content</a>
-{% set base = '/memecoins' if screen.market == 'memecoins' else '/' %}
+{% set base = '/memecoins' if (screen is defined and screen.market == 'memecoins') else '/' %}
 <div class="market-screen">
+  {% block topbar %}
   <header class="topbar">
     <a class="brand" href="{{ runners_origin }}/" aria-label="RATi home">RATi<span>●</span></a>
     <nav aria-label="Market" class="markets">
@@ -31,9 +33,11 @@
       <input id="marketSearch" name="q" type="search" value="{{ screen.query }}" placeholder="Find a ticker" autocomplete="off">
       <button type="submit" aria-label="Search">⌕</button>
     </form>
-    <a class="account" href="{{ '/my-calls?market=' ~ screen.market if user else '/login?next=' ~ request.url.path|urlencode }}">{{ 'My Calls' if user else 'Log in' }}</a>
+    <a class="account" href="{{ '/calls' if user else '/login?next=' ~ request.url.path|urlencode }}">{{ 'My Calls' if user else 'Log in' }}</a>
   </header>
+  {% endblock %}
   <main id="content">
+  {% block screen_main %}
   {% if screen.kind != 'detail' %}
     <div data-live-surface>
     {% if screen.rows %}
@@ -71,11 +75,13 @@
     {% block detail_comments %}{% endblock %}
     {% block detail_extra %}{% endblock %}
   {% endif %}
+  {% endblock %}
   </main>
 </div>
-{% if screen.kind == 'detail' %}<script type="application/json" nonce="{{ request.state.csp_nonce }}" id="screenData">{{ screen|tojson }}</script>{% endif %}
+{% if user and flash_wallet %}{% include "_flash_release_modal.html" %}{% endif %}
+{% if screen is defined and screen.kind == 'detail' %}<script type="application/json" nonce="{{ request.state.csp_nonce }}" id="screenData">{{ screen|tojson }}</script>{% endif %}
 <script src="/static/market-screen.js?v={{ static_version }}" defer></script>
-{% if screen.kind != 'detail' and screen.market == 'stocks' %}<script src="/static/ticker-row.js?v={{ static_version }}" defer></script><script nonce="{{ request.state.csp_nonce }}">window.addEventListener('DOMContentLoaded',()=>{if(window.TickerRow){window.TickerRow.loadCharts('/api/pulse/charts');}});</script>{% endif %}
+{% if screen is defined and screen.kind != 'detail' and screen.market == 'stocks' %}<script src="/static/ticker-row.js?v={{ static_version }}" defer></script><script nonce="{{ request.state.csp_nonce }}">window.addEventListener('DOMContentLoaded',()=>{if(window.TickerRow){window.TickerRow.loadCharts('/api/pulse/charts');}});</script>{% endif %}
 {% block detail_scripts %}{% endblock %}
 </body>
 </html>

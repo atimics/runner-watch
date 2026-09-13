@@ -285,7 +285,7 @@ def test_api_writes_use_sessions_origin_and_source_prices(calls_db):
         assert repeated["public_id"] == opened["public_id"]
         my_calls = client.get("/my-calls?market=memecoins", follow_redirects=False)
         assert my_calls.status_code == 303
-        assert my_calls.headers["location"] == f"/u/{opened['caller_handle']}?market=memecoins"
+        assert my_calls.headers["location"] == "/calls"
         close_url = f"/api/memecoin-calls/{opened['public_id']}/close"
         assert client.post(close_url).status_code == 403
         assert (

@@ -1021,3 +1021,52 @@ def flash_record(*, recent_limit: int = 50) -> dict[str, Any]:
             "It does not verify every fact in a report."
         ),
     }
+
+
+def flash_open_calls(*, limit: int = 6) -> dict[str, Any]:
+    """Flash's active directional forecasts, highest confidence first.
+
+    Only pending eligible up/down calls count. One call per ticker: the most
+    confident one wins, so a re-forecast cannot crowd the list.
+    """
+
+    limit = max(1, min(limit, 12))
+    with connection() as database:
+        rows = database.execute(
+            """
+            SELECT f.ticker,f.direction,f.probability_up,f.reason,
+                   f.target_session_date,f.start_price,
+                   v.public_label AS version_label
+            FROM flash_forecasts f
+            JOIN flash_versions v ON v.id=f.version_id
+            JOIN flash_forecast_outcomes o ON o.forecast_id=f.id
+            WHERE o.status='pending' AND f.eligibility='eligible'
+              AND f.direction IN ('up','down')
+            ORDER BY f.probability_up DESC,f.created_at DESC
+            LIMIT 40
+            """
+        ).fetchall()
+    calls: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows:
+        ticker = str(row["ticker"]).upper()
+        if ticker in seen:
+            continue
+        seen.add(ticker)
+        probability_up = _number(row["probability_up"]) or 0.0
+        direction = str(row["direction"])
+        confidence = probability_up if direction == "up" else 1.0 - probability_up
+        calls.append(
+            {
+                "ticker": ticker,
+                "direction": direction,
+                "confidence": round(confidence, 4),
+                "reason": str(row["reason"] or "").strip(),
+                "target_session_date": row["target_session_date"],
+                "start_price": _number(row["start_price"]),
+                "version_label": str(row["version_label"] or ""),
+            }
+        )
+        if len(calls) >= limit:
+            break
+    return {"calls": calls}
