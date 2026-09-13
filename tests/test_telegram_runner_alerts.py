@@ -824,13 +824,30 @@ def test_a_new_build_announces_itself_once(alert_environment, monkeypatch: Monke
     assert sent == []
 
     monkeypatch.setattr(web_main, "APP_BUILD_SHA", "sha-two")
+    monkeypatch.setenv("TELEGRAM_RELEASE_NOTES", "Trade fixes and a new outpost.")
     second = web_main.dispatch_release_announcement()
 
     assert second["status"] == "sent"
     assert len(sent) == 1
-    assert "sha-two" in sent[0]
+    assert "Trade fixes and a new outpost." in sent[0]
     assert web_main.dispatch_release_announcement()["status"] == "already"
     assert len(sent) == 1
+
+
+def test_a_release_without_notes_is_not_announced(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TELEGRAM_RELEASE_ANNOUNCEMENTS", "1")
+    monkeypatch.setattr(web_main, "APP_BUILD_SHA", "sha-one")
+    sent: list[str] = []
+    monkeypatch.setattr(web_main, "send_telegram_message", lambda config, text: sent.append(text))
+    web_main.dispatch_release_announcement()
+
+    monkeypatch.setattr(web_main, "APP_BUILD_SHA", "sha-two")
+    monkeypatch.delenv("TELEGRAM_RELEASE_NOTES", raising=False)
+
+    assert web_main.dispatch_release_announcement()["status"] == "skipped"
+    assert sent == []
 
 
 def test_release_announcements_stay_off_until_enabled(
@@ -883,6 +900,7 @@ def test_a_failed_release_announcement_retries_then_stays_sent(
     alert_environment, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setenv("TELEGRAM_RELEASE_ANNOUNCEMENTS", "1")
+    monkeypatch.setenv("TELEGRAM_RELEASE_NOTES", "A fresh outpost is live.")
     monkeypatch.setattr(web_main, "APP_BUILD_SHA", "sha-one")
     monkeypatch.setattr(web_main, "send_telegram_message", lambda config, text: None)
     web_main.dispatch_release_announcement()

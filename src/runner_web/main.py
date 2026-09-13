@@ -11424,12 +11424,21 @@ def _activity_payload(
 ) -> dict[str, Any]:
     """Fold the three pending kinds into one list of things that just landed."""
 
+    def absolute(origin: str, path: str) -> str:
+        if not path:
+            return ""
+        if path.startswith(("http://", "https://")):
+            return path
+        return f"{origin.rstrip('/')}{path}"
+
     activity_runners = [
         {
             "ticker": str(entry.get("ticker") or "").upper(),
             "change_pct": entry.get("change_pct"),
             "relative_volume": entry.get("relative_volume"),
-            "path": f"/t/{str(entry.get('ticker') or '').upper()}",
+            "url": absolute(
+                RUNNERS_ORIGIN, f"/t/{str(entry.get('ticker') or '').upper()}"
+            ),
             "at": entry.get("entered_at"),
         }
         for entry in runners
@@ -11442,7 +11451,7 @@ def _activity_payload(
                 "ticker": "",
                 "label": report.get("label"),
                 "headline": report.get("headline"),
-                "path": report.get("path"),
+                "url": absolute(RUNNERS_ORIGIN, str(report.get("path") or "")),
                 "at": report.get("created_at"),
             }
         )
@@ -11450,12 +11459,13 @@ def _activity_payload(
         ticker = str(report.get("ticker") or "")
         symbol = ticker.upper().lstrip("$")
         public_id = str(report.get("public_id") or "")
+        origin = SPORTS_ORIGIN if ticker.lower().startswith("sports:") else RUNNERS_ORIGIN
         reports.append(
             {
                 "ticker": symbol,
                 "label": f"New research on ${symbol}" if symbol else "New research",
                 "headline": report.get("headline"),
-                "path": f"/research/{public_id}" if public_id else "",
+                "url": absolute(origin, f"/research/{public_id}" if public_id else ""),
                 "at": report.get("published_at") or report.get("completed_at"),
             }
         )
@@ -11476,8 +11486,8 @@ def _generate_telegram_announcement(activity: dict[str, Any]) -> str | None:
                     "task": (
                         "Announce what just landed on the board. One short message, two "
                         "sentences at most, present tense. Name only the tickers and "
-                        "reports in the batch, and repeat the links you were given. Do "
-                        "not tell anyone what to buy."
+                        "reports in the batch, and give the full https link from the "
+                        "url field. Do not tell anyone what to buy."
                     ),
                     "landed": activity,
                 },
@@ -11509,6 +11519,20 @@ def _generate_telegram_announcement(activity: dict[str, Any]) -> str | None:
     return text or None
 
 
+def _absolutize_links(text: str, activity: dict[str, Any]) -> str:
+    """Turn a relative link the model wrote back into the full one it was given."""
+
+    rows = [*(activity.get("runners") or []), *(activity.get("reports") or [])]
+    for row in rows:
+        url = str(row.get("url") or "").strip()
+        if not url or url in text:
+            continue
+        path = urlparse(url).path
+        if path and path in text:
+            text = text.replace(path, url)
+    return text
+
+
 def _compose_update_announcement(activity: dict[str, Any]) -> str:
     """Dash's announcement when the model is available, the plain one otherwise."""
 
@@ -11529,7 +11553,7 @@ def _compose_update_announcement(activity: dict[str, Any]) -> str:
         # The model named something that was not in the batch. The stored rows
         # are the only source of truth here, so use them instead.
         return fallback
-    return text
+    return _absolutize_links(text, activity)
 
 
 def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]:
@@ -11734,11 +11758,11 @@ def dispatch_release_announcement() -> dict[str, Any]:
                 _record_channel_post(database, "release", sha, status="baseline")
                 return {"status": "baseline"}
         notes = os.getenv("TELEGRAM_RELEASE_NOTES", "")
+        message = format_release_announcement(APP_VERSION, notes, origin=RUNNERS_ORIGIN)
+        if not message:
+            return {"status": "skipped"}
         try:
-            send_telegram_message(
-                config,
-                format_release_announcement(APP_VERSION, sha, notes, origin=RUNNERS_ORIGIN),
-            )
+            send_telegram_message(config, message)
         except Exception as exc:
             with connection() as database:
                 _record_channel_post(
