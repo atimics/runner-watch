@@ -114,13 +114,32 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
   .search{order:2;flex:1 1 100%;margin-left:0}
   .search input{width:100%}
   .tag-filters{order:4;width:100%;justify-content:center}
-  .market-stocks .ticker,.market-memecoins .ticker,.market-sports .ticker{grid-template-columns:84px minmax(0,1fr) auto;grid-template-areas:"tag id value" "tag score score";row-gap:3px;min-height:76px}
-  .ticker>.tag,.ticker>.ticker-mark{grid-area:tag}
-  .ticker-name{grid-area:id}
-  .ticker-value{grid-area:value}
-  .ticker-score{grid-area:score;display:flex;align-items:center;gap:8px;text-align:left}
-  .score-track{width:80px;margin-top:0}
+
+  /* Keep every ticker on one compact row. The previous two-row grid made the
+     tag, quote and score appear at unrelated vertical levels on phones. */
+  .market-stocks .ticker,.market-memecoins .ticker,.market-sports .ticker{
+    grid-template-columns:76px minmax(0,1fr) auto auto;
+    grid-template-areas:none;
+    align-items:center;
+    min-height:54px;
+    padding:7px 0;
+    gap:8px;
+  }
+  .ticker>.tag,.ticker>.ticker-mark,.ticker-name,.ticker-value,.ticker-score{grid-area:auto}
+  .ticker>.tag,.ticker>.ticker-mark{justify-self:start}
+  .ticker>.tag{width:76px;min-width:0;padding-left:4px;padding-right:4px;font-size:9px}
+  .ticker-name{display:flex;flex-direction:row;align-items:baseline;gap:6px;min-width:0}
+  .ticker-name strong{flex:0 0 auto;font-size:15px}
+  .ticker-name small{min-width:0;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ticker-value{display:flex;flex-direction:row;align-items:baseline;gap:4px;min-width:0;white-space:nowrap}
+  .ticker-value strong{font-size:14px}
+  .ticker-value small{font-size:11px}
+  .ticker-score{display:block;min-width:26px;text-align:right}
+  .ticker-score b{font-size:14px}
+  .score-track{display:none}
+  .ticker-score.is-empty{display:none}
   .ticker .mini-chart,.row-arrow{display:none}
+
   .part{grid-template-columns:112px minmax(0,1fr) 64px}
   .comment-list strong{font-size:12.5px}
 }
