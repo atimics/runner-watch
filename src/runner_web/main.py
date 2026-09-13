@@ -6613,8 +6613,11 @@ def memecoins_board_response(
     q: str = "",
     sort: str = "volume",
 ) -> HTMLResponse:
+    from runner_web.stories import stories_by_subject
+
     enforce_rate(request, "memecoins", limit=120, seconds=60)
     market = memecoin_market(query=q, sort=sort, view="radar")
+    coins = [str(item.get("id") or "") for item in market["rows"] if item.get("id")]
     return _simple_board(
         request,
         runner_session,
@@ -6623,6 +6626,7 @@ def memecoins_board_response(
         view,
         q,
         updated_at=str(market.get("collected_at") or ""),
+        stories=stories_by_subject("memecoins", coins),
     )
 
 
@@ -7020,11 +7024,15 @@ def runners_board_response(
     runner_session: str | None,
     view: str,
 ) -> HTMLResponse:
+    from runner_web.stories import stories_by_subject
+
     page = _public_pulse_data(limit=50)
     rows = list(page["rows"])
     while page.get("has_more") and page["rows"]:
         page = _public_pulse_data(offset=len(rows), limit=50)
         rows.extend(page["rows"])
+    tickers = [str(item.get("ticker") or "").upper() for item in rows if item.get("ticker")]
+    stories = stories_by_subject("stocks", tickers)
     return _simple_board(
         request,
         runner_session,
@@ -7033,6 +7041,7 @@ def runners_board_response(
         view,
         request.query_params.get("q", ""),
         updated_at=str(page.get("updated_at") or ""),
+        stories=stories,
     )
 
 
@@ -7044,10 +7053,13 @@ def _simple_board(
     view: str,
     query: str = "",
     updated_at: str = "",
+    stories: dict[str, dict[str, Any]] | None = None,
 ) -> HTMLResponse:
     from runner_web.market_screens import listing
 
-    screen = listing(market, items, view=view, query=query, updated_at=updated_at)
+    screen = listing(
+        market, items, view=view, query=query, updated_at=updated_at, stories=stories
+    )
     return templates.TemplateResponse(
         request,
         "market_screen.html",
@@ -7265,6 +7277,8 @@ def sports_board_response(
     view: str,
     league: str = "all",
 ) -> HTMLResponse:
+    from runner_web.stories import stories_by_subject
+
     enforce_rate(request, "sports", limit=120, seconds=60)
     selected_league = league if league in SPORTS_LEAGUES or league == "golf" else "all"
     slate = _public_screen_data(
@@ -7273,8 +7287,15 @@ def sports_board_response(
     events = list(slate.get("events", [])) if selected_league != "golf" else []
     if selected_league in {"all", "golf"}:
         events.extend(_public_golf_data().get("events", []))
+    event_ids = [str(event.get("id") or "") for event in events if event.get("id")]
     return _simple_board(
-        request, runner_session, "sports", events, view, request.query_params.get("q", "")
+        request,
+        runner_session,
+        "sports",
+        events,
+        view,
+        request.query_params.get("q", ""),
+        stories=stories_by_subject("sports", event_ids),
     )
 
 
@@ -8460,6 +8481,14 @@ def screen_detail_state(
         raise HTTPException(404, "Market not found")
     if market != "sports":
         screen = simple_market_detail(market, data, active_call=active)
+    from runner_web.stories import public_story
+
+    try:
+        story = public_story(market, subject)
+    except Exception:
+        story = None
+    if story:
+        screen["story"] = story
     return JSONResponse(screen, headers={"Cache-Control": "private, no-store"})
 
 

@@ -135,6 +135,29 @@ def _ensure_actor(
         "SELECT * FROM market_actors WHERE stable_key=?", (stable_key,)
     ).fetchone()
     actor = dict(row)
+    if actor.get("entity_id") is None:
+        from runner_web.identity import attach_reference, ensure_entity
+
+        entity = ensure_entity(
+            "provisional_group" if domain == "coin" else "person",
+            dedupe_key=f"market-actor:{stable_key}",
+            created_at=str(actor.get("created_at") or timestamp),
+            connection=db,
+        )
+        db.execute(
+            "UPDATE market_actors SET entity_id=? WHERE id=? AND entity_id IS NULL",
+            (entity["id"], actor["id"]),
+        )
+        attach_reference(
+            entity["id"],
+            "legacy_actor",
+            stable_key,
+            learned_at=str(actor.get("created_at") or timestamp),
+            source_kind="ingest",
+            source_id=str(actor["id"]),
+            connection=db,
+        )
+        actor["entity_id"] = entity["id"]
     if cache is not None:
         cache[stable_key] = actor
     return actor
