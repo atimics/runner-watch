@@ -87,20 +87,81 @@ def render(screen, user=None):
 @pytest.mark.parametrize("market", ["stocks", "memecoins", "sports"])
 @pytest.mark.parametrize("view", ["list", "map"])
 def test_shared_board_only_renders_business_fields(market, view):
-    screen = listing(
-        market,
-        [sample(market)],
-        view=view,
-        graph={"subjects": [{"key": "OPK", "actor_ids": ["private-actor"]}]},
-    )
+    screen = listing(market, [sample(market)], view=view)
     html = render(screen)
     assert SENTINEL not in html
     assert "private-actor" not in html
-    assert 'aria-label="View"' in html
-    assert ">List</a>" in html and ">Map</a>" in html
+    assert 'aria-label="View"' not in html
+    assert ">Map</a>" not in html
+    assert 'class="ticker-list market-' in html
     assert "screenData" not in html
     assert "desktop-workspace" not in html
     assert screen["rows"][0]["href"] in html
+
+
+def scored_stock(**extra):
+    return {
+        **sample("stocks"),
+        "trade_state": "TRIGGERED",
+        "stage": "RUNNING",
+        "rug_level": "low",
+        "score": 84.0,
+        "score_detail": {
+            "score": 84.0,
+            "drivers": [{"key": "market", "label": "Market scanner", "value": 60.0}],
+            "penalties": [{"key": "rug", "label": "Rug risk", "value": -12.0}],
+        },
+        **extra,
+    }
+
+
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    [
+        ({"trade_state": "TRIGGERED"}, "RUNNING"),
+        ({"stage": "RUNNING"}, "RUNNING"),
+        ({"trade_state": "MANAGE"}, "RUNNING"),
+        ({"trade_state": "ARMED"}, "SETUP"),
+        ({"stage": "EARLY"}, "SETUP"),
+        ({"stage": "BUILDING"}, "SETUP"),
+        ({"stage": "EXTENDED"}, "EXTENDED"),
+        ({"trade_state": "AVOID"}, "AVOID"),
+        ({"trade_state": "EXIT"}, "AVOID"),
+        ({"rug_level": "high"}, "AVOID"),
+        ({"rug_level": "critical"}, "AVOID"),
+        ({"trade_state": "WATCH"}, "WATCH"),
+        ({}, ""),
+    ],
+)
+def test_action_tag_precedence(state, expected):
+    screen = listing("stocks", [{**sample("stocks"), **state}])
+    assert screen["rows"][0]["tag"] == expected
+
+
+def test_list_exposes_score_and_breakdown_without_internal_fields():
+    screen = listing("stocks", [scored_stock()])
+    row = screen["rows"][0]
+    assert row["score"] == 84.0
+    assert row["tag"] == "RUNNING"
+    assert row["score_detail"]["drivers"][0]["label"] == "Market scanner"
+    html = render(screen)
+    assert "ticker-score" in html
+    assert SENTINEL not in html
+
+
+def test_memecoin_pause_state_gets_a_tag():
+    screen = listing("memecoins", [{**sample("memecoins"), "stale": True}])
+    assert screen["rows"][0]["tag"] == "PAUSED"
+
+
+def test_updated_label_and_counts_reach_the_top_bar():
+    screen = listing(
+        "stocks",
+        [scored_stock(ticker="AAA"), sample("stocks")],
+        updated_at=datetime.now(UTC).isoformat(),
+    )
+    assert screen["updated_label"] == "now"
+    assert screen["counts"] == {"running": 1}
 
 
 @pytest.mark.parametrize("market", ["stocks", "memecoins", "sports"])
@@ -144,6 +205,68 @@ def test_sports_closed_game_has_score_and_existing_call():
     assert screen["actions"] == []
     assert screen["teams"][0]["score"] == "72"
     assert screen["call"]["outcome"] == "Win"
+
+
+def _render_template(name, context):
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "query_string": b"",
+            "headers": [(b"host", b"app.test")],
+            "scheme": "http",
+            "server": ("app.test", 80),
+        }
+    )
+    request.state.csp_nonce = "test"
+    return web.templates.env.get_template(name).render(
+        request=request,
+        user=None,
+        runners_origin="http://app.test",
+        sports_origin="http://sports.test",
+        static_version="test",
+        **context,
+    )
+
+
+def test_stock_detail_orders_chart_map_metrics_and_comments():
+    detail_data = {
+        "ticker": "OPK",
+        "company": "OPKO Health",
+        "current": {
+            **sample("stocks"),
+            "score": 84.0,
+            "trade_state": "TRIGGERED",
+            "stage": "RUNNING",
+            "rug_level": "low",
+            "score_detail": {
+                "score": 84.0,
+                "drivers": [{"key": "market", "label": "Market scanner", "value": 60.0}],
+                "penalties": [{"key": "rug", "label": "Rug risk", "value": -12.0}],
+            },
+        },
+    }
+    html = _render_template(
+        "simple_stock_detail.html",
+        {
+            "detail": detail_data,
+            "active_call": None,
+            "comments": [],
+            "comment_count": 0,
+            "comment_generation_enabled": False,
+            "calls": [],
+        },
+    )
+    assert SENTINEL not in html
+    chart = html.index('class="visual"')
+    ticker_map = html.index('class="ticker-map"')
+    metrics = html.index('class="metrics"')
+    comments = html.index('class="discussion-section"')
+    assert chart < ticker_map < metrics < comments
+    assert "Market scanner" in html
+    assert "Avatar Sentiment" in html
+    assert "Avatar reactions" in html
 
 
 def test_search_applies_to_map_and_list():
@@ -363,83 +486,6 @@ def test_call_preview_price_has_a_strict_numeric_shape(screen_client, changing_d
         screen_client.post("/api/calls/stock/OPK", json={"expected_price": price}).status_code
         == 422
     )
-
-
-def connected_graph(count=2):
-    return {
-        "actors": [
-            {
-                "id": "actor-one",
-                "name": "Cedar Owl",
-                "portrait_ready": False,
-                "evidence_id": SENTINEL,
-            }
-        ],
-        "subjects": [{"key": f"T{i}", "label": f"T{i}"} for i in range(count)],
-        "links": [
-            {
-                "actor_id": "actor-one",
-                "subject_key": f"T{i}",
-                "direction": "buy",
-                "as_of": "2026-09-12T12:00:00Z",
-                "evidence_id": SENTINEL,
-            }
-            for i in range(count)
-        ],
-    }
-
-
-def test_shared_actor_retains_identity_related_subjects_and_overflow():
-    graph = connected_graph(9)
-    items = [{**sample("stocks"), "ticker": f"T{i}"} for i in range(9)]
-    screen = listing("stocks", items, view="map", query="T0", graph=graph)
-    assert len(screen["connections"]) == 1
-    node = screen["connections"][0]
-    assert node["id"] == "actor-one"
-    assert len(node["visible_links"]) == 6
-    assert len(node["more_links"]) == 3
-    assert node["links"][0]["item"]["id"] == "T0"
-    assert node["links"][1]["label"] == "Reported purchase · filed"
-    assert node["links"][1]["time"] == "Sep 12 · 12:00 UTC"
-    assert node["portrait"] == ""
-    assert SENTINEL not in json.dumps(screen)
-    assert 'href="/t/T0"' in render(screen)
-    assert 'href="/t/T8"' not in render(screen)
-
-
-def test_coin_connections_keep_uncertainty_and_safe_portrait_url():
-    graph = connected_graph()
-    graph["actors"][0].update(portrait_ready=True, portrait_url="https://secret.invalid")
-    coin = {**sample("memecoins"), "id": "T0"}
-    screen = listing("memecoins", [coin], view="map", graph=graph)
-    node = screen["connections"][0]
-    assert node["label"] == "Possible wallet link"
-    assert "possible" in node["explanation"]
-    assert node["links"][0]["label"] == "Possible wallet activity · observed"
-    assert node["portrait"] == "/api/market-actors/actor-one/portrait?cached=true"
-    assert node["links"][1]["item"]["href"] == "/memecoins/coin/T1"
-    assert "secret.invalid" not in render(screen)
-
-
-def test_sports_shared_team_identity_is_scoped_to_league():
-    first = {**sample("sports"), "away_team_id": "2", "home_team_id": "3"}
-    second = {**first, "id": "nba:456", "away_team_id": "4", "away_team_name": "Other Team"}
-    third = {**first, "id": "wnba:123", "league": "wnba"}
-    screen = listing("sports", [first, second, third], view="map")
-    shared = next(node for node in screen["connections"] if node["id"] == "team:nba:3")
-    assert len(shared["links"]) == 2
-    assert shared["links"][0]["label"] == "Game time"
-    assert shared["links"][0]["time"] == "Sep 12 · 18:00 UTC"
-    assert len(next(n for n in screen["connections"] if n["id"] == "team:wnba:3")["links"]) == 1
-
-
-def test_sparse_map_keeps_subject_and_discovery_hint():
-    screen = listing("stocks", [sample("stocks")], view="map")
-    assert screen["connections"] == []
-    assert screen["unlinked"][0]["id"] == "OPK"
-    assert "One map for each ticker" in render(screen)
-
-
 def test_map_cached_portraits_read_saved_images_only(screen_client, monkeypatch):
     def unexpected_generation(*a, **kw):
         pytest.fail("Map browsing must use saved portraits")
@@ -454,29 +500,3 @@ def test_map_cached_portraits_read_saved_images_only(screen_client, monkeypatch)
     response = screen_client.get(url)
     assert response.status_code == 200
     assert response.content == b"saved-image"
-
-
-def test_stock_map_shows_actions_history_and_safe_sources():
-    graph = connected_graph(1)
-    graph["links"][0]["activity"] = [
-        {
-            "direction": "sell",
-            "value": 400,
-            "as_of": "2026-09-12T12:00:00Z",
-            "url": "https://www.sec.gov/Archives/example",
-            "role": "officer",
-        },
-        {
-            "direction": "mixed",
-            "value": 999,
-            "as_of": "2026-09-11T12:00:00Z",
-            "url": "javascript:alert(1)",
-        },
-    ]
-    screen = listing("stocks", [{**sample("stocks"), "ticker": "T0"}], view="map", graph=graph)
-    assert screen["connections"][0]["action_summary"] == "Sold T0"
-    html = render(screen)
-    assert "Explore map" in html
-    assert 'href="/t/T0"' in html
-    assert "javascript:" not in html
-    assert "$999" not in html

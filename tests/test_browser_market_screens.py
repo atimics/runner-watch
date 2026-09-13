@@ -41,24 +41,21 @@ def test_list_layout_and_navigation_are_shared(page: Page, market, width):
     page.set_viewport_size({"width": width, "height": 844})
     open_screen(page, listing(market, [fixtures.sample(market)]))
     expect(page.get_by_role("navigation", name="Market").get_by_role("link")).to_have_count(3)
-    expect(page.get_by_role("navigation", name="View").get_by_role("link")).to_have_count(2)
-    expect(page.get_by_role("heading", name="List", exact=True)).to_be_visible()
+    expect(page.locator(".ticker-list")).to_be_visible()
     expect(page.locator(".ticker")).to_have_count(1)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert page.locator(".ticker").bounding_box()["y"] < 450
     expect(page.get_by_text(fixtures.SENTINEL)).to_have_count(0)
 
 
-@pytest.mark.parametrize("market", ["stocks", "memecoins", "sports"])
-def test_map_items_are_clickable(page: Page, market):
-    screen = listing(market, [fixtures.sample(market)], view="map")
-    open_screen(page, screen)
-    href = screen["rows"][0]["href"]
-    page.route("http://app.test" + href, lambda r: r.fulfill(body="Detail opened"))
-    page.get_by_role("link", name="Open " + screen["rows"][0]["name"], exact=True).click()
-    expect(page).to_have_url("http://app.test" + href)
-
-
+def test_tag_filter_chips_hide_and_show_rows(page: Page):
+    items = [fixtures.scored_stock(), {**fixtures.sample("stocks"), "ticker": "SLOW"}]
+    open_screen(page, listing("stocks", items))
+    expect(page.locator(".ticker")).to_have_count(2)
+    page.get_by_role("button", name=re.compile("running")).click()
+    expect(page.locator(".ticker:visible")).to_have_count(1)
+    page.get_by_role("button", name=re.compile("running")).click()
+    expect(page.locator(".ticker:visible")).to_have_count(2)
 def test_chart_renders_real_points_and_empty_history(page: Page):
     screen = detail("memecoins", {"coin": fixtures.sample("memecoins"), "history": []})
     screen.pop("quote_url")
@@ -319,23 +316,6 @@ def test_call_record_keeps_choice_terms_and_reward_readable(page, market, width)
     expect(record.get_by_text(screen["call"]["terms"], exact=True)).to_be_visible()
     expect(record.get_by_text(screen["call"]["reward"], exact=True)).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-
-
-@pytest.mark.parametrize("width", [320, 390, 1280])
-def test_map_gallery_keyboard_navigation_and_detail(page, width):
-    items = [{**fixtures.sample("stocks"), "ticker": f"T{i}"} for i in range(9)]
-    screen = listing("stocks", items, view="map", graph=fixtures.connected_graph(9))
-    page.set_viewport_size({"width": width, "height": 844})
-    open_screen(page, screen)
-    expect(page.locator(".map-subject")).to_have_count(9)
-    target = page.get_by_role("link", name="Open T8", exact=True)
-    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-    page.route("http://app.test/t/T8", lambda r: r.fulfill(body="Detail opened"))
-    target.focus()
-    page.keyboard.press("Enter")
-    expect(page).to_have_url("http://app.test/t/T8")
-
-
 @pytest.mark.parametrize("width", [320, 1280])
 @pytest.mark.parametrize("end,expected", [(100.01, "+0.01%"), (200, "+100%"), (100, "+0%")])
 def test_chart_scopes_magnitude_and_period_separately_from_daily_quote(page, width, end, expected):
@@ -375,22 +355,3 @@ def test_single_chart_point_and_empty_refresh_clear_old_period(page):
     expect(page.locator("[data-chart-start]")).to_be_empty()
     expect(page.locator("[data-chart-end]")).to_be_empty()
     expect(page.locator("[data-chart-summary]")).to_be_empty()
-
-
-def test_map_missing_cached_portrait_uses_initials(page):
-    graph = fixtures.connected_graph()
-    graph["actors"][0]["portrait_ready"] = True
-    screen = listing(
-        "stocks", [{**fixtures.sample("stocks"), "ticker": "T0"}], view="map", graph=graph
-    )
-    requested = []
-
-    def missing(route):
-        requested.append(route.request.url)
-        route.fulfill(status=404)
-
-    page.route("**/api/market-actors/**", missing)
-    open_screen(page, screen)
-    expect(page.locator("[data-portrait]")).to_be_hidden()
-    expect(page.locator(".map-subject .ticker-mark")).to_have_text("T0")
-    assert requested == []
