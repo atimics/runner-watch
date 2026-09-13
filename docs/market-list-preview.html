@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RATi · tight list redesign preview</title>
+<style>
+  :root{
+    color-scheme:dark;
+    --bg:#0b100e; --panel:#101713; --panel-2:#141d17; --line:#23302a;
+    --text:#f0f4f1; --muted:#96a49b; --green:#a5e5b9; --red:#ef99a4;
+    --amber:#f5c66b; --blue:#73ceff; --orange:#ffad70; --purple:#c2adff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 Inter,ui-sans-serif,system-ui,sans-serif}
+  a{color:inherit;text-decoration:none}
+  button{font:inherit;cursor:pointer;color:inherit;background:none;border:0}
+  .preview-note{background:#161f18;border-bottom:1px solid var(--line);color:var(--muted);
+    font-size:12px;padding:8px 20px;display:flex;gap:10px;align-items:center}
+  .preview-note b{color:var(--text);font-weight:650}
+  .preview-note code{color:var(--green)}
+  .wrap{max-width:960px;margin:0 auto;padding:0 24px}
+
+  /* ---------- top bar ---------- */
+  .topbar{position:sticky;top:0;z-index:5;background:rgba(11,16,14,.94);
+    backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+  .topbar-inner{display:flex;align-items:center;gap:14px;min-height:64px;flex-wrap:wrap}
+  .brand{font-size:19px;font-weight:850;letter-spacing:-.6px}
+  .brand span{color:var(--green);font-size:7px;vertical-align:top;margin-left:4px}
+  .switch{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:3px}
+  .switch a{padding:6px 13px;border-radius:16px;color:var(--muted);font-size:13px;font-weight:600}
+  .switch a[aria-current]{background:#243329;color:var(--text)}
+  .status{display:flex;align-items:center;gap:12px;margin-left:auto;color:var(--muted);font-size:12px;white-space:nowrap}
+  .status .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);margin-right:6px}
+  .status .live{color:var(--green);font-weight:700;letter-spacing:.04em}
+  .chips{display:flex;gap:6px}
+  .chip{border:1px solid var(--line);border-radius:20px;padding:5px 11px;font-size:12px;color:var(--muted);
+    display:flex;align-items:center;gap:6px}
+  .chip i{width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block}
+  .chip[aria-pressed="true"]{color:var(--text);background:var(--panel-2);border-color:#3a4c40}
+  .chip.running{color:var(--green)} .chip.setup{color:var(--blue)}
+  .chip.avoid{color:var(--red)} .chip.watch{color:var(--muted)} .chip.extended{color:var(--orange)}
+  .search{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:20px;
+    padding:6px 12px;color:var(--muted);font-size:13px;min-width:150px;background:var(--panel)}
+  .search input{background:none;border:0;color:var(--text);outline:none;width:100%}
+  .avatar{width:34px;height:34px;border-radius:50%;border:1px solid #33413b;background:#1b2420;
+    display:grid;place-items:center;font-size:12px;font-weight:800;color:var(--green)}
+
+  /* ---------- list ---------- */
+  main{padding:18px 0 80px}
+  .board-head{display:flex;align-items:baseline;justify-content:space-between;color:var(--muted);
+    font-size:12px;padding:4px 6px 10px}
+  .rows{border-top:1px solid var(--line)}
+  .row{display:grid;grid-template-columns:104px minmax(0,1fr) 128px 72px 132px;
+    align-items:center;gap:14px;min-height:66px;padding:9px 6px;border-bottom:1px solid var(--line)}
+  .row:hover{background:#111b15}
+  .tag{justify-self:start;display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:850;
+    letter-spacing:.07em;padding:5px 9px;border-radius:7px;border:1px solid;min-width:84px;justify-content:center}
+  .tag.risk:after{content:"▲";font-size:8px;opacity:.9}
+  .tag.running{color:#0d1a12;background:var(--green);border-color:var(--green)}
+  .tag.setup{color:#04141d;background:var(--blue);border-color:var(--blue)}
+  .tag.extended{color:#1d1004;background:var(--orange);border-color:var(--orange)}
+  .tag.avoid{color:#1e070a;background:var(--red);border-color:var(--red)}
+  .tag.watch{color:var(--muted);background:transparent;border-color:#38443d}
+  .identity{min-width:0}
+  .identity strong{font-size:16px;font-weight:700;letter-spacing:-.2px}
+  .identity small{display:block;color:var(--muted);font-size:12px;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .quote{text-align:right;font-variant-numeric:tabular-nums}
+  .quote strong{display:block;font-size:15px}
+  .quote small{font-size:12.5px;font-weight:700}
+  .spark{width:72px;height:26px}
+  .spark path{fill:none;stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-linecap:round;stroke-linejoin:round}
+  .spark.up path{stroke:var(--green)} .spark.down path{stroke:var(--red)}
+  .metrics{display:flex;gap:14px;justify-content:flex-end;font-variant-numeric:tabular-nums}
+  .metrics span{font-size:12px;color:var(--muted);text-align:right}
+  .metrics b{display:block;color:var(--text);font-size:12.5px;font-weight:650}
+  .metrics b.up{color:var(--green)} .metrics b.down{color:var(--red)}
+  .age{color:#6f7d75;font-size:11px;text-align:right;min-width:34px}
+  .row .identity{cursor:pointer}
+  .row .identity:focus-visible{outline:2px solid var(--green);outline-offset:3px;border-radius:4px}
+
+  /* ---------- universe ---------- */
+  .universe{margin-top:20px;border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--panel)}
+  .universe-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:20px 22px}
+  .universe-head h2{margin:0;font-size:20px;font-weight:600;letter-spacing:-.4px}
+  .universe-head p{margin:3px 0 0;color:var(--muted);font-size:12px}
+  .back{border:1px solid var(--line);border-radius:20px;padding:7px 14px;color:var(--muted);font-size:12px}
+  .universe-canvas{padding:0 10px 14px;background:radial-gradient(ellipse at center,#1b2b2088,transparent 62%)}
+  .universe-canvas svg{display:block;width:100%;height:auto}
+  .map-link{stroke:#42584b;stroke-width:1.4}
+  .map-link.up{stroke:var(--green)} .map-link.down{stroke:var(--red)}
+  .actor circle{fill:#202e26;stroke:#789681;stroke-width:1.4}
+  .actor.up circle{stroke:var(--green)} .actor.down circle{stroke:var(--red)}
+  .actor text{fill:var(--text);font-size:12px;text-anchor:middle;pointer-events:none}
+  .actor .sub{fill:var(--muted);font-size:9px}
+  .core circle{fill:#253e2d;stroke:#7ea98a;stroke-width:1.2}
+  .core text{fill:var(--text);font-size:19px;font-weight:750;text-anchor:middle}
+  .key{display:flex;gap:16px;color:var(--muted);font-size:11px;padding:0 22px 18px}
+  .key b{font-weight:600}
+  .key i{display:inline-block;width:8px;height:8px;border-radius:50%;background:currentColor;margin-right:5px}
+
+  @media(max-width:760px){
+    .row{grid-template-columns:92px minmax(0,1fr) auto;grid-template-areas:"tag id quote" "meta meta spark";
+      row-gap:2px;min-height:74px}
+    .tag{grid-area:tag}.identity{grid-area:id}.quote{grid-area:quote}
+    .spark{grid-area:spark;justify-self:end;width:64px}
+    .metrics{grid-area:meta;justify-content:flex-start;gap:12px}
+    .age{display:none}
+    .status .session,.status .fresh{display:none}
+    .chip{padding:4px 9px}
+  }
+</style>
+</head>
+<body>
+<div class="preview-note">
+  <b>Design preview</b>
+  <span>tight list · colored action tags · top-bar breadth filters · per-ticker universe</span>
+  <span style="margin-left:auto">spec: <code>docs/market-list-ux.md</code></span>
+</div>
+
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <a class="brand" href="#">RATi<span>●</span></a>
+    <nav class="switch" aria-label="Market">
+      <a href="#" aria-current="page">Stocks</a>
+      <a href="#">Memecoins</a>
+      <a href="#">Sports</a>
+    </nav>
+    <div class="status">
+      <span class="session"><i class="dot"></i><span class="live">REG</span> 15:42 ET</span>
+      <span class="fresh">Updated 2m ago</span>
+      <div class="chips" id="chips" aria-label="Filter by state">
+        <button class="chip running" data-tag="running"><i></i>3 running</button>
+        <button class="chip setup" data-tag="setup"><i></i>2 setup</button>
+        <button class="chip avoid" data-tag="avoid"><i></i>1 avoid</button>
+      </div>
+      <label class="search" aria-label="Search tickers">⌕<input id="q" type="search" placeholder="Find a ticker"></label>
+      <span class="avatar" title="Account">RW</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="board-head"><span id="count">8 names on the board</span><span>Ranked by Pulse score</span></div>
+  <div class="rows" id="rows" aria-label="Tickers"></div>
+
+  <section class="universe" id="universe" hidden aria-label="Ticker universe">
+    <div class="universe-head">
+      <div><h2 id="uni-title">SOUN universe</h2><p>People and filings reported around this ticker. Bubble size is report weight; color is the latest reported action.</p></div>
+      <button class="back" id="uni-back">← Back to list</button>
+    </div>
+    <div class="universe-canvas">
+      <svg viewBox="0 0 900 420" role="group" aria-label="SOUN actor universe">
+        <line class="map-link up" x1="450" y1="210" x2="450" y2="80"/>
+        <line class="map-link down" x1="450" y1="210" x2="690" y2="120"/>
+        <line class="map-link up" x1="450" y1="210" x2="740" y2="250"/>
+        <line class="map-link" x1="450" y1="210" x2="620" y2="350"/>
+        <line class="map-link up" x1="450" y1="210" x2="280" y2="340"/>
+        <line class="map-link" x1="450" y1="210" x2="170" y2="180"/>
+        <line class="map-link down" x1="450" y1="210" x2="250" y2="70"/>
+        <line class="map-link" x1="450" y1="210" x2="300" y2="210" stroke-dasharray="4 4"/>
+        <g class="core">
+          <circle cx="450" cy="210" r="46"/>
+          <text x="450" y="205">SOUN</text>
+          <text x="450" y="224" class="sub" style="fill:var(--muted);font-size:10px;font-weight:500">$8.42 · +18.3%</text>
+        </g>
+        <g class="actor up"><circle cx="450" cy="80" r="30"/><text x="450" y="84">CEO</text><text x="450" y="120" class="sub">Bought $1.2M</text></g>
+        <g class="actor down"><circle cx="690" cy="120" r="26"/><text x="690" y="124">Fund</text><text x="690" y="156" class="sub">13G · sold</text></g>
+        <g class="actor up"><circle cx="740" cy="250" r="24"/><text x="740" y="254">Dir</text><text x="740" y="284" class="sub">Bought $340K</text></g>
+        <g class="actor"><circle cx="620" cy="350" r="22"/><text x="620" y="354">8-K</text><text x="620" y="382" class="sub">Filed yesterday</text></g>
+        <g class="actor up"><circle cx="280" cy="340" r="28"/><text x="280" y="344">Holder</text><text x="280" y="378" class="sub">Added 2.1%</text></g>
+        <g class="actor"><circle cx="170" cy="180" r="22"/><text x="170" y="184">News</text><text x="170" y="212" class="sub">3 sources</text></g>
+        <g class="actor down"><circle cx="250" cy="70" r="24"/><text x="250" y="74">Short</text><text x="250" y="102" class="sub">Float 14%</text></g>
+        <circle cx="300" cy="210" r="14" fill="#243329" stroke="#3d5144"/>
+        <text x="300" y="214" style="fill:var(--muted);font-size:9px;text-anchor:middle">+4</text>
+      </svg>
+    </div>
+    <div class="key">
+      <span><i style="color:var(--green)"></i><b>Bought</b> / added</span>
+      <span><i style="color:var(--red)"></i><b>Sold</b> / reduced</span>
+      <span><i style="color:#789681"></i><b>Other</b> reported action</span>
+      <span style="margin-left:auto">Reuses <b>_stock_map.html</b> + <b>ticker-map.js</b></span>
+    </div>
+  </section>
+</main>
+
+<script>
+  const rows = [
+    {tag:'RUNNING', tone:'running', ticker:'SOUN', company:'SoundHound AI', price:8.42, change:18.3, rvol:3.4, m15:7.1, age:'2m', spark:[3,4,4,6,5,8,7,10,9,12]},
+    {tag:'SETUP',   tone:'setup',   ticker:'RGTI', company:'Rigetti Computing', price:1.87, change:4.2,  rvol:2.1, m15:1.8, age:'6m', spark:[5,5,6,6,7,7,9,8,10,11]},
+    {tag:'RUNNING', tone:'running', ticker:'LAES', company:'SEALSQ', price:3.15, change:11.6, rvol:2.8, m15:4.9, age:'11m', spark:[4,5,5,7,6,9,9,11,11,13]},
+    {tag:'EXTENDED',tone:'extended',ticker:'IONQ', company:'IonQ', price:24.10, change:26.4, rvol:4.6, m15:12.3, age:'14m', spark:[2,3,4,6,8,9,12,14,15,16]},
+    {tag:'SETUP',   tone:'setup',   ticker:'HOLO', company:'MicroCloud Hologram', price:0.94, change:2.1, rvol:1.6, m15:0.9, age:'22m', spark:[6,6,5,7,6,7,7,8,8,9]},
+    {tag:'WATCH',   tone:'watch',   ticker:'BBAI', company:'BigBear.ai', price:2.63, change:-1.4, rvol:0.8, m15:-0.6, age:'31m', spark:[9,9,8,8,7,7,8,7,7,6]},
+    {tag:'AVOID',   tone:'avoid',   ticker:'KULR', company:'KULR Technology', price:0.71, change:-8.9, rvol:3.1, m15:-5.4, age:'38m', spark:[10,9,9,8,7,6,5,4,3,2], risk:true},
+    {tag:'WATCH',   tone:'watch',   ticker:'COSM', company:'Cosmos Health', price:1.12, change:0.4,  rvol:0.6, m15:0.2, age:'1h', spark:[6,6,6,7,6,6,7,6,6,6]},
+  ];
+
+  const list = document.getElementById('rows');
+  const count = document.getElementById('count');
+  const q = document.getElementById('q');
+  let activeTag = null;
+
+  const sparkPath = values => {
+    const min = Math.min(...values), max = Math.max(...values), span = max - min || 1;
+    return values.map((v, i) => {
+      const x = 1 + i / (values.length - 1) * 70;
+      const y = 24 - (v - min) / span * 22;
+      return `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`;
+    }).join(' ');
+  };
+
+  const sign = v => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+
+  function render() {
+    const needle = q.value.trim().toLowerCase();
+    const shown = rows.filter(r =>
+      (!activeTag || r.tone === activeTag) &&
+      (!needle || (r.ticker + ' ' + r.company).toLowerCase().includes(needle)));
+    list.innerHTML = shown.map(r => `
+      <div class="row">
+        <span class="tag ${r.tone}${r.risk ? ' risk' : ''}">${r.tag}</span>
+        <span class="identity" tabindex="0" role="button" data-ticker="${r.ticker}" aria-label="Open ${r.ticker} universe">
+          <strong>${r.ticker}</strong><small>${r.company}</small>
+        </span>
+        <span class="quote"><strong>$${r.price.toFixed(2)}</strong>
+          <small class="${r.change >= 0 ? 'up' : 'down'}">${sign(r.change)}</small></span>
+        <svg class="spark ${r.change >= 0 ? 'up' : 'down'}" viewBox="0 0 72 26" aria-hidden="true">
+          <path d="${sparkPath(r.spark)}"/></svg>
+        <span class="metrics">
+          <span>RVOL<b>${r.rvol.toFixed(1)}×</b></span>
+          <span>15m<b class="${r.m15 >= 0 ? 'up' : 'down'}">${sign(r.m15)}</b></span>
+          <span class="age">${r.age}</span>
+        </span>
+      </div>`).join('');
+    count.textContent = `${shown.length} of ${rows.length} names on the board`;
+  }
+
+  document.getElementById('chips').addEventListener('click', event => {
+    const chip = event.target.closest('.chip');
+    if (!chip) return;
+    const tag = chip.dataset.tag;
+    activeTag = activeTag === tag ? null : tag;
+    document.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.tag === activeTag)));
+    render();
+  });
+  q.addEventListener('input', render);
+
+  function openUniverse(ticker) {
+    document.getElementById('uni-title').textContent = `${ticker} universe`;
+    document.getElementById('universe').hidden = false;
+    document.querySelector('.rows').hidden = true;
+    document.querySelector('.board-head').hidden = true;
+    window.scrollTo({top: 0, behavior: 'smooth'});
+  }
+  function closeUniverse() {
+    document.getElementById('universe').hidden = true;
+    document.querySelector('.rows').hidden = false;
+    document.querySelector('.board-head').hidden = false;
+  }
+  list.addEventListener('click', e => { const id = e.target.closest('[data-ticker]'); if (id) openUniverse(id.dataset.ticker); });
+  list.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const id = e.target.closest('[data-ticker]'); if (!id) return;
+    e.preventDefault(); openUniverse(id.dataset.ticker);
+  });
+  document.getElementById('uni-back').addEventListener('click', closeUniverse);
+
+  render();
+</script>
+</body>
+</html>
