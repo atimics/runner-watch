@@ -354,6 +354,14 @@ def format_update_announcement(activity: Mapping[str, Any], *, origin: str) -> s
     """
 
     base = origin.rstrip("/")
+
+    def link(row: Mapping[str, Any]) -> str:
+        url = str(row.get("url") or "").strip()
+        if url:
+            return url
+        path = str(row.get("path") or "").strip()
+        return f"{base}{path}" if path else ""
+
     runners = [row for row in activity.get("runners") or [] if row.get("ticker")]
     reports = list(activity.get("reports") or [])
     total = len(runners) + len(reports)
@@ -371,31 +379,32 @@ def format_update_announcement(activity: Mapping[str, Any], *, origin: str) -> s
         if relative_volume:
             facts.append(relative_volume)
         line = " · ".join(facts)
-        if entry.get("path"):
-            line += f"\n{base}{entry['path']}"
+        url = link(entry)
+        if url:
+            line += f"\n{url}"
         blocks.append(line)
     for report in reports:
         label = str(report.get("label") or "Report").strip()
         headline = str(report.get("headline") or "").strip()
         line = f"{label}: {headline}" if headline else label
-        if report.get("path"):
-            line += f"\n{base}{report['path']}"
+        url = link(report)
+        if url:
+            line += f"\n{url}"
         blocks.append(line)
     return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
 
 
-def format_release_announcement(
-    version: str, build_sha: str, notes: str | None, *, origin: str
-) -> str:
-    """One message announcing that a new build is live."""
+def format_release_announcement(version: str, notes: str | None, *, origin: str) -> str:
+    """One message announcing a release, from its notes.
 
-    blocks = [f"🐆 Fresh build is live — RATi Runners {version}"]
+    There is no message without notes: a bare build hash tells the room nothing,
+    so a deploy is only announced when there is something to say about it.
+    """
+
     text = " ".join(str(notes or "").split())
-    if text:
-        blocks.append(text[:1000])
-    if build_sha and build_sha != "dev":
-        blocks.append(f"build {build_sha}")
-    blocks.append(origin.rstrip("/"))
+    if not text:
+        return ""
+    blocks = [f"🐆 RATi Runners {version}", text[:1000], origin.rstrip("/")]
     return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
 
 
