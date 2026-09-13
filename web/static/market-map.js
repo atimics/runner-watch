@@ -24,6 +24,7 @@
     svg.setAttribute('hidden', '');
     return;
   }
+  empty.hidden = true;
 
   const maxWeight = Math.max(1, ...(data.actors || []).map((actor) => actor.weight || 0));
   const radiusFor = (actor) => {

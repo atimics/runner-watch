@@ -39,6 +39,10 @@
   font-size: 12px;
 }
 
+.map-empty[hidden] {
+  display: none;
+}
+
 .map-link {
   stroke: rgba(126, 139, 134, .28);
   stroke-width: 1.4;
