@@ -108,40 +108,56 @@ when `rug_level` is GUARDED or worse. It never repeats the tag text.
 
 ## The score
 
-The list shows one number. The ticker page shows where it came from. The score is
-a weighted composite of five normalized components, each 0–100:
+The list shows one number. The ticker page shows where it came from. **V1 ships
+the breakdown of the existing score**, so nothing re-ranks. The score is the sum
+of five positive drivers plus explicit penalties, clamped to 0–100:
 
-| # | Component | Inputs | Weight |
-| --- | --- | --- | --- |
-| 1 | **Volume** | relative volume, recent relative volume | 25 |
-| 2 | **Momentum** | 5m move, 15m move, acceleration | 25 |
-| 3 | **Move quality** | change curve, breakout, range position, VWAP, close location | 20 |
-| 4 | **Liquidity** | session and recent dollar volume | 15 |
-| 5 | **Catalyst** | latest SEC filing / news event | 15 |
-| 6 | **Avatar Sentiment** *(planned)* | what this ticker's avatars are saying | TBD |
+| Driver | Source |
+| --- | --- |
+| **Market scanner** | the scanner/ranker score (`scoring.py`) |
+| **SEC event** | recent filing, weighted by sentiment |
+| **News** | saved news events |
+| **Social search** | external social mentions |
+| **Community** | Calls and comments |
+
+| Penalty | Source |
+| --- | --- |
+| **Safety** | halt or safety gate |
+| **Rug risk** | `rug_score` × 0.30 |
+| **State** | AVOID / EXIT gate |
 
 ```
-score = round( Σ (weight_i × component_i / 100) × freshness − penalties , 0 … 100 )
+score = market + sec_event + news + social_search + community
+        − safety − rug − state,  clamped to 0 … 100
 ```
 
-- `freshness` is the existing staleness multiplier from `scoring.py`.
-- `penalties` are the existing extension/parabola/VWAP-break terms, shown
-  separately so the arithmetic is honest.
-- The five components are the same terms `score_runner` already uses, grouped and
-  named so a person can read them. Component 6 (**Avatar Sentiment**) is the
-  planned extension: it reads what the ticker's avatars are saying on the
-  comments screen, weighted by each avatar's track record, and adds one more
-  weighted component. Add the component, add a weight, bump the score policy
-  version. Nothing else changes.
+These are the real terms `pulse_score` already uses in `_pulse_data_uncached`;
+the panel just names them. The ticker page renders each as a row: name, its
+points, a proportion bar, then the formula and the total. A saved score can
+always be traced to the formula that produced it.
 
-The ticker page renders each component as a row: name, raw value, a 0–100 bar,
-the weight, and its contribution, then the subtotal, penalties, freshness and
-final score. This is the "how the score is calculated" panel.
+**Avatar Sentiment (next).** The comments screen is also an input. Avatar
+Sentiment aggregates what a ticker's avatars are saying, weighted by each
+avatar's track record rather than its post volume:
 
-**Versioning.** The weights and component list live in policy (alongside
-`product_policy.py`) as `SCORE_POLICY_VERSION`, so a score can always be traced
-to the formula that produced it. This matches how `FEATURE_SCHEMA_VERSION` works
-for the ranker.
+```
+avatar_sentiment = Σ (avatar_weight × avatar_view) / Σ avatar_weight
+```
+
+`avatar_view` is a stance (−1 bearish … +1 bullish) and `avatar_weight` is its
+settled hit rate times an evidence-quality factor, floored so a new avatar has
+some voice but cannot dominate. Until it ships, the panel shows it as *not yet
+weighted*, exactly as the preview does.
+
+**Later refinement.** The Market scanner driver is itself the nine-term
+`score_runner`. Once those terms are persisted per snapshot, the Market scanner
+row expands into Volume, Momentum, Move quality and Liquidity — the five-metric
+view originally proposed. That is a scoring change and is deliberately out of
+scope for v1 so the ranking stays put.
+
+**Versioning.** The driver list lives in `PUBLIC_SCORE_DRIVERS` /
+`PUBLIC_SCORE_PENALTIES` in `main.py`, next to the formula that computes them.
+A weighted policy version arrives with Avatar Sentiment.
 
 ## The list row
 
