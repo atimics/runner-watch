@@ -22,6 +22,7 @@ def test_animation_upload_contains_gif_caption_and_configured_destination(monkey
         assert request.full_url.endswith("/sendAnimation")
         assert request.get_header("Content-type").startswith("multipart/form-data; boundary=")
         assert b'name="animation"; filename="token-replay.gif"' in request.data
+        assert b'name="parse_mode"' in request.data
         assert b"fixture-channel" in request.data
         assert b"GIF89atest" in request.data and b"New memecoin detected" in request.data
         assert timeout == 30

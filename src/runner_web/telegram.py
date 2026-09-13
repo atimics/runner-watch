@@ -86,7 +86,12 @@ def send_animation(
         raise AnimationDeliveryError("failed")
     boundary = "rati-" + secrets.token_hex(16)
     caption = caption.encode("utf-16-le")[:2048].decode("utf-16-le", errors="ignore")
-    fields = {"chat_id": config.chat_id, "caption": caption, "disable_notification": "false"}
+    fields = {
+        "chat_id": config.chat_id,
+        "caption": caption,
+        "parse_mode": "MarkdownV2",
+        "disable_notification": "false",
+    }
     parts = []
     for name, value in fields.items():
         parts.append(
@@ -210,121 +215,6 @@ def select_new_runners(
     return eligible[: max(0, limit)]
 
 
-def _price_label(value: Any) -> str:
-    try:
-        price = float(value)
-    except (TypeError, ValueError):
-        return "price n/a"
-    if price < 1:
-        return f"${price:.4f}"
-    return f"${price:,.2f}"
-
-
-def _change_label(value: Any) -> str:
-    try:
-        change = float(value)
-    except (TypeError, ValueError):
-        return ""
-    return f"{change:+.2f}%"
-
-
-def _relative_volume_label(value: Any) -> str:
-    try:
-        relative_volume = float(value)
-    except (TypeError, ValueError):
-        return ""
-    return f"RVOL {relative_volume:.1f}x"
-
-
-def format_runner_line(entry: Mapping[str, Any], *, origin: str) -> str:
-    """Format one runner as a metrics line plus its ticker link."""
-
-    ticker = str(entry.get("ticker") or "").strip().upper()
-    facts = [f"${ticker}", _price_label(entry.get("price"))]
-    extras = (
-        _change_label(entry.get("change_pct")),
-        _relative_volume_label(entry.get("relative_volume")),
-    )
-    facts.extend(label for label in extras if label)
-    facts.append(f"score {_score(entry):.0f}")
-    return " · ".join(facts) + f"\n{origin.rstrip('/')}/t/{ticker}"
-
-
-def format_runner_digest(entries: Iterable[Mapping[str, Any]], *, origin: str) -> str:
-    """Build one Telegram message for a group of new runners."""
-
-    rows = list(entries)
-    count = len(rows)
-    header = "🟢 1 new runner detected" if count == 1 else f"🟢 {count} new runners detected"
-    blocks = [format_runner_line(entry, origin=origin) for entry in rows]
-    message = "\n\n".join([header, *blocks])
-    return message[:MAX_MESSAGE_CHARS]
-
-
-def format_market_report_post(report: Mapping[str, Any], *, origin: str) -> str:
-    """Build one Telegram message for a frozen pre-market or post-market report."""
-
-    report_type = str(report.get("report_type") or "")
-    label = str(
-        report.get("label")
-        or ("Pre-market briefing" if report_type == "pre_market" else "Post-market recap")
-    )
-    header = f"📋 {label}"
-    headline = str(report.get("headline") or "").strip()
-    summary = str(report.get("summary") or "").strip()
-    blocks = [header]
-    if headline:
-        blocks.append(headline)
-    if summary and summary != headline:
-        blocks.append(summary)
-    leaders: list[str] = []
-    raw_leaders = report.get("leaders") or []
-    if isinstance(raw_leaders, list):
-        for leader in raw_leaders[:MARKET_REPORT_LEADER_LIMIT]:
-            if not isinstance(leader, Mapping):
-                continue
-            ticker = str(leader.get("ticker") or "").strip().upper()
-            if not ticker:
-                continue
-            facts = [f"${ticker}"]
-            change = _change_label(leader.get("change_pct"))
-            if change:
-                facts.append(change)
-            if leader.get("score") is not None:
-                facts.append(f"score {_score(leader):.0f}")
-            leaders.append(" · ".join(facts))
-    if leaders:
-        blocks.append("\n".join(leaders))
-    path = str(report.get("path") or "").strip()
-    if not path:
-        day = str(report.get("report_day") or "").strip()
-        slug = "pre" if report_type == "pre_market" else "post"
-        path = f"/reports/{day}/{slug}" if day else ""
-    if path:
-        blocks.append(f"{origin.rstrip('/')}{path}")
-    return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
-
-
-def format_public_report_post(report: Mapping[str, Any], *, origin: str) -> str:
-    """Build one Telegram message for a research report that just went public."""
-
-    ticker = str(report.get("ticker") or "").strip()
-    sports = ticker.lower().startswith("sports:")
-    symbol = ticker.upper().lstrip("$")
-    header = "📄 New public report" if sports or not symbol else f"📄 New public report · ${symbol}"
-    blocks = [header]
-    headline = str(report.get("headline") or "").strip()
-    if headline:
-        blocks.append(headline)
-    base = origin.rstrip("/")
-    public_id = str(report.get("public_id") or "").strip()
-    if not sports and symbol:
-        blocks.append(f"{base}/t/{symbol}")
-    if public_id:
-        blocks.append(f"{base}/research/{public_id}")
-    return "\n".join(blocks)[:MAX_MESSAGE_CHARS]
-
-
 def announcement_batch_ready(
     count: int,
     oldest_age_minutes: float,
@@ -344,69 +234,6 @@ def announcement_batch_ready(
     if count >= max(1, min_items):
         return True
     return oldest_age_minutes >= max(0, debounce_minutes)
-
-
-def format_update_announcement(activity: Mapping[str, Any], *, origin: str) -> str:
-    """One message for everything that just landed, in the room's plain voice.
-
-    Used when no model writes the announcement, and as the fallback when one
-    fails. Everything named here came from a stored row, so the links and numbers
-    are the ones the site already shows.
-    """
-
-    base = origin.rstrip("/")
-
-    def link(row: Mapping[str, Any]) -> str:
-        url = str(row.get("url") or "").strip()
-        if url:
-            return url
-        path = str(row.get("path") or "").strip()
-        return f"{base}{path}" if path else ""
-
-    runners = [row for row in activity.get("runners") or [] if row.get("ticker")]
-    reports = list(activity.get("reports") or [])
-    total = len(runners) + len(reports)
-    if total == 0:
-        return ""
-    header = "🐆 1 new on the board" if total == 1 else f"🐆 {total} new on the board"
-    blocks = [header]
-    for entry in runners:
-        symbol = str(entry.get("ticker") or "").strip().upper()
-        facts = [f"${symbol}"]
-        change = _change_label(entry.get("change_pct"))
-        if change:
-            facts.append(change)
-        relative_volume = _relative_volume_label(entry.get("relative_volume"))
-        if relative_volume:
-            facts.append(relative_volume)
-        line = " · ".join(facts)
-        url = link(entry)
-        if url:
-            line += f"\n{url}"
-        blocks.append(line)
-    for report in reports:
-        label = str(report.get("label") or "Report").strip()
-        headline = str(report.get("headline") or "").strip()
-        line = f"{label}: {headline}" if headline else label
-        url = link(report)
-        if url:
-            line += f"\n{url}"
-        blocks.append(line)
-    return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
-
-
-def format_release_announcement(version: str, notes: str | None, *, origin: str) -> str:
-    """One message announcing a release, from its notes.
-
-    There is no message without notes: a bare build hash tells the room nothing,
-    so a deploy is only announced when there is something to say about it.
-    """
-
-    text = " ".join(str(notes or "").split())
-    if not text:
-        return ""
-    blocks = [f"🐆 RATi Runners {version}", text[:1000], origin.rstrip("/")]
-    return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
 
 
 def _api_call(
@@ -495,37 +322,6 @@ def set_reaction(
     )
 
 
-def send_message(
-    config: TelegramConfig,
-    text: str,
-    *,
-    opener: Callable[..., Any] | None = None,
-) -> None:
-    """Post one message. Raises on transport or API errors."""
-
-    if not config.configured:
-        raise RuntimeError("Telegram bot token and chat id are required")
-    payload = json.dumps(
-        {
-            "chat_id": config.chat_id,
-            "text": text,
-            "disable_notification": False,
-        }
-    ).encode()
-    request = urllib.request.Request(
-        config.endpoint(),
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with opener(request, timeout=SEND_TIMEOUT_SECONDS) as response:
-        status = getattr(response, "status", 200)
-        if status >= 400:
-            raise urllib.error.HTTPError(
-                config.endpoint(), status, "Telegram sendMessage failed", {}, None
-            )
-        response.read()
-
 # ---------------------------------------------------------------------------
 # Markdown V2 formatters and link-preview sender.
 #
@@ -533,9 +329,9 @@ def send_message(
 # like a message board: bold tickers, emoji-coded state, an inline metrics
 # line per runner, and exactly one URL per block so Telegram unfurls a
 # link preview from the entity's ticker page. Every user-provided string
-# is escaped with escape_markdown_v2, every URL is the first URL in the
-# message, and send_post switches off preview for explicit cases. Telegram
-# parse failures fall back to plain text so nothing is dropped silently.
+# is escaped with escape_markdown_v2, and every URL sits on its own line.
+# Telegram parse failures fall back to plain text so nothing is dropped
+# silently.
 # ---------------------------------------------------------------------------
 
 _MD_V2_SPECIAL = chr(0) + "_*[]()~`>#+-=|{}.!" + chr(92)
@@ -653,34 +449,6 @@ def _format_metrics_line(entry):
     return "  \u00b7  ".join(parts)
 
 
-def format_runner_digest_md(entries, *, origin):
-    rows = list(entries)
-    count = len(rows)
-    header = (
-        "\U0001F7E2 *1 new runner detected*"
-        if count == 1
-        else f"\U0001F7E2 *{count} new runners detected*"
-    )
-    base = origin.rstrip("/")
-    blocks = [header]
-    for entry in rows:
-        ticker = escape_markdown_v2(str(entry.get("ticker") or "").strip().upper())
-        state = escape_markdown_v2(str(entry.get("tag") or ""))
-        emoji = _state_emoji(entry.get("tag") or "")
-        url = f"{base}/t/{ticker}"
-        metrics = _format_metrics_line(entry)
-        head = (emoji + " " if emoji else "") + f"*{ticker}*"
-        if state:
-            head += f"  \u2014  *{state}*"
-        blocks.append(head)
-        if metrics:
-            blocks.append(metrics)
-        else:
-            blocks.append(escape_markdown_v2(str(entry.get("company") or "")))
-        blocks.append(url)
-    return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
-
-
 def format_market_report_post_md(report, *, origin):
     """Pre-market or post-market briefing in one message."""
 
@@ -773,9 +541,9 @@ def format_update_announcement_md(activity, *, origin):
     if total == 0:
         return ""
     header = (
-        "\U0001F981 *1 new on the board*"
+        "\U0001F406 *1 new on the board*"
         if total == 1
-        else f"\U0001F981 *{total} new on the board*"
+        else f"\U0001F406 *{total} new on the board*"
     )
     blocks = [header]
     for entry in runners:
@@ -784,14 +552,14 @@ def format_update_announcement_md(activity, *, origin):
         head = (emoji + " " if emoji else "") + f"*{ticker}*"
         state = escape_markdown_v2(str(entry.get("tag") or ""))
         if state:
-            head += f"  \u2014  *{state}*"
+            head += f"  \u2014  {state}"
         blocks.append(head)
         metrics = _format_metrics_line(entry)
         if metrics:
             blocks.append(metrics)
         blocks.append(f"{base}/t/{ticker}")
     for event in events:
-        blocks.append(format_event_post_md(event, origin=origin).splitlines()[0])
+        blocks.append(format_event_post_md(event, origin=origin))
     for report in reports:
         if report.get("kind") == "market_report":
             blocks.append(format_market_report_post_md(report, origin=origin))
@@ -808,5 +576,5 @@ def format_release_announcement_md(version, notes, *, origin):
         return ""
     safe = escape_markdown_v2(text)[:900]
     base = origin.rstrip("/")
-    blocks = [f"\U0001F981 *RATi Runners {escape_markdown_v2(version)}*", safe, base]
+    blocks = [f"\U0001F406 *RATi Runners {escape_markdown_v2(version)}*", safe, base]
     return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
