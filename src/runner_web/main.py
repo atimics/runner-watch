@@ -4059,6 +4059,7 @@ def _pulse_data_uncached() -> dict[str, Any]:
             "external_social_engagement": external["social_engagement"],
             "latest_news": external.get("latest_news"),
             "score_components": score_components,
+            "score_detail": _public_score_detail(score_components, pulse_score),
             "company": (
                 catalyst.get("company", ticker)
                 if catalyst
@@ -4131,6 +4132,37 @@ def _pulse_data_uncached() -> dict[str, Any]:
     }
 
 
+PUBLIC_SCORE_DRIVERS = (
+    ("market", "Market scanner"),
+    ("sec_event", "SEC event"),
+    ("news", "News"),
+    ("social_search", "Social search"),
+    ("community", "Community"),
+)
+PUBLIC_SCORE_PENALTIES = (
+    ("safety", "Safety"),
+    ("rug", "Rug risk"),
+    ("state", "State"),
+)
+
+
+def _public_score_detail(components: dict[str, Any], score: float) -> dict[str, Any]:
+    """Keep the public score breakdown small enough to ship with every row."""
+
+    return {
+        "score": round(float(score), 1),
+        "drivers": [
+            {"key": key, "label": label, "value": round(float(components.get(key) or 0.0), 1)}
+            for key, label in PUBLIC_SCORE_DRIVERS
+        ],
+        "penalties": [
+            {"key": key, "label": label, "value": round(float(components.get(key) or 0.0), 1)}
+            for key, label in PUBLIC_SCORE_PENALTIES
+            if float(components.get(key) or 0.0) != 0.0
+        ],
+    }
+
+
 def _pulse_base_data() -> dict[str, Any]:
     return _public_screen_data(
         "runners-pulse",
@@ -4163,6 +4195,7 @@ PUBLIC_PULSE_ROW_FIELDS = (
     "ticker",
     "custom_rank",
     "score",
+    "score_detail",
     "setup_score",
     "company",
     "name",
@@ -4212,6 +4245,19 @@ def _public_pulse_data(*, offset: int = 0, limit: int = 50) -> dict[str, Any]:
         "items": items,
         "rows": items,
     }
+
+
+def _pulse_row_for_ticker(ticker: str) -> dict[str, Any] | None:
+    wanted = str(ticker).upper()
+    try:
+        rows = _pulse_base_data().get("rows", [])
+    except Exception:  # The score panel is optional; never fail the ticker page for it.
+        LOG.debug("Pulse score lookup failed for %s", ticker, exc_info=True)
+        return None
+    for row in rows:
+        if str(row.get("ticker") or "").upper() == wanted:
+            return row
+    return None
 
 
 def _report_record(row: Any) -> dict[str, Any] | None:
@@ -6409,7 +6455,15 @@ def memecoins_board_response(
 ) -> HTMLResponse:
     enforce_rate(request, "memecoins", limit=120, seconds=60)
     market = memecoin_market(query=q, sort=sort, view="radar")
-    return _simple_board(request, runner_session, "memecoins", market["rows"], view, q)
+    return _simple_board(
+        request,
+        runner_session,
+        "memecoins",
+        market["rows"],
+        view,
+        q,
+        updated_at=str(market.get("collected_at") or ""),
+    )
 
 
 @app.get("/memecoins/radar", response_class=HTMLResponse)
@@ -6818,6 +6872,7 @@ def runners_board_response(
         rows,
         view,
         request.query_params.get("q", ""),
+        updated_at=str(page.get("updated_at") or ""),
     )
 
 
@@ -6828,11 +6883,11 @@ def _simple_board(
     items: list[dict[str, Any]],
     view: str,
     query: str = "",
+    updated_at: str = "",
 ) -> HTMLResponse:
     from runner_web.market_screens import listing
 
-    selected = "map" if view == "map" else "list"
-    screen = listing(market, items, view=selected, query=query)
+    screen = listing(market, items, view=view, query=query, updated_at=updated_at)
     return templates.TemplateResponse(
         request,
         "market_screen.html",
@@ -8162,6 +8217,10 @@ def ticker_page(
         calls = list(public_data["calls"])
         latest_report = public_data.get("latest_commission")
         latest_attempt = None
+    pulse_row = _pulse_row_for_ticker(normalized)
+    if pulse_row and isinstance(detail.get("current"), dict):
+        detail["current"]["score"] = pulse_row.get("score")
+        detail["current"]["score_detail"] = pulse_row.get("score_detail")
     user_id = str(user["id"]) if user else None
     return templates.TemplateResponse(
         request=request,
