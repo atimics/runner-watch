@@ -3209,6 +3209,14 @@ def _migration_067_coin_evidence_pruning(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_069_stock_map_evidence(db: DatabaseConnection) -> None:
+    _ensure_column(db, "sec_filings", "evidence_json TEXT")
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS sec_filings_ticker_history "
+        "ON sec_filings(ticker,filed_at DESC,accession DESC)"
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3282,6 +3290,7 @@ MIGRATIONS = (
     Migration(66, "market_actors", _migration_066_market_actors),
     Migration(67, "coin_evidence_pruning", _migration_067_coin_evidence_pruning),
     Migration(68, "memecoin_replays", _migration_068_memecoin_replays),
+    Migration(69, "stock_map_evidence", _migration_069_stock_map_evidence),
 )
 
 

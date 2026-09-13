@@ -26,7 +26,7 @@ from urllib.parse import quote, unquote, urlencode, urlparse
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -7009,6 +7009,19 @@ def market_actors_api(request: Request, domain: str = "stock") -> dict[str, Any]
     return market_actor_map(domain)
 
 
+@app.get("/api/stocks/{ticker}/map")
+def stock_ticker_map_api(
+    ticker: str, request: Request, cursor: str | None = Query(default=None, max_length=1024),
+) -> dict[str, Any]:
+    from runner_web.stock_map import ticker_map
+
+    enforce_rate(request, "stock-ticker-map", limit=120, seconds=60)
+    try:
+        return ticker_map(_clean_ticker(ticker), cursor)
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid map cursor") from exc
+
+
 @app.get("/api/market-actors/{actor_id}")
 def market_actor_api(actor_id: str, request: Request) -> dict[str, Any]:
     enforce_rate(request, "market-map", limit=120, seconds=60)
@@ -7218,12 +7231,7 @@ def _simple_board(
     from runner_web.market_screens import listing
 
     selected = "map" if view == "map" else "list"
-    graph = (
-        market_actor_map("coin" if market == "memecoins" else "stock")
-        if selected == "map" and market != "sports"
-        else None
-    )
-    screen = listing(market, items, view=selected, query=query, graph=graph)
+    screen = listing(market, items, view=selected, query=query)
     return templates.TemplateResponse(
         request,
         "market_screen.html",

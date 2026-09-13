@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -15,9 +16,10 @@ from runner_watch.models import ScanSettings
 from runner_watch.scanner import RunnerScanner
 from runner_web.collection import recording_market_data
 from runner_web.db import connection
-from runner_web.ingestion import mark_source_item, record_source_fetch, source_item_is_terminal
+from runner_web.ingestion import TERMINAL_ITEM_STATUSES, mark_source_item, record_source_fetch
 from runner_web.legal_risk import sync_filing_people
 from runner_web.sec_facts import refresh_company_facts
+from runner_web.stock_map import restore_archived_map_evidence
 
 LOG = logging.getLogger(__name__)
 INTERESTING_FORMS = (
@@ -31,6 +33,8 @@ INTERESTING_FORMS = (
     "144",
     "SC 13D",
     "SC 13G",
+    "SCHEDULE 13D",
+    "SCHEDULE 13G",
     "NT 10-Q",
     "NT 10-K",
     "10-Q",
@@ -38,7 +42,7 @@ INTERESTING_FORMS = (
     "20-F",
     "40-F",
 )
-PARSER_VERSION = "5"
+PARSER_VERSION = "6"
 
 
 def iso(value: datetime | None = None) -> str:
@@ -107,7 +111,16 @@ def _already_seen(accession: str) -> bool:
             db.execute("SELECT 1 FROM sec_filings WHERE accession=?", (accession,)).fetchone()
             is not None
         )
-    return stored or source_item_is_terminal("sec", "filing", accession)
+        prior = db.execute(
+            "SELECT status,parser_version FROM source_item_state "
+            "WHERE source='sec' AND feed='filing' AND item_key=?",
+            (accession,),
+        ).fetchone()
+    return stored or bool(
+        prior
+        and prior["status"] in TERMINAL_ITEM_STATUSES
+        and prior["parser_version"] == PARSER_VERSION
+    )
 
 
 def _interesting(form: str) -> bool:
@@ -168,7 +181,9 @@ def _prepare_event(
     is_purchase = bool(ownership and ownership.purchase_value)
     return {
         "accession": filing.accession,
-        "cik": ownership.issuer_cik if ownership else filing.cik,
+        "cik": ownership.issuer_cik
+        if ownership
+        else (beneficial.issuer_cik if beneficial and beneficial.issuer_cik else filing.cik),
         "ticker": ticker,
         "company": company["name"],
         "form": filing.form,
@@ -208,6 +223,16 @@ def _prepare_event(
         "reporting_person_types": (
             ",".join(beneficial.reporting_person_types) if beneficial else ""
         ),
+        "evidence_json": json.dumps(
+            {
+                "version": 1,
+                "owners": ownership.reporting_owners if ownership else [],
+                "transactions": ownership.transactions if ownership else [],
+                "positions": beneficial.positions if beneficial else [],
+            }
+        )
+        if (ownership and ownership.transactions or beneficial and beneficial.positions)
+        else None,
     }
 
 
@@ -280,9 +305,11 @@ def refresh_edgar() -> dict[str, Any]:
             except Exception as exc:
                 LOG.warning("Could not parse ownership filing %s: %s", filing.accession, exc)
                 item_errors[filing.accession] = f"Ownership parsing failed: {exc}"
-        elif filing.form.startswith(("SC 13D", "SC 13G")):
+        elif filing.form.startswith(("SC 13D", "SC 13G", "SCHEDULE 13D", "SCHEDULE 13G")):
             try:
                 beneficial = client.beneficial_ownership_summary(filing)
+                if beneficial and beneficial.issuer_cik:
+                    issuer_cik = beneficial.issuer_cik
             except Exception as exc:
                 LOG.warning("Could not parse beneficial ownership %s: %s", filing.accession, exc)
                 item_errors[filing.accession] = f"Beneficial ownership parsing failed: {exc}"
@@ -336,7 +363,7 @@ def refresh_edgar() -> dict[str, Any]:
                     post_transaction_shares,stake_change_pct,is_10b5_1,
                     direct_ownership,footnotes
                     ,beneficial_ownership_pct,beneficial_shares,beneficial_owner_names,
-                    reporting_person_types
+                    reporting_person_types,evidence_json
                 ) VALUES(
                     :accession,:cik,:ticker,:company,:form,:kind,:sentiment,:score,:title,
                     :filed_at,:filing_url,:actor,:actor_cik,:actor_title,:transaction_codes,
@@ -345,7 +372,7 @@ def refresh_edgar() -> dict[str, Any]:
                     :parser_version,:post_transaction_shares,:stake_change_pct,
                     :is_10b5_1,:direct_ownership,:footnotes
                     ,:beneficial_ownership_pct,:beneficial_shares,:beneficial_owner_names,
-                    :reporting_person_types
+                    :reporting_person_types,:evidence_json
                 )
                 """,
                 {
@@ -384,6 +411,7 @@ def refresh_edgar() -> dict[str, Any]:
             parser_version=PARSER_VERSION,
         )
 
+    restored_map_filings = restore_archived_map_evidence()
     people_result = sync_filing_people()
 
     fact_result: dict[str, Any] = {"facts": 0}
@@ -403,6 +431,7 @@ def refresh_edgar() -> dict[str, Any]:
         "companies": company_count,
         "feed_filings": len(filings),
         "new_events": len(new_events),
+        "restored_map_filings": restored_map_filings,
         "issuer_facts": int(fact_result.get("facts") or 0),
         "filing_people_staged": int(people_result.get("people_staged") or 0),
         "refreshed_at": timestamp,

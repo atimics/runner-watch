@@ -322,26 +322,13 @@ def test_call_record_keeps_choice_terms_and_reward_readable(page, market, width)
 
 
 @pytest.mark.parametrize("width", [320, 390, 1280])
-def test_map_keyboard_connections_overflow_and_detail(page, width):
+def test_map_gallery_keyboard_navigation_and_detail(page, width):
     items = [{**fixtures.sample("stocks"), "ticker": f"T{i}"} for i in range(9)]
     screen = listing("stocks", items, view="map", graph=fixtures.connected_graph(9))
     page.set_viewport_size({"width": width, "height": 844})
     open_screen(page, screen)
-    summary = page.locator(".connection-node > summary")
-    expect(summary).to_have_count(1)
-    summary.focus()
-    page.keyboard.press("Enter")
-    expect(
-        page.get_by_text(
-            "This fictional character represents a public filer. "
-            "Dates show when each filing was reported."
-        )
-    ).to_be_visible()
-    expect(page.get_by_role("link", name="View T8 Detail")).to_be_hidden()
-    page.locator(".more-connections > summary").focus()
-    page.keyboard.press("Enter")
-    target = page.get_by_role("link", name="View T8 Detail")
-    expect(target).to_be_visible()
+    expect(page.locator(".map-subject")).to_have_count(9)
+    target = page.get_by_role("link", name="Open T8", exact=True)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.route("http://app.test/t/T8", lambda r: r.fulfill(body="Detail opened"))
     target.focus()
@@ -405,5 +392,5 @@ def test_map_missing_cached_portrait_uses_initials(page):
     page.route("**/api/market-actors/**", missing)
     open_screen(page, screen)
     expect(page.locator("[data-portrait]")).to_be_hidden()
-    expect(page.locator(".participant-mark")).to_have_text("CO")
-    assert requested == ["http://app.test/api/market-actors/actor-one/portrait?cached=true"]
+    expect(page.locator(".map-subject .ticker-mark")).to_have_text("T0")
+    assert requested == []
