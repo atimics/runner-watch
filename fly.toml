@@ -38,8 +38,14 @@ kill_timeout = 30
   REGISTRATION_MODE = "open"
   TELEGRAM_MEMECOIN_ALERTS = "1"
 
+  # The release command runs migrations before this image serves traffic, so a
+  # rollback after a schema change must tolerate a database the newer release
+  # wrote. Do not enable this outside the production rollback path.
   ALLOW_NEWER_DATABASE_SCHEMA = "1"
 
+  # Postgres and Redis are reached over Fly's encrypted private network
+  # (`.internal`), so the drivers do not also negotiate TLS. Turn these on if
+  # either service is ever addressed by a public hostname or over the internet.
   REQUIRE_DATABASE_TLS = "0"
 
   REQUIRE_REDIS_TLS = "0"

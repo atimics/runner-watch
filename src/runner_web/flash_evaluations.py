@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import uuid
 from datetime import UTC, datetime, time, timedelta
@@ -18,6 +19,8 @@ from runner_web.ai_kol import (
 from runner_web.collection import recording_market_data
 from runner_web.db import connection
 from runner_web.market_clock import market_clock
+
+LOG = logging.getLogger(__name__)
 
 EASTERN = ZoneInfo("America/New_York")
 REGULAR_OPEN = time(9, 30)
@@ -423,7 +426,7 @@ def refresh_flash_forecasts(
             with recording_market_data(batch_size=60) as market_data:
                 market_data.intraday(tickers)
         except Exception:
-            pass
+            LOG.debug("Forecast market-data prefetch failed", exc_info=True)
     bars_by_ticker = _forecast_bars(tickers)
     resolved = 0
     voided = 0

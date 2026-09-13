@@ -16,12 +16,15 @@ is a worse cheetah, and someone saying "stop" has to be able to end it.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+
+LOG = logging.getLogger(__name__)
 
 ENGAGEMENT_REPLIES = max(1, int(os.getenv("TELEGRAM_ENGAGEMENT_REPLIES", "3")))
 ENGAGEMENT_MINUTES = max(1, int(os.getenv("TELEGRAM_ENGAGEMENT_MINUTES", "10")))
@@ -571,7 +574,7 @@ def prefetch_for(message: InboundMessage, database: Any) -> dict[str, Any]:
             grounded["market"] = market_now()
             grounded["recent_runners"] = recent_runners(limit=6)
         except Exception:  # pragma: no cover - prefetch is optional grounding
-            pass
+            LOG.debug("Telegram prefetch grounding failed", exc_info=True)
     return grounded
 
 

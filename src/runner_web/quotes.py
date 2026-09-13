@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import os
 import threading
@@ -18,6 +19,8 @@ from runner_watch.provider_contracts import DataKind, ProviderRequest
 from runner_watch.provider_registry import ProviderRegistry
 from runner_web.db import connection
 from runner_web.ingestion import record_source_fetch
+
+LOG = logging.getLogger(__name__)
 
 QUOTE_TTL_SECONDS = max(5, int(os.getenv("TICKER_QUOTE_TTL_SECONDS", "30")))
 QUOTE_CALLS_PER_MINUTE = max(1, int(os.getenv("TICKER_QUOTE_CALLS_PER_MINUTE", "40")))
@@ -396,7 +399,7 @@ def market_mark(
         try:
             ticker_quote(symbol, at=now)
         except Exception:
-            pass
+            LOG.debug("Quote refresh failed for %s", symbol, exc_info=True)
     with connection() as database:
         marks = price_marks(database, symbol, until=now)
     if not marks:

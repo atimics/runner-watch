@@ -5,6 +5,7 @@ import base64
 import binascii
 import hashlib
 import json
+import logging
 import math
 import re
 import shutil
@@ -36,6 +37,8 @@ from runner_web.sec_training_v2 import (
     _target,
     semantic_chunks,
 )
+
+LOG = logging.getLogger(__name__)
 
 SOURCE_RELEASE_RE = re.compile(r"^braid_sec_[a-f0-9]{64}$")
 ACCESSION_RE = re.compile(r"^\d{10}-\d{2}-\d{6}$")
@@ -130,7 +133,7 @@ def _classification_fields(
         elif form.startswith(("SC 13D", "SC 13G")):
             beneficial = parse_beneficial_ownership_xml(text)
     except Exception:
-        pass
+        LOG.debug("Ownership XML parse failed for a %s filing", form, exc_info=True)
 
     classification = classify_filing(form, ownership)
     tickers = issuer.get("tickers")

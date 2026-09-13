@@ -58,7 +58,7 @@ COPY tests ./tests
 COPY cloudflare-router ./cloudflare-router
 COPY ml/sec-qwen/src ./ml/sec-qwen/src
 COPY .github/workflows/fly.yml .github/workflows/uptime.yml ./.github/workflows/
-COPY app.py compose.local.yml fly.toml Dockerfile ./
+COPY compose.local.yml fly.toml Dockerfile ./
 RUN uv sync --locked --extra dev --no-editable
 RUN uv run --no-sync pytest -q && uv run --no-sync ruff check src tests ml/sec-qwen/src
 CMD ["uv", "run", "--no-sync", "pytest", "-q"]
