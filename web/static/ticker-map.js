@@ -23,11 +23,11 @@
   const names = e => e.people.map(p => p.name).join(' + ') || 'Reporting person';
   const amount = e => e.view === 'ownership' ? (e.percent == null ? 'See filing' : number(e.percent) + '% of class') : money(e.value);
   let events = [], dates = [], cursor = null, loaded = 0, coverage = {}, selected = null;
-  let view = 'activity', filter = 'all', cutoff = Infinity, page = 0, pending = false;
+  let view = 'all', filter = 'all', cutoff = Infinity, page = 0, pending = false;
   const small = window.matchMedia('(max-width:500px)');
   const pageSize = () => small.matches ? 4 : 8;
-  const subset = () => events.filter(e => e.view === view && (Date.parse(e.filed_at) || 0) <= cutoff &&
-    (view === 'ownership' || filter === 'all' || (filter === 'other' ? !['Bought','Sold'].includes(e.action) : e.action === filter)));
+  const subset = () => events.filter(e => (Date.parse(e.filed_at) || 0) <= cutoff &&
+    (filter === 'all' || (filter === 'other' ? !['Bought','Sold'].includes(e.action) : e.action === filter)));
   function source(event) {
     const panel = $('selection'); panel.replaceChildren();
     if (!event) {
@@ -116,8 +116,8 @@
     if (!rows.length) list.append(make('p','Saved events for this view will appear here.','map-note'));
     $('time').textContent = Number.isFinite(cutoff) ? date(new Date(cutoff).toISOString()) : 'Latest saved filing';
     $('time-slider').setAttribute('aria-valuetext',$('time').textContent);
-    $('list-title').textContent = view === 'activity' ? 'Reported activity' : 'Reported ownership';
-    $('filter').parentElement.hidden = view === 'ownership'; $('ownership-note').hidden = view !== 'ownership';
+    $('list-title').textContent = 'Reported filings';
+    $('filter').parentElement.hidden = false; $('ownership-note').hidden = true;
     $('coverage').textContent = `${loaded} filings · ${rows.length} events`;
     source(event);
   }
@@ -135,7 +135,7 @@
       const slider = $('time-slider'); slider.disabled = dates.length < 2; slider.max = Math.max(0,dates.length-1);
       slider.value = Number.isFinite(cutoff) ? Math.max(0,dates.indexOf(cutoff)) : slider.max;
       $('load').hidden = !cursor; $('load').textContent = 'Load older filings';
-      $('status').textContent = coverage.filings ? 'Saved SEC filings · Select a person to follow their activity' : 'This ticker’s map is ready for incoming SEC filings.';
+      $('status').textContent = coverage.filings ? 'Saved SEC filings' : 'No filings yet';
       render();
     } catch (_) { $('status').textContent = 'Please retry to load the saved filings.'; $('load').hidden = false; $('load').textContent = 'Retry loading filings'; }
     finally {pending = false; $('load').disabled = false;}
