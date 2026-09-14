@@ -31,7 +31,7 @@
   function source(event) {
     const panel = $('selection'); panel.replaceChildren();
     if (!event) {
-      panel.append(make('h3', 'Follow the people'), make('p', 'Choose another view or load older filings to explore the saved evidence.'));
+      panel.append(make('h3', 'Select a filing'));
       document.dispatchEvent(new CustomEvent('rati:map-time', {detail:{time:null}})); return;
     }
     panel.append(make('h3', names(event)), make('p', `${event.action} · ${amount(event)}`, 'map-event-action'));
@@ -103,7 +103,7 @@
       g.addEventListener('click',activate); g.addEventListener('keydown',e => {if (['Enter',' '].includes(e.key)) {e.preventDefault();activate();}}); graph.append(g);
     });
     graph.append(svg('circle',{cx,cy,r:small.matches ? 36 : 48,class:'map-center'}),svg('text',{x:cx,y:cy+7,'text-anchor':'middle',class:'map-center-text'},root.dataset.ticker));
-    if (!people.length) graph.append(svg('text',{x:cx,y:320,'text-anchor':'middle',fill:'#96a49b','font-size':small.matches ? 12 : 16},'People appear as filings are collected'));
+    if (!people.length) graph.append(svg('text',{x:cx,y:320,'text-anchor':'middle',fill:'#96a49b','font-size':small.matches ? 12 : 16},'No people yet'));
     $('page').textContent = people.length ? `${page*size+1}–${page*size+shown.length} of ${people.length} people` : 'Saved SEC evidence';
     $('previous').disabled = page === 0; $('next').disabled = (page+1)*size >= people.length;
     const list = $('events'); list.replaceChildren();
@@ -118,7 +118,7 @@
     $('time-slider').setAttribute('aria-valuetext',$('time').textContent);
     $('list-title').textContent = view === 'activity' ? 'Reported activity' : 'Reported ownership';
     $('filter').parentElement.hidden = view === 'ownership'; $('ownership-note').hidden = view !== 'ownership';
-    $('coverage').textContent = `${loaded} of ${coverage.filings || 0} saved filings loaded · ${rows.length} events in this view. Coverage follows the SEC documents collected for ${root.dataset.ticker}.`;
+    $('coverage').textContent = `${loaded} filings · ${rows.length} events`;
     source(event);
   }
   async function load() {

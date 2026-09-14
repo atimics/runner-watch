@@ -7,13 +7,11 @@
 {% set score_detail = screen.item.score_detail %}
 {% if score_detail %}
 <section class="metrics" aria-labelledby="scoreTitle">
-  <header class="section-head"><div><p class="eyebrow">METRICS</p><h2 id="scoreTitle">Score {{ screen.item.score|round|int }}</h2></div><span>score policy v1</span></header>
+  <header class="section-head"><div><p class="eyebrow">SCORE</p><h2 id="scoreTitle">{{ screen.item.score|round|int }}</h2></div></header>
   <div class="breakdown">
     {% for part in score_detail.drivers %}<div class="part"><span class="name">{{ part.label }}</span><span class="bar"><i style="width: {{ [part.value, 100]|min|round|int if part.value > 0 else 0 }}%"></i></span><span class="raw">{{ '%+.1f'|format(part.value) }}</span></div>{% endfor %}
     {% for part in score_detail.penalties %}<div class="part is-penalty"><span class="name">{{ part.label }}</span><span class="bar"><i style="width: {{ [-part.value, 100]|min|round|int }}%"></i></span><span class="raw">{{ '%.1f'|format(part.value) }}</span></div>{% endfor %}
-    <div class="part is-planned"><span class="name">Avatar Sentiment</span><span class="bar"><i style="width:0"></i></span><span class="raw">not yet weighted</span></div>
   </div>
-  <p class="formula">Score = {% for part in score_detail.drivers %}{{ part.label }}{% if not loop.last %} + {% endif %}{% endfor %}{% for part in score_detail.penalties %} − {{ part.label }}{% endfor %}, clamped to 0–100. Avatar Sentiment joins this sum when it ships.</p>
 </section>
 {% endif %}
 {% endblock %}

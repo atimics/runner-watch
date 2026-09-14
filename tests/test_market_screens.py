@@ -265,8 +265,6 @@ def test_stock_detail_orders_chart_map_metrics_and_comments():
     comments = html.index('class="discussion-section"')
     assert chart < ticker_map < metrics < comments
     assert "Market scanner" in html
-    assert "Avatar Sentiment" in html
-    assert "Avatar reactions" in html
 
 
 def test_search_applies_to_map_and_list():
