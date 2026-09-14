@@ -6627,6 +6627,16 @@ def _public_research_report_data(public_id: str) -> dict[str, Any]:
     return {"report": report}
 
 
+def _ticker_issuer_risk(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(str(value or "{}"))
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def latest_commission(user_id: str, ticker: str) -> dict[str, Any] | None:
     with connection() as db:
         row = db.execute(
@@ -7913,7 +7923,7 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
                 "return_5d_pct": current.get("scan_return_5d_pct"),
                 "signals": _json_list(current.get("signals_json")),
                 "risks": _json_list(current.get("risks_json")),
-                "issuer_risk": json.loads(current.get("issuer_risk_json") or "{}"),
+                "issuer_risk": _ticker_issuer_risk(current.get("issuer_risk_json")),
                 "source": "market",
             }
         )
@@ -10314,7 +10324,11 @@ def research_report_page(
 ) -> HTMLResponse:
     user = current_user(runner_session)
     report = (
-        get_commission(public_id) if user else _public_research_report_data(public_id).get("report")
+        get_commission(public_id)
+        if user
+        else _public_screen_data(
+            "research", public_id, lambda: _public_research_report_data(public_id)
+        ).get("report")
     )
     is_owner = bool(user and report and str(report["user_id"]) == str(user["id"]))
     if not report or (str(report.get("visibility") or "private") != "public" and not is_owner):
