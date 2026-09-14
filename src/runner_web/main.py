@@ -70,7 +70,6 @@ from runner_web.account_routes import (
 )
 from runner_web.actor_portraits import generate_actor_portrait, portrait_for_actor
 from runner_web.ai_kol import FLASH, AIKol, actor_snapshot, flash_version_snapshot
-from runner_web.base_rates import matched_market_base_rates
 from runner_web.billing import (
     construct_webhook_event,
     delete_customer,
@@ -7938,7 +7937,20 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
         }
     pressure = _market_trade_pressure(ticker)
     external = _external_event_context([dict(row) for row in external_rows])
-    base_rates = matched_market_base_rates(current)
+    base_rates = {
+        "method": "same_ticker_session_clock",
+        "method_version": 1,
+        "ticker": ticker,
+        "as_of": current.get("captured_at") or current.get("event_at"),
+        "session": current.get("session"),
+        "mode": "deferred",
+        "matched_sessions": 0,
+        "minimum_samples": 20,
+        "lookback_days": 120,
+        "clock_tolerance_minutes": 15,
+        "metrics": {},
+        "notable_metrics": [],
+    }
     directional_thesis = _ranker_directional_thesis(
         dict(prediction) if prediction is not None else None
     )
