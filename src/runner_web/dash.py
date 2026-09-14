@@ -131,6 +131,9 @@ def market_now(at: datetime | None = None) -> dict[str, Any]:
     return {
         "session": clock["label"],
         "session_note": clock["data_note"],
+        "eastern_now": clock["eastern_now"][11:16] + " ET",
+        "next_open": f"{clock['next_label']} at {clock['next_at'][11:16]} ET",
+        "scanner_active": clock["scanner_active"],
         "board_size": len(rows),
         "green": sum(value > 0 for value in changes),
         "red": sum(value < 0 for value in changes),
@@ -399,8 +402,12 @@ def recent_runners(limit: int = 8, at: datetime | None = None) -> dict[str, Any]
 
     The scanner records a row the first time a ticker appears, which is what the
     alert digest posts from. Dash reads the same record so "what just showed up"
-    and what got posted to the channel are the same list.
+    and what got posted to the channel are the same list. Session state rides
+    along, because zero new runners during a weekend close is the schedule
+    working, not a gap.
     """
+
+    from runner_web.market_clock import market_clock
 
     now = at or datetime.now(UTC)
     since = (now - timedelta(hours=12)).isoformat()
@@ -414,7 +421,8 @@ def recent_runners(limit: int = 8, at: datetime | None = None) -> dict[str, Any]
             """,
             (since, max(1, min(limit, 20))),
         ).fetchall()
-    return {
+    clock = market_clock(now)
+    payload = {
         "window_hours": 12,
         "count": len(rows),
         "entries": [
@@ -427,6 +435,13 @@ def recent_runners(limit: int = 8, at: datetime | None = None) -> dict[str, Any]
             for row in rows
         ],
     }
+    if not rows and not clock["scanner_active"]:
+        payload["note"] = (
+            f"The scanner is not live right now: {clock['label']}. "
+            f"{clock['next_label']} at {clock['next_at'][11:16]} ET. "
+            "A quiet board while markets are closed is the schedule, not a gap."
+        )
+    return payload
 
 
 def community_now(limit: int = 8) -> dict[str, Any]:
