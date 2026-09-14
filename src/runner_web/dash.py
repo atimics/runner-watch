@@ -402,9 +402,9 @@ def recent_runners(limit: int = 8, at: datetime | None = None) -> dict[str, Any]
 
     The scanner records a row the first time a ticker appears, which is what the
     alert digest posts from. Dash reads the same record so "what just showed up"
-    and what got posted to the channel are the same list. Session state rides
-    along, because zero new runners during a weekend close is the schedule
-    working, not a gap.
+    and what got posted to the channel are the same list. When the scanner is
+    off, the note carries the session and the next open instead of an empty
+    list.
     """
 
     from runner_web.market_clock import market_clock
@@ -437,9 +437,8 @@ def recent_runners(limit: int = 8, at: datetime | None = None) -> dict[str, Any]
     }
     if not rows and not clock["scanner_active"]:
         payload["note"] = (
-            f"The scanner is not live right now: {clock['label']}. "
-            f"{clock['next_label']} at {clock['next_at'][11:16]} ET. "
-            "A quiet board while markets are closed is the schedule, not a gap."
+            f"The scanner is not live: {clock['label']}. "
+            f"{clock['next_label']} at {clock['next_at'][11:16]} ET."
         )
     return payload
 

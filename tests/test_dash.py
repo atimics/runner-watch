@@ -759,7 +759,8 @@ def test_recent_runners_reports_the_schedule_when_the_market_is_closed(monkeypat
 
     assert payload["count"] == 0
     assert "Weekend closed" in payload["note"]
-    assert "schedule, not a gap" in payload["note"]
+    assert "ET" in payload["note"]
+    assert "schedule" not in payload["note"] and "gap" not in payload["note"]
 
 
 def test_market_now_carries_the_next_open(monkeypatch):
