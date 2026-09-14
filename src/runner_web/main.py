@@ -7902,6 +7902,10 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
         current.update(
             {
                 "ticker": ticker,
+                "score_detail": _public_score_detail(
+                    {"market": float(current.get("score") or 0)},
+                    float(current.get("score") or 0),
+                ),
                 "kind": current.get("catalyst_kind") or "No recent SEC catalyst",
                 "sentiment": current.get("catalyst_sentiment") or "gap",
                 "event_at": current["captured_at"],
@@ -8457,13 +8461,13 @@ def _public_ticker_page_data(ticker: str) -> dict[str, Any]:
             "found": True,
             "detail": detail,
             "calls": community_calls_for_ticker(ticker, current_price=mark, limit=20),
+            "latest_commission": daily_report_for_ticker(ticker),
         }
 
     payload = dict(_public_screen_data("ticker", ticker, build))
     if payload.get("found"):
         payload["comments"] = comments_for_ticker(ticker)
         payload["comment_count"] = comment_count_for_ticker(ticker)
-        payload["latest_commission"] = daily_report_for_ticker(ticker)
     return payload
 
 
@@ -8503,10 +8507,6 @@ def ticker_page(
         calls = list(public_data["calls"])
         latest_report = public_data.get("latest_commission")
         latest_attempt = None
-    pulse_row = _pulse_row_for_ticker(normalized)
-    if pulse_row and isinstance(detail.get("current"), dict):
-        detail["current"]["score"] = pulse_row.get("score")
-        detail["current"]["score_detail"] = pulse_row.get("score_detail")
     user_id = str(user["id"]) if user else None
     return templates.TemplateResponse(
         request=request,
