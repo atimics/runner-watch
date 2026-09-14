@@ -260,16 +260,30 @@ def _api_call(
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with opener(request, timeout=SEND_TIMEOUT_SECONDS) as response:
-        status = getattr(response, "status", 200)
-        body = response.read()
-        if status >= 400:
+    try:
+        with opener(request, timeout=SEND_TIMEOUT_SECONDS) as response:
+            status = getattr(response, "status", 200)
+            body = response.read()
+            if status >= 400:
+                details = (
+                    body.decode("utf-8", errors="ignore")
+                    if isinstance(body, bytes)
+                    else str(body)
+                )
+                raise RuntimeError(
+                    f"Telegram {method} failed with status {status}: {details[:200]}"
+                )
+    except urllib.error.HTTPError as exc:
+        try:
+            body = exc.read(64 * 1024)
             details = (
-                body.decode("utf-8", errors="ignore")
-                if isinstance(body, bytes)
-                else str(body)
+                body.decode("utf-8", errors="ignore") if isinstance(body, bytes) else str(body)
             )
-            raise RuntimeError(f"Telegram {method} failed with status {status}: {details[:200]}")
+        finally:
+            exc.close()
+        raise RuntimeError(
+            f"Telegram {method} failed with status {exc.code}: {details[:200]}"
+        ) from exc
     try:
         return json.loads(body)
     except (TypeError, ValueError):
@@ -357,6 +371,11 @@ def escape_markdown_v2(text):
 def _first_url(text):
     match = re.search(r"https?://[^\s)]+", text)
     return match.group(0) if match else ""
+
+
+def _markdown_link(label, url):
+    target = str(url).replace("\\", "\\\\").replace(")", "\\)")
+    return f"[{escape_markdown_v2(str(label))}]({target})"
 
 
 def send_post(config, text, *, preview_url="", parse_mode="MarkdownV2", opener=None):
@@ -482,7 +501,7 @@ def format_market_report_post_md(report, *, origin):
     day = str(report.get("report_day") or "").strip()
     slug = "pre" if raw_type == "pre_market" else "post"
     path = f"{base}/reports/{day}/{slug}" if day else base
-    blocks.append(path)
+    blocks.append(_markdown_link("Open report", path))
     return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
 
 
@@ -503,18 +522,18 @@ def format_public_report_post_md(report, *, origin):
     if headline:
         blocks.append(headline)
     if not sports and token:
-        blocks.append(f"{base}/t/{escape_markdown_v2(token)}")
-    public_id = escape_markdown_v2(str(report.get("public_id") or "").strip())
+        blocks.append(_markdown_link(f"${token}", f"{base}/t/{token}"))
+    public_id = str(report.get("public_id") or "").strip()
     if public_id:
-        blocks.append(f"{base}/research/{public_id}")
+        blocks.append(_markdown_link("Read report", f"{base}/research/{public_id}"))
     return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
 
 
 def format_event_post_md(event, *, origin):
     """A new filing or market event on a tracked ticker."""
 
-    ticker_raw = str(event.get("ticker") or "")
-    ticker = escape_markdown_v2(ticker_raw.strip().upper())
+    ticker_raw = str(event.get("ticker") or "").strip().upper()
+    ticker = escape_markdown_v2(ticker_raw)
     kind = escape_markdown_v2(str(event.get("kind") or "Filing update"))
     headline = escape_markdown_v2(str(event.get("headline") or "").strip())
     age = escape_markdown_v2(str(event.get("age") or "").strip())
@@ -528,7 +547,7 @@ def format_event_post_md(event, *, origin):
         sec_path = " \u00b7 filed via SEC" if is_sec else ""
         blocks.append(f"\u00b7 {age} ago{sec_path}")
     if ticker:
-        blocks.append(f"{base}/t/{ticker}")
+        blocks.append(_markdown_link(f"${ticker_raw}", f"{base}/t/{ticker_raw}"))
     return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
 
 
@@ -547,7 +566,8 @@ def format_update_announcement_md(activity, *, origin):
     )
     blocks = [header]
     for entry in runners:
-        ticker = escape_markdown_v2(str(entry.get("ticker") or "").strip().upper())
+        ticker_raw = str(entry.get("ticker") or "").strip().upper()
+        ticker = escape_markdown_v2(ticker_raw)
         emoji = _state_emoji(entry.get("tag") or "")
         head = (emoji + " " if emoji else "") + f"*{ticker}*"
         state = escape_markdown_v2(str(entry.get("tag") or ""))
@@ -557,7 +577,7 @@ def format_update_announcement_md(activity, *, origin):
         metrics = _format_metrics_line(entry)
         if metrics:
             blocks.append(metrics)
-        blocks.append(f"{base}/t/{ticker}")
+        blocks.append(_markdown_link(f"${ticker_raw}", f"{base}/t/{ticker_raw}"))
     for event in events:
         blocks.append(format_event_post_md(event, origin=origin))
     for report in reports:
@@ -576,5 +596,9 @@ def format_release_announcement_md(version, notes, *, origin):
         return ""
     safe = escape_markdown_v2(text)[:900]
     base = origin.rstrip("/")
-    blocks = [f"\U0001F406 *RATi Runners {escape_markdown_v2(version)}*", safe, base]
+    blocks = [
+        f"\U0001F406 *RATi Runners {escape_markdown_v2(version)}*",
+        safe,
+        _markdown_link("Open runners", base),
+    ]
     return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
