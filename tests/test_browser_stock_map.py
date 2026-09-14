@@ -147,7 +147,7 @@ def test_filing_time_excludes_later_disclosures_and_preserves_loaded_history(pag
     expect(page.locator("[data-map-events] button")).to_have_count(2)
     expect(page.locator("[data-map-time]")).to_have_text("Sep 1, 2026")
     page.get_by_role("button", name="Latest", exact=True).click()
-    expect(page.locator("[data-map-events] button")).to_have_count(11)
+    expect(page.locator("[data-map-events] button")).to_have_count(12)
     expect(page.get_by_role("button", name="Load older filings")).to_be_hidden()
 
 
