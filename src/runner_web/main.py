@@ -1444,6 +1444,11 @@ async def edgar_worker() -> None:
     while True:
         try:
             await run_in_threadpool(refresh_edgar)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            record_edgar_error(exc)
+        try:
             sectors = await run_in_threadpool(refresh_company_sectors)
             worker_state("sector_backfill_last_run", json.dumps(sectors, separators=(",", ":")))
         except asyncio.CancelledError:
@@ -1720,6 +1725,25 @@ def _telegram_chat_completion(body: dict[str, Any]) -> dict[str, Any]:
         return json.loads(response.read(262_145))
 
 
+def _dash_session_context() -> dict[str, Any]:
+    """Where the market clock stands, so Dash always knows the time of week.
+
+    The tools can look the session up, but every turn should carry it anyway:
+    a weekend message that names a silent board needs the answer in hand, not
+    another tool call.
+    """
+
+    clock = market_clock()
+    return {
+        "eastern_now": clock["eastern_now"],
+        "session": clock["session"],
+        "label": clock["label"],
+        "scanner_active": clock["scanner_active"],
+        "next_label": clock["next_label"],
+        "next_at": clock["next_at"],
+    }
+
+
 def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dict[str, Any]:
     """Ask the model what the cheetah does with one message.
 
@@ -1746,6 +1770,7 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
         "said": message.text,
         "tickers_mentioned": list(message.tickers),
         "already_looked_up": grounded,
+        "market_session": _dash_session_context(),
         "addressed_you": message.addressed,
         "recent": transcript,
     }

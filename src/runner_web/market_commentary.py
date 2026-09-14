@@ -234,12 +234,20 @@ def _validated_commentary(
     analysis = result.get("analysis")
     if not isinstance(analysis, dict):
         raise ValueError("The response must contain an analysis object.")
+    # A take with no substance would render as a blank card, so an empty
+    # headline or narrative is a rejected response, not a published one.
+    headline = _text(analysis.get("headline"), HEADLINE_MAX_CHARS)
+    narrative = _text(analysis.get("narrative"), NARRATIVE_MAX_CHARS)
+    if not headline:
+        raise ValueError("The analysis needs a headline.")
+    if not narrative:
+        raise ValueError("The analysis needs a narrative.")
     points = analysis.get("points")
     if points is not None and not isinstance(points, list):
         raise ValueError("Analysis points must be a list.")
     saved_analysis = {
-        "headline": _text(analysis.get("headline"), HEADLINE_MAX_CHARS),
-        "narrative": _text(analysis.get("narrative"), NARRATIVE_MAX_CHARS),
+        "headline": headline,
+        "narrative": narrative,
         "points": [_text(point, POINT_MAX_CHARS) for point in (points or [])[:MAX_POINTS]],
         "model": request["actor"]["model"],
         "contract_version": request["contract_version"],
@@ -283,6 +291,34 @@ def _job_is_ready(database: Any, job: Any, current: datetime) -> bool:
     return pending is None
 
 
+def _blank_take(database: Any) -> list[str]:
+    """Reports whose stored take parsed but said nothing.
+
+    Older responses could pass validation with an empty headline, which
+    rendered as a blank card on the recap. Those jobs go back to the queue so
+    the desk writes a real take; the attempt cap still bounds the loop.
+    """
+
+    rows = database.execute(
+        """
+        SELECT j.report_id AS report_id,r.analysis_json AS analysis_json
+        FROM market_report_commentary_jobs j
+        JOIN market_session_reports r ON r.id=j.report_id
+        WHERE j.status='complete'
+        """
+    ).fetchall()
+    blank: list[str] = []
+    for row in rows:
+        try:
+            analysis = json.loads(str(row["analysis_json"] or "") or "null")
+        except (TypeError, ValueError):
+            analysis = None
+        headline = analysis.get("headline") if isinstance(analysis, dict) else None
+        if not str(headline or "").strip():
+            blank.append(str(row["report_id"]))
+    return blank[:10]
+
+
 def generate_report_commentary(
     generate: Callable[[dict[str, Any]], dict[str, Any]] | None,
     at: datetime | None = None,
@@ -294,6 +330,14 @@ def generate_report_commentary(
     if generate is None:
         return {"completed": 0, "failed": 0, "waiting": 0}
     with connection() as database:
+        blank = _blank_take(database)
+        if blank:
+            placeholders = ",".join("?" for _ in blank)
+            database.execute(
+                f"UPDATE market_report_commentary_jobs SET status='queued',updated_at=? "
+                f"WHERE report_id IN ({placeholders}) AND status='complete'",
+                (timestamp, *blank),
+            )
         candidates = database.execute(
             """
             SELECT * FROM market_report_commentary_jobs WHERE attempts<?
