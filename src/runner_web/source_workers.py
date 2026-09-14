@@ -10,6 +10,7 @@ from runner_web.congressional_disclosures import (
     house_disclosures_enabled,
     refresh_house_disclosures,
 )
+from runner_web.db import connection
 from runner_web.discovery_sources import (
     apewisdom_social_enabled,
     bluesky_search_enabled,
@@ -29,6 +30,26 @@ from runner_web.free_risk_sources import (
 from runner_web.nasdaq_halts import refresh_trade_halts
 
 LOG = logging.getLogger(__name__)
+
+
+def _state(worker: str, error: str = "") -> None:
+    timestamp = datetime.now(UTC).isoformat()
+    try:
+        with connection() as database:
+            for key, value in (
+                (f"{worker}_last_run", timestamp),
+                (f"{worker}_last_error", error[:500]),
+            ):
+                database.execute(
+                    """
+                    INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value=excluded.value,updated_at=excluded.updated_at
+                    """,
+                    (key, value, timestamp),
+                )
+    except Exception:
+        LOG.debug("Could not record %s worker state", worker, exc_info=True)
 EASTERN = ZoneInfo("America/New_York")
 DISCOVERY_INTERVAL_SECONDS = max(15, int(os.getenv("DISCOVERY_INTERVAL_SECONDS", "30")))
 FREE_LEGAL_INTERVAL_SECONDS = max(
@@ -62,9 +83,11 @@ async def trading_halt_worker() -> None:
         if trade_halts_enabled() and extended_us_session_is_open():
             try:
                 await asyncio.to_thread(refresh_trade_halts)
+                _state("trading_halts")
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                _state("trading_halts", str(exc))
                 LOG.warning("Nasdaq halt refresh failed: %s", exc)
         await asyncio.sleep(60)
 
@@ -77,9 +100,11 @@ async def house_disclosure_worker() -> None:
         if house_disclosures_enabled():
             try:
                 await asyncio.to_thread(refresh_house_disclosures)
+                _state("house_disclosures")
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                _state("house_disclosures", str(exc))
                 LOG.warning("House disclosure refresh failed: %s", exc)
         elapsed = asyncio.get_running_loop().time() - started
         await asyncio.sleep(max(30, HOUSE_DISCLOSURE_INTERVAL_SECONDS - elapsed))
@@ -129,9 +154,17 @@ async def discovery_source_worker() -> None:
                     *calls,
                     return_exceptions=True,
                 )
-                for source, result in zip(labels, results, strict=True):
-                    if isinstance(result, Exception):
-                        LOG.warning("%s discovery refresh failed: %s", source, result)
+                errors = [
+                    f"{source}: {result}"
+                    for source, result in zip(labels, results, strict=True)
+                    if isinstance(result, Exception)
+                ]
+                if errors:
+                    _state("discovery_sources", "; ".join(errors))
+                    for error in errors:
+                        LOG.warning("%s discovery refresh failed", error)
+                else:
+                    _state("discovery_sources")
         elapsed = asyncio.get_running_loop().time() - started
         await asyncio.sleep(max(5, DISCOVERY_INTERVAL_SECONDS - elapsed))
 
@@ -146,9 +179,11 @@ async def apewisdom_source_worker() -> None:
                 watchlist = await asyncio.to_thread(discovery_watchlist, 30)
                 if watchlist:
                     await asyncio.to_thread(refresh_apewisdom_social, watchlist)
+                _state("apewisdom")
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                _state("apewisdom", str(exc))
                 LOG.warning("ApeWisdom social refresh failed: %s", exc)
         loop_time = asyncio.get_running_loop().time()
         if free_legal_sources_enabled() and loop_time >= next_legal_refresh:

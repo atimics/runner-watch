@@ -1504,10 +1504,7 @@ async def kol_worker() -> None:
 
 
 def scan_collection_allowed(value: datetime) -> bool:
-
-    eastern_now = value.astimezone(EASTERN)
-    local_time = eastern_now.time().replace(tzinfo=None)
-    return eastern_now.weekday() < 5 and clock_time(4) <= local_time < clock_time(20)
+    return bool(market_clock(value)["scanner_active"])
 
 
 async def scan_collection_worker() -> None:
@@ -4542,6 +4539,24 @@ def _commission_record(
                 "risk_heading": "What could break it",
             }
         )
+    elif str(report.get("subject_type") or "") == "coin":
+        evidence_coin = evidence
+        report["subject_type"] = "coin"
+        report["subject_id"] = str(report.get("subject_id") or report["ticker"])
+        report["company"] = str(
+            evidence_coin.get("name")
+            or evidence_coin.get("symbol")
+            or report["subject_id"]
+        )
+        report["coin_label"] = str(evidence_coin.get("symbol") or report["subject_id"][:6])
+        report["coin_tone"] = _coin_tone(report["subject_id"])
+        report["ticker"] = report["coin_label"]
+        report["asset_href"] = f"/memecoins/coin/{report['subject_id']}"
+        report["back_href"] = "/memecoins"
+        report["nav_product"] = "memecoins"
+        report["profile_heading"] = "On-chain context"
+        report["risk_heading"] = "What could break it"
+        report["sports_forecast"] = None
     else:
         summary = summary or _ticker_summary(report["ticker"])
         report["company"] = summary["company"] if summary else report["ticker"]
@@ -5309,7 +5324,8 @@ def _normalize_openrouter_report(
         citation_values = []
     citations = [item for item in citation_values if isinstance(item, dict)]
     is_sports = evidence.get("subject_type") == "sports_game"
-    forecast = None if is_sports else validate_forecast(raw_report.get("forecast"))
+    is_coin = evidence.get("subject_type") == "coin"
+    forecast = None if is_sports or is_coin else validate_forecast(raw_report.get("forecast"))
     sports_forecast = (
         validate_sports_ai_forecast(raw_report.get("sports_forecast"), evidence)
         if is_sports
@@ -5510,6 +5526,7 @@ def _generate_openrouter_report(
     provider_result: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str, dict[str, Any]] | dict[str, Any]:
     is_sports = evidence.get("subject_type") == "sports_game"
+    is_coin = evidence.get("subject_type") == "coin"
     request_payload = {
         "actor": actor_snapshot(actor),
         "task": (
@@ -5522,9 +5539,15 @@ def _generate_openrouter_report(
             )
             if is_sports
             else (
-                "Identify the issuer and each person named in the filings. Explain the filings, "
-                "ownership changes, news, and social posts. Then form a thesis from the supplied "
-                "business, financing, ownership, market, and media evidence."
+                "Describe the saved token identity and on-chain findings. Use dated observations, "
+                "qualified uncertainty, and alternative explanations. Never claim ownership or "
+                "intent from behavioral evidence. Form a thesis only from the supplied evidence."
+                if is_coin
+                else (
+                    "Identify the issuer and each person named in the filings. Explain the "
+                    "filings, ownership changes, news, and social posts. Then form a thesis "
+                    "from the supplied business, financing, ownership, market, and media evidence."
+                )
             )
         ),
         "output": _sports_report_output_contract()
@@ -5537,7 +5560,10 @@ def _generate_openrouter_report(
                 "what_it_does": (
                     "leave empty for a sports game"
                     if is_sports
-                    else "products, customers, and business model"
+                    else (
+                        "products, customers, and business model; "
+                        "for a coin, summarize the token and chain"
+                    )
                 ),
                 "stage": (
                     "leave empty for a sports game"
@@ -5586,8 +5612,8 @@ def _generate_openrouter_report(
                 }
             ],
             "forecast": (
-                "leave empty for a sports game"
-                if is_sports
+                "leave empty for this subject"
+                if is_sports or is_coin
                 else {
                     "direction": "up, down, or no_call",
                     "probability_up": "0 to 1; up >= .55, down <= .45, no_call between",
@@ -5911,6 +5937,40 @@ def _exclusive_until_for(current_time: datetime, exclusive_minutes: int | None =
     return iso(current_time + timedelta(minutes=max(0, exclusive_minutes)))
 
 
+def _coin_alpha_evidence(coin_id: str) -> tuple[str, dict[str, Any]]:
+    detail = memecoin_detail(coin_id)
+    if not detail:
+        raise ValueError("Coin detail is unavailable")
+    coin = dict(detail.get("coin") or {})
+    evidence = {
+        "subject_type": "coin",
+        "subject_id": coin_id,
+        "coin_id": coin_id,
+        "symbol": coin.get("symbol"),
+        "name": coin.get("name"),
+        "network": coin.get("network") or "solana",
+        "token_address": coin.get("token_address"),
+        "pool_address": coin.get("pool_address"),
+        "price": coin.get("price"),
+        "liquidity_usd": coin.get("liquidity_usd"),
+        "volume_24h": coin.get("volume_24h"),
+        "change_24h": coin.get("change_24h"),
+        "observed_at": coin.get("observed_at"),
+        "collected_at": detail.get("collected_at"),
+        "stale": bool(coin.get("stale")),
+        "source": coin.get("source"),
+        "source_url": coin.get("source_url"),
+        "discovery": coin.get("discovery") or {},
+        "evidence": detail.get("evidence") or [],
+        "uncertainty": (
+            "Saved on-chain findings are qualified observations; they do not establish "
+            "ownership or intent."
+        ),
+    }
+    fingerprint = json.dumps(evidence, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(fingerprint.encode()).hexdigest()[:24], evidence
+
+
 def _create_research_commission(
     user_id: str,
     ticker: str,
@@ -5920,13 +5980,21 @@ def _create_research_commission(
     trigger: str = "commission",
     charge: bool = True,
     exclusive_minutes: int | None = None,
+    subject_type: str | None = None,
+    subject_id: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
 
     current_time = now()
     timestamp = iso(current_time)
     report_day = current_time.date().isoformat()
     exclusive_until = _exclusive_until_for(current_time, exclusive_minutes)
-    if ticker.startswith("sports:"):
+    if subject_type == "coin":
+        coin_id = str(subject_id or ticker)
+        try:
+            evidence_key, evidence = _coin_alpha_evidence(coin_id)
+        except ValueError as exc:
+            raise HTTPException(404, "Coin not found") from exc
+    elif ticker.startswith("sports:"):
         event_id = ticker.removeprefix("sports:")
         try:
             evidence_key, evidence = sports_flash_evidence(event_id)
@@ -5994,11 +6062,11 @@ def _create_research_commission(
             inserted = db.execute(
                 """
                 INSERT INTO research_commissions(
-                    id,public_id,user_id,ticker,evidence_key,status,requested_model,
-                    actor_id,actor_snapshot_json,case_id,trigger,evidence_snapshot_json,
+                    id,public_id,user_id,ticker,subject_type,subject_id,evidence_key,status,requested_model,
+                     actor_id,actor_snapshot_json,case_id,trigger,evidence_snapshot_json,
                     evidence_as_of,created_at,updated_at,report_day,exclusive_until,
                     flash_version_id,inference_scope,inference_route_json,customer_inference
-                ) VALUES(?,?,?,?,?,'running',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES(?,?,?,?,?,?,?,'running',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT DO NOTHING
                 """,
                 (
@@ -6006,6 +6074,8 @@ def _create_research_commission(
                     public_id,
                     user_id,
                     ticker,
+                    subject_type or ("sports_game" if ticker.startswith("sports:") else "stock"),
+                    subject_id or ticker.removeprefix("sports:"),
                     evidence_key,
                     inference_route.model,
                     actor.id,
@@ -6086,6 +6156,7 @@ def _run_research_commission(
         else:
             _, evidence = _alpha_evidence(ticker, _community_engagement_count(ticker))
     is_sports = evidence.get("subject_type") == "sports_game"
+    is_coin = evidence.get("subject_type") == "coin"
     try:
         if is_sports:
             included_sections = sum(
@@ -6107,6 +6178,15 @@ def _run_research_commission(
                     "included_sections": included_sections,
                     "subject_type": "sports_game",
                     "as_of": evidence_as_of,
+                },
+            }
+        elif is_coin:
+            research_context = {
+                **evidence,
+                "context_stats": {
+                    "subject_type": "coin",
+                    "as_of": evidence_as_of,
+                    "qualified_uncertainty": evidence.get("uncertainty"),
                 },
             }
         else:
@@ -6339,7 +6419,7 @@ def _run_research_commission(
             ).fetchone()
             if not completed_row:
                 raise RuntimeError("Completed Flash report disappeared")
-            if not customer_inference and not is_sports:
+            if not customer_inference and not is_sports and not is_coin:
                 record_flash_forecast(
                     db,
                     dict(completed_row),
@@ -10064,6 +10144,48 @@ async def commission_research_api(
     payload = _commission_api_payload(report, str(user["id"]))
     payload["created"] = created
     return JSONResponse(payload, status_code=202 if payload["status"] == "running" else 200)
+
+
+@app.post("/api/research/coin/{coin_id}")
+async def commission_coin_research_api(
+    coin_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "commission-research", limit=20, seconds=3600, subject=user["id"])
+    if not memecoin_detail(coin_id):
+        raise HTTPException(404, "Coin not found")
+    _require_research_route(str(user["id"]))
+    report, created = await run_in_threadpool(
+        _create_research_commission,
+        user["id"],
+        coin_id,
+        subject_type="coin",
+        subject_id=coin_id,
+    )
+    if created:
+        report = await _enqueue_created_research_report(report, str(user["id"]))
+    payload = _commission_api_payload(report, str(user["id"]))
+    payload["created"] = created
+    return JSONResponse(payload, status_code=202 if payload["status"] == "running" else 200)
+
+
+@app.get("/api/research/coin/{coin_id}")
+def coin_research_status_api(
+    coin_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    user = require_user(runner_session)
+    if not memecoin_detail(coin_id):
+        raise HTTPException(404, "Coin not found")
+    enforce_rate(request, "research-status", limit=180, seconds=600, subject=user["id"])
+    report = latest_commission(str(user["id"]), coin_id)
+    if not report:
+        raise HTTPException(404, "No Flash report found")
+    return JSONResponse(_commission_api_payload(report, str(user["id"])))
 
 
 @app.get("/api/research/stock/{ticker}")

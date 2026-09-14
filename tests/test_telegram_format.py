@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import urllib.error
 from typing import Any
 
@@ -122,7 +123,6 @@ def test_send_post_falls_back_to_plain_on_parse_error(
         request: urllib.request.Request, timeout: int = 0
     ) -> _FakeResponse:
         opened.append(request)
-        # First call returns a parse error so we fall back.
         if len(opened) == 1:
             return _FakeResponse(
                 400,
@@ -137,8 +137,32 @@ def test_send_post_falls_back_to_plain_on_parse_error(
     assert len(opened) >= 2
     fallback = _url_payload(opened[1])
     assert "parse_mode" not in fallback
-    # The body had no URL, so the fallback stays free of link previews.
     assert "link_preview_options" not in fallback
+
+
+def test_send_post_falls_back_when_urlopen_raises_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[urllib.request.Request] = []
+
+    def _open(request: urllib.request.Request, timeout: int = 0) -> _FakeResponse:
+        opened.append(request)
+        if len(opened) == 1:
+            raise urllib.error.HTTPError(
+                request.full_url,
+                400,
+                "Bad Request",
+                {},
+                io.BytesIO(b'{"description":"Bad request: could not parse entities"}'),
+            )
+        return _FakeResponse(200, body=b'{"ok":true}')
+
+    import urllib.request as _real_urllib
+
+    monkeypatch.setattr(_real_urllib, "urlopen", _open)
+    telegram.send_post(_config(), "hello *unbalanced")
+    assert len(opened) == 2
+    assert "parse_mode" not in _url_payload(opened[1])
 
 
 def test_send_post_raises_without_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -177,7 +201,7 @@ def test_batched_update_renders_cheetah_state_price_and_link() -> None:
     assert "\u26A1 *SOUN*  \u2014  RUNNING" in message, message
     assert "$8.42" in message, message
     assert "*+18.3%" in message and "*3.4\u00D7*" in message and "score *88*" in message
-    assert message.endswith("https://runners.rati.chat/t/SOUN"), message
+    assert message.endswith("[$SOUN](https://runners.rati.chat/t/SOUN)"), message
 
 
 def test_batched_update_counts_and_links_every_runner() -> None:
@@ -210,7 +234,7 @@ def test_market_report_link_falls_back_to_base_when_day_unknown() -> None:
     )
     # Exact block comparison; an endswith check on a bare origin trips
     # CodeQL's incomplete URL substring sanitization rule.
-    assert message.split("\n\n")[-1] == "http://app.test"
+    assert message.split("\n\n")[-1] == "[Open report](http://app.test)"
 
 
 def test_public_report_includes_research_link_when_public_id_present() -> None:
@@ -230,7 +254,7 @@ def test_event_post_lists_origin_and_source() -> None:
     )
     assert "\U0001F4F0 *Event on $SOUN*" in message
     assert "filed via SEC" in message
-    assert message.endswith("http://app.test/t/SOUN"), message
+    assert message.endswith("[$SOUN](http://app.test/t/SOUN)"), message
 
 
 def test_release_announcement_returns_empty_without_notes() -> None:
