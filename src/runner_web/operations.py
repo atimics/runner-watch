@@ -260,9 +260,18 @@ def health_status(*, checked_at: datetime | None = None) -> dict[str, Any]:
             "latest_scan_at": None,
             "edgar_updated_at": None,
             "scan_error": None,
+            "worker_state": {},
         }
     workers = worker_health(states, checked_at=checked_at)
     trainer = trainer_health(states, checked_at=checked_at)
+    safe_worker_state = {
+        key: (
+            {"present": bool(item.get("value")), "updated_at": item.get("updated_at")}
+            if "error" in key
+            else item
+        )
+        for key, item in states.items()
+    }
     return {
         "status": "ok" if workers["status"] == "ok" else "degraded",
         "checked_at": checked_at.isoformat(),
@@ -272,6 +281,7 @@ def health_status(*, checked_at: datetime | None = None) -> dict[str, Any]:
         "latest_scan_at": latest_scan,
         "edgar_updated_at": states.get("edgar_last_refresh", {}).get("updated_at"),
         "scan_error": bool(states.get("background_scan_last_error", {}).get("value")),
+        "worker_state": safe_worker_state,
     }
 
 

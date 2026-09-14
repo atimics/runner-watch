@@ -3385,6 +3385,18 @@ def _backfill_participant_identity(db: DatabaseConnection) -> None:
     link_market_actors(db)
 
 
+def _migration_071_typed_research_subjects(db: DatabaseConnection) -> None:
+    _ensure_column(db, "research_commissions", "subject_type TEXT NOT NULL DEFAULT 'stock'")
+    _ensure_column(db, "research_commissions", "subject_id TEXT")
+    db.execute(
+        "UPDATE research_commissions SET subject_id=ticker WHERE subject_id IS NULL"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS research_commissions_subject "
+        "ON research_commissions(subject_type,subject_id,report_day)"
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3460,6 +3472,7 @@ MIGRATIONS = (
     Migration(68, "memecoin_replays", _migration_068_memecoin_replays),
     Migration(69, "stock_map_evidence", _migration_069_stock_map_evidence),
     Migration(70, "story_and_identity", _migration_070_story_and_identity),
+    Migration(71, "typed_research_subjects", _migration_071_typed_research_subjects),
 )
 
 
