@@ -3735,7 +3735,7 @@ def _evidence_gate(
 
 
 def _baseline_summary(base_rates: dict[str, Any] | None) -> str | None:
-    if not base_rates:
+    if not base_rates or str(base_rates.get("mode") or "") == "deferred":
         return None
     metrics = base_rates.get("metrics") or {}
     empirical = [
@@ -4426,19 +4426,6 @@ def _public_pulse_data(*, offset: int = 0, limit: int = 50) -> dict[str, Any]:
         "items": items,
         "rows": items,
     }
-
-
-def _pulse_row_for_ticker(ticker: str) -> dict[str, Any] | None:
-    wanted = str(ticker).upper()
-    try:
-        rows = _pulse_base_data().get("rows", [])
-    except Exception:  # The score panel is optional; never fail the ticker page for it.
-        LOG.debug("Pulse score lookup failed for %s", ticker, exc_info=True)
-        return None
-    for row in rows:
-        if str(row.get("ticker") or "").upper() == wanted:
-            return row
-    return None
 
 
 def _report_record(row: Any) -> dict[str, Any] | None:
@@ -10303,7 +10290,11 @@ def publish_research_report_api(
             ).fetchone()
             balance = int(wallet["balance"]) if wallet else 0
     if newly_published:
+        ticker = str(row["ticker"])
         _invalidate_public_screen_data("research", public_id)
+        _invalidate_public_screen_data("ticker", ticker)
+        if ticker.startswith("sports:"):
+            _invalidate_public_screen_data("sports-game", ticker.removeprefix("sports:"))
         _spawn_telegram_dispatch()
     return JSONResponse(
         {
