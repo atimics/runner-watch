@@ -22,6 +22,7 @@ from runner_web.flash_wallet import claim_daily_flash, wallet_for_user
 from runner_web.ingestion import record_source_batch
 from runner_web.main import (
     APP_ORIGIN,
+    _baseline_summary,
     _chart_annotations,
     _commission_research,
     _evidence_gate,
@@ -1474,6 +1475,21 @@ def test_evidence_gate_counts_market_calculations_as_one_family() -> None:
     assert gate["count"] == 1
     assert gate["checks"] == ["Market structure"]
     assert len(gate["raw_market_checks"]) == 6
+
+
+def test_deferred_base_rates_do_not_claim_matched_sessions() -> None:
+    deferred = {
+        "mode": "deferred",
+        "matched_sessions": 0,
+        "minimum_samples": 20,
+        "metrics": {},
+        "notable_metrics": [],
+    }
+
+    assert _baseline_summary(deferred) is None
+    assert _baseline_summary({**deferred, "mode": "insufficient_data"}) == (
+        "Baseline learning: 0/20 matched sessions"
+    )
 
 
 def test_evidence_gate_opens_with_three_independent_families() -> None:
@@ -2991,6 +3007,10 @@ def test_owner_can_publish_report_once_and_earn_flash(
         web_main.research_report_page(report["public_id"], public_request, None)
     assert private_error.value.status_code == 404
 
+    ticker_key, _ = web_main._public_screen_cache_keys("ticker", "ONE")
+    web_main._public_screen_data("ticker", "ONE", lambda: {"found": True})
+    assert ticker_key in web_main.PUBLIC_SCREEN_DATA_CACHE
+
     publish_request = Request(
         {
             "type": "http",
@@ -3013,6 +3033,7 @@ def test_owner_can_publish_report_once_and_earn_flash(
     assert second_publish["published"] is False
     assert second_publish["reward"] == 0
     assert second_publish["balance"] == 50
+    assert ticker_key not in web_main.PUBLIC_SCREEN_DATA_CACHE
     public_page = web_main.research_report_page(report["public_id"], public_request, None)
     assert public_page.status_code == 200
     request = Request({"type": "http", "method": "GET", "path": "/research", "headers": []})
