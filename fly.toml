@@ -14,12 +14,20 @@ kill_timeout = 30
 
 [processes]
   web = "uvicorn runner_web.main:app --host 0.0.0.0 --port 8080 --no-proxy-headers --timeout-graceful-shutdown 25 --no-access-log"
-  worker = "env PROCESS_ROLE=worker stonks-worker"
+  worker = "env PROCESS_ROLE=worker MASSIVE_CACHE_PATH=/data/massive_daily.sqlite3 stonks-worker"
   trainer = "env PROCESS_ROLE=trainer stonks-trainer"
 
 [[restart]]
   policy = "always"
   processes = ["worker", "trainer"]
+
+# The Massive grouped-daily cache is a local SQLite file. Without a volume it
+# is wiped by every deploy, so every scan falls back to slow Yahoo history.
+[[mounts]]
+  source = "massive_daily"
+  destination = "/data"
+  initial_size = "1gb"
+  processes = ["worker"]
 
 [env]
   APP_ORIGIN = "https://runners.rati.chat"
@@ -71,6 +79,9 @@ kill_timeout = 30
   DISCOVERY_INTERVAL_SECONDS = "30"
   YAHOO_NEWS_ENABLED = "true"
   APEWISDOM_SOCIAL_ENABLED = "true"
+  # Warm the whole year of grouped daily sessions in one cycle (the API limiter
+  # still paces calls at MASSIVE_CALLS_PER_MINUTE).
+  MASSIVE_BACKFILL_CALLS = "300"
   GDELT_NEWS_ENABLED = "false"
   BLUESKY_SEARCH_ENABLED = "false"
   NASDAQ_TRADE_HALTS_ENABLED = "true"

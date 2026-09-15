@@ -512,6 +512,19 @@ EASTERN = ZoneInfo("America/New_York")
 BACKGROUND_SCAN_INTERVAL_SECONDS = max(
     120, int(os.getenv("BACKGROUND_SCAN_INTERVAL_SECONDS", "180"))
 )
+OUTCOME_REFRESH_TIMEOUT_SECONDS = max(
+    120, int(os.getenv("OUTCOME_REFRESH_TIMEOUT_SECONDS", "900"))
+)
+OUTCOME_ERROR_RECORD_TIMEOUT_SECONDS = max(
+    15, int(os.getenv("OUTCOME_ERROR_RECORD_TIMEOUT_SECONDS", "60"))
+)
+WORKER_PROGRESS_KEYS = {
+    "outcomes": "outcomes_last_refresh",
+    "scan-collection": "background_scan_last_run",
+}
+WORKER_PROGRESS_MAX_AGE_SECONDS = max(
+    600, int(os.getenv("WORKER_PROGRESS_MAX_AGE_SECONDS", "7200"))
+)
 PULSE_CACHE_TTL_SECONDS = max(5.0, float(os.getenv("PULSE_CACHE_TTL_SECONDS", "60")))
 RADAR_CACHE_TTL_SECONDS = max(5.0, float(os.getenv("RADAR_CACHE_TTL_SECONDS", "60")))
 ALPHA_CACHE_TTL_SECONDS = max(5.0, float(os.getenv("ALPHA_CACHE_TTL_SECONDS", "60")))
@@ -782,11 +795,53 @@ def _worker_heartbeat_detail(workers: list[asyncio.Task[Any]]) -> dict[str, Any]
     }
 
 
+def _stale_workers(*, at: datetime | None = None) -> list[dict[str, Any]]:
+    """Workers whose last recorded progress is older than the allowed age.
+
+    A task object that never finishes still looks "running"; its progress key is
+    the only evidence that the loop is actually cycling.
+    """
+
+    observed_at = at or now()
+    keys = tuple(WORKER_PROGRESS_KEYS.values())
+    with connection() as db:
+        rows = db.execute(
+            f"SELECT key,updated_at FROM worker_state WHERE key IN ({','.join('?' for _ in keys)})",
+            keys,
+        ).fetchall()
+    updated_by_key = {str(row["key"]): str(row["updated_at"] or "") for row in rows}
+    stale: list[dict[str, Any]] = []
+    for worker, key in WORKER_PROGRESS_KEYS.items():
+        updated_at = updated_by_key.get(key)
+        if not updated_at:
+            continue
+        try:
+            completed = datetime.fromisoformat(updated_at)
+        except ValueError:
+            continue
+        completed = completed.replace(tzinfo=UTC) if completed.tzinfo is None else completed
+        age = max(0.0, (observed_at - completed).total_seconds())
+        if age > WORKER_PROGRESS_MAX_AGE_SECONDS:
+            stale.append(
+                {
+                    "worker": worker,
+                    "last_completed_at": completed.isoformat(),
+                    "age_seconds": round(age),
+                }
+            )
+    return stale
+
+
 async def worker_process_heartbeat(
     workers: list[asyncio.Task[Any]], heartbeat: Callable[[], None] | None = None
 ) -> None:
     while True:
         detail = _worker_heartbeat_detail(workers)
+        try:
+            detail["stale_workers"] = await asyncio.to_thread(_stale_workers)
+        except Exception:
+            LOG.warning("Stale worker check failed", exc_info=True)
+            detail["stale_workers"] = []
         await asyncio.to_thread(
             worker_state,
             worker_heartbeat_key(WORKER_INSTANCE_ID),
@@ -1483,16 +1538,34 @@ async def outcome_worker() -> None:
     await asyncio.sleep(75)
     while True:
         try:
-            await run_in_threadpool(refresh_outcomes)
-            await run_in_threadpool(refresh_scan_outcomes)
-            flash_results = await run_in_threadpool(refresh_flash_forecasts)
+            await asyncio.wait_for(
+                run_in_threadpool(refresh_outcomes),
+                timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
+            )
+            await asyncio.wait_for(
+                run_in_threadpool(refresh_scan_outcomes),
+                timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
+            )
+            flash_results = await asyncio.wait_for(
+                run_in_threadpool(refresh_flash_forecasts),
+                timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
+            )
             if any(flash_results.get(key) for key in ("resolved", "voided", "reviewed")):
                 _invalidate_runners_feeds("pulse")
-            await run_in_threadpool(prune_storage)
+            await asyncio.wait_for(
+                run_in_threadpool(prune_storage),
+                timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            record_outcome_error(exc)
+            try:
+                await asyncio.wait_for(
+                    run_in_threadpool(record_outcome_error, exc),
+                    timeout=OUTCOME_ERROR_RECORD_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                LOG.exception("Outcome error recording failed")
         await asyncio.sleep(600)
 
 

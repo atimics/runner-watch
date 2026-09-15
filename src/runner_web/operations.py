@@ -137,8 +137,14 @@ def worker_health(
         required = {str(name) for name in instance_detail.get("required_workers", [])}
         running = {str(name) for name in instance_detail.get("running_workers", [])}
         missing = sorted(required - running)
-        if missing:
+        stale_workers = [
+            str(item.get("worker"))
+            for item in instance_detail.get("stale_workers", [])
+            if isinstance(item, dict) and item.get("worker")
+        ]
+        if missing or stale_workers:
             reported_status = "degraded"
+        if missing:
             instance_detail["missing_workers"] = missing
         fresh = age <= OPERATIONS.worker_heartbeat_max_age_seconds
         instances.append(
