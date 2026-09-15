@@ -3397,6 +3397,31 @@ def _migration_071_typed_research_subjects(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_072_client_errors(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS client_errors (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            message TEXT NOT NULL,
+            source TEXT,
+            line INTEGER,
+            column_number INTEGER,
+            stack TEXT,
+            page_url TEXT NOT NULL,
+            user_agent TEXT,
+            release TEXT,
+            client_ip_hash TEXT,
+            seen_count INTEGER NOT NULL DEFAULT 1,
+            first_seen_at TEXT NOT NULL,
+            seen_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS client_errors_seen
+            ON client_errors(seen_at DESC);
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3473,6 +3498,7 @@ MIGRATIONS = (
     Migration(69, "stock_map_evidence", _migration_069_stock_map_evidence),
     Migration(70, "story_and_identity", _migration_070_story_and_identity),
     Migration(71, "typed_research_subjects", _migration_071_typed_research_subjects),
+    Migration(72, "client_errors", _migration_072_client_errors),
 )
 
 
