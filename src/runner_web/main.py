@@ -98,6 +98,11 @@ from runner_web.calls import (
     calls_for_ticker as community_calls_for_ticker,
 )
 from runner_web.case_monitor import refresh_case_monitor
+from runner_web.client_errors import (
+    CLIENT_ERROR_RETENTION_DAYS,
+    client_ip_hash,
+    record_client_error,
+)
 from runner_web.collection import recording_market_data
 from runner_web.content_notices import (
     attach_comment_notices,
@@ -856,10 +861,20 @@ async def lifespan(application: FastAPI):
     finally:
         await _stop_tasks(tasks)
         if worker_tasks:
-            delete_worker_state(worker_heartbeat_key(WORKER_INSTANCE_ID))
-            release_research_worker(WORKER_INSTANCE_ID)
+            _release_worker_presence()
         if SWARM_RUNTIME is not None:
             SWARM_RUNTIME.close()
+
+
+def _release_worker_presence() -> None:
+    try:
+        delete_worker_state(worker_heartbeat_key(WORKER_INSTANCE_ID))
+    except Exception:
+        LOG.warning("Worker heartbeat cleanup failed", exc_info=True)
+    try:
+        release_research_worker(WORKER_INSTANCE_ID)
+    except Exception:
+        LOG.warning("Research worker release failed", exc_info=True)
 
 
 async def run_worker(heartbeat: Callable[[], None] | None = None) -> None:
@@ -881,8 +896,7 @@ async def run_worker(heartbeat: Callable[[], None] | None = None) -> None:
         await asyncio.gather(*tasks)
     finally:
         await _stop_tasks(tasks)
-        delete_worker_state(worker_heartbeat_key(WORKER_INSTANCE_ID))
-        release_research_worker(WORKER_INSTANCE_ID)
+        _release_worker_presence()
         if SWARM_RUNTIME is not None:
             SWARM_RUNTIME.close()
 
@@ -1077,6 +1091,13 @@ def prune_storage() -> None:
             "entered_at<?",
             (iso(now() - timedelta(days=PULSE_ENTRY_RETENTION_DAYS)),),
         )
+        client_errors_deleted = _delete_batched(
+            db,
+            "client_errors",
+            ("id",),
+            "seen_at<?",
+            (iso(now() - timedelta(days=CLIENT_ERROR_RETENTION_DAYS)),),
+        )
         db.execute("DELETE FROM sessions WHERE expires_at<=?", (iso(),))
         db.execute("DELETE FROM auth_challenges WHERE expires_at<=?", (iso(),))
         db.execute(
@@ -1094,6 +1115,7 @@ def prune_storage() -> None:
                         "scan_runs": runs_deleted,
                         "ranker_training_examples": training_examples_deleted,
                         "pulse_entries": pulse_entries_deleted,
+                        "client_errors": client_errors_deleted,
                     },
                     separators=(",", ":"),
                 ),
@@ -2265,6 +2287,17 @@ class SportsPickPayload(BaseModel):
     expected_odds: int | None = Field(default=None, strict=True)
 
 
+class ClientErrorReport(BaseModel):
+    kind: str = Field(default="error", max_length=40)
+    message: str = Field(min_length=1, max_length=500)
+    source: str = Field(default="", max_length=300)
+    line: int | None = Field(default=None, ge=0, le=100_000_000)
+    column_number: int | None = Field(default=None, ge=0, le=100_000_000)
+    stack: str = Field(default="", max_length=4000)
+    page_url: str = Field(default="", max_length=500)
+    release: str = Field(default="", max_length=60)
+
+
 def _public_flash_record_data() -> dict[str, Any]:
     return _public_screen_data("flash-record", "public", flash_record)
 
@@ -2273,6 +2306,39 @@ def _public_flash_record_data() -> dict[str, Any]:
 def api_kol_status(request: Request) -> dict[str, Any]:
     enforce_rate(request, "kols", limit=120, seconds=60)
     return kol_status()
+
+
+@app.post("/api/client-errors")
+def report_client_error(
+    report: ClientErrorReport,
+    request: Request,
+) -> JSONResponse:
+    enforce_rate(request, "client-errors", limit=30, seconds=60)
+    content_length = request.headers.get("content-length", "")
+    if content_length.isdigit() and int(content_length) > 20_000:
+        raise HTTPException(413, "Report is too large")
+    row_id = record_client_error(
+        kind=report.kind,
+        message=report.message,
+        source=report.source,
+        line=report.line,
+        column_number=report.column_number,
+        stack=report.stack,
+        page_url=report.page_url,
+        user_agent=request.headers.get("user-agent", ""),
+        release=report.release or APP_BUILD_SHA,
+        client_ip=client_ip_hash(_request_client_ip(request), RATE_LIMIT_HASH_KEY),
+    )
+    LOG.error(
+        "client_error id=%s kind=%s page=%s source=%s line=%s message=%s",
+        row_id,
+        report.kind[:40],
+        report.page_url[:300],
+        report.source[:300],
+        report.line,
+        report.message.replace("\n", " ").replace("\r", " ")[:200],
+    )
+    return JSONResponse({"status": "recorded", "id": row_id})
 
 
 @app.get("/api/flash/record")

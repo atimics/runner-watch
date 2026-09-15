@@ -158,6 +158,12 @@ jobs:
         if: steps.deploy.outcome == 'success' && steps.smoke.outcome == 'success'
         continue-on-error: true
         run: scripts/test-live-screens
+        env:
+          # A rolling deploy leaves cold caches and a thin fleet behind it, so the
+          # rollout gate allows a longer budget and one more attempt than the warm
+          # uptime monitor, which keeps the strict 3500ms / 3 attempt defaults.
+          LIVE_SCREEN_FAILURE_MS: "5000"
+          LIVE_SCREEN_RETRIES: "4"
       - name: Save failure screenshots
         if: always() && steps.screens.outcome == 'failure'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

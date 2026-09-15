@@ -215,6 +215,7 @@ async def _check_screen(
 
         page.on("console", record_console)
         page.on("pageerror", lambda error: browser_errors.append(str(error)))
+        page.on("crash", lambda _page=None: browser_errors.append("page crashed"))
 
         async def render(*, reload: bool = False) -> int:
             browser_errors.clear()

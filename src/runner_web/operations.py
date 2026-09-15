@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from runner_node.runtime import NODE_SERVICE
 from runner_watch.source_catalog import DEFAULT_SOURCE_POLICIES
 from runner_web.ai_kol import FLASH
+from runner_web.client_errors import client_error_summary
 from runner_web.data_health import data_health
 from runner_web.db import MIGRATIONS, connection
 from runner_web.flash_wallet import (
@@ -493,6 +494,13 @@ def data_health_details_api(
 @router.get("/health/performance")
 def performance_api(_access: None = Depends(require_operations_access)) -> dict[str, Any]:
     return performance_snapshot()
+
+
+@router.get("/health/client-errors")
+def client_errors_api(
+    _access: None = Depends(require_operations_access), limit: int = 50
+) -> dict[str, Any]:
+    return client_error_summary(limit=limit)
 
 
 @router.get("/api/ranker/status")
