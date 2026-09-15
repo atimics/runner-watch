@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -18,6 +19,7 @@ UPPER_BARRIER_PCT = 8.0
 LOWER_BARRIER_PCT = 4.0
 BARRIER_HORIZON = timedelta(minutes=60)
 BAR_TOLERANCE = timedelta(minutes=10)
+OUTCOME_REFRESH_TICKER_LIMIT = max(50, int(os.getenv("OUTCOME_REFRESH_TICKER_LIMIT", "200")))
 CASE_OUTCOME_GRACE = timedelta(days=4)
 
 
@@ -44,28 +46,17 @@ def due_horizons(row: dict[str, Any], at: datetime | None = None) -> list[str]:
     ]
 
 
-def _latest_prices(tickers: list[str]) -> dict[str, float]:
-    import pandas as pd
+def _parsed_moment(value: Any) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value or ""))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
-    from runner_web.collection import recording_market_data
 
-    unique = list(dict.fromkeys(tickers))
-    if not unique:
-        return {}
-    with recording_market_data(batch_size=60) as market_data:
-        result = market_data.intraday(unique)
-    prices: dict[str, float] = {}
-    for ticker, frame in result.frames.items():
-        close = pd.Series(dtype="float64")
-        for column in frame.columns:
-            if str(column).lower().replace(" ", "") == "close":
-                close = pd.to_numeric(frame[column], errors="coerce").dropna()
-                break
-        if not close.empty:
-            price = float(close.iloc[-1])
-            if math.isfinite(price) and price > 0:
-                prices[ticker] = price
-    return prices
+def _earliest_observation(moments: list[datetime | None]) -> datetime | None:
+    known = [moment for moment in moments if moment is not None]
+    return min(known) - timedelta(days=1) if known else None
 
 
 def _state(key: str, value: str, timestamp: str) -> None:
@@ -108,10 +99,11 @@ def refresh_outcomes(at: datetime | None = None) -> dict[str, Any]:
         horizons = due_horizons(row, current)
         if horizons:
             pending.append((row, horizons))
+    pending.sort(key=lambda item: str(item[0].get("base_at") or ""))
+    pending = pending[:OUTCOME_REFRESH_TICKER_LIMIT]
     tickers = [str(row["ticker"]) for row, _ in pending]
-
-    _latest_prices(tickers)
-    prices = _bar_prices(tickers)
+    since = _earliest_observation([_parsed_moment(row.get("base_at")) for row, _ in pending])
+    prices = _bar_prices(tickers, since=since)
 
     samples_added = 0
     with connection() as db:
@@ -168,20 +160,27 @@ def record_outcome_error(exc: Exception) -> None:
 Bar = tuple[datetime, float, float, float]
 
 
-def _bar_prices(tickers: list[str]) -> dict[str, list[Bar]]:
+def _bar_prices(
+    tickers: list[str], *, since: datetime | None = None
+) -> dict[str, list[Bar]]:
     if not tickers:
         return {}
     unique = list(dict.fromkeys(tickers))
     placeholders = ",".join("?" for _ in unique)
+    window = ""
+    parameters: list[Any] = [*unique]
+    if since is not None:
+        window = " AND bar_time>=?"
+        parameters.append(since.astimezone(UTC).isoformat())
     with connection() as db:
         rows = db.execute(
             f"""
             SELECT ticker,bar_time,high,low,close FROM market_bars
             WHERE source='yahoo' AND interval='5m' AND close>0
-                  AND ticker IN ({placeholders})
+                  AND ticker IN ({placeholders}){window}
             ORDER BY ticker,bar_time
             """,
-            unique,
+            parameters,
         ).fetchall()
     output: dict[str, list[Bar]] = {}
     for row in rows:
@@ -417,9 +416,13 @@ def refresh_case_outcomes(at: datetime | None = None) -> dict[str, Any]:
             base_at = base_at.replace(tzinfo=UTC)
         if current >= base_at.astimezone(UTC) + timedelta(minutes=int(case["horizon_minutes"])):
             due_cases.append(case)
+    due_cases.sort(key=lambda case: str(case.get("reference_at") or ""))
+    due_cases = due_cases[:OUTCOME_REFRESH_TICKER_LIMIT]
     tickers = [str(case["ticker"]) for case in due_cases]
-    _latest_prices(tickers)
-    archived = _bar_prices(tickers)
+    since = _earliest_observation(
+        [_parsed_moment(case.get("reference_at")) for case in due_cases]
+    )
+    archived = _bar_prices(tickers, since=since)
     completed: list[tuple[dict[str, Any], dict[str, Any]]] = []
     with connection() as db:
         for case in due_cases:
@@ -550,10 +553,13 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
         if horizons or barrier_due:
             pending.append((row, horizons, barrier_due))
 
+    pending.sort(key=lambda item: str(item[0].get("base_at") or ""))
+    pending = pending[:OUTCOME_REFRESH_TICKER_LIMIT]
     tickers = [str(row["ticker"]) for row, _, _ in pending]
-
-    _latest_prices(tickers)
-    prices = _bar_prices(tickers)
+    since = _earliest_observation(
+        [_parsed_moment(row.get("base_at")) for row, _, _ in pending]
+    )
+    prices = _bar_prices(tickers, since=since)
 
     samples_added = 0
     barrier_labels_added = 0
