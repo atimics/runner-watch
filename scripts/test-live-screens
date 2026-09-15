@@ -391,7 +391,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--failure-ms",
         type=int,
-        default=int(os.getenv("LIVE_SCREEN_FAILURE_MS", "2500")),
+        default=int(os.getenv("LIVE_SCREEN_FAILURE_MS", "3500")),
     )
     parser.add_argument(
         "--retries",

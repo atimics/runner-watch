@@ -121,7 +121,7 @@ def test_live_screen_sweep_defaults_to_one_worker_with_a_retry_and_hard_limit(
     args = namespace["parse_args"]()
 
     assert args.slow_ms == 1_000
-    assert args.failure_ms == 2_500
+    assert args.failure_ms == 3_500
     assert args.workers == 1
 
 

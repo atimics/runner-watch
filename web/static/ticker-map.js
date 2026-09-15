@@ -23,15 +23,15 @@
   const names = e => e.people.map(p => p.name).join(' + ') || 'Reporting person';
   const amount = e => e.view === 'ownership' ? (e.percent == null ? 'See filing' : number(e.percent) + '% of class') : money(e.value);
   let events = [], dates = [], cursor = null, loaded = 0, coverage = {}, selected = null;
-  let view = 'activity', filter = 'all', cutoff = Infinity, page = 0, pending = false;
+  let view = 'all', filter = 'all', cutoff = Infinity, page = 0, pending = false;
   const small = window.matchMedia('(max-width:500px)');
   const pageSize = () => small.matches ? 4 : 8;
-  const subset = () => events.filter(e => e.view === view && (Date.parse(e.filed_at) || 0) <= cutoff &&
-    (view === 'ownership' || filter === 'all' || (filter === 'other' ? !['Bought','Sold'].includes(e.action) : e.action === filter)));
+  const subset = () => events.filter(e => (Date.parse(e.filed_at) || 0) <= cutoff &&
+    (filter === 'all' || (filter === 'other' ? !['Bought','Sold'].includes(e.action) : e.action === filter)));
   function source(event) {
     const panel = $('selection'); panel.replaceChildren();
     if (!event) {
-      panel.append(make('h3', 'Follow the people'), make('p', 'Choose another view or load older filings to explore the saved evidence.'));
+      panel.append(make('h3', 'Select a filing'));
       document.dispatchEvent(new CustomEvent('rati:map-time', {detail:{time:null}})); return;
     }
     panel.append(make('h3', names(event)), make('p', `${event.action} · ${amount(event)}`, 'map-event-action'));
@@ -103,7 +103,7 @@
       g.addEventListener('click',activate); g.addEventListener('keydown',e => {if (['Enter',' '].includes(e.key)) {e.preventDefault();activate();}}); graph.append(g);
     });
     graph.append(svg('circle',{cx,cy,r:small.matches ? 36 : 48,class:'map-center'}),svg('text',{x:cx,y:cy+7,'text-anchor':'middle',class:'map-center-text'},root.dataset.ticker));
-    if (!people.length) graph.append(svg('text',{x:cx,y:320,'text-anchor':'middle',fill:'#96a49b','font-size':small.matches ? 12 : 16},'People appear as filings are collected'));
+    if (!people.length) graph.append(svg('text',{x:cx,y:320,'text-anchor':'middle',fill:'#96a49b','font-size':small.matches ? 12 : 16},'No people yet'));
     $('page').textContent = people.length ? `${page*size+1}–${page*size+shown.length} of ${people.length} people` : 'Saved SEC evidence';
     $('previous').disabled = page === 0; $('next').disabled = (page+1)*size >= people.length;
     const list = $('events'); list.replaceChildren();
@@ -116,9 +116,9 @@
     if (!rows.length) list.append(make('p','Saved events for this view will appear here.','map-note'));
     $('time').textContent = Number.isFinite(cutoff) ? date(new Date(cutoff).toISOString()) : 'Latest saved filing';
     $('time-slider').setAttribute('aria-valuetext',$('time').textContent);
-    $('list-title').textContent = view === 'activity' ? 'Reported activity' : 'Reported ownership';
-    $('filter').parentElement.hidden = view === 'ownership'; $('ownership-note').hidden = view !== 'ownership';
-    $('coverage').textContent = `${loaded} of ${coverage.filings || 0} saved filings loaded · ${rows.length} events in this view. Coverage follows the SEC documents collected for ${root.dataset.ticker}.`;
+    $('list-title').textContent = 'Reported filings';
+    $('filter').parentElement.hidden = false; $('ownership-note').hidden = true;
+    $('coverage').textContent = `${loaded} filings · ${rows.length} events`;
     source(event);
   }
   async function load() {
@@ -135,7 +135,7 @@
       const slider = $('time-slider'); slider.disabled = dates.length < 2; slider.max = Math.max(0,dates.length-1);
       slider.value = Number.isFinite(cutoff) ? Math.max(0,dates.indexOf(cutoff)) : slider.max;
       $('load').hidden = !cursor; $('load').textContent = 'Load older filings';
-      $('status').textContent = coverage.filings ? 'Saved SEC filings · Select a person to follow their activity' : 'This ticker’s map is ready for incoming SEC filings.';
+      $('status').textContent = coverage.filings ? 'Saved SEC filings' : 'No filings yet';
       render();
     } catch (_) { $('status').textContent = 'Please retry to load the saved filings.'; $('load').hidden = false; $('load').textContent = 'Retry loading filings'; }
     finally {pending = false; $('load').disabled = false;}

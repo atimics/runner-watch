@@ -105,7 +105,7 @@ def open_map(page: Page, width=1280):
         ),
     )
     page.goto("http://app.test/t/TEST")
-    expect(page.locator("[data-map-status]")).to_contain_text("Select a person")
+    expect(page.locator("[data-map-status]")).to_contain_text("Saved SEC filings")
     return data
 
 
@@ -129,7 +129,7 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width):
     )
     expect(page.locator(".chart-filing-marker")).to_have_count(1)
     page.get_by_role("button", name="Next people").click()
-    expect(page.locator("[data-person]")).to_have_count(4 if width <= 500 else 2)
+    expect(page.locator("[data-person]")).to_have_count(4 if width <= 500 else 3)
     page.get_by_role("combobox", name="Filter reported action").select_option("Sold")
     expect(page.locator("[data-map-events] button")).to_have_count(3)
     assert not errors
@@ -143,18 +143,12 @@ def test_filing_time_excludes_later_disclosures_and_preserves_loaded_history(pag
     expect(page.locator("[data-map-events] button")).to_have_count(1)
     expect(page.locator("[data-map-selection] h3")).to_have_text("Person 0")
     page.get_by_role("button", name="Load older filings").click()
-    expect(page.locator("[data-map-coverage]")).to_contain_text("12 of 12")
+    expect(page.locator("[data-map-coverage]")).to_contain_text("12 filings")
     expect(page.locator("[data-map-events] button")).to_have_count(2)
     expect(page.locator("[data-map-time]")).to_have_text("Sep 1, 2026")
     page.get_by_role("button", name="Latest", exact=True).click()
-    expect(page.locator("[data-map-events] button")).to_have_count(11)
+    expect(page.locator("[data-map-events] button")).to_have_count(12)
     expect(page.get_by_role("button", name="Load older filings")).to_be_hidden()
-    page.get_by_role("button", name="Ownership", exact=True).click()
-    expect(page.locator("[data-map-events] button")).to_have_count(1)
-    expect(page.locator("[data-map-selection]")).to_contain_text("7.5% of class")
-    expect(page.locator("[data-map-selection]")).to_contain_text("Amendment")
-    expect(page.locator("[data-map-selection]")).to_contain_text("Class A")
-    expect(page.locator("[data-map-ownership-note]")).to_be_visible()
 
 
 def test_source_failure_can_retry_and_reported_names_are_text(page):
@@ -166,6 +160,6 @@ def test_source_failure_can_retry_and_reported_names_are_text(page):
     payload["events"][-1]["people"][0]["name"] = "<img src=x onerror=alert(1)>"
     page.route("**/api/stocks/TEST/map", lambda route: route.fulfill(json=payload))
     page.get_by_role("button", name="Retry loading filings").click()
-    page.get_by_role("button", name="Ownership", exact=True).click()
+    page.locator("[data-person]").filter(has_text="<img src=x onerror=alert(1)>").click()
     expect(page.locator("[data-map-selection] h3")).to_have_text("<img src=x onerror=alert(1)>")
     expect(page.locator("[data-map-selection] img")).to_have_count(0)
