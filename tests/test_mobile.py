@@ -1492,6 +1492,23 @@ def test_deferred_base_rates_do_not_claim_matched_sessions() -> None:
     )
 
 
+def test_stale_worker_detection_uses_progress_keys(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "stale-workers.db")
+    init_db()
+    old = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?)",
+            ("outcomes_last_refresh", old, old),
+        )
+
+    stale = web_main._stale_workers()
+
+    assert [item["worker"] for item in stale] == ["outcomes"]
+
+
 def test_evidence_gate_opens_with_three_independent_families() -> None:
     current = {
         "relative_volume": 3.0,

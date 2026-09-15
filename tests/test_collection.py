@@ -55,6 +55,52 @@ def test_collectors_keep_market_bars_and_distinct_source_versions(
     assert {row["source"]: row["count"] for row in runs} == {"sec": 3, "yahoo": 2}
 
 
+def test_market_bar_upserts_skip_unchanged_rows(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "bar-upserts.db")
+    init_db()
+    index = pd.date_range("2026-08-24 09:30", periods=1, freq="1D", tz="America/New_York")
+    frame = pd.DataFrame(
+        {
+            "Open": [1.0],
+            "High": [1.2],
+            "Low": [0.9],
+            "Close": [1.1],
+            "Volume": [1000],
+        },
+        index=index,
+    )
+    record_market_bars("1d", {"PEN": frame})
+    with connection() as database:
+        first = dict(
+            database.execute(
+                "SELECT first_collected_at,last_collected_at FROM market_bars WHERE ticker='PEN'"
+            ).fetchone()
+        )
+
+    record_market_bars("1d", {"PEN": frame})
+    with connection() as database:
+        unchanged = dict(
+            database.execute(
+                "SELECT first_collected_at,last_collected_at FROM market_bars WHERE ticker='PEN'"
+            ).fetchone()
+        )
+    assert unchanged == first
+
+    revised = frame.copy()
+    revised.loc[index[-1], "Close"] = 1.25
+    record_market_bars("1d", {"PEN": revised})
+    with connection() as database:
+        changed = dict(
+            database.execute(
+                "SELECT first_collected_at,last_collected_at FROM market_bars WHERE ticker='PEN'"
+            ).fetchone()
+        )
+    assert changed["last_collected_at"] != first["last_collected_at"]
+    assert changed["first_collected_at"] == first["first_collected_at"]
+
+
 def test_shared_pipe_records_universe_items_errors_and_terminal_source_items(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
