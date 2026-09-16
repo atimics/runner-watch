@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from pytest import MonkeyPatch
@@ -110,8 +110,10 @@ def alert_environment(tmp_path, monkeypatch: MonkeyPatch):
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "test-chat")
     monkeypatch.setenv("TELEGRAM_MIN_SCORE", "60")
     monkeypatch.setenv("TELEGRAM_MAX_PER_RUN", "10")
-    monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_BATCH_MIN", 1)
-    monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES", 0)
+    # No pacing gap by default, so a test that wants the next segment gets it
+    # without waiting out the rundown clock.
+    monkeypatch.setattr(web_main, "TELEGRAM_SEGMENT_GAP_MINUTES", 0)
+    monkeypatch.setattr(web_main, "TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES", 0)
     init_db()
     return tmp_path
 
@@ -636,11 +638,12 @@ def _announce_reply(text: str) -> dict:
     }
 
 
-def test_a_lone_runner_waits_for_a_batch_then_goes_out_with_it(
+def test_runners_go_out_one_story_at_a_time_best_first(
     alert_environment, monkeypatch: MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_BATCH_MIN", 2)
-    monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES", 30)
+    """A roster of tickers reads like a table. Each runner gets its own message,
+    its own card, and its own turn."""
+
     sent: list[str] = []
     monkeypatch.setattr(
         web_main, "telegram_send_post",
@@ -648,32 +651,77 @@ def test_a_lone_runner_waits_for_a_batch_then_goes_out_with_it(
     )
     recent = datetime.now(UTC).isoformat()
     _insert_runner("run-1", "AAAA", score=80, entered_at=recent)
+    _insert_runner("run-1", "BBBB", score=91, entered_at=recent)
 
-    waiting = web_main.dispatch_telegram_posts(scan_run_id="run-1")
+    first = web_main.dispatch_telegram_posts(scan_run_id="run-1")
 
-    assert waiting["status"] == "waiting"
-    assert waiting["announcement"]["status"] == "waiting"
-    assert sent == []
-
-    _insert_runner("run-1", "BBBB", score=81, entered_at=recent)
-    sent_batch = web_main.dispatch_telegram_posts(scan_run_id="run-1")
-
-    assert sent_batch["status"] == "sent"
-    assert sent_batch["announcement"]["count"] == 2
+    assert first["status"] == "sent"
+    assert first["announcement"]["kind"] == "runner"
     assert len(sent) == 1
-    assert "AAAA" in sent[0]
-    assert "BBBB" in sent[0]
+    assert "BBBB" in sent[0] and "AAAA" not in sent[0]
+
+    second = web_main.dispatch_telegram_posts(scan_run_id="run-1")
+
+    assert second["status"] == "sent"
+    assert len(sent) == 2
+    assert "AAAA" in sent[1]
+
+    assert web_main.dispatch_telegram_posts(scan_run_id="run-1")["status"] == "empty"
+    assert len(sent) == 2
 
 
-def test_a_batch_goes_out_as_one_message_per_segment_each_with_its_own_card(
+def test_the_pacing_gap_holds_the_next_story_back(
     alert_environment, monkeypatch: MonkeyPatch
 ) -> None:
-    """Telegram previews one URL per message. Merging the batch into a single
-    announcement threw away every card but the first, so each segment now gets
-    its own message and its own preview."""
+    """Spacing is what makes the channel read as a program rather than a dump."""
 
-    monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_BATCH_MIN", 2)
-    monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES", 30)
+    monkeypatch.setattr(web_main, "TELEGRAM_SEGMENT_GAP_MINUTES", 30)
+    sent: list[str] = []
+    monkeypatch.setattr(
+        web_main, "telegram_send_post",
+        lambda config, text, **_kw: sent.append(text),
+    )
+    recent = datetime.now(UTC).isoformat()
+    _insert_runner("run-1", "AAAA", score=80, entered_at=recent)
+    _insert_runner("run-1", "BBBB", score=91, entered_at=recent)
+
+    assert web_main.dispatch_telegram_posts(scan_run_id="run-1")["status"] == "sent"
+    held = web_main.dispatch_telegram_posts(scan_run_id="run-1")
+
+    assert held["status"] == "waiting"
+    assert len(sent) == 1
+
+
+def test_a_runner_that_waited_too_long_is_retired_unheard(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    """By the time a story is hours old the move it describes is over."""
+
+    monkeypatch.setattr(web_main, "TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES", 60)
+    sent: list[str] = []
+    monkeypatch.setattr(
+        web_main, "telegram_send_post",
+        lambda config, text, **_kw: sent.append(text),
+    )
+    stale = (datetime.now(UTC) - timedelta(hours=6)).isoformat()
+    _insert_runner("run-1", "AAAA", score=80, entered_at=stale)
+
+    result = web_main.dispatch_telegram_posts(scan_run_id="run-1")
+
+    assert result["status"] == "empty"
+    assert result["announcement"]["stale"] == 1
+    assert sent == []
+    # Retired, not left to resurface on the next pass.
+    assert web_main.dispatch_telegram_posts(scan_run_id="run-1")["status"] == "empty"
+
+
+def test_each_segment_is_its_own_message_with_its_own_card(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    """Telegram previews one URL per message. Merging the batch threw away every
+    card but the first, so each thing gets its own turn and its own preview —
+    the briefing first, because a session report is appointment listening."""
+
     sent: list[str] = []
     monkeypatch.setattr(
         web_main, "telegram_send_post",
@@ -684,12 +732,11 @@ def test_a_batch_goes_out_as_one_message_per_segment_each_with_its_own_card(
     _insert_market_report("pre-1", created_at=recent)
     _insert_public_report("one", "CAST", created_at=recent)
 
-    result = web_main.dispatch_telegram_posts()
+    first = web_main.dispatch_telegram_posts()
+    assert first["announcement"]["kind"] == "market_report"
+    second = web_main.dispatch_telegram_posts()
+    assert second["announcement"]["kind"] == "research_report"
 
-    assert result["status"] == "sent"
-    assert result["announcement"]["count"] == 2
-    assert result["announcement"]["segments"] == 2
-    assert len(sent) == 2
     briefing, report = sent
     assert "Pre-market briefing" in strip_markdown_v2(briefing)
     assert f"{web_main.RUNNERS_ORIGIN}/reports/2026-09-11/pre" in briefing
@@ -698,21 +745,42 @@ def test_a_batch_goes_out_as_one_message_per_segment_each_with_its_own_card(
     # The point of the split: every message previews the card it is about.
     for message in sent:
         assert message.count(web_main.RUNNERS_ORIGIN) == 1, message
+    assert web_main.dispatch_telegram_posts()["status"] == "empty"
 
 
-def test_a_segment_failure_keeps_what_already_landed(
+def test_the_rundown_rotates_away_from_the_kind_it_just_played(
     alert_environment, monkeypatch: MonkeyPatch
 ) -> None:
-    """A later segment failing must not re-send the earlier one next time."""
+    """Variety without curation: while something else is waiting, the room does
+    not hear the same kind twice running."""
 
-    monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_BATCH_MIN", 2)
-    monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES", 30)
     sent: list[str] = []
+    monkeypatch.setattr(
+        web_main, "telegram_send_post",
+        lambda config, text, **_kw: sent.append(text),
+    )
+    web_main.dispatch_telegram_posts()  # baseline the empty board
+    recent = datetime.now(UTC).isoformat()
+    _insert_runner("run-1", "AAAA", score=80, entered_at=recent)
+    _insert_runner("run-1", "BBBB", score=91, entered_at=recent)
+    _insert_public_report("one", "CAST", created_at=recent)
+
+    kinds = [
+        web_main.dispatch_telegram_posts(scan_run_id="run-1")["announcement"]["kind"]
+        for _ in range(3)
+    ]
+
+    assert kinds == ["research_report", "runner", "runner"]
+    assert len(sent) == 3
+
+
+def test_a_failed_segment_leaves_the_rest_pending(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    """One message per dispatch, so a failure costs exactly that one item."""
 
     def send(config: object, text: str, **_kw: object) -> None:
-        if sent:
-            raise RuntimeError("Telegram sendMessage failed with status 500")
-        sent.append(text)
+        raise RuntimeError("Telegram sendMessage failed with status 500")
 
     monkeypatch.setattr(web_main, "telegram_send_post", send)
     web_main.dispatch_telegram_posts()  # baseline the empty board
@@ -722,10 +790,10 @@ def test_a_segment_failure_keeps_what_already_landed(
 
     result = web_main.dispatch_telegram_posts()
 
-    assert result["status"] == "partial"
-    assert len(sent) == 1
-    assert result["market_reports"]["status"] == "sent"
-    assert result["research_reports"]["status"] == "failed"
+    assert result["status"] == "failed"
+    assert result["market_reports"]["status"] == "failed"
+    # The research report was never attempted, so it is still waiting its turn.
+    assert result["research_reports"]["status"] == "pending"
 
 
 def test_the_announcement_uses_deterministic_markdown(
@@ -746,7 +814,7 @@ def test_the_announcement_uses_deterministic_markdown(
     web_main.dispatch_telegram_posts(scan_run_id="run-1")
 
     assert len(sent) == 1
-    assert "*AAAA*" in sent[0]
+    assert "*$AAAA is worth watching*" in sent[0]
     assert "/t/AAAA" in sent[0]
     assert "score *80*" in sent[0]
 
@@ -820,11 +888,33 @@ def test_release_announcements_stay_off_until_enabled(
     assert web_main.dispatch_release_announcement()["status"] == "off"
 
 
-def test_batch_readiness_waits_for_a_batch_or_the_debounce() -> None:
-    assert telegram.announcement_batch_ready(0, 999) is False
-    assert telegram.announcement_batch_ready(2, 0, min_items=2) is True
-    assert telegram.announcement_batch_ready(1, 5, min_items=2, debounce_minutes=30) is False
-    assert telegram.announcement_batch_ready(1, 31, min_items=2, debounce_minutes=30) is True
+def test_the_rundown_picks_by_priority_then_rotates() -> None:
+    runner = [{"ticker": "AAAA"}]
+    report = [{"public_id": "one"}]
+    briefing = [{"id": "pre-1"}]
+
+    # Priority: a session briefing outranks research, which outranks a runner.
+    assert telegram.next_segment({"market_report": briefing, "runner": runner}) == "market_report"
+    assert telegram.next_segment({"research_report": report, "runner": runner}) == "research_report"
+    assert telegram.next_segment({"runner": runner}) == "runner"
+
+    # Rotation: skip the kind just played while something else is waiting.
+    assert (
+        telegram.next_segment(
+            {"market_report": briefing, "runner": runner}, last_kind="market_report"
+        )
+        == "runner"
+    )
+    # Nothing else to play, so the same kind keeps its turn.
+    assert telegram.next_segment({"runner": runner}, last_kind="runner") == "runner"
+    assert telegram.next_segment({}) == ""
+
+
+def test_a_story_goes_stale_after_its_window() -> None:
+    assert telegram.story_is_stale(30, max_age_minutes=60) is False
+    assert telegram.story_is_stale(61, max_age_minutes=60) is True
+    # Zero disables the window rather than retiring everything instantly.
+    assert telegram.story_is_stale(9_999, max_age_minutes=0) is False
 
 
 def test_a_failed_release_announcement_retries_then_stays_sent(

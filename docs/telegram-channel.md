@@ -40,23 +40,32 @@ Pages that already carry a card:
 A memecoin replay is better than a card: `sendAnimation` puts the GIF itself in
 the room, with the caption carrying the single link.
 
-### A batch gets a page, not a list
+### One story per message, never a list
 
-When several things land at once, the answer is never "list them in the
-message". It is a **page for the batch**, linked once, with a card that shows
-the group. The individual names earn their own card later, when a free Flash
-report publishes for them — which is already how the pipeline runs
-(`_queue_telegram_runner_reports` commissions the best
-`TELEGRAM_RUNNER_REPORTS_PER_RUN` of a batch and staggers them public).
+A list of tickers reads like a table, and a table is not a story. When several
+things land at once the answer is never "put them all in one message": each one
+takes its own turn, with its own card, spaced apart by the rundown clock.
 
 So a busy morning reads:
 
-> **5 new on the board** → one card, one link to the drop page
-> …an hour later…
-> **Flash report: $SOUN** → its own card
-> **Flash report: $CAST** → its own card
+> ⚡ **$SOUN is running** — gap up on 4× average volume → its own card
+> …twelve minutes later…
+> 📄 **New public report · $CAST** → its own card
+> …twelve minutes later…
+> 🔵 **$MSGM is setting up** → its own card
 
-instead of one message with fourteen links in it.
+instead of one message with fourteen links in it. A session briefing follows
+the same rule: it names who is out front — *$SOUN leads the pack* — and sends
+the reader to the report for the rest, rather than printing a roster none of
+which can be previewed.
+
+The pacing is what makes this work rather than flood. `dispatch_telegram_posts`
+plays **at most one segment per call** and refuses to play at all within
+`TELEGRAM_SEGMENT_GAP_MINUTES` of the last message. The sweep worker calls it on
+a timer, so a queue of five runners drains as five stories over an hour. A
+runner that waited longer than `TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES` is
+retired unheard: by then the move it describes is over, and stale news is worse
+than none.
 
 ## The segments
 
@@ -67,7 +76,7 @@ play.
 | Segment | Slot | Inventory | The one card |
 |---|---|---|---|
 | **The Opening Brief** | 4:20 a.m. ET, appointment | frozen pre-market report | `/reports/{day}/pre` |
-| **New on the Board** | rotating, debounced | runners without a delivery row | `/drops/{id}` *(to build)* |
+| **Runner story** | rotating, one at a time | runners without a delivery row | `/t/{ticker}` |
 | **Flash Report** | rotating, staggered | research commission gone public | `/research/{public_id}` |
 | **The Closing Bell** | 4:20 p.m. ET, appointment | frozen post-market report | `/reports/{day}/post` |
 | **The Scoreboard** | after the close, daily | Flash's record, community calls | `/flash/record` *(needs a card)* |
@@ -107,21 +116,26 @@ best-produced segment we have.
 Radio works because the hour has a shape. The dispatcher's job is not "send
 what is pending" but "pick the next segment".
 
-- **Appointment slots fire on their own schedule** and are never displaced: the
-  Opening Brief, the Closing Bell, the Scoreboard.
-- **Rotating slots are drawn in priority order**, at most one message per
-  `TELEGRAM_SEGMENT_GAP_MINUTES`, with a per-segment daily cap so no single
-  vertical takes over a slow day. A segment that just played goes to the back of
-  the queue while another has inventory — that is what produces variety without
-  anyone curating it.
-- **Interrupts jump the queue**, hard-capped per hour so a filing storm cannot
-  become the whole program.
+`next_segment` picks what plays next, and it is the whole of the variety rule:
 
-This replaces the current `announcement_batch_ready` merge, which optimises for
-the opposite thing: it waits for items to pile up and then fuses them into a
-single message. Batching was the right answer to flooding when every item was
-its own ping; a paced rundown is the better answer, because it keeps each item's
-card intact.
+- **Priority.** `SEGMENT_ORDER` puts session briefings first (appointment
+  listening), then a published Flash report, then the everyday runner
+  inventory that fills the gaps between them.
+- **Rotation.** While something else is waiting, the room never hears the same
+  kind twice running. A runner follows the briefing; a briefing does not follow
+  a briefing. No curation and no randomness — just "skip the kind you just
+  played if you can".
+- **The gap.** At most one message per `TELEGRAM_SEGMENT_GAP_MINUTES`, measured
+  from the last successful send across both delivery tables, so the clock needs
+  no state of its own.
+
+Still to add: **interrupts** that jump the queue for a halt or a material
+filing, hard-capped per hour so a filing storm cannot become the whole program.
+
+This replaced `announcement_batch_ready`, which optimised for the opposite
+thing: it waited for items to pile up and then fused them into one message.
+Batching was the right answer to flooding when every item was its own ping; a
+paced rundown is the better answer, because it keeps every item's card intact.
 
 ## Dedupe and delivery (unchanged)
 
@@ -135,10 +149,16 @@ not land:
 | Public Flash report | `telegram_channel_posts(kind="research_report", subject=public_id)` |
 | Build | `telegram_channel_posts(kind="release", subject=sha)` |
 | Memecoin replay | `memecoin_replay_posts(coin_id)` |
-| Drop page | `telegram_channel_posts(kind="drop", subject=id)` *(to build)* |
 | Market event | `telegram_channel_posts(kind="event", subject=event_id)` *(to build)* |
 
-A retry only happens if the prior row is `failed` and under `attempts`.
+A retry only happens if the prior row is `failed` and under `attempts`. A
+runner retired by the staleness window is recorded `stale`, which takes it out
+of the pending query without ever having been sent.
+
+Because a dispatch plays exactly one segment, it records exactly that one item.
+Everything else stays pending for the next turn rather than being marked
+delivered alongside it — which is also why an activity row carries the key its
+delivery needs (`entered_at` for a runner, `id` for a session report).
 
 ## Render rules
 
@@ -170,19 +190,19 @@ A retry only happens if the prior row is `failed` and under `attempts`.
 
 ## Build order
 
-1. **One-card rule in the existing formatter.** `format_update_announcement_md`
-   stops emitting a link per runner and carries a single destination. No new
-   pages; immediate improvement to what the room sees.
-2. **The drop page.** `/drops/{id}` plus a card route and a `runner_drops`
-   table, mirroring `market_session_reports` and its `card.png`. This is what
-   "New on the Board" links to.
-3. **Split the batch into segments.** Replace the `announcement_batch_ready`
-   merge with the rundown scheduler above.
-4. **Turn on the desks.** Emit `market_events` into the dispatcher so the halt
-   and filing segments have inventory; the formatter already exists.
-5. **Cards for the scoreboard and sports.** `og:image` plus a `card.png` route
+1. ~~**One-card rule.**~~ Done: every message carries one URL, and the roster
+   became one story per runner.
+2. ~~**The rundown scheduler.**~~ Done: `next_segment` plus the pacing gap
+   replaced the batched merge.
+3. **Turn on the desks.** Emit `market_events` into the dispatcher so the halt
+   and filing segments have inventory; `format_event_post_md` and the
+   `"event"` branch of `_render_segment` already exist, and nothing fills
+   `activity["events"]`.
+4. **Cards for the scoreboard and sports.** `og:image` plus a `card.png` route
    for `/flash/record`, `/calls` and `/sports/game/{id}`, mirroring
-   `_ticker_card_png`.
+   `_ticker_card_png`, then their own entries in `SEGMENT_ORDER`.
+5. **Per-segment daily caps**, so a hot day of runners cannot crowd out the
+   quieter verticals once sports and the scoreboard are in the rotation.
 
 ## Why we dropped the Dash model narration
 
@@ -224,8 +244,12 @@ the per-batch pick in `TELEGRAM_RUNNER_REPORTS_PER_RUN` (3), staggered by
 
 ## Anti-flood watch
 
-Per-runner reports are queued by `_queue_telegram_runner_reports` and capped at
-`TELEGRAM_RUNNER_REPORTS_PER_DAY`. If a hot day saturates that cap, the rest
-wait until tomorrow. Once the rundown scheduler lands, the segment gap and the
-per-segment daily caps become the primary flood control, and
-`announcement_batch_ready` retires with the merged message.
+`TELEGRAM_SEGMENT_GAP_MINUTES` (12) is the primary flood control: one message
+per dispatch, never closer together than the gap, however much is pending.
+`TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES` (180) drains the other end, retiring
+stories the room would no longer care about instead of letting a backlog play
+out hours late.
+
+Per-runner Flash reports are queued by `_queue_telegram_runner_reports` and
+capped at `TELEGRAM_RUNNER_REPORTS_PER_DAY`. If a hot day saturates that cap,
+the rest wait until tomorrow.
