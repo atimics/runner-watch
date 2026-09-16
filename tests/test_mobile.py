@@ -2433,27 +2433,43 @@ def test_first_daily_flash_report_locks_other_users_for_one_hour(
     assert late_publish["balance"] == 0
 
 
-def test_the_flash_report_workflow_is_one_shared_macro() -> None:
-    """Only the stock detail page carries the action today.
+def test_both_detail_pages_share_one_flash_report_workflow() -> None:
+    """The stock and game pages run the same macro and the same script.
 
-    Sports used to share it, but simple_sports_detail.html does not include the
-    macro, so the assertion is scoped to what actually ships rather than to a
-    contract the sports page stopped honouring.
+    The game page lost both when it moved to the simple shell, while its route
+    kept computing flash_report - so the action was built server-side every
+    request and thrown away by a two-line template.
     """
 
     root = Path(__file__).parents[1]
     ticker_template = (root / "web/templates/simple_stock_detail.html").read_text()
+    sports_template = (root / "web/templates/simple_sports_detail.html").read_text()
     action_template = (root / "web/templates/_flash_report_action.html").read_text()
     report_script = (root / "web/static/flash-report.js").read_text()
 
-    assert "flash_report_action(flash_report)" in ticker_template
-    assert "/static/flash-report.js" in ticker_template
+    for template in (ticker_template, sports_template):
+        assert "flash_report_action(flash_report)" in template
+        assert "/static/flash-report.js" in template
     assert "Generate report" in report_script
     assert "Report couldn't be generated" in report_script
     assert "data-start-url" in action_template
     assert "Sending the report to the queue" not in report_script
     assert "OpenRouter" not in action_template + report_script
     assert "X-OpenRouter-Key" not in action_template + report_script
+
+
+def test_every_page_that_renders_comments_loads_their_scripts() -> None:
+    """flash-comments.js calls window.RatiContentNotices.render, which only
+    content-notices.js defines. market_screen.html does not load it the way
+    mobile_base.html did, so a page that renders comments has to ask for both
+    or posting one throws on the live site."""
+
+    root = Path(__file__).parents[1]
+    for name in ("simple_stock_detail.html", "simple_sports_detail.html"):
+        template = (root / "web/templates" / name).read_text()
+        assert "flash_comments(" in template, name
+        assert "/static/flash-comments.js" in template, name
+        assert "/static/content-notices.js" in template, name
 
 
 def test_flash_model_label_is_shown_on_research() -> None:

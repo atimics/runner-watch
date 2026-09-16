@@ -71,7 +71,6 @@ def test_narrow_stock_rows_are_single_line(page: Page):
     assert max(item["y"] for item in children) - min(item["y"] for item in children) <= 4
 def test_chart_renders_real_points_and_empty_history(page: Page):
     screen = detail("memecoins", {"coin": fixtures.sample("memecoins"), "history": []})
-    screen.pop("quote_url")
     screen.pop("refresh_url")
     screen["series"] = [
         {"time": "2026-09-12T12:00:00Z", "value": 1},
@@ -89,7 +88,6 @@ def test_chart_renders_real_points_and_empty_history(page: Page):
 
 def test_call_requires_confirmation_and_keeps_internal_error_private(page: Page):
     screen = detail("memecoins", {"coin": fixtures.sample("memecoins"), "can_call": True})
-    screen.pop("quote_url")
     screen.pop("refresh_url")
     submitted = []
 

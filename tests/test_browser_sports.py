@@ -139,6 +139,9 @@ def _inline_static_assets(html: str) -> str:
         "live-list.js": (ROOT / "web/static/live-list.js").read_text(),
         "ticker-row.js": (ROOT / "web/static/ticker-row.js").read_text(),
         "sports-live.js": (ROOT / "web/static/sports-live.js").read_text(),
+        "content-notices.js": (ROOT / "web/static/content-notices.js").read_text(),
+        "flash-report.js": (ROOT / "web/static/flash-report.js").read_text(),
+        "flash-comments.js": (ROOT / "web/static/flash-comments.js").read_text(),
     }
 
     def script(match: re.Match[str]) -> str:

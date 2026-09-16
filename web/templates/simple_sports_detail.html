@@ -1,2 +1,15 @@
 {% extends "market_screen.html" %}
+{% from "_flash_report_action.html" import flash_report_action %}
 {% set screen = simple_market_detail('sports', event, my_pick=my_pick) %}
+{% block detail_comments %}
+{% from "_flash_comments.html" import flash_comments %}
+{{ flash_comments('game', event.id, comments|default([]), comment_count|default(0), user, comment_generation_enabled|default(false), '/login?next=' ~ (sports_path_prefix|default('')) ~ '/game/' ~ event.id ~ '#discussion') }}
+{% endblock %}
+{% block detail_extra %}
+{% if flash_report and (flash_report.href or user) %}
+<section class="ticker-support" aria-label="Research">
+  <div><p class="eyebrow">RESEARCH</p><h2>Report on this game</h2>{{ flash_report_action(flash_report) }}</div>
+</section>
+{% endif %}
+{% endblock %}
+{% block detail_scripts %}<script src="/static/content-notices.js?v={{ static_version }}" defer></script><script src="/static/flash-report.js?v={{ static_version }}" defer></script><script src="/static/flash-comments.js?v={{ static_version }}" defer></script>{% endblock %}

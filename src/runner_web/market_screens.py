@@ -406,9 +406,6 @@ def detail(
         result["note"] = "Price history"
         if market == "stocks":
             result["chart_url"] = f"/api/screens/stocks/{identifier}/chart"
-            result["quote_url"] = f"/api/screens/stocks/{identifier}/quote"
-        else:
-            result["quote_url"] = f"/api/screens/memecoins/{identifier}/quote"
         volume = source.get("volume_label") if market == "memecoins" else None
         if volume:
             result["facts"].append({"label": "24h volume", "value": volume})
