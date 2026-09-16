@@ -178,46 +178,63 @@ def _url_payload(request: urllib.request.Request) -> dict[str, Any]:
     return json.loads(body)
 
 
-def test_batched_update_renders_cheetah_state_price_and_link() -> None:
-    message = telegram.format_update_announcement_md(
+def test_a_runner_story_leads_with_what_the_name_is_doing() -> None:
+    message = telegram.format_runner_story_md(
         {
-            "runners": [
-                {
-                    "ticker": "SOUN",
-                    "tag": "RUNNING",
-                    "price": 8.42,
-                    "change_pct": 18.3,
-                    "relative_volume": 3.4,
-                    "score": 88,
-                }
-            ],
-            "reports": [],
-            "events": [],
+            "ticker": "SOUN",
+            "tag": "RUNNING",
+            "price": 8.42,
+            "change_pct": 18.3,
+            "relative_volume": 3.4,
+            "score": 88,
+            "signals": ["Gap up on 4\u00d7 average volume", "Holding the opening range"],
         },
         origin="https://runners.rati.chat",
     )
     lines = message.split("\n")
-    assert lines[0] == "\U0001f406 *1 new on the board*"
-    assert "\u26a1 *SOUN*  \u2014  RUNNING" in message, message
+    assert lines[0] == "\u26a1 *$SOUN is running*"
+    assert "Gap up on 4\u00d7 average volume  \u00b7  Holding the opening range" in message
     assert "$8\\.42" in message, message
     assert "*\\+18\\.3%" in message and "*3\\.4\u00d7*" in message and "score *88*" in message
+    assert message.count("https://runners.rati.chat") == 1
     assert message.endswith("[$SOUN](https://runners.rati.chat/t/SOUN)"), message
 
 
-def test_batched_update_counts_and_links_every_runner() -> None:
-    two = telegram.format_update_announcement_md(
-        {
-            "runners": [
-                {"ticker": "A", "tag": "RUNNING", "score": 88},
-                {"ticker": "B", "tag": "SETUP", "score": 60},
-            ],
-            "reports": [],
-            "events": [],
-        },
-        origin="http://app.test",
+@pytest.mark.parametrize(
+    ("tag", "headline"),
+    [
+        ("RUNNING", "*$AAA is running*"),
+        ("SETUP", "*$AAA is setting up*"),
+        ("EXTENDED", "*$AAA is extended*"),
+        ("AVOID", "*$AAA is flagged*"),
+        ("WATCH", "*$AAA is worth watching*"),
+        ("PAUSED", "*$AAA is paused*"),
+        ("", "*$AAA is on the board*"),
+    ],
+)
+def test_the_story_headline_follows_the_state_tag(tag: str, headline: str) -> None:
+    """A name with a verb reads like news; a ticker in a table does not."""
+
+    message = telegram.format_runner_story_md({"ticker": "AAA", "tag": tag}, origin="http://a.test")
+    assert headline in message
+
+
+def test_a_runner_story_survives_signals_stored_as_json() -> None:
+    """The snapshot column arrives as a JSON string, not a list."""
+
+    message = telegram.format_runner_story_md(
+        {"ticker": "AAA", "tag": "RUNNING", "signals": '["Volume surge", "New high", "Third"]'},
+        origin="http://a.test",
     )
-    assert "2 new on the board" in two
-    assert "/t/B" in two and "/t/A" in two
+    assert "Volume surge  \u00b7  New high" in message
+    assert "Third" not in message  # two reasons is a line; three is a list
+    _assert_parses(message)
+
+
+def test_a_runner_story_is_empty_without_a_ticker() -> None:
+    assert telegram.format_runner_story_md({}, origin="http://app.test") == ""
+    assert telegram.format_runner_story_md(None, origin="http://app.test") == ""
+    assert telegram.format_runner_story_md({"ticker": " "}, origin="http://app.test") == ""
 
 
 def test_market_report_link_falls_back_to_base_when_day_unknown() -> None:
@@ -235,14 +252,27 @@ def test_market_report_link_falls_back_to_base_when_day_unknown() -> None:
     assert message.split("\n\n")[-1] == "[Open report](http://app.test)"
 
 
-def test_public_report_includes_research_link_when_public_id_present() -> None:
+def test_public_report_links_the_report_page_and_nothing_else() -> None:
+    """The report page is the one that carries a card, and the ticker is already
+    named in the header, so a second link to /t/ only spent an unpreviewable
+    line."""
+
     message = telegram.format_public_report_post_md(
         {"ticker": "CAST", "public_id": "pub-one", "headline": "report"},
         origin="http://app.test",
     )
-    assert "http://app.test/t/CAST" in message
-    # Hyphens in URLs are MDV2 escaped to keep escaping safe across the message.
-    assert "http://app.test/research/pub" in message
+    assert "$CAST" in message
+    assert message.count("http://app.test") == 1
+    assert message.endswith("[Read report](http://app.test/research/pub-one)"), message
+
+
+def test_public_report_falls_back_to_the_ticker_page_without_a_public_id() -> None:
+    message = telegram.format_public_report_post_md(
+        {"ticker": "CAST", "public_id": "", "headline": "report"},
+        origin="http://app.test",
+    )
+    assert message.count("http://app.test") == 1
+    assert message.endswith("[$CAST](http://app.test/t/CAST)"), message
 
 
 def test_event_post_lists_origin_and_source() -> None:
@@ -335,11 +365,7 @@ def test_every_rendered_post_parses_as_markdown_v2() -> None:
         "relative_volume": 3.4,
         "score": 88,
     }
-    _assert_parses(
-        telegram.format_update_announcement_md(
-            {"runners": [runner], "reports": [], "events": []}, origin=origin
-        )
-    )
+    _assert_parses(telegram.format_runner_story_md(runner, origin=origin))
     _assert_parses(
         telegram.format_market_report_post_md(
             {
@@ -387,12 +413,8 @@ def test_a_price_always_renders_a_decimal_point_and_escapes_it() -> None:
 
 
 def test_strip_markdown_v2_gives_the_reader_words_not_markup() -> None:
-    message = telegram.format_update_announcement_md(
-        {
-            "runners": [{"ticker": "SOUN", "tag": "RUNNING", "price": 8.42, "score": 88}],
-            "reports": [],
-            "events": [],
-        },
+    message = telegram.format_runner_story_md(
+        {"ticker": "SOUN", "tag": "RUNNING", "price": 8.42, "score": 88},
         origin="https://runners.rati.chat",
     )
     plain = telegram.strip_markdown_v2(message)
@@ -434,15 +456,14 @@ def test_release_notes_are_trimmed_before_escaping() -> None:
     _assert_parses(message)
 
 
-def test_a_long_batch_drops_whole_cards_instead_of_splitting_one() -> None:
-    message = telegram.format_update_announcement_md(
+def test_a_long_story_drops_whole_blocks_instead_of_splitting_one() -> None:
+    message = telegram.format_runner_story_md(
         {
-            "runners": [
-                {"ticker": f"TICK{index}", "tag": "RUNNING", "price": 8.42, "score": 61}
-                for index in range(400)
-            ],
-            "reports": [],
-            "events": [],
+            "ticker": "SOUN",
+            "tag": "RUNNING",
+            "price": 8.42,
+            "score": 61,
+            "signals": ["a reason that runs long " * 400],
         },
         origin="https://runners.rati.chat",
     )

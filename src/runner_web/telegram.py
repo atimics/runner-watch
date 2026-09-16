@@ -219,25 +219,38 @@ def select_new_runners(
     return eligible[: max(0, limit)]
 
 
-def announcement_batch_ready(
-    count: int,
-    oldest_age_minutes: float,
-    *,
-    min_items: int = DEFAULT_ANNOUNCE_BATCH_MIN,
-    debounce_minutes: int = DEFAULT_ANNOUNCE_DEBOUNCE_MINUTES,
-) -> bool:
-    """Decide whether enough has piled up to announce it.
+# The rundown order. Session briefings are appointment listening and go first;
+# a published Flash report is the next most interesting thing the desk has; a
+# new runner is the everyday inventory that fills the gaps between them.
+SEGMENT_ORDER = ("market_report", "research_report", "runner")
 
-    A batch goes out as soon as it reaches the floor. A lone item waits for more
-    to arrive, so a single runner does not cost a message, but it is not stranded
-    either: once it is older than the debounce window it goes out on its own.
+
+def next_segment(pending, *, last_kind=""):
+    """Pick the one kind to play next.
+
+    Priority picks what matters most, and rotation keeps the room from hearing
+    the same kind twice running while another has something to say. That is the
+    whole of the variety rule: it needs no curation and no randomness.
     """
 
-    if count <= 0:
+    available = [kind for kind in SEGMENT_ORDER if pending.get(kind)]
+    if not available:
+        return ""
+    if last_kind in available and len(available) > 1:
+        return next(kind for kind in available if kind != last_kind)
+    return available[0]
+
+
+def story_is_stale(age_minutes, *, max_age_minutes):
+    """A runner nobody heard about for hours is not news any more.
+
+    Without this the queue drains oldest-first forever and the room is told
+    about a move that finished before lunch.
+    """
+
+    if max_age_minutes <= 0:
         return False
-    if count >= max(1, min_items):
-        return True
-    return oldest_age_minutes >= max(0, debounce_minutes)
+    return age_minutes > max_age_minutes
 
 
 def _api_call(
@@ -518,6 +531,15 @@ def _rise_emoji(change):
         return ""
 
 
+def _lead_entry(entries):
+    """The one entry a story is about: highest score, else the first given."""
+
+    rows = [row for row in (entries or []) if isinstance(row, dict) and row.get("ticker")]
+    if not rows:
+        return None
+    return max(rows, key=lambda row: _score(row))
+
+
 def _format_metrics_line(entry):
     """The inline metrics run.
 
@@ -581,19 +603,15 @@ def format_market_report_post_md(report, *, origin):
         blocks.append(headline)
     if summary and summary != headline:
         blocks.append(summary)
-    leaders = report.get("leaders") or []
-    if isinstance(leaders, list) and leaders:
-        lines = []
-        for leader in leaders[:MARKET_REPORT_LEADER_LIMIT]:
-            if not isinstance(leader, dict):
-                continue
-            ticker = escape_markdown_v2(str(leader.get("ticker") or "").strip().upper())
-            if not ticker:
-                continue
-            metrics = _format_metrics_line(leader)
-            lines.append((f"*{ticker}* " + (metrics or "")).strip())
-        if lines:
-            blocks.append("\n".join(lines))
+    # One story, not a roster. A list of three tickers reads like a table and
+    # none of them can be previewed anyway, so the briefing names who is out
+    # front and sends the reader to the report for the rest.
+    leader = _lead_entry(report.get("leaders"))
+    if leader is not None:
+        ticker = escape_markdown_v2(str(leader.get("ticker") or "").strip().upper())
+        lead_line = f"*{ticker}* leads the pack"
+        metrics = _format_metrics_line(leader)
+        blocks.append(lead_line + ("\n" + metrics if metrics else ""))
     base = origin.rstrip("/")
     day = str(report.get("report_day") or "").strip()
     slug = "pre" if raw_type == "pre_market" else "post"
@@ -618,11 +636,14 @@ def format_public_report_post_md(report, *, origin):
     headline = escape_markdown_v2(str(report.get("headline") or "").strip())
     if headline:
         blocks.append(headline)
-    if not sports and token:
-        blocks.append(markdown_link(f"${token}", f"{base}/t/{token}"))
+    # One URL per message, and the report page is the one that carries a card.
+    # The ticker is already named in the header, so a second link to /t/ only
+    # spent a line the reader could not preview.
     public_id = str(report.get("public_id") or "").strip()
     if public_id:
         blocks.append(markdown_link("Read report", f"{base}/research/{public_id}"))
+    elif not sports and token:
+        blocks.append(markdown_link(f"${token}", f"{base}/t/{token}"))
     return _join_blocks(blocks)
 
 
@@ -648,41 +669,65 @@ def format_event_post_md(event, *, origin):
     return _join_blocks(blocks)
 
 
-def format_update_announcement_md(activity, *, origin):
-    base = origin.rstrip("/")
-    runners = [row for row in (activity.get("runners") or []) if row.get("ticker")]
-    reports = list(activity.get("reports") or [])
-    events = list(activity.get("events") or [])
-    total = len(runners) + len(reports) + len(events)
-    if total == 0:
+# What the room is told a runner is doing, by the state tag the list shows.
+# A list of tickers reads like a table; one name with a verb reads like news.
+_STORY_HEADLINES = {
+    "RUNNING": "{ticker} is running",
+    "SETUP": "{ticker} is setting up",
+    "EXTENDED": "{ticker} is extended",
+    "AVOID": "{ticker} is flagged",
+    "WATCH": "{ticker} is worth watching",
+    "PAUSED": "{ticker} is paused",
+}
+
+
+def format_runner_story_md(entry, *, origin):
+    """One runner, one story, one card.
+
+    A runner goes out on its own rather than inside a roster: the room gets a
+    name, what it is doing, why it surfaced, and a link that previews the
+    ticker page. Several new runners become several messages spaced apart by
+    the dispatcher, which is what makes the channel read as a program rather
+    than a dump.
+    """
+
+    if not entry:
         return ""
-    header = (
-        "\U0001F406 *1 new on the board*"
-        if total == 1
-        else f"\U0001F406 *{total} new on the board*"
-    )
-    blocks = [header]
-    for entry in runners:
-        ticker_raw = str(entry.get("ticker") or "").strip().upper()
-        ticker = escape_markdown_v2(ticker_raw)
-        emoji = _state_emoji(entry.get("tag") or "")
-        head = (emoji + " " if emoji else "") + f"*{ticker}*"
-        state = escape_markdown_v2(str(entry.get("tag") or ""))
-        if state:
-            head += f"  \u2014  {state}"
-        blocks.append(head)
-        metrics = _format_metrics_line(entry)
-        if metrics:
-            blocks.append(metrics)
-        blocks.append(markdown_link(f"${ticker_raw}", f"{base}/t/{ticker_raw}"))
-    for event in events:
-        blocks.append(format_event_post_md(event, origin=origin))
-    for report in reports:
-        if report.get("kind") == "market_report":
-            blocks.append(format_market_report_post_md(report, origin=origin))
-        else:
-            blocks.append(format_public_report_post_md(report, origin=origin))
+    ticker_raw = str(entry.get("ticker") or "").strip().upper()
+    if not ticker_raw:
+        return ""
+    ticker = escape_markdown_v2(ticker_raw)
+    tag = str(entry.get("tag") or "").strip().upper()
+    emoji = _state_emoji(tag) or "\U0001F406"
+    template = _STORY_HEADLINES.get(tag, "{ticker} is on the board")
+    blocks = [emoji + " *" + template.format(ticker="$" + ticker) + "*"]
+    reason = _story_reason(entry)
+    if reason:
+        blocks.append(reason)
+    metrics = _format_metrics_line(entry)
+    if metrics:
+        blocks.append(metrics)
+    blocks.append(markdown_link(f"${ticker_raw}", f"{origin.rstrip('/')}/t/{ticker_raw}"))
     return _join_blocks(blocks)
+
+
+def _story_reason(entry):
+    """Why this name surfaced, in the scanner's own words.
+
+    The signals the scan already recorded are the most interesting line in the
+    message, and they cost nothing to carry.
+    """
+
+    signals = entry.get("signals")
+    if isinstance(signals, str):
+        try:
+            signals = json.loads(signals)
+        except (TypeError, ValueError):
+            signals = []
+    reasons = [str(item).strip() for item in (signals or []) if str(item).strip()]
+    if not reasons:
+        return ""
+    return escape_markdown_v2("  \u00b7  ".join(reasons[:2]))
 
 
 def format_release_announcement_md(version, notes, *, origin):

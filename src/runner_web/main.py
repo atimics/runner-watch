@@ -316,20 +316,31 @@ from runner_web.telegram import (
     alerts_enabled as telegram_alerts_enabled,
 )
 from runner_web.telegram import (
-    announcement_batch_ready,
-    select_new_runners,
+    config_from_env as telegram_config_from_env,
 )
 from runner_web.telegram import (
-    config_from_env as telegram_config_from_env,
+    format_event_post_md as telegram_format_event_post_md,
+)
+from runner_web.telegram import (
+    format_market_report_post_md as telegram_format_market_report_post_md,
+)
+from runner_web.telegram import (
+    format_public_report_post_md as telegram_format_public_report_post_md,
 )
 from runner_web.telegram import (
     format_release_announcement_md as telegram_format_release_announcement_md,
 )
 from runner_web.telegram import (
-    format_update_announcement_md as telegram_format_update_announcement_md,
+    format_runner_story_md as telegram_format_runner_story_md,
+)
+from runner_web.telegram import (
+    next_segment as telegram_next_segment,
 )
 from runner_web.telegram import (
     release_announcements_enabled as telegram_release_announcements_enabled,
+)
+from runner_web.telegram import (
+    select_new_runners,
 )
 from runner_web.telegram import (
     send_post as telegram_send_post,
@@ -339,6 +350,9 @@ from runner_web.telegram import (
 )
 from runner_web.telegram import (
     set_reaction as set_telegram_reaction,
+)
+from runner_web.telegram import (
+    story_is_stale as telegram_story_is_stale,
 )
 from runner_web.telegram_chat import (
     CHEETAH_PERSONA,
@@ -11303,7 +11317,7 @@ def _pending_runner_alert_rows(database: Any, *, limit: int) -> list[dict[str, A
     rows = database.execute(
         """
         SELECT p.ticker,p.entered_at,p.price,
-               s.score,s.change_pct,s.relative_volume,
+               s.score,s.change_pct,s.relative_volume,s.signals_json,
                s.trade_state,s.stage,s.rug_level
         FROM pulse_entries p
         LEFT JOIN scan_snapshots s ON s.id=p.snapshot_id
@@ -11575,10 +11589,39 @@ def _pending_research_report_rows(database: Any, *, limit: int) -> list[dict[str
     return [dict(row) for row in rows]
 
 
-TELEGRAM_ANNOUNCE_BATCH_MIN = max(1, int(os.getenv("TELEGRAM_ANNOUNCE_BATCH_MIN", "2")))
-TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES = max(
-    0, int(os.getenv("TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES", "30"))
+# The rundown clock. One message per dispatch, no closer together than the gap,
+# so several new runners arrive as a spaced sequence of stories rather than one
+# roster. A runner older than the staleness window is retired unheard: by then
+# the move it describes is over.
+TELEGRAM_SEGMENT_GAP_MINUTES = max(1, int(os.getenv("TELEGRAM_SEGMENT_GAP_MINUTES", "12")))
+TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES = max(
+    0, int(os.getenv("TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES", "180"))
 )
+
+def _last_channel_post(database: Any) -> tuple[datetime | None, str]:
+    """When the room last heard from us, and what it heard.
+
+    Both delivery tables stamp ``updated_at`` on a successful send, so the gap
+    between segments and the rotation away from the last kind need no state of
+    their own.
+    """
+
+    runner_at = _stamp(
+        database.execute(
+            "SELECT MAX(updated_at) FROM telegram_alert_deliveries WHERE status='sent'"
+        ).fetchone()[0]
+    )
+    row = database.execute(
+        "SELECT kind,updated_at FROM telegram_channel_posts WHERE status='sent' "
+        "ORDER BY updated_at DESC LIMIT 1"
+    ).fetchone()
+    channel_at = _stamp(row["updated_at"]) if row else None
+    if runner_at and (channel_at is None or runner_at >= channel_at):
+        return runner_at, "runner"
+    if channel_at:
+        return channel_at, str(row["kind"])
+    return None, ""
+
 
 _MARKET_REPORT_BASELINE_SQL = (
     "SELECT 'market_report',id,'baseline',0,'pre-existing report',?,? "
@@ -11645,6 +11688,11 @@ def _activity_payload(
             "relative_volume": entry.get("relative_volume"),
             "score": entry.get("score"),
             "tag": _tag(entry),
+            # The scanner's own reasons are the most interesting line a story
+            # can carry, and they are already on the snapshot.
+            "signals": entry.get("signals_json"),
+            # Carried so one row can both render a story and key its delivery.
+            "entered_at": entry.get("entered_at"),
             "url": absolute(
                 RUNNERS_ORIGIN, f"/t/{str(entry.get('ticker') or '').upper()}"
             ),
@@ -11658,6 +11706,10 @@ def _activity_payload(
         reports.append(
             {
                 "kind": "market_report",
+                # Carried so one row can both render a segment and key its
+                # delivery; without it the post is recorded against an empty
+                # subject and the report goes out again on every dispatch.
+                "id": report.get("id"),
                 "ticker": "",
                 "label": report.get("label"),
                 "headline": report.get("headline"),
@@ -11687,21 +11739,72 @@ def _activity_payload(
     return {"runners": activity_runners, "reports": reports}
 
 
-def _compose_update_announcement(activity: dict[str, Any]) -> str:
-    """Render the batched announcement in Telegram Markdown V2."""
+_RESULT_KEYS = {
+    "runner": "runners",
+    "market_report": "market_reports",
+    "research_report": "research_reports",
+}
 
-    markdown = telegram_format_update_announcement_md(activity, origin=RUNNERS_ORIGIN)
-    return markdown
+
+def _record_segment_outcome(
+    kind: str,
+    item: dict[str, Any],
+    *,
+    status: str,
+    detail: str | None = None,
+) -> None:
+    """Write down what happened to the one item this segment carried.
+
+    Only that item is recorded, so everything else stays pending for the next
+    turn of the rundown rather than being marked delivered alongside it.
+    """
+
+    with connection() as database:
+        if kind == "runner":
+            _record_runner_alert_delivery(database, [item], status=status, detail=detail)
+        elif kind == "market_report":
+            _record_channel_post(
+                database, "market_report", str(item.get("id") or ""), status=status, detail=detail
+            )
+        elif kind == "research_report":
+            _record_channel_post(
+                database,
+                "research_report",
+                str(item.get("public_id") or ""),
+                status=status,
+                detail=detail,
+            )
+
+
+def _render_segment(kind: str, item: dict[str, Any]) -> str:
+    """Render the one thing this segment is about."""
+
+    if kind == "runner":
+        return telegram_format_runner_story_md(item, origin=RUNNERS_ORIGIN)
+    if kind == "market_report":
+        return telegram_format_market_report_post_md(item, origin=RUNNERS_ORIGIN)
+    if kind == "research_report":
+        return telegram_format_public_report_post_md(item, origin=RUNNERS_ORIGIN)
+    if kind == "event":
+        return telegram_format_event_post_md(item, origin=RUNNERS_ORIGIN)
+    return ""
 
 
 def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]:
-    """Post one batched update announcement for everything that has landed.
+    """Play the next segment of the rundown, at most one per call.
 
-    Runners, frozen session reports, and newly public research reports used to go
-    out as separate messages, which turned a busy morning into a wall of pings.
-    They are gathered into one activity list now, and the room gets a single
-    announcement once it is worth making. A lone item waits for company but is
-    flushed on its own after the debounce window, so nothing is stranded.
+    The room used to get everything pending fused into a single announcement:
+    one message, a roster of tickers, and — because Telegram previews only the
+    first URL — one arbitrary card for the lot. Now each thing is its own story
+    with its own card, and the dispatcher paces them: no two messages closer
+    than ``TELEGRAM_SEGMENT_GAP_MINUTES``, and the next kind rotates away from
+    the last one whenever something else is waiting. Several new runners arrive
+    as a spaced sequence rather than a list.
+
+    Nothing is stranded by the pacing: the sweep worker calls this on a timer,
+    so the queue drains a story at a time. A runner that waited past
+    ``TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES`` is retired unheard instead, since
+    by then the move it describes is over.
     """
 
     result: dict[str, Any] = {
@@ -11778,73 +11881,75 @@ def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]
             count = len(activity["runners"]) + len(activity["reports"])
             result["pending"] = count
             result["announcement"]["count"] = count
+            # A runner nobody heard about for hours is not news. Retire it so
+            # the queue never drains a stale move ahead of a fresh one.
+            stale = [
+                entry
+                for entry in activity["runners"]
+                if telegram_story_is_stale(
+                    _age_minutes(entry.get("at"), current),
+                    max_age_minutes=TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES,
+                )
+            ]
+            if stale:
+                stale_keys = {entry["ticker"] for entry in stale}
+                with connection() as database:
+                    _record_runner_alert_delivery(
+                        database, stale, status="stale", detail="older than the story window"
+                    )
+                activity["runners"] = [
+                    row for row in activity["runners"] if row["ticker"] not in stale_keys
+                ]
+                count = len(activity["runners"]) + len(activity["reports"])
+                result["pending"] = count
+                result["announcement"]["count"] = count
+                result["announcement"]["stale"] = len(stale)
             if count == 0:
                 result["status"] = "empty"
                 result["announcement"]["status"] = "empty"
                 return result
-            ages = [
-                _age_minutes(row.get("at"), current)
-                for row in [*activity["runners"], *activity["reports"]]
-            ]
-            oldest = max(ages) if ages else 0.0
-            if not announcement_batch_ready(
-                count,
-                oldest,
-                min_items=TELEGRAM_ANNOUNCE_BATCH_MIN,
-                debounce_minutes=TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES,
-            ):
+            with connection() as database:
+                last_at, last_kind = _last_channel_post(database)
+            since = _age_minutes(last_at, current) if last_at is not None else None
+            if since is not None and since < TELEGRAM_SEGMENT_GAP_MINUTES:
+                # Still inside the gap. The sweep worker comes back on a timer,
+                # so the rest of the rundown plays out on its own.
                 result["status"] = "waiting"
                 result["announcement"]["status"] = "waiting"
                 return result
-            text = _compose_update_announcement(activity)
+            pending: dict[str, list[dict[str, Any]]] = {
+                "runner": activity["runners"],
+                "market_report": [
+                    row for row in activity["reports"] if row.get("kind") == "market_report"
+                ],
+                "research_report": [
+                    row for row in activity["reports"] if row.get("kind") != "market_report"
+                ],
+            }
+            kind = telegram_next_segment(pending, last_kind=last_kind)
+            item = pending[kind][0] if kind else None
+            text = _render_segment(kind, item) if item else ""
+            result["announcement"]["kind"] = kind
+            if not text:
+                result["status"] = "empty"
+                result["announcement"]["status"] = "empty"
+                return result
             try:
                 telegram_send_post(config, text)
             except Exception as exc:
+                LOG.warning("Telegram %s segment failed: %s", kind, exc)
                 result["status"] = "failed"
                 result["announcement"]["status"] = "failed"
-                for key in ("runners", "market_reports", "research_reports"):
-                    if result[key]["status"] == "pending":
-                        result[key]["status"] = "failed"
-                with connection() as database:
-                    _record_runner_alert_delivery(
-                        database, runners, status="failed", detail=str(exc)[:500]
-                    )
-                    for report in market:
-                        _record_channel_post(
-                            database,
-                            "market_report",
-                            str(report.get("id") or ""),
-                            status="failed",
-                            detail=str(exc)[:500],
-                        )
-                    for report in research:
-                        _record_channel_post(
-                            database,
-                            "research_report",
-                            str(report.get("public_id") or ""),
-                            status="failed",
-                            detail=str(exc)[:500],
-                        )
-                LOG.warning("Telegram update announcement failed: %s", exc)
+                _record_segment_outcome(kind, item, status="failed", detail=str(exc)[:500])
+                if result[_RESULT_KEYS[kind]]["status"] == "pending":
+                    result[_RESULT_KEYS[kind]]["status"] = "failed"
                 return result
+            _record_segment_outcome(kind, item, status="sent")
+            if result[_RESULT_KEYS[kind]]["status"] == "pending":
+                result[_RESULT_KEYS[kind]]["status"] = "sent"
+            runners = [item] if kind == "runner" else []
             result["status"] = "sent"
             result["announcement"]["status"] = "sent"
-            with connection() as database:
-                _record_runner_alert_delivery(database, runners, status="sent")
-                for report in market:
-                    _record_channel_post(
-                        database, "market_report", str(report.get("id") or ""), status="sent"
-                    )
-                for report in research:
-                    _record_channel_post(
-                        database,
-                        "research_report",
-                        str(report.get("public_id") or ""),
-                        status="sent",
-                    )
-            for key in ("runners", "market_reports", "research_reports"):
-                if result[key]["status"] == "pending":
-                    result[key]["status"] = "sent"
             result["reports"] = _queue_telegram_runner_reports(
                 [str(entry.get("ticker") or "") for entry in runners]
             )
