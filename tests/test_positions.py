@@ -105,44 +105,48 @@ def test_public_call_freezes_entry_and_exit_marks(tmp_path: Path, monkeypatch: M
 
 
 def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
+    """Calls, not positions or hearts.
+
+    The retired interactions are checked against every shipped template rather
+    than one page, so the guard cannot go stale by outliving whichever template
+    it happened to name.
+    """
+
     root = Path(__file__).parents[1]
-    ticker = (root / "web/templates/ticker.html").read_text()
-    ticker_script = (root / "web/static/ticker-detail.js").read_text()
+    detail = (root / "web/templates/simple_stock_detail.html").read_text()
+    screen = (root / "web/templates/market_screen.html").read_text()
+    shipped = "\n".join(path.read_text() for path in (root / "web/templates").glob("*.html"))
     flash_action = (root / "web/templates/_flash_report_action.html").read_text()
     flash_script = (root / "web/static/flash-report.js").read_text()
     alpha = (root / "web/templates/community.html").read_text()
     alpha += (root / "web/templates/_alpha_ledger.html").read_text()
     navigation = (root / "web/templates/mobile_base.html").read_text()
     app_source = (root / "src/runner_web/main.py").read_text()
-    radar = (root / "web/templates/radar.html").read_text()
 
-    assert "Make Call" in ticker
-    assert "Post as" not in ticker
-    assert "callerIdentity" not in ticker
-    assert "swapCommentAlias" not in ticker
-    assert "Swap this thread" not in ticker
+    assert "Make Call" in screen
+    assert "flash_report_action(flash_report)" in detail
+    assert "flash.model" not in detail
+    assert "Post as" not in shipped
+    assert "callerIdentity" not in shipped
+    assert "swapCommentAlias" not in shipped
+    assert "Swap this thread" not in shipped
+    assert "Entry time" not in shipped
+    assert "Add exit" not in shipped
+    assert "heartButton" not in shipped
     assert "/api/caller-identities" not in app_source
     assert "/alias/swap" not in app_source
-    assert "Public · stamped" in ticker
-    assert "Entry time" not in ticker
-    assert "Add exit" not in ticker
-    assert "flash_report_action(flash_report)" in ticker
     assert "const REPORT_COST = 100" in flash_script
     assert "commissionButton" in flash_action
-    assert "Flash earned" in ticker_script
+    assert "Flash earned" in alpha
     assert "call.reward_label" in alpha
-    assert "flash.model" not in ticker
     assert "🐺" in alpha
     assert "open Calls" in alpha
     assert "data-alpha-reaction" not in alpha
     assert "call.return_pct" in alpha
     assert "heart" not in alpha.lower()
-    assert "heartButton" not in ticker
     assert "<span>List</span>" in navigation
     assert "<span>Map</span>" in navigation
     assert "My Calls" in navigation
     assert '@app.post("/api/calls/{ticker}")' in app_source
     assert '@app.post("/api/positions/' not in app_source
     assert '@app.post("/api/heart/{ticker}")' not in app_source
-    assert "My Radar" not in radar
-    assert "events from the board" in radar

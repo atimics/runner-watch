@@ -78,7 +78,18 @@ def test_policy_manifest_ignores_internal_and_other_product_sources() -> None:
 
 
 def test_sports_does_not_accept_or_publish_human_written_comments() -> None:
-    template = (ROOT / "web/templates/sports_game.html").read_text()
+    # Every shipped sports surface, not one page: the guard is about the
+    # product rule, and naming a single template let it outlive that page.
+    template = "\n".join(
+        (ROOT / "web/templates" / name).read_text()
+        for name in (
+            "simple_sports_detail.html",
+            "sports.html",
+            "sports_radar.html",
+            "sports_alpha.html",
+            "_sports_game_decision.html",
+        )
+    )
     application = (ROOT / "src/runner_web/main.py").read_text()
 
     assert "<textarea" not in template
