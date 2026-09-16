@@ -148,10 +148,10 @@ def test_ticker_page_advertises_its_card(
 def test_ticker_card_route_and_meta_are_public() -> None:
     root = Path(__file__).parents[1]
     source = (root / "src/runner_web/main.py").read_text()
-    template = (root / "web/templates/ticker.html").read_text()
+    # The share meta lives on the shell the live ticker page extends.
+    template = (root / "web/templates/market_screen.html").read_text()
 
     assert '@app.get("/t/{ticker}/card.png")' in source
     assert "def ticker_share(" in source
     for tag in ("og:title", "og:description", "og:image", "twitter:card"):
         assert tag in template
-    assert "block page_description" in template

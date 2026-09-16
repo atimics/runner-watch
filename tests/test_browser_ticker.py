@@ -118,7 +118,7 @@ def _rendered_ticker(
     request = _request()
     response = web_main.templates.TemplateResponse(
         request=request,
-        name="ticker.html",
+        name="simple_stock_detail.html",
         context=web_main.page_context(
             request,
             None,
@@ -155,7 +155,16 @@ def _rendered_ticker(
     html = html.replace("<head>", '<head><base href="http://app.test/">')
     html = html.replace("</head>", f"<style>{styles}</style></head>")
     if inline_script:
-        for script_name in ("content-notices.js", "flash-comments.js", "ticker-detail.js"):
+        # Every script the live page pulls, not just the ones this suite
+        # drives: the catch-all route answers each request with the page HTML,
+        # so a script left external parses as HTML and breaks the page.
+        for script_name in (
+            "content-notices.js",
+            "flash-comments.js",
+            "market-screen.js",
+            "ticker-map.js",
+            "flash-report.js",
+        ):
             script = (ROOT / "web/static" / script_name).read_text()
             html = re.sub(
                 rf'<script src="/static/{re.escape(script_name)}[^\"]*"[^>]*></script>',
@@ -163,49 +172,6 @@ def _rendered_ticker(
                 html,
             )
     return re.sub(r'<link rel="stylesheet"[^>]*>', "", html)
-
-
-def test_model_path_receipt_stays_compact_and_keeps_risk_separate(page: Page) -> None:
-    page.set_viewport_size({"width": 390, "height": 844})
-    page.set_content(_rendered_ticker(), wait_until="domcontentloaded")
-
-    card = page.locator(".model-path-card")
-    risk = page.locator(".risk-decision")
-    assert card.is_visible()
-    assert "Model estimates" in card.inner_text()
-    assert "Actual outcomes can differ" in card.inner_text()
-    assert [
-        " ".join(text.split())
-        for text in card.locator(".model-path-outcomes > div").all_inner_texts()
-    ] == ["15% −4% first", "31% No barrier", "54% +8% first"]
-    assert card.bounding_box()["height"] < 170
-    assert risk.bounding_box()["y"] > card.bounding_box()["y"] + card.bounding_box()["height"]
-    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
-
-
-@pytest.mark.parametrize(
-    ("values", "display"),
-    [
-        ((None, None, None), ["unknown", "unknown", "unknown"]),
-        ((0, 0, 0), ["0", "0", "0%"]),
-        ((67, 42, 31), ["67", "42", "31%"]),
-    ],
-)
-def test_ticker_risk_readings_keep_missing_values_and_zero_distinct(
-    page: Page, values: tuple[float | None, ...], display: list[str]
-) -> None:
-    page.set_viewport_size({"width": 390, "height": 844})
-    page.set_content(
-        _rendered_ticker(
-            current_overrides=dict(
-                zip(("setup_score", "rug_score", "drawdown_52w_pct"), values, strict=True)
-            )
-        ),
-        wait_until="domcontentloaded",
-    )
-
-    assert page.locator(".risk-grid b").all_inner_texts() == display
-    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
 
 
 @pytest.mark.parametrize(
@@ -595,84 +561,3 @@ def test_pending_avatar_request_stays_with_its_account(page: Page) -> None:
     )
     assert len(requests) == 3
     assert requests[0] == requests[2]
-
-
-def test_live_quote_replaces_the_scan_price_and_shows_the_previous_close(page: Page) -> None:
-    def quote(route: Route) -> None:
-        route.fulfill(
-            status=200,
-            content_type="application/json",
-            body=json.dumps(
-                {
-                    "ticker": "TEST",
-                    "price": 0.8421,
-                    "observed_at": "2026-09-02T12:32:00+00:00",
-                    "session": "PRE-MARKET",
-                    "previous_close": 0.7,
-                    "change_pct": 20.3,
-                    "fresh": True,
-                }
-            ),
-        )
-
-    page.route("**/api/t/TEST/quote", quote)
-    page.set_content(
-        _rendered_ticker(inline_script=True),
-        wait_until="domcontentloaded",
-    )
-
-    page.wait_for_function(
-        "document.querySelector('[data-quote-price]').textContent === '$0.8421'"
-    )
-    block = page.locator("[data-quote-block]")
-    assert block.get_attribute("data-quote-fresh") == "true"
-    assert page.locator("[data-quote-change]").text_content() == "+20.3%"
-    assert page.locator("[data-quote-change]").get_attribute("class") == "up"
-    assert page.locator("[data-quote-anchor]").text_content() == "Prev close $0.7000"
-    meta = page.locator("[data-quote-meta]").text_content()
-    assert "Last trade" in meta and "pre market" in meta and "stale" not in meta
-
-
-def test_a_stale_quote_without_a_previous_close_hides_the_anchor(page: Page) -> None:
-    def quote(route: Route) -> None:
-        route.fulfill(
-            status=200,
-            content_type="application/json",
-            body=json.dumps(
-                {
-                    "ticker": "TEST",
-                    "price": 1.25,
-                    "observed_at": "2026-09-01T20:00:00+00:00",
-                    "session": "CLOSED",
-                    "previous_close": None,
-                    "change_pct": None,
-                    "fresh": False,
-                }
-            ),
-        )
-
-    page.route("**/api/t/TEST/quote", quote)
-    page.set_content(
-        _rendered_ticker(inline_script=True),
-        wait_until="domcontentloaded",
-    )
-
-    page.wait_for_function(
-        "document.querySelector('[data-quote-block]').dataset.quoteFresh === 'false'"
-    )
-    assert page.locator("[data-quote-price]").text_content() == "$1.25"
-    assert page.locator("[data-quote-anchor]").is_hidden()
-    assert page.locator("[data-quote-change]").is_hidden()
-    assert "stale" in page.locator("[data-quote-meta]").text_content()
-
-
-def test_a_failed_quote_request_leaves_the_rendered_price_alone(page: Page) -> None:
-    page.route("**/api/t/TEST/quote", lambda route: route.fulfill(status=503, body=""))
-    page.set_content(
-        _rendered_ticker(inline_script=True),
-        wait_until="domcontentloaded",
-    )
-    page.wait_for_timeout(200)
-
-    assert page.locator("[data-quote-price]").text_content() == "$2.15"
-    assert page.locator("[data-quote-anchor]").is_hidden()

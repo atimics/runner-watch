@@ -34,18 +34,21 @@ def test_shared_product_system_has_one_component_and_one_theme_file() -> None:
 
 
 def test_general_interface_keeps_its_editorial_edge() -> None:
-    ticker = (ROOT / "web/templates/ticker.html").read_text()
-    ticker_script = (ROOT / "web/static/ticker-detail.js").read_text()
+    """The house style rules, swept across everything that ships.
+
+    These used to be checked against one page, which meant they only guarded
+    whichever template happened to be named here — and that template outlived
+    its route. Sweeping the directory keeps the rule pointed at shipped copy.
+    """
+
+    shipped = "\n".join(path.read_text() for path in (ROOT / "web/templates").glob("*.html"))
     community = (ROOT / "web/templates/community.html").read_text()
     community += (ROOT / "web/templates/_alpha_ledger.html").read_text()
     navigation = (ROOT / "web/templates/mobile_base.html").read_text()
 
-    assert "Movement first. Evidence before conviction." not in ticker
-    assert "could send" not in ticker
-    assert "RUG CHECK" in ticker
-    assert "risk-evidence" in ticker
-    assert "astrology for the tape" in ticker_script
-    assert "Evidence review, not a trade alert." not in ticker
+    assert "Movement first. Evidence before conviction." not in shipped
+    assert "could send" not in shipped
+    assert "Evidence review, not a trade alert." not in shipped
     assert "#1 by open Calls" in community
     assert "Open Calls first · total Calls break ties" in community
     assert "🐺" in community

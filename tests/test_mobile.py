@@ -119,69 +119,13 @@ def test_ranker_directional_thesis_uses_the_three_way_contract(
     assert sum(item["probability_pct"] for item in thesis["distribution"]) == 100
 
 
-def test_ticker_model_path_is_compact_explicit_and_separate_from_risk() -> None:
-    root = Path(__file__).parents[1]
-    template = (root / "web/templates/ticker.html").read_text()
-    styles = (root / "web/static/mobile.css").read_text()
-
-    assert 'class="model-path-card model-path-' in template
-    assert "MODEL PATH ·" in template
-    assert "detail.directional_thesis.distribution" in template
-    assert "No barrier” means neither was reached" in template
-    assert template.index('class="model-path-card') < template.index('class="risk-decision')
-    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in styles
-    assert ".model-path-segment.path-down { background: var(--red); }" in styles
-    assert ".model-path-segment.path-up { background: var(--green); }" in styles
-
-
-def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
-    root = Path(__file__).parents[1]
-    pulse_template = (root / "web/templates/pulse.html").read_text()
-    radar_template = (root / "web/templates/radar.html").read_text()
-
-    assert "1 new ticker" in pulse_template
-    assert "new tickers" in pulse_template
-    assert "Pulse updated" not in pulse_template
-    assert "TickerRow.fingerprint" not in pulse_template
-    assert "New since you looked" not in pulse_template
-    assert "exposureQueue" not in pulse_template
-    assert "body:JSON.stringify({entries})" not in pulse_template
-    assert "1 new event" in radar_template
-    assert "RatiLiveList.mount" in pulse_template
-    assert "RatiLiveList.mount" in radar_template
-    assert "pendingUpdateTickers" not in radar_template
-
-
-def test_pulse_does_not_render_an_empty_scorecard_spacer() -> None:
-    root = Path(__file__).parents[1]
-    pulse_template = (root / "web/templates/pulse.html").read_text()
-    kol_styles = (root / "web/static/mobile.css").read_text()
-
-    assert 'id="kolScoreStrip"' in pulse_template
-    assert "{% if not flash_record %} hidden{% endif %}" in pulse_template
-    assert ".kol-score-strip[hidden] { display: none; }" in kol_styles
-    assert "function renderKolScorecard()" in pulse_template
-    assert "pulse.flash_record = next.flash_record || null;" in pulse_template
-
-
-def test_pulse_refresh_handles_missing_markers_stale_updates_and_page_failures() -> None:
-    pulse_template = (Path(__file__).parents[1] / "web/templates/pulse.html").read_text()
-
-    assert "function tickerKey(row)" in pulse_template
-    assert "flatMap(row => [tickerKey(row), entryKey(row)])" in pulse_template
-    assert "RatiLiveList.mount" in pulse_template
-    assert "pendingPulse" not in pulse_template
-    assert "function scheduleLoadMoreRetry()" in pulse_template
-    assert "catch (_) {\n    scheduleLoadMoreRetry();" in pulse_template
-
-
 def test_large_responses_are_compressed() -> None:
     assert any(middleware.cls is GZipMiddleware for middleware in web_main.app.user_middleware)
 
 
 def test_ticker_has_public_call_and_flash_actions() -> None:
-    template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
-    script = (Path(__file__).parents[1] / "web/static/ticker-detail.js").read_text()
+    template = (Path(__file__).parents[1] / "web/templates/simple_stock_detail.html").read_text()
+    screen = (Path(__file__).parents[1] / "web/templates/market_screen.html").read_text()
     comments = (Path(__file__).parents[1] / "web/templates/_flash_comments.html").read_text()
     comment_script = (Path(__file__).parents[1] / "web/static/flash-comments.js").read_text()
     action = (Path(__file__).parents[1] / "web/templates/_flash_report_action.html").read_text()
@@ -191,20 +135,14 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert "thesisForm" not in template
     assert "flash_report_action(flash_report)" in template
     assert "commissionButton" in action
-    assert "Make Call" in template
-    assert 'class="ticker-action-row"' in template
-    assert template.count('class="ticker-action-slot"') == 2
-    assert "action-card" not in template
+    assert "Make Call" in screen
     assert template.count("<textarea") == 0
-    assert "flash_comments('stock', detail.ticker" in template
     assert 'id="generateComment"' in comments
     assert "Summon avatar" in comments
     assert "Persistent avatars · public across tickers" not in template
     assert "ability guides a short Flash draft" not in template
     assert "Start the read" not in template
     assert "Flash drafted" not in template
-    assert "Flash is drafting" not in script
-    assert "comment_generation_enabled" in template
     assert "window.RatiFlash?.canSpend" in comment_script
     assert "render_comment_avatar(comment.avatar)" in comments
     assert "'Idempotency-Key': pending" in comment_script
@@ -212,23 +150,6 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert "item.dataset.commentId === String(result.comment.id)" in comment_script
     assert "const RECOVERY_DELAYS = [500, 1500, 3000, 5000]" in comment_script
     assert "Still posting. Tap again." in comment_script
-
-
-def test_ticker_layout_puts_subtle_actions_after_the_analysis() -> None:
-    root = Path(__file__).parents[1]
-    template = (root / "web/templates/ticker.html").read_text()
-    desktop_css = (root / "web/static/mobile.css").read_text()
-
-    chart = template.index('class="detail-chart-panel"')
-    actions = template.index('class="detail-actions"')
-    analysis = template.index('class="detail-analysis"')
-
-    assert chart < analysis < actions
-    assert "grid-template-areas:" in desktop_css
-    assert '"chart"\n      "analysis"\n      "actions"' in desktop_css
-    assert "grid-template-columns: repeat(2, minmax(0, 210px))" in desktop_css
-    assert "background: rgba(255, 255, 255, .018)" in desktop_css
-    assert "min-height: 44px" in desktop_css
 
 
 @pytest.mark.parametrize(
@@ -315,14 +236,13 @@ def test_scanner_page_is_removed() -> None:
 def test_desktop_feeds_share_full_info_and_article_panel() -> None:
     root = Path(__file__).parents[1]
     templates_dir = root / "web/templates"
-    pulse = (templates_dir / "pulse.html").read_text()
-    radar = (templates_dir / "radar.html").read_text()
     alpha = (templates_dir / "community.html").read_text()
+    coin_alpha = (templates_dir / "memecoin_alpha.html").read_text()
     panel = (templates_dir / "_desktop_panel.html").read_text()
     workspace = (root / "web/static/desktop-workspace.js").read_text()
     desktop_css = (root / "web/static/mobile.css").read_text()
 
-    for template in (pulse, radar, alpha):
+    for template in (alpha, coin_alpha):
         assert "workspace-app" in template
         assert "data-desktop-workspace" in template
         assert "data-desktop-list" in template
@@ -371,7 +291,6 @@ def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
         (templates_dir / name).read_text()
         for name in ("sports.html", "sports_radar.html", "sports_alpha.html")
     ]
-    game = (templates_dir / "sports_game.html").read_text()
     live_script = (root / "web/static/sports-live.js").read_text()
     product_styles = (root / "web/static/sports-product.css").read_text()
 
@@ -382,15 +301,9 @@ def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
         assert "data-desktop-list" in template
         assert '{% include "_desktop_panel.html" %}' in template
         assert "sports_base.html" not in template
-    assert '{% extends "mobile_base.html" %}' in game
-    assert 'class="detail-nav sports-detail-nav"' in game
-    assert 'class="detail-body sports-detail-body"' in game
-    assert 'class="game-detail-grid game-detail-flow"' in game
-    assert "html:not(.embedded-pane) .game-detail-grid" in product_styles
-    assert ".game-detail-grid.game-detail-flow" in product_styles
     assert "max-width: 1120px" in product_styles
     assert not (templates_dir / "sports_base.html").exists()
-    assert "location.reload" not in "\n".join([*sports_templates, game, live_script])
+    assert "location.reload" not in "\n".join([*sports_templates, live_script])
     assert "RatiLiveList.mount" in live_script
     assert "setInterval(poll" not in live_script
     assert "body.sports-product" in product_styles
@@ -414,16 +327,12 @@ def test_ticker_rows_have_no_reader_attention_state() -> None:
     assert "tradeState !== statusLabel" in row_script
 
 
-def test_pulse_ticker_search_uses_native_validation() -> None:
+def test_ticker_search_uses_native_validation() -> None:
     root = Path(__file__).parents[1]
-    pulse_template = (root / "web/templates/pulse.html").read_text()
     account_strip = (root / "web/templates/_account_strip.html").read_text()
 
     assert 'pattern="[A-Za-z0-9.-]{1,12}"' in account_strip
     assert " required " in account_strip
-    assert 'id="pulseSearch"' not in pulse_template
-    assert '{% include "_market_clock.html" %}' not in pulse_template
-    assert "Movement is only the first clue." not in pulse_template
 
 
 def _call_mark_database(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -2524,36 +2433,52 @@ def test_first_daily_flash_report_locks_other_users_for_one_hour(
     assert late_publish["balance"] == 0
 
 
-def test_ticker_and_sports_share_one_flash_report_workflow() -> None:
+def test_both_detail_pages_share_one_flash_report_workflow() -> None:
+    """The stock and game pages run the same macro and the same script.
+
+    The game page lost both when it moved to the simple shell, while its route
+    kept computing flash_report - so the action was built server-side every
+    request and thrown away by a two-line template.
+    """
+
     root = Path(__file__).parents[1]
-    ticker_template = (root / "web/templates/ticker.html").read_text()
-    sports_template = (root / "web/templates/sports_game.html").read_text()
+    ticker_template = (root / "web/templates/simple_stock_detail.html").read_text()
+    sports_template = (root / "web/templates/simple_sports_detail.html").read_text()
     action_template = (root / "web/templates/_flash_report_action.html").read_text()
     report_script = (root / "web/static/flash-report.js").read_text()
-    ticker_script = (root / "web/static/ticker-detail.js").read_text()
 
-    assert "flash_report_action(flash_report)" in ticker_template
-    assert "flash_report_action(flash_report, 'sports')" in sports_template
-    assert "/static/flash-report.js" in ticker_template
-    assert "/static/flash-report.js" in sports_template
+    for template in (ticker_template, sports_template):
+        assert "flash_report_action(flash_report)" in template
+        assert "/static/flash-report.js" in template
     assert "Generate report" in report_script
     assert "Report couldn't be generated" in report_script
     assert "data-start-url" in action_template
-    assert "pollFlash" not in ticker_script + sports_template
-    assert "Sending the report to the queue" not in report_script + sports_template
+    assert "Sending the report to the queue" not in report_script
     assert "OpenRouter" not in action_template + report_script
     assert "X-OpenRouter-Key" not in action_template + report_script
 
 
-def test_flash_model_label_is_shown_on_research_and_pulse() -> None:
+def test_every_page_that_renders_comments_loads_their_scripts() -> None:
+    """flash-comments.js calls window.RatiContentNotices.render, which only
+    content-notices.js defines. market_screen.html does not load it the way
+    mobile_base.html did, so a page that renders comments has to ask for both
+    or posting one throws on the live site."""
+
+    root = Path(__file__).parents[1]
+    for name in ("simple_stock_detail.html", "simple_sports_detail.html"):
+        template = (root / "web/templates" / name).read_text()
+        assert "flash_comments(" in template, name
+        assert "/static/flash-comments.js" in template, name
+        assert "/static/content-notices.js" in template, name
+
+
+def test_flash_model_label_is_shown_on_research() -> None:
     root = Path(__file__).parents[1]
     report = (root / "web/templates/research_report.html").read_text()
-    pulse = (root / "web/templates/pulse.html").read_text()
     ticker_row = (root / "web/static/ticker-row.js").read_text()
 
     assert "{{ report.actor.display_name }}" in report
     assert "{{ report.actor.model }}" in report
-    assert "flash_record.model_label" in pulse
     assert "call.inference_model_label" not in ticker_row
 
 
