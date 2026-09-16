@@ -61,7 +61,7 @@ The Call action sits after the metric panel.
 
 `/reports`, report detail, `/research/{public_id}` and `/flash/record` render on
 the same shell with the same top bar. The market turns list keeps its schedule
-(`4:15 a.m. ET` / `4:15 p.m. ET`), report cards and Flash receipt panels.
+(`4:20 a.m. ET` / `4:20 p.m. ET`), report cards and Flash receipt panels.
 
 ## Removed
 

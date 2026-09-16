@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
 from pytest import MonkeyPatch
 
 from runner_web import db
@@ -236,7 +237,7 @@ def test_post_market_report_mirrors_the_watch_board_with_results(
         price=0.75,
         change_pct=8.0,
     )
-    at = datetime(2026, 8, 24, 20, 15, tzinfo=UTC)
+    at = datetime(2026, 8, 24, 20, 20, tzinfo=UTC)
 
     result = refresh_market_reports(at)
     overview = market_reports_overview(at)
@@ -337,7 +338,7 @@ def test_post_market_report_keeps_the_pre_market_counts_on_a_wide_board(
         price=1.5,
         change_pct=40.0,
     )
-    at = datetime(2026, 8, 24, 20, 15, tzinfo=UTC)
+    at = datetime(2026, 8, 24, 20, 20, tzinfo=UTC)
 
     refresh_market_reports(at)
     overview = market_reports_overview(at)
@@ -386,7 +387,7 @@ def test_post_market_report_falls_back_to_the_opening_scan(
         price=1.0,
         change_pct=-5.0,
     )
-    at = datetime(2026, 8, 24, 20, 15, tzinfo=UTC)
+    at = datetime(2026, 8, 24, 20, 20, tzinfo=UTC)
 
     refresh_market_reports(at)
     report = market_reports_overview(at)["latest"]["post_market"]
@@ -415,7 +416,7 @@ def test_market_report_schedule_waits_for_scans_and_skips_weekends(
     assert weekend["due"] == []
     assert weekend["is_market_day"] is False
     assert weekend["next_label"] == "Pre-market briefing"
-    assert weekend["next_at"] == "2026-08-31T08:15:00+00:00"
+    assert weekend["next_at"] == "2026-08-31T08:20:00+00:00"
 
 
 def test_market_report_routes_and_template_are_public() -> None:
@@ -431,8 +432,8 @@ def test_market_report_routes_and_template_are_public() -> None:
     assert '@app.get("/reports/{report_day}/{slug}/card.png")' in source
     assert "Pre-market" in template
     assert "After the bell" in template
-    assert "4:15 a.m. ET" in template
-    assert "4:15 p.m. ET" in template
+    assert "4:20 a.m. ET" in template
+    assert "4:20 p.m. ET" in template
     assert "Desk commentary" in card
     assert "Frozen from scanner checkpoints" in card
     for tag in ("og:title", "og:description", "og:image", "twitter:card"):
@@ -459,7 +460,7 @@ def _share_client(tmp_path: Path, monkeypatch: MonkeyPatch) -> Any:
     _insert_snapshot(
         "close-two", "close", "TWO", 90, 1, close_at, session="after", price=3.0, change_pct=25.0
     )
-    refresh_market_reports(datetime(2026, 8, 24, 20, 15, tzinfo=UTC))
+    refresh_market_reports(datetime(2026, 8, 24, 20, 20, tzinfo=UTC))
     return TestClient(web_main.app, base_url=web_main.APP_ORIGIN)
 
 
@@ -504,7 +505,7 @@ def test_share_metadata_names_the_top_pick_and_the_record(
     _insert_snapshot(
         "close-one", "close", "ONE", 90, 1, close_at, session="after", price=1.5, change_pct=25.0
     )
-    at = datetime(2026, 8, 24, 20, 15, tzinfo=UTC)
+    at = datetime(2026, 8, 24, 20, 20, tzinfo=UTC)
     refresh_market_reports(at)
     with connection() as database:
         database.execute(
@@ -621,3 +622,114 @@ def test_legacy_post_market_report_without_close_fields_still_renders(
     assert listing.status_code == 200
     assert "Dropped off the board" in listing.text
     assert detail.status_code == 200
+
+
+def test_the_scanner_polls_the_session_gate_without_burning_an_interval(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """A closed session used to cost a full interval of silence.
+
+    The gate is a clock check, so waiting the scan interval to notice the
+    session opened meant the first scan of the day could start half an hour
+    after pre-market, well past the 4:20 report.
+    """
+
+    import asyncio
+
+    from runner_web import main as web_main
+
+    delays: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        delays.append(seconds)
+        if len(delays) > 3:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(web_main, "scan_collection_allowed", lambda _moment: False)
+    monkeypatch.setattr(web_main.asyncio, "sleep", sleep)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(web_main.scan_collection_worker())
+
+    assert delays[0] == 15  # the worker's own start-up stagger
+    assert delays[1:] == [web_main.SCAN_IDLE_POLL_SECONDS] * 3
+    assert web_main.SCAN_IDLE_POLL_SECONDS < web_main.BACKGROUND_SCAN_INTERVAL_SECONDS
+
+
+SCAN_SECONDS = 40.0
+
+
+def test_the_scan_interval_is_the_cadence_not_a_gap_after_the_work(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Sleeping the whole interval after each scan made the real cycle
+    ``scan duration + interval``, which is how a session report's window went
+    by with no completed run inside it."""
+
+    import asyncio
+
+    from runner_web import main as web_main
+
+    delays: list[float] = []
+    # time.monotonic is shared, so hand out a fixed sequence and hold the last
+    # value rather than exhausting an iterator under an unrelated caller.
+    # A stable clock the scan itself advances, so an unrelated monotonic()
+    # caller cannot shift the reading.
+    clock = {"now": 0.0}
+
+    def monotonic() -> float:
+        return clock["now"]
+
+    async def run(function: Any, *args: Any) -> dict[str, Any]:
+        clock["now"] += SCAN_SECONDS
+        return {"scan_run_id": "run-1"}
+
+    async def sleep(seconds: float) -> None:
+        delays.append(seconds)
+        if len(delays) > 1:  # let the worker's start-up stagger through
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(web_main, "scan_collection_allowed", lambda _moment: True)
+    monkeypatch.setattr(web_main, "run_in_threadpool", run)
+    monkeypatch.setattr(web_main, "worker_state", lambda *_args: None)
+    monkeypatch.setattr(web_main.time, "monotonic", monotonic)
+    monkeypatch.setattr(web_main.asyncio, "sleep", sleep)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(web_main.scan_collection_worker())
+
+    # 400s of scan comes out of the interval rather than being added to it.
+    assert delays[-1] == web_main.BACKGROUND_SCAN_INTERVAL_SECONDS - SCAN_SECONDS
+
+
+def test_a_scan_that_overruns_the_interval_still_gets_a_gap(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from runner_web import main as web_main
+
+    delays: list[float] = []
+    # A stable clock the scan itself advances, so an unrelated monotonic()
+    # caller cannot shift the reading.
+    clock = {"now": 0.0}
+
+    def monotonic() -> float:
+        return clock["now"]
+
+    async def run(function: Any, *args: Any) -> dict[str, Any]:
+        clock["now"] += 10_000.0
+        return {"scan_run_id": "run-1"}
+
+    async def sleep(seconds: float) -> None:
+        delays.append(seconds)
+        if len(delays) > 1:  # let the worker's start-up stagger through
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(web_main, "scan_collection_allowed", lambda _moment: True)
+    monkeypatch.setattr(web_main, "run_in_threadpool", run)
+    monkeypatch.setattr(web_main, "worker_state", lambda *_args: None)
+    monkeypatch.setattr(web_main.time, "monotonic", monotonic)
+    monkeypatch.setattr(web_main.asyncio, "sleep", sleep)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(web_main.scan_collection_worker())
+
+    assert delays[-1] == web_main.SCAN_MIN_GAP_SECONDS

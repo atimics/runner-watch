@@ -512,6 +512,13 @@ EASTERN = ZoneInfo("America/New_York")
 BACKGROUND_SCAN_INTERVAL_SECONDS = max(
     120, int(os.getenv("BACKGROUND_SCAN_INTERVAL_SECONDS", "180"))
 )
+# The gate is a clock check, so it can be polled far more often than a scan
+# costs. It used to be read once per interval, which let the scanner sleep
+# through the first half hour of pre-market and miss the 4:20 report window.
+SCAN_IDLE_POLL_SECONDS = max(15, int(os.getenv("SCAN_IDLE_POLL_SECONDS", "60")))
+# Floor between consecutive scans, so a scan that overruns the interval does
+# not start the next one the moment it lands.
+SCAN_MIN_GAP_SECONDS = max(15, int(os.getenv("SCAN_MIN_GAP_SECONDS", "60")))
 OUTCOME_REFRESH_TIMEOUT_SECONDS = max(
     120, int(os.getenv("OUTCOME_REFRESH_TIMEOUT_SECONDS", "900"))
 )
@@ -1602,31 +1609,48 @@ def scan_collection_allowed(value: datetime) -> bool:
 
 
 async def scan_collection_worker() -> None:
+    """Collect one scan per interval while the session is open.
+
+    The interval is the cadence, not a gap bolted onto the end of the work.
+    Sleeping the full interval *after* each scan made the real cycle
+    ``scan duration + interval``, so a slow scan stretched the gap between
+    completed runs past the window a session report reads, and the report was
+    never built. The session gate is polled on its own short timer for the same
+    reason: it is a clock check, and waiting an interval to notice the session
+    opened cost the first scan of the day.
+    """
+
     await asyncio.sleep(15)
     while True:
-        if scan_collection_allowed(now()):
-            try:
-                result = await run_in_threadpool(run_scan, "penny")
-                worker_state("background_scan_last_run", str(result.get("scan_run_id") or "cached"))
-                worker_state("background_scan_last_error", "")
-                if SWARM_RUNTIME is not None and SWARM_RUNTIME.config.publish_scan_claims:
-                    try:
-                        published = await run_in_threadpool(
-                            SWARM_RUNTIME.publish_scan_rows,
-                            result.get("rows") or [],
-                        )
-                        worker_state(
-                            "swarm_scan_last_publish",
-                            json.dumps(published.as_dict(), separators=(",", ":")),
-                        )
-                        worker_state("swarm_scan_last_error", "")
-                    except Exception as exc:
-                        worker_state("swarm_scan_last_error", str(exc)[:500])
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                worker_state("background_scan_last_error", str(exc)[:500])
-        await asyncio.sleep(BACKGROUND_SCAN_INTERVAL_SECONDS)
+        if not scan_collection_allowed(now()):
+            await asyncio.sleep(SCAN_IDLE_POLL_SECONDS)
+            continue
+        started = time.monotonic()
+        try:
+            result = await run_in_threadpool(run_scan, "penny")
+            worker_state("background_scan_last_run", str(result.get("scan_run_id") or "cached"))
+            worker_state("background_scan_last_error", "")
+            if SWARM_RUNTIME is not None and SWARM_RUNTIME.config.publish_scan_claims:
+                try:
+                    published = await run_in_threadpool(
+                        SWARM_RUNTIME.publish_scan_rows,
+                        result.get("rows") or [],
+                    )
+                    worker_state(
+                        "swarm_scan_last_publish",
+                        json.dumps(published.as_dict(), separators=(",", ":")),
+                    )
+                    worker_state("swarm_scan_last_error", "")
+                except Exception as exc:
+                    worker_state("swarm_scan_last_error", str(exc)[:500])
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            worker_state("background_scan_last_error", str(exc)[:500])
+        elapsed = time.monotonic() - started
+        await asyncio.sleep(
+            max(SCAN_MIN_GAP_SECONDS, BACKGROUND_SCAN_INTERVAL_SECONDS - elapsed)
+        )
 
 
 HOT_QUOTE_INTERVAL_SECONDS = max(20, int(os.getenv("HOT_QUOTE_INTERVAL_SECONDS", "45")))
