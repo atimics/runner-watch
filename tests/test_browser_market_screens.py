@@ -412,3 +412,80 @@ def test_a_chart_without_state_history_keeps_one_plain_line(page: Page):
 
     expect(page.locator(".chart-state")).to_have_count(0)
     assert page.locator(".chart-line").get_attribute("d").startswith("M")
+
+
+def _row(ticker: str, score: float) -> dict:
+    row = {**fixtures.scored_stock(), "ticker": ticker, "score": score}
+    row["score_detail"] = {
+        "score": score,
+        "penalties": [],
+        "drivers": [
+            {"key": "market", "label": "Market scanner", "value": score * 0.6},
+            {"key": "news", "label": "News", "value": score * 0.4},
+        ],
+    }
+    return row
+
+
+def test_the_score_pie_reads_as_three_styles(page: Page):
+    """Large and solid, large and ringed, small and ringed - told apart by size
+    and fill before any number is read."""
+
+    open_screen(page, listing("stocks", [_row("AAA", 88), _row("BBB", 52), _row("CCC", 24)]))
+
+    bands = page.locator(".ticker-score")
+    expect(bands).to_have_count(3)
+    assert [bands.nth(i).get_attribute("data-band") for i in range(3)] == ["3", "2", "1"]
+    sizes = [
+        bands.nth(i).locator(".score-pie").bounding_box()["width"] for i in range(3)
+    ]
+    assert sizes[0] == sizes[1] > sizes[2], sizes
+    # The top band fills solid; the others have their middle taken out.
+    masks = [
+        bands.nth(i).locator(".score-pie").evaluate(
+            "el => getComputedStyle(el).webkitMaskImage || getComputedStyle(el).maskImage"
+        )
+        for i in range(3)
+    ]
+    assert "gradient" not in (masks[0] or "none")
+    assert all("gradient" in (mask or "") for mask in masks[1:])
+
+
+def test_a_row_that_arrives_on_a_refresh_wears_the_new_halo(page: Page):
+    """A reader should be able to tell a new arrival from one that merely
+    moved, so only rows absent at the previous refresh are marked."""
+
+    before = fixtures.render(listing("stocks", [_row("AAA", 88), _row("BBB", 52)]))
+    after = fixtures.render(
+        listing("stocks", [_row("NEW", 91), _row("AAA", 88), _row("BBB", 52)])
+    )
+
+    def inline(html: str) -> str:
+        html = re.sub(
+            r'<link rel="stylesheet" href="/static/([^"?]+)[^"]*">',
+            lambda m: "<style>" + (ROOT / "web/static" / m[1]).read_text() + "</style>",
+            html,
+        )
+        return re.sub(
+            r'<script src="/static/market-screen.js[^"]*"[^>]*></script>',
+            lambda _: "<script>" + (ROOT / "web/static/market-screen.js").read_text() + "</script>",
+            html,
+        )
+
+    served = [inline(before)]
+    page.route(
+        "http://app.test/",
+        lambda route: route.fulfill(content_type="text/html", body=served[-1]),
+    )
+    page.route("**/api/screens/**", lambda route: route.fulfill(json={"points": []}))
+    page.clock.install()
+    page.goto("http://app.test/")
+
+    # Nothing is new on the first paint - there is no previous refresh to differ from.
+    expect(page.locator(".ticker.is-new")).to_have_count(0)
+
+    served.append(inline(after))
+    page.clock.fast_forward(60000)
+
+    expect(page.locator(".ticker.is-new")).to_have_count(1)
+    expect(page.locator(".ticker.is-new")).to_have_attribute("href", "/t/NEW")

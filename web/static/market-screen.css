@@ -52,17 +52,22 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
 .tag-avoid{color:#1e070a;background:var(--red);border-color:var(--red)}
 .tag-watch{color:var(--purple);background:transparent;border-color:color-mix(in srgb,var(--purple) 45%,transparent)}
 .tag-paused{color:var(--muted);background:transparent;border-color:#38443d}
-/* Score as a component pie: diameter carries the magnitude, the slices carry
-   what drove it, and the top band gets a ring. */
+/* Score as a component pie. The slices say what drove the score; the style
+   says how much of it there is, in three steps a reader can tell apart at a
+   glance: large and solid, large and ringed, small and ringed. */
 .ticker-score{display:grid;place-items:center;width:40px;height:40px;border-radius:50%}
-.score-pie{
-  display:block;width:var(--pie,26px);height:var(--pie,26px);border-radius:50%;
-  background:var(--muted);
+.score-pie{display:block;width:var(--pie,34px);height:var(--pie,34px);border-radius:50%;background:var(--muted)}
+.ticker-score[data-band="1"]{--pie:22px}
+.ticker-score[data-band="2"],.ticker-score[data-band="3"]{--pie:34px}
+/* A ring is the pie with its middle taken out; the top band stays solid. */
+.ticker-score[data-band="1"] .score-pie,.ticker-score[data-band="2"] .score-pie{
   -webkit-mask:radial-gradient(circle,transparent 46%,#000 47%);
   mask:radial-gradient(circle,transparent 46%,#000 47%);
 }
-.ticker-score[data-band="2"]{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--soft) 26%,transparent)}
-.ticker-score[data-band="3"]{box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--green) 75%,transparent)}
+/* Arrived since the last refresh. */
+.ticker.is-new .ticker-score{
+  box-shadow:0 0 0 2px var(--amber),0 0 13px color-mix(in srgb,var(--amber) 60%,transparent);
+}
 .ticker-score.is-empty{visibility:hidden}
 .ticker .mini-chart{width:64px;height:18px;opacity:.35}
 .ticker .mini-chart.loaded{opacity:.9}
@@ -145,7 +150,8 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
   /* Match the text rows' height so the tag, quote and score keep one
      baseline on phones. */
   .ticker-score{width:22px;height:22px}
-  .score-pie{width:min(var(--pie,26px),22px);height:min(var(--pie,26px),22px)}
+  .ticker-score[data-band="1"]{--pie:15px}
+  .ticker-score[data-band="2"],.ticker-score[data-band="3"]{--pie:22px}
   .ticker-score.is-empty{display:none}
   .ticker .mini-chart,.row-arrow{display:none}
 

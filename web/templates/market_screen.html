@@ -2,11 +2,11 @@
 {%- if item.score is none -%}
 <span class="ticker-score is-empty"></span>
 {%- else -%}
-{#- Size carries the magnitude, the slices carry what drove it, and the top
-    band gets a ring. A number told you none of that. -#}
 {%- set parts = (item.score_detail.drivers if item.score_detail else []) | selectattr('value', 'greaterthan', 0) | list -%}
 {%- set total = parts | sum(attribute='value') -%}
-{%- set band = 3 if item.score >= 80 else 2 if item.score >= 60 else 1 if item.score >= 40 else 0 -%}
+{#- Three styles, strongest first: large and solid, large and ringed, small
+    and ringed. Size and fill are read before any number is. -#}
+{%- set band = 3 if item.score >= 70 else 2 if item.score >= 40 else 1 -%}
 {%- set ns = namespace(acc=0, stops=[]) -%}
 {%- for part in parts -%}
   {%- set start = (ns.acc / total * 100) | round(2) -%}
@@ -17,7 +17,7 @@
 <span class="ticker-score" data-band="{{ band }}" role="img"
       aria-label="Score {{ item.score|round|int }}{% if parts %} · led by {{ (parts|sort(attribute='value')|last).label }}{% endif %}"
       title="Score {{ item.score|round|int }}{% for part in parts %} · {{ part.label }} {{ part.value }}{% endfor %}">
-  <span class="score-pie" style="--pie: {{ (15 + (([item.score, 100]|min) / 100 * 21)) | round(1) }}px{% if ns.stops %}; background: conic-gradient({{ ns.stops|join(', ') }}){% endif %}"></span>
+  <span class="score-pie"{% if ns.stops %} style="background: conic-gradient({{ ns.stops|join(', ') }})"{% endif %}></span>
 </span>
 {%- endif -%}
 {%- endmacro %}
