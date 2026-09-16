@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -119,11 +119,14 @@ def test_client_error_summary_is_available_to_operations(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     _prime(tmp_path, monkeypatch)
+    # Relative to now, not a fixed date: the summary only reports the last
+    # CLIENT_ERROR_WINDOW_HOURS, so a pinned timestamp silently ages out of the
+    # window and the test starts failing on a day nobody touched this code.
     record_client_error(
         kind="resource",
         message="SCRIPT failed to load: /static/missing.js",
         page_url="/roadmap",
-        at=datetime(2026, 9, 15, 12, 0, tzinfo=UTC),
+        at=datetime.now(UTC) - timedelta(minutes=5),
     )
 
     from runner_web.operations import client_errors_api

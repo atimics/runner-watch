@@ -9261,16 +9261,6 @@ def radar_api(
     return JSONResponse({"items": items, "rows": items, "updated_at": iso()})
 
 
-@app.get("/api/radar/charts")
-async def radar_charts_api(
-    request: Request,
-) -> JSONResponse:
-    enforce_rate(request, "radar-charts", limit=20, seconds=60)
-    tickers = [row["ticker"] for row in radar_data()]
-    payload = await run_in_threadpool(ticker_charts_payload, tickers)
-    return JSONResponse(_compact_list_chart_payload(payload))
-
-
 def _known_ticker(ticker: str) -> bool:
     with connection() as db:
         return (
