@@ -11,6 +11,7 @@ from runner_web.telegram import (
     AnimationDeliveryError,
     config_from_env,
     escape_markdown_v2,
+    markdown_link,
     memecoin_alerts_enabled,
     send_animation,
 )
@@ -34,11 +35,11 @@ def caption(payload: dict, *, origin: str) -> str:
         f"{origin.rstrip('/')}/memecoins/coin/"
         f"{quote(payload['coin_id'], safe='')}?replay={payload['id']}#token-replay"
     )
-    return (
-        f"\U0001FA99 *{label}* — new coin detected\n\n"
-        f"{launch} · {events}\n\n"
-        f"{link}"
-    )
+    # The URL is an inline link, not a bare line: every dot and hyphen in a
+    # bare URL is reserved in Markdown V2, and a caption that fails to parse
+    # takes the GIF down with it — sendAnimation has no plain-text retry.
+    card = f"\U0001FA99 *{label}* — new coin detected\n\n{launch} · {events}"
+    return card + "\n\n" + markdown_link("Open the coin page", link)
 
 
 def dispatch_memecoin_replays(

@@ -26,7 +26,7 @@ from runner_web.memecoin_chain_parser import (
     parse_events,
 )
 from runner_web.memecoin_replay_gif import render_gif
-from runner_web.memecoin_replay_posts import dispatch_memecoin_replays
+from runner_web.memecoin_replay_posts import caption, dispatch_memecoin_replays
 from runner_web.memecoin_store import save_memecoin_snapshot
 from runner_web.telegram import AnimationDeliveryError
 
@@ -588,3 +588,27 @@ def test_details_routes_return_the_same_saved_gif_and_package(monkeypatch):
         assert "/static/memecoin-replay.js" in page.text
     finally:
         client.close()
+
+
+def test_the_replay_caption_links_the_coin_page_instead_of_pasting_the_url() -> None:
+    """A bare URL is not valid Markdown V2 — its dots and hyphens are reserved.
+    sendAnimation has no plain-text retry, so a caption that fails to parse
+    loses the GIF with it."""
+
+    text = caption(
+        {
+            "symbol": "P-NUT",
+            "token_address": "abc123def456",
+            "launch": True,
+            "events": [1, 2, 3],
+            "coin_id": "sol:abc-123",
+            "id": "r-9",
+        },
+        origin="https://app.test",
+    )
+    assert "*P\\-NUT*" in text
+    assert text.endswith(
+        "[Open the coin page](https://app.test/memecoins/coin/sol%3Aabc-123"
+        "?replay=r-9#token-replay)"
+    ), text
+    assert "\n\nhttps://" not in text
