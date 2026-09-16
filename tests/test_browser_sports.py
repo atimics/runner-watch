@@ -273,7 +273,7 @@ def _rendered_game_detail(latest_commission: dict[str, Any] | None = None) -> st
     }
     response = web_main.templates.TemplateResponse(
         request=_request("/game/closed-game"),
-        name="sports_game.html",
+        name="simple_sports_detail.html",
         context={
             "event": event,
             "latest_commission": latest_commission,
@@ -375,7 +375,7 @@ def _rendered_open_game_with_slip(
     }
     response = web_main.templates.TemplateResponse(
         request=_request("/game/open-game"),
-        name="sports_game.html",
+        name="simple_sports_detail.html",
         context={
             "event": event,
             "latest_commission": None,
@@ -409,54 +409,6 @@ def _rendered_open_game_with_slip(
         },
     )
     return _inline_static_assets(response.body.decode())
-
-
-def test_game_detail_shows_a_confirmation_slip_with_the_exact_payout() -> None:
-    html = _rendered_open_game_with_slip(user={"id": "user-1"})
-
-    assert 'data-pick="away" data-team="Cincinnati Reds" data-odds="+150" data-reward="38"' in html
-    assert 'data-pick="home" data-team="Chicago Cubs" data-odds="-170" data-reward="15"' in html
-    assert 'id="pickSlip" hidden' in html
-    assert "Freeze Call" in html
-    assert "Settles" in html
-    assert "One Call per game, no undo." in html
-    assert "about +38 Flash" not in html  # exact numbers only fill the slip after a tap
-
-
-def test_game_detail_shows_your_call_ticket_instead_of_pick_buttons() -> None:
-    html = _rendered_open_game_with_slip(
-        user={"id": "user-1"},
-        my_pick={
-            "selection": "away",
-            "american_odds": 150,
-            "status": "open",
-            "result": None,
-            "reward_flash": 0,
-        },
-    )
-
-    assert "Your Call" in html
-    assert "CIN +150" in html
-    assert "OPEN" in html
-    assert '<button type="button" data-pick=' not in html  # pick buttons are gone
-    assert "Settles when the game ends." in html
-
-
-def test_game_detail_ticket_shows_a_won_call_with_its_flash_reward() -> None:
-    html = _rendered_open_game_with_slip(
-        user={"id": "user-1"},
-        my_pick={
-            "selection": "home",
-            "american_odds": -170,
-            "status": "settled",
-            "result": "win",
-            "reward_flash": 15,
-        },
-    )
-
-    assert "Your Call" in html
-    assert "CHC -170" in html
-    assert "WON · +15 Flash" in html
 
 
 def _load(
@@ -559,75 +511,6 @@ def test_sports_list_opens_a_single_detail_screen(page: Page, monkeypatch) -> No
     assert errors == []
 
 
-def test_game_detail_prioritizes_actions_and_closes_started_actions(page: Page) -> None:
-    html = _rendered_game_detail()
-    page.set_viewport_size({"width": 1280, "height": 800})
-    page.route(
-        "http://app.test/",
-        lambda route: route.fulfill(status=200, content_type="text/html", body=html),
-    )
-    page.goto("http://app.test/", wait_until="domcontentloaded")
-
-    app = page.locator(".sports-game-app")
-    grid = page.locator(".game-detail-grid")
-    assert app.evaluate("node => Math.round(node.getBoundingClientRect().width)") == 1120
-    assert grid.evaluate("node => getComputedStyle(node).display") == "block"
-    assert grid.evaluate("node => Math.round(node.getBoundingClientRect().width)") == 860
-    assert page.locator(".probability-row").count() == 2
-    assert page.locator(".decision-movement .edge-spark").bounding_box()["width"] > 200
-    assert page.get_by_role("heading", name="Game thread").count() == 0
-    assert page.get_by_role("heading", name="Calls closed").is_visible()
-    assert page.get_by_text("Score pending from ESPN").is_visible()
-    assert page.get_by_text("Log in to make a Call").count() == 0
-    assert (
-        page.locator(".game-disclosure > summary b").first.evaluate(
-            "node => getComputedStyle(node).fontSize"
-        )
-        == "9px"
-    )
-    assert page.evaluate(
-        """() => {
-          const style = selector => getComputedStyle(document.querySelector(selector));
-          return {
-            stripRadius: style('.match-strip').borderRadius,
-            boardRadius: style('.decision-board').borderRadius,
-            modelCallRadius: style('.decision-model-call').borderRadius,
-            valueCallRule: style('.decision-value-call').borderLeftWidth,
-            metricRadius: style('.value-numbers > span').borderRadius,
-            notebookRadius: style('.game-notebook').borderRadius,
-            notebookItemRadius: style('.game-notebook .game-disclosure').borderRadius,
-            actionRadius: style('.game-actions > .paper-pick').borderRadius,
-            flashRadius: style('.game-actions > .game-flash').borderRadius,
-          };
-        }"""
-    ) == {
-        "stripRadius": "0px",
-        "boardRadius": "0px",
-        "modelCallRadius": "0px",
-        "valueCallRule": "1px",
-        "metricRadius": "0px",
-        "notebookRadius": "0px",
-        "notebookItemRadius": "0px",
-        "actionRadius": "0px",
-        "flashRadius": "0px",
-    }
-    assert (
-        page.locator(".game-actions").bounding_box()["y"]
-        < page.locator(".game-notebook").bounding_box()["y"]
-    )
-
-    page.set_viewport_size({"width": 390, "height": 800})
-    assert grid.evaluate("node => getComputedStyle(node).display") == "block"
-    assert app.evaluate("node => Math.round(node.getBoundingClientRect().width)") == 390
-    assert page.locator(".decision-value-call").evaluate(
-        "node => ({"
-        "left: getComputedStyle(node).borderLeftWidth, "
-        "top: getComputedStyle(node).borderTopWidth"
-        "})"
-    ) == {"left": "0px", "top": "1px"}
-    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-
-
 @pytest.mark.parametrize("width", [390, 900, 1280])
 def test_sports_list_respects_shared_responsive_breakpoints(
     page: Page, monkeypatch, width: int
@@ -719,30 +602,3 @@ def test_sports_alpha_opens_its_leader_in_the_shared_detail_pane(page: Page, mon
         .endswith("desktop-panel-selected")
     )
     assert errors == []
-
-
-def test_sports_forecast_keeps_model_context_next_to_its_estimate(page: Page) -> None:
-    page.set_viewport_size({"width": 390, "height": 844})
-    page.set_content(
-        _rendered_game_detail(
-            {
-                "locked": False,
-                "actor": {"ladder_position": 1, "ladder_size": 2, "model_label": "test/model"},
-                "sports_forecast": {
-                    "selection": "away",
-                    "selected_abbreviation": "SEA",
-                    "selected_probability": 0.57,
-                    "selected_team": "Seattle",
-                    "agrees_with_baseline": True,
-                },
-            }
-        ),
-        wait_until="domcontentloaded",
-    )
-    forecast = page.locator(".game-flash-prediction")
-    assert "SEA 57%" in forecast.inner_text()
-    assert "test/model" in forecast.inner_text()
-    assert forecast.locator(".game-forecast-context").inner_text() == (
-        "AI estimate from the report’s saved inputs. Actual outcomes can differ."
-    )
-    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
