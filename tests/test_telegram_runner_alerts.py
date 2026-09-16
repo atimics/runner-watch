@@ -9,6 +9,7 @@ from pytest import MonkeyPatch
 from runner_web import db, telegram
 from runner_web import main as web_main
 from runner_web.db import connection, init_db
+from runner_web.telegram import strip_markdown_v2
 
 
 class _FakeResponse:
@@ -517,8 +518,8 @@ def test_dispatch_posts_a_new_market_report_and_skips_the_old_one(
     assert second["status"] == "sent"
     assert second["market_reports"]["status"] == "sent"
     assert len(sent) == 1
-    assert "Pre-market briefing" in sent[0]
-    assert "CAST leads the pre-market board" in sent[0]
+    assert "Pre-market briefing" in strip_markdown_v2(sent[0])
+    assert "CAST leads the pre-market board" in strip_markdown_v2(sent[0])
     assert f"{web_main.RUNNERS_ORIGIN}/reports/2026-09-11/pre" in sent[0]
     assert web_main.dispatch_telegram_posts()["market_reports"]["status"] == "empty"
     assert len(sent) == 1
@@ -684,7 +685,7 @@ def test_a_report_batch_goes_out_as_one_message_not_one_per_report(
     assert result["status"] == "sent"
     assert result["announcement"]["count"] == 2
     assert len(sent) == 1
-    assert "Pre-market briefing" in sent[0]
+    assert "Pre-market briefing" in strip_markdown_v2(sent[0])
     assert "CAST" in sent[0]
     assert f"{web_main.RUNNERS_ORIGIN}/reports/2026-09-11/pre" in sent[0]
     assert f"{web_main.RUNNERS_ORIGIN}/research/pub-one" in sent[0]
@@ -750,7 +751,7 @@ def test_a_new_build_announces_itself_once(alert_environment, monkeypatch: Monke
 
     assert second["status"] == "sent"
     assert len(sent) == 1
-    assert "Trade fixes and a new outpost." in sent[0]
+    assert "Trade fixes and a new outpost." in strip_markdown_v2(sent[0])
     assert web_main.dispatch_release_announcement()["status"] == "already"
     assert len(sent) == 1
 

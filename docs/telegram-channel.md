@@ -49,16 +49,33 @@ The daily report cap (Flash runs per runner) lives in
 
 ## Render rules
 
-- Messages are sent with `parse_mode=MarkdownV2`. Every user-controlled string is
-  escaped with `escape_markdown_v2`. Numbers, emoji and ordinary punctuation
-  are passed through.
+- Messages are sent with `parse_mode=MarkdownV2`. **Everything that is not a
+  deliberate markup character is escaped with `escape_markdown_v2` — numbers and
+  ordinary punctuation included.** Telegram reserves ``_*[]()~`>#+-=|{}.!``
+  everywhere in body text, not only at the start of a line: the period in
+  `12.5%`, the sign in `+18.3%` and the hyphen in `8-K` each fail the parse on
+  their own. Emoji pass through. A URL reaches the body only as an inline link
+  (`markdown_link`); a bare URL is a run of reserved characters.
+- Blocks are assembled by `_join_blocks`, which drops a card whole rather than
+  slicing the joined message at 4096 and stranding an open `*` or a trailing
+  backslash. Anything trimmed to a length — release notes, the replay caption —
+  is trimmed *before* escaping, for the same reason.
+- Chat replies (`send_reply`) are a separate path: plain text, no `parse_mode`,
+  and the persona prompt asks for prose without markdown so nothing lands as
+  stray asterisks.
 - The URL that Telegram unfurls into a preview is **the first URL in the
   body**. We hand-place it: a ticker card puts `/t/{ticker}` first, a public
   report puts `/t/{symbol}` followed by `/research/{public_id}`, the pre/post
   briefing puts `/reports/{day}/{pre|post}` on the last line.
 - `link_preview_options={"is_disabled": false}` is sent on every message.
-  When Telegram returns a parse error on Markdown V2, `send_post` retries once
-  without `parse_mode` so the notification never gets dropped.
+  When Telegram returns a parse error on Markdown V2, `send_post` logs it and
+  retries once with the markup stripped by `strip_markdown_v2`, so the room
+  gets readable prose instead of the source. `sendAnimation` has no such retry,
+  so a replay caption has to be right the first time.
+- `tests/test_telegram_format.py` walks every rendered post the way Telegram's
+  parser does and fails on any unescaped reserved character. That guard is what
+  keeps this honest: a parse failure is invisible in production, because the
+  fallback still reports a successful send.
 
 ## Why we dropped the Dash model narration
 

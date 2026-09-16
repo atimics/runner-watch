@@ -32,6 +32,7 @@ DEFAULT_ANNOUNCE_BATCH_MIN = 2
 DEFAULT_ANNOUNCE_DEBOUNCE_MINUTES = 30
 MAX_MESSAGE_CHARS = 4096
 MARKET_REPORT_LEADER_LIMIT = 3
+RELEASE_NOTES_LIMIT = 900
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
@@ -86,6 +87,9 @@ def send_animation(
         raise AnimationDeliveryError("failed")
     boundary = "rati-" + secrets.token_hex(16)
     caption = caption.encode("utf-16-le")[:2048].decode("utf-16-le", errors="ignore")
+    trailing = len(caption) - len(caption.rstrip(chr(92)))
+    if trailing % 2:
+        caption = caption[:-1]
     fields = {
         "chat_id": config.chat_id,
         "caption": caption,
@@ -348,24 +352,50 @@ def set_reaction(
 # silently.
 # ---------------------------------------------------------------------------
 
-_MD_V2_SPECIAL = chr(0) + "_*[]()~`>#+-=|{}.!" + chr(92)
-# Characters Telegram treats as syntax anywhere in the line.
-_MD_V2_INLINE_SPECIAL = "_*[]()~`" + chr(92)
-# Characters Telegram only treats as syntax at the start of a line or after whitespace.
-_MD_V2_LINE_SPECIAL = ">#+-=|{}.!"
-_INLINE_RE = re.compile("([" + re.escape(_MD_V2_INLINE_SPECIAL) + "])")
-_LINE_RE = re.compile(r"(^|(?<=\s))([" + re.escape(_MD_V2_LINE_SPECIAL) + "])")
+# Telegram reserves all of these in Markdown V2 body text wherever they appear.
+# There is no line-start exemption: the period in "12.5%" and the hyphen in
+# "8-K" fail the parse exactly like one in the first column would.
+_MD_V2_SPECIAL = "_*[]()~`>#+-=|{}.!" + chr(92)
+_ESCAPE_RE = re.compile("([" + re.escape(_MD_V2_SPECIAL) + "])")
+_UNESCAPE_RE = re.compile(r"\\([" + re.escape(_MD_V2_SPECIAL) + "])")
+_MARKER_RE = re.compile(r"(?<!\\)[*_~`]")
+_LINK_RE = re.compile(r"\[((?:[^\[\]\\]|\\.)*)\]\(((?:[^()\\]|\\.)*)\)")
 
 
 def escape_markdown_v2(text):
-    """Escape Markdown V2 special characters; line-context only for the ones that
-    only matter at line start or after whitespace."""
+    """Escape every character Telegram reserves in Markdown V2 body text.
+
+    Escaping one that did not strictly need it renders identically; missing one
+    costs the whole message, because Telegram rejects the parse and the room
+    gets the markup source instead of the card.
+    """
 
     if not text:
         return ""
-    out = _INLINE_RE.sub(r"\\\1", text)
-    out = _LINE_RE.sub(lambda m: m.group(1) + "\\" + m.group(2), out)
-    return out
+    return _ESCAPE_RE.sub(r"\\\1", str(text))
+
+
+def _plain(text):
+    """Drop the entity markers, then put the escaped characters back."""
+
+    return _UNESCAPE_RE.sub(r"\1", _MARKER_RE.sub("", text))
+
+
+def _plain_link(match):
+    label = _plain(match.group(1))
+    target = _UNESCAPE_RE.sub(r"\1", match.group(2))
+    return (label + " " + target).strip()
+
+
+def strip_markdown_v2(text):
+    """Render a Markdown V2 body as the plain text a reader expects.
+
+    Used when Telegram rejects the markup. Resending the source put raw
+    asterisks and backslashes in the room; this keeps the words. Links keep
+    both halves, since Telegram auto-links a bare URL in a plain message.
+    """
+
+    return _plain(_LINK_RE.sub(_plain_link, str(text or "")))
 
 
 def _first_url(text):
@@ -373,9 +403,50 @@ def _first_url(text):
     return match.group(0) if match else ""
 
 
-def _markdown_link(label, url):
+def markdown_link(label, url):
+    """An inline link. A link target reserves only ``\\`` and ``)``."""
+
     target = str(url).replace("\\", "\\\\").replace(")", "\\)")
     return f"[{escape_markdown_v2(str(label))}]({target})"
+
+
+def _join_blocks(blocks, limit=MAX_MESSAGE_CHARS):
+    """Join rendered blocks without ever splitting one.
+
+    Each block is balanced Markdown V2 on its own. Slicing the joined string at
+    a fixed width could strand an opening ``*`` or a trailing backslash, which
+    Telegram rejects, so a block that does not fit is dropped whole instead.
+    """
+
+    kept: list[str] = []
+    used = 0
+    for block in blocks:
+        if not block:
+            continue
+        cost = len(block) + (2 if kept else 0)
+        if used + cost > limit:
+            continue
+        kept.append(block)
+        used += cost
+    return "\n\n".join(kept)
+
+
+def _truncate_md(text, limit=MAX_MESSAGE_CHARS):
+    """Cut an assembled message to the Telegram limit on a block boundary.
+
+    Callers hand us text that already fits; this is the guard for the ones that
+    do not. A blind slice can end on a half-written escape, so drop back to the
+    last blank line, and failing that trim the dangling backslash.
+    """
+
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    boundary = cut.rfind("\n\n")
+    if boundary > 0:
+        return cut[:boundary]
+    trimmed = cut.rstrip(chr(92))
+    return cut[: len(trimmed) + (len(cut) - len(trimmed)) // 2 * 2]
 
 
 def send_post(config, text, *, preview_url="", parse_mode="MarkdownV2", opener=None):
@@ -387,9 +458,12 @@ def send_post(config, text, *, preview_url="", parse_mode="MarkdownV2", opener=N
     we never drop a notification silently.
     """
 
-    body = text[:MAX_MESSAGE_CHARS]
+    body = _truncate_md(text)
     if preview_url and (preview_url not in body):
-        body = f"{preview_url}\n\n{body}"
+        # A bare URL on its own line is not valid Markdown V2 — every dot and
+        # hyphen in the host is reserved — so anchor it as an inline link.
+        anchor = markdown_link(preview_url, preview_url) if parse_mode else preview_url
+        body = _truncate_md(anchor + "\n\n" + body)
     payload = {
         "chat_id": config.chat_id,
         "text": body,
@@ -411,7 +485,14 @@ def send_post(config, text, *, preview_url="", parse_mode="MarkdownV2", opener=N
         message = str(exc)
         if "parse" not in message.lower():
             raise
-        plain = {"chat_id": config.chat_id, "text": body, "disable_notification": False}
+        # Resending the markup source is what put raw asterisks in the room.
+        # Strip it to plain text, and say so: this path used to report success.
+        LOG.warning("Telegram rejected Markdown V2, resending as plain text: %s", message)
+        plain = {
+            "chat_id": config.chat_id,
+            "text": strip_markdown_v2(body),
+            "disable_notification": False,
+        }
         if first:
             plain["link_preview_options"] = {"is_disabled": False}
         return _api_call(config, "sendMessage", plain, opener=opener)
@@ -438,33 +519,47 @@ def _rise_emoji(change):
 
 
 def _format_metrics_line(entry):
+    """The inline metrics run.
+
+    Every number here is escaped before it is placed next to the bold markers.
+    A price always renders a decimal point and a move always renders a sign, and
+    Telegram reserves both, so an unescaped run fails the whole message.
+    """
+
     parts = []
     price = entry.get("price")
     if price is not None:
         try:
             number = float(price)
-            parts.append("$" + (f"{number:.4f}" if number < 1 else f"{number:,.2f}"))
         except (TypeError, ValueError):
             pass
+        else:
+            shown = f"{number:.4f}" if number < 1 else f"{number:,.2f}"
+            parts.append(escape_markdown_v2("$" + shown))
     change = entry.get("change_pct")
     if change is not None:
         try:
-            arrow = _rise_emoji(change)
-            parts.append(f"{arrow} *{change:+.1f}%*")
+            moved = escape_markdown_v2(f"{float(change):+.1f}%")
         except (TypeError, ValueError):
             pass
+        else:
+            parts.append(f"{_rise_emoji(change)} *{moved}*")
     relative_volume = entry.get("relative_volume")
     if relative_volume is not None:
         try:
-            parts.append(f"RVOL *{float(relative_volume):.1f}\u00d7*")
+            volume = escape_markdown_v2(f"{float(relative_volume):.1f}\u00d7")
         except (TypeError, ValueError):
             pass
+        else:
+            parts.append(f"RVOL *{volume}*")
     score = entry.get("score")
     if score is not None:
         try:
-            parts.append(f"score *{float(score):.0f}*")
+            rated = escape_markdown_v2(f"{float(score):.0f}")
         except (TypeError, ValueError):
             pass
+        else:
+            parts.append(f"score *{rated}*")
     return "  \u00b7  ".join(parts)
 
 
@@ -472,10 +567,12 @@ def format_market_report_post_md(report, *, origin):
     """Pre-market or post-market briefing in one message."""
 
     raw_type = str(report.get("report_type") or "")
-    label = escape_markdown_v2(str(
-        report.get("label")
-        or ("Pre-market briefing" if raw_type == "pre_market" else "Post-market recap")
-    ))
+    label = escape_markdown_v2(
+        str(
+            report.get("label")
+            or ("Pre-market briefing" if raw_type == "pre_market" else "Post-market recap")
+        )
+    )
     header = f"\U0001F9ED *{label}*"
     headline = escape_markdown_v2(str(report.get("headline") or "").strip())
     summary = escape_markdown_v2(str(report.get("summary") or "").strip())
@@ -501,8 +598,8 @@ def format_market_report_post_md(report, *, origin):
     day = str(report.get("report_day") or "").strip()
     slug = "pre" if raw_type == "pre_market" else "post"
     path = f"{base}/reports/{day}/{slug}" if day else base
-    blocks.append(_markdown_link("Open report", path))
-    return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
+    blocks.append(markdown_link("Open report", path))
+    return _join_blocks(blocks)
 
 
 def format_public_report_post_md(report, *, origin):
@@ -522,11 +619,11 @@ def format_public_report_post_md(report, *, origin):
     if headline:
         blocks.append(headline)
     if not sports and token:
-        blocks.append(_markdown_link(f"${token}", f"{base}/t/{token}"))
+        blocks.append(markdown_link(f"${token}", f"{base}/t/{token}"))
     public_id = str(report.get("public_id") or "").strip()
     if public_id:
-        blocks.append(_markdown_link("Read report", f"{base}/research/{public_id}"))
-    return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
+        blocks.append(markdown_link("Read report", f"{base}/research/{public_id}"))
+    return _join_blocks(blocks)
 
 
 def format_event_post_md(event, *, origin):
@@ -547,8 +644,8 @@ def format_event_post_md(event, *, origin):
         sec_path = " \u00b7 filed via SEC" if is_sec else ""
         blocks.append(f"\u00b7 {age} ago{sec_path}")
     if ticker:
-        blocks.append(_markdown_link(f"${ticker_raw}", f"{base}/t/{ticker_raw}"))
-    return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
+        blocks.append(markdown_link(f"${ticker_raw}", f"{base}/t/{ticker_raw}"))
+    return _join_blocks(blocks)
 
 
 def format_update_announcement_md(activity, *, origin):
@@ -577,7 +674,7 @@ def format_update_announcement_md(activity, *, origin):
         metrics = _format_metrics_line(entry)
         if metrics:
             blocks.append(metrics)
-        blocks.append(_markdown_link(f"${ticker_raw}", f"{base}/t/{ticker_raw}"))
+        blocks.append(markdown_link(f"${ticker_raw}", f"{base}/t/{ticker_raw}"))
     for event in events:
         blocks.append(format_event_post_md(event, origin=origin))
     for report in reports:
@@ -585,7 +682,7 @@ def format_update_announcement_md(activity, *, origin):
             blocks.append(format_market_report_post_md(report, origin=origin))
         else:
             blocks.append(format_public_report_post_md(report, origin=origin))
-    return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
+    return _join_blocks(blocks)
 
 
 def format_release_announcement_md(version, notes, *, origin):
@@ -594,11 +691,13 @@ def format_release_announcement_md(version, notes, *, origin):
     text = " ".join(str(notes or "").split())
     if not text:
         return ""
-    safe = escape_markdown_v2(text)[:900]
+    # Trim the raw note, not the escaped one: slicing after escaping can cut a
+    # backslash off the character it escapes and leave a dangling escape.
+    safe = escape_markdown_v2(text[:RELEASE_NOTES_LIMIT].rstrip())
     base = origin.rstrip("/")
     blocks = [
         f"\U0001F406 *RATi Runners {escape_markdown_v2(version)}*",
         safe,
-        _markdown_link("Open runners", base),
+        markdown_link("Open runners", base),
     ]
-    return "\n\n".join(blocks)[:MAX_MESSAGE_CHARS]
+    return _join_blocks(blocks)
