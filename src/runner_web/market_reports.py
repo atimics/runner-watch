@@ -18,11 +18,11 @@ from runner_web.market_forecasts import (
 
 EASTERN = ZoneInfo("America/New_York")
 PRE_MARKET_START = time(4, 0)
-PRE_MARKET_REPORT_AT = time(4, 15)
+PRE_MARKET_REPORT_AT = time(4, 20)
 PRE_MARKET_CUTOFF = time(9, 15)
 REGULAR_OPEN = time(9, 30)
 REGULAR_CLOSE = time(16, 0)
-POST_MARKET_REPORT_AT = time(16, 15)
+POST_MARKET_REPORT_AT = time(16, 20)
 POST_MARKET_CUTOFF = time(16, 20)
 
 ReportType = Literal["pre_market", "post_market"]
@@ -89,7 +89,7 @@ def market_report_schedule(moment: datetime | None = None) -> dict[str, Any]:
         "next_label": REPORT_LABELS[next_type],
         "next_at": _iso_utc(next_at),
         "seconds_to_next": max(0, int((next_at - current).total_seconds())),
-        "schedule_note": "Weekdays · 4:15 a.m. and 4:15 p.m. ET",
+        "schedule_note": "Weekdays · 4:20 a.m. and 4:20 p.m. ET",
     }
 
 
