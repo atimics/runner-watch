@@ -132,7 +132,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         score = number(item.get("score"))
         score_detail = item.get("score_detail")
     elif paused:
-        tag, tag_tone, risk, score, score_detail = "PAUSED", "watch", False, None, None
+        tag, tag_tone, risk, score, score_detail = "PAUSED", "paused", False, None, None
     else:
         tag, tag_tone, risk, score, score_detail = "", "", False, None, None
     return {
@@ -399,6 +399,12 @@ def detail(
                 )
     else:
         result["series"] = series(data.get("history") or [])
+        # Where the action tag changed, so the line can be drawn in its colours.
+        result["states"] = [
+            {"time": str(change["time"]), "tone": str(change["tone"])}
+            for change in (data.get("states") or [])
+            if change.get("time") and change.get("tone")
+        ]
         result["chart_period"] = {
             "start": result["series"][0]["time"] if result["series"] else None,
             "end": result["series"][-1]["time"] if result["series"] else None,

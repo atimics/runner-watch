@@ -8551,6 +8551,38 @@ def ticker_charts_payload(tickers: list[str]) -> dict[str, Any]:
             CHART_PAYLOAD_CONDITION.notify_all()
 
 
+def _ticker_state_changes(ticker: str, *, days: int = 7) -> list[dict[str, Any]]:
+    """When the action tag changed, so the chart can be drawn in its colours.
+
+    The scan snapshots already carry the trade state, stage and rug level the
+    tag is collapsed from, so the history costs one query and no new storage.
+    Only the changes are returned: a reader cares where the line turned from
+    watch to setup, not that it stayed setup for forty bars.
+    """
+
+    from runner_web.market_screens import state_tag
+
+    cutoff = iso(now() - timedelta(days=days))
+    with connection() as db:
+        rows = db.execute(
+            """
+            SELECT captured_at,trade_state,stage,rug_level FROM scan_snapshots
+            WHERE ticker=? AND captured_at>=?
+            ORDER BY captured_at
+            """,
+            (ticker, cutoff),
+        ).fetchall()
+    changes: list[dict[str, Any]] = []
+    for raw in rows:
+        row = dict(raw)
+        _label, tone, _risk = state_tag(row)
+        tone = tone or "paused"
+        if changes and changes[-1]["tone"] == tone:
+            continue
+        changes.append({"time": str(row["captured_at"]), "tone": tone})
+    return changes
+
+
 def _ticker_chart_detail_payload_uncached(ticker: str) -> dict[str, Any]:
     frame, freshness = _stored_chart_frame(ticker)
     structure = analyze_market_structure(frame)
@@ -8559,6 +8591,7 @@ def _ticker_chart_detail_payload_uncached(ticker: str) -> dict[str, Any]:
         "points": _serialize_chart_frame(frame, max_points=360),
         "freshness": freshness,
         "annotations": _chart_annotations([ticker]).get(ticker, []),
+        "states": _ticker_state_changes(ticker),
         "levels": list(structure.levels),
         "fibonacci": structure.fibonacci,
         "structure": structure.summary,
@@ -8713,6 +8746,7 @@ def screen_detail_state(
                 maximum_age=CALL_MARK_MAX_AGE,
             ),
             "history": ticker_chart_detail_payload(subject).get("points") or [],
+            "states": ticker_chart_detail_payload(subject).get("states") or [],
         }
         if user_id:
             active = active_call_for_user(
@@ -8778,7 +8812,10 @@ async def screen_stock_chart(ticker: str, request: Request) -> dict[str, Any]:
     if not _ticker_exists(normalized):
         raise HTTPException(404, "Ticker not found")
     payload = await run_in_threadpool(ticker_chart_detail_payload, normalized)
-    return {"points": series(payload.get("points") or [])}
+    return {
+        "points": series(payload.get("points") or []),
+        "states": payload.get("states") or [],
+    }
 
 
 @app.get("/api/screens/stocks/{ticker}/quote")

@@ -1,3 +1,26 @@
+{% macro score_pie(item) -%}
+{%- if item.score is none -%}
+<span class="ticker-score is-empty"></span>
+{%- else -%}
+{#- Size carries the magnitude, the slices carry what drove it, and the top
+    band gets a ring. A number told you none of that. -#}
+{%- set parts = (item.score_detail.drivers if item.score_detail else []) | selectattr('value', 'greaterthan', 0) | list -%}
+{%- set total = parts | sum(attribute='value') -%}
+{%- set band = 3 if item.score >= 80 else 2 if item.score >= 60 else 1 if item.score >= 40 else 0 -%}
+{%- set ns = namespace(acc=0, stops=[]) -%}
+{%- for part in parts -%}
+  {%- set start = (ns.acc / total * 100) | round(2) -%}
+  {%- set ns.acc = ns.acc + part.value -%}
+  {%- set stop = (ns.acc / total * 100) | round(2) -%}
+  {%- set _ = ns.stops.append('var(--score-' ~ part.key ~ ') ' ~ start ~ '% ' ~ stop ~ '%') -%}
+{%- endfor -%}
+<span class="ticker-score" data-band="{{ band }}" role="img"
+      aria-label="Score {{ item.score|round|int }}{% if parts %} · led by {{ (parts|sort(attribute='value')|last).label }}{% endif %}"
+      title="Score {{ item.score|round|int }}{% for part in parts %} · {{ part.label }} {{ part.value }}{% endfor %}">
+  <span class="score-pie" style="--pie: {{ (15 + (([item.score, 100]|min) / 100 * 21)) | round(1) }}px{% if ns.stops %}; background: conic-gradient({{ ns.stops|join(', ') }}){% endif %}"></span>
+</span>
+{%- endif -%}
+{%- endmacro %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -24,7 +47,7 @@
     {% endif %}
     {% if screen.updated_label %}<span class="fresh">Updated {{ screen.updated_label }}</span>{% endif %}
     {% if screen.counts %}<div class="tag-filters" data-tag-filters aria-label="Filter by state">
-      {% for tone in ['running','setup','extended','avoid','watch'] %}{% if screen.counts.get(tone) %}<button type="button" class="chip chip-{{ tone }}" data-tag="{{ tone }}" aria-pressed="false"><i></i>{{ screen.counts[tone] }} {{ tone }}</button>{% endif %}{% endfor %}
+      {% for tone in ['running','setup','extended','avoid','watch','paused'] %}{% if screen.counts.get(tone) %}<button type="button" class="chip chip-{{ tone }}" data-tag="{{ tone }}" aria-pressed="false"><i></i>{{ screen.counts[tone] }} {{ tone }}</button>{% endif %}{% endfor %}
       <button type="button" class="chip chip-all" data-tag="" aria-pressed="true" hidden>All</button>
     </div>{% endif %}
     <form class="search" method="get" action="{{ base }}" role="search">
@@ -47,7 +70,7 @@
         <span class="ticker-name"><strong>{{ item.name }}</strong><small>{{ item.subtitle }}</small></span>
         <span class="ticker-value"><strong>{{ item.value }}</strong><small class="{{ item.tone }}">{{ item.change }}</small></span>
         {% if screen.market == 'stocks' %}<svg class="mini-chart" data-ticker="{{ item.name }}" viewBox="0 0 64 18" preserveAspectRatio="none" aria-hidden="true"><path class="chart-placeholder" d="M1 12 L13 10 L25 13 L39 8 L51 10 L63 7"/></svg>{% endif %}
-        <span class="ticker-score{% if item.score is none %} is-empty{% endif %}">{% if item.score is not none %}<b>{{ item.score|round|int }}</b><span class="score-track"><i style="width: {{ [item.score, 100]|min|round|int }}%"></i></span>{% endif %}</span>
+        {{ score_pie(item) }}
         <span class="row-arrow" aria-hidden="true">↗</span>
       </a>{% endfor %}</div>
     {% else %}<div class="empty"><span aria-hidden="true">◌</span><h2>{{ 'Try another search' if screen.query else 'A quiet moment' }}</h2><p>{{ 'Search by name or symbol.' if screen.query else 'New activity will appear here.' }}</p></div>{% endif %}

@@ -366,3 +366,49 @@ def test_single_chart_point_and_empty_refresh_clear_old_period(page):
     expect(page.locator("[data-chart-start]")).to_be_empty()
     expect(page.locator("[data-chart-end]")).to_be_empty()
     expect(page.locator("[data-chart-summary]")).to_be_empty()
+
+
+def test_the_chart_is_drawn_in_the_colours_of_the_action_tag(page: Page):
+    """A reader should see where a name turned from watch to setup to running
+    without reading a table, so the line is split into one run per tag."""
+
+    screen = detail("stocks", {"current": fixtures.scored_stock(), "ticker": "AAA"})
+    screen.pop("refresh_url", None)
+    screen.pop("chart_url", None)
+    screen["series"] = [
+        {"time": "2026-09-14T12:00:00Z", "value": 1},
+        {"time": "2026-09-14T13:00:00Z", "value": 2},
+        {"time": "2026-09-15T12:00:00Z", "value": 3},
+        {"time": "2026-09-15T13:00:00Z", "value": 4},
+        {"time": "2026-09-16T12:00:00Z", "value": 5},
+        {"time": "2026-09-16T13:00:00Z", "value": 6},
+    ]
+    screen["states"] = [
+        {"time": "2026-09-14T00:00:00Z", "tone": "watch"},
+        {"time": "2026-09-15T06:00:00Z", "tone": "setup"},
+        {"time": "2026-09-16T06:00:00Z", "tone": "running"},
+    ]
+    open_screen(page, screen)
+
+    expect(page.locator(".chart-state.state-watch")).to_have_count(1)
+    expect(page.locator(".chart-state.state-setup")).to_have_count(1)
+    expect(page.locator(".chart-state.state-running")).to_have_count(1)
+    # Runs join up rather than leaving a gap at each change.
+    watch_end = page.locator(".chart-state.state-watch").get_attribute("d").split("L")[-1]
+    setup_start = page.locator(".chart-state.state-setup").get_attribute("d")
+    assert setup_start.startswith("M" + watch_end)
+
+
+def test_a_chart_without_state_history_keeps_one_plain_line(page: Page):
+    screen = detail("stocks", {"current": fixtures.scored_stock(), "ticker": "AAA"})
+    screen.pop("refresh_url", None)
+    screen.pop("chart_url", None)
+    screen["series"] = [
+        {"time": "2026-09-16T12:00:00Z", "value": 1},
+        {"time": "2026-09-16T13:00:00Z", "value": 2},
+    ]
+    screen["states"] = []
+    open_screen(page, screen)
+
+    expect(page.locator(".chart-state")).to_have_count(0)
+    assert page.locator(".chart-line").get_attribute("d").startswith("M")

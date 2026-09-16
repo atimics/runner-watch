@@ -47,6 +47,40 @@
     }
   }
   document.addEventListener('rati:map-time',event => {filingMarker = event.detail; markFiling();});
+  // The action tag over time, drawn onto the line. A reader can see where a
+  // name turned from watch to setup to running without reading a table.
+  let chartStates = [];
+  function toneAt(time) {
+    let tone = '';
+    for (const change of chartStates) {
+      const at = Date.parse(change.time);
+      if (!Number.isFinite(at) || at > time) break;
+      tone = change.tone;
+    }
+    return tone;
+  }
+  function paintStates(data, coords) {
+    if (!chart) return;
+    chart.querySelectorAll('.chart-state').forEach(node => node.remove());
+    if (!chartStates.length || data.length < 2) return;
+    const base = chart.querySelector('.chart-line');
+    let run = [], runTone = toneAt(data[0][0]);
+    const flush = () => {
+      if (run.length > 1 && runTone) {
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('class', 'chart-state state-' + runTone);
+        path.setAttribute('d', run.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' '));
+        base.after(path);
+      }
+      run = run.length ? [run[run.length - 1]] : [];
+    };
+    data.forEach((point, index) => {
+      const tone = toneAt(point[0]);
+      if (tone !== runTone) { flush(); runTone = tone; }
+      run.push(coords[index]);
+    });
+    flush();
+  }
   function draw(points) {
     if (!chart) return;
     const ordered = new Map();
@@ -75,9 +109,11 @@
     const line = coords.map((p,i)=>`${i?'L':'M'}${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ');
     chart.querySelector('.chart-line').setAttribute('d',line);
     chart.querySelector('.chart-area').setAttribute('d',data.length === 1 ? '' : `${line} L792,280 L8,280 Z`);
+    paintStates(data, coords);
     dot.toggleAttribute('hidden', data.length !== 1); dot.setAttribute('cx', '400'); dot.setAttribute('cy', '140');
     chart.removeAttribute('hidden'); status.hidden = true;
   }
+  chartStates = screen?.states || [];
   draw(screen?.series);
   const pageKey = () => location.pathname + location.search;
   let requestNumber = 0;
@@ -131,6 +167,7 @@
       }
     }
     screen = next;
+    if (next.states) chartStates = next.states;
     draw(next.series);
   }
   async function refreshDetail() {
@@ -166,7 +203,7 @@
     } catch (_) { /* Keep the saved view during connection recovery. */ }
   }
   if (screen?.refresh_url) refreshDetail();
-  else if (screen?.chart_url) fetch(screen.chart_url).then(r=>r.json()).then(p=>draw(p.points)).catch(()=>draw(screen.series));
+  else if (screen?.chart_url) fetch(screen.chart_url).then(r=>r.json()).then(p=>{if(p.states)chartStates=p.states;draw(p.points);}).catch(()=>draw(screen.series));
   setInterval(refreshSurface, 60000);
   function showTerms(selected) {
     put('[data-confirm-title]', selected.label);

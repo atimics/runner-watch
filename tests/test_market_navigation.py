@@ -253,4 +253,8 @@ def test_screen_quote_and_chart_keep_provider_details_private(board_client, monk
         "time": "Sep 12 · 12:00 UTC",
     }
     chart = board_client.get("/api/screens/stocks/ABC/chart").json()
-    assert chart == {"points": [{"value": 2.5, "time": "2026-09-12T12:00:00Z"}]}
+    assert chart["points"] == [{"value": 2.5, "time": "2026-09-12T12:00:00Z"}]
+    # The state history carries when the action tag changed and nothing else -
+    # no trade state, stage or rug level, which are what it is collapsed from.
+    assert set(chart) == {"points", "states"}
+    assert all(set(change) == {"time", "tone"} for change in chart["states"])
