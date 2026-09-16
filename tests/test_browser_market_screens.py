@@ -451,41 +451,14 @@ def test_the_score_pie_reads_as_three_styles(page: Page):
     assert all("gradient" in (mask or "") for mask in masks[1:])
 
 
-def test_a_row_that_arrives_on_a_refresh_wears_the_new_halo(page: Page):
-    """A reader should be able to tell a new arrival from one that merely
-    moved, so only rows absent at the previous refresh are marked."""
+def test_the_announced_row_wears_the_new_halo(page: Page):
+    """The halo marks what the channel was most recently told, not what this
+    reader happens not to have seen - one fact, the same for everyone, and it
+    survives a reload."""
 
-    before = fixtures.render(listing("stocks", [_row("AAA", 88), _row("BBB", 52)]))
-    after = fixtures.render(
-        listing("stocks", [_row("NEW", 91), _row("AAA", 88), _row("BBB", 52)])
-    )
-
-    def inline(html: str) -> str:
-        html = re.sub(
-            r'<link rel="stylesheet" href="/static/([^"?]+)[^"]*">',
-            lambda m: "<style>" + (ROOT / "web/static" / m[1]).read_text() + "</style>",
-            html,
-        )
-        return re.sub(
-            r'<script src="/static/market-screen.js[^"]*"[^>]*></script>',
-            lambda _: "<script>" + (ROOT / "web/static/market-screen.js").read_text() + "</script>",
-            html,
-        )
-
-    served = [inline(before)]
-    page.route(
-        "http://app.test/",
-        lambda route: route.fulfill(content_type="text/html", body=served[-1]),
-    )
-    page.route("**/api/screens/**", lambda route: route.fulfill(json={"points": []}))
-    page.clock.install()
-    page.goto("http://app.test/")
-
-    # Nothing is new on the first paint - there is no previous refresh to differ from.
-    expect(page.locator(".ticker.is-new")).to_have_count(0)
-
-    served.append(inline(after))
-    page.clock.fast_forward(60000)
+    rows = [_row("AAA", 88), _row("BBB", 52)]
+    rows[0]["announced"] = True
+    open_screen(page, listing("stocks", rows))
 
     expect(page.locator(".ticker.is-new")).to_have_count(1)
-    expect(page.locator(".ticker.is-new")).to_have_attribute("href", "/t/NEW")
+    expect(page.locator(".ticker.is-new")).to_have_attribute("href", "/t/AAA")

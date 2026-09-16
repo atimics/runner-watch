@@ -27,21 +27,6 @@
     applyTagFilter();
   });
   applyTagFilter();
-  // Rows that were not on the board at the previous refresh wear a halo, so a
-  // reader can tell a new arrival from one that merely moved.
-  let seenRows = null;
-  function markNewRows() {
-    const rows = [...document.querySelectorAll('.ticker-list .ticker')];
-    if (!rows.length) return;
-    const keys = new Set(rows.map(row => row.getAttribute('href')));
-    if (seenRows) {
-      rows.forEach(row => {
-        if (!seenRows.has(row.getAttribute('href'))) row.classList.add('is-new');
-      });
-    }
-    seenRows = keys;
-  }
-  markNewRows();
   const put = (selector, value) => { const el = document.querySelector(selector); if (el) el.textContent = value || ''; };
   let filingMarker = null, chartBounds = null;
   function markFiling() {
@@ -213,7 +198,6 @@
         const opened = new Map([...surface.querySelectorAll('[data-connection][open]')].map(el => [el.dataset.connection, !!el.querySelector('.more-connections[open]')]));
         content.querySelectorAll('[data-connection]').forEach(el => { if (opened.has(el.dataset.connection)) { el.open = true; const more = el.querySelector('.more-connections'); if (more) more.open = opened.get(el.dataset.connection); } });
         surface.replaceWith(content);
-        markNewRows();
       }
       applyTagFilter();
     } catch (_) { /* Keep the saved view during connection recovery. */ }

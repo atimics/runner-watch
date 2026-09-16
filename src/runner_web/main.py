@@ -4164,6 +4164,46 @@ def _external_event_label(context: dict[str, Any]) -> tuple[str, str, str | None
     )
 
 
+# How close two deliveries must be to count as the same announcement round, and
+# how long the most recent round keeps its halo before it stops being news.
+ANNOUNCEMENT_ROUND_MINUTES = 2
+ANNOUNCEMENT_HALO_MINUTES = 90
+
+
+def _announced_tickers() -> set[str]:
+    """The tickers carried by the most recent pulse announcement.
+
+    The board marks these rather than tracking what each reader has already
+    seen: it is one fact, the same for everyone, and it survives a reload. The
+    rundown sends one runner per message, so this is usually a single name -
+    deliveries landing within a couple of minutes of each other are treated as
+    one round so a batch still halos together.
+    """
+
+    with connection() as database:
+        row = database.execute(
+            "SELECT MAX(updated_at) AS latest FROM telegram_alert_deliveries WHERE status='sent'"
+        ).fetchone()
+    latest = _stamp(row["latest"] if row else None)
+    current = now()
+    if latest is None or (current - latest) > timedelta(minutes=ANNOUNCEMENT_HALO_MINUTES):
+        return set()
+    cutoff = iso(latest - timedelta(minutes=ANNOUNCEMENT_ROUND_MINUTES))
+    with connection() as database:
+        rows = database.execute(
+            "SELECT ticker FROM telegram_alert_deliveries "
+            "WHERE status='sent' AND updated_at>=?",
+            (cutoff,),
+        ).fetchall()
+    return {str(entry["ticker"]).upper() for entry in rows}
+
+
+def _attach_announcements(rows: list[dict[str, Any]]) -> None:
+    announced = _announced_tickers()
+    for row in rows:
+        row["announced"] = str(row.get("ticker") or "").upper() in announced
+
+
 def _attach_pulse_entries(rows: list[dict[str, Any]]) -> None:
     entries = _pulse_entry_markers([str(row["ticker"]) for row in rows])
     for row in rows:
@@ -4469,6 +4509,7 @@ def _pulse_data_uncached() -> dict[str, Any]:
         runner["custom_rank"] = custom_rank
     _apply_market_marks(runner_rows)
     _attach_pulse_entries(runner_rows)
+    _attach_announcements(runner_rows)
     quote_times = [str(row["quote_time"]) for row in market_rows if row["quote_time"]]
     market_updated_at = max(quote_times) if quote_times else None
     if market_updated_at is None and latest_run:

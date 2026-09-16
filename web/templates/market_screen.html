@@ -64,7 +64,7 @@
   {% if screen.kind != 'detail' %}
     <div data-live-surface>
     {% if screen.rows %}
-      <div class="ticker-list market-{{ screen.market }}" data-tag-list aria-label="Tickers">{% for item in screen.rows %}<a class="ticker" href="{{ item.href }}" data-tag="{{ item.tag_tone }}">
+      <div class="ticker-list market-{{ screen.market }}" data-tag-list aria-label="Tickers">{% for item in screen.rows %}<a class="ticker{% if item.announced %} is-new{% endif %}" href="{{ item.href }}" data-tag="{{ item.tag_tone }}">
         {% if item.tag %}<span class="tag tag-{{ item.tag_tone }}{% if item.risk %} has-risk{% endif %}">{% if item.risk %}<i aria-hidden="true">▲</i>{% endif %}{{ item.tag }}</span>
         {% else %}<span class="ticker-mark tone-{{ loop.index0 % 5 }}" aria-hidden="true">{{ item.mark }}</span>{% endif %}
         <span class="ticker-name"><strong>{{ item.name }}</strong><small>{{ item.subtitle }}</small></span>

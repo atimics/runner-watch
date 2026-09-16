@@ -1013,3 +1013,36 @@ def test_a_free_report_can_skip_the_paid_private_window() -> None:
     assert web_main._exclusive_until_for(start) == "2026-09-11T13:00:00+00:00"
     assert web_main._exclusive_until_for(start, 0) == "2026-09-11T12:00:00+00:00"
     assert web_main._exclusive_until_for(start, 10) == "2026-09-11T12:10:00+00:00"
+
+
+def _record_sent(ticker: str, *, minutes_ago: float) -> None:
+    stamp = (datetime.now(UTC) - timedelta(minutes=minutes_ago)).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO telegram_alert_deliveries("
+            "ticker,entered_at,status,attempts,detail,created_at,updated_at) "
+            "VALUES(?,?,'sent',1,NULL,?,?)",
+            (ticker, stamp, stamp, stamp),
+        )
+
+
+def test_the_board_halos_the_most_recent_announcement(alert_environment) -> None:
+    """The rundown sends one runner per message, so this is usually a single
+    name. Deliveries landing within a couple of minutes count as one round, so
+    a batch still halos together."""
+
+    _record_sent("NEWEST", minutes_ago=1)
+    _record_sent("SAMEROUND", minutes_ago=2)
+    _record_sent("EARLIER", minutes_ago=25)
+
+    assert web_main._announced_tickers() == {"NEWEST", "SAMEROUND"}
+
+
+def test_a_stale_announcement_stops_being_news(alert_environment) -> None:
+    _record_sent("OLD", minutes_ago=web_main.ANNOUNCEMENT_HALO_MINUTES + 5)
+
+    assert web_main._announced_tickers() == set()
+
+
+def test_nothing_is_haloed_before_the_first_announcement(alert_environment) -> None:
+    assert web_main._announced_tickers() == set()
