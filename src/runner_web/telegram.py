@@ -618,11 +618,14 @@ def format_public_report_post_md(report, *, origin):
     headline = escape_markdown_v2(str(report.get("headline") or "").strip())
     if headline:
         blocks.append(headline)
-    if not sports and token:
-        blocks.append(markdown_link(f"${token}", f"{base}/t/{token}"))
+    # One URL per message, and the report page is the one that carries a card.
+    # The ticker is already named in the header, so a second link to /t/ only
+    # spent a line the reader could not preview.
     public_id = str(report.get("public_id") or "").strip()
     if public_id:
         blocks.append(markdown_link("Read report", f"{base}/research/{public_id}"))
+    elif not sports and token:
+        blocks.append(markdown_link(f"${token}", f"{base}/t/{token}"))
     return _join_blocks(blocks)
 
 
@@ -648,23 +651,28 @@ def format_event_post_md(event, *, origin):
     return _join_blocks(blocks)
 
 
-def format_update_announcement_md(activity, *, origin):
+def format_board_segment_md(runners, *, origin):
+    """The "New on the Board" segment: the whole batch, one card.
+
+    Telegram previews exactly one URL per message, so a link per runner spent
+    nine lines to render one arbitrary thumbnail. The batch is named in text and
+    the single link goes to the leader, whose ticker page carries a card. The
+    other names earn their own card later, when their free Flash report
+    publishes.
+    """
+
     base = origin.rstrip("/")
-    runners = [row for row in (activity.get("runners") or []) if row.get("ticker")]
-    reports = list(activity.get("reports") or [])
-    events = list(activity.get("events") or [])
-    total = len(runners) + len(reports) + len(events)
-    if total == 0:
+    entries = [row for row in (runners or []) if row.get("ticker")]
+    if not entries:
         return ""
     header = (
         "\U0001F406 *1 new on the board*"
-        if total == 1
-        else f"\U0001F406 *{total} new on the board*"
+        if len(entries) == 1
+        else f"\U0001F406 *{len(entries)} new on the board*"
     )
     blocks = [header]
-    for entry in runners:
-        ticker_raw = str(entry.get("ticker") or "").strip().upper()
-        ticker = escape_markdown_v2(ticker_raw)
+    for entry in entries:
+        ticker = escape_markdown_v2(str(entry.get("ticker") or "").strip().upper())
         emoji = _state_emoji(entry.get("tag") or "")
         head = (emoji + " " if emoji else "") + f"*{ticker}*"
         state = escape_markdown_v2(str(entry.get("tag") or ""))
@@ -674,14 +682,9 @@ def format_update_announcement_md(activity, *, origin):
         metrics = _format_metrics_line(entry)
         if metrics:
             blocks.append(metrics)
-        blocks.append(markdown_link(f"${ticker_raw}", f"{base}/t/{ticker_raw}"))
-    for event in events:
-        blocks.append(format_event_post_md(event, origin=origin))
-    for report in reports:
-        if report.get("kind") == "market_report":
-            blocks.append(format_market_report_post_md(report, origin=origin))
-        else:
-            blocks.append(format_public_report_post_md(report, origin=origin))
+    lead = str(entries[0].get("ticker") or "").strip().upper()
+    label = f"${lead}" if len(entries) == 1 else f"${lead} and the rest of the board"
+    blocks.append(markdown_link(label, f"{base}/t/{lead}"))
     return _join_blocks(blocks)
 
 

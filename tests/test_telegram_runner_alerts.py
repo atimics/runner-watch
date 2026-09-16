@@ -665,9 +665,13 @@ def test_a_lone_runner_waits_for_a_batch_then_goes_out_with_it(
     assert "BBBB" in sent[0]
 
 
-def test_a_report_batch_goes_out_as_one_message_not_one_per_report(
+def test_a_batch_goes_out_as_one_message_per_segment_each_with_its_own_card(
     alert_environment, monkeypatch: MonkeyPatch
 ) -> None:
+    """Telegram previews one URL per message. Merging the batch into a single
+    announcement threw away every card but the first, so each segment now gets
+    its own message and its own preview."""
+
     monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_BATCH_MIN", 2)
     monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES", 30)
     sent: list[str] = []
@@ -684,11 +688,44 @@ def test_a_report_batch_goes_out_as_one_message_not_one_per_report(
 
     assert result["status"] == "sent"
     assert result["announcement"]["count"] == 2
+    assert result["announcement"]["segments"] == 2
+    assert len(sent) == 2
+    briefing, report = sent
+    assert "Pre-market briefing" in strip_markdown_v2(briefing)
+    assert f"{web_main.RUNNERS_ORIGIN}/reports/2026-09-11/pre" in briefing
+    assert "CAST" in report
+    assert f"{web_main.RUNNERS_ORIGIN}/research/pub-one" in report
+    # The point of the split: every message previews the card it is about.
+    for message in sent:
+        assert message.count(web_main.RUNNERS_ORIGIN) == 1, message
+
+
+def test_a_segment_failure_keeps_what_already_landed(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    """A later segment failing must not re-send the earlier one next time."""
+
+    monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_BATCH_MIN", 2)
+    monkeypatch.setattr(web_main, "TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES", 30)
+    sent: list[str] = []
+
+    def send(config: object, text: str, **_kw: object) -> None:
+        if sent:
+            raise RuntimeError("Telegram sendMessage failed with status 500")
+        sent.append(text)
+
+    monkeypatch.setattr(web_main, "telegram_send_post", send)
+    web_main.dispatch_telegram_posts()  # baseline the empty board
+    recent = datetime.now(UTC).isoformat()
+    _insert_market_report("pre-1", created_at=recent)
+    _insert_public_report("one", "CAST", created_at=recent)
+
+    result = web_main.dispatch_telegram_posts()
+
+    assert result["status"] == "partial"
     assert len(sent) == 1
-    assert "Pre-market briefing" in strip_markdown_v2(sent[0])
-    assert "CAST" in sent[0]
-    assert f"{web_main.RUNNERS_ORIGIN}/reports/2026-09-11/pre" in sent[0]
-    assert f"{web_main.RUNNERS_ORIGIN}/research/pub-one" in sent[0]
+    assert result["market_reports"]["status"] == "sent"
+    assert result["research_reports"]["status"] == "failed"
 
 
 def test_the_announcement_uses_deterministic_markdown(

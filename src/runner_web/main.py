@@ -323,10 +323,19 @@ from runner_web.telegram import (
     config_from_env as telegram_config_from_env,
 )
 from runner_web.telegram import (
-    format_release_announcement_md as telegram_format_release_announcement_md,
+    format_board_segment_md as telegram_format_board_segment_md,
 )
 from runner_web.telegram import (
-    format_update_announcement_md as telegram_format_update_announcement_md,
+    format_event_post_md as telegram_format_event_post_md,
+)
+from runner_web.telegram import (
+    format_market_report_post_md as telegram_format_market_report_post_md,
+)
+from runner_web.telegram import (
+    format_public_report_post_md as telegram_format_public_report_post_md,
+)
+from runner_web.telegram import (
+    format_release_announcement_md as telegram_format_release_announcement_md,
 )
 from runner_web.telegram import (
     release_announcements_enabled as telegram_release_announcements_enabled,
@@ -11687,11 +11696,31 @@ def _activity_payload(
     return {"runners": activity_runners, "reports": reports}
 
 
-def _compose_update_announcement(activity: dict[str, Any]) -> str:
-    """Render the batched announcement in Telegram Markdown V2."""
+def _compose_segments(activity: dict[str, Any]) -> list[tuple[str, str]]:
+    """Split what has landed into one message per segment.
 
-    markdown = telegram_format_update_announcement_md(activity, origin=RUNNERS_ORIGIN)
-    return markdown
+    Telegram previews one URL per message, so merging the batch into a single
+    announcement threw away every card but the first. Each segment now carries
+    its own destination and its own preview: the board batch links its leader,
+    a session report links its report page, a public Flash report links the
+    research page. Returned as ``(kind, markdown)`` so the caller can record
+    exactly what landed when a later segment fails.
+    """
+
+    segments: list[tuple[str, str]] = []
+    board = telegram_format_board_segment_md(activity.get("runners"), origin=RUNNERS_ORIGIN)
+    if board:
+        segments.append(("runners", board))
+    for event in activity.get("events") or []:
+        segments.append(("event", telegram_format_event_post_md(event, origin=RUNNERS_ORIGIN)))
+    for report in activity.get("reports") or []:
+        if report.get("kind") == "market_report":
+            rendered = telegram_format_market_report_post_md(report, origin=RUNNERS_ORIGIN)
+        else:
+            rendered = telegram_format_public_report_post_md(report, origin=RUNNERS_ORIGIN)
+        if rendered:
+            segments.append((str(report.get("kind") or "report"), rendered))
+    return segments
 
 
 def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]:
@@ -11796,55 +11825,60 @@ def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]
                 result["status"] = "waiting"
                 result["announcement"]["status"] = "waiting"
                 return result
-            text = _compose_update_announcement(activity)
-            try:
-                telegram_send_post(config, text)
-            except Exception as exc:
-                result["status"] = "failed"
-                result["announcement"]["status"] = "failed"
-                for key in ("runners", "market_reports", "research_reports"):
-                    if result[key]["status"] == "pending":
-                        result[key]["status"] = "failed"
-                with connection() as database:
-                    _record_runner_alert_delivery(
-                        database, runners, status="failed", detail=str(exc)[:500]
-                    )
-                    for report in market:
-                        _record_channel_post(
-                            database,
-                            "market_report",
-                            str(report.get("id") or ""),
-                            status="failed",
-                            detail=str(exc)[:500],
-                        )
-                    for report in research:
-                        _record_channel_post(
-                            database,
-                            "research_report",
-                            str(report.get("public_id") or ""),
-                            status="failed",
-                            detail=str(exc)[:500],
-                        )
-                LOG.warning("Telegram update announcement failed: %s", exc)
-                return result
-            result["status"] = "sent"
-            result["announcement"]["status"] = "sent"
+            segments = _compose_segments(activity)
+            result["announcement"]["segments"] = len(segments)
+            # Each segment is its own message so each keeps its own card. A
+            # segment that fails stops the run, and only what already landed is
+            # recorded sent — the rest stays pending for the next dispatch.
+            sent_kinds: set[str] = set()
+            failure: Exception | None = None
+            for kind, text in segments:
+                try:
+                    telegram_send_post(config, text)
+                except Exception as exc:
+                    failure = exc
+                    LOG.warning("Telegram %s segment failed: %s", kind, exc)
+                    break
+                sent_kinds.add(kind)
+            detail = str(failure)[:500] if failure else None
+
+            def _status(kind: str) -> str:
+                return "sent" if kind in sent_kinds else "failed"
+
             with connection() as database:
-                _record_runner_alert_delivery(database, runners, status="sent")
+                if runners:
+                    _record_runner_alert_delivery(
+                        database, runners, status=_status("runners"), detail=detail
+                    )
                 for report in market:
                     _record_channel_post(
-                        database, "market_report", str(report.get("id") or ""), status="sent"
+                        database,
+                        "market_report",
+                        str(report.get("id") or ""),
+                        status=_status("market_report"),
+                        detail=detail,
                     )
                 for report in research:
                     _record_channel_post(
                         database,
                         "research_report",
                         str(report.get("public_id") or ""),
-                        status="sent",
+                        status=_status("research_report"),
+                        detail=detail,
                     )
-            for key in ("runners", "market_reports", "research_reports"):
+            for key, kind in (
+                ("runners", "runners"),
+                ("market_reports", "market_report"),
+                ("research_reports", "research_report"),
+            ):
                 if result[key]["status"] == "pending":
-                    result[key]["status"] = "sent"
+                    result[key]["status"] = _status(kind)
+            if failure is not None:
+                result["status"] = "failed" if not sent_kinds else "partial"
+                result["announcement"]["status"] = result["status"]
+                return result
+            result["status"] = "sent"
+            result["announcement"]["status"] = "sent"
             result["reports"] = _queue_telegram_runner_reports(
                 [str(entry.get("ticker") or "") for entry in runners]
             )

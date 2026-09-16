@@ -1,4 +1,4 @@
-# Telegram channel — what we post and how
+# Telegram channel — the rundown
 
 This document is the playbook for the public Telegram room that mirrors what
 shows up on the runners feed. The code lives in `src/runner_web/telegram.py`
@@ -6,46 +6,139 @@ shows up on the runners feed. The code lives in `src/runner_web/telegram.py`
 The strategy here is the single source of truth; if the code drifts, this
 document is the thing to update first.
 
-## Goals
+## The shape we are going for
 
-- **Tight, on-brand.** Every post is Markdown V2, with bold tickers, emoji-coded
-  state matched to the new list tags, and a single URL ahead of the body so
-  Telegram renders a clean link preview on the entity page.
-- **Per-event dedupe.** Each event is delivered once. Runners use
-  `telegram_alert_deliveries(ticker, entered_at)`; reports and the build use
-  `telegram_channel_posts(kind, subject)`. A retry only happens if the prior
-  delivery row is `failed` and under `attempts`.
-- **No floods.** A single dispatch batches everything that's pending and uses
-  `announcement_batch_ready` to wait for `TELEGRAM_ANNOUNCE_BATCH_MIN` items
-  or the `TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES` window before posting.
-- **Single render pass.** Every kind of message is built by one function in
-  `telegram.py`; dispatchers reuse those builders and the `send_post` helper.
+The channel is a **financial radio program**, not a feed. A feed dumps
+everything that happened; a program has a rundown — a handful of recognisable
+segments, each with its own voice and its own slot, so a reader who tunes in at
+any hour gets something that feels produced rather than emitted.
 
-## Kinds and triggers
+Two rules carry most of the weight.
 
-Everything pending is folded into **one batched announcement** by
-`dispatch_telegram_posts` and rendered by `format_update_announcement_md`.
-Each kind keeps its own dedupe key, so a failed batch redelivers only what
-did not land:
+### One message, one card
 
-| Post | Trigger | Dedupe key | Rendered by |
+Telegram renders **exactly one link preview per message** — the first URL in the
+body, or whatever `link_preview_options.url` pins. Everything after that is
+plain blue text nobody taps.
+
+So: **every message carries exactly one URL, and that URL resolves to a page
+with an `og:image` card.** Everything else in the message is text.
+
+This is the rule the old batched announcement broke. A ten-runner batch emitted
+ten `[$TICKER](…)` links plus a link per report — nine of them dead weight, and
+the preview was whichever URL happened to sort first. The room got a wall of
+markup with one arbitrary thumbnail.
+
+Pages that already carry a card:
+
+| Page | Card route |
+|---|---|
+| `/reports/{day}/{pre\|post}` | `/reports/{day}/{slug}/card.png` |
+| `/t/{ticker}` | `/t/{ticker}/card.png` |
+| `/research/{public_id}` | `/research/{public_id}/card.png` |
+
+A memecoin replay is better than a card: `sendAnimation` puts the GIF itself in
+the room, with the caption carrying the single link.
+
+### A batch gets a page, not a list
+
+When several things land at once, the answer is never "list them in the
+message". It is a **page for the batch**, linked once, with a card that shows
+the group. The individual names earn their own card later, when a free Flash
+report publishes for them — which is already how the pipeline runs
+(`_queue_telegram_runner_reports` commissions the best
+`TELEGRAM_RUNNER_REPORTS_PER_RUN` of a batch and staggers them public).
+
+So a busy morning reads:
+
+> **5 new on the board** → one card, one link to the drop page
+> …an hour later…
+> **Flash report: $SOUN** → its own card
+> **Flash report: $CAST** → its own card
+
+instead of one message with fourteen links in it.
+
+## The segments
+
+Each segment has a slot, a single card, and a reason to exist. "Inventory"
+means the thing that has to be pending for the segment to have something to
+play.
+
+| Segment | Slot | Inventory | The one card |
 |---|---|---|---|
-| New runner alert | pulse entry without a delivery row, score ≥ `TELEGRAM_MIN_SCORE` | `telegram_alert_deliveries(ticker, entered_at)` | runner card inside `format_update_announcement_md` |
-| 4:20 Blaze Report (pre- or post-market) | frozen session report without a channel post for its id | `telegram_channel_posts(kind="market_report", subject=id)` | `format_market_report_post_md` |
-| Public Flash report | research commission in `visible=public` without a channel post | `telegram_channel_posts(kind="research_report", subject=public_id)` | `format_public_report_post_md` |
-| New build | `APP_BUILD_SHA` changed and `TELEGRAM_RELEASE_ANNOUNCEMENTS=1` | `telegram_channel_posts(kind="release", subject=sha)` | `format_release_announcement_md` |
+| **The Opening Brief** | 4:20 a.m. ET, appointment | frozen pre-market report | `/reports/{day}/pre` |
+| **New on the Board** | rotating, debounced | runners without a delivery row | `/drops/{id}` *(to build)* |
+| **Flash Report** | rotating, staggered | research commission gone public | `/research/{public_id}` |
+| **The Closing Bell** | 4:20 p.m. ET, appointment | frozen post-market report | `/reports/{day}/post` |
+| **The Scoreboard** | after the close, daily | Flash's record, community calls | `/flash/record` *(needs a card)* |
+| **Halt Desk** | interrupt | `market_events` halts | `/t/{ticker}` |
+| **Filing Desk** | interrupt, capped | `market_events` EDGAR / disclosures | `/t/{ticker}` |
+| **Memecoin Replay** | rotating | rendered replay awaiting delivery | the GIF itself |
+| **Sports Desk** | rotating | game decisions, alpha, receipts | `/sports/game/{id}` *(needs a card)* |
 
-`format_event_post_md` renders a filing/news card and is wired into the batch
-builder, but nothing dispatches events yet: `_activity_payload` does not emit
-them. That row stays out of the table until a trigger and a dedupe key exist.
+### Why these, in this order
 
-Memecoin replay GIFs are delivered by `dispatch_memecoin_replays` with a
-Markdown V2 caption (`🪙 SYMBOL — new coin detected`, launch state, saved
-events, and the coin page link). The raw token address stays on the coin page,
-not in the chat.
+**The two 4:20 briefings are the anchors.** They are appointment listening:
+same time every weekday, 20 minutes into pre-market and 20 minutes after the
+close. Everything else rotates around them.
 
-The daily report cap (Flash runs per runner) lives in
-`TELEGRAM_RUNNER_REPORTS_PER_DAY` and is enforced before the queue.
+**Halts are the most radio-worthy thing that happens all day** and we currently
+post none of them. `format_event_post_md` is already written and wired into the
+batch builder; nothing dispatches it because `_activity_payload` never emits
+events. The `market_events` table (`source`, `feed`, `event_type`, `ticker`,
+`event_at`, `source_url`) is already populated by the `trading-halts`, `edgar`
+and `house-disclosures` workers. This is the largest piece of unused inventory
+in the system.
+
+**The Scoreboard is what makes the rest credible.** A channel that only posts
+entries is a hype feed. A channel that posts its own win–loss after the close is
+a program. The data exists (`/flash/record`, `/calls`, `/receipts`); the pages
+need `og:image` cards.
+
+**Sports and memecoins are the variety.** They break up an all-equities
+rundown, and they are already separate products with their own boards. Sports
+lives on its own origin (`sports.rati.chat`) with `/sports`, `/sports/radar`,
+`/sports/alpha`, `/sports/receipts` and `/sports/game/{id}` — none of which
+have cards or any Telegram dispatch today. Memecoin replays are already the
+best-produced segment we have.
+
+## The rundown clock
+
+Radio works because the hour has a shape. The dispatcher's job is not "send
+what is pending" but "pick the next segment".
+
+- **Appointment slots fire on their own schedule** and are never displaced: the
+  Opening Brief, the Closing Bell, the Scoreboard.
+- **Rotating slots are drawn in priority order**, at most one message per
+  `TELEGRAM_SEGMENT_GAP_MINUTES`, with a per-segment daily cap so no single
+  vertical takes over a slow day. A segment that just played goes to the back of
+  the queue while another has inventory — that is what produces variety without
+  anyone curating it.
+- **Interrupts jump the queue**, hard-capped per hour so a filing storm cannot
+  become the whole program.
+
+This replaces the current `announcement_batch_ready` merge, which optimises for
+the opposite thing: it waits for items to pile up and then fuses them into a
+single message. Batching was the right answer to flooding when every item was
+its own ping; a paced rundown is the better answer, because it keeps each item's
+card intact.
+
+## Dedupe and delivery (unchanged)
+
+Each kind keeps its own dedupe key, so a failed segment redelivers only what did
+not land:
+
+| Kind | Dedupe key |
+|---|---|
+| Runner | `telegram_alert_deliveries(ticker, entered_at)` |
+| Session report | `telegram_channel_posts(kind="market_report", subject=id)` |
+| Public Flash report | `telegram_channel_posts(kind="research_report", subject=public_id)` |
+| Build | `telegram_channel_posts(kind="release", subject=sha)` |
+| Memecoin replay | `memecoin_replay_posts(coin_id)` |
+| Drop page | `telegram_channel_posts(kind="drop", subject=id)` *(to build)* |
+| Market event | `telegram_channel_posts(kind="event", subject=event_id)` *(to build)* |
+
+A retry only happens if the prior row is `failed` and under `attempts`.
 
 ## Render rules
 
@@ -56,6 +149,8 @@ The daily report cap (Flash runs per runner) lives in
   `12.5%`, the sign in `+18.3%` and the hyphen in `8-K` each fail the parse on
   their own. Emoji pass through. A URL reaches the body only as an inline link
   (`markdown_link`); a bare URL is a run of reserved characters.
+- **One URL per message.** If a message wants to point at more than one thing,
+  it wants to be more than one message, or it wants a page that collects them.
 - Blocks are assembled by `_join_blocks`, which drops a card whole rather than
   slicing the joined message at 4096 and stranding an open `*` or a trailing
   backslash. Anything trimmed to a length — release notes, the replay caption —
@@ -63,10 +158,6 @@ The daily report cap (Flash runs per runner) lives in
 - Chat replies (`send_reply`) are a separate path: plain text, no `parse_mode`,
   and the persona prompt asks for prose without markdown so nothing lands as
   stray asterisks.
-- The URL that Telegram unfurls into a preview is **the first URL in the
-  body**. We hand-place it: a ticker card puts `/t/{ticker}` first, a public
-  report puts `/t/{symbol}` followed by `/research/{public_id}`, the pre/post
-  briefing puts `/reports/{day}/{pre|post}` on the last line.
 - `link_preview_options={"is_disabled": false}` is sent on every message.
   When Telegram returns a parse error on Markdown V2, `send_post` logs it and
   retries once with the markup stripped by `strip_markdown_v2`, so the room
@@ -77,15 +168,31 @@ The daily report cap (Flash runs per runner) lives in
   keeps this honest: a parse failure is invisible in production, because the
   fallback still reports a successful send.
 
+## Build order
+
+1. **One-card rule in the existing formatter.** `format_update_announcement_md`
+   stops emitting a link per runner and carries a single destination. No new
+   pages; immediate improvement to what the room sees.
+2. **The drop page.** `/drops/{id}` plus a card route and a `runner_drops`
+   table, mirroring `market_session_reports` and its `card.png`. This is what
+   "New on the Board" links to.
+3. **Split the batch into segments.** Replace the `announcement_batch_ready`
+   merge with the rundown scheduler above.
+4. **Turn on the desks.** Emit `market_events` into the dispatcher so the halt
+   and filing segments have inventory; the formatter already exists.
+5. **Cards for the scoreboard and sports.** `og:image` plus a `card.png` route
+   for `/flash/record`, `/calls` and `/sports/game/{id}`, mirroring
+   `_ticker_card_png`.
+
 ## Why we dropped the Dash model narration
 
 The previous version asked the chat agent to narrate the batched announcement.
 That gave a varied voice but suffered two problems: a single source of truth
 disappeared, and Telegram used whatever URL the model happened to cite for the
-preview. The channel posts are now deterministic — the formatter has the
-entity page URL ahead of the body — and the chat agent is reserved for chat.
+preview. The channel posts are deterministic — the formatter owns the
+destination — and the chat agent is reserved for chat.
 
-## Tones, emojis, and the new app vocabulary
+## Tones, emojis, and the app vocabulary
 
 Action tags in the list and the message headers match each other. The
 formatter states use the same color anchors the list does (RUNNING green,
@@ -100,21 +207,25 @@ SETUP blue, EXTENDED orange, AVOID red, WATCH neutral, PAUSED muted).
 | WATCH | ⚪ |
 | PAUSED | ⏸ |
 
-The batched update and release headers are 🐆 — the channel mascot is the
-cheetah, matching the reactions and the chat persona. Briefing posts are 🧭.
-Public research is 📄. Events are 📰. Memecoin replays are 🪙.
+Segment headers: 🐆 the board and the build (the channel mascot, matching the
+reactions and the chat persona), 🧭 the 4:20 briefings, 📄 public research,
+📰 the filing desk, 🛑 the halt desk, 🪙 memecoin replays, 🏟 the sports desk,
+🏆 the scoreboard.
 
 ## How to turn a kind on or off
 
 `TELEGRAM_RUNNER_ALERTS` toggles runners + batched dispatch.
 `TELEGRAM_RELEASE_ANNOUNCEMENTS` toggles the build announcement.
-`TELEGRAM_MEMECOIN_ALERTS` toggles the GIF/photo deliveries (separate helper,
-unchanged in this iteration).
+`TELEGRAM_MEMECOIN_ALERTS` toggles the GIF/photo deliveries.
+
+The daily free-report cap lives in `TELEGRAM_RUNNER_REPORTS_PER_DAY` (20) and
+the per-batch pick in `TELEGRAM_RUNNER_REPORTS_PER_RUN` (3), staggered by
+`TELEGRAM_RUNNER_REPORT_STAGGER_MINUTES`.
 
 ## Anti-flood watch
 
-The batched dispatcher is the only channel. It posts when the batch rule allows
-it and posts the entire batch as a single message. Per-runner reports are
-queued by `_queue_telegram_runner_reports` and capped at
+Per-runner reports are queued by `_queue_telegram_runner_reports` and capped at
 `TELEGRAM_RUNNER_REPORTS_PER_DAY`. If a hot day saturates that cap, the rest
-wait until tomorrow.
+wait until tomorrow. Once the rundown scheduler lands, the segment gap and the
+per-segment daily caps become the primary flood control, and
+`announcement_batch_ready` retires with the merged message.
