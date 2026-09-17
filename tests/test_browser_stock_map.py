@@ -106,7 +106,7 @@ def open_map(page: Page, width=1280, *, current=None, map_handler=None):
     )
     page.goto("http://app.test/t/TEST", wait_until="domcontentloaded")
     if map_handler is None:
-        expect(page.locator("[data-map-status]")).to_contain_text("Saved SEC filings")
+        expect(page.locator("[data-map-status]")).to_have_text("")
     return data
 
 
@@ -181,7 +181,13 @@ def test_filing_time_excludes_later_disclosures_and_preserves_loaded_history(pag
     expect(page.locator("[data-map-events] button")).to_have_count(2)
     expect(page.locator("[data-map-time]")).to_have_text("Sep 1, 2026")
     page.get_by_role("button", name="Latest", exact=True).click()
-    expect(page.locator("[data-map-events] button")).to_have_count(12)
+    expect(page.locator("[data-map-filings-page]")).to_have_text("1–5 of 12")
+    page.locator(".map-filings>summary").click()
+    expect(page.locator("[data-map-events]")).to_be_visible()
+    page.get_by_role("button", name="Next filings").click()
+    expect(page.locator("[data-map-filings-page]")).to_have_text("6–10 of 12")
+    page.get_by_role("button", name="Next filings").click()
+    expect(page.locator("[data-map-filings-page]")).to_have_text("11–12 of 12")
     expect(page.get_by_role("button", name="Load older filings")).to_be_hidden()
     expect(page.locator(".map-center-score")).to_have_text("45")
     expect(page.locator("[data-map-score-time]")).to_have_text(timestamp)
@@ -197,8 +203,7 @@ def test_filing_time_excludes_later_disclosures_and_preserves_loaded_history(pag
     page.get_by_role("button", name="Return to score overview").click()
     expect(page.locator("[data-map-selection] h3")).to_have_text("45")
     expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(0)
-    page.locator("[data-map-list-title]").click()
-    page.locator("[data-map-events] button").first.click()
+    page.locator(".map-filings[open] [data-map-events] button").first.click()
     expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
     expect(page.locator("[data-map-score-return]")).to_be_visible()
     page.keyboard.press("Escape")
@@ -316,7 +321,7 @@ def test_pending_empty_and_failed_filings_keep_score_rendered(page, response):
         expect(page.locator("[data-map-status]")).to_contain_text("Please retry")
     else:
         pending.pop().fulfill(json=empty)
-        expect(page.locator("[data-map-status]")).to_have_text("No filings yet")
+        expect(page.locator("[data-map-status]")).to_have_text("")
     expect(page.locator("[data-map-selection] h3")).to_have_text("45")
     expect(page.locator(".map-score-segment")).to_have_count(3)
     expect(page.locator("[data-person]")).to_have_count(0)
@@ -324,7 +329,7 @@ def test_pending_empty_and_failed_filings_keep_score_rendered(page, response):
     if response == "error":
         page.route("**/api/stocks/TEST/map", lambda route: route.fulfill(json=map_payload()))
         page.get_by_role("button", name="Retry loading filings").click()
-        expect(page.locator("[data-map-status]")).to_have_text("Saved SEC filings")
+        expect(page.locator("[data-map-status]")).to_have_text("")
         expect(page.locator("[data-map-selection] h3")).to_have_text("45")
         expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
     assert not errors
@@ -450,6 +455,10 @@ def test_zero_driver_or_single_positive_driver_has_valid_ring(page, weight):
         expect(page.locator(".map-score-segment")).to_have_count(0)
         expect(page.locator(".map-score-legend strong")).to_have_text("0 pts")
         expect(page.locator("[data-map-selection]")).to_contain_text("No positive contributions.")
+    penalty = page.locator(".map-score-penalty-arc")
+    expect(penalty).to_have_count(1)
+    assert penalty.evaluate("arc => getComputedStyle(arc).stroke") == "rgb(239, 153, 164)"
+    assert penalty.evaluate("arc => getComputedStyle(arc).pointerEvents") == "none"
     expect(page.locator("[data-stock-map]")).not_to_contain_text(re.compile("NaN|Infinity"))
 
 
@@ -543,6 +552,9 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
     expect(page.locator("[data-map-selection] h3")).to_have_text("35")
     expect(page.locator(".map-score-legend strong")).to_have_text(["+20 pts", "+20 pts"])
     expect(page.locator(".map-score-penalties strong")).to_have_text("-5 pts")
+    penalty_arc = page.locator(".map-score-penalty-arc")
+    expect(penalty_arc).to_have_count(1)
+    assert penalty_arc.evaluate("arc => getComputedStyle(arc).stroke") == "rgb(239, 153, 164)"
     expect(page.locator("[data-map-score-time] time")).to_have_attribute(
         "datetime", screen["item"]["score_as_of"]
     )

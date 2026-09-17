@@ -48,9 +48,10 @@
   const color = part => `var(--score-${part.key}, var(--muted))`;
   let pinned = null, hovered = null, focused = null;
   let events = [], dates = [], cursor = null, loaded = 0, coverage = {}, selected = null;
-  let view = 'all', filter = 'all', cutoff = Infinity, page = 0, pending = false;
+  let view = 'all', filter = 'all', cutoff = Infinity, page = 0, pending = false, filingsPageNumber = 0;
   const small = window.matchMedia('(max-width:500px)');
   const pageSize = () => small.matches ? 4 : 8;
+  const FILINGS_PAGE_SIZE = 5;
   const subset = () => events.filter(e => (Date.parse(e.filed_at) || 0) <= cutoff &&
     (filter === 'all' || (filter === 'other' ? !['Bought','Sold'].includes(e.action) : e.action === filter)));
   function scorePanel(part) {
@@ -111,6 +112,19 @@
       });
       graph.append(segment);
     });
+    let penaltyAngle = -Math.PI / 2;
+    const penaltyTotal = penalties.reduce((sum, part) => sum + Math.abs(part.value), 0);
+    penalties.forEach(part => {
+      if (!penaltyTotal) return;
+      const sweep = Math.abs(part.value) / penaltyTotal * Math.PI * 2, end = penaltyAngle + sweep;
+      const penaltyRadius = radius + width / 2 + 3;
+      const attrs = {class:'map-score-penalty-arc', 'data-penalty-key':part.key, 'aria-hidden':'true', fill:'none', 'pointer-events':'none', 'stroke-width':Math.max(2, Math.round(width / 4))};
+      const arc = penalties.length === 1 ? svg('circle', {...attrs, cx, cy, r:penaltyRadius}) : svg('path', {...attrs, d:`M ${cx + penaltyRadius * Math.cos(penaltyAngle)} ${cy + penaltyRadius * Math.sin(penaltyAngle)} A ${penaltyRadius} ${penaltyRadius} 0 ${sweep > Math.PI ? 1 : 0} 1 ${cx + penaltyRadius * Math.cos(end)} ${cy + penaltyRadius * Math.sin(end)}`});
+      arc.style.stroke = 'var(--red)';
+      arc.append(svg('title', {}, `${part.label}: ${points(part.value)}`));
+      penaltyAngle = end;
+      graph.append(arc);
+    });
     const center = svg('g', {role:'button', tabindex:0, class:'map-score-center', 'data-map-score-center':'', 'aria-label':`${root.dataset.ticker}, current score ${score}. Show score overview.`});
     center.append(svg('circle', {cx, cy, r:radius - width / 2 - 3, class:'map-center'}), svg('text', {x:cx, y:cy - 6, 'text-anchor':'middle', class:'map-center-text'}, root.dataset.ticker), svg('text', {x:cx, y:cy + 16, 'text-anchor':'middle', class:'map-center-score'}, score));
     center.addEventListener('click', overview);
@@ -162,6 +176,11 @@
   }
   function choose(event, personId) {
     selected = event?.id || null; pinned = null; hovered = null; focused = null;
+    if (event) {
+      const order = subset();
+      const at = order.findIndex(row => row.id === event.id);
+      if (at >= 0) filingsPageNumber = Math.floor(at / FILINGS_PAGE_SIZE);
+    }
     const people = peopleFor(subset()), at = people.findIndex(p => p.id === (personId || event?.people[0]?.id));
     if (at >= 0) page = Math.floor(at / pageSize());
     render(false);
@@ -203,13 +222,21 @@
     if (people.length) $('page').textContent = `${page*size+1}–${page*size+shown.length} of ${people.length} people`;
     $('previous').disabled = page === 0; $('next').disabled = (page+1)*size >= people.length;
     const list = $('events'); list.replaceChildren();
-    rows.forEach(e => {
+    const filingsPage = FILINGS_PAGE_SIZE;
+    const filingsPageCount = Math.max(1, Math.ceil(rows.length / filingsPage));
+    filingsPageNumber = Math.min(filingsPageNumber, filingsPageCount - 1);
+    const filingSlice = rows.slice(filingsPageNumber * filingsPage, filingsPageNumber * filingsPage + filingsPage);
+    filingSlice.forEach(e => {
       const button = make('button',null,'map-event'); button.type = 'button'; button.dataset.eventId = e.id; button.setAttribute('aria-pressed',String(e.id === selected));
       const main = make('span'); main.append(make('strong',`${names(e)} · ${e.action}`),make('small',`${e.basis} · Filed ${date(e.filed_at)}${e.amendment ? ' · Amendment' : ''}`));
       button.append(make('span','●',e.tone),main,make('span',amount(e),'event-money'));
       button.addEventListener('click',() => {choose(e); $('events').querySelector(`[data-event-id="${CSS.escape(e.id)}"]`)?.focus({preventScroll:true});}); list.append(button);
     });
     if (!rows.length) list.append(make('p','Saved events for this view will appear here.','map-note'));
+    $('filings-paging').hidden = rows.length <= filingsPage;
+    $('filings-page').textContent = rows.length ? `${filingsPageNumber * filingsPage + 1}–${filingsPageNumber * filingsPage + filingSlice.length} of ${rows.length}` : '';
+    $('filings-previous').disabled = filingsPageNumber === 0;
+    $('filings-next').disabled = (filingsPageNumber + 1) * filingsPage >= rows.length;
     $('time').textContent = Number.isFinite(cutoff) ? date(new Date(cutoff).toISOString()) : 'Latest saved filing';
     $('time-slider').setAttribute('aria-valuetext',$('time').textContent);
     $('list-title').textContent = 'Reported filings';
@@ -232,7 +259,7 @@
       const slider = $('time-slider'); slider.disabled = dates.length < 2; slider.max = Math.max(0,dates.length-1);
       slider.value = Number.isFinite(cutoff) ? Math.max(0,dates.indexOf(cutoff)) : slider.max;
       $('load').hidden = !cursor; $('load').textContent = 'Load older filings';
-      $('status').textContent = coverage.filings ? 'Saved SEC filings' : 'No filings yet';
+      $('status').textContent = '';
       render();
     } catch (_) { $('status').textContent = 'Please retry to load the saved filings.'; $('load').hidden = false; $('load').textContent = 'Retry loading filings'; }
     finally {pending = false; $('load').disabled = false;}
@@ -245,6 +272,7 @@
   $('time-slider').addEventListener('input',() => {cutoff = dates[Number($('time-slider').value)]; page = 0; selected = null; render();});
   $('latest').addEventListener('click',() => {cutoff = Infinity; $('time-slider').value = $('time-slider').max; page = 0; selected = null; render();});
   $('previous').addEventListener('click',() => {page--;render();}); $('next').addEventListener('click',() => {page++;render();});
+  $('filings-previous').addEventListener('click',() => {filingsPageNumber--;render();}); $('filings-next').addEventListener('click',() => {filingsPageNumber++;render();});
   $('load').addEventListener('click',load);
   $('score-return').addEventListener('click', overview);
   root.addEventListener('keydown', event => {if (event.key === 'Escape' && (pinned || selected)) {event.preventDefault(); overview();}});
@@ -266,7 +294,7 @@
     hovered = null; focused = null;
     readScore();
     if (!positive.some(part => part.key === pinned)) pinned = null;
-    graph.querySelectorAll('.map-score-track, .map-score-segment, [data-map-score-center]').forEach(el => el.remove());
+    graph.querySelectorAll('.map-score-track, .map-score-segment, .map-score-penalty-arc, [data-map-score-center]').forEach(el => el.remove());
     ring(graph, small.matches ? 180 : 380, small.matches ? 184 : 218);
     if (!selected || preview) context();
     if (key || restoreCenter) (graph.querySelector(`[data-score-key="${CSS.escape(key || '')}"]`) || graph.querySelector('[data-map-score-center]'))?.focus({preventScroll:true});
