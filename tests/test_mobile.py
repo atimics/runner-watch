@@ -50,6 +50,7 @@ from runner_web.main import (
 )
 from runner_web.pseudonyms import COMMENT_AVATAR_ABILITIES
 from runner_web.research_context import evidence_id_for
+from tests.test_kol import _seed_prediction
 
 
 def _test_flash_forecast() -> dict[str, Any]:
@@ -1370,6 +1371,25 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
         "safety": -0.0,
     }
     assert pulse["custom_score"] == 47.82
+    detail = ticker_detail_data("FLOW")
+    assert detail["current"]["score"] == pulse["score"]
+    assert detail["current"]["score_detail"] == pulse["score_detail"]
+    assert detail["current"]["score_components"] == pulse["score_components"]
+    assert detail["current"]["scanner_score"] == 40
+    assert detail["current"]["score_snapshot_id"] == "external-snapshot"
+    assert detail["current"]["score_as_of"] >= captured_at
+    assert detail["evidence_gate"] == _evidence_gate(
+        {
+            "relative_volume": 3,
+            "recent_relative_volume": 4,
+            "momentum_15m_pct": 4,
+            "breakout_pct": 0.8,
+        },
+        [],
+        detail["trade_pressure"],
+        external_context=detail["external_context"],
+        base_rates=detail["base_rates"],
+    )
     assert pulse["external_social_mentions"] == 4
     assert pulse["news_count"] == 1
     assert radar["pulse_label"] == "Bluesky · 4 cashtag mentions"
@@ -1379,6 +1399,182 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
     assert alpha["external_social_mentions"] == 4
     assert alpha["news_count"] == 1
     assert alpha["pulse_label"] == "Bluesky · 4 cashtag mentions"
+
+
+@pytest.mark.parametrize("model_status", ["active", "shadow"])
+@pytest.mark.parametrize("trade_state", ["EXIT", "AVOID"])
+def test_detail_composite_uses_pulse_ranker_and_penalties(
+    tmp_path: Path, monkeypatch: MonkeyPatch, model_status: str, trade_state: str
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "score-penalties.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    monkeypatch.setattr(web_main, "now", lambda: timestamp)
+    _seed_prediction(
+        "score-run", "score-snapshot", "PEN", timestamp, probability_up=0.9, expected_return_pct=4
+    )
+    insert_filing("strong-risk", "PEN", 1, 80, (timestamp - timedelta(days=2)).isoformat())
+    for index in range(13):
+        insert_filing(
+            f"newer-{index}", "PEN", 1, 10, (timestamp - timedelta(minutes=index)).isoformat()
+        )
+    insert_filing("too-old", "PEN", 1, 100, (timestamp - timedelta(days=4)).isoformat())
+    with connection() as database:
+        database.execute("UPDATE ranker_models SET status=?", (model_status,))
+        database.execute("UPDATE scan_snapshots SET rug_score=40,trade_state=?", (trade_state,))
+        database.execute("UPDATE sec_filings SET sentiment='risk' WHERE accession='strong-risk'")
+    pulse = web_main._pulse_data_uncached()["rows"][0]
+    monkeypatch.setattr(web_main, "_pulse_data_uncached", lambda: pytest.fail("full pulse build"))
+    detail = ticker_detail_data("PEN")
+    current = detail["current"]
+    assert current["score_detail"] == pulse["score_detail"]
+    assert current["score"] == pulse["score"]
+    assert current["score_as_of"] == pulse["score_as_of"] == timestamp.isoformat()
+    assert current["score_components"]["market"] == (90 if model_status == "active" else 70)
+    assert current["score_components"]["sec_event"] == -20
+    assert current["score_components"]["rug"] == -12
+    assert current["score_components"]["state"] == (-25 if trade_state == "EXIT" else -20)
+    assert len(detail["events"]) == 12
+    assert all(event["accession"] != "strong-risk" for event in detail["events"])
+    assert detail["evidence_gate"]["blockers"] == [f"State: {trade_state.title()}"]
+    assert detail["can_publish"] is True
+
+
+def test_detail_score_uses_latest_eligible_run_without_replacing_history(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "score-runs.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    monkeypatch.setattr(web_main, "now", lambda: timestamp)
+    for run_id, age, probability in [("old", 3, 0.5), ("eligible", 2, 0.8), ("empty", 1, 0.1)]:
+        _seed_prediction(
+            run_id,
+            run_id + "-snapshot",
+            "CYPH",
+            timestamp - timedelta(hours=age),
+            probability_up=probability,
+            expected_return_pct=probability,
+        )
+    with connection() as database:
+        database.execute("UPDATE scan_runs SET candidate_rows=0 WHERE id='empty'")
+        database.execute("UPDATE scan_snapshots SET price=42,score=12 WHERE scan_run_id='empty'")
+    pulse = web_main._pulse_data_uncached()["rows"][0]
+    detail = ticker_detail_data("CYPH")
+    current = detail["current"]
+    assert current["score_detail"] == pulse["score_detail"]
+    assert current["score"] == 80
+    assert current["score_snapshot_id"] == "eligible-snapshot"
+    assert current["id"] == "empty-snapshot"
+    assert current["scanner_score"] == 12
+    assert current["baseline_score"] == 70
+    assert current["price"] == 42
+    assert current["quote_time"] == (timestamp - timedelta(hours=1)).isoformat()
+    assert current["captured_at"] == (timestamp - timedelta(hours=1)).isoformat()
+    insert_scan_run("other", timestamp.isoformat(), 1)
+    insert_scored_snapshot("other-snapshot", "other", "OTHER", 20, 1, timestamp.isoformat())
+    fallback = ticker_detail_data("CYPH")["current"]
+    assert fallback["score"] == 12
+    assert fallback["score_detail"]["drivers"][0]["value"] == 12
+    assert fallback["score_as_of"] == current["captured_at"]
+
+
+def test_detail_score_does_not_use_truncated_external_evidence(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "score-external.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    monkeypatch.setattr(web_main, "now", lambda: timestamp)
+    insert_scan_run("external", timestamp.isoformat(), 1)
+    insert_scored_snapshot("external-snapshot", "external", "CYPH", 90, 1, timestamp.isoformat())
+    with connection() as database:
+        database.execute("UPDATE scan_snapshots SET rug_score=10,trade_state='ARMED'")
+    fetch = SourceFetch.success(
+        source="score_test",
+        feed="mixed",
+        locator="https://example.test/discovery",
+        started_at=timestamp,
+        payload={},
+        content_type="application/json",
+    )
+    record_source_batch(
+        SourceBatch(
+            fetch=fetch,
+            market_events=(
+                MarketEvent(
+                    event_id="social",
+                    ticker="CYPH",
+                    event_type="social_spike",
+                    event_at=timestamp - timedelta(hours=1),
+                    status="active",
+                    source_url="https://example.test/event",
+                    payload={"mention_count": 7, "engagement_count": 15},
+                ),
+                MarketEvent(
+                    event_id="halt",
+                    ticker="CYPH",
+                    event_type="trading_halt",
+                    event_at=timestamp - timedelta(hours=2),
+                    status="active",
+                    source_url="https://example.test/event",
+                    payload={},
+                ),
+                *(
+                    MarketEvent(
+                        event_id=f"news-{index}",
+                        ticker="CYPH",
+                        event_type="news_article",
+                        event_at=timestamp - timedelta(minutes=index),
+                        status="published",
+                        source_url="https://example.test/event",
+                        payload={},
+                    )
+                    for index in range(31)
+                ),
+            ),
+        )
+    )
+    _approve_test_source("score_test", "mixed")
+    pulse = web_main._pulse_data_uncached()["rows"][0]
+    detail = ticker_detail_data("CYPH")
+    current = detail["current"]
+    assert current["score_detail"] == pulse["score_detail"]
+    assert current["score"] == pulse["score"] == 29
+    assert current["score_components"]["social_search"] == 5
+    assert current["score_components"]["safety"] == -25
+    assert current["score_components"]["rug"] == -27
+    assert current["score_components"]["state"] == -20
+    assert len(detail["external_events"]) == 30
+    assert detail["external_context"]["social_mentions"] == 0
+    assert detail["external_context"]["active_halt"] is None
+    assert current["rug_score"] == 10
+    assert current["trade_state"] == "ARMED"
+    assert detail["evidence_gate"]["blockers"] == []
+
+
+def test_detail_without_eligible_scan_keeps_historical_and_sec_fallbacks(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "score-fallbacks.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    monkeypatch.setattr(web_main, "now", lambda: timestamp)
+    captured_at = (timestamp - timedelta(days=7)).isoformat()
+    insert_scan_run("stale", captured_at, 1)
+    insert_scored_snapshot("stale-snapshot", "stale", "OLD", 32, 1, captured_at)
+    insert_filing("sec-only", "FILE", 1, 80, timestamp.isoformat())
+    assert web_main._pulse_data_uncached()["rows"] == []
+    old = ticker_detail_data("OLD")
+    assert old["current"]["score"] == 32
+    assert old["current"]["score_as_of"] == captured_at
+    assert old["can_publish"] is False
+    filing = ticker_detail_data("FILE")["current"]
+    assert filing["source"] == "sec"
+    assert filing["score"] == 80
+    assert filing.get("score_detail") is None
+    assert filing.get("score_as_of") is None
+    assert ticker_detail_data("UNKNOWN") is None
 
 
 def test_negative_social_counts_do_not_break_pulse_or_radar(

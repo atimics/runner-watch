@@ -161,6 +161,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         "risk": risk,
         "score": score,
         "score_detail": score_detail,
+        "score_as_of": item.get("score_as_of") if market == "stocks" else None,
         # Carried by the most recent pulse announcement, so the board can show
         # what the channel was just told.
         "announced": bool(item.get("announced")),
