@@ -230,7 +230,7 @@ def _render_template(name, context):
     )
 
 
-def test_stock_detail_orders_chart_map_metrics_and_comments():
+def test_stock_detail_orders_chart_unified_score_map_and_comments():
     detail_data = {
         "ticker": "OPK",
         "company": "OPKO Health",
@@ -261,9 +261,12 @@ def test_stock_detail_orders_chart_map_metrics_and_comments():
     assert SENTINEL not in html
     chart = html.index('class="visual"')
     ticker_map = html.index('class="ticker-map"')
-    metrics = html.index('class="metrics"')
+    score = html.index("data-map-selection")
     comments = html.index('class="discussion-section"')
-    assert chart < ticker_map < metrics < comments
+    assert chart < ticker_map < score < comments
+    assert 'class="metrics"' not in html
+    assert 'class="breakdown"' not in html
+    assert "Current score 84" in html
     assert "Market scanner" in html
 
 

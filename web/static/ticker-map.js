@@ -22,18 +22,97 @@
   };
   const names = e => e.people.map(p => p.name).join(' + ') || 'Reporting person';
   const amount = e => e.view === 'ownership' ? (e.percent == null ? 'See filing' : number(e.percent) + '% of class') : money(e.value);
+  const item = JSON.parse(document.getElementById('screenData')?.textContent || '{}').item || {};
+  const drivers = (item.score_detail?.drivers || []).filter(part => Number.isFinite(part.value));
+  const positive = drivers.filter(part => part.value > 0);
+  const penalties = [...(item.score_detail?.penalties || []), ...drivers.filter(part => part.value < 0)].filter(part => Number.isFinite(part.value) && part.value !== 0);
+  const total = positive.reduce((sum, part) => sum + part.value, 0);
+  const score = Number.isFinite(item.score) ? number(Math.round(item.score)) : '—';
+  const points = value => `${value > 0 ? '+' : ''}${number(value)} pts`;
+  const percent = part => `${number(Math.round(part.value / total * 1000) / 10)}% of positive contributions`;
+  const color = part => `var(--score-${part.key}, var(--muted))`;
+  let pinned = null, hovered = null, focused = null;
   let events = [], dates = [], cursor = null, loaded = 0, coverage = {}, selected = null;
   let view = 'all', filter = 'all', cutoff = Infinity, page = 0, pending = false;
   const small = window.matchMedia('(max-width:500px)');
   const pageSize = () => small.matches ? 4 : 8;
   const subset = () => events.filter(e => (Date.parse(e.filed_at) || 0) <= cutoff &&
     (filter === 'all' || (filter === 'other' ? !['Bought','Sold'].includes(e.action) : e.action === filter)));
-  function source(event) {
+  function scorePanel(part) {
     const panel = $('selection'); panel.replaceChildren();
-    if (!event) {
-      panel.append(make('h3', 'Select a filing'));
+    panel.append(make('h3', `Current score ${score}`));
+    if (part) {
+      panel.append(make('h4', part.label), make('p', `${points(part.value)} · ${percent(part)}`, 'map-score-breakdown'));
+      panel.append(make('p', pinned === part ? 'Pinned contribution. Return to score overview to clear.' : 'Click or press Enter to pin this contribution.', 'map-note'));
+    }
+    const legend = make('ul', null, 'map-score-legend');
+    drivers.filter(driver => driver.value >= 0).forEach(driver => {
+      const row = make('li');
+      const swatch = make('span', null, 'map-score-swatch'); swatch.style.background = color(driver); swatch.setAttribute('aria-hidden', 'true');
+      row.append(swatch, make('span', driver.label), make('strong', points(driver.value))); legend.append(row);
+    });
+    if (legend.children.length) panel.append(legend);
+    if (!positive.length) panel.append(make('p', item.score_detail ? 'No positive contributions.' : 'Score breakdown unavailable.', 'map-note'));
+    panel.append(make('p', 'Ring shares use positive contributions only, not the net score.', 'map-note'));
+    panel.append(make('h4', 'Penalties'));
+    if (penalties.length) {
+      const list = make('ul', null, 'map-score-penalties');
+      penalties.forEach(penalty => {const row = make('li'); row.append(make('span', penalty.label), make('strong', points(penalty.value))); list.append(row);});
+      panel.append(list);
+    } else panel.append(make('p', item.score_detail ? 'No penalties applied.' : 'Penalty data unavailable.', 'map-note'));
+  }
+  function context() {
+    source(subset().find(event => event.id === selected));
+  }
+  function overview() {
+    selected = null; pinned = null; hovered = null; focused = null; render(false);
+    $('graph').querySelector('[data-map-score-center]')?.focus({preventScroll:true});
+  }
+  function ring(graph, cx, cy) {
+    const radius = small.matches ? 48 : 62, width = small.matches ? 16 : 20;
+    graph.append(svg('circle', {cx, cy, r:radius, class:'map-score-track', 'stroke-width':width}));
+    let angle = -Math.PI / 2;
+    positive.forEach(part => {
+      const sweep = part.value / total * Math.PI * 2, end = angle + sweep;
+      const attrs = {class:'map-score-segment', role:'button', tabindex:0, 'data-score-key':part.key, 'aria-label':`${part.label}: ${points(part.value)}, ${percent(part)}`, 'aria-pressed':String(pinned === part), 'stroke-width':width};
+      const segment = positive.length === 1 ? svg('circle', {...attrs, cx, cy, r:radius}) : svg('path', {...attrs, d:`M ${cx + radius * Math.cos(angle)} ${cy + radius * Math.sin(angle)} A ${radius} ${radius} 0 ${sweep > Math.PI ? 1 : 0} 1 ${cx + radius * Math.cos(end)} ${cy + radius * Math.sin(end)}`});
+      segment.style.stroke = color(part); angle = end;
+      segment.append(svg('title', {}, `${part.label}: ${points(part.value)} · ${percent(part)}`));
+      segment.addEventListener('mouseenter', () => {hovered = part; context();});
+      segment.addEventListener('mouseleave', () => {hovered = null; context();});
+      segment.addEventListener('focus', () => {focused = part; context();});
+      segment.addEventListener('blur', () => {focused = null; context();});
+      const activate = () => {
+        pinned = part; selected = null; hovered = null; focused = null; render();
+        graph.querySelector(`[data-score-key="${CSS.escape(part.key)}"]`)?.focus({preventScroll:true});
+      };
+      segment.addEventListener('click', activate);
+      segment.addEventListener('keydown', event => {
+        if (['Enter', ' '].includes(event.key)) {event.preventDefault(); activate();}
+        if (['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+          event.preventDefault();
+          const segments = [...graph.querySelectorAll('.map-score-segment')], index = segments.indexOf(segment);
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? segments.length - 1 : (index + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + segments.length) % segments.length;
+          segments[next].focus({preventScroll:true});
+        }
+      });
+      graph.append(segment);
+    });
+    const center = svg('g', {role:'button', tabindex:0, class:'map-score-center', 'data-map-score-center':'', 'aria-label':`${root.dataset.ticker}, current score ${score}. Show score overview.`});
+    center.append(svg('circle', {cx, cy, r:radius - width / 2 - 3, class:'map-center'}), svg('text', {x:cx, y:cy - 6, 'text-anchor':'middle', class:'map-center-text'}, root.dataset.ticker), svg('text', {x:cx, y:cy + 16, 'text-anchor':'middle', class:'map-center-score'}, score));
+    center.addEventListener('click', overview);
+    center.addEventListener('keydown', event => {if (['Enter', ' '].includes(event.key)) {event.preventDefault(); overview();}});
+    graph.append(center);
+  }
+  function source(event) {
+    const preview = hovered || focused;
+    $('context').textContent = preview || !event ? 'SCORE' : 'FILING';
+    $('score-return').hidden = !event && !pinned;
+    if (preview || !event) {
+      scorePanel(preview || pinned);
       document.dispatchEvent(new CustomEvent('rati:map-time', {detail:{time:null}})); return;
     }
+    const panel = $('selection'); panel.replaceChildren();
     panel.append(make('h3', names(event)), make('p', `${event.action} · ${amount(event)}`, 'map-event-action'));
     panel.append(make('p', event.people.map(p => p.role).join(' · ')));
     const facts = make('dl');
@@ -69,15 +148,18 @@
     return [...people.values()];
   }
   function choose(event, personId) {
-    selected = event?.id || null;
+    selected = event?.id || null; pinned = null; hovered = null; focused = null;
     const people = peopleFor(subset()), at = people.findIndex(p => p.id === (personId || event?.people[0]?.id));
     if (at >= 0) page = Math.floor(at / pageSize());
-    render();
+    render(false);
   }
-  function render() {
+  function render(restoreFocus = true) {
     const rows = subset(), people = peopleFor(rows), graph = $('graph');
-    const event = rows.find(e => e.id === selected) || rows[0]; selected = event?.id || null;
-    const size = pageSize(), cx = small.matches ? 180 : 380, cy = small.matches ? 165 : 218;
+    const active = document.activeElement;
+    const focusSelector = active?.hasAttribute('data-score-key') ? `[data-score-key="${CSS.escape(active.dataset.scoreKey)}"]` : active?.hasAttribute('data-person') ? `[data-person="${CSS.escape(active.dataset.person)}"]` : active?.hasAttribute('data-map-score-center') ? '[data-map-score-center]' : active?.hasAttribute('data-event-id') ? `[data-event-id="${CSS.escape(active.dataset.eventId)}"]` : null;
+    hovered = null; focused = null;
+    const event = rows.find(e => e.id === selected); selected = event?.id || null;
+    const size = pageSize(), cx = small.matches ? 180 : 380, cy = small.matches ? 184 : 218;
     page = Math.min(page, Math.max(0, Math.ceil(people.length / size)-1));
     graph.setAttribute('viewBox', small.matches ? '0 0 360 350' : '0 0 760 440');
     graph.replaceChildren();
@@ -102,7 +184,7 @@
       const activate = () => {choose(first,person.id); graph.querySelector(`[data-person="${CSS.escape(person.id)}"]`)?.focus({preventScroll:true});};
       g.addEventListener('click',activate); g.addEventListener('keydown',e => {if (['Enter',' '].includes(e.key)) {e.preventDefault();activate();}}); graph.append(g);
     });
-    graph.append(svg('circle',{cx,cy,r:small.matches ? 36 : 48,class:'map-center'}),svg('text',{x:cx,y:cy+7,'text-anchor':'middle',class:'map-center-text'},root.dataset.ticker));
+    ring(graph, cx, cy);
     if (!people.length) graph.append(svg('text',{x:cx,y:320,'text-anchor':'middle',fill:'#96a49b','font-size':small.matches ? 12 : 16},'No people yet'));
     $('page').textContent = people.length ? `${page*size+1}–${page*size+shown.length} of ${people.length} people` : 'Saved SEC evidence';
     $('previous').disabled = page === 0; $('next').disabled = (page+1)*size >= people.length;
@@ -120,6 +202,7 @@
     $('filter').parentElement.hidden = false; $('ownership-note').hidden = true;
     $('coverage').textContent = `${loaded} filings · ${rows.length} events`;
     source(event);
+    if (restoreFocus && focusSelector) (root.querySelector(focusSelector) || graph.querySelector('[data-map-score-center]'))?.focus({preventScroll:true});
   }
   async function load() {
     if (pending) return; pending = true; $('load').disabled = true;
@@ -149,6 +232,9 @@
   $('latest').addEventListener('click',() => {cutoff = Infinity; $('time-slider').value = $('time-slider').max; page = 0; selected = null; render();});
   $('previous').addEventListener('click',() => {page--;render();}); $('next').addEventListener('click',() => {page++;render();});
   $('load').addEventListener('click',load);
+  $('score-return').addEventListener('click', overview);
+  root.addEventListener('keydown', event => {if (event.key === 'Escape' && (pinned || selected)) {event.preventDefault(); overview();}});
   small.addEventListener('change',() => {page = 0;render();});
+  render();
   load();
 })();

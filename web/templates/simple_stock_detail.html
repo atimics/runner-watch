@@ -3,25 +3,13 @@
 {% set screen = simple_market_detail('stocks', detail, active_call=active_call) %}
 {% block detail_head %}<link rel="stylesheet" href="/static/ticker-map.css?v={{ static_version }}">{% endblock %}
 {% block detail_map %}{% include "_stock_map.html" %}{% endblock %}
-{% block detail_metrics %}
-{% set score_detail = screen.item.score_detail %}
-{% if score_detail %}
-<section class="metrics" aria-labelledby="scoreTitle">
-  <header class="section-head"><div><p class="eyebrow">SCORE</p><h2 id="scoreTitle">{{ screen.item.score|round|int }}</h2></div></header>
-  <div class="breakdown">
-    {% for part in score_detail.drivers %}<div class="part"><span class="name">{{ part.label }}</span><span class="bar"><i style="width: {{ [part.value, 100]|min|round|int if part.value > 0 else 0 }}%"></i></span><span class="raw">{{ '%+.1f'|format(part.value) }}</span></div>{% endfor %}
-    {% for part in score_detail.penalties %}<div class="part is-penalty"><span class="name">{{ part.label }}</span><span class="bar"><i style="width: {{ [-part.value, 100]|min|round|int }}%"></i></span><span class="raw">{{ '%.1f'|format(part.value) }}</span></div>{% endfor %}
-  </div>
-</section>
-{% endif %}
-{% endblock %}
 {% block detail_comments %}
 {% from "_flash_comments.html" import flash_comments %}
 {{ flash_comments('stock', detail.ticker, comments|default([]), comment_count|default(0), user, comment_generation_enabled|default(false), '/login?next=/t/' ~ detail.ticker ~ '#discussion') }}
 {% endblock %}
 {% block detail_extra %}
 <section class="ticker-support" aria-label="Research and community">
-  <div><p class="eyebrow">THE COMPANY</p><h2>{{ detail.company }}</h2>{% set issuer = detail.current.get('issuer_risk') or {} %}{% if issuer.get('issuer_data_available') %}<dl class="company-facts">{% for key,label,suffix in [('cash','Reported cash',''),('cash_runway_months','Cash runway',' months'),('shares_growth_pct','Share growth','%'),('current_ratio','Current ratio','')] %}{% if issuer.get(key) is not none %}<div><dt>{{ label }}</dt><dd>{{ '$' if key == 'cash' else '' }}{{ '{:,.2f}'.format(issuer[key]) }}{{ suffix }}</dd></div>{% endif %}{% endfor %}</dl><p>Financial facts · Filed {{ (issuer.get('facts_filed_at') or '')[:10] }}</p>{% else %}<p>Saved financial facts will appear here as company filings are collected.</p>{% endif %}{% if detail.events %}<h3>Recent company filings</h3>{% for event in detail.events[:5] %}<p><a href="{{ event.filing_url }}" target="_blank" rel="noopener noreferrer">{{ event.form }} · {{ event.filed_at[:10] }} ↗</a> <span>{{ event.kind }}</span></p>{% endfor %}{% endif %}</div>
+  <div><p class="eyebrow">THE COMPANY</p><h2>{{ detail.company }}</h2>{% set issuer = detail.current.get('issuer_risk') or {} %}{% if issuer.get('issuer_data_available') %}<dl class="company-facts">{% for key,label,suffix in [('cash','Reported cash',''),('cash_runway_months','Cash runway',' months'),('shares_growth_pct','Share growth','%'),('current_ratio','Current ratio','')] %}{% if issuer.get(key) is not none %}<div><dt>{{ label }}</dt><dd>{{ '$' if key == 'cash' else '' }}{{ '{:,.2f}'.format(issuer[key]) }}{{ suffix }}</dd></div>{% endif %}{% endfor %}</dl><p>Financial facts · Filed {{ (issuer.get('facts_filed_at') or '')[:10] }}</p>{% else %}<p>Saved financial facts will appear here as company filings are collected.</p>{% endif %}</div>
   <div><p class="eyebrow">COMMUNITY</p><h2>Calls on {{ detail.ticker }}</h2>{% for call in calls|default([]) %}{% if loop.index <= 5 %}<p><a href="/u/{{ call.caller_handle }}">{{ call.caller_handle }}</a> · {{ call.status }}{% if call.return_pct is not none %} · {{ '%.1f'|format(call.return_pct) }}%{% endif %}</p>{% endif %}{% else %}<p>Share your view with a Call above.</p>{% endfor %}
   {% if flash_report and (flash_report.href or user) %}<div class="ticker-research"><h3>Research</h3>{{ flash_report_action(flash_report) }}</div>{% endif %}</div>
 </section>

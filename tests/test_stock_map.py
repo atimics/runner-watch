@@ -1,5 +1,6 @@
 import gzip
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,6 +8,71 @@ from fastapi.testclient import TestClient
 from runner_watch.edgar import EdgarFiling, parse_beneficial_ownership_xml, parse_ownership_xml
 from runner_web import db, intelligence, main
 from runner_web.stock_map import filing_events, restore_archived_map_evidence, ticker_map
+from tests.test_market_screens import _render_template, sample
+
+
+def score_current(**changes):
+    return {
+        **sample("stocks"),
+        "ticker": "TEST",
+        "score": 45,
+        "captured_at": "2026-09-12T18:00:00+00:00",
+        "event_at": "2026-09-11T18:00:00+00:00",
+        "score_detail": {
+            "score": 45,
+            "drivers": [
+                {"key": "market", "label": "Market scanner", "value": 60},
+                {"key": "sec_event", "label": "SEC events", "value": 30},
+                {"key": "news", "label": "News", "value": 10},
+                {"key": "community", "label": "Community", "value": 0},
+                {"key": "social_search", "label": "Social / search", "value": -5},
+            ],
+            "penalties": [{"key": "rug", "label": "Rug risk", "value": -50}],
+        },
+        **changes,
+    }
+
+
+@pytest.mark.parametrize("score", [45, 0, None])
+@pytest.mark.parametrize("timestamp", ["captured", "event", "missing"])
+def test_unified_score_template_preserves_current_score_and_collapses_filings(score, timestamp):
+    current = score_current(score=score)
+    if timestamp != "captured":
+        current.pop("captured_at")
+    if timestamp == "missing":
+        current.pop("event_at")
+    html = _render_template(
+        "simple_stock_detail.html",
+        {
+            "detail": {
+                "ticker": "TEST",
+                "company": "Test Company",
+                "current": current,
+                "events": [filing_row()],
+            },
+            "active_call": None,
+            "calls": [],
+        },
+    )
+    assert f"Current score {score if score is not None else 'unavailable'}" in html
+    assert 'class="metrics"' not in html
+    assert 'class="breakdown"' not in html
+    assert re.search(r'<details class="map-filings">', html)
+    assert "data-map-score-return hidden" in html
+    assert 'aria-live="polite" aria-atomic="true"' in html
+    assert "Filing dates filter evidence, not the score." in html
+    note = re.search(r"<p[^>]*data-map-score-time>(.*?)</p>", html).group(1)
+    expected_time = current.get("captured_at") or current.get("event_at")
+    if expected_time and score is not None:
+        assert f'datetime="{expected_time}"' in note
+    else:
+        assert "Timestamp unavailable" in note
+    payload = json.loads(re.search(r'id="screenData">(.*?)</script>', html).group(1))
+    assert payload["item"]["score"] == score
+    assert payload["item"]["score_detail"] == current["score_detail"]
+    fallback = re.search(r"<noscript>(.*?)</noscript>", html, re.S).group(1)
+    assert filing_row()["filing_url"] in fallback
+    assert "Recent company filings" not in html
 
 
 def ownership_xml():
