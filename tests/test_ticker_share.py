@@ -67,9 +67,7 @@ def test_ticker_share_names_the_symbol_and_the_move() -> None:
 def test_ticker_share_version_tracks_the_latest_quote() -> None:
     first = web_main.ticker_share(_ticker_detail())
     repriced = web_main.ticker_share(_ticker_detail(price=13.25))
-    requoted = web_main.ticker_share(
-        _ticker_detail(quote_time="2026-08-24T14:05:00+00:00")
-    )
+    requoted = web_main.ticker_share(_ticker_detail(quote_time="2026-08-24T14:05:00+00:00"))
 
     assert first["card_path"] != repriced["card_path"]
     assert first["card_path"] != requoted["card_path"]
@@ -131,9 +129,7 @@ def test_ticker_page_advertises_its_card(
     init_db()
     captured_at = datetime.now(UTC).isoformat()
     insert_scan_run("ticker-share-run", captured_at, 1)
-    insert_scored_snapshot(
-        "ticker-share-snapshot", "ticker-share-run", "ONE", 42, 1, captured_at
-    )
+    insert_scored_snapshot("ticker-share-snapshot", "ticker-share-run", "ONE", 42, 1, captured_at)
 
     response = web_main.ticker_page("ONE", _ticker_request("/t/ONE"), None)
     html = response.body.decode()

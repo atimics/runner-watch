@@ -3365,9 +3365,7 @@ def _migration_070_story_and_identity(db: DatabaseConnection) -> None:
         """
     )
     _ensure_column(db, "market_actors", "entity_id TEXT REFERENCES participant_entities(id)")
-    db.execute(
-        "CREATE INDEX IF NOT EXISTS market_actors_entity ON market_actors(entity_id)"
-    )
+    db.execute("CREATE INDEX IF NOT EXISTS market_actors_entity ON market_actors(entity_id)")
     _ensure_column(db, "research_commissions", "identity_revision INTEGER")
     _backfill_participant_identity(db)
 
@@ -3388,9 +3386,7 @@ def _backfill_participant_identity(db: DatabaseConnection) -> None:
 def _migration_071_typed_research_subjects(db: DatabaseConnection) -> None:
     _ensure_column(db, "research_commissions", "subject_type TEXT NOT NULL DEFAULT 'stock'")
     _ensure_column(db, "research_commissions", "subject_id TEXT")
-    db.execute(
-        "UPDATE research_commissions SET subject_id=ticker WHERE subject_id IS NULL"
-    )
+    db.execute("UPDATE research_commissions SET subject_id=ticker WHERE subject_id IS NULL")
     db.execute(
         "CREATE INDEX IF NOT EXISTS research_commissions_subject "
         "ON research_commissions(subject_type,subject_id,report_day)"

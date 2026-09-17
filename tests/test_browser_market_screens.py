@@ -69,6 +69,8 @@ def test_narrow_stock_rows_are_single_line(page: Page):
     children = [row.locator(selector).bounding_box() for selector in selectors]
     children = [item for item in children if item is not None]
     assert max(item["y"] for item in children) - min(item["y"] for item in children) <= 4
+
+
 def test_chart_renders_real_points_and_empty_history(page: Page):
     screen = detail("memecoins", {"coin": fixtures.sample("memecoins"), "history": []})
     screen.pop("refresh_url")
@@ -327,6 +329,8 @@ def test_call_record_keeps_choice_terms_and_reward_readable(page, market, width)
     expect(record.get_by_text(screen["call"]["terms"], exact=True)).to_be_visible()
     expect(record.get_by_text(screen["call"]["reward"], exact=True)).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
 @pytest.mark.parametrize("width", [320, 1280])
 @pytest.mark.parametrize("end,expected", [(100.01, "+0.01%"), (200, "+100%"), (100, "+0%")])
 def test_chart_scopes_magnitude_and_period_separately_from_daily_quote(page, width, end, expected):
@@ -436,15 +440,13 @@ def test_the_score_pie_reads_as_three_styles(page: Page):
     bands = page.locator(".ticker-score")
     expect(bands).to_have_count(3)
     assert [bands.nth(i).get_attribute("data-band") for i in range(3)] == ["3", "2", "1"]
-    sizes = [
-        bands.nth(i).locator(".score-pie").bounding_box()["width"] for i in range(3)
-    ]
+    sizes = [bands.nth(i).locator(".score-pie").bounding_box()["width"] for i in range(3)]
     assert sizes[0] == sizes[1] > sizes[2], sizes
     # The top band fills solid; the others have their middle taken out.
     masks = [
-        bands.nth(i).locator(".score-pie").evaluate(
-            "el => getComputedStyle(el).webkitMaskImage || getComputedStyle(el).maskImage"
-        )
+        bands.nth(i)
+        .locator(".score-pie")
+        .evaluate("el => getComputedStyle(el).webkitMaskImage || getComputedStyle(el).maskImage")
         for i in range(3)
     ]
     assert "gradient" not in (masks[0] or "none")

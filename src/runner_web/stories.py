@@ -85,7 +85,7 @@ def open_story(
     ).fetchone()
     if existing:
         return dict(existing)
-    reference_kind, reference_id = (reference or (None, None))
+    reference_kind, reference_id = reference or (None, None)
     connection.execute(
         """
         INSERT INTO ticker_stories(
@@ -110,9 +110,7 @@ def open_story(
             stamp,
         ),
     )
-    row = connection.execute(
-        "SELECT * FROM ticker_stories WHERE id=?", (story_key,)
-    ).fetchone()
+    row = connection.execute("SELECT * FROM ticker_stories WHERE id=?", (story_key,)).fetchone()
     return dict(row)
 
 
@@ -149,10 +147,13 @@ def add_story_update(
         (story_id,),
     ).fetchone()
     version = int(version_row["version"]) + 1
-    update_id = "su-" + hashlib.sha256(
-        "|".join([story_id, str(version), kind, _clean(note) or "", stamp]).encode()
-    ).hexdigest()[:24]
-    reference_kind, reference_id = (reference or (None, None))
+    update_id = (
+        "su-"
+        + hashlib.sha256(
+            "|".join([story_id, str(version), kind, _clean(note) or "", stamp]).encode()
+        ).hexdigest()[:24]
+    )
+    reference_kind, reference_id = reference or (None, None)
     connection.execute(
         """
         INSERT INTO ticker_story_updates(
@@ -220,8 +221,7 @@ def resolve_story(
         ON CONFLICT(story_id,version) DO UPDATE SET note=excluded.note
         """,
         (
-            "su-"
-            + hashlib.sha256(f"{story_id}|{version}|close|{stamp}".encode()).hexdigest()[:24],
+            "su-" + hashlib.sha256(f"{story_id}|{version}|close|{stamp}".encode()).hexdigest()[:24],
             story_id,
             version,
             "close",

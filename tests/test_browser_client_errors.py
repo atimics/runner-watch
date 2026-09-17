@@ -38,9 +38,7 @@ def test_unhandled_rejection_is_reported(page: Page) -> None:
     _open_reporter(page)
 
     with page.expect_request("**/api/client-errors") as captured:
-        page.evaluate(
-            "setTimeout(() => { Promise.reject(new Error('rejected by the page')); }, 0)"
-        )
+        page.evaluate("setTimeout(() => { Promise.reject(new Error('rejected by the page')); }, 0)")
 
     payload = json.loads(captured.value.post_data)
     assert payload["kind"] == "rejection"

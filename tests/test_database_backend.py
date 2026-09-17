@@ -60,8 +60,8 @@ def test_sql_like_patterns_escape_percent_for_postgres() -> None:
                 if re.search(r"(?<!%)%(?!%)", match.group(1)):
                     offenders.append(f"{path.name}:{number}: {line.strip()}")
 
-    assert not offenders, (
-        "Escape % as %% in SQL LIKE literals for PostgreSQL:\n" + "\n".join(offenders)
+    assert not offenders, "Escape % as %% in SQL LIKE literals for PostgreSQL:\n" + "\n".join(
+        offenders
     )
 
 

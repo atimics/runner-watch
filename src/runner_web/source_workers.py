@@ -50,6 +50,8 @@ def _state(worker: str, error: str = "") -> None:
                 )
     except Exception:
         LOG.debug("Could not record %s worker state", worker, exc_info=True)
+
+
 EASTERN = ZoneInfo("America/New_York")
 DISCOVERY_INTERVAL_SECONDS = max(15, int(os.getenv("DISCOVERY_INTERVAL_SECONDS", "30")))
 FREE_LEGAL_INTERVAL_SECONDS = max(

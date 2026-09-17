@@ -92,7 +92,6 @@ def test_trade_halt_worker_requires_an_explicit_opt_in(monkeypatch: MonkeyPatch)
 def test_a_collected_halt_reaches_the_public_board(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
-
     """Fetching a feed is not the same as showing it.
 
     public_market_events filters on the source registry's review and display policy, so

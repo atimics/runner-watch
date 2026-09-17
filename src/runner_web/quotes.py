@@ -141,9 +141,7 @@ def _fetch_quote(ticker: str, now: datetime) -> dict[str, Any]:
         "last_error": None,
     }
     try:
-        batch = _quote_registry().fetch(
-            ProviderRequest(kind=DataKind.QUOTES, symbols=(ticker,))
-        )
+        batch = _quote_registry().fetch(ProviderRequest(kind=DataKind.QUOTES, symbols=(ticker,)))
         quote = next((item for item in batch.quotes if item.symbol == ticker), None)
     except Exception as exc:
         values["last_error"] = type(exc).__name__
@@ -213,7 +211,6 @@ HOT_SET_LIMIT = max(1, int(os.getenv("HOT_QUOTE_LIMIT", "30")))
 
 
 def fresh_quotes(tickers: list[str]) -> dict[str, dict[str, Any]]:
-
     """The stored quote row for each of these tickers, keyed by ticker."""
 
     symbols = sorted({str(item).strip().upper() for item in tickers if str(item).strip()})
@@ -234,7 +231,6 @@ def fresh_quotes(tickers: list[str]) -> dict[str, dict[str, Any]]:
 
 
 def refresh_hot_quotes(tickers: list[str], at: datetime | None = None) -> dict[str, int]:
-
     """Refresh a small hot set in one batched request rather than one call per ticker.
 
     The per-ticker lane suits a page view, where one name is wanted right now. Keeping
@@ -298,7 +294,6 @@ def refresh_hot_quotes(tickers: list[str], at: datetime | None = None) -> dict[s
 
 
 def _previous_close_for(database: Any, ticker: str, session_day: date) -> float | None:
-
     """The prior session's close, so a batched mark can carry a move as well as a price.
 
     A one-minute batch only covers today, so the anchor comes from whatever the rest of
@@ -341,7 +336,6 @@ def price_marks(
     since: datetime | None = None,
     until: datetime | None = None,
 ) -> list[tuple[datetime, float, str]]:
-
     """Every stored price observation for a ticker, newest first.
 
     The on-demand quote lane and the scanner both observe prices on their own cadence.
@@ -388,7 +382,6 @@ def market_mark(
     at: datetime | None = None,
     refresh: bool = True,
 ) -> dict[str, Any] | None:
-
     """The freshest price we know for a ticker, with its age and where it came from."""
 
     symbol = str(ticker).strip().upper()

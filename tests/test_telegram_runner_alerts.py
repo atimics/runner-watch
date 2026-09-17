@@ -221,7 +221,8 @@ def test_dispatch_takes_a_baseline_and_sends_only_the_triggering_run(
 ) -> None:
     sent: list[str] = []
     monkeypatch.setattr(
-        web_main, "telegram_send_post",
+        web_main,
+        "telegram_send_post",
         lambda config, text, **_kw: sent.append(text),
     )
     _insert_runner("run-old", "OLD1", score=95, entered_at="2026-09-01T14:00:00+00:00")
@@ -250,7 +251,8 @@ def test_dispatch_never_backfills_the_existing_board(
 ) -> None:
     sent: list[str] = []
     monkeypatch.setattr(
-        web_main, "telegram_send_post",
+        web_main,
+        "telegram_send_post",
         lambda config, text, **_kw: sent.append(text),
     )
     _insert_runner("run-old", "OLD1", score=95, entered_at="2026-09-01T14:00:00+00:00")
@@ -275,7 +277,8 @@ def test_a_sweep_with_no_scan_still_delivers_a_stranded_runner(
 
     sent: list[str] = []
     monkeypatch.setattr(
-        web_main, "telegram_send_post",
+        web_main,
+        "telegram_send_post",
         lambda config, text, **_kw: sent.append(text),
     )
     _insert_runner("run-old", "OLD1", score=95, entered_at="2026-09-01T14:00:00+00:00")
@@ -346,7 +349,8 @@ def test_two_dispatches_at_once_post_once(alert_environment, monkeypatch: Monkey
 def test_dispatch_applies_the_score_floor(alert_environment, monkeypatch: MonkeyPatch) -> None:
     sent: list[str] = []
     monkeypatch.setattr(
-        web_main, "telegram_send_post",
+        web_main,
+        "telegram_send_post",
         lambda config, text, **_kw: sent.append(text),
     )
     _insert_runner("run-1", "QUIET", score=42, entered_at="2026-09-10T14:00:00+00:00")
@@ -501,7 +505,8 @@ def test_dispatch_posts_a_new_market_report_and_skips_the_old_one(
 ) -> None:
     sent: list[str] = []
     monkeypatch.setattr(
-        web_main, "telegram_send_post",
+        web_main,
+        "telegram_send_post",
         lambda config, text, **_kw: sent.append(text),
     )
     _insert_market_report(
@@ -532,7 +537,8 @@ def test_dispatch_posts_a_new_public_report_and_ignores_private_ones(
 ) -> None:
     sent: list[str] = []
     monkeypatch.setattr(
-        web_main, "telegram_send_post",
+        web_main,
+        "telegram_send_post",
         lambda config, text, **_kw: sent.append(text),
     )
     _insert_public_report("old", "OLD1")
@@ -646,7 +652,8 @@ def test_runners_go_out_one_story_at_a_time_best_first(
 
     sent: list[str] = []
     monkeypatch.setattr(
-        web_main, "telegram_send_post",
+        web_main,
+        "telegram_send_post",
         lambda config, text, **_kw: sent.append(text),
     )
     recent = datetime.now(UTC).isoformat()
@@ -678,7 +685,8 @@ def test_the_pacing_gap_holds_the_next_story_back(
     monkeypatch.setattr(web_main, "TELEGRAM_SEGMENT_GAP_MINUTES", 30)
     sent: list[str] = []
     monkeypatch.setattr(
-        web_main, "telegram_send_post",
+        web_main,
+        "telegram_send_post",
         lambda config, text, **_kw: sent.append(text),
     )
     recent = datetime.now(UTC).isoformat()
@@ -700,7 +708,8 @@ def test_a_runner_that_waited_too_long_is_retired_unheard(
     monkeypatch.setattr(web_main, "TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES", 60)
     sent: list[str] = []
     monkeypatch.setattr(
-        web_main, "telegram_send_post",
+        web_main,
+        "telegram_send_post",
         lambda config, text, **_kw: sent.append(text),
     )
     stale = (datetime.now(UTC) - timedelta(hours=6)).isoformat()
@@ -724,7 +733,8 @@ def test_each_segment_is_its_own_message_with_its_own_card(
 
     sent: list[str] = []
     monkeypatch.setattr(
-        web_main, "telegram_send_post",
+        web_main,
+        "telegram_send_post",
         lambda config, text, **_kw: sent.append(text),
     )
     web_main.dispatch_telegram_posts()  # baseline the empty board
@@ -756,7 +766,8 @@ def test_the_rundown_rotates_away_from_the_kind_it_just_played(
 
     sent: list[str] = []
     monkeypatch.setattr(
-        web_main, "telegram_send_post",
+        web_main,
+        "telegram_send_post",
         lambda config, text, **_kw: sent.append(text),
     )
     web_main.dispatch_telegram_posts()  # baseline the empty board
@@ -805,7 +816,8 @@ def test_the_announcement_uses_deterministic_markdown(
     """
 
     monkeypatch.setattr(
-        web_main, "telegram_send_post",
+        web_main,
+        "telegram_send_post",
         lambda config, text, **_kw: sent.append(text),
     )
     _insert_runner("run-1", "AAAA", score=80, entered_at=datetime.now(UTC).isoformat())
@@ -825,7 +837,8 @@ def test_the_announcement_includes_the_main_link_when_no_model_call(
     """Without the model narrative, the message is the Markdown formatter."""
 
     monkeypatch.setattr(
-        web_main, "telegram_send_post",
+        web_main,
+        "telegram_send_post",
         lambda config, text, **_kw: sent.append(text),
     )
     _insert_runner("run-1", "AAAA", score=80, entered_at=datetime.now(UTC).isoformat())
@@ -843,7 +856,8 @@ def test_a_new_build_announces_itself_once(alert_environment, monkeypatch: Monke
     monkeypatch.setattr(web_main, "APP_BUILD_SHA", "sha-one")
     sent: list[str] = []
     monkeypatch.setattr(
-        web_main, "telegram_send_post",
+        web_main,
+        "telegram_send_post",
         lambda config, text, **_kw: sent.append(text),
     )
 
@@ -868,7 +882,8 @@ def test_a_release_without_notes_is_not_announced(
     monkeypatch.setattr(web_main, "APP_BUILD_SHA", "sha-one")
     sent: list[str] = []
     monkeypatch.setattr(
-        web_main, "telegram_send_post",
+        web_main,
+        "telegram_send_post",
         lambda config, text, **_kw: sent.append(text),
     )
     web_main.dispatch_release_announcement()
@@ -956,7 +971,8 @@ def test_a_model_announcement_that_names_a_stray_ticker_is_rejected(
     )
     sent: list[str] = []
     monkeypatch.setattr(
-        web_main, "telegram_send_post",
+        web_main,
+        "telegram_send_post",
         lambda config, text, **_kw: sent.append(text),
     )
     _insert_runner("run-1", "AAAA", score=80, entered_at=datetime.now(UTC).isoformat())

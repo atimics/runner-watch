@@ -51,7 +51,6 @@ _NAMED: dict[int, str] = {
 
 
 def sector_for(sic: Any) -> str | None:
-
     """Group a SIC code into something a person would actually say."""
 
     try:
@@ -73,7 +72,6 @@ def _stale_before(now: datetime) -> str:
 
 
 def companies_missing_sectors(database: Any, now: datetime, limit: int) -> list[dict[str, Any]]:
-
     """Filers on the board that have no sector yet, or a stale one."""
 
     rows = database.execute(
@@ -126,7 +124,6 @@ def refresh_company_sectors(
     at: datetime | None = None,
     limit: int | None = None,
 ) -> dict[str, int]:
-
     """Fill in sectors for a few filers.
 
     SEC asks for a slow, identified client, so this takes a small batch each
@@ -197,7 +194,6 @@ def _name_hint(name: Any) -> str | None:
 
 
 def sector_board(database: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-
     """Group board rows by sector, busiest first.
 
     Sectors come from the SIC code when the backfill has reached the filer.
@@ -247,9 +243,7 @@ def sector_board(database: Any, rows: list[dict[str, Any]]) -> list[dict[str, An
     board = []
     for bucket in grouped.values():
         changes = bucket.pop("changes")
-        bucket["average_change_pct"] = (
-            round(sum(changes) / len(changes), 2) if changes else None
-        )
+        bucket["average_change_pct"] = round(sum(changes) / len(changes), 2) if changes else None
         board.append(bucket)
     board.sort(key=lambda item: (-item["count"], item["sector"]))
     return board

@@ -23,9 +23,7 @@ class DesktopReleaseTests(unittest.TestCase):
         (self.root / "pyproject.toml").write_text('[project]\nversion = "1.0.0"\n')
         (self.root / "desktop/package.json").write_text('{"version": "1.0.0"}')
         (self.root / "desktop/src-tauri/tauri.conf.json").write_text('{"version": "1.0.0"}')
-        (self.root / "desktop/src-tauri/Cargo.toml").write_text(
-            '[package]\nversion = "1.0.0"\n'
-        )
+        (self.root / "desktop/src-tauri/Cargo.toml").write_text('[package]\nversion = "1.0.0"\n')
         (self.root / "src/runner_watch").mkdir(parents=True)
         (self.root / "src/runner_watch/__init__.py").write_text(
             'from unavailable_dependency import models\n__version__ = "1.0.0"\n'
@@ -38,8 +36,11 @@ class DesktopReleaseTests(unittest.TestCase):
         )
         self.installers = []
         for platform, _architecture, extension, template in MODULE["ASSETS"]:
-            path = self.artifacts / f"rati-swarm-{platform}" / extension / template.format(
-                version="1.0.0"
+            path = (
+                self.artifacts
+                / f"rati-swarm-{platform}"
+                / extension
+                / template.format(version="1.0.0")
             )
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(f"Installer fixture for {platform} {extension}".encode())
@@ -127,8 +128,9 @@ class DesktopReleaseTests(unittest.TestCase):
             path = self.root / relative
             original = path.read_text()
             path.write_text(original.replace('"1.0.0"', '"0.1.0"'))
-            with self.subTest(lock=relative), self.assertRaisesRegex(
-                ValueError, "Package versions differ"
+            with (
+                self.subTest(lock=relative),
+                self.assertRaisesRegex(ValueError, "Package versions differ"),
             ):
                 self.prepare()
             path.write_text(original)

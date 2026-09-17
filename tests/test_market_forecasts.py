@@ -73,8 +73,19 @@ def _insert_scan_price(ticker: str, price: float, at) -> None:
                 started_at,finished_at,captured_at
             ) VALUES(?,?,?,?,?,?,?,?,'[]','[]',?,?,?)
             """,
-            (f"run-{ticker}-{at.isoformat()}", "penny", "Penny", "test", 1, 1, 1, 1,
-             at.isoformat(), at.isoformat(), at.isoformat()),
+            (
+                f"run-{ticker}-{at.isoformat()}",
+                "penny",
+                "Penny",
+                "test",
+                1,
+                1,
+                1,
+                1,
+                at.isoformat(),
+                at.isoformat(),
+                at.isoformat(),
+            ),
         )
         database.execute(
             """
@@ -85,9 +96,26 @@ def _insert_scan_price(ticker: str, price: float, at) -> None:
                 scan_run_id,baseline_rank,trade_state
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'[]','[]',?,?,?,?)
             """,
-            (f"snap-{ticker}-{at.isoformat()}", ticker, 70.0, "BUILDING", "pre", price, 5.0,
-             1.0, 2.0, 3.0, 3.0, 0.5, 500_000, at.isoformat(), at.isoformat(),
-             f"run-{ticker}-{at.isoformat()}", 1, "WATCH"),
+            (
+                f"snap-{ticker}-{at.isoformat()}",
+                ticker,
+                70.0,
+                "BUILDING",
+                "pre",
+                price,
+                5.0,
+                1.0,
+                2.0,
+                3.0,
+                3.0,
+                0.5,
+                500_000,
+                at.isoformat(),
+                at.isoformat(),
+                f"run-{ticker}-{at.isoformat()}",
+                1,
+                "WATCH",
+            ),
         )
 
 

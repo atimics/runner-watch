@@ -533,9 +533,7 @@ SCAN_IDLE_POLL_SECONDS = max(15, int(os.getenv("SCAN_IDLE_POLL_SECONDS", "60")))
 # Floor between consecutive scans, so a scan that overruns the interval does
 # not start the next one the moment it lands.
 SCAN_MIN_GAP_SECONDS = max(15, int(os.getenv("SCAN_MIN_GAP_SECONDS", "60")))
-OUTCOME_REFRESH_TIMEOUT_SECONDS = max(
-    120, int(os.getenv("OUTCOME_REFRESH_TIMEOUT_SECONDS", "900"))
-)
+OUTCOME_REFRESH_TIMEOUT_SECONDS = max(120, int(os.getenv("OUTCOME_REFRESH_TIMEOUT_SECONDS", "900")))
 OUTCOME_ERROR_RECORD_TIMEOUT_SECONDS = max(
     15, int(os.getenv("OUTCOME_ERROR_RECORD_TIMEOUT_SECONDS", "60"))
 )
@@ -652,32 +650,164 @@ def _invalidate_runners_feeds(*scopes: str) -> None:
         _invalidate_public_screen_data(f"runners-{scope}", "public")
 
 
+def _build_cached_payload(
+    local_key: str,
+    shared_key: str,
+    builder: Callable[[], dict[str, Any]],
+    *,
+    cache: dict[str, tuple[float, dict[str, Any]]],
+    condition: threading.Condition,
+    ttl_seconds: float,
+    max_entries: int | None = None,
+) -> dict[str, Any]:
+    payload = builder()
+    with condition:
+        if max_entries is not None and len(cache) >= max_entries and local_key not in cache:
+            oldest_key = min(cache, key=lambda key: cache[key][0])
+            cache.pop(oldest_key, None)
+        cache[local_key] = (time.monotonic() + ttl_seconds, payload)
+    shared_cache_set(shared_key, payload, int(ttl_seconds))
+    return payload
+
+
+def _finish_cached_payload_refresh(
+    local_key: str,
+    refreshing: set[str],
+    condition: threading.Condition,
+) -> None:
+    with condition:
+        refreshing.discard(local_key)
+        condition.notify_all()
+
+
+def _refresh_cached_payload(
+    local_key: str,
+    shared_key: str,
+    builder: Callable[[], dict[str, Any]],
+    *,
+    cache: dict[str, tuple[float, dict[str, Any]]],
+    refreshing: set[str],
+    condition: threading.Condition,
+    ttl_seconds: float,
+    failure_message: str,
+    metric_scope: str | None = None,
+) -> None:
+    started = time.perf_counter()
+    try:
+        _build_cached_payload(
+            local_key,
+            shared_key,
+            builder,
+            cache=cache,
+            condition=condition,
+            ttl_seconds=ttl_seconds,
+        )
+    except Exception:
+        LOG.exception(failure_message)
+    finally:
+        if metric_scope is not None:
+            record_cache(metric_scope, "build", duration_ms=(time.perf_counter() - started) * 1000)
+        _finish_cached_payload_refresh(local_key, refreshing, condition)
+
+
+def _cached_payload(
+    local_key: str,
+    shared_key: str,
+    builder: Callable[[], dict[str, Any]],
+    *,
+    cache: dict[str, tuple[float, dict[str, Any]]],
+    refreshing: set[str],
+    condition: threading.Condition,
+    ttl_seconds: float,
+    max_entries: int,
+    refresh_target: Callable[..., None],
+    refresh_args: tuple[Any, ...],
+    refresh_name: str,
+    metric_scope: str | None = None,
+) -> dict[str, Any]:
+    current = time.monotonic()
+    with condition:
+        cached = cache.get(local_key)
+        if cached and current < cached[0]:
+            if metric_scope is not None:
+                record_cache(metric_scope, "hit")
+            return cached[1]
+        if cached:
+            if metric_scope is not None:
+                record_cache(metric_scope, "stale")
+            if local_key not in refreshing:
+                refreshing.add(local_key)
+                threading.Thread(
+                    target=refresh_target,
+                    args=refresh_args,
+                    daemon=True,
+                    name=refresh_name,
+                ).start()
+            return cached[1]
+
+    shared = shared_cache_get(shared_key)
+    if isinstance(shared, dict):
+        if metric_scope is not None:
+            record_cache(metric_scope, "shared")
+        with condition:
+            cache[local_key] = (time.monotonic() + ttl_seconds, shared)
+        return shared
+
+    with condition:
+        cached = cache.get(local_key)
+        if cached:
+            return cached[1]
+        if local_key in refreshing:
+            if metric_scope is not None:
+                record_cache(metric_scope, "wait")
+            condition.wait_for(
+                lambda: local_key in cache or local_key not in refreshing,
+                timeout=CACHE_BUILD_WAIT_SECONDS,
+            )
+            cached = cache.get(local_key)
+            if cached:
+                if metric_scope is not None:
+                    record_cache(metric_scope, "hit")
+                return cached[1]
+        refreshing.add(local_key)
+
+    started = time.perf_counter()
+    if metric_scope is not None:
+        record_cache(metric_scope, "miss")
+    try:
+        payload = _build_cached_payload(
+            local_key,
+            shared_key,
+            builder,
+            cache=cache,
+            condition=condition,
+            ttl_seconds=ttl_seconds,
+            max_entries=max_entries,
+        )
+        if metric_scope is not None:
+            record_cache(metric_scope, "build", duration_ms=(time.perf_counter() - started) * 1000)
+        return payload
+    finally:
+        _finish_cached_payload_refresh(local_key, refreshing, condition)
+
+
 def _refresh_public_screen_data(
     local_key: str,
     shared_key: str,
     builder: Callable[[], dict[str, Any]],
     ttl_seconds: float,
 ) -> None:
-    started = time.perf_counter()
-    try:
-        payload = builder()
-        with PUBLIC_SCREEN_DATA_CONDITION:
-            PUBLIC_SCREEN_DATA_CACHE[local_key] = (
-                time.monotonic() + ttl_seconds,
-                payload,
-            )
-        shared_cache_set(shared_key, payload, int(ttl_seconds))
-    except Exception:
-        LOG.exception("Public screen cache refresh failed")
-    finally:
-        record_cache(
-            "public-screen-refresh",
-            "build",
-            duration_ms=(time.perf_counter() - started) * 1000,
-        )
-        with PUBLIC_SCREEN_DATA_CONDITION:
-            PUBLIC_SCREEN_DATA_REFRESHING.discard(local_key)
-            PUBLIC_SCREEN_DATA_CONDITION.notify_all()
+    _refresh_cached_payload(
+        local_key,
+        shared_key,
+        builder,
+        cache=PUBLIC_SCREEN_DATA_CACHE,
+        refreshing=PUBLIC_SCREEN_DATA_REFRESHING,
+        condition=PUBLIC_SCREEN_DATA_CONDITION,
+        ttl_seconds=ttl_seconds,
+        failure_message="Public screen cache refresh failed",
+        metric_scope="public-screen-refresh",
+    )
 
 
 def _public_screen_data(
@@ -688,75 +818,20 @@ def _public_screen_data(
     ttl_seconds: float = PUBLIC_SCREEN_CACHE_TTL_SECONDS,
 ) -> dict[str, Any]:
     local_key, shared_key = _public_screen_cache_keys(scope, identity)
-    current = time.monotonic()
-    with PUBLIC_SCREEN_DATA_CONDITION:
-        cached = PUBLIC_SCREEN_DATA_CACHE.get(local_key)
-        if cached and current < cached[0]:
-            record_cache(scope, "hit")
-            return cached[1]
-        if cached:
-            record_cache(scope, "stale")
-            if local_key not in PUBLIC_SCREEN_DATA_REFRESHING:
-                PUBLIC_SCREEN_DATA_REFRESHING.add(local_key)
-                threading.Thread(
-                    target=_refresh_public_screen_data,
-                    args=(local_key, shared_key, builder, ttl_seconds),
-                    daemon=True,
-                    name=f"public-screen-cache-{scope}",
-                ).start()
-            return cached[1]
-
-    shared = shared_cache_get(shared_key)
-    if isinstance(shared, dict):
-        record_cache(scope, "shared")
-        with PUBLIC_SCREEN_DATA_CONDITION:
-            PUBLIC_SCREEN_DATA_CACHE[local_key] = (
-                time.monotonic() + ttl_seconds,
-                shared,
-            )
-        return shared
-
-    with PUBLIC_SCREEN_DATA_CONDITION:
-        cached = PUBLIC_SCREEN_DATA_CACHE.get(local_key)
-        if cached:
-            return cached[1]
-        if local_key in PUBLIC_SCREEN_DATA_REFRESHING:
-            record_cache(scope, "wait")
-            PUBLIC_SCREEN_DATA_CONDITION.wait_for(
-                lambda: (
-                    local_key in PUBLIC_SCREEN_DATA_CACHE
-                    or local_key not in PUBLIC_SCREEN_DATA_REFRESHING
-                ),
-                timeout=CACHE_BUILD_WAIT_SECONDS,
-            )
-            cached = PUBLIC_SCREEN_DATA_CACHE.get(local_key)
-            if cached:
-                record_cache(scope, "hit")
-                return cached[1]
-        PUBLIC_SCREEN_DATA_REFRESHING.add(local_key)
-
-    started = time.perf_counter()
-    record_cache(scope, "miss")
-    try:
-        payload = builder()
-        with PUBLIC_SCREEN_DATA_CONDITION:
-            if len(PUBLIC_SCREEN_DATA_CACHE) >= 64 and local_key not in PUBLIC_SCREEN_DATA_CACHE:
-                oldest_key = min(
-                    PUBLIC_SCREEN_DATA_CACHE,
-                    key=lambda key: PUBLIC_SCREEN_DATA_CACHE[key][0],
-                )
-                PUBLIC_SCREEN_DATA_CACHE.pop(oldest_key, None)
-            PUBLIC_SCREEN_DATA_CACHE[local_key] = (
-                time.monotonic() + ttl_seconds,
-                payload,
-            )
-        shared_cache_set(shared_key, payload, int(ttl_seconds))
-        record_cache(scope, "build", duration_ms=(time.perf_counter() - started) * 1000)
-        return payload
-    finally:
-        with PUBLIC_SCREEN_DATA_CONDITION:
-            PUBLIC_SCREEN_DATA_REFRESHING.discard(local_key)
-            PUBLIC_SCREEN_DATA_CONDITION.notify_all()
+    return _cached_payload(
+        local_key,
+        shared_key,
+        builder,
+        cache=PUBLIC_SCREEN_DATA_CACHE,
+        refreshing=PUBLIC_SCREEN_DATA_REFRESHING,
+        condition=PUBLIC_SCREEN_DATA_CONDITION,
+        ttl_seconds=ttl_seconds,
+        max_entries=64,
+        refresh_target=_refresh_public_screen_data,
+        refresh_args=(local_key, shared_key, builder, ttl_seconds),
+        refresh_name=f"public-screen-cache-{scope}",
+        metric_scope=scope,
+    )
 
 
 BACKGROUND_WORKERS_ENABLED = os.getenv("BACKGROUND_WORKERS_ENABLED", "1") != "0"
@@ -1520,6 +1595,7 @@ def _flash_provider_ready(actor: AIKol = FLASH) -> bool:
                 (actor.id, since, FLASH_REPORT_FAILURE_STREAK_LIMIT),
             ).fetchall()
     except Exception:
+        LOG.exception("Flash provider readiness check failed")
         return True
     return not (
         len(rows) == FLASH_REPORT_FAILURE_STREAK_LIMIT
@@ -1662,9 +1738,7 @@ async def scan_collection_worker() -> None:
         except Exception as exc:
             worker_state("background_scan_last_error", str(exc)[:500])
         elapsed = time.monotonic() - started
-        await asyncio.sleep(
-            max(SCAN_MIN_GAP_SECONDS, BACKGROUND_SCAN_INTERVAL_SECONDS - elapsed)
-        )
+        await asyncio.sleep(max(SCAN_MIN_GAP_SECONDS, BACKGROUND_SCAN_INTERVAL_SECONDS - elapsed))
 
 
 HOT_QUOTE_INTERVAL_SECONDS = max(20, int(os.getenv("HOT_QUOTE_INTERVAL_SECONDS", "45")))
@@ -3125,9 +3199,9 @@ def _flash_stock_picks(*, limit: int = 6) -> list[dict[str, Any]]:
                 "reason": str(call["reason"] or "")[:180],
                 "settle_label": call["target_session_date"],
                 "start_label": (
-                    f"${start:.4f}" if start is not None and start < 1 else (
-                        f"${start:.2f}" if start is not None else None
-                    )
+                    f"${start:.4f}"
+                    if start is not None and start < 1
+                    else (f"${start:.2f}" if start is not None else None)
                 ),
                 "version_label": call["version_label"],
             }
@@ -3153,9 +3227,7 @@ def _flash_sports_picks(*, limit: int = 4) -> list[dict[str, Any]]:
         prediction = event.get("prediction") if isinstance(event.get("prediction"), dict) else {}
         picks.append(
             {
-                "label": (
-                    f"{event.get('away_abbreviation')} @ {event.get('home_abbreviation')}"
-                ),
+                "label": (f"{event.get('away_abbreviation')} @ {event.get('home_abbreviation')}"),
                 "league": str(event.get("league") or "").upper(),
                 "kickoff": screen_stamp(event.get("start_time")) or "",
                 "pick": str(event.get("model_winner_abbreviation")),
@@ -4191,8 +4263,7 @@ def _announced_tickers() -> set[str]:
     cutoff = iso(latest - timedelta(minutes=ANNOUNCEMENT_ROUND_MINUTES))
     with connection() as database:
         rows = database.execute(
-            "SELECT ticker FROM telegram_alert_deliveries "
-            "WHERE status='sent' AND updated_at>=?",
+            "SELECT ticker FROM telegram_alert_deliveries WHERE status='sent' AND updated_at>=?",
             (cutoff,),
         ).fetchall()
     return {str(entry["ticker"]).upper() for entry in rows}
@@ -4748,9 +4819,7 @@ def _commission_record(
         report["subject_type"] = "coin"
         report["subject_id"] = str(report.get("subject_id") or report["ticker"])
         report["company"] = str(
-            evidence_coin.get("name")
-            or evidence_coin.get("symbol")
-            or report["subject_id"]
+            evidence_coin.get("name") or evidence_coin.get("symbol") or report["subject_id"]
         )
         report["coin_label"] = str(evidence_coin.get("symbol") or report["subject_id"][:6])
         report["coin_tone"] = _coin_tone(report["subject_id"])
@@ -4918,6 +4987,7 @@ def _flash_daily_capacity_available(
                 (actor.id, since),
             ).fetchone()[0]
     except Exception:
+        LOG.exception("Flash daily capacity check failed")
         return False
     return int(count) < FLASH_GLOBAL_DAILY_LIMIT
 
@@ -5729,6 +5799,32 @@ def _generate_openrouter_report(
     prepare_only: bool = False,
     provider_result: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str, dict[str, Any]] | dict[str, Any]:
+    body = _prepare_openrouter_report_request(
+        evidence, actor=actor, model=model, customer_route=customer_route
+    )
+    if prepare_only:
+        return body
+    if customer_route and provider_result is None:
+        raise ReportGenerationFailure(
+            503,
+            "The local model connector has not returned this report.",
+            {"phase": "edge_result_missing", "provider": "customer_edge"},
+        )
+    result = (
+        provider_result
+        if provider_result is not None
+        else _request_openrouter_report(openrouter_key, body)
+    )
+    return _process_openrouter_report_response(result, evidence, model=model or actor.model)
+
+
+def _prepare_openrouter_report_request(
+    evidence: dict[str, Any],
+    *,
+    actor: AIKol,
+    model: str | None,
+    customer_route: bool,
+) -> dict[str, Any]:
     is_sports = evidence.get("subject_type") == "sports_game"
     is_coin = evidence.get("subject_type") == "coin"
     request_payload = {
@@ -5892,59 +5988,64 @@ def _generate_openrouter_report(
     if customer_route:
         for key in ("plugins", "provider", "reasoning_effort"):
             body.pop(key, None)
-    if prepare_only:
-        return body
-    if customer_route and provider_result is None:
+    return body
+
+
+def _request_openrouter_report(
+    openrouter_key: str,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    api_request = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=json.dumps(body).encode(),
+        headers={
+            "Authorization": f"Bearer {openrouter_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": APP_ORIGIN,
+            "X-OpenRouter-Title": "Runner Watch",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(
+            api_request, timeout=OPENROUTER_RESEARCH_TIMEOUT_SECONDS
+        ) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403}:
+            message = "OpenRouter rejected the server key."
+        elif exc.code == 402:
+            message = "The server's OpenRouter account needs credits."
+        elif exc.code == 429:
+            message = "OpenRouter is busy. Try again in a moment."
+        else:
+            message = "OpenRouter could not complete this report."
         raise ReportGenerationFailure(
-            503,
-            "The local model connector has not returned this report.",
-            {"phase": "edge_result_missing", "provider": "customer_edge"},
-        )
-    if provider_result is not None:
-        result = provider_result
-    else:
-        api_request = urllib.request.Request(
-            "https://openrouter.ai/api/v1/chat/completions",
-            data=json.dumps(body).encode(),
-            headers={
-                "Authorization": f"Bearer {openrouter_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": APP_ORIGIN,
-                "X-OpenRouter-Title": "Runner Watch",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(
-                api_request, timeout=OPENROUTER_RESEARCH_TIMEOUT_SECONDS
-            ) as response:
-                result = json.load(response)
-        except urllib.error.HTTPError as exc:
-            if exc.code in {401, 403}:
-                message = "OpenRouter rejected the server key."
-            elif exc.code == 402:
-                message = "The server's OpenRouter account needs credits."
-            elif exc.code == 429:
-                message = "OpenRouter is busy. Try again in a moment."
-            else:
-                message = "OpenRouter could not complete this report."
-            raise ReportGenerationFailure(
-                exc.code if exc.code < 500 else 502,
-                message,
-                {"phase": "provider_http", "http_status": exc.code},
-            ) from exc
-        except (TimeoutError, urllib.error.URLError) as exc:
-            raise ReportGenerationFailure(
-                504,
-                "Flash took too long to answer. Retry Flash.",
-                {"phase": "provider_timeout"},
-            ) from exc
-        except (TypeError, ValueError) as exc:
-            raise ReportGenerationFailure(
-                502,
-                "OpenRouter returned an unreadable response. Retry Flash.",
-                {"phase": "provider_envelope", "failure_kind": "invalid_json"},
-            ) from exc
+            exc.code if exc.code < 500 else 502,
+            message,
+            {"phase": "provider_http", "http_status": exc.code},
+        ) from exc
+    except (TimeoutError, urllib.error.URLError) as exc:
+        raise ReportGenerationFailure(
+            504,
+            "Flash took too long to answer. Retry Flash.",
+            {"phase": "provider_timeout"},
+        ) from exc
+    except (TypeError, ValueError) as exc:
+        raise ReportGenerationFailure(
+            502,
+            "OpenRouter returned an unreadable response. Retry Flash.",
+            {"phase": "provider_envelope", "failure_kind": "invalid_json"},
+        ) from exc
+
+
+def _process_openrouter_report_response(
+    result: dict[str, Any],
+    evidence: dict[str, Any],
+    *,
+    model: str,
+) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    is_sports = evidence.get("subject_type") == "sports_game"
     choice: Any = None
     message: Any = None
     content: Any = None
@@ -6082,7 +6183,7 @@ def _generate_openrouter_report(
         ),
         "normalized_fields": normalized_fields,
     }
-    return report, str(result.get("model") or model or actor.model), usage
+    return report, str(result.get("model") or model), usage
 
 
 def _fallback_people_from_evidence(evidence: dict[str, Any]) -> list[dict[str, Any]]:
@@ -7051,8 +7152,9 @@ def _memecoin_replay_artifact(coin_id: str, replay_id: str, request: Request, *,
     from runner_web.memecoin_replay_store import saved_replay
 
     enforce_rate(request, "memecoin_replay", limit=30, seconds=60)
-    if (not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", coin_id)
-            or not re.fullmatch(r"[a-f0-9]{64}", replay_id)):
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", coin_id) or not re.fullmatch(
+        r"[a-f0-9]{64}", replay_id
+    ):
         raise HTTPException(404, "Replay not found")
     try:
         record = saved_replay(coin_id, replay_id, with_gif=gif)
@@ -7062,11 +7164,15 @@ def _memecoin_replay_artifact(coin_id: str, replay_id: str, request: Request, *,
         raise HTTPException(404, "Replay not found")
     content = record["gif"] if gif else json.dumps(record["payload"], allow_nan=False).encode()
     suffix = "gif" if gif else "json"
-    return Response(content, media_type="image/gif" if gif else "application/json", headers={
-        "Cache-Control": "public, max-age=31536000, immutable",
-        "ETag": '"' + (record["gif_sha256"] if gif else replay_id) + '"',
-        "Content-Disposition": f'inline; filename="token-replay-{replay_id[:12]}.{suffix}"',
-    })
+    return Response(
+        content,
+        media_type="image/gif" if gif else "application/json",
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "ETag": '"' + (record["gif_sha256"] if gif else replay_id) + '"',
+            "Content-Disposition": f'inline; filename="token-replay-{replay_id[:12]}.{suffix}"',
+        },
+    )
 
 
 @app.get("/api/memecoins/{coin_id}/replays/{replay_id}.gif")
@@ -7149,7 +7255,9 @@ def market_actors_api(request: Request, domain: str = "stock") -> dict[str, Any]
 
 @app.get("/api/stocks/{ticker}/map")
 def stock_ticker_map_api(
-    ticker: str, request: Request, cursor: str | None = Query(default=None, max_length=1024),
+    ticker: str,
+    request: Request,
+    cursor: str | None = Query(default=None, max_length=1024),
 ) -> dict[str, Any]:
     from runner_web.stock_map import ticker_map
 
@@ -7170,9 +7278,7 @@ def market_actor_api(actor_id: str, request: Request) -> dict[str, Any]:
 
 
 @app.get("/api/market-actors/{actor_id}/portrait")
-def market_actor_portrait_api(
-    actor_id: str, request: Request, cached: bool = False
-) -> Response:
+def market_actor_portrait_api(actor_id: str, request: Request, cached: bool = False) -> Response:
     enforce_rate(request, "market-actor-portrait", limit=60, seconds=60)
     existing = portrait_for_actor(actor_id)
     if existing is None and not cached:
@@ -7376,9 +7482,7 @@ def _simple_board(
 ) -> HTMLResponse:
     from runner_web.market_screens import listing
 
-    screen = listing(
-        market, items, view=view, query=query, updated_at=updated_at, stories=stories
-    )
+    screen = listing(market, items, view=view, query=query, updated_at=updated_at, stories=stories)
     return templates.TemplateResponse(
         request,
         "market_screen.html",
@@ -8542,24 +8646,16 @@ def _refresh_chart_payload(
     shared_key: str,
     requested: list[str],
 ) -> None:
-    try:
-        payload = _ticker_charts_payload_uncached(requested)
-        with CHART_PAYLOAD_CONDITION:
-            CHART_PAYLOAD_CACHE[local_key] = (
-                time.monotonic() + CHART_PAYLOAD_CACHE_TTL_SECONDS,
-                payload,
-            )
-        shared_cache_set(
-            shared_key,
-            payload,
-            int(CHART_PAYLOAD_CACHE_TTL_SECONDS),
-        )
-    except Exception:
-        LOG.exception("Chart payload cache refresh failed")
-    finally:
-        with CHART_PAYLOAD_CONDITION:
-            CHART_PAYLOAD_REFRESHING.discard(local_key)
-            CHART_PAYLOAD_CONDITION.notify_all()
+    _refresh_cached_payload(
+        local_key,
+        shared_key,
+        lambda: _ticker_charts_payload_uncached(requested),
+        cache=CHART_PAYLOAD_CACHE,
+        refreshing=CHART_PAYLOAD_REFRESHING,
+        condition=CHART_PAYLOAD_CONDITION,
+        ttl_seconds=CHART_PAYLOAD_CACHE_TTL_SECONDS,
+        failure_message="Chart payload cache refresh failed",
+    )
 
 
 def ticker_charts_payload(tickers: list[str]) -> dict[str, Any]:
@@ -8567,67 +8663,19 @@ def ticker_charts_payload(tickers: list[str]) -> dict[str, Any]:
     if not requested:
         return {"charts": {}, "freshness": {}, "annotations": {}}
     local_key, shared_key = _chart_payload_cache_key(requested)
-    current = time.monotonic()
-    with CHART_PAYLOAD_CONDITION:
-        cached = CHART_PAYLOAD_CACHE.get(local_key)
-        if cached and current < cached[0]:
-            return cached[1]
-        if cached:
-            if local_key not in CHART_PAYLOAD_REFRESHING:
-                CHART_PAYLOAD_REFRESHING.add(local_key)
-                threading.Thread(
-                    target=_refresh_chart_payload,
-                    args=(local_key, shared_key, requested),
-                    daemon=True,
-                    name="chart-payload-cache-refresh",
-                ).start()
-            return cached[1]
-    shared = shared_cache_get(shared_key)
-    if isinstance(shared, dict):
-        with CHART_PAYLOAD_CONDITION:
-            CHART_PAYLOAD_CACHE[local_key] = (
-                time.monotonic() + CHART_PAYLOAD_CACHE_TTL_SECONDS,
-                shared,
-            )
-        return shared
-    with CHART_PAYLOAD_CONDITION:
-        cached = CHART_PAYLOAD_CACHE.get(local_key)
-        if cached:
-            return cached[1]
-        if local_key in CHART_PAYLOAD_REFRESHING:
-            CHART_PAYLOAD_CONDITION.wait_for(
-                lambda: (
-                    local_key in CHART_PAYLOAD_CACHE or local_key not in CHART_PAYLOAD_REFRESHING
-                ),
-                timeout=CACHE_BUILD_WAIT_SECONDS,
-            )
-            cached = CHART_PAYLOAD_CACHE.get(local_key)
-            if cached:
-                return cached[1]
-        CHART_PAYLOAD_REFRESHING.add(local_key)
-    try:
-        payload = _ticker_charts_payload_uncached(requested)
-        with CHART_PAYLOAD_CONDITION:
-            if len(CHART_PAYLOAD_CACHE) >= 32 and local_key not in CHART_PAYLOAD_CACHE:
-                oldest_key = min(
-                    CHART_PAYLOAD_CACHE,
-                    key=lambda key: CHART_PAYLOAD_CACHE[key][0],
-                )
-                CHART_PAYLOAD_CACHE.pop(oldest_key, None)
-            CHART_PAYLOAD_CACHE[local_key] = (
-                time.monotonic() + CHART_PAYLOAD_CACHE_TTL_SECONDS,
-                payload,
-            )
-        shared_cache_set(
-            shared_key,
-            payload,
-            int(CHART_PAYLOAD_CACHE_TTL_SECONDS),
-        )
-        return payload
-    finally:
-        with CHART_PAYLOAD_CONDITION:
-            CHART_PAYLOAD_REFRESHING.discard(local_key)
-            CHART_PAYLOAD_CONDITION.notify_all()
+    return _cached_payload(
+        local_key,
+        shared_key,
+        lambda: _ticker_charts_payload_uncached(requested),
+        cache=CHART_PAYLOAD_CACHE,
+        refreshing=CHART_PAYLOAD_REFRESHING,
+        condition=CHART_PAYLOAD_CONDITION,
+        ttl_seconds=CHART_PAYLOAD_CACHE_TTL_SECONDS,
+        max_entries=32,
+        refresh_target=_refresh_chart_payload,
+        refresh_args=(local_key, shared_key, requested),
+        refresh_name="chart-payload-cache-refresh",
+    )
 
 
 def _ticker_state_changes(ticker: str, *, days: int = 7) -> list[dict[str, Any]]:
@@ -11639,6 +11687,7 @@ TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES = max(
     0, int(os.getenv("TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES", "180"))
 )
 
+
 def _last_channel_post(database: Any) -> tuple[datetime | None, str]:
     """When the room last heard from us, and what it heard.
 
@@ -11734,9 +11783,7 @@ def _activity_payload(
             "signals": entry.get("signals_json"),
             # Carried so one row can both render a story and key its delivery.
             "entered_at": entry.get("entered_at"),
-            "url": absolute(
-                RUNNERS_ORIGIN, f"/t/{str(entry.get('ticker') or '').upper()}"
-            ),
+            "url": absolute(RUNNERS_ORIGIN, f"/t/{str(entry.get('ticker') or '').upper()}"),
             "at": entry.get("entered_at"),
         }
         for entry in runners
@@ -12042,9 +12089,7 @@ def dispatch_release_announcement() -> dict[str, Any]:
                 _record_channel_post(database, "release", sha, status="baseline")
                 return {"status": "baseline"}
         notes = os.getenv("TELEGRAM_RELEASE_NOTES", "")
-        message = telegram_format_release_announcement_md(
-            APP_VERSION, notes, origin=RUNNERS_ORIGIN
-        )
+        message = telegram_format_release_announcement_md(APP_VERSION, notes, origin=RUNNERS_ORIGIN)
         if not message:
             return {"status": "skipped"}
         try:

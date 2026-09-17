@@ -217,7 +217,6 @@ class YahooMarketData:
     def minutes(
         self, tickers: list[str], progress: ProgressCallback | None = None
     ) -> DownloadResult:
-
         """One-minute bars for a small hot set, in one batched request."""
 
         return self._download(
@@ -380,14 +379,11 @@ def _last_print(frame: pd.DataFrame) -> tuple[datetime, dict[str, Any]] | None:
         "last": _quote_number(row.get(close_column)),
         "day_high": _quote_number(usable[columns["high"]].max()) if "high" in columns else None,
         "day_low": _quote_number(usable[columns["low"]].min()) if "low" in columns else None,
-        "volume": (
-            _quote_number(usable[columns["volume"]].sum()) if "volume" in columns else None
-        ),
+        "volume": (_quote_number(usable[columns["volume"]].sum()) if "volume" in columns else None),
     }
 
 
 class YahooQuoteAdapter:
-
     name = "yahoo"
     capabilities = frozenset({DataKind.QUOTES})
 
