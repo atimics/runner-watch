@@ -212,18 +212,21 @@ def test_filing_time_excludes_later_disclosures_and_preserves_loaded_history(pag
 
 
 @pytest.mark.parametrize("width", [320, 390, 1280])
-def test_scoring_panel_segments_share_the_ring_by_positive_contribution(page, width):
+def test_scoring_panel_segments_share_the_ring_by_total_magnitude(page, width):
     open_map(page, width)
     segments = page.locator(".map-score-segment")
-    expect(segments).to_have_count(3)
+    expect(segments).to_have_count(5)
+    expect(page.locator(".map-score-penalty-arc, [data-penalty-key]")).to_have_count(0)
     radius = 48 if width <= 500 else 62
     cx, cy = (180, 184) if width <= 500 else (380, 218)
     angle = -math.pi / 2
     lengths = []
-    for segment, weight in zip(segments.all(), [60, 30, 10], strict=True):
+    weights = [60, 30, 10, -50, -5]
+    total = sum(abs(weight) for weight in weights)
+    for segment, weight in zip(segments.all(), weights, strict=True):
         d = segment.get_attribute("d")
         values = [float(value) for value in re.findall(r"-?\d+(?:\.\d+)?(?:e[+-]?\d+)?", d)]
-        end = angle + weight / 100 * math.tau
+        end = angle + abs(weight) / total * math.tau
         assert values == pytest.approx(
             [
                 cx + radius * math.cos(angle),
@@ -231,19 +234,28 @@ def test_scoring_panel_segments_share_the_ring_by_positive_contribution(page, wi
                 radius,
                 radius,
                 0,
-                int(weight > 50),
+                int(abs(weight) > total / 2),
                 1,
                 cx + radius * math.cos(end),
                 cy + radius * math.sin(end),
             ]
         )
         lengths.append(segment.evaluate("segment => segment.getTotalLength()"))
-        expect(segment).to_have_attribute(
-            "aria-label", re.compile(rf"\+{weight} pts, {weight}% of positive contributions")
-        )
+        percent = round(abs(weight) / total * 100, 1)
+        label = f"{weight:+} pts, {percent}% of total magnitude"
+        expect(segment).to_have_attribute("aria-label", re.compile(re.escape(label)))
+        expect(segment.locator("title")).to_contain_text(label.replace(", ", " · "))
+        expect(segment).to_have_attribute("stroke-width", "16" if width <= 500 else "20")
+        expect(segment).to_have_attribute("role", "button")
+        expect(segment).to_have_attribute("tabindex", "0")
+        assert segment.evaluate("el => getComputedStyle(el).pointerEvents") == "stroke"
+        if weight < 0:
+            assert segment.evaluate("el => getComputedStyle(el).stroke") == "rgb(239, 153, 164)"
         angle = end
+    assert angle == pytest.approx(3 * math.pi / 2)
+    assert sum(lengths) == pytest.approx(math.tau * radius, rel=0.001)
     assert [length / sum(lengths) for length in lengths] == pytest.approx(
-        [0.6, 0.3, 0.1], abs=0.001
+        [abs(weight) / total for weight in weights], abs=0.001
     )
     expect(page.locator(".map-center-score")).to_have_text("45")
 
@@ -278,7 +290,7 @@ def test_score_panel_pins_and_summarizes_positive_drivers_and_penalties(page):
     first.focus()
     expect(first).to_have_attribute("aria-pressed", "false")
     expect(selection.locator("p.map-score-breakdown")).to_have_text(
-        "+60 pts · 60% of positive contributions"
+        "+60 pts · 38.7% of total magnitude"
     )
     first.focus()
     page.mouse.click(**ring_point(first))
@@ -298,6 +310,52 @@ def test_score_panel_pins_and_summarizes_positive_drivers_and_penalties(page):
     expect(selection.locator("h3")).to_have_text("45")
 
 
+@pytest.mark.parametrize("width", [390, 1280])
+@pytest.mark.parametrize(
+    "key, label, breakdown",
+    [
+        ("rug", "Rug risk", "-50 pts · 32.3% of total magnitude"),
+        ("social_search", "Social / search", "-5 pts · 3.2% of total magnitude"),
+    ],
+)
+def test_risk_hover_and_pin_share_filing_selection(page, width, key, label, breakdown):
+    open_map(page, width)
+    page.locator("[data-person]").first.press("Enter")
+    selection = page.locator("[data-map-selection]")
+    filing_title = selection.locator("h3").text_content()
+    risk = page.locator(f'[data-score-key="{key}"]')
+    page.mouse.move(**ring_point(risk))
+    expect(selection.locator("h4")).to_have_text(label)
+    expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
+    expect(risk).to_have_attribute("aria-pressed", "false")
+    page.mouse.move(0, 0)
+    expect(selection.locator("h3")).to_have_text(filing_title)
+    expect(page.locator(".chart-filing-marker")).to_have_count(1)
+    risk.focus()
+    expect(selection.locator("h4")).to_have_text(label)
+    page.mouse.click(**ring_point(risk))
+    page.mouse.move(0, 0)
+    page.get_by_role("button", name="Next people").focus()
+    expect(risk).to_have_attribute("aria-pressed", "true")
+    expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
+    expect(selection).to_contain_text("Pinned contribution")
+    expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
+    expect(page.locator("[data-event-id][aria-pressed=true]")).to_have_count(0)
+    expect(page.locator(".chart-filing-marker")).to_have_count(0)
+    page.get_by_role("button", name="Next people").click()
+    expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
+    page.locator(".map-filings>summary").click()
+    page.get_by_role("button", name="Next filings").click()
+    expect(page.locator("[data-map-filings-page]")).to_have_text("6–10 of 11")
+    expect(risk).to_have_attribute("aria-pressed", "true")
+    expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
+    page.get_by_role("button", name="Return to score overview").click()
+    expect(page.locator("[data-map-score-center]")).to_be_focused()
+    expect(page.locator("[data-map-filings-page]")).to_have_text("6–10 of 11")
+    expect(risk).to_have_attribute("aria-pressed", "false")
+    expect(selection.locator("h3")).to_have_text("45")
+
+
 @pytest.mark.parametrize("response", ["empty", "error"])
 def test_pending_empty_and_failed_filings_keep_score_rendered(page, response):
     pending = []
@@ -307,7 +365,7 @@ def test_pending_empty_and_failed_filings_keep_score_rendered(page, response):
     expect(page.locator("[data-map-status]")).to_have_text("Loading saved SEC filings…")
     expect(page.locator("[data-map-selection] h3")).to_have_text("45")
     expect(page.locator(".map-center-score")).to_have_text("45")
-    expect(page.locator(".map-score-segment")).to_have_count(3)
+    expect(page.locator(".map-score-segment")).to_have_count(5)
     assert len(pending) == 1
     empty = {
         "ticker": "TEST",
@@ -323,7 +381,7 @@ def test_pending_empty_and_failed_filings_keep_score_rendered(page, response):
         pending.pop().fulfill(json=empty)
         expect(page.locator("[data-map-status]")).to_have_text("")
     expect(page.locator("[data-map-selection] h3")).to_have_text("45")
-    expect(page.locator(".map-score-segment")).to_have_count(3)
+    expect(page.locator(".map-score-segment")).to_have_count(5)
     expect(page.locator("[data-person]")).to_have_count(0)
     expect(page.locator("[data-map-time-slider]")).to_be_disabled()
     if response == "error":
@@ -377,14 +435,22 @@ def test_source_failure_can_retry_and_reported_names_are_text(page):
 
 
 @pytest.mark.parametrize("key", ["Enter", "Space"])
-def test_score_keyboard_navigation_and_pin_survive_filing_scrub(page, key):
+@pytest.mark.parametrize(
+    "score_key, breakdown",
+    [
+        ("market", "+60 pts · 38.7% of total magnitude"),
+        ("rug", "-50 pts · 32.3% of total magnitude"),
+        ("social_search", "-5 pts · 3.2% of total magnitude"),
+    ],
+)
+def test_score_keyboard_navigation_and_pin_survive_filing_scrub(page, key, score_key, breakdown):
     open_map(page)
     segments = page.locator(".map-score-segment")
     segments.first.focus()
     segments.first.press("ArrowRight")
     expect(segments.nth(1)).to_be_focused()
     expect(page.locator(".map-score-breakdown")).to_have_text(
-        "+30 pts · 30% of positive contributions"
+        "+30 pts · 19.4% of total magnitude"
     )
     segments.nth(1).press("End")
     expect(segments.last).to_be_focused()
@@ -392,34 +458,47 @@ def test_score_keyboard_navigation_and_pin_survive_filing_scrub(page, key):
     expect(segments.first).to_be_focused()
     segments.first.press("ArrowLeft")
     expect(segments.last).to_be_focused()
-    segments.last.press("Home")
-    segments.first.press(key)
-    expect(segments.first).to_be_focused()
-    expect(segments.first).to_have_attribute("aria-pressed", "true")
-    page.get_by_role("slider", name="Filings known by").press("Home")
-    expect(segments.first).to_have_attribute("aria-pressed", "true")
+    segments.last.press("ArrowUp")
+    expect(page.locator('[data-score-key="rug"]')).to_be_focused()
     expect(page.locator(".map-score-breakdown")).to_have_text(
-        "+60 pts · 60% of positive contributions"
+        "-50 pts · 32.3% of total magnitude"
     )
-    page.get_by_role("button", name="Load older filings").focus()
+    page.keyboard.press("Home")
+    expect(segments.first).to_be_focused()
+    segment = page.locator(f'[data-score-key="{score_key}"]')
+    segment.press(key)
+    expect(segment).to_be_focused()
+    expect(segment).to_have_attribute("aria-pressed", "true")
+    page.get_by_role("slider", name="Filings known by").press("Home")
+    expect(segment).to_have_attribute("aria-pressed", "true")
+    expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
+    page.get_by_role("button", name="Load older filings").click()
+    expect(page.locator("[data-map-coverage]")).to_contain_text("12 filings")
+    expect(segment).to_have_attribute("aria-pressed", "true")
+    expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
     page.locator("[data-map-score-center]").press(key)
     expect(page.locator("[data-map-score-center]")).to_be_focused()
-    expect(segments.first).to_have_attribute("aria-pressed", "false")
+    expect(segment).to_have_attribute("aria-pressed", "false")
     expect(page.locator(".map-score-breakdown")).to_have_count(0)
 
 
 @pytest.mark.parametrize("width", [320, 390])
-def test_touch_pins_ring_and_center_returns_to_score(browser, width):
+@pytest.mark.parametrize(
+    "key, breakdown",
+    [
+        ("sec_event", "+30 pts · 19.4% of total magnitude"),
+        ("rug", "-50 pts · 32.3% of total magnitude"),
+    ],
+)
+def test_touch_pins_ring_and_center_returns_to_score(browser, width, key, breakdown):
     context = browser.new_context(has_touch=True)
     try:
         page = context.new_page()
         open_map(page, width)
-        segment = page.locator(".map-score-segment").nth(1)
+        segment = page.locator(f'[data-score-key="{key}"]')
         page.touchscreen.tap(**ring_point(segment))
         expect(segment).to_have_attribute("aria-pressed", "true")
-        expect(page.locator(".map-score-breakdown")).to_have_text(
-            "+30 pts · 30% of positive contributions"
-        )
+        expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
         expect(page.locator("[data-map-selection]")).to_contain_text("Pinned contribution")
         page.locator("[data-map-score-center]").tap()
         expect(page.locator(".map-score-segment[aria-pressed=true]")).to_have_count(0)
@@ -430,36 +509,122 @@ def test_touch_pins_ring_and_center_returns_to_score(browser, width):
         context.close()
 
 
-@pytest.mark.parametrize("weight", [0, 60])
-def test_zero_driver_or_single_positive_driver_has_valid_ring(page, weight):
+@pytest.mark.parametrize("weight, penalty_value", [(0, -60), (60, -60), (60, 60), (60, 0)])
+def test_single_contribution_and_mixed_rings_have_valid_geometry(page, weight, penalty_value):
     current = score_current(
         score=0,
         score_detail={
             "drivers": [{"key": "market", "label": "Market scanner", "value": weight}],
-            "penalties": [{"key": "rug", "label": "Rug risk", "value": -60}],
+            "penalties": [{"key": "rug", "label": "Rug risk", "value": penalty_value}],
         },
     )
     open_map(page, current=current)
     expect(page.locator(".map-center-score")).to_have_text("0")
-    expect(page.locator(".map-score-penalties strong")).to_have_text("-60 pts")
+    segments = page.locator(".map-score-segment")
+    mixed = bool(weight and penalty_value)
+    expect(segments).to_have_count(2 if mixed else 1)
+    expect(page.locator(".map-score-penalty-arc")).to_have_count(0)
+    if mixed:
+        expect(page.locator("circle.map-score-segment")).to_have_count(0)
+        for segment in segments.all():
+            assert segment.evaluate("s => s.getTotalLength()") == pytest.approx(
+                math.pi * 62, rel=0.001
+            )
+    else:
+        expect(segments).to_have_attribute("r", "62")
+        assert segments.evaluate("s => s.getTotalLength()") == pytest.approx(
+            math.tau * 62, rel=0.01
+        )
     if weight:
-        segment = page.locator("circle.map-score-segment")
-        expect(segment).to_have_count(1)
-        expect(segment).to_have_attribute("r", "62")
-        assert segment.evaluate("s => s.getTotalLength()") == pytest.approx(math.tau * 62, rel=0.01)
-        segment.press("Enter")
+        page.locator('[data-score-key="market"]').press("Enter")
         expect(page.locator(".map-score-breakdown")).to_have_text(
-            "+60 pts · 100% of positive contributions"
+            f"+60 pts · {50 if mixed else 100}% of total magnitude"
         )
     else:
-        expect(page.locator(".map-score-segment")).to_have_count(0)
         expect(page.locator(".map-score-legend strong")).to_have_text("0 pts")
         expect(page.locator("[data-map-selection]")).to_contain_text("No positive contributions.")
-    penalty = page.locator(".map-score-penalty-arc")
-    expect(penalty).to_have_count(1)
-    assert penalty.evaluate("arc => getComputedStyle(arc).stroke") == "rgb(239, 153, 164)"
-    assert penalty.evaluate("arc => getComputedStyle(arc).pointerEvents") == "none"
+    if penalty_value:
+        expect(page.locator(".map-score-penalties strong")).to_have_text("-60 pts")
+        penalty = page.locator('[data-score-key="rug"]')
+        assert penalty.evaluate("el => getComputedStyle(el).stroke") == "rgb(239, 153, 164)"
+        expect(penalty).to_have_attribute("stroke-width", "20")
+        penalty.press("Enter")
+        expect(penalty).to_have_attribute("aria-pressed", "true")
+        expect(page.locator(".map-score-breakdown")).to_have_text(
+            f"-60 pts · {50 if mixed else 100}% of total magnitude"
+        )
+    else:
+        expect(page.locator('[data-score-key="rug"]')).to_have_count(0)
+        expect(page.locator("[data-map-selection]")).to_contain_text("No penalties applied.")
     expect(page.locator("[data-stock-map]")).not_to_contain_text(re.compile("NaN|Infinity"))
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+@pytest.mark.parametrize("key, removal", [("rug", "zero"), ("social_search", "remove")])
+def test_polling_preserves_risk_pin_and_clears_missing_risk(page, width, key, removal):
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.clock.install()
+    open_map(page, width)
+    screen = page.locator("#screenData").evaluate("node => JSON.parse(node.textContent)")
+    page.route("**/api/screens/**", lambda route: route.fulfill(json=screen))
+
+    def poll(score):
+        screen["item"]["score"] = score
+        with page.expect_response("**/api/screens/**"):
+            page.clock.fast_forward(60000)
+        expect(page.locator(".map-center-score")).to_have_text(str(score))
+
+    page.locator(".map-filings>summary").click()
+    page.get_by_role("button", name="Next filings").click()
+    page.get_by_role("button", name="Next people").click()
+    people_page = page.locator("[data-map-page]").text_content()
+    filings_page = page.locator("[data-map-filings-page]").text_content()
+    risk = page.locator(f'[data-score-key="{key}"]')
+    risk.press("Space")
+    page.get_by_role("button", name="Previous people").focus()
+    detail = screen["item"]["score_detail"]
+    parts = detail["penalties"] if key == "rug" else detail["drivers"]
+    part = next(part for part in parts if part["key"] == key)
+    part["value"] = -20
+    detail["drivers"].reverse()
+    poll(25)
+    total = 125 if key == "rug" else 170
+    percent = "16" if key == "rug" else "11.8"
+    breakdown = f"-20 pts · {percent}% of total magnitude"
+    expect(risk).to_have_attribute("aria-pressed", "true")
+    expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
+    expect(page.locator("[data-map-selection]")).to_contain_text("Pinned contribution")
+    expect(page.get_by_role("button", name="Previous people")).to_be_focused()
+    lengths = page.locator(".map-score-segment").evaluate_all(
+        "segments => segments.map(segment => segment.getTotalLength())"
+    )
+    assert risk.evaluate("el => el.getTotalLength()") / sum(lengths) == pytest.approx(
+        20 / total, abs=0.001
+    )
+    risk.focus()
+    part["value"] = -10
+    poll(30)
+    expect(risk).to_be_focused()
+    expect(risk).to_have_attribute("aria-pressed", "true")
+    percent = "8.7" if key == "rug" else "6.3"
+    expect(page.locator(".map-score-breakdown")).to_have_text(
+        f"-10 pts · {percent}% of total magnitude"
+    )
+    assert risk.evaluate("el => getComputedStyle(el).stroke") == "rgb(239, 153, 164)"
+    if removal == "zero":
+        part["value"] = 0
+    else:
+        parts.remove(part)
+    poll(40)
+    expect(risk).to_have_count(0)
+    expect(page.locator("[data-map-score-center]")).to_be_focused()
+    expect(page.locator(".map-score-breakdown")).to_have_count(0)
+    expect(page.locator("[data-map-score-return]")).to_be_hidden()
+    expect(page.locator("[data-map-page]")).to_have_text(people_page)
+    expect(page.locator("[data-map-filings-page]")).to_have_text(filings_page)
+    expect(page.locator(".map-score-penalty-arc")).to_have_count(0)
+    assert not errors
 
 
 @pytest.mark.parametrize("width", [390, 1280])
@@ -535,7 +700,9 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
     lengths = page.locator(".map-score-segment").evaluate_all(
         "segments => segments.map(segment => segment.getTotalLength())"
     )
-    assert [length / sum(lengths) for length in lengths] == pytest.approx([1 / 3, 2 / 3], abs=0.001)
+    assert [length / sum(lengths) for length in lengths] == pytest.approx(
+        [2 / 7, 4 / 7, 1 / 7], abs=0.001
+    )
     social.press("Enter")
     expect(social).to_have_attribute("aria-pressed", "true")
     screen["item"]["score_detail"]["drivers"].reverse()
@@ -546,15 +713,16 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
     expect(social).to_be_focused()
     expect(social).to_have_attribute("aria-pressed", "true")
     expect(page.locator(".map-score-breakdown")).to_have_text(
-        "+20 pts · 50% of positive contributions"
+        "+20 pts · 44.4% of total magnitude"
     )
     expect(page.locator("[data-map-selection]")).to_contain_text("Pinned contribution")
     expect(page.locator("[data-map-selection] h3")).to_have_text("35")
     expect(page.locator(".map-score-legend strong")).to_have_text(["+20 pts", "+20 pts"])
     expect(page.locator(".map-score-penalties strong")).to_have_text("-5 pts")
-    penalty_arc = page.locator(".map-score-penalty-arc")
-    expect(penalty_arc).to_have_count(1)
-    assert penalty_arc.evaluate("arc => getComputedStyle(arc).stroke") == "rgb(239, 153, 164)"
+    penalty = page.locator('[data-score-key="rug"]')
+    expect(penalty).to_have_count(1)
+    expect(page.locator(".map-score-penalty-arc")).to_have_count(0)
+    assert penalty.evaluate("el => getComputedStyle(el).stroke") == "rgb(239, 153, 164)"
     expect(page.locator("[data-map-score-time] time")).to_have_attribute(
         "datetime", screen["item"]["score_as_of"]
     )
