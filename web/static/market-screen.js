@@ -100,7 +100,7 @@
     const start = data[0][0], end = data[data.length-1][0];
     const first = data[0][1], last = data[data.length-1][1];
     const move = ((last / first - 1) * 100).toLocaleString('en-US', {signDisplay:'always', maximumFractionDigits:6});
-    const summary = data.length === 1 ? `One saved price: ${money(first)}` : `${money(first)} → ${money(last)} · ${move}% over this period`;
+    const summary = data.length === 1 ? `One saved price: ${money(first)}` : `${money(first)} → ${money(last)} · ${move}%`;
     put('[data-chart-summary]', summary);
     put('[data-chart-start]', label(start));
     if (data.length > 1) put('[data-chart-end]', label(end));

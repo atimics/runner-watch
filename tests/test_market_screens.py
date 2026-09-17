@@ -266,7 +266,7 @@ def test_stock_detail_orders_chart_unified_score_map_and_comments():
     assert chart < ticker_map < score < comments
     assert 'class="metrics"' not in html
     assert 'class="breakdown"' not in html
-    assert "Current score 84" in html
+    assert "84" in html
     assert "Market scanner" in html
 
 

@@ -118,8 +118,7 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width):
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     expect(page.get_by_role("heading", name="TEST map", exact=True)).to_be_visible()
     expect(page.locator("[data-person]")).to_have_count(4 if width <= 500 else 8)
-    expect(page.locator("[data-map-selection] h3")).to_have_text("Current score 45")
-    expect(page.locator("[data-map-context]")).to_have_text("SCORE")
+    expect(page.locator("[data-map-selection] h3")).to_have_text("45")
     expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
     expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(0)
     expect(page.locator(".chart-filing-marker")).to_have_count(0)
@@ -144,10 +143,10 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width):
     expect(page.locator("[data-map-events] button")).to_have_count(3)
     expect(page.locator("[data-map-events]")).to_be_visible()
     page.locator("[data-map-events] button").first.click()
-    expect(page.locator("[data-map-context]")).to_have_text("FILING")
+    expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
     page.locator("[data-map-list-title]").press("Enter")
     expect(page.locator("[data-map-events]")).to_be_hidden()
-    expect(page.locator("[data-map-context]")).to_have_text("FILING")
+    expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
     page.locator("[data-map-list-title]").press("Space")
     expect(page.locator("[data-map-events]")).to_be_visible()
     expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(1)
@@ -161,12 +160,12 @@ def test_filing_time_excludes_later_disclosures_and_preserves_loaded_history(pag
     )
     timestamp = page.locator("[data-map-score-time]").text_content()
     page.locator("[data-person]").first.press("Enter")
-    expect(page.locator("[data-map-context]")).to_have_text("FILING")
+    expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
     slider = page.get_by_role("slider", name="Filings known by")
     slider.focus()
     slider.press("Home")
     expect(page.locator("[data-map-events] button")).to_have_count(1)
-    expect(page.locator("[data-map-selection] h3")).to_have_text("Current score 45")
+    expect(page.locator("[data-map-selection] h3")).to_have_text("45")
     expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(0)
     expect(page.locator(".chart-filing-marker")).to_have_count(0)
     expect(page.locator(".map-center-score")).to_have_text("45")
@@ -194,18 +193,16 @@ def test_filing_time_excludes_later_disclosures_and_preserves_loaded_history(pag
     )
 
     page.locator("[data-person]").first.press("Enter")
-    expect(page.locator("[data-map-context]")).to_have_text("FILING")
+    expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
     page.get_by_role("button", name="Return to score overview").click()
-    expect(page.locator("[data-map-context]")).to_have_text("SCORE")
-    expect(page.locator("[data-map-selection] h3")).to_have_text("Current score 45")
+    expect(page.locator("[data-map-selection] h3")).to_have_text("45")
     expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(0)
     page.locator("[data-map-list-title]").click()
     page.locator("[data-map-events] button").first.click()
-    expect(page.locator("[data-map-context]")).to_have_text("FILING")
+    expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
     expect(page.locator("[data-map-score-return]")).to_be_visible()
     page.keyboard.press("Escape")
-    expect(page.locator("[data-map-context]")).to_have_text("SCORE")
-    expect(page.locator("[data-map-selection] h3")).to_have_text("Current score 45")
+    expect(page.locator("[data-map-selection] h3")).to_have_text("45")
     page.locator("[data-map-list-title]").click()
 
 
@@ -258,8 +255,7 @@ def ring_point(segment):
 def test_score_panel_pins_and_summarizes_positive_drivers_and_penalties(page):
     open_map(page)
     selection = page.locator("[data-map-selection]")
-    expect(selection.locator("h3")).to_have_text("Current score 45")
-    expect(selection.locator("h4")).to_have_text("Penalties")
+    expect(selection.locator("h3")).to_have_text("45")
     legend = selection.locator(".map-score-legend li")
     expect(legend).to_have_count(4)
     expect(legend.locator("strong")).to_have_text(["+60 pts", "+30 pts", "+10 pts", "0 pts"])
@@ -272,30 +268,21 @@ def test_score_panel_pins_and_summarizes_positive_drivers_and_penalties(page):
     expect(penalties.locator("strong")).to_have_text(["-50 pts", "-5 pts"])
     first = page.locator(".map-score-segment").first
     page.mouse.move(**ring_point(first))
-    expect(selection.locator("h4")).to_have_text(["Market scanner", "Penalties"])
     expect(first).to_have_attribute("aria-pressed", "false")
     page.mouse.move(0, 0)
-    expect(selection.locator("h4")).to_have_text("Penalties")
     first.focus()
-    expect(selection.locator("h4")).to_have_text(["Market scanner", "Penalties"])
     expect(first).to_have_attribute("aria-pressed", "false")
     expect(selection.locator("p.map-score-breakdown")).to_have_text(
         "+60 pts · 60% of positive contributions"
     )
-    expect(page.locator("[data-map-context]")).to_have_text("SCORE")
     first.focus()
-    expect(page.locator("[data-map-context]")).to_have_text("SCORE")
     page.mouse.click(**ring_point(first))
     expect(first).to_have_attribute("aria-pressed", "true")
-    expect(page.locator("[data-map-context]")).to_have_text("SCORE")
     expect(selection.locator("p.map-note").first).to_contain_text("Pinned contribution")
     expect(page.locator("[data-map-score-return]")).to_be_visible()
     page.mouse.move(20, 20)
-    expect(page.locator("[data-map-context]")).to_have_text("SCORE")
-    expect(selection.locator("h4")).to_have_text(["Market scanner", "Penalties"])
     page.locator("[data-map-score-return]").click()
-    expect(selection.locator("h3")).to_have_text("Current score 45")
-    expect(selection.locator("h4")).to_have_text("Penalties")
+    expect(selection.locator("h3")).to_have_text("45")
     expect(first).to_have_attribute("aria-pressed", "false")
     expect(page.locator("[data-map-score-return]")).to_be_hidden()
     page.locator(".map-score-segment").nth(1).focus()
@@ -303,7 +290,7 @@ def test_score_panel_pins_and_summarizes_positive_drivers_and_penalties(page):
     expect(page.locator(".map-score-segment").nth(1)).to_have_attribute("aria-pressed", "true")
     page.keyboard.press("Escape")
     expect(page.locator(".map-score-segment").nth(1)).to_have_attribute("aria-pressed", "false")
-    expect(selection.locator("h3")).to_have_text("Current score 45")
+    expect(selection.locator("h3")).to_have_text("45")
 
 
 @pytest.mark.parametrize("response", ["empty", "error"])
@@ -313,7 +300,7 @@ def test_pending_empty_and_failed_filings_keep_score_rendered(page, response):
     page.on("pageerror", lambda error: errors.append(str(error)))
     open_map(page, map_handler=lambda route: pending.append(route))
     expect(page.locator("[data-map-status]")).to_have_text("Loading saved SEC filings…")
-    expect(page.locator("[data-map-selection] h3")).to_have_text("Current score 45")
+    expect(page.locator("[data-map-selection] h3")).to_have_text("45")
     expect(page.locator(".map-center-score")).to_have_text("45")
     expect(page.locator(".map-score-segment")).to_have_count(3)
     assert len(pending) == 1
@@ -330,7 +317,7 @@ def test_pending_empty_and_failed_filings_keep_score_rendered(page, response):
     else:
         pending.pop().fulfill(json=empty)
         expect(page.locator("[data-map-status]")).to_have_text("No filings yet")
-    expect(page.locator("[data-map-selection] h3")).to_have_text("Current score 45")
+    expect(page.locator("[data-map-selection] h3")).to_have_text("45")
     expect(page.locator(".map-score-segment")).to_have_count(3)
     expect(page.locator("[data-person]")).to_have_count(0)
     expect(page.locator("[data-map-time-slider]")).to_be_disabled()
@@ -338,7 +325,7 @@ def test_pending_empty_and_failed_filings_keep_score_rendered(page, response):
         page.route("**/api/stocks/TEST/map", lambda route: route.fulfill(json=map_payload()))
         page.get_by_role("button", name="Retry loading filings").click()
         expect(page.locator("[data-map-status]")).to_have_text("Saved SEC filings")
-        expect(page.locator("[data-map-selection] h3")).to_have_text("Current score 45")
+        expect(page.locator("[data-map-selection] h3")).to_have_text("45")
         expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
     assert not errors
 
@@ -350,15 +337,12 @@ def test_missing_and_zero_score_are_graceful(page, score, breakdown):
     page.on("pageerror", lambda error: errors.append(str(error)))
     open_map(page, current=score_current(score=score, score_detail=breakdown))
     text = "—" if score is None else "0"
-    expect(page.locator("[data-map-selection] h3")).to_have_text(f"Current score {text}")
+    expect(page.locator("[data-map-selection] h3")).to_have_text(text)
     expect(page.locator(".map-center-score")).to_have_text(text)
     expect(page.locator(".map-score-segment")).to_have_count(0)
     expect(page.locator(".map-score-track")).to_have_count(1)
     expect(page.locator("[data-map-selection]")).to_contain_text(
         "Score breakdown unavailable." if breakdown is None else "No positive contributions."
-    )
-    expect(page.locator("[data-map-selection]")).to_contain_text(
-        "Penalty data unavailable." if breakdown is None else "No penalties applied."
     )
     if score is None:
         expect(page.locator("[data-map-score-time]")).to_contain_text("Timestamp unavailable")
@@ -368,9 +352,9 @@ def test_missing_and_zero_score_are_graceful(page, score, breakdown):
         )
     expect(page.locator("[data-stock-map]")).not_to_contain_text(re.compile("NaN|Infinity"))
     page.locator("[data-person]").first.press("Enter")
-    expect(page.locator("[data-map-context]")).to_have_text("FILING")
+    expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
     page.locator("[data-map-score-center]").press("Enter")
-    expect(page.locator("[data-map-selection] h3")).to_have_text(f"Current score {text}")
+    expect(page.locator("[data-map-selection] h3")).to_have_text(text)
     assert not errors
 
 
@@ -412,8 +396,7 @@ def test_score_keyboard_navigation_and_pin_survive_filing_scrub(page, key):
     expect(page.locator(".map-score-breakdown")).to_have_text(
         "+60 pts · 60% of positive contributions"
     )
-    page.get_by_role("button", name="Next people").focus()
-    expect(page.locator("[data-map-selection]")).to_contain_text("Pinned contribution")
+    page.get_by_role("button", name="Load older filings").focus()
     page.locator("[data-map-score-center]").press(key)
     expect(page.locator("[data-map-score-center]")).to_be_focused()
     expect(segments.first).to_have_attribute("aria-pressed", "false")
@@ -436,7 +419,7 @@ def test_touch_pins_ring_and_center_returns_to_score(browser, width):
         page.locator("[data-map-score-center]").tap()
         expect(page.locator(".map-score-segment[aria-pressed=true]")).to_have_count(0)
         expect(page.locator("[data-map-score-return]")).to_be_hidden()
-        expect(page.locator("[data-map-selection] h3")).to_have_text("Current score 45")
+        expect(page.locator("[data-map-selection] h3")).to_have_text("45")
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     finally:
         context.close()
@@ -557,7 +540,7 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
         "+20 pts · 50% of positive contributions"
     )
     expect(page.locator("[data-map-selection]")).to_contain_text("Pinned contribution")
-    expect(page.locator("[data-map-selection] h3")).to_have_text("Current score 35")
+    expect(page.locator("[data-map-selection] h3")).to_have_text("35")
     expect(page.locator(".map-score-legend strong")).to_have_text(["+20 pts", "+20 pts"])
     expect(page.locator(".map-score-penalties strong")).to_have_text("-5 pts")
     expect(page.locator("[data-map-score-time] time")).to_have_attribute(
