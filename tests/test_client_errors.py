@@ -58,9 +58,7 @@ def test_client_errors_collapse_repeats_and_strip_page_query(
     assert error["kind"] == "error"
 
 
-def test_client_error_endpoint_records_report(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_client_error_endpoint_records_report(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     _prime(tmp_path, monkeypatch)
     with _client() as client:
         response = client.post(
@@ -101,9 +99,7 @@ def test_client_error_endpoint_rejects_bad_reports(
     with _client() as client:
         blank = client.post("/api/client-errors", json={"message": ""})
         too_long = client.post("/api/client-errors", json={"message": "x" * 501})
-        bad_kind = client.post(
-            "/api/client-errors", json={"message": "boom", "kind": "k" * 41}
-        )
+        bad_kind = client.post("/api/client-errors", json={"message": "boom", "kind": "k" * 41})
         oversized = client.post(
             "/api/client-errors",
             json={"message": "boom", "padding": "x" * 20_100},

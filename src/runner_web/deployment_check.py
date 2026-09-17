@@ -17,8 +17,7 @@ def _component_healthy(component: dict[str, Any]) -> bool:
     if any(str(instance.get("status") or "") == "stale" for instance in instances):
         return False
     if any(
-        instance.get("missing_workers") or instance.get("failed_workers")
-        for instance in instances
+        instance.get("missing_workers") or instance.get("failed_workers") for instance in instances
     ):
         return False
     # A worker whose progress key stopped advancing is an ops alert, not a

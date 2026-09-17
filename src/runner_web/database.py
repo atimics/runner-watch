@@ -303,8 +303,7 @@ def _pool(database_url: str) -> Any:
                 "keepalives_interval": 10,
                 "keepalives_count": 3,
                 "options": (
-                    "-c statement_timeout=1800000"
-                    " -c idle_in_transaction_session_timeout=120000"
+                    "-c statement_timeout=1800000 -c idle_in_transaction_session_timeout=120000"
                 ),
             },
             open=True,

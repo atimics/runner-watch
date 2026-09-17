@@ -482,9 +482,7 @@ def create_llm_edge_routes(dependencies: LLMEdgeRouteDependencies) -> LLMEdgeRou
         return JSONResponse(
             {
                 "ok": True,
-                "report": dependencies.commission_api_payload(
-                    report, str(connector["user_id"])
-                ),
+                "report": dependencies.commission_api_payload(report, str(connector["user_id"])),
             }
         )
 
@@ -518,9 +516,7 @@ def create_llm_edge_routes(dependencies: LLMEdgeRouteDependencies) -> LLMEdgeRou
                 (payload.error[:500], timestamp, timestamp, job_id),
             )
         try:
-            await run_in_threadpool(
-                dependencies.run_research_commission, str(row["commission_id"])
-            )
+            await run_in_threadpool(dependencies.run_research_commission, str(row["commission_id"]))
         except Exception:
             LOG.debug("Failed edge job %s could not run", job_id, exc_info=True)
         return JSONResponse({"ok": True})

@@ -45,8 +45,7 @@ def test_two_people_with_the_same_name_stay_separate(identity_db) -> None:
     assert one["id"] != two["id"]
     queue = identity_reconciliation_queue()
     collisions = {
-        collision["name"]: collision["entity_ids"]
-        for collision in queue["name_collisions"]
+        collision["name"]: collision["entity_ids"] for collision in queue["name_collisions"]
     }
     assert collisions["jordan smith"] == [one["id"], two["id"]]
 

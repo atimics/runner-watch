@@ -912,6 +912,242 @@ def test_chart_payload_caches_points_and_annotations_together(
     assert calls == 1
 
 
+@pytest.fixture(params=["public", "charts"])
+def payload_cache(request: pytest.FixtureRequest, monkeypatch: MonkeyPatch) -> SimpleNamespace:
+    public = request.param == "public"
+    prefix = "PUBLIC_SCREEN_DATA" if public else "CHART_PAYLOAD"
+    cache: dict[str, tuple[float, dict[str, Any]]] = {}
+    refreshing: set[str] = set()
+    condition = threading.Condition()
+    for suffix, value in (("CACHE", cache), ("REFRESHING", refreshing), ("CONDITION", condition)):
+        monkeypatch.setattr(web_main, f"{prefix}_{suffix}", value)
+    monkeypatch.setattr(web_main, "CHART_PAYLOAD_CACHE_TTL_SECONDS", 37.5)
+    monkeypatch.setattr(
+        web_main, "time", SimpleNamespace(monotonic=lambda: 100.0, perf_counter=lambda: 10.0)
+    )
+    state = SimpleNamespace(
+        cache=cache,
+        refreshing=refreshing,
+        condition=condition,
+        payload={"version": "new"},
+        shared=None,
+        reads=[],
+        writes=[],
+        metrics=[],
+        ttl=23.5 if public else 37.5,
+        limit=64 if public else 32,
+        public=public,
+        failure_message=(
+            "Public screen cache refresh failed" if public else "Chart payload cache refresh failed"
+        ),
+    )
+    state.build = lambda: state.payload
+
+    def shared_get(key: str) -> Any:
+        state.reads.append(key)
+        return state.shared
+
+    monkeypatch.setattr(web_main, "shared_cache_get", shared_get)
+    monkeypatch.setattr(web_main, "shared_cache_set", lambda *args: state.writes.append(args))
+    monkeypatch.setattr(
+        web_main, "record_cache", lambda *args, **kwargs: state.metrics.append((args, kwargs))
+    )
+    if public:
+        state.local_key, state.shared_key = web_main._public_screen_cache_keys("cache-test", "ONE")
+        state.fetch = lambda: web_main._public_screen_data(
+            "cache-test", "ONE", lambda: state.build(), ttl_seconds=state.ttl
+        )
+    else:
+        state.local_key, state.shared_key = web_main._chart_payload_cache_key(["ONE", "TWO"])
+
+        def build_charts(requested: list[str]) -> dict[str, Any]:
+            assert requested == ["ONE", "TWO"]
+            return state.build()
+
+        monkeypatch.setattr(web_main, "_ticker_charts_payload_uncached", build_charts)
+        state.fetch = lambda: ticker_charts_payload(["two", "ONE", "one"])
+    return state
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_payload_cache_stale_refresh(
+    payload_cache: SimpleNamespace, caplog: pytest.LogCaptureFixture, fails: bool
+) -> None:
+    state = payload_cache
+    stale = {"version": "old"}
+    state.cache[state.local_key] = (99.0, stale)
+    started = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def build() -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        started.set()
+        assert release.wait(timeout=5)
+        if fails:
+            raise RuntimeError("refresh unavailable")
+        return state.payload
+
+    state.build = build
+    try:
+        assert state.fetch() is stale
+        assert started.wait(timeout=5)
+        assert state.fetch() is stale
+        assert calls == 1
+        assert state.local_key in state.refreshing
+    finally:
+        release.set()
+        with state.condition:
+            assert state.condition.wait_for(lambda: not state.refreshing, timeout=5)
+    assert state.reads == []
+    if fails:
+        assert state.cache[state.local_key] == (99.0, stale)
+        assert state.writes == []
+        assert caplog.records[-1].getMessage() == state.failure_message
+        assert caplog.records[-1].exc_info is not None
+    else:
+        assert state.cache[state.local_key] == (100.0 + state.ttl, state.payload)
+        assert state.writes == [(state.shared_key, state.payload, int(state.ttl))]
+        assert state.fetch() is state.payload
+    if state.public:
+        assert (("cache-test", "stale"), {}) in state.metrics
+        assert (("public-screen-refresh", "build"), {"duration_ms": 0.0}) in state.metrics
+    else:
+        assert state.metrics == []
+
+
+def test_payload_cache_cold_failure_cleanup(payload_cache: SimpleNamespace) -> None:
+    state = payload_cache
+
+    def fail() -> dict[str, Any]:
+        raise RuntimeError("build unavailable")
+
+    state.build = fail
+    with pytest.raises(RuntimeError, match="build unavailable"):
+        state.fetch()
+    assert state.refreshing == set()
+    assert state.cache == {}
+    assert state.writes == []
+    state.build = lambda: state.payload
+    assert state.fetch() is state.payload
+    assert state.refreshing == set()
+    assert state.cache[state.local_key] == (100.0 + state.ttl, state.payload)
+
+
+@pytest.mark.parametrize("shared", [{}, {"version": "shared"}])
+def test_payload_cache_shared_hydration(
+    payload_cache: SimpleNamespace, shared: dict[str, Any]
+) -> None:
+    state = payload_cache
+    state.shared = shared
+
+    def unexpected_build() -> dict[str, Any]:
+        pytest.fail("shared hydration must not build")
+
+    state.build = unexpected_build
+    state.cache.update({f"other-{index}": (50.0, {}) for index in range(state.limit)})
+    assert state.fetch() is shared
+    assert state.fetch() is shared
+    assert state.cache[state.local_key] == (100.0 + state.ttl, shared)
+    assert len(state.cache) == state.limit + 1
+    assert state.reads == [state.shared_key]
+    assert state.writes == []
+    assert state.refreshing == set()
+    assert state.metrics == (
+        [(("cache-test", "shared"), {}), (("cache-test", "hit"), {})] if state.public else []
+    )
+
+
+@pytest.mark.parametrize("first_fails", [False, True])
+def test_payload_cache_coalesces_and_wakes_waiters(
+    payload_cache: SimpleNamespace, monkeypatch: MonkeyPatch, first_fails: bool
+) -> None:
+    state = payload_cache
+    started = threading.Event()
+    waiting = threading.Event()
+    release = threading.Event()
+    wait_for = state.condition.wait_for
+    calls = 0
+
+    def observed_wait(predicate: Any, timeout: float) -> bool:
+        assert timeout == web_main.CACHE_BUILD_WAIT_SECONDS
+        waiting.set()
+        return wait_for(predicate, timeout=timeout)
+
+    def build() -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+            assert release.wait(timeout=5)
+            if first_fails:
+                raise RuntimeError("first build failed")
+        return state.payload
+
+    monkeypatch.setattr(state.condition, "wait_for", observed_wait)
+    state.build = build
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(state.fetch)
+        try:
+            assert started.wait(timeout=5)
+            second = pool.submit(state.fetch)
+            assert waiting.wait(timeout=5)
+        finally:
+            release.set()
+        if first_fails:
+            with pytest.raises(RuntimeError, match="first build failed"):
+                first.result(timeout=5)
+        else:
+            assert first.result(timeout=5) is state.payload
+        assert second.result(timeout=5) is state.payload
+    assert calls == (2 if first_fails else 1)
+    assert state.refreshing == set()
+    assert state.writes == [(state.shared_key, state.payload, int(state.ttl))]
+    if state.public:
+        assert (("cache-test", "wait"), {}) in state.metrics
+    else:
+        assert state.metrics == []
+
+
+def test_payload_cache_cold_build_evicts_oldest(payload_cache: SimpleNamespace) -> None:
+    state = payload_cache
+    state.cache.update({f"other-{index}": (float(index), {}) for index in range(state.limit)})
+    assert state.fetch() is state.payload
+    assert len(state.cache) == state.limit
+    assert "other-0" not in state.cache
+    assert state.cache[state.local_key] == (100.0 + state.ttl, state.payload)
+    assert state.fetch() is state.payload
+    assert state.reads == [state.shared_key]
+    assert state.writes == [(state.shared_key, state.payload, int(state.ttl))]
+
+
+def test_payload_cache_wait_timeout_allows_build(
+    payload_cache: SimpleNamespace, monkeypatch: MonkeyPatch
+) -> None:
+    state = payload_cache
+    state.refreshing.add(state.local_key)
+
+    def timed_out(predicate: Any, timeout: float) -> bool:
+        assert not predicate()
+        assert timeout == web_main.CACHE_BUILD_WAIT_SECONDS
+        return False
+
+    monkeypatch.setattr(state.condition, "wait_for", timed_out)
+    assert state.fetch() is state.payload
+    assert state.refreshing == set()
+
+
+def test_chart_payload_empty_request_skips_caches(monkeypatch: MonkeyPatch) -> None:
+    def unexpected(*args: Any) -> Any:
+        pytest.fail("empty charts must not access caches or build")
+
+    monkeypatch.setattr(web_main, "_chart_payload_cache_key", unexpected)
+    monkeypatch.setattr(web_main, "_ticker_charts_payload_uncached", unexpected)
+    monkeypatch.setattr(web_main, "shared_cache_get", unexpected)
+    assert ticker_charts_payload([]) == {"charts": {}, "freshness": {}, "annotations": {}}
+
+
 def test_list_chart_payload_sends_only_time_and_price(monkeypatch: MonkeyPatch) -> None:
     snapshot = SimpleNamespace(
         data=[
@@ -2863,6 +3099,36 @@ def test_flash_report_circuit_breaker_stops_promising_failed_reports(
     assert report_action["label"] == "Report unavailable"
     assert report_action["message"] == "Report couldn't be generated. No Flash was charged."
     assert "provider" not in json.dumps(report_action).lower()
+
+
+@pytest.mark.parametrize(
+    ("check_name", "fallback", "message"),
+    [
+        ("_flash_provider_ready", True, "Flash provider readiness check failed"),
+        ("_flash_daily_capacity_available", False, "Flash daily capacity check failed"),
+    ],
+)
+def test_flash_checks_log_database_failures_and_keep_fallbacks(
+    monkeypatch: MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    check_name: str,
+    fallback: bool,
+    message: str,
+) -> None:
+    def fail_connection() -> Any:
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(web_main, "connection", fail_connection)
+    monkeypatch.setattr(web_main, "_openrouter_api_key", lambda: "secret-server-key")
+
+    assert getattr(web_main, check_name)() is fallback
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.getMessage() == message
+    assert record.levelname == "ERROR"
+    assert record.exc_info is not None
+    assert record.exc_info[0] is RuntimeError
+    assert "secret-server-key" not in caplog.text
 
 
 def test_flash_queue_failure_refunds_before_the_response(

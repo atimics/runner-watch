@@ -791,9 +791,7 @@ def load_latest_model(horizon: str = DEFAULT_HORIZON) -> RankerModel | None:
 
 def promote_ranker(model_id: str) -> dict[str, Any]:
     with connection() as database:
-        row = database.execute(
-            "SELECT * FROM ranker_models WHERE id=?", (model_id,)
-        ).fetchone()
+        row = database.execute("SELECT * FROM ranker_models WHERE id=?", (model_id,)).fetchone()
         if row is None:
             raise ValueError("Choose an existing ranker model")
         if (

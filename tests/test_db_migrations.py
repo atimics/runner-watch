@@ -763,9 +763,12 @@ def test_story_and_identity_migration_backfills_actors_idempotently(
     init_db()
 
     with connection() as database:
-        versions = [int(row["version"]) for row in database.execute(
-            "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall()]
+        versions = [
+            int(row["version"])
+            for row in database.execute(
+                "SELECT version FROM schema_migrations ORDER BY version"
+            ).fetchall()
+        ]
         assert versions.count(70) == 1
 
         database.execute(
@@ -791,9 +794,7 @@ def test_story_and_identity_migration_backfills_actors_idempotently(
             ) VALUES('ma-test','wallet-a','chain_event','sig-1','2026-09-12T00:00:00+00:00')
             """
         )
-        database.execute(
-            "UPDATE market_actors SET domain='coin',kind='cluster' WHERE id='ma-test'"
-        )
+        database.execute("UPDATE market_actors SET domain='coin',kind='cluster' WHERE id='ma-test'")
 
     # The migration is not re-run by init_db once applied, so the sweep runs
     # the same backfill for late-arriving actors.
@@ -820,7 +821,7 @@ def test_story_and_identity_migration_backfills_actors_idempotently(
             "SELECT COUNT(*) AS total FROM participant_references"
         ).fetchone()["total"]
         link_market_actors(database)
-        after = database.execute(
-            "SELECT COUNT(*) AS total FROM participant_references"
-        ).fetchone()["total"]
+        after = database.execute("SELECT COUNT(*) AS total FROM participant_references").fetchone()[
+            "total"
+        ]
     assert before == after

@@ -160,9 +160,7 @@ def record_outcome_error(exc: Exception) -> None:
 Bar = tuple[datetime, float, float, float]
 
 
-def _bar_prices(
-    tickers: list[str], *, since: datetime | None = None
-) -> dict[str, list[Bar]]:
+def _bar_prices(tickers: list[str], *, since: datetime | None = None) -> dict[str, list[Bar]]:
     if not tickers:
         return {}
     unique = list(dict.fromkeys(tickers))
@@ -419,9 +417,7 @@ def refresh_case_outcomes(at: datetime | None = None) -> dict[str, Any]:
     due_cases.sort(key=lambda case: str(case.get("reference_at") or ""))
     due_cases = due_cases[:OUTCOME_REFRESH_TICKER_LIMIT]
     tickers = [str(case["ticker"]) for case in due_cases]
-    since = _earliest_observation(
-        [_parsed_moment(case.get("reference_at")) for case in due_cases]
-    )
+    since = _earliest_observation([_parsed_moment(case.get("reference_at")) for case in due_cases])
     archived = _bar_prices(tickers, since=since)
     completed: list[tuple[dict[str, Any], dict[str, Any]]] = []
     with connection() as db:
@@ -556,9 +552,7 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
     pending.sort(key=lambda item: str(item[0].get("base_at") or ""))
     pending = pending[:OUTCOME_REFRESH_TICKER_LIMIT]
     tickers = [str(row["ticker"]) for row, _, _ in pending]
-    since = _earliest_observation(
-        [_parsed_moment(row.get("base_at")) for row, _, _ in pending]
-    )
+    since = _earliest_observation([_parsed_moment(row.get("base_at")) for row, _, _ in pending])
     prices = _bar_prices(tickers, since=since)
 
     samples_added = 0

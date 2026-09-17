@@ -274,9 +274,7 @@ def test_dash_opens_a_call_at_the_shared_mark(callable_market):
     assert opened["ticker"] == "RUN"
     assert opened["entry_price"] == 1.5
     with connection() as database:
-        row = database.execute(
-            "SELECT user_id,ticker,status FROM community_calls"
-        ).fetchone()
+        row = database.execute("SELECT user_id,ticker,status FROM community_calls").fetchone()
     assert (row["user_id"], row["ticker"], row["status"]) == (dash.DASH_USER_ID, "RUN", "active")
 
 
@@ -349,9 +347,7 @@ def test_dash_comments_under_his_own_avatar_and_pays_for_it():
     assert posted["ok"] is True
     assert posted["spent"] == 10
     with connection() as database:
-        row = database.execute(
-            "SELECT user_id,ticker,source,body FROM ticker_comments"
-        ).fetchone()
+        row = database.execute("SELECT user_id,ticker,source,body FROM ticker_comments").fetchone()
         balance = database.execute(
             "SELECT balance FROM flash_wallets WHERE user_id=?", (dash.DASH_USER_ID,)
         ).fetchone()[0]
@@ -403,8 +399,7 @@ def test_dash_earns_flash_from_a_winning_call_so_he_ranks(callable_market):
 
     with connection() as database:
         earned = database.execute(
-            "SELECT COUNT(*) FROM flash_transactions "
-            "WHERE user_id=? AND kind='runner_call_win'",
+            "SELECT COUNT(*) FROM flash_transactions WHERE user_id=? AND kind='runner_call_win'",
             (dash.DASH_USER_ID,),
         ).fetchone()[0]
         identity = database.execute(
@@ -455,8 +450,15 @@ def test_community_now_reports_where_people_put_their_names():
                 ) VALUES(?,?,'u1',?,'long',1.0,?,?,?,?,?,?)
                 """,
                 (
-                    f"c{index}", f"p{index}", ticker, NOW.isoformat(),
-                    exit_price, exit_at, status, NOW.isoformat(), NOW.isoformat(),
+                    f"c{index}",
+                    f"p{index}",
+                    ticker,
+                    NOW.isoformat(),
+                    exit_price,
+                    exit_at,
+                    status,
+                    NOW.isoformat(),
+                    NOW.isoformat(),
                 ),
             )
         database.execute(

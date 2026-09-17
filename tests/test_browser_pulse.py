@@ -48,6 +48,4 @@ def test_stock_home_renders_the_shared_screen(page: Page, monkeypatch):
     page.route("http://app.test/", lambda r: r.fulfill(content_type="text/html", body=html))
     page.goto("http://app.test/")
     expect(page.locator(".ticker-list")).to_be_visible()
-    expect(page.locator(".ticker").filter(has_text="ONE")).to_have_attribute(
-        "href", "/t/ONE"
-    )
+    expect(page.locator(".ticker").filter(has_text="ONE")).to_have_attribute("href", "/t/ONE")

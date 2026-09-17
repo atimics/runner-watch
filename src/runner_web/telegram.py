@@ -283,9 +283,7 @@ def _api_call(
             body = response.read()
             if status >= 400:
                 details = (
-                    body.decode("utf-8", errors="ignore")
-                    if isinstance(body, bytes)
-                    else str(body)
+                    body.decode("utf-8", errors="ignore") if isinstance(body, bytes) else str(body)
                 )
                 raise RuntimeError(
                     f"Telegram {method} failed with status {status}: {details[:200]}"
@@ -515,18 +513,18 @@ def _state_emoji(tag):
     """One emoji that matches the action tag on the list."""
 
     return {
-        "RUNNING":  "\u26A1",
-        "SETUP":    "\U0001F535",
-        "EXTENDED": "\U0001F7E0",
-        "AVOID":    "\U0001F534",
-        "WATCH":    "\u26AA",
-        "PAUSED":   "\u23F8",
+        "RUNNING": "\u26a1",
+        "SETUP": "\U0001f535",
+        "EXTENDED": "\U0001f7e0",
+        "AVOID": "\U0001f534",
+        "WATCH": "\u26aa",
+        "PAUSED": "\u23f8",
     }.get(str(tag or "").upper(), "")
 
 
 def _rise_emoji(change):
     try:
-        return "\u2B06" if float(change) >= 0 else "\u2B07"
+        return "\u2b06" if float(change) >= 0 else "\u2b07"
     except (TypeError, ValueError):
         return ""
 
@@ -595,7 +593,7 @@ def format_market_report_post_md(report, *, origin):
             or ("Pre-market briefing" if raw_type == "pre_market" else "Post-market recap")
         )
     )
-    header = f"\U0001F9ED *{label}*"
+    header = f"\U0001f9ed *{label}*"
     headline = escape_markdown_v2(str(report.get("headline") or "").strip())
     summary = escape_markdown_v2(str(report.get("summary") or "").strip())
     blocks = [header]
@@ -628,9 +626,9 @@ def format_public_report_post_md(report, *, origin):
     token = ticker_raw.upper().lstrip("$") if ticker_raw else ""
     base = origin.rstrip("/")
     header = (
-        "\U0001F4C4 *New public report*"
+        "\U0001f4c4 *New public report*"
         if not token or sports
-        else f"\U0001F4C4 *New public report \u00b7 ${escape_markdown_v2(token)}*"
+        else f"\U0001f4c4 *New public report \u00b7 ${escape_markdown_v2(token)}*"
     )
     blocks = [header]
     headline = escape_markdown_v2(str(report.get("headline") or "").strip())
@@ -656,7 +654,7 @@ def format_event_post_md(event, *, origin):
     headline = escape_markdown_v2(str(event.get("headline") or "").strip())
     age = escape_markdown_v2(str(event.get("age") or "").strip())
     base = origin.rstrip("/")
-    head_title = f"\U0001F4F0 *Event on ${ticker}*" if ticker else "\U0001F4F0 *New event*"
+    head_title = f"\U0001f4f0 *Event on ${ticker}*" if ticker else "\U0001f4f0 *New event*"
     blocks = [head_title, f"*{kind}*"]
     if headline:
         blocks.append(headline)
@@ -698,7 +696,7 @@ def format_runner_story_md(entry, *, origin):
         return ""
     ticker = escape_markdown_v2(ticker_raw)
     tag = str(entry.get("tag") or "").strip().upper()
-    emoji = _state_emoji(tag) or "\U0001F406"
+    emoji = _state_emoji(tag) or "\U0001f406"
     template = _STORY_HEADLINES.get(tag, "{ticker} is on the board")
     blocks = [emoji + " *" + template.format(ticker="$" + ticker) + "*"]
     reason = _story_reason(entry)
@@ -741,7 +739,7 @@ def format_release_announcement_md(version, notes, *, origin):
     safe = escape_markdown_v2(text[:RELEASE_NOTES_LIMIT].rstrip())
     base = origin.rstrip("/")
     blocks = [
-        f"\U0001F406 *RATi Runners {escape_markdown_v2(version)}*",
+        f"\U0001f406 *RATi Runners {escape_markdown_v2(version)}*",
         safe,
         markdown_link("Open runners", base),
     ]

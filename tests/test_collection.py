@@ -55,9 +55,7 @@ def test_collectors_keep_market_bars_and_distinct_source_versions(
     assert {row["source"]: row["count"] for row in runs} == {"sec": 3, "yahoo": 2}
 
 
-def test_market_bar_upserts_skip_unchanged_rows(
-    tmp_path: Path, monkeypatch: MonkeyPatch
-) -> None:
+def test_market_bar_upserts_skip_unchanged_rows(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "bar-upserts.db")
     init_db()
     index = pd.date_range("2026-08-24 09:30", periods=1, freq="1D", tz="America/New_York")

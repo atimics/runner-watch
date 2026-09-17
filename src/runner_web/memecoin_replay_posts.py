@@ -38,7 +38,7 @@ def caption(payload: dict, *, origin: str) -> str:
     # The URL is an inline link, not a bare line: every dot and hyphen in a
     # bare URL is reserved in Markdown V2, and a caption that fails to parse
     # takes the GIF down with it — sendAnimation has no plain-text retry.
-    card = f"\U0001FA99 *{label}* — new coin detected\n\n{launch} · {events}"
+    card = f"\U0001fa99 *{label}* — new coin detected\n\n{launch} · {events}"
     return card + "\n\n" + markdown_link("Open the coin page", link)
 
 

@@ -322,8 +322,7 @@ def test_an_empty_take_is_rejected_and_retried():
             "request_id": "commentary-blank",
             "analysis": {"headline": "", "narrative": "", "points": []},
             "comments": [
-                {"voice_id": voice["id"], "comment": "..." }
-                for voice in request["voices"]
+                {"voice_id": voice["id"], "comment": "..."} for voice in request["voices"]
             ],
         }
 

@@ -92,9 +92,7 @@ def ensure_entity(
         else None
     )
     if row is None:
-        entity_id = "pe-" + hashlib.sha256(
-            (key or f"{kind}:{stamp}").encode()
-        ).hexdigest()[:24]
+        entity_id = "pe-" + hashlib.sha256((key or f"{kind}:{stamp}").encode()).hexdigest()[:24]
         connection.execute(
             """
             INSERT INTO participant_entities(id,kind,dedupe_key,created_at,updated_at)
@@ -153,17 +151,20 @@ def attach_reference(
                 connection=opened,
             )
     stamp = _clean(learned_at) or _now()
-    reference_id = "pr-" + hashlib.sha256(
-        "|".join(
-            [
-                entity_id,
-                kind,
-                clean_value,
-                _clean(chain) or "",
-                _clean(issuing_system) or "",
-            ]
-        ).encode()
-    ).hexdigest()[:24]
+    reference_id = (
+        "pr-"
+        + hashlib.sha256(
+            "|".join(
+                [
+                    entity_id,
+                    kind,
+                    clean_value,
+                    _clean(chain) or "",
+                    _clean(issuing_system) or "",
+                ]
+            ).encode()
+        ).hexdigest()[:24]
+    )
     connection.execute(
         """
         INSERT INTO participant_references(
@@ -239,19 +240,22 @@ def record_claim(
                 connection=opened,
             )
     stamp = _clean(learned_at) or _now()
-    claim_id = "pc-" + hashlib.sha256(
-        "|".join(
-            [
-                subject_entity_id,
-                relationship,
-                object_entity_id or "",
-                object_reference_id or "",
-                _clean(valid_from) or "",
-                stamp,
-                _clean(origin) or "",
-            ]
-        ).encode()
-    ).hexdigest()[:24]
+    claim_id = (
+        "pc-"
+        + hashlib.sha256(
+            "|".join(
+                [
+                    subject_entity_id,
+                    relationship,
+                    object_entity_id or "",
+                    object_reference_id or "",
+                    _clean(valid_from) or "",
+                    stamp,
+                    _clean(origin) or "",
+                ]
+            ).encode()
+        ).hexdigest()[:24]
+    )
     connection.execute(
         """
         INSERT INTO participant_claims(

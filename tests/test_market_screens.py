@@ -484,6 +484,8 @@ def test_call_preview_price_has_a_strict_numeric_shape(screen_client, changing_d
         screen_client.post("/api/calls/stock/OPK", json={"expected_price": price}).status_code
         == 422
     )
+
+
 def test_map_cached_portraits_read_saved_images_only(screen_client, monkeypatch):
     def unexpected_generation(*a, **kw):
         pytest.fail("Map browsing must use saved portraits")
