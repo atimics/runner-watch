@@ -41,7 +41,6 @@
     if (Number.isFinite(item.score) && value && Number.isFinite(Date.parse(value))) {
       const time = make('time', value); time.dateTime = value; note.append('As of ', time);
     } else note.append('Timestamp unavailable');
-    note.append('. Filing dates filter evidence, not the score.');
   }
   readScore();
   const points = value => `${value > 0 ? '+' : ''}${number(value)} pts`;
@@ -56,7 +55,7 @@
     (filter === 'all' || (filter === 'other' ? !['Bought','Sold'].includes(e.action) : e.action === filter)));
   function scorePanel(part) {
     const panel = $('selection'); panel.replaceChildren();
-    panel.append(make('h3', `Current score ${score}`));
+    panel.append(make('h3', String(score), 'map-score-heading'));
     if (part) {
       panel.append(make('h4', part.label), make('p', `${points(part.value)} · ${percent(part)}`, 'map-score-breakdown'));
       panel.append(make('p', pinned === part.key ? 'Pinned contribution. Return to score overview to clear.' : 'Click or press Enter to pin this contribution.', 'map-note'));
@@ -69,13 +68,11 @@
     });
     if (legend.children.length) panel.append(legend);
     if (!positive.length) panel.append(make('p', item.score_detail ? 'No positive contributions.' : 'Score breakdown unavailable.', 'map-note'));
-    panel.append(make('p', 'Ring shares use positive contributions only, not the net score.', 'map-note'));
-    panel.append(make('h4', 'Penalties'));
     if (penalties.length) {
       const list = make('ul', null, 'map-score-penalties');
       penalties.forEach(penalty => {const row = make('li'); row.append(make('span', penalty.label), make('strong', points(penalty.value))); list.append(row);});
       panel.append(list);
-    } else panel.append(make('p', item.score_detail ? 'No penalties applied.' : 'Penalty data unavailable.', 'map-note'));
+    } else if (item.score_detail) panel.append(make('p', 'No penalties applied.', 'map-note'));
   }
   function context() {
     source(subset().find(event => event.id === selected));
@@ -122,13 +119,13 @@
   }
   function source(event) {
     const preview = hovered || focused;
-    $('context').textContent = preview || !event ? 'SCORE' : 'FILING';
+    const panel = $('selection');
     $('score-return').hidden = !event && !pinned;
     if (preview || !event) {
       scorePanel(preview || positive.find(part => part.key === pinned));
       document.dispatchEvent(new CustomEvent('rati:map-time', {detail:{time:null}})); return;
     }
-    const panel = $('selection'); panel.replaceChildren();
+    panel.replaceChildren();
     panel.append(make('h3', names(event)), make('p', `${event.action} · ${amount(event)}`, 'map-event-action'));
     panel.append(make('p', event.people.map(p => p.role).join(' · ')));
     const facts = make('dl');
@@ -201,8 +198,9 @@
       g.addEventListener('click',activate); g.addEventListener('keydown',e => {if (['Enter',' '].includes(e.key)) {e.preventDefault();activate();}}); graph.append(g);
     });
     ring(graph, cx, cy);
-    if (!people.length) graph.append(svg('text',{x:cx,y:320,'text-anchor':'middle',fill:'#96a49b','font-size':small.matches ? 12 : 16},'No people yet'));
-    $('page').textContent = people.length ? `${page*size+1}–${page*size+shown.length} of ${people.length} people` : 'Saved SEC evidence';
+    const single = people.length <= size;
+    $('paging').hidden = single;
+    if (people.length) $('page').textContent = `${page*size+1}–${page*size+shown.length} of ${people.length} people`;
     $('previous').disabled = page === 0; $('next').disabled = (page+1)*size >= people.length;
     const list = $('events'); list.replaceChildren();
     rows.forEach(e => {

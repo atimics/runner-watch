@@ -54,13 +54,12 @@ def test_unified_score_template_preserves_current_score_and_collapses_filings(sc
             "calls": [],
         },
     )
-    assert f"Current score {score if score is not None else 'unavailable'}" in html
+    assert f'<h3 class="map-score-heading">{score if score is not None else "—"}</h3>' in html
     assert 'class="metrics"' not in html
     assert 'class="breakdown"' not in html
     assert re.search(r'<details class="map-filings">', html)
     assert "data-map-score-return hidden" in html
     assert 'aria-live="polite" aria-atomic="true"' in html
-    assert "Filing dates filter evidence, not the score." in html
     note = re.search(r"<p[^>]*data-map-score-time>(.*?)</p>", html).group(1)
     expected_time = current.get("captured_at") or current.get("event_at")
     if expected_time and score is not None:
