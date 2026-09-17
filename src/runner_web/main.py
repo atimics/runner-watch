@@ -4150,8 +4150,10 @@ def _event_timestamp(row: dict[str, Any]) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def _external_event_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    checked_at = now()
+def _external_event_context(
+    rows: list[dict[str, Any]], *, at: datetime | None = None
+) -> dict[str, Any]:
+    checked_at = at or now()
     news: list[dict[str, Any]] = []
     social_by_source: dict[str, dict[str, Any]] = {}
     active_halt: dict[str, Any] | None = None
@@ -4320,9 +4322,10 @@ def _apply_market_marks(rows: list[dict[str, Any]]) -> int:
     return upgraded
 
 
-def _pulse_data_uncached() -> dict[str, Any]:
-    event_cutoff = iso(now() - timedelta(days=3))
-    scan_cutoff = iso(now() - timedelta(days=7))
+def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[str, Any]:
+    event_cutoff = iso(at - timedelta(days=3))
+    scan_cutoff = iso(at - timedelta(days=7))
+    ticker_params = (ticker,) if ticker is not None else ()
     with connection() as db:
         latest_run = db.execute(
             """
@@ -4334,63 +4337,69 @@ def _pulse_data_uncached() -> dict[str, Any]:
         ).fetchone()
         market_rows = (
             db.execute(
-                """
+                f"""
                 SELECT s.*,
                        (SELECT c.name FROM sec_companies c
                         WHERE c.ticker=s.ticker LIMIT 1) AS listed_company
                 FROM scan_snapshots s
-                WHERE s.scan_run_id=?
+                WHERE s.scan_run_id=? {"AND s.ticker=?" if ticker is not None else ""}
                 ORDER BY s.baseline_rank,s.ticker
                 """,
-                (latest_run["id"],),
+                (latest_run["id"], *ticker_params),
             ).fetchall()
             if latest_run
             else []
         )
         prediction_rows = (
             db.execute(
-                """
+                f"""
                 SELECT p.*,m.status AS model_status FROM ranker_predictions p
                 JOIN scan_snapshots s ON s.id=p.snapshot_id
                 JOIN ranker_models m ON m.id=p.model_id
                 WHERE s.scan_run_id=? AND m.status='active'
+                {"AND s.ticker=?" if ticker is not None else ""}
                 ORDER BY p.created_at DESC
                 """,
-                (latest_run["id"],),
+                (latest_run["id"], *ticker_params),
             ).fetchall()
             if latest_run
             else []
         )
         call_rows = db.execute(
-            """
+            f"""
             SELECT ticker,COUNT(DISTINCT user_id) AS call_count
-            FROM community_calls WHERE status='active' GROUP BY ticker
-            """
+            FROM community_calls WHERE status='active'
+            {"AND ticker=?" if ticker is not None else ""} GROUP BY ticker
+            """,
+            ticker_params,
         ).fetchall()
         comment_rows = db.execute(
-            """
+            f"""
             SELECT ticker,COUNT(*) AS comment_count
             FROM ticker_comments
-            WHERE subject_kind='stock' AND status='public' GROUP BY ticker
-            """
+            WHERE subject_kind='stock' AND status='public'
+            {"AND ticker=?" if ticker is not None else ""} GROUP BY ticker
+            """,
+            ticker_params,
         ).fetchall()
         market_event_rows = db.execute(
-            """
+            f"""
             SELECT source,ticker,event_type,status,event_at,source_url,payload_json
             FROM public_market_events
-            WHERE event_at>? ORDER BY event_at DESC,last_collected_at DESC
+            WHERE event_at>? {"AND ticker=?" if ticker is not None else ""}
+            ORDER BY event_at DESC,last_collected_at DESC
             """,
-            (event_cutoff,),
+            (event_cutoff, *ticker_params),
         ).fetchall()
         filing_rows = db.execute(
-            """
+            f"""
             SELECT f.*,o.return_1h_pct,o.return_1d_pct,o.return_5d_pct
             FROM sec_filings f
             LEFT JOIN sec_outcomes o ON o.accession=f.accession
-            WHERE f.created_at>?
+            WHERE f.created_at>? {"AND f.ticker=?" if ticker is not None else ""}
             ORDER BY f.score DESC,f.filed_at DESC
             """,
-            (event_cutoff,),
+            (event_cutoff, *ticker_params),
         ).fetchall()
 
     filings_by_ticker: dict[str, dict[str, Any]] = {}
@@ -4419,116 +4428,142 @@ def _pulse_data_uncached() -> dict[str, Any]:
     market_events_by_ticker: dict[str, list[dict[str, Any]]] = {}
     for raw in market_event_rows:
         market_events_by_ticker.setdefault(str(raw["ticker"]), []).append(dict(raw))
+    return {
+        "latest_run": dict(latest_run) if latest_run else None,
+        "market_rows": [dict(row) for row in market_rows],
+        "predictions": predictions,
+        "community": community,
+        "market_events_by_ticker": market_events_by_ticker,
+        "filings_by_ticker": filings_by_ticker,
+        "filing_counts": filing_counts,
+        "score_as_of": iso(at),
+    }
+
+
+def _pulse_snapshot_score(snapshot: dict[str, Any], inputs: dict[str, Any]) -> dict[str, Any]:
+    ticker = snapshot["ticker"]
+    catalyst = inputs["filings_by_ticker"].get(ticker)
+    prediction = inputs["predictions"].get(str(snapshot["id"]))
+    custom_score = (
+        float(prediction["score"])
+        if prediction and prediction.get("score") is not None
+        else float(snapshot.get("score") or 0)
+    )
+    catalyst_score = float(catalyst.get("score") or 0) if catalyst else 0.0
+    catalyst_sentiment = str(catalyst.get("sentiment") or "") if catalyst else ""
+    event_boost = (
+        min(12.0, catalyst_score * 0.12)
+        if catalyst_sentiment == "positive"
+        else -min(25.0, catalyst_score * 0.25)
+        if catalyst_sentiment == "risk"
+        else 0.0
+    )
+    community_counts = inputs["community"].get(ticker, {"call_count": 0, "comment_count": 0})
+    call_count = community_counts["call_count"]
+    comment_count = community_counts["comment_count"]
+    engagement_count = call_count + (comment_count * 2)
+    community_boost = min(8.0, math.log2(engagement_count + 1) * 2.0)
+    external = _external_event_context(
+        inputs["market_events_by_ticker"].get(ticker, []), at=_timestamp(inputs["score_as_of"])
+    )
+    news_boost = float(external["news_boost"])
+    social_search_boost = float(external["social_search_boost"])
+    safety_penalty = float(external["safety_penalty"])
+    raw_rug_score = snapshot.get("rug_score")
+    rug_score = float(raw_rug_score) if raw_rug_score is not None else None
+    trade_state = str(snapshot.get("trade_state") or "UNKNOWN").upper()
+    if external.get("active_halt"):
+        rug_score = max(rug_score or 0.0, 90.0)
+        trade_state = "AVOID"
+    rug_penalty = (rug_score or 0.0) * 0.30
+    state_penalty = 25.0 if trade_state == "EXIT" else 20.0 if trade_state == "AVOID" else 0.0
+    pulse_score = round(
+        max(
+            0.0,
+            min(
+                100.0,
+                custom_score
+                + event_boost
+                + news_boost
+                + social_search_boost
+                + community_boost
+                - safety_penalty
+                - rug_penalty
+                - state_penalty,
+            ),
+        ),
+        2,
+    )
+    score_components = {
+        "market": round(custom_score, 2),
+        "sec_event": round(event_boost, 2),
+        "news": news_boost,
+        "social_search": social_search_boost,
+        "community": round(community_boost, 2),
+        "safety": -safety_penalty,
+    }
+    if snapshot.get("rug_score") is not None or snapshot.get("trade_state") is not None:
+        score_components.update({"rug": -round(rug_penalty, 2), "state": -state_penalty})
+    return {
+        "baseline_score": float(snapshot.get("score") or 0),
+        "rug_score": rug_score,
+        "trade_state": trade_state,
+        "model_score": custom_score if prediction else None,
+        "model_rank": prediction.get("rank") if prediction else None,
+        "score": pulse_score,
+        "custom_score": pulse_score,
+        "score_as_of": inputs["score_as_of"],
+        "score_snapshot_id": snapshot["id"],
+        "runner_probability": prediction.get("probability_up") if prediction else None,
+        "runner_probability_down": prediction.get("probability_down") if prediction else None,
+        "runner_probability_timeout": prediction.get("probability_timeout") if prediction else None,
+        "directional_thesis": _ranker_directional_thesis(prediction),
+        "expected_return_pct": prediction.get("expected_return_pct") if prediction else None,
+        "call_count": call_count,
+        "comment_count": comment_count,
+        "engagement_count": engagement_count,
+        "event_boost": round(event_boost, 2),
+        "news_boost": news_boost,
+        "social_search_boost": social_search_boost,
+        "community_boost": round(community_boost, 2),
+        "safety_penalty": safety_penalty,
+        "rug_penalty": round(rug_penalty, 2),
+        "state_penalty": state_penalty,
+        "active_market_event": external.get("active_halt"),
+        "news_count": external["news_count"],
+        "external_social_mentions": external["social_mentions"],
+        "external_social_engagement": external["social_engagement"],
+        "latest_news": external.get("latest_news"),
+        "score_components": score_components,
+        "score_detail": _public_score_detail(score_components, pulse_score),
+        "external_context": external,
+    }
+
+
+def _pulse_data_uncached() -> dict[str, Any]:
+    inputs = _pulse_scoring_inputs(at=now())
+    latest_run = inputs["latest_run"]
+    market_rows = inputs["market_rows"]
+    filings_by_ticker = inputs["filings_by_ticker"]
+    filing_counts = inputs["filing_counts"]
     active_kol_calls = calls_for_tickers([str(row["ticker"]) for row in market_rows])
 
     runner_rows: list[dict[str, Any]] = []
     unexplained = 0
-    for raw in market_rows:
-        snapshot = dict(raw)
+    for snapshot in market_rows:
         ticker = snapshot["ticker"]
         catalyst = filings_by_ticker.get(ticker)
         if not catalyst:
             unexplained += 1
-        prediction = predictions.get(str(snapshot["id"]))
-        custom_score = (
-            float(prediction["score"])
-            if prediction and prediction.get("score") is not None
-            else float(snapshot.get("score") or 0)
-        )
-        catalyst_score = float(catalyst.get("score") or 0) if catalyst else 0.0
-        catalyst_sentiment = str(catalyst.get("sentiment") or "") if catalyst else ""
-        event_boost = (
-            min(12.0, catalyst_score * 0.12)
-            if catalyst_sentiment == "positive"
-            else -min(25.0, catalyst_score * 0.25)
-            if catalyst_sentiment == "risk"
-            else 0.0
-        )
-        community_counts = community.get(
-            ticker,
-            {"call_count": 0, "comment_count": 0},
-        )
-        call_count = community_counts["call_count"]
-        comment_count = community_counts["comment_count"]
-        engagement_count = call_count + (comment_count * 2)
-        community_boost = min(8.0, math.log2(engagement_count + 1) * 2.0)
-        external = _external_event_context(market_events_by_ticker.get(ticker, []))
-        news_boost = float(external["news_boost"])
-        social_search_boost = float(external["social_search_boost"])
-        safety_penalty = float(external["safety_penalty"])
-        raw_rug_score = snapshot.get("rug_score")
-        rug_score = float(raw_rug_score) if raw_rug_score is not None else None
-        trade_state = str(snapshot.get("trade_state") or "UNKNOWN").upper()
-        if external.get("active_halt"):
-            rug_score = max(rug_score or 0.0, 90.0)
-            trade_state = "AVOID"
-        rug_penalty = (rug_score or 0.0) * 0.30
-        state_penalty = 25.0 if trade_state == "EXIT" else 20.0 if trade_state == "AVOID" else 0.0
-        pulse_score = round(
-            max(
-                0.0,
-                min(
-                    100.0,
-                    custom_score
-                    + event_boost
-                    + news_boost
-                    + social_search_boost
-                    + community_boost
-                    - safety_penalty
-                    - rug_penalty
-                    - state_penalty,
-                ),
-            ),
-            2,
-        )
-        score_components = {
-            "market": round(custom_score, 2),
-            "sec_event": round(event_boost, 2),
-            "news": news_boost,
-            "social_search": social_search_boost,
-            "community": round(community_boost, 2),
-            "safety": -safety_penalty,
-        }
-        if snapshot.get("rug_score") is not None or snapshot.get("trade_state") is not None:
-            score_components.update({"rug": -round(rug_penalty, 2), "state": -state_penalty})
+        scoring = _pulse_snapshot_score(snapshot, inputs)
+        external = scoring.pop("external_context")
         external_label = _external_event_label(external)
-        directional_thesis = _ranker_directional_thesis(prediction)
         runner = {
             **snapshot,
-            "baseline_score": float(snapshot.get("score") or 0),
+            **scoring,
             "setup_score": _number(snapshot.get("setup_score")),
-            "rug_score": rug_score,
-            "trade_state": trade_state,
-            "model_score": custom_score if prediction else None,
-            "model_rank": prediction.get("rank") if prediction else None,
-            "score": pulse_score,
-            "custom_score": pulse_score,
-            "runner_probability": prediction.get("probability_up") if prediction else None,
-            "runner_probability_down": (prediction.get("probability_down") if prediction else None),
-            "runner_probability_timeout": (
-                prediction.get("probability_timeout") if prediction else None
-            ),
-            "directional_thesis": directional_thesis,
-            "expected_return_pct": (prediction.get("expected_return_pct") if prediction else None),
-            "call_count": call_count,
             "bull_count": 0,
             "bear_count": 0,
-            "comment_count": comment_count,
-            "engagement_count": engagement_count,
-            "event_boost": round(event_boost, 2),
-            "news_boost": news_boost,
-            "social_search_boost": social_search_boost,
-            "community_boost": round(community_boost, 2),
-            "safety_penalty": safety_penalty,
-            "rug_penalty": round(rug_penalty, 2),
-            "state_penalty": state_penalty,
-            "active_market_event": external.get("active_halt"),
-            "news_count": external["news_count"],
-            "external_social_mentions": external["social_mentions"],
-            "external_social_engagement": external["social_engagement"],
-            "latest_news": external.get("latest_news"),
-            "score_components": score_components,
-            "score_detail": _public_score_detail(score_components, pulse_score),
             "company": (
                 catalyst.get("company", ticker)
                 if catalyst
@@ -4550,7 +4585,7 @@ def _pulse_data_uncached() -> dict[str, Any]:
             "source": "market",
             "section": "scored",
             "event_at": snapshot["captured_at"],
-            "attention_score": pulse_score,
+            "attention_score": scoring["score"],
             "filing_url": (
                 catalyst.get("filing_url")
                 if catalyst
@@ -4666,6 +4701,7 @@ PUBLIC_PULSE_ROW_FIELDS = (
     "custom_rank",
     "score",
     "score_detail",
+    "score_as_of",
     "setup_score",
     "company",
     "name",
@@ -5313,7 +5349,7 @@ def _alpha_evidence(ticker: str, engagement_count: int) -> tuple[str, dict[str, 
         "captured_at": current.get("event_at"),
         "price": current.get("price"),
         "change_pct": current.get("change_pct"),
-        "score": current.get("score"),
+        "score": current.get("scanner_score", current.get("score")),
         "setup_score": _number(current.get("setup_score")),
         "rug_score": current.get("rug_score"),
         "rug_level": current.get("rug_level"),
@@ -8154,6 +8190,7 @@ def _ticker_exists(ticker: str) -> bool:
 
 
 def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
+    score_time = now()
     with connection() as db:
         filings = db.execute(
             """
@@ -8220,6 +8257,9 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
         current.update(
             {
                 "ticker": ticker,
+                "baseline_score": float(current.get("score") or 0),
+                "score_as_of": current["captured_at"],
+                "score_snapshot_id": current["id"],
                 "score_detail": _public_score_detail(
                     {"market": float(current.get("score") or 0)},
                     float(current.get("score") or 0),
@@ -8273,6 +8313,23 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
     directional_thesis = _ranker_directional_thesis(
         dict(prediction) if prediction is not None else None
     )
+    if snapshot is not None:
+        inputs = _pulse_scoring_inputs(ticker=ticker, at=score_time)
+        if inputs["market_rows"]:
+            scoring = _pulse_snapshot_score(inputs["market_rows"][0], inputs)
+            current["scanner_score"] = current["score"]
+            for field in (
+                "score",
+                "custom_score",
+                "baseline_score",
+                "model_score",
+                "model_rank",
+                "score_detail",
+                "score_components",
+                "score_as_of",
+                "score_snapshot_id",
+            ):
+                current[field] = scoring[field]
     return {
         "ticker": ticker,
         "company": company["name"] if company else current.get("company", ticker),

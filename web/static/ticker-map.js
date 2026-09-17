@@ -22,12 +22,28 @@
   };
   const names = e => e.people.map(p => p.name).join(' + ') || 'Reporting person';
   const amount = e => e.view === 'ownership' ? (e.percent == null ? 'See filing' : number(e.percent) + '% of class') : money(e.value);
-  const item = JSON.parse(document.getElementById('screenData')?.textContent || '{}').item || {};
-  const drivers = (item.score_detail?.drivers || []).filter(part => Number.isFinite(part.value));
-  const positive = drivers.filter(part => part.value > 0);
-  const penalties = [...(item.score_detail?.penalties || []), ...drivers.filter(part => part.value < 0)].filter(part => Number.isFinite(part.value) && part.value !== 0);
-  const total = positive.reduce((sum, part) => sum + part.value, 0);
-  const score = Number.isFinite(item.score) ? number(Math.round(item.score)) : '—';
+  const screenNode = document.getElementById('screenData');
+  const initial = JSON.parse(screenNode?.textContent || '{}');
+  let item = initial.market === 'stocks' && initial.item?.id === root.dataset.ticker ? initial.item : {};
+  let drivers = [], positive = [], penalties = [], total = 0, score = '—';
+  const scoreData = value => JSON.stringify([value.score ?? null, value.score_detail ?? null]);
+  function readScore() {
+    const parts = value => Array.isArray(value) ? value.filter(part => part && Number.isFinite(part.value)) : [];
+    drivers = parts(item.score_detail?.drivers);
+    positive = drivers.filter(part => part.value > 0);
+    penalties = [...parts(item.score_detail?.penalties), ...drivers.filter(part => part.value < 0)].filter(part => part.value !== 0);
+    total = positive.reduce((sum, part) => sum + part.value, 0);
+    score = Number.isFinite(item.score) ? number(Math.round(item.score)) : '—';
+  }
+  function scoreTime(value) {
+    const note = $('score-time');
+    note.replaceChildren('Current score · ');
+    if (Number.isFinite(item.score) && value && Number.isFinite(Date.parse(value))) {
+      const time = make('time', value); time.dateTime = value; note.append('As of ', time);
+    } else note.append('Timestamp unavailable');
+    note.append('. Filing dates filter evidence, not the score.');
+  }
+  readScore();
   const points = value => `${value > 0 ? '+' : ''}${number(value)} pts`;
   const percent = part => `${number(Math.round(part.value / total * 1000) / 10)}% of positive contributions`;
   const color = part => `var(--score-${part.key}, var(--muted))`;
@@ -43,7 +59,7 @@
     panel.append(make('h3', `Current score ${score}`));
     if (part) {
       panel.append(make('h4', part.label), make('p', `${points(part.value)} · ${percent(part)}`, 'map-score-breakdown'));
-      panel.append(make('p', pinned === part ? 'Pinned contribution. Return to score overview to clear.' : 'Click or press Enter to pin this contribution.', 'map-note'));
+      panel.append(make('p', pinned === part.key ? 'Pinned contribution. Return to score overview to clear.' : 'Click or press Enter to pin this contribution.', 'map-note'));
     }
     const legend = make('ul', null, 'map-score-legend');
     drivers.filter(driver => driver.value >= 0).forEach(driver => {
@@ -74,7 +90,7 @@
     let angle = -Math.PI / 2;
     positive.forEach(part => {
       const sweep = part.value / total * Math.PI * 2, end = angle + sweep;
-      const attrs = {class:'map-score-segment', role:'button', tabindex:0, 'data-score-key':part.key, 'aria-label':`${part.label}: ${points(part.value)}, ${percent(part)}`, 'aria-pressed':String(pinned === part), 'stroke-width':width};
+      const attrs = {class:'map-score-segment', role:'button', tabindex:0, 'data-score-key':part.key, 'aria-label':`${part.label}: ${points(part.value)}, ${percent(part)}`, 'aria-pressed':String(pinned === part.key), 'stroke-width':width};
       const segment = positive.length === 1 ? svg('circle', {...attrs, cx, cy, r:radius}) : svg('path', {...attrs, d:`M ${cx + radius * Math.cos(angle)} ${cy + radius * Math.sin(angle)} A ${radius} ${radius} 0 ${sweep > Math.PI ? 1 : 0} 1 ${cx + radius * Math.cos(end)} ${cy + radius * Math.sin(end)}`});
       segment.style.stroke = color(part); angle = end;
       segment.append(svg('title', {}, `${part.label}: ${points(part.value)} · ${percent(part)}`));
@@ -83,7 +99,7 @@
       segment.addEventListener('focus', () => {focused = part; context();});
       segment.addEventListener('blur', () => {focused = null; context();});
       const activate = () => {
-        pinned = part; selected = null; hovered = null; focused = null; render();
+        pinned = part.key; selected = null; hovered = null; focused = null; render();
         graph.querySelector(`[data-score-key="${CSS.escape(part.key)}"]`)?.focus({preventScroll:true});
       };
       segment.addEventListener('click', activate);
@@ -109,7 +125,7 @@
     $('context').textContent = preview || !event ? 'SCORE' : 'FILING';
     $('score-return').hidden = !event && !pinned;
     if (preview || !event) {
-      scorePanel(preview || pinned);
+      scorePanel(preview || positive.find(part => part.key === pinned));
       document.dispatchEvent(new CustomEvent('rati:map-time', {detail:{time:null}})); return;
     }
     const panel = $('selection'); panel.replaceChildren();
@@ -235,6 +251,28 @@
   $('score-return').addEventListener('click', overview);
   root.addEventListener('keydown', event => {if (event.key === 'Escape' && (pinned || selected)) {event.preventDefault(); overview();}});
   small.addEventListener('change',() => {page = 0;render();});
+  screenNode?.addEventListener('rati:screen-detail', event => {
+    const next = event.detail;
+    if (next?.market !== 'stocks' || next.item?.id !== root.dataset.ticker) return;
+    const changed = scoreData(item) !== scoreData(next.item);
+    const timestamp = value => value.score_as_of || value.captured_at || value.event_at;
+    const timeChanged = timestamp(item) !== timestamp(next.item);
+    item = next.item;
+    if (!changed && !timeChanged) return;
+    scoreTime(timestamp(item));
+    if (!changed) return;
+    const graph = $('graph'), active = document.activeElement;
+    const key = graph.contains(active) ? active.dataset.scoreKey : null;
+    const restoreCenter = graph.contains(active) && active.hasAttribute('data-map-score-center');
+    const preview = hovered || focused;
+    hovered = null; focused = null;
+    readScore();
+    if (!positive.some(part => part.key === pinned)) pinned = null;
+    graph.querySelectorAll('.map-score-track, .map-score-segment, [data-map-score-center]').forEach(el => el.remove());
+    ring(graph, small.matches ? 180 : 380, small.matches ? 184 : 218);
+    if (!selected || preview) context();
+    if (key || restoreCenter) (graph.querySelector(`[data-score-key="${CSS.escape(key || '')}"]`) || graph.querySelector('[data-map-score-center]'))?.focus({preventScroll:true});
+  });
   render();
   load();
 })();

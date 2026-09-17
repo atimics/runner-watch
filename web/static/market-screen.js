@@ -169,6 +169,7 @@
     screen = next;
     if (next.states) chartStates = next.states;
     draw(next.series);
+    node?.dispatchEvent(new CustomEvent('rati:screen-detail', {detail:next}));
   }
   async function refreshDetail() {
     if (!screen?.refresh_url) return null;

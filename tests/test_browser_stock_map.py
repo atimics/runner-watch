@@ -468,3 +468,141 @@ def test_zero_driver_or_single_positive_driver_has_valid_ring(page, weight):
         expect(page.locator(".map-score-legend strong")).to_have_text("0 pts")
         expect(page.locator("[data-map-selection]")).to_contain_text("No positive contributions.")
     expect(page.locator("[data-stock-map]")).not_to_contain_text(re.compile("NaN|Infinity"))
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, width):
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.clock.install()
+    initial_time = "2026-09-13T19:00:00+00:00"
+    open_map(page, width, current=score_current(score_as_of=initial_time))
+    expect(page.locator("[data-map-score-time] time")).to_have_attribute("datetime", initial_time)
+    screen = page.locator("#screenData").evaluate("node => JSON.parse(node.textContent)")
+    screen["series"] = [
+        {"time": f"2026-09-{day:02}T18:00:00Z", "value": day + 2} for day in range(1, 12)
+    ]
+    page.route("**/api/screens/**", lambda route: route.fulfill(json=screen))
+    page.evaluate("""() => {
+        window.detailUpdates = 0;
+        document.getElementById('screenData').addEventListener('rati:screen-detail', () => {
+            window.detailUpdates++;
+        });
+    }""")
+
+    def poll():
+        updates = page.evaluate("window.detailUpdates")
+        page.clock.fast_forward(60000)
+        page.wait_for_function("count => window.detailUpdates > count", arg=updates)
+
+    page.get_by_role("button", name="Load older filings").click()
+    expect(page.locator("[data-map-coverage]")).to_contain_text("12 filings")
+    slider = page.get_by_role("slider", name="Filings known by")
+    slider.press("End")
+    slider.press("ArrowLeft")
+    cutoff = slider.input_value()
+    filing_time = page.locator("[data-map-time]").text_content()
+    page.get_by_role("button", name="Next people").click()
+    pagination = page.locator("[data-map-page]").text_content()
+    person = page.locator("[data-person]").first
+    person.press("Enter")
+    person_id = person.get_attribute("data-person")
+    selected_event = page.locator("[data-event-id][aria-pressed=true]").get_attribute(
+        "data-event-id"
+    )
+    filing_title = page.locator("[data-map-selection] h3").text_content()
+    page.evaluate("window.savedPerson = document.querySelector('[data-person]')")
+    screen["item"].update(
+        score=50,
+        score_as_of="2026-09-14T20:00:00+00:00",
+        score_detail={
+            "drivers": [
+                {"key": "market", "label": "Market scanner", "value": 20},
+                {"key": "social_search", "label": "Social / search", "value": 40},
+            ],
+            "penalties": [{"key": "rug", "label": "Rug risk", "value": -10}],
+        },
+    )
+    poll()
+    expect(page.locator(".map-center-score")).to_have_text("50")
+    expect(page.locator("[data-map-selection] h3")).to_have_text(filing_title)
+    expect(page.locator(f'[data-person="{person_id}"]')).to_be_focused()
+    expect(page.locator(f'[data-event-id="{selected_event}"]')).to_have_attribute(
+        "aria-pressed", "true"
+    )
+    expect(page.locator(".chart-filing-marker")).to_have_count(1)
+    assert page.evaluate("window.savedPerson === document.querySelector('[data-person]')")
+    expect(page.locator("[data-map-page]")).to_have_text(pagination)
+    assert slider.input_value() == cutoff
+    expect(page.locator("[data-map-time]")).to_have_text(filing_time)
+    expect(page.locator("[data-map-load]")).to_be_hidden()
+    social = page.locator('[data-score-key="social_search"]')
+    market = page.locator('[data-score-key="market"]')
+    assert social.evaluate("el => getComputedStyle(el).stroke") == "rgb(255, 173, 112)"
+    assert market.evaluate("el => getComputedStyle(el).stroke") == "rgb(115, 206, 255)"
+    lengths = page.locator(".map-score-segment").evaluate_all(
+        "segments => segments.map(segment => segment.getTotalLength())"
+    )
+    assert [length / sum(lengths) for length in lengths] == pytest.approx([1 / 3, 2 / 3], abs=0.001)
+    social.press("Enter")
+    expect(social).to_have_attribute("aria-pressed", "true")
+    screen["item"]["score_detail"]["drivers"].reverse()
+    screen["item"]["score_detail"]["drivers"][0]["value"] = 20
+    screen["item"]["score_detail"]["penalties"][0]["value"] = -5
+    screen["item"].update(score=35, score_as_of="2026-09-15T21:00:00+00:00")
+    poll()
+    expect(social).to_be_focused()
+    expect(social).to_have_attribute("aria-pressed", "true")
+    expect(page.locator(".map-score-breakdown")).to_have_text(
+        "+20 pts · 50% of positive contributions"
+    )
+    expect(page.locator("[data-map-selection]")).to_contain_text("Pinned contribution")
+    expect(page.locator("[data-map-selection] h3")).to_have_text("Current score 35")
+    expect(page.locator(".map-score-legend strong")).to_have_text(["+20 pts", "+20 pts"])
+    expect(page.locator(".map-score-penalties strong")).to_have_text("-5 pts")
+    expect(page.locator("[data-map-score-time] time")).to_have_attribute(
+        "datetime", screen["item"]["score_as_of"]
+    )
+    expect(page.locator("[data-map-page]")).to_have_text(pagination)
+    assert slider.input_value() == cutoff
+    page.evaluate("window.savedSegment = document.querySelector('[data-score-key]')")
+    screen["item"]["value"] = "$999.00"
+    poll()
+    expect(page.locator("[data-value]")).to_have_text("$999.00")
+    assert page.evaluate("window.savedSegment === document.querySelector('[data-score-key]')")
+    expect(social).to_be_focused()
+    screen["item"]["score_as_of"] = "2026-09-16T22:00:00+00:00"
+    poll()
+    expect(page.locator("[data-map-score-time] time")).to_have_attribute(
+        "datetime", screen["item"]["score_as_of"]
+    )
+    assert page.evaluate("window.savedSegment === document.querySelector('[data-score-key]')")
+    screen["item"].update(id="OTHER", score=99, value="$123.00")
+    updates = page.evaluate("window.detailUpdates")
+    with page.expect_response("**/api/screens/**"):
+        page.clock.fast_forward(60000)
+    page.clock.run_for(50)
+    assert page.evaluate("window.detailUpdates") == updates
+    page.evaluate(
+        """next => document.getElementById('screenData').dispatchEvent(
+        new CustomEvent('rati:screen-detail', {detail:next}))""",
+        screen,
+    )
+    expect(page.locator(".map-center-score")).to_have_text("35")
+    expect(page.locator("[data-value]")).to_have_text("$999.00")
+    expect(social).to_be_focused()
+    expect(social).to_have_attribute("aria-pressed", "true")
+    screen["item"].update(id="TEST", score=None, score_detail=None, score_as_of=None)
+    poll()
+    expect(page.locator(".map-center-score")).to_have_text("—")
+    expect(page.locator("[data-map-score-center]")).to_be_focused()
+    expect(page.locator(".map-score-segment")).to_have_count(0)
+    expect(page.locator("[data-map-selection]")).to_contain_text("Score breakdown unavailable.")
+    expect(page.locator("[data-map-score-time]")).to_contain_text("Timestamp unavailable")
+    expect(page.locator("[data-map-score-return]")).to_be_hidden()
+    screen["item"].update(score=0, score_detail={"drivers": [None], "penalties": None})
+    poll()
+    expect(page.locator(".map-center-score")).to_have_text("0")
+    expect(page.locator("[data-map-selection]")).to_contain_text("No positive contributions.")
+    expect(page.locator("[data-stock-map]")).not_to_contain_text(re.compile("NaN|Infinity"))
+    assert not errors
