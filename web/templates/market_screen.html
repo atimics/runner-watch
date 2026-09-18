@@ -2,22 +2,40 @@
 {%- if item.score is none -%}
 <span class="ticker-score is-empty"></span>
 {%- else -%}
-{%- set parts = (item.score_detail.drivers if item.score_detail else []) | selectattr('value', 'greaterthan', 0) | list -%}
-{%- set total = parts | sum(attribute='value') -%}
+{#- Positive drivers and penalties share one ring, sized by total magnitude,
+    with penalties painted red. This mirrors the detail map's score ring
+    (ticker-map.js) so a row and its dossier read the same way. -#}
+{%- set drivers = (item.score_detail.drivers if item.score_detail else []) -%}
+{%- set penalties = (item.score_detail.penalties if item.score_detail else []) -%}
+{%- set ns = namespace(parts=[], total=0, positives=[]) -%}
+{%- for part in drivers if part.value > 0 -%}
+  {%- set _ = ns.parts.append({'key': part.key, 'label': part.label, 'value': part.value}) -%}
+  {%- set _ = ns.positives.append(part) -%}
+  {%- set ns.total = ns.total + part.value -%}
+{%- endfor -%}
+{%- for part in penalties if part.value != 0 -%}
+  {%- set _ = ns.parts.append({'key': part.key, 'label': part.label, 'value': 0 - (part.value | abs)}) -%}
+  {%- set ns.total = ns.total + (part.value | abs) -%}
+{%- endfor -%}
+{%- for part in drivers if part.value < 0 -%}
+  {%- set _ = ns.parts.append({'key': part.key, 'label': part.label, 'value': 0 - (part.value | abs)}) -%}
+  {%- set ns.total = ns.total + (part.value | abs) -%}
+{%- endfor -%}
 {#- Three styles, strongest first: large and solid, large and ringed, small
     and ringed. Size and fill are read before any number is. -#}
 {%- set band = 3 if item.score >= 70 else 2 if item.score >= 40 else 1 -%}
-{%- set ns = namespace(acc=0, stops=[]) -%}
-{%- for part in parts -%}
-  {%- set start = (ns.acc / total * 100) | round(2) -%}
-  {%- set ns.acc = ns.acc + part.value -%}
-  {%- set stop = (ns.acc / total * 100) | round(2) -%}
-  {%- set _ = ns.stops.append('var(--score-' ~ part.key ~ ') ' ~ start ~ '% ' ~ stop ~ '%') -%}
+{%- set ns2 = namespace(acc=0, stops=[]) -%}
+{%- for part in ns.parts -%}
+  {%- set start = (ns2.acc / ns.total * 100) | round(2) -%}
+  {%- set ns2.acc = ns2.acc + (part.value | abs) -%}
+  {%- set stop = (ns2.acc / ns.total * 100) | round(2) -%}
+  {%- set tone = 'var(--red)' if part.value < 0 else 'var(--score-' ~ part.key ~ ')' -%}
+  {%- set _ = ns2.stops.append(tone ~ ' ' ~ start ~ '% ' ~ stop ~ '%') -%}
 {%- endfor -%}
 <span class="ticker-score" data-band="{{ band }}" role="img"
-      aria-label="Score {{ item.score|round|int }}{% if parts %} · led by {{ (parts|sort(attribute='value')|last).label }}{% endif %}"
-      title="Score {{ item.score|round|int }}{% for part in parts %} · {{ part.label }} {{ part.value }}{% endfor %}">
-  <span class="score-pie"{% if ns.stops %} style="background: conic-gradient({{ ns.stops|join(', ') }})"{% endif %}></span>
+      aria-label="Score {{ item.score|round|int }}{% if ns.positives %} · led by {{ (ns.positives|sort(attribute='value')|last).label }}{% endif %}"
+      title="Score {{ item.score|round|int }}{% for part in ns.parts %} · {{ part.label }} {{ '+' if part.value >= 0 else '' }}{{ part.value }}{% endfor %}">
+  <span class="score-pie"{% if ns2.stops %} style="background: conic-gradient({{ ns2.stops|join(', ') }})"{% endif %}></span>
 </span>
 {%- endif -%}
 {%- endmacro %}
@@ -81,7 +99,7 @@
       <div class="asset-quote"><div class="asset-value"><strong data-value>{{ screen.item.value }}</strong><span data-change class="{{ screen.item.tone }}">{{ screen.item.change }}</span></div><p class="quote-scope">{% if screen.market != 'sports' %}{{ '24h change' if screen.market == 'memecoins' else 'Daily change' }} · {% endif %}<span class="quote-time" data-time>{{ screen.item.time }}</span></p></div></div>
       <section class="visual" aria-label="{{ 'Game' if screen.teams else 'Price history' }}">
       {% if screen.teams %}<div class="teams">{% for team in screen.teams %}<div><span class="team-mark">{{ team.mark }}</span><h2>{{ team.name }}</h2><strong>{{ team.score }}</strong></div>{% endfor %}</div><p class="visual-caption" data-game-note>{{ screen.note }}</p>
-      {% else %}<svg class="price-chart" viewBox="0 0 800 280" role="img" aria-label="Price history" hidden><path class="chart-area"/><path class="chart-line"/><circle class="chart-point" r="4" hidden/></svg><p class="chart-status" data-chart-status>Price history is loading.</p><p class="chart-summary" data-chart-summary></p><div class="chart-labels"><span data-chart-start></span><span data-chart-end></span></div>{% endif %}
+      {% else %}<svg class="price-chart" viewBox="0 0 800 280" role="img" aria-label="Price history" hidden><path class="chart-area"/><path class="chart-line"/><circle class="chart-point" r="4" hidden/></svg><p class="chart-status" data-chart-status>Price history is loading.</p><div class="chart-state-legend" data-chart-state-legend aria-label="Status legend" hidden></div>{% endif %}
       </section>
       {% block detail_map %}{% endblock %}
       {% block detail_metrics %}{% endblock %}
