@@ -253,6 +253,16 @@ def test_stock_search_opens_a_tracked_ticker_outside_the_pulse_board(
     assert "Try another search" not in response.text
 
 
+def test_open_a_ticker_box_redirects_to_the_ticker_page(board_client):
+    response = board_client.get("/t?ticker=aapl", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "/t/AAPL"
+
+    bad = board_client.get("/t?ticker=!!", follow_redirects=False)
+    assert bad.status_code == 404
+
+
 def test_screen_quote_and_chart_keep_provider_details_private(board_client, monkeypatch):
     secret = "private-provider-log"
     monkeypatch.setattr(web_main, "_known_ticker", lambda _: True)

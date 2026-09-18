@@ -4639,15 +4639,15 @@ def _pulse_data_uncached() -> dict[str, Any]:
 
 
 PUBLIC_SCORE_DRIVERS = (
-    ("market", "Market scanner"),
-    ("sec_event", "SEC event"),
+    ("market", "Scan"),
+    ("sec_event", "SEC"),
     ("news", "News"),
-    ("social_search", "Social search"),
+    ("social_search", "Social"),
     ("community", "Community"),
 )
 PUBLIC_SCORE_PENALTIES = (
     ("safety", "Safety"),
-    ("rug", "Rug risk"),
+    ("rug", "Rug"),
     ("state", "State"),
 )
 
@@ -8861,6 +8861,14 @@ def _public_ticker_page_data(ticker: str) -> dict[str, Any]:
         payload["comments"] = comments_for_ticker(ticker)
         payload["comment_count"] = comment_count_for_ticker(ticker)
     return payload
+
+
+@app.get("/t")
+def ticker_search_redirect(ticker: str = "") -> RedirectResponse:
+    """The board's "Open a ticker" box submits here and lands on the ticker page."""
+
+    normalized = _clean_ticker(ticker)
+    return RedirectResponse(f"/t/{normalized}", status_code=307)
 
 
 @app.get("/t/{ticker}", response_class=HTMLResponse)
