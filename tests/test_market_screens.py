@@ -149,6 +149,56 @@ def test_list_exposes_score_and_breakdown_without_internal_fields():
     assert SENTINEL not in html
 
 
+def test_score_pie_shares_the_ring_with_red_penalty_slices():
+    """The list pie reads like the detail map ring: positive drivers and
+    penalties divide the circle by total magnitude, penalties in red."""
+
+    screen = listing("stocks", [scored_stock()])
+    html = render(screen)
+    assert (
+        "conic-gradient(var(--score-market) 0.0% 83.33%, var(--red) 83.33% 100.0%)"
+        in html
+    )
+    assert "Rug risk -12.0" in html
+
+    penalty_only = listing(
+        "stocks",
+        [
+            scored_stock(
+                score=50.0,
+                score_detail={
+                    "score": 50.0,
+                    "drivers": [{"key": "market", "label": "Market scanner", "value": 0.0}],
+                    "penalties": [{"key": "rug", "label": "Rug risk", "value": -12.0}],
+                },
+            )
+        ],
+    )
+    assert "conic-gradient(var(--red) 0.0% 100.0%)" in render(penalty_only)
+
+
+def test_public_score_detail_uses_short_driver_labels():
+    detail = web._public_score_detail(
+        {
+            "market": 5,
+            "sec_event": 0,
+            "news": 0,
+            "social_search": 0,
+            "community": 0,
+            "rug": -3,
+        },
+        2,
+    )
+    assert [part["label"] for part in detail["drivers"]] == [
+        "Scan",
+        "SEC",
+        "News",
+        "Social",
+        "Community",
+    ]
+    assert [part["label"] for part in detail["penalties"]] == ["Rug"]
+
+
 def test_memecoin_pause_state_gets_a_tag():
     screen = listing("memecoins", [{**sample("memecoins"), "stale": True}])
     assert screen["rows"][0]["tag"] == "PAUSED"
@@ -268,6 +318,59 @@ def test_stock_detail_orders_chart_unified_score_map_and_comments():
     assert 'class="breakdown"' not in html
     assert "84" in html
     assert "Market scanner" in html
+
+
+def test_stock_detail_shows_the_robinhood_chain_token_and_disclosure():
+    detail_data = {
+        "ticker": "P",
+        "company": "Everpure",
+        "current": {**sample("stocks")},
+    }
+    token = {
+        "symbol": "P",
+        "name": "Everpure • Robinhood Token",
+        "contract_address": "0x1Cdad396DB64BDa184d5182A97Dd9B3C62100b7D",
+        "chain_id": 4663,
+        "multiplier": "1.000000000000000000",
+        "pending_multiplier": "",
+        "status": "active",
+        "logo_url": "",
+        "docs_url": "https://docs.robinhood.com/chain/stock-tokens",
+        "price": {
+            "symbol": "P",
+            "bid": "213.45",
+            "ask": "213.47",
+            "currency": "USD",
+            "volume": "48293710",
+            "halt": False,
+            "as_of": "2026-06-23T15:53:30Z",
+        },
+        "actions": [
+            {
+                "type": "forward_split",
+                "label": "Forward split",
+                "date": "2026-06-15",
+                "status": "completed",
+            }
+        ],
+    }
+    html = _render_template(
+        "simple_stock_detail.html",
+        {"detail": detail_data, "active_call": None, "calls": [], "robinhood_token": token},
+    )
+    assert "Robinhood Chain token" in html
+    assert token["contract_address"] in html
+    assert "Chain" in html and "4663" in html
+    assert "213.45 / 213.47" in html
+    assert "Forward split (2026-06-15)" in html
+    assert "not the underlying stock" in html
+    assert token["docs_url"] in html
+
+    plain = _render_template(
+        "simple_stock_detail.html",
+        {"detail": detail_data, "active_call": None, "calls": []},
+    )
+    assert "Robinhood Chain token" not in plain
 
 
 def test_search_applies_to_map_and_list():

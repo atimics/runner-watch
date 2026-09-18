@@ -259,6 +259,7 @@ from runner_web.request_security import (
 )
 from runner_web.research_context import build_research_context, research_evidence_metrics
 from runner_web.research_pipeline import verified_public_citations
+from runner_web.robinhood_chain import stock_token
 from runner_web.sectors import refresh_company_sectors
 from runner_web.shared_state import (
     acknowledge_research_job,
@@ -4638,15 +4639,15 @@ def _pulse_data_uncached() -> dict[str, Any]:
 
 
 PUBLIC_SCORE_DRIVERS = (
-    ("market", "Market scanner"),
-    ("sec_event", "SEC event"),
+    ("market", "Scan"),
+    ("sec_event", "SEC"),
     ("news", "News"),
-    ("social_search", "Social search"),
+    ("social_search", "Social"),
     ("community", "Community"),
 )
 PUBLIC_SCORE_PENALTIES = (
     ("safety", "Safety"),
-    ("rug", "Rug risk"),
+    ("rug", "Rug"),
     ("state", "State"),
 )
 
@@ -7492,6 +7493,10 @@ def runners_board_response(
     while page.get("has_more") and page["rows"]:
         page = _public_pulse_data(offset=len(rows), limit=50)
         rows.extend(page["rows"])
+    query = request.query_params.get("q", "")
+    direct = _direct_ticker_item(query, rows)
+    if direct is not None:
+        rows.append(direct)
     tickers = [str(item.get("ticker") or "").upper() for item in rows if item.get("ticker")]
     stories = stories_by_subject("stocks", tickers)
     return _simple_board(
@@ -7500,7 +7505,7 @@ def runners_board_response(
         "stocks",
         rows,
         view,
-        request.query_params.get("q", ""),
+        query,
         updated_at=str(page.get("updated_at") or ""),
         stories=stories,
     )
@@ -8187,6 +8192,28 @@ def _ticker_exists(ticker: str) -> bool:
             ).fetchone()
             is not None
         )
+
+
+def _direct_ticker_item(query: str, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Search opens any tracked ticker, not only the tickers on the pulse board."""
+
+    candidate = str(query or "").strip().upper().replace(".", "-")
+    if not candidate or not TICKER_RE.fullmatch(candidate):
+        return None
+    existing = {str(item.get("ticker") or "").upper().replace(".", "-") for item in rows}
+    if candidate in existing or not _ticker_exists(candidate):
+        return None
+    try:
+        detail = _public_ticker_detail_data(candidate)
+    except Exception:  # noqa: BLE001 - a search fallback must never break the board
+        LOG.exception("Direct ticker search failed for %s", candidate)
+        return None
+    if detail is None:
+        return None
+    item = dict(detail.get("current") or {})
+    item["ticker"] = candidate
+    item["company"] = detail.get("company")
+    return item
 
 
 def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
@@ -8896,6 +8923,7 @@ def ticker_page(
             ),
             comment_generation_enabled=_flash_provider_ready(),
             active_tab="pulse",
+            robinhood_token=stock_token(normalized),
         ),
     )
 

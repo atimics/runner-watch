@@ -109,7 +109,8 @@ operations token and invite codes before the first production deploy.
 **Feature switches** default to off and are turned on per environment:
 `DISCOVERY_SOURCES_ENABLED`, `SPORTS_INGESTION_ENABLED`, `ODDS_API_ENABLED`,
 `SEC`/`HOUSE_DISCLOSURES_ENABLED`, `MEMECOINS_ENABLED`,
-`FINTEL_SHORT_DATA_ENABLED`, `TELEGRAM_*_ALERTS`, and the `RANKER_*` training
+`FINTEL_SHORT_DATA_ENABLED`, `ROBINHOOD_CHAIN_ENABLED` (read-only Stock Token
+metadata on the stock detail), `TELEGRAM_*_ALERTS`, and the `RANKER_*` training
 knobs. Budget caps and intervals (`HELIUS_DAILY_CREDITS`,
 `ODDS_API_MONTHLY_WORKING_LIMIT`, `BACKGROUND_SCAN_INTERVAL_SECONDS`, …) are
 documented in the module that owns them.

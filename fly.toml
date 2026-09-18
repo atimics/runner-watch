@@ -87,6 +87,7 @@ kill_timeout = 30
   NASDAQ_TRADE_HALTS_ENABLED = "true"
   HOUSE_DISCLOSURES_ENABLED = "true"
   SEC_USER_AGENT = "RATi-Runners/0.3 https://runners.rati.chat"
+  ROBINHOOD_CHAIN_ENABLED = "1"
 
 [http_service]
   internal_port = 8080
