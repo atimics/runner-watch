@@ -527,7 +527,7 @@ def test_own_call_record_survives_close_and_reload(calls_db, monkeypatch, market
         monkeypatch.setattr(web_main, "_known_ticker", lambda *a: True)
         monkeypatch.setattr(web_main, "ticker_detail_data", lambda *a: data)
         monkeypatch.setattr(web_main, "_public_ticker_detail_data", lambda *a: data)
-        monkeypatch.setattr(web_main, "ticker_quote", lambda *a: {})
+        monkeypatch.setattr(web_main, "ticker_quote", lambda *a, **k: {})
         monkeypatch.setattr(
             web_main,
             "market_mark",

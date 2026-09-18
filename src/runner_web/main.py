@@ -4394,11 +4394,23 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
         ).fetchall()
         filing_rows = db.execute(
             f"""
-            SELECT f.*,o.return_1h_pct,o.return_1d_pct,o.return_5d_pct
-            FROM sec_filings f
-            LEFT JOIN sec_outcomes o ON o.accession=f.accession
-            WHERE f.created_at>? {"AND f.ticker=?" if ticker is not None else ""}
-            ORDER BY f.score DESC,f.filed_at DESC
+            SELECT * FROM (
+                SELECT f.*,o.return_1h_pct,o.return_1d_pct,o.return_5d_pct,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY f.ticker ORDER BY f.score DESC,f.filed_at DESC
+                       ) AS ticker_row
+                FROM sec_filings f
+                LEFT JOIN sec_outcomes o ON o.accession=f.accession
+                WHERE f.created_at>? {"AND f.ticker=?" if ticker is not None else ""}
+            ) ranked WHERE ticker_row=1
+            """,
+            (event_cutoff, *ticker_params),
+        ).fetchall()
+        filing_count_rows = db.execute(
+            f"""
+            SELECT ticker,COUNT(*) AS filing_count FROM sec_filings
+            WHERE created_at>? {"AND ticker=?" if ticker is not None else ""}
+            GROUP BY ticker
             """,
             (event_cutoff, *ticker_params),
         ).fetchall()
@@ -4407,9 +4419,9 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
     filing_counts: dict[str, int] = {}
     for raw in filing_rows:
         event = _intelligence_evidence(dict(raw))
-        ticker = event["ticker"]
-        filing_counts[ticker] = filing_counts.get(ticker, 0) + 1
-        filings_by_ticker.setdefault(ticker, event)
+        filings_by_ticker[event["ticker"]] = event
+    for raw in filing_count_rows:
+        filing_counts[str(raw["ticker"])] = int(raw["filing_count"] or 0)
 
     predictions: dict[str, dict[str, Any]] = {}
     for raw in prediction_rows:
@@ -8944,7 +8956,7 @@ def screen_detail_state(
         data = _public_ticker_detail_data(subject)
         if data is None:
             raise HTTPException(404, "Ticker not found")
-        current = {**data.get("current", {}), **(ticker_quote(subject) or {})}
+        current = {**data.get("current", {}), **(ticker_quote(subject, refresh=False) or {})}
         mark = market_mark(subject, refresh=False)
         if mark:
             current.update(price=mark["price"], quote_time=mark["observed_at"])
