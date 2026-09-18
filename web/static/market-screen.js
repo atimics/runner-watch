@@ -91,7 +91,6 @@
     const money = value => '$' + value.toLocaleString('en-US', value < 1 ? {maximumSignificantDigits: 6} : {minimumFractionDigits: 2, maximumFractionDigits: 6});
     const label = t => new Date(t).toLocaleString('en-US', {year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'UTC'}) + ' UTC';
     const dot = chart.querySelector('.chart-point');
-    put('[data-chart-start]', ''); put('[data-chart-end]', ''); put('[data-chart-summary]', '');
     if (!data.length) {
       status.hidden = false; status.textContent = 'Price history will appear here.';
       chart.setAttribute('hidden', ''); chart.setAttribute('aria-label', 'Price history is pending.'); return;
@@ -101,9 +100,6 @@
     const first = data[0][1], last = data[data.length-1][1];
     const move = ((last / first - 1) * 100).toLocaleString('en-US', {signDisplay:'always', maximumFractionDigits:6});
     const summary = data.length === 1 ? `One saved price: ${money(first)}` : `${money(first)} → ${money(last)} · ${move}%`;
-    put('[data-chart-summary]', summary);
-    put('[data-chart-start]', label(start));
-    if (data.length > 1) put('[data-chart-end]', label(end));
     chart.setAttribute('aria-label', `Price history: ${summary}. ${label(start)}${data.length > 1 ? ' to ' + label(end) : ''}.`);
     const coords = data.map(p=>[end===start ? 400 : 8 + (p[0]-start)/(end-start)*784, high===low ? 140 : 260-(p[1]-low)/(high-low)*240]);
     const line = coords.map((p,i)=>`${i?'L':'M'}${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ');

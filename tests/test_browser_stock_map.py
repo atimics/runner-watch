@@ -63,6 +63,7 @@ def map_payload():
 
 def open_map(page: Page, width=1280, *, current=None, map_handler=None):
     page.set_viewport_size({"width": width, "height": 900})
+    page.emulate_media(reduced_motion="reduce")
     request = _request()
     detail = {
         "ticker": "TEST",
@@ -116,15 +117,14 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width):
     page.on("pageerror", lambda e: errors.append(str(e)))
     open_map(page, width)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-    expect(page.get_by_role("heading", name="TEST map", exact=True)).to_be_visible()
+    expect(page.locator("[data-map-graph]")).to_be_visible()
     expect(page.locator("[data-person]")).to_have_count(4 if width <= 500 else 8)
     expect(page.locator("[data-map-selection] h3")).to_have_text("45")
     expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
     expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(0)
+    expect(page.locator("[data-map-events]")).to_be_visible()
     expect(page.locator(".chart-filing-marker")).to_have_count(0)
     expect(page.locator("[data-map-score-return]")).to_be_hidden()
-    expect(page.locator(".map-filings")).not_to_have_attribute("open", "")
-    expect(page.locator("[data-map-events]")).to_be_hidden()
     bubble = page.locator("[data-person]").first
     name = bubble.get_attribute("aria-label").split(":")[0]
     bubble.focus()
@@ -138,59 +138,40 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width):
     expect(page.locator(".chart-filing-marker")).to_have_count(1)
     page.get_by_role("button", name="Next people").click()
     expect(page.locator("[data-person]")).to_have_count(4 if width <= 500 else 3)
-    page.locator("[data-map-list-title]").click()
-    page.get_by_role("combobox", name="Filter reported action").select_option("Sold")
-    expect(page.locator("[data-map-events] button")).to_have_count(3)
-    expect(page.locator("[data-map-events]")).to_be_visible()
+    page.get_by_role("button", name="Next filings").click()
+    expect(page.locator("[data-map-filings-page]")).to_have_text("6–10 of 11")
     page.locator("[data-map-events] button").first.click()
     expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
-    page.locator("[data-map-list-title]").press("Enter")
-    expect(page.locator("[data-map-events]")).to_be_hidden()
-    expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
-    page.locator("[data-map-list-title]").press("Space")
-    expect(page.locator("[data-map-events]")).to_be_visible()
-    expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(1)
     assert not errors
 
 
-def test_filing_time_excludes_later_disclosures_and_preserves_loaded_history(page):
+def _oldest_filing(page: Page) -> None:
+    for _ in range(3):
+        button = page.get_by_role("button", name="Next filings")
+        if button.is_disabled():
+            break
+        button.click()
+
+
+def test_clicking_a_filing_scrubs_the_map(page):
+    """The list is the scrubber: clicking a filing moves the map to the
+    people and events known by that filing's date, and the ring stays put."""
+
     open_map(page)
     geometry = page.locator(".map-score-segment").evaluate_all(
         "segments => segments.map(segment => segment.getAttribute('d'))"
     )
-    timestamp = page.locator("[data-map-score-time]").text_content()
-    page.locator("[data-person]").first.press("Enter")
+    expect(page.locator("[data-person]")).to_have_count(8)
+    _oldest_filing(page)
+    expect(page.locator("[data-map-filings-page]")).to_have_text("11–11 of 11")
+    oldest = page.locator("[data-map-events] button").last
+    oldest.click()
+    expect(oldest).to_have_attribute("aria-pressed", "true")
+    expect(page.locator("[data-person]")).to_have_count(1)
+    expect(page.locator("[data-map-page]")).to_have_text("1–1 of 1 people")
+    expect(page.locator("[data-map-paging]")).to_be_hidden()
     expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
-    slider = page.get_by_role("slider", name="Filings known by")
-    slider.focus()
-    slider.press("Home")
-    expect(page.locator("[data-map-events] button")).to_have_count(1)
-    expect(page.locator("[data-map-selection] h3")).to_have_text("45")
-    expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(0)
-    expect(page.locator(".chart-filing-marker")).to_have_count(0)
-    expect(page.locator(".map-center-score")).to_have_text("45")
-    expect(page.locator("[data-map-score-time]")).to_have_text(timestamp)
-    assert (
-        page.locator(".map-score-segment").evaluate_all(
-            "segments => segments.map(segment => segment.getAttribute('d'))"
-        )
-        == geometry
-    )
-    page.get_by_role("button", name="Load older filings").click()
-    expect(page.locator("[data-map-coverage]")).to_contain_text("12 filings")
-    expect(page.locator("[data-map-events] button")).to_have_count(2)
-    expect(page.locator("[data-map-time]")).to_have_text("Sep 1, 2026")
-    page.get_by_role("button", name="Latest", exact=True).click()
-    expect(page.locator("[data-map-filings-page]")).to_have_text("1–5 of 12")
-    page.locator(".map-filings>summary").click()
-    expect(page.locator("[data-map-events]")).to_be_visible()
-    page.get_by_role("button", name="Next filings").click()
-    expect(page.locator("[data-map-filings-page]")).to_have_text("6–10 of 12")
-    page.get_by_role("button", name="Next filings").click()
-    expect(page.locator("[data-map-filings-page]")).to_have_text("11–12 of 12")
-    expect(page.get_by_role("button", name="Load older filings")).to_be_hidden()
-    expect(page.locator(".map-center-score")).to_have_text("45")
-    expect(page.locator("[data-map-score-time]")).to_have_text(timestamp)
+    expect(page.locator(".chart-filing-marker")).to_have_count(1)
     assert (
         page.locator(".map-score-segment").evaluate_all(
             "segments => segments.map(segment => segment.getAttribute('d'))"
@@ -198,17 +179,14 @@ def test_filing_time_excludes_later_disclosures_and_preserves_loaded_history(pag
         == geometry
     )
 
-    page.locator("[data-person]").first.press("Enter")
-    expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
+    page.get_by_role("button", name="Load older filings").click()
+    expect(page.locator("[data-map-filings-page]")).to_have_text("11–12 of 12")
+    expect(page.locator("[data-person]")).to_have_count(1)
+
     page.get_by_role("button", name="Return to score overview").click()
     expect(page.locator("[data-map-selection] h3")).to_have_text("45")
     expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(0)
-    page.locator(".map-filings[open] [data-map-events] button").first.click()
-    expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
-    expect(page.locator("[data-map-score-return]")).to_be_visible()
-    page.keyboard.press("Escape")
-    expect(page.locator("[data-map-selection] h3")).to_have_text("45")
-    page.locator("[data-map-list-title]").click()
+    expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
 
 
 @pytest.mark.parametrize("width", [320, 390, 1280])
@@ -344,7 +322,6 @@ def test_risk_hover_and_pin_share_filing_selection(page, width, key, label, brea
     expect(page.locator(".chart-filing-marker")).to_have_count(0)
     page.get_by_role("button", name="Next people").click()
     expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
-    page.locator(".map-filings>summary").click()
     page.get_by_role("button", name="Next filings").click()
     expect(page.locator("[data-map-filings-page]")).to_have_text("6–10 of 11")
     expect(risk).to_have_attribute("aria-pressed", "true")
@@ -383,7 +360,9 @@ def test_pending_empty_and_failed_filings_keep_score_rendered(page, response):
     expect(page.locator("[data-map-selection] h3")).to_have_text("45")
     expect(page.locator(".map-score-segment")).to_have_count(5)
     expect(page.locator("[data-person]")).to_have_count(0)
-    expect(page.locator("[data-map-time-slider]")).to_be_disabled()
+    expect(page.locator("[data-map-events] .map-note")).to_have_text(
+        "Saved filings will appear here."
+    )
     if response == "error":
         page.route("**/api/stocks/TEST/map", lambda route: route.fulfill(json=map_payload()))
         page.get_by_role("button", name="Retry loading filings").click()
@@ -407,12 +386,6 @@ def test_missing_and_zero_score_are_graceful(page, score, breakdown):
     expect(page.locator("[data-map-selection]")).to_contain_text(
         "Score breakdown unavailable." if breakdown is None else "No positive contributions."
     )
-    if score is None:
-        expect(page.locator("[data-map-score-time]")).to_contain_text("Timestamp unavailable")
-    else:
-        expect(page.locator("[data-map-score-time] time")).to_have_attribute(
-            "datetime", "2026-09-12T18:00:00+00:00"
-        )
     expect(page.locator("[data-stock-map]")).not_to_contain_text(re.compile("NaN|Infinity"))
     page.locator("[data-person]").first.press("Enter")
     expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
@@ -469,13 +442,13 @@ def test_score_keyboard_navigation_and_pin_survive_filing_scrub(page, key, score
     segment.press(key)
     expect(segment).to_be_focused()
     expect(segment).to_have_attribute("aria-pressed", "true")
-    page.get_by_role("slider", name="Filings known by").press("Home")
+    _oldest_filing(page)
+    page.locator("[data-map-events] button").last.click()
     expect(segment).to_have_attribute("aria-pressed", "true")
-    expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
+    expect(page.locator(".map-score-segment[aria-pressed=true]")).to_have_count(1)
     page.get_by_role("button", name="Load older filings").click()
-    expect(page.locator("[data-map-coverage]")).to_contain_text("12 filings")
+    expect(page.locator("[data-map-events] button")).to_have_count(2)
     expect(segment).to_have_attribute("aria-pressed", "true")
-    expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
     page.locator("[data-map-score-center]").press(key)
     expect(page.locator("[data-map-score-center]")).to_be_focused()
     expect(segment).to_have_attribute("aria-pressed", "false")
@@ -575,7 +548,6 @@ def test_polling_preserves_risk_pin_and_clears_missing_risk(page, width, key, re
             page.clock.fast_forward(60000)
         expect(page.locator(".map-center-score")).to_have_text(str(score))
 
-    page.locator(".map-filings>summary").click()
     page.get_by_role("button", name="Next filings").click()
     page.get_by_role("button", name="Next people").click()
     people_page = page.locator("[data-map-page]").text_content()
@@ -634,7 +606,6 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
     page.clock.install()
     initial_time = "2026-09-13T19:00:00+00:00"
     open_map(page, width, current=score_current(score_as_of=initial_time))
-    expect(page.locator("[data-map-score-time] time")).to_have_attribute("datetime", initial_time)
     screen = page.locator("#screenData").evaluate("node => JSON.parse(node.textContent)")
     screen["series"] = [
         {"time": f"2026-09-{day:02}T18:00:00Z", "value": day + 2} for day in range(1, 12)
@@ -653,12 +624,7 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
         page.wait_for_function("count => window.detailUpdates > count", arg=updates)
 
     page.get_by_role("button", name="Load older filings").click()
-    expect(page.locator("[data-map-coverage]")).to_contain_text("12 filings")
-    slider = page.get_by_role("slider", name="Filings known by")
-    slider.press("End")
-    slider.press("ArrowLeft")
-    cutoff = slider.input_value()
-    filing_time = page.locator("[data-map-time]").text_content()
+    page.get_by_role("button", name="Next filings").click()
     page.get_by_role("button", name="Next people").click()
     pagination = page.locator("[data-map-page]").text_content()
     person = page.locator("[data-person]").first
@@ -690,8 +656,6 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
     expect(page.locator(".chart-filing-marker")).to_have_count(1)
     assert page.evaluate("window.savedPerson === document.querySelector('[data-person]')")
     expect(page.locator("[data-map-page]")).to_have_text(pagination)
-    assert slider.input_value() == cutoff
-    expect(page.locator("[data-map-time]")).to_have_text(filing_time)
     expect(page.locator("[data-map-load]")).to_be_hidden()
     social = page.locator('[data-score-key="social_search"]')
     market = page.locator('[data-score-key="market"]')
@@ -723,11 +687,7 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
     expect(penalty).to_have_count(1)
     expect(page.locator(".map-score-penalty-arc")).to_have_count(0)
     assert penalty.evaluate("el => getComputedStyle(el).stroke") == "rgb(239, 153, 164)"
-    expect(page.locator("[data-map-score-time] time")).to_have_attribute(
-        "datetime", screen["item"]["score_as_of"]
-    )
     expect(page.locator("[data-map-page]")).to_have_text(pagination)
-    assert slider.input_value() == cutoff
     page.evaluate("window.savedSegment = document.querySelector('[data-score-key]')")
     screen["item"]["value"] = "$999.00"
     poll()
@@ -736,9 +696,6 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
     expect(social).to_be_focused()
     screen["item"]["score_as_of"] = "2026-09-16T22:00:00+00:00"
     poll()
-    expect(page.locator("[data-map-score-time] time")).to_have_attribute(
-        "datetime", screen["item"]["score_as_of"]
-    )
     assert page.evaluate("window.savedSegment === document.querySelector('[data-score-key]')")
     screen["item"].update(id="OTHER", score=99, value="$123.00")
     updates = page.evaluate("window.detailUpdates")
@@ -761,7 +718,6 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
     expect(page.locator("[data-map-score-center]")).to_be_focused()
     expect(page.locator(".map-score-segment")).to_have_count(0)
     expect(page.locator("[data-map-selection]")).to_contain_text("Score breakdown unavailable.")
-    expect(page.locator("[data-map-score-time]")).to_contain_text("Timestamp unavailable")
     expect(page.locator("[data-map-score-return]")).to_be_hidden()
     screen["item"].update(score=0, score_detail={"drivers": [None], "penalties": None})
     poll()
@@ -769,3 +725,37 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
     expect(page.locator("[data-map-selection]")).to_contain_text("No positive contributions.")
     expect(page.locator("[data-stock-map]")).not_to_contain_text(re.compile("NaN|Infinity"))
     assert not errors
+
+
+def _record_phases(page: Page) -> None:
+    page.evaluate("""() => {
+        window.mapPhases = [];
+        const graph = document.querySelector('[data-map-graph]');
+        new MutationObserver(() => window.mapPhases.push(graph.dataset.phase))
+            .observe(graph, {attributes: true, attributeFilter: ['data-phase']});
+    }""")
+
+
+def test_scrubbing_a_filing_animates_the_people(page):
+    open_map(page)
+    page.emulate_media(reduced_motion="no-preference")
+    _record_phases(page)
+    graph = page.locator("[data-map-graph]")
+    expect(graph).to_have_attribute("data-phase", "settled")
+    _oldest_filing(page)
+    page.locator("[data-map-events] button").last.click()
+    expect(graph).to_have_attribute("data-phase", "settled")
+    assert "moving" in page.evaluate("window.mapPhases")
+    expect(page.locator("[data-person]")).to_have_count(1)
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_reduced_motion_scrubs_without_animation(page, width):
+    open_map(page, width)
+    _record_phases(page)
+    graph = page.locator("[data-map-graph]")
+    _oldest_filing(page)
+    page.locator("[data-map-events] button").last.click()
+    expect(graph).to_have_attribute("data-phase", "settled")
+    assert "moving" not in page.evaluate("window.mapPhases")
+

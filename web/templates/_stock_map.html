@@ -1,18 +1,13 @@
-<section class="ticker-map" id="ticker-map" data-stock-map data-ticker="{{ detail.ticker }}" aria-labelledby="stockMapTitle">
-  <header class="map-heading"><div><p class="eyebrow">SCORE · PEOPLE &amp; FILINGS</p><h2 id="stockMapTitle">{{ detail.ticker }} map</h2></div></header>
-  <p class="map-note" data-map-score-time>Current score · {% set score_at = screen.item.score_as_of or detail.current.get('captured_at') or detail.current.get('event_at') %}{% if score_at and screen.item.score is not none %}As of <time datetime="{{ score_at }}">{{ score_at }}</time>{% else %}Timestamp unavailable{% endif %}.</p>
+<section class="ticker-map" id="ticker-map" data-stock-map data-ticker="{{ detail.ticker }}" aria-label="{{ detail.ticker }} score, people and filings">
   <p class="map-status" role="status" data-map-status>Loading…</p>
   <div class="map-workspace">
-    <div class="map-canvas"><svg viewBox="0 0 760 440" data-map-graph role="group" aria-label="Current score and people linked to {{ detail.ticker }}"></svg><div class="map-paging" data-map-paging><button type="button" data-map-previous aria-label="Previous people">←</button><span data-map-page></span><button type="button" data-map-next aria-label="Next people">→</button></div></div>
+    <div class="map-canvas"><svg viewBox="0 0 760 440" data-map-graph data-phase="settled" role="group" aria-label="Current score and people linked to {{ detail.ticker }}"></svg><div class="map-paging" data-map-paging><button type="button" data-map-previous aria-label="Previous people">←</button><span data-map-page></span><button type="button" data-map-next aria-label="Next people">→</button></div></div>
     <aside class="map-source" aria-label="Score or selected filing"><button class="map-score-return" type="button" data-map-score-return hidden>← Return to score overview</button><div data-map-selection aria-live="polite" aria-atomic="true"><h3 class="map-score-heading">{{ screen.item.score|round|int if screen.item.score is not none else '—' }}</h3></div></aside>
   </div>
-  <div class="map-timebar"><label for="stockMapTime">Filings known by <strong data-map-time>Latest saved filing</strong></label><input type="range" id="stockMapTime" data-map-time-slider min="0" max="0" value="0" disabled><button type="button" data-map-latest>Latest</button></div>
-  <details class="map-filings"><summary data-map-list-title>Reported filings</summary>
-    <div class="map-activity-heading"><label class="sr-only" for="mapActionFilter">Action</label><select id="mapActionFilter" data-map-filter aria-label="Filter reported action"><option value="all">All actions</option><option value="Bought">Bought</option><option value="Sold">Sold</option><option value="other">Other actions</option></select></div>
-    <div class="map-event-list" data-map-events aria-label="Reported events"></div>
+  <div class="map-filings">
+    <div class="map-event-list" data-map-events aria-label="Reported filings"></div>
     <div class="map-paging map-filings-paging" data-map-filings-paging><button type="button" data-map-filings-previous aria-label="Previous filings">←</button><span data-map-filings-page></span><button type="button" data-map-filings-next aria-label="Next filings">→</button></div>
-    <p class="map-note" data-map-coverage></p><p class="map-note" data-map-ownership-note hidden>Ownership is reported for each person and share class. Shared interests can overlap. Each filing has its own as-of date.</p>
-  </details>
+  </div>
   <button class="map-load" type="button" data-map-load hidden>Load older filings</button>
   <noscript><p>Enable JavaScript to explore this ticker’s map.</p>{% if detail.events %}<h3>SEC filings</h3>{% for event in detail.events %}<p><a href="{{ event.filing_url }}" target="_blank" rel="noopener noreferrer">{{ event.form }} · {{ event.filed_at[:10] }} ↗</a> <span>{{ event.kind }}</span></p>{% endfor %}{% endif %}</noscript>
 </section>
