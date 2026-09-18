@@ -7493,6 +7493,10 @@ def runners_board_response(
     while page.get("has_more") and page["rows"]:
         page = _public_pulse_data(offset=len(rows), limit=50)
         rows.extend(page["rows"])
+    query = request.query_params.get("q", "")
+    direct = _direct_ticker_item(query, rows)
+    if direct is not None:
+        rows.append(direct)
     tickers = [str(item.get("ticker") or "").upper() for item in rows if item.get("ticker")]
     stories = stories_by_subject("stocks", tickers)
     return _simple_board(
@@ -7501,7 +7505,7 @@ def runners_board_response(
         "stocks",
         rows,
         view,
-        request.query_params.get("q", ""),
+        query,
         updated_at=str(page.get("updated_at") or ""),
         stories=stories,
     )
@@ -8188,6 +8192,28 @@ def _ticker_exists(ticker: str) -> bool:
             ).fetchone()
             is not None
         )
+
+
+def _direct_ticker_item(query: str, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Search opens any tracked ticker, not only the tickers on the pulse board."""
+
+    candidate = str(query or "").strip().upper().replace(".", "-")
+    if not candidate or not TICKER_RE.fullmatch(candidate):
+        return None
+    existing = {str(item.get("ticker") or "").upper().replace(".", "-") for item in rows}
+    if candidate in existing or not _ticker_exists(candidate):
+        return None
+    try:
+        detail = _public_ticker_detail_data(candidate)
+    except Exception:  # noqa: BLE001 - a search fallback must never break the board
+        LOG.exception("Direct ticker search failed for %s", candidate)
+        return None
+    if detail is None:
+        return None
+    item = dict(detail.get("current") or {})
+    item["ticker"] = candidate
+    item["company"] = detail.get("company")
+    return item
 
 
 def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
