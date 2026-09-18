@@ -177,6 +177,28 @@ def test_score_pie_shares_the_ring_with_red_penalty_slices():
     assert "conic-gradient(var(--red) 0.0% 100.0%)" in render(penalty_only)
 
 
+def test_public_score_detail_uses_short_driver_labels():
+    detail = web._public_score_detail(
+        {
+            "market": 5,
+            "sec_event": 0,
+            "news": 0,
+            "social_search": 0,
+            "community": 0,
+            "rug": -3,
+        },
+        2,
+    )
+    assert [part["label"] for part in detail["drivers"]] == [
+        "Scan",
+        "SEC",
+        "News",
+        "Social",
+        "Community",
+    ]
+    assert [part["label"] for part in detail["penalties"]] == ["Rug"]
+
+
 def test_memecoin_pause_state_gets_a_tag():
     screen = listing("memecoins", [{**sample("memecoins"), "stale": True}])
     assert screen["rows"][0]["tag"] == "PAUSED"
@@ -314,6 +336,23 @@ def test_stock_detail_shows_the_robinhood_chain_token_and_disclosure():
         "status": "active",
         "logo_url": "",
         "docs_url": "https://docs.robinhood.com/chain/stock-tokens",
+        "price": {
+            "symbol": "P",
+            "bid": "213.45",
+            "ask": "213.47",
+            "currency": "USD",
+            "volume": "48293710",
+            "halt": False,
+            "as_of": "2026-06-23T15:53:30Z",
+        },
+        "actions": [
+            {
+                "type": "forward_split",
+                "label": "Forward split",
+                "date": "2026-06-15",
+                "status": "completed",
+            }
+        ],
     }
     html = _render_template(
         "simple_stock_detail.html",
@@ -322,6 +361,8 @@ def test_stock_detail_shows_the_robinhood_chain_token_and_disclosure():
     assert "Robinhood Chain token" in html
     assert token["contract_address"] in html
     assert "Chain" in html and "4663" in html
+    assert "213.45 / 213.47" in html
+    assert "Forward split (2026-06-15)" in html
     assert "not the underlying stock" in html
     assert token["docs_url"] in html
 

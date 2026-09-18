@@ -4639,15 +4639,15 @@ def _pulse_data_uncached() -> dict[str, Any]:
 
 
 PUBLIC_SCORE_DRIVERS = (
-    ("market", "Market scanner"),
-    ("sec_event", "SEC event"),
+    ("market", "Scan"),
+    ("sec_event", "SEC"),
     ("news", "News"),
-    ("social_search", "Social search"),
+    ("social_search", "Social"),
     ("community", "Community"),
 )
 PUBLIC_SCORE_PENALTIES = (
     ("safety", "Safety"),
-    ("rug", "Rug risk"),
+    ("rug", "Rug"),
     ("state", "State"),
 )
 
