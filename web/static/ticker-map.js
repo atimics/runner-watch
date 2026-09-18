@@ -55,6 +55,32 @@
   const FILINGS_PAGE_SIZE = 5;
   const ANIMATION_MS = 320;
   const subset = () => events.filter(e => (Date.parse(e.filed_at) || 0) <= cutoff);
+  const STATE_TONES = ['running', 'setup', 'extended', 'avoid', 'watch', 'paused'];
+  const STATE_LABELS = {running:'Running', setup:'Setup', extended:'Extended', avoid:'Avoid', watch:'Watch', paused:'Paused'};
+  let toneFilter = null;
+  function buildStateLegend() {
+    const legend = $('state-legend');
+    if (!legend) return;
+    const tones = new Set();
+    (Array.isArray(initial.states) ? initial.states : []).forEach(change => {
+      const tone = String(change?.tone || '');
+      if (STATE_TONES.includes(tone)) tones.add(tone);
+    });
+    const current = String(item.tag_tone || '');
+    if (STATE_TONES.includes(current)) tones.add(current);
+    legend.replaceChildren();
+    STATE_TONES.filter(tone => tones.has(tone)).forEach(tone => {
+      const button = make('button', STATE_LABELS[tone], `chip chip-${tone}`);
+      button.type = 'button';
+      button.setAttribute('aria-pressed', String(toneFilter === tone));
+      button.addEventListener('click', () => {
+        toneFilter = toneFilter === tone ? null : tone;
+        [...legend.querySelectorAll('button')].forEach(control => control.setAttribute('aria-pressed', String(control === button && toneFilter === tone)));
+        document.dispatchEvent(new CustomEvent('rati:chart-tone', {detail:{tone:toneFilter}}));
+      });
+      legend.append(button);
+    });
+  }
   function scorePanel(part) {
     const panel = $('selection'); panel.replaceChildren();
     panel.append(make('h3', String(score), 'map-score-heading'));
@@ -62,13 +88,6 @@
       panel.append(make('h4', part.label), make('p', `${points(part.value)} · ${percent(part)}`, 'map-score-breakdown'));
       panel.append(make('p', pinned === part.key ? 'Pinned contribution. Return to score overview to clear.' : 'Click or press Enter to pin this contribution.', 'map-note'));
     }
-    const legend = make('ul', null, 'map-score-legend');
-    drivers.filter(driver => driver.value >= 0).forEach(driver => {
-      const row = make('li');
-      const swatch = make('span', null, 'map-score-swatch'); swatch.style.background = color(driver); swatch.setAttribute('aria-hidden', 'true');
-      row.append(swatch, make('span', driver.label), make('strong', points(driver.value))); legend.append(row);
-    });
-    if (legend.children.length) panel.append(legend);
     if (!positive.length) panel.append(make('p', item.score_detail ? 'No positive contributions.' : 'Score breakdown unavailable.', 'map-note'));
     if (penalties.length) {
       const list = make('ul', null, 'map-score-penalties');
@@ -321,6 +340,7 @@
     source(selectedEvent);
     if (focusSelector) (root.querySelector(focusSelector) || ringLayer.querySelector('[data-map-score-center]'))?.focus({preventScroll:true});
   });
+  buildStateLegend();
   render();
   load();
 })();

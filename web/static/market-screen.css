@@ -408,3 +408,10 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
 .flash-release-body>footer{display:flex;align-items:center;justify-content:space-between;margin-top:12px}
 .flash-release-body>footer a{color:var(--muted);font-size:9px;text-decoration:underline;text-underline-offset:3px}
 .flash-release-body>footer button{border-color:var(--line);background:transparent;color:var(--soft)}
+.chart-state-label{font-size:9px;font-weight:800;letter-spacing:.08em;fill:var(--muted)}
+.chart-state-label.state-running{fill:var(--green)}
+.chart-state-label.state-setup{fill:var(--blue)}
+.chart-state-label.state-extended{fill:var(--orange)}
+.chart-state-label.state-avoid{fill:var(--red)}
+.chart-state-label.state-watch{fill:var(--purple)}
+.chart-state-label.state-paused{fill:var(--muted)}
