@@ -260,10 +260,10 @@ def test_score_panel_pins_and_summarizes_positive_drivers_and_penalties(page):
     selection = page.locator("[data-map-selection]")
     expect(selection.locator("h3")).to_have_text("45")
     legend = selection.locator(".map-score-legend li")
-    expect(legend).to_have_count(4)
-    expect(legend.locator("strong")).to_have_text(["+60 pts", "+30 pts", "+10 pts", "0 pts"])
+    expect(legend).to_have_count(3)
+    expect(legend.locator("strong")).to_have_text(["+60 pts", "+30 pts", "+10 pts"])
     expect(legend.locator("span:not([aria-hidden])")).to_have_text(
-        ["Market scanner", "SEC events", "News", "Community"]
+        ["Market scanner", "SEC events", "News"]
     )
     penalties = selection.locator(".map-score-penalties li")
     expect(penalties).to_have_count(2)
