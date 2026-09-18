@@ -518,7 +518,7 @@ def changing_detail(screen_client, monkeypatch):
 
     monkeypatch.setattr(web, "ticker_detail_data", stock_data)
     monkeypatch.setattr(web, "_public_ticker_detail_data", stock_data)
-    monkeypatch.setattr(web, "ticker_quote", lambda *a: {})
+    monkeypatch.setattr(web, "ticker_quote", lambda *a, **k: {})
     monkeypatch.setattr(web, "market_mark", mark)
     monkeypatch.setattr(web, "_current_call_mark", mark)
     monkeypatch.setattr(
