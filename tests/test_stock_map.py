@@ -34,13 +34,8 @@ def score_current(**changes):
 
 
 @pytest.mark.parametrize("score", [45, 0, None])
-@pytest.mark.parametrize("timestamp", ["captured", "event", "missing"])
-def test_unified_score_template_preserves_current_score_and_collapses_filings(score, timestamp):
+def test_unified_score_template_keeps_score_and_lists_filings(score):
     current = score_current(score=score)
-    if timestamp != "captured":
-        current.pop("captured_at")
-    if timestamp == "missing":
-        current.pop("event_at")
     html = _render_template(
         "simple_stock_detail.html",
         {
@@ -57,15 +52,21 @@ def test_unified_score_template_preserves_current_score_and_collapses_filings(sc
     assert f'<h3 class="map-score-heading">{score if score is not None else "—"}</h3>' in html
     assert 'class="metrics"' not in html
     assert 'class="breakdown"' not in html
-    assert re.search(r'<details class="map-filings">', html)
+    assert re.search(r'<div class="map-filings">', html)
     assert "data-map-score-return hidden" in html
     assert 'aria-live="polite" aria-atomic="true"' in html
-    note = re.search(r"<p[^>]*data-map-score-time>(.*?)</p>", html).group(1)
-    expected_time = current.get("captured_at") or current.get("event_at")
-    if expected_time and score is not None:
-        assert f'datetime="{expected_time}"' in note
-    else:
-        assert "Timestamp unavailable" in note
+    for removed in (
+        "data-map-score-time",
+        "data-map-time-slider",
+        "data-map-filter",
+        "data-map-latest",
+        "data-map-coverage",
+        "map-heading",
+        "data-chart-summary",
+        "data-chart-start",
+        "data-chart-end",
+    ):
+        assert removed not in html
     payload = json.loads(re.search(r'id="screenData">(.*?)</script>', html).group(1))
     assert payload["item"]["score"] == score
     assert payload["item"]["score_detail"] == current["score_detail"]

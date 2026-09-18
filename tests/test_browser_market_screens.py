@@ -343,11 +343,13 @@ def test_chart_scopes_magnitude_and_period_separately_from_daily_quote(page, wid
     ]
     page.set_viewport_size({"width": width, "height": 844})
     open_screen(page, screen)
-    expect(page.locator("[data-chart-summary]")).to_contain_text(expected)
-    expect(page.locator("[data-chart-summary]")).to_contain_text("$100.00 →")
-    expect(page.locator(".price-chart")).to_have_attribute(
-        "aria-label", re.compile(expected.replace("+", r"\+") + ".*Sep 10.*Sep 12")
-    )
+    label = page.locator(".price-chart").get_attribute("aria-label")
+    assert "$100.00 →" in label
+    assert expected in label
+    assert "Sep 10" in label and "Sep 12" in label
+    expect(page.locator("[data-chart-summary]")).to_have_count(0)
+    expect(page.locator("[data-chart-start]")).to_have_count(0)
+    expect(page.locator("[data-chart-end]")).to_have_count(0)
     expect(page.locator("[data-change]")).to_have_text("+5.4%")
     expect(page.locator(".quote-scope")).to_contain_text("Daily change")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
@@ -359,17 +361,14 @@ def test_single_chart_point_and_empty_refresh_clear_old_period(page):
     screen["series"] = [{"time": "2026-09-12T12:00:00Z", "value": 0.000018}]
     open_screen(page, screen)
     expect(page.locator(".chart-point")).to_be_visible()
-    expect(page.locator("[data-chart-summary]")).to_have_text("One saved price: $0.000018")
-    expect(page.locator("[data-chart-end]")).to_be_empty()
     expect(page.locator(".price-chart")).to_have_attribute(
-        "aria-label", re.compile("One saved price.*Sep 12")
+        "aria-label", re.compile("One saved price: \\$0\\.000018.*Sep 12")
     )
     screen["series"] = []
     page.unroute("http://app.test/")
     open_screen(page, screen)
-    expect(page.locator("[data-chart-start]")).to_be_empty()
-    expect(page.locator("[data-chart-end]")).to_be_empty()
-    expect(page.locator("[data-chart-summary]")).to_be_empty()
+    expect(page.locator(".price-chart")).to_be_hidden()
+    expect(page.locator("[data-chart-status]")).to_have_text("Price history will appear here.")
 
 
 def test_the_chart_is_drawn_in_the_colours_of_the_action_tag(page: Page):
@@ -397,6 +396,10 @@ def test_the_chart_is_drawn_in_the_colours_of_the_action_tag(page: Page):
     expect(page.locator(".chart-state.state-watch")).to_have_count(1)
     expect(page.locator(".chart-state.state-setup")).to_have_count(1)
     expect(page.locator(".chart-state.state-running")).to_have_count(1)
+    legend = page.locator("[data-chart-state-legend] button")
+    expect(legend).to_have_count(3)
+    expect(legend).to_have_text(["Running", "Setup", "Watch"])
+    expect(page.locator(".chart-state-label")).to_have_count(0)
     # Runs join up rather than leaving a gap at each change.
     watch_end = page.locator(".chart-state.state-watch").get_attribute("d").split("L")[-1]
     setup_start = page.locator(".chart-state.state-setup").get_attribute("d")
@@ -415,6 +418,8 @@ def test_a_chart_without_state_history_keeps_one_plain_line(page: Page):
     open_screen(page, screen)
 
     expect(page.locator(".chart-state")).to_have_count(0)
+    expect(page.locator(".chart-state-label")).to_have_count(0)
+    expect(page.locator("[data-chart-state-legend]")).to_be_hidden()
     assert page.locator(".chart-line").get_attribute("d").startswith("M")
 
 
