@@ -4,7 +4,7 @@
 {% if user or show_ticker_search or show_coin_search %}
 <nav class="account-strip {{ account_product }}-account-strip" aria-label="{{ 'Runners tools' if show_ticker_search else 'Memecoin tools' if show_coin_search else 'Account summary' }}" data-flash-low="{{ 'true' if user and flash_wallet.balance < flash_wallet.report_cost else 'false' }}">
   {% if show_ticker_search %}
-  <form class="account-ticker-search" id="pulseSearch" action="/t" method="get" role="search">
+  <form class="account-ticker-search" id="pulseSearch" role="search">
     <label for="pulseTickerSearch">Open a ticker</label>
     <input id="pulseTickerSearch" name="ticker" type="search" inputmode="latin" autocomplete="off" maxlength="12" pattern="[A-Za-z0-9.-]{1,12}" required title="Enter a ticker using letters, numbers, a dot, or a dash" placeholder="Ticker, e.g. RKLB" aria-label="Ticker symbol">
     <button type="submit" aria-label="View ticker">→</button>

@@ -8863,14 +8863,6 @@ def _public_ticker_page_data(ticker: str) -> dict[str, Any]:
     return payload
 
 
-@app.get("/t")
-def ticker_search_redirect(ticker: str = "") -> RedirectResponse:
-    """The board's "Open a ticker" box submits here and lands on the ticker page."""
-
-    normalized = _clean_ticker(ticker)
-    return RedirectResponse(f"/t/{normalized}", status_code=307)
-
-
 @app.get("/t/{ticker}", response_class=HTMLResponse)
 def ticker_page(
     ticker: str,
