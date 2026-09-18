@@ -72,7 +72,7 @@ jobs:
       actions: read
       contents: read
       security-events: write
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@8e5cf47b818121e8b405931c82126c2630b0b20d
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@8ac9e5ce44cc7178e0e04229a91bdcc003166e57
     with:
       scan-args: |-
         --lockfile=./desktop/pnpm-lock.yaml
@@ -105,7 +105,7 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
         with:
           python-version: "3.13"
           enable-cache: true
