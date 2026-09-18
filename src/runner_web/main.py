@@ -8941,13 +8941,14 @@ def screen_detail_state(
     active = None
     if market == "stocks":
         subject = _clean_ticker(subject)
-        data = ticker_detail_data(subject)
+        data = _public_ticker_detail_data(subject)
         if data is None:
             raise HTTPException(404, "Ticker not found")
         current = {**data.get("current", {}), **(ticker_quote(subject) or {})}
         mark = market_mark(subject, refresh=False)
         if mark:
             current.update(price=mark["price"], quote_time=mark["observed_at"])
+        chart = ticker_chart_detail_payload(subject)
         data = {
             **data,
             "current": current,
@@ -8957,8 +8958,8 @@ def screen_detail_state(
                 current.get("quote_time") or current.get("observed_at") or current.get("event_at"),
                 maximum_age=CALL_MARK_MAX_AGE,
             ),
-            "history": ticker_chart_detail_payload(subject).get("points") or [],
-            "states": ticker_chart_detail_payload(subject).get("states") or [],
+            "history": chart.get("points") or [],
+            "states": chart.get("states") or [],
         }
         if user_id:
             active = active_call_for_user(
@@ -9437,6 +9438,32 @@ def radar_data() -> list[dict[str, Any]]:
     return output
 
 
+def _warm_list_charts() -> None:
+    """Pre-build the board's chart payload and the hottest ticker details.
+
+    Both are expensive and otherwise block the first request after a cold start
+    (the chart payload alone has been observed at ~50s on a cold miss).
+    """
+
+    try:
+        rows = _pulse_base_data().get("rows", [])
+    except Exception:
+        LOG.exception("Startup list warm could not read pulse rows")
+        return
+    tickers = [str(row.get("ticker") or "") for row in rows if row.get("ticker")][:20]
+    if not tickers:
+        return
+    try:
+        ticker_charts_payload(tickers)
+    except Exception:
+        LOG.exception("Startup list chart warm failed")
+    for ticker in tickers[:5]:
+        try:
+            _public_ticker_detail_data(ticker)
+        except Exception:
+            LOG.exception("Startup ticker detail warm failed for %s", ticker)
+
+
 async def request_cache_warmer() -> None:
 
     await asyncio.sleep(1)
@@ -9447,6 +9474,7 @@ async def request_cache_warmer() -> None:
         _public_flash_record_data,
         _public_sports_pulse_data,
         _public_sports_radar_data,
+        _warm_list_charts,
     ]
     try:
         with connection() as database:
