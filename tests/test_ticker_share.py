@@ -141,6 +141,37 @@ def test_ticker_page_advertises_its_card(
     assert '<meta name="description"' in html
 
 
+def test_ticker_page_includes_the_robinhood_chain_token(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "ticker-rh-chain.db")
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_scan_run("ticker-rh-run", captured_at, 1)
+    insert_scored_snapshot("ticker-rh-snapshot", "ticker-rh-run", "ONE", 42, 1, captured_at)
+    token = {
+        "symbol": "ONE",
+        "name": "One Corp • Robinhood Token",
+        "contract_address": "0x1Cdad396DB64BDa184d5182A97Dd9B3C62100b7D",
+        "chain_id": 4663,
+        "multiplier": "1.000000000000000000",
+        "status": "active",
+        "docs_url": "https://docs.robinhood.com/chain/stock-tokens",
+    }
+    monkeypatch.setattr(web_main, "stock_token", lambda ticker: token)
+
+    response = web_main.ticker_page("ONE", _ticker_request("/t/ONE"), None)
+
+    assert response.status_code == 200
+    html = response.body.decode()
+    assert "Robinhood Chain token" in html
+    assert token["contract_address"] in html
+    assert "not the underlying stock" in html
+
+
+
 def test_ticker_card_route_and_meta_are_public() -> None:
     root = Path(__file__).parents[1]
     source = (root / "src/runner_web/main.py").read_text()

@@ -298,6 +298,40 @@ def test_stock_detail_orders_chart_unified_score_map_and_comments():
     assert "Market scanner" in html
 
 
+def test_stock_detail_shows_the_robinhood_chain_token_and_disclosure():
+    detail_data = {
+        "ticker": "P",
+        "company": "Everpure",
+        "current": {**sample("stocks")},
+    }
+    token = {
+        "symbol": "P",
+        "name": "Everpure • Robinhood Token",
+        "contract_address": "0x1Cdad396DB64BDa184d5182A97Dd9B3C62100b7D",
+        "chain_id": 4663,
+        "multiplier": "1.000000000000000000",
+        "pending_multiplier": "",
+        "status": "active",
+        "logo_url": "",
+        "docs_url": "https://docs.robinhood.com/chain/stock-tokens",
+    }
+    html = _render_template(
+        "simple_stock_detail.html",
+        {"detail": detail_data, "active_call": None, "calls": [], "robinhood_token": token},
+    )
+    assert "Robinhood Chain token" in html
+    assert token["contract_address"] in html
+    assert "Chain" in html and "4663" in html
+    assert "not the underlying stock" in html
+    assert token["docs_url"] in html
+
+    plain = _render_template(
+        "simple_stock_detail.html",
+        {"detail": detail_data, "active_call": None, "calls": []},
+    )
+    assert "Robinhood Chain token" not in plain
+
+
 def test_search_applies_to_map_and_list():
     for view in ["list", "map"]:
         assert len(listing("stocks", [sample("stocks")], query="opko", view=view)["rows"]) == 1
