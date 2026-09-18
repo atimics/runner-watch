@@ -61,7 +61,7 @@ def map_payload():
     }
 
 
-def open_map(page: Page, width=1280, *, current=None, map_handler=None):
+def open_map(page: Page, width=1280, *, current=None, map_handler=None, states=None, history=None):
     page.set_viewport_size({"width": width, "height": 900})
     page.emulate_media(reduced_motion="reduce")
     request = _request()
@@ -71,10 +71,15 @@ def open_map(page: Page, width=1280, *, current=None, map_handler=None):
         "current": score_current() if current is None else current,
         "events": [],
     }
+    if states is not None:
+        detail["states"] = states
+    if history is not None:
+        detail["history"] = history
     screen = main.simple_market_detail("stocks", detail)
-    screen["series"] = [
-        {"time": f"2026-09-{day:02}T18:00:00Z", "value": day + 2} for day in range(1, 12)
-    ]
+    if history is None:
+        screen["series"] = [
+            {"time": f"2026-09-{day:02}T18:00:00Z", "value": day + 2} for day in range(1, 12)
+        ]
     html = main.templates.TemplateResponse(
         request,
         "simple_stock_detail.html",
@@ -95,7 +100,10 @@ def open_map(page: Page, width=1280, *, current=None, map_handler=None):
     page.route(
         "http://app.test/**", lambda route: route.fulfill(content_type="text/html", body=html)
     )
-    page.route("**/api/screens/**", lambda route: route.fulfill(json=screen))
+    page.route(
+        "**/api/screens/**",
+        lambda route: route.fulfill(json={**screen, "points": screen.get("series") or []}),
+    )
     data = map_payload()
     page.route("**/api/stocks/TEST/map", map_handler or (lambda route: route.fulfill(json=data)))
     old = filing_events(filing_row("old", filed_at="2026-08-01T18:00:00Z"))
@@ -247,16 +255,11 @@ def ring_point(segment):
     }""")
 
 
-def test_score_panel_pins_and_summarizes_positive_drivers_and_penalties(page):
+def test_score_panel_pins_and_summarizes_penalties(page):
     open_map(page)
     selection = page.locator("[data-map-selection]")
     expect(selection.locator("h3")).to_have_text("45")
-    legend = selection.locator(".map-score-legend li")
-    expect(legend).to_have_count(4)
-    expect(legend.locator("strong")).to_have_text(["+60 pts", "+30 pts", "+10 pts", "0 pts"])
-    expect(legend.locator("span:not([aria-hidden])")).to_have_text(
-        ["Market scanner", "SEC events", "News", "Community"]
-    )
+    expect(selection.locator(".map-score-legend")).to_have_count(0)
     penalties = selection.locator(".map-score-penalties li")
     expect(penalties).to_have_count(2)
     expect(penalties.locator("span")).to_have_text(["Rug risk", "Social / search"])
@@ -514,7 +517,6 @@ def test_single_contribution_and_mixed_rings_have_valid_geometry(page, weight, p
             f"+60 pts · {50 if mixed else 100}% of total magnitude"
         )
     else:
-        expect(page.locator(".map-score-legend strong")).to_have_text("0 pts")
         expect(page.locator("[data-map-selection]")).to_contain_text("No positive contributions.")
     if penalty_value:
         expect(page.locator(".map-score-penalties strong")).to_have_text("-60 pts")
@@ -681,7 +683,6 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
     )
     expect(page.locator("[data-map-selection]")).to_contain_text("Pinned contribution")
     expect(page.locator("[data-map-selection] h3")).to_have_text("35")
-    expect(page.locator(".map-score-legend strong")).to_have_text(["+20 pts", "+20 pts"])
     expect(page.locator(".map-score-penalties strong")).to_have_text("-5 pts")
     penalty = page.locator('[data-score-key="rug"]')
     expect(penalty).to_have_count(1)
@@ -759,3 +760,35 @@ def test_reduced_motion_scrubs_without_animation(page, width):
     expect(graph).to_have_attribute("data-phase", "settled")
     assert "moving" not in page.evaluate("window.mapPhases")
 
+
+
+def test_state_legend_tabs_filter_the_chart(page):
+    """The map's state legend replaces the score driver list: the chips carry
+    the chart's status colours and toggle which run the line emphasises."""
+
+    history = [
+        {"time": f"2026-09-{day:02}T18:00:00Z", "price": day + 2} for day in range(14, 20)
+    ]
+    states = [
+        {"time": "2026-09-14T00:00:00Z", "tone": "watch"},
+        {"time": "2026-09-16T06:00:00Z", "tone": "running"},
+    ]
+    open_map(page, current=score_current(trade_state="TRIGGERED"), states=states, history=history)
+
+    chips = page.locator("[data-map-state-legend] .chip")
+    expect(chips).to_have_count(2)
+    expect(chips).to_have_text(["Running", "Watch"])
+    expect(chips.first).to_have_attribute("aria-pressed", "false")
+    expect(page.locator(".chart-state-label.state-watch")).to_have_text("WATCH")
+    expect(page.locator(".chart-state-label.state-running")).to_have_text("RUNNING")
+
+    chips.first.click()
+    expect(chips.first).to_have_attribute("aria-pressed", "true")
+    expect(page.locator(".chart-state.state-running")).not_to_have_css("opacity", "0.15")
+    expect(page.locator(".chart-state.state-watch")).to_have_css("opacity", "0.15")
+    expect(page.locator(".chart-state-label.state-watch")).to_have_count(0)
+
+    chips.first.click()
+    expect(chips.first).to_have_attribute("aria-pressed", "false")
+    expect(page.locator(".chart-state.state-watch")).not_to_have_css("opacity", "0.15")
+    expect(page.locator(".chart-state-label.state-watch")).to_have_text("WATCH")

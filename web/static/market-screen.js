@@ -47,9 +47,12 @@
     }
   }
   document.addEventListener('rati:map-time',event => {filingMarker = event.detail; markFiling();});
+  // The map's state legend toggles which coloured run the chart emphasises.
+  document.addEventListener('rati:chart-tone',event => {toneFilter = event.detail?.tone || null; draw(screen?.series || []);});
   // The action tag over time, drawn onto the line. A reader can see where a
   // name turned from watch to setup to running without reading a table.
   let chartStates = [];
+  let toneFilter = null;
   function toneAt(time) {
     let tone = '';
     for (const change of chartStates) {
@@ -61,16 +64,31 @@
   }
   function paintStates(data, coords) {
     if (!chart) return;
-    chart.querySelectorAll('.chart-state').forEach(node => node.remove());
+    chart.querySelectorAll('.chart-state, .chart-state-label').forEach(node => node.remove());
     if (!chartStates.length || data.length < 2) return;
     const base = chart.querySelector('.chart-line');
+    const ns = 'http://www.w3.org/2000/svg';
+    const labeled = new Set();
     let run = [], runTone = toneAt(data[0][0]);
     const flush = () => {
       if (run.length > 1 && runTone) {
-        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        const path = document.createElementNS(ns, 'path');
         path.setAttribute('class', 'chart-state state-' + runTone);
         path.setAttribute('d', run.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' '));
+        if (toneFilter && toneFilter !== runTone) path.style.opacity = '0.15';
         base.after(path);
+        const width = Math.abs(run[run.length - 1][0] - run[0][0]);
+        if (width >= 8 && (!toneFilter || toneFilter === runTone) && !labeled.has(runTone)) {
+          labeled.add(runTone);
+          const mid = run[Math.floor(run.length / 2)];
+          const label = document.createElementNS(ns, 'text');
+          label.setAttribute('class', 'chart-state-label state-' + runTone);
+          label.setAttribute('x', mid[0].toFixed(2));
+          label.setAttribute('y', Math.max(12, mid[1] - 8).toFixed(2));
+          label.setAttribute('text-anchor', 'middle');
+          label.textContent = runTone.toUpperCase();
+          base.after(label);
+        }
       }
       run = run.length ? [run[run.length - 1]] : [];
     };

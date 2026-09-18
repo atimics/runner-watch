@@ -2,7 +2,7 @@
   <p class="map-status" role="status" data-map-status>Loading…</p>
   <div class="map-workspace">
     <div class="map-canvas"><svg viewBox="0 0 760 440" data-map-graph data-phase="settled" role="group" aria-label="Current score and people linked to {{ detail.ticker }}"></svg><div class="map-paging" data-map-paging><button type="button" data-map-previous aria-label="Previous people">←</button><span data-map-page></span><button type="button" data-map-next aria-label="Next people">→</button></div></div>
-    <aside class="map-source" aria-label="Score or selected filing"><button class="map-score-return" type="button" data-map-score-return hidden>← Return to score overview</button><div data-map-selection aria-live="polite" aria-atomic="true"><h3 class="map-score-heading">{{ screen.item.score|round|int if screen.item.score is not none else '—' }}</h3></div></aside>
+    <aside class="map-source" aria-label="Score or selected filing"><button class="map-score-return" type="button" data-map-score-return hidden>← Return to score overview</button><div class="tag-filters map-state-legend" data-map-state-legend aria-label="Status colour legend"></div><div data-map-selection aria-live="polite" aria-atomic="true"><h3 class="map-score-heading">{{ screen.item.score|round|int if screen.item.score is not none else '—' }}</h3></div></aside>
   </div>
   <div class="map-filings">
     <div class="map-event-list" data-map-events aria-label="Reported filings"></div>
