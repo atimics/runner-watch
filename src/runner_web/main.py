@@ -259,6 +259,7 @@ from runner_web.request_security import (
 )
 from runner_web.research_context import build_research_context, research_evidence_metrics
 from runner_web.research_pipeline import verified_public_citations
+from runner_web.robinhood_chain import stock_token
 from runner_web.sectors import refresh_company_sectors
 from runner_web.shared_state import (
     acknowledge_research_job,
@@ -8896,6 +8897,7 @@ def ticker_page(
             ),
             comment_generation_enabled=_flash_provider_ready(),
             active_tab="pulse",
+            robinhood_token=stock_token(normalized),
         ),
     )
 
