@@ -408,10 +408,14 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
 .flash-release-body>footer{display:flex;align-items:center;justify-content:space-between;margin-top:12px}
 .flash-release-body>footer a{color:var(--muted);font-size:9px;text-decoration:underline;text-underline-offset:3px}
 .flash-release-body>footer button{border-color:var(--line);background:transparent;color:var(--soft)}
-.chart-state-label{font-size:9px;font-weight:800;letter-spacing:.08em;fill:var(--muted)}
-.chart-state-label.state-running{fill:var(--green)}
-.chart-state-label.state-setup{fill:var(--blue)}
-.chart-state-label.state-extended{fill:var(--orange)}
-.chart-state-label.state-avoid{fill:var(--red)}
-.chart-state-label.state-watch{fill:var(--purple)}
-.chart-state-label.state-paused{fill:var(--muted)}
+.chart-state-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;color:var(--muted);font-size:11px}
+.chart-state-legend[hidden]{display:none}
+.chart-state-legend button{display:inline-flex;align-items:center;gap:6px;border:0;background:none;padding:0;font:inherit;color:var(--muted);cursor:pointer}
+.chart-state-legend button:before{content:'';width:8px;height:8px;border-radius:50%;background:currentColor}
+.chart-state-legend button.tone-running:before{background:var(--green)}
+.chart-state-legend button.tone-setup:before{background:var(--blue)}
+.chart-state-legend button.tone-extended:before{background:var(--orange)}
+.chart-state-legend button.tone-avoid:before{background:var(--red)}
+.chart-state-legend button.tone-watch:before{background:var(--purple)}
+.chart-state-legend button.tone-paused:before{background:var(--muted)}
+.chart-state-legend button[aria-pressed=true]{color:var(--text)}

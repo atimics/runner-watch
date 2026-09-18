@@ -47,12 +47,33 @@
     }
   }
   document.addEventListener('rati:map-time',event => {filingMarker = event.detail; markFiling();});
-  // The map's state legend toggles which coloured run the chart emphasises.
-  document.addEventListener('rati:chart-tone',event => {toneFilter = event.detail?.tone || null; draw(screen?.series || []);});
   // The action tag over time, drawn onto the line. A reader can see where a
   // name turned from watch to setup to running without reading a table.
   let chartStates = [];
   let toneFilter = null;
+  const STATE_TONES = ['running', 'setup', 'extended', 'avoid', 'watch', 'paused'];
+  const STATE_LABELS = {running:'Running', setup:'Setup', extended:'Extended', avoid:'Avoid', watch:'Watch', paused:'Paused'};
+  function renderStateLegend() {
+    const legend = document.querySelector('[data-chart-state-legend]');
+    if (!legend) return;
+    const tones = new Set();
+    chartStates.forEach(change => { const tone = String(change?.tone || ''); if (STATE_TONES.includes(tone)) tones.add(tone); });
+    const ordered = STATE_TONES.filter(tone => tones.has(tone));
+    legend.replaceChildren();
+    legend.hidden = ordered.length === 0;
+    ordered.forEach(tone => {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'state-legend-chip tone-' + tone;
+      button.textContent = STATE_LABELS[tone];
+      button.setAttribute('aria-pressed', String(toneFilter === tone));
+      button.addEventListener('click', () => {
+        toneFilter = toneFilter === tone ? null : tone;
+        [...legend.querySelectorAll('button')].forEach(control => control.setAttribute('aria-pressed', String(control === button && toneFilter === tone)));
+        draw(screen?.series || []);
+      });
+      legend.append(button);
+    });
+  }
   function toneAt(time) {
     let tone = '';
     for (const change of chartStates) {
@@ -64,11 +85,10 @@
   }
   function paintStates(data, coords) {
     if (!chart) return;
-    chart.querySelectorAll('.chart-state, .chart-state-label').forEach(node => node.remove());
+    chart.querySelectorAll('.chart-state').forEach(node => node.remove());
     if (!chartStates.length || data.length < 2) return;
     const base = chart.querySelector('.chart-line');
     const ns = 'http://www.w3.org/2000/svg';
-    const labeled = new Set();
     let run = [], runTone = toneAt(data[0][0]);
     const flush = () => {
       if (run.length > 1 && runTone) {
@@ -77,18 +97,6 @@
         path.setAttribute('d', run.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' '));
         if (toneFilter && toneFilter !== runTone) path.style.opacity = '0.15';
         base.after(path);
-        const width = Math.abs(run[run.length - 1][0] - run[0][0]);
-        if (width >= 8 && (!toneFilter || toneFilter === runTone) && !labeled.has(runTone)) {
-          labeled.add(runTone);
-          const mid = run[Math.floor(run.length / 2)];
-          const label = document.createElementNS(ns, 'text');
-          label.setAttribute('class', 'chart-state-label state-' + runTone);
-          label.setAttribute('x', mid[0].toFixed(2));
-          label.setAttribute('y', Math.max(12, mid[1] - 8).toFixed(2));
-          label.setAttribute('text-anchor', 'middle');
-          label.textContent = runTone.toUpperCase();
-          base.after(label);
-        }
       }
       run = run.length ? [run[run.length - 1]] : [];
     };
@@ -111,7 +119,10 @@
     const dot = chart.querySelector('.chart-point');
     if (!data.length) {
       status.hidden = false; status.textContent = 'Price history will appear here.';
-      chart.setAttribute('hidden', ''); chart.setAttribute('aria-label', 'Price history is pending.'); return;
+      chart.setAttribute('hidden', ''); chart.setAttribute('aria-label', 'Price history is pending.');
+      const legend = document.querySelector('[data-chart-state-legend]');
+      if (legend) legend.hidden = true;
+      return;
     }
     const low = Math.min(...data.map(p=>p[1])), high = Math.max(...data.map(p=>p[1]));
     const start = data[0][0], end = data[data.length-1][0];
@@ -126,6 +137,7 @@
     paintStates(data, coords);
     dot.toggleAttribute('hidden', data.length !== 1); dot.setAttribute('cx', '400'); dot.setAttribute('cy', '140');
     chart.removeAttribute('hidden'); status.hidden = true;
+    renderStateLegend();
   }
   chartStates = screen?.states || [];
   draw(screen?.series);

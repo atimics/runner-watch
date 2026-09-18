@@ -396,9 +396,10 @@ def test_the_chart_is_drawn_in_the_colours_of_the_action_tag(page: Page):
     expect(page.locator(".chart-state.state-watch")).to_have_count(1)
     expect(page.locator(".chart-state.state-setup")).to_have_count(1)
     expect(page.locator(".chart-state.state-running")).to_have_count(1)
-    expect(page.locator(".chart-state-label.state-watch")).to_have_text("WATCH")
-    expect(page.locator(".chart-state-label.state-setup")).to_have_text("SETUP")
-    expect(page.locator(".chart-state-label.state-running")).to_have_text("RUNNING")
+    legend = page.locator("[data-chart-state-legend] button")
+    expect(legend).to_have_count(3)
+    expect(legend).to_have_text(["Running", "Setup", "Watch"])
+    expect(page.locator(".chart-state-label")).to_have_count(0)
     # Runs join up rather than leaving a gap at each change.
     watch_end = page.locator(".chart-state.state-watch").get_attribute("d").split("L")[-1]
     setup_start = page.locator(".chart-state.state-setup").get_attribute("d")
@@ -418,6 +419,7 @@ def test_a_chart_without_state_history_keeps_one_plain_line(page: Page):
 
     expect(page.locator(".chart-state")).to_have_count(0)
     expect(page.locator(".chart-state-label")).to_have_count(0)
+    expect(page.locator("[data-chart-state-legend]")).to_be_hidden()
     assert page.locator(".chart-line").get_attribute("d").startswith("M")
 
 

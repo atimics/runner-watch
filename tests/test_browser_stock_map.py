@@ -255,11 +255,16 @@ def ring_point(segment):
     }""")
 
 
-def test_score_panel_pins_and_summarizes_penalties(page):
+def test_score_panel_pins_and_summarizes_positive_drivers_and_penalties(page):
     open_map(page)
     selection = page.locator("[data-map-selection]")
     expect(selection.locator("h3")).to_have_text("45")
-    expect(selection.locator(".map-score-legend")).to_have_count(0)
+    legend = selection.locator(".map-score-legend li")
+    expect(legend).to_have_count(4)
+    expect(legend.locator("strong")).to_have_text(["+60 pts", "+30 pts", "+10 pts", "0 pts"])
+    expect(legend.locator("span:not([aria-hidden])")).to_have_text(
+        ["Market scanner", "SEC events", "News", "Community"]
+    )
     penalties = selection.locator(".map-score-penalties li")
     expect(penalties).to_have_count(2)
     expect(penalties.locator("span")).to_have_text(["Rug risk", "Social / search"])
@@ -763,8 +768,8 @@ def test_reduced_motion_scrubs_without_animation(page, width):
 
 
 def test_state_legend_tabs_filter_the_chart(page):
-    """The map's state legend replaces the score driver list: the chips carry
-    the chart's status colours and toggle which run the line emphasises."""
+    """The status legend sits muted below the chart, never on it: its tabs
+    carry the chart's status colours and toggle which run the line emphasises."""
 
     history = [
         {"time": f"2026-09-{day:02}T18:00:00Z", "price": day + 2} for day in range(14, 20)
@@ -775,20 +780,20 @@ def test_state_legend_tabs_filter_the_chart(page):
     ]
     open_map(page, current=score_current(trade_state="TRIGGERED"), states=states, history=history)
 
-    chips = page.locator("[data-map-state-legend] .chip")
+    legend = page.locator("[data-chart-state-legend]")
+    expect(legend).to_be_visible()
+    chips = legend.locator("button")
     expect(chips).to_have_count(2)
     expect(chips).to_have_text(["Running", "Watch"])
     expect(chips.first).to_have_attribute("aria-pressed", "false")
-    expect(page.locator(".chart-state-label.state-watch")).to_have_text("WATCH")
-    expect(page.locator(".chart-state-label.state-running")).to_have_text("RUNNING")
+    expect(page.locator(".chart-state-label")).to_have_count(0)
 
     chips.first.click()
     expect(chips.first).to_have_attribute("aria-pressed", "true")
     expect(page.locator(".chart-state.state-running")).not_to_have_css("opacity", "0.15")
     expect(page.locator(".chart-state.state-watch")).to_have_css("opacity", "0.15")
-    expect(page.locator(".chart-state-label.state-watch")).to_have_count(0)
 
     chips.first.click()
     expect(chips.first).to_have_attribute("aria-pressed", "false")
     expect(page.locator(".chart-state.state-watch")).not_to_have_css("opacity", "0.15")
-    expect(page.locator(".chart-state-label.state-watch")).to_have_text("WATCH")
+    expect(page.locator(".chart-state-label")).to_have_count(0)
