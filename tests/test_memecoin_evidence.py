@@ -102,6 +102,7 @@ def test_ingestion_resumes_same_window_and_keeps_cursor_on_provider_failure():
 
     ingest_stream("program:test", POOL, at=AT, rpc=first)
     first_filter = calls[0]["params"][1]["filters"]
+    assert calls[0]["params"][1]["maxSupportedTransactionVersion"] == 1
 
     def failed(body):
         assert body["params"][1]["paginationToken"] == "100:1"

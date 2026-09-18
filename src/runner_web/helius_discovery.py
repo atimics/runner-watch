@@ -145,7 +145,7 @@ def discover_pools(*, at: datetime, rpc: Rpc | None = None) -> dict[str, Any]:
         options = {
             "transactionDetails": "full",
             "encoding": "jsonParsed",
-            "maxSupportedTransactionVersion": 0,
+            "maxSupportedTransactionVersion": 1,
             "commitment": "finalized",
             "sortOrder": "desc",
             "limit": limit,
