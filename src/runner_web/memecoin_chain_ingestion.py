@@ -29,7 +29,7 @@ def ingest_stream(stream: str, address: str, *, at: datetime, rpc: Rpc) -> dict[
     options = {
         "transactionDetails": "full",
         "encoding": "jsonParsed",
-        "maxSupportedTransactionVersion": 0,
+        "maxSupportedTransactionVersion": 1,
         "commitment": "finalized",
         "sortOrder": "asc",
         "limit": PAGE_SIZE,
