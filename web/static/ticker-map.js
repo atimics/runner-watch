@@ -63,7 +63,7 @@
       panel.append(make('p', pinned === part.key ? 'Pinned contribution. Return to score overview to clear.' : 'Click or press Enter to pin this contribution.', 'map-note'));
     }
     const legend = make('ul', null, 'map-score-legend');
-    drivers.filter(driver => driver.value >= 0).forEach(driver => {
+    positive.forEach(driver => {
       const row = make('li');
       const swatch = make('span', null, 'map-score-swatch'); swatch.style.background = color(driver); swatch.setAttribute('aria-hidden', 'true');
       row.append(swatch, make('span', driver.label), make('strong', points(driver.value))); legend.append(row);

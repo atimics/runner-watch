@@ -8,12 +8,12 @@ main:has(.ticker-map),main:has(.token-replay){max-width:1040px}.market-screen:ha
 .stock-token h3{font-size:13px;font-weight:600;margin:0 0 10px}
 .stock-token-note{color:var(--muted);font-size:12px;margin-top:12px}
 .stock-token-note a{color:var(--green);text-decoration:underline;text-underline-offset:4px}
-.map-score-legend{list-style:none;padding:0;margin:16px 0;display:flex;flex-wrap:wrap;gap:6px;font-size:11px}
-.map-score-legend li{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border:1px solid var(--line);border-radius:12px;color:var(--muted)}
-.map-score-legend .map-score-swatch{width:7px;height:7px}
+.map-score-legend{list-style:none;padding:0;margin:12px 0 0;display:flex;flex-wrap:wrap;gap:5px;font-size:10.5px}
+.map-score-legend li{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border:1px solid var(--line);border-radius:10px;color:var(--muted)}
+.map-score-legend .map-score-swatch{width:6px;height:6px}
 .map-score-legend strong{color:var(--muted);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
-.map-score-penalties{list-style:none;padding:0;margin:8px 0 0;display:flex;flex-wrap:wrap;gap:6px;font-size:11px}
-.map-score-penalties li{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border:1px solid var(--line);border-radius:12px;color:var(--muted)}
+.map-score-penalties{list-style:none;padding:0;margin:5px 0 0;display:flex;flex-wrap:wrap;gap:5px;font-size:10.5px}
+.map-score-penalties li{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border:1px solid var(--line);border-radius:10px;color:var(--muted)}
 .map-score-penalties strong{color:var(--red);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
 
 
