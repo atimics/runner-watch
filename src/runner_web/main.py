@@ -7478,6 +7478,44 @@ def stock_person_connections_api(
         raise HTTPException(400, "Invalid connection request") from exc
 
 
+@app.get("/wallets/stocks/{ticker}/{person_id}", response_class=HTMLResponse)
+def stock_wallet_page(
+    ticker: str,
+    person_id: str,
+    request: Request,
+    cursor: str | None = Query(default=None, max_length=1024),
+    runner_session: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    from runner_web.market_screens import listing
+    from runner_web.stock_map import person_connections
+
+    enforce_rate(request, "stock-wallet", limit=60, seconds=60)
+    ticker = _clean_ticker(ticker)
+    try:
+        connections = person_connections(ticker, person_id, cursor)
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid wallet request") from exc
+    events = connections["events"]
+    wallet = next(
+        (person for event in events for person in event["people"] if person["id"] == person_id),
+        {"name": "Wallet"},
+    )
+    stocks = sorted({event["ticker"] for event in events})
+    items = [_direct_ticker_item(symbol, []) or {"ticker": symbol} for symbol in stocks]
+    screen = listing("stocks", items)
+    next_url = None
+    if connections["next_cursor"]:
+        next_url = str(request.url.replace_query_params(cursor=connections["next_cursor"]))
+    return templates.TemplateResponse(
+        request,
+        "stock_wallet.html",
+        page_context(
+            request, runner_session, nav_product="runners", screen=screen,
+            wallet=wallet, wallet_events=events, wallet_next=next_url, wallet_ticker=ticker,
+        ),
+    )
+
+
 @app.get("/api/market-actors/{actor_id}")
 def market_actor_api(actor_id: str, request: Request) -> dict[str, Any]:
     enforce_rate(request, "market-map", limit=120, seconds=60)

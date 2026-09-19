@@ -389,3 +389,23 @@ def test_person_connections_candidate_paging_and_invalid_input(database):
     )
     assert response.status_code == 200
     assert len(response.json()["events"]) == 3
+
+
+def test_wallet_portfolio_uses_shared_stock_rows_and_keeps_event_lines(database, monkeypatch):
+    insert(filing_row("source", evidence_json=json.dumps(evidence())))
+    insert(filing_row("other", ticker="USO", evidence_json=json.dumps(evidence())))
+    monkeypatch.setattr(main, "_direct_ticker_item", lambda ticker, _: {
+        **score_current(), "ticker": ticker, "company": f"{ticker} company"
+    })
+    response = TestClient(main.app).get("/wallets/stocks/TEST/sec:101")
+    assert response.status_code == 200
+    html = response.text
+    assert "Jane Lee" in html
+    assert 'class="ticker-list market-stocks"' in html
+    assert html.count('class="ticker"') == 2
+    assert html.count('class="wallet-event"') == 8
+    assert 'href="/t/USO"' in html
+    assert "Filed 2026-09-05" in html
+    assert "% of class" not in html
+    assert "sec.gov/Archives" in html
+    assert TestClient(main.app).get("/wallets/stocks/TEST/invalid").status_code == 400
