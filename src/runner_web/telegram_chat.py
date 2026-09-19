@@ -327,6 +327,11 @@ CHEETAH_PERSONA = (
     "you never list commands, because there are none. "
     "Every turn hands you market_session: the Eastern time, whether markets are "
     "open, and when they next open. "
+    "You are also handed a world state: the board, new runners, recent events "
+    "(halts, coverage, social spikes), community activity, your own book, and what "
+    "changed since the last look. That is your memory and your surroundings. When "
+    "you need the detail behind one node, expand it rather than guessing; the "
+    "world already told you whether anything happened.",
     "The scanner's own words for a state are internal, so say what they mean rather "
     "than reading MANAGE or GUARDED aloud. "
     "Say numbers only when a tool gave them to you or they are in the "
@@ -385,55 +390,19 @@ TOOL_SCHEMA = (
         },
     },
     {
-        "name": "market_now",
+        "name": "expand",
         "description": (
-            "What the board looks like right now: the session, how many names are "
-            "green against red, the biggest movers, and the latest session report. "
-            "Use this for questions about the market in general."
-        ),
-        "parameters": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "sector_now",
-        "description": (
-            "The board grouped by sector, or one sector on its own. Pass a sector "
-            "name like biotech or software to narrow it. Names without a filed SIC "
-            "code yet group by a name hint and their group is marked hinted — say "
-            "it is a hint, not a looked-up fact. Anything still unknown comes back "
-            "as unclassified, and you should say so rather than guessing what it is."
+            "Drill into one node of the world you were handed. The world already "
+            "carries the session, the board summary, new runners, recent events, "
+            "community activity, your own book and what changed. Use this when you "
+            "need the detail behind one of those nodes before you say anything. "
+            "Nodes: board, runners, events, community, sector:<name>, report:pre, "
+            "report:post, ticker:<SYM>."
         ),
         "parameters": {
             "type": "object",
-            "properties": {"sector": {"type": "string"}},
-        },
-    },
-    {
-        "name": "recent_runners",
-        "description": (
-            "Names that entered the board in the last twelve hours, newest first. "
-            "Use this for what just showed up or what is new."
-        ),
-        "parameters": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "community_now",
-        "description": (
-            "Where people are putting their names: which tickers have the most Calls "
-            "and the most comments. Use this for what the room is watching, as "
-            "opposed to what merely moved."
-        ),
-        "parameters": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "session_report",
-        "description": (
-            "The frozen pre-market or post-market report: the watch board, Flash's "
-            "targets and how they scored, and the desk commentary. Pass pre or post, "
-            "or leave it out for whichever is current."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {"which": {"type": "string", "enum": ["pre", "post"]}},
+            "properties": {"node": {"type": "string"}},
+            "required": ["node"],
         },
     },
     {
@@ -480,22 +449,6 @@ TOOL_SCHEMA = (
             "you currently have open. Check this before spending."
         ),
         "parameters": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "look_up_ticker",
-        "description": (
-            "Everything on one ticker: the freshest price and move, relative volume, "
-            "the scanner's trade state and risk reading in plain words, recent "
-            "filings, the published research if there is any, what other avatars "
-            "have already said about it, how many people have Called it, and Flash's "
-            "saved target for the day. Use this before saying anything about a "
-            "ticker, and read what other avatars said so you are not repeating them."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {"ticker": {"type": "string"}},
-            "required": ["ticker"],
-        },
     },
 )
 
@@ -794,6 +747,32 @@ def record_action(
             ),
         ).rowcount
     )
+
+
+def room_chat_id() -> int | None:
+    """Where Dash speaks proactively: the room, not the announcement channel.
+
+    TELEGRAM_ROOM_CHAT_ID wins; otherwise it is the last room that spoke to us.
+    """
+
+    configured = os.getenv("TELEGRAM_ROOM_CHAT_ID", "").strip()
+    if configured:
+        try:
+            return int(configured)
+        except ValueError:
+            return None
+    from runner_web.db import connection
+
+    with connection() as database:
+        row = database.execute(
+            "SELECT chat_id FROM telegram_updates ORDER BY update_id DESC LIMIT 1"
+        ).fetchone()
+    if row is None:
+        return None
+    try:
+        return int(row["chat_id"])
+    except (TypeError, ValueError):
+        return None
 
 
 def recent_transcript(database: Any, chat_id: int, limit: int = 12) -> list[dict[str, Any]]:

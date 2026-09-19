@@ -91,13 +91,13 @@ play.
 same time every weekday, 20 minutes into pre-market and 20 minutes after the
 close. Everything else rotates around them.
 
-**Halts are the most radio-worthy thing that happens all day** and we currently
-post none of them. `format_event_post_md` is already written and wired into the
-batch builder; nothing dispatches it because `_activity_payload` never emits
-events. The `market_events` table (`source`, `feed`, `event_type`, `ticker`,
-`event_at`, `source_url`) is already populated by the `trading-halts`, `edgar`
-and `house-disclosures` workers. This is the largest piece of unused inventory
-in the system.
+**Halts are the most radio-worthy thing that happens all day.** The Halt Desk is
+live: `_pending_event_rows` feeds `format_event_post_md` from
+`public_market_events` (halts, news, social spikes) inside a
+`TELEGRAM_EVENT_WINDOW_MINUTES` window, and the rundown rotates it in after the
+session briefings. Resume notices are skipped so the desk reports the halt, not
+the recovery. EDGAR and house-disclosure events will join the same segment when
+their feeds populate `market_events`.
 
 **The Scoreboard is what makes the rest credible.** A channel that only posts
 entries is a hype feed. A channel that posts its own win–loss after the close is
@@ -223,6 +223,29 @@ reactions and the chat persona), 🧭 the 4:20 briefings, 📄 public research,
 `TELEGRAM_RUNNER_ALERTS` toggles runners + batched dispatch.
 `TELEGRAM_RELEASE_ANNOUNCEMENTS` toggles the build announcement.
 `TELEGRAM_MEMECOIN_ALERTS` toggles the GIF/photo deliveries.
+`TELEGRAM_DESK_NOTES` toggles the room's proactive hourly note.
+
+`TELEGRAM_EVENT_WINDOW_MINUTES` (360) bounds how old an event may be before the
+Halt Desk stops selecting it.
+
+## The room bot and its world
+
+Dash, the cheetah in the discussion room, observes a **world state** rather than
+calling a menu of getters. Every addressed message hands the model one snapshot
+from `dash_world()`: the session, the board summary, new runners, recent events,
+community activity, Dash's own book, and `changes` — what landed since the last
+look. The one read verb is `expand` (`board`, `runners`, `events`, `community`,
+`sector:<name>`, `report:pre`, `report:post`, `ticker:<SYM>`); the rest are the
+mutations `reply`, `react`, `hold`, `make_call`, `close_call`,
+`comment_on_ticker` and `my_standing`. His recent chat actions come back in the
+world (`dash.recent_actions`) so continuity is stored, not pleaded.
+
+`dash_desk_note_worker` is the proactive tick: every `DASH_DESK_NOTE_SECONDS`
+(3600) it builds the world and, only when `changes.any` is true, asks for one
+short desk note and posts it to the room. `TELEGRAM_ROOM_CHAT_ID` names the room
+(falling back to the last room that spoke to us), and
+`DASH_DESK_NOTE_MIN_GAP_SECONDS` (3000) keeps two notes from landing close
+together.
 
 The daily free-report cap lives in `TELEGRAM_RUNNER_REPORTS_PER_DAY` (20) and
 the per-batch pick in `TELEGRAM_RUNNER_REPORTS_PER_RUN` (3), staggered by

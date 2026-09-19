@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from runner_web.db import connection
@@ -13,6 +13,7 @@ from runner_web.telegram import (
     MAX_MESSAGE_CHARS,
     TelegramDeliveryError,
     escape_markdown_v2,
+    format_event_post_md,
     markdown_link,
     message_units,
     next_segment,
@@ -327,6 +328,109 @@ def queue_stock_filings(database, config, *, origin: str, at: datetime) -> int:
             (row["accession"],),
         )
     return total
+
+
+# Halt Desk / Filing Desk inventory. Events older than the window are no longer
+# news, so the query stops selecting them.
+TELEGRAM_EVENT_TYPES = ("trading_halt", "news_article", "social_spike")
+
+
+def _event_age_label(value, current: datetime) -> str:
+    try:
+        parsed = datetime.fromisoformat(str(value or ""))
+    except ValueError:
+        return ""
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    minutes = max(0.0, (current - parsed).total_seconds() / 60)
+    if minutes < 90:
+        return f"{max(1, int(minutes))}m"
+    if minutes < 60 * 36:
+        return f"{int(minutes / 60)}h"
+    return f"{int(minutes / (60 * 24))}d"
+
+
+def _channel_event(row: dict, current: datetime) -> dict:
+    """Normalize one public market event for the event formatter."""
+
+    try:
+        payload = row.get("payload_json")
+        payload = payload if isinstance(payload, dict) else json.loads(payload or "{}")
+    except (TypeError, ValueError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    ticker = str(row.get("ticker") or "").upper()
+    event_type = str(row.get("event_type") or "market_event")
+    status = str(row.get("status") or "")
+    if event_type == "trading_halt":
+        kind = f"Trading halt · {status}" if status else "Trading halt"
+        issue = str(payload.get("issue_name") or "").strip()
+        market = str(payload.get("market") or "").strip()
+        headline = issue or f"${ticker} halted"
+        if issue and market:
+            headline = f"{issue} · {market}"
+    elif event_type == "news_article":
+        kind = "News"
+        headline = str(payload.get("title") or "New company coverage").strip()
+    elif event_type == "social_spike":
+        try:
+            mentions = max(0, int(payload.get("mention_count") or 0))
+        except (TypeError, ValueError):
+            mentions = 0
+        kind = f"{payload.get('network_label') or 'Social'} spike"
+        headline = f"{mentions} mention{'s' if mentions != 1 else ''}"
+    else:
+        kind = event_type.replace("_", " ").title()
+        headline = str(payload.get("title") or "").strip()
+    return {
+        "subject": "|".join(
+            str(row.get(key) or "") for key in ("source", "feed", "event_id", "version")
+        ),
+        "ticker": ticker,
+        "kind": kind,
+        "headline": headline,
+        "source": str(row.get("source") or ""),
+        "age": _event_age_label(row.get("event_at"), current),
+        "at": row.get("event_at"),
+        "url": str(row.get("source_url") or ""),
+    }
+
+
+def event_card(event: dict, *, origin: str) -> dict:
+    return {
+        "kind": "event",
+        "subject": event["subject"],
+        "ticker": event.get("ticker", ""),
+        "group": "ticker:" + str(event.get("ticker") or ""),
+        "text": format_event_post_md(event, origin=origin),
+        "event": event,
+    }
+
+
+def queue_events(database, config, *, origin: str, at: datetime) -> int:
+    """Queue halts, coverage and social spikes from the recent window."""
+
+    cutoff = (at - timedelta(minutes=_setting("TELEGRAM_EVENT_WINDOW_MINUTES", 360))).isoformat()
+    placeholders = ",".join("?" for _ in TELEGRAM_EVENT_TYPES)
+    rows = database.execute(
+        f"""
+        SELECT source,feed,event_id,version,ticker,event_type,status,event_at,
+               source_url,payload_json
+        FROM public_market_events
+        WHERE event_at>?
+          AND event_type IN ({placeholders})
+          AND NOT (event_type='trading_halt' AND status='resume_announced')
+        ORDER BY event_at DESC LIMIT 20
+        """,
+        (cutoff, *TELEGRAM_EVENT_TYPES),
+    ).fetchall()
+    cards = []
+    for row in rows:
+        card = event_card(_channel_event(dict(row), at), origin=origin)
+        if card["text"]:
+            cards.append(card)
+    return enqueue_cards(database, config.chat_id, cards, at=at)
 
 
 def announcement_history(limit: int = 50) -> dict:
