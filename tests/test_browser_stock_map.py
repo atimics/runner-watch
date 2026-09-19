@@ -61,7 +61,10 @@ def map_payload():
     }
 
 
-def open_map(page: Page, width=1280, *, current=None, map_handler=None, states=None, history=None):
+def open_map(
+    page: Page, width=1280, *, current=None, map_handler=None, states=None,
+    history=None, connections_handler=None,
+):
     page.set_viewport_size({"width": width, "height": 900})
     page.emulate_media(reduced_motion="reduce")
     request = _request()
@@ -113,6 +116,8 @@ def open_map(page: Page, width=1280, *, current=None, map_handler=None, states=N
             json={**data, "events": old, "loaded_filings": 1, "next_cursor": None}
         ),
     )
+    if connections_handler:
+        page.route("**/map/connections?*", connections_handler)
     page.goto("http://app.test/t/TEST", wait_until="domcontentloaded")
     if map_handler is None:
         expect(page.locator("[data-map-status]")).to_have_text("")
@@ -797,3 +802,92 @@ def test_state_legend_tabs_filter_the_chart(page):
     expect(chips.first).to_have_attribute("aria-pressed", "false")
     expect(page.locator(".chart-state.state-watch")).not_to_have_css("opacity", "0.15")
     expect(page.locator(".chart-state-label")).to_have_count(0)
+
+
+@pytest.mark.parametrize("width", [320, 1280])
+def test_actor_stock_ring_separate_actions_scale_and_sources(page, width):
+    data = map_payload()
+    base = {
+        **data["events"][0],
+        "people": [
+            {"id": "sec:101", "name": "Person 0", "role": "Director", "identity_basis": "SEC CIK"}
+        ],
+    }
+    rows = [
+        {
+            **base,
+            "id": "large",
+            "ticker": "BIG",
+            "view": "ownership",
+            "action": "Reported stake",
+            "percent": 20,
+        },
+        {
+            **base,
+            "id": "small",
+            "ticker": "SMALL",
+            "view": "ownership",
+            "action": "Reported stake",
+            "percent": 2,
+        },
+        {
+            **base,
+            "id": "sale",
+            "ticker": "BIG",
+            "view": "activity",
+            "action": "Sold",
+            "value": 100000,
+        },
+        {
+            **base,
+            "id": "buy",
+            "ticker": "SMALL",
+            "view": "activity",
+            "action": "Bought",
+            "value": 10000,
+        },
+        {
+            **base,
+            "id": "unknown",
+            "ticker": "UNKNOWN",
+            "view": "ownership",
+            "action": "Reported stake",
+            "percent": None,
+        },
+    ]
+    def respond(route):
+        from urllib.parse import parse_qs, urlparse
+
+        person_id = parse_qs(urlparse(route.request.url).query)['person_id'][0]
+        route.fulfill(json={
+            'person_id': person_id, 'identity_scope': 'SEC CIK',
+            'events': rows if person_id == 'sec:101' else [], 'next_cursor': None,
+        })
+
+    open_map(page, width, connections_handler=respond)
+    page.locator('[data-map-connections-person]').select_option('sec:101')
+    expect(page.locator("[data-map-connections-status]")).to_contain_text("SEC person ID")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    marks = {}
+    labels = []
+    while True:
+        nodes = page.locator("[data-connection]")
+        labels.extend(nodes.evaluate_all('(nodes) => nodes.map(n => n.getAttribute("aria-label"))'))
+        for mark in page.locator("[data-map-connections-graph] [data-amount]").all():
+            marks[mark.get_attribute("data-amount")] = float(mark.get_attribute("r"))
+        if page.locator("[data-map-connections-next]").is_disabled():
+            break
+        page.locator("[data-map-connections-next]").click()
+    assert marks["20"] > marks["2"]
+    assert marks["100000"] > marks["10000"]
+    assert any("BIG: Sell" in label for label in labels)
+    assert any("BIG: Stake" in label for label in labels)
+    assert any("Director" in label for label in labels)
+    assert any("See filing" in label for label in labels)
+    page.locator("[data-connection]").first.focus()
+    page.keyboard.press("Enter")
+    expect(page.locator("[data-map-connections-detail]")).to_contain_text("Filed")
+    expect(page.locator("[data-map-connections-detail] a").first).to_have_attribute(
+        "href", re.compile("/t/")
+    )
+    expect(page.locator("[data-stock-map]")).not_to_contain_text(re.compile("NaN|Infinity"))
