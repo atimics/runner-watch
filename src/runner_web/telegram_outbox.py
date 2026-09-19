@@ -173,23 +173,28 @@ def deliver_outbox(
                 ).fetchall()
             ]
             _mirror(database, cards, "uncertain", row["attempts"], stamp)
+        latest = database.execute(
+            "SELECT i.kind FROM telegram_outbox o JOIN telegram_outbox_items i "
+            "ON i.outbox_id=o.id WHERE o.chat_id=? AND o.status='sent' "
+            "ORDER BY o.updated_at DESC,o.id DESC LIMIT 1",
+            (config.chat_id,),
+        ).fetchone()
+        if latest:
+            last_kind = latest["kind"]
         placeholders = ",".join("?" for _ in kinds)
         rows = database.execute(
-            "SELECT o.* FROM telegram_outbox o WHERE o.chat_id=? "
-            "AND o.status IN ('pending','retry') AND o.attempts<3 "
-            "AND (o.retry_at IS NULL OR o.retry_at<=?) AND EXISTS "
-            "(SELECT 1 FROM telegram_outbox_items i WHERE i.outbox_id=o.id "
-            f"AND i.kind IN ({placeholders})) ORDER BY o.created_at,o.position,o.id",
+            "WITH eligible AS (SELECT o.*,i.card_json,ROW_NUMBER() OVER "
+            "(PARTITION BY i.kind ORDER BY o.created_at,o.position,o.id) AS queue_rank "
+            "FROM telegram_outbox o JOIN telegram_outbox_items i ON i.outbox_id=o.id "
+            "WHERE o.chat_id=? AND o.status IN ('pending','retry') AND o.attempts<3 "
+            "AND (o.retry_at IS NULL OR o.retry_at<=?) "
+            f"AND i.kind IN ({placeholders})) SELECT * FROM eligible WHERE queue_rank<=50 "
+            "ORDER BY created_at,position,id",
             (config.chat_id, stamp, *kinds),
         ).fetchall()
         candidates = []
         for row in rows:
-            cards = [
-                json.loads(r[0])
-                for r in database.execute(
-                    "SELECT card_json FROM telegram_outbox_items WHERE outbox_id=?", (row["id"],)
-                ).fetchall()
-            ]
+            cards = [json.loads(row["card_json"])]
             if cards and cards[0].get("expires_at", "~") < stamp:
                 database.execute(
                     "UPDATE telegram_outbox SET status='stale',updated_at=? WHERE id=?",

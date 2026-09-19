@@ -392,3 +392,14 @@ def test_long_source_fields_keep_the_story_link():
     )
     assert message_units(text) <= 4096 and text.endswith("https://app.test/research/report)")
     _assert_parses(text)
+
+
+def test_filing_stories_rotate_with_runners_across_restarts():
+    filing = {**card("filing-1"), "kind": "stock_filing"}
+    runner = {**card("runner-1"), "kind": "runner", "entered_at": AT.isoformat()}
+    queue([filing, {**filing, "subject": "filing-2"}, runner])
+    first = deliver(at=AT)
+    assert first["items"][0]["kind"] == "stock_filing"
+    second = deliver(at=AT + timedelta(seconds=1))
+    assert second["items"][0]["kind"] == "runner"
+    assert deliver(at=AT + timedelta(seconds=2))["items"][0]["kind"] == "stock_filing"

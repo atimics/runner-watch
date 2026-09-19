@@ -26,7 +26,7 @@
         if (post.status === 'uncertain') card.append(element('p', 'Check the chat to confirm delivery. This message is held for review.'));
         posts.append(card);
       }
-      status.textContent = data.posts.length ? `${data.posts.length} recent posts` : 'New announcements will appear here as they are queued.';
+      status.textContent = data.posts.length ? `${data.posts.length} recent post${data.posts.length === 1 ? '' : 's'}` : 'New announcements will appear here as they are queued.';
       button.textContent = 'Refresh history';
     } catch (error) { status.textContent = error.message; }
     finally { button.disabled = false; }
