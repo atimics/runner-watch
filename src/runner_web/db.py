@@ -3189,6 +3189,39 @@ def _migration_068_memecoin_replays(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_074_telegram_outbox(db: DatabaseConnection) -> None:
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS telegram_outbox (
+            id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, text TEXT NOT NULL,
+            position INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+            message_id BIGINT, retry_at TEXT, last_error TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS telegram_outbox_pending
+            ON telegram_outbox(chat_id,status,created_at);
+        CREATE TABLE IF NOT EXISTS telegram_outbox_items (
+            kind TEXT NOT NULL, subject TEXT NOT NULL, ticker TEXT NOT NULL,
+            card_json TEXT NOT NULL, outbox_id TEXT REFERENCES telegram_outbox(id),
+            PRIMARY KEY(kind,subject)
+        );
+        CREATE INDEX IF NOT EXISTS telegram_outbox_items_message
+            ON telegram_outbox_items(outbox_id);
+        CREATE TABLE IF NOT EXISTS telegram_channel_schedule (
+            chat_id TEXT PRIMARY KEY, next_at TEXT NOT NULL, budget_day TEXT NOT NULL,
+            used INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS telegram_ticker_schedule (
+            chat_id TEXT NOT NULL, ticker TEXT NOT NULL, next_at TEXT NOT NULL,
+            PRIMARY KEY(chat_id,ticker)
+        );
+        CREATE TABLE IF NOT EXISTS telegram_sec_seen (accession TEXT PRIMARY KEY);
+        INSERT INTO telegram_sec_seen(accession) SELECT accession FROM sec_filings WHERE 1=1
+            ON CONFLICT(accession) DO NOTHING;
+    """)
+    _ensure_column(db, "memecoin_replay_posts", "caption_text TEXT")
+
+
 @dataclass(frozen=True, slots=True)
 class Migration:
     version: int
@@ -3508,6 +3541,7 @@ MIGRATIONS = (
     Migration(71, "typed_research_subjects", _migration_071_typed_research_subjects),
     Migration(72, "client_errors", _migration_072_client_errors),
     Migration(73, "market_event_time_index", _migration_073_market_event_time_index),
+    Migration(74, "telegram_outbox", _migration_074_telegram_outbox),
 )
 
 

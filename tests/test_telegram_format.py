@@ -11,11 +11,13 @@ from runner_web.telegram import strip_markdown_v2
 
 
 class _FakeResponse:
-    def __init__(self, status: int = 200, body: bytes = b'{"ok":true}') -> None:
+    def __init__(
+        self, status: int = 200, body: bytes = b'{"ok":true,"result":{"message_id":42}}'
+    ) -> None:
         self.status = status
         self._body = body
 
-    def read(self) -> bytes:
+    def read(self, size=None) -> bytes:
         return self._body
 
     def __enter__(self) -> _FakeResponse:
@@ -70,7 +72,9 @@ def patch_urlopen(monkeypatch: pytest.MonkeyPatch):
         import json
 
         opened.append(request)
-        body = json.dumps(bodies[-1][0] if bodies else {"ok": True}).encode()
+        body = json.dumps(
+            bodies[-1][0] if bodies else {"ok": True, "result": {"message_id": 42}}
+        ).encode()
         return _FakeResponse(200, body=body)
 
     monkeypatch.setattr(_real_urllib, "urlopen", _open)
@@ -128,12 +132,12 @@ def test_send_post_falls_back_to_plain_on_parse_error(
                 400,
                 body=b'{"ok":false,"description":"Bad request: could not parse entities"}',
             )
-        return _FakeResponse(200, body=b'{"ok":true}')
+        return _FakeResponse(200, body=b'{"ok":true,"result":{"message_id":42}}')
 
     import urllib.request as _real_urllib
 
     monkeypatch.setattr(_real_urllib, "urlopen", _open)
-    telegram.send_post(_config(), "hello *unbalanced")
+    telegram.send_post(_config(), "hello *unbalanced", allow_fallback=True)
     assert len(opened) >= 2
     fallback = _url_payload(opened[1])
     assert "parse_mode" not in fallback
@@ -155,19 +159,19 @@ def test_send_post_falls_back_when_urlopen_raises_http_error(
                 {},
                 io.BytesIO(b'{"description":"Bad request: could not parse entities"}'),
             )
-        return _FakeResponse(200, body=b'{"ok":true}')
+        return _FakeResponse(200, body=b'{"ok":true,"result":{"message_id":42}}')
 
     import urllib.request as _real_urllib
 
     monkeypatch.setattr(_real_urllib, "urlopen", _open)
-    telegram.send_post(_config(), "hello *unbalanced")
+    telegram.send_post(_config(), "hello *unbalanced", allow_fallback=True)
     assert len(opened) == 2
     assert "parse_mode" not in _url_payload(opened[1])
 
 
 def test_send_post_raises_without_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     config = telegram.TelegramConfig(bot_token="", chat_id="")
-    with pytest.raises(RuntimeError, match="bot token and chat id"):
+    with pytest.raises(RuntimeError, match="Telegram delivery failed"):
         telegram.send_post(config, "hi")
 
 
@@ -434,12 +438,12 @@ def test_send_post_fallback_sends_plain_text_rather_than_the_markup_source(
             return _FakeResponse(
                 400, body=b'{"ok":false,"description":"Bad Request: can\'t parse entities"}'
             )
-        return _FakeResponse(200, body=b'{"ok":true}')
+        return _FakeResponse(200, body=b'{"ok":true,"result":{"message_id":42}}')
 
     import urllib.request as _real_urllib
 
     monkeypatch.setattr(_real_urllib, "urlopen", _open)
-    telegram.send_post(_config(), "\U0001f406 *SOUN* up 12\\.5%")
+    telegram.send_post(_config(), "\U0001f406 *SOUN* up 12\\.5%", allow_fallback=True)
     fallback = _url_payload(opened[1])
     assert "parse_mode" not in fallback
     assert fallback["text"] == "\U0001f406 SOUN up 12.5%"

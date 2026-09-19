@@ -527,6 +527,8 @@ def test_archive_capacity_retains_the_saved_version_and_new_source_evidence(monk
 )
 def test_delivery_records_retry_and_uncertain_outcomes(monkeypatch, outcome, expected):
     monkeypatch.setenv("TELEGRAM_MEMECOIN_ALERTS", "1")
+    monkeypatch.setenv("TELEGRAM_CHANNEL_INTERVAL_SECONDS", "0")
+    monkeypatch.setenv("TELEGRAM_TICKER_QUIET_SECONDS", "0")
     collect()
     store.render_pending_replays(at=AT)
 
@@ -588,6 +590,35 @@ def test_details_routes_return_the_same_saved_gif_and_package(monkeypatch):
         assert "/static/memecoin-replay.js" in page.text
     finally:
         client.close()
+
+
+def test_coin_gif_uses_the_shared_channel_schedule(monkeypatch):
+    from runner_web.telegram import config_from_env
+    from runner_web.telegram_outbox import reserve_channel_slot
+
+    monkeypatch.setenv("TELEGRAM_MEMECOIN_ALERTS", "1")
+    monkeypatch.setenv("TELEGRAM_CHANNEL_INTERVAL_SECONDS", "300")
+    collect()
+    store.render_pending_replays(at=AT)
+    with db.connection() as database:
+        assert reserve_channel_slot(database, config_from_env().chat_id, ["AAAA"], AT)
+    assert (
+        dispatch_memecoin_replays(
+            origin="https://app.test", at=AT, sender=lambda *_: pytest.fail("early send")
+        )["sent"]
+        == 0
+    )
+    assert (
+        dispatch_memecoin_replays(
+            origin="https://app.test", at=AT + timedelta(seconds=301), sender=lambda *_: 42
+        )["sent"]
+        == 1
+    )
+    with db.connection() as database:
+        row = database.execute(
+            "SELECT caption_text,message_id FROM memecoin_replay_posts"
+        ).fetchone()
+        assert "?replay=" in row["caption_text"] and row["message_id"] == 42
 
 
 def test_the_replay_caption_links_the_coin_page_instead_of_pasting_the_url() -> None:

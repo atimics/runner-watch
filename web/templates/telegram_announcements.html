@@ -1,0 +1,15 @@
+{% extends "mobile_base.html" %}
+{% block title %}Channel posts · RATi{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/telegram-announcements.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+<main class="channel-review">
+  <a href="/">← Stocks</a>
+  <p class="eyebrow">TELEGRAM</p><h1>Channel posts</h1>
+  <p>Preview queued messages and follow their delivery.</p>
+  <form id="channelAccess"><label for="channelKey">Operations access key</label><div class="channel-access"><input id="channelKey" type="password" autocomplete="off" required><button>Open history</button></div></form>
+  <p role="status" id="channelStatus">Enter your access key to view channel posts.</p>
+  <div id="channelLimits"></div>
+  <div id="channelPosts" aria-label="Announcement history"></div>
+</main>
+{% endblock %}
+{% block scripts %}<script src="/static/telegram-announcements.js?v={{ static_version }}" defer></script>{% endblock %}
