@@ -23,7 +23,7 @@
   const names = e => e.people.map(p => p.name).join(' + ') || 'Reporting person';
   const amount = e => e.view === 'ownership' ? (e.percent == null ? 'See filing' : number(e.percent) + '% of class') : money(e.value);
   const screenNode = document.getElementById('screenData');
-  const initial = JSON.parse(screenNode?.textContent || '{}');
+  const initial = screenNode?.ratiScreenDetail || JSON.parse(screenNode?.textContent || '{}');
   let item = initial.market === 'stocks' && initial.item?.id === root.dataset.ticker ? initial.item : {};
   let drivers = [], positive = [], penalties = [], contributions = [], total = 0, score = '—';
   const scoreData = value => JSON.stringify([value.score ?? null, value.score_detail ?? null]);

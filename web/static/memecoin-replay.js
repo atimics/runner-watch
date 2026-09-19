@@ -4,7 +4,7 @@
   if (!root) return;
   const $ = key => root.querySelector(`[data-replay-${key}]`);
   const graph = $('graph'), screen = document.getElementById('screenData');
-  let item = JSON.parse(screen?.textContent || '{}').item || {};
+  let item = (screen?.ratiScreenDetail || JSON.parse(screen?.textContent || '{}')).item || {};
   let data = null, page = 0, receiptBase = '/api/memecoins/evidence/', selected = null;
   let controller, timer;
   const small = matchMedia('(max-width:500px)');
