@@ -116,5 +116,5 @@ kill_timeout = 30
 
 [[vm]]
   processes = ["worker", "trainer"]
-  size = "shared-cpu-1x"
+  size = "shared-cpu-2x"
   memory = "1gb"

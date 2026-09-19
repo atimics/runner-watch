@@ -494,6 +494,16 @@ def memecoin_market(
     }
 
 
+def snapshot_version() -> str:
+    """Collected-at of the current quote snapshot; changes on every refresh.
+
+    Public caches key on this so a refreshed snapshot is not served stale.
+    """
+
+    snapshot = _market_states(keys=("memecoins_snapshot",)).get("memecoins_snapshot") or {}
+    return str(snapshot.get("collected_at") or "")
+
+
 def memecoin_detail(
     coin_id: str, *, at: datetime | None = None, history_limit: int = 288
 ) -> dict[str, Any] | None:

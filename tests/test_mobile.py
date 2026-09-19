@@ -1001,7 +1001,7 @@ def test_payload_cache_stale_refresh(
         release.set()
         with state.condition:
             assert state.condition.wait_for(lambda: not state.refreshing, timeout=5)
-    assert state.reads == []
+    assert state.reads == [state.shared_key, state.shared_key]
     if fails:
         assert state.cache[state.local_key] == (99.0, stale)
         assert state.writes == []
@@ -1016,6 +1016,22 @@ def test_payload_cache_stale_refresh(
         assert (("public-screen-refresh", "build"), {"duration_ms": 0.0}) in state.metrics
     else:
         assert state.metrics == []
+
+
+def test_payload_cache_stale_prefers_shared_copy(payload_cache: SimpleNamespace) -> None:
+    """A worker-refreshed shared copy beats rebuilding a stale local entry."""
+
+    state = payload_cache
+    stale = {"version": "old"}
+    shared = {"version": "shared"}
+    state.cache[state.local_key] = (99.0, stale)
+    state.shared = shared
+    state.build = lambda: pytest.fail("a stale shared copy must not rebuild")
+
+    assert state.fetch() is shared
+    assert state.reads == [state.shared_key]
+    assert state.refreshing == set()
+    assert state.cache[state.local_key] == (100.0 + state.ttl, shared)
 
 
 def test_payload_cache_cold_failure_cleanup(payload_cache: SimpleNamespace) -> None:
