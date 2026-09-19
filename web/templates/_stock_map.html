@@ -4,8 +4,16 @@
     <div class="map-canvas"><svg viewBox="0 0 760 440" data-map-graph data-phase="settled" role="group" aria-label="Current score and people linked to {{ detail.ticker }}"></svg><div class="map-paging" data-map-paging><button type="button" data-map-previous aria-label="Previous people">←</button><span data-map-page></span><button type="button" data-map-next aria-label="Next people">→</button></div></div>
     <aside class="map-source" aria-label="Score or selected filing"><button class="map-score-return" type="button" data-map-score-return hidden>← Return to score overview</button><div data-map-selection aria-live="polite" aria-atomic="true"><h3 class="map-score-heading">{{ screen.item.score|round|int if screen.item.score is not none else '—' }}</h3></div></aside>
   </div>
-  <p class="map-note" data-map-connection-note></p>
-  <div class="map-paging" data-map-connections-paging hidden><button type="button" data-map-connections-previous aria-label="Previous connections">←</button><span data-map-connections-page></span><button type="button" data-map-connections-next aria-label="Next connections">→</button></div>
+  <section class="map-connections" data-map-connections hidden aria-label="Connected stocks">
+    <div class="map-connections-heading"><h3 data-map-connections-title>Connected stocks</h3><label>Person or firm <select data-map-connections-person></select></label></div>
+    <p class="map-note">Latest filing line for each relationship and share class. Select a marker for its date and filing.</p>
+    <div class="map-key"><span class="up">● Buy</span><span class="down">● Sell</span><span class="map-stake-key">● Stake</span><span>◇ Director</span></div>
+    <p class="map-note" data-map-connections-scale>Circle area grows with the amount. Stakes use % of class; buys and sales use dollars. Each scale covers the loaded connections.</p>
+    <div class="map-workspace"><div class="map-canvas"><svg data-map-connections-graph viewBox="0 0 760 440" role="group" aria-label="Stocks around the selected person"></svg></div><aside class="map-source" data-map-connections-detail aria-live="polite"></aside></div>
+    <p class="map-note" role="status" data-map-connections-status></p>
+    <div class="map-paging" data-map-connections-paging hidden><button type="button" data-map-connections-previous aria-label="Previous connections">←</button><span data-map-connections-page></span><button type="button" data-map-connections-next aria-label="Next connections">→</button></div>
+    <button type="button" class="map-load" data-map-connections-load hidden>Load older connections</button>
+  </section>
   <div class="map-filings">
     <div class="map-event-list" data-map-events aria-label="Reported filings"></div>
     <div class="map-paging map-filings-paging" data-map-filings-paging><button type="button" data-map-filings-previous aria-label="Previous filings">←</button><span data-map-filings-page></span><button type="button" data-map-filings-next aria-label="Next filings">→</button></div>

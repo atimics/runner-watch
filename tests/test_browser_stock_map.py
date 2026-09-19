@@ -61,7 +61,10 @@ def map_payload():
     }
 
 
-def open_map(page: Page, width=1280, *, current=None, map_handler=None, states=None, history=None):
+def open_map(
+    page: Page, width=1280, *, current=None, map_handler=None, states=None,
+    history=None, connections_handler=None,
+):
     page.set_viewport_size({"width": width, "height": 900})
     page.emulate_media(reduced_motion="reduce")
     request = _request()
@@ -113,6 +116,8 @@ def open_map(page: Page, width=1280, *, current=None, map_handler=None, states=N
             json={**data, "events": old, "loaded_filings": 1, "next_cursor": None}
         ),
     )
+    if connections_handler:
+        page.route("**/map/connections?*", connections_handler)
     page.goto("http://app.test/t/TEST", wait_until="domcontentloaded")
     if map_handler is None:
         expect(page.locator("[data-map-status]")).to_have_text("")
@@ -126,7 +131,7 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width):
     open_map(page, width)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     expect(page.locator("[data-map-graph]")).to_be_visible()
-    expect(page.locator("[data-person]")).to_have_count(1 if width <= 500 else 2)
+    expect(page.locator("[data-person]")).to_have_count(4 if width <= 500 else 8)
     expect(page.locator("[data-map-selection] h3")).to_have_text("45")
     expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
     expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(0)
@@ -145,7 +150,7 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width):
     )
     expect(page.locator(".chart-filing-marker")).to_have_count(1)
     page.get_by_role("button", name="Next people").click()
-    expect(page.locator("[data-person]")).to_have_count(1 if width <= 500 else 2)
+    expect(page.locator("[data-person]")).to_have_count(4 if width <= 500 else 3)
     page.get_by_role("button", name="Next filings").click()
     expect(page.locator("[data-map-filings-page]")).to_have_text("6–10 of 11")
     page.locator("[data-map-events] button").first.click()
@@ -169,7 +174,7 @@ def test_clicking_a_filing_scrubs_the_map(page):
     geometry = page.locator(".map-score-segment").evaluate_all(
         "segments => segments.map(segment => segment.getAttribute('d'))"
     )
-    expect(page.locator("[data-person]")).to_have_count(2)
+    expect(page.locator("[data-person]")).to_have_count(8)
     _oldest_filing(page)
     expect(page.locator("[data-map-filings-page]")).to_have_text("11–11 of 11")
     oldest = page.locator("[data-map-events] button").last
@@ -204,7 +209,7 @@ def test_scoring_panel_segments_share_the_ring_by_total_magnitude(page, width):
     expect(segments).to_have_count(5)
     expect(page.locator(".map-score-penalty-arc, [data-penalty-key]")).to_have_count(0)
     radius = 48 if width <= 500 else 62
-    cx, cy = (180, 74) if width <= 500 else (380, 218)
+    cx, cy = (180, 184) if width <= 500 else (380, 218)
     angle = -math.pi / 2
     lengths = []
     weights = [60, 30, 10, -50, -5]
@@ -407,7 +412,7 @@ def test_source_failure_can_retry_and_reported_names_are_text(page):
     page.reload()
     expect(page.get_by_role("button", name="Retry loading filings")).to_be_visible()
     payload = map_payload()
-    payload["events"][9]["people"][0]["name"] = "<img src=x onerror=alert(1)>"
+    payload["events"][-1]["people"][0]["name"] = "<img src=x onerror=alert(1)>"
     page.route("**/api/stocks/TEST/map", lambda route: route.fulfill(json=payload))
     page.get_by_role("button", name="Retry loading filings").click()
     page.locator("[data-person]").filter(has_text="<img src=x onerror=alert(1)>").click()
@@ -430,7 +435,9 @@ def test_score_keyboard_navigation_and_pin_survive_filing_scrub(page, key, score
     segments.first.focus()
     segments.first.press("ArrowRight")
     expect(segments.nth(1)).to_be_focused()
-    expect(page.locator(".map-score-breakdown")).to_have_text("+30 pts · 19.4% of total magnitude")
+    expect(page.locator(".map-score-breakdown")).to_have_text(
+        "+30 pts · 19.4% of total magnitude"
+    )
     segments.nth(1).press("End")
     expect(segments.last).to_be_focused()
     segments.last.press("ArrowDown")
@@ -439,7 +446,9 @@ def test_score_keyboard_navigation_and_pin_survive_filing_scrub(page, key, score
     expect(segments.last).to_be_focused()
     segments.last.press("ArrowUp")
     expect(page.locator('[data-score-key="rug"]')).to_be_focused()
-    expect(page.locator(".map-score-breakdown")).to_have_text("-50 pts · 32.3% of total magnitude")
+    expect(page.locator(".map-score-breakdown")).to_have_text(
+        "-50 pts · 32.3% of total magnitude"
+    )
     page.keyboard.press("Home")
     expect(segments.first).to_be_focused()
     segment = page.locator(f'[data-score-key="{score_key}"]')
@@ -679,7 +688,9 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
     poll()
     expect(social).to_be_focused()
     expect(social).to_have_attribute("aria-pressed", "true")
-    expect(page.locator(".map-score-breakdown")).to_have_text("+20 pts · 44.4% of total magnitude")
+    expect(page.locator(".map-score-breakdown")).to_have_text(
+        "+20 pts · 44.4% of total magnitude"
+    )
     expect(page.locator("[data-map-selection]")).to_contain_text("Pinned contribution")
     expect(page.locator("[data-map-selection] h3")).to_have_text("35")
     expect(page.locator(".map-score-penalties strong")).to_have_text("-5 pts")
@@ -760,11 +771,14 @@ def test_reduced_motion_scrubs_without_animation(page, width):
     assert "moving" not in page.evaluate("window.mapPhases")
 
 
+
 def test_state_legend_tabs_filter_the_chart(page):
     """The status legend sits muted below the chart, never on it: its tabs
     carry the chart's status colours and toggle which run the line emphasises."""
 
-    history = [{"time": f"2026-09-{day:02}T18:00:00Z", "price": day + 2} for day in range(14, 20)]
+    history = [
+        {"time": f"2026-09-{day:02}T18:00:00Z", "price": day + 2} for day in range(14, 20)
+    ]
     states = [
         {"time": "2026-09-14T00:00:00Z", "tone": "watch"},
         {"time": "2026-09-16T06:00:00Z", "tone": "running"},
@@ -791,35 +805,89 @@ def test_state_legend_tabs_filter_the_chart(page):
 
 
 @pytest.mark.parametrize("width", [320, 1280])
-def test_connected_stock_rings_keep_trades_separate_and_scale(page, width):
+def test_actor_stock_ring_separate_actions_scale_and_sources(page, width):
     data = map_payload()
-    person = data["events"][9]["people"][0]
-    base = {**data["events"][9], "view": "ownership", "action": "Reported stake"}
-    links = [
-        {**base, "id": "small", "ticker": "SMALL", "percent": 2, "matched_people": [person]},
-        {**base, "id": "large", "ticker": "LARGE", "percent": 20, "matched_people": [person]},
+    base = {
+        **data["events"][0],
+        "people": [
+            {"id": "sec:101", "name": "Person 0", "role": "Director", "identity_basis": "SEC CIK"}
+        ],
+    }
+    rows = [
+        {
+            **base,
+            "id": "large",
+            "ticker": "BIG",
+            "view": "ownership",
+            "action": "Reported stake",
+            "percent": 20,
+        },
+        {
+            **base,
+            "id": "small",
+            "ticker": "SMALL",
+            "view": "ownership",
+            "action": "Reported stake",
+            "percent": 2,
+        },
         {
             **base,
             "id": "sale",
-            "ticker": "LARGE",
+            "ticker": "BIG",
             "view": "activity",
             "action": "Sold",
-            "tone": "down",
-            "value": 25000,
-            "matched_people": [person],
+            "value": 100000,
+        },
+        {
+            **base,
+            "id": "buy",
+            "ticker": "SMALL",
+            "view": "activity",
+            "action": "Bought",
+            "value": 10000,
+        },
+        {
+            **base,
+            "id": "unknown",
+            "ticker": "UNKNOWN",
+            "view": "ownership",
+            "action": "Reported stake",
+            "percent": None,
         },
     ]
-    data["connections"] = {"events": links, "has_more": False}
-    open_map(page, width, map_handler=lambda route: route.fulfill(json=data))
-    expect(page.locator("[data-connection]")).to_have_count(3)
-    small = page.locator('[data-connection^="small:"] circle')
-    large = page.locator('[data-connection^="large:"] circle')
-    assert float(large.get_attribute("r")) > float(small.get_attribute("r"))
-    sale = page.locator('[data-connection^="sale:"]')
-    sale.focus()
-    sale.press("Enter")
-    expect(sale).to_be_focused()
-    expect(page.locator("[data-map-selection]")).to_contain_text("Sold · $25,000")
-    expect(page.locator("[data-map-selection] a").first).to_have_attribute("href", "/t/LARGE")
-    expect(page.locator(".chart-filing-marker")).to_have_count(0)
+    def respond(route):
+        from urllib.parse import parse_qs, urlparse
+
+        person_id = parse_qs(urlparse(route.request.url).query)['person_id'][0]
+        route.fulfill(json={
+            'person_id': person_id, 'identity_scope': 'SEC CIK',
+            'events': rows if person_id == 'sec:101' else [], 'next_cursor': None,
+        })
+
+    open_map(page, width, connections_handler=respond)
+    page.locator('[data-map-connections-person]').select_option('sec:101')
+    expect(page.locator("[data-map-connections-status]")).to_contain_text("SEC person ID")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    marks = {}
+    labels = []
+    while True:
+        nodes = page.locator("[data-connection]")
+        labels.extend(nodes.evaluate_all('(nodes) => nodes.map(n => n.getAttribute("aria-label"))'))
+        for mark in page.locator("[data-map-connections-graph] [data-amount]").all():
+            marks[mark.get_attribute("data-amount")] = float(mark.get_attribute("r"))
+        if page.locator("[data-map-connections-next]").is_disabled():
+            break
+        page.locator("[data-map-connections-next]").click()
+    assert marks["20"] > marks["2"]
+    assert marks["100000"] > marks["10000"]
+    assert any("BIG: Sell" in label for label in labels)
+    assert any("BIG: Stake" in label for label in labels)
+    assert any("Director" in label for label in labels)
+    assert any("See filing" in label for label in labels)
+    page.locator("[data-connection]").first.focus()
+    page.keyboard.press("Enter")
+    expect(page.locator("[data-map-connections-detail]")).to_contain_text("Filed")
+    expect(page.locator("[data-map-connections-detail] a").first).to_have_attribute(
+        "href", re.compile("/t/")
+    )
+    expect(page.locator("[data-stock-map]")).not_to_contain_text(re.compile("NaN|Infinity"))
