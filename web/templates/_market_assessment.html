@@ -23,7 +23,7 @@
         <summary>{{ {'pattern': 'Pattern', 'relationship': 'Relationship'}.get(driver.basis, 'Observation') }} · {% if receipts %}{{ receipts|length }} {{ 'receipt' if receipts|length == 1 else 'receipts' }}{% else %}Context{% endif %}</summary>
         {% if driver.explanation %}<p>{{ driver.explanation }}</p>{% endif %}
         {% if receipts %}<ol>
-          {% for receipt in receipts %}<li><a href="{{ receipt.receipt_url or receipt.source_url }}" target="_blank" rel="noopener noreferrer">{{ receipt.kind }} {{ loop.index }} ↗</a>{% if receipt.receipt_url and receipt.source_url and receipt.receipt_url != receipt.source_url %}<a href="{{ receipt.source_url }}" target="_blank" rel="noopener noreferrer">Explorer ↗</a>{% endif %}</li>{% endfor %}
+          {% for receipt in receipts %}<li data-receipt-id="{{ receipt.event_id or receipt.receipt_url or receipt.source_url }}"><a href="{{ receipt.receipt_url or receipt.source_url }}" target="_blank" rel="noopener noreferrer">{{ receipt.kind }} {{ loop.index }} ↗</a>{% if receipt.receipt_url and receipt.source_url and receipt.receipt_url != receipt.source_url %}<a href="{{ receipt.source_url }}" target="_blank" rel="noopener noreferrer">Explorer ↗</a>{% endif %}</li>{% endfor %}
         </ol>{% endif %}
       </details>
       {% endif %}

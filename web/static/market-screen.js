@@ -277,18 +277,22 @@
       return next;
     } catch (_) { return null; }
   }
+  let surfaceRequestNumber = 0;
   async function refreshSurface() {
     if (document.hidden) return;
     if (screen?.refresh_url) { await refreshDetail(); return; }
-    const surface = document.querySelector('[data-live-surface]');
+    let surface = document.querySelector('[data-live-surface]');
     if (!surface || surface.contains(document.activeElement) || document.querySelector('dialog[open]')) return;
-    const key = pageKey();
+    const key = pageKey(), version = ++surfaceRequestNumber;
     try {
       const response = await fetch(location.href);
-      if (!response.ok || response.redirected || pageKey() !== key) return;
-      const next = new DOMParser().parseFromString(await response.text(), 'text/html');
+      if (!response.ok || response.redirected) return;
+      const html = await response.text();
+      if (pageKey() !== key || version !== surfaceRequestNumber) return;
+      const next = new DOMParser().parseFromString(html, 'text/html');
       const content = next.querySelector('[data-live-surface]');
-      if (!content || document.querySelector('dialog[open]') || surface.contains(document.activeElement)) return;
+      surface = document.querySelector('[data-live-surface]');
+      if (!content || !surface || document.querySelector('dialog[open]') || surface.contains(document.activeElement)) return;
       if (content.innerHTML !== surface.innerHTML) {
         const opened = new Map([...surface.querySelectorAll('[data-connection][open]')].map(el => [el.dataset.connection, !!el.querySelector('.more-connections[open]')]));
         content.querySelectorAll('[data-connection]').forEach(el => { if (opened.has(el.dataset.connection)) { el.open = true; const more = el.querySelector('.more-connections'); if (more) more.open = opened.get(el.dataset.connection); } });

@@ -52,6 +52,13 @@
       if (points < 0) row.className = 'is-penalty';
       row.append(label, meter, value); return row;
     }));
+    const active = document.activeElement;
+    const focusedFinding = active?.closest('[data-finding-id]');
+    const focus = focusedFinding && panel.contains(focusedFinding) ? {
+      findingId: focusedFinding.dataset.findingId,
+      receiptId: active.closest('[data-receipt-id]')?.dataset.receiptId,
+      href: active.tagName === 'A' ? active.href : null,
+    } : null;
     const expanded = new Set([...panel.querySelectorAll('[data-finding-id][open]')].map(item => item.dataset.findingId));
     panel.querySelector('[data-assessment-drivers]').replaceChildren(...(assessment.drivers || []).map(driver => {
       const row = document.createElement('li');
@@ -94,6 +101,7 @@
           const list = document.createElement('ol');
           receipts.forEach((receipt, index) => {
             const entry = document.createElement('li');
+            entry.dataset.receiptId = receipt.event_id || receipt.receipt_url || receipt.source_url;
             const saved = sourceLink(receipt.receipt_url || receipt.source_url, `${receipt.kind} ${index + 1} ↗`);
             if (saved) entry.append(saved);
             if (receipt.receipt_url && receipt.source_url && receipt.receipt_url !== receipt.source_url) {
@@ -108,6 +116,18 @@
       }
       return row;
     }));
+    if (focus) {
+      const finding = [...panel.querySelectorAll('[data-finding-id]')]
+        .find(item => item.dataset.findingId === focus.findingId);
+      const receipt = finding && [...finding.querySelectorAll('[data-receipt-id]')]
+        .find(item => item.dataset.receiptId === focus.receiptId);
+      const link = receipt && [...receipt.querySelectorAll('a')].find(item => item.href === focus.href);
+      const target = link || finding?.querySelector('summary') || panel.querySelector('[data-assessment-label]');
+      if (target) {
+        if (target.tagName === 'H2') target.tabIndex = -1;
+        target.focus({preventScroll: true});
+      }
+    }
     const risks = assessment.risks || [];
     panel.querySelector('[data-assessment-evidence]').hidden = !risks.length;
     panel.querySelector('[data-assessment-risks]').replaceChildren(...risks.map(text => {

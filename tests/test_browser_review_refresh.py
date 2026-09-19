@@ -128,3 +128,31 @@ def test_disappeared_filters_preserve_selection_then_recover(page):
     expect(page.locator('.chip[data-tag="pass"]')).to_have_text("1 pass")
     page.locator('.chip[data-tag="pass"]').click()
     expect(page.locator(".ticker:visible")).to_have_count(1)
+
+
+def test_older_list_response_keeps_latest_rows_and_filters(page):
+    start_list(page, sport(None))
+    held = []
+
+    def hold(route):
+        held.append(route)
+        page.evaluate("count => window.heldRefreshCount = count", len(held))
+
+    page.route("https://app.test/", hold)
+    with page.expect_request("https://app.test/"):
+        page.clock.fast_forward(60_000)
+    with page.expect_request("https://app.test/"):
+        page.clock.fast_forward(60_000)
+    page.wait_for_function("window.heldRefreshCount === 2")
+    assert len(held) == 2
+    held[1].fulfill(content_type="text/html", body=screens.render(sport("pass")))
+    expect(page.locator('.chip[data-tag="pass"]')).to_have_text("1 pass")
+    with page.expect_response("https://app.test/"):
+        held[0].fulfill(content_type="text/html", body=screens.render(sport("lean")))
+    # A later round trip ensures the fetch continuation has handled the old response.
+    page.evaluate("() => new Promise(resolve => setTimeout(resolve, 0))")
+    expect(page.locator('.chip[data-tag="pass"]')).to_have_text("1 pass")
+    expect(page.locator('.chip[data-tag="lean"]')).to_have_count(0)
+    expect(page.locator(".ticker")).to_have_attribute("data-tag", "pass")
+    page.locator('.chip[data-tag="pass"]').click()
+    expect(page.locator(".ticker:visible")).to_have_count(1)
