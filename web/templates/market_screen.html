@@ -46,6 +46,7 @@
   <meta name="theme-color" content="#0b100e"><title>{% block screen_title %}{{ screen.item.name ~ ' · ' if screen.kind == 'detail' else '' }}{{ screen.label }} · RATi{% endblock %}</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/market-screen.css?v={{ static_version }}">
+  {% if screen is defined and screen.market in ['memecoins', 'sports'] %}<link rel="stylesheet" href="/static/market-anchor.css?v={{ static_version }}">{% endif %}
   {% block detail_head %}{% endblock %}
   <meta name="description" content="{% block screen_description %}{% if share %}{{ screen.item.subtitle }}{% endif %}{% endblock %}">
   {% if share %}<meta property="og:title" content="{{ share.title }}"><meta property="og:description" content="{{ share.summary }}"><meta property="og:image" content="{{ app_origin }}{{ share.card_path }}"><meta name="twitter:card" content="summary_large_image">{% endif %}
@@ -53,25 +54,26 @@
 <body>
 <a class="skip-link" href="#content">Skip to content</a>
 {% set base = '/memecoins' if (screen is defined and screen.market == 'memecoins') else '/' %}
-<div class="market-screen">
+<div class="market-screen{% if screen is defined and screen.market in ['memecoins', 'sports'] %} anchor-{{ screen.market }}{% endif %}">
   {% block topbar %}
   <header class="topbar">
     <a class="brand" href="{{ runners_origin }}/" aria-label="RATi home">RATi<span>●</span></a>
     <nav aria-label="Market" class="markets">
       {% for key,label,url in [('stocks','Stocks',runners_origin ~ '/'),('memecoins','Memecoins',runners_origin ~ '/memecoins'),('sports','Sports',sports_origin ~ '/')] %}<a href="{{ url }}"{% if screen.market == key %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
     </nav>
-    {% if market_clock %}
+    {% if market_clock and screen.market == 'stocks' %}
     <span class="clock" title="{{ market_clock.label }} · {{ market_clock.data_note }}"><i class="{{ 'live' if market_clock.scanner_active else 'idle' }}"></i><b>{{ {'pre':'PRE','regular':'REG','after':'AH','overnight':'OVN'}.get(market_clock.session, 'CLOSED') }}</b><span>{{ market_clock.eastern_now[11:16] }} ET</span></span>
     {% endif %}
     {% if screen.updated_label %}<span class="fresh">Updated {{ screen.updated_label }}</span>{% endif %}
     {% if screen.counts %}<div class="tag-filters" data-tag-filters aria-label="Filter by state">
-      {% for tone in ['running','setup','extended','avoid','watch','paused'] %}{% if screen.counts.get(tone) %}<button type="button" class="chip chip-{{ tone }}" data-tag="{{ tone }}" aria-pressed="false"><i></i>{{ screen.counts[tone] }} {{ tone }}</button>{% endif %}{% endfor %}
+      {% for tone in ['running','setup','extended','avoid','watch','paused','lean','pass','model-only'] %}{% if screen.counts.get(tone) %}<button type="button" class="chip chip-{{ tone }}" data-tag="{{ tone }}" aria-pressed="false"><i></i>{{ screen.counts[tone] }} {{ tone|replace('-', ' ') }}</button>{% endif %}{% endfor %}
       <button type="button" class="chip chip-all" data-tag="" aria-pressed="true" hidden>All</button>
     </div>{% endif %}
     <form class="search" method="get" action="{{ base }}" role="search">
       <input type="hidden" name="view" value="list">
-      <label for="marketSearch" class="sr-only">Find a ticker</label>
-      <input id="marketSearch" name="q" type="search" value="{{ screen.query }}" placeholder="Find a ticker" autocomplete="off">
+      {% set search_label = 'Find a token' if screen.market == 'memecoins' else 'Find a team or event' if screen.market == 'sports' else 'Find a ticker' %}
+      <label for="marketSearch" class="sr-only">{{ search_label }}</label>
+      <input id="marketSearch" name="q" type="search" value="{{ screen.query }}" placeholder="{{ search_label }}" autocomplete="off">
       <button type="submit" aria-label="Search">⌕</button>
     </form>
     <a class="account" href="{{ '/calls' if user else '/login?next=' ~ request.url.path|urlencode }}">{{ 'My Calls' if user else 'Log in' }}</a>
@@ -82,13 +84,13 @@
   {% if screen.kind != 'detail' %}
     <div data-live-surface>
     {% if screen.rows %}
-      <div class="ticker-list market-{{ screen.market }}" data-tag-list aria-label="Tickers">{% for item in screen.rows %}<a class="ticker{% if item.announced %} is-new{% endif %}" href="{{ item.href }}" data-tag="{{ item.tag_tone }}">
+      <div class="ticker-list market-{{ screen.market }}" data-tag-list aria-label="{{ 'Events' if screen.market == 'sports' else 'Tokens' if screen.market == 'memecoins' else 'Tickers' }}">{% for item in screen.rows %}<a class="ticker{% if item.announced %} is-new{% endif %}" href="{{ item.href }}" data-tag="{{ item.tag_tone }}">
         {% if item.tag %}<span class="tag tag-{{ item.tag_tone }}{% if item.risk %} has-risk{% endif %}">{% if item.risk %}<i aria-hidden="true">▲</i>{% endif %}{{ item.tag }}</span>
         {% else %}<span class="ticker-mark tone-{{ loop.index0 % 5 }}" aria-hidden="true">{{ item.mark }}</span>{% endif %}
-        <span class="ticker-name"><strong>{{ item.name }}</strong><small>{{ item.subtitle }}</small></span>
+        <span class="ticker-name"><strong>{{ item.name }}</strong><small{% if screen.market == 'memecoins' and item.contract_address %} title="{{ item.contract_address }}"{% endif %}>{{ item.subtitle }}</small></span>
         <span class="ticker-value"><strong>{{ item.value }}</strong><small class="{{ item.tone }}">{{ item.change }}</small></span>
         {% if screen.market == 'stocks' %}<svg class="mini-chart" data-ticker="{{ item.name }}" viewBox="0 0 64 18" preserveAspectRatio="none" aria-hidden="true"><path class="chart-placeholder" d="M1 12 L13 10 L25 13 L39 8 L51 10 L63 7"/></svg>{% endif %}
-        {{ score_pie(item) }}
+        {% if screen.market == 'stocks' %}{{ score_pie(item) }}{% else %}<span class="row-assessment">{% if item.score is not none %}{{ score_pie(item) }}<small>{{ item.score|round|int }} score</small>{% elif item.assessment is defined and item.assessment.value is not none %}<strong>{{ item.assessment.value|round|int }}{{ item.assessment.unit }}</strong><small>{{ item.assessment.label }}</small>{% else %}<span class="assessment-pending">◌</span><small>Pending</small>{% endif %}</span>{% endif %}
         <span class="row-arrow" aria-hidden="true">↗</span>
       </a>{% endfor %}</div>
     {% else %}<div class="empty"><span aria-hidden="true">◌</span><h2>{{ 'Try another search' if screen.query else 'A quiet moment' }}</h2><p>{{ 'Search by name or symbol.' if screen.query else 'New activity will appear here.' }}</p></div>{% endif %}
@@ -97,6 +99,8 @@
     <a class="back" href="{{ base }}">← {{ screen.label }}</a>
     <article class="detail" data-live-surface><div class="asset-overview"><header class="asset-heading"><span class="ticker-mark tone-0" aria-hidden="true">{{ screen.item.mark }}</span><div><p class="eyebrow">{{ screen.item.subtitle }}</p><h1>{{ screen.item.name }}</h1></div></header>
       <div class="asset-quote"><div class="asset-value"><strong data-value>{{ screen.item.value }}</strong><span data-change class="{{ screen.item.tone }}">{{ screen.item.change }}</span></div><p class="quote-scope">{% if screen.market != 'sports' %}{{ '24h change' if screen.market == 'memecoins' else 'Daily change' }} · {% endif %}<span class="quote-time" data-time>{{ screen.item.time }}</span></p></div></div>
+      {% if screen.market == 'memecoins' and screen.item.contract_address %}<div class="token-contract"><details><summary>Contract address</summary><code>{{ screen.item.contract_address }}</code></details><button type="button" data-copy-contract data-contract="{{ screen.item.contract_address }}">Copy CA</button><span class="sr-only" role="status" data-copy-status></span></div>{% endif %}
+      {% if screen.market in ['memecoins', 'sports'] %}{% include "_market_assessment.html" %}{% endif %}
       <section class="visual" aria-label="{{ 'Game' if screen.teams else 'Price history' }}">
       {% if screen.teams %}<div class="teams">{% for team in screen.teams %}<div><span class="team-mark">{{ team.mark }}</span><h2>{{ team.name }}</h2><strong>{{ team.score }}</strong></div>{% endfor %}</div><p class="visual-caption" data-game-note>{{ screen.note }}</p>
       {% else %}<svg class="price-chart" viewBox="0 0 800 280" role="img" aria-label="Price history" hidden><path class="chart-area"/><path class="chart-line"/><circle class="chart-point" r="4" hidden/></svg><p class="chart-status" data-chart-status>Price history is loading.</p><div class="chart-state-legend" data-chart-state-legend aria-label="Status legend" hidden></div>{% endif %}
@@ -122,6 +126,7 @@
 {% if user and flash_wallet %}{% include "_flash_release_modal.html" %}{% endif %}
 {% if screen is defined and screen.kind == 'detail' %}<script type="application/json" nonce="{{ request.state.csp_nonce }}" id="screenData">{{ screen|tojson }}</script>{% endif %}
 <script src="/static/market-screen.js?v={{ static_version }}" defer></script>
+{% if screen is defined and screen.market in ['memecoins', 'sports'] %}<script src="/static/market-anchor.js?v={{ static_version }}" defer></script>{% endif %}
 {% if screen is defined and screen.kind != 'detail' and screen.market == 'stocks' %}<script src="/static/ticker-row.js?v={{ static_version }}" defer></script><script nonce="{{ request.state.csp_nonce }}">window.addEventListener('DOMContentLoaded',()=>{if(window.TickerRow){window.TickerRow.loadCharts('/api/pulse/charts');}});</script>{% endif %}
 {% block detail_scripts %}{% endblock %}
 </body>

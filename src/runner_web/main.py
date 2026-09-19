@@ -7417,6 +7417,14 @@ def memecoin_detail_page(
         if context["user"]
         else None
     )
+    user_id = str(context["user"]["id"]) if context["user"] else None
+    context["flash_report"] = _flash_report_action(
+        user_id=user_id,
+        latest_report=daily_report_for_ticker(coin_id, user_id),
+        latest_attempt=latest_commission(user_id, coin_id) if user_id else None,
+        start_url=f"/api/research/coin/{coin_id}",
+        login_url=f"/login?next=/memecoins/coin/{coin_id}",
+    )
     return templates.TemplateResponse(request, "simple_coin_detail.html", context)
 
 

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import math
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
+
+from runner_web.market_assessments import assessment
 
 LABELS = {"stocks": "Stocks", "memecoins": "Memecoins", "sports": "Sports"}
 
@@ -69,27 +72,41 @@ def sports_state(item: dict[str, Any]) -> dict[str, Any]:
 
 def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
     if market == "sports" and str(item.get("id", "")).startswith("golf:"):
-        leader = item.get("leader") or {}
+        from runner_web.sports import _golf_display_status
+
+        leader = item.get("leader") or next(iter(item.get("leaderboard") or []), {})
+        event_status = _golf_display_status(item, datetime.now(UTC))
+        rating = assessment(market, item)
+        saved_tag, saved_tone, saved_risk = state_tag(item)
+        if saved_tag:
+            rating.update(tag=saved_tag, tag_tone=saved_tone)
         return {
             "id": str(item["id"]),
             "name": str(item.get("name") or "Tournament"),
             "subtitle": "PGA Tour",
             "value": str(leader.get("score_display") or leader.get("score") or "—"),
-            "change": str(item.get("display_status") or item.get("status_detail") or "Upcoming"),
+            "change": event_status,
+            "event_status": event_status,
+            "assessment": rating,
             "tone": "neutral",
             "time": stamp(item.get("start_time")),
             "href": "/game/" + quote(str(item["id"]), safe=":"),
             "mark": "PG",
-            "tag": "",
-            "tag_tone": "",
-            "risk": False,
-            "score": None,
-            "score_detail": None,
+            "tag": rating["tag"],
+            "tag_tone": rating["tag_tone"],
+            "risk": saved_risk,
+            "score": rating["score"],
+            "score_detail": rating["score_detail"],
+            "score_as_of": rating["score_as_of"],
         }
     if market == "sports":
         away = str(item.get("away_abbreviation") or item.get("away_team_name") or "Away")
         home = str(item.get("home_abbreviation") or item.get("home_team_name") or "Home")
         state = sports_state(item)
+        rating = assessment(market, item)
+        saved_tag, saved_tone, saved_risk = state_tag(item)
+        if saved_tag:
+            rating.update(tag=saved_tag, tag_tone=saved_tone)
         started = state.get("started") or item.get("status") in {"in", "post"}
         scores = [item.get(f"{side}_score") for side in ("away", "home")]
         value = (
@@ -116,31 +133,45 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
             "time": stamp(item.get("start_time")),
             "href": "/game/" + quote(str(item["id"]), safe=":"),
             "mark": away[:2],
-            "tag": "",
-            "tag_tone": "",
-            "risk": False,
-            "score": None,
-            "score_detail": None,
+            "event_status": state.get("label") or item.get("status_detail") or "Upcoming",
+            "assessment": rating,
+            "tag": rating["tag"],
+            "tag_tone": rating["tag_tone"],
+            "risk": saved_risk,
+            "score": rating["score"],
+            "score_detail": rating["score_detail"],
+            "score_as_of": rating["score_as_of"],
         }
     coin = market == "memecoins"
     identifier = str(item.get("id") if coin else item.get("ticker") or "")
     name = str(item.get("symbol") if coin else item.get("ticker") or "")
     move = number(item.get("change_24h") if coin else item.get("change_pct"))
     paused = coin and bool(item.get("stale"))
+    rating = assessment(market, item) if coin else None
     if market == "stocks":
         tag, tag_tone, risk = state_tag(item)
         score = number(item.get("score"))
         score_detail = item.get("score_detail")
     elif paused:
-        tag, tag_tone, risk, score, score_detail = "PAUSED", "paused", False, None, None
+        tag, tag_tone, risk = state_tag(item)
+        if not tag:
+            tag, tag_tone = "PAUSED", "paused"
+        score, score_detail = rating["score"], rating["score_detail"]
     else:
-        tag, tag_tone, risk, score, score_detail = "", "", False, None, None
+        tag, tag_tone, risk = state_tag(item)
+        score, score_detail = rating["score"], rating["score_detail"]
+    if rating is not None:
+        rating["tag"], rating["tag_tone"], _ = state_tag(item)
+    subtitle = str(item.get("name") if coin else item.get("company") or item.get("name") or "")
+    address = str(item.get("token_address") or "") if coin else ""
+    if not re.fullmatch(r"(?:[1-9A-HJ-NP-Za-km-z]{32,44}|0x[a-fA-F0-9]{40})", address):
+        address = ""
+    if address:
+        subtitle = address[:6] + "…" + address[-4:]
     return {
         "id": identifier,
         "name": name,
-        "subtitle": str(
-            item.get("name") if coin else item.get("company") or item.get("name") or ""
-        ),
+        "subtitle": subtitle,
         "value": money(item.get("price")),
         "change": "Price paused" if paused else change(move),
         "tone": "neutral"
@@ -150,7 +181,15 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         else "down"
         if move and move < 0
         else "neutral",
-        **({"freshness": "paused" if paused else "current"} if coin else {}),
+        **(
+            {
+                "freshness": "paused" if paused else "current",
+                "assessment": rating,
+                "contract_address": address,
+            }
+            if coin
+            else {}
+        ),
         "time": stamp(
             item.get("observed_at") if coin else item.get("quote_time") or item.get("event_at")
         ),
@@ -161,7 +200,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         "risk": risk,
         "score": score,
         "score_detail": score_detail,
-        "score_as_of": item.get("score_as_of") if market == "stocks" else None,
+        "score_as_of": item.get("score_as_of"),
         # Carried by the most recent pulse announcement, so the board can show
         # what the channel was just told.
         "announced": bool(item.get("announced")),
@@ -330,6 +369,8 @@ def detail(
             "ticker": data.get("ticker"),
             "company": data.get("company") or data.get("name"),
         }
+    if market == "memecoins":
+        source = {**source, "findings": data.get("findings") or source.get("findings") or []}
     item = row(market, source)
     result = {
         "kind": "detail",

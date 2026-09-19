@@ -1,62 +1,66 @@
-{% extends "mobile_base.html" %}
-{% block title %}{{ caller }} Calls · RATi{% endblock %}
-{% block content %}
-<header class="detail-nav">
-  <a href="{{ caller_back_url|default('/community') }}" aria-label="Back to Alpha">‹</a>
-  <strong>Caller</strong>
-  <span></span>
+{% extends "market_screen.html" %}
+{% macro subject_label(value, kind) -%}
+  {%- if kind == 'memecoin' and value|length > 24 and ' ' not in value -%}
+    <span aria-hidden="true">{{ value[:6] }}…{{ value[-4:] }}</span><span class="sr-only">{{ value }}</span>
+  {%- else -%}{{ value }}{%- endif -%}
+{%- endmacro %}
+{% block screen_title %}{{ caller }} Calls · RATi{% endblock %}
+{% block detail_head %}<link rel="stylesheet" href="/static/caller-screen.css?v={{ static_version }}">{% endblock %}
+{% block topbar %}
+<header class="topbar caller-topbar">
+  <a class="brand" href="{{ runners_origin }}/" aria-label="RATi home">RATi<span>●</span></a>
+  <nav aria-label="Market" class="markets">
+    <a href="{{ runners_origin }}/">Stocks</a>
+    <a href="{{ runners_origin }}/memecoins">Memecoins</a>
+    <a href="{{ sports_origin }}/">Sports</a>
+    <a href="{{ runners_origin }}/reports">Reports</a>
+  </nav>
+  <a class="account" href="{{ runners_origin ~ '/calls' if user else '/login?next=' ~ request.url.path|urlencode }}">{{ 'My Calls' if user else 'Log in' }}</a>
 </header>
-<main class="caller-page">
-  <section class="caller-head">
-    <span class="comment-avatar">{{ caller[-2:] }}</span>
-    <div><h1>{{ caller }}</h1><p>Public Calls across Stocks, Memecoins, and Sports. Every entry keeps its source price and time.</p></div>
-  </section>
-
-  <section class="caller-stats" aria-label="Call performance">
-    <div><strong>{{ stats.open }}</strong><span>Open</span></div>
-    <div><strong>{{ stats.settled }}</strong><span>Settled</span></div>
-    <div><strong>{{ stats.wins }}–{{ stats.losses }}</strong><span>W–L</span></div>
-    <div><strong>{{ stats.total }}</strong><span>Total</span></div>
-  </section>
-
+{% endblock %}
+{% block screen_main %}
+<div class="caller-page">
+  <a class="back" href="{{ caller_back_url|default('/community') }}">← Calls</a>
+  <header class="asset-heading caller-heading">
+    <span class="ticker-mark tone-0" aria-hidden="true">{{ caller[-2:] }}</span>
+    <div><p class="eyebrow">PUBLIC CALLER</p><h1>{{ caller }}</h1><p class="caller-note">Stocks · Memecoins · Sports</p></div>
+  </header>
+  <dl class="caller-stats" aria-label="Call performance">
+    <div><dt>Open</dt><dd>{{ stats.open }}</dd></div>
+    <div><dt>Settled</dt><dd>{{ stats.settled }}</dd></div>
+    <div><dt>Wins–losses</dt><dd>{{ stats.wins }}–{{ stats.losses }}</dd></div>
+    <div><dt>Total</dt><dd>{{ stats.total }}</dd></div>
+  </dl>
+  {% if streak and streak >= 2 %}<p class="caller-streak">{{ streak }}-win streak</p>{% endif %}
   {% if today and (today.you.settled or today.machine.settled) %}
-  <section class="day-matchup" aria-label="Today versus the machine">
-    <header>
-      <span>TODAY · SETTLED AT THE CLOSE</span>
-      <strong>
-        {%- if today.verdict == 'you' -%}You beat Flash today
-        {%- elif today.verdict == 'machine' -%}Flash ahead today
-        {%- elif today.verdict == 'even' -%}Even with Flash today
-        {%- elif today.verdict == 'you-only' -%}On the board today · Flash has not settled yet
-        {%- else -%}Flash is on the board today
-        {%- endif -%}
-      </strong>
-    </header>
-    <div class="day-matchup-row">
-      <div><small>{{ caller }}</small><b>{{ today.you.wins }}–{{ today.you.losses }}</b><span>{% if today.you.avg_return_pct is not none %}{{ '%+.1f'|format(today.you.avg_return_pct) }}% avg{% else %}no returns yet{% endif %}</span></div>
-      <i>VS</i>
-      <div><small>Flash</small><b>{{ today.machine.wins }}–{{ today.machine.losses }}</b><span>{% if today.machine.avg_return_pct is not none %}{{ '%+.1f'|format(today.machine.avg_return_pct) }}% avg{% else %}no calls settled{% endif %}</span></div>
+  <section class="caller-matchup" aria-label="Today versus Flash AI">
+    <p class="eyebrow">TODAY · SETTLED AT THE CLOSE</p>
+    <h2>{% if today.verdict == 'you' %}{{ caller }} ahead today{% elif today.verdict == 'machine' %}Flash AI ahead today{% elif today.verdict == 'even' %}Even with Flash AI{% elif today.verdict == 'you-only' %}{{ caller }} is on the board{% else %}Flash AI is on the board{% endif %}</h2>
+    <div class="caller-matchup-row">
+      {% for label, result in [(caller, today.you), ('Flash AI', today.machine)] %}
+      <div><span>{{ label }}</span><strong>{{ result.wins }}–{{ result.losses }}</strong><small>{% if result.avg_return_pct is not none %}{{ '%+.1f'|format(result.avg_return_pct) }}% avg return{% else %}Awaiting returns{% endif %}</small></div>
+      {% endfor %}
     </div>
   </section>
   {% endif %}
-
-  {% if streak and streak >= 2 %}
-  <p class="streak-chip">{{ streak }}-win streak</p>
-  {% endif %}
-
-  <section class="public-call-feed">
-    <div class="alpha-section-head"><h2>Calls</h2><span>{{ stats.subjects }} subjects</span></div>
-    {% if calls %}
-      {% for call in calls %}
-      <article class="public-call-row">
-        <a class="call-ticker" href="{{ call.href }}"><strong>{{ call.subject }}</strong><small>{{ call.product_label }} · {{ call.company }}{% if call.live_label %} · {{ call.live_label }}{% endif %} · {{ call.created_at[:10] }}</small></a>
-        <span class="call-prices"><small>Entry</small><b>{{ call.entry_label }}</b></span>
-        <span class="call-pnl"><b class="{{ call.result_tone }}">{{ call.result_label }}</b><small>{{ call.reward_label or call.status }}</small></span>
-      </article>
-      {% endfor %}
+  <section class="caller-feed" aria-labelledby="caller-calls-heading">
+    <div class="section-heading"><h2 id="caller-calls-heading">Calls</h2><b>{{ stats.subjects }} subjects</b></div>
+    {% for call in calls %}
+    <a class="caller-call" href="{{ call.href }}">
+      <div class="caller-subject">
+        <span class="caller-market">{{ call.product_label }} · {{ call.created_at[:10] }}</span>
+        <strong title="{{ call.subject }}">{{ subject_label(call.subject, call.kind) }}</strong>
+        {% if call.company or call.live_label %}<small>{% if call.company %}<span title="{{ call.company }}">{{ subject_label(call.company, call.kind) }}</span>{% endif %}{% if call.live_label %} · {{ call.live_label }}{% endif %}</small>{% endif %}
+      </div>
+      <dl class="caller-values">
+        <div><dt>Entry</dt><dd>{{ call.entry_label }}</dd></div>
+        <div><dt>Result</dt><dd class="{{ call.result_tone }}">{{ call.result_label }}</dd></div>
+      </dl>
+      <span class="caller-outcome">{{ call.reward_label or call.status|replace('_', ' ') }} <span aria-hidden="true">↗</span></span>
+    </a>
     {% else %}
-      <div class="empty-list"><strong>No Calls yet</strong><span>This caller has not posted a Call.</span></div>
-    {% endif %}
+    <div class="call-empty"><p>First Call coming soon.</p></div>
+    {% endfor %}
   </section>
-</main>
+</div>
 {% endblock %}
