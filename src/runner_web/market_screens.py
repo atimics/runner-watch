@@ -167,7 +167,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
     if not re.fullmatch(r"(?:[1-9A-HJ-NP-Za-km-z]{32,44}|0x[a-fA-F0-9]{40})", address):
         address = ""
     if address:
-        subtitle = "CA " + address[:6] + "…" + address[-4:]
+        subtitle = address[:6] + "…" + address[-4:]
     return {
         "id": identifier,
         "name": name,

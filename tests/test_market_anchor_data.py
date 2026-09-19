@@ -62,5 +62,5 @@ def test_token_subtitle_uses_its_contract_address():
         'id': 'bonk', 'symbol': 'BONK', 'name': 'Saved assessment example',
         'token_address': address,
     }])['rows'][0]
-    assert item['subtitle'] == 'CA DezXAZ…B263'
+    assert item['subtitle'] == 'DezXAZ…B263'
     assert item['contract_address'] == address
