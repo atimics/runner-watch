@@ -15,6 +15,8 @@ from runner_web.telegram import (
     memecoin_alerts_enabled,
     send_animation,
 )
+from runner_web.telegram_outbox import label as bounded_label
+from runner_web.telegram_outbox import lock_channel, reserve_channel_slot
 
 
 def caption(payload: dict, *, origin: str) -> str:
@@ -25,7 +27,7 @@ def caption(payload: dict, *, origin: str) -> str:
     """
 
     label = escape_markdown_v2(
-        str(payload["symbol"] or payload["token_address"][:8]).strip().upper()
+        bounded_label(payload["symbol"] or payload["token_address"][:8], 80).upper()
     )
     launch = escape_markdown_v2(
         "Launch recorded on chain" if payload["launch"] else "Launch evidence pending"
@@ -53,13 +55,14 @@ def dispatch_memecoin_replays(
     current = at or datetime.now(UTC)
     stamp = current.isoformat()
     with connection() as database:
+        lock_channel(database, config.chat_id, current)
         database.execute(
             "UPDATE memecoin_replay_posts SET status='uncertain',last_error='acknowledgement_lost' "
-            "WHERE status='sending' AND updated_at<?",
-            ((current - timedelta(minutes=5)).isoformat(),),
+            "WHERE chat_id=? AND status='sending' AND updated_at<?",
+            (config.chat_id, (current - timedelta(minutes=5)).isoformat()),
         )
         rows = database.execute(
-            "SELECT coin_id,replay_id FROM memecoin_replay_posts "
+            "SELECT coin_id,replay_id,caption_text FROM memecoin_replay_posts "
             "WHERE status IN ('pending','retry') AND replay_id IS NOT NULL AND chat_id=? "
             "AND attempts<3 AND (retry_at IS NULL OR retry_at<=?) ORDER BY created_at LIMIT ?",
             (config.chat_id, stamp, max(1, min(limit, 5))),
@@ -67,6 +70,17 @@ def dispatch_memecoin_replays(
     sent = 0
     for row in rows:
         with connection() as database:
+            lock_channel(database, config.chat_id, current)
+            eligible = database.execute(
+                "SELECT status FROM memecoin_replay_posts WHERE coin_id=? "
+                "AND status IN ('pending','retry') AND attempts<3 "
+                "AND chat_id=? AND (retry_at IS NULL OR retry_at<=?)",
+                (row["coin_id"], config.chat_id, stamp),
+            ).fetchone()
+            if not eligible or not reserve_channel_slot(
+                database, config.chat_id, ["coin:" + row["coin_id"]], current
+            ):
+                continue
             claimed = database.execute(
                 "UPDATE memecoin_replay_posts SET status='sending',"
                 "attempts=attempts+1,updated_at=? "
@@ -81,7 +95,13 @@ def dispatch_memecoin_replays(
             record = saved_replay(row["coin_id"], row["replay_id"], with_gif=True)
             if not record:
                 raise ValueError("missing_replay")
-            message_id = sender(config, record["gif"], caption(record["payload"], origin=origin))
+            text = row["caption_text"] or caption(record["payload"], origin=origin)
+            with connection() as database:
+                database.execute(
+                    "UPDATE memecoin_replay_posts SET caption_text=? WHERE coin_id=?",
+                    (text, row["coin_id"]),
+                )
+            message_id = sender(config, record["gif"], text)
             if type(message_id) is not int or message_id <= 0:
                 raise AnimationDeliveryError("uncertain")
             sent += 1
@@ -95,10 +115,19 @@ def dispatch_memecoin_replays(
             status, error = "failed", "replay_quality_failed"
         except Exception:
             status, error = "uncertain", "acknowledgement_lost"
+        if status != "sent":
+            message_id = None
         with connection() as database:
+            lock_channel(database, config.chat_id, current)
             database.execute(
                 "UPDATE memecoin_replay_posts SET status=?,message_id=?,retry_at=?,last_error=?,"
                 "updated_at=? WHERE coin_id=? AND status='sending'",
                 (status, message_id, retry_at, error, stamp, row["coin_id"]),
             )
+            if retry_at:
+                database.execute(
+                    "UPDATE telegram_channel_schedule SET next_at=CASE WHEN next_at<? "
+                    "THEN ? ELSE next_at END WHERE chat_id=?",
+                    (retry_at, retry_at, config.chat_id),
+                )
     return {"status": "checked", "sent": sent}

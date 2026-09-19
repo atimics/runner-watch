@@ -336,9 +336,6 @@ from runner_web.telegram import (
     format_runner_story_md as telegram_format_runner_story_md,
 )
 from runner_web.telegram import (
-    next_segment as telegram_next_segment,
-)
-from runner_web.telegram import (
     release_announcements_enabled as telegram_release_announcements_enabled,
 )
 from runner_web.telegram import (
@@ -11672,8 +11669,9 @@ def _pending_runner_alert_rows(database: Any, *, limit: int) -> list[dict[str, A
         LEFT JOIN scan_snapshots s ON s.id=p.snapshot_id
         LEFT JOIN telegram_alert_deliveries d
           ON d.ticker=p.ticker AND d.entered_at=p.entered_at
-        WHERE d.ticker IS NULL
-           OR (d.status='failed' AND d.attempts<?)
+        WHERE (d.ticker IS NULL OR (d.status='failed' AND d.attempts<?))
+          AND NOT EXISTS (SELECT 1 FROM telegram_outbox_items o
+            WHERE o.kind='runner' AND o.subject=p.ticker || ':' || p.entered_at)
         ORDER BY COALESCE(s.score,0) DESC,p.entered_at DESC
         LIMIT ?
         """,
@@ -11895,8 +11893,9 @@ def _pending_market_report_rows(database: Any, *, limit: int) -> list[dict[str, 
         FROM market_session_reports r
         LEFT JOIN telegram_channel_posts p
           ON p.kind='market_report' AND p.subject=r.id
-        WHERE p.subject IS NULL
-           OR (p.status='failed' AND p.attempts<?)
+        WHERE (p.subject IS NULL OR (p.status='failed' AND p.attempts<?))
+          AND NOT EXISTS (SELECT 1 FROM telegram_outbox_items o
+            WHERE o.kind='market_report' AND o.subject=r.id)
         ORDER BY r.created_at DESC,r.id DESC
         LIMIT ?
         """,
@@ -11922,14 +11921,19 @@ def _pending_market_report_rows(database: Any, *, limit: int) -> list[dict[str, 
 def _pending_research_report_rows(database: Any, *, limit: int) -> list[dict[str, Any]]:
     rows = database.execute(
         """
-        SELECT r.public_id,r.ticker,r.headline,r.summary,r.published_at,r.completed_at
+        SELECT r.public_id,r.ticker,r.headline,r.summary,r.published_at,r.completed_at,
+               r.subject_type,r.subject_id,e.away_team_name,e.home_team_name
         FROM research_commissions r
+        LEFT JOIN sports_events e ON e.id=CASE WHEN r.subject_type='sports_game'
+          THEN r.subject_id WHEN substr(r.ticker,1,7)='sports:' THEN substr(r.ticker,8) END
         LEFT JOIN telegram_channel_posts p
           ON p.kind='research_report' AND p.subject=r.public_id
         WHERE r.status='complete'
           AND r.visibility='public'
           AND COALESCE(r.customer_inference,0)=0
           AND (p.subject IS NULL OR (p.status='failed' AND p.attempts<?))
+          AND NOT EXISTS (SELECT 1 FROM telegram_outbox_items o
+            WHERE o.kind='research_report' AND o.subject=r.public_id)
         ORDER BY COALESCE(r.published_at,r.completed_at,r.created_at) DESC,r.public_id DESC
         LIMIT ?
         """,
@@ -12068,20 +12072,23 @@ def _activity_payload(
                 "leaders": list(report.get("leaders") or []),
             }
         )
+    from runner_web.telegram_outbox import label
+
     for report in research_reports:
         ticker = str(report.get("ticker") or "")
-        symbol = ticker.upper().lstrip("$")
-        public_id = str(report.get("public_id") or "")
-        origin = SPORTS_ORIGIN if ticker.lower().startswith("sports:") else RUNNERS_ORIGIN
+        sports = report.get("subject_type") == "sports_game" or ticker.lower().startswith("sports:")
+        teams = " at ".join(
+            label(report.get(k), 120) for k in ("away_team_name", "home_team_name") if report.get(k)
+        )
         reports.append(
             {
+                **report,
                 "kind": "research_report",
-                "ticker": symbol,
-                "label": f"New research on ${symbol}" if symbol else "New research",
-                "headline": report.get("headline"),
-                "url": absolute(origin, f"/research/{public_id}" if public_id else ""),
+                "ticker": ticker,
+                "origin": SPORTS_ORIGIN if sports else RUNNERS_ORIGIN,
+                "game_label": teams or ("Game research" if sports else ""),
+                "headline": label(report.get("headline"), 600),
                 "at": report.get("published_at") or report.get("completed_at"),
-                "public_id": public_id,
             }
         )
     return {"runners": activity_runners, "reports": reports}
@@ -12092,36 +12099,6 @@ _RESULT_KEYS = {
     "market_report": "market_reports",
     "research_report": "research_reports",
 }
-
-
-def _record_segment_outcome(
-    kind: str,
-    item: dict[str, Any],
-    *,
-    status: str,
-    detail: str | None = None,
-) -> None:
-    """Write down what happened to the one item this segment carried.
-
-    Only that item is recorded, so everything else stays pending for the next
-    turn of the rundown rather than being marked delivered alongside it.
-    """
-
-    with connection() as database:
-        if kind == "runner":
-            _record_runner_alert_delivery(database, [item], status=status, detail=detail)
-        elif kind == "market_report":
-            _record_channel_post(
-                database, "market_report", str(item.get("id") or ""), status=status, detail=detail
-            )
-        elif kind == "research_report":
-            _record_channel_post(
-                database,
-                "research_report",
-                str(item.get("public_id") or ""),
-                status=status,
-                detail=detail,
-            )
 
 
 def _render_segment(kind: str, item: dict[str, Any]) -> str:
@@ -12136,6 +12113,35 @@ def _render_segment(kind: str, item: dict[str, Any]) -> str:
     if kind == "event":
         return telegram_format_event_post_md(item, origin=RUNNERS_ORIGIN)
     return ""
+
+
+def _announcement_cards(activity: dict[str, Any]) -> list[dict]:
+    cards = []
+    for entry in activity["runners"]:
+        card = {
+            "kind": "runner",
+            "subject": entry["ticker"] + ":" + entry["entered_at"],
+            "ticker": entry["ticker"],
+            "entered_at": entry["entered_at"],
+            "text": _render_segment("runner", entry),
+        }
+        entered = _stamp(entry["entered_at"])
+        if entered and TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES:
+            card["expires_at"] = (
+                entered + timedelta(minutes=TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES)
+            ).isoformat()
+        cards.append(card)
+    for item in activity["reports"]:
+        kind = item["kind"]
+        cards.append(
+            {
+                "kind": kind,
+                "subject": item.get("id") if kind == "market_report" else item["public_id"],
+                "ticker": item.get("ticker", ""),
+                "text": _render_segment(kind, item),
+            }
+        )
+    return cards
 
 
 def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]:
@@ -12252,55 +12258,40 @@ def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]
                 result["pending"] = count
                 result["announcement"]["count"] = count
                 result["announcement"]["stale"] = len(stale)
-            if count == 0:
-                result["status"] = "empty"
-                result["announcement"]["status"] = "empty"
-                return result
+            from runner_web.telegram_outbox import (
+                deliver_outbox,
+                enqueue_cards,
+                queue_stock_filings,
+            )
+
             with connection() as database:
+                enqueue_cards(database, config.chat_id, _announcement_cards(activity), at=current)
+                result["filings_queued"] = queue_stock_filings(
+                    database, config, origin=RUNNERS_ORIGIN, at=current
+                )
                 last_at, last_kind = _last_channel_post(database)
             since = _age_minutes(last_at, current) if last_at is not None else None
             if since is not None and since < TELEGRAM_SEGMENT_GAP_MINUTES:
-                # Still inside the gap. The sweep worker comes back on a timer,
-                # so the rest of the rundown plays out on its own.
-                result["status"] = "waiting"
-                result["announcement"]["status"] = "waiting"
+                result["status"] = result["announcement"]["status"] = "waiting"
                 return result
-            pending: dict[str, list[dict[str, Any]]] = {
-                "runner": activity["runners"],
-                "market_report": [
-                    row for row in activity["reports"] if row.get("kind") == "market_report"
-                ],
-                "research_report": [
-                    row for row in activity["reports"] if row.get("kind") != "market_report"
-                ],
-            }
-            kind = telegram_next_segment(pending, last_kind=last_kind)
-            item = pending[kind][0] if kind else None
-            text = _render_segment(kind, item) if item else ""
-            result["announcement"]["kind"] = kind
-            if not text:
-                result["status"] = "empty"
-                result["announcement"]["status"] = "empty"
-                return result
-            try:
-                telegram_send_post(config, text)
-            except Exception as exc:
-                LOG.warning("Telegram %s segment failed: %s", kind, exc)
-                result["status"] = "failed"
-                result["announcement"]["status"] = "failed"
-                _record_segment_outcome(kind, item, status="failed", detail=str(exc)[:500])
-                if result[_RESULT_KEYS[kind]]["status"] == "pending":
-                    result[_RESULT_KEYS[kind]]["status"] = "failed"
-                return result
-            _record_segment_outcome(kind, item, status="sent")
-            if result[_RESULT_KEYS[kind]]["status"] == "pending":
-                result[_RESULT_KEYS[kind]]["status"] = "sent"
-            runners = [item] if kind == "runner" else []
-            result["status"] = "sent"
-            result["announcement"]["status"] = "sent"
-            result["reports"] = _queue_telegram_runner_reports(
-                [str(entry.get("ticker") or "") for entry in runners]
+            delivery = deliver_outbox(
+                config,
+                telegram_send_post,
+                at=current,
+                kinds=("runner", "market_report", "research_report", "stock_filing"),
+                last_kind=last_kind,
             )
+            result["status"] = result["announcement"]["status"] = delivery["status"]
+            items = delivery["items"]
+            if items:
+                kind = items[0]["kind"]
+                result["announcement"]["kind"] = kind
+                if kind in _RESULT_KEYS:
+                    result[_RESULT_KEYS[kind]]["status"] = delivery["status"]
+            if delivery["status"] == "sent":
+                result["reports"] = _queue_telegram_runner_reports(
+                    [item["ticker"] for item in items if item["kind"] == "runner"]
+                )
             return result
         finally:
             TELEGRAM_ALERT_DISPATCH_LOCK.release()
@@ -12352,20 +12343,33 @@ def dispatch_release_announcement() -> dict[str, Any]:
         message = telegram_format_release_announcement_md(APP_VERSION, notes, origin=RUNNERS_ORIGIN)
         if not message:
             return {"status": "skipped"}
-        try:
-            telegram_send_post(config, message)
-        except Exception as exc:
-            with connection() as database:
-                _record_channel_post(
-                    database, "release", sha, status="failed", detail=str(exc)[:500]
-                )
-            LOG.warning("Telegram release announcement failed: %s", exc)
-            return {"status": "failed"}
+        from runner_web.telegram_outbox import deliver_outbox, enqueue_cards
+
         with connection() as database:
-            _record_channel_post(database, "release", sha, status="sent")
-        return {"status": "sent", "sha": sha}
+            enqueue_cards(
+                database,
+                config.chat_id,
+                [{"kind": "release", "subject": sha, "text": message}],
+                at=now(),
+            )
+        delivery = deliver_outbox(config, telegram_send_post, at=now(), kinds=("release",))
+        return {"status": delivery["status"], "sha": sha}
     finally:
         TELEGRAM_ALERT_DISPATCH_LOCK.release()
+
+
+@app.get("/telegram/announcements", response_class=HTMLResponse)
+def telegram_announcements_page(request: Request):
+    return templates.TemplateResponse(
+        request, "telegram_announcements.html", page_context(request, None, resolved_user=None)
+    )
+
+
+@app.get("/api/telegram/announcements")
+def telegram_announcements_api(_access: None = Depends(require_operations_access)):
+    from runner_web.telegram_outbox import announcement_history
+
+    return JSONResponse(announcement_history(), headers={"Cache-Control": "no-store"})
 
 
 def _spawn_telegram_dispatch(*, scan_run_id: str | None = None) -> None:

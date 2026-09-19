@@ -1,12 +1,4 @@
-"""Telegram delivery for public channel posts.
-
-The room gets one batched update announcement when enough has landed: new
-runners, a frozen pre-market or post-market report, and a research report that
-went public are gathered into the same message rather than posted one at a time.
-A new build can also announce itself once. Formatting and the batch rule live
-here so they can be tested without a database; the worker in ``main`` loads the
-rows, writes the announcement, and records the outcome.
-"""
+"""Render complete channel stories and validate Telegram delivery receipts."""
 
 from __future__ import annotations
 
@@ -66,11 +58,61 @@ def memecoin_alerts_enabled() -> bool:
     return alerts_enabled(os.getenv("TELEGRAM_MEMECOIN_ALERTS", "0"))
 
 
-class AnimationDeliveryError(RuntimeError):
+class TelegramDeliveryError(RuntimeError):
     def __init__(self, status: str, *, retry_after: int = 60):
-        super().__init__("Telegram animation " + status)
+        super().__init__("Telegram delivery " + status)
         self.status = status
         self.retry_after = max(30, min(retry_after, 86400))
+
+
+AnimationDeliveryError = TelegramDeliveryError
+
+
+def message_units(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _delivery_receipt(request, opener, *, timeout: int) -> int:
+    try:
+        with opener(request, timeout=timeout) as response:
+            body = json.loads(response.read(64 * 1024))
+    except urllib.error.HTTPError as exc:
+        try:
+            body = json.loads(exc.read(64 * 1024))
+        except (ValueError, OSError):
+            body = {}
+        finally:
+            exc.close()
+        body = body if isinstance(body, dict) else {}
+        if exc.code == 429:
+            delay = (body.get("parameters") or {}).get("retry_after", 60)
+            raise TelegramDeliveryError("retry", retry_after=_retry_seconds(delay)) from None
+        error = TelegramDeliveryError("failed" if 400 <= exc.code < 500 else "uncertain")
+        error.parse_error = exc.code == 400 and "parse" in str(body.get("description", "")).lower()
+        raise error from None
+    except (OSError, ValueError):
+        raise TelegramDeliveryError("uncertain") from None
+    if not isinstance(body, dict):
+        raise TelegramDeliveryError("uncertain")
+    if body.get("ok") is False:
+        if body.get("error_code") == 429:
+            delay = (body.get("parameters") or {}).get("retry_after", 60)
+            raise TelegramDeliveryError("retry", retry_after=_retry_seconds(delay))
+        error = TelegramDeliveryError("failed")
+        error.parse_error = "parse" in str(body.get("description", "")).lower()
+        raise error
+    result = body.get("result")
+    message_id = result.get("message_id") if isinstance(result, dict) else None
+    if body.get("ok") is not True or type(message_id) is not int or message_id <= 0:
+        raise TelegramDeliveryError("uncertain")
+    return message_id
+
+
+def _retry_seconds(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return 60
 
 
 def send_animation(
@@ -86,10 +128,8 @@ def send_animation(
     if not gif.startswith((b"GIF87a", b"GIF89a")) or len(gif) > 8 * 1024 * 1024:
         raise AnimationDeliveryError("failed")
     boundary = "rati-" + secrets.token_hex(16)
-    caption = caption.encode("utf-16-le")[:2048].decode("utf-16-le", errors="ignore")
-    trailing = len(caption) - len(caption.rstrip(chr(92)))
-    if trailing % 2:
-        caption = caption[:-1]
+    if message_units(caption) > 1024:
+        raise TelegramDeliveryError("failed")
     fields = {
         "chat_id": config.chat_id,
         "caption": caption,
@@ -121,34 +161,7 @@ def send_animation(
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
         method="POST",
     )
-    try:
-        with opener(request, timeout=30) as response:
-            body = json.loads(response.read(64 * 1024))
-    except urllib.error.HTTPError as exc:
-        try:
-            body = json.loads(exc.read(64 * 1024))
-        except (ValueError, OSError):
-            body = {}
-        finally:
-            exc.close()
-        if exc.code == 429:
-            delay = (body.get("parameters") or {}).get("retry_after", 60)
-            raise AnimationDeliveryError("retry", retry_after=int(delay)) from None
-        raise AnimationDeliveryError("failed" if 400 <= exc.code < 500 else "uncertain") from None
-    except (OSError, ValueError):
-        raise AnimationDeliveryError("uncertain") from None
-    if not isinstance(body, dict):
-        raise AnimationDeliveryError("uncertain")
-    if body.get("ok") is False:
-        if body.get("error_code") == 429:
-            raise AnimationDeliveryError(
-                "retry", retry_after=int((body.get("parameters") or {}).get("retry_after", 60))
-            )
-        raise AnimationDeliveryError("failed")
-    message_id = (body.get("result") or {}).get("message_id")
-    if body.get("ok") is not True or type(message_id) is not int or message_id <= 0:
-        raise AnimationDeliveryError("uncertain")
-    return message_id
+    return _delivery_receipt(request, opener or urllib.request.urlopen, timeout=30)
 
 
 def release_announcements_enabled(value: str | None = None) -> bool:
@@ -222,7 +235,7 @@ def select_new_runners(
 # The rundown order. Session briefings are appointment listening and go first;
 # a published Flash report is the next most interesting thing the desk has; a
 # new runner is the everyday inventory that fills the gaps between them.
-SEGMENT_ORDER = ("market_report", "research_report", "runner")
+SEGMENT_ORDER = ("market_report", "research_report", "stock_filing", "runner", "release")
 
 
 def next_segment(pending, *, last_kind=""):
@@ -373,6 +386,14 @@ _MARKER_RE = re.compile(r"(?<!\\)[*_~`]")
 _LINK_RE = re.compile(r"\[((?:[^\[\]\\]|\\.)*)\]\(((?:[^()\\]|\\.)*)\)")
 
 
+def bounded_text(value, limit=600):
+    text = re.sub(r"https?://\S+", "", str(value or ""))
+    text = " ".join(text.split())
+    if message_units(text) <= limit:
+        return text
+    return text.encode("utf-16-le")[: (limit - 1) * 2].decode("utf-16-le", errors="ignore") + "…"
+
+
 def escape_markdown_v2(text):
     """Escape every character Telegram reserves in Markdown V2 body text.
 
@@ -434,7 +455,7 @@ def _join_blocks(blocks, limit=MAX_MESSAGE_CHARS):
     for block in blocks:
         if not block:
             continue
-        cost = len(block) + (2 if kept else 0)
+        cost = message_units(block) + (2 if kept else 0)
         if used + cost > limit:
             continue
         kept.append(block)
@@ -460,53 +481,48 @@ def _truncate_md(text, limit=MAX_MESSAGE_CHARS):
     return cut[: len(trimmed) + (len(cut) - len(trimmed)) // 2 * 2]
 
 
-def send_post(config, text, *, preview_url="", parse_mode="MarkdownV2", opener=None):
-    """Send one message with a link preview from its first URL.
-
-    Telegram renders a preview for the first URL it finds in the message body.
-    To pin which link unfurls, pass preview_url and we surface it as the
-    first line. When the Markdown parse fails, the message is resent plain so
-    we never drop a notification silently.
-    """
-
-    body = _truncate_md(text)
-    if preview_url and (preview_url not in body):
-        # A bare URL on its own line is not valid Markdown V2 — every dot and
-        # hyphen in the host is reserved — so anchor it as an inline link.
+def send_post(
+    config, text, *, preview_url="", parse_mode="MarkdownV2", opener=None, allow_fallback=False
+):
+    """Send one complete post and return its confirmed Telegram message ID."""
+    body = text
+    if preview_url and preview_url not in body:
         anchor = markdown_link(preview_url, preview_url) if parse_mode else preview_url
-        body = _truncate_md(anchor + "\n\n" + body)
-    payload = {
-        "chat_id": config.chat_id,
-        "text": body,
-        "disable_notification": False,
-    }
+        body = anchor + "\n\n" + body
+    if not config.configured or not body or message_units(body) > MAX_MESSAGE_CHARS:
+        raise TelegramDeliveryError("failed")
+    payload = {"chat_id": config.chat_id, "text": body, "disable_notification": False}
     if parse_mode:
         payload["parse_mode"] = parse_mode
     first = preview_url or _first_url(body)
     if first:
-        previews = {"is_disabled": False}
+        payload["link_preview_options"] = {"is_disabled": False}
         if preview_url:
-            previews["url"] = preview_url
-        payload["link_preview_options"] = previews
+            payload["link_preview_options"]["url"] = preview_url
+
+    def send(payload):
+        request = urllib.request.Request(
+            config.endpoint(),
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        return _delivery_receipt(
+            request, opener or urllib.request.urlopen, timeout=SEND_TIMEOUT_SECONDS
+        )
+
     try:
-        return _api_call(config, "sendMessage", payload, opener=opener)
-    except RuntimeError as exc:
-        if not parse_mode:
+        return send(payload)
+    except TelegramDeliveryError as exc:
+        if not (allow_fallback and parse_mode and getattr(exc, "parse_error", False)):
             raise
-        message = str(exc)
-        if "parse" not in message.lower():
-            raise
-        # Resending the markup source is what put raw asterisks in the room.
-        # Strip it to plain text, and say so: this path used to report success.
-        LOG.warning("Telegram rejected Markdown V2, resending as plain text: %s", message)
-        plain = {
-            "chat_id": config.chat_id,
-            "text": strip_markdown_v2(body),
-            "disable_notification": False,
-        }
-        if first:
-            plain["link_preview_options"] = {"is_disabled": False}
-        return _api_call(config, "sendMessage", plain, opener=opener)
+        payload.pop("parse_mode", None)
+        payload["text"] = strip_markdown_v2(body)
+        return send(payload)
+
+
+def send_message(config, text, *, opener=None):
+    return send_post(config, text, parse_mode="", opener=opener)
 
 
 def _state_emoji(tag):
@@ -594,8 +610,8 @@ def format_market_report_post_md(report, *, origin):
         )
     )
     header = f"\U0001f9ed *{label}*"
-    headline = escape_markdown_v2(str(report.get("headline") or "").strip())
-    summary = escape_markdown_v2(str(report.get("summary") or "").strip())
+    headline = escape_markdown_v2(bounded_text(report.get("headline")))
+    summary = escape_markdown_v2(bounded_text(report.get("summary"), 500))
     blocks = [header]
     if headline:
         blocks.append(headline)
@@ -622,16 +638,18 @@ def format_public_report_post_md(report, *, origin):
     """A research report that just went public."""
 
     ticker_raw = str(report.get("ticker") or "").strip()
-    sports = ticker_raw.lower().startswith("sports:")
+    sports = report.get("subject_type") == "sports_game" or ticker_raw.lower().startswith("sports:")
     token = ticker_raw.upper().lstrip("$") if ticker_raw else ""
-    base = origin.rstrip("/")
+    base = str(report.get("origin") or origin).rstrip("/")
     header = (
         "\U0001f4c4 *New public report*"
         if not token or sports
         else f"\U0001f4c4 *New public report \u00b7 ${escape_markdown_v2(token)}*"
     )
     blocks = [header]
-    headline = escape_markdown_v2(str(report.get("headline") or "").strip())
+    if sports and report.get("game_label"):
+        blocks.append(escape_markdown_v2(report["game_label"]))
+    headline = escape_markdown_v2(bounded_text(report.get("headline")))
     if headline:
         blocks.append(headline)
     # One URL per message, and the report page is the one that carries a card.
@@ -725,13 +743,15 @@ def _story_reason(entry):
     reasons = [str(item).strip() for item in (signals or []) if str(item).strip()]
     if not reasons:
         return ""
-    return escape_markdown_v2("  \u00b7  ".join(reasons[:2]))
+    return escape_markdown_v2(
+        "  \u00b7  ".join(bounded_text(reason, 300) for reason in reasons[:2])
+    )
 
 
 def format_release_announcement_md(version, notes, *, origin):
     """Build note + link in Markdown V2."""
 
-    text = " ".join(str(notes or "").split())
+    text = bounded_text(notes, RELEASE_NOTES_LIMIT)
     if not text:
         return ""
     # Trim the raw note, not the escaped one: slicing after escaping can cut a

@@ -119,15 +119,15 @@ what is pending" but "pick the next segment".
 `next_segment` picks what plays next, and it is the whole of the variety rule:
 
 - **Priority.** `SEGMENT_ORDER` puts session briefings first (appointment
-  listening), then a published Flash report, then the everyday runner
+  listening), then a published Flash report, a structured SEC filing, and the everyday runner
   inventory that fills the gaps between them.
 - **Rotation.** While something else is waiting, the room never hears the same
   kind twice running. A runner follows the briefing; a briefing does not follow
   a briefing. No curation and no randomness — just "skip the kind you just
   played if you can".
 - **The gap.** At most one message per `TELEGRAM_SEGMENT_GAP_MINUTES`, measured
-  from the last successful send across both delivery tables, so the clock needs
-  no state of its own.
+  from the last successful text story. The shared channel schedule also paces
+  attempts across text, build notes, and coin GIFs.
 
 Still to add: **interrupts** that jump the queue for a halt or a material
 filing, hard-capped per hour so a filing storm cannot become the whole program.
@@ -137,28 +137,18 @@ thing: it waited for items to pile up and then fused them into one message.
 Batching was the right answer to flooding when every item was its own ping; a
 paced rundown is the better answer, because it keeps every item's card intact.
 
-## Dedupe and delivery (unchanged)
+## Dedupe and delivery
 
-Each kind keeps its own dedupe key, so a failed segment redelivers only what did
-not land:
+Every text story has a unique `(kind, subject)` in `telegram_outbox_items`.
+Runners use ticker plus entry time; reports use their saved report ID; filings
+use their transaction or stake ID; builds use their commit ID. Coin GIFs retain
+their unique coin ID and saved replay. Each message keeps its original destination.
 
-| Kind | Dedupe key |
-|---|---|
-| Runner | `telegram_alert_deliveries(ticker, entered_at)` |
-| Session report | `telegram_channel_posts(kind="market_report", subject=id)` |
-| Public Flash report | `telegram_channel_posts(kind="research_report", subject=public_id)` |
-| Build | `telegram_channel_posts(kind="release", subject=sha)` |
-| Memecoin replay | `memecoin_replay_posts(coin_id)` |
-| Market event | `telegram_channel_posts(kind="event", subject=event_id)` *(to build)* |
-
-A retry only happens if the prior row is `failed` and under `attempts`. A
-runner retired by the staleness window is recorded `stale`, which takes it out
-of the pending query without ever having been sent.
-
-Because a dispatch plays exactly one segment, it records exactly that one item.
-Everything else stays pending for the next turn rather than being marked
-delivered alongside it — which is also why an activity row carries the key its
-delivery needs (`entered_at` for a runner, `id` for a session report).
+A database claim reserves the attempt before the network call. Confirmed sends
+record the positive Telegram message ID and update the existing delivery tables.
+Explicit rate limits schedule up to three attempts. Interrupted sends and lost
+replies become `uncertain` for inspection. Queued runners past their news window
+become `stale`. Each story keeps its exact saved Markdown body through retries.
 
 ## Render rules
 
@@ -178,15 +168,11 @@ delivery needs (`entered_at` for a runner, `id` for a session report).
 - Chat replies (`send_reply`) are a separate path: plain text, no `parse_mode`,
   and the persona prompt asks for prose without markdown so nothing lands as
   stray asterisks.
-- `link_preview_options={"is_disabled": false}` is sent on every message.
-  When Telegram returns a parse error on Markdown V2, `send_post` logs it and
-  retries once with the markup stripped by `strip_markdown_v2`, so the room
-  gets readable prose instead of the source. `sendAnimation` has no such retry,
-  so a replay caption has to be right the first time.
-- `tests/test_telegram_format.py` walks every rendered post the way Telegram's
-  parser does and fails on any unescaped reserved character. That guard is what
-  keeps this honest: a parse failure is invisible in production, because the
-  fallback still reports a successful send.
+- Posts with a URL enable its link preview. Saved channel posts use strict
+  Markdown delivery. A parse error is recorded for review. Direct callers may
+  explicitly select the plain-text fallback with `allow_fallback=True`.
+- `tests/test_telegram_format.py` checks escaped reserved characters, complete
+  links, confirmed receipts, and the optional plain-text fallback.
 
 ## Build order
 
@@ -253,3 +239,23 @@ out hours late.
 Per-runner Flash reports are queued by `_queue_telegram_runner_reports` and
 capped at `TELEGRAM_RUNNER_REPORTS_PER_DAY`. If a hot day saturates that cap,
 the rest wait until tomorrow.
+
+
+### Confirmed delivery and evidence cards
+
+Every story now passes through the saved outbox described in
+[Telegram announcements](telegram-announcements.md). The outbox stores the exact
+Markdown body and destination before an attempt. A positive Telegram message ID
+confirms delivery. Rate limits schedule a retry; lost acknowledgements hold the
+post for review. The shared channel schedule also covers GIFs and build notes.
+
+New structured SEC filings enter the rundown as one story per transaction or
+reported stake. They name the filers and their roles, label the reported action,
+and keep dates, share classes, joint ownership, and amendments visible. The one
+link opens the ticker map with its SEC evidence. The existing filing archive is
+the starting baseline. The channel history is available at
+`/telegram/announcements` with the operations access key.
+
+Saved channel posts use strict Markdown delivery so their saved body matches
+what was sent. The optional plain-text fallback remains available to direct
+callers. Formatters bound source fields before escaping and retain complete links.
