@@ -155,7 +155,7 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width):
         "href", re.compile(r"^https://www\.sec\.gov/Archives/edgar/data/")
     )
     expect(page.locator(".chart-filing-marker")).to_have_count(1)
-    page.get_by_role("button", name="Next people").click()
+    page.get_by_role("button", name="Next wallets").click()
     expect(page.locator("[data-person]")).to_have_count(4 if width <= 500 else 3)
     page.get_by_role("button", name="Next filings").click()
     expect(page.locator("[data-map-filings-page]")).to_have_text("6–10 of 11")
@@ -187,7 +187,7 @@ def test_clicking_a_filing_scrubs_the_map(page):
     oldest.click()
     expect(oldest).to_have_attribute("aria-pressed", "true")
     expect(page.locator("[data-person]")).to_have_count(1)
-    expect(page.locator("[data-map-page]")).to_have_text("1–1 of 1 people")
+    expect(page.locator("[data-map-page]")).to_have_text("1–1 of 1 wallets")
     expect(page.locator("[data-map-paging]")).to_be_hidden()
     expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
     expect(page.locator(".chart-filing-marker")).to_have_count(1)
@@ -332,14 +332,14 @@ def test_risk_hover_and_pin_share_filing_selection(page, width, key, label, brea
     expect(selection.locator("h4")).to_have_text(label)
     page.mouse.click(**ring_point(risk))
     page.mouse.move(0, 0)
-    page.get_by_role("button", name="Next people").focus()
+    page.get_by_role("button", name="Next wallets").focus()
     expect(risk).to_have_attribute("aria-pressed", "true")
     expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
     expect(selection).to_contain_text("Pinned contribution")
     expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
     expect(page.locator("[data-event-id][aria-pressed=true]")).to_have_count(0)
     expect(page.locator(".chart-filing-marker")).to_have_count(0)
-    page.get_by_role("button", name="Next people").click()
+    page.get_by_role("button", name="Next wallets").click()
     expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
     page.get_by_role("button", name="Next filings").click()
     expect(page.locator("[data-map-filings-page]")).to_have_text("6–10 of 11")
@@ -561,12 +561,12 @@ def test_polling_preserves_risk_pin_and_clears_missing_risk(page, width, key, re
         expect(page.locator(".map-center-score")).to_have_text(str(score))
 
     page.get_by_role("button", name="Next filings").click()
-    page.get_by_role("button", name="Next people").click()
+    page.get_by_role("button", name="Next wallets").click()
     people_page = page.locator("[data-map-page]").text_content()
     filings_page = page.locator("[data-map-filings-page]").text_content()
     risk = page.locator(f'[data-score-key="{key}"]')
     risk.press("Space")
-    page.get_by_role("button", name="Previous people").focus()
+    page.get_by_role("button", name="Previous wallets").focus()
     detail = screen["item"]["score_detail"]
     parts = detail["penalties"] if key == "rug" else detail["drivers"]
     part = next(part for part in parts if part["key"] == key)
@@ -579,7 +579,7 @@ def test_polling_preserves_risk_pin_and_clears_missing_risk(page, width, key, re
     expect(risk).to_have_attribute("aria-pressed", "true")
     expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
     expect(page.locator("[data-map-selection]")).to_contain_text("Pinned contribution")
-    expect(page.get_by_role("button", name="Previous people")).to_be_focused()
+    expect(page.get_by_role("button", name="Previous wallets")).to_be_focused()
     lengths = page.locator(".map-score-segment").evaluate_all(
         "segments => segments.map(segment => segment.getTotalLength())"
     )
@@ -637,7 +637,7 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
 
     page.get_by_role("button", name="Load older filings").click()
     page.get_by_role("button", name="Next filings").click()
-    page.get_by_role("button", name="Next people").click()
+    page.get_by_role("button", name="Next wallets").click()
     pagination = page.locator("[data-map-page]").text_content()
     person = page.locator("[data-person]").first
     person.press("Enter")

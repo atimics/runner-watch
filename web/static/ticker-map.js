@@ -20,7 +20,7 @@
     const time = new Date(value);
     return Number.isFinite(time.getTime()) ? time.toLocaleDateString('en-US', {year:'numeric',month:'short',day:'numeric',timeZone:'UTC'}) : 'See filing';
   };
-  const names = e => e.people.map(p => p.name).join(' + ') || 'Reporting person';
+  const names = e => e.people.map(p => p.name).join(' + ') || 'Reporting wallet';
   const amount = e => e.view === 'ownership' ? (e.percent == null ? 'See filing' : number(e.percent) + '% of class') : money(e.value);
   const screenNode = document.getElementById('screenData');
   const initial = screenNode?.ratiScreenDetail || JSON.parse(screenNode?.textContent || '{}');
@@ -148,7 +148,7 @@
     if (event.security_type === 'derivative') entries.push(['Security type','Derivative'], ['Underlying',event.underlying_security || 'See filing']);
     entries.forEach(([key,value]) => {const row = make('div'); row.append(make('dt',key),make('dd',value)); facts.append(row);});
     panel.append(facts);
-    if (event.joint) panel.append(make('p','Joint report. The source describes how the reporting people share this interest.'));
+    if (event.joint) panel.append(make('p','Joint report. The source describes how the reporting wallets share this interest.'));
     if (event.amendment) panel.append(make('p','This amendment has its own filing date. Open the source to see the correction and its scope.'));
     if (event.people.some(p => p.identity_basis === 'Reported name')) panel.append(make('p','Identity matched by the reported name within this ticker.'));
     if (event.footnotes || event.ownership_detail) {
@@ -290,7 +290,7 @@
     page = Math.min(page, Math.max(0, Math.ceil(people.length / size) - 1));
     const target = buildScene(event);
     $('paging').hidden = people.length <= size;
-    $('page').textContent = people.length ? `${page*size+1}–${page*size+target.length} of ${people.length} people` : '';
+    $('page').textContent = people.length ? `${page*size+1}–${page*size+target.length} of ${people.length} wallets` : '';
     $('previous').disabled = page === 0; $('next').disabled = (page+1)*size >= people.length;
     const duration = animate && !motion.matches && scene.length ? ANIMATION_MS : 0;
     cancelAnimationFrame(animation);
