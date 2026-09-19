@@ -19,8 +19,19 @@
     const target = panel.querySelector(`[data-assessment-${name}]`);
     if (target) target.textContent = value ?? '';
   };
-  node.addEventListener('rati:screen-detail', event => {
-    const assessment = event.detail.item?.assessment || {};
+  const sourceLink = (href, text) => {
+    if (!href) return null;
+    try {
+      const url = new URL(href, location.origin);
+      if (!['https:', 'http:'].includes(url.protocol)) return null;
+      const link = document.createElement('a');
+      link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      link.textContent = text;
+      return link;
+    } catch (_) { return null; }
+  };
+  function render(next) {
+    const assessment = next.item?.assessment || {};
     put('label', assessment.label || 'Assessment pending');
     put('value', Number.isFinite(assessment.value) ? `${Math.round(assessment.value * 10) / 10}${assessment.unit || ''}` : '—');
     put('reason', assessment.reason);
@@ -41,29 +52,59 @@
       if (points < 0) row.className = 'is-penalty';
       row.append(label, meter, value); return row;
     }));
+    const expanded = new Set([...panel.querySelectorAll('[data-finding-id][open]')].map(item => item.dataset.findingId));
     panel.querySelector('[data-assessment-drivers]').replaceChildren(...(assessment.drivers || []).map(driver => {
       const row = document.createElement('li');
+      const heading = document.createElement('div');
+      heading.className = 'assessment-driver-summary';
       const label = document.createElement('span');
       label.textContent = driver.label;
-      row.append(label);
+      heading.append(label);
+      row.append(heading);
       if (driver.value !== null && driver.value !== undefined) {
         if (driver.unit === '%') {
           const meter = document.createElement('meter');
           meter.min = 0; meter.max = 100; meter.value = driver.value;
           meter.setAttribute('aria-label', `${driver.label} ${driver.value}%`);
-          row.append(meter);
+          heading.append(meter);
         }
         const value = document.createElement('strong');
         value.textContent = `${driver.value}${driver.unit || ''}`;
-        row.append(value);
+        heading.append(value);
       }
-      if (driver.source_url) {
-        const url = new URL(driver.source_url, location.origin);
-        if (url.protocol === 'https:' || url.protocol === 'http:') {
-          const link = document.createElement('a');
-          link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer';
-          link.textContent = 'Source ↗'; row.append(link);
+      const receipts = driver.evidence || [];
+      if (!receipts.length) {
+        const source = sourceLink(driver.source_url, 'Source ↗');
+        if (source) heading.append(source);
+      }
+      if (receipts.length || driver.explanation) {
+        const details = document.createElement('details'), summary = document.createElement('summary');
+        details.className = 'assessment-finding';
+        details.dataset.findingId = driver.id || driver.key || '';
+        details.open = expanded.has(details.dataset.findingId);
+        const basis = {pattern: 'Pattern', relationship: 'Relationship'}[driver.basis] || 'Observation';
+        summary.textContent = `${basis} · ${receipts.length ? `${receipts.length} ${receipts.length === 1 ? 'receipt' : 'receipts'}` : 'Context'}`;
+        details.append(summary);
+        if (driver.explanation) {
+          const explanation = document.createElement('p');
+          explanation.textContent = driver.explanation;
+          details.append(explanation);
         }
+        if (receipts.length) {
+          const list = document.createElement('ol');
+          receipts.forEach((receipt, index) => {
+            const entry = document.createElement('li');
+            const saved = sourceLink(receipt.receipt_url || receipt.source_url, `${receipt.kind} ${index + 1} ↗`);
+            if (saved) entry.append(saved);
+            if (receipt.receipt_url && receipt.source_url && receipt.receipt_url !== receipt.source_url) {
+              const explorer = sourceLink(receipt.source_url, 'Explorer ↗');
+              if (explorer) entry.append(explorer);
+            }
+            list.append(entry);
+          });
+          details.append(list);
+        }
+        row.append(details);
       }
       return row;
     }));
@@ -72,5 +113,7 @@
     panel.querySelector('[data-assessment-risks]').replaceChildren(...risks.map(text => {
       const item = document.createElement('li'); item.textContent = text; return item;
     }));
-  });
+  }
+  node.addEventListener('rati:screen-detail', event => render(event.detail));
+  if (node.ratiScreenDetail) render(node.ratiScreenDetail);
 })();

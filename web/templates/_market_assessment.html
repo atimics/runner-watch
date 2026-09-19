@@ -6,7 +6,30 @@
   </header>
   <p class="assessment-reason" data-assessment-reason>{{ assessment.reason|default('Collecting evidence for this assessment.') }}</p>
   <ul class="assessment-contributions" data-assessment-contributions>{% for part in assessment.contributions|default([]) %}<li class="{{ 'is-penalty' if part.value < 0 else '' }}"><span>{{ part.label }}</span><meter min="0" max="100" value="{{ part.value|abs }}" aria-label="{{ part.label }} {{ '%+g'|format(part.value) }} points"></meter><strong>{{ '%+g'|format(part.value) }}</strong></li>{% endfor %}</ul>
-  <ul class="assessment-drivers" data-assessment-drivers>{% for driver in assessment.drivers|default([]) %}<li><span>{{ driver.label }}</span>{% if driver.value is defined and driver.value is not none %}{% if driver.unit == '%' %}<meter min="0" max="100" value="{{ driver.value }}" aria-label="{{ driver.label }} {{ driver.value }}%"></meter>{% endif %}<strong>{{ driver.value }}{{ driver.unit }}</strong>{% endif %}{% if driver.source_url %}<a href="{{ driver.source_url }}" target="_blank" rel="noopener noreferrer">Source ↗</a>{% endif %}</li>{% endfor %}</ul>
+  <ul class="assessment-drivers" data-assessment-drivers>
+    {% for driver in assessment.drivers|default([]) %}
+    {% set receipts = driver.evidence|default([]) %}
+    <li>
+      <div class="assessment-driver-summary">
+        <span>{{ driver.label }}</span>
+        {% if driver.value is defined and driver.value is not none %}
+        {% if driver.unit == '%' %}<meter min="0" max="100" value="{{ driver.value }}" aria-label="{{ driver.label }} {{ driver.value }}%"></meter>{% endif %}
+        <strong>{{ driver.value }}{{ driver.unit }}</strong>
+        {% endif %}
+        {% if driver.source_url and not receipts %}<a href="{{ driver.source_url }}" target="_blank" rel="noopener noreferrer">Source ↗</a>{% endif %}
+      </div>
+      {% if receipts or driver.explanation %}
+      <details class="assessment-finding" data-finding-id="{{ driver.id or driver.key }}">
+        <summary>{{ {'pattern': 'Pattern', 'relationship': 'Relationship'}.get(driver.basis, 'Observation') }} · {% if receipts %}{{ receipts|length }} {{ 'receipt' if receipts|length == 1 else 'receipts' }}{% else %}Context{% endif %}</summary>
+        {% if driver.explanation %}<p>{{ driver.explanation }}</p>{% endif %}
+        {% if receipts %}<ol>
+          {% for receipt in receipts %}<li><a href="{{ receipt.receipt_url or receipt.source_url }}" target="_blank" rel="noopener noreferrer">{{ receipt.kind }} {{ loop.index }} ↗</a>{% if receipt.receipt_url and receipt.source_url and receipt.receipt_url != receipt.source_url %}<a href="{{ receipt.source_url }}" target="_blank" rel="noopener noreferrer">Explorer ↗</a>{% endif %}</li>{% endfor %}
+        </ol>{% endif %}
+      </details>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
   <details class="assessment-evidence"{% if not assessment.risks %} hidden{% endif %} data-assessment-evidence><summary>What to watch</summary><ul data-assessment-risks>{% for risk in assessment.risks|default([]) %}<li>{{ risk }}</li>{% endfor %}</ul></details>
   <small class="assessment-time" data-assessment-time>{% if assessment.as_of %}Saved {{ assessment.as_of }}{% endif %}</small>
 </section>

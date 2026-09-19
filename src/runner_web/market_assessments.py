@@ -44,6 +44,27 @@ def _component_key(value: Any) -> str:
     return key if re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", key) else "saved"
 
 
+def _finding_evidence(value: Any) -> list[dict[str, str | None]]:
+    if not isinstance(value, list):
+        return []
+    receipts = []
+    for receipt in value:
+        if not isinstance(receipt, dict):
+            continue
+        source_url = _source_url(receipt.get("source_url"))
+        receipt_url = _source_url(receipt.get("receipt_url"))
+        if source_url or receipt_url:
+            receipts.append(
+                {
+                    "event_id": str(receipt.get("event_id") or ""),
+                    "kind": str(receipt.get("kind") or "event").replace("_", " ").capitalize(),
+                    "source_url": source_url,
+                    "receipt_url": receipt_url,
+                }
+            )
+    return receipts
+
+
 def _prediction_reason(team: str, observed: Any) -> str:
     parts = [team] if team else ["Saved model assessment"]
     try:
@@ -177,6 +198,7 @@ def assessment(market: str, item: dict[str, Any]) -> dict[str, Any]:
             continue
         result["drivers"].append(
             {
+                "id": str(finding.get("id") or ""),
                 "key": _component_key(finding.get("kind") or "observation"),
                 "label": str(finding.get("title") or "Saved chain evidence"),
                 "value": None,
@@ -185,6 +207,7 @@ def assessment(market: str, item: dict[str, Any]) -> dict[str, Any]:
                 "observed_at": finding.get("observed_at"),
                 "source_url": _source_url(finding.get("source_url")),
                 "explanation": str(finding.get("explanation") or ""),
+                "evidence": _finding_evidence(finding.get("evidence")),
             }
         )
     result["drivers"] = sorted(

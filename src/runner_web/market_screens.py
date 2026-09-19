@@ -120,6 +120,11 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
             "id": str(item["id"]),
             "name": f"{away} · {home}",
             "subtitle": str(item.get("league") or "Sports").upper(),
+            "selected_team_label": str(
+                item.get(f"{rating.get('selection')}_abbreviation")
+                or rating.get("selected_team")
+                or ""
+            ),
             "value": value,
             "change": (
                 "Score pending"
@@ -231,6 +236,27 @@ def state_tag(item: dict[str, Any]) -> tuple[str, str, bool]:
     return "", "", False
 
 
+def _search_text(market: str, source: dict[str, Any], display: dict[str, Any]) -> str:
+    """Search original identities without adding raw fields to public view models."""
+    text = display["name"] + " " + display["subtitle"]
+    if market == "memecoins":
+        fields = ("id", "symbol", "name", "token_address")
+    elif market == "sports":
+        fields = (
+            "id",
+            "name",
+            "venue",
+            "league",
+            "home_team_name",
+            "away_team_name",
+            "home_abbreviation",
+            "away_abbreviation",
+        )
+    else:
+        return text
+    return text + " " + " ".join(str(source.get(key) or "") for key in fields)
+
+
 def listing(
     market: str,
     items: list[dict[str, Any]],
@@ -247,7 +273,11 @@ def listing(
     rows = [row(market, item) for item in items]
     query = query.strip()[:80]
     if query:
-        rows = [r for r in rows if query.casefold() in (r["name"] + " " + r["subtitle"]).casefold()]
+        rows = [
+            r
+            for source, r in zip(items, rows, strict=True)
+            if query.casefold() in _search_text(market, source, r).casefold()
+        ]
     counts: dict[str, int] = {}
     for item in rows:
         tone = str(item.get("tag_tone") or "")

@@ -462,7 +462,10 @@ def memecoin_market(
         rows = [
             row
             for row in rows
-            if query.casefold() in (f"{row['id']} {row['symbol']} {row['name']}".casefold())
+            if query.casefold()
+            in (
+                f"{row['id']} {row['symbol']} {row['name']} {row.get('token_address') or ''}"
+            ).casefold()
         ]
     sort = sort if sort in {"volume", "market_cap", "gainers", "losers"} else "volume"
     field = {"volume": "volume_24h", "gainers": "change_24h", "losers": "change_24h"}.get(

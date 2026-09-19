@@ -192,3 +192,19 @@ def test_coin_contract_copy_uses_the_full_address(page):
     expect(page.locator('body')).to_have_attribute('data-copied-address', ADDRESS)
     page.locator('.token-contract summary').click()
     expect(page.locator('.token-contract code')).to_have_text(ADDRESS)
+
+
+@pytest.mark.parametrize("width", [320, 390])
+def test_selected_team_probability_fits_with_full_team_names(page, width):
+    market, raw = long_sample("team")
+    raw["prediction"] = {"selection": "home", "home_probability": 0.6, "signal": "lean"}
+    screen = listing(market, [raw])
+    page.set_viewport_size({"width": width, "height": 844})
+    open_html(page, screens.render(screen))
+    rating = page.locator(".row-assessment")
+    expect(rating.locator("strong")).to_have_attribute(
+        "aria-label", f"{raw['home_team_name']} · 60% win chance"
+    )
+    no_overlap(page.locator(".ticker-name"), rating)
+    no_overlap(page.locator(".ticker-value"), rating)
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
