@@ -152,7 +152,9 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         score = number(item.get("score"))
         score_detail = item.get("score_detail")
     elif paused:
-        tag, tag_tone, risk = "PAUSED", "paused", False
+        tag, tag_tone, risk = state_tag(item)
+        if not tag:
+            tag, tag_tone = "PAUSED", "paused"
         score, score_detail = rating["score"], rating["score_detail"]
     else:
         tag, tag_tone, risk = state_tag(item)

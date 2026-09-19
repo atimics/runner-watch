@@ -66,7 +66,7 @@
     {% endif %}
     {% if screen.updated_label %}<span class="fresh">Updated {{ screen.updated_label }}</span>{% endif %}
     {% if screen.counts %}<div class="tag-filters" data-tag-filters aria-label="Filter by state">
-      {% for tone in ['running','setup','extended','avoid','watch','paused'] %}{% if screen.counts.get(tone) %}<button type="button" class="chip chip-{{ tone }}" data-tag="{{ tone }}" aria-pressed="false"><i></i>{{ screen.counts[tone] }} {{ tone }}</button>{% endif %}{% endfor %}
+      {% for tone in ['running','setup','extended','avoid','watch','paused','lean','pass','model-only'] %}{% if screen.counts.get(tone) %}<button type="button" class="chip chip-{{ tone }}" data-tag="{{ tone }}" aria-pressed="false"><i></i>{{ screen.counts[tone] }} {{ tone|replace('-', ' ') }}</button>{% endif %}{% endfor %}
       <button type="button" class="chip chip-all" data-tag="" aria-pressed="true" hidden>All</button>
     </div>{% endif %}
     <form class="search" method="get" action="{{ base }}" role="search">
@@ -84,13 +84,13 @@
   {% if screen.kind != 'detail' %}
     <div data-live-surface>
     {% if screen.rows %}
-      <div class="ticker-list market-{{ screen.market }}" data-tag-list aria-label="Tickers">{% for item in screen.rows %}<a class="ticker{% if item.announced %} is-new{% endif %}" href="{{ item.href }}" data-tag="{{ item.tag_tone }}">
+      <div class="ticker-list market-{{ screen.market }}" data-tag-list aria-label="{{ 'Events' if screen.market == 'sports' else 'Tokens' if screen.market == 'memecoins' else 'Tickers' }}">{% for item in screen.rows %}<a class="ticker{% if item.announced %} is-new{% endif %}" href="{{ item.href }}" data-tag="{{ item.tag_tone }}">
         {% if item.tag %}<span class="tag tag-{{ item.tag_tone }}{% if item.risk %} has-risk{% endif %}">{% if item.risk %}<i aria-hidden="true">▲</i>{% endif %}{{ item.tag }}</span>
         {% else %}<span class="ticker-mark tone-{{ loop.index0 % 5 }}" aria-hidden="true">{{ item.mark }}</span>{% endif %}
         <span class="ticker-name"><strong>{{ item.name }}</strong><small>{{ item.subtitle }}</small></span>
         <span class="ticker-value"><strong>{{ item.value }}</strong><small class="{{ item.tone }}">{{ item.change }}</small></span>
         {% if screen.market == 'stocks' %}<svg class="mini-chart" data-ticker="{{ item.name }}" viewBox="0 0 64 18" preserveAspectRatio="none" aria-hidden="true"><path class="chart-placeholder" d="M1 12 L13 10 L25 13 L39 8 L51 10 L63 7"/></svg>{% endif %}
-        {% if screen.market == 'stocks' %}{{ score_pie(item) }}{% else %}<span class="row-assessment">{% if item.score is not none %}{{ score_pie(item) }}<small>{{ item.score|round|int }} score</small>{% elif item.assessment is defined and item.assessment.value is not none %}<strong>{{ item.assessment.value|round|int }}{{ item.assessment.unit }}</strong><small>{{ item.assessment.label }}</small>{% else %}<span class="assessment-pending">◌</span><small>Assessing</small>{% endif %}</span>{% endif %}
+        {% if screen.market == 'stocks' %}{{ score_pie(item) }}{% else %}<span class="row-assessment">{% if item.score is not none %}{{ score_pie(item) }}<small>{{ item.score|round|int }} score</small>{% elif item.assessment is defined and item.assessment.value is not none %}<strong>{{ item.assessment.value|round|int }}{{ item.assessment.unit }}</strong><small>{{ item.assessment.label }}</small>{% else %}<span class="assessment-pending">◌</span><small>Pending</small>{% endif %}</span>{% endif %}
         <span class="row-arrow" aria-hidden="true">↗</span>
       </a>{% endfor %}</div>
     {% else %}<div class="empty"><span aria-hidden="true">◌</span><h2>{{ 'Try another search' if screen.query else 'A quiet moment' }}</h2><p>{{ 'Search by name or symbol.' if screen.query else 'New activity will appear here.' }}</p></div>{% endif %}

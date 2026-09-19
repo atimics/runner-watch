@@ -98,7 +98,8 @@ def test_paused_quote_retains_dated_saved_score_and_assessment_state():
     result = row(
         "memecoins", coin(stale=True, score=20, score_as_of="2026-09-18", trade_state="AVOID")
     )
-    assert result["tag"] == "PAUSED"
+    assert result["tag"] == "AVOID"
+    assert result["change"] == "Price paused"
     assert result["score"] == 20
     assert result["assessment"]["tag"] == "AVOID"
     assert result["assessment"]["freshness"] == "paused"

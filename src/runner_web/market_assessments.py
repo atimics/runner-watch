@@ -115,9 +115,9 @@ def assessment(market: str, item: dict[str, Any]) -> dict[str, Any]:
         signal = str(prediction.get("signal") or "").lower()
         tag, tone = {
             "watch": ("WATCH", "watch"),
-            "lean": ("LEAN", "setup"),
-            "pass": ("PASS", "watch"),
-            "model only": ("MODEL ONLY", "watch"),
+            "lean": ("LEAN", "lean"),
+            "pass": ("PASS", "pass"),
+            "model only": ("MODEL ONLY", "model-only"),
         }.get(signal, ("", ""))
         observed = prediction.get("observed_at")
         team = str(item.get(f"{side}_team_name") or item.get(f"{side}_abbreviation") or "")

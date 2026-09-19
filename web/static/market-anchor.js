@@ -14,16 +14,33 @@
     put('reason', assessment.reason);
     put('time', assessment.as_of ? `Saved ${assessment.as_of}` : '');
     const tag = panel.querySelector('[data-assessment-tag]');
-    const tones = ['setup', 'running', 'extended', 'avoid', 'watch', 'paused'];
+    const tones = ['setup', 'running', 'extended', 'avoid', 'watch', 'paused', 'lean', 'pass', 'model-only'];
     tag.hidden = !assessment.tag;
     tag.textContent = assessment.tag || '';
     tag.className = 'tag tag-' + (tones.includes(assessment.tag_tone) ? assessment.tag_tone : 'watch');
+    panel.querySelector('[data-assessment-contributions]').replaceChildren(...(assessment.contributions || []).map(part => {
+      const row = document.createElement('li'), label = document.createElement('span');
+      const meter = document.createElement('meter'), value = document.createElement('strong');
+      label.textContent = part.label;
+      const points = Number(part.value);
+      value.textContent = `${points >= 0 ? '+' : ''}${points}`;
+      meter.min = 0; meter.max = 100; meter.value = Math.abs(points);
+      meter.setAttribute('aria-label', `${part.label} ${value.textContent} points`);
+      if (points < 0) row.className = 'is-penalty';
+      row.append(label, meter, value); return row;
+    }));
     panel.querySelector('[data-assessment-drivers]').replaceChildren(...(assessment.drivers || []).map(driver => {
       const row = document.createElement('li');
       const label = document.createElement('span');
       label.textContent = driver.label;
       row.append(label);
       if (driver.value !== null && driver.value !== undefined) {
+        if (driver.unit === '%') {
+          const meter = document.createElement('meter');
+          meter.min = 0; meter.max = 100; meter.value = driver.value;
+          meter.setAttribute('aria-label', `${driver.label} ${driver.value}%`);
+          row.append(meter);
+        }
         const value = document.createElement('strong');
         value.textContent = `${driver.value}${driver.unit || ''}`;
         row.append(value);
