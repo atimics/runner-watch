@@ -208,6 +208,7 @@ from runner_web.memecoins import (
     memecoin_detail,
     memecoin_market,
     refresh_memecoins,
+    snapshot_version,
 )
 from runner_web.operations import (
     require_operations_access,
@@ -558,6 +559,24 @@ PUBLIC_SCREEN_DATA_LOCK = threading.Lock()
 PUBLIC_SCREEN_DATA_CONDITION = threading.Condition(PUBLIC_SCREEN_DATA_LOCK)
 PUBLIC_SCREEN_DATA_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 PUBLIC_SCREEN_DATA_REFRESHING: set[str] = set()
+# Scopes the worker keeps warm in the shared cache. A web process serves these
+# from the shared copy instead of rebuilding them; dynamic scopes (per ticker,
+# coin or handle) still refresh in web.
+WORKER_OWNED_SCREENS = frozenset(
+    {
+        ("runners-pulse", "public"),
+        ("runners-radar", "public"),
+        ("runners-alpha", "public"),
+        ("flash-record", "public"),
+        ("calls-flash", ""),
+        ("caller", MACHINE_HANDLE),
+        ("sports-pulse", "all"),
+        ("sports-radar", "all"),
+        ("sports-alpha", "all"),
+        ("sports-golf", "pga"),
+        ("simple-sports", "all"),
+    }
+)
 SPORTS_INGESTION_ENABLED = os.getenv("SPORTS_INGESTION_ENABLED", "true").strip().lower() not in {
     "0",
     "false",
@@ -725,6 +744,7 @@ def _cached_payload(
     refresh_args: tuple[Any, ...],
     refresh_name: str,
     metric_scope: str | None = None,
+    allow_refresh: bool = True,
 ) -> dict[str, Any]:
     current = time.monotonic()
     with condition:
@@ -733,9 +753,22 @@ def _cached_payload(
             if metric_scope is not None:
                 record_cache(metric_scope, "hit")
             return cached[1]
-        if cached:
-            if metric_scope is not None:
-                record_cache(metric_scope, "stale")
+    if cached:
+        if metric_scope is not None:
+            record_cache(metric_scope, "stale")
+
+    # A shared copy refreshed by the worker (or another instance) is cheaper
+    # than rebuilding locally, and lets a web process stay off the rebuild path.
+    shared = shared_cache_get(shared_key)
+    if isinstance(shared, dict):
+        if metric_scope is not None:
+            record_cache(metric_scope, "shared")
+        with condition:
+            cache[local_key] = (time.monotonic() + ttl_seconds, shared)
+        return shared
+
+    if cached and allow_refresh:
+        with condition:
             if local_key not in refreshing:
                 refreshing.add(local_key)
                 threading.Thread(
@@ -744,15 +777,12 @@ def _cached_payload(
                     daemon=True,
                     name=refresh_name,
                 ).start()
+            cached = cache.get(local_key)
+        if cached:
             return cached[1]
-
-    shared = shared_cache_get(shared_key)
-    if isinstance(shared, dict):
-        if metric_scope is not None:
-            record_cache(metric_scope, "shared")
+    if cached and not allow_refresh:
         with condition:
-            cache[local_key] = (time.monotonic() + ttl_seconds, shared)
-        return shared
+            cache.pop(local_key, None)
 
     with condition:
         cached = cache.get(local_key)
@@ -817,8 +847,13 @@ def _public_screen_data(
     builder: Callable[[], dict[str, Any]],
     *,
     ttl_seconds: float = PUBLIC_SCREEN_CACHE_TTL_SECONDS,
+    allow_refresh: bool | None = None,
 ) -> dict[str, Any]:
     local_key, shared_key = _public_screen_cache_keys(scope, identity)
+    if allow_refresh is None:
+        allow_refresh = not (
+            PROCESS_ROLE == "web" and (scope, identity) in WORKER_OWNED_SCREENS
+        )
     return _cached_payload(
         local_key,
         shared_key,
@@ -832,6 +867,7 @@ def _public_screen_data(
         refresh_args=(local_key, shared_key, builder, ttl_seconds),
         refresh_name=f"public-screen-cache-{scope}",
         metric_scope=scope,
+        allow_refresh=allow_refresh,
     )
 
 
@@ -846,6 +882,7 @@ def _start_worker_tasks(
         return []
     workers = [
         asyncio.create_task(edgar_worker(), name="edgar"),
+        asyncio.create_task(public_screen_warm_worker(), name="public-screens"),
         asyncio.create_task(trading_halt_worker(), name="trading-halts"),
         asyncio.create_task(house_disclosure_worker(), name="house-disclosures"),
         asyncio.create_task(discovery_source_worker(), name="discovery-sources"),
@@ -7162,8 +7199,18 @@ def memecoin_calls_api(request: Request) -> dict[str, Any]:
     return {"calls": memecoin_calls()}
 
 
+def _cached_memecoin_detail(coin_id: str) -> dict[str, Any] | None:
+    payload = _public_screen_data(
+        "memecoin-detail",
+        f"{coin_id}:{snapshot_version()}",
+        lambda: {"detail": memecoin_detail(coin_id)},
+    )
+    detail = payload.get("detail")
+    return dict(detail) if isinstance(detail, dict) else None
+
+
 def _memecoin_detail_payload(coin_id: str) -> dict[str, Any]:
-    detail = memecoin_detail(coin_id)
+    detail = _cached_memecoin_detail(coin_id)
     if detail is None:
         raise HTTPException(404, "Coin not found")
     return {
@@ -7181,20 +7228,28 @@ def memecoin_detail_api(coin_id: str, request: Request) -> dict[str, Any]:
 
 @app.get("/api/memecoins/{coin_id}/replay")
 def memecoin_replay_api(coin_id: str, request: Request, revision: str | None = None):
-    from runner_web.memecoin_replay_store import replay_status
-
     enforce_rate(request, "memecoin_replay", limit=30, seconds=60)
-    if memecoin_detail(coin_id) is None or (
+    if _cached_memecoin_detail(coin_id) is None or (
         revision and not re.fullmatch(r"[a-f0-9]{64}", revision)
     ):
         raise HTTPException(404, "Replay not found")
     try:
-        status = replay_status(coin_id, revision)
+        status = _cached_replay_status(coin_id, revision)
     except ValueError:
         raise HTTPException(409, "Saved replay needs an evidence review") from None
     if revision and status["status"] != "ready":
         raise HTTPException(404, "Replay not found")
     return status
+
+
+def _cached_replay_status(coin_id: str, revision: str | None) -> dict[str, Any]:
+    from runner_web.memecoin_replay_store import replay_status
+
+    return _public_screen_data(
+        "memecoin-replay",
+        f"{coin_id}:{revision or ''}",
+        lambda: replay_status(coin_id, revision),
+    )
 
 
 def _memecoin_replay_artifact(coin_id: str, replay_id: str, request: Request, *, gif: bool):
@@ -9474,6 +9529,86 @@ def _warm_list_charts() -> None:
             _public_ticker_detail_data(ticker)
         except Exception:
             LOG.exception("Startup ticker detail warm failed for %s", ticker)
+
+
+def _public_screen_refreshers() -> list[tuple[str, str, Callable[[], dict[str, Any]], float]]:
+    """The fixed, expensive screens the worker rebuilds into the shared cache."""
+
+    return [
+        ("runners-pulse", "public", _pulse_data_uncached, PULSE_CACHE_TTL_SECONDS),
+        (
+            "runners-radar",
+            "public",
+            lambda: {"items": _radar_base_data_uncached()},
+            RADAR_CACHE_TTL_SECONDS,
+        ),
+        ("runners-alpha", "public", _alpha_base_data_uncached, ALPHA_CACHE_TTL_SECONDS),
+        ("flash-record", "public", flash_record, PUBLIC_SCREEN_CACHE_TTL_SECONDS),
+        ("calls-flash", "", _calls_flash_uncached, PUBLIC_SCREEN_CACHE_TTL_SECONDS),
+        (
+            "caller",
+            MACHINE_HANDLE,
+            lambda: _unified_caller_page_data(MACHINE_HANDLE),
+            PUBLIC_SCREEN_CACHE_TTL_SECONDS,
+        ),
+        (
+            "sports-pulse",
+            "all",
+            lambda: {
+                "pulse": _compact_sports_feed(
+                    sports_pulse("all", view="signals", limit=100), radar=False
+                ),
+                "pick_stats": sports_pick_stats(),
+            },
+            PUBLIC_SCREEN_CACHE_TTL_SECONDS,
+        ),
+        (
+            "sports-radar",
+            "all",
+            lambda: {"radar": _compact_sports_feed(sports_radar("all", 100), radar=True)},
+            PUBLIC_SCREEN_CACHE_TTL_SECONDS,
+        ),
+        (
+            "sports-alpha",
+            "all",
+            lambda: sports_alpha_board("all", 100),
+            SPORTS_ALPHA_CACHE_TTL_SECONDS,
+        ),
+        (
+            "sports-golf",
+            "pga",
+            lambda: {"golf": golf_slate(limit=20, leaderboard_limit=10)},
+            PUBLIC_SCREEN_CACHE_TTL_SECONDS,
+        ),
+        ("simple-sports", "all", lambda: sports_slate("all", 80), PUBLIC_SCREEN_CACHE_TTL_SECONDS),
+    ]
+
+
+def _warm_public_screens_once() -> None:
+    # The shared copy must outlive the web-side TTL so a web process never has
+    # to rebuild between worker cycles.
+    shared_ttl = max(300.0, PUBLIC_SCREEN_CACHE_TTL_SECONDS)
+    for scope, identity, builder, ttl in _public_screen_refreshers():
+        local_key, shared_key = _public_screen_cache_keys(scope, identity)
+        try:
+            _refresh_public_screen_data(local_key, shared_key, builder, max(ttl, shared_ttl))
+        except Exception:
+            LOG.exception("Public screen refresh failed for %s", scope)
+    try:
+        _warm_list_charts()
+    except Exception:
+        LOG.exception("Public list chart warm failed")
+
+
+async def public_screen_warm_worker() -> None:
+    interval = max(15, int(os.getenv("PUBLIC_SCREEN_WARM_SECONDS", "45")))
+    await asyncio.sleep(5)
+    while True:
+        try:
+            await asyncio.to_thread(_warm_public_screens_once)
+        except Exception:
+            LOG.exception("Public screen warm cycle failed")
+        await asyncio.sleep(interval)
 
 
 async def request_cache_warmer() -> None:
