@@ -202,6 +202,31 @@ def filing_events(row: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def connected_stocks(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Match saved filing people by SEC identity and preserve each reported amount."""
+    identities = sorted(
+        {p["id"] for e in events for p in e["people"] if p["id"].startswith("sec:")}
+    )[:100]
+    if not identities:
+        return {"events": [], "has_more": False}
+    ciks = [int(identity.split(":")[1]) for identity in identities]
+    clauses = " OR ".join("evidence_json LIKE ?" for _ in ciks)
+    with connection() as db:
+        rows = db.execute(
+            f"SELECT * FROM sec_filings WHERE form IN ({','.join('?' for _ in FORMS)}) "
+            f"AND (actor_cik IN ({','.join('?' for _ in ciks)}) OR {clauses}) "
+            "ORDER BY filed_at DESC, accession DESC LIMIT 501",
+            (*FORMS, *ciks, *(f"%{cik}%" for cik in ciks)),
+        ).fetchall()
+    links = []
+    for row in rows[:500]:
+        for event in filing_events(dict(row)):
+            matched = [p for p in event["people"] if p["id"] in identities]
+            if matched:
+                links.append({**event, "ticker": row["ticker"], "matched_people": matched})
+    return {"events": links, "has_more": len(rows) > 500}
+
+
 def ticker_map(ticker: str, cursor: str | None = None, *, limit: int = 50) -> dict[str, Any]:
     limit = min(50, max(1, limit))
     clause, args = "", []
@@ -241,9 +266,11 @@ def ticker_map(ticker: str, cursor: str | None = None, *, limit: int = 50) -> di
         if has_more
         else None
     )
+    events = [e for row in rows for e in filing_events(row)]
     return {
         "ticker": ticker,
-        "events": [e for row in rows for e in filing_events(row)],
+        "events": events,
+        "connections": connected_stocks(events),
         "loaded_filings": len(rows),
         "coverage": coverage,
         "next_cursor": next_cursor,

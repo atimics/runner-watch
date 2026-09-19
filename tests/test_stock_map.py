@@ -331,3 +331,56 @@ def test_public_endpoint_and_stable_sec_identity(database):
         assert client.get("/api/stocks/TEST/map?cursor=invalid").status_code == 400
     finally:
         client.close()
+
+
+def test_connections_use_sec_identity_and_preserve_amounts(database):
+    insert(filing_row("subject", evidence_json=json.dumps(evidence())))
+    insert(filing_row("other", ticker="OTHER", evidence_json=json.dumps(evidence())))
+    different = evidence()
+    different["owners"] = [{"name": "Jane Lee", "cik": 1010, "role": "Director"}]
+    insert(
+        filing_row("different", ticker="WRONG", actor_cik=1010, evidence_json=json.dumps(different))
+    )
+    insert(filing_row("name-only", ticker="NAME", actor_cik=None))
+    result = ticker_map("TEST")["connections"]
+    other = [e for e in result["events"] if e["ticker"] == "OTHER"]
+    assert [e["action"] for e in other] == [
+        "Bought",
+        "Sold",
+        "Award or grant",
+        "Exercise or conversion",
+    ]
+    assert [e["value"] for e in other] == [200, 60, None, 0]
+    assert other[0]["matched_people"][0]["role"] == "Director · CEO"
+    assert all(e["ticker"] not in {"WRONG", "NAME"} for e in result["events"])
+    assert result["has_more"] is False
+
+
+def test_connection_stakes_keep_class_percent_and_filing_date(database):
+    insert(filing_row("subject", evidence_json=json.dumps(evidence())))
+    insert(
+        filing_row(
+            "stake",
+            ticker="OTHER",
+            form="SCHEDULE 13D",
+            evidence_json=json.dumps(
+                {
+                    "positions": [
+                        {
+                            "name": "Jane Lee",
+                            "cik": 101,
+                            "percent": 12.5,
+                            "shares": 500,
+                            "security": "Class A",
+                        }
+                    ]
+                }
+            ),
+        )
+    )
+    links = ticker_map("TEST")["connections"]["events"]
+    stake = next(e for e in links if e["ticker"] == "OTHER")
+    assert stake["percent"] == 12.5
+    assert stake["security"] == "Class A"
+    assert stake["filed_at"] == "2026-09-05T18:00:00+00:00"
+    assert stake["source_url"].endswith("/stake/index.htm")

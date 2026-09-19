@@ -40,18 +40,19 @@
   const points = value => `${value > 0 ? '+' : ''}${number(value)} pts`;
   const percent = part => `${number(Math.round(Math.abs(part.value) / total * 1000) / 10)}% of total magnitude`;
   const color = part => part.value < 0 ? 'var(--red)' : `var(--score-${part.key}, var(--muted))`;
-  const metrics = () => small.matches ? {cx:180, cy:184, radius:48, width:16} : {cx:380, cy:218, radius:62, width:20};
+  const metrics = () => small.matches ? {cx:180, cy:74, radius:48, width:16} : {cx:380, cy:218, radius:62, width:20};
   const graph = $('graph');
   const peopleLayer = svg('g', {class:'map-people'});
   const ringLayer = svg('g', {class:'map-ring'});
   graph.append(peopleLayer, ringLayer);
   let pinned = null, hovered = null, focused = null;
+  let connections = [], connectionPage = 0, selectedConnection = null;
   let events = [], cursor = null, selected = null;
   let cutoff = Infinity, page = 0, pending = false, filingsPageNumber = 0;
   let ringDirty = true, scene = [], animation = 0, generation = 0;
   const small = window.matchMedia('(max-width:500px)');
   const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const pageSize = () => small.matches ? 4 : 8;
+  const pageSize = () => small.matches ? 1 : 2;
   const FILINGS_PAGE_SIZE = 5;
   const ANIMATION_MS = 320;
   const subset = () => events.filter(e => (Date.parse(e.filed_at) || 0) <= cutoff);
@@ -77,10 +78,10 @@
     } else if (item.score_detail) panel.append(make('p', 'No penalties applied.', 'map-note'));
   }
   function context() {
-    source(subset().find(event => event.id === selected));
+    source(selectedConnection || subset().find(event => event.id === selected));
   }
   function overview() {
-    selected = null; pinned = null; hovered = null; focused = null; ringDirty = true;
+    selectedConnection = null; selected = null; pinned = null; hovered = null; focused = null; ringDirty = true;
     render(false, false);
     graph.querySelector('[data-map-score-center]')?.focus({preventScroll:true});
   }
@@ -100,7 +101,7 @@
       segment.addEventListener('focus', () => {focused = part; context();});
       segment.addEventListener('blur', () => {focused = null; context();});
       const activate = () => {
-        pinned = part.key; selected = null; hovered = null; focused = null; ringDirty = true;
+        selectedConnection = null; pinned = part.key; selected = null; hovered = null; focused = null; ringDirty = true;
         render(false, false);
         ringLayer.querySelector(`[data-score-key="${CSS.escape(part.key)}"]`)?.focus({preventScroll:true});
       };
@@ -131,6 +132,7 @@
       document.dispatchEvent(new CustomEvent('rati:map-time', {detail:{time:null}})); return;
     }
     panel.replaceChildren();
+    if (event.ticker) {const link = make('a', event.ticker + ' ↗'); link.href = '/t/' + encodeURIComponent(event.ticker); panel.append(link);}
     panel.append(make('h3', names(event)), make('p', `${event.action} · ${amount(event)}`, 'map-event-action'));
     panel.append(make('p', event.people.map(p => p.role).join(' · ')));
     const facts = make('dl');
@@ -155,7 +157,7 @@
     if (event.source_url) {
       const link = make('a','Open SEC filing ↗'); link.href = event.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; panel.append(link);
     }
-    document.dispatchEvent(new CustomEvent('rati:map-time', {detail:{time:event.filed_at,label:`Filed ${date(event.filed_at)}`}}));
+    document.dispatchEvent(new CustomEvent('rati:map-time', {detail:{time:!event.ticker || event.ticker === root.dataset.ticker ? event.filed_at : null,label:`Filed ${date(event.filed_at)}`}}));
   }
   function peopleFor(rows) {
     const people = new Map();
@@ -169,12 +171,34 @@
     const size = pageSize();
     const shown = peopleFor(subset()).slice(page*size, page*size + size);
     return shown.map((person, i) => {
-      const left = i % 2 === 0;
-      const x = small.matches ? (left ? 85 : 275) : (left ? 180 : 580);
-      const y = small.matches ? 64 + Math.floor(i/2)*210 : 62 + Math.floor(i/2)*103;
+      const x = small.matches ? 180 : (i % 2 === 0 ? 165 : 595);
+      const y = small.matches ? 290 : 218;
       const first = person.events[0];
       const tones = new Set(person.events.map(e => e.tone));
-      return {id:person.id, name:person.name, first, eventCount:person.events.length, tone:tones.size === 1 ? first.tone : 'neutral', active:!!event?.people.some(p => p.id === person.id), x, y};
+      return {id:person.id, name:person.name, links:connections.filter(e => e.matched_people.some(p => p.id === person.id) && (Date.parse(e.filed_at) || 0) <= cutoff), first, eventCount:person.events.length, tone:tones.size === 1 ? first.tone : 'neutral', active:!!event?.people.some(p => p.id === person.id), x, y};
+    });
+  }
+  function drawConnections(node) {
+    // One bubble per filing line keeps purchases, sales and stakes separate.
+    const links = node.links || [], start = connectionPage * 6;
+    const shown = links.slice(start, start + 6);
+    if (!shown.length) return;
+    peopleLayer.append(svg('circle', {cx:node.x, cy:node.y, r:112, class:'map-connection-orbit'}));
+    shown.forEach((event, i) => {
+      const angle = -Math.PI / 2 + i * Math.PI * 2 / 6;
+      const x = node.x + Math.cos(angle)*112, y = node.y + Math.sin(angle)*112;
+      const unit = event.view === 'ownership' ? 'percent' : 'value';
+      const values = connections.filter(e => (e.view === 'ownership' ? 'percent' : 'value') === unit).map(e => Number(e[unit]) || 0);
+      const value = Number(event[unit]) || 0, max = Math.max(1, ...values);
+      const radius = value > 0 ? Math.sqrt(100 + 525 * value / max) : 10;
+      const role = event.matched_people.find(p => p.id === node.id)?.role || '';
+      const label = `${event.ticker} · ${event.action} · ${amount(event)} · ${role}`;
+      const g = svg('g', {class:`map-person map-connection ${event.tone}`, role:'button', tabindex:0, 'aria-label':label, 'data-connection':event.id + ':' + node.id});
+      peopleLayer.append(svg('line', {x1:node.x,y1:node.y,x2:x,y2:y,class:`map-edge ${event.tone}`}));
+      g.append(svg('circle',{cx:x,cy:y,r:radius}),svg('text',{x,y:y+radius+14,'text-anchor':'middle'},event.ticker),svg('text',{x,y:y+radius+28,'text-anchor':'middle',class:'map-node-action'},`${({'Bought':'Buy','Sold':'Sell','Reported stake':'Stake'}[event.action] || (/director/i.test(role) ? 'Director' : event.action))} ${event[unit] == null ? '' : unit === 'percent' ? number(event.percent)+'%' : new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',notation:'compact',maximumFractionDigits:1}).format(event.value)}`),svg('title',{},label));
+      const activate = () => {pinned = null; hovered = null; focused = null; selectedConnection = event; drawRing(); source(event);};
+      g.addEventListener('click',activate); g.addEventListener('keydown',e => {if (['Enter',' '].includes(e.key)) {e.preventDefault();activate();}});
+      peopleLayer.append(g);
     });
   }
   function drawScene(nodes) {
@@ -184,14 +208,15 @@
       const opacity = node.opacity ?? 1;
       const line = svg('line', {x1:cx, y1:cy, x2:node.x, y2:node.y, class:`map-edge ${node.tone}`, 'stroke-opacity':opacity});
       line.addEventListener('click', () => choose(node.first, node.id)); peopleLayer.append(line);
+      drawConnections(node);
       const g = svg('g', {class:`map-person ${node.tone}`, role:'button', tabindex:0, 'aria-label':`${node.name}: ${node.first.action}`, 'aria-pressed':String(!!node.active), 'data-person':node.id, opacity});
       g.append(svg('circle', {cx:node.x, cy:node.y, r:22}));
       const initials = node.name.split(/\s+/).slice(0,2).map(n => n[0]).join('');
       g.append(svg('text', {x:node.x, y:node.y+5, 'text-anchor':'middle'}, initials));
       const maxName = small.matches ? 21 : 28;
-      g.append(svg('text', {x:node.x, y:node.y+42, 'text-anchor':'middle'}, node.name.length > maxName ? node.name.slice(0,maxName-2)+'…' : node.name));
+      g.append(svg('text', {x:node.x, y:node.y+37, 'text-anchor':'middle'}, node.name.length > maxName ? node.name.slice(0,maxName-2)+'…' : node.name));
       const action = small.matches ? ({'Exercise or conversion':'Exercise / conversion','Tax or exercise payment':'Tax / exercise payment'}[node.first.action] || node.first.action) : `${node.first.action} · ${node.eventCount} ${node.eventCount === 1 ? 'event' : 'events'}`;
-      g.append(svg('text', {x:node.x, y:node.y+59, 'text-anchor':'middle', class:'map-node-action'}, action));
+      g.append(svg('text', {x:node.x, y:node.y+53, 'text-anchor':'middle', class:'map-node-action'}, action));
       g.append(svg('title', {}, node.name));
       const activate = () => {choose(node.first, node.id); peopleLayer.querySelector(`[data-person="${CSS.escape(node.id)}"]`)?.focus({preventScroll:true});};
       g.addEventListener('click', activate); g.addEventListener('keydown', e => {if (['Enter',' '].includes(e.key)) {e.preventDefault();activate();}}); peopleLayer.append(g);
@@ -213,6 +238,12 @@
     const people = peopleFor(subset()), size = pageSize();
     page = Math.min(page, Math.max(0, Math.ceil(people.length / size) - 1));
     const target = buildScene(event);
+    const count = Math.max(0, ...target.map(n => n.links.length));
+    connectionPage = Math.min(connectionPage, Math.max(0, Math.ceil(count/6)-1));
+    $('connections-paging').hidden = count <= 6;
+    $('connections-page').textContent = `Connections ${connectionPage+1} / ${Math.max(1,Math.ceil(count/6))}`;
+    $('connections-previous').disabled = connectionPage === 0;
+    $('connections-next').disabled = (connectionPage+1)*6 >= count;
     $('paging').hidden = people.length <= size;
     $('page').textContent = people.length ? `${page*size+1}–${page*size+target.length} of ${people.length} people` : '';
     $('previous').disabled = page === 0; $('next').disabled = (page+1)*size >= people.length;
@@ -248,7 +279,7 @@
     $('filings-next').disabled = (filingsPageNumber + 1) * FILINGS_PAGE_SIZE >= events.length;
   }
   function choose(event, personId) {
-    selected = event?.id || null; pinned = null; hovered = null; focused = null;
+    selectedConnection = null; selected = event?.id || null; pinned = null; hovered = null; focused = null;
     if (event) {
       const at = events.findIndex(row => row.id === event.id);
       if (at >= 0) filingsPageNumber = Math.floor(at / FILINGS_PAGE_SIZE);
@@ -260,7 +291,7 @@
   }
   function scrub(event) {
     const time = Date.parse(event.filed_at);
-    selected = event.id;
+    selectedConnection = null; selected = event.id;
     if (Number.isFinite(time) && time !== cutoff) {
       cutoff = time;
       const people = peopleFor(subset()), at = people.findIndex(p => p.events.some(row => row.id === event.id));
@@ -272,7 +303,7 @@
     $('events').querySelector(`[data-event-id="${CSS.escape(event.id)}"]`)?.focus({preventScroll:true});
   }
   function render(restoreFocus = true, animate = true) {
-    graph.setAttribute('viewBox', small.matches ? '0 0 360 350' : '0 0 760 440');
+    graph.setAttribute('viewBox', small.matches ? '0 0 360 450' : '0 0 760 440');
     const active = document.activeElement;
     const focusSelector = active?.hasAttribute('data-score-key') ? `[data-score-key="${CSS.escape(active.dataset.scoreKey)}"]` : active?.hasAttribute('data-person') ? `[data-person="${CSS.escape(active.dataset.person)}"]` : active?.hasAttribute('data-map-score-center') ? '[data-map-score-center]' : active?.hasAttribute('data-event-id') ? `[data-event-id="${CSS.escape(active.dataset.eventId)}"]` : null;
     if (ringDirty) { drawRing(); ringDirty = false; }
@@ -280,7 +311,7 @@
     selected = event?.id || null;
     renderPeople(event, animate, restoreFocus, focusSelector);
     renderFilings();
-    source(event);
+    source(selectedConnection || event);
   }
   async function load() {
     if (pending) return; pending = true; $('load').disabled = true;
@@ -291,6 +322,10 @@
       const data = await res.json(); if (data.ticker !== root.dataset.ticker) throw new Error('subject');
       const unique = new Map(events.map(e => [e.id,e])); data.events.forEach(e => unique.set(e.id,e));
       events = [...unique.values()].sort((a,b) => Date.parse(b.filed_at)-Date.parse(a.filed_at) || b.id.localeCompare(a.id));
+      const linked = new Map(connections.map(e => [e.id,e]));
+      (data.connections?.events || []).forEach(e => linked.set(e.id,e));
+      connections = [...linked.values()];
+      $('connection-note').textContent = data.connections?.has_more ? 'Limited saved filings. Bubble area scales by stake % or trade value, within each measure.' : 'Bubble area scales by stake % or trade value, within each measure. Each bubble is one reported filing line.';
       cursor = data.next_cursor;
       $('load').hidden = !cursor; $('load').textContent = 'Load older filings';
       $('status').textContent = '';
@@ -298,11 +333,13 @@
     } catch (_) { $('status').textContent = 'Please retry to load the saved filings.'; $('load').hidden = false; $('load').textContent = 'Retry loading filings'; }
     finally {pending = false; $('load').disabled = false;}
   }
+  $('connections-previous').addEventListener('click',() => {connectionPage--;render(false,false);});
+  $('connections-next').addEventListener('click',() => {connectionPage++;render(false,false);});
   $('filings-previous').addEventListener('click',() => {filingsPageNumber--;renderFilings();}); $('filings-next').addEventListener('click',() => {filingsPageNumber++;renderFilings();});
   $('previous').addEventListener('click',() => {page--;render(true,true);}); $('next').addEventListener('click',() => {page++;render(true,true);});
   $('load').addEventListener('click',load);
   $('score-return').addEventListener('click', overview);
-  root.addEventListener('keydown', event => {if (event.key === 'Escape' && (pinned || selected)) {event.preventDefault(); overview();}});
+  root.addEventListener('keydown', event => {if (event.key === 'Escape' && (pinned || selected || selectedConnection)) {event.preventDefault(); overview();}});
   small.addEventListener('change',() => {page = 0; ringDirty = true; render(false,false);});
   motion.addEventListener('change', () => render(false,false));
   screenNode?.addEventListener('rati:screen-detail', event => {
@@ -318,7 +355,7 @@
     drawRing(); ringDirty = false;
     const selectedEvent = subset().find(row => row.id === selected) || null;
     selected = selectedEvent?.id || null;
-    source(selectedEvent);
+    source(selectedConnection || selectedEvent);
     if (focusSelector) (root.querySelector(focusSelector) || ringLayer.querySelector('[data-map-score-center]'))?.focus({preventScroll:true});
   });
   render();

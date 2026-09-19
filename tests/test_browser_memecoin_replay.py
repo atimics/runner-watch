@@ -1,6 +1,5 @@
 """Exercise the saved replay on the actual coin details template."""
 
-import json
 import re
 from pathlib import Path
 
@@ -79,27 +78,23 @@ def open_replay(page: Page, *, width: int = 390, launch: bool = True) -> dict:
 
 
 @pytest.mark.parametrize("width", [320, 390, 1440])
-def test_replay_details_layout_history_and_downloads(page: Page, width: int):
+def test_coin_map_uses_stock_layout_and_ticker_center(page: Page, width: int):
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
     data = open_replay(page, width=width)
-    expect(page.locator("[data-node]")).to_have_count(len(data["frames"][-1]["nodes"]))
-    expect(page.locator("[data-replay-position]")).to_have_value(str(len(data["frames"]) - 1))
-    expect(page.locator("[data-replay-selection]")).to_be_visible()
-    expect(page.locator("[data-replay-badge]")).to_have_text("Launch recorded")
-    page.locator("[data-replay-latest]").click()
     expect(page.locator("[data-replay-graph]")).to_have_attribute("data-phase", "settled")
-    expect(page.locator("[data-node]")).to_have_count(len(data["frames"][-1]["nodes"]))
-    page.get_by_role("link", name="Save GIF").is_visible()
-    expect(page.locator("[data-replay-gif]")).to_have_attribute("href", "/saved.gif")
+    expect(page.locator(".map-score-center")).to_contain_text(COIN["symbol"])
+    expect(page.locator(".map-canvas")).to_be_visible()
+    expect(page.locator("[data-replay-events] button")).to_have_count(
+        len({e["event_id"] for e in data["frames"][-1]["edges"]})
+    )
+    expect(page.locator(".market-assessment, [data-replay-gif], .replay-controls")).to_have_count(0)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-    page.locator("[data-replay-origin]").click()
-    expect(page.locator("[data-node]")).to_have_count(1)
-    expect(page.locator("[data-replay-graph] line")).to_have_count(0)
+    assert not errors
 
 
-def test_keyboard_bubble_opens_evidence_and_keeps_focus(page: Page):
-    open_replay(page)
-    page.locator("[data-replay-latest]").click()
-    expect(page.locator("[data-replay-graph]")).to_have_attribute("data-phase", "settled")
+def test_keyboard_bubble_opens_evidence_and_returns_to_score(page: Page):
+    open_replay(page, width=1440)
     wallet = page.get_by_role("button", name=re.compile(r"^wallet:"))
     wallet.first.focus()
     wallet.first.press("Enter")
@@ -108,39 +103,23 @@ def test_keyboard_bubble_opens_evidence_and_keeps_focus(page: Page):
         "href", re.compile("/api/memecoins/evidence/")
     )
     expect(page.locator("[data-replay-selection]")).to_contain_text("9007199254740993 raw units")
+    wallet.first.press("Escape")
+    expect(page.locator(".map-score-center")).to_be_focused()
+    expect(page.locator("[data-replay-score-return]")).to_be_hidden()
 
 
-def test_replay_loops_and_respects_reduced_motion(page: Page):
-    page.emulate_media(reduced_motion="reduce")
-    open_replay(page, launch=False)
-    expect(page.locator("[data-replay-badge]")).to_have_text("Launch evidence pending")
-    page.locator("[data-replay-latest]").click()
-    expect(page.locator("[data-replay-graph]")).to_have_attribute("data-phase", "settled")
-    page.get_by_role("button", name="Replay events").click()
-    expect(page.locator("[data-replay-position]")).to_have_value("0")
-    expect(page.get_by_role("button", name="Pause replay")).to_be_visible()
-    expect(page.locator("[data-replay-position]")).to_have_value("1", timeout=3000)
-    expect(page.locator("[data-replay-position]")).to_have_value("0", timeout=4000)
-    page.get_by_role("button", name="Pause replay").click()
-
-
-def test_pending_evidence_and_failed_revision_show_clear_status(page: Page):
+def test_pending_evidence_keeps_ticker_and_score_visible(page: Page):
     open_replay(page)
     page.route(
         "**/api/memecoins/*/replay*",
         lambda route: route.fulfill(
-            json={
-                "status": "pending",
-                "message": "The replay will appear as chain evidence is collected.",
-            }
+            json={"status": "pending", "message": "Chain events are being collected."}
         ),
     )
     page.reload()
-    expect(page.locator("[data-replay-status]")).to_contain_text("as chain evidence is collected")
-    expect(page.locator("[data-replay-content]")).to_be_hidden()
-    page.route(
-        "**/api/memecoins/*/replay*",
-        lambda route: route.fulfill(status=404, body=json.dumps({"detail": "Replay not found"})),
-    )
-    page.goto("http://app.test/memecoins/coin/" + COIN["id"] + "?replay=" + "0" * 64)
-    expect(page.locator("[data-replay-status]")).to_contain_text("awaiting evidence review")
+    expect(page.locator("[data-replay-status]")).to_have_text("Chain events are being collected.")
+    expect(page.locator(".map-score-center")).to_be_visible()
+    page.route("**/api/memecoins/*/replay*", lambda route: route.fulfill(status=404))
+    page.reload()
+    expect(page.locator("[data-replay-status]")).to_contain_text("Please retry")
+    expect(page.locator(".map-score-center")).to_be_visible()
