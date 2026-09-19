@@ -1,0 +1,45 @@
+/* Memecoin and sports pages share the stock page's existing visual language. */
+.anchor-memecoins,.anchor-sports{--score-liquidity:var(--blue);--score-risk:var(--red)}
+.anchor-memecoins .ticker-name,.anchor-sports .ticker-name{min-width:0}
+.anchor-memecoins .asset-heading>div,.anchor-sports .asset-heading>div{min-width:0}
+.anchor-memecoins .asset-heading .eyebrow,.anchor-memecoins .asset-heading h1,.anchor-sports .asset-heading h1{overflow-wrap:anywhere}
+.anchor-memecoins .row-assessment,.anchor-sports .row-assessment{display:flex;flex-direction:column;align-items:center;text-align:center;min-width:0;font-variant-numeric:tabular-nums}
+.row-assessment>strong{font-size:18px;font-weight:650}.row-assessment>small{font-size:9px;line-height:1.2;color:var(--muted)}
+.assessment-pending{font-size:24px;line-height:1;color:var(--muted)}
+.token-contract{display:flex;align-items:flex-start;gap:12px;color:var(--muted);font-size:12px}.token-contract details{flex:1;min-width:0}.token-contract summary{cursor:pointer;padding:10px 0}.token-contract code{display:block;overflow-wrap:anywhere;user-select:all;color:var(--text);font-size:11px}.token-contract button{min-height:36px;border:1px solid var(--line);border-radius:8px;color:var(--green);background:var(--panel);padding:6px 12px}
+.tag-lean{color:#04141d;background:var(--blue);border-color:var(--blue)}.chip-lean{color:var(--blue)}.tag-pass,.tag-model-only{color:var(--muted);border-color:var(--line)}.chip-pass,.chip-model-only{color:var(--muted)}
+.assessment-contributions{list-style:none;padding:0;margin:12px 0;display:grid;gap:8px}.assessment-contributions:empty{display:none}.assessment-contributions li{display:grid;grid-template-columns:minmax(0,1fr) 80px 36px;align-items:center;gap:10px;font-size:12px}.assessment-contributions meter{width:100%;height:8px;accent-color:var(--green)}.assessment-contributions strong{text-align:right;font-variant-numeric:tabular-nums}.assessment-contributions .is-penalty{color:var(--red)}.assessment-contributions .is-penalty meter{accent-color:var(--red)}
+.market-assessment{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:18px 0;margin:20px 0}
+.market-assessment header{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.market-assessment h2{font-size:17px;line-height:1.3;font-weight:600;margin:0}.market-assessment .eyebrow{font-size:10px;margin-bottom:4px}
+.assessment-verdict{display:flex;align-items:center;gap:12px}.assessment-verdict>strong{font-size:28px;font-weight:650;font-variant-numeric:tabular-nums}
+.assessment-reason{margin:10px 0;color:var(--muted);font-size:12px}.assessment-reason:empty{display:none}
+.assessment-drivers{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:7px}
+.assessment-drivers li{display:flex;align-items:baseline;gap:8px;border-left:2px solid var(--green);padding-left:10px;font-size:12px;min-width:0;overflow-wrap:anywhere}
+.assessment-drivers li>span{flex:1}.assessment-drivers strong{font-variant-numeric:tabular-nums}.assessment-drivers a{color:var(--green);white-space:nowrap;padding:6px 0}
+.assessment-drivers meter{width:64px;height:8px;flex-shrink:0;accent-color:var(--green)}.assessment-contributions .is-penalty meter::-webkit-meter-optimum-value{background:var(--red)}
+.assessment-time{display:block;color:var(--muted);font-size:10px;margin-top:10px}.assessment-time:empty{display:none}
+.assessment-evidence{margin-top:10px;font-size:12px;color:var(--muted)}.assessment-evidence summary{cursor:pointer;min-height:36px;display:flex;align-items:center}.assessment-evidence summary:after{content:'+';margin-left:auto}.assessment-evidence[open] summary:after{content:'−'}.assessment-evidence ul{margin:0;padding-left:18px}
+.anchor-sports .teams>div{min-width:0}.anchor-sports .teams h2{overflow-wrap:anywhere}
+.anchor-memecoins .token-replay header{flex-wrap:wrap}.anchor-memecoins .replay-evidence{overflow-wrap:anywhere}
+.coin-call-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 16px;padding:14px 0;border-bottom:1px solid var(--line)}.coin-call-row>a{font-size:14px;overflow-wrap:anywhere}.coin-call-row strong{text-align:right;font-variant-numeric:tabular-nums}.coin-call-row small{font-size:11px;color:var(--muted)}
+.anchor-memecoins .ticker-support .ticker-action,.anchor-sports .ticker-support .ticker-action{display:block;padding:14px 18px;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:12px;width:100%;text-align:left}
+.anchor-memecoins .ticker-support .ticker-action span,.anchor-sports .ticker-support .ticker-action span{display:block;font-size:12px;color:var(--muted);margin-top:4px}
+@media(max-width:650px){
+  .anchor-memecoins .ticker,.anchor-sports .ticker{grid-template-columns:62px minmax(0,1fr) 84px 44px;gap:8px;min-height:76px;padding:12px 0}
+  .anchor-memecoins .ticker .tag,.anchor-sports .ticker .tag{min-width:0;width:62px;font-size:8px;padding:5px 2px}
+  .anchor-memecoins .ticker-name,.anchor-sports .ticker-name,.anchor-memecoins .ticker-value,.anchor-sports .ticker-value{flex-direction:column;align-items:stretch;gap:3px}
+  .anchor-memecoins .ticker-name strong,.anchor-sports .ticker-name strong{flex:initial;max-width:100%}
+  .anchor-memecoins .ticker-name strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .anchor-memecoins .ticker-value strong{font-size:13px}.anchor-memecoins .ticker-value small{font-size:10px}
+  .anchor-sports .ticker{grid-template-columns:42px minmax(0,1fr) 74px;grid-template-areas:'mark name value' 'mark name assessment';gap:4px 10px;min-height:92px}
+  .anchor-sports .ticker>.tag,.anchor-sports .ticker>.ticker-mark{grid-area:mark}
+  .anchor-sports .ticker>.tag{width:42px;font-size:7px;letter-spacing:0;padding:5px 1px}
+  .anchor-sports .ticker-name{grid-area:name}.anchor-sports .ticker-name strong{white-space:normal;overflow-wrap:anywhere;line-height:1.35;font-size:14px}
+  .anchor-sports .ticker-value{grid-area:value;align-self:end}.anchor-sports .ticker-value strong{font-size:16px}.anchor-sports .ticker-value small{font-size:10px;white-space:normal;line-height:1.3}
+  .anchor-sports .row-assessment{grid-area:assessment;align-self:start;align-items:flex-end}.anchor-sports .row-assessment>strong{font-size:12px}.anchor-sports .row-assessment>small{font-size:9px}.anchor-sports .assessment-pending{display:none}
+  .anchor-memecoins .search input,.anchor-sports .search input{width:100%;min-width:0}
+  .anchor-memecoins .chip,.anchor-sports .chip{min-height:36px}
+  .market-assessment .tag{min-width:60px;font-size:8px}.assessment-verdict{gap:8px}.assessment-verdict>strong{font-size:23px}
+}
+@media(max-width:360px){.anchor-memecoins .ticker{grid-template-columns:54px minmax(0,1fr) 76px 32px;gap:6px}.anchor-memecoins .ticker .tag{width:54px}.row-assessment .ticker-score{width:30px}.row-assessment>small{font-size:8px}}

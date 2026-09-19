@@ -428,6 +428,14 @@ def memecoin_market(
         _quote_display(row, snapshot.get("collected_at"), current)
         for row in snapshot.get("rows", [])
     ]
+    findings = (states.get("memecoin_forensics") or {}).get("findings") or []
+    for row in rows:
+        row["findings"] = [
+            finding
+            for finding in findings
+            if row.get("token_address")
+            and finding.get("token_address") == row["token_address"]
+        ]
     collected = _time(snapshot.get("collected_at"))
     stale = collected is None or not 0 <= (current - collected).total_seconds() <= STALE_SECONDS
     total = len(rows)
@@ -510,7 +518,7 @@ def memecoin_detail(
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", coin_id):
         return None
     current = at or datetime.now(UTC)
-    states = _market_states(keys=("memecoins_snapshot", "memecoins_error"))
+    states = _market_states(keys=("memecoins_snapshot", "memecoins_error", "memecoin_forensics"))
     snapshot = states.get("memecoins_snapshot") or {}
     snapshot_coin = next((row for row in snapshot.get("rows", []) if row["id"] == coin_id), None)
     saved = stored_memecoin(coin_id)
@@ -523,6 +531,12 @@ def memecoin_detail(
             "run_id": snapshot.get("run_id"),
         }
     coin = _quote_display(saved["coin"], saved["collected_at"], current)
+    coin["findings"] = [
+        finding
+        for finding in (states.get("memecoin_forensics") or {}).get("findings") or []
+        if coin.get("token_address")
+        and finding.get("token_address") == coin["token_address"]
+    ]
     active = snapshot_coin is not None
     coin["stale"] = coin["stale"] or not memecoins_enabled()
     status = "stale" if coin["stale"] else "ok"
