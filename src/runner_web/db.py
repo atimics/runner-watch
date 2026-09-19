@@ -3418,6 +3418,18 @@ def _migration_072_client_errors(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_073_market_event_time_index(db: DatabaseConnection) -> None:
+    """The public_market_events view filters and orders by event_at with no
+    usable index, which made every pulse scoring build scan the table."""
+
+    db.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS market_events_event_time
+            ON market_events(event_at DESC,last_collected_at DESC);
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3495,6 +3507,7 @@ MIGRATIONS = (
     Migration(70, "story_and_identity", _migration_070_story_and_identity),
     Migration(71, "typed_research_subjects", _migration_071_typed_research_subjects),
     Migration(72, "client_errors", _migration_072_client_errors),
+    Migration(73, "market_event_time_index", _migration_073_market_event_time_index),
 )
 
 
