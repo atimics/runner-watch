@@ -17,11 +17,12 @@
   function overview(part) {
     selected = null; $('score-return').hidden = !part;
     root.querySelectorAll('[data-replay-event]').forEach(b => b.setAttribute('aria-pressed','false'));
-    const panel = $('selection'); panel.replaceChildren(make('h3',score(),'map-score-heading'));
+    const panel = $('selection'); panel.replaceChildren();
     if (part) panel.append(make('h4',part.label),make('p',`${part.value > 0 ? '+' : ''}${part.value} pts`));
+    const badges = make('div',null,'map-score-badges');
     const list = make('ul',null,'map-score-legend');
     parts().forEach(p => {const li = make('li'), dot = make('span',null,'map-score-swatch'); dot.style.background = tone(p); li.append(dot,make('span',p.label),make('strong',`${p.value > 0 ? '+' : ''}${p.value} pts`)); list.append(li);});
-    panel.append(list);
+    badges.append(list); panel.append(badges);
     if (item.score == null) panel.append(make('p','RATi score pending.','map-note'));
     document.dispatchEvent(new CustomEvent('rati:map-time',{detail:{time:null}}));
   }

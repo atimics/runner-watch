@@ -49,7 +49,7 @@ def test_unified_score_template_keeps_score_and_lists_filings(score):
             "calls": [],
         },
     )
-    assert f'<h3 class="map-score-heading">{score if score is not None else "—"}</h3>' in html
+    assert 'class="map-score-heading"' not in html
     assert 'class="metrics"' not in html
     assert 'class="breakdown"' not in html
     assert re.search(r'<div class="map-filings">', html)

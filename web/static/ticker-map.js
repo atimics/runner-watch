@@ -23,7 +23,7 @@
   const names = e => e.people.map(p => p.name).join(' + ') || 'Reporting person';
   const amount = e => e.view === 'ownership' ? (e.percent == null ? 'See filing' : number(e.percent) + '% of class') : money(e.value);
   const screenNode = document.getElementById('screenData');
-  const initial = JSON.parse(screenNode?.textContent || '{}');
+  const initial = screenNode?.ratiScreenDetail || JSON.parse(screenNode?.textContent || '{}');
   let item = initial.market === 'stocks' && initial.item?.id === root.dataset.ticker ? initial.item : {};
   let drivers = [], positive = [], penalties = [], contributions = [], total = 0, score = '—';
   const scoreData = value => JSON.stringify([value.score ?? null, value.score_detail ?? null]);
@@ -44,7 +44,8 @@
   const graph = $('graph');
   const peopleLayer = svg('g', {class:'map-people'});
   const ringLayer = svg('g', {class:'map-ring'});
-  graph.append(peopleLayer, ringLayer);
+  const interestsLayer = svg('g', {class:'map-interests'});
+  graph.append(peopleLayer, interestsLayer, ringLayer);
   let pinned = null, hovered = null, focused = null;
   let events = [], cursor = null, selected = null;
   let cutoff = Infinity, page = 0, pending = false, filingsPageNumber = 0;
@@ -57,24 +58,25 @@
   const subset = () => events.filter(e => (Date.parse(e.filed_at) || 0) <= cutoff);
   function scorePanel(part) {
     const panel = $('selection'); panel.replaceChildren();
-    panel.append(make('h3', String(score), 'map-score-heading'));
     if (part) {
       panel.append(make('h4', part.label), make('p', `${points(part.value)} · ${percent(part)}`, 'map-score-breakdown'));
       panel.append(make('p', pinned === part.key ? 'Pinned contribution. Return to score overview to clear.' : 'Click or press Enter to pin this contribution.', 'map-note'));
     }
+    const badges = make('div', null, 'map-score-badges');
     const legend = make('ul', null, 'map-score-legend');
     positive.forEach(driver => {
       const row = make('li');
       const swatch = make('span', null, 'map-score-swatch'); swatch.style.background = color(driver); swatch.setAttribute('aria-hidden', 'true');
       row.append(swatch, make('span', driver.label), make('strong', points(driver.value))); legend.append(row);
     });
-    if (legend.children.length) panel.append(legend);
+    if (legend.children.length) badges.append(legend);
     if (!positive.length) panel.append(make('p', item.score_detail ? 'No positive contributions.' : 'Score breakdown unavailable.', 'map-note'));
     if (penalties.length) {
       const list = make('ul', null, 'map-score-penalties');
       penalties.forEach(penalty => {const row = make('li'); row.append(make('span', penalty.label), make('strong', points(penalty.value))); list.append(row);});
-      panel.append(list);
-    } else if (item.score_detail) panel.append(make('p', 'No penalties applied.', 'map-note'));
+      badges.append(list);
+    }
+    panel.append(badges);
   }
   function context() {
     source(subset().find(event => event.id === selected));
@@ -128,7 +130,7 @@
     $('score-return').hidden = !event && !pinned;
     if (preview || !event) {
       scorePanel(preview || contributions.find(part => part.key === pinned));
-      document.dispatchEvent(new CustomEvent('rati:map-time', {detail:{time:null}})); return;
+      if (!preview) document.dispatchEvent(new CustomEvent('rati:map-time', {detail:{time:null}})); return;
     }
     panel.replaceChildren();
     panel.append(make('h3', names(event)), make('p', `${event.action} · ${amount(event)}`, 'map-event-action'));
@@ -150,7 +152,7 @@
     if (event.amendment) panel.append(make('p','This amendment has its own filing date. Open the source to see the correction and its scope.'));
     if (event.people.some(p => p.identity_basis === 'Reported name')) panel.append(make('p','Identity matched by the reported name within this ticker.'));
     if (event.footnotes || event.ownership_detail) {
-      const notes = make('details'); notes.append(make('summary','Filing notes'),make('p',[event.footnotes,event.ownership_detail].filter(Boolean).join(' '))); panel.append(notes);
+      panel.append(make('p',[event.footnotes,event.ownership_detail].filter(Boolean).join(' '),'map-filing-notes'));
     }
     if (event.source_url) {
       const link = make('a','Open SEC filing ↗'); link.href = event.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; panel.append(link);
@@ -200,120 +202,77 @@
       g.addEventListener('click', activate); g.addEventListener('keydown', e => {if (['Enter',' '].includes(e.key)) {e.preventDefault();activate();}}); peopleLayer.append(g);
     });
     scene = nodes;
+    drawInterests(nodes);
   }
-  let connectionPerson = null, connectionEvents = [], connectionCursor = null;
-  let connectionPage = 0, connectionSelected = null, connectionRequest = 0, connectionPending = false;
   const finiteAmount = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
-  const compact = value => new Intl.NumberFormat('en-US', {notation:'compact', maximumFractionDigits:1}).format(value);
-  function connectionRows() {
+  const interests = new Map();
+  const interestRequests = new Set();
+  function interestRows(personId) {
     const rows = new Map();
-    const sorted = connectionEvents.filter(e => (Date.parse(e.filed_at) || 0) <= cutoff)
+    const sorted = (interests.get(personId)?.events || [])
+      .filter(e => e.ticker !== root.dataset.ticker && (Date.parse(e.filed_at) || 0) <= cutoff)
       .sort((a,b) => Date.parse(b.filed_at) - Date.parse(a.filed_at) || (Date.parse(b.occurred_at) || 0) - (Date.parse(a.occurred_at) || 0) || b.id.localeCompare(a.id, 'en', {numeric:true}));
     sorted.forEach(event => {
-      const person = event.people.find(p => p.id === connectionPerson?.id);
+      const person = event.people.find(p => p.id === personId);
       if (!person) return;
-      const kind = event.view === 'ownership' ? 'Stake' : ({Bought:'Buy', Sold:'Sell'}[event.action] || event.action);
-      const add = (relationship, value, unit) => {
-        const key = JSON.stringify(relationship === 'Director' ? [event.ticker, relationship] : [event.ticker, relationship, event.security || '', event.security_type || '', event.ownership || '']);
-        if (!rows.has(key)) rows.set(key, {key, event, relationship, value:finiteAmount(value) ? value : null, unit});
+      const relationship = event.view === 'ownership' ? 'Stake' : ({Bought:'Buy', Sold:'Sell'}[event.action] || event.action);
+      const add = (kind, value, unit) => {
+        const key = JSON.stringify([event.ticker, kind, kind === 'Director' ? '' : event.security || '', kind === 'Director' ? '' : event.security_type || '', kind === 'Director' ? '' : event.ownership || '']);
+        if (!rows.has(key)) rows.set(key, {key, event, relationship:kind, value:finiteAmount(value) ? value : null, unit});
       };
-      add(kind, event.view === 'ownership' ? event.percent : event.value, event.view === 'ownership' ? '%' : '$');
+      add(relationship, event.view === 'ownership' ? event.percent : event.value, event.view === 'ownership' ? '%' : '$');
       if (/\bdirector\b/i.test(person.role)) add('Director', null, 'role');
     });
-    const order = {Stake:0, Buy:1, Sell:2, Director:3};
-    return [...rows.values()].sort((a,b) => a.event.ticker.localeCompare(b.event.ticker) || (order[a.relationship] ?? 4) - (order[b.relationship] ?? 4));
+    return [...rows.values()];
   }
-  const connectionAmount = row => row.relationship === 'Director' ? 'Reported role' : row.value == null ? 'See filing' : row.unit === '%' ? `${number(row.value)}%` : `$${compact(row.value)}`;
-  function connectionDetail(row) {
-    const panel = $('connections-detail'); panel.replaceChildren();
-    if (!row) {panel.append(make('h3', connectionPerson?.name || 'Connected stocks'), make('p','Select a stock marker to see the relationship.')); return;}
-    const event = row.event;
-    panel.append(make('h3', `${event.ticker} · ${row.relationship}`), make('p',event.company || event.ticker), make('p',`${row.relationship === 'Director' ? connectionPerson.name : connectionAmount(row)}${row.unit === '%' && row.value != null ? ' of class' : ''}`, 'map-event-action'));
-    panel.append(make('p', `Filed ${date(event.filed_at)}${event.amendment ? ' · Amendment' : ''}`));
-    panel.append(make('p',`${event.view === 'ownership' ? 'As of' : 'Trade date'} ${date(event.occurred_at)}`));
-    if (row.relationship !== 'Director') panel.append(make('p',`${number(event.shares)} shares / units · ${event.security || 'See filing for share class'}`));
-    if (event.joint) panel.append(make('p','Joint report. The filing describes the shared interest.'));
-    if (event.footnotes || event.ownership_detail) panel.append(make('p',[event.footnotes,event.ownership_detail].filter(Boolean).join(' ')));
-    const stock = make('a',`Open ${event.ticker} →`); stock.href = `/t/${encodeURIComponent(event.ticker)}`; panel.append(stock);
-    if (event.source_url) {const link = make('a','Open SEC filing ↗'); link.href = event.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; panel.append(make('br'),link);}
-  }
-  function drawConnections() {
-    const graph = $('connections-graph'); graph.replaceChildren();
-    if (!connectionPerson) return;
-    const rows = connectionRows(), size = small.matches ? 4 : 6;
-    connectionPage = Math.min(connectionPage, Math.max(0, Math.ceil(rows.length/size)-1));
-    const shown = rows.slice(connectionPage*size, (connectionPage+1)*size);
-    const cx = small.matches ? 180 : 380, cy = small.matches ? 225 : 218;
-    const rx = small.matches ? 110 : 235, ry = small.matches ? 145 : 142;
-    graph.setAttribute('viewBox', small.matches ? '0 0 360 450' : '0 0 760 440');
-    graph.append(svg('ellipse',{cx,cy,rx,ry,class:'map-connection-orbit'}));
-    const maxima = {'%':0,'$':0};
-    rows.forEach(row => {if (row.value != null && row.unit in maxima) maxima[row.unit] = Math.max(maxima[row.unit], row.value);});
-    shown.forEach((row,i) => {
-      const angle = -Math.PI/2 + i * 2*Math.PI/shown.length;
-      const x = cx + rx*Math.cos(angle), y = cy + ry*Math.sin(angle);
-      // The area above the minimum touch marker grows in proportion to the amount.
-      const r = row.value == null ? 10 : Math.sqrt(64 + 720 * (maxima[row.unit] ? row.value/maxima[row.unit] : 0));
-      const tone = row.relationship === 'Buy' ? 'up' : row.relationship === 'Sell' ? 'down' : row.relationship === 'Stake' ? 'stake' : 'neutral';
-      graph.append(svg('line',{x1:cx,y1:cy,x2:x,y2:y,class:`map-edge ${tone}`}));
-      const label = `${row.event.ticker}: ${row.relationship} · ${connectionAmount(row)}`;
-      const node = svg('g',{class:`map-connection ${tone}`,role:'button',tabindex:0,'aria-label':label,'aria-pressed':String(connectionSelected === row.key),'data-connection':row.key});
-      node.append(svg('circle',{cx:x,cy:y,r:Math.max(22,r),class:'map-connection-hit'}));
-      node.append(row.relationship === 'Director' ? svg('path',{d:`M ${x} ${y-12} l 12 12 l -12 12 l -12 -12 Z`,class:'map-connection-mark'}) : svg('circle',{cx:x,cy:y,r,class:'map-connection-mark', 'data-unit':row.unit, 'data-amount':row.value ?? 'unknown'}));
-      node.append(svg('text',{x,y:y+44,'text-anchor':'middle'},row.event.ticker),svg('text',{x,y:y+61,'text-anchor':'middle',class:'map-node-action'},`${row.relationship} · ${connectionAmount(row)}`),svg('title',{},label));
-      const activate = () => {connectionSelected = row.key; drawConnections(); graph.querySelector(`[data-connection="${CSS.escape(row.key)}"]`)?.focus({preventScroll:true});};
-      node.addEventListener('click',activate); node.addEventListener('keydown',e => {if (['Enter',' '].includes(e.key)) {e.preventDefault();activate();}}); graph.append(node);
+  function drawInterests(nodes) {
+    const active = document.activeElement;
+    const focusedKey = active?.getAttribute('data-interest');
+    interestsLayer.replaceChildren();
+    nodes.forEach(node => {
+      const rows = interestRows(node.id);
+      const maxima = {'%':0,'$':0};
+      rows.forEach(row => {if (row.value != null && row.unit in maxima) maxima[row.unit] = Math.max(maxima[row.unit],row.value);});
+      rows.forEach((row,i) => {
+        // Dots follow the upper arc so the person's name stays readable.
+        const orbit = node.radius + 13;
+        const angle = rows.length === 1 ? -Math.PI/2 : 5*Math.PI/6 + i*4*Math.PI/3/(rows.length-1);
+        const x = node.x + orbit*Math.cos(angle), y = node.y + orbit*Math.sin(angle);
+        const radius = row.value == null ? 4 : Math.sqrt(9 + 27*(maxima[row.unit] ? row.value/maxima[row.unit] : 0));
+        const tone = row.relationship === 'Sell' ? 'sell' : ['Buy','Stake'].includes(row.relationship) ? 'buy' : 'role';
+        const amount = row.value == null ? '' : row.unit === '%' ? `${number(row.value)}%` : money(row.value);
+        const label = `${row.event.ticker} · ${row.relationship}${amount ? ' · '+amount : ''} · Filed ${date(row.event.filed_at)}`;
+        const link = svg('a', {href:`/t/${encodeURIComponent(row.event.ticker)}`,class:`map-interest ${tone}`,tabindex:0,'aria-label':label,'data-interest':node.id+':'+row.key});
+        link.append(svg('circle',{cx:x,cy:y,r:Math.max(7,radius),class:'map-interest-hit'}),svg('circle',{cx:x,cy:y,r:radius,class:'map-interest-dot','data-amount':row.value ?? 'unknown'}),svg('title',{},label));
+        interestsLayer.append(link);
+      });
     });
-    const center = svg('g',{class:'map-connection-center'});
-    center.append(svg('circle',{cx,cy,r:36}));
-    center.append(svg('text',{x:cx,y:cy+5,'text-anchor':'middle'},connectionPerson.name.split(/\s+/).slice(0,2).map(n=>n[0]).join('')));
-    center.append(svg('text',{x:cx,y:cy+56,'text-anchor':'middle',class:'map-node-action'},'Person / firm'));
-    graph.append(center);
-    $('connections-paging').hidden = rows.length <= size;
-    $('connections-page').textContent = rows.length ? `${connectionPage*size+1}–${connectionPage*size+shown.length} of ${rows.length} connections` : '';
-    $('connections-previous').disabled = connectionPage === 0; $('connections-next').disabled = (connectionPage+1)*size >= rows.length;
-    if (!connectionPending && !rows.length) $('connections-status').textContent = 'Saved connections will appear here.';
-    connectionDetail(rows.find(row => row.key === connectionSelected));
+    if (focusedKey) interestsLayer.querySelector(`[data-interest="${CSS.escape(focusedKey)}"]`)?.focus({preventScroll:true});
   }
-  function selectConnectionPerson(person) {
-    if (!person) return;
-    $('connections').hidden = false;
-    if (connectionPerson?.id === person.id) {drawConnections(); return;}
-    connectionPerson = person; connectionPage = 0; connectionSelected = null; connectionCursor = null;
-    connectionEvents = events.filter(e => e.people.some(p=>p.id === person.id));
-    $('connections-title').textContent = `Stocks connected to ${person.name}`;
-    $('connections-person').value = person.id;
-    connectionPending = false; connectionRequest++;
-    drawConnections(); loadConnections();
-  }
-  function syncConnectionPeople() {
-    const people = peopleFor(subset()), select = $('connections-person');
-    select.replaceChildren(); people.forEach(p => {const option = make('option',p.name); option.value = p.id; select.append(option);});
-    if (!people.length) {$('connections').hidden = true; return;}
-    const person = people.find(p=>p.id === connectionPerson?.id) || people[0];
-    select.value = person.id; selectConnectionPerson(person);
-  }
-  async function loadConnections() {
-    if (connectionPending || !connectionPerson) return;
-    connectionPending = true; const request = ++connectionRequest, person = connectionPerson;
-    $('connections-load').disabled = true; $('connections-status').textContent = 'Loading connected stocks…';
+  async function loadInterests(person) {
+    if (!person.id.startsWith('sec:') || interests.has(person.id)) return;
+    const state = {events:[]}; interests.set(person.id,state);
+    const controller = new AbortController(); interestRequests.add(controller);
+    let cursor = null;
     try {
-      const query = new URLSearchParams({person_id:person.id}); if (connectionCursor) query.set('cursor',connectionCursor);
-      const response = await fetch(`/api/stocks/${encodeURIComponent(root.dataset.ticker)}/map/connections?${query}`,{headers:{Accept:'application/json'}});
-      if (!response.ok) throw new Error('connections');
-      const data = await response.json(); if (request !== connectionRequest) return;
-      if (data.person_id !== person.id || !Array.isArray(data.events)) throw new Error('person');
-      const unique = new Map(connectionEvents.map(e=>[e.id,e])); data.events.forEach(e=>unique.set(e.id,e)); connectionEvents = [...unique.values()];
-      connectionCursor = data.next_cursor;
-      $('connections-load').hidden = !connectionCursor; $('connections-load').textContent = 'Load older connections';
-      $('connections-status').textContent = data.identity_scope === 'This ticker' ? 'Reported name within this stock. An SEC person ID links filings across stocks.' : 'People matched by SEC person ID. Dates and share classes stay separate.';
-    } catch (_) {if (request !== connectionRequest) return; $('connections-status').textContent = 'Please retry to load connected stocks.'; $('connections-load').hidden = false; $('connections-load').textContent = 'Retry connections';}
-    finally {if (request === connectionRequest) {connectionPending = false; $('connections-load').disabled = false; drawConnections();}}
+      do {
+        const query = new URLSearchParams({person_id:person.id}); if (cursor) query.set('cursor',cursor);
+        const response = await fetch(`/api/stocks/${encodeURIComponent(root.dataset.ticker)}/map/connections?${query}`,{signal:controller.signal,headers:{Accept:'application/json'}});
+        if (!response.ok) throw new Error('connections');
+        const data = await response.json();
+        if (data.person_id !== person.id || !Array.isArray(data.events)) throw new Error('person');
+        const unique = new Map(state.events.map(e=>[e.id,e])); data.events.forEach(e=>unique.set(e.id,e)); state.events=[...unique.values()];
+        cursor = data.next_cursor;
+        drawInterests(scene);
+      } while (cursor && !controller.signal.aborted);
+    } catch (_) { interests.delete(person.id); }
+    finally {interestRequests.delete(controller);}
   }
-  $('connections-person').addEventListener('change',e => selectConnectionPerson(peopleFor(subset()).find(p=>p.id === e.target.value)));
-  $('connections-previous').addEventListener('click',()=>{connectionPage--;drawConnections();});
-  $('connections-next').addEventListener('click',()=>{connectionPage++;drawConnections();});
-  $('connections-load').addEventListener('click',loadConnections);
+  function loadVisibleInterests() {
+    const shown = peopleFor(subset()).slice(page*pageSize(),(page+1)*pageSize());
+    shown.forEach(loadInterests);
+  }
+  window.addEventListener('pagehide',()=>interestRequests.forEach(controller=>controller.abort()));
 
   function blendScenes(first, last, t) {
     const before = new Map(first.map(node => [node.id, node])), after = new Map(last.map(node => [node.id, node]));
@@ -374,7 +333,6 @@
     if (at >= 0) page = Math.floor(at / pageSize());
     ringDirty = true;
     render(false, true);
-    selectConnectionPerson(people.find(p => p.id === (personId || event?.people[0]?.id)));
   }
   function scrub(event) {
     const time = Date.parse(event.filed_at);
@@ -399,7 +357,7 @@
     renderPeople(event, animate, restoreFocus, focusSelector);
     renderFilings();
     source(event);
-    syncConnectionPeople();
+    loadVisibleInterests();
   }
   async function load() {
     if (pending) return; pending = true; $('load').disabled = true;

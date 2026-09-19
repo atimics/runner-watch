@@ -189,4 +189,5 @@ def test_late_coin_map_uses_latest_score(page):
     page.locator(".map-score-segment").first.press("Enter")
     expect(page.locator("[data-replay-selection]")).to_contain_text("+80 pts")
     page.locator(".map-score-center").press("Enter")
-    expect(page.locator("[data-replay-selection] h3")).to_have_text("72")
+    expect(page.locator(".map-center-score")).to_have_text("72")
+    expect(page.locator("[data-replay-selection] h3")).to_have_count(0)

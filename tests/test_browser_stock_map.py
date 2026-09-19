@@ -62,8 +62,14 @@ def map_payload():
 
 
 def open_map(
-    page: Page, width=1280, *, current=None, map_handler=None, states=None,
-    history=None, connections_handler=None,
+    page: Page,
+    width=1280,
+    *,
+    current=None,
+    map_handler=None,
+    states=None,
+    history=None,
+    connections_handler=None,
 ):
     page.set_viewport_size({"width": width, "height": 900})
     page.emulate_media(reduced_motion="reduce")
@@ -132,7 +138,7 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width):
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     expect(page.locator("[data-map-graph]")).to_be_visible()
     expect(page.locator("[data-person]")).to_have_count(4 if width <= 500 else 8)
-    expect(page.locator("[data-map-selection] h3")).to_have_text("45")
+    expect(page.locator(".map-center-score")).to_have_text("45")
     expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
     expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(0)
     expect(page.locator("[data-map-events]")).to_be_visible()
@@ -197,7 +203,7 @@ def test_clicking_a_filing_scrubs_the_map(page):
     expect(page.locator("[data-person]")).to_have_count(1)
 
     page.get_by_role("button", name="Return to score overview").click()
-    expect(page.locator("[data-map-selection] h3")).to_have_text("45")
+    expect(page.locator(".map-center-score")).to_have_text("45")
     expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(0)
     expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
 
@@ -263,7 +269,7 @@ def ring_point(segment):
 def test_score_panel_pins_and_summarizes_positive_drivers_and_penalties(page):
     open_map(page)
     selection = page.locator("[data-map-selection]")
-    expect(selection.locator("h3")).to_have_text("45")
+    expect(page.locator(".map-center-score")).to_have_text("45")
     legend = selection.locator(".map-score-legend li")
     expect(legend).to_have_count(3)
     expect(legend.locator("strong")).to_have_text(["+60 pts", "+30 pts", "+10 pts"])
@@ -290,7 +296,7 @@ def test_score_panel_pins_and_summarizes_positive_drivers_and_penalties(page):
     expect(page.locator("[data-map-score-return]")).to_be_visible()
     page.mouse.move(20, 20)
     page.locator("[data-map-score-return]").click()
-    expect(selection.locator("h3")).to_have_text("45")
+    expect(page.locator(".map-center-score")).to_have_text("45")
     expect(first).to_have_attribute("aria-pressed", "false")
     expect(page.locator("[data-map-score-return]")).to_be_hidden()
     page.locator(".map-score-segment").nth(1).focus()
@@ -298,7 +304,7 @@ def test_score_panel_pins_and_summarizes_positive_drivers_and_penalties(page):
     expect(page.locator(".map-score-segment").nth(1)).to_have_attribute("aria-pressed", "true")
     page.keyboard.press("Escape")
     expect(page.locator(".map-score-segment").nth(1)).to_have_attribute("aria-pressed", "false")
-    expect(selection.locator("h3")).to_have_text("45")
+    expect(page.locator(".map-center-score")).to_have_text("45")
 
 
 @pytest.mark.parametrize("width", [390, 1280])
@@ -343,7 +349,7 @@ def test_risk_hover_and_pin_share_filing_selection(page, width, key, label, brea
     expect(page.locator("[data-map-score-center]")).to_be_focused()
     expect(page.locator("[data-map-filings-page]")).to_have_text("6–10 of 11")
     expect(risk).to_have_attribute("aria-pressed", "false")
-    expect(selection.locator("h3")).to_have_text("45")
+    expect(page.locator(".map-center-score")).to_have_text("45")
 
 
 @pytest.mark.parametrize("response", ["empty", "error"])
@@ -353,7 +359,7 @@ def test_pending_empty_and_failed_filings_keep_score_rendered(page, response):
     page.on("pageerror", lambda error: errors.append(str(error)))
     open_map(page, map_handler=lambda route: pending.append(route))
     expect(page.locator("[data-map-status]")).to_have_text("Loading saved SEC filings…")
-    expect(page.locator("[data-map-selection] h3")).to_have_text("45")
+    expect(page.locator(".map-center-score")).to_have_text("45")
     expect(page.locator(".map-center-score")).to_have_text("45")
     expect(page.locator(".map-score-segment")).to_have_count(5)
     assert len(pending) == 1
@@ -370,7 +376,7 @@ def test_pending_empty_and_failed_filings_keep_score_rendered(page, response):
     else:
         pending.pop().fulfill(json=empty)
         expect(page.locator("[data-map-status]")).to_have_text("")
-    expect(page.locator("[data-map-selection] h3")).to_have_text("45")
+    expect(page.locator(".map-center-score")).to_have_text("45")
     expect(page.locator(".map-score-segment")).to_have_count(5)
     expect(page.locator("[data-person]")).to_have_count(0)
     expect(page.locator("[data-map-events] .map-note")).to_have_text(
@@ -380,7 +386,7 @@ def test_pending_empty_and_failed_filings_keep_score_rendered(page, response):
         page.route("**/api/stocks/TEST/map", lambda route: route.fulfill(json=map_payload()))
         page.get_by_role("button", name="Retry loading filings").click()
         expect(page.locator("[data-map-status]")).to_have_text("")
-        expect(page.locator("[data-map-selection] h3")).to_have_text("45")
+        expect(page.locator(".map-center-score")).to_have_text("45")
         expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
     assert not errors
 
@@ -392,7 +398,7 @@ def test_missing_and_zero_score_are_graceful(page, score, breakdown):
     page.on("pageerror", lambda error: errors.append(str(error)))
     open_map(page, current=score_current(score=score, score_detail=breakdown))
     text = "—" if score is None else "0"
-    expect(page.locator("[data-map-selection] h3")).to_have_text(text)
+    expect(page.locator(".map-center-score")).to_have_text(text)
     expect(page.locator(".map-center-score")).to_have_text(text)
     expect(page.locator(".map-score-segment")).to_have_count(0)
     expect(page.locator(".map-score-track")).to_have_count(1)
@@ -403,7 +409,7 @@ def test_missing_and_zero_score_are_graceful(page, score, breakdown):
     page.locator("[data-person]").first.press("Enter")
     expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
     page.locator("[data-map-score-center]").press("Enter")
-    expect(page.locator("[data-map-selection] h3")).to_have_text(text)
+    expect(page.locator(".map-center-score")).to_have_text(text)
     assert not errors
 
 
@@ -435,9 +441,7 @@ def test_score_keyboard_navigation_and_pin_survive_filing_scrub(page, key, score
     segments.first.focus()
     segments.first.press("ArrowRight")
     expect(segments.nth(1)).to_be_focused()
-    expect(page.locator(".map-score-breakdown")).to_have_text(
-        "+30 pts · 19.4% of total magnitude"
-    )
+    expect(page.locator(".map-score-breakdown")).to_have_text("+30 pts · 19.4% of total magnitude")
     segments.nth(1).press("End")
     expect(segments.last).to_be_focused()
     segments.last.press("ArrowDown")
@@ -446,9 +450,7 @@ def test_score_keyboard_navigation_and_pin_survive_filing_scrub(page, key, score
     expect(segments.last).to_be_focused()
     segments.last.press("ArrowUp")
     expect(page.locator('[data-score-key="rug"]')).to_be_focused()
-    expect(page.locator(".map-score-breakdown")).to_have_text(
-        "-50 pts · 32.3% of total magnitude"
-    )
+    expect(page.locator(".map-score-breakdown")).to_have_text("-50 pts · 32.3% of total magnitude")
     page.keyboard.press("Home")
     expect(segments.first).to_be_focused()
     segment = page.locator(f'[data-score-key="{score_key}"]')
@@ -489,7 +491,7 @@ def test_touch_pins_ring_and_center_returns_to_score(browser, width, key, breakd
         page.locator("[data-map-score-center]").tap()
         expect(page.locator(".map-score-segment[aria-pressed=true]")).to_have_count(0)
         expect(page.locator("[data-map-score-return]")).to_be_hidden()
-        expect(page.locator("[data-map-selection] h3")).to_have_text("45")
+        expect(page.locator(".map-center-score")).to_have_text("45")
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     finally:
         context.close()
@@ -540,7 +542,7 @@ def test_single_contribution_and_mixed_rings_have_valid_geometry(page, weight, p
         )
     else:
         expect(page.locator('[data-score-key="rug"]')).to_have_count(0)
-        expect(page.locator("[data-map-selection]")).to_contain_text("No penalties applied.")
+        expect(page.locator(".map-score-penalties li")).to_have_count(0)
     expect(page.locator("[data-stock-map]")).not_to_contain_text(re.compile("NaN|Infinity"))
 
 
@@ -688,11 +690,9 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
     poll()
     expect(social).to_be_focused()
     expect(social).to_have_attribute("aria-pressed", "true")
-    expect(page.locator(".map-score-breakdown")).to_have_text(
-        "+20 pts · 44.4% of total magnitude"
-    )
+    expect(page.locator(".map-score-breakdown")).to_have_text("+20 pts · 44.4% of total magnitude")
     expect(page.locator("[data-map-selection]")).to_contain_text("Pinned contribution")
-    expect(page.locator("[data-map-selection] h3")).to_have_text("35")
+    expect(page.locator(".map-center-score")).to_have_text("35")
     expect(page.locator(".map-score-penalties strong")).to_have_text("-5 pts")
     penalty = page.locator('[data-score-key="rug"]')
     expect(penalty).to_have_count(1)
@@ -771,14 +771,11 @@ def test_reduced_motion_scrubs_without_animation(page, width):
     assert "moving" not in page.evaluate("window.mapPhases")
 
 
-
 def test_state_legend_tabs_filter_the_chart(page):
     """The status legend sits muted below the chart, never on it: its tabs
     carry the chart's status colours and toggle which run the line emphasises."""
 
-    history = [
-        {"time": f"2026-09-{day:02}T18:00:00Z", "price": day + 2} for day in range(14, 20)
-    ]
+    history = [{"time": f"2026-09-{day:02}T18:00:00Z", "price": day + 2} for day in range(14, 20)]
     states = [
         {"time": "2026-09-14T00:00:00Z", "tone": "watch"},
         {"time": "2026-09-16T06:00:00Z", "tone": "running"},
@@ -804,90 +801,102 @@ def test_state_legend_tabs_filter_the_chart(page):
     expect(page.locator(".chart-state-label")).to_have_count(0)
 
 
-@pytest.mark.parametrize("width", [320, 1280])
-def test_actor_stock_ring_separate_actions_scale_and_sources(page, width):
+@pytest.mark.parametrize("width", [320, 390, 1280])
+def test_inline_interests_link_to_stocks_and_keep_one_chart(page, width, tmp_path):
     data = map_payload()
-    base = {
-        **data["events"][0],
-        "people": [
-            {"id": "sec:101", "name": "Person 0", "role": "Director", "identity_basis": "SEC CIK"}
-        ],
-    }
+    base = data["events"][0]
     rows = [
-        {
-            **base,
-            "id": "large",
-            "ticker": "BIG",
-            "view": "ownership",
-            "action": "Reported stake",
-            "percent": 20,
-        },
-        {
-            **base,
-            "id": "small",
-            "ticker": "SMALL",
-            "view": "ownership",
-            "action": "Reported stake",
-            "percent": 2,
-        },
-        {
-            **base,
-            "id": "sale",
-            "ticker": "BIG",
-            "view": "activity",
-            "action": "Sold",
-            "value": 100000,
-        },
-        {
-            **base,
-            "id": "buy",
-            "ticker": "SMALL",
-            "view": "activity",
-            "action": "Bought",
-            "value": 10000,
-        },
-        {
-            **base,
-            "id": "unknown",
-            "ticker": "UNKNOWN",
-            "view": "ownership",
-            "action": "Reported stake",
-            "percent": None,
-        },
+        {**base, "id": "large", "ticker": "BIG", "view": "ownership", "percent": 20},
+        {**base, "id": "small", "ticker": "SMALL", "view": "ownership", "percent": 2},
+        {**base, "id": "sale", "ticker": "BIG", "action": "Sold", "value": 100000},
+        {**base, "id": "buy", "ticker": "SMALL", "action": "Bought", "value": 10000},
+        {**base, "id": "self", "ticker": "TEST", "action": "Bought", "value": 1},
     ]
+
     def respond(route):
-        from urllib.parse import parse_qs, urlparse
+        route.fulfill(json={"person_id": "sec:101", "events": rows, "next_cursor": None})
 
-        person_id = parse_qs(urlparse(route.request.url).query)['person_id'][0]
-        route.fulfill(json={
-            'person_id': person_id, 'identity_scope': 'SEC CIK',
-            'events': rows if person_id == 'sec:101' else [], 'next_cursor': None,
-        })
-
-    open_map(page, width, connections_handler=respond)
-    page.locator('[data-map-connections-person]').select_option('sec:101')
-    expect(page.locator("[data-map-connections-status]")).to_contain_text("SEC person ID")
-    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-    marks = {}
-    labels = []
-    while True:
-        nodes = page.locator("[data-connection]")
-        labels.extend(nodes.evaluate_all('(nodes) => nodes.map(n => n.getAttribute("aria-label"))'))
-        for mark in page.locator("[data-map-connections-graph] [data-amount]").all():
-            marks[mark.get_attribute("data-amount")] = float(mark.get_attribute("r"))
-        if page.locator("[data-map-connections-next]").is_disabled():
-            break
-        page.locator("[data-map-connections-next]").click()
-    assert marks["20"] > marks["2"]
-    assert marks["100000"] > marks["10000"]
-    assert any("BIG: Sell" in label for label in labels)
-    assert any("BIG: Stake" in label for label in labels)
-    assert any("Director" in label for label in labels)
-    assert any("See filing" in label for label in labels)
-    page.locator("[data-connection]").first.focus()
-    page.keyboard.press("Enter")
-    expect(page.locator("[data-map-connections-detail]")).to_contain_text("Filed")
-    expect(page.locator("[data-map-connections-detail] a").first).to_have_attribute(
-        "href", re.compile("/t/")
+    open_map(
+        page,
+        width,
+        map_handler=lambda route: route.fulfill(json={**data, "events": [base]}),
+        connections_handler=respond,
     )
-    expect(page.locator("[data-stock-map]")).not_to_contain_text(re.compile("NaN|Infinity"))
+    links = page.locator("[data-interest]")
+    expect(links).to_have_count(6)
+    expect(page.locator("[data-stock-map] svg")).to_have_count(1)
+    expect(page.locator("[data-map-connections], [data-stock-map] select")).to_have_count(0)
+    expect(page.locator("[data-map-selection] h3")).to_have_count(0)
+    expect(page.locator(".map-interest.buy")).to_have_count(3)
+    expect(page.locator(".map-interest.sell")).to_have_count(1)
+    expect(page.locator(".map-interest.role")).to_have_count(2)
+    radii = {
+        mark.get_attribute("data-amount"): float(mark.get_attribute("r"))
+        for mark in page.locator(".map-interest-dot[data-amount]").all()
+    }
+    assert radii["20"] > radii["2"]
+    assert radii["100000"] > radii["10000"]
+    assert max(radii.values()) <= 6
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    page.locator("[data-map-graph]").screenshot(path=str(tmp_path / f"inline-map-{width}.png"))
+    sale = page.locator(".map-interest.sell")
+    expect(sale).to_have_attribute("href", "/t/BIG")
+    page.route(
+        "http://app.test/t/BIG",
+        lambda route: route.fulfill(body="<h1>BIG</h1>", content_type="text/html"),
+    )
+    sale.focus()
+    sale.press("Enter")
+    expect(page).to_have_url("http://app.test/t/BIG")
+    expect(page.get_by_role("heading", name="BIG")).to_be_visible()
+
+
+def test_score_badges_share_a_row_and_filing_notes_are_visible(page):
+    current = score_current(
+        score_detail={
+            "drivers": [{"key": "market", "label": "Scan", "value": 51.9}],
+            "penalties": [{"key": "rug", "label": "Rug", "value": -6}],
+        }
+    )
+    open_map(page, current=current)
+    expect(page.locator(".map-center-score")).to_have_text("45")
+    expect(page.locator("[data-map-selection] h3")).to_have_count(0)
+    scan = page.locator(".map-score-legend li").bounding_box()
+    rug = page.locator(".map-score-penalties li").bounding_box()
+    assert abs(scan["y"] - rug["y"]) <= 1
+    data = map_payload()
+    data["events"] = [data["events"][0]]
+    data["events"][0]["footnotes"] = "Held through the family trust."
+    page.route("**/api/stocks/TEST/map", lambda route: route.fulfill(json=data))
+    page.reload()
+    page.locator("[data-person]").first.click()
+    expect(page.locator(".map-filing-notes")).to_have_text("Held through the family trust.")
+    expect(page.locator("[data-map-selection] details")).to_have_count(0)
+
+
+def test_inline_interests_load_next_page_and_follow_filing_time(page):
+    data = map_payload()
+    base = data["events"][0]
+    later = {**base, "id": "later", "ticker": "LATER", "filed_at": "2026-10-01T18:00:00Z"}
+    old = {**base, "id": "old-interest", "ticker": "OLDER"}
+
+    def respond(route):
+        more = "cursor=" in route.request.url
+        route.fulfill(
+            json={
+                "person_id": "sec:101",
+                "events": [old] if more else [later],
+                "next_cursor": None if more else "older",
+            }
+        )
+
+    open_map(
+        page,
+        map_handler=lambda route: route.fulfill(json={**data, "events": [base]}),
+        connections_handler=respond,
+    )
+    expect(page.locator('[data-interest][href="/t/OLDER"]')).to_have_count(2)
+    expect(page.locator('[data-interest][href="/t/LATER"]')).to_have_count(2)
+    page.locator("[data-map-events] button").first.click()
+    expect(page.locator('[data-interest][href="/t/LATER"]')).to_have_count(0)
+    expect(page.locator('[data-interest][href="/t/OLDER"]')).to_have_count(2)
