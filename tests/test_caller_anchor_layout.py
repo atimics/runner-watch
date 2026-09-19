@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from bs4 import BeautifulSoup
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 ROOT = Path(__file__).parents[1]
@@ -98,7 +99,10 @@ def test_caller_rows_fit_and_keep_entry_result_visible(page, width):
         lambda match: "<style>" + (ROOT / "web/static" / match[1]).read_text() + "</style>",
         html,
     )
-    html = re.sub(r"<script\b[^>]*>.*?</script>", "", html, flags=re.S)
+    document = BeautifulSoup(html, "html.parser")
+    for script in document.find_all("script"):
+        script.decompose()
+    html = str(document)
     page.set_viewport_size(dict(width=width, height=844))
     page.set_content(html)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
