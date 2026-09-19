@@ -469,3 +469,100 @@ def test_the_announced_row_wears_the_new_halo(page: Page):
 
     expect(page.locator(".ticker.is-new")).to_have_count(1)
     expect(page.locator(".ticker.is-new")).to_have_attribute("href", "/t/AAA")
+
+
+@pytest.mark.parametrize("market", ["stocks", "memecoins", "sports"])
+def test_search_remembers_viewed_items_and_clears_history(page, market):
+    source = fixtures.sample(market)
+    payload = {"coin": source, "history": []} if market == "memecoins" else source
+    screen = detail(market, payload)
+    open_screen(page, screen)
+    search = page.get_by_role("combobox")
+    search.click()
+    expect(page.get_by_text("Recently viewed", exact=True)).to_be_visible()
+    option = page.get_by_role("option")
+    expect(option).to_have_count(1)
+    expect(option).to_contain_text(screen["item"]["name"])
+    expect(option).to_have_attribute("href", screen["item"]["href"])
+    page.reload()
+    page.get_by_role("combobox").click()
+    expect(page.get_by_role("option")).to_have_count(1)
+    page.get_by_role("button", name="Clear recently viewed").click()
+    expect(page.get_by_role("option")).to_have_count(0)
+    expect(page.get_by_text("Items you view will appear here.")).to_be_visible()
+    page.get_by_role("combobox").press("Escape")
+    expect(page.locator(".search-popup")).to_be_hidden()
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_search_typeahead_keyboard_and_mobile_layout(page, width, tmp_path):
+    page.set_viewport_size({"width": width, "height": 844})
+    open_screen(page, listing("stocks", []))
+    matches = listing("stocks", [fixtures.sample("stocks")])
+    page.route("http://app.test/?*", lambda route: route.fulfill(
+        content_type="text/html", body=fixtures.render(matches)
+    ))
+    search = page.get_by_role("combobox")
+    search.fill("TE")
+    expect(page.get_by_role("option")).to_have_count(1)
+    expect(page.get_by_role("option")).to_contain_text(matches["rows"][0]["name"])
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    page.screenshot(path=str(tmp_path / f"search-{width}.png"))
+    search.press("ArrowDown")
+    expect(page.get_by_role("option")).to_have_attribute("aria-selected", "true")
+    href = matches["rows"][0]["href"]
+    page.route(f"http://app.test{href}", lambda route: route.fulfill(body="Selected stock"))
+    search.press("Enter")
+    expect(page).to_have_url(f"http://app.test{href}")
+
+
+def test_search_handles_storage_and_network_failure(page):
+    page.add_init_script(
+        "Storage.prototype.getItem = () => {throw new Error('blocked')};"
+        "Storage.prototype.setItem = () => {throw new Error('blocked')};"
+    )
+    open_screen(page, listing("stocks", []))
+    page.route("http://app.test/?*", lambda route: route.fulfill(status=503))
+    search = page.get_by_role("combobox")
+    search.fill("TEST")
+    expect(page.get_by_text("Press Enter to search.")).to_be_visible()
+    search.fill("")
+    expect(page.get_by_text("Recently viewed", exact=True)).to_be_visible()
+    page.locator(".brand").focus()
+    expect(page.locator(".search-popup")).to_be_hidden()
+
+
+def test_search_ignores_late_matches_and_keeps_history_in_view_order(page):
+    page.add_init_script("""localStorage.setItem('rati:recently-viewed:stocks:v1', JSON.stringify([
+      {name:'OLD', subtitle:'Older view', href:'/t/OLD'},
+      {name:'OPK', subtitle:'Previous name', href:'/t/OPK'},
+      {name:'Unsafe', href:'https://other.test/t/BAD'}
+    ]));""")
+    open_screen(page, detail("stocks", {"ticker": "OPK", "current": fixtures.sample("stocks")}))
+    search = page.get_by_role("combobox")
+    search.click()
+    expect(page.get_by_role("option")).to_have_count(2)
+    expect(page.get_by_role("option").first).to_contain_text("OPK")
+    expect(page.get_by_role("option").last).to_contain_text("OLD")
+    page.evaluate("""() => {
+      const original = window.fetch; window.searchResponses = {};
+      window.fetch = (url, options) => new URL(url, location.href).searchParams.has('q')
+        ? new Promise(resolve => {
+          window.searchResponses[new URL(url).searchParams.get('q')] = resolve;
+        })
+        : original(url, options);
+    }""")
+    search.fill("OLD")
+    page.wait_for_function("Boolean(window.searchResponses.OLD)")
+    search.fill("NEW")
+    page.wait_for_function("Boolean(window.searchResponses.NEW)")
+    for ticker in ["NEW", "OLD"]:
+        html = fixtures.render(listing("stocks", [{**fixtures.sample("stocks"), "ticker": ticker}]))
+        page.evaluate(
+            "([ticker, html]) => window.searchResponses[ticker](new Response(html))",
+            [ticker, html],
+        )
+    expect(page.get_by_role("option")).to_have_count(1)
+    expect(page.get_by_role("option")).to_contain_text("NEW")
+    search.press("Escape")
+    expect(page.locator(".search-popup")).to_be_hidden()

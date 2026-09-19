@@ -69,11 +69,11 @@
       {% for tone in ['running','setup','extended','avoid','watch','paused','lean','pass','model-only'] %}{% if screen.counts.get(tone) %}<button type="button" class="chip chip-{{ tone }}" data-tag="{{ tone }}" aria-pressed="false"><i></i>{{ screen.counts[tone] }} {{ tone|replace('-', ' ') }}</button>{% endif %}{% endfor %}
       <button type="button" class="chip chip-all" data-tag="" aria-pressed="true" hidden>All</button>
     </div>{% endif %}
-    <form class="search" method="get" action="{{ base }}" role="search">
+    <form class="search" method="get" action="{{ base }}" role="search" data-market="{{ screen.market }}">
       <input type="hidden" name="view" value="list">
       {% set search_label = 'Find a token' if screen.market == 'memecoins' else 'Find a team or event' if screen.market == 'sports' else 'Find a ticker' %}
       <label for="marketSearch" class="sr-only">{{ search_label }}</label>
-      <input id="marketSearch" name="q" type="search" value="{{ screen.query }}" placeholder="{{ search_label }}" autocomplete="off">
+      <input id="marketSearch" name="q" type="search" maxlength="80" value="{{ screen.query }}" placeholder="{{ search_label }}" autocomplete="off">
       <button type="submit" aria-label="Search">⌕</button>
     </form>
     <a class="account" href="{{ '/calls' if user else '/login?next=' ~ request.url.path|urlencode }}">{{ 'My Calls' if user else 'Log in' }}</a>
