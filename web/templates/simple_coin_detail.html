@@ -1,6 +1,6 @@
 {% extends "market_screen.html" %}
 {% set screen = simple_market_detail('memecoins', detail, active_call=active_call) %}
-{% block detail_head %}<link rel="stylesheet" href="/static/ticker-map.css?v={{ static_version }}"><link rel="stylesheet" href="/static/memecoin-replay.css?v={{ static_version }}">{% endblock %}
+{% block detail_head %}<link rel="stylesheet" href="/static/ticker-map.css?v={{ static_version }}">{% endblock %}
 {% block detail_map %}{% set coin = detail.coin %}{% include "_memecoin_replay.html" %}{% endblock %}
 {% block detail_extra %}
 {% if calls %}<section class="calls-section" aria-label="Community Calls"><div class="section-heading"><h2>Calls</h2><b>{{ calls|length }}</b></div>{% for call in calls %}<article class="coin-call-row"><a href="/u/{{ call.caller_handle|urlencode }}?market=memecoins">{{ call.caller_handle }}</a><strong class="{{ 'up' if call.return_pct is not none and call.return_pct >= 0 else 'down' if call.return_pct is not none else '' }}">{{ '%+.2f%%'|format(call.return_pct) if call.return_pct is not none else 'Pending' }}</strong><small>Entry {{ call.entry_price_label }} · {{ call.entry_at[:10] }}</small><small>{{ call.status|title }}{% if call.reward_label %} · {{ call.reward_label }}{% endif %}</small></article>{% endfor %}</section>{% endif %}

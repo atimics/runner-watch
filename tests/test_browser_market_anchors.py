@@ -116,7 +116,8 @@ def test_long_market_details_fit(page, width, kind):
     page.set_viewport_size(dict(width=width, height=844))
     open_html(page, screens.render(screen), screen)
     expect(page.locator(".asset-heading h1")).to_have_text(screen["item"]["name"])
-    expect(page.get_by_role("region", name="RATi assessment")).to_be_visible()
+    if kind != "coin":
+        expect(page.get_by_role("region", name="RATi assessment")).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     for team in page.locator(".teams > div").all():
         no_overlap(team.locator("h2"), team.locator("strong"))
@@ -143,8 +144,8 @@ def test_saved_report_expands_full_text_and_sources(page, width, subject_type):
 
 
 def test_detail_api_refresh_updates_assessment_evidence(page):
-    market, raw = long_sample("coin")
-    screen = detail(market, {"coin": raw, "history": []})
+    market, raw = long_sample("team")
+    screen = detail(market, raw)
     refreshed = copy.deepcopy(screen)
     refreshed["item"]["assessment"].update(
         label="Updated saved assessment",
@@ -179,19 +180,22 @@ def test_detail_api_refresh_updates_assessment_evidence(page):
 
 
 def test_coin_contract_copy_uses_the_full_address(page):
-    market, raw = long_sample('coin')
-    screen = detail(market, {'coin': raw, 'history': []})
+    market, raw = long_sample("coin")
+    screen = detail(market, {"coin": raw, "history": []})
     page.add_init_script("""
         Object.defineProperty(navigator, 'clipboard', {value: {
             writeText: async value => document.body.dataset.copiedAddress = value
         }});
     """)
-    open_html(page, screens.render(screen), refresh=screen)
-    page.get_by_role('button', name='Copy CA', exact=True).click()
-    expect(page.get_by_role('button', name='Copied', exact=True)).to_be_visible()
-    expect(page.locator('body')).to_have_attribute('data-copied-address', ADDRESS)
-    page.locator('.token-contract summary').click()
-    expect(page.locator('.token-contract code')).to_have_text(ADDRESS)
+    html = screens._render_template(
+        "simple_coin_detail.html",
+        {"detail": {"coin": raw, "history": []}, "active_call": None, "calls": []},
+    )
+    open_html(page, html, refresh=screen)
+    page.get_by_role("button", name="Copy CA", exact=True).click()
+    expect(page.get_by_role("button", name="Copied", exact=True)).to_be_visible()
+    expect(page.locator("body")).to_have_attribute("data-copied-address", ADDRESS)
+    expect(page.locator("[data-copy-contract]")).to_have_attribute("title", ADDRESS)
 
 
 @pytest.mark.parametrize("width", [320, 390])

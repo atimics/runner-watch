@@ -191,6 +191,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
                 "freshness": "paused" if paused else "current",
                 "assessment": rating,
                 "contract_address": address,
+                "full_name": str(item.get("name") or ""),
             }
             if coin
             else {}

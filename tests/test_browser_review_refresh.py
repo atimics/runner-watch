@@ -20,9 +20,9 @@ screens = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(screens)
 
 
-def assets(page, held=None):
+def assets(page, held=None, script="market-anchor.js"):
     def serve(route):
-        if held is not None and "market-anchor.js" in route.request.url:
+        if held is not None and script in route.request.url:
             held.append(route)
             return
         asset = route.request.url.split("/static/", 1)[1].split("?")[0]
@@ -64,7 +64,7 @@ def refresh(page, state, screen):
 
 
 def test_late_assessment_script_consumes_completed_detail_refresh(page):
-    screen = detail("memecoins", {"coin": screens.sample("memecoins"), "history": []})
+    screen = detail("sports", screens.sample("sports"))
     fresh = copy.deepcopy(screen)
     fresh["item"]["value"] = "$123.00"
     fresh["item"]["assessment"].update(label="Runner score", value=72, unit="pts")
@@ -156,3 +156,37 @@ def test_older_list_response_keeps_latest_rows_and_filters(page):
     expect(page.locator(".ticker")).to_have_attribute("data-tag", "pass")
     page.locator('.chip[data-tag="pass"]').click()
     expect(page.locator(".ticker:visible")).to_have_count(1)
+
+
+def test_late_coin_map_uses_latest_score(page):
+    raw = screens.sample("memecoins")
+    data = {"coin": raw, "history": []}
+    fresh = detail("memecoins", data)
+    fresh["item"].update(
+        value="$123.00",
+        score=72,
+        score_detail={
+            "drivers": [{"key": "market", "label": "Market", "value": 80}],
+            "penalties": [{"key": "risk", "label": "Risk", "value": -8}],
+        },
+    )
+    held = []
+    assets(page, held, "memecoin-replay.js")
+    page.route("https://app.test/api/**", lambda route: route.fulfill(json=fresh))
+    html = screens._render_template(
+        "simple_coin_detail.html", {"detail": data, "active_call": None, "calls": []}
+    )
+    page.route(
+        "https://app.test/", lambda route: route.fulfill(content_type="text/html", body=html)
+    )
+    page.goto("https://app.test/", wait_until="commit")
+    expect(page.locator("[data-value]")).to_have_text("$123.00")
+    assert len(held) == 1
+    held[0].fulfill(path=str(ROOT / "web/static/memecoin-replay.js"))
+    page.wait_for_load_state("load")
+    expect(page.locator(".map-center-score")).to_have_text("72")
+    expect(page.locator(".map-score-segment")).to_have_count(2)
+    page.locator(".map-score-segment").first.press("Enter")
+    expect(page.locator("[data-replay-selection]")).to_contain_text("+80 pts")
+    page.locator(".map-score-center").press("Enter")
+    expect(page.locator("[data-replay-selection] h3")).to_have_text("72")

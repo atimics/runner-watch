@@ -1,167 +1,100 @@
 (() => {
-  "use strict";
-  const root = document.querySelector("[data-token-replay]");
+  'use strict';
+  const root = document.querySelector('[data-token-replay]');
   if (!root) return;
-  const $ = name => root.querySelector(`[data-replay-${name}]`);
-  const graph = $("graph"), status = $("status"), play = $("play"), position = $("position");
-  const ns = "http://www.w3.org/2000/svg";
-  const colors = {launch: "#d3eb86", wallet: "#77c9ce", token: "#c8d284", pool: "#b69be4"};
-  const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
-  let data, index = 0, shown, animation = 0, timer = 0, playing = false, generation = 0;
-  let loadController, receiptBase;
-  const make = (tag, attrs = {}, text) => {
-    const node = document.createElementNS(ns, tag);
-    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
-    if (text !== undefined) node.textContent = text;
-    return node;
-  };
-  const stop = () => { playing = false; clearTimeout(timer); play.textContent = "Replay events"; };
-  function details(id, eventId, focus = true) {
-    stop();
-    cancelAnimationFrame(animation); generation++;
-    const frame = data.frames[index];
-    draw(frame);
-    const node = frame.nodes.find(n => n.id === id);
-    if (!node) return;
-    const target = $("selection");
-    target.replaceChildren();
-    const heading = document.createElement("p");
-    heading.textContent = node.kind === "launch" ? `Token launch · ${data.launch ? "recorded on chain" : "evidence pending"}` : `${node.kind} · ${node.address}`;
-    target.append(heading);
-    const events = new Map(data.events.map(e => [e.event_id, e]));
-    for (const edge of frame.edges.filter(e => eventId ? e.event_id === eventId : e.source === id || e.target === id)) {
-      const event = events.get(edge.event_id);
-      const line = document.createElement("p"), link = document.createElement("a");
-      link.href = `${receiptBase}${encodeURIComponent(edge.signature)}`;
-      link.textContent = `${edge.role} · slot ${edge.slot} ↗`;
-      link.target = "_blank"; link.rel = "noopener noreferrer";
-      line.append(link);
-      if (event.net_token_amount) line.append(` · ${event.net_token_amount} tokens (${event.amount_basis})`);
-      if (event.balances) for (const b of event.balances) line.append(` · ${b.raw} raw units / ${b.decimals} decimals of ${b.mint}`);
-      target.append(line);
-      if (event.observed_at) {
-        const when = document.createElement('p'); when.textContent = `Recorded ${event.observed_at}`; target.append(when);
-        document.dispatchEvent(new CustomEvent('rati:map-time', {detail:{time:event.observed_at,label:'Chain event'}}));
-      }
-    }
-    if (focus) graph.querySelector(`[data-node="${CSS.escape(id)}"]`)?.focus({preventScroll:true});
-    root.querySelectorAll('[data-replay-event]').forEach(button => button.setAttribute('aria-pressed',String(button.dataset.replayEvent === eventId)));
+  const $ = key => root.querySelector(`[data-replay-${key}]`);
+  const graph = $('graph'), screen = document.getElementById('screenData');
+  let item = (screen?.ratiScreenDetail || JSON.parse(screen?.textContent || '{}')).item || {};
+  let data = null, page = 0, receiptBase = '/api/memecoins/evidence/', selected = null;
+  let controller, timer;
+  const small = matchMedia('(max-width:500px)');
+  const make = (tag, text, cls) => {const el = document.createElement(tag); if (text != null) el.textContent = text; if (cls) el.className = cls; return el;};
+  const svg = (tag, attrs, text) => {const el = document.createElementNS('http://www.w3.org/2000/svg',tag); Object.entries(attrs).forEach(([k,v]) => el.setAttribute(k,v)); if (text != null) el.textContent = text; return el;};
+  const score = () => Number.isFinite(item.score) ? String(Math.round(item.score)) : '—';
+  const parts = () => [...(item.score_detail?.drivers || []), ...(item.score_detail?.penalties || []).map(p => ({...p,value:-Math.abs(p.value)}))].filter(p => Number.isFinite(p.value) && p.value !== 0);
+  const tone = p => p.value < 0 ? 'var(--red)' : `var(--score-${p.key},var(--muted))`;
+  const activate = (el, fn) => {el.addEventListener('click',fn); el.addEventListener('keydown',e => {if (['Enter',' '].includes(e.key)) {e.preventDefault();fn();}});};
+  function overview(part) {
+    selected = null; $('score-return').hidden = !part;
+    root.querySelectorAll('[data-replay-event]').forEach(b => b.setAttribute('aria-pressed','false'));
+    const panel = $('selection'); panel.replaceChildren(make('h3',score(),'map-score-heading'));
+    if (part) panel.append(make('h4',part.label),make('p',`${part.value > 0 ? '+' : ''}${part.value} pts`));
+    const list = make('ul',null,'map-score-legend');
+    parts().forEach(p => {const li = make('li'), dot = make('span',null,'map-score-swatch'); dot.style.background = tone(p); li.append(dot,make('span',p.label),make('strong',`${p.value > 0 ? '+' : ''}${p.value} pts`)); list.append(li);});
+    panel.append(list);
+    if (item.score == null) panel.append(make('p','RATi score pending.','map-note'));
+    document.dispatchEvent(new CustomEvent('rati:map-time',{detail:{time:null}}));
   }
-  function draw(frame) {
-    graph.replaceChildren();
-    const nodes = new Map(frame.nodes.map(n => [n.id, n]));
-    for (const edge of frame.edges) {
-      const a = nodes.get(edge.source), b = nodes.get(edge.target);
-      if (!a || !b) continue;
-      graph.append(make("line", {x1:a.x, y1:a.y, x2:b.x, y2:b.y, stroke:"#507c86", "stroke-width":1,
-        opacity:Math.min(a.opacity ?? 1, b.opacity ?? 1)}));
-    }
-    for (const node of frame.nodes) {
-      const group = make("g", {transform:`translate(${node.x} ${node.y})`, role:"button", tabindex:0,
-        "aria-label":`${node.kind}: ${node.address}`, opacity:node.opacity ?? 1, "data-node":node.id});
-      group.append(make("circle", {r:node.r, fill:colors[node.kind], "fill-opacity":.16, stroke:colors[node.kind], "stroke-width":1.5}));
-      group.append(make("text", {"text-anchor":"middle", y:node.id === "launch" ? -4 : 4}, node.id === "launch" ? "Token launch" : node.address.slice(0,4)));
-      if (node.id === "launch") group.append(make("text", {"text-anchor":"middle", y:15, class:"replay-origin-state"}, data.launch ? "Recorded on chain" : "Evidence pending"));
-      group.addEventListener("click", () => details(node.id));
-      group.addEventListener("keydown", event => {if (["Enter", " "].includes(event.key)) {event.preventDefault(); details(node.id);}});
-      graph.append(group);
-    }
-    shown = frame;
-  }
-  function activity(frame) {
-    const list = $("events"); if (!list) return;
-    list.replaceChildren();
+  function details(node, eventId) {
+    selected = node.id; $('score-return').hidden = false;
+    const panel = $('selection'); panel.replaceChildren(make('h3',node.id === 'launch' ? item.name : node.kind === 'wallet' ? 'Wallet' : node.kind));
+    if (node.id !== 'launch') panel.append(make('p',node.address));
+    const edges = data.frames.at(-1).edges.filter(e => eventId ? e.event_id === eventId : e.source === node.id || e.target === node.id);
     const seen = new Set();
-    for (const edge of [...frame.edges].reverse()) {
-      if (seen.has(edge.event_id)) continue; seen.add(edge.event_id);
+    edges.forEach(edge => {
+      if (seen.has(edge.event_id)) return; seen.add(edge.event_id);
       const event = data.events.find(e => e.event_id === edge.event_id);
-      const button = document.createElement('button'); button.type = 'button'; button.className = 'map-event';
-      button.dataset.replayEvent = edge.event_id; button.setAttribute('aria-pressed','false');
-      const dot = document.createElement('span'); dot.textContent = '●';
-      const description = document.createElement('span'), title = document.createElement('strong'), detail = document.createElement('small');
-      title.textContent = `${edge.role} · ${event.wallet || edge.source}`;
-      detail.textContent = `Slot ${edge.slot}${event.observed_at ? ' · ' + event.observed_at : ''}`;
-      description.append(title,detail); button.append(dot,description);
-      button.addEventListener('click',() => details(edge.source,edge.event_id,false)); list.append(button);
-    }
-    if (!seen.size) list.textContent = 'Move through the saved timeline to explore recorded events.';
+      const link = make('a',`${edge.role} · slot ${edge.slot} ↗`); link.href = receiptBase + encodeURIComponent(edge.signature); link.target = '_blank'; link.rel = 'noopener noreferrer'; panel.append(link);
+      if (event?.net_token_amount) panel.append(make('p',`${event.net_token_amount} tokens · ${event.amount_basis}`));
+      (event?.balances || []).forEach(b => panel.append(make('p',`${b.raw} raw units / ${b.decimals} decimals of ${b.mint}`)));
+      if (event?.observed_at) {panel.append(make('p',`Recorded ${event.observed_at}`)); if (eventId) document.dispatchEvent(new CustomEvent('rati:map-time',{detail:{time:event.observed_at,label:'Chain event'}}));}
+    });
+    root.querySelectorAll('[data-replay-event]').forEach(b => b.setAttribute('aria-pressed',String(b.dataset.replayEvent === eventId)));
   }
-  function blend(first, last, progress, reset) {
-    const t = progress * progress * (3 - 2 * progress);
-    const before = new Map(first.nodes.map(n => [n.id,n])), after = new Map(last.nodes.map(n => [n.id,n]));
-    const keys = [...after.keys(), ...(reset ? [...before.keys()].filter(k => !after.has(k)) : [])];
-    return {...last, edges:reset ? first.edges : last.edges, nodes:keys.map(key => {
-      let start = before.get(key), end = after.get(key);
-      if (!start) start = {...(before.get(end.parent) || before.get("launch")), r:0};
-      if (!end) end = {...last.nodes[0], r:0};
-      const node = {...(after.get(key) || before.get(key)), opacity:!after.has(key) ? 1-t : !before.has(key) ? t : 1};
-      for (const name of ["x", "y", "r"]) node[name] = start[name] + (end[name] - start[name]) * t;
-      return node;
-    })};
+  function draw() {
+    graph.replaceChildren(); graph.dataset.phase = 'settled';
+    const cx = small.matches ? 180 : 380, cy = small.matches ? 184 : 218, r = small.matches ? 48 : 62, width = small.matches ? 16 : 20;
+    graph.setAttribute('viewBox',small.matches ? '0 0 360 390' : '0 0 760 440');
+    const frame = data?.frames.at(-1), size = small.matches ? 4 : 8;
+    const all = (frame?.nodes || []).filter(n => n.id !== 'launch');
+    const launchWallet = data?.launch?.wallet;
+    all.sort((a,b) => Number(b.address === launchWallet)-Number(a.address === launchWallet));
+    page = Math.min(page,Math.max(0,Math.ceil(all.length/size)-1));
+    const shown = all.slice(page*size,page*size+size);
+    const positions = new Map([['launch',{x:cx,y:cy}]]);
+    shown.forEach((n,i) => positions.set(n.id,{x:small.matches ? (i%2 ? 278 : 82) : (i%2 ? 595 : 165),y:small.matches ? 66+Math.floor(i/2)*240 : 50+Math.floor(i/2)*103}));
+    (frame?.edges || []).forEach(edge => {const a=positions.get(edge.source),b=positions.get(edge.target); if(a&&b) graph.append(svg('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:`map-edge ${edge.role === 'bought' ? 'up' : edge.role === 'sold' ? 'down' : ''}`}));});
+    shown.forEach(n => {const {x,y}=positions.get(n.id), label=n.address === launchWallet ? 'Launch wallet' : n.kind; const g=svg('g',{class:'map-person',role:'button',tabindex:0,'data-node':n.id,'aria-label':`${n.kind}: ${n.address}`}); g.append(svg('circle',{cx:x,cy:y,r:22}),svg('text',{x,y:y+5,'text-anchor':'middle'},n.address.slice(0,4)),svg('text',{x,y:y+42,'text-anchor':'middle'},label),svg('title',{},n.address)); activate(g,()=>details(n)); graph.append(g);});
+    graph.append(svg('circle',{cx,cy,r,class:'map-score-track','stroke-width':width}));
+    const contributions=parts(),total=contributions.reduce((v,p)=>v+Math.abs(p.value),0); let angle=-Math.PI/2;
+    contributions.forEach(p => {const sweep=Math.abs(p.value)/total*Math.PI*2,end=angle+sweep; const attrs={class:'map-score-segment',role:'button',tabindex:0,'stroke-width':width,'aria-label':`${p.label}: ${p.value} pts`}; const segment=contributions.length===1 ? svg('circle',{...attrs,cx,cy,r}) : svg('path',{...attrs,d:`M ${cx+r*Math.cos(angle)} ${cy+r*Math.sin(angle)} A ${r} ${r} 0 ${sweep>Math.PI?1:0} 1 ${cx+r*Math.cos(end)} ${cy+r*Math.sin(end)}`}); segment.style.stroke=tone(p); activate(segment,()=>overview(p)); graph.append(segment); angle=end;});
+    const center=svg('g',{class:'map-score-center',role:'button',tabindex:0,'data-node':'launch','aria-label':`${item.name}, RATi score ${score()}. Show score overview.`});
+    center.append(svg('circle',{cx,cy,r:r-width/2-3,class:'map-center'}),svg('text',{x:cx,y:cy-6,'text-anchor':'middle',class:'map-center-text'},item.name?.length > 10 ? item.name.slice(0,6)+'…' : item.name),svg('text',{x:cx,y:cy+16,'text-anchor':'middle',class:'map-center-score'},score())); activate(center,()=>overview()); graph.append(center);
+    $('paging').hidden=all.length<=size; $('previous').disabled=page===0; $('next').disabled=(page+1)*size>=all.length; $('page').textContent=`${page*size+1}–${page*size+shown.length} of ${all.length}`;
   }
-  function select(next, {animate = true, reset = false} = {}) {
-    cancelAnimationFrame(animation);
-    const run = ++generation;
-    index = next;
-    position.value = String(index);
-    const target = data.frames[index], first = shown || target;
-    $("time").textContent = `${target.label} · keyframe ${index + 1} of ${data.frames.length}`;
-    $("selection").textContent = "Choose a bubble to view its recorded connections.";
-    activity(target);
-    document.dispatchEvent(new CustomEvent('rati:map-time', {detail:{time:null}}));
-    const duration = animate && !motion.matches ? (reset ? data.timing.reset : data.timing.transition) : 0;
-    const start = performance.now();
-    graph.dataset.phase = reset ? "returning-to-launch" : "transition";
-    function tick(now) {
-      if (run !== generation) return;
-      const t = duration ? Math.min(1, (now-start)/duration) : 1;
-      draw(t === 1 ? target : blend(first, target, t, reset));
-      if (t < 1) animation = requestAnimationFrame(tick);
-      else {
-        graph.dataset.phase = "settled";
-        if (playing) timer = setTimeout(advance, index === 0 ? data.timing.origin_hold : index === data.frames.length-1 ? data.timing.final_hold : data.timing.hold);
-      }
-    }
-    tick(start);
+  const findings = () => (item.assessment?.drivers || []).filter(f => f.evidence?.length);
+  function findingDetails(finding) {
+    selected = 'finding:' + finding.id; $('score-return').hidden = false;
+    const panel = $('selection'); panel.replaceChildren(make('h3',finding.label),make('p',finding.explanation));
+    const list = make('ul',null,'map-receipts');
+    (finding.evidence || []).forEach((receipt,i) => {
+      const row = make('li');
+      [[receipt.receipt_url,`${receipt.kind} ${i+1} ↗`],[receipt.source_url,'Explorer ↗']].forEach(([href,label]) => {
+        if (!href) return;
+        try {const url = new URL(href,location.origin); if (!['https:','http:'].includes(url.protocol)) return;
+          const link=make('a',label); link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';row.append(link);
+        } catch (_) { /* A valid saved URL is required. */ }
+      });
+      list.append(row);
+    });
+    panel.append(list);
+    document.dispatchEvent(new CustomEvent('rati:map-time',{detail:{time:null}}));
   }
-  function advance() {
-    if (!playing) return;
-    if (index < data.frames.length - 1) select(index + 1);
-    else if ($("loop").checked) select(0, {reset:true});
-    else stop();
+  function activity() {
+    const list=$('events'); list.replaceChildren(); const frame=data?.frames.at(-1),seen=new Set();
+    [...(frame?.edges || [])].reverse().forEach(edge => {if(seen.has(edge.event_id))return;seen.add(edge.event_id); const event=data.events.find(e=>e.event_id===edge.event_id),node=frame.nodes.find(n=>n.id===edge.source); if(!node)return; const button=make('button',null,'map-event');button.type='button';button.dataset.replayEvent=edge.event_id;button.setAttribute('aria-pressed','false'); const text=make('span');text.append(make('strong',`${edge.role} · ${(event.wallet||node.address).slice(0,6)}…`),make('small',`Slot ${edge.slot}${event.observed_at?' · '+event.observed_at:''}`));button.append(make('span','●',edge.role==='sold'?'down':edge.role==='bought'?'up':''),text);button.addEventListener('click',()=>details(node,edge.event_id));list.append(button);});
+    findings().forEach(f => {const button=make('button',null,'map-event');button.type='button';button.dataset.findingId=f.id;button.setAttribute('aria-pressed',String(selected==='finding:'+f.id));const text=make('span');text.append(make('strong',f.label),make('small',`${f.evidence.length} receipts`));button.append(make('span','●'),text);button.addEventListener('click',()=>findingDetails(f));list.append(button);});
+    if(!seen.size && !findings().length)list.append(make('p','Saved chain events will appear here.','map-note'));
   }
-  play.addEventListener("click", () => {
-    if (playing) return stop();
-    playing = true; play.textContent = "Pause replay";
-    select(index === data.frames.length-1 ? 0 : index, {reset:index === data.frames.length-1});
-  });
-  $("origin").addEventListener("click", () => {stop(); select(0, {animate:false});});
-  $("latest").addEventListener("click", () => {stop(); select(data.frames.length-1);});
-  position.addEventListener("input", () => {stop(); select(Number(position.value), {animate:false});});
-  document.addEventListener("visibilitychange", () => {if (document.hidden) {stop(); if (data) select(index, {animate:false});}});
-  motion.addEventListener("change", () => {if (data) {stop(); select(index, {animate:false});}});
   async function load() {
-    loadController?.abort(); loadController = new AbortController();
-    const revision = new URL(location.href).searchParams.get("replay");
-    const url = `/api/memecoins/${encodeURIComponent(root.dataset.coinId)}/replay${revision ? `?revision=${encodeURIComponent(revision)}` : ""}`;
-    try {
-      const response = await fetch(url, {signal:loadController.signal, headers:{Accept:"application/json"}});
-      if (!response.ok) throw new Error("The saved replay is awaiting evidence review.");
-      const record = await response.json();
-      if (record.status !== "ready") {status.textContent = record.message; timer = setTimeout(load, 15000); return;}
-      data = record.payload;
-      receiptBase = record.receipt_base || "/api/memecoins/evidence/";
-      const extent = Math.max(190, ...data.frames.at(-1).nodes.flatMap(n => [Math.abs(n.x-400)+n.r+30, Math.abs(n.y-292)+n.r+30]));
-      graph.setAttribute("viewBox", `${400-extent} ${292-extent} ${extent*2} ${extent*2}`);
-      $("badge").textContent = data.launch ? "Launch recorded" : "Launch evidence pending";
-      status.textContent = "Saved chain evidence · replay checks passed";
-      $("content").hidden = false;
-      position.max = String(data.frames.length-1);
-      $("gif").href = record.gif_url; $("evidence").href = record.evidence_url;
-      $("coverage").textContent = `${data.coverage.drawn_events} events shown from ${data.coverage.saved_events} saved events · ${data.coverage.drawn_nodes} bubbles · ${data.frames.length} keyframes. ${data.coverage.basis}${record.collection_status ? " Further collection is pending." : ""}`;
-      select(data.frames.length-1, {animate:false});
-    } catch (error) {if (error.name !== "AbortError") status.textContent = error.message;}
+    controller?.abort();controller=new AbortController();
+    const revision=new URL(location.href).searchParams.get('replay');
+    try {const res=await fetch(`/api/memecoins/${encodeURIComponent(root.dataset.coinId)}/replay${revision?'?revision='+encodeURIComponent(revision):''}`,{signal:controller.signal,headers:{Accept:'application/json'}});if(!res.ok)throw Error('Please retry to load saved chain events.');const record=await res.json();if(record.status!=='ready'){$('status').textContent=record.message || 'Saved chain events will appear here.';timer=setTimeout(load,15000);return;}data=record.payload;receiptBase=record.receipt_base||'/api/memecoins/evidence/';$('status').textContent='';draw();activity();}catch(e){if(e.name!=='AbortError')$('status').textContent=e.message;}
   }
-  window.addEventListener("pagehide", () => {stop(); loadController?.abort(); cancelAnimationFrame(animation);});
-  load();
+  $('previous').addEventListener('click',()=>{page--;draw();});$('next').addEventListener('click',()=>{page++;draw();});$('score-return').addEventListener('click',()=>overview());
+  root.addEventListener('keydown',e=>{if(e.key==='Escape'){overview();graph.querySelector('.map-score-center')?.focus();}});
+  small.addEventListener('change',()=>{page=0;draw();});
+  screen?.addEventListener('rati:screen-detail',e=>{if(e.detail?.market!=='memecoins'||e.detail.item?.id!==root.dataset.coinId)return;item=e.detail.item;draw();activity();if(selected?.startsWith('finding:') && !findings().some(f=>'finding:'+f.id===selected)){overview();graph.querySelector('.map-score-center')?.focus();}else if(!selected)overview();});
+  window.addEventListener('pagehide',()=>{controller?.abort();clearTimeout(timer);});
+  draw();overview();activity();load();
 })();
