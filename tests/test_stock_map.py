@@ -331,3 +331,61 @@ def test_public_endpoint_and_stable_sec_identity(database):
         assert client.get("/api/stocks/TEST/map?cursor=invalid").status_code == 400
     finally:
         client.close()
+
+
+def test_person_connections_match_joint_cik_and_preserve_separate_interests(database):
+    from runner_web.stock_map import person_connections
+
+    insert(filing_row("source", evidence_json=json.dumps(evidence())))
+    data = evidence()
+    data["owners"][0]["name"] = "Jane Renamed"
+    insert(filing_row("other", ticker="OTHER", actor_cik=102, evidence_json=json.dumps(data)))
+    # A matching name or a number elsewhere in JSON is only a candidate.
+    data["owners"] = [{"cik": 1101, "name": "Jane Lee", "role": "Director"}]
+    insert(filing_row("unrelated", ticker="FALSE", actor_cik=1101, evidence_json=json.dumps(data)))
+    result = person_connections("TEST", "sec:101")
+    assert {e["ticker"] for e in result["events"]} == {"TEST", "OTHER"}
+    assert {e["action"] for e in result["events"]} >= {"Bought", "Sold"}
+    assert all(e["joint"] for e in result["events"])
+    assert all(e["source_url"] for e in result["events"])
+    assert result["identity_scope"] == "SEC CIK"
+
+
+def test_person_connections_stake_owner_cik_and_ticker_scoped_names(database):
+    from runner_web.stock_map import person_connections
+
+    payload = {
+        "positions": [
+            {"name": "A Fund", "cik": 991, "percent": 17, "shares": 200, "security": "Class A"}
+        ]
+    }
+    insert(
+        filing_row("stake", ticker="FUND", form="SCHEDULE 13D/A", evidence_json=json.dumps(payload))
+    )
+    assert person_connections("TEST", "sec:991")["events"][0]["percent"] == 17
+    insert(filing_row("named", actor_cik=None, transaction_codes="P"))
+    insert(filing_row("same-name", ticker="OTHER", actor_cik=None, transaction_codes="P"))
+    identity = filing_events(filing_row("named", actor_cik=None))[0]["people"][0]["id"]
+    result = person_connections("TEST", identity)
+    assert {e["ticker"] for e in result["events"]} == {"TEST"}
+    assert result["identity_scope"] == "This ticker"
+
+
+def test_person_connections_candidate_paging_and_invalid_input(database):
+    from runner_web.stock_map import person_connections
+
+    for accession in ("a", "b", "c"):
+        insert(filing_row(accession, transaction_codes="P"))
+    first = person_connections("TEST", "sec:101", limit=1)
+    second = person_connections("TEST", "sec:101", first["next_cursor"], limit=1)
+    assert first["events"][0]["accession"] == "c"
+    assert second["events"][0]["accession"] == "b"
+    with pytest.raises(ValueError):
+        person_connections("TEST", "sec:101", "bad cursor")
+    with pytest.raises(ValueError):
+        person_connections("TEST", "sec:0")
+    response = TestClient(main.app).get(
+        "/api/stocks/TEST/map/connections", params={"person_id": "sec:101"}
+    )
+    assert response.status_code == 200
+    assert len(response.json()["events"]) == 3

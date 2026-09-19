@@ -112,6 +112,8 @@ def _person(raw: dict[str, Any], ticker: str) -> dict[str, Any]:
 
 def filing_events(row: dict[str, Any]) -> list[dict[str, Any]]:
     common = {
+        "ticker": row["ticker"],
+        "company": row.get("company"),
         "accession": row["accession"],
         "filed_at": _date(row["filed_at"]),
         "collected_at": _date(row["created_at"]),
@@ -247,6 +249,66 @@ def ticker_map(ticker: str, cursor: str | None = None, *, limit: int = 50) -> di
         "loaded_filings": len(rows),
         "coverage": coverage,
         "next_cursor": next_cursor,
+    }
+
+
+def person_connections(
+    ticker: str, person_id: str, cursor: str | None = None, *, limit: int = 200
+) -> dict[str, Any]:
+    """Read a bounded page of candidate filings, then match exact reporting identities.
+
+    The text prefilter includes joint owners and 13D/G cover pages. It only selects
+    candidates; parsed CIK equality is required for every cross-company connection.
+    Names retain the ticker-scoped identity used by the main map.
+    """
+    import re
+
+    if not re.fullmatch(r"sec:[1-9][0-9]{0,9}|name:[0-9a-f]{20}", person_id):
+        raise ValueError("Invalid person ID")
+    limit = min(200, max(1, limit))
+    args: list[Any] = list(FORMS)
+    where = "form IN (" + ",".join("?" for _ in FORMS) + ")"
+    if person_id.startswith("sec:"):
+        cik = person_id.removeprefix("sec:")
+        where += " AND (actor_cik=? OR evidence_json LIKE ?)"
+        args.extend([int(cik), f"%{cik}%"])
+    else:
+        where += " AND ticker=?"
+        args.append(ticker)
+    if cursor:
+        try:
+            stamp, accession = json.loads(base64.urlsafe_b64decode(cursor.encode()))
+            if not isinstance(stamp, str) or not isinstance(accession, str):
+                raise ValueError("Invalid connection cursor")
+        except (ValueError, TypeError, UnicodeError) as exc:
+            raise ValueError("Invalid connection cursor") from exc
+        where += " AND (filed_at<? OR (filed_at=? AND accession<?))"
+        args.extend([stamp, stamp, accession])
+    with connection() as db:
+        rows = [
+            dict(row)
+            for row in db.execute(
+                f"SELECT * FROM sec_filings WHERE {where} "
+                "ORDER BY filed_at DESC,accession DESC LIMIT ?",
+                (*args, limit + 1),
+            ).fetchall()
+        ]
+    more = len(rows) > limit
+    rows = rows[:limit]
+    events = []
+    for row in rows:
+        for event in filing_events(row):
+            if any(person["id"] == person_id for person in event["people"]):
+                events.append(event)
+    return {
+        "person_id": person_id,
+        "identity_scope": "SEC CIK" if person_id.startswith("sec:") else "This ticker",
+        "events": events,
+        "next_cursor": base64.urlsafe_b64encode(
+            json.dumps([rows[-1]["filed_at"], rows[-1]["accession"]]).encode()
+        ).decode()
+        if more
+        else None,
     }
 
 

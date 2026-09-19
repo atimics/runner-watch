@@ -7462,6 +7462,22 @@ def stock_ticker_map_api(
         raise HTTPException(400, "Invalid map cursor") from exc
 
 
+@app.get("/api/stocks/{ticker}/map/connections")
+def stock_person_connections_api(
+    ticker: str,
+    request: Request,
+    person_id: str = Query(max_length=32),
+    cursor: str | None = Query(default=None, max_length=1024),
+) -> dict[str, Any]:
+    from runner_web.stock_map import person_connections
+
+    enforce_rate(request, "stock-person-connections", limit=120, seconds=60)
+    try:
+        return person_connections(_clean_ticker(ticker), person_id, cursor)
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid connection request") from exc
+
+
 @app.get("/api/market-actors/{actor_id}")
 def market_actor_api(actor_id: str, request: Request) -> dict[str, Any]:
     enforce_rate(request, "market-map", limit=120, seconds=60)
