@@ -520,3 +520,210 @@ def session_report(which: str | None = None) -> dict[str, Any]:
             for comment in (report.get("desk_comments") or [])[:3]
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# The world Dash observes and acts on.
+#
+# The chat used to hand him a menu of getter tools and ask which one to call.
+# Instead he gets one snapshot of the market, the room and his own book, and the
+# only read verb is `expand`: drill into one node of the world he already has.
+# Actions (reply, react, call, comment) write back through the ordinary rails,
+# so continuity lives in the world rather than in the prompt.
+# ---------------------------------------------------------------------------
+
+WORLD_NODES = (
+    "board",
+    "runners",
+    "events",
+    "community",
+    "sector:<name>",
+    "report:pre",
+    "report:post",
+    "ticker:<SYM>",
+)
+
+
+def recent_events(limit: int = 6, at: datetime | None = None) -> list[dict[str, Any]]:
+    """Halts, coverage and social spikes from the last six hours, newest first."""
+
+    current = at or datetime.now(UTC)
+    cutoff = (current - timedelta(hours=6)).isoformat()
+    with connection() as database:
+        rows = database.execute(
+            """
+            SELECT source,feed,event_id,version,ticker,event_type,status,event_at,
+                   source_url,payload_json
+            FROM public_market_events
+            WHERE event_at>?
+              AND event_type IN ('trading_halt','news_article','social_spike')
+              AND NOT (event_type='trading_halt' AND status='resume_announced')
+            ORDER BY event_at DESC LIMIT ?
+            """,
+            (cutoff, max(1, min(int(limit), 20))),
+        ).fetchall()
+    events = []
+    for row in rows:
+        try:
+            payload = row["payload_json"]
+            payload = payload if isinstance(payload, dict) else {}
+        except (KeyError, TypeError):
+            payload = {}
+        event_type = str(row["event_type"] or "event")
+        ticker = str(row["ticker"] or "").upper()
+        if event_type == "trading_halt":
+            kind = f"Trading halt · {row['status']}" if row["status"] else "Trading halt"
+            headline = str(payload.get("issue_name") or f"${ticker} halted")
+        elif event_type == "news_article":
+            kind = "News"
+            headline = str(payload.get("title") or "New company coverage")
+        else:
+            kind = f"{payload.get('network_label') or 'Social'} spike"
+            headline = f"{payload.get('mention_count') or 0} mentions"
+        events.append(
+            {
+                "kind": kind,
+                "ticker": ticker,
+                "headline": headline,
+                "event_at": row["event_at"],
+                "source": row["source"],
+                "url": row["source_url"],
+            }
+        )
+    return events
+
+
+def recent_changes(hours: int = 1, at: datetime | None = None) -> dict[str, Any]:
+    """What landed since the last look, so Dash can decide whether to speak.
+
+    This is the proactive trigger: the hourly note plays only when the counts are
+    not all zero.
+    """
+
+    current = at or datetime.now(UTC)
+    cutoff = (current - timedelta(hours=max(1, hours))).isoformat()
+    with connection() as database:
+        runners = database.execute(
+            "SELECT COUNT(*) AS n FROM pulse_entries WHERE entered_at>?", (cutoff,)
+        ).fetchone()["n"]
+        events = database.execute(
+            """
+            SELECT COUNT(*) AS n FROM public_market_events
+            WHERE event_at>? AND event_type IN ('trading_halt','news_article','social_spike')
+              AND NOT (event_type='trading_halt' AND status='resume_announced')
+            """,
+            (cutoff,),
+        ).fetchone()["n"]
+        reports = database.execute(
+            "SELECT COUNT(*) AS n FROM market_session_reports WHERE created_at>?", (cutoff,)
+        ).fetchone()["n"]
+        public_reports = database.execute(
+            """
+            SELECT COUNT(*) AS n FROM research_commissions
+            WHERE status='complete' AND visibility='public'
+              AND COALESCE(customer_inference,0)=0
+              AND COALESCE(published_at,completed_at,created_at)>?
+            """,
+            (cutoff,),
+        ).fetchone()["n"]
+    return {
+        "window_hours": max(1, hours),
+        "new_runners": int(runners or 0),
+        "events": int(events or 0),
+        "session_reports": int(reports or 0),
+        "public_reports": int(public_reports or 0),
+        "any": bool(runners or events or reports or public_reports),
+    }
+
+
+def recent_actions(chat_id: int, limit: int = 8) -> list[dict[str, Any]]:
+    """What Dash last did in this room, newest first.
+
+    The action log is the anti-repetition memory: the model sees its own recent
+    replies and reactions instead of being told in the prompt not to repeat.
+    """
+
+    with connection() as database:
+        rows = database.execute(
+            """
+            SELECT action,detail,acted_at FROM telegram_chat_actions
+            WHERE chat_id=? ORDER BY acted_at DESC LIMIT ?
+            """,
+            (int(chat_id), max(1, min(int(limit), 20))),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def dash_self(at: datetime | None = None) -> dict[str, Any]:
+    """Dash's own book: balance, budget, open Calls and what he just did."""
+
+    current = at or datetime.now(UTC)
+    with connection() as database:
+        calls = database.execute(
+            """
+            SELECT ticker,status,entry_price,entry_at,updated_at
+            FROM community_calls WHERE user_id=?
+            ORDER BY created_at DESC LIMIT 5
+            """,
+            (DASH_USER_ID,),
+        ).fetchall()
+    return {
+        "budget": dash_budget(at=current),
+        "recent_calls": [dict(row) for row in calls],
+    }
+
+
+def dash_world(at: datetime | None = None) -> dict[str, Any]:
+    """One snapshot of everything Dash can see this turn."""
+
+    current = at or datetime.now(UTC)
+    from runner_web.market_clock import market_clock
+
+    clock = market_clock(current)
+    return {
+        "session": {
+            "label": clock["label"],
+            "eastern_now": clock["eastern_now"],
+            "scanner_active": clock["scanner_active"],
+            "next_label": clock["next_label"],
+            "next_at": clock["next_at"],
+            "data_note": clock["data_note"],
+        },
+        "board": market_now(current),
+        "runners": recent_runners(limit=6, at=current),
+        "events": recent_events(limit=6, at=current),
+        "community": community_now(limit=6),
+        "self": dash_self(current),
+        "changes": recent_changes(at=current),
+    }
+
+
+def dash_expand(node: str | None) -> dict[str, Any]:
+    """Drill into one node of the world. The one read verb the model gets."""
+
+    key = str(node or "").strip().lower()
+    if key in {"", "world", "all"}:
+        return dash_world()
+    if key in {"board", "market", "market_now"}:
+        return market_now()
+    if key.startswith("sector"):
+        asked = key.split(":", 1)[1].strip() if ":" in key else None
+        return sector_now(asked or None)
+    if key in {"runners", "recent_runners"}:
+        return recent_runners()
+    if key in {"community", "community_now"}:
+        return community_now()
+    if key in {"events", "news"}:
+        return recent_events(limit=20)
+    if key.startswith("report"):
+        which = key.split(":", 1)[1].strip() if ":" in key else None
+        return session_report(which or None)
+    if key.startswith("ticker"):
+        symbol = key.split(":", 1)[1].strip().lstrip("$")
+        if not symbol:
+            return {"error": "ticker node needs a symbol, e.g. ticker:MSGM"}
+        from runner_web.telegram_chat import look_up_ticker
+
+        return look_up_ticker(symbol)
+    return {"error": "unknown node", "nodes": list(WORLD_NODES)}
+

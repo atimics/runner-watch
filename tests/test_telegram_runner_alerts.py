@@ -500,6 +500,64 @@ def _insert_public_report(
         )
 
 
+def _insert_halt(
+    event_id: str,
+    ticker: str,
+    *,
+    event_at: str,
+    status: str = "halted",
+    issue_name: str | None = None,
+) -> None:
+    with connection() as database:
+        database.execute(
+            "UPDATE source_registry SET enabled=1,review_status='approved' "
+            "WHERE source='nasdaq_trader' AND feed='trade_halts'"
+        )
+        database.execute(
+            """
+            INSERT INTO ingestion_runs(id,source,feed,locator,status,started_at,finished_at,
+                requested_count,received_count,content_hash,metadata_json)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING
+            """,
+            (
+                f"run-{event_id}",
+                "nasdaq_trader",
+                "trade_halts",
+                "test://halts",
+                "success",
+                event_at,
+                event_at,
+                1,
+                1,
+                "hash",
+                "{}",
+            ),
+        )
+        database.execute(
+            """
+            INSERT INTO market_events(source,feed,event_id,version,ticker,event_type,
+                event_at,status,source_url,payload_json,first_run_id,last_run_id,
+                first_collected_at,last_collected_at)
+            VALUES('nasdaq_trader','trade_halts',?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(source,feed,event_id,version) DO NOTHING
+            """,
+            (
+                event_id,
+                "1",
+                ticker,
+                "trading_halt",
+                event_at,
+                status,
+                f"https://example.com/{event_id}",
+                json.dumps({"issue_name": issue_name or f"{ticker} Inc", "market": "NASDAQ"}),
+                f"run-{event_id}",
+                f"run-{event_id}",
+                event_at,
+                event_at,
+            ),
+        )
+
+
 def test_dispatch_posts_a_new_market_report_and_skips_the_old_one(
     alert_environment, monkeypatch: MonkeyPatch
 ) -> None:
@@ -756,6 +814,49 @@ def test_each_segment_is_its_own_message_with_its_own_card(
     for message in sent:
         assert message.count(web_main.RUNNERS_ORIGIN) == 1, message
     assert web_main.dispatch_telegram_posts()["status"] == "empty"
+
+
+def test_halt_events_reach_the_channel_once(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    """Halt Desk: the already-written event formatter finally has inventory."""
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        web_main,
+        "telegram_send_post",
+        lambda config, text, **_kw: sent.append(text),
+    )
+    web_main.dispatch_telegram_posts()  # baseline the empty board
+    recent = datetime.now(UTC).isoformat()
+    _insert_halt("halt-1", "HALT", event_at=recent)
+
+    result = web_main.dispatch_telegram_posts()
+
+    assert result["announcement"]["kind"] == "event"
+    assert result["events"]["selected"] == 1
+    assert len(sent) == 1
+    assert "HALT" in sent[0]
+    assert f"{web_main.RUNNERS_ORIGIN}/t/HALT" in sent[0]
+    # Delivered once, not on every sweep.
+    assert web_main.dispatch_telegram_posts()["status"] == "empty"
+
+
+def test_resumed_halt_events_stay_off_the_channel(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    sent: list[str] = []
+    monkeypatch.setattr(
+        web_main,
+        "telegram_send_post",
+        lambda config, text, **_kw: sent.append(text),
+    )
+    web_main.dispatch_telegram_posts()
+    recent = datetime.now(UTC).isoformat()
+    _insert_halt("halt-2", "BACK", event_at=recent, status="resume_announced")
+
+    assert web_main.dispatch_telegram_posts()["status"] == "empty"
+    assert sent == []
 
 
 def test_the_rundown_rotates_away_from_the_kind_it_just_played(

@@ -220,9 +220,10 @@ def select_new_runners(
 
 
 # The rundown order. Session briefings are appointment listening and go first;
-# a published Flash report is the next most interesting thing the desk has; a
-# new runner is the everyday inventory that fills the gaps between them.
-SEGMENT_ORDER = ("market_report", "research_report", "runner")
+# a halt or a fresh filing is the next most urgent thing the desk has; a
+# published Flash report follows; a new runner is the everyday inventory that
+# fills the gaps between them.
+SEGMENT_ORDER = ("market_report", "event", "research_report", "runner")
 
 
 def next_segment(pending, *, last_kind=""):

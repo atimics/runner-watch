@@ -210,11 +210,14 @@ def test_an_empty_board_groups_into_nothing():
         assert sector_board(database, []) == []
 
 
-def test_the_chat_tools_offer_the_market_and_sector_lookups():
+def test_the_chat_tools_offer_the_world_and_its_expansion():
     from runner_web.telegram_chat import TOOL_SCHEMA
 
     names = {tool["name"] for tool in TOOL_SCHEMA}
-    assert {"market_now", "sector_now", "look_up_ticker", "reply", "react", "hold"} <= names
+    assert {"expand", "reply", "react", "hold"} <= names
+    # The getter menu is gone: the world carries the summaries and `expand`
+    # is the one read verb.
+    assert {"market_now", "sector_now", "look_up_ticker"} & names == set()
 
 
 def _tradeable(ticker: str, price: float = 1.50) -> None:
@@ -543,21 +546,28 @@ def test_session_report_quotes_the_frozen_board(monkeypatch):
 
 
 def test_the_chat_tools_cover_the_whole_board():
+    from runner_web import dash
     from runner_web.telegram_chat import TOOL_SCHEMA
 
     names = {tool["name"] for tool in TOOL_SCHEMA}
     assert {
-        "market_now",
-        "sector_now",
-        "recent_runners",
-        "community_now",
-        "session_report",
-        "look_up_ticker",
+        "expand",
         "make_call",
         "close_call",
         "comment_on_ticker",
         "my_standing",
     } <= names
+    # Every node the world advertises is reachable through expand.
+    assert {
+        "board",
+        "runners",
+        "events",
+        "community",
+        "sector:<name>",
+        "report:pre",
+        "report:post",
+        "ticker:<SYM>",
+    } <= set(dash.WORLD_NODES)
 
 
 def _looked_up(ticker: str = "MSGM"):
@@ -778,3 +788,83 @@ def test_market_now_carries_the_next_open(monkeypatch):
     assert payload["scanner_active"] is False
     assert "ET" in payload["next_open"]
     assert payload["eastern_now"].endswith(" ET")
+
+
+def test_the_world_is_one_snapshot_of_everything():
+    world = dash.dash_world(at=NOW)
+
+    assert {
+        "session",
+        "board",
+        "runners",
+        "events",
+        "community",
+        "self",
+        "changes",
+    } <= set(world)
+    assert world["session"]["label"]
+    assert "any" in world["changes"]
+
+
+def test_expand_reads_a_node_and_rejects_an_unknown_one():
+    assert isinstance(dash.dash_expand("board"), dict)
+    assert isinstance(dash.dash_expand("events"), list)
+    unknown = dash.dash_expand("nope")
+    assert "error" in unknown and "board" in unknown["nodes"]
+    assert dash.dash_expand("ticker:NOPE").get("known") is False
+
+
+def test_recent_changes_reports_what_landed():
+    with connection() as database:
+        database.execute(
+            "INSERT INTO pulse_entries(ticker,entered_at,scan_run_id,snapshot_id,price,created_at) "
+            "VALUES('AAA',?,?,?,?,?)",
+            (NOW.isoformat(), "run", "snap", 1.0, NOW.isoformat()),
+        )
+
+    changes = dash.recent_changes(at=NOW)
+
+    assert changes["new_runners"] == 1
+    assert changes["any"] is True
+
+
+def test_recent_actions_reads_dashs_chat_log():
+    with connection() as database:
+        database.execute(
+            "INSERT INTO telegram_chat_actions("
+            "id,chat_id,message_id,update_id,action,detail,acted_at"
+            ") VALUES('a1',123,1,1,'reply','hello',?)",
+            (NOW.isoformat(),),
+        )
+
+    actions = dash.recent_actions(123)
+
+    assert actions and actions[0]["action"] == "reply"
+
+
+def test_the_desk_note_speaks_only_when_something_changed(monkeypatch):
+    from runner_web import main as web_main
+
+    monkeypatch.setattr(web_main, "DASH_DESK_NOTES_ENABLED", True)
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("TELEGRAM_API_TOKEN", "test-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "test-chat")
+    monkeypatch.setattr(web_main, "telegram_room_chat_id", lambda: 123)
+    sent: list[tuple[int, str]] = []
+    monkeypatch.setattr(
+        web_main,
+        "send_telegram_reply",
+        lambda config, chat_id, text: sent.append((chat_id, text)),
+    )
+    monkeypatch.setattr(web_main, "dash_world", lambda *a, **k: {"changes": {"any": True}})
+    monkeypatch.setattr(web_main, "_generate_desk_note", lambda world: "Something moved.")
+
+    result = web_main.post_dash_desk_note(at=NOW)
+
+    assert result["status"] == "sent"
+    assert sent == [(123, "Something moved.")]
+
+    sent.clear()
+    monkeypatch.setattr(web_main, "dash_world", lambda *a, **k: {"changes": {"any": False}})
+    assert web_main.post_dash_desk_note(at=NOW + timedelta(hours=2))["status"] == "quiet"
+    assert sent == []

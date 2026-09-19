@@ -109,19 +109,17 @@ from runner_web.content_notices import (
     notices_for_content,
     report_share_metadata,
 )
-from runner_web.dash import community_now as dash_community_now
 from runner_web.dash import (
     dash_budget,
     dash_close_call,
     dash_comment,
+    dash_expand,
     dash_make_call,
     dash_open_calls,
     dash_wallet,
+    dash_world,
 )
-from runner_web.dash import market_now as dash_market_now
-from runner_web.dash import recent_runners as dash_recent_runners
-from runner_web.dash import sector_now as dash_sector_now
-from runner_web.dash import session_report as dash_session_report
+from runner_web.dash import recent_actions as dash_recent_actions
 from runner_web.db import connection, init_db
 from runner_web.flash_evaluations import (
     flash_open_calls,
@@ -369,9 +367,6 @@ from runner_web.telegram_chat import (
     finish_update as telegram_finish_update,
 )
 from runner_web.telegram_chat import (
-    look_up_ticker as telegram_look_up_ticker,
-)
-from runner_web.telegram_chat import (
     mute_engagement as telegram_mute_engagement,
 )
 from runner_web.telegram_chat import (
@@ -397,6 +392,9 @@ from runner_web.telegram_chat import (
 )
 from runner_web.telegram_chat import (
     resolve_tickers as telegram_resolve_tickers,
+)
+from runner_web.telegram_chat import (
+    room_chat_id as telegram_room_chat_id,
 )
 from runner_web.telegram_chat import (
     spend_engagement as telegram_spend_engagement,
@@ -892,6 +890,7 @@ def _start_worker_tasks(
         asyncio.create_task(market_report_worker(), name="market-reports"),
         asyncio.create_task(hot_quote_worker(), name="hot-quotes"),
         asyncio.create_task(telegram_chat_worker(), name="telegram-chat"),
+        asyncio.create_task(dash_desk_note_worker(), name="dash-desk-notes"),
         asyncio.create_task(telegram_alert_sweep_worker(), name="telegram-alert-sweep"),
         asyncio.create_task(massive_backfill_worker(), name="massive-backfill"),
         asyncio.create_task(research_job_worker(), name="research-jobs"),
@@ -1966,25 +1965,6 @@ def _telegram_chat_completion(body: dict[str, Any]) -> dict[str, Any]:
         return json.loads(response.read(262_145))
 
 
-def _dash_session_context() -> dict[str, Any]:
-    """Where the market clock stands, so Dash always knows the time of week.
-
-    The tools can look the session up, but every turn should carry it anyway:
-    a weekend message that names a silent board needs the answer in hand, not
-    another tool call.
-    """
-
-    clock = market_clock()
-    return {
-        "eastern_now": clock["eastern_now"],
-        "session": clock["session"],
-        "label": clock["label"],
-        "scanner_active": clock["scanner_active"],
-        "next_label": clock["next_label"],
-        "next_at": clock["next_at"],
-    }
-
-
 def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dict[str, Any]:
     """Ask the model what the cheetah does with one message.
 
@@ -2005,15 +1985,20 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
         if item.get("ticker")
     }
     looked_symbols.discard("")
+    world = dash_world()
     context = {
-        "room": "RATi Runners",
-        "speaker": message.user_name,
-        "said": message.text,
-        "tickers_mentioned": list(message.tickers),
+        **world,
+        "market_session": world["session"],
         "already_looked_up": grounded,
-        "market_session": _dash_session_context(),
-        "addressed_you": message.addressed,
-        "recent": transcript,
+        "room": {
+            "name": "RATi Runners",
+            "speaker": message.user_name,
+            "said": message.text,
+            "tickers_mentioned": list(message.tickers),
+            "addressed_you": message.addressed,
+            "recent": transcript,
+            "your_recent_actions": dash_recent_actions(message.chat_id),
+        },
     }
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": CHEETAH_PERSONA},
@@ -2044,18 +2029,14 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
         except (TypeError, ValueError):
             args = {}
         looked: Any = None
-        if name == "look_up_ticker":
-            looked = telegram_look_up_ticker(str(args.get("ticker") or ""))
-        elif name == "market_now":
-            looked = dash_market_now()
-        elif name == "sector_now":
-            looked = dash_sector_now(args.get("sector"))
-        elif name == "recent_runners":
-            looked = dash_recent_runners()
-        elif name == "community_now":
-            looked = dash_community_now()
-        elif name == "session_report":
-            looked = dash_session_report(args.get("which"))
+        if name == "expand":
+            node = str(args.get("node") or "")
+            looked = dash_expand(node)
+            key = node.strip().lower()
+            if key.startswith("ticker"):
+                symbol = key.split(":", 1)[1].strip().upper().lstrip("$")
+                if symbol:
+                    looked_symbols.add(symbol)
         elif name == "my_standing":
             looked = {"budget": dash_budget(), "open_calls": dash_open_calls()}
         elif name == "make_call":
@@ -2065,10 +2046,6 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
         elif name == "comment_on_ticker":
             looked = dash_comment(str(args.get("ticker") or ""), str(args.get("body") or ""))
         if looked is not None:
-            if name == "look_up_ticker":
-                symbol = str(args.get("ticker") or "").strip().upper().lstrip("$")
-                if symbol:
-                    looked_symbols.add(symbol)
             messages.append(choice)
             messages.append(
                 {
@@ -2100,9 +2077,10 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
                             "content": (
                                 "You were about to name "
                                 + ", ".join(unbacked)
-                                + " without having looked it up. Call look_up_ticker "
-                                "for it now, or reply saying you have not looked it up. "
-                                "Do not state numbers you did not fetch."
+                                + " without having looked it up. Call expand with "
+                                "node ticker:<SYMBOL> for it now, or reply saying you "
+                                "have not looked it up. Do not state numbers you did "
+                                "not fetch."
                             ),
                         }
                     )
@@ -2116,6 +2094,100 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
             "stop": bool(args.get("stop")),
         }
     return {"action": "hold", "why": "ran out of lookups"}
+
+
+DASH_DESK_NOTES_ENABLED = os.getenv("TELEGRAM_DESK_NOTES", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+DASH_DESK_NOTE_SECONDS = max(900, int(os.getenv("DASH_DESK_NOTE_SECONDS", "3600")))
+DASH_DESK_NOTE_MIN_GAP_SECONDS = max(
+    600, int(os.getenv("DASH_DESK_NOTE_MIN_GAP_SECONDS", "3000"))
+)
+
+
+def _generate_desk_note(world: dict[str, Any]) -> str:
+    """Ask Dash for one short, unprompted note about what changed."""
+
+    body = {
+        "model": FLASH.model,
+        "messages": [
+            {"role": "system", "content": CHEETAH_PERSONA},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "task": "desk_note",
+                        "instruction": (
+                            "Nobody asked you anything. Write one short desk note "
+                            "about what changed in the world, under 60 words, plain "
+                            "text, no markdown, no advice, no list of commands. If "
+                            "nothing is worth saying, return an empty string."
+                        ),
+                        "world": world,
+                    },
+                    separators=(",", ":"),
+                    default=str,
+                ),
+            },
+        ],
+        "provider": {"require_parameters": True, "zdr": True},
+        "max_tokens": 200,
+    }
+    result = _telegram_chat_completion(body)
+    choice = (result.get("choices") or [{}])[0].get("message") or {}
+    return str(choice.get("content") or "").strip()
+
+
+def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
+    """The proactive tick: speak in the room only when the world changed."""
+
+    if not DASH_DESK_NOTES_ENABLED or not OPENROUTER_API_KEY:
+        return {"status": "off"}
+    config = telegram_config_from_env()
+    if not config.configured:
+        return {"status": "unconfigured"}
+    chat_id = telegram_room_chat_id()
+    if chat_id is None:
+        return {"status": "no_room"}
+    current = at or now()
+    with connection() as database:
+        row = database.execute(
+            "SELECT value FROM worker_state WHERE key='dash_desk_note_last_at'"
+        ).fetchone()
+    last_at = _stamp(row["value"]) if row else None
+    if last_at and (current - last_at).total_seconds() < DASH_DESK_NOTE_MIN_GAP_SECONDS:
+        return {"status": "waiting"}
+    world = dash_world(current)
+    if not world["changes"]["any"]:
+        return {"status": "quiet"}
+    try:
+        note = _generate_desk_note(world)
+    except Exception as exc:
+        return {"status": "error", "detail": type(exc).__name__}
+    if not note:
+        return {"status": "held"}
+    send_telegram_reply(config, chat_id, note)
+    worker_state("dash_desk_note_last_at", current.isoformat())
+    worker_state("dash_desk_note_last_note", note[:500])
+    return {"status": "sent", "chars": len(note)}
+
+
+async def dash_desk_note_worker() -> None:
+    if not DASH_DESK_NOTES_ENABLED:
+        return
+    await asyncio.sleep(180)
+    while True:
+        try:
+            result = await run_in_threadpool(post_dash_desk_note)
+            worker_state("dash_desk_note_last_run", json.dumps(result, separators=(",", ":")))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            worker_state("dash_desk_note_last_error", str(exc)[:500])
+        await asyncio.sleep(DASH_DESK_NOTE_SECONDS)
 
 
 async def telegram_chat_worker() -> None:
@@ -11946,6 +12018,89 @@ TELEGRAM_SEGMENT_GAP_MINUTES = max(1, int(os.getenv("TELEGRAM_SEGMENT_GAP_MINUTE
 TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES = max(
     0, int(os.getenv("TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES", "180"))
 )
+# Halt Desk / Filing Desk inventory. Events older than the window are no longer
+# news, so the query simply stops selecting them.
+TELEGRAM_EVENT_WINDOW_MINUTES = max(15, int(os.getenv("TELEGRAM_EVENT_WINDOW_MINUTES", "360")))
+TELEGRAM_EVENT_TYPES = ("trading_halt", "news_article", "social_spike")
+
+_EVENT_BASELINE_SQL = (
+    "SELECT 'event',source||'|'||feed||'|'||event_id||'|'||version,'baseline',0,"
+    "'pre-existing event',?,? FROM public_market_events WHERE 1=1"
+)
+
+
+def _age_label(value: Any, current: datetime) -> str:
+    minutes = _age_minutes(value, current)
+    if minutes < 90:
+        return f"{max(1, int(minutes))}m"
+    if minutes < 60 * 36:
+        return f"{int(minutes / 60)}h"
+    return f"{int(minutes / (60 * 24))}d"
+
+
+def _channel_event_item(row: dict[str, Any], current: datetime) -> dict[str, Any]:
+    """Normalize one market event into the shape the event formatter reads."""
+
+    payload = _event_payload(row)
+    ticker = str(row.get("ticker") or "").upper()
+    event_type = str(row.get("event_type") or "market_event")
+    status = str(row.get("status") or "")
+    if event_type == "trading_halt":
+        kind = f"Trading halt · {status}" if status else "Trading halt"
+        issue = str(payload.get("issue_name") or "").strip()
+        market = str(payload.get("market") or "").strip()
+        headline = issue or f"${ticker} halted"
+        if issue and market:
+            headline = f"{issue} · {market}"
+    elif event_type == "news_article":
+        kind = "News"
+        headline = str(payload.get("title") or "New company coverage").strip()
+    elif event_type == "social_spike":
+        mentions = _nonnegative_event_count(payload.get("mention_count"))
+        network = str(payload.get("network_label") or "Social")
+        kind = f"{network} spike"
+        headline = f"{mentions} mention{'s' if mentions != 1 else ''}"
+    else:
+        kind = event_type.replace("_", " ").title()
+        headline = str(payload.get("title") or "").strip()
+    return {
+        "subject": "|".join(
+            str(row.get(key) or "") for key in ("source", "feed", "event_id", "version")
+        ),
+        "ticker": ticker,
+        "kind": kind,
+        "headline": headline,
+        "source": str(row.get("source") or ""),
+        "age": _age_label(row.get("event_at"), current),
+        "at": row.get("event_at"),
+        "url": str(row.get("source_url") or ""),
+    }
+
+
+def _pending_event_rows(
+    database: Any, *, limit: int, current: datetime | None = None
+) -> list[dict[str, Any]]:
+    observed_at = current or now()
+    cutoff = iso(observed_at - timedelta(minutes=TELEGRAM_EVENT_WINDOW_MINUTES))
+    placeholders = ",".join("?" for _ in TELEGRAM_EVENT_TYPES)
+    rows = database.execute(
+        f"""
+        SELECT e.source,e.feed,e.event_id,e.version,e.ticker,e.event_type,e.status,
+               e.event_at,e.source_url,e.payload_json
+        FROM public_market_events e
+        LEFT JOIN telegram_channel_posts p
+          ON p.kind='event'
+         AND p.subject=e.source||'|'||e.feed||'|'||e.event_id||'|'||e.version
+        WHERE e.event_at>?
+          AND e.event_type IN ({placeholders})
+          AND NOT (e.event_type='trading_halt' AND e.status='resume_announced')
+          AND (p.subject IS NULL OR (p.status='failed' AND p.attempts<?))
+        ORDER BY e.event_at DESC
+        LIMIT ?
+        """,
+        (cutoff, *TELEGRAM_EVENT_TYPES, TELEGRAM_CHANNEL_POST_MAX_ATTEMPTS, max(1, limit)),
+    ).fetchall()
+    return [_channel_event_item(dict(row), observed_at) for row in rows]
 
 
 def _last_channel_post(database: Any) -> tuple[datetime | None, str]:
@@ -12008,8 +12163,9 @@ def _activity_payload(
     runners: list[dict[str, Any]],
     market_reports: list[dict[str, Any]],
     research_reports: list[dict[str, Any]],
+    events: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Fold the three pending kinds into one list of things that just landed."""
+    """Fold the pending kinds into one list of things that just landed."""
 
     def absolute(origin: str, path: str) -> str:
         if not path:
@@ -12084,13 +12240,14 @@ def _activity_payload(
                 "public_id": public_id,
             }
         )
-    return {"runners": activity_runners, "reports": reports}
+    return {"runners": activity_runners, "reports": reports, "events": events}
 
 
 _RESULT_KEYS = {
     "runner": "runners",
     "market_report": "market_reports",
     "research_report": "research_reports",
+    "event": "events",
 }
 
 
@@ -12119,6 +12276,14 @@ def _record_segment_outcome(
                 database,
                 "research_report",
                 str(item.get("public_id") or ""),
+                status=status,
+                detail=detail,
+            )
+        elif kind == "event":
+            _record_channel_post(
+                database,
+                "event",
+                str(item.get("subject") or ""),
                 status=status,
                 detail=detail,
             )
@@ -12169,6 +12334,7 @@ def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]
         },
         "market_reports": _empty_channel_post_result(),
         "research_reports": _empty_channel_post_result(),
+        "events": _empty_channel_post_result(),
         "announcement": {"status": "disabled", "count": 0},
     }
     try:
@@ -12203,11 +12369,19 @@ def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]
                 research_baseline = _take_channel_post_baseline(
                     database, "research_report", _RESEARCH_REPORT_BASELINE_SQL
                 )
+                event_baseline = _take_channel_post_baseline(
+                    database, "event", _EVENT_BASELINE_SQL
+                )
                 market = _pending_market_report_rows(database, limit=TELEGRAM_CHANNEL_POSTS_PER_RUN)
                 research = _pending_research_report_rows(
                     database, limit=TELEGRAM_CHANNEL_POSTS_PER_RUN
                 )
-            result["baseline"] = runner_baseline or market_baseline or research_baseline
+                events = _pending_event_rows(
+                    database, limit=TELEGRAM_CHANNEL_POSTS_PER_RUN, current=current
+                )
+            result["baseline"] = (
+                runner_baseline or market_baseline or research_baseline or event_baseline
+            )
             result["runners"] = {
                 "enabled": True,
                 "baseline": runner_baseline,
@@ -12225,8 +12399,13 @@ def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]
                 "selected": len(research),
                 "status": "pending" if research else "empty",
             }
-            activity = _activity_payload(runners, market, research)
-            count = len(activity["runners"]) + len(activity["reports"])
+            result["events"] = {
+                "baseline": event_baseline,
+                "selected": len(events),
+                "status": "pending" if events else "empty",
+            }
+            activity = _activity_payload(runners, market, research, events)
+            count = len(activity["runners"]) + len(activity["reports"]) + len(activity["events"])
             result["pending"] = count
             result["announcement"]["count"] = count
             # A runner nobody heard about for hours is not news. Retire it so
@@ -12248,7 +12427,9 @@ def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]
                 activity["runners"] = [
                     row for row in activity["runners"] if row["ticker"] not in stale_keys
                 ]
-                count = len(activity["runners"]) + len(activity["reports"])
+                count = (
+                    len(activity["runners"]) + len(activity["reports"]) + len(activity["events"])
+                )
                 result["pending"] = count
                 result["announcement"]["count"] = count
                 result["announcement"]["stale"] = len(stale)
@@ -12273,6 +12454,7 @@ def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]
                 "research_report": [
                     row for row in activity["reports"] if row.get("kind") != "market_report"
                 ],
+                "event": activity["events"],
             }
             kind = telegram_next_segment(pending, last_kind=last_kind)
             item = pending[kind][0] if kind else None
