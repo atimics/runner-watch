@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import re
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -24,6 +26,8 @@ def _probability(value: Any) -> float | None:
 
 def _source_url(value: Any) -> str | None:
     text = str(value or "")
+    if any(ord(char) < 33 for char in text) or "\\" in text:
+        return None
     try:
         parsed = urlsplit(text)
     except ValueError:
@@ -33,6 +37,24 @@ def _source_url(value: Any) -> str | None:
     if text.startswith("/api/") and not parsed.netloc and not parsed.scheme:
         return text
     return None
+
+
+def _component_key(value: Any) -> str:
+    key = str(value or "").lower()
+    return key if re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", key) else "saved"
+
+
+def _prediction_reason(team: str, observed: Any) -> str:
+    parts = [team] if team else ["Saved model assessment"]
+    try:
+        moment = datetime.fromisoformat(str(observed).replace("Z", "+00:00"))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        parts.append(moment.astimezone(UTC).strftime("saved %b %d, %H:%M UTC"))
+    except (TypeError, ValueError):
+        if team:
+            parts.append("saved model estimate")
+    return " · ".join(parts)
 
 
 def assessment(market: str, item: dict[str, Any]) -> dict[str, Any]:
@@ -56,7 +78,14 @@ def assessment(market: str, item: dict[str, Any]) -> dict[str, Any]:
     }
     saved_detail = item.get("score_detail") or {}
     if result["score"] is not None:
-        result.update(status="saved", reason="", label="Runner score")
+        result.update(
+            status="saved",
+            reason="",
+            label="Runner score",
+            value=result["score"],
+            unit="pts",
+            as_of=result["score_as_of"],
+        )
         result["score_detail"] = {"score": result["score"], "drivers": [], "penalties": []}
         for group in ("drivers", "penalties"):
             for part in saved_detail.get(group) or []:
@@ -64,7 +93,7 @@ def assessment(market: str, item: dict[str, Any]) -> dict[str, Any]:
                 if value is not None:
                     result["score_detail"][group].append(
                         {
-                            "key": str(part.get("key") or ""),
+                            "key": _component_key(part.get("key")),
                             "label": str(part.get("label") or "Saved contribution"),
                             "value": value,
                         }
@@ -94,11 +123,8 @@ def assessment(market: str, item: dict[str, Any]) -> dict[str, Any]:
         team = str(item.get(f"{side}_team_name") or item.get(f"{side}_abbreviation") or "")
         result.update(
             status="saved",
-            label="Model win chance" if probability is not None else "Saved model",
             selected_team=team,
-            value=round(probability * 100, 1) if probability is not None else None,
-            unit="%" if probability is not None else "",
-            as_of=observed,
+            reason=_prediction_reason(team, observed),
             tag=tag,
             tag_tone=tone,
             selection=side,
@@ -106,6 +132,13 @@ def assessment(market: str, item: dict[str, Any]) -> dict[str, Any]:
             quality=prediction.get("quality"),
             risks=[str(value) for value in prediction.get("risks") or []],
         )
+        if result["score"] is None:
+            result.update(
+                label="Model win chance" if probability is not None else "Saved model",
+                value=round(probability * 100, 1) if probability is not None else None,
+                unit="%" if probability is not None else "",
+                as_of=observed,
+            )
         # Model and market probabilities are separate measures, not additive score slices.
         for key, label, value, unit in (
             ("model_probability", "Model win chance", probability, "%"),
@@ -144,7 +177,7 @@ def assessment(market: str, item: dict[str, Any]) -> dict[str, Any]:
             continue
         result["drivers"].append(
             {
-                "key": str(finding.get("kind") or "observation"),
+                "key": _component_key(finding.get("kind") or "observation"),
                 "label": str(finding.get("title") or "Saved chain evidence"),
                 "value": None,
                 "unit": "",
@@ -157,9 +190,9 @@ def assessment(market: str, item: dict[str, Any]) -> dict[str, Any]:
     result["drivers"] = sorted(
         result["drivers"], key=lambda driver: str(driver.get("observed_at") or ""), reverse=True
     )[:3]
-    if result["drivers"]:
+    if result["drivers"] and result["score"] is None:
         result.update(
-            status="saved" if result["score"] is not None else "evidence",
+            status="evidence",
             label="Saved chain evidence",
             as_of=max(str(driver.get("observed_at") or "") for driver in result["drivers"]) or None,
         )

@@ -135,7 +135,10 @@ def test_sports_pass_keeps_selection_and_missing_probability_honest():
 def test_sports_score_comes_only_from_saved_score():
     result = row("sports", game(score=72, prediction=prediction()))
     assert result["score"] == 72
-    assert result["assessment"]["value"] == 60
+    assert result["assessment"]["value"] == 72
+    assert result["assessment"]["unit"] == "pts"
+    assert result["assessment"]["label"] == "Runner score"
+    assert result["assessment"]["drivers"][0]["value"] == 60
 
 
 @pytest.mark.parametrize("state, expected", [("in", "In progress"), ("post", "Final")])
@@ -187,3 +190,46 @@ def test_saved_sports_risk_state_overrides_model_signal():
     assert result["tag"] == "AVOID"
     assert result["risk"] is True
     assert result["assessment"]["tag"] == "AVOID"
+
+
+def test_saved_coin_score_remains_primary_when_chain_evidence_is_present():
+    result = row(
+        "memecoins",
+        coin(
+            score=54,
+            score_as_of="2026-09-18T12:00:00Z",
+            findings=[
+                {
+                    "token_address": "token-a",
+                    "title": "Saved observation",
+                    "observed_at": "2026-09-19T12:00:00Z",
+                }
+            ],
+        ),
+    )["assessment"]
+    assert (result["label"], result["value"], result["unit"]) == ("Runner score", 54, "pts")
+    assert result["as_of"] == "2026-09-18T12:00:00Z"
+    assert result["drivers"][0]["observed_at"] == "2026-09-19T12:00:00Z"
+
+
+def test_sports_model_reason_identifies_team_and_saved_time():
+    result = row("sports", game(prediction=prediction()))["assessment"]
+    assert result["reason"] == "Home · saved Sep 19, 12:00 UTC"
+
+
+@pytest.mark.parametrize("key", ["bad);color:red", "<script>", "123", "with space", ""])
+def test_saved_score_contribution_keys_are_safe_css_identifiers(key):
+    result = row(
+        "memecoins",
+        coin(
+            score=10, score_detail={"drivers": [{"key": key, "label": "Saved driver", "value": 10}]}
+        ),
+    )["assessment"]
+    assert result["contributions"][0]["key"] == "saved"
+    assert result["contributions"][0]["label"] == "Saved driver"
+
+
+@pytest.mark.parametrize("url", ["https://example.test/\npath", "https://example.test/\\path"])
+def test_finding_source_urls_reject_browser_normalization_characters(url):
+    result = row("memecoins", coin(findings=[{"token_address": "token-a", "source_url": url}]))
+    assert result["assessment"]["drivers"][0]["source_url"] is None
