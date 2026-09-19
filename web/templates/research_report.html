@@ -17,11 +17,13 @@
   {% if person.source_urls %}<div class="person-sources">{% for source in person.source_urls %}<a href="{{ source }}" target="_blank" rel="noopener">Evidence {{ loop.index }}</a>{% endfor %}</div>{% endif %}
 </article>
 {%- endmacro %}
+{% set report_anchor = report.subject_type in ['coin', 'sports_game'] %}
 {% set share_title = report.share_title|default(report.ticker ~ ' · ' ~ report.headline) %}
 {% set share_summary = report.share_summary|default(report.summary) %}
 {% block screen_title %}{{ report.ticker }} research · {{ 'RATi Sports' if report.subject_type == 'sports_game' else 'RATi Runners' }}{% endblock %}
 {% block screen_description %}{{ share_summary }}{% endblock %}
 {% block detail_head %}
+{% if report_anchor %}<link rel="stylesheet" href="/static/report-anchor.css?v={{ static_version }}">{% endif %}
 <meta property="og:title" content="{{ share_title }}">
 <meta property="og:description" content="{{ share_summary }}">
 <meta property="og:type" content="article">
@@ -47,11 +49,14 @@
 {% block screen_main %}
 <a class="back" href="{{ report.back_href }}">← {{ 'Game' if report.subject_type == 'sports_game' else 'Alpha' }}</a>
 
-<main class="research-report">
+<main class="research-report{% if report_anchor %} report-anchor{% endif %}">
   <a class="research-report-head" href="{{ report.asset_href }}">
     <span class="coin coin-{{ report.coin_tone }}"><b>{{ report.coin_label }}</b><i></i></span>
     <span><strong>{{ report.ticker }}</strong><small>{{ report.company }}</small></span>
   </a>
+  {% if report_anchor %}
+  <p class="report-saved">Saved report · <time>{{ report.completed_at[:16]|replace('T', ' ') }} UTC</time></p>
+  {% endif %}
   {% if report.actor %}
   <section class="research-author">
     <span class="kol-avatar">{{ '◆' if report.customer_inference else report.actor.emoji }}</span>
@@ -84,6 +89,9 @@
     {% else %}
     <h2>{{ forecast.selected_abbreviation }} · {{ '%.0f'|format(forecast.selected_probability * 100) }}% win probability</h2>
     {% endif %}
+    {% if report_anchor and forecast.selection != 'pass' and forecast.selected_probability is number %}
+    <meter class="report-probability" min="0" max="1" value="{{ forecast.selected_probability }}" aria-label="{{ forecast.selected_abbreviation }} saved win probability">{{ '%.0f'|format(forecast.selected_probability * 100) }}%</meter>
+    {% endif %}
     <p>{{ forecast.reason }}</p>
     <small>{{ report.actor.display_name }} · {{ forecast.confidence }} confidence</small>
     {% if forecast.brier_score is not none %}<strong class="{{ 'up' if forecast.result == 'win' else 'down' }}">Brier {{ '%.3f'|format(forecast.brier_score) }}</strong>{% endif %}
@@ -107,6 +115,32 @@
   <section class="flash-forecast-receipt state-unscored"><header><span>FORECAST RECORD</span><b>NOT SCORED</b></header><p>This report predates the fixed forecast contract.</p></section>
   {% endif %}
 
+  {% if report_anchor %}
+  {% if report.subject_type == 'coin' %}
+  {% set saved = report.evidence_snapshot or {} %}
+  {% if saved.get('price') is number or saved.get('change_24h') is number or saved.get('liquidity_usd') is number or saved.get('volume_24h') is number %}
+  <section class="report-snapshot" aria-label="Saved market snapshot">
+    <h2>Market snapshot</h2>
+    <p class="report-saved">Observed {{ saved.get('observed_at') or saved.get('collected_at') or 'with the report' }}{% if saved.get('stale') %} · Marked stale at capture{% endif %}</p>
+    <dl class="report-metrics">
+      {% if saved.get('price') is number %}<div><dt>Price</dt><dd>${{ '%.8g'|format(saved.price) }}</dd></div>{% endif %}
+      {% if saved.get('change_24h') is number %}<div><dt>24h move</dt><dd class="{{ 'up' if saved.change_24h >= 0 else 'down' }}">{{ '%+.1f'|format(saved.change_24h) }}%</dd></div>{% endif %}
+      {% if saved.get('liquidity_usd') is number %}<div><dt>Liquidity</dt><dd>${{ '{:,.0f}'.format(saved.liquidity_usd) }}</dd></div>{% endif %}
+      {% if saved.get('volume_24h') is number %}<div><dt>24h volume</dt><dd>${{ '{:,.0f}'.format(saved.volume_24h) }}</dd></div>{% endif %}
+    </dl>
+  </section>
+  {% endif %}
+  {% endif %}
+  {% if report.catalysts or report.risks or report.watch %}
+  <section class="report-findings" aria-label="Key findings">
+    <h2>Key findings</h2>
+    {% for label, items in [('Support', report.catalysts), ('Risk', report.risks), ('Watch', report.watch)] %}
+    {% if items %}<article><strong>{{ label }}</strong><p>{{ items[0] }}</p></article>{% endif %}
+    {% endfor %}
+  </section>
+  {% endif %}
+  <details class="report-expand"><summary>Full report <span>Thesis, context and evidence</span></summary>
+  {% endif %}
   <section class="research-thesis">
     <span>THESIS</span>
     <p>{{ report.thesis or report.summary }}</p>
@@ -152,8 +186,10 @@
   {% if report.risks %}{{ research_points(report.risk_heading, report.risks) }}{% endif %}
   {% if report.watch %}{{ research_points('What changes the read', report.watch) }}{% endif %}
   {% if report.unknowns %}{{ research_points('Unknowns', report.unknowns, 'research-unknowns') }}{% endif %}
+  {% if report_anchor %}</details>{% endif %}
   {% if report.citations or report.sources %}
-  <section id="report-sources" class="research-section report-source-index">
+  {% if report_anchor %}<details id="report-sources" class="report-expand"><summary>Sources <span>{{ report.sources|length }} links · {{ report.citations|length }} cited claims</span></summary>{% endif %}
+  <section{% if not report_anchor %} id="report-sources"{% endif %} class="research-section report-source-index">
     <h2>Sources</h2>
     {% if report.citations %}
     {% for citation in report.citations %}<article class="research-citation"><p>{{ citation.claim }}</p><div class="research-sources">{% for source in citation.source_urls %}<a href="{{ source }}" target="_blank" rel="noopener">Source {{ loop.index }}</a>{% endfor %}{% if citation.source_receipts %}<span>Stored market data</span>{% endif %}</div></article>{% endfor %}
@@ -163,6 +199,7 @@
     {% endif %}
   </section>
   {% endif %}
+  {% if report_anchor and (report.citations or report.sources) %}</details>{% endif %}
   {% if is_owner %}
   <section class="research-section report-publish">
     {% if report.customer_inference %}
@@ -186,6 +223,12 @@
 {% endblock %}
 {% block detail_scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
+{% if report_anchor %}
+document.querySelector('a[href="#report-sources"]')?.addEventListener('click',()=>{
+  const sources=document.getElementById('report-sources');
+  if(sources)sources.open=true;
+});
+{% endif %}
 document.getElementById('shareReport')?.addEventListener('click',async event=>{
   const share={title:document.querySelector('meta[property="og:title"]')?.content || {{ share_title|tojson }},text:document.querySelector('meta[property="og:description"]')?.content || {{ share_summary|tojson }},url:location.href};
   try{if(navigator.share)await navigator.share(share);else{await navigator.clipboard.writeText(location.href);event.currentTarget.textContent='✓';}}catch(_){}
