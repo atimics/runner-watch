@@ -1,0 +1,11 @@
+{% set assessment = screen.item.assessment|default({}) %}
+<section class="market-assessment" data-market-assessment aria-label="RATi assessment">
+  <header>
+    <div><p class="eyebrow">RATi ASSESSMENT</p><h2 data-assessment-label>{{ assessment.label|default('Assessment pending') }}</h2></div>
+    <div class="assessment-verdict"><strong data-assessment-value>{% if assessment.value is defined and assessment.value is not none %}{{ assessment.value|round(1) }}{{ assessment.unit }}{% else %}—{% endif %}</strong><span class="tag tag-{{ assessment.tag_tone|default('watch') }}" data-assessment-tag{% if not assessment.tag %} hidden{% endif %}>{{ assessment.tag }}</span></div>
+  </header>
+  <p class="assessment-reason" data-assessment-reason>{{ assessment.reason|default('Collecting evidence for this assessment.') }}</p>
+  <ul class="assessment-drivers" data-assessment-drivers>{% for driver in assessment.drivers|default([]) %}<li><span>{{ driver.label }}</span>{% if driver.value is defined and driver.value is not none %}<strong>{{ driver.value }}{{ driver.unit }}</strong>{% endif %}{% if driver.source_url %}<a href="{{ driver.source_url }}" target="_blank" rel="noopener noreferrer">Source ↗</a>{% endif %}</li>{% endfor %}</ul>
+  <details class="assessment-evidence"{% if not assessment.risks %} hidden{% endif %} data-assessment-evidence><summary>What to watch</summary><ul data-assessment-risks>{% for risk in assessment.risks|default([]) %}<li>{{ risk }}</li>{% endfor %}</ul></details>
+  <small class="assessment-time" data-assessment-time>{% if assessment.as_of %}Saved {{ assessment.as_of }}{% endif %}</small>
+</section>

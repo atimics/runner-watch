@@ -1,0 +1,47 @@
+(() => {
+  'use strict';
+  const node = document.getElementById('screenData');
+  const panel = document.querySelector('[data-market-assessment]');
+  if (!node || !panel) return;
+  const put = (name, value) => {
+    const target = panel.querySelector(`[data-assessment-${name}]`);
+    if (target) target.textContent = value ?? '';
+  };
+  node.addEventListener('rati:screen-detail', event => {
+    const assessment = event.detail.item?.assessment || {};
+    put('label', assessment.label || 'Assessment pending');
+    put('value', Number.isFinite(assessment.value) ? `${Math.round(assessment.value * 10) / 10}${assessment.unit || ''}` : '—');
+    put('reason', assessment.reason);
+    put('time', assessment.as_of ? `Saved ${assessment.as_of}` : '');
+    const tag = panel.querySelector('[data-assessment-tag]');
+    const tones = ['setup', 'running', 'extended', 'avoid', 'watch', 'paused'];
+    tag.hidden = !assessment.tag;
+    tag.textContent = assessment.tag || '';
+    tag.className = 'tag tag-' + (tones.includes(assessment.tag_tone) ? assessment.tag_tone : 'watch');
+    panel.querySelector('[data-assessment-drivers]').replaceChildren(...(assessment.drivers || []).map(driver => {
+      const row = document.createElement('li');
+      const label = document.createElement('span');
+      label.textContent = driver.label;
+      row.append(label);
+      if (driver.value !== null && driver.value !== undefined) {
+        const value = document.createElement('strong');
+        value.textContent = `${driver.value}${driver.unit || ''}`;
+        row.append(value);
+      }
+      if (driver.source_url) {
+        const url = new URL(driver.source_url, location.origin);
+        if (url.protocol === 'https:' || url.protocol === 'http:') {
+          const link = document.createElement('a');
+          link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer';
+          link.textContent = 'Source ↗'; row.append(link);
+        }
+      }
+      return row;
+    }));
+    const risks = assessment.risks || [];
+    panel.querySelector('[data-assessment-evidence]').hidden = !risks.length;
+    panel.querySelector('[data-assessment-risks]').replaceChildren(...risks.map(text => {
+      const item = document.createElement('li'); item.textContent = text; return item;
+    }));
+  });
+})();
