@@ -70,13 +70,12 @@
       row.append(swatch, make('span', driver.label), make('strong', points(driver.value))); legend.append(row);
     });
     if (legend.children.length) badges.append(legend);
-    if (!positive.length) panel.append(make('p', item.score_detail ? 'No positive contributions.' : 'Score breakdown unavailable.', 'map-note'));
     if (penalties.length) {
       const list = make('ul', null, 'map-score-penalties');
       penalties.forEach(penalty => {const row = make('li'); row.append(make('span', penalty.label), make('strong', points(penalty.value))); list.append(row);});
       badges.append(list);
     }
-    panel.append(badges);
+    if (badges.children.length) panel.append(badges);
   }
   function context() {
     source(subset().find(event => event.id === selected));
@@ -126,6 +125,7 @@
   }
   function source(event) {
     const preview = hovered || focused;
+    root.querySelector('.map-workspace').classList.toggle('map-overview', !event);
     const panel = $('selection');
     $('score-return').hidden = !event && !pinned;
     if (preview || !event) {

@@ -402,9 +402,7 @@ def test_missing_and_zero_score_are_graceful(page, score, breakdown):
     expect(page.locator(".map-center-score")).to_have_text(text)
     expect(page.locator(".map-score-segment")).to_have_count(0)
     expect(page.locator(".map-score-track")).to_have_count(1)
-    expect(page.locator("[data-map-selection]")).to_contain_text(
-        "Score breakdown unavailable." if breakdown is None else "No positive contributions."
-    )
+    expect(page.locator(".map-source")).to_be_hidden()
     expect(page.locator("[data-stock-map]")).not_to_contain_text(re.compile("NaN|Infinity"))
     page.locator("[data-person]").first.press("Enter")
     expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
@@ -529,7 +527,7 @@ def test_single_contribution_and_mixed_rings_have_valid_geometry(page, weight, p
             f"+60 pts · {50 if mixed else 100}% of total magnitude"
         )
     else:
-        expect(page.locator("[data-map-selection]")).to_contain_text("No positive contributions.")
+        expect(page.locator(".map-score-legend li")).to_have_count(0)
     if penalty_value:
         expect(page.locator(".map-score-penalties strong")).to_have_text("-60 pts")
         penalty = page.locator('[data-score-key="rug"]')
@@ -728,12 +726,12 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
     expect(page.locator(".map-center-score")).to_have_text("—")
     expect(page.locator("[data-map-score-center]")).to_be_focused()
     expect(page.locator(".map-score-segment")).to_have_count(0)
-    expect(page.locator("[data-map-selection]")).to_contain_text("Score breakdown unavailable.")
+    expect(page.locator(".map-source")).to_be_hidden()
     expect(page.locator("[data-map-score-return]")).to_be_hidden()
     screen["item"].update(score=0, score_detail={"drivers": [None], "penalties": None})
     poll()
     expect(page.locator(".map-center-score")).to_have_text("0")
-    expect(page.locator("[data-map-selection]")).to_contain_text("No positive contributions.")
+    expect(page.locator(".map-score-legend li")).to_have_count(0)
     expect(page.locator("[data-stock-map]")).not_to_contain_text(re.compile("NaN|Infinity"))
     assert not errors
 
@@ -851,19 +849,24 @@ def test_inline_interests_link_to_stocks_and_keep_one_chart(page, width, tmp_pat
     expect(page.get_by_role("heading", name="BIG")).to_be_visible()
 
 
-def test_score_badges_share_a_row_and_filing_notes_are_visible(page):
+@pytest.mark.parametrize("width", [390, 1280])
+def test_score_badges_share_a_row_and_filing_notes_are_visible(page, width, tmp_path):
     current = score_current(
         score_detail={
             "drivers": [{"key": "market", "label": "Scan", "value": 51.9}],
             "penalties": [{"key": "rug", "label": "Rug", "value": -6}],
         }
     )
-    open_map(page, current=current)
+    open_map(page, current=current, width=width)
     expect(page.locator(".map-center-score")).to_have_text("45")
     expect(page.locator("[data-map-selection] h3")).to_have_count(0)
     scan = page.locator(".map-score-legend li").bounding_box()
     rug = page.locator(".map-score-penalties li").bounding_box()
     assert abs(scan["y"] - rug["y"]) <= 1
+    source = page.locator(".map-source")
+    assert source.bounding_box()["height"] < 30
+    assert source.evaluate("el => getComputedStyle(el).backgroundColor") == "rgba(0, 0, 0, 0)"
+    page.locator(".map-workspace").screenshot(path=str(tmp_path / f"compact-tags-{width}.png"))
     data = map_payload()
     data["events"] = [data["events"][0]]
     data["events"][0]["footnotes"] = "Held through the family trust."

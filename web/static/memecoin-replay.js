@@ -15,6 +15,7 @@
   const tone = p => p.value < 0 ? 'var(--red)' : `var(--score-${p.key},var(--muted))`;
   const activate = (el, fn) => {el.addEventListener('click',fn); el.addEventListener('keydown',e => {if (['Enter',' '].includes(e.key)) {e.preventDefault();fn();}});};
   function overview(part) {
+    root.querySelector('.map-workspace').classList.add('map-overview');
     selected = null; $('score-return').hidden = !part;
     root.querySelectorAll('[data-replay-event]').forEach(b => b.setAttribute('aria-pressed','false'));
     const panel = $('selection'); panel.replaceChildren();
@@ -22,11 +23,11 @@
     const badges = make('div',null,'map-score-badges');
     const list = make('ul',null,'map-score-legend');
     parts().forEach(p => {const li = make('li'), dot = make('span',null,'map-score-swatch'); dot.style.background = tone(p); li.append(dot,make('span',p.label),make('strong',`${p.value > 0 ? '+' : ''}${p.value} pts`)); list.append(li);});
-    badges.append(list); panel.append(badges);
-    if (item.score == null) panel.append(make('p','RATi score pending.','map-note'));
+    if (list.children.length) {badges.append(list); panel.append(badges);}
     document.dispatchEvent(new CustomEvent('rati:map-time',{detail:{time:null}}));
   }
   function details(node, eventId) {
+    root.querySelector('.map-workspace').classList.remove('map-overview');
     selected = node.id; $('score-return').hidden = false;
     const panel = $('selection'); panel.replaceChildren(make('h3',node.id === 'launch' ? item.name : node.kind === 'wallet' ? 'Wallet' : node.kind));
     if (node.id !== 'launch') panel.append(make('p',node.address));
@@ -65,6 +66,7 @@
   }
   const findings = () => (item.assessment?.drivers || []).filter(f => f.evidence?.length);
   function findingDetails(finding) {
+    root.querySelector('.map-workspace').classList.remove('map-overview');
     selected = 'finding:' + finding.id; $('score-return').hidden = false;
     const panel = $('selection'); panel.replaceChildren(make('h3',finding.label),make('p',finding.explanation));
     const list = make('ul',null,'map-receipts');
