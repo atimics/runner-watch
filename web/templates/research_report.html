@@ -40,14 +40,14 @@
     <a href="{{ runners_origin }}/">Stocks</a>
     <a href="{{ runners_origin }}/memecoins">Memecoins</a>
     <a href="{{ sports_origin }}/">Sports</a>
-    <a href="{{ runners_origin }}/calls">Calls</a>
-    <a href="{{ runners_origin }}/reports">Reports</a>
+    {% if not report_anchor %}<a href="{{ runners_origin }}/calls">Calls</a>
+    <a href="{{ runners_origin }}/reports">Reports</a>{% endif %}
   </nav>
   {% if not report.customer_inference %}<button type="button" id="shareReport" class="account" aria-label="Share this report">Share ↗</button>{% else %}<a class="account" href="/login?next={{ request.url.path|urlencode }}">Log in</a>{% endif %}
 </header>
 {% endblock %}
 {% block screen_main %}
-<a class="back" href="{{ report.back_href }}">← {{ 'Game' if report.subject_type == 'sports_game' else 'Alpha' }}</a>
+<a class="back" href="{{ report.back_href }}">← {{ 'Game' if report.subject_type == 'sports_game' else 'Memecoins' if report.subject_type == 'coin' else 'Alpha' }}</a>
 
 <main class="research-report{% if report_anchor %} report-anchor{% endif %}">
   <a class="research-report-head" href="{{ report.asset_href }}">

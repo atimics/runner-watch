@@ -19,9 +19,13 @@
 .anchor-sports .teams>div{min-width:0}.anchor-sports .teams h2{overflow-wrap:anywhere}
 .anchor-memecoins .token-replay header{flex-wrap:wrap}.anchor-memecoins .replay-evidence{overflow-wrap:anywhere}
 .coin-call-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 16px;padding:14px 0;border-bottom:1px solid var(--line)}.coin-call-row>a{font-size:14px;overflow-wrap:anywhere}.coin-call-row strong{text-align:right;font-variant-numeric:tabular-nums}.coin-call-row small{font-size:11px;color:var(--muted)}
+.anchor-memecoins .ticker-support .ticker-action,.anchor-sports .ticker-support .ticker-action{display:block;padding:14px 18px;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:12px;width:100%;text-align:left}
+.anchor-memecoins .ticker-support .ticker-action span,.anchor-sports .ticker-support .ticker-action span{display:block;font-size:12px;color:var(--muted);margin-top:4px}
 @media(max-width:650px){
   .anchor-memecoins .ticker,.anchor-sports .ticker{grid-template-columns:62px minmax(0,1fr) 84px 44px;gap:8px;min-height:76px;padding:12px 0}
   .anchor-memecoins .ticker .tag,.anchor-sports .ticker .tag{min-width:0;width:62px;font-size:8px;padding:5px 2px}
+  .anchor-memecoins .ticker-name,.anchor-sports .ticker-name,.anchor-memecoins .ticker-value,.anchor-sports .ticker-value{flex-direction:column;align-items:stretch;gap:3px}
+  .anchor-memecoins .ticker-name strong,.anchor-sports .ticker-name strong{flex:initial;max-width:100%}
   .anchor-memecoins .ticker-name strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .anchor-memecoins .ticker-value strong{font-size:13px}.anchor-memecoins .ticker-value small{font-size:10px}
   .anchor-sports .ticker{grid-template-columns:42px minmax(0,1fr) 74px;grid-template-areas:'mark name value' 'mark name assessment';gap:4px 10px;min-height:92px}
