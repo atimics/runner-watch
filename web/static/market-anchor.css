@@ -15,8 +15,9 @@
 .assessment-verdict{display:flex;align-items:center;gap:12px}.assessment-verdict>strong{font-size:28px;font-weight:650;font-variant-numeric:tabular-nums}
 .assessment-reason{margin:10px 0;color:var(--muted);font-size:12px}.assessment-reason:empty{display:none}
 .assessment-drivers{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:7px}
-.assessment-drivers li{display:flex;align-items:baseline;gap:8px;border-left:2px solid var(--green);padding-left:10px;font-size:12px;min-width:0;overflow-wrap:anywhere}
-.assessment-drivers li>span{flex:1}.assessment-drivers strong{font-variant-numeric:tabular-nums}.assessment-drivers a{color:var(--green);white-space:nowrap;padding:6px 0}
+.assessment-drivers>li{border-left:2px solid var(--green);padding-left:10px;font-size:12px;min-width:0;overflow-wrap:anywhere}
+.assessment-driver-summary{display:flex;align-items:baseline;gap:8px}.assessment-driver-summary>span{flex:1}.assessment-drivers strong{font-variant-numeric:tabular-nums}.assessment-drivers a{color:var(--green);white-space:nowrap;padding:6px 0}
+.assessment-finding{color:var(--muted);margin-top:3px}.assessment-finding summary{cursor:pointer;padding:6px 0}.assessment-finding p{margin:4px 0 8px;line-height:1.5}.assessment-finding ol{list-style:none;margin:0;padding:0;display:grid;gap:2px}.assessment-finding li{display:flex;flex-wrap:wrap;gap:4px 16px}
 .assessment-drivers meter{width:64px;height:8px;flex-shrink:0;accent-color:var(--green)}.assessment-contributions .is-penalty meter::-webkit-meter-optimum-value{background:var(--red)}
 .assessment-time{display:block;color:var(--muted);font-size:10px;margin-top:10px}.assessment-time:empty{display:none}
 .assessment-evidence{margin-top:10px;font-size:12px;color:var(--muted)}.assessment-evidence summary{cursor:pointer;min-height:36px;display:flex;align-items:center}.assessment-evidence summary:after{content:'+';margin-left:auto}.assessment-evidence[open] summary:after{content:'−'}.assessment-evidence ul{margin:0;padding-left:18px}

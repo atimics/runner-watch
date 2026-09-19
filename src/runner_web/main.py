@@ -5224,7 +5224,20 @@ def _flash_report_action(
 
     if sports_event is not None and not _sports_report_is_open(sports_event, at=current_time):
         return action("closed", "Reports closed", "Game has started")
-    if not _flash_provider_ready():
+    route = None
+    if user_id:
+        with connection() as database:
+            route = route_for_user(database, user_id, managed_model=FLASH.model)
+        if not route.available:
+            return action(
+                "unavailable",
+                "Report unavailable",
+                route.unavailable_reason or "Your model route is not available.",
+                message=failure_message,
+                status_tone="error" if failure_message else "",
+            )
+    managed_route = route is None or route.kind == "managed"
+    if managed_route and not _flash_provider_ready():
         return action(
             "unavailable",
             "Report unavailable",
@@ -5232,7 +5245,7 @@ def _flash_report_action(
             message=failure_message,
             status_tone="error" if failure_message else "",
         )
-    if not _flash_daily_capacity_available(at=current_time):
+    if managed_route and not _flash_daily_capacity_available(at=current_time):
         return action(
             "unavailable",
             "Report unavailable",

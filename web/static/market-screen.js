@@ -2,29 +2,96 @@
   'use strict';
   const node = document.getElementById('screenData');
   let screen = node ? JSON.parse(node.textContent) : null;
+  // Late-loaded detail views consume the latest accepted response.
+  if (node) node.ratiScreenDetail = screen;
   document.addEventListener('error', event => { if (event.target.matches?.('[data-portrait]')) event.target.hidden = true; }, true);
   const chart = document.querySelector('.price-chart');
   const status = document.querySelector('[data-chart-status]');
   let activeTag = null;
+  function filterControls() {
+    const filters = document.querySelector('[data-tag-filters]');
+    if (!filters) return;
+    filters.querySelectorAll('[data-retained-filter]').forEach(chip => {
+      if (chip.dataset.tag !== activeTag) chip.remove();
+    });
+    filters.querySelectorAll('.chip').forEach(chip => {
+      chip.setAttribute('aria-pressed', String((chip.dataset.tag || '') === (activeTag || '')));
+    });
+    filters.querySelector('.chip-all')?.toggleAttribute('hidden', !activeTag);
+    if (!filters.querySelector('.chip:not(.chip-all)')) filters.remove();
+  }
   function applyTagFilter() {
-    const list = document.querySelector('[data-tag-list]');
-    if (!list) return;
-    list.querySelectorAll('.ticker').forEach(row => {
+    const surface = document.querySelector('[data-live-surface]');
+    if (!surface) return;
+    const rows = [...surface.querySelectorAll('[data-tag-list] .ticker')];
+    rows.forEach(row => {
       row.hidden = Boolean(activeTag) && (row.dataset.tag || '') !== activeTag;
     });
+    const showEmpty = Boolean(activeTag) && !rows.some(row => !row.hidden);
+    let empty = surface.querySelector('[data-filter-empty]');
+    if (showEmpty && !empty) {
+      empty = document.createElement('div');
+      empty.className = 'empty'; empty.dataset.filterEmpty = '';
+      empty.setAttribute('role', 'status');
+      const message = document.createElement('p'), all = document.createElement('button');
+      message.textContent = 'No results in this state.';
+      all.type = 'button'; all.className = 'chip'; all.dataset.clearTagFilter = '';
+      all.textContent = 'Show all'; empty.append(message, all); surface.append(empty);
+    }
+    if (empty) empty.hidden = !showEmpty;
+    const serverEmpty = surface.querySelector('.empty:not([data-filter-empty])');
+    if (serverEmpty) serverEmpty.hidden = showEmpty;
+    filterControls();
   }
-  const tagFilters = document.querySelector('[data-tag-filters]');
-  if (tagFilters) tagFilters.addEventListener('click', event => {
-    const chip = event.target.closest('.chip');
+  function refreshTagFilters(next) {
+    const current = document.querySelector('[data-tag-filters]');
+    const focused = current?.contains(document.activeElement) ? document.activeElement.dataset.tag : null;
+    let incoming = next.querySelector('[data-tag-filters]');
+    if (activeTag && !incoming?.querySelector(`.chip[data-tag="${activeTag}"]`)) {
+      if (!incoming) {
+        incoming = document.createElement('div');
+        incoming.className = 'tag-filters'; incoming.dataset.tagFilters = '';
+        incoming.setAttribute('aria-label', 'Filter by state');
+      }
+      const retained = document.createElement('button');
+      retained.type = 'button'; retained.className = 'chip chip-' + activeTag;
+      retained.dataset.tag = activeTag; retained.dataset.retainedFilter = '';
+      const dot = document.createElement('i');
+      retained.append(dot, `0 ${activeTag.replaceAll('-', ' ')}`); incoming.prepend(retained);
+      if (!incoming.querySelector('.chip-all')) {
+        const all = document.createElement('button');
+        all.type = 'button'; all.className = 'chip chip-all'; all.dataset.tag = '';
+        all.textContent = 'All'; incoming.append(all);
+      }
+    }
+    if (current) {
+      if (incoming) current.replaceWith(incoming);
+      else current.remove();
+    } else if (incoming) {
+      const search = document.querySelector('.topbar .search');
+      if (search) search.before(incoming);
+    }
+    filterControls();
+    if (focused !== null) {
+      const target = [...document.querySelectorAll('[data-tag-filters] .chip')]
+        .find(chip => chip.dataset.tag === focused && !chip.hidden);
+      (target || document.querySelector('#marketSearch'))?.focus();
+    }
+  }
+  document.addEventListener('click', event => {
+    if (event.target.closest('[data-clear-tag-filter]')) {
+      activeTag = null; applyTagFilter();
+      (document.querySelector('[data-tag-filters] .chip') || document.querySelector('#marketSearch'))?.focus();
+      return;
+    }
+    const chip = event.target.closest('[data-tag-filters] .chip');
     if (!chip) return;
     const tag = chip.dataset.tag || '';
     activeTag = (!tag || activeTag === tag) ? null : tag;
-    tagFilters.querySelectorAll('.chip').forEach(item => {
-      item.setAttribute('aria-pressed', String((item.dataset.tag || '') === (activeTag || '')));
-    });
-    const all = tagFilters.querySelector('.chip-all');
-    if (all) all.toggleAttribute('hidden', !activeTag);
     applyTagFilter();
+    if (!chip.isConnected || chip.hidden) {
+      (document.querySelector('[data-tag-filters] .chip:not([hidden])') || document.querySelector('#marketSearch'))?.focus();
+    }
   });
   applyTagFilter();
   const put = (selector, value) => { const el = document.querySelector(selector); if (el) el.textContent = value || ''; };
@@ -193,6 +260,7 @@
       }
     }
     screen = next;
+    if (node) node.ratiScreenDetail = next;
     if (next.states) chartStates = next.states;
     draw(next.series);
     node?.dispatchEvent(new CustomEvent('rati:screen-detail', {detail:next}));
@@ -209,23 +277,28 @@
       return next;
     } catch (_) { return null; }
   }
+  let surfaceRequestNumber = 0;
   async function refreshSurface() {
     if (document.hidden) return;
     if (screen?.refresh_url) { await refreshDetail(); return; }
-    const surface = document.querySelector('[data-live-surface]');
+    let surface = document.querySelector('[data-live-surface]');
     if (!surface || surface.contains(document.activeElement) || document.querySelector('dialog[open]')) return;
-    const key = pageKey();
+    const key = pageKey(), version = ++surfaceRequestNumber;
     try {
       const response = await fetch(location.href);
-      if (!response.ok || response.redirected || pageKey() !== key) return;
-      const next = new DOMParser().parseFromString(await response.text(), 'text/html');
+      if (!response.ok || response.redirected) return;
+      const html = await response.text();
+      if (pageKey() !== key || version !== surfaceRequestNumber) return;
+      const next = new DOMParser().parseFromString(html, 'text/html');
       const content = next.querySelector('[data-live-surface]');
-      if (!content || document.querySelector('dialog[open]') || surface.contains(document.activeElement)) return;
+      surface = document.querySelector('[data-live-surface]');
+      if (!content || !surface || document.querySelector('dialog[open]') || surface.contains(document.activeElement)) return;
       if (content.innerHTML !== surface.innerHTML) {
         const opened = new Map([...surface.querySelectorAll('[data-connection][open]')].map(el => [el.dataset.connection, !!el.querySelector('.more-connections[open]')]));
         content.querySelectorAll('[data-connection]').forEach(el => { if (opened.has(el.dataset.connection)) { el.open = true; const more = el.querySelector('.more-connections'); if (more) more.open = opened.get(el.dataset.connection); } });
         surface.replaceWith(content);
       }
+      refreshTagFilters(next);
       applyTagFilter();
     } catch (_) { /* Keep the saved view during connection recovery. */ }
   }
