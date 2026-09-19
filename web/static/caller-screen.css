@@ -1,0 +1,27 @@
+.caller-page .back{margin-bottom:24px;min-height:44px;display:inline-flex;align-items:center}
+.caller-heading>div{min-width:0}.caller-heading h1{overflow-wrap:anywhere}
+.caller-note{font-size:13px;color:var(--muted);margin:8px 0 0}
+.caller-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:26px 0;border-block:1px solid var(--line);padding:18px 0}
+.caller-stats>div{display:flex;flex-direction:column-reverse;justify-content:end;gap:4px;min-width:0}
+.caller-stats dt,.caller-values dt{font-size:11px;color:var(--muted)}
+.caller-stats dd{font-size:24px;line-height:1.2;font-weight:650;margin:0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.caller-streak{font-size:12px;color:var(--green);margin:0 0 24px}
+.caller-matchup{margin:0 0 30px;padding:18px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+.caller-matchup h2{font-size:17px;margin:0 0 18px;overflow-wrap:anywhere}
+.caller-matchup-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.caller-matchup-row>div{display:flex;flex-direction:column;min-width:0;gap:3px;overflow-wrap:anywhere}
+.caller-matchup-row>div+div{border-left:1px solid var(--line);padding-left:18px}
+.caller-matchup-row span,.caller-matchup-row small{font-size:12px;color:var(--muted)}
+.caller-matchup-row strong{font-size:24px;font-variant-numeric:tabular-nums}
+.caller-call{display:grid;grid-template-columns:minmax(0,1fr) minmax(150px,.6fr);gap:6px 20px;padding:16px 0;border-bottom:1px solid var(--line)}
+.caller-call:hover{background:var(--panel)}
+.caller-subject{min-width:0;display:flex;flex-direction:column;gap:4px;overflow-wrap:anywhere}
+.caller-market,.caller-subject small,.caller-outcome{font-size:12px;color:var(--muted)}
+.caller-subject>strong{font-size:17px;line-height:1.3;font-weight:650}
+.caller-values{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-self:center;margin:0;text-align:right}
+.caller-values dd{margin:4px 0 0;font-variant-numeric:tabular-nums;font-weight:600;overflow-wrap:anywhere}
+.caller-outcome{grid-column:1/-1;text-align:right;overflow-wrap:anywhere}
+.caller-outcome>span{margin-left:8px}
+@media(max-width:650px){.caller-call{grid-template-columns:minmax(0,1fr)}.caller-values{text-align:left;max-width:100%;margin-top:8px}.caller-outcome{text-align:left}.caller-stats{gap:8px}.caller-stats dd{font-size:22px}.caller-heading h1{font-size:28px}}
+
+@media(max-width:360px){.caller-topbar .markets{gap:2px;min-width:0}.caller-topbar .markets a{padding:7px 8px;font-size:12px}}
