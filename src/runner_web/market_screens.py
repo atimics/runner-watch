@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
@@ -162,9 +163,11 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
     if rating is not None:
         rating["tag"], rating["tag_tone"], _ = state_tag(item)
     subtitle = str(item.get("name") if coin else item.get("company") or item.get("name") or "")
-    if coin and item.get("token_address"):
-        address = str(item["token_address"])
-        subtitle = subtitle.replace(address, address[:6] + "…" + address[-4:])
+    address = str(item.get("token_address") or "") if coin else ""
+    if not re.fullmatch(r"(?:[1-9A-HJ-NP-Za-km-z]{32,44}|0x[a-fA-F0-9]{40})", address):
+        address = ""
+    if address:
+        subtitle = "CA " + address[:6] + "…" + address[-4:]
     return {
         "id": identifier,
         "name": name,
@@ -182,6 +185,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
             {
                 "freshness": "paused" if paused else "current",
                 "assessment": rating,
+                "contract_address": address,
             }
             if coin
             else {}

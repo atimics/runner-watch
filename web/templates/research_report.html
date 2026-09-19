@@ -1,5 +1,8 @@
 {% extends "market_screen.html" %}
 {% from "_content_notices.html" import content_notices %}
+{% macro report_amount(value) -%}
+{% if value|abs >= 1000000000 %}${{ '%.2f'|format(value / 1000000000) }}B{% elif value|abs >= 1000000 %}${{ '%.2f'|format(value / 1000000) }}M{% elif value|abs >= 100000 %}${{ '%.0f'|format(value / 1000) }}K{% else %}${{ '{:,.0f}'.format(value) }}{% endif %}
+{%- endmacro %}
 {% macro research_points(title, items, extra_class='') -%}
 <section class="research-section research-points {{ extra_class }}">
   <h2>{{ title }}</h2>
@@ -123,10 +126,10 @@
     <h2>Market snapshot</h2>
     <p class="report-saved">Observed {{ saved.get('observed_at') or saved.get('collected_at') or 'with the report' }}{% if saved.get('stale') %} · Marked stale at capture{% endif %}</p>
     <dl class="report-metrics">
-      {% if saved.get('price') is number %}<div><dt>Price</dt><dd>${{ '%.8g'|format(saved.price) }}</dd></div>{% endif %}
+      {% if saved.get('price') is number %}<div><dt>Price</dt><dd title="${{ saved.price }}">${{ ('%.12f'|format(saved.price)).rstrip('0').rstrip('.') if saved.price >= 0.000000000001 else '%.4g'|format(saved.price) }}</dd></div>{% endif %}
       {% if saved.get('change_24h') is number %}<div><dt>24h move</dt><dd class="{{ 'up' if saved.change_24h >= 0 else 'down' }}">{{ '%+.1f'|format(saved.change_24h) }}%</dd></div>{% endif %}
-      {% if saved.get('liquidity_usd') is number %}<div><dt>Liquidity</dt><dd>${{ '{:,.0f}'.format(saved.liquidity_usd) }}</dd></div>{% endif %}
-      {% if saved.get('volume_24h') is number %}<div><dt>24h volume</dt><dd>${{ '{:,.0f}'.format(saved.volume_24h) }}</dd></div>{% endif %}
+      {% if saved.get('liquidity_usd') is number %}<div><dt>Liquidity</dt><dd title="${{ '{:,.0f}'.format(saved.liquidity_usd) }}">{{ report_amount(saved.liquidity_usd) }}</dd></div>{% endif %}
+      {% if saved.get('volume_24h') is number %}<div><dt>24h volume</dt><dd title="${{ '{:,.0f}'.format(saved.volume_24h) }}">{{ report_amount(saved.volume_24h) }}</dd></div>{% endif %}
     </dl>
   </section>
   {% endif %}

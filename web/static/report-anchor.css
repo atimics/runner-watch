@@ -6,7 +6,7 @@
 .report-anchor .report-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:0}
 .report-anchor .report-metrics div{background:var(--bg,#0b100e);padding:14px;min-width:0}
 .report-anchor .report-metrics dt{font-size:11px;color:var(--muted);margin-bottom:6px}
-.report-anchor .report-metrics dd{font-size:23px;font-weight:700;margin:0;font-variant-numeric:tabular-nums}
+.report-anchor .report-metrics dd{font-size:clamp(17px,5vw,23px);font-weight:700;margin:0;font-variant-numeric:tabular-nums}
 .report-anchor .report-findings article{display:grid;grid-template-columns:58px minmax(0,1fr);gap:10px;padding:12px 0;border-top:1px solid var(--line)}
 .report-anchor .report-findings strong{color:var(--muted);font-size:11px;padding-top:3px}
 .report-anchor .report-findings p{margin:0;font-size:14px;line-height:1.5}

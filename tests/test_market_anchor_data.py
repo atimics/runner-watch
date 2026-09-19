@@ -54,3 +54,13 @@ def test_paused_quote_keeps_saved_risk_state_visible():
     assert item['tag'] == 'AVOID'
     assert item['assessment']['tag'] == 'AVOID'
     assert item['change'] == 'Price paused'
+
+
+def test_token_subtitle_uses_its_contract_address():
+    address = 'DezXAZ8z7PnrnRJjz3wXBoRgixCaDqdGX2FNBFpPB263'
+    item = listing('memecoins', [{
+        'id': 'bonk', 'symbol': 'BONK', 'name': 'Saved assessment example',
+        'token_address': address,
+    }])['rows'][0]
+    assert item['subtitle'] == 'CA DezXAZ…B263'
+    assert item['contract_address'] == address

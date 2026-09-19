@@ -3,6 +3,18 @@
   const node = document.getElementById('screenData');
   const panel = document.querySelector('[data-market-assessment]');
   if (!node || !panel) return;
+  const copy = document.querySelector('[data-copy-contract]');
+  copy?.addEventListener('click', async () => {
+    const status = document.querySelector('[data-copy-status]');
+    try {
+      await navigator.clipboard.writeText(copy.dataset.contract);
+      status.textContent = 'Contract address copied.';
+      copy.textContent = 'Copied';
+    } catch (_) {
+      document.querySelector('.token-contract details').open = true;
+      status.textContent = 'Select the contract address to copy it.';
+    }
+  });
   const put = (name, value) => {
     const target = panel.querySelector(`[data-assessment-${name}]`);
     if (target) target.textContent = value ?? '';

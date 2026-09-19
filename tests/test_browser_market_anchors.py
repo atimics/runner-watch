@@ -176,3 +176,19 @@ def test_detail_api_refresh_updates_assessment_evidence(page):
     expect(source).to_have_attribute("href", "https://example.com/new")
     page.locator("[data-assessment-evidence] summary").click()
     expect(page.locator("[data-assessment-risks]")).to_have_text("Liquidity remains concentrated.")
+
+
+def test_coin_contract_copy_uses_the_full_address(page):
+    market, raw = long_sample('coin')
+    screen = detail(market, {'coin': raw, 'history': []})
+    page.add_init_script("""
+        Object.defineProperty(navigator, 'clipboard', {value: {
+            writeText: async value => document.body.dataset.copiedAddress = value
+        }});
+    """)
+    open_html(page, screens.render(screen), refresh=screen)
+    page.get_by_role('button', name='Copy CA', exact=True).click()
+    expect(page.get_by_role('button', name='Copied', exact=True)).to_be_visible()
+    expect(page.locator('body')).to_have_attribute('data-copied-address', ADDRESS)
+    page.locator('.token-contract summary').click()
+    expect(page.locator('.token-contract code')).to_have_text(ADDRESS)

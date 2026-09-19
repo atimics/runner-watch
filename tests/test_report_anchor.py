@@ -73,3 +73,12 @@ def test_stock_report_keeps_existing_layout():
     assert 'report-expand' not in html
     assert 'Saved report' not in html
     assert '<section id="report-sources"' in html
+
+
+def test_coin_report_uses_readable_small_prices_and_compact_volume():
+    html = render_report('coin', evidence_snapshot={
+        'price': 0.000018, 'volume_24h': 12450000,
+    })
+    assert '$0.000018</dd>' in html
+    assert '$12.45M' in html
+    assert 'title="$12,450,000"' in html
