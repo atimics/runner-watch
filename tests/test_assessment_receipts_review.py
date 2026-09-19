@@ -1,5 +1,7 @@
 """Chain patterns keep their complete proof through the public assessment."""
 
+import json
+
 from bs4 import BeautifulSoup
 
 from runner_web.market_assessments import assessment
@@ -31,12 +33,13 @@ def test_round_trip_pattern_keeps_all_receipts_and_context_in_rendered_html():
     assert len(driver["evidence"]) == 4
     expected = [receipt["receipt_url"] for receipt in finding["evidence"]]
     assert [receipt["receipt_url"] for receipt in driver["evidence"]] == expected
-    panel = BeautifulSoup(render(screen), "html.parser").select_one(".assessment-finding")
-    assert panel.select_one("summary").get_text(strip=True) == "Pattern · 4 receipts"
-    assert panel.select_one("p").get_text() == finding["explanation"]
-    assert [item.select_one("a")["href"] for item in panel.select("li")] == expected
-    assert [item.select("a")[1]["href"] for item in panel.select("li")] == [
-        receipt["source_url"] for receipt in finding["evidence"]
+    html = BeautifulSoup(render(screen), "html.parser")
+    payload = json.loads(html.select_one("#screenData").string)
+    saved = payload["item"]["assessment"]["drivers"][0]
+    assert saved["explanation"] == finding["explanation"]
+    assert [r["receipt_url"] for r in saved["evidence"]] == expected
+    assert [r["source_url"] for r in saved["evidence"]] == [
+        r["source_url"] for r in finding["evidence"]
     ]
 
 
@@ -88,6 +91,7 @@ def test_receipts_validate_each_url_and_publish_only_display_fields():
 def test_pattern_explanation_is_escaped_in_server_render():
     screen, _ = chain_pattern()
     screen["item"]["assessment"]["drivers"][0]["explanation"] = "<script>alert(1)</script>"
-    panel = BeautifulSoup(render(screen), "html.parser").select_one(".assessment-finding")
-    assert panel.select("script") == []
-    assert panel.select_one("p").get_text() == "<script>alert(1)</script>"
+    html = BeautifulSoup(render(screen), "html.parser")
+    payload = json.loads(html.select_one("#screenData").string)
+    assert payload["item"]["assessment"]["drivers"][0]["explanation"] == "<script>alert(1)</script>"
+    assert "<script>alert(1)</script>" not in str(html)

@@ -21,3 +21,5 @@ main:has(.ticker-map),main:has(.token-replay){max-width:1040px}.market-screen:ha
 .map-connection-orbit{fill:none;stroke:var(--line);stroke-dasharray:3 5}.map-connection text{font-size:11px}.map-connection:focus-visible{outline:2px solid var(--text)}
 
 .token-contract [hidden]{display:none}.token-contract{flex-wrap:wrap}.token-contract [data-contract-fallback]{flex-basis:100%}
+
+.map-receipts{padding-left:18px}.map-receipts li{margin:8px 0}.map-receipts a{margin-right:12px}

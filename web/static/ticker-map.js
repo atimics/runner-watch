@@ -196,6 +196,7 @@
       const g = svg('g', {class:`map-person map-connection ${event.tone}`, role:'button', tabindex:0, 'aria-label':label, 'data-connection':event.id + ':' + node.id});
       peopleLayer.append(svg('line', {x1:node.x,y1:node.y,x2:x,y2:y,class:`map-edge ${event.tone}`}));
       g.append(svg('circle',{cx:x,cy:y,r:radius}),svg('text',{x,y:y+radius+14,'text-anchor':'middle'},event.ticker),svg('text',{x,y:y+radius+28,'text-anchor':'middle',class:'map-node-action'},`${({'Bought':'Buy','Sold':'Sell','Reported stake':'Stake'}[event.action] || (/director/i.test(role) ? 'Director' : event.action))} ${event[unit] == null ? '' : unit === 'percent' ? number(event.percent)+'%' : new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',notation:'compact',maximumFractionDigits:1}).format(event.value)}`),svg('title',{},label));
+      if (/director/i.test(role)) g.append(svg('text',{x,y:y+radius+41,'text-anchor':'middle',class:'map-node-action'},'Director'));
       const activate = () => {pinned = null; hovered = null; focused = null; selectedConnection = event; drawRing(); source(event);};
       g.addEventListener('click',activate); g.addEventListener('keydown',e => {if (['Enter',' '].includes(e.key)) {e.preventDefault();activate();}});
       peopleLayer.append(g);
@@ -303,7 +304,7 @@
     $('events').querySelector(`[data-event-id="${CSS.escape(event.id)}"]`)?.focus({preventScroll:true});
   }
   function render(restoreFocus = true, animate = true) {
-    graph.setAttribute('viewBox', small.matches ? '0 0 360 450' : '0 0 760 440');
+    graph.setAttribute('viewBox', small.matches ? '0 0 360 480' : '0 0 760 440');
     const active = document.activeElement;
     const focusSelector = active?.hasAttribute('data-score-key') ? `[data-score-key="${CSS.escape(active.dataset.scoreKey)}"]` : active?.hasAttribute('data-person') ? `[data-person="${CSS.escape(active.dataset.person)}"]` : active?.hasAttribute('data-map-score-center') ? '[data-map-score-center]' : active?.hasAttribute('data-event-id') ? `[data-event-id="${CSS.escape(active.dataset.eventId)}"]` : null;
     if (ringDirty) { drawRing(); ringDirty = false; }

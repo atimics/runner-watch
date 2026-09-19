@@ -10,13 +10,13 @@ Each joint transaction remains one event linked to its reporting people. Schedul
 
 `GET /api/stocks/{ticker}/map` reads up to 50 filings from that ticker per page. Its cursor orders tied dates by accession. Coverage reports the saved filing count. The timeline uses filing time. Selecting an event also marks its filing time on the saved price chart when that date is covered.
 
-People use SEC CIKs where available. Name-based matches carry a visible label. Bubble sizes are equal. Older aggregate rows carry “Filing summary.” Each collector cycle attempts to restore 20 older rows from saved SEC XML documents. The restore cursor lives in `worker_state.stock_map_restore_after`; deleting that key starts another archive pass.
+People use SEC CIKs where available. Name-based matches carry a visible label. Each person has a ring of stock connections. Cross-stock matches use SEC CIKs. The response includes up to 500 candidate filings across those identities, then checks the parsed reporting people. The interface marks a limited result. Each bubble keeps one filing line, with its own ticker, action, role, date and source. Stake percentage and trade value use separate size scales. People and connections have page controls. Older aggregate rows carry “Filing summary.” Each collector cycle attempts to restore 20 older rows from saved SEC XML documents. The restore cursor lives in `worker_state.stock_map_restore_after`; deleting that key starts another archive pass.
 
 The Schedule parser accepts both SC and SCHEDULE form names. Its cover-page mappings follow the SEC [XML specification](https://www.sec.gov/file/schedule-13d-13g-tech-specs-20), including the separate Schedule 13G person fields. Missing numeric values remain empty, and numeric zero stays zero.
 
 ## Coin evidence
 
-The coin map opens at the final saved frame. Launch, replay, timeline, saved revision links, GIF export, and evidence packages keep their existing receipt data. Wallets and recorded events open the visible source panel. The activity list follows the chosen frame.
+The coin detail follows ticker, chart, then map. It uses the stock map stylesheet. The token and RATi score sit at the centre; saved wallets and their connections surround it. The launch wallet is labelled. Wallets and recorded events open the source panel, which also holds Copy CA. The map reads the final saved frame and supports saved revision links. Pending chain data keeps the token and score visible. Replay generation, receipt checks and export endpoints keep their existing data contracts.
 
 ## Checks
 

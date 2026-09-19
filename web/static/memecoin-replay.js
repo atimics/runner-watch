@@ -62,20 +62,39 @@
     center.append(svg('circle',{cx,cy,r:r-width/2-3,class:'map-center'}),svg('text',{x:cx,y:cy-6,'text-anchor':'middle',class:'map-center-text'},item.name?.length > 10 ? item.name.slice(0,6)+'…' : item.name),svg('text',{x:cx,y:cy+16,'text-anchor':'middle',class:'map-center-score'},score())); activate(center,()=>overview()); graph.append(center);
     $('paging').hidden=all.length<=size; $('previous').disabled=page===0; $('next').disabled=(page+1)*size>=all.length; $('page').textContent=`${page*size+1}–${page*size+shown.length} of ${all.length}`;
   }
+  const findings = () => (item.assessment?.drivers || []).filter(f => f.evidence?.length);
+  function findingDetails(finding) {
+    selected = 'finding:' + finding.id; $('score-return').hidden = false;
+    const panel = $('selection'); panel.replaceChildren(make('h3',finding.label),make('p',finding.explanation));
+    const list = make('ul',null,'map-receipts');
+    (finding.evidence || []).forEach((receipt,i) => {
+      const row = make('li');
+      [[receipt.receipt_url,`${receipt.kind} ${i+1} ↗`],[receipt.source_url,'Explorer ↗']].forEach(([href,label]) => {
+        if (!href) return;
+        try {const url = new URL(href,location.origin); if (!['https:','http:'].includes(url.protocol)) return;
+          const link=make('a',label); link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';row.append(link);
+        } catch (_) { /* A valid saved URL is required. */ }
+      });
+      list.append(row);
+    });
+    panel.append(list);
+    document.dispatchEvent(new CustomEvent('rati:map-time',{detail:{time:null}}));
+  }
   function activity() {
-    const list=$('events'); list.replaceChildren(); const frame=data.frames.at(-1),seen=new Set();
-    [...frame.edges].reverse().forEach(edge => {if(seen.has(edge.event_id))return;seen.add(edge.event_id); const event=data.events.find(e=>e.event_id===edge.event_id),node=frame.nodes.find(n=>n.id===edge.source); if(!node)return; const button=make('button',null,'map-event');button.type='button';button.dataset.replayEvent=edge.event_id;button.setAttribute('aria-pressed','false'); const text=make('span');text.append(make('strong',`${edge.role} · ${(event.wallet||node.address).slice(0,6)}…`),make('small',`Slot ${edge.slot}${event.observed_at?' · '+event.observed_at:''}`));button.append(make('span','●',edge.role==='sold'?'down':edge.role==='bought'?'up':''),text);button.addEventListener('click',()=>details(node,edge.event_id));list.append(button);});
-    if(!seen.size)list.append(make('p','Saved chain events will appear here.','map-note'));
+    const list=$('events'); list.replaceChildren(); const frame=data?.frames.at(-1),seen=new Set();
+    [...(frame?.edges || [])].reverse().forEach(edge => {if(seen.has(edge.event_id))return;seen.add(edge.event_id); const event=data.events.find(e=>e.event_id===edge.event_id),node=frame.nodes.find(n=>n.id===edge.source); if(!node)return; const button=make('button',null,'map-event');button.type='button';button.dataset.replayEvent=edge.event_id;button.setAttribute('aria-pressed','false'); const text=make('span');text.append(make('strong',`${edge.role} · ${(event.wallet||node.address).slice(0,6)}…`),make('small',`Slot ${edge.slot}${event.observed_at?' · '+event.observed_at:''}`));button.append(make('span','●',edge.role==='sold'?'down':edge.role==='bought'?'up':''),text);button.addEventListener('click',()=>details(node,edge.event_id));list.append(button);});
+    findings().forEach(f => {const button=make('button',null,'map-event');button.type='button';button.dataset.findingId=f.id;button.setAttribute('aria-pressed',String(selected==='finding:'+f.id));const text=make('span');text.append(make('strong',f.label),make('small',`${f.evidence.length} receipts`));button.append(make('span','●'),text);button.addEventListener('click',()=>findingDetails(f));list.append(button);});
+    if(!seen.size && !findings().length)list.append(make('p','Saved chain events will appear here.','map-note'));
   }
   async function load() {
     controller?.abort();controller=new AbortController();
     const revision=new URL(location.href).searchParams.get('replay');
-    try {const res=await fetch(`/api/memecoins/${encodeURIComponent(root.dataset.coinId)}/replay${revision?'?revision='+encodeURIComponent(revision):''}`,{signal:controller.signal,headers:{Accept:'application/json'}});if(!res.ok)throw Error('Please retry to load saved chain events.');const record=await res.json();if(record.status!=='ready'){$('status').textContent=record.message;timer=setTimeout(load,15000);return;}data=record.payload;receiptBase=record.receipt_base||'/api/memecoins/evidence/';$('status').textContent='';draw();activity();}catch(e){if(e.name!=='AbortError')$('status').textContent=e.message;}
+    try {const res=await fetch(`/api/memecoins/${encodeURIComponent(root.dataset.coinId)}/replay${revision?'?revision='+encodeURIComponent(revision):''}`,{signal:controller.signal,headers:{Accept:'application/json'}});if(!res.ok)throw Error('Please retry to load saved chain events.');const record=await res.json();if(record.status!=='ready'){$('status').textContent=record.message || 'Saved chain events will appear here.';timer=setTimeout(load,15000);return;}data=record.payload;receiptBase=record.receipt_base||'/api/memecoins/evidence/';$('status').textContent='';draw();activity();}catch(e){if(e.name!=='AbortError')$('status').textContent=e.message;}
   }
   $('previous').addEventListener('click',()=>{page--;draw();});$('next').addEventListener('click',()=>{page++;draw();});$('score-return').addEventListener('click',()=>overview());
   root.addEventListener('keydown',e=>{if(e.key==='Escape'){overview();graph.querySelector('.map-score-center')?.focus();}});
   small.addEventListener('change',()=>{page=0;draw();});
-  screen?.addEventListener('rati:screen-detail',e=>{if(e.detail?.market!=='memecoins'||e.detail.item?.id!==root.dataset.coinId)return;item=e.detail.item;draw();if(!selected)overview();});
+  screen?.addEventListener('rati:screen-detail',e=>{if(e.detail?.market!=='memecoins'||e.detail.item?.id!==root.dataset.coinId)return;item=e.detail.item;draw();activity();if(selected?.startsWith('finding:') && !findings().some(f=>'finding:'+f.id===selected)){overview();graph.querySelector('.map-score-center')?.focus();}else if(!selected)overview();});
   window.addEventListener('pagehide',()=>{controller?.abort();clearTimeout(timer);});
-  draw();overview();load();
+  draw();overview();activity();load();
 })();
