@@ -204,7 +204,7 @@ def test_generated_claims_and_links_stay_out_of_stock_announcements(monkeypatch)
         [],
         [],
     )
-    text = main._compose_update_announcement(activity)
+    text = main._announcement_cards(activity)[0]["text"]
     assert "$AAAA" in text and "/t/AAAA" in text
 
 
@@ -224,7 +224,7 @@ def test_sports_card_uses_game_names_and_destinations():
     )
     text = main._announcement_cards(activity)[0]["text"]
     assert "Lions at Bears" in text and "$SPORTS" not in text
-    assert main.SPORTS_ORIGIN + "/game/game-one" in text
+    assert text.count("https://") == 1
     assert main.SPORTS_ORIGIN + "/research/report" in text
 
 
@@ -248,7 +248,7 @@ def test_new_sec_cards_keep_people_actions_and_amendments():
 
     insert(filing_row("old", evidence_json="{}"))
     with db.connection() as database:
-        db._migration_070_telegram_outbox(database)
+        db._migration_074_telegram_outbox(database)
     insert(filing_row("new", evidence_json=json.dumps(evidence())))
     insert(filing_row("amended", form="4/A", evidence_json=json.dumps(evidence())))
     with db.connection() as database:
@@ -265,11 +265,14 @@ def test_new_sec_cards_keep_people_actions_and_amendments():
         ]
     assert len(cards) == 8
     purchase = next(c for c in cards if c["subject"] == "new:nonDerivative:1")
+    from runner_web.telegram import strip_markdown_v2
+
+    purchase["text"] = strip_markdown_v2(purchase["text"])
     assert "Jane Lee" in purchase["text"] and "Lee Family, LLC" in purchase["text"]
     assert "Shared transaction" in purchase["text"] and "Shares / units: 100" in purchase["text"]
     assert "2026-09-01" in purchase["text"] and "2026-09-05" in purchase["text"]
     assert "https://app.test/t/TEST#ticker-map" in purchase["text"]
-    assert "/new/index.htm" in purchase["text"]
+    assert "/new/index.htm" in purchase["event"]["source_url"]
     assert {c["event"]["action"] for c in cards} == {
         "Bought",
         "Sold",
@@ -315,7 +318,9 @@ def test_stake_cards_keep_each_person_and_share_class():
     cards = [outbox.stock_event_card("TEST", event) for event in events]
     assert "Fund" in cards[0]["text"] and "Class A" in cards[0]["text"]
     assert "Manager" in cards[1]["text"] and "Class B" in cards[1]["text"]
-    assert all("Reported stake (%)" in c["text"] for c in cards)
+    from runner_web.telegram import strip_markdown_v2
+
+    assert all("Reported stake (%)" in strip_markdown_v2(c["text"]) for c in cards)
     assert all("Shares / units: 5000" in c["text"] for c in cards)
 
 
@@ -324,3 +329,66 @@ def test_oversize_cards_fail_before_reserving_any_items():
         queue([card("valid"), card("huge", text="🦊" * 2049)])
     with db.connection() as database:
         assert database.execute("SELECT COUNT(*) FROM telegram_outbox_items").fetchone()[0] == 0
+
+
+def test_a_queued_runner_expires_before_delivery():
+    story = {
+        "kind": "runner",
+        "subject": "AAAA:" + AT.isoformat(),
+        "ticker": "AAAA",
+        "entered_at": AT.isoformat(),
+        "expires_at": (AT + timedelta(minutes=3)).isoformat(),
+        "text": "$AAAA is running",
+    }
+    queue([story])
+    result = deliver(lambda *_: pytest.fail("expired story sent"), AT + timedelta(minutes=4))
+    assert result["status"] == "empty"
+    with db.connection() as database:
+        assert database.execute("SELECT status,attempts FROM telegram_outbox").fetchone()[:] == (
+            "stale",
+            0,
+        )
+        assert (
+            database.execute("SELECT status FROM telegram_alert_deliveries").fetchone()[0]
+            == "stale"
+        )
+
+
+def test_saved_markdown_rejection_holds_exact_body():
+    from runner_web.telegram import send_post
+
+    calls = []
+
+    def receiver(request, **_):
+        calls.append(request.data)
+        raise HTTPError(
+            request.full_url,
+            400,
+            "bad request",
+            {},
+            BytesIO(b'{"ok":false,"description":"could not parse entities"}'),
+        )
+
+    queue([card(text="*broken")])
+    result = deliver(lambda config, text: send_post(config, text, opener=receiver))
+    assert result["status"] == "failed" and len(calls) == 1
+    assert outbox.announcement_history()["posts"][0]["text"] == "*broken"
+
+
+def test_unicode_overflow_is_rejected_before_network():
+    from runner_web.telegram import send_post
+
+    with pytest.raises(TelegramDeliveryError):
+        send_post(CONFIG, "🦊" * 2049, opener=lambda *_: pytest.fail("oversize sent"))
+
+
+def test_long_source_fields_keep_the_story_link():
+    from runner_web.telegram import format_public_report_post_md
+    from tests.test_telegram_format import _assert_parses
+
+    text = format_public_report_post_md(
+        {"ticker": "TEST", "public_id": "report", "headline": "🦊_*[]" * 2000},
+        origin="https://app.test",
+    )
+    assert message_units(text) <= 4096 and text.endswith("https://app.test/research/report)")
+    _assert_parses(text)

@@ -221,6 +221,38 @@ def test_stock_search_reaches_rows_after_the_first_page(board_client, monkeypatc
     assert pages == [0, 1]
 
 
+def test_stock_search_opens_a_tracked_ticker_outside_the_pulse_board(
+    board_client, monkeypatch
+):
+    monkeypatch.setattr(
+        web_main,
+        "_public_pulse_data",
+        lambda **_: {"rows": [], "has_more": False, "updated_at": ""},
+    )
+    monkeypatch.setattr(web_main, "_ticker_exists", lambda ticker: ticker == "AAPL")
+    monkeypatch.setattr(
+        web_main,
+        "_public_ticker_detail_data",
+        lambda ticker: {
+            "ticker": ticker,
+            "company": "Apple Inc.",
+            "current": {
+                "ticker": ticker,
+                "company": "Apple Inc.",
+                "price": 213.45,
+                "change_pct": 1.2,
+                "score": 0,
+            },
+        },
+    )
+
+    response = board_client.get("/?q=aapl")
+
+    assert response.status_code == 200
+    assert 'href="/t/AAPL"' in response.text
+    assert "Try another search" not in response.text
+
+
 def test_screen_quote_and_chart_keep_provider_details_private(board_client, monkeypatch):
     secret = "private-provider-log"
     monkeypatch.setattr(web_main, "_known_ticker", lambda _: True)
@@ -253,4 +285,8 @@ def test_screen_quote_and_chart_keep_provider_details_private(board_client, monk
         "time": "Sep 12 · 12:00 UTC",
     }
     chart = board_client.get("/api/screens/stocks/ABC/chart").json()
-    assert chart == {"points": [{"value": 2.5, "time": "2026-09-12T12:00:00Z"}]}
+    assert chart["points"] == [{"value": 2.5, "time": "2026-09-12T12:00:00Z"}]
+    # The state history carries when the action tag changed and nothing else -
+    # no trade state, stage or rug level, which are what it is collapsed from.
+    assert set(chart) == {"points", "states"}
+    assert all(set(change) == {"time", "tone"} for change in chart["states"])

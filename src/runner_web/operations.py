@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from runner_node.runtime import NODE_SERVICE
 from runner_watch.source_catalog import DEFAULT_SOURCE_POLICIES
 from runner_web.ai_kol import FLASH
+from runner_web.client_errors import client_error_summary
 from runner_web.data_health import data_health
 from runner_web.db import MIGRATIONS, connection
 from runner_web.flash_wallet import (
@@ -136,8 +137,14 @@ def worker_health(
         required = {str(name) for name in instance_detail.get("required_workers", [])}
         running = {str(name) for name in instance_detail.get("running_workers", [])}
         missing = sorted(required - running)
-        if missing:
+        stale_workers = [
+            str(item.get("worker"))
+            for item in instance_detail.get("stale_workers", [])
+            if isinstance(item, dict) and item.get("worker")
+        ]
+        if missing or stale_workers:
             reported_status = "degraded"
+        if missing:
             instance_detail["missing_workers"] = missing
         fresh = age <= OPERATIONS.worker_heartbeat_max_age_seconds
         instances.append(
@@ -260,9 +267,18 @@ def health_status(*, checked_at: datetime | None = None) -> dict[str, Any]:
             "latest_scan_at": None,
             "edgar_updated_at": None,
             "scan_error": None,
+            "worker_state": {},
         }
     workers = worker_health(states, checked_at=checked_at)
     trainer = trainer_health(states, checked_at=checked_at)
+    safe_worker_state = {
+        key: (
+            {"present": bool(item.get("value")), "updated_at": item.get("updated_at")}
+            if "error" in key
+            else item
+        )
+        for key, item in states.items()
+    }
     return {
         "status": "ok" if workers["status"] == "ok" else "degraded",
         "checked_at": checked_at.isoformat(),
@@ -272,6 +288,7 @@ def health_status(*, checked_at: datetime | None = None) -> dict[str, Any]:
         "latest_scan_at": latest_scan,
         "edgar_updated_at": states.get("edgar_last_refresh", {}).get("updated_at"),
         "scan_error": bool(states.get("background_scan_last_error", {}).get("value")),
+        "worker_state": safe_worker_state,
     }
 
 
@@ -483,6 +500,13 @@ def data_health_details_api(
 @router.get("/health/performance")
 def performance_api(_access: None = Depends(require_operations_access)) -> dict[str, Any]:
     return performance_snapshot()
+
+
+@router.get("/health/client-errors")
+def client_errors_api(
+    _access: None = Depends(require_operations_access), limit: int = 50
+) -> dict[str, Any]:
+    return client_error_summary(limit=limit)
 
 
 @router.get("/api/ranker/status")

@@ -61,9 +61,7 @@ def test_market_coverage_follows_callable_routes(client):
     for key in ("crypto_markets", "sports_scores", "sports_odds", "sports_news"):
         assert coverage()[key]["private_ready"] is False
     coingecko = next(
-        row
-        for row in client.get("/api/v1/providers").json()["providers"]
-        if row["id"] == "helius"
+        row for row in client.get("/api/v1/providers").json()["providers"] if row["id"] == "helius"
     )
     assert coingecko["runtime_available"] is False
     assert coingecko["state"] == "cloud_required"

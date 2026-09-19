@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import math
 import os
 import sqlite3
@@ -24,6 +25,8 @@ from runner_watch.provider_contracts import (
     ProviderProvenance,
     ProviderRequest,
 )
+
+LOG = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[int, int, str], None]
 EASTERN = ZoneInfo("America/New_York")
@@ -376,7 +379,7 @@ class MassiveClient:
         try:
             self.fetch_recorder(fetch)
         except Exception:
-            pass
+            LOG.debug("Massive fetch recorder failed", exc_info=True)
 
     def _safe_error(self, error: object) -> str:
 

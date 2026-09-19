@@ -275,6 +275,11 @@ def _market_projection(database: Any, run_id: str, fetch: SourceFetch, collected
                 open=excluded.open,high=excluded.high,low=excluded.low,
                 close=excluded.close,volume=excluded.volume,
                 last_collected_at=excluded.last_collected_at
+            WHERE market_bars.open IS DISTINCT FROM excluded.open
+               OR market_bars.high IS DISTINCT FROM excluded.high
+               OR market_bars.low IS DISTINCT FROM excluded.low
+               OR market_bars.close IS DISTINCT FROM excluded.close
+               OR market_bars.volume IS DISTINCT FROM excluded.volume
             """,
             rows,
         )

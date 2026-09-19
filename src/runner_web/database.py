@@ -295,7 +295,17 @@ def _pool(database_url: str) -> Any:
             conninfo=database_url,
             min_size=1,
             max_size=10,
-            kwargs={"autocommit": False},
+            kwargs={
+                "autocommit": False,
+                "connect_timeout": 10,
+                "keepalives": 1,
+                "keepalives_idle": 30,
+                "keepalives_interval": 10,
+                "keepalives_count": 3,
+                "options": (
+                    "-c statement_timeout=1800000 -c idle_in_transaction_session_timeout=120000"
+                ),
+            },
             open=True,
         )
         _POSTGRES_POOL = (database_url, pool)

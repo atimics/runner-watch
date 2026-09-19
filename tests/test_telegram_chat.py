@@ -117,9 +117,7 @@ def test_prefetch_hands_over_the_board_when_no_ticker_is_named(monkeypatch):
     from runner_web import dash, telegram_chat
 
     monkeypatch.setattr(dash, "market_now", lambda: {"session": "Pre-market"})
-    monkeypatch.setattr(
-        dash, "recent_runners", lambda limit=8: {"count": 0, "entries": []}
-    )
+    monkeypatch.setattr(dash, "recent_runners", lambda limit=8: {"count": 0, "entries": []})
     message = _parse(_update("whats moving"))
 
     with connection() as database:

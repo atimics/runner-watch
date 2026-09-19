@@ -90,9 +90,7 @@ def _reference_quote(
 
     offer(leader.get("price"), leader.get("quote_time"), "report")
     if ticker:
-        candidates.extend(
-            price_marks(database, ticker, since=session_start, until=current)
-        )
+        candidates.extend(price_marks(database, ticker, since=session_start, until=current))
     if not candidates:
         return None, None, None
     quote_at, price, source = max(candidates)

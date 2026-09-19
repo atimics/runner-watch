@@ -47,8 +47,5 @@ def test_stock_home_renders_the_shared_screen(page: Page, monkeypatch):
     html = web.home(request, None).body.decode()
     page.route("http://app.test/", lambda r: r.fulfill(content_type="text/html", body=html))
     page.goto("http://app.test/")
-    expect(page.get_by_role("heading", name="List", exact=True)).to_be_visible()
-    expect(page.locator(".ticker").filter(has_text="ONE")).to_have_attribute(
-        "href", "/t/ONE"
-    )
-    expect(page.get_by_role("navigation", name="View").get_by_role("link")).to_have_count(2)
+    expect(page.locator(".ticker-list")).to_be_visible()
+    expect(page.locator(".ticker").filter(has_text="ONE")).to_have_attribute("href", "/t/ONE")

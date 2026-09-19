@@ -26,7 +26,7 @@ from runner_web.memecoin_chain_parser import (
     parse_events,
 )
 from runner_web.memecoin_replay_gif import render_gif
-from runner_web.memecoin_replay_posts import dispatch_memecoin_replays
+from runner_web.memecoin_replay_posts import caption, dispatch_memecoin_replays
 from runner_web.memecoin_store import save_memecoin_snapshot
 from runner_web.telegram import AnimationDeliveryError
 
@@ -341,7 +341,8 @@ def test_new_detection_queues_one_frozen_gif_and_delivers_once(monkeypatch):
     assert len(sent) == 1
     assert sent[0][0] == "test-channel"
     assert sent[0][1] == store.saved_replay(COIN["id"], with_gif=True)["gif"]
-    assert MINT in sent[0][2] and "?replay=" in sent[0][2]
+    assert MINT not in sent[0][2]
+    assert "new coin detected" in sent[0][2] and "?replay=" in sent[0][2]
     collect(at=AT + timedelta(minutes=5))
     store.render_pending_replays(at=AT + timedelta(minutes=5))
     assert dispatch_memecoin_replays(origin="https://app.test", at=AT, sender=receiver)["sent"] == 0
@@ -618,3 +619,27 @@ def test_coin_gif_uses_the_shared_channel_schedule(monkeypatch):
             "SELECT caption_text,message_id FROM memecoin_replay_posts"
         ).fetchone()
         assert "?replay=" in row["caption_text"] and row["message_id"] == 42
+
+
+def test_the_replay_caption_links_the_coin_page_instead_of_pasting_the_url() -> None:
+    """A bare URL is not valid Markdown V2 — its dots and hyphens are reserved.
+    sendAnimation has no plain-text retry, so a caption that fails to parse
+    loses the GIF with it."""
+
+    text = caption(
+        {
+            "symbol": "P-NUT",
+            "token_address": "abc123def456",
+            "launch": True,
+            "events": [1, 2, 3],
+            "coin_id": "sol:abc-123",
+            "id": "r-9",
+        },
+        origin="https://app.test",
+    )
+    assert "*P\\-NUT*" in text
+    assert text.endswith(
+        "[Open the coin page](https://app.test/memecoins/coin/sol%3Aabc-123"
+        "?replay=r-9#token-replay)"
+    ), text
+    assert "\n\nhttps://" not in text

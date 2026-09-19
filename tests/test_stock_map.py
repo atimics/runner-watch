@@ -1,5 +1,6 @@
 import gzip
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,6 +8,71 @@ from fastapi.testclient import TestClient
 from runner_watch.edgar import EdgarFiling, parse_beneficial_ownership_xml, parse_ownership_xml
 from runner_web import db, intelligence, main
 from runner_web.stock_map import filing_events, restore_archived_map_evidence, ticker_map
+from tests.test_market_screens import _render_template, sample
+
+
+def score_current(**changes):
+    return {
+        **sample("stocks"),
+        "ticker": "TEST",
+        "score": 45,
+        "captured_at": "2026-09-12T18:00:00+00:00",
+        "event_at": "2026-09-11T18:00:00+00:00",
+        "score_detail": {
+            "score": 45,
+            "drivers": [
+                {"key": "market", "label": "Market scanner", "value": 60},
+                {"key": "sec_event", "label": "SEC events", "value": 30},
+                {"key": "news", "label": "News", "value": 10},
+                {"key": "community", "label": "Community", "value": 0},
+                {"key": "social_search", "label": "Social / search", "value": -5},
+            ],
+            "penalties": [{"key": "rug", "label": "Rug risk", "value": -50}],
+        },
+        **changes,
+    }
+
+
+@pytest.mark.parametrize("score", [45, 0, None])
+def test_unified_score_template_keeps_score_and_lists_filings(score):
+    current = score_current(score=score)
+    html = _render_template(
+        "simple_stock_detail.html",
+        {
+            "detail": {
+                "ticker": "TEST",
+                "company": "Test Company",
+                "current": current,
+                "events": [filing_row()],
+            },
+            "active_call": None,
+            "calls": [],
+        },
+    )
+    assert f'<h3 class="map-score-heading">{score if score is not None else "—"}</h3>' in html
+    assert 'class="metrics"' not in html
+    assert 'class="breakdown"' not in html
+    assert re.search(r'<div class="map-filings">', html)
+    assert "data-map-score-return hidden" in html
+    assert 'aria-live="polite" aria-atomic="true"' in html
+    for removed in (
+        "data-map-score-time",
+        "data-map-time-slider",
+        "data-map-filter",
+        "data-map-latest",
+        "data-map-coverage",
+        "map-heading",
+        "data-chart-summary",
+        "data-chart-start",
+        "data-chart-end",
+    ):
+        assert removed not in html
+    payload = json.loads(re.search(r'id="screenData">(.*?)</script>', html).group(1))
+    assert payload["item"]["score"] == score
+    assert payload["item"]["score_detail"] == current["score_detail"]
+    fallback = re.search(r"<noscript>(.*?)</noscript>", html, re.S).group(1)
+    assert filing_row()["filing_url"] in fallback
+    assert "Recent company filings" not in html
 
 
 def ownership_xml():

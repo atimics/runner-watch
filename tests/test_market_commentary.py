@@ -311,3 +311,57 @@ def test_report_page_shows_the_analysis_and_desk_comments(monkeypatch):
     for voice in report_voices("pre"):
         assert voice["name"] in html
     assert Path("web/templates/market_reports.html").exists()
+
+
+def test_an_empty_take_is_rejected_and_retried():
+    _report("blank", "post_market")
+
+    def blank_take(request):
+        return {
+            "model": request["actor"]["model"],
+            "request_id": "commentary-blank",
+            "analysis": {"headline": "", "narrative": "", "points": []},
+            "comments": [
+                {"voice_id": voice["id"], "comment": "..."} for voice in request["voices"]
+            ],
+        }
+
+    result = generate_report_commentary(blank_take, LATE)
+
+    assert result["failed"] == 1
+    with connection() as database:
+        job = database.execute(
+            "SELECT status,attempts FROM market_report_commentary_jobs WHERE report_id='blank'"
+        ).fetchone()
+        stored = database.execute(
+            "SELECT analysis_json FROM market_session_reports WHERE id='blank'"
+        ).fetchone()
+    assert job["status"] == "queued" and int(job["attempts"]) == 1
+    assert stored["analysis_json"] is None
+
+
+def test_a_stored_blank_take_is_requeued_for_repair():
+    _report("repaired", "post_market")
+    with connection() as database:
+        database.execute(
+            "UPDATE market_session_reports SET analysis_json=? WHERE id='repaired'",
+            ('{"headline":"","narrative":""}',),
+        )
+        database.execute(
+            "UPDATE market_report_commentary_jobs SET status='complete',attempts=1 "
+            "WHERE report_id='repaired'"
+        )
+
+    generate_report_commentary(_generate, LATE)
+
+    with connection() as database:
+        job = database.execute(
+            "SELECT status FROM market_report_commentary_jobs WHERE report_id='repaired'"
+        ).fetchone()
+        stored = database.execute(
+            "SELECT analysis_json FROM market_session_reports WHERE id='repaired'"
+        ).fetchone()
+    assert job["status"] == "complete"
+    import json as _json
+
+    assert _json.loads(stored["analysis_json"])["headline"] == "The board is thin but awake."

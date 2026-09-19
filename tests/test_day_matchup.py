@@ -29,7 +29,6 @@ def _database(tmp_path: Path, monkeypatch: MonkeyPatch) -> datetime:
 
 
 def _session_day(current: datetime, *, days_back: int = 0) -> str:
-
     """The Eastern session date, which is how the product groups a trading day."""
 
     return (current.astimezone(EASTERN) - timedelta(days=days_back)).strftime("%Y-%m-%d")
@@ -63,19 +62,25 @@ def test_day_verdict_compares_settled_todays_stock_calls(tmp_path, monkeypatch) 
     current = _database(tmp_path, monkeypatch)
     today = _session_day(current)
     _closed_call(
-        "human", 10.0, 11.0,
+        "human",
+        10.0,
+        11.0,
         entry_at=f"{today}T14:00:00+00:00",
         exit_at=f"{today}T19:00:00+00:00",
         ticker="AAA",
     )
     _closed_call(
-        MACHINE_HANDLE, 10.0, 10.2,
+        MACHINE_HANDLE,
+        10.0,
+        10.2,
         entry_at=f"{today}T14:00:00+00:00",
         exit_at=f"{today}T19:00:00+00:00",
         ticker="BBB",
     )
     _closed_call(
-        MACHINE_HANDLE, 10.0, 9.9,
+        MACHINE_HANDLE,
+        10.0,
+        9.9,
         entry_at=f"{today}T14:00:00+00:00",
         exit_at=f"{today}T19:30:00+00:00",
         ticker="CCC",
@@ -83,8 +88,12 @@ def test_day_verdict_compares_settled_todays_stock_calls(tmp_path, monkeypatch) 
     # Yesterday's settlement does not count.
     yesterday = _session_day(current, days_back=1)
     _closed_call(
-        MACHINE_HANDLE, 10.0, 20.0, entry_at=f"{yesterday}T14:00:00+00:00",
-        exit_at=f"{yesterday}T19:00:00+00:00", ticker="DDD",
+        MACHINE_HANDLE,
+        10.0,
+        20.0,
+        entry_at=f"{yesterday}T14:00:00+00:00",
+        exit_at=f"{yesterday}T19:00:00+00:00",
+        ticker="DDD",
     )
 
     record = web_main._unified_caller_page_data(_human_handle())
@@ -107,7 +116,9 @@ def test_day_verdict_reports_the_machine_when_the_user_has_not_settled(
     current = _database(tmp_path, monkeypatch)
     today = _session_day(current)
     _closed_call(
-        MACHINE_HANDLE, 10.0, 11.0,
+        MACHINE_HANDLE,
+        10.0,
+        11.0,
         entry_at=f"{today}T14:00:00+00:00",
         exit_at=f"{today}T19:00:00+00:00",
         ticker="AAA",
@@ -125,25 +136,33 @@ def test_win_streak_counts_consecutive_settled_wins(tmp_path, monkeypatch) -> No
     current = _database(tmp_path, monkeypatch)
     today = _session_day(current)
     _closed_call(
-        "human", 10.0, 10.5,
+        "human",
+        10.0,
+        10.5,
         entry_at=f"{today}T14:00:00+00:00",
         exit_at=f"{today}T15:00:00+00:00",
         ticker="AAA",
     )
     _closed_call(
-        "human", 10.0, 10.4,
+        "human",
+        10.0,
+        10.4,
         entry_at=f"{today}T15:00:00+00:00",
         exit_at=f"{today}T16:00:00+00:00",
         ticker="BBB",
     )
     _closed_call(
-        "human", 10.0, 9.5,
+        "human",
+        10.0,
+        9.5,
         entry_at=f"{today}T16:00:00+00:00",
         exit_at=f"{today}T17:00:00+00:00",
         ticker="CCC",
     )
     _closed_call(
-        "human", 10.0, 10.1,
+        "human",
+        10.0,
+        10.1,
         entry_at=f"{today}T17:00:00+00:00",
         exit_at=f"{today}T18:00:00+00:00",
         ticker="DDD",
@@ -161,7 +180,9 @@ def test_the_machine_page_compares_itself_honestly(tmp_path, monkeypatch) -> Non
     current = _database(tmp_path, monkeypatch)
     today = _session_day(current)
     _closed_call(
-        MACHINE_HANDLE, 10.0, 11.0,
+        MACHINE_HANDLE,
+        10.0,
+        11.0,
         entry_at=f"{today}T14:00:00+00:00",
         exit_at=f"{today}T19:00:00+00:00",
         ticker="AAA",

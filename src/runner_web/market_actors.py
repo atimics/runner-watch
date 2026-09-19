@@ -91,9 +91,7 @@ def _ensure_actor(
     actor_id = actor_id_for(stable_key)
     user_id = _actor_user_id(stable_key)
     name = identity["name"]
-    clash = db.execute(
-        "SELECT user_id FROM comment_avatars WHERE name=?", (name,)
-    ).fetchone()
+    clash = db.execute("SELECT user_id FROM comment_avatars WHERE name=?", (name,)).fetchone()
     if clash is not None and str(clash["user_id"]) != user_id:
         name = f"{name} {stable_key[:4].upper()}"
     timestamp = _iso()
@@ -131,10 +129,31 @@ def _ensure_actor(
             timestamp,
         ),
     )
-    row = db.execute(
-        "SELECT * FROM market_actors WHERE stable_key=?", (stable_key,)
-    ).fetchone()
+    row = db.execute("SELECT * FROM market_actors WHERE stable_key=?", (stable_key,)).fetchone()
     actor = dict(row)
+    if actor.get("entity_id") is None:
+        from runner_web.identity import attach_reference, ensure_entity
+
+        entity = ensure_entity(
+            "provisional_group" if domain == "coin" else "person",
+            dedupe_key=f"market-actor:{stable_key}",
+            created_at=str(actor.get("created_at") or timestamp),
+            connection=db,
+        )
+        db.execute(
+            "UPDATE market_actors SET entity_id=? WHERE id=? AND entity_id IS NULL",
+            (entity["id"], actor["id"]),
+        )
+        attach_reference(
+            entity["id"],
+            "legacy_actor",
+            stable_key,
+            learned_at=str(actor.get("created_at") or timestamp),
+            source_kind="ingest",
+            source_id=str(actor["id"]),
+            connection=db,
+        )
+        actor["entity_id"] = entity["id"]
     if cache is not None:
         cache[stable_key] = actor
     return actor
@@ -381,9 +400,7 @@ def _process_coin_findings(
         evidence_id = str(finding.get("signature") or "")
         as_of = str(finding.get("observed_at") or timestamp)
         for wallet in wallets:
-            _insert_cluster_member(
-                db, actor_id, wallet, "chain_event", evidence_id, timestamp
-            )
+            _insert_cluster_member(db, actor_id, wallet, "chain_event", evidence_id, timestamp)
         if _insert_tie(
             db,
             actor_id,
@@ -436,16 +453,12 @@ def derive_coin_actors(
     step = max(1, int(batch_size))
     for start in range(0, len(findings), step):
         with connection() as db:
-            inserted += _process_coin_findings(
-                db, findings[start : start + step], timestamp, cache
-            )
+            inserted += _process_coin_findings(db, findings[start : start + step], timestamp, cache)
     return inserted
 
 
 def _coin_labels(db: Any) -> dict[str, str]:
-    row = db.execute(
-        "SELECT value FROM worker_state WHERE key='memecoins_snapshot'"
-    ).fetchone()
+    row = db.execute("SELECT value FROM worker_state WHERE key='memecoins_snapshot'").fetchone()
     labels: dict[str, str] = {}
     if row is None:
         return labels
@@ -460,9 +473,7 @@ def _coin_labels(db: Any) -> dict[str, str]:
     return labels
 
 
-def _subject_payload(
-    subject_kind: str, subject_key: str, labels: dict[str, str]
-) -> dict[str, Any]:
+def _subject_payload(subject_kind: str, subject_key: str, labels: dict[str, str]) -> dict[str, Any]:
     if subject_kind == "stock":
         return {
             "key": subject_key,
@@ -616,11 +627,7 @@ def market_actor_map(domain: str, *, at: datetime | None = None) -> dict[str, An
         }
         for actor in ranked
     ]
-    link_payloads = [
-        link
-        for link in links.values()
-        if link["actor_id"] in keep
-    ]
+    link_payloads = [link for link in links.values() if link["actor_id"] in keep]
     return {
         "domain": domain,
         "generated_at": _iso(at),
@@ -668,9 +675,7 @@ def _actor_evidence(db: Any, actor: dict[str, Any]) -> list[dict[str, Any]]:
             ).fetchone()
             if filing is not None:
                 entry["url"] = str(filing["filing_url"] or "")
-                entry["title"] = (
-                    f"{filing['form']} · {filing['actor_title'] or entry['role']}"
-                )
+                entry["title"] = f"{filing['form']} · {filing['actor_title'] or entry['role']}"
                 if entry["weight"] is None:
                     entry["weight"] = _number(filing["transaction_value"]) or _number(
                         filing["beneficial_ownership_pct"]

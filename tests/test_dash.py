@@ -164,8 +164,13 @@ def test_a_failed_lookup_is_left_for_next_time():
     result = refresh_company_sectors(client, at=NOW)
 
     assert result == {"checked": 1, "stored": 0, "missing": 0, "failed": 1}
+    # A failure is re-due tomorrow so one bad filer cannot starve the queue.
     with connection() as database:
-        assert [row["ticker"] for row in companies_missing_sectors(database, NOW, 10)] == ["DDD"]
+        assert companies_missing_sectors(database, NOW, 10) == []
+        tomorrow = NOW + timedelta(days=1, minutes=1)
+        assert [row["ticker"] for row in companies_missing_sectors(database, tomorrow, 10)] == [
+            "DDD"
+        ]
 
 
 def test_a_fresh_sector_is_not_looked_up_again_but_a_stale_one_is():
@@ -269,9 +274,7 @@ def test_dash_opens_a_call_at_the_shared_mark(callable_market):
     assert opened["ticker"] == "RUN"
     assert opened["entry_price"] == 1.5
     with connection() as database:
-        row = database.execute(
-            "SELECT user_id,ticker,status FROM community_calls"
-        ).fetchone()
+        row = database.execute("SELECT user_id,ticker,status FROM community_calls").fetchone()
     assert (row["user_id"], row["ticker"], row["status"]) == (dash.DASH_USER_ID, "RUN", "active")
 
 
@@ -344,9 +347,7 @@ def test_dash_comments_under_his_own_avatar_and_pays_for_it():
     assert posted["ok"] is True
     assert posted["spent"] == 10
     with connection() as database:
-        row = database.execute(
-            "SELECT user_id,ticker,source,body FROM ticker_comments"
-        ).fetchone()
+        row = database.execute("SELECT user_id,ticker,source,body FROM ticker_comments").fetchone()
         balance = database.execute(
             "SELECT balance FROM flash_wallets WHERE user_id=?", (dash.DASH_USER_ID,)
         ).fetchone()[0]
@@ -398,8 +399,7 @@ def test_dash_earns_flash_from_a_winning_call_so_he_ranks(callable_market):
 
     with connection() as database:
         earned = database.execute(
-            "SELECT COUNT(*) FROM flash_transactions "
-            "WHERE user_id=? AND kind='runner_call_win'",
+            "SELECT COUNT(*) FROM flash_transactions WHERE user_id=? AND kind='runner_call_win'",
             (dash.DASH_USER_ID,),
         ).fetchone()[0]
         identity = database.execute(
@@ -450,8 +450,15 @@ def test_community_now_reports_where_people_put_their_names():
                 ) VALUES(?,?,'u1',?,'long',1.0,?,?,?,?,?,?)
                 """,
                 (
-                    f"c{index}", f"p{index}", ticker, NOW.isoformat(),
-                    exit_price, exit_at, status, NOW.isoformat(), NOW.isoformat(),
+                    f"c{index}",
+                    f"p{index}",
+                    ticker,
+                    NOW.isoformat(),
+                    exit_price,
+                    exit_at,
+                    status,
+                    NOW.isoformat(),
+                    NOW.isoformat(),
                 ),
             )
         database.execute(
@@ -718,3 +725,56 @@ def test_the_avatar_macro_renders_a_picture_for_dash_and_a_face_for_everyone_els
     assert "avatar-tone-" not in drawn
     assert "<img" not in generated
     assert "avatar-tone-" in generated
+
+
+def test_a_hinted_name_groups_without_a_filed_sic():
+    _company(20, "CURE", sic=None, refreshed=NOW.isoformat())
+    with connection() as database:
+        database.execute(
+            "UPDATE sec_companies SET name='CureVax Therapeutics Inc' WHERE ticker='CURE'"
+        )
+    rows = [{"ticker": "CURE", "change_pct": 12.0}]
+
+    with connection() as database:
+        board = sector_board(database, rows)
+
+    assert board[0]["sector"] == "Biotech and pharma"
+    assert board[0]["hinted"] is True
+
+
+def test_an_unknown_name_stays_unclassified():
+    _company(21, "ZZZ", sic=None, refreshed=NOW.isoformat())
+    rows = [{"ticker": "ZZZ", "change_pct": 1.0}]
+
+    with connection() as database:
+        board = sector_board(database, rows)
+
+    assert board[0]["sector"] == "Unclassified"
+    assert "hinted" not in board[0]
+
+
+def test_recent_runners_reports_the_schedule_when_the_market_is_closed(monkeypatch):
+    closed = datetime(2026, 9, 12, 15, 0, tzinfo=UTC)  # a Saturday
+    monkeypatch.setattr(dash, "_iso", lambda *_: closed.isoformat())
+
+    payload = dash.recent_runners(at=closed)
+
+    assert payload["count"] == 0
+    assert "Weekend closed" in payload["note"]
+    assert "ET" in payload["note"]
+    assert "schedule" not in payload["note"] and "gap" not in payload["note"]
+
+
+def test_market_now_carries_the_next_open(monkeypatch):
+    closed = datetime(2026, 9, 12, 15, 0, tzinfo=UTC)
+
+    def fake_pulse(**_):
+        return {"rows": [], "updated_at": None}
+
+    monkeypatch.setattr("runner_web.main._public_pulse_data", fake_pulse)
+
+    payload = dash.market_now(at=closed)
+
+    assert payload["scanner_active"] is False
+    assert "ET" in payload["next_open"]
+    assert payload["eastern_now"].endswith(" ET")

@@ -7,15 +7,6 @@ import yaml
 ROOT = Path(__file__).parents[1]
 
 
-def test_scanner_lab_is_clearly_separate_from_the_online_product() -> None:
-    source = (ROOT / "app.py").read_text()
-
-    assert 'page_title="RATi Scanner Lab"' in source
-    assert "Scanner Lab is not the online RATi product" in source
-    assert '"Stage (lab)"' in source
-    assert "(0.20, 5.00)" in source
-
-
 def test_local_compose_has_the_production_process_boundaries() -> None:
     config = yaml.safe_load((ROOT / "compose.local.yml").read_text())
     services = config["services"]

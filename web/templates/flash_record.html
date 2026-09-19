@@ -1,18 +1,31 @@
-{% extends "mobile_base.html" %}
-{% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
-{% block app_class %}flash-record-app{% endblock %}
-{% block title %}Flash forecast record · RATi Runners{% endblock %}
-{% block content %}
-<header class="screen-head flash-record-head">
-  <div><span class="rati-product">FLASH ⚡</span><h1>Forecast record</h1><span class="head-meta">Frozen calls. Later prices. No rewrites.</span></div>
-  {% if user %}<button class="avatar-button" type="button" data-profile aria-label="Open {{ comment_avatar.name }} profile">{{ render_comment_avatar(comment_avatar) }}</button>{% else %}<a class="avatar-button signed-out" href="/login">Log in</a>{% endif %}
+{% extends "market_screen.html" %}
+{% block screen_title %}Flash forecast record · RATi{% endblock %}
+{% block topbar %}
+<header class="topbar">
+  <a class="brand" href="{{ runners_origin }}/" aria-label="RATi home">RATi<span>●</span></a>
+  <nav aria-label="Market" class="markets">
+    <a href="{{ runners_origin }}/">Stocks</a>
+    <a href="{{ runners_origin }}/memecoins">Memecoins</a>
+    <a href="{{ sports_origin }}/">Sports</a>
+    <a href="{{ runners_origin }}/calls">Calls</a>
+    <a href="{{ runners_origin }}/reports">Reports</a>
+  </nav>
+  {% if user %}<a class="account" href="{{ runners_origin }}/calls">My Calls</a>
+  {% else %}<a class="account" href="/login?next=%2Fflash%2Frecord">Log in</a>{% endif %}
+</header>
+{% endblock %}
+{% block screen_main %}
+<header class="page-head flash-head">
+  <p class="eyebrow">FLASH ⚡</p>
+  <h1>Forecast record</h1>
+  <p class="head-note">Frozen calls. Later prices. No rewrites.</p>
 </header>
 
 <main class="flash-record-page">
   {% set current = record.current_version %}
   {% if current %}
   <section class="flash-record-hero state-{{ current.state }}">
-    <div><span class="kol-avatar" aria-hidden="true">⚡</span><p><strong>{{ current.label }}</strong><small>{{ current.model_label }} · {{ current.state|replace('_', ' ') }}</small></p></div>
+    <div><span class="flash-mark" aria-hidden="true">⚡</span><p><strong>{{ current.label }}</strong><small>{{ current.model_label }} · {{ current.state|replace('_', ' ') }}</small></p></div>
     {% if current.headline_rate_visible and current.hit_rate is not none %}
     <b>{{ '%.0f'|format(current.hit_rate * 100) }}% <small>hit rate</small></b>
     {% else %}

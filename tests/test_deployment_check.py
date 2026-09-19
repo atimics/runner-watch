@@ -31,6 +31,51 @@ def test_background_process_check_requires_both_processes(
     assert deployment_check.background_processes_healthy() is expected
 
 
+def test_background_process_check_allows_only_stale_progress_workers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def payload(instance: dict) -> dict:
+        return {
+            "worker": {"status": "degraded", "detail": {"instances": [instance]}},
+            "trainer": {"status": "ok"},
+        }
+
+    monkeypatch.setattr(
+        deployment_check,
+        "health_status",
+        lambda: payload(
+            {
+                "status": "degraded",
+                "stale_workers": [{"worker": "scan-collection"}],
+                "missing_workers": [],
+                "failed_workers": [],
+            }
+        ),
+    )
+    assert deployment_check.background_processes_healthy() is True
+
+    monkeypatch.setattr(
+        deployment_check,
+        "health_status",
+        lambda: payload(
+            {
+                "status": "degraded",
+                "stale_workers": [{"worker": "scan-collection"}],
+                "missing_workers": ["kol"],
+                "failed_workers": [],
+            }
+        ),
+    )
+    assert deployment_check.background_processes_healthy() is False
+
+    monkeypatch.setattr(
+        deployment_check,
+        "health_status",
+        lambda: payload({"status": "stale", "stale_workers": []}),
+    )
+    assert deployment_check.background_processes_healthy() is False
+
+
 def test_failed_background_process_check_exits_without_details(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

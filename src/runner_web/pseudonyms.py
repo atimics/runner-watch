@@ -145,7 +145,6 @@ def _comment_avatar_name() -> str:
 
 
 def derive_actor_identity(stable_key: str) -> dict[str, str]:
-
     """A stable fictional identity for a market actor.
 
     Unlike a person's random avatar, this is derived from the actor's stable key,

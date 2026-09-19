@@ -22,18 +22,115 @@
   };
   const names = e => e.people.map(p => p.name).join(' + ') || 'Reporting person';
   const amount = e => e.view === 'ownership' ? (e.percent == null ? 'See filing' : number(e.percent) + '% of class') : money(e.value);
-  let events = [], dates = [], cursor = null, loaded = 0, coverage = {}, selected = null;
-  let view = 'activity', filter = 'all', cutoff = Infinity, page = 0, pending = false;
+  const screenNode = document.getElementById('screenData');
+  const initial = JSON.parse(screenNode?.textContent || '{}');
+  let item = initial.market === 'stocks' && initial.item?.id === root.dataset.ticker ? initial.item : {};
+  let drivers = [], positive = [], penalties = [], contributions = [], total = 0, score = '—';
+  const scoreData = value => JSON.stringify([value.score ?? null, value.score_detail ?? null]);
+  function readScore() {
+    const parts = value => Array.isArray(value) ? value.filter(part => part && Number.isFinite(part.value)) : [];
+    drivers = parts(item.score_detail?.drivers);
+    positive = drivers.filter(part => part.value > 0);
+    penalties = [...parts(item.score_detail?.penalties), ...drivers.filter(part => part.value < 0)].filter(part => part.value !== 0).map(part => ({...part, value:-Math.abs(part.value)}));
+    contributions = [...positive, ...penalties];
+    total = contributions.reduce((sum, part) => sum + Math.abs(part.value), 0);
+    score = Number.isFinite(item.score) ? number(Math.round(item.score)) : '—';
+  }
+  readScore();
+  const points = value => `${value > 0 ? '+' : ''}${number(value)} pts`;
+  const percent = part => `${number(Math.round(Math.abs(part.value) / total * 1000) / 10)}% of total magnitude`;
+  const color = part => part.value < 0 ? 'var(--red)' : `var(--score-${part.key}, var(--muted))`;
+  const metrics = () => small.matches ? {cx:180, cy:184, radius:48, width:16} : {cx:380, cy:218, radius:62, width:20};
+  const graph = $('graph');
+  const peopleLayer = svg('g', {class:'map-people'});
+  const ringLayer = svg('g', {class:'map-ring'});
+  graph.append(peopleLayer, ringLayer);
+  let pinned = null, hovered = null, focused = null;
+  let events = [], cursor = null, selected = null;
+  let cutoff = Infinity, page = 0, pending = false, filingsPageNumber = 0;
+  let ringDirty = true, scene = [], animation = 0, generation = 0;
   const small = window.matchMedia('(max-width:500px)');
+  const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
   const pageSize = () => small.matches ? 4 : 8;
-  const subset = () => events.filter(e => e.view === view && (Date.parse(e.filed_at) || 0) <= cutoff &&
-    (view === 'ownership' || filter === 'all' || (filter === 'other' ? !['Bought','Sold'].includes(e.action) : e.action === filter)));
-  function source(event) {
+  const FILINGS_PAGE_SIZE = 5;
+  const ANIMATION_MS = 320;
+  const subset = () => events.filter(e => (Date.parse(e.filed_at) || 0) <= cutoff);
+  function scorePanel(part) {
     const panel = $('selection'); panel.replaceChildren();
-    if (!event) {
-      panel.append(make('h3', 'Follow the people'), make('p', 'Choose another view or load older filings to explore the saved evidence.'));
+    panel.append(make('h3', String(score), 'map-score-heading'));
+    if (part) {
+      panel.append(make('h4', part.label), make('p', `${points(part.value)} · ${percent(part)}`, 'map-score-breakdown'));
+      panel.append(make('p', pinned === part.key ? 'Pinned contribution. Return to score overview to clear.' : 'Click or press Enter to pin this contribution.', 'map-note'));
+    }
+    const legend = make('ul', null, 'map-score-legend');
+    positive.forEach(driver => {
+      const row = make('li');
+      const swatch = make('span', null, 'map-score-swatch'); swatch.style.background = color(driver); swatch.setAttribute('aria-hidden', 'true');
+      row.append(swatch, make('span', driver.label), make('strong', points(driver.value))); legend.append(row);
+    });
+    if (legend.children.length) panel.append(legend);
+    if (!positive.length) panel.append(make('p', item.score_detail ? 'No positive contributions.' : 'Score breakdown unavailable.', 'map-note'));
+    if (penalties.length) {
+      const list = make('ul', null, 'map-score-penalties');
+      penalties.forEach(penalty => {const row = make('li'); row.append(make('span', penalty.label), make('strong', points(penalty.value))); list.append(row);});
+      panel.append(list);
+    } else if (item.score_detail) panel.append(make('p', 'No penalties applied.', 'map-note'));
+  }
+  function context() {
+    source(subset().find(event => event.id === selected));
+  }
+  function overview() {
+    selected = null; pinned = null; hovered = null; focused = null; ringDirty = true;
+    render(false, false);
+    graph.querySelector('[data-map-score-center]')?.focus({preventScroll:true});
+  }
+  function drawRing() {
+    ringLayer.replaceChildren();
+    const {cx, cy, radius, width} = metrics();
+    ringLayer.append(svg('circle', {cx, cy, r:radius, class:'map-score-track', 'stroke-width':width}));
+    let angle = -Math.PI / 2;
+    contributions.forEach(part => {
+      const sweep = Math.abs(part.value) / total * Math.PI * 2, end = angle + sweep;
+      const attrs = {class:'map-score-segment', role:'button', tabindex:0, 'data-score-key':part.key, 'aria-label':`${part.label}: ${points(part.value)}, ${percent(part)}`, 'aria-pressed':String(pinned === part.key), 'stroke-width':width};
+      const segment = contributions.length === 1 ? svg('circle', {...attrs, cx, cy, r:radius}) : svg('path', {...attrs, d:`M ${cx + radius * Math.cos(angle)} ${cy + radius * Math.sin(angle)} A ${radius} ${radius} 0 ${sweep > Math.PI ? 1 : 0} 1 ${cx + radius * Math.cos(end)} ${cy + radius * Math.sin(end)}`});
+      segment.style.stroke = color(part); angle = end;
+      segment.append(svg('title', {}, `${part.label}: ${points(part.value)} · ${percent(part)}`));
+      segment.addEventListener('mouseenter', () => {hovered = part; context();});
+      segment.addEventListener('mouseleave', () => {hovered = null; context();});
+      segment.addEventListener('focus', () => {focused = part; context();});
+      segment.addEventListener('blur', () => {focused = null; context();});
+      const activate = () => {
+        pinned = part.key; selected = null; hovered = null; focused = null; ringDirty = true;
+        render(false, false);
+        ringLayer.querySelector(`[data-score-key="${CSS.escape(part.key)}"]`)?.focus({preventScroll:true});
+      };
+      segment.addEventListener('click', activate);
+      segment.addEventListener('keydown', event => {
+        if (['Enter', ' '].includes(event.key)) {event.preventDefault(); activate();}
+        if (['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+          event.preventDefault();
+          const segments = [...ringLayer.querySelectorAll('.map-score-segment')], index = segments.indexOf(segment);
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? segments.length - 1 : (index + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + segments.length) % segments.length;
+          segments[next].focus({preventScroll:true});
+        }
+      });
+      ringLayer.append(segment);
+    });
+    const center = svg('g', {role:'button', tabindex:0, class:'map-score-center', 'data-map-score-center':'', 'aria-label':`${root.dataset.ticker}, current score ${score}. Show score overview.`});
+    center.append(svg('circle', {cx, cy, r:radius - width / 2 - 3, class:'map-center'}), svg('text', {x:cx, y:cy - 6, 'text-anchor':'middle', class:'map-center-text'}, root.dataset.ticker), svg('text', {x:cx, y:cy + 16, 'text-anchor':'middle', class:'map-center-score'}, score));
+    center.addEventListener('click', overview);
+    center.addEventListener('keydown', event => {if (['Enter', ' '].includes(event.key)) {event.preventDefault(); overview();}});
+    ringLayer.append(center);
+  }
+  function source(event) {
+    const preview = hovered || focused;
+    const panel = $('selection');
+    $('score-return').hidden = !event && !pinned;
+    if (preview || !event) {
+      scorePanel(preview || contributions.find(part => part.key === pinned));
       document.dispatchEvent(new CustomEvent('rati:map-time', {detail:{time:null}})); return;
     }
+    panel.replaceChildren();
     panel.append(make('h3', names(event)), make('p', `${event.action} · ${amount(event)}`, 'map-event-action'));
     panel.append(make('p', event.people.map(p => p.role).join(' · ')));
     const facts = make('dl');
@@ -68,57 +165,121 @@
     }));
     return [...people.values()];
   }
-  function choose(event, personId) {
-    selected = event?.id || null;
-    const people = peopleFor(subset()), at = people.findIndex(p => p.id === (personId || event?.people[0]?.id));
-    if (at >= 0) page = Math.floor(at / pageSize());
-    render();
-  }
-  function render() {
-    const rows = subset(), people = peopleFor(rows), graph = $('graph');
-    const event = rows.find(e => e.id === selected) || rows[0]; selected = event?.id || null;
-    const size = pageSize(), cx = small.matches ? 180 : 380, cy = small.matches ? 165 : 218;
-    page = Math.min(page, Math.max(0, Math.ceil(people.length / size)-1));
-    graph.setAttribute('viewBox', small.matches ? '0 0 360 350' : '0 0 760 440');
-    graph.replaceChildren();
-    const shown = people.slice(page*size,page*size+size);
-    shown.forEach((person,i) => {
-      const left = i % 2 === 0, x = small.matches ? (left ? 85 : 275) : (left ? 180 : 580);
+  function buildScene(event) {
+    const size = pageSize();
+    const shown = peopleFor(subset()).slice(page*size, page*size + size);
+    return shown.map((person, i) => {
+      const left = i % 2 === 0;
+      const x = small.matches ? (left ? 85 : 275) : (left ? 180 : 580);
       const y = small.matches ? 64 + Math.floor(i/2)*210 : 62 + Math.floor(i/2)*103;
-      const first = person.events[0], active = event?.people.some(p => p.id === person.id);
+      const first = person.events[0];
       const tones = new Set(person.events.map(e => e.tone));
-      const tone = tones.size === 1 ? first.tone : 'neutral';
-      const line = svg('line',{x1:cx,y1:cy,x2:x,y2:y,class:`map-edge ${tone}`});
-      line.addEventListener('click',() => choose(first,person.id)); graph.append(line);
-      const g = svg('g',{class:`map-person ${tone}`,role:'button',tabindex:0,'aria-label':`${person.name}: ${first.action}`,'aria-pressed':String(!!active),'data-person':person.id});
-      g.append(svg('circle',{cx:x,cy:y,r:22}));
-      const initials = person.name.split(/\s+/).slice(0,2).map(n => n[0]).join('');
-      g.append(svg('text',{x,y:y+5,'text-anchor':'middle'},initials));
-      const maxName = small.matches ? 21 : 28;
-      g.append(svg('text',{x,y:y+42,'text-anchor':'middle'},person.name.length > maxName ? person.name.slice(0,maxName-2)+'…' : person.name));
-      const action = small.matches ? ({'Exercise or conversion':'Exercise / conversion','Tax or exercise payment':'Tax / exercise payment'}[first.action] || first.action) : `${first.action} · ${person.events.length} ${person.events.length === 1 ? 'event' : 'events'}`;
-      g.append(svg('text',{x,y:y+59,'text-anchor':'middle',class:'map-node-action'},action));
-      g.append(svg('title',{},person.name));
-      const activate = () => {choose(first,person.id); graph.querySelector(`[data-person="${CSS.escape(person.id)}"]`)?.focus({preventScroll:true});};
-      g.addEventListener('click',activate); g.addEventListener('keydown',e => {if (['Enter',' '].includes(e.key)) {e.preventDefault();activate();}}); graph.append(g);
+      return {id:person.id, name:person.name, first, eventCount:person.events.length, tone:tones.size === 1 ? first.tone : 'neutral', active:!!event?.people.some(p => p.id === person.id), x, y};
     });
-    graph.append(svg('circle',{cx,cy,r:small.matches ? 36 : 48,class:'map-center'}),svg('text',{x:cx,y:cy+7,'text-anchor':'middle',class:'map-center-text'},root.dataset.ticker));
-    if (!people.length) graph.append(svg('text',{x:cx,y:320,'text-anchor':'middle',fill:'#96a49b','font-size':small.matches ? 12 : 16},'People appear as filings are collected'));
-    $('page').textContent = people.length ? `${page*size+1}–${page*size+shown.length} of ${people.length} people` : 'Saved SEC evidence';
+  }
+  function drawScene(nodes) {
+    peopleLayer.replaceChildren();
+    const {cx, cy} = metrics();
+    nodes.forEach(node => {
+      const opacity = node.opacity ?? 1;
+      const line = svg('line', {x1:cx, y1:cy, x2:node.x, y2:node.y, class:`map-edge ${node.tone}`, 'stroke-opacity':opacity});
+      line.addEventListener('click', () => choose(node.first, node.id)); peopleLayer.append(line);
+      const g = svg('g', {class:`map-person ${node.tone}`, role:'button', tabindex:0, 'aria-label':`${node.name}: ${node.first.action}`, 'aria-pressed':String(!!node.active), 'data-person':node.id, opacity});
+      g.append(svg('circle', {cx:node.x, cy:node.y, r:22}));
+      const initials = node.name.split(/\s+/).slice(0,2).map(n => n[0]).join('');
+      g.append(svg('text', {x:node.x, y:node.y+5, 'text-anchor':'middle'}, initials));
+      const maxName = small.matches ? 21 : 28;
+      g.append(svg('text', {x:node.x, y:node.y+42, 'text-anchor':'middle'}, node.name.length > maxName ? node.name.slice(0,maxName-2)+'…' : node.name));
+      const action = small.matches ? ({'Exercise or conversion':'Exercise / conversion','Tax or exercise payment':'Tax / exercise payment'}[node.first.action] || node.first.action) : `${node.first.action} · ${node.eventCount} ${node.eventCount === 1 ? 'event' : 'events'}`;
+      g.append(svg('text', {x:node.x, y:node.y+59, 'text-anchor':'middle', class:'map-node-action'}, action));
+      g.append(svg('title', {}, node.name));
+      const activate = () => {choose(node.first, node.id); peopleLayer.querySelector(`[data-person="${CSS.escape(node.id)}"]`)?.focus({preventScroll:true});};
+      g.addEventListener('click', activate); g.addEventListener('keydown', e => {if (['Enter',' '].includes(e.key)) {e.preventDefault();activate();}}); peopleLayer.append(g);
+    });
+    scene = nodes;
+  }
+  function blendScenes(first, last, t) {
+    const before = new Map(first.map(node => [node.id, node])), after = new Map(last.map(node => [node.id, node]));
+    const {cx, cy} = metrics();
+    const keys = [...after.keys(), ...[...before.keys()].filter(key => !after.has(key))];
+    return keys.map(key => {
+      const start = before.get(key), end = after.get(key);
+      if (start && end) return {...end, x:start.x + (end.x - start.x) * t, y:start.y + (end.y - start.y) * t, opacity:1};
+      if (end) return {...end, x:cx, y:cy, opacity:t};
+      return {...start, opacity:1 - t};
+    });
+  }
+  function renderPeople(event, animate, restoreFocus, focusSelector) {
+    const people = peopleFor(subset()), size = pageSize();
+    page = Math.min(page, Math.max(0, Math.ceil(people.length / size) - 1));
+    const target = buildScene(event);
+    $('paging').hidden = people.length <= size;
+    $('page').textContent = people.length ? `${page*size+1}–${page*size+target.length} of ${people.length} people` : '';
     $('previous').disabled = page === 0; $('next').disabled = (page+1)*size >= people.length;
+    const duration = animate && !motion.matches && scene.length ? ANIMATION_MS : 0;
+    cancelAnimationFrame(animation);
+    const run = ++generation, first = scene, start = performance.now();
+    graph.dataset.phase = duration ? 'moving' : 'settled';
+    function tick(now) {
+      if (run !== generation) return;
+      const t = duration ? Math.min(1, (now - start) / duration) : 1;
+      drawScene(t === 1 ? target : blendScenes(first, target, t * t * (3 - 2 * t)));
+      if (t < 1) { animation = requestAnimationFrame(tick); return; }
+      graph.dataset.phase = 'settled';
+      if (restoreFocus && focusSelector) (root.querySelector(focusSelector) || ringLayer.querySelector('[data-map-score-center]'))?.focus({preventScroll:true});
+    }
+    tick(start);
+  }
+  function renderFilings() {
     const list = $('events'); list.replaceChildren();
-    rows.forEach(e => {
+    const pageCount = Math.max(1, Math.ceil(events.length / FILINGS_PAGE_SIZE));
+    filingsPageNumber = Math.min(filingsPageNumber, pageCount - 1);
+    const slice = events.slice(filingsPageNumber * FILINGS_PAGE_SIZE, filingsPageNumber * FILINGS_PAGE_SIZE + FILINGS_PAGE_SIZE);
+    slice.forEach(e => {
       const button = make('button',null,'map-event'); button.type = 'button'; button.dataset.eventId = e.id; button.setAttribute('aria-pressed',String(e.id === selected));
       const main = make('span'); main.append(make('strong',`${names(e)} · ${e.action}`),make('small',`${e.basis} · Filed ${date(e.filed_at)}${e.amendment ? ' · Amendment' : ''}`));
       button.append(make('span','●',e.tone),main,make('span',amount(e),'event-money'));
-      button.addEventListener('click',() => {choose(e); $('events').querySelector(`[data-event-id="${CSS.escape(e.id)}"]`)?.focus({preventScroll:true});}); list.append(button);
+      button.addEventListener('click',() => scrub(e)); list.append(button);
     });
-    if (!rows.length) list.append(make('p','Saved events for this view will appear here.','map-note'));
-    $('time').textContent = Number.isFinite(cutoff) ? date(new Date(cutoff).toISOString()) : 'Latest saved filing';
-    $('time-slider').setAttribute('aria-valuetext',$('time').textContent);
-    $('list-title').textContent = view === 'activity' ? 'Reported activity' : 'Reported ownership';
-    $('filter').parentElement.hidden = view === 'ownership'; $('ownership-note').hidden = view !== 'ownership';
-    $('coverage').textContent = `${loaded} of ${coverage.filings || 0} saved filings loaded · ${rows.length} events in this view. Coverage follows the SEC documents collected for ${root.dataset.ticker}.`;
+    if (!events.length) list.append(make('p','Saved filings will appear here.','map-note'));
+    $('filings-paging').hidden = events.length <= FILINGS_PAGE_SIZE;
+    $('filings-page').textContent = events.length ? `${filingsPageNumber * FILINGS_PAGE_SIZE + 1}–${filingsPageNumber * FILINGS_PAGE_SIZE + slice.length} of ${events.length}` : '';
+    $('filings-previous').disabled = filingsPageNumber === 0;
+    $('filings-next').disabled = (filingsPageNumber + 1) * FILINGS_PAGE_SIZE >= events.length;
+  }
+  function choose(event, personId) {
+    selected = event?.id || null; pinned = null; hovered = null; focused = null;
+    if (event) {
+      const at = events.findIndex(row => row.id === event.id);
+      if (at >= 0) filingsPageNumber = Math.floor(at / FILINGS_PAGE_SIZE);
+    }
+    const people = peopleFor(subset()), at = people.findIndex(p => p.id === (personId || event?.people[0]?.id));
+    if (at >= 0) page = Math.floor(at / pageSize());
+    ringDirty = true;
+    render(false, true);
+  }
+  function scrub(event) {
+    const time = Date.parse(event.filed_at);
+    selected = event.id;
+    if (Number.isFinite(time) && time !== cutoff) {
+      cutoff = time;
+      const people = peopleFor(subset()), at = people.findIndex(p => p.events.some(row => row.id === event.id));
+      page = at >= 0 ? Math.floor(at / pageSize()) : 0;
+    }
+    const at = events.findIndex(row => row.id === event.id);
+    if (at >= 0) filingsPageNumber = Math.floor(at / FILINGS_PAGE_SIZE);
+    render(false, true);
+    $('events').querySelector(`[data-event-id="${CSS.escape(event.id)}"]`)?.focus({preventScroll:true});
+  }
+  function render(restoreFocus = true, animate = true) {
+    graph.setAttribute('viewBox', small.matches ? '0 0 360 350' : '0 0 760 440');
+    const active = document.activeElement;
+    const focusSelector = active?.hasAttribute('data-score-key') ? `[data-score-key="${CSS.escape(active.dataset.scoreKey)}"]` : active?.hasAttribute('data-person') ? `[data-person="${CSS.escape(active.dataset.person)}"]` : active?.hasAttribute('data-map-score-center') ? '[data-map-score-center]' : active?.hasAttribute('data-event-id') ? `[data-event-id="${CSS.escape(active.dataset.eventId)}"]` : null;
+    if (ringDirty) { drawRing(); ringDirty = false; }
+    const event = subset().find(row => row.id === selected) || null;
+    selected = event?.id || null;
+    renderPeople(event, animate, restoreFocus, focusSelector);
+    renderFilings();
     source(event);
   }
   async function load() {
@@ -130,25 +291,36 @@
       const data = await res.json(); if (data.ticker !== root.dataset.ticker) throw new Error('subject');
       const unique = new Map(events.map(e => [e.id,e])); data.events.forEach(e => unique.set(e.id,e));
       events = [...unique.values()].sort((a,b) => Date.parse(b.filed_at)-Date.parse(a.filed_at) || b.id.localeCompare(a.id));
-      cursor = data.next_cursor; loaded += data.loaded_filings; coverage = data.coverage;
-      dates = [...new Set(events.map(e => Date.parse(e.filed_at)).filter(Number.isFinite))].sort((a,b) => a-b);
-      const slider = $('time-slider'); slider.disabled = dates.length < 2; slider.max = Math.max(0,dates.length-1);
-      slider.value = Number.isFinite(cutoff) ? Math.max(0,dates.indexOf(cutoff)) : slider.max;
+      cursor = data.next_cursor;
       $('load').hidden = !cursor; $('load').textContent = 'Load older filings';
-      $('status').textContent = coverage.filings ? 'Saved SEC filings · Select a person to follow their activity' : 'This ticker’s map is ready for incoming SEC filings.';
-      render();
+      $('status').textContent = '';
+      render(false, true);
     } catch (_) { $('status').textContent = 'Please retry to load the saved filings.'; $('load').hidden = false; $('load').textContent = 'Retry loading filings'; }
     finally {pending = false; $('load').disabled = false;}
   }
-  root.querySelectorAll('[data-map-view]').forEach(button => button.addEventListener('click',() => {
-    view = button.dataset.mapView; page = 0; selected = null;
-    root.querySelectorAll('[data-map-view]').forEach(b => b.setAttribute('aria-pressed',String(b === button))); render();
-  }));
-  $('filter').addEventListener('change',() => {filter = $('filter').value; page = 0; selected = null; render();});
-  $('time-slider').addEventListener('input',() => {cutoff = dates[Number($('time-slider').value)]; page = 0; selected = null; render();});
-  $('latest').addEventListener('click',() => {cutoff = Infinity; $('time-slider').value = $('time-slider').max; page = 0; selected = null; render();});
-  $('previous').addEventListener('click',() => {page--;render();}); $('next').addEventListener('click',() => {page++;render();});
+  $('filings-previous').addEventListener('click',() => {filingsPageNumber--;renderFilings();}); $('filings-next').addEventListener('click',() => {filingsPageNumber++;renderFilings();});
+  $('previous').addEventListener('click',() => {page--;render(true,true);}); $('next').addEventListener('click',() => {page++;render(true,true);});
   $('load').addEventListener('click',load);
-  small.addEventListener('change',() => {page = 0;render();});
+  $('score-return').addEventListener('click', overview);
+  root.addEventListener('keydown', event => {if (event.key === 'Escape' && (pinned || selected)) {event.preventDefault(); overview();}});
+  small.addEventListener('change',() => {page = 0; ringDirty = true; render(false,false);});
+  motion.addEventListener('change', () => render(false,false));
+  screenNode?.addEventListener('rati:screen-detail', event => {
+    const next = event.detail;
+    if (next?.market !== 'stocks' || next.item?.id !== root.dataset.ticker) return;
+    if (scoreData(item) === scoreData(next.item)) return;
+    item = next.item;
+    hovered = null; focused = null;
+    readScore();
+    if (!contributions.some(part => part.key === pinned)) pinned = null;
+    const active = document.activeElement;
+    const focusSelector = active?.hasAttribute('data-score-key') ? `[data-score-key="${CSS.escape(active.dataset.scoreKey)}"]` : active?.hasAttribute('data-map-score-center') ? '[data-map-score-center]' : null;
+    drawRing(); ringDirty = false;
+    const selectedEvent = subset().find(row => row.id === selected) || null;
+    selected = selectedEvent?.id || null;
+    source(selectedEvent);
+    if (focusSelector) (root.querySelector(focusSelector) || ringLayer.querySelector('[data-map-score-center]'))?.focus({preventScroll:true});
+  });
+  render();
   load();
 })();

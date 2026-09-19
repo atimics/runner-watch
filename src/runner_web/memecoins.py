@@ -380,13 +380,19 @@ def _amount_label(value: float | None) -> str:
     return f"${value:,.2f}"
 
 
-def _market_states() -> dict[str, Any]:
+def _market_states(*, keys: tuple[str, ...] | None = None) -> dict[str, Any]:
+    requested = keys or (
+        "memecoins_snapshot",
+        "memecoins_error",
+        "memecoin_integrity_alerts",
+        "memecoin_integrity_coverage",
+        "memecoin_forensics",
+    )
+    placeholders = ",".join("?" for _ in requested)
     states = {}
     with connection() as database:
         for state in database.execute(
-            "SELECT key,value FROM worker_state "
-            "WHERE key IN ('memecoins_snapshot','memecoins_error',"
-            "'memecoin_integrity_alerts','memecoin_integrity_coverage','memecoin_forensics')"
+            f"SELECT key,value FROM worker_state WHERE key IN ({placeholders})", requested
         ).fetchall():
             try:
                 states[state["key"]] = json.loads(state["value"])
@@ -488,13 +494,23 @@ def memecoin_market(
     }
 
 
+def snapshot_version() -> str:
+    """Collected-at of the current quote snapshot; changes on every refresh.
+
+    Public caches key on this so a refreshed snapshot is not served stale.
+    """
+
+    snapshot = _market_states(keys=("memecoins_snapshot",)).get("memecoins_snapshot") or {}
+    return str(snapshot.get("collected_at") or "")
+
+
 def memecoin_detail(
     coin_id: str, *, at: datetime | None = None, history_limit: int = 288
 ) -> dict[str, Any] | None:
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", coin_id):
         return None
     current = at or datetime.now(UTC)
-    states = _market_states()
+    states = _market_states(keys=("memecoins_snapshot", "memecoins_error"))
     snapshot = states.get("memecoins_snapshot") or {}
     snapshot_coin = next((row for row in snapshot.get("rows", []) if row["id"] == coin_id), None)
     saved = stored_memecoin(coin_id)

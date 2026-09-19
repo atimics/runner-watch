@@ -6,6 +6,7 @@
   data-balance="{{ flash_wallet.balance }}"
   data-can-claim="{{ 'true' if flash_wallet.can_claim else 'false' }}"
   data-claim-day="{{ flash_wallet.claim_day }}"
+  data-auto-open="{{ 'false' if screen is defined else 'true' }}"
   aria-labelledby="flashReleaseTitle"
   aria-describedby="flashReleaseIntro"
 >
@@ -48,6 +49,7 @@
   const releaseTitle = document.getElementById('flashReleaseTitle');
   const releaseIntro = document.getElementById('flashReleaseIntro');
   const releaseId = dialog.dataset.releaseId;
+  const autoOpen = dialog.dataset.autoOpen !== 'false';
   const releaseKey = `rati-release:${releaseId}`;
   const dailyKey = `rati-flash-prompt:${dialog.dataset.claimDay}`;
   let balance = Number(dialog.dataset.balance || 0);
@@ -161,7 +163,7 @@
     url.searchParams.delete('welcome');
     history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
   }
-  if (justLoggedIn || shouldAnnounce || shouldClaim) setTimeout(() => open(), 180);
+  if (justLoggedIn || (autoOpen && (shouldAnnounce || shouldClaim))) setTimeout(() => open(), 180);
 })();
 </script>
 {% endif %}

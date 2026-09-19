@@ -1,0 +1,125 @@
+{% extends "market_screen.html" %}
+{% block screen_title %}Calls · RATi{% endblock %}
+{% block topbar %}
+<header class="topbar">
+  <a class="brand" href="{{ runners_origin }}/" aria-label="RATi home">RATi<span>●</span></a>
+  <nav aria-label="Market" class="markets">
+    <a href="{{ runners_origin }}/">Stocks</a>
+    <a href="{{ runners_origin }}/memecoins">Memecoins</a>
+    <a href="{{ sports_origin }}/">Sports</a>
+    <a href="{{ runners_origin }}/reports">Reports</a>
+  </nav>
+  {% if user %}<a class="account" href="{{ runners_origin }}/calls" aria-current="page">My Calls</a>
+  {% else %}<a class="account" href="/login?next=%2Fcalls">Log in</a>{% endif %}
+</header>
+{% endblock %}
+{% block screen_main %}
+<header class="page-head">
+  <p class="eyebrow">RATi CALLS</p>
+  <h1>Calls</h1>
+  <p class="head-note">One paper Call per subject, settled against the saved price. Yours and Flash's, across all three markets.</p>
+</header>
+
+{% if user and calls_page.mine %}
+<section class="calls-section" aria-labelledby="my-calls-heading">
+  <div class="section-heading">
+    <h2 id="my-calls-heading">My Calls</h2>
+    <b>{{ calls_page.mine.stats.open }} open · {{ calls_page.mine.stats.wins }}–{{ calls_page.mine.stats.losses }} settled</b>
+  </div>
+  {% if calls_page.mine.calls %}
+  <div class="call-list">
+    {% for call in calls_page.mine.calls %}
+    <a class="call-row" href="{{ call.href }}">
+      <span class="market-chip market-{{ call.kind }}">{{ call.product_label }}</span>
+      <span class="call-subject"><strong>{{ call.subject }}</strong><small>{{ call.company }}{% if call.live_label %} · {{ call.live_label }}{% endif %} · {{ call.created_at[:10] }}</small></span>
+      <span class="call-entry"><small>Entry</small><b>{{ call.entry_label }}</b></span>
+      <span class="call-result"><b class="{{ call.result_tone }}">{{ call.result_label }}</b><small>{{ call.reward_label or call.status|replace('_', ' ') }}</small></span>
+    </a>
+    {% endfor %}
+  </div>
+  <a class="calls-more" href="{{ runners_origin }}/u/{{ calls_page.mine.handle }}">Full public record <span aria-hidden="true">›</span></a>
+  {% else %}
+  <div class="call-empty">
+    <p>No Calls yet. Open a ticker, coin or game and make the first one.</p>
+  </div>
+  {% endif %}
+</section>
+{% elif not user %}
+<section class="login-cta">
+  <div>
+    <h2>Make your own Calls</h2>
+    <p>Your picks settle against the same saved prices as Flash's. Sign in with a passkey to start the record.</p>
+  </div>
+  <a class="primary" href="/login?next=%2Fcalls">Create your passkey</a>
+</section>
+{% endif %}
+
+<section class="calls-section flash-section" aria-labelledby="flash-heading">
+  <div class="section-heading">
+    <h2 id="flash-heading"><span class="flash-mark" aria-hidden="true">⚡</span> Flash</h2>
+    <b class="flash-cred">
+      {% set record = calls_page.record %}
+      {% if record.headline_rate_visible and record.hit_rate is not none %}
+      {{ '%.0f'|format(record.hit_rate * 100) }}% hit rate
+      {% else %}
+      building record
+      {% endif %}
+      · <a href="{{ runners_origin }}/flash/record">forecast record</a>
+    </b>
+  </div>
+
+  <div class="flash-groups">
+    <section class="flash-group">
+      <h3>Stocks · next close</h3>
+      {% if calls_page.stock_picks %}
+      <div class="pick-list">
+        {% for pick in calls_page.stock_picks %}
+        <a class="pick-row" href="{{ runners_origin }}/t/{{ pick.ticker }}">
+          <span class="tag tag-{{ 'running' if pick.direction == 'up' else 'avoid' }}">{{ 'UP' if pick.direction == 'up' else 'DOWN' }}</span>
+          <span class="call-subject"><strong>${{ pick.ticker }}</strong><small>{{ pick.reason }}</small></span>
+          <span class="confidence" title="Direction confidence">
+            <b>{{ pick.confidence_pct }}%</b>
+            <span class="confidence-track"><i style="width: {{ pick.confidence_pct }}%"></i></span>
+          </span>
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}<p class="flash-empty">No open directional calls this session.</p>{% endif %}
+    </section>
+
+    <section class="flash-group">
+      <h3>Sports · today's slate</h3>
+      {% if calls_page.sports_picks %}
+      <div class="pick-list">
+        {% for pick in calls_page.sports_picks %}
+        <a class="pick-row" href="{{ pick.href }}">
+          <span class="tag tag-setup">{{ pick.league }}</span>
+          <span class="call-subject"><strong>{{ pick.label }}</strong><small>{{ pick.kickoff }} · Flash takes {{ pick.pick }}{% if pick.edge_pct is not none %} · {{ '%+.1f'|format(pick.edge_pct) }}% edge{% endif %}</small></span>
+          <span class="confidence" title="Win probability">
+            <b>{{ pick.confidence_pct }}%</b>
+            <span class="confidence-track"><i style="width: {{ pick.confidence_pct }}%"></i></span>
+          </span>
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}<p class="flash-empty">The slate has not been graded yet.</p>{% endif %}
+    </section>
+
+    <section class="flash-group">
+      <h3>Memecoins · on the board</h3>
+      {% if calls_page.memecoin_picks %}
+      <div class="pick-list">
+        {% for pick in calls_page.memecoin_picks %}
+        <a class="pick-row" href="{{ runners_origin }}{{ pick.href }}">
+          <span class="tag tag-{{ pick.tag_tone }}{% if pick.risk %} has-risk{% endif %}">{% if pick.risk %}<i aria-hidden="true">▲</i>{% endif %}{{ pick.tag }}</span>
+          <span class="call-subject"><strong>{{ pick.symbol }}</strong><small>{{ pick.company }}</small></span>
+          <span class="ticker-value"><strong>{{ pick.value }}</strong><small class="{{ pick.tone }}">{{ pick.change }}</small></span>
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}<p class="flash-empty">The scanner has not tagged any coins yet.</p>{% endif %}
+    </section>
+  </div>
+  <p class="flash-note">Every pick above is frozen with its own evidence and settles on the public record. Research only — never advice.</p>
+</section>
+{% endblock %}

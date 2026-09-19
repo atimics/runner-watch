@@ -67,9 +67,7 @@ def test_ticker_share_names_the_symbol_and_the_move() -> None:
 def test_ticker_share_version_tracks_the_latest_quote() -> None:
     first = web_main.ticker_share(_ticker_detail())
     repriced = web_main.ticker_share(_ticker_detail(price=13.25))
-    requoted = web_main.ticker_share(
-        _ticker_detail(quote_time="2026-08-24T14:05:00+00:00")
-    )
+    requoted = web_main.ticker_share(_ticker_detail(quote_time="2026-08-24T14:05:00+00:00"))
 
     assert first["card_path"] != repriced["card_path"]
     assert first["card_path"] != requoted["card_path"]
@@ -131,9 +129,7 @@ def test_ticker_page_advertises_its_card(
     init_db()
     captured_at = datetime.now(UTC).isoformat()
     insert_scan_run("ticker-share-run", captured_at, 1)
-    insert_scored_snapshot(
-        "ticker-share-snapshot", "ticker-share-run", "ONE", 42, 1, captured_at
-    )
+    insert_scored_snapshot("ticker-share-snapshot", "ticker-share-run", "ONE", 42, 1, captured_at)
 
     response = web_main.ticker_page("ONE", _ticker_request("/t/ONE"), None)
     html = response.body.decode()
@@ -145,13 +141,44 @@ def test_ticker_page_advertises_its_card(
     assert '<meta name="description"' in html
 
 
+def test_ticker_page_includes_the_robinhood_chain_token(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "ticker-rh-chain.db")
+    monkeypatch.setattr(web_main, "OPENROUTER_API_KEY", "")
+    init_db()
+    captured_at = datetime.now(UTC).isoformat()
+    insert_scan_run("ticker-rh-run", captured_at, 1)
+    insert_scored_snapshot("ticker-rh-snapshot", "ticker-rh-run", "ONE", 42, 1, captured_at)
+    token = {
+        "symbol": "ONE",
+        "name": "One Corp • Robinhood Token",
+        "contract_address": "0x1Cdad396DB64BDa184d5182A97Dd9B3C62100b7D",
+        "chain_id": 4663,
+        "multiplier": "1.000000000000000000",
+        "status": "active",
+        "docs_url": "https://docs.robinhood.com/chain/stock-tokens",
+    }
+    monkeypatch.setattr(web_main, "stock_token", lambda ticker: token)
+
+    response = web_main.ticker_page("ONE", _ticker_request("/t/ONE"), None)
+
+    assert response.status_code == 200
+    html = response.body.decode()
+    assert "Robinhood Chain token" in html
+    assert token["contract_address"] in html
+    assert "not the underlying stock" in html
+
+
+
 def test_ticker_card_route_and_meta_are_public() -> None:
     root = Path(__file__).parents[1]
     source = (root / "src/runner_web/main.py").read_text()
-    template = (root / "web/templates/ticker.html").read_text()
+    # The share meta lives on the shell the live ticker page extends.
+    template = (root / "web/templates/market_screen.html").read_text()
 
     assert '@app.get("/t/{ticker}/card.png")' in source
     assert "def ticker_share(" in source
     for tag in ("og:title", "og:description", "og:image", "twitter:card"):
         assert tag in template
-    assert "block page_description" in template

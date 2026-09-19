@@ -5,6 +5,28 @@
   document.addEventListener('error', event => { if (event.target.matches?.('[data-portrait]')) event.target.hidden = true; }, true);
   const chart = document.querySelector('.price-chart');
   const status = document.querySelector('[data-chart-status]');
+  let activeTag = null;
+  function applyTagFilter() {
+    const list = document.querySelector('[data-tag-list]');
+    if (!list) return;
+    list.querySelectorAll('.ticker').forEach(row => {
+      row.hidden = Boolean(activeTag) && (row.dataset.tag || '') !== activeTag;
+    });
+  }
+  const tagFilters = document.querySelector('[data-tag-filters]');
+  if (tagFilters) tagFilters.addEventListener('click', event => {
+    const chip = event.target.closest('.chip');
+    if (!chip) return;
+    const tag = chip.dataset.tag || '';
+    activeTag = (!tag || activeTag === tag) ? null : tag;
+    tagFilters.querySelectorAll('.chip').forEach(item => {
+      item.setAttribute('aria-pressed', String((item.dataset.tag || '') === (activeTag || '')));
+    });
+    const all = tagFilters.querySelector('.chip-all');
+    if (all) all.toggleAttribute('hidden', !activeTag);
+    applyTagFilter();
+  });
+  applyTagFilter();
   const put = (selector, value) => { const el = document.querySelector(selector); if (el) el.textContent = value || ''; };
   let filingMarker = null, chartBounds = null;
   function markFiling() {
@@ -25,6 +47,66 @@
     }
   }
   document.addEventListener('rati:map-time',event => {filingMarker = event.detail; markFiling();});
+  // The action tag over time, drawn onto the line. A reader can see where a
+  // name turned from watch to setup to running without reading a table.
+  let chartStates = [];
+  let toneFilter = null;
+  const STATE_TONES = ['running', 'setup', 'extended', 'avoid', 'watch', 'paused'];
+  const STATE_LABELS = {running:'Running', setup:'Setup', extended:'Extended', avoid:'Avoid', watch:'Watch', paused:'Paused'};
+  function renderStateLegend() {
+    const legend = document.querySelector('[data-chart-state-legend]');
+    if (!legend) return;
+    const tones = new Set();
+    chartStates.forEach(change => { const tone = String(change?.tone || ''); if (STATE_TONES.includes(tone)) tones.add(tone); });
+    const ordered = STATE_TONES.filter(tone => tones.has(tone));
+    legend.replaceChildren();
+    legend.hidden = ordered.length === 0;
+    ordered.forEach(tone => {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'state-legend-chip tone-' + tone;
+      button.textContent = STATE_LABELS[tone];
+      button.setAttribute('aria-pressed', String(toneFilter === tone));
+      button.addEventListener('click', () => {
+        toneFilter = toneFilter === tone ? null : tone;
+        [...legend.querySelectorAll('button')].forEach(control => control.setAttribute('aria-pressed', String(control === button && toneFilter === tone)));
+        draw(screen?.series || []);
+      });
+      legend.append(button);
+    });
+  }
+  function toneAt(time) {
+    let tone = '';
+    for (const change of chartStates) {
+      const at = Date.parse(change.time);
+      if (!Number.isFinite(at) || at > time) break;
+      tone = change.tone;
+    }
+    return tone;
+  }
+  function paintStates(data, coords) {
+    if (!chart) return;
+    chart.querySelectorAll('.chart-state').forEach(node => node.remove());
+    if (!chartStates.length || data.length < 2) return;
+    const base = chart.querySelector('.chart-line');
+    const ns = 'http://www.w3.org/2000/svg';
+    let run = [], runTone = toneAt(data[0][0]);
+    const flush = () => {
+      if (run.length > 1 && runTone) {
+        const path = document.createElementNS(ns, 'path');
+        path.setAttribute('class', 'chart-state state-' + runTone);
+        path.setAttribute('d', run.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' '));
+        if (toneFilter && toneFilter !== runTone) path.style.opacity = '0.15';
+        base.after(path);
+      }
+      run = run.length ? [run[run.length - 1]] : [];
+    };
+    data.forEach((point, index) => {
+      const tone = toneAt(point[0]);
+      if (tone !== runTone) { flush(); runTone = tone; }
+      run.push(coords[index]);
+    });
+    flush();
+  }
   function draw(points) {
     if (!chart) return;
     const ordered = new Map();
@@ -35,27 +117,29 @@
     const money = value => '$' + value.toLocaleString('en-US', value < 1 ? {maximumSignificantDigits: 6} : {minimumFractionDigits: 2, maximumFractionDigits: 6});
     const label = t => new Date(t).toLocaleString('en-US', {year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'UTC'}) + ' UTC';
     const dot = chart.querySelector('.chart-point');
-    put('[data-chart-start]', ''); put('[data-chart-end]', ''); put('[data-chart-summary]', '');
     if (!data.length) {
       status.hidden = false; status.textContent = 'Price history will appear here.';
-      chart.setAttribute('hidden', ''); chart.setAttribute('aria-label', 'Price history is pending.'); return;
+      chart.setAttribute('hidden', ''); chart.setAttribute('aria-label', 'Price history is pending.');
+      const legend = document.querySelector('[data-chart-state-legend]');
+      if (legend) legend.hidden = true;
+      return;
     }
     const low = Math.min(...data.map(p=>p[1])), high = Math.max(...data.map(p=>p[1]));
     const start = data[0][0], end = data[data.length-1][0];
     const first = data[0][1], last = data[data.length-1][1];
     const move = ((last / first - 1) * 100).toLocaleString('en-US', {signDisplay:'always', maximumFractionDigits:6});
-    const summary = data.length === 1 ? `One saved price: ${money(first)}` : `${money(first)} → ${money(last)} · ${move}% over this period`;
-    put('[data-chart-summary]', summary);
-    put('[data-chart-start]', label(start));
-    if (data.length > 1) put('[data-chart-end]', label(end));
+    const summary = data.length === 1 ? `One saved price: ${money(first)}` : `${money(first)} → ${money(last)} · ${move}%`;
     chart.setAttribute('aria-label', `Price history: ${summary}. ${label(start)}${data.length > 1 ? ' to ' + label(end) : ''}.`);
     const coords = data.map(p=>[end===start ? 400 : 8 + (p[0]-start)/(end-start)*784, high===low ? 140 : 260-(p[1]-low)/(high-low)*240]);
     const line = coords.map((p,i)=>`${i?'L':'M'}${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ');
     chart.querySelector('.chart-line').setAttribute('d',line);
     chart.querySelector('.chart-area').setAttribute('d',data.length === 1 ? '' : `${line} L792,280 L8,280 Z`);
+    paintStates(data, coords);
     dot.toggleAttribute('hidden', data.length !== 1); dot.setAttribute('cx', '400'); dot.setAttribute('cy', '140');
     chart.removeAttribute('hidden'); status.hidden = true;
+    renderStateLegend();
   }
+  chartStates = screen?.states || [];
   draw(screen?.series);
   const pageKey = () => location.pathname + location.search;
   let requestNumber = 0;
@@ -109,7 +193,9 @@
       }
     }
     screen = next;
+    if (next.states) chartStates = next.states;
     draw(next.series);
+    node?.dispatchEvent(new CustomEvent('rati:screen-detail', {detail:next}));
   }
   async function refreshDetail() {
     if (!screen?.refresh_url) return null;
@@ -140,10 +226,11 @@
         content.querySelectorAll('[data-connection]').forEach(el => { if (opened.has(el.dataset.connection)) { el.open = true; const more = el.querySelector('.more-connections'); if (more) more.open = opened.get(el.dataset.connection); } });
         surface.replaceWith(content);
       }
+      applyTagFilter();
     } catch (_) { /* Keep the saved view during connection recovery. */ }
   }
   if (screen?.refresh_url) refreshDetail();
-  else if (screen?.chart_url) fetch(screen.chart_url).then(r=>r.json()).then(p=>draw(p.points)).catch(()=>draw(screen.series));
+  else if (screen?.chart_url) fetch(screen.chart_url).then(r=>r.json()).then(p=>{if(p.states)chartStates=p.states;draw(p.points);}).catch(()=>draw(screen.series));
   setInterval(refreshSurface, 60000);
   function showTerms(selected) {
     put('[data-confirm-title]', selected.label);

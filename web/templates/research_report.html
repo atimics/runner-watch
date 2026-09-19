@@ -1,4 +1,4 @@
-{% extends "mobile_base.html" %}
+{% extends "market_screen.html" %}
 {% from "_content_notices.html" import content_notices %}
 {% macro research_points(title, items, extra_class='') -%}
 <section class="research-section research-points {{ extra_class }}">
@@ -19,9 +19,9 @@
 {%- endmacro %}
 {% set share_title = report.share_title|default(report.ticker ~ ' · ' ~ report.headline) %}
 {% set share_summary = report.share_summary|default(report.summary) %}
-{% block title %}{{ report.ticker }} research · {{ 'RATi Sports' if report.subject_type == 'sports_game' else 'RATi Runners' }}{% endblock %}
-{% block page_description %}<meta name="description" content="{{ share_summary }}">{% endblock %}
-{% block head %}
+{% block screen_title %}{{ report.ticker }} research · {{ 'RATi Sports' if report.subject_type == 'sports_game' else 'RATi Runners' }}{% endblock %}
+{% block screen_description %}{{ share_summary }}{% endblock %}
+{% block detail_head %}
 <meta property="og:title" content="{{ share_title }}">
 <meta property="og:description" content="{{ share_summary }}">
 <meta property="og:type" content="article">
@@ -31,12 +31,21 @@
 <meta name="twitter:title" content="{{ share_title }}">
 <meta name="twitter:description" content="{{ share_summary }}">
 {% endblock %}
-{% block content %}
-<header class="detail-nav">
-  <a href="{{ report.back_href }}" aria-label="Back to {{ 'game' if report.subject_type == 'sports_game' else 'Alpha' }}">‹</a>
-  <strong>Research</strong>
-  {% if not report.customer_inference %}<button type="button" id="shareReport" aria-label="Share this report">↗</button>{% else %}<span></span>{% endif %}
+{% block topbar %}
+<header class="topbar">
+  <a class="brand" href="{{ runners_origin }}/" aria-label="RATi home">RATi<span>●</span></a>
+  <nav aria-label="Market" class="markets">
+    <a href="{{ runners_origin }}/">Stocks</a>
+    <a href="{{ runners_origin }}/memecoins">Memecoins</a>
+    <a href="{{ sports_origin }}/">Sports</a>
+    <a href="{{ runners_origin }}/calls">Calls</a>
+    <a href="{{ runners_origin }}/reports">Reports</a>
+  </nav>
+  {% if not report.customer_inference %}<button type="button" id="shareReport" class="account" aria-label="Share this report">Share ↗</button>{% else %}<a class="account" href="/login?next={{ request.url.path|urlencode }}">Log in</a>{% endif %}
 </header>
+{% endblock %}
+{% block screen_main %}
+<a class="back" href="{{ report.back_href }}">← {{ 'Game' if report.subject_type == 'sports_game' else 'Alpha' }}</a>
 
 <main class="research-report">
   <a class="research-report-head" href="{{ report.asset_href }}">
@@ -175,7 +184,7 @@
   <div class="research-meta">{% if report.customer_inference %}Your model · {{ report.model or report.requested_model }}{% elif report.actor %}{{ report.actor.display_name }} · {{ report.actor.model }}{% else %}{{ report.model or report.requested_model }}{% endif %} · {{ report.completed_at[:16]|replace('T', ' ') }} UTC{% if report.usage.context.evidence_metrics %}{% set metrics = report.usage.context.evidence_metrics %} · {{ metrics.source_family_count }} source families · {{ metrics.fresh_evidence_count }} fresh · {{ metrics.linked_claim_count }} points linked · {{ metrics.public_link_count }} public links{% endif %}</div>
 </main>
 {% endblock %}
-{% block scripts %}
+{% block detail_scripts %}
 <script nonce="{{ request.state.csp_nonce }}">
 document.getElementById('shareReport')?.addEventListener('click',async event=>{
   const share={title:document.querySelector('meta[property="og:title"]')?.content || {{ share_title|tojson }},text:document.querySelector('meta[property="og:description"]')?.content || {{ share_summary|tojson }},url:location.href};

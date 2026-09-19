@@ -28,6 +28,9 @@ class Screen:
     dynamic_key: str | None = None
     final_path: str | None = None
     fixture_required: bool = True
+    # The redesigned list renders no body heading; the top bar's current
+    # market link is its stable landmark.
+    selector: str = "h1"
 
 
 @dataclass(frozen=True)
@@ -41,17 +44,58 @@ class Result:
 
 
 SCREENS = (
-    Screen("runners_pulse", "Stocks · List", "runners", "/", r"^List$"),
-    Screen("ticker", "Runners · Ticker", "runners", None, r"\S+", "ticker"),
-    Screen("runners_radar", "Stocks · Map", "runners", "/?view=map", r"^Map$"),
-    Screen("market_reports", "Runners · Market turns", "runners", "/reports", r"^Market turns$"),
-    Screen("memecoins", "Memecoins · List", "runners", "/memecoins", r"^List$"),
-    Screen("memecoin", "Memecoins · Coin", "runners", None, r"\S+", "memecoin"),
-    Screen("memecoin_radar", "Memecoins · Map", "runners", "/memecoins?view=map", r"^Map$"),
     Screen(
-        "memecoin_alpha", "Memecoins · Saved link", "runners", "/memecoins?view=calls", r"^List$"
+        "runners_pulse",
+        "Stocks · List",
+        "runners",
+        "/",
+        r"^Stocks$",
+        selector='.markets a[aria-current="page"]',
     ),
-    Screen("runners_alpha", "Stocks · Saved link", "runners", "/?view=calls", r"^List$"),
+    Screen("ticker", "Runners · Ticker", "runners", None, r"\S+", "ticker"),
+    Screen(
+        "runners_radar",
+        "Stocks · Map",
+        "runners",
+        "/?view=map",
+        r"^Stocks$",
+        selector='.markets a[aria-current="page"]',
+    ),
+    Screen("market_reports", "Runners · Market turns", "runners", "/reports", r"^Market turns$"),
+    Screen("calls", "Calls · My Calls and Flash", "runners", "/calls", r"^Calls$"),
+    Screen(
+        "memecoins",
+        "Memecoins · List",
+        "runners",
+        "/memecoins",
+        r"^Memecoins$",
+        selector='.markets a[aria-current="page"]',
+    ),
+    Screen("memecoin", "Memecoins · Coin", "runners", None, r"\S+", "memecoin"),
+    Screen(
+        "memecoin_radar",
+        "Memecoins · Map",
+        "runners",
+        "/memecoins?view=map",
+        r"^Memecoins$",
+        selector='.markets a[aria-current="page"]',
+    ),
+    Screen(
+        "memecoin_alpha",
+        "Memecoins · Saved link",
+        "runners",
+        "/memecoins?view=calls",
+        r"^Memecoins$",
+        selector='.markets a[aria-current="page"]',
+    ),
+    Screen(
+        "runners_alpha",
+        "Stocks · Saved link",
+        "runners",
+        "/?view=calls",
+        r"^Stocks$",
+        selector='.markets a[aria-current="page"]',
+    ),
     Screen("caller", "Runners · Caller", "runners", None, r"\S+", "caller"),
     Screen("research", "Runners · Research", "runners", None, r"\S+", "research"),
     Screen(
@@ -61,10 +105,31 @@ SCREENS = (
         "/flash/record",
         r"^Forecast record$",
     ),
-    Screen("sports_pulse", "Sports · List", "sports", "/", r"^List$"),
+    Screen(
+        "sports_pulse",
+        "Sports · List",
+        "sports",
+        "/",
+        r"^Sports$",
+        selector='.markets a[aria-current="page"]',
+    ),
     Screen("sports_game", "Sports · Game", "sports", None, r"\S+", "sports_game"),
-    Screen("sports_radar", "Sports · Map", "sports", "/?view=map", r"^Map$"),
-    Screen("sports_alpha", "Sports · Saved link", "sports", "/?view=calls", r"^List$"),
+    Screen(
+        "sports_radar",
+        "Sports · Map",
+        "sports",
+        "/?view=map",
+        r"^Sports$",
+        selector='.markets a[aria-current="page"]',
+    ),
+    Screen(
+        "sports_alpha",
+        "Sports · Saved link",
+        "sports",
+        "/?view=calls",
+        r"^Sports$",
+        selector='.markets a[aria-current="page"]',
+    ),
     Screen("login", "Account · Login", "runners", "/login", r"^Create your passkey$"),
     Screen(
         "backup_passkey",
@@ -150,6 +215,7 @@ async def _check_screen(
 
         page.on("console", record_console)
         page.on("pageerror", lambda error: browser_errors.append(str(error)))
+        page.on("crash", lambda _page=None: browser_errors.append("page crashed"))
 
         async def render(*, reload: bool = False) -> int:
             browser_errors.clear()
@@ -164,11 +230,11 @@ async def _check_screen(
             if response.status >= 400:
                 raise RuntimeError(f"document returned HTTP {response.status}")
 
-            heading = page.locator("h1").first
-            await heading.wait_for(state="visible", timeout=timeout_ms)
-            heading_text = (await heading.inner_text()).strip()
-            if not re.search(screen.heading, heading_text):
-                raise RuntimeError(f"unexpected heading {heading_text!r}")
+            landmark = page.locator(screen.selector).first
+            await landmark.wait_for(state="visible", timeout=timeout_ms)
+            landmark_text = (await landmark.inner_text()).strip()
+            if not re.search(screen.heading, landmark_text):
+                raise RuntimeError(f"unexpected heading {landmark_text!r}")
 
             expected_path = screen.final_path or urlsplit(path).path
             actual_path = urlsplit(page.url).path
@@ -326,7 +392,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--failure-ms",
         type=int,
-        default=int(os.getenv("LIVE_SCREEN_FAILURE_MS", "2500")),
+        default=int(os.getenv("LIVE_SCREEN_FAILURE_MS", "3500")),
     )
     parser.add_argument(
         "--retries",

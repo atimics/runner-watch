@@ -35,8 +35,17 @@ def _report_and_forecasts(ticker: str, direction: str) -> None:
             ) VALUES(?,?,?,?,?,?,?,?,?)
             ON CONFLICT DO NOTHING
             """,
-            ("report-1", SESSION_DAY, "pre_market", "scan-1", SESSION_OPEN.isoformat(), "h", "s",
-             SESSION_OPEN.isoformat(), SESSION_OPEN.isoformat()),
+            (
+                "report-1",
+                SESSION_DAY,
+                "pre_market",
+                "scan-1",
+                SESSION_OPEN.isoformat(),
+                "h",
+                "s",
+                SESSION_OPEN.isoformat(),
+                SESSION_OPEN.isoformat(),
+            ),
         )
         database.execute(
             """

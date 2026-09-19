@@ -10,23 +10,38 @@ from runner_web.memecoin_replay_store import saved_replay
 from runner_web.telegram import (
     AnimationDeliveryError,
     config_from_env,
+    escape_markdown_v2,
+    markdown_link,
     memecoin_alerts_enabled,
     send_animation,
 )
-from runner_web.telegram_outbox import label, lock_channel, reserve_channel_slot
+from runner_web.telegram_outbox import label as bounded_label
+from runner_web.telegram_outbox import lock_channel, reserve_channel_slot
 
 
 def caption(payload: dict, *, origin: str) -> str:
-    launch = "Launch recorded on chain" if payload["launch"] else "Launch evidence pending"
-    symbol = label(payload["symbol"] or payload["token_address"][:8], 80)
-    return (
-        f"New memecoin detected · {symbol}\n\n{payload['token_address']}\n"
-        f"{launch}\n{len(payload['events'])} saved events · "
-        f"{len(payload['frames'])} replay keyframes\n"
-        "Coverage follows collected transactions.\n\n"
-        f"Replay the network: {origin.rstrip('/')}/memecoins/coin/"
+    """One tight Markdown V2 card under the replay GIF.
+
+    The coin page URL carries the identity, so the raw token address stays on
+    the page instead of in the chat.
+    """
+
+    label = escape_markdown_v2(
+        bounded_label(payload["symbol"] or payload["token_address"][:8], 80).upper()
+    )
+    launch = escape_markdown_v2(
+        "Launch recorded on chain" if payload["launch"] else "Launch evidence pending"
+    )
+    events = escape_markdown_v2(f"{len(payload['events'])} saved events")
+    link = (
+        f"{origin.rstrip('/')}/memecoins/coin/"
         f"{quote(payload['coin_id'], safe='')}?replay={payload['id']}#token-replay"
     )
+    # The URL is an inline link, not a bare line: every dot and hyphen in a
+    # bare URL is reserved in Markdown V2, and a caption that fails to parse
+    # takes the GIF down with it — sendAnimation has no plain-text retry.
+    card = f"\U0001fa99 *{label}* — new coin detected\n\n{launch} · {events}"
+    return card + "\n\n" + markdown_link("Open the coin page", link)
 
 
 def dispatch_memecoin_replays(
@@ -40,13 +55,14 @@ def dispatch_memecoin_replays(
     current = at or datetime.now(UTC)
     stamp = current.isoformat()
     with connection() as database:
+        lock_channel(database, config.chat_id, current)
         database.execute(
             "UPDATE memecoin_replay_posts SET status='uncertain',last_error='acknowledgement_lost' "
-            "WHERE status='sending' AND updated_at<?",
-            ((current - timedelta(minutes=5)).isoformat(),),
+            "WHERE chat_id=? AND status='sending' AND updated_at<?",
+            (config.chat_id, (current - timedelta(minutes=5)).isoformat()),
         )
         rows = database.execute(
-            "SELECT coin_id,replay_id FROM memecoin_replay_posts "
+            "SELECT coin_id,replay_id,caption_text FROM memecoin_replay_posts "
             "WHERE status IN ('pending','retry') AND replay_id IS NOT NULL AND chat_id=? "
             "AND attempts<3 AND (retry_at IS NULL OR retry_at<=?) ORDER BY created_at LIMIT ?",
             (config.chat_id, stamp, max(1, min(limit, 5))),
@@ -79,7 +95,7 @@ def dispatch_memecoin_replays(
             record = saved_replay(row["coin_id"], row["replay_id"], with_gif=True)
             if not record:
                 raise ValueError("missing_replay")
-            text = caption(record["payload"], origin=origin)
+            text = row["caption_text"] or caption(record["payload"], origin=origin)
             with connection() as database:
                 database.execute(
                     "UPDATE memecoin_replay_posts SET caption_text=? WHERE coin_id=?",
@@ -99,6 +115,8 @@ def dispatch_memecoin_replays(
             status, error = "failed", "replay_quality_failed"
         except Exception:
             status, error = "uncertain", "acknowledgement_lost"
+        if status != "sent":
+            message_id = None
         with connection() as database:
             lock_channel(database, config.chat_id, current)
             database.execute(

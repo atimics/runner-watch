@@ -70,7 +70,6 @@ from runner_web.account_routes import (
 )
 from runner_web.actor_portraits import generate_actor_portrait, portrait_for_actor
 from runner_web.ai_kol import FLASH, AIKol, actor_snapshot, flash_version_snapshot
-from runner_web.base_rates import matched_market_base_rates
 from runner_web.billing import (
     construct_webhook_event,
     delete_customer,
@@ -99,6 +98,11 @@ from runner_web.calls import (
     calls_for_ticker as community_calls_for_ticker,
 )
 from runner_web.case_monitor import refresh_case_monitor
+from runner_web.client_errors import (
+    CLIENT_ERROR_RETENTION_DAYS,
+    client_ip_hash,
+    record_client_error,
+)
 from runner_web.collection import recording_market_data
 from runner_web.content_notices import (
     attach_comment_notices,
@@ -120,6 +124,7 @@ from runner_web.dash import sector_now as dash_sector_now
 from runner_web.dash import session_report as dash_session_report
 from runner_web.db import connection, init_db
 from runner_web.flash_evaluations import (
+    flash_open_calls,
     flash_record,
     forecast_for_report,
     prepare_forecast_evidence,
@@ -158,8 +163,15 @@ from runner_web.kol import (
     refresh_kol_calls,
 )
 from runner_web.live_screens import public_dynamic_screen_paths
+from runner_web.llm_edge_routes import (
+    EdgeConnectorPayload,
+    EdgeJobCompletePayload,
+    EdgeJobFailPayload,
+    LLMEdgeRouteDependencies,
+    LLMRoutePayload,
+    create_llm_edge_routes,
+)
 from runner_web.llm_routing import (
-    connector_token_hash,
     route_for_user,
 )
 from runner_web.market_actors import (
@@ -183,6 +195,7 @@ from runner_web.market_reports import (
     refresh_market_reports,
 )
 from runner_web.market_screens import detail as simple_market_detail
+from runner_web.market_screens import stamp as screen_stamp
 from runner_web.memecoin_calls import (
     active_memecoin_call,
     close_memecoin_call,
@@ -195,6 +208,7 @@ from runner_web.memecoins import (
     memecoin_detail,
     memecoin_market,
     refresh_memecoins,
+    snapshot_version,
 )
 from runner_web.operations import (
     require_operations_access,
@@ -246,6 +260,7 @@ from runner_web.request_security import (
 )
 from runner_web.research_context import build_research_context, research_evidence_metrics
 from runner_web.research_pipeline import verified_public_citations
+from runner_web.robinhood_chain import stock_token
 from runner_web.sectors import refresh_company_sectors
 from runner_web.shared_state import (
     acknowledge_research_job,
@@ -303,25 +318,40 @@ from runner_web.telegram import (
     alerts_enabled as telegram_alerts_enabled,
 )
 from runner_web.telegram import (
-    announcement_batch_ready,
-    format_release_announcement,
-    format_update_announcement,
-    select_new_runners,
+    config_from_env as telegram_config_from_env,
 )
 from runner_web.telegram import (
-    config_from_env as telegram_config_from_env,
+    format_event_post_md as telegram_format_event_post_md,
+)
+from runner_web.telegram import (
+    format_market_report_post_md as telegram_format_market_report_post_md,
+)
+from runner_web.telegram import (
+    format_public_report_post_md as telegram_format_public_report_post_md,
+)
+from runner_web.telegram import (
+    format_release_announcement_md as telegram_format_release_announcement_md,
+)
+from runner_web.telegram import (
+    format_runner_story_md as telegram_format_runner_story_md,
 )
 from runner_web.telegram import (
     release_announcements_enabled as telegram_release_announcements_enabled,
 )
 from runner_web.telegram import (
-    send_message as send_telegram_message,
+    select_new_runners,
+)
+from runner_web.telegram import (
+    send_post as telegram_send_post,
 )
 from runner_web.telegram import (
     send_reply as send_telegram_reply,
 )
 from runner_web.telegram import (
     set_reaction as set_telegram_reaction,
+)
+from runner_web.telegram import (
+    story_is_stale as telegram_story_is_stale,
 )
 from runner_web.telegram_chat import (
     CHEETAH_PERSONA,
@@ -371,7 +401,16 @@ from runner_web.telegram_chat import (
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
 from runner_web.worker_supervisor import run_supervised
 
-__all__ = ["AccountDeletePayload", "CloudDataDeletePayload"]
+__all__ = [
+    "AccountDeletePayload",
+    "CloudDataDeletePayload",
+    # Re-exported for the local-model route tests; the handlers live in
+    # runner_web.llm_edge_routes.
+    "EdgeConnectorPayload",
+    "EdgeJobCompletePayload",
+    "EdgeJobFailPayload",
+    "LLMRoutePayload",
+]
 
 LOG = logging.getLogger(__name__)
 
@@ -486,6 +525,24 @@ EASTERN = ZoneInfo("America/New_York")
 BACKGROUND_SCAN_INTERVAL_SECONDS = max(
     120, int(os.getenv("BACKGROUND_SCAN_INTERVAL_SECONDS", "180"))
 )
+# The gate is a clock check, so it can be polled far more often than a scan
+# costs. It used to be read once per interval, which let the scanner sleep
+# through the first half hour of pre-market and miss the 4:20 report window.
+SCAN_IDLE_POLL_SECONDS = max(15, int(os.getenv("SCAN_IDLE_POLL_SECONDS", "60")))
+# Floor between consecutive scans, so a scan that overruns the interval does
+# not start the next one the moment it lands.
+SCAN_MIN_GAP_SECONDS = max(15, int(os.getenv("SCAN_MIN_GAP_SECONDS", "60")))
+OUTCOME_REFRESH_TIMEOUT_SECONDS = max(120, int(os.getenv("OUTCOME_REFRESH_TIMEOUT_SECONDS", "900")))
+OUTCOME_ERROR_RECORD_TIMEOUT_SECONDS = max(
+    15, int(os.getenv("OUTCOME_ERROR_RECORD_TIMEOUT_SECONDS", "60"))
+)
+WORKER_PROGRESS_KEYS = {
+    "outcomes": "outcomes_last_refresh",
+    "scan-collection": "background_scan_last_run",
+}
+WORKER_PROGRESS_MAX_AGE_SECONDS = max(
+    600, int(os.getenv("WORKER_PROGRESS_MAX_AGE_SECONDS", "7200"))
+)
 PULSE_CACHE_TTL_SECONDS = max(5.0, float(os.getenv("PULSE_CACHE_TTL_SECONDS", "60")))
 RADAR_CACHE_TTL_SECONDS = max(5.0, float(os.getenv("RADAR_CACHE_TTL_SECONDS", "60")))
 ALPHA_CACHE_TTL_SECONDS = max(5.0, float(os.getenv("ALPHA_CACHE_TTL_SECONDS", "60")))
@@ -499,6 +556,24 @@ PUBLIC_SCREEN_DATA_LOCK = threading.Lock()
 PUBLIC_SCREEN_DATA_CONDITION = threading.Condition(PUBLIC_SCREEN_DATA_LOCK)
 PUBLIC_SCREEN_DATA_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 PUBLIC_SCREEN_DATA_REFRESHING: set[str] = set()
+# Scopes the worker keeps warm in the shared cache. A web process serves these
+# from the shared copy instead of rebuilding them; dynamic scopes (per ticker,
+# coin or handle) still refresh in web.
+WORKER_OWNED_SCREENS = frozenset(
+    {
+        ("runners-pulse", "public"),
+        ("runners-radar", "public"),
+        ("runners-alpha", "public"),
+        ("flash-record", "public"),
+        ("calls-flash", ""),
+        ("caller", MACHINE_HANDLE),
+        ("sports-pulse", "all"),
+        ("sports-radar", "all"),
+        ("sports-alpha", "all"),
+        ("sports-golf", "pga"),
+        ("simple-sports", "all"),
+    }
+)
 SPORTS_INGESTION_ENABLED = os.getenv("SPORTS_INGESTION_ENABLED", "true").strip().lower() not in {
     "0",
     "false",
@@ -592,32 +667,175 @@ def _invalidate_runners_feeds(*scopes: str) -> None:
         _invalidate_public_screen_data(f"runners-{scope}", "public")
 
 
+def _build_cached_payload(
+    local_key: str,
+    shared_key: str,
+    builder: Callable[[], dict[str, Any]],
+    *,
+    cache: dict[str, tuple[float, dict[str, Any]]],
+    condition: threading.Condition,
+    ttl_seconds: float,
+    max_entries: int | None = None,
+) -> dict[str, Any]:
+    payload = builder()
+    with condition:
+        if max_entries is not None and len(cache) >= max_entries and local_key not in cache:
+            oldest_key = min(cache, key=lambda key: cache[key][0])
+            cache.pop(oldest_key, None)
+        cache[local_key] = (time.monotonic() + ttl_seconds, payload)
+    shared_cache_set(shared_key, payload, int(ttl_seconds))
+    return payload
+
+
+def _finish_cached_payload_refresh(
+    local_key: str,
+    refreshing: set[str],
+    condition: threading.Condition,
+) -> None:
+    with condition:
+        refreshing.discard(local_key)
+        condition.notify_all()
+
+
+def _refresh_cached_payload(
+    local_key: str,
+    shared_key: str,
+    builder: Callable[[], dict[str, Any]],
+    *,
+    cache: dict[str, tuple[float, dict[str, Any]]],
+    refreshing: set[str],
+    condition: threading.Condition,
+    ttl_seconds: float,
+    failure_message: str,
+    metric_scope: str | None = None,
+) -> None:
+    started = time.perf_counter()
+    try:
+        _build_cached_payload(
+            local_key,
+            shared_key,
+            builder,
+            cache=cache,
+            condition=condition,
+            ttl_seconds=ttl_seconds,
+        )
+    except Exception:
+        LOG.exception(failure_message)
+    finally:
+        if metric_scope is not None:
+            record_cache(metric_scope, "build", duration_ms=(time.perf_counter() - started) * 1000)
+        _finish_cached_payload_refresh(local_key, refreshing, condition)
+
+
+def _cached_payload(
+    local_key: str,
+    shared_key: str,
+    builder: Callable[[], dict[str, Any]],
+    *,
+    cache: dict[str, tuple[float, dict[str, Any]]],
+    refreshing: set[str],
+    condition: threading.Condition,
+    ttl_seconds: float,
+    max_entries: int,
+    refresh_target: Callable[..., None],
+    refresh_args: tuple[Any, ...],
+    refresh_name: str,
+    metric_scope: str | None = None,
+    allow_refresh: bool = True,
+) -> dict[str, Any]:
+    current = time.monotonic()
+    with condition:
+        cached = cache.get(local_key)
+        if cached and current < cached[0]:
+            if metric_scope is not None:
+                record_cache(metric_scope, "hit")
+            return cached[1]
+    if cached:
+        if metric_scope is not None:
+            record_cache(metric_scope, "stale")
+
+    # A shared copy refreshed by the worker (or another instance) is cheaper
+    # than rebuilding locally, and lets a web process stay off the rebuild path.
+    shared = shared_cache_get(shared_key)
+    if isinstance(shared, dict):
+        if metric_scope is not None:
+            record_cache(metric_scope, "shared")
+        with condition:
+            cache[local_key] = (time.monotonic() + ttl_seconds, shared)
+        return shared
+
+    if cached and allow_refresh:
+        with condition:
+            if local_key not in refreshing:
+                refreshing.add(local_key)
+                threading.Thread(
+                    target=refresh_target,
+                    args=refresh_args,
+                    daemon=True,
+                    name=refresh_name,
+                ).start()
+            cached = cache.get(local_key)
+        if cached:
+            return cached[1]
+    if cached and not allow_refresh:
+        with condition:
+            cache.pop(local_key, None)
+
+    with condition:
+        cached = cache.get(local_key)
+        if cached:
+            return cached[1]
+        if local_key in refreshing:
+            if metric_scope is not None:
+                record_cache(metric_scope, "wait")
+            condition.wait_for(
+                lambda: local_key in cache or local_key not in refreshing,
+                timeout=CACHE_BUILD_WAIT_SECONDS,
+            )
+            cached = cache.get(local_key)
+            if cached:
+                if metric_scope is not None:
+                    record_cache(metric_scope, "hit")
+                return cached[1]
+        refreshing.add(local_key)
+
+    started = time.perf_counter()
+    if metric_scope is not None:
+        record_cache(metric_scope, "miss")
+    try:
+        payload = _build_cached_payload(
+            local_key,
+            shared_key,
+            builder,
+            cache=cache,
+            condition=condition,
+            ttl_seconds=ttl_seconds,
+            max_entries=max_entries,
+        )
+        if metric_scope is not None:
+            record_cache(metric_scope, "build", duration_ms=(time.perf_counter() - started) * 1000)
+        return payload
+    finally:
+        _finish_cached_payload_refresh(local_key, refreshing, condition)
+
+
 def _refresh_public_screen_data(
     local_key: str,
     shared_key: str,
     builder: Callable[[], dict[str, Any]],
     ttl_seconds: float,
 ) -> None:
-    started = time.perf_counter()
-    try:
-        payload = builder()
-        with PUBLIC_SCREEN_DATA_CONDITION:
-            PUBLIC_SCREEN_DATA_CACHE[local_key] = (
-                time.monotonic() + ttl_seconds,
-                payload,
-            )
-        shared_cache_set(shared_key, payload, int(ttl_seconds))
-    except Exception:
-        LOG.exception("Public screen cache refresh failed")
-    finally:
-        record_cache(
-            "public-screen-refresh",
-            "build",
-            duration_ms=(time.perf_counter() - started) * 1000,
-        )
-        with PUBLIC_SCREEN_DATA_CONDITION:
-            PUBLIC_SCREEN_DATA_REFRESHING.discard(local_key)
-            PUBLIC_SCREEN_DATA_CONDITION.notify_all()
+    _refresh_cached_payload(
+        local_key,
+        shared_key,
+        builder,
+        cache=PUBLIC_SCREEN_DATA_CACHE,
+        refreshing=PUBLIC_SCREEN_DATA_REFRESHING,
+        condition=PUBLIC_SCREEN_DATA_CONDITION,
+        ttl_seconds=ttl_seconds,
+        failure_message="Public screen cache refresh failed",
+        metric_scope="public-screen-refresh",
+    )
 
 
 def _public_screen_data(
@@ -626,77 +844,28 @@ def _public_screen_data(
     builder: Callable[[], dict[str, Any]],
     *,
     ttl_seconds: float = PUBLIC_SCREEN_CACHE_TTL_SECONDS,
+    allow_refresh: bool | None = None,
 ) -> dict[str, Any]:
     local_key, shared_key = _public_screen_cache_keys(scope, identity)
-    current = time.monotonic()
-    with PUBLIC_SCREEN_DATA_CONDITION:
-        cached = PUBLIC_SCREEN_DATA_CACHE.get(local_key)
-        if cached and current < cached[0]:
-            record_cache(scope, "hit")
-            return cached[1]
-        if cached:
-            record_cache(scope, "stale")
-            if local_key not in PUBLIC_SCREEN_DATA_REFRESHING:
-                PUBLIC_SCREEN_DATA_REFRESHING.add(local_key)
-                threading.Thread(
-                    target=_refresh_public_screen_data,
-                    args=(local_key, shared_key, builder, ttl_seconds),
-                    daemon=True,
-                    name=f"public-screen-cache-{scope}",
-                ).start()
-            return cached[1]
-
-    shared = shared_cache_get(shared_key)
-    if isinstance(shared, dict):
-        record_cache(scope, "shared")
-        with PUBLIC_SCREEN_DATA_CONDITION:
-            PUBLIC_SCREEN_DATA_CACHE[local_key] = (
-                time.monotonic() + ttl_seconds,
-                shared,
-            )
-        return shared
-
-    with PUBLIC_SCREEN_DATA_CONDITION:
-        cached = PUBLIC_SCREEN_DATA_CACHE.get(local_key)
-        if cached:
-            return cached[1]
-        if local_key in PUBLIC_SCREEN_DATA_REFRESHING:
-            record_cache(scope, "wait")
-            PUBLIC_SCREEN_DATA_CONDITION.wait_for(
-                lambda: (
-                    local_key in PUBLIC_SCREEN_DATA_CACHE
-                    or local_key not in PUBLIC_SCREEN_DATA_REFRESHING
-                ),
-                timeout=CACHE_BUILD_WAIT_SECONDS,
-            )
-            cached = PUBLIC_SCREEN_DATA_CACHE.get(local_key)
-            if cached:
-                record_cache(scope, "hit")
-                return cached[1]
-        PUBLIC_SCREEN_DATA_REFRESHING.add(local_key)
-
-    started = time.perf_counter()
-    record_cache(scope, "miss")
-    try:
-        payload = builder()
-        with PUBLIC_SCREEN_DATA_CONDITION:
-            if len(PUBLIC_SCREEN_DATA_CACHE) >= 64 and local_key not in PUBLIC_SCREEN_DATA_CACHE:
-                oldest_key = min(
-                    PUBLIC_SCREEN_DATA_CACHE,
-                    key=lambda key: PUBLIC_SCREEN_DATA_CACHE[key][0],
-                )
-                PUBLIC_SCREEN_DATA_CACHE.pop(oldest_key, None)
-            PUBLIC_SCREEN_DATA_CACHE[local_key] = (
-                time.monotonic() + ttl_seconds,
-                payload,
-            )
-        shared_cache_set(shared_key, payload, int(ttl_seconds))
-        record_cache(scope, "build", duration_ms=(time.perf_counter() - started) * 1000)
-        return payload
-    finally:
-        with PUBLIC_SCREEN_DATA_CONDITION:
-            PUBLIC_SCREEN_DATA_REFRESHING.discard(local_key)
-            PUBLIC_SCREEN_DATA_CONDITION.notify_all()
+    if allow_refresh is None:
+        allow_refresh = not (
+            PROCESS_ROLE == "web" and (scope, identity) in WORKER_OWNED_SCREENS
+        )
+    return _cached_payload(
+        local_key,
+        shared_key,
+        builder,
+        cache=PUBLIC_SCREEN_DATA_CACHE,
+        refreshing=PUBLIC_SCREEN_DATA_REFRESHING,
+        condition=PUBLIC_SCREEN_DATA_CONDITION,
+        ttl_seconds=ttl_seconds,
+        max_entries=64,
+        refresh_target=_refresh_public_screen_data,
+        refresh_args=(local_key, shared_key, builder, ttl_seconds),
+        refresh_name=f"public-screen-cache-{scope}",
+        metric_scope=scope,
+        allow_refresh=allow_refresh,
+    )
 
 
 BACKGROUND_WORKERS_ENABLED = os.getenv("BACKGROUND_WORKERS_ENABLED", "1") != "0"
@@ -710,6 +879,7 @@ def _start_worker_tasks(
         return []
     workers = [
         asyncio.create_task(edgar_worker(), name="edgar"),
+        asyncio.create_task(public_screen_warm_worker(), name="public-screens"),
         asyncio.create_task(trading_halt_worker(), name="trading-halts"),
         asyncio.create_task(house_disclosure_worker(), name="house-disclosures"),
         asyncio.create_task(discovery_source_worker(), name="discovery-sources"),
@@ -756,11 +926,53 @@ def _worker_heartbeat_detail(workers: list[asyncio.Task[Any]]) -> dict[str, Any]
     }
 
 
+def _stale_workers(*, at: datetime | None = None) -> list[dict[str, Any]]:
+    """Workers whose last recorded progress is older than the allowed age.
+
+    A task object that never finishes still looks "running"; its progress key is
+    the only evidence that the loop is actually cycling.
+    """
+
+    observed_at = at or now()
+    keys = tuple(WORKER_PROGRESS_KEYS.values())
+    with connection() as db:
+        rows = db.execute(
+            f"SELECT key,updated_at FROM worker_state WHERE key IN ({','.join('?' for _ in keys)})",
+            keys,
+        ).fetchall()
+    updated_by_key = {str(row["key"]): str(row["updated_at"] or "") for row in rows}
+    stale: list[dict[str, Any]] = []
+    for worker, key in WORKER_PROGRESS_KEYS.items():
+        updated_at = updated_by_key.get(key)
+        if not updated_at:
+            continue
+        try:
+            completed = datetime.fromisoformat(updated_at)
+        except ValueError:
+            continue
+        completed = completed.replace(tzinfo=UTC) if completed.tzinfo is None else completed
+        age = max(0.0, (observed_at - completed).total_seconds())
+        if age > WORKER_PROGRESS_MAX_AGE_SECONDS:
+            stale.append(
+                {
+                    "worker": worker,
+                    "last_completed_at": completed.isoformat(),
+                    "age_seconds": round(age),
+                }
+            )
+    return stale
+
+
 async def worker_process_heartbeat(
     workers: list[asyncio.Task[Any]], heartbeat: Callable[[], None] | None = None
 ) -> None:
     while True:
         detail = _worker_heartbeat_detail(workers)
+        try:
+            detail["stale_workers"] = await asyncio.to_thread(_stale_workers)
+        except Exception:
+            LOG.warning("Stale worker check failed", exc_info=True)
+            detail["stale_workers"] = []
         await asyncio.to_thread(
             worker_state,
             worker_heartbeat_key(WORKER_INSTANCE_ID),
@@ -835,10 +1047,20 @@ async def lifespan(application: FastAPI):
     finally:
         await _stop_tasks(tasks)
         if worker_tasks:
-            delete_worker_state(worker_heartbeat_key(WORKER_INSTANCE_ID))
-            release_research_worker(WORKER_INSTANCE_ID)
+            _release_worker_presence()
         if SWARM_RUNTIME is not None:
             SWARM_RUNTIME.close()
+
+
+def _release_worker_presence() -> None:
+    try:
+        delete_worker_state(worker_heartbeat_key(WORKER_INSTANCE_ID))
+    except Exception:
+        LOG.warning("Worker heartbeat cleanup failed", exc_info=True)
+    try:
+        release_research_worker(WORKER_INSTANCE_ID)
+    except Exception:
+        LOG.warning("Research worker release failed", exc_info=True)
 
 
 async def run_worker(heartbeat: Callable[[], None] | None = None) -> None:
@@ -860,8 +1082,7 @@ async def run_worker(heartbeat: Callable[[], None] | None = None) -> None:
         await asyncio.gather(*tasks)
     finally:
         await _stop_tasks(tasks)
-        delete_worker_state(worker_heartbeat_key(WORKER_INSTANCE_ID))
-        release_research_worker(WORKER_INSTANCE_ID)
+        _release_worker_presence()
         if SWARM_RUNTIME is not None:
             SWARM_RUNTIME.close()
 
@@ -1056,6 +1277,13 @@ def prune_storage() -> None:
             "entered_at<?",
             (iso(now() - timedelta(days=PULSE_ENTRY_RETENTION_DAYS)),),
         )
+        client_errors_deleted = _delete_batched(
+            db,
+            "client_errors",
+            ("id",),
+            "seen_at<?",
+            (iso(now() - timedelta(days=CLIENT_ERROR_RETENTION_DAYS)),),
+        )
         db.execute("DELETE FROM sessions WHERE expires_at<=?", (iso(),))
         db.execute("DELETE FROM auth_challenges WHERE expires_at<=?", (iso(),))
         db.execute(
@@ -1073,6 +1301,7 @@ def prune_storage() -> None:
                         "scan_runs": runs_deleted,
                         "ranker_training_examples": training_examples_deleted,
                         "pulse_entries": pulse_entries_deleted,
+                        "client_errors": client_errors_deleted,
                     },
                     separators=(",", ":"),
                 ),
@@ -1401,6 +1630,7 @@ def _flash_provider_ready(actor: AIKol = FLASH) -> bool:
                 (actor.id, since, FLASH_REPORT_FAILURE_STREAK_LIMIT),
             ).fetchall()
     except Exception:
+        LOG.exception("Flash provider readiness check failed")
         return True
     return not (
         len(rows) == FLASH_REPORT_FAILURE_STREAK_LIMIT
@@ -1422,6 +1652,11 @@ async def edgar_worker() -> None:
     while True:
         try:
             await run_in_threadpool(refresh_edgar)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            record_edgar_error(exc)
+        try:
             sectors = await run_in_threadpool(refresh_company_sectors)
             worker_state("sector_backfill_last_run", json.dumps(sectors, separators=(",", ":")))
         except asyncio.CancelledError:
@@ -1435,16 +1670,34 @@ async def outcome_worker() -> None:
     await asyncio.sleep(75)
     while True:
         try:
-            await run_in_threadpool(refresh_outcomes)
-            await run_in_threadpool(refresh_scan_outcomes)
-            flash_results = await run_in_threadpool(refresh_flash_forecasts)
+            await asyncio.wait_for(
+                run_in_threadpool(refresh_outcomes),
+                timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
+            )
+            await asyncio.wait_for(
+                run_in_threadpool(refresh_scan_outcomes),
+                timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
+            )
+            flash_results = await asyncio.wait_for(
+                run_in_threadpool(refresh_flash_forecasts),
+                timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
+            )
             if any(flash_results.get(key) for key in ("resolved", "voided", "reviewed")):
                 _invalidate_runners_feeds("pulse")
-            await run_in_threadpool(prune_storage)
+            await asyncio.wait_for(
+                run_in_threadpool(prune_storage),
+                timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            record_outcome_error(exc)
+            try:
+                await asyncio.wait_for(
+                    run_in_threadpool(record_outcome_error, exc),
+                    timeout=OUTCOME_ERROR_RECORD_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                LOG.exception("Outcome error recording failed")
         await asyncio.sleep(600)
 
 
@@ -1477,38 +1730,50 @@ async def kol_worker() -> None:
 
 
 def scan_collection_allowed(value: datetime) -> bool:
-
-    eastern_now = value.astimezone(EASTERN)
-    local_time = eastern_now.time().replace(tzinfo=None)
-    return eastern_now.weekday() < 5 and clock_time(4) <= local_time < clock_time(20)
+    return bool(market_clock(value)["scanner_active"])
 
 
 async def scan_collection_worker() -> None:
+    """Collect one scan per interval while the session is open.
+
+    The interval is the cadence, not a gap bolted onto the end of the work.
+    Sleeping the full interval *after* each scan made the real cycle
+    ``scan duration + interval``, so a slow scan stretched the gap between
+    completed runs past the window a session report reads, and the report was
+    never built. The session gate is polled on its own short timer for the same
+    reason: it is a clock check, and waiting an interval to notice the session
+    opened cost the first scan of the day.
+    """
+
     await asyncio.sleep(15)
     while True:
-        if scan_collection_allowed(now()):
-            try:
-                result = await run_in_threadpool(run_scan, "penny")
-                worker_state("background_scan_last_run", str(result.get("scan_run_id") or "cached"))
-                worker_state("background_scan_last_error", "")
-                if SWARM_RUNTIME is not None and SWARM_RUNTIME.config.publish_scan_claims:
-                    try:
-                        published = await run_in_threadpool(
-                            SWARM_RUNTIME.publish_scan_rows,
-                            result.get("rows") or [],
-                        )
-                        worker_state(
-                            "swarm_scan_last_publish",
-                            json.dumps(published.as_dict(), separators=(",", ":")),
-                        )
-                        worker_state("swarm_scan_last_error", "")
-                    except Exception as exc:
-                        worker_state("swarm_scan_last_error", str(exc)[:500])
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                worker_state("background_scan_last_error", str(exc)[:500])
-        await asyncio.sleep(BACKGROUND_SCAN_INTERVAL_SECONDS)
+        if not scan_collection_allowed(now()):
+            await asyncio.sleep(SCAN_IDLE_POLL_SECONDS)
+            continue
+        started = time.monotonic()
+        try:
+            result = await run_in_threadpool(run_scan, "penny")
+            worker_state("background_scan_last_run", str(result.get("scan_run_id") or "cached"))
+            worker_state("background_scan_last_error", "")
+            if SWARM_RUNTIME is not None and SWARM_RUNTIME.config.publish_scan_claims:
+                try:
+                    published = await run_in_threadpool(
+                        SWARM_RUNTIME.publish_scan_rows,
+                        result.get("rows") or [],
+                    )
+                    worker_state(
+                        "swarm_scan_last_publish",
+                        json.dumps(published.as_dict(), separators=(",", ":")),
+                    )
+                    worker_state("swarm_scan_last_error", "")
+                except Exception as exc:
+                    worker_state("swarm_scan_last_error", str(exc)[:500])
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            worker_state("background_scan_last_error", str(exc)[:500])
+        elapsed = time.monotonic() - started
+        await asyncio.sleep(max(SCAN_MIN_GAP_SECONDS, BACKGROUND_SCAN_INTERVAL_SECONDS - elapsed))
 
 
 HOT_QUOTE_INTERVAL_SECONDS = max(20, int(os.getenv("HOT_QUOTE_INTERVAL_SECONDS", "45")))
@@ -1698,6 +1963,25 @@ def _telegram_chat_completion(body: dict[str, Any]) -> dict[str, Any]:
         return json.loads(response.read(262_145))
 
 
+def _dash_session_context() -> dict[str, Any]:
+    """Where the market clock stands, so Dash always knows the time of week.
+
+    The tools can look the session up, but every turn should carry it anyway:
+    a weekend message that names a silent board needs the answer in hand, not
+    another tool call.
+    """
+
+    clock = market_clock()
+    return {
+        "eastern_now": clock["eastern_now"],
+        "session": clock["session"],
+        "label": clock["label"],
+        "scanner_active": clock["scanner_active"],
+        "next_label": clock["next_label"],
+        "next_at": clock["next_at"],
+    }
+
+
 def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dict[str, Any]:
     """Ask the model what the cheetah does with one message.
 
@@ -1724,6 +2008,7 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
         "said": message.text,
         "tickers_mentioned": list(message.tickers),
         "already_looked_up": grounded,
+        "market_session": _dash_session_context(),
         "addressed_you": message.addressed,
         "recent": transcript,
     }
@@ -2222,23 +2507,15 @@ class SportsPickPayload(BaseModel):
     expected_odds: int | None = Field(default=None, strict=True)
 
 
-class LLMRoutePayload(BaseModel):
-    policy: Literal["managed", "prefer_customer", "customer_only"]
-    route_kind: Literal["managed", "edge"]
-    model: str = Field(default="", max_length=160)
-    connector_id: str | None = Field(default=None, max_length=80)
-
-
-class EdgeConnectorPayload(BaseModel):
-    name: str = Field(default="Local model", min_length=1, max_length=80)
-
-
-class EdgeJobCompletePayload(BaseModel):
-    response: dict[str, Any]
-
-
-class EdgeJobFailPayload(BaseModel):
-    error: str = Field(min_length=1, max_length=500)
+class ClientErrorReport(BaseModel):
+    kind: str = Field(default="error", max_length=40)
+    message: str = Field(min_length=1, max_length=500)
+    source: str = Field(default="", max_length=300)
+    line: int | None = Field(default=None, ge=0, le=100_000_000)
+    column_number: int | None = Field(default=None, ge=0, le=100_000_000)
+    stack: str = Field(default="", max_length=4000)
+    page_url: str = Field(default="", max_length=500)
+    release: str = Field(default="", max_length=60)
 
 
 def _public_flash_record_data() -> dict[str, Any]:
@@ -2249,6 +2526,39 @@ def _public_flash_record_data() -> dict[str, Any]:
 def api_kol_status(request: Request) -> dict[str, Any]:
     enforce_rate(request, "kols", limit=120, seconds=60)
     return kol_status()
+
+
+@app.post("/api/client-errors")
+def report_client_error(
+    report: ClientErrorReport,
+    request: Request,
+) -> JSONResponse:
+    enforce_rate(request, "client-errors", limit=30, seconds=60)
+    content_length = request.headers.get("content-length", "")
+    if content_length.isdigit() and int(content_length) > 20_000:
+        raise HTTPException(413, "Report is too large")
+    row_id = record_client_error(
+        kind=report.kind,
+        message=report.message,
+        source=report.source,
+        line=report.line,
+        column_number=report.column_number,
+        stack=report.stack,
+        page_url=report.page_url,
+        user_agent=request.headers.get("user-agent", ""),
+        release=report.release or APP_BUILD_SHA,
+        client_ip=client_ip_hash(_request_client_ip(request), RATE_LIMIT_HASH_KEY),
+    )
+    LOG.error(
+        "client_error id=%s kind=%s page=%s source=%s line=%s message=%s",
+        row_id,
+        report.kind[:40],
+        report.page_url[:300],
+        report.source[:300],
+        report.line,
+        report.message.replace("\n", " ").replace("\r", " ")[:200],
+    )
+    return JSONResponse({"status": "recorded", "id": row_id})
 
 
 @app.get("/api/flash/record")
@@ -2321,432 +2631,36 @@ def claim_daily_flash_api(
     return JSONResponse({"claimed": claimed, "wallet": wallet})
 
 
-def _llm_settings_data(user_id: str) -> dict[str, Any]:
-    with connection() as database:
-        row = database.execute(
-            "SELECT * FROM user_llm_routes WHERE user_id=?",
-            (user_id,),
-        ).fetchone()
-        connectors = database.execute(
-            """
-            SELECT id,name,status,last_seen_at,created_at,updated_at
-            FROM llm_edge_connectors
-            WHERE user_id=? ORDER BY created_at DESC
-            """,
-            (user_id,),
-        ).fetchall()
-    route = (
-        {
-            "policy": str(row["policy"]),
-            "route_kind": str(row["route_kind"]),
-            "model": str(row["model"] or ""),
-            "connector_id": str(row["connector_id"] or "") or None,
-            "last_error": str(row["last_error"] or "") or None,
-        }
-        if row
-        else {
-            "policy": "managed",
-            "route_kind": "managed",
-            "model": "",
-            "connector_id": None,
-            "last_error": None,
-        }
-    )
-    return {"route": route, "connectors": [dict(connector) for connector in connectors]}
-
-
-@app.get("/settings/models", response_class=HTMLResponse)
-def model_settings_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> Response:
-    user = current_user(runner_session)
-    if not user:
-        return RedirectResponse("/login?next=/settings/models", status_code=303)
-    return templates.TemplateResponse(
-        request=request,
-        name="model_settings.html",
-        context=page_context(
-            request,
-            runner_session,
-            llm_settings=_llm_settings_data(str(user["id"])),
+llm_edge_routes = create_llm_edge_routes(
+    LLMEdgeRouteDependencies(
+        templates=templates,
+        page_context=lambda *args, **kwargs: page_context(*args, **kwargs),
+        current_user=lambda session: current_user(session),
+        require_user=lambda session: require_user(session),
+        require_origin=lambda request: require_origin(request),
+        enforce_rate=lambda *args, **kwargs: enforce_rate(*args, **kwargs),
+        now=lambda: now(),
+        iso=lambda value=None: iso(value),
+        json_container=lambda value, fallback: _json_container(value, fallback),
+        run_research_commission=lambda report_id, **kwargs: _run_research_commission(
+            report_id, **kwargs
         ),
+        commission_api_payload=lambda report, user_id=None: _commission_api_payload(
+            report, user_id
+        ),
+        edge_job_lease_minutes=EDGE_JOB_LEASE_MINUTES,
     )
-
-
-@app.get("/api/account/llm-route")
-def account_llm_route_api(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    user = require_user(runner_session)
-    enforce_rate(request, "llm-route-read", limit=60, seconds=60, subject=user["id"])
-    response = JSONResponse(_llm_settings_data(str(user["id"])))
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-@app.put("/api/account/llm-route")
-def update_account_llm_route_api(
-    payload: LLMRoutePayload,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    user_id = str(user["id"])
-    enforce_rate(request, "llm-route-write", limit=20, seconds=3600, subject=user_id)
-    model = payload.model.strip()
-    connector_id = payload.connector_id if payload.route_kind == "edge" else None
-    if payload.policy == "managed":
-        if payload.route_kind != "managed":
-            raise HTTPException(400, "Managed routing cannot use a local connector.")
-        model = ""
-    else:
-        if payload.route_kind != "edge":
-            raise HTTPException(400, "Choose a local connector for your model policy.")
-        if not model:
-            raise HTTPException(400, "Enter the model ID loaded by LM Studio or Unsloth.")
-        if not connector_id:
-            raise HTTPException(400, "Create and choose a local connector.")
-    timestamp = iso()
-    with connection() as database:
-        if connector_id:
-            connector = database.execute(
-                """
-                SELECT id FROM llm_edge_connectors
-                WHERE id=? AND user_id=? AND status='active'
-                """,
-                (connector_id, user_id),
-            ).fetchone()
-            if not connector:
-                raise HTTPException(404, "Local connector not found.")
-        database.execute(
-            """
-            INSERT INTO user_llm_routes(
-                user_id,policy,route_kind,model,connector_id,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                policy=excluded.policy,route_kind=excluded.route_kind,
-                model=excluded.model,connector_id=excluded.connector_id,
-                last_error=NULL,updated_at=excluded.updated_at
-            """,
-            (
-                user_id,
-                payload.policy,
-                payload.route_kind,
-                model,
-                connector_id,
-                timestamp,
-                timestamp,
-            ),
-        )
-    response = JSONResponse(_llm_settings_data(user_id))
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-@app.post("/api/account/llm-connectors")
-def create_llm_connector_api(
-    payload: EdgeConnectorPayload,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    user_id = str(user["id"])
-    enforce_rate(request, "llm-connector-create", limit=5, seconds=3600, subject=user_id)
-    connector_name = payload.name.strip()
-    if not connector_name:
-        raise HTTPException(400, "Enter a connector name.")
-    connector_id = str(uuid.uuid4())
-    token = f"rati_edge_{secrets.token_urlsafe(32)}"
-    timestamp = iso()
-    with connection() as database:
-        active_count = database.execute(
-            """
-            SELECT COUNT(*) FROM llm_edge_connectors
-            WHERE user_id=? AND status='active'
-            """,
-            (user_id,),
-        ).fetchone()[0]
-        if int(active_count) >= 5:
-            raise HTTPException(409, "Revoke an old connector before creating another one.")
-        database.execute(
-            """
-            INSERT INTO llm_edge_connectors(
-                id,user_id,name,token_hash,status,created_at,updated_at
-            ) VALUES(?,?,?,?,'active',?,?)
-            """,
-            (
-                connector_id,
-                user_id,
-                connector_name,
-                connector_token_hash(token),
-                timestamp,
-                timestamp,
-            ),
-        )
-    response = JSONResponse(
-        {
-            "connector": {
-                "id": connector_id,
-                "name": connector_name,
-                "status": "active",
-                "last_seen_at": None,
-            },
-            "token": token,
-            "token_notice": "This token is shown once. Keep it private.",
-        },
-        status_code=201,
-    )
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-@app.delete("/api/account/llm-connectors/{connector_id}")
-def revoke_llm_connector_api(
-    connector_id: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    user_id = str(user["id"])
-    enforce_rate(request, "llm-connector-revoke", limit=10, seconds=3600, subject=user_id)
-    timestamp = iso()
-    with connection() as database:
-        connector = database.execute(
-            """
-            SELECT id FROM llm_edge_connectors
-            WHERE id=? AND user_id=? AND status='active'
-            """,
-            (connector_id, user_id),
-        ).fetchone()
-        if not connector:
-            raise HTTPException(404, "Active local connector not found.")
-        jobs = database.execute(
-            """
-            SELECT commission_id FROM llm_edge_jobs
-            WHERE connector_id=? AND status IN ('pending','claimed')
-            """,
-            (connector_id,),
-        ).fetchall()
-        database.execute(
-            """
-            UPDATE llm_edge_jobs
-            SET status='failed',error=?,completed_at=?,updated_at=?
-            WHERE connector_id=? AND status IN ('pending','claimed')
-            """,
-            ("The local connector was revoked.", timestamp, timestamp, connector_id),
-        )
-        database.execute(
-            """
-            UPDATE user_llm_routes
-            SET policy='managed',route_kind='managed',model='',connector_id=NULL,
-                last_error=NULL,updated_at=?
-            WHERE user_id=? AND connector_id=?
-            """,
-            (timestamp, user_id, connector_id),
-        )
-        database.execute(
-            """
-            UPDATE llm_edge_connectors SET status='revoked',updated_at=?
-            WHERE id=?
-            """,
-            (timestamp, connector_id),
-        )
-    for job in jobs:
-        try:
-            _run_research_commission(str(job["commission_id"]))
-        except Exception:
-            pass
-    response = JSONResponse(_llm_settings_data(user_id))
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-def _edge_connector_for_request(request: Request) -> dict[str, Any]:
-    enforce_rate(request, "edge-auth", limit=180, seconds=60)
-    authorization = request.headers.get("authorization", "")
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        raise HTTPException(401, "Missing connector token.")
-    timestamp = iso()
-    with connection() as database:
-        row = database.execute(
-            """
-            SELECT * FROM llm_edge_connectors
-            WHERE token_hash=? AND status='active'
-            """,
-            (connector_token_hash(token),),
-        ).fetchone()
-        if not row:
-            raise HTTPException(401, "Invalid connector token.")
-        database.execute(
-            "UPDATE llm_edge_connectors SET last_seen_at=?,updated_at=? WHERE id=?",
-            (timestamp, timestamp, row["id"]),
-        )
-    return dict(row)
-
-
-@app.post("/api/llm/edge/jobs/claim")
-def claim_edge_job_api(request: Request) -> JSONResponse:
-    connector = _edge_connector_for_request(request)
-    connector_id = str(connector["id"])
-    enforce_rate(request, "edge-job-claim", limit=120, seconds=60, subject=connector_id)
-    current_time = now()
-    timestamp = iso(current_time)
-    lease_expires_at = iso(current_time + timedelta(minutes=EDGE_JOB_LEASE_MINUTES))
-    with connection() as database:
-        row = database.execute(
-            """
-            SELECT * FROM llm_edge_jobs
-            WHERE connector_id=? AND (
-                status='pending' OR (status='claimed' AND lease_expires_at<=?)
-            )
-            ORDER BY created_at LIMIT 1
-            """,
-            (connector_id, timestamp),
-        ).fetchone()
-        if not row:
-            return JSONResponse({"job": None})
-        claimed = database.execute(
-            """
-            UPDATE llm_edge_jobs
-            SET status='claimed',claimed_at=?,lease_expires_at=?,updated_at=?
-            WHERE id=? AND connector_id=? AND (
-                status='pending' OR (status='claimed' AND lease_expires_at<=?)
-            )
-            """,
-            (
-                timestamp,
-                lease_expires_at,
-                timestamp,
-                row["id"],
-                connector_id,
-                timestamp,
-            ),
-        )
-        if claimed.rowcount != 1:
-            return JSONResponse({"job": None})
-    response = JSONResponse(
-        {
-            "job": {
-                "id": str(row["id"]),
-                "model": str(row["model"]),
-                "request": _json_container(row["request_json"], {}),
-                "request_fingerprint": str(row["request_fingerprint"]),
-                "lease_expires_at": lease_expires_at,
-            }
-        }
-    )
-    response.headers["Cache-Control"] = "no-store"
-    return response
-
-
-@app.post("/api/llm/edge/jobs/{job_id}/heartbeat")
-def heartbeat_edge_job_api(job_id: str, request: Request) -> JSONResponse:
-    connector = _edge_connector_for_request(request)
-    connector_id = str(connector["id"])
-    enforce_rate(request, "edge-job-heartbeat", limit=120, seconds=60, subject=connector_id)
-    current_time = now()
-    with connection() as database:
-        updated = database.execute(
-            """
-            UPDATE llm_edge_jobs SET lease_expires_at=?,updated_at=?
-            WHERE id=? AND connector_id=? AND status='claimed'
-            """,
-            (
-                iso(current_time + timedelta(minutes=EDGE_JOB_LEASE_MINUTES)),
-                iso(current_time),
-                job_id,
-                connector_id,
-            ),
-        )
-    if updated.rowcount != 1:
-        raise HTTPException(404, "Claimed local model job not found.")
-    return JSONResponse({"ok": True})
-
-
-@app.post("/api/llm/edge/jobs/{job_id}/complete")
-async def complete_edge_job_api(
-    job_id: str,
-    payload: EdgeJobCompletePayload,
-    request: Request,
-) -> JSONResponse:
-    connector = _edge_connector_for_request(request)
-    connector_id = str(connector["id"])
-    enforce_rate(request, "edge-job-complete", limit=60, seconds=60, subject=connector_id)
-    response_json = json.dumps(payload.response, separators=(",", ":"))
-    if len(response_json.encode()) > 8 * 1024 * 1024:
-        raise HTTPException(413, "Local model response is too large.")
-    timestamp = iso()
-    with connection() as database:
-        row = database.execute(
-            """
-            SELECT commission_id FROM llm_edge_jobs
-            WHERE id=? AND connector_id=? AND status='claimed'
-            """,
-            (job_id, connector_id),
-        ).fetchone()
-        if not row:
-            raise HTTPException(404, "Claimed local model job not found.")
-        database.execute(
-            """
-            UPDATE llm_edge_jobs
-            SET status='complete',response_json=?,completed_at=?,updated_at=?
-            WHERE id=?
-            """,
-            (response_json, timestamp, timestamp, job_id),
-        )
-    try:
-        report = await run_in_threadpool(_run_research_commission, str(row["commission_id"]))
-    except Exception as exc:
-        LOG.warning("Local model report %s was rejected: %s", job_id, type(exc).__name__)
-        raise HTTPException(
-            422, "The local model response did not match the report contract."
-        ) from exc
-    return JSONResponse(
-        {
-            "ok": True,
-            "report": _commission_api_payload(report, str(connector["user_id"])),
-        }
-    )
-
-
-@app.post("/api/llm/edge/jobs/{job_id}/fail")
-async def fail_edge_job_api(
-    job_id: str,
-    payload: EdgeJobFailPayload,
-    request: Request,
-) -> JSONResponse:
-    connector = _edge_connector_for_request(request)
-    connector_id = str(connector["id"])
-    enforce_rate(request, "edge-job-fail", limit=60, seconds=60, subject=connector_id)
-    timestamp = iso()
-    with connection() as database:
-        row = database.execute(
-            """
-            SELECT commission_id FROM llm_edge_jobs
-            WHERE id=? AND connector_id=? AND status='claimed'
-            """,
-            (job_id, connector_id),
-        ).fetchone()
-        if not row:
-            raise HTTPException(404, "Claimed local model job not found.")
-        database.execute(
-            """
-            UPDATE llm_edge_jobs
-            SET status='failed',error=?,completed_at=?,updated_at=? WHERE id=?
-            """,
-            (payload.error[:500], timestamp, timestamp, job_id),
-        )
-    try:
-        await run_in_threadpool(_run_research_commission, str(row["commission_id"]))
-    except Exception:
-        pass
-    return JSONResponse({"ok": True})
+)
+app.include_router(llm_edge_routes.router)
+model_settings_page = llm_edge_routes.model_settings_page
+account_llm_route_api = llm_edge_routes.account_llm_route_api
+update_account_llm_route_api = llm_edge_routes.update_account_llm_route_api
+create_llm_connector_api = llm_edge_routes.create_llm_connector_api
+revoke_llm_connector_api = llm_edge_routes.revoke_llm_connector_api
+claim_edge_job_api = llm_edge_routes.claim_edge_job_api
+heartbeat_edge_job_api = llm_edge_routes.heartbeat_edge_job_api
+complete_edge_job_api = llm_edge_routes.complete_edge_job_api
+fail_edge_job_api = llm_edge_routes.fail_edge_job_api
 
 
 def _public_caller_handles_for_user(user_id: str) -> list[str]:
@@ -3299,12 +3213,164 @@ def my_calls_page(
     runner_session: str | None = Cookie(default=None),
     market: str = "",
 ) -> RedirectResponse:
+    _ = request, market
     user = require_user(runner_session)
-    identity = ensure_caller_identity(str(user["id"]))
-    suffix = (
-        "?" + urlencode({"market": market}) if market in {"stocks", "memecoins", "sports"} else ""
+    ensure_caller_identity(str(user["id"]))
+    return RedirectResponse("/calls", status_code=303)
+
+
+_FLASH_PICK_TAG_RANK = {"running": 0, "setup": 1, "extended": 2, "watch": 3, "avoid": 4}
+
+
+def _flash_stock_picks(*, limit: int = 6) -> list[dict[str, Any]]:
+    picks: list[dict[str, Any]] = []
+    for call in flash_open_calls(limit=limit)["calls"]:
+        start = call.get("start_price")
+        picks.append(
+            {
+                "ticker": call["ticker"],
+                "direction": call["direction"],
+                "confidence_pct": int(round(float(call["confidence"]) * 100)),
+                "reason": str(call["reason"] or "")[:180],
+                "settle_label": call["target_session_date"],
+                "start_label": (
+                    f"${start:.4f}"
+                    if start is not None and start < 1
+                    else (f"${start:.2f}" if start is not None else None)
+                ),
+                "version_label": call["version_label"],
+            }
+        )
+    return picks
+
+
+def _flash_sports_picks(*, limit: int = 4) -> list[dict[str, Any]]:
+    slate = sports_slate("all", 24)
+    events = [
+        _compact_sports_event(event, radar=False)
+        for event in slate.get("events") or []
+        if isinstance(event, dict) and event.get("model_winner_abbreviation")
+    ]
+    events.sort(
+        key=lambda event: (
+            -float(event.get("model_probability_pct") or 0),
+            str(event.get("start_time") or ""),
+        )
     )
-    return RedirectResponse(f"/u/{identity['handle']}{suffix}", status_code=303)
+    picks: list[dict[str, Any]] = []
+    for event in events[:limit]:
+        prediction = event.get("prediction") if isinstance(event.get("prediction"), dict) else {}
+        picks.append(
+            {
+                "label": (f"{event.get('away_abbreviation')} @ {event.get('home_abbreviation')}"),
+                "league": str(event.get("league") or "").upper(),
+                "kickoff": screen_stamp(event.get("start_time")) or "",
+                "pick": str(event.get("model_winner_abbreviation")),
+                "confidence_pct": int(round(float(event.get("model_probability_pct") or 0))),
+                "edge_pct": prediction.get("edge_pct"),
+                "href": f"{SPORTS_ORIGIN}/game/{event.get('id')}",
+            }
+        )
+    return picks
+
+
+def _flash_memecoin_picks(*, limit: int = 6) -> list[dict[str, Any]]:
+    from runner_web.market_screens import row as screen_row
+
+    market = memecoin_market(sort="volume")
+    ranked: list[tuple[int, float, float, dict[str, Any]]] = []
+    for item in market.get("rows") or []:
+        if not isinstance(item, dict) or item.get("stale"):
+            continue
+        entry = screen_row("memecoins", item)
+        if not entry["tag"]:
+            continue
+        ranked.append(
+            (
+                _FLASH_PICK_TAG_RANK.get(str(entry["tag_tone"]), 9),
+                -abs(float(item.get("change_24h") or 0)),
+                -float(item.get("volume_24h") or 0),
+                entry,
+            )
+        )
+    ranked.sort(key=lambda value: value[:3])
+    return [
+        {
+            "symbol": entry["name"],
+            "company": entry["subtitle"],
+            "href": entry["href"],
+            "tag": entry["tag"],
+            "tag_tone": entry["tag_tone"],
+            "risk": entry["risk"],
+            "value": entry["value"],
+            "change": entry["change"],
+            "tone": entry["tone"],
+        }
+        for _, _, _, entry in ranked[:limit]
+    ]
+
+
+def _calls_flash_uncached() -> dict[str, Any]:
+    record = flash_record(recent_limit=1)
+    current = record.get("current_version") or {}
+    return {
+        "stock_picks": _flash_stock_picks(),
+        "sports_picks": _flash_sports_picks(),
+        "memecoin_picks": _flash_memecoin_picks(),
+        "record": {
+            "label": current.get("label"),
+            "model_label": current.get("model_label"),
+            "state": current.get("state"),
+            "hit_rate": current.get("hit_rate"),
+            "headline_rate_visible": current.get("headline_rate_visible"),
+            "settled": current.get("settled"),
+            "hits": current.get("hits"),
+            "misses": current.get("misses"),
+            "pending": current.get("pending"),
+        },
+    }
+
+
+def _calls_flash_picks() -> dict[str, Any]:
+    return _public_screen_data(
+        "calls-flash",
+        "",
+        _calls_flash_uncached,
+        ttl_seconds=60,
+    )
+
+
+def _calls_page_data(runner_session: str | None) -> dict[str, Any]:
+    user = current_user(runner_session)
+    mine: dict[str, Any] | None = None
+    if user:
+        identity = ensure_caller_identity(str(user["id"]))
+        unified = _unified_caller_page_data(identity["handle"])
+        mine = {
+            "handle": identity["handle"],
+            "calls": (unified.get("calls") or [])[:24],
+            "stats": dict(unified.get("stats") or {}),
+        }
+    return {"mine": mine, **_calls_flash_picks()}
+
+
+@app.get("/calls", response_class=HTMLResponse)
+def calls_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> Response:
+    enforce_rate(request, "calls", limit=120, seconds=60)
+    return templates.TemplateResponse(
+        request=request,
+        name="calls.html",
+        context=page_context(
+            request,
+            runner_session,
+            nav_product="runners",
+            active_tab="alpha",
+            calls_page=_calls_page_data(runner_session),
+        ),
+    )
 
 
 def _score(value: Any) -> str:
@@ -3953,7 +4019,7 @@ def _evidence_gate(
 
 
 def _baseline_summary(base_rates: dict[str, Any] | None) -> str | None:
-    if not base_rates:
+    if not base_rates or str(base_rates.get("mode") or "") == "deferred":
         return None
     metrics = base_rates.get("metrics") or {}
     empirical = [
@@ -4119,8 +4185,10 @@ def _event_timestamp(row: dict[str, Any]) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def _external_event_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    checked_at = now()
+def _external_event_context(
+    rows: list[dict[str, Any]], *, at: datetime | None = None
+) -> dict[str, Any]:
+    checked_at = at or now()
     news: list[dict[str, Any]] = []
     social_by_source: dict[str, dict[str, Any]] = {}
     active_halt: dict[str, Any] | None = None
@@ -4205,6 +4273,45 @@ def _external_event_label(context: dict[str, Any]) -> tuple[str, str, str | None
     )
 
 
+# How close two deliveries must be to count as the same announcement round, and
+# how long the most recent round keeps its halo before it stops being news.
+ANNOUNCEMENT_ROUND_MINUTES = 2
+ANNOUNCEMENT_HALO_MINUTES = 90
+
+
+def _announced_tickers() -> set[str]:
+    """The tickers carried by the most recent pulse announcement.
+
+    The board marks these rather than tracking what each reader has already
+    seen: it is one fact, the same for everyone, and it survives a reload. The
+    rundown sends one runner per message, so this is usually a single name -
+    deliveries landing within a couple of minutes of each other are treated as
+    one round so a batch still halos together.
+    """
+
+    with connection() as database:
+        row = database.execute(
+            "SELECT MAX(updated_at) AS latest FROM telegram_alert_deliveries WHERE status='sent'"
+        ).fetchone()
+    latest = _stamp(row["latest"] if row else None)
+    current = now()
+    if latest is None or (current - latest) > timedelta(minutes=ANNOUNCEMENT_HALO_MINUTES):
+        return set()
+    cutoff = iso(latest - timedelta(minutes=ANNOUNCEMENT_ROUND_MINUTES))
+    with connection() as database:
+        rows = database.execute(
+            "SELECT ticker FROM telegram_alert_deliveries WHERE status='sent' AND updated_at>=?",
+            (cutoff,),
+        ).fetchall()
+    return {str(entry["ticker"]).upper() for entry in rows}
+
+
+def _attach_announcements(rows: list[dict[str, Any]]) -> None:
+    announced = _announced_tickers()
+    for row in rows:
+        row["announced"] = str(row.get("ticker") or "").upper() in announced
+
+
 def _attach_pulse_entries(rows: list[dict[str, Any]]) -> None:
     entries = _pulse_entry_markers([str(row["ticker"]) for row in rows])
     for row in rows:
@@ -4250,9 +4357,10 @@ def _apply_market_marks(rows: list[dict[str, Any]]) -> int:
     return upgraded
 
 
-def _pulse_data_uncached() -> dict[str, Any]:
-    event_cutoff = iso(now() - timedelta(days=3))
-    scan_cutoff = iso(now() - timedelta(days=7))
+def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[str, Any]:
+    event_cutoff = iso(at - timedelta(days=3))
+    scan_cutoff = iso(at - timedelta(days=7))
+    ticker_params = (ticker,) if ticker is not None else ()
     with connection() as db:
         latest_run = db.execute(
             """
@@ -4264,72 +4372,90 @@ def _pulse_data_uncached() -> dict[str, Any]:
         ).fetchone()
         market_rows = (
             db.execute(
-                """
+                f"""
                 SELECT s.*,
                        (SELECT c.name FROM sec_companies c
                         WHERE c.ticker=s.ticker LIMIT 1) AS listed_company
                 FROM scan_snapshots s
-                WHERE s.scan_run_id=?
+                WHERE s.scan_run_id=? {"AND s.ticker=?" if ticker is not None else ""}
                 ORDER BY s.baseline_rank,s.ticker
                 """,
-                (latest_run["id"],),
+                (latest_run["id"], *ticker_params),
             ).fetchall()
             if latest_run
             else []
         )
         prediction_rows = (
             db.execute(
-                """
+                f"""
                 SELECT p.*,m.status AS model_status FROM ranker_predictions p
                 JOIN scan_snapshots s ON s.id=p.snapshot_id
                 JOIN ranker_models m ON m.id=p.model_id
                 WHERE s.scan_run_id=? AND m.status='active'
+                {"AND s.ticker=?" if ticker is not None else ""}
                 ORDER BY p.created_at DESC
                 """,
-                (latest_run["id"],),
+                (latest_run["id"], *ticker_params),
             ).fetchall()
             if latest_run
             else []
         )
         call_rows = db.execute(
-            """
+            f"""
             SELECT ticker,COUNT(DISTINCT user_id) AS call_count
-            FROM community_calls WHERE status='active' GROUP BY ticker
-            """
+            FROM community_calls WHERE status='active'
+            {"AND ticker=?" if ticker is not None else ""} GROUP BY ticker
+            """,
+            ticker_params,
         ).fetchall()
         comment_rows = db.execute(
-            """
+            f"""
             SELECT ticker,COUNT(*) AS comment_count
             FROM ticker_comments
-            WHERE subject_kind='stock' AND status='public' GROUP BY ticker
-            """
+            WHERE subject_kind='stock' AND status='public'
+            {"AND ticker=?" if ticker is not None else ""} GROUP BY ticker
+            """,
+            ticker_params,
         ).fetchall()
         market_event_rows = db.execute(
-            """
+            f"""
             SELECT source,ticker,event_type,status,event_at,source_url,payload_json
             FROM public_market_events
-            WHERE event_at>? ORDER BY event_at DESC,last_collected_at DESC
+            WHERE event_at>? {"AND ticker=?" if ticker is not None else ""}
+            ORDER BY event_at DESC,last_collected_at DESC
             """,
-            (event_cutoff,),
+            (event_cutoff, *ticker_params),
         ).fetchall()
         filing_rows = db.execute(
-            """
-            SELECT f.*,o.return_1h_pct,o.return_1d_pct,o.return_5d_pct
-            FROM sec_filings f
-            LEFT JOIN sec_outcomes o ON o.accession=f.accession
-            WHERE f.created_at>?
-            ORDER BY f.score DESC,f.filed_at DESC
+            f"""
+            SELECT * FROM (
+                SELECT f.*,o.return_1h_pct,o.return_1d_pct,o.return_5d_pct,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY f.ticker ORDER BY f.score DESC,f.filed_at DESC
+                       ) AS ticker_row
+                FROM sec_filings f
+                LEFT JOIN sec_outcomes o ON o.accession=f.accession
+                WHERE f.created_at>? {"AND f.ticker=?" if ticker is not None else ""}
+            ) ranked WHERE ticker_row=1
             """,
-            (event_cutoff,),
+            (event_cutoff, *ticker_params),
+        ).fetchall()
+        filing_count_rows = db.execute(
+            f"""
+            SELECT ticker,COUNT(*) AS filing_count FROM sec_filings
+            WHERE created_at>? {"AND ticker=?" if ticker is not None else ""}
+            GROUP BY ticker
+            """,
+            (event_cutoff, *ticker_params),
         ).fetchall()
 
     filings_by_ticker: dict[str, dict[str, Any]] = {}
     filing_counts: dict[str, int] = {}
     for raw in filing_rows:
         event = _intelligence_evidence(dict(raw))
-        ticker = event["ticker"]
-        filing_counts[ticker] = filing_counts.get(ticker, 0) + 1
-        filings_by_ticker.setdefault(ticker, event)
+        filings_by_ticker[event["ticker"]] = event
+    for raw in filing_count_rows:
+        filing_counts[str(raw["ticker"])] = int(raw["filing_count"] or 0)
 
     predictions: dict[str, dict[str, Any]] = {}
     for raw in prediction_rows:
@@ -4349,115 +4475,142 @@ def _pulse_data_uncached() -> dict[str, Any]:
     market_events_by_ticker: dict[str, list[dict[str, Any]]] = {}
     for raw in market_event_rows:
         market_events_by_ticker.setdefault(str(raw["ticker"]), []).append(dict(raw))
+    return {
+        "latest_run": dict(latest_run) if latest_run else None,
+        "market_rows": [dict(row) for row in market_rows],
+        "predictions": predictions,
+        "community": community,
+        "market_events_by_ticker": market_events_by_ticker,
+        "filings_by_ticker": filings_by_ticker,
+        "filing_counts": filing_counts,
+        "score_as_of": iso(at),
+    }
+
+
+def _pulse_snapshot_score(snapshot: dict[str, Any], inputs: dict[str, Any]) -> dict[str, Any]:
+    ticker = snapshot["ticker"]
+    catalyst = inputs["filings_by_ticker"].get(ticker)
+    prediction = inputs["predictions"].get(str(snapshot["id"]))
+    custom_score = (
+        float(prediction["score"])
+        if prediction and prediction.get("score") is not None
+        else float(snapshot.get("score") or 0)
+    )
+    catalyst_score = float(catalyst.get("score") or 0) if catalyst else 0.0
+    catalyst_sentiment = str(catalyst.get("sentiment") or "") if catalyst else ""
+    event_boost = (
+        min(12.0, catalyst_score * 0.12)
+        if catalyst_sentiment == "positive"
+        else -min(25.0, catalyst_score * 0.25)
+        if catalyst_sentiment == "risk"
+        else 0.0
+    )
+    community_counts = inputs["community"].get(ticker, {"call_count": 0, "comment_count": 0})
+    call_count = community_counts["call_count"]
+    comment_count = community_counts["comment_count"]
+    engagement_count = call_count + (comment_count * 2)
+    community_boost = min(8.0, math.log2(engagement_count + 1) * 2.0)
+    external = _external_event_context(
+        inputs["market_events_by_ticker"].get(ticker, []), at=_timestamp(inputs["score_as_of"])
+    )
+    news_boost = float(external["news_boost"])
+    social_search_boost = float(external["social_search_boost"])
+    safety_penalty = float(external["safety_penalty"])
+    raw_rug_score = snapshot.get("rug_score")
+    rug_score = float(raw_rug_score) if raw_rug_score is not None else None
+    trade_state = str(snapshot.get("trade_state") or "UNKNOWN").upper()
+    if external.get("active_halt"):
+        rug_score = max(rug_score or 0.0, 90.0)
+        trade_state = "AVOID"
+    rug_penalty = (rug_score or 0.0) * 0.30
+    state_penalty = 25.0 if trade_state == "EXIT" else 20.0 if trade_state == "AVOID" else 0.0
+    pulse_score = round(
+        max(
+            0.0,
+            min(
+                100.0,
+                custom_score
+                + event_boost
+                + news_boost
+                + social_search_boost
+                + community_boost
+                - safety_penalty
+                - rug_penalty
+                - state_penalty,
+            ),
+        ),
+        2,
+    )
+    score_components = {
+        "market": round(custom_score, 2),
+        "sec_event": round(event_boost, 2),
+        "news": news_boost,
+        "social_search": social_search_boost,
+        "community": round(community_boost, 2),
+        "safety": -safety_penalty,
+    }
+    if snapshot.get("rug_score") is not None or snapshot.get("trade_state") is not None:
+        score_components.update({"rug": -round(rug_penalty, 2), "state": -state_penalty})
+    return {
+        "baseline_score": float(snapshot.get("score") or 0),
+        "rug_score": rug_score,
+        "trade_state": trade_state,
+        "model_score": custom_score if prediction else None,
+        "model_rank": prediction.get("rank") if prediction else None,
+        "score": pulse_score,
+        "custom_score": pulse_score,
+        "score_as_of": inputs["score_as_of"],
+        "score_snapshot_id": snapshot["id"],
+        "runner_probability": prediction.get("probability_up") if prediction else None,
+        "runner_probability_down": prediction.get("probability_down") if prediction else None,
+        "runner_probability_timeout": prediction.get("probability_timeout") if prediction else None,
+        "directional_thesis": _ranker_directional_thesis(prediction),
+        "expected_return_pct": prediction.get("expected_return_pct") if prediction else None,
+        "call_count": call_count,
+        "comment_count": comment_count,
+        "engagement_count": engagement_count,
+        "event_boost": round(event_boost, 2),
+        "news_boost": news_boost,
+        "social_search_boost": social_search_boost,
+        "community_boost": round(community_boost, 2),
+        "safety_penalty": safety_penalty,
+        "rug_penalty": round(rug_penalty, 2),
+        "state_penalty": state_penalty,
+        "active_market_event": external.get("active_halt"),
+        "news_count": external["news_count"],
+        "external_social_mentions": external["social_mentions"],
+        "external_social_engagement": external["social_engagement"],
+        "latest_news": external.get("latest_news"),
+        "score_components": score_components,
+        "score_detail": _public_score_detail(score_components, pulse_score),
+        "external_context": external,
+    }
+
+
+def _pulse_data_uncached() -> dict[str, Any]:
+    inputs = _pulse_scoring_inputs(at=now())
+    latest_run = inputs["latest_run"]
+    market_rows = inputs["market_rows"]
+    filings_by_ticker = inputs["filings_by_ticker"]
+    filing_counts = inputs["filing_counts"]
     active_kol_calls = calls_for_tickers([str(row["ticker"]) for row in market_rows])
 
     runner_rows: list[dict[str, Any]] = []
     unexplained = 0
-    for raw in market_rows:
-        snapshot = dict(raw)
+    for snapshot in market_rows:
         ticker = snapshot["ticker"]
         catalyst = filings_by_ticker.get(ticker)
         if not catalyst:
             unexplained += 1
-        prediction = predictions.get(str(snapshot["id"]))
-        custom_score = (
-            float(prediction["score"])
-            if prediction and prediction.get("score") is not None
-            else float(snapshot.get("score") or 0)
-        )
-        catalyst_score = float(catalyst.get("score") or 0) if catalyst else 0.0
-        catalyst_sentiment = str(catalyst.get("sentiment") or "") if catalyst else ""
-        event_boost = (
-            min(12.0, catalyst_score * 0.12)
-            if catalyst_sentiment == "positive"
-            else -min(25.0, catalyst_score * 0.25)
-            if catalyst_sentiment == "risk"
-            else 0.0
-        )
-        community_counts = community.get(
-            ticker,
-            {"call_count": 0, "comment_count": 0},
-        )
-        call_count = community_counts["call_count"]
-        comment_count = community_counts["comment_count"]
-        engagement_count = call_count + (comment_count * 2)
-        community_boost = min(8.0, math.log2(engagement_count + 1) * 2.0)
-        external = _external_event_context(market_events_by_ticker.get(ticker, []))
-        news_boost = float(external["news_boost"])
-        social_search_boost = float(external["social_search_boost"])
-        safety_penalty = float(external["safety_penalty"])
-        raw_rug_score = snapshot.get("rug_score")
-        rug_score = float(raw_rug_score) if raw_rug_score is not None else None
-        trade_state = str(snapshot.get("trade_state") or "UNKNOWN").upper()
-        if external.get("active_halt"):
-            rug_score = max(rug_score or 0.0, 90.0)
-            trade_state = "AVOID"
-        rug_penalty = (rug_score or 0.0) * 0.30
-        state_penalty = 25.0 if trade_state == "EXIT" else 20.0 if trade_state == "AVOID" else 0.0
-        pulse_score = round(
-            max(
-                0.0,
-                min(
-                    100.0,
-                    custom_score
-                    + event_boost
-                    + news_boost
-                    + social_search_boost
-                    + community_boost
-                    - safety_penalty
-                    - rug_penalty
-                    - state_penalty,
-                ),
-            ),
-            2,
-        )
-        score_components = {
-            "market": round(custom_score, 2),
-            "sec_event": round(event_boost, 2),
-            "news": news_boost,
-            "social_search": social_search_boost,
-            "community": round(community_boost, 2),
-            "safety": -safety_penalty,
-        }
-        if snapshot.get("rug_score") is not None or snapshot.get("trade_state") is not None:
-            score_components.update({"rug": -round(rug_penalty, 2), "state": -state_penalty})
+        scoring = _pulse_snapshot_score(snapshot, inputs)
+        external = scoring.pop("external_context")
         external_label = _external_event_label(external)
-        directional_thesis = _ranker_directional_thesis(prediction)
         runner = {
             **snapshot,
-            "baseline_score": float(snapshot.get("score") or 0),
+            **scoring,
             "setup_score": _number(snapshot.get("setup_score")),
-            "rug_score": rug_score,
-            "trade_state": trade_state,
-            "model_score": custom_score if prediction else None,
-            "model_rank": prediction.get("rank") if prediction else None,
-            "score": pulse_score,
-            "custom_score": pulse_score,
-            "runner_probability": prediction.get("probability_up") if prediction else None,
-            "runner_probability_down": (prediction.get("probability_down") if prediction else None),
-            "runner_probability_timeout": (
-                prediction.get("probability_timeout") if prediction else None
-            ),
-            "directional_thesis": directional_thesis,
-            "expected_return_pct": (prediction.get("expected_return_pct") if prediction else None),
-            "call_count": call_count,
             "bull_count": 0,
             "bear_count": 0,
-            "comment_count": comment_count,
-            "engagement_count": engagement_count,
-            "event_boost": round(event_boost, 2),
-            "news_boost": news_boost,
-            "social_search_boost": social_search_boost,
-            "community_boost": round(community_boost, 2),
-            "safety_penalty": safety_penalty,
-            "rug_penalty": round(rug_penalty, 2),
-            "state_penalty": state_penalty,
-            "active_market_event": external.get("active_halt"),
-            "news_count": external["news_count"],
-            "external_social_mentions": external["social_mentions"],
-            "external_social_engagement": external["social_engagement"],
-            "latest_news": external.get("latest_news"),
-            "score_components": score_components,
             "company": (
                 catalyst.get("company", ticker)
                 if catalyst
@@ -4479,7 +4632,7 @@ def _pulse_data_uncached() -> dict[str, Any]:
             "source": "market",
             "section": "scored",
             "event_at": snapshot["captured_at"],
-            "attention_score": pulse_score,
+            "attention_score": scoring["score"],
             "filing_url": (
                 catalyst.get("filing_url")
                 if catalyst
@@ -4509,6 +4662,7 @@ def _pulse_data_uncached() -> dict[str, Any]:
         runner["custom_rank"] = custom_rank
     _apply_market_marks(runner_rows)
     _attach_pulse_entries(runner_rows)
+    _attach_announcements(runner_rows)
     quote_times = [str(row["quote_time"]) for row in market_rows if row["quote_time"]]
     market_updated_at = max(quote_times) if quote_times else None
     if market_updated_at is None and latest_run:
@@ -4527,6 +4681,37 @@ def _pulse_data_uncached() -> dict[str, Any]:
         "kols": predictor_scorecards(),
         "next_offset": len(runner_rows),
         "has_more": False,
+    }
+
+
+PUBLIC_SCORE_DRIVERS = (
+    ("market", "Scan"),
+    ("sec_event", "SEC"),
+    ("news", "News"),
+    ("social_search", "Social"),
+    ("community", "Community"),
+)
+PUBLIC_SCORE_PENALTIES = (
+    ("safety", "Safety"),
+    ("rug", "Rug"),
+    ("state", "State"),
+)
+
+
+def _public_score_detail(components: dict[str, Any], score: float) -> dict[str, Any]:
+    """Keep the public score breakdown small enough to ship with every row."""
+
+    return {
+        "score": round(float(score), 1),
+        "drivers": [
+            {"key": key, "label": label, "value": round(float(components.get(key) or 0.0), 1)}
+            for key, label in PUBLIC_SCORE_DRIVERS
+        ],
+        "penalties": [
+            {"key": key, "label": label, "value": round(float(components.get(key) or 0.0), 1)}
+            for key, label in PUBLIC_SCORE_PENALTIES
+            if float(components.get(key) or 0.0) != 0.0
+        ],
     }
 
 
@@ -4562,6 +4747,8 @@ PUBLIC_PULSE_ROW_FIELDS = (
     "ticker",
     "custom_rank",
     "score",
+    "score_detail",
+    "score_as_of",
     "setup_score",
     "company",
     "name",
@@ -4710,6 +4897,22 @@ def _commission_record(
                 "risk_heading": "What could break it",
             }
         )
+    elif str(report.get("subject_type") or "") == "coin":
+        evidence_coin = evidence
+        report["subject_type"] = "coin"
+        report["subject_id"] = str(report.get("subject_id") or report["ticker"])
+        report["company"] = str(
+            evidence_coin.get("name") or evidence_coin.get("symbol") or report["subject_id"]
+        )
+        report["coin_label"] = str(evidence_coin.get("symbol") or report["subject_id"][:6])
+        report["coin_tone"] = _coin_tone(report["subject_id"])
+        report["ticker"] = report["coin_label"]
+        report["asset_href"] = f"/memecoins/coin/{report['subject_id']}"
+        report["back_href"] = "/memecoins"
+        report["nav_product"] = "memecoins"
+        report["profile_heading"] = "On-chain context"
+        report["risk_heading"] = "What could break it"
+        report["sports_forecast"] = None
     else:
         summary = summary or _ticker_summary(report["ticker"])
         report["company"] = summary["company"] if summary else report["ticker"]
@@ -4867,6 +5070,7 @@ def _flash_daily_capacity_available(
                 (actor.id, since),
             ).fetchone()[0]
     except Exception:
+        LOG.exception("Flash daily capacity check failed")
         return False
     return int(count) < FLASH_GLOBAL_DAILY_LIMIT
 
@@ -5192,7 +5396,7 @@ def _alpha_evidence(ticker: str, engagement_count: int) -> tuple[str, dict[str, 
         "captured_at": current.get("event_at"),
         "price": current.get("price"),
         "change_pct": current.get("change_pct"),
-        "score": current.get("score"),
+        "score": current.get("scanner_score", current.get("score")),
         "setup_score": _number(current.get("setup_score")),
         "rug_score": current.get("rug_score"),
         "rug_level": current.get("rug_level"),
@@ -5477,7 +5681,8 @@ def _normalize_openrouter_report(
         citation_values = []
     citations = [item for item in citation_values if isinstance(item, dict)]
     is_sports = evidence.get("subject_type") == "sports_game"
-    forecast = None if is_sports else validate_forecast(raw_report.get("forecast"))
+    is_coin = evidence.get("subject_type") == "coin"
+    forecast = None if is_sports or is_coin else validate_forecast(raw_report.get("forecast"))
     sports_forecast = (
         validate_sports_ai_forecast(raw_report.get("sports_forecast"), evidence)
         if is_sports
@@ -5677,7 +5882,34 @@ def _generate_openrouter_report(
     prepare_only: bool = False,
     provider_result: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str, dict[str, Any]] | dict[str, Any]:
+    body = _prepare_openrouter_report_request(
+        evidence, actor=actor, model=model, customer_route=customer_route
+    )
+    if prepare_only:
+        return body
+    if customer_route and provider_result is None:
+        raise ReportGenerationFailure(
+            503,
+            "The local model connector has not returned this report.",
+            {"phase": "edge_result_missing", "provider": "customer_edge"},
+        )
+    result = (
+        provider_result
+        if provider_result is not None
+        else _request_openrouter_report(openrouter_key, body)
+    )
+    return _process_openrouter_report_response(result, evidence, model=model or actor.model)
+
+
+def _prepare_openrouter_report_request(
+    evidence: dict[str, Any],
+    *,
+    actor: AIKol,
+    model: str | None,
+    customer_route: bool,
+) -> dict[str, Any]:
     is_sports = evidence.get("subject_type") == "sports_game"
+    is_coin = evidence.get("subject_type") == "coin"
     request_payload = {
         "actor": actor_snapshot(actor),
         "task": (
@@ -5690,9 +5922,15 @@ def _generate_openrouter_report(
             )
             if is_sports
             else (
-                "Identify the issuer and each person named in the filings. Explain the filings, "
-                "ownership changes, news, and social posts. Then form a thesis from the supplied "
-                "business, financing, ownership, market, and media evidence."
+                "Describe the saved token identity and on-chain findings. Use dated observations, "
+                "qualified uncertainty, and alternative explanations. Never claim ownership or "
+                "intent from behavioral evidence. Form a thesis only from the supplied evidence."
+                if is_coin
+                else (
+                    "Identify the issuer and each person named in the filings. Explain the "
+                    "filings, ownership changes, news, and social posts. Then form a thesis "
+                    "from the supplied business, financing, ownership, market, and media evidence."
+                )
             )
         ),
         "output": _sports_report_output_contract()
@@ -5705,7 +5943,10 @@ def _generate_openrouter_report(
                 "what_it_does": (
                     "leave empty for a sports game"
                     if is_sports
-                    else "products, customers, and business model"
+                    else (
+                        "products, customers, and business model; "
+                        "for a coin, summarize the token and chain"
+                    )
                 ),
                 "stage": (
                     "leave empty for a sports game"
@@ -5754,8 +5995,8 @@ def _generate_openrouter_report(
                 }
             ],
             "forecast": (
-                "leave empty for a sports game"
-                if is_sports
+                "leave empty for this subject"
+                if is_sports or is_coin
                 else {
                     "direction": "up, down, or no_call",
                     "probability_up": "0 to 1; up >= .55, down <= .45, no_call between",
@@ -5830,59 +6071,64 @@ def _generate_openrouter_report(
     if customer_route:
         for key in ("plugins", "provider", "reasoning_effort"):
             body.pop(key, None)
-    if prepare_only:
-        return body
-    if customer_route and provider_result is None:
+    return body
+
+
+def _request_openrouter_report(
+    openrouter_key: str,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    api_request = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=json.dumps(body).encode(),
+        headers={
+            "Authorization": f"Bearer {openrouter_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": APP_ORIGIN,
+            "X-OpenRouter-Title": "Runner Watch",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(
+            api_request, timeout=OPENROUTER_RESEARCH_TIMEOUT_SECONDS
+        ) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403}:
+            message = "OpenRouter rejected the server key."
+        elif exc.code == 402:
+            message = "The server's OpenRouter account needs credits."
+        elif exc.code == 429:
+            message = "OpenRouter is busy. Try again in a moment."
+        else:
+            message = "OpenRouter could not complete this report."
         raise ReportGenerationFailure(
-            503,
-            "The local model connector has not returned this report.",
-            {"phase": "edge_result_missing", "provider": "customer_edge"},
-        )
-    if provider_result is not None:
-        result = provider_result
-    else:
-        api_request = urllib.request.Request(
-            "https://openrouter.ai/api/v1/chat/completions",
-            data=json.dumps(body).encode(),
-            headers={
-                "Authorization": f"Bearer {openrouter_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": APP_ORIGIN,
-                "X-OpenRouter-Title": "Runner Watch",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(
-                api_request, timeout=OPENROUTER_RESEARCH_TIMEOUT_SECONDS
-            ) as response:
-                result = json.load(response)
-        except urllib.error.HTTPError as exc:
-            if exc.code in {401, 403}:
-                message = "OpenRouter rejected the server key."
-            elif exc.code == 402:
-                message = "The server's OpenRouter account needs credits."
-            elif exc.code == 429:
-                message = "OpenRouter is busy. Try again in a moment."
-            else:
-                message = "OpenRouter could not complete this report."
-            raise ReportGenerationFailure(
-                exc.code if exc.code < 500 else 502,
-                message,
-                {"phase": "provider_http", "http_status": exc.code},
-            ) from exc
-        except (TimeoutError, urllib.error.URLError) as exc:
-            raise ReportGenerationFailure(
-                504,
-                "Flash took too long to answer. Retry Flash.",
-                {"phase": "provider_timeout"},
-            ) from exc
-        except (TypeError, ValueError) as exc:
-            raise ReportGenerationFailure(
-                502,
-                "OpenRouter returned an unreadable response. Retry Flash.",
-                {"phase": "provider_envelope", "failure_kind": "invalid_json"},
-            ) from exc
+            exc.code if exc.code < 500 else 502,
+            message,
+            {"phase": "provider_http", "http_status": exc.code},
+        ) from exc
+    except (TimeoutError, urllib.error.URLError) as exc:
+        raise ReportGenerationFailure(
+            504,
+            "Flash took too long to answer. Retry Flash.",
+            {"phase": "provider_timeout"},
+        ) from exc
+    except (TypeError, ValueError) as exc:
+        raise ReportGenerationFailure(
+            502,
+            "OpenRouter returned an unreadable response. Retry Flash.",
+            {"phase": "provider_envelope", "failure_kind": "invalid_json"},
+        ) from exc
+
+
+def _process_openrouter_report_response(
+    result: dict[str, Any],
+    evidence: dict[str, Any],
+    *,
+    model: str,
+) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    is_sports = evidence.get("subject_type") == "sports_game"
     choice: Any = None
     message: Any = None
     content: Any = None
@@ -6020,7 +6266,7 @@ def _generate_openrouter_report(
         ),
         "normalized_fields": normalized_fields,
     }
-    return report, str(result.get("model") or model or actor.model), usage
+    return report, str(result.get("model") or model), usage
 
 
 def _fallback_people_from_evidence(evidence: dict[str, Any]) -> list[dict[str, Any]]:
@@ -6079,6 +6325,40 @@ def _exclusive_until_for(current_time: datetime, exclusive_minutes: int | None =
     return iso(current_time + timedelta(minutes=max(0, exclusive_minutes)))
 
 
+def _coin_alpha_evidence(coin_id: str) -> tuple[str, dict[str, Any]]:
+    detail = memecoin_detail(coin_id)
+    if not detail:
+        raise ValueError("Coin detail is unavailable")
+    coin = dict(detail.get("coin") or {})
+    evidence = {
+        "subject_type": "coin",
+        "subject_id": coin_id,
+        "coin_id": coin_id,
+        "symbol": coin.get("symbol"),
+        "name": coin.get("name"),
+        "network": coin.get("network") or "solana",
+        "token_address": coin.get("token_address"),
+        "pool_address": coin.get("pool_address"),
+        "price": coin.get("price"),
+        "liquidity_usd": coin.get("liquidity_usd"),
+        "volume_24h": coin.get("volume_24h"),
+        "change_24h": coin.get("change_24h"),
+        "observed_at": coin.get("observed_at"),
+        "collected_at": detail.get("collected_at"),
+        "stale": bool(coin.get("stale")),
+        "source": coin.get("source"),
+        "source_url": coin.get("source_url"),
+        "discovery": coin.get("discovery") or {},
+        "evidence": detail.get("evidence") or [],
+        "uncertainty": (
+            "Saved on-chain findings are qualified observations; they do not establish "
+            "ownership or intent."
+        ),
+    }
+    fingerprint = json.dumps(evidence, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(fingerprint.encode()).hexdigest()[:24], evidence
+
+
 def _create_research_commission(
     user_id: str,
     ticker: str,
@@ -6088,13 +6368,21 @@ def _create_research_commission(
     trigger: str = "commission",
     charge: bool = True,
     exclusive_minutes: int | None = None,
+    subject_type: str | None = None,
+    subject_id: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
 
     current_time = now()
     timestamp = iso(current_time)
     report_day = current_time.date().isoformat()
     exclusive_until = _exclusive_until_for(current_time, exclusive_minutes)
-    if ticker.startswith("sports:"):
+    if subject_type == "coin":
+        coin_id = str(subject_id or ticker)
+        try:
+            evidence_key, evidence = _coin_alpha_evidence(coin_id)
+        except ValueError as exc:
+            raise HTTPException(404, "Coin not found") from exc
+    elif ticker.startswith("sports:"):
         event_id = ticker.removeprefix("sports:")
         try:
             evidence_key, evidence = sports_flash_evidence(event_id)
@@ -6162,11 +6450,11 @@ def _create_research_commission(
             inserted = db.execute(
                 """
                 INSERT INTO research_commissions(
-                    id,public_id,user_id,ticker,evidence_key,status,requested_model,
-                    actor_id,actor_snapshot_json,case_id,trigger,evidence_snapshot_json,
+                    id,public_id,user_id,ticker,subject_type,subject_id,evidence_key,status,requested_model,
+                     actor_id,actor_snapshot_json,case_id,trigger,evidence_snapshot_json,
                     evidence_as_of,created_at,updated_at,report_day,exclusive_until,
                     flash_version_id,inference_scope,inference_route_json,customer_inference
-                ) VALUES(?,?,?,?,?,'running',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES(?,?,?,?,?,?,?,'running',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT DO NOTHING
                 """,
                 (
@@ -6174,6 +6462,8 @@ def _create_research_commission(
                     public_id,
                     user_id,
                     ticker,
+                    subject_type or ("sports_game" if ticker.startswith("sports:") else "stock"),
+                    subject_id or ticker.removeprefix("sports:"),
                     evidence_key,
                     inference_route.model,
                     actor.id,
@@ -6254,6 +6544,7 @@ def _run_research_commission(
         else:
             _, evidence = _alpha_evidence(ticker, _community_engagement_count(ticker))
     is_sports = evidence.get("subject_type") == "sports_game"
+    is_coin = evidence.get("subject_type") == "coin"
     try:
         if is_sports:
             included_sections = sum(
@@ -6275,6 +6566,15 @@ def _run_research_commission(
                     "included_sections": included_sections,
                     "subject_type": "sports_game",
                     "as_of": evidence_as_of,
+                },
+            }
+        elif is_coin:
+            research_context = {
+                **evidence,
+                "context_stats": {
+                    "subject_type": "coin",
+                    "as_of": evidence_as_of,
+                    "qualified_uncertainty": evidence.get("uncertainty"),
                 },
             }
         else:
@@ -6507,7 +6807,7 @@ def _run_research_commission(
             ).fetchone()
             if not completed_row:
                 raise RuntimeError("Completed Flash report disappeared")
-            if not customer_inference and not is_sports:
+            if not customer_inference and not is_sports and not is_coin:
                 record_flash_forecast(
                     db,
                     dict(completed_row),
@@ -6716,6 +7016,16 @@ def _public_research_report_data(public_id: str) -> dict[str, Any]:
     return {"report": report}
 
 
+def _ticker_issuer_risk(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(str(value or "{}"))
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def latest_commission(user_id: str, ticker: str) -> dict[str, Any] | None:
     with connection() as db:
         row = db.execute(
@@ -6806,9 +7116,21 @@ def memecoins_board_response(
     q: str = "",
     sort: str = "volume",
 ) -> HTMLResponse:
+    from runner_web.stories import stories_by_subject
+
     enforce_rate(request, "memecoins", limit=120, seconds=60)
     market = memecoin_market(query=q, sort=sort, view="radar")
-    return _simple_board(request, runner_session, "memecoins", market["rows"], view, q)
+    coins = [str(item.get("id") or "") for item in market["rows"] if item.get("id")]
+    return _simple_board(
+        request,
+        runner_session,
+        "memecoins",
+        market["rows"],
+        view,
+        q,
+        updated_at=str(market.get("collected_at") or ""),
+        stories=stories_by_subject("memecoins", coins),
+    )
 
 
 @app.get("/memecoins/radar", response_class=HTMLResponse)
@@ -6874,8 +7196,18 @@ def memecoin_calls_api(request: Request) -> dict[str, Any]:
     return {"calls": memecoin_calls()}
 
 
+def _cached_memecoin_detail(coin_id: str) -> dict[str, Any] | None:
+    payload = _public_screen_data(
+        "memecoin-detail",
+        f"{coin_id}:{snapshot_version()}",
+        lambda: {"detail": memecoin_detail(coin_id)},
+    )
+    detail = payload.get("detail")
+    return dict(detail) if isinstance(detail, dict) else None
+
+
 def _memecoin_detail_payload(coin_id: str) -> dict[str, Any]:
-    detail = memecoin_detail(coin_id)
+    detail = _cached_memecoin_detail(coin_id)
     if detail is None:
         raise HTTPException(404, "Coin not found")
     return {
@@ -6893,20 +7225,28 @@ def memecoin_detail_api(coin_id: str, request: Request) -> dict[str, Any]:
 
 @app.get("/api/memecoins/{coin_id}/replay")
 def memecoin_replay_api(coin_id: str, request: Request, revision: str | None = None):
-    from runner_web.memecoin_replay_store import replay_status
-
     enforce_rate(request, "memecoin_replay", limit=30, seconds=60)
-    if memecoin_detail(coin_id) is None or (
+    if _cached_memecoin_detail(coin_id) is None or (
         revision and not re.fullmatch(r"[a-f0-9]{64}", revision)
     ):
         raise HTTPException(404, "Replay not found")
     try:
-        status = replay_status(coin_id, revision)
+        status = _cached_replay_status(coin_id, revision)
     except ValueError:
         raise HTTPException(409, "Saved replay needs an evidence review") from None
     if revision and status["status"] != "ready":
         raise HTTPException(404, "Replay not found")
     return status
+
+
+def _cached_replay_status(coin_id: str, revision: str | None) -> dict[str, Any]:
+    from runner_web.memecoin_replay_store import replay_status
+
+    return _public_screen_data(
+        "memecoin-replay",
+        f"{coin_id}:{revision or ''}",
+        lambda: replay_status(coin_id, revision),
+    )
 
 
 def _memecoin_replay_artifact(coin_id: str, replay_id: str, request: Request, *, gif: bool):
@@ -7210,18 +7550,28 @@ def runners_board_response(
     runner_session: str | None,
     view: str,
 ) -> HTMLResponse:
+    from runner_web.stories import stories_by_subject
+
     page = _public_pulse_data(limit=50)
     rows = list(page["rows"])
     while page.get("has_more") and page["rows"]:
         page = _public_pulse_data(offset=len(rows), limit=50)
         rows.extend(page["rows"])
+    query = request.query_params.get("q", "")
+    direct = _direct_ticker_item(query, rows)
+    if direct is not None:
+        rows.append(direct)
+    tickers = [str(item.get("ticker") or "").upper() for item in rows if item.get("ticker")]
+    stories = stories_by_subject("stocks", tickers)
     return _simple_board(
         request,
         runner_session,
         "stocks",
         rows,
         view,
-        request.query_params.get("q", ""),
+        query,
+        updated_at=str(page.get("updated_at") or ""),
+        stories=stories,
     )
 
 
@@ -7232,11 +7582,12 @@ def _simple_board(
     items: list[dict[str, Any]],
     view: str,
     query: str = "",
+    updated_at: str = "",
+    stories: dict[str, dict[str, Any]] | None = None,
 ) -> HTMLResponse:
     from runner_web.market_screens import listing
 
-    selected = "map" if view == "map" else "list"
-    screen = listing(market, items, view=selected, query=query)
+    screen = listing(market, items, view=view, query=query, updated_at=updated_at, stories=stories)
     return templates.TemplateResponse(
         request,
         "market_screen.html",
@@ -7454,6 +7805,8 @@ def sports_board_response(
     view: str,
     league: str = "all",
 ) -> HTMLResponse:
+    from runner_web.stories import stories_by_subject
+
     enforce_rate(request, "sports", limit=120, seconds=60)
     selected_league = league if league in SPORTS_LEAGUES or league == "golf" else "all"
     slate = _public_screen_data(
@@ -7462,8 +7815,15 @@ def sports_board_response(
     events = list(slate.get("events", [])) if selected_league != "golf" else []
     if selected_league in {"all", "golf"}:
         events.extend(_public_golf_data().get("events", []))
+    event_ids = [str(event.get("id") or "") for event in events if event.get("id")]
     return _simple_board(
-        request, runner_session, "sports", events, view, request.query_params.get("q", "")
+        request,
+        runner_session,
+        "sports",
+        events,
+        view,
+        request.query_params.get("q", ""),
+        stories=stories_by_subject("sports", event_ids),
     )
 
 
@@ -7898,7 +8258,30 @@ def _ticker_exists(ticker: str) -> bool:
         )
 
 
+def _direct_ticker_item(query: str, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Search opens any tracked ticker, not only the tickers on the pulse board."""
+
+    candidate = str(query or "").strip().upper().replace(".", "-")
+    if not candidate or not TICKER_RE.fullmatch(candidate):
+        return None
+    existing = {str(item.get("ticker") or "").upper().replace(".", "-") for item in rows}
+    if candidate in existing or not _ticker_exists(candidate):
+        return None
+    try:
+        detail = _public_ticker_detail_data(candidate)
+    except Exception:  # noqa: BLE001 - a search fallback must never break the board
+        LOG.exception("Direct ticker search failed for %s", candidate)
+        return None
+    if detail is None:
+        return None
+    item = dict(detail.get("current") or {})
+    item["ticker"] = candidate
+    item["company"] = detail.get("company")
+    return item
+
+
 def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
+    score_time = now()
     with connection() as db:
         filings = db.execute(
             """
@@ -7965,6 +8348,13 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
         current.update(
             {
                 "ticker": ticker,
+                "baseline_score": float(current.get("score") or 0),
+                "score_as_of": current["captured_at"],
+                "score_snapshot_id": current["id"],
+                "score_detail": _public_score_detail(
+                    {"market": float(current.get("score") or 0)},
+                    float(current.get("score") or 0),
+                ),
                 "kind": current.get("catalyst_kind") or "No recent SEC catalyst",
                 "sentiment": current.get("catalyst_sentiment") or "gap",
                 "event_at": current["captured_at"],
@@ -7973,7 +8363,7 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
                 "return_5d_pct": current.get("scan_return_5d_pct"),
                 "signals": _json_list(current.get("signals_json")),
                 "risks": _json_list(current.get("risks_json")),
-                "issuer_risk": json.loads(current.get("issuer_risk_json") or "{}"),
+                "issuer_risk": _ticker_issuer_risk(current.get("issuer_risk_json")),
                 "source": "market",
             }
         )
@@ -7997,10 +8387,40 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
         }
     pressure = _market_trade_pressure(ticker)
     external = _external_event_context([dict(row) for row in external_rows])
-    base_rates = matched_market_base_rates(current)
+    base_rates = {
+        "method": "same_ticker_session_clock",
+        "method_version": 1,
+        "ticker": ticker,
+        "as_of": current.get("captured_at") or current.get("event_at"),
+        "session": current.get("session"),
+        "mode": "deferred",
+        "matched_sessions": 0,
+        "minimum_samples": 20,
+        "lookback_days": 120,
+        "clock_tolerance_minutes": 15,
+        "metrics": {},
+        "notable_metrics": [],
+    }
     directional_thesis = _ranker_directional_thesis(
         dict(prediction) if prediction is not None else None
     )
+    if snapshot is not None:
+        inputs = _pulse_scoring_inputs(ticker=ticker, at=score_time)
+        if inputs["market_rows"]:
+            scoring = _pulse_snapshot_score(inputs["market_rows"][0], inputs)
+            current["scanner_score"] = current["score"]
+            for field in (
+                "score",
+                "custom_score",
+                "baseline_score",
+                "model_score",
+                "model_rank",
+                "score_detail",
+                "score_components",
+                "score_as_of",
+                "score_snapshot_id",
+            ):
+                current[field] = scoring[field]
     return {
         "ticker": ticker,
         "company": company["name"] if company else current.get("company", ticker),
@@ -8374,24 +8794,16 @@ def _refresh_chart_payload(
     shared_key: str,
     requested: list[str],
 ) -> None:
-    try:
-        payload = _ticker_charts_payload_uncached(requested)
-        with CHART_PAYLOAD_CONDITION:
-            CHART_PAYLOAD_CACHE[local_key] = (
-                time.monotonic() + CHART_PAYLOAD_CACHE_TTL_SECONDS,
-                payload,
-            )
-        shared_cache_set(
-            shared_key,
-            payload,
-            int(CHART_PAYLOAD_CACHE_TTL_SECONDS),
-        )
-    except Exception:
-        LOG.exception("Chart payload cache refresh failed")
-    finally:
-        with CHART_PAYLOAD_CONDITION:
-            CHART_PAYLOAD_REFRESHING.discard(local_key)
-            CHART_PAYLOAD_CONDITION.notify_all()
+    _refresh_cached_payload(
+        local_key,
+        shared_key,
+        lambda: _ticker_charts_payload_uncached(requested),
+        cache=CHART_PAYLOAD_CACHE,
+        refreshing=CHART_PAYLOAD_REFRESHING,
+        condition=CHART_PAYLOAD_CONDITION,
+        ttl_seconds=CHART_PAYLOAD_CACHE_TTL_SECONDS,
+        failure_message="Chart payload cache refresh failed",
+    )
 
 
 def ticker_charts_payload(tickers: list[str]) -> dict[str, Any]:
@@ -8399,67 +8811,51 @@ def ticker_charts_payload(tickers: list[str]) -> dict[str, Any]:
     if not requested:
         return {"charts": {}, "freshness": {}, "annotations": {}}
     local_key, shared_key = _chart_payload_cache_key(requested)
-    current = time.monotonic()
-    with CHART_PAYLOAD_CONDITION:
-        cached = CHART_PAYLOAD_CACHE.get(local_key)
-        if cached and current < cached[0]:
-            return cached[1]
-        if cached:
-            if local_key not in CHART_PAYLOAD_REFRESHING:
-                CHART_PAYLOAD_REFRESHING.add(local_key)
-                threading.Thread(
-                    target=_refresh_chart_payload,
-                    args=(local_key, shared_key, requested),
-                    daemon=True,
-                    name="chart-payload-cache-refresh",
-                ).start()
-            return cached[1]
-    shared = shared_cache_get(shared_key)
-    if isinstance(shared, dict):
-        with CHART_PAYLOAD_CONDITION:
-            CHART_PAYLOAD_CACHE[local_key] = (
-                time.monotonic() + CHART_PAYLOAD_CACHE_TTL_SECONDS,
-                shared,
-            )
-        return shared
-    with CHART_PAYLOAD_CONDITION:
-        cached = CHART_PAYLOAD_CACHE.get(local_key)
-        if cached:
-            return cached[1]
-        if local_key in CHART_PAYLOAD_REFRESHING:
-            CHART_PAYLOAD_CONDITION.wait_for(
-                lambda: (
-                    local_key in CHART_PAYLOAD_CACHE or local_key not in CHART_PAYLOAD_REFRESHING
-                ),
-                timeout=CACHE_BUILD_WAIT_SECONDS,
-            )
-            cached = CHART_PAYLOAD_CACHE.get(local_key)
-            if cached:
-                return cached[1]
-        CHART_PAYLOAD_REFRESHING.add(local_key)
-    try:
-        payload = _ticker_charts_payload_uncached(requested)
-        with CHART_PAYLOAD_CONDITION:
-            if len(CHART_PAYLOAD_CACHE) >= 32 and local_key not in CHART_PAYLOAD_CACHE:
-                oldest_key = min(
-                    CHART_PAYLOAD_CACHE,
-                    key=lambda key: CHART_PAYLOAD_CACHE[key][0],
-                )
-                CHART_PAYLOAD_CACHE.pop(oldest_key, None)
-            CHART_PAYLOAD_CACHE[local_key] = (
-                time.monotonic() + CHART_PAYLOAD_CACHE_TTL_SECONDS,
-                payload,
-            )
-        shared_cache_set(
-            shared_key,
-            payload,
-            int(CHART_PAYLOAD_CACHE_TTL_SECONDS),
-        )
-        return payload
-    finally:
-        with CHART_PAYLOAD_CONDITION:
-            CHART_PAYLOAD_REFRESHING.discard(local_key)
-            CHART_PAYLOAD_CONDITION.notify_all()
+    return _cached_payload(
+        local_key,
+        shared_key,
+        lambda: _ticker_charts_payload_uncached(requested),
+        cache=CHART_PAYLOAD_CACHE,
+        refreshing=CHART_PAYLOAD_REFRESHING,
+        condition=CHART_PAYLOAD_CONDITION,
+        ttl_seconds=CHART_PAYLOAD_CACHE_TTL_SECONDS,
+        max_entries=32,
+        refresh_target=_refresh_chart_payload,
+        refresh_args=(local_key, shared_key, requested),
+        refresh_name="chart-payload-cache-refresh",
+    )
+
+
+def _ticker_state_changes(ticker: str, *, days: int = 7) -> list[dict[str, Any]]:
+    """When the action tag changed, so the chart can be drawn in its colours.
+
+    The scan snapshots already carry the trade state, stage and rug level the
+    tag is collapsed from, so the history costs one query and no new storage.
+    Only the changes are returned: a reader cares where the line turned from
+    watch to setup, not that it stayed setup for forty bars.
+    """
+
+    from runner_web.market_screens import state_tag
+
+    cutoff = iso(now() - timedelta(days=days))
+    with connection() as db:
+        rows = db.execute(
+            """
+            SELECT captured_at,trade_state,stage,rug_level FROM scan_snapshots
+            WHERE ticker=? AND captured_at>=?
+            ORDER BY captured_at
+            """,
+            (ticker, cutoff),
+        ).fetchall()
+    changes: list[dict[str, Any]] = []
+    for raw in rows:
+        row = dict(raw)
+        _label, tone, _risk = state_tag(row)
+        tone = tone or "paused"
+        if changes and changes[-1]["tone"] == tone:
+            continue
+        changes.append({"time": str(row["captured_at"]), "tone": tone})
+    return changes
 
 
 def _ticker_chart_detail_payload_uncached(ticker: str) -> dict[str, Any]:
@@ -8470,6 +8866,7 @@ def _ticker_chart_detail_payload_uncached(ticker: str) -> dict[str, Any]:
         "points": _serialize_chart_frame(frame, max_points=360),
         "freshness": freshness,
         "annotations": _chart_annotations([ticker]).get(ticker, []),
+        "states": _ticker_state_changes(ticker),
         "levels": list(structure.levels),
         "fibonacci": structure.fibonacci,
         "structure": structure.summary,
@@ -8520,13 +8917,13 @@ def _public_ticker_page_data(ticker: str) -> dict[str, Any]:
             "found": True,
             "detail": detail,
             "calls": community_calls_for_ticker(ticker, current_price=mark, limit=20),
+            "latest_commission": daily_report_for_ticker(ticker),
         }
 
     payload = dict(_public_screen_data("ticker", ticker, build))
     if payload.get("found"):
         payload["comments"] = comments_for_ticker(ticker)
         payload["comment_count"] = comment_count_for_ticker(ticker)
-        payload["latest_commission"] = daily_report_for_ticker(ticker)
     return payload
 
 
@@ -8590,6 +8987,7 @@ def ticker_page(
             ),
             comment_generation_enabled=_flash_provider_ready(),
             active_tab="pulse",
+            robinhood_token=stock_token(normalized),
         ),
     )
 
@@ -8607,13 +9005,14 @@ def screen_detail_state(
     active = None
     if market == "stocks":
         subject = _clean_ticker(subject)
-        data = ticker_detail_data(subject)
+        data = _public_ticker_detail_data(subject)
         if data is None:
             raise HTTPException(404, "Ticker not found")
-        current = {**data.get("current", {}), **(ticker_quote(subject) or {})}
+        current = {**data.get("current", {}), **(ticker_quote(subject, refresh=False) or {})}
         mark = market_mark(subject, refresh=False)
         if mark:
             current.update(price=mark["price"], quote_time=mark["observed_at"])
+        chart = ticker_chart_detail_payload(subject)
         data = {
             **data,
             "current": current,
@@ -8623,7 +9022,8 @@ def screen_detail_state(
                 current.get("quote_time") or current.get("observed_at") or current.get("event_at"),
                 maximum_age=CALL_MARK_MAX_AGE,
             ),
-            "history": ticker_chart_detail_payload(subject).get("points") or [],
+            "history": chart.get("points") or [],
+            "states": chart.get("states") or [],
         }
         if user_id:
             active = active_call_for_user(
@@ -8645,6 +9045,14 @@ def screen_detail_state(
         raise HTTPException(404, "Market not found")
     if market != "sports":
         screen = simple_market_detail(market, data, active_call=active)
+    from runner_web.stories import public_story
+
+    try:
+        story = public_story(market, subject)
+    except Exception:
+        story = None
+    if story:
+        screen["story"] = story
     return JSONResponse(screen, headers={"Cache-Control": "private, no-store"})
 
 
@@ -8681,7 +9089,10 @@ async def screen_stock_chart(ticker: str, request: Request) -> dict[str, Any]:
     if not _ticker_exists(normalized):
         raise HTTPException(404, "Ticker not found")
     payload = await run_in_threadpool(ticker_chart_detail_payload, normalized)
-    return {"points": series(payload.get("points") or [])}
+    return {
+        "points": series(payload.get("points") or []),
+        "states": payload.get("states") or [],
+    }
 
 
 @app.get("/api/screens/stocks/{ticker}/quote")
@@ -9091,6 +9502,112 @@ def radar_data() -> list[dict[str, Any]]:
     return output
 
 
+def _warm_list_charts() -> None:
+    """Pre-build the board's chart payload and the hottest ticker details.
+
+    Both are expensive and otherwise block the first request after a cold start
+    (the chart payload alone has been observed at ~50s on a cold miss).
+    """
+
+    try:
+        rows = _pulse_base_data().get("rows", [])
+    except Exception:
+        LOG.exception("Startup list warm could not read pulse rows")
+        return
+    tickers = [str(row.get("ticker") or "") for row in rows if row.get("ticker")][:20]
+    if not tickers:
+        return
+    try:
+        ticker_charts_payload(tickers)
+    except Exception:
+        LOG.exception("Startup list chart warm failed")
+    for ticker in tickers[:5]:
+        try:
+            _public_ticker_detail_data(ticker)
+        except Exception:
+            LOG.exception("Startup ticker detail warm failed for %s", ticker)
+
+
+def _public_screen_refreshers() -> list[tuple[str, str, Callable[[], dict[str, Any]], float]]:
+    """The fixed, expensive screens the worker rebuilds into the shared cache."""
+
+    return [
+        ("runners-pulse", "public", _pulse_data_uncached, PULSE_CACHE_TTL_SECONDS),
+        (
+            "runners-radar",
+            "public",
+            lambda: {"items": _radar_base_data_uncached()},
+            RADAR_CACHE_TTL_SECONDS,
+        ),
+        ("runners-alpha", "public", _alpha_base_data_uncached, ALPHA_CACHE_TTL_SECONDS),
+        ("flash-record", "public", flash_record, PUBLIC_SCREEN_CACHE_TTL_SECONDS),
+        ("calls-flash", "", _calls_flash_uncached, PUBLIC_SCREEN_CACHE_TTL_SECONDS),
+        (
+            "caller",
+            MACHINE_HANDLE,
+            lambda: _unified_caller_page_data(MACHINE_HANDLE),
+            PUBLIC_SCREEN_CACHE_TTL_SECONDS,
+        ),
+        (
+            "sports-pulse",
+            "all",
+            lambda: {
+                "pulse": _compact_sports_feed(
+                    sports_pulse("all", view="signals", limit=100), radar=False
+                ),
+                "pick_stats": sports_pick_stats(),
+            },
+            PUBLIC_SCREEN_CACHE_TTL_SECONDS,
+        ),
+        (
+            "sports-radar",
+            "all",
+            lambda: {"radar": _compact_sports_feed(sports_radar("all", 100), radar=True)},
+            PUBLIC_SCREEN_CACHE_TTL_SECONDS,
+        ),
+        (
+            "sports-alpha",
+            "all",
+            lambda: sports_alpha_board("all", 100),
+            SPORTS_ALPHA_CACHE_TTL_SECONDS,
+        ),
+        (
+            "sports-golf",
+            "pga",
+            lambda: {"golf": golf_slate(limit=20, leaderboard_limit=10)},
+            PUBLIC_SCREEN_CACHE_TTL_SECONDS,
+        ),
+        ("simple-sports", "all", lambda: sports_slate("all", 80), PUBLIC_SCREEN_CACHE_TTL_SECONDS),
+    ]
+
+
+def _warm_public_screens_once() -> None:
+    # The shared copy must outlive the web-side TTL so a web process never has
+    # to rebuild between worker cycles.
+    shared_ttl = max(300.0, PUBLIC_SCREEN_CACHE_TTL_SECONDS)
+    for scope, identity, builder, ttl in _public_screen_refreshers():
+        local_key, shared_key = _public_screen_cache_keys(scope, identity)
+        try:
+            _refresh_public_screen_data(local_key, shared_key, builder, max(ttl, shared_ttl))
+        except Exception:
+            LOG.exception("Public screen refresh failed for %s", scope)
+    try:
+        _warm_list_charts()
+    except Exception:
+        LOG.exception("Public list chart warm failed")
+
+
+async def public_screen_warm_worker() -> None:
+    interval = max(15, int(os.getenv("PUBLIC_SCREEN_WARM_SECONDS", "45")))
+    await asyncio.sleep(5)
+    while True:
+        try:
+            await asyncio.to_thread(_warm_public_screens_once)
+        except Exception:
+            LOG.exception("Public screen warm cycle failed")
+        await asyncio.sleep(interval)
+
+
 async def request_cache_warmer() -> None:
 
     await asyncio.sleep(1)
@@ -9101,6 +9618,7 @@ async def request_cache_warmer() -> None:
         _public_flash_record_data,
         _public_sports_pulse_data,
         _public_sports_radar_data,
+        _warm_list_charts,
     ]
     try:
         with connection() as database:
@@ -9162,16 +9680,6 @@ def radar_api(
     enforce_rate(request, "radar", limit=120, seconds=60)
     items = radar_data()
     return JSONResponse({"items": items, "rows": items, "updated_at": iso()})
-
-
-@app.get("/api/radar/charts")
-async def radar_charts_api(
-    request: Request,
-) -> JSONResponse:
-    enforce_rate(request, "radar-charts", limit=20, seconds=60)
-    tickers = [row["ticker"] for row in radar_data()]
-    payload = await run_in_threadpool(ticker_charts_payload, tickers)
-    return JSONResponse(_compact_list_chart_payload(payload))
 
 
 def _known_ticker(ticker: str) -> bool:
@@ -10197,6 +10705,48 @@ async def commission_research_api(
     return JSONResponse(payload, status_code=202 if payload["status"] == "running" else 200)
 
 
+@app.post("/api/research/coin/{coin_id}")
+async def commission_coin_research_api(
+    coin_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    require_origin(request)
+    user = require_user(runner_session)
+    enforce_rate(request, "commission-research", limit=20, seconds=3600, subject=user["id"])
+    if not memecoin_detail(coin_id):
+        raise HTTPException(404, "Coin not found")
+    _require_research_route(str(user["id"]))
+    report, created = await run_in_threadpool(
+        _create_research_commission,
+        user["id"],
+        coin_id,
+        subject_type="coin",
+        subject_id=coin_id,
+    )
+    if created:
+        report = await _enqueue_created_research_report(report, str(user["id"]))
+    payload = _commission_api_payload(report, str(user["id"]))
+    payload["created"] = created
+    return JSONResponse(payload, status_code=202 if payload["status"] == "running" else 200)
+
+
+@app.get("/api/research/coin/{coin_id}")
+def coin_research_status_api(
+    coin_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> JSONResponse:
+    user = require_user(runner_session)
+    if not memecoin_detail(coin_id):
+        raise HTTPException(404, "Coin not found")
+    enforce_rate(request, "research-status", limit=180, seconds=600, subject=user["id"])
+    report = latest_commission(str(user["id"]), coin_id)
+    if not report:
+        raise HTTPException(404, "No Flash report found")
+    return JSONResponse(_commission_api_payload(report, str(user["id"])))
+
+
 @app.get("/api/research/stock/{ticker}")
 @app.get("/api/research/{ticker}")
 def research_status_api(
@@ -10290,7 +10840,11 @@ def publish_research_report_api(
             ).fetchone()
             balance = int(wallet["balance"]) if wallet else 0
     if newly_published:
+        ticker = str(row["ticker"])
         _invalidate_public_screen_data("research", public_id)
+        _invalidate_public_screen_data("ticker", ticker)
+        if ticker.startswith("sports:"):
+            _invalidate_public_screen_data("sports-game", ticker.removeprefix("sports:"))
         _spawn_telegram_dispatch()
     return JSONResponse(
         {
@@ -10311,7 +10865,11 @@ def research_report_page(
 ) -> HTMLResponse:
     user = current_user(runner_session)
     report = (
-        get_commission(public_id) if user else _public_research_report_data(public_id).get("report")
+        get_commission(public_id)
+        if user
+        else _public_screen_data(
+            "research", public_id, lambda: _public_research_report_data(public_id)
+        ).get("report")
     )
     is_owner = bool(user and report and str(report["user_id"]) == str(user["id"]))
     if not report or (str(report.get("visibility") or "private") != "public" and not is_owner):
@@ -11105,14 +11663,15 @@ def _pending_runner_alert_rows(database: Any, *, limit: int) -> list[dict[str, A
     rows = database.execute(
         """
         SELECT p.ticker,p.entered_at,p.price,
-               s.score,s.change_pct,s.relative_volume
+               s.score,s.change_pct,s.relative_volume,s.signals_json,
+               s.trade_state,s.stage,s.rug_level
         FROM pulse_entries p
         LEFT JOIN scan_snapshots s ON s.id=p.snapshot_id
         LEFT JOIN telegram_alert_deliveries d
           ON d.ticker=p.ticker AND d.entered_at=p.entered_at
         WHERE (d.ticker IS NULL OR (d.status='failed' AND d.attempts<?))
           AND NOT EXISTS (SELECT 1 FROM telegram_outbox_items o
-              WHERE o.kind='runner' AND o.subject=p.ticker || ':' || p.entered_at)
+            WHERE o.kind='runner' AND o.subject=p.ticker || ':' || p.entered_at)
         ORDER BY COALESCE(s.score,0) DESC,p.entered_at DESC
         LIMIT ?
         """,
@@ -11336,7 +11895,7 @@ def _pending_market_report_rows(database: Any, *, limit: int) -> list[dict[str, 
           ON p.kind='market_report' AND p.subject=r.id
         WHERE (p.subject IS NULL OR (p.status='failed' AND p.attempts<?))
           AND NOT EXISTS (SELECT 1 FROM telegram_outbox_items o
-              WHERE o.kind='market_report' AND o.subject=r.id)
+            WHERE o.kind='market_report' AND o.subject=r.id)
         ORDER BY r.created_at DESC,r.id DESC
         LIMIT ?
         """,
@@ -11363,9 +11922,10 @@ def _pending_research_report_rows(database: Any, *, limit: int) -> list[dict[str
     rows = database.execute(
         """
         SELECT r.public_id,r.ticker,r.headline,r.summary,r.published_at,r.completed_at,
-               e.away_team_name,e.home_team_name
+               r.subject_type,r.subject_id,e.away_team_name,e.home_team_name
         FROM research_commissions r
-        LEFT JOIN sports_events e ON e.id=substr(r.ticker,8)
+        LEFT JOIN sports_events e ON e.id=CASE WHEN r.subject_type='sports_game'
+          THEN r.subject_id WHEN substr(r.ticker,1,7)='sports:' THEN substr(r.ticker,8) END
         LEFT JOIN telegram_channel_posts p
           ON p.kind='research_report' AND p.subject=r.public_id
         WHERE r.status='complete'
@@ -11373,7 +11933,7 @@ def _pending_research_report_rows(database: Any, *, limit: int) -> list[dict[str
           AND COALESCE(r.customer_inference,0)=0
           AND (p.subject IS NULL OR (p.status='failed' AND p.attempts<?))
           AND NOT EXISTS (SELECT 1 FROM telegram_outbox_items o
-              WHERE o.kind='research_report' AND o.subject=r.public_id)
+            WHERE o.kind='research_report' AND o.subject=r.public_id)
         ORDER BY COALESCE(r.published_at,r.completed_at,r.created_at) DESC,r.public_id DESC
         LIMIT ?
         """,
@@ -11382,10 +11942,40 @@ def _pending_research_report_rows(database: Any, *, limit: int) -> list[dict[str
     return [dict(row) for row in rows]
 
 
-TELEGRAM_ANNOUNCE_BATCH_MIN = max(1, int(os.getenv("TELEGRAM_ANNOUNCE_BATCH_MIN", "2")))
-TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES = max(
-    0, int(os.getenv("TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES", "30"))
+# The rundown clock. One message per dispatch, no closer together than the gap,
+# so several new runners arrive as a spaced sequence of stories rather than one
+# roster. A runner older than the staleness window is retired unheard: by then
+# the move it describes is over.
+TELEGRAM_SEGMENT_GAP_MINUTES = max(1, int(os.getenv("TELEGRAM_SEGMENT_GAP_MINUTES", "12")))
+TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES = max(
+    0, int(os.getenv("TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES", "180"))
 )
+
+
+def _last_channel_post(database: Any) -> tuple[datetime | None, str]:
+    """When the room last heard from us, and what it heard.
+
+    Both delivery tables stamp ``updated_at`` on a successful send, so the gap
+    between segments and the rotation away from the last kind need no state of
+    their own.
+    """
+
+    runner_at = _stamp(
+        database.execute(
+            "SELECT MAX(updated_at) FROM telegram_alert_deliveries WHERE status='sent'"
+        ).fetchone()[0]
+    )
+    row = database.execute(
+        "SELECT kind,updated_at FROM telegram_channel_posts WHERE status='sent' "
+        "ORDER BY updated_at DESC LIMIT 1"
+    ).fetchone()
+    channel_at = _stamp(row["updated_at"]) if row else None
+    if runner_at and (channel_at is None or runner_at >= channel_at):
+        return runner_at, "runner"
+    if channel_at:
+        return channel_at, str(row["kind"])
+    return None, ""
+
 
 _MARKET_REPORT_BASELINE_SQL = (
     "SELECT 'market_report',id,'baseline',0,'pre-existing report',?,? "
@@ -11418,201 +12008,307 @@ def _age_minutes(value: Any, current: datetime) -> float:
     return max(0.0, (current - parsed).total_seconds() / 60.0)
 
 
-def _activity_payload(runners, market_reports, research_reports) -> dict[str, Any]:
-    from urllib.parse import quote
+def _activity_payload(
+    runners: list[dict[str, Any]],
+    market_reports: list[dict[str, Any]],
+    research_reports: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Fold the three pending kinds into one list of things that just landed."""
 
+    def absolute(origin: str, path: str) -> str:
+        if not path:
+            return ""
+        if path.startswith(("http://", "https://")):
+            return path
+        return f"{origin.rstrip('/')}{path}"
+
+    def _tag(entry: Any) -> str:
+        from runner_web.market_screens import state_tag
+
+        label, _tone, _risk = state_tag(
+            {
+                "trade_state": entry.get("trade_state"),
+                "stage": entry.get("stage"),
+                "rug_level": entry.get("rug_level"),
+            }
+        )
+        return label
+
+    activity_runners = [
+        {
+            "ticker": str(entry.get("ticker") or "").upper(),
+            "price": entry.get("price"),
+            "change_pct": entry.get("change_pct"),
+            "relative_volume": entry.get("relative_volume"),
+            "score": entry.get("score"),
+            "tag": _tag(entry),
+            # The scanner's own reasons are the most interesting line a story
+            # can carry, and they are already on the snapshot.
+            "signals": entry.get("signals_json"),
+            # Carried so one row can both render a story and key its delivery.
+            "entered_at": entry.get("entered_at"),
+            "url": absolute(RUNNERS_ORIGIN, f"/t/{str(entry.get('ticker') or '').upper()}"),
+            "at": entry.get("entered_at"),
+        }
+        for entry in runners
+        if entry.get("ticker")
+    ]
+    reports: list[dict[str, Any]] = []
+    for report in market_reports:
+        reports.append(
+            {
+                "kind": "market_report",
+                # Carried so one row can both render a segment and key its
+                # delivery; without it the post is recorded against an empty
+                # subject and the report goes out again on every dispatch.
+                "id": report.get("id"),
+                "ticker": "",
+                "label": report.get("label"),
+                "headline": report.get("headline"),
+                "url": absolute(RUNNERS_ORIGIN, str(report.get("path") or "")),
+                "at": report.get("created_at"),
+                "report_day": str(report.get("report_day") or ""),
+                "report_type": str(report.get("report_type") or ""),
+                "leaders": list(report.get("leaders") or []),
+            }
+        )
     from runner_web.telegram_outbox import label
 
-    activity = {"runners": [], "reports": []}
-    for entry in runners:
-        ticker = str(entry["ticker"]).upper()
-        activity["runners"].append(
-            {
-                **entry,
-                "ticker": ticker,
-                "path": f"/t/{quote(ticker, safe='')}",
-                "at": entry.get("entered_at"),
-            }
-        )
-    for report in market_reports:
-        activity["reports"].append(
-            {
-                **report,
-                "kind": "market_report",
-                "ticker": "",
-                "subject": report["id"],
-                "at": report.get("created_at"),
-                "headline": label(report.get("headline"), 600),
-                "origin": RUNNERS_ORIGIN,
-            }
-        )
     for report in research_reports:
         ticker = str(report.get("ticker") or "")
-        public_id = str(report.get("public_id") or "")
-        sports = ticker.startswith("sports:")
-        game_id = ticker.removeprefix("sports:")
+        sports = report.get("subject_type") == "sports_game" or ticker.lower().startswith("sports:")
         teams = " at ".join(
-            label(report.get(key), 120)
-            for key in ("away_team_name", "home_team_name")
-            if report.get(key)
+            label(report.get(k), 120) for k in ("away_team_name", "home_team_name") if report.get(k)
         )
-        activity["reports"].append(
+        reports.append(
             {
                 **report,
                 "kind": "research_report",
-                "ticker": ticker if sports else ticker.upper().lstrip("$"),
-                "subject": public_id,
-                "label": (f"New game research · {teams}" if teams else "New game research")
-                if sports
-                else f"New research on ${ticker.upper().lstrip('$')}",
-                "headline": label(report.get("headline"), 600),
-                "path": f"/research/{quote(public_id, safe='')}",
+                "ticker": ticker,
                 "origin": SPORTS_ORIGIN if sports else RUNNERS_ORIGIN,
-                "asset_path": f"/game/{quote(game_id, safe='')}"
-                if sports
-                else f"/t/{quote(ticker, safe='')}",
+                "game_label": teams or ("Game research" if sports else ""),
+                "headline": label(report.get("headline"), 600),
                 "at": report.get("published_at") or report.get("completed_at"),
             }
         )
-    return activity
+    return {"runners": activity_runners, "reports": reports}
 
 
-def _compose_update_announcement(activity: dict[str, Any]) -> str:
-    """Build announcement text directly from saved, bounded fields."""
-    return format_update_announcement(activity, origin=RUNNERS_ORIGIN)
+_RESULT_KEYS = {
+    "runner": "runners",
+    "market_report": "market_reports",
+    "research_report": "research_reports",
+}
+
+
+def _render_segment(kind: str, item: dict[str, Any]) -> str:
+    """Render the one thing this segment is about."""
+
+    if kind == "runner":
+        return telegram_format_runner_story_md(item, origin=RUNNERS_ORIGIN)
+    if kind == "market_report":
+        return telegram_format_market_report_post_md(item, origin=RUNNERS_ORIGIN)
+    if kind == "research_report":
+        return telegram_format_public_report_post_md(item, origin=RUNNERS_ORIGIN)
+    if kind == "event":
+        return telegram_format_event_post_md(item, origin=RUNNERS_ORIGIN)
+    return ""
 
 
 def _announcement_cards(activity: dict[str, Any]) -> list[dict]:
     cards = []
     for entry in activity["runners"]:
+        card = {
+            "kind": "runner",
+            "subject": entry["ticker"] + ":" + entry["entered_at"],
+            "ticker": entry["ticker"],
+            "entered_at": entry["entered_at"],
+            "text": _render_segment("runner", entry),
+        }
+        entered = _stamp(entry["entered_at"])
+        if entered and TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES:
+            card["expires_at"] = (
+                entered + timedelta(minutes=TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES)
+            ).isoformat()
+        cards.append(card)
+    for item in activity["reports"]:
+        kind = item["kind"]
         cards.append(
             {
-                "kind": "runner",
-                "subject": entry["ticker"] + ":" + entry["entered_at"],
-                "ticker": entry["ticker"],
-                "entered_at": entry["entered_at"],
-                "text": _compose_update_announcement({"runners": [entry], "reports": []}),
-            }
-        )
-    for report in activity["reports"]:
-        cards.append(
-            {
-                "kind": report["kind"],
-                "subject": report["subject"],
-                "ticker": report["ticker"],
-                "text": _compose_update_announcement({"runners": [], "reports": [report]}),
+                "kind": kind,
+                "subject": item.get("id") if kind == "market_report" else item["public_id"],
+                "ticker": item.get("ticker", ""),
+                "text": _render_segment(kind, item),
             }
         )
     return cards
 
 
 def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]:
-    from runner_web.telegram_outbox import deliver_outbox, enqueue_cards, queue_stock_filings
+    """Play the next segment of the rundown, at most one per call.
 
-    result = {
-        "enabled": telegram_alerts_enabled(),
+    The room used to get everything pending fused into a single announcement:
+    one message, a roster of tickers, and — because Telegram previews only the
+    first URL — one arbitrary card for the lot. Now each thing is its own story
+    with its own card, and the dispatcher paces them: no two messages closer
+    than ``TELEGRAM_SEGMENT_GAP_MINUTES``, and the next kind rotates away from
+    the last one whenever something else is waiting. Several new runners arrive
+    as a spaced sequence rather than a list.
+
+    Nothing is stranded by the pacing: the sweep worker calls this on a timer,
+    so the queue drains a story at a time. A runner that waited past
+    ``TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES`` is retired unheard instead, since
+    by then the move it describes is over.
+    """
+
+    result: dict[str, Any] = {
+        "enabled": False,
         "status": "disabled",
         "baseline": False,
         "pending": 0,
         "runners": {
-            "enabled": telegram_alerts_enabled(),
+            "enabled": False,
             "baseline": False,
             "candidates": 0,
             "selected": 0,
-            "status": "empty",
+            "status": "disabled",
         },
         "market_reports": _empty_channel_post_result(),
         "research_reports": _empty_channel_post_result(),
         "announcement": {"status": "disabled", "count": 0},
     }
-    if not result["enabled"]:
-        return result
-    if not TELEGRAM_ALERT_DISPATCH_LOCK.acquire(blocking=False):
-        result["status"] = "busy"
-        return result
     try:
-        config = telegram_config_from_env()
-        if not config.configured:
-            result["status"] = "unconfigured"
+        if not telegram_alerts_enabled():
             return result
-        current = now()
-        with connection() as database:
-            runner_baseline = _take_telegram_alert_baseline(database, current_run_id=scan_run_id)
-            market_baseline = _take_channel_post_baseline(
-                database, "market_report", _MARKET_REPORT_BASELINE_SQL
-            )
-            research_baseline = _take_channel_post_baseline(
-                database, "research_report", _RESEARCH_REPORT_BASELINE_SQL
-            )
-            candidates = _pending_runner_alert_rows(database, limit=config.max_per_run)
-            runners = select_new_runners(
-                candidates, min_score=config.min_score, limit=config.max_per_run
-            )
-            market = _pending_market_report_rows(database, limit=TELEGRAM_CHANNEL_POSTS_PER_RUN)
-            research = _pending_research_report_rows(database, limit=TELEGRAM_CHANNEL_POSTS_PER_RUN)
+        result["enabled"] = True
+        if not TELEGRAM_ALERT_DISPATCH_LOCK.acquire(blocking=False):
+            # Another dispatch is mid-flight. Whatever it does not take stays
+            # pending for the next one, so there is nothing to wait around for.
+            result["status"] = "busy"
+            return result
+        try:
+            config = telegram_config_from_env()
+            if not config.configured:
+                LOG.warning("TELEGRAM_RUNNER_ALERTS is on but the bot token or chat id is missing")
+                result["status"] = "unconfigured"
+                return result
+            current = now()
+            with connection() as database:
+                runner_baseline = _take_telegram_alert_baseline(
+                    database, current_run_id=scan_run_id
+                )
+                candidates = _pending_runner_alert_rows(database, limit=config.max_per_run)
+                runners = select_new_runners(
+                    candidates,
+                    min_score=config.min_score,
+                    limit=config.max_per_run,
+                )
+                market_baseline = _take_channel_post_baseline(
+                    database, "market_report", _MARKET_REPORT_BASELINE_SQL
+                )
+                research_baseline = _take_channel_post_baseline(
+                    database, "research_report", _RESEARCH_REPORT_BASELINE_SQL
+                )
+                market = _pending_market_report_rows(database, limit=TELEGRAM_CHANNEL_POSTS_PER_RUN)
+                research = _pending_research_report_rows(
+                    database, limit=TELEGRAM_CHANNEL_POSTS_PER_RUN
+                )
+            result["baseline"] = runner_baseline or market_baseline or research_baseline
+            result["runners"] = {
+                "enabled": True,
+                "baseline": runner_baseline,
+                "candidates": len(candidates),
+                "selected": len(runners),
+                "status": "pending" if runners else "empty",
+            }
+            result["market_reports"] = {
+                "baseline": market_baseline,
+                "selected": len(market),
+                "status": "pending" if market else "empty",
+            }
+            result["research_reports"] = {
+                "baseline": research_baseline,
+                "selected": len(research),
+                "status": "pending" if research else "empty",
+            }
             activity = _activity_payload(runners, market, research)
-            cards = _announcement_cards(activity)
-            count = len(cards)
-            ages = [
-                _age_minutes(row.get("at"), current)
-                for row in [*activity["runners"], *activity["reports"]]
+            count = len(activity["runners"]) + len(activity["reports"])
+            result["pending"] = count
+            result["announcement"]["count"] = count
+            # A runner nobody heard about for hours is not news. Retire it so
+            # the queue never drains a stale move ahead of a fresh one.
+            stale = [
+                entry
+                for entry in activity["runners"]
+                if telegram_story_is_stale(
+                    _age_minutes(entry.get("at"), current),
+                    max_age_minutes=TELEGRAM_RUNNER_STORY_MAX_AGE_MINUTES,
+                )
             ]
-            ready = announcement_batch_ready(
-                count,
-                max(ages, default=0),
-                min_items=TELEGRAM_ANNOUNCE_BATCH_MIN,
-                debounce_minutes=TELEGRAM_ANNOUNCE_DEBOUNCE_MINUTES,
+            if stale:
+                stale_keys = {entry["ticker"] for entry in stale}
+                with connection() as database:
+                    _record_runner_alert_delivery(
+                        database, stale, status="stale", detail="older than the story window"
+                    )
+                activity["runners"] = [
+                    row for row in activity["runners"] if row["ticker"] not in stale_keys
+                ]
+                count = len(activity["runners"]) + len(activity["reports"])
+                result["pending"] = count
+                result["announcement"]["count"] = count
+                result["announcement"]["stale"] = len(stale)
+            from runner_web.telegram_outbox import (
+                deliver_outbox,
+                enqueue_cards,
+                queue_stock_filings,
             )
-            if ready:
-                enqueue_cards(database, config.chat_id, cards, at=current)
-            result["stock_events_queued"] = queue_stock_filings(
-                database, config, origin=RUNNERS_ORIGIN, at=current
+
+            with connection() as database:
+                enqueue_cards(database, config.chat_id, _announcement_cards(activity), at=current)
+                result["filings_queued"] = queue_stock_filings(
+                    database, config, origin=RUNNERS_ORIGIN, at=current
+                )
+                last_at, last_kind = _last_channel_post(database)
+            since = _age_minutes(last_at, current) if last_at is not None else None
+            if since is not None and since < TELEGRAM_SEGMENT_GAP_MINUTES:
+                result["status"] = result["announcement"]["status"] = "waiting"
+                return result
+            delivery = deliver_outbox(
+                config,
+                telegram_send_post,
+                at=current,
+                kinds=("runner", "market_report", "research_report", "stock_filing"),
+                last_kind=last_kind,
             )
-        result["baseline"] = runner_baseline or market_baseline or research_baseline
-        result["runners"].update(
-            baseline=runner_baseline, candidates=len(candidates), selected=len(runners)
-        )
-        result["market_reports"].update(
-            baseline=market_baseline, selected=len(market), status="empty"
-        )
-        result["research_reports"].update(
-            baseline=research_baseline, selected=len(research), status="empty"
-        )
-        delivered = deliver_outbox(
-            config,
-            send_telegram_message,
-            at=current,
-            kinds=("runner", "market_report", "research_report", "stock_filing"),
-        )
-        status = delivered["status"]
-        if status == "empty" and count and not ready:
-            status = "waiting"
-        result["status"] = status
-        result["pending"] = count
-        result["announcement"] = {"status": status, "count": len(delivered["items"]) or count}
-        for kind, key in (
-            ("runner", "runners"),
-            ("market_report", "market_reports"),
-            ("research_report", "research_reports"),
-        ):
-            taken = [c for c in delivered["items"] if c["kind"] == kind]
-            if taken:
-                result[key].update(status=status, selected=len(taken))
-        if status == "sent":
-            result["reports"] = _queue_telegram_runner_reports(
-                [c["ticker"] for c in delivered["items"] if c["kind"] == "runner"]
-            )
-        return result
+            result["status"] = result["announcement"]["status"] = delivery["status"]
+            items = delivery["items"]
+            if items:
+                kind = items[0]["kind"]
+                result["announcement"]["kind"] = kind
+                if kind in _RESULT_KEYS:
+                    result[_RESULT_KEYS[kind]]["status"] = delivery["status"]
+            if delivery["status"] == "sent":
+                result["reports"] = _queue_telegram_runner_reports(
+                    [item["ticker"] for item in items if item["kind"] == "runner"]
+                )
+            return result
+        finally:
+            TELEGRAM_ALERT_DISPATCH_LOCK.release()
     except Exception:
-        LOG.exception("Telegram announcement queue failed")
+        LOG.exception("Telegram channel posts failed")
         result["status"] = "error"
         return result
-    finally:
-        TELEGRAM_ALERT_DISPATCH_LOCK.release()
 
 
 def dispatch_release_announcement() -> dict[str, Any]:
-    from runner_web.telegram_outbox import deliver_outbox, enqueue_cards
+    """Tell the room once when a new build goes live.
+
+    The first build seen records itself without speaking, so turning this on does
+    not announce whatever was already running. After that, a changed build sha
+    posts one message. The stored row is the identity, so a restart or a second
+    machine cannot repeat it.
+    """
 
     if not telegram_alerts_enabled():
         return {"status": "disabled"}
@@ -11624,40 +12320,42 @@ def dispatch_release_announcement() -> dict[str, Any]:
     config = telegram_config_from_env()
     if not config.configured:
         return {"status": "unconfigured"}
-    current = now()
-    with connection() as database:
-        row = database.execute(
-            "SELECT status FROM telegram_channel_posts WHERE kind='release' AND subject=?", (sha,)
-        ).fetchone()
-        if row and row["status"] in {"sent", "baseline"}:
-            return {"status": "already"}
-        seen = database.execute(
-            "SELECT subject FROM telegram_channel_posts WHERE kind='release' LIMIT 1"
-        ).fetchone()
-        if seen is None:
-            _record_channel_post(database, "release", sha, status="baseline")
-            return {"status": "baseline"}
-        enqueue_cards(
-            database,
-            config.chat_id,
-            [
-                {
-                    "kind": "release",
-                    "subject": sha,
-                    "ticker": "",
-                    "group": "release",
-                    "text": format_release_announcement(
-                        APP_VERSION,
-                        sha,
-                        os.getenv("TELEGRAM_RELEASE_NOTES", ""),
-                        origin=RUNNERS_ORIGIN,
-                    ),
-                }
-            ],
-            at=current,
-        )
-    result = deliver_outbox(config, send_telegram_message, at=current, kinds=("release",))
-    return {"status": result["status"], "sha": sha}
+    if not TELEGRAM_ALERT_DISPATCH_LOCK.acquire(blocking=False):
+        return {"status": "busy"}
+    try:
+        with connection() as database:
+            row = database.execute(
+                "SELECT status,attempts FROM telegram_channel_posts "
+                "WHERE kind='release' AND subject=?",
+                (sha,),
+            ).fetchone()
+            if row and str(row["status"]) in {"sent", "baseline"}:
+                return {"status": "already"}
+            if row and int(row["attempts"] or 0) >= TELEGRAM_CHANNEL_POST_MAX_ATTEMPTS:
+                return {"status": "exhausted"}
+            seen = database.execute(
+                "SELECT subject FROM telegram_channel_posts WHERE kind='release' LIMIT 1"
+            ).fetchone()
+            if seen is None:
+                _record_channel_post(database, "release", sha, status="baseline")
+                return {"status": "baseline"}
+        notes = os.getenv("TELEGRAM_RELEASE_NOTES", "")
+        message = telegram_format_release_announcement_md(APP_VERSION, notes, origin=RUNNERS_ORIGIN)
+        if not message:
+            return {"status": "skipped"}
+        from runner_web.telegram_outbox import deliver_outbox, enqueue_cards
+
+        with connection() as database:
+            enqueue_cards(
+                database,
+                config.chat_id,
+                [{"kind": "release", "subject": sha, "text": message}],
+                at=now(),
+            )
+        delivery = deliver_outbox(config, telegram_send_post, at=now(), kinds=("release",))
+        return {"status": delivery["status"], "sha": sha}
+    finally:
+        TELEGRAM_ALERT_DISPATCH_LOCK.release()
 
 
 @app.get("/telegram/announcements", response_class=HTMLResponse)

@@ -16,12 +16,15 @@ is a worse cheetah, and someone saying "stop" has to be able to end it.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+
+LOG = logging.getLogger(__name__)
 
 ENGAGEMENT_REPLIES = max(1, int(os.getenv("TELEGRAM_ENGAGEMENT_REPLIES", "3")))
 ENGAGEMENT_MINUTES = max(1, int(os.getenv("TELEGRAM_ENGAGEMENT_MINUTES", "10")))
@@ -81,7 +84,6 @@ PREFETCH_LIMIT = max(0, int(os.getenv("TELEGRAM_PREFETCH_TICKERS", "2")))
 
 
 def resolve_tickers(database: Any, text: str, *, limit: int | None = None) -> list[str]:
-
     """The tickers a message points at, cashtag or bare symbol.
 
     A cashtag is explicit and always counts. A bare capitalised word only counts
@@ -150,7 +152,6 @@ def _entity_text(text: str, entity: dict[str, Any]) -> str:
 def parse_update(
     payload: dict[str, Any], *, bot_username: str, bot_id: int
 ) -> InboundMessage | None:
-
     """Read one update, or None when there is nothing for the cheetah to see."""
 
     message = payload.get("message") or payload.get("edited_message")
@@ -214,7 +215,6 @@ def engagement_for(database: Any, chat_id: int, user_id: int | None) -> dict[str
 
 
 def open_engagement(database: Any, chat_id: int, user_id: int, now: datetime) -> None:
-
     """Someone addressed the cheetah, so it listens to them for a short run."""
 
     timestamp = now.isoformat()
@@ -246,7 +246,6 @@ def spend_engagement(database: Any, chat_id: int, user_id: int | None, now: date
 
 
 def mute_engagement(database: Any, chat_id: int, user_id: int | None, now: datetime) -> None:
-
     """Close the run and stay quiet with this person for a while.
 
     This is what the hold tool reaches for when someone asks it to stop. It ends
@@ -285,10 +284,7 @@ def last_reply_at(database: Any, chat_id: int) -> datetime | None:
     return _stamp(row["acted_at"]) if row else None
 
 
-def attention_for(
-    database: Any, message: InboundMessage, now: datetime | None = None
-) -> Attention:
-
+def attention_for(database: Any, message: InboundMessage, now: datetime | None = None) -> Attention:
     """Decide whether this message is worth a model call at all.
 
     Addressing the cheetah always earns one. Otherwise it only considers people it
@@ -329,6 +325,8 @@ CHEETAH_PERSONA = (
     "twenty: short bursts, present tense, quick asides. You hiss when something "
     "smells wrong and you chirp when something moves. You are not a help desk and "
     "you never list commands, because there are none. "
+    "Every turn hands you market_session: the Eastern time, whether markets are "
+    "open, and when they next open. "
     "The scanner's own words for a state are internal, so say what they mean rather "
     "than reading MANAGE or GUARDED aloud. "
     "Say numbers only when a tool gave them to you or they are in the "
@@ -341,6 +339,8 @@ CHEETAH_PERSONA = (
     "believed it, not because somebody asked you to. "
     "If you do speak, say something: an ellipsis or a bare acknowledgement reads "
     "as being ignored, so either answer the person or hold and say nothing. "
+    "The room gets your words as plain text, so write them that way: no "
+    "asterisks, no markdown, no bullet lists. "
     "Keep it under about forty words unless someone asked for detail."
 )
 
@@ -397,9 +397,10 @@ TOOL_SCHEMA = (
         "name": "sector_now",
         "description": (
             "The board grouped by sector, or one sector on its own. Pass a sector "
-            "name like biotech or software to narrow it. Names whose sector has not "
-            "been looked up yet come back as unclassified, and you should say so "
-            "rather than guessing what they are."
+            "name like biotech or software to narrow it. Names without a filed SIC "
+            "code yet group by a name hint and their group is marked hinted — say "
+            "it is a hint, not a looked-up fact. Anything still unknown comes back "
+            "as unclassified, and you should say so rather than guessing what it is."
         ),
         "parameters": {
             "type": "object",
@@ -500,7 +501,6 @@ TOOL_SCHEMA = (
 
 
 def look_up_ticker(ticker: str) -> dict[str, Any]:
-
     """What the app already knows about a ticker, for the cheetah to quote.
 
     Everything here comes from stored evidence or the shared price resolver, so a
@@ -531,9 +531,7 @@ def look_up_ticker(ticker: str) -> dict[str, Any]:
         "momentum_15m_pct": current.get("momentum_15m_pct"),
         "session": current.get("session"),
         "trade_state": current.get("trade_state"),
-        "trade_state_means": _TRADE_STATE_PLAIN.get(
-            str(current.get("trade_state") or "").upper()
-        ),
+        "trade_state_means": _TRADE_STATE_PLAIN.get(str(current.get("trade_state") or "").upper()),
         "rug_level": current.get("rug_level"),
         "rug_means": _RUG_PLAIN.get(str(current.get("rug_level") or "").lower()),
         "evidence_summary": gate.get("summary"),
@@ -551,7 +549,6 @@ def look_up_ticker(ticker: str) -> dict[str, Any]:
 
 
 def prefetch_for(message: InboundMessage, database: Any) -> dict[str, Any]:
-
     """Gather what the message points at before the model is asked anything.
 
     Every evidence tool is a round trip. A question that names a ticker always
@@ -571,7 +568,7 @@ def prefetch_for(message: InboundMessage, database: Any) -> dict[str, Any]:
             grounded["market"] = market_now()
             grounded["recent_runners"] = recent_runners(limit=6)
         except Exception:  # pragma: no cover - prefetch is optional grounding
-            pass
+            LOG.debug("Telegram prefetch grounding failed", exc_info=True)
     return grounded
 
 
@@ -614,7 +611,6 @@ def _recent_filings(detail: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _research_report(ticker: str) -> dict[str, Any] | None:
-
     """The published research on this name, if there is any to quote.
 
     A locked report is one somebody paid for and has not released yet, so it is
@@ -641,7 +637,6 @@ def _research_report(ticker: str) -> dict[str, Any] | None:
 
 
 def _avatar_comments(ticker: str) -> list[dict[str, Any]]:
-
     """What other avatars have already said here, so Dash does not repeat them."""
 
     from runner_web.main import comments_for_ticker
@@ -658,7 +653,6 @@ def _avatar_comments(ticker: str) -> list[dict[str, Any]]:
 
 
 def _community_for(ticker: str) -> dict[str, Any]:
-
     """How many people have put a Call on this, and how those are going."""
 
     from runner_web.db import connection as _connection
@@ -687,7 +681,6 @@ def _community_for(ticker: str) -> dict[str, Any]:
 
 
 def _todays_target(ticker: str) -> dict[str, Any] | None:
-
     """Flash's saved end-of-day target for this name, and how it is doing."""
 
     from runner_web.db import connection as _connection
@@ -714,7 +707,6 @@ def _todays_target(ticker: str) -> dict[str, Any] | None:
 
 
 def record_update(database: Any, payload: dict[str, Any], now: datetime | None = None) -> bool:
-
     """Store one update for the worker. Returns False when it is a duplicate.
 
     Telegram retries anything that is not answered quickly, so the webhook has to
@@ -736,8 +728,9 @@ def record_update(database: Any, payload: dict[str, Any], now: datetime | None =
         (
             update_id,
             int(chat["id"]) if isinstance(chat, dict) and chat.get("id") is not None else None,
-            int(message.get("message_id")) if isinstance(message, dict)
-            and message.get("message_id") is not None else None,
+            int(message.get("message_id"))
+            if isinstance(message, dict) and message.get("message_id") is not None
+            else None,
             json.dumps(payload, separators=(",", ":")),
             _utc(now).isoformat(),
         ),
@@ -781,7 +774,6 @@ def record_action(
     detail: str | None,
     now: datetime | None = None,
 ) -> bool:
-
     """Log what the cheetah did. The unique index makes a repeat a no-op."""
 
     return bool(
@@ -805,7 +797,6 @@ def record_action(
 
 
 def recent_transcript(database: Any, chat_id: int, limit: int = 12) -> list[dict[str, Any]]:
-
     """The last few things said in the room, oldest first, for context."""
 
     rows = database.execute(

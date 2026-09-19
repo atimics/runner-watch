@@ -1,18 +1,79 @@
 # Shared market screens
 
-Stocks, Memecoins and Sports use one template, one stylesheet and one interaction script. The market changes the content. List, Detail and Map keep the same layout.
+Stocks, Memecoins and Sports use one template, one stylesheet and one interaction
+script. The market changes the content.
 
-List shows each ticker's name, price or score, and movement or game state. Search covers the saved list. Selecting a row opens Detail. Detail shows one price chart or matchup, followed by the Call action. Map shows saved relationships around each ticker; selecting a ticker opens Detail.
+## Top bar
 
-Lists and live games refresh every minute. Refresh keeps search text and keyboard focus. Calls use a confirmation step. The server selects public display fields before rendering the screen or returning a quote or chart.
+The bar carries everything global so the list body stays content-only: the RATi
+brand, the market switcher, the session clock (PRE / REG / AH / OVN), data
+freshness, the state filter chips, search, and the account link. The chips
+(`1 running`, `1 setup`, `1 avoid`, …) are the tag legend and the filter at once;
+clicking one hides every row whose tag differs.
 
-Source receipts, provider names, model details, logs, credit counters and collection diagnostics belong in internal tools. Keep these fields outside the shared screen contract.
+## List
 
-These screenshots were captured from local previews with sample data on September 12, 2026. Desktop previews use a 1280 × 720 viewport; phone previews use 390 × 844.
+Each row is one line: the colored action tag, the ticker and company, price and
+change, a shared-scale sparkline, and the score. The tag collapses `stage`,
+`trade_state` and `rug_level` into one decision — `AVOID`, `EXTENDED`,
+`RUNNING`, `SETUP` or `WATCH` — highest precedence first. A high-risk rug shows a
+small mark on the tag, never a second badge.
 
-| Market | List | Detail | Map |
-| --- | --- | --- | --- |
-| Stocks | [List](stocks-list.png) | [Detail](stocks-detail.png) | [Map](stocks-map.png) |
-| Memecoins | [List](memecoins-list.png) | [Detail](memecoins-detail.png) | [Map](memecoins-map.png) |
-| Sports | [List](sports-list.png) | [Detail](sports-detail.png) | [Map](sports-map.png) |
-| Phone | [List](phone-list.png) | [Detail](phone-detail.png) | [Map](phone-map.png) |
+Lists and live games refresh every minute. Refresh keeps search text, the
+active filter and keyboard focus. The server selects public display fields before
+rendering the screen or returning a quote or chart.
+
+## Story
+
+A ticker can carry several stories (#245). Each story is one open question with
+a bounded review time. The shared presenter emits one public story block —
+`question`, `status`, `outcome`, `next_review_at`, `revisit_trigger`,
+`version`, `updated_at` — on matching List rows and on Detail. Story review
+time is independent of Call settlement. Internal story IDs, opening
+references and source receipts stay in the service layer.
+
+## Ticker page
+
+One ordered story, four screens top to bottom:
+
+1. **Chart** — price history, the movement period, the filing marker.
+2. **Map** — the bubble universe: people, wallet clusters and filings around this
+   ticker.
+3. **Metrics = score** — the five drivers, the penalties and the formula behind
+   the row's score.
+4. **Comments** — avatar reactions and Flash reports.
+
+The Call action sits after the metric panel.
+
+## Calls
+
+`/calls` renders on the same shell. One screen for all three markets:
+
+1. **My Calls** — the signed-in user's paper Calls across stocks, memecoins and
+   sports, most recent first, with entry, result and earned Flash. The full
+   record stays on the public caller page; `/my-calls` redirects here.
+2. **Flash** — the AI Caller's picks, always visible: open stock forecasts with
+   their direction confidence, today's graded sports slate by model probability,
+   and the scanner-tagged coins on the board. Every pick settles on the public
+   record; signed-out visitors see this section and a passkey prompt.
+
+## Reports
+
+`/reports`, report detail, `/research/{public_id}` and `/flash/record` render on
+the same shell with the same top bar. The market turns list keeps its schedule
+(`4:20 a.m. ET` / `4:20 p.m. ET`), report cards and Flash receipt panels.
+
+## Removed
+
+The market-wide **Map** tab is retired. A map belongs to one ticker, so it lives
+inside the ticker page. An incoming `?view=map` renders the list instead; saved
+links keep working.
+
+Source receipts, provider names, model details, logs, credit counters and
+collection diagnostics belong in internal tools. Keep these fields outside the
+shared screen contract.
+
+The screenshots in this directory were captured from local previews with sample
+data on September 12, 2026, before the redesign. They are historical. A current
+static preview of the list, tags and score lives at
+[../market-list-preview.html](../market-list-preview.html).

@@ -753,3 +753,75 @@ def test_market_forecast_migration_keeps_targets_and_outcome_receipts(
         "close_collected_at",
         "settled_at",
     } <= forecast_columns
+
+
+def test_story_and_identity_migration_backfills_actors_idempotently(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "story-identity.db")
+
+    init_db()
+
+    with connection() as database:
+        versions = [
+            int(row["version"])
+            for row in database.execute(
+                "SELECT version FROM schema_migrations ORDER BY version"
+            ).fetchall()
+        ]
+        assert versions.count(70) == 1
+
+        database.execute(
+            """
+            INSERT INTO users(id,username,display_name,status,created_at)
+            VALUES('actor-user','actor-user','Actor','active','2026-09-12T00:00:00+00:00')
+            """
+        )
+        database.execute(
+            """
+            INSERT INTO market_actors(
+                id,kind,domain,stable_key,user_id,display_name,ability_id,avatar_seed,
+                portrait_status,created_at,updated_at
+            ) VALUES('ma-test','person','stock','insider:jane-roe','actor-user',
+                     'Quiet Ledger','patrol','seed-abc','pending',
+                     '2026-09-12T00:00:00+00:00','2026-09-12T00:00:00+00:00')
+            """
+        )
+        database.execute(
+            """
+            INSERT INTO actor_cluster_members(
+                actor_id,wallet,evidence_kind,evidence_id,created_at
+            ) VALUES('ma-test','wallet-a','chain_event','sig-1','2026-09-12T00:00:00+00:00')
+            """
+        )
+        database.execute("UPDATE market_actors SET domain='coin',kind='cluster' WHERE id='ma-test'")
+
+    # The migration is not re-run by init_db once applied, so the sweep runs
+    # the same backfill for late-arriving actors.
+    from runner_web.identity import link_market_actors
+
+    with connection() as database:
+        link_market_actors(database)
+        actor = database.execute(
+            "SELECT entity_id FROM market_actors WHERE id='ma-test'"
+        ).fetchone()
+        entity_id = str(actor["entity_id"])
+        references = database.execute(
+            "SELECT kind,value FROM participant_references WHERE entity_id=? ORDER BY kind",
+            (entity_id,),
+        ).fetchall()
+
+    assert [(str(row["kind"]), str(row["value"])) for row in references] == [
+        ("legacy_actor", "insider:jane-roe"),
+        ("wallet", "wallet-a"),
+    ]
+
+    with connection() as database:
+        before = database.execute(
+            "SELECT COUNT(*) AS total FROM participant_references"
+        ).fetchone()["total"]
+        link_market_actors(database)
+        after = database.execute("SELECT COUNT(*) AS total FROM participant_references").fetchone()[
+            "total"
+        ]
+    assert before == after

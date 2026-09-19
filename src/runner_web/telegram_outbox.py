@@ -9,7 +9,15 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 from runner_web.db import connection
-from runner_web.telegram import MAX_MESSAGE_CHARS, TelegramDeliveryError, message_units
+from runner_web.telegram import (
+    MAX_MESSAGE_CHARS,
+    TelegramDeliveryError,
+    escape_markdown_v2,
+    markdown_link,
+    message_units,
+    next_segment,
+    strip_markdown_v2,
+)
 
 
 def _setting(name: str, default: int) -> int:
@@ -57,7 +65,13 @@ def reserve_channel_slot(database, chat_id: str, tickers: list[str], current: da
         if quiet and quiet["next_at"] > stamp:
             return False
     next_at = (
-        current + timedelta(seconds=_setting("TELEGRAM_CHANNEL_INTERVAL_SECONDS", 300))
+        current
+        + timedelta(
+            seconds=_setting(
+                "TELEGRAM_CHANNEL_INTERVAL_SECONDS",
+                _setting("TELEGRAM_SEGMENT_GAP_MINUTES", 12) * 60,
+            )
+        )
     ).isoformat()
     database.execute(
         "UPDATE telegram_channel_schedule SET next_at=?,budget_day=?,used=? WHERE chat_id=?",
@@ -76,22 +90,11 @@ def reserve_channel_slot(database, chat_id: str, tickers: list[str], current: da
 
 
 def split_cards(cards: list[dict]) -> list[list[dict]]:
-    """Keep each card whole; SEC events share a message only with the same ticker."""
-    batches, batch, size, group = [], [], 0, None
+    """Keep each complete story in its own message."""
     for card in cards:
-        length = message_units(card["text"])
-        if not length or length > MAX_MESSAGE_CHARS:
+        if not 0 < message_units(card["text"]) <= MAX_MESSAGE_CHARS:
             raise ValueError("announcement_card_size")
-        card_group = card.get("group", "digest")
-        if batch and (size + 2 + length > MAX_MESSAGE_CHARS or card_group != group):
-            batches.append(batch)
-            batch, size = [], 0
-        size += length + (2 if batch else 0)
-        batch.append(card)
-        group = card_group
-    if batch:
-        batches.append(batch)
-    return batches
+    return [[card] for card in cards]
 
 
 def enqueue_cards(database, chat_id: str, cards: list[dict], *, at: datetime) -> int:
@@ -106,17 +109,18 @@ def enqueue_cards(database, chat_id: str, cards: list[dict], *, at: datetime) ->
         ).fetchone()
         if claimed:
             fresh.append(card)
-    for batch in split_cards(fresh):
+    for position, batch in enumerate(split_cards(fresh)):
         identity = str(uuid4())
         database.execute(
-            "INSERT INTO telegram_outbox(id,chat_id,text,status,created_at,updated_at) "
-            "VALUES(?,?,?,'pending',?,?)",
+            "INSERT INTO telegram_outbox(id,chat_id,text,status,created_at,updated_at,position) "
+            "VALUES(?,?,?,'pending',?,?,?)",
             (
                 identity,
                 chat_id,
                 "\n\n".join(c["text"] for c in batch),
                 at.isoformat(),
                 at.isoformat(),
+                position,
             ),
         )
         for card in batch:
@@ -148,7 +152,9 @@ def _mirror(database, cards: list[dict], status: str, attempts: int, stamp: str)
             )
 
 
-def deliver_outbox(config, sender, *, at: datetime, kinds: tuple[str, ...]) -> dict:
+def deliver_outbox(
+    config, sender, *, at: datetime, kinds: tuple[str, ...], last_kind: str = ""
+) -> dict:
     stamp = at.isoformat()
     with connection() as database:
         lock_channel(database, config.chat_id, at)
@@ -173,19 +179,29 @@ def deliver_outbox(config, sender, *, at: datetime, kinds: tuple[str, ...]) -> d
             "AND o.status IN ('pending','retry') AND o.attempts<3 "
             "AND (o.retry_at IS NULL OR o.retry_at<=?) AND EXISTS "
             "(SELECT 1 FROM telegram_outbox_items i WHERE i.outbox_id=o.id "
-            f"AND i.kind IN ({placeholders})) ORDER BY o.created_at,o.id LIMIT 50",
+            f"AND i.kind IN ({placeholders})) ORDER BY o.created_at,o.position,o.id",
             (config.chat_id, stamp, *kinds),
         ).fetchall()
-        chosen = None
+        candidates = []
         for row in rows:
             cards = [
                 json.loads(r[0])
                 for r in database.execute(
-                    "SELECT card_json FROM telegram_outbox_items "
-                    "WHERE outbox_id=? ORDER BY kind,subject",
-                    (row["id"],),
+                    "SELECT card_json FROM telegram_outbox_items WHERE outbox_id=?", (row["id"],)
                 ).fetchall()
             ]
+            if cards and cards[0].get("expires_at", "~") < stamp:
+                database.execute(
+                    "UPDATE telegram_outbox SET status='stale',updated_at=? WHERE id=?",
+                    (stamp, row["id"]),
+                )
+                _mirror(database, cards, "stale", row["attempts"], stamp)
+            elif cards:
+                candidates.append((row, cards))
+        preferred = next_segment({c[0]["kind"]: True for _, c in candidates}, last_kind=last_kind)
+        candidates.sort(key=lambda item: item[1][0]["kind"] != preferred)
+        chosen = None
+        for row, cards in candidates:
             # The conditional update is the cross-process send claim. A denied
             # channel slot restores it within this same uncommitted transaction.
             claim = database.execute(
@@ -207,7 +223,7 @@ def deliver_outbox(config, sender, *, at: datetime, kinds: tuple[str, ...]) -> d
             chosen = (dict(row), cards, claim["attempts"])
             break
     if not chosen:
-        return {"status": "waiting" if rows else "empty", "sent": 0, "items": []}
+        return {"status": "waiting" if candidates else "empty", "sent": 0, "items": []}
     row, cards, attempts = chosen
     status, error, receipt, retry_at = "sent", None, None, None
     try:
@@ -222,6 +238,8 @@ def deliver_outbox(config, sender, *, at: datetime, kinds: tuple[str, ...]) -> d
         error = "telegram_" + status
     except Exception:
         status, error = "uncertain", "acknowledgement_lost"
+    if status != "sent":
+        receipt = None
     with connection() as database:
         lock_channel(database, config.chat_id, at)
         database.execute(
@@ -242,7 +260,7 @@ def deliver_outbox(config, sender, *, at: datetime, kinds: tuple[str, ...]) -> d
 def stock_event_card(ticker: str, event: dict) -> dict:
     people = event["people"]
     names = "; ".join(label(p["name"], 100) + " · " + label(p["role"], 100) for p in people)
-    names = label(names, 1300)
+    names = label(names, 800)
     amendment = " · Amendment" if event["amendment"] else ""
     lines = [f"${ticker} · {event['action']}{amendment}", names]
     if event.get("joint"):
@@ -254,7 +272,7 @@ def stock_event_card(ticker: str, event: dict) -> dict:
         ("percent", "Reported stake (%)"),
     ):
         if event.get(key) is not None:
-            lines.append(f"{title}: {label(event[key], 180)}")
+            lines.append(f"{title}: {label(event[key], 100)}")
     if event.get("occurred_at"):
         lines.append(f"Transaction / as-of date: {event['occurred_at']}")
     lines.append(f"Filed: {event['filed_at']}")
@@ -263,7 +281,7 @@ def stock_event_card(ticker: str, event: dict) -> dict:
         "subject": event["id"],
         "ticker": ticker,
         "group": "stock:" + ticker,
-        "text": "\n".join(lines),
+        "text": "\n".join(escape_markdown_v2(line) for line in lines),
         "event": event,
     }
 
@@ -293,9 +311,9 @@ def queue_stock_filings(database, config, *, origin: str, at: datetime) -> int:
             ):
                 continue
             card = stock_event_card(row["ticker"], event)
-            card["text"] += (
-                f"\n\nMap: {origin.rstrip('/')}/t/{quote(row['ticker'], safe='')}#ticker-map"
-                f"\nSEC filing: {event['source_url']}"
+            card["text"] += "\n\n" + markdown_link(
+                "Open map and SEC filing",
+                f"{origin.rstrip('/')}/t/{quote(row['ticker'], safe='')}#ticker-map",
             )
             cards.append(card)
         total += enqueue_cards(database, config.chat_id, cards, at=at)
@@ -324,6 +342,7 @@ def announcement_history(limit: int = 50) -> dict:
                 ).fetchall()
             ]
             post["format"] = "text"
+            post["display_text"] = strip_markdown_v2(post["text"])
             posts.append(post)
         for row in database.execute(
             "SELECT coin_id AS id,chat_id,caption_text AS text,status,attempts,message_id,"
@@ -331,12 +350,22 @@ def announcement_history(limit: int = 50) -> dict:
             "WHERE status<>'baseline' ORDER BY created_at DESC LIMIT ?",
             (limit,),
         ).fetchall():
-            posts.append({**dict(row), "format": "animation", "items": []})
+            posts.append(
+                {
+                    **dict(row),
+                    "format": "animation",
+                    "items": [],
+                    "display_text": strip_markdown_v2(row["text"] or ""),
+                }
+            )
     return {
         "posts": sorted(posts, key=lambda p: p["created_at"], reverse=True)[:limit],
         "limits": {
             "daily": _setting("TELEGRAM_CHANNEL_DAILY_LIMIT", 24),
-            "interval_seconds": _setting("TELEGRAM_CHANNEL_INTERVAL_SECONDS", 300),
+            "interval_seconds": _setting(
+                "TELEGRAM_CHANNEL_INTERVAL_SECONDS",
+                _setting("TELEGRAM_SEGMENT_GAP_MINUTES", 12) * 60,
+            ),
             "ticker_quiet_seconds": _setting("TELEGRAM_TICKER_QUIET_SECONDS", 1800),
         },
     }

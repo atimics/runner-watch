@@ -122,6 +122,7 @@ def test_pagination_is_bounded_and_reports_partial_coverage():
     assert len(result["pools"]) == 1
     assert requests[0]["params"][1]["commitment"] == "finalized"
     assert requests[0]["params"][1]["encoding"] == "jsonParsed"
+    assert requests[0]["params"][1]["maxSupportedTransactionVersion"] == 1
     assert requests[1]["params"][1]["paginationToken"] == "1"
     assert requests[0]["params"][1]["limit"] == 100
 

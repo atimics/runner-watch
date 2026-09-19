@@ -146,6 +146,34 @@ def test_worker_health_recomputes_missing_required_names() -> None:
     assert result["detail"]["instances"][0]["missing_workers"] == ["kol"]
 
 
+def test_worker_health_flags_workers_that_stopped_cycling() -> None:
+    checked_at = datetime(2026, 9, 15, 18, tzinfo=UTC)
+    state = {
+        worker_heartbeat_key("machine-a"): {
+            "value": json.dumps(
+                {
+                    "status": "ok",
+                    "required_workers": ["outcomes"],
+                    "running_workers": ["outcomes"],
+                    "stale_workers": [
+                        {
+                            "worker": "outcomes",
+                            "last_completed_at": "2026-09-02T17:27:54+00:00",
+                            "age_seconds": 3_000_000,
+                        }
+                    ],
+                }
+            ),
+            "updated_at": checked_at.isoformat(),
+        }
+    }
+
+    result = worker_health(state, checked_at=checked_at)
+
+    assert result["status"] == "degraded"
+    assert result["detail"]["instances"][0]["stale_workers"][0]["worker"] == "outcomes"
+
+
 def test_worker_startup_schedules_kol_and_case_refreshers(
     monkeypatch: MonkeyPatch,
 ) -> None:

@@ -51,7 +51,6 @@ _NAMED: dict[int, str] = {
 
 
 def sector_for(sic: Any) -> str | None:
-
     """Group a SIC code into something a person would actually say."""
 
     try:
@@ -73,7 +72,6 @@ def _stale_before(now: datetime) -> str:
 
 
 def companies_missing_sectors(database: Any, now: datetime, limit: int) -> list[dict[str, Any]]:
-
     """Filers on the board that have no sector yet, or a stale one."""
 
     rows = database.execute(
@@ -105,13 +103,27 @@ def save_sector(
     )
 
 
+def defer_sector_lookup(database: Any, cik: int, now: datetime) -> None:
+    """Put a failed lookup back in the queue for tomorrow, not for now.
+
+    A filer that errors every pass would otherwise sit at the head of the
+    queue and starve the rest, so a failure is re-due in a day and the batch
+    keeps draining. The staleness window still applies after that.
+    """
+
+    due_again = now - timedelta(days=max(1, SECTOR_REFRESH_DAYS - 1))
+    database.execute(
+        "UPDATE sec_companies SET sector_refreshed_at=? WHERE cik=?",
+        (due_again.isoformat(), cik),
+    )
+
+
 def refresh_company_sectors(
     client: Any = None,
     *,
     at: datetime | None = None,
     limit: int | None = None,
 ) -> dict[str, int]:
-
     """Fill in sectors for a few filers.
 
     SEC asks for a slow, identified client, so this takes a small batch each
@@ -137,6 +149,8 @@ def refresh_company_sectors(
         try:
             payload = client.get_json(SUBMISSIONS_URL.format(cik=cik))
         except Exception:
+            with connection() as database:
+                defer_sector_lookup(database, cik, now)
             counts["failed"] += 1
             continue
         sic = str(payload.get("sic") or "").strip() or None
@@ -147,13 +161,47 @@ def refresh_company_sectors(
     return counts
 
 
-def sector_board(database: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+# Fallback hints from the company name itself, used when no SIC code is on
+# file yet. A keyword match is a hint, not a lookup, so hinted groups are
+# marked as such and Dash is told to say so. The keywords are kept
+# deliberately narrow: a wrong guess reads worse than "unclassified".
+_NAME_HINTS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (
+        ("bio", "pharma", "therap", "clinic", "genomic", "medical", "immune", "dosing"),
+        "Biotech and pharma",
+    ),
+    (
+        ("bancorp", "bank", "financial", "finance", "insurance", "reit", "mortgage", "credit"),
+        "Finance and real estate",
+    ),
+    (("software", "cloud", "semiconductor", "silicon"), "Software"),
+    (("petroleum", "drilling", "solar", "energy", "power"), "Oil and gas"),
+    (("gold", "silver", "mining", "copper", "lithium"), "Mining and energy"),
+    (("acquisition corp", "acquisition company"), "Blank checks and shells"),
+    (("airlines", "airline", "logistics", "shipping"), "Transport and utilities"),
+)
 
+
+def _name_hint(name: Any) -> str | None:
+    text = " ".join(str(name or "").split()).casefold()
+    if not text:
+        return None
+    for keywords, label in _NAME_HINTS:
+        for keyword in keywords:
+            if keyword in text:
+                return label
+    return None
+
+
+def sector_board(database: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Group board rows by sector, busiest first.
 
-    Rows without a known sector are carried in their own group rather than
-    dropped, so a reader can tell "no filers in biotech today" apart from
-    "we have not looked up what these are".
+    Sectors come from the SIC code when the backfill has reached the filer.
+    Until then the company name gives a marked hint so the board groups
+    instead of piling into one unclassified bucket; anything still unknown is
+    carried in its own group rather than dropped, so a reader can tell "no
+    filers in biotech today" apart from "we have not looked up what these
+    are".
     """
 
     tickers = sorted({str(row.get("ticker") or "") for row in rows if row.get("ticker")})
@@ -163,20 +211,29 @@ def sector_board(database: Any, rows: list[dict[str, Any]]) -> list[dict[str, An
     lookup = {
         str(found["ticker"]): found
         for found in database.execute(
-            f"SELECT ticker,sic,sic_description FROM sec_companies "
+            f"SELECT ticker,sic,sic_description,name FROM sec_companies "
             f"WHERE ticker IN ({placeholders})",
             tickers,
         ).fetchall()
     }
     grouped: dict[str, dict[str, Any]] = {}
+    hinted: set[str] = set()
     for row in rows:
         company = lookup.get(str(row.get("ticker") or ""))
         label = sector_for(company["sic"]) if company else None
-        key = label or "Unclassified"
+        hint = False
+        if not label and company:
+            label = _name_hint(company["name"])
+            hint = label is not None
+        if not label:
+            label = "Unclassified"
         bucket = grouped.setdefault(
-            key,
-            {"sector": key, "count": 0, "tickers": [], "changes": []},
+            label,
+            {"sector": label, "count": 0, "tickers": [], "changes": []},
         )
+        if hint:
+            bucket["hinted"] = True
+            hinted.add(label)
         bucket["count"] += 1
         if len(bucket["tickers"]) < 6:
             bucket["tickers"].append(str(row.get("ticker") or ""))
@@ -186,9 +243,7 @@ def sector_board(database: Any, rows: list[dict[str, Any]]) -> list[dict[str, An
     board = []
     for bucket in grouped.values():
         changes = bucket.pop("changes")
-        bucket["average_change_pct"] = (
-            round(sum(changes) / len(changes), 2) if changes else None
-        )
+        bucket["average_change_pct"] = round(sum(changes) / len(changes), 2) if changes else None
         board.append(bucket)
     board.sort(key=lambda item: (-item["count"], item["sector"]))
     return board

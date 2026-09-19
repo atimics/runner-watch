@@ -18,11 +18,11 @@ from runner_web.market_forecasts import (
 
 EASTERN = ZoneInfo("America/New_York")
 PRE_MARKET_START = time(4, 0)
-PRE_MARKET_REPORT_AT = time(4, 15)
+PRE_MARKET_REPORT_AT = time(4, 20)
 PRE_MARKET_CUTOFF = time(9, 15)
 REGULAR_OPEN = time(9, 30)
 REGULAR_CLOSE = time(16, 0)
-POST_MARKET_REPORT_AT = time(16, 15)
+POST_MARKET_REPORT_AT = time(16, 20)
 POST_MARKET_CUTOFF = time(16, 20)
 
 ReportType = Literal["pre_market", "post_market"]
@@ -89,7 +89,7 @@ def market_report_schedule(moment: datetime | None = None) -> dict[str, Any]:
         "next_label": REPORT_LABELS[next_type],
         "next_at": _iso_utc(next_at),
         "seconds_to_next": max(0, int((next_at - current).total_seconds())),
-        "schedule_note": "Weekdays · 4:15 a.m. and 4:15 p.m. ET",
+        "schedule_note": "Weekdays · 4:20 a.m. and 4:20 p.m. ET",
     }
 
 
@@ -340,9 +340,7 @@ def _session_results(board: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "winners": sum(value > 0 for value in returns),
         "losers": sum(value < 0 for value in returns),
-        "average_session_return_pct": (
-            round(statistics.fmean(returns), 2) if returns else None
-        ),
+        "average_session_return_pct": (round(statistics.fmean(returns), 2) if returns else None),
     }
 
 
@@ -482,9 +480,7 @@ def _apply_settled_closes(report: dict[str, Any]) -> None:
             continue
         leader["close_price"] = close_price
         leader["close_is_settled"] = True
-        leader["session_return_pct"] = round(
-            (float(close_price) / float(watch_price) - 1) * 100, 2
-        )
+        leader["session_return_pct"] = round((float(close_price) / float(watch_price) - 1) * 100, 2)
     report["metrics"] = {**report["metrics"], **_session_results(report["leaders"])}
 
 
@@ -570,9 +566,7 @@ def _top_pick(report: dict[str, Any]) -> dict[str, Any] | None:
     if not leaders:
         return None
     directional = [
-        row
-        for row in leaders
-        if (row.get("eod_forecast") or {}).get("direction") in {"up", "down"}
+        row for row in leaders if (row.get("eod_forecast") or {}).get("direction") in {"up", "down"}
     ]
     pick = min(directional or leaders, key=lambda row: int(row.get("rank") or 1_000_000))
     forecast = pick.get("eod_forecast") or {}
@@ -764,9 +758,7 @@ def market_reports_overview(
             """,
             (max(2, min(history_limit, 30)),),
         ).fetchall()
-        reports = _decorate(
-            database, [report for row in rows if (report := _report_record(row))]
-        )
+        reports = _decorate(database, [report for row in rows if (report := _report_record(row))])
     latest = {
         report_type: next(
             (report for report in reports if report["report_type"] == report_type),

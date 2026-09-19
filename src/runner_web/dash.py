@@ -37,7 +37,6 @@ def _iso(value: datetime | None = None) -> str:
 
 
 def dash_avatar() -> dict[str, Any]:
-
     """Dash's face, fixed rather than rolled.
 
     Everyone else gets a random avatar on first comment. Dash is a character
@@ -45,13 +44,10 @@ def dash_avatar() -> dict[str, Any]:
     render the same way.
     """
 
-    return comment_avatar_profile(
-        DASH_AVATAR_NAME, DASH_AVATAR_SEED, DASH_AVATAR_ABILITY, level=1
-    )
+    return comment_avatar_profile(DASH_AVATAR_NAME, DASH_AVATAR_SEED, DASH_AVATAR_ABILITY, level=1)
 
 
 def ensure_dash_account(database: Any = None) -> dict[str, Any]:
-
     """Create or return Dash's account, caller identity and avatar."""
 
     if database is None:
@@ -89,7 +85,6 @@ def ensure_dash_account(database: Any = None) -> dict[str, Any]:
 
 
 def dash_wallet(at: datetime | None = None) -> dict[str, Any]:
-
     """Dash's balance, claiming the day's allowance if it is still there.
 
     He is funded the same way a person is: one hundred a day, no more. That is
@@ -103,7 +98,6 @@ def dash_wallet(at: datetime | None = None) -> dict[str, Any]:
 
 
 def market_now(at: datetime | None = None) -> dict[str, Any]:
-
     """What is going on right now, in the terms the board already uses.
 
     This is assembled from stored scanner output and the frozen session reports
@@ -131,6 +125,9 @@ def market_now(at: datetime | None = None) -> dict[str, Any]:
     return {
         "session": clock["label"],
         "session_note": clock["data_note"],
+        "eastern_now": clock["eastern_now"][11:16] + " ET",
+        "next_open": f"{clock['next_label']} at {clock['next_at'][11:16]} ET",
+        "scanner_active": clock["scanner_active"],
         "board_size": len(rows),
         "green": sum(value > 0 for value in changes),
         "red": sum(value < 0 for value in changes),
@@ -167,7 +164,6 @@ def market_now(at: datetime | None = None) -> dict[str, Any]:
 
 
 def sector_now(sector: str | None = None, at: datetime | None = None) -> dict[str, Any]:
-
     """The board grouped by sector, or one sector on its own.
 
     Sectors come from the SIC code SEC publishes per filer, backfilled a little
@@ -183,11 +179,7 @@ def sector_now(sector: str | None = None, at: datetime | None = None) -> dict[st
         board = sector_board(database, rows)
     if sector:
         wanted = str(sector).strip().lower()
-        matched = [
-            group
-            for group in board
-            if wanted in str(group["sector"]).lower()
-        ]
+        matched = [group for group in board if wanted in str(group["sector"]).lower()]
         return {
             "asked_for": sector,
             "matched": bool(matched),
@@ -214,7 +206,6 @@ def _acted_today(database: Any, kinds: tuple[str, ...], now: datetime) -> int:
 
 
 def dash_budget(at: datetime | None = None) -> dict[str, Any]:
-
     """What Dash can still afford and still allowed to do today.
 
     The wallet alone would let him spend the whole allowance on the first thing
@@ -245,7 +236,6 @@ def dash_budget(at: datetime | None = None) -> dict[str, Any]:
 
 
 def dash_make_call(ticker: str, at: datetime | None = None) -> dict[str, Any]:
-
     """Open a public Call as Dash, on the same terms as anyone else.
 
     It goes through the shared mark so he is stamped at the price the site would
@@ -285,7 +275,6 @@ def dash_make_call(ticker: str, at: datetime | None = None) -> dict[str, Any]:
 
 
 def dash_close_call(ticker: str, at: datetime | None = None) -> dict[str, Any]:
-
     """Close Dash's open Call on a ticker at the current mark."""
 
     from runner_web.calls import active_call_for_user, close_call
@@ -318,7 +307,6 @@ def dash_close_call(ticker: str, at: datetime | None = None) -> dict[str, Any]:
 
 
 def dash_open_calls() -> list[dict[str, Any]]:
-
     """Dash's own open positions, so he can talk about what he is holding."""
 
     from runner_web.calls import caller_call_rows, calls_from_rows
@@ -336,7 +324,6 @@ def dash_open_calls() -> list[dict[str, Any]]:
 
 
 def dash_comment(ticker: str, body: str, at: datetime | None = None) -> dict[str, Any]:
-
     """Post a public comment on a ticker as Dash, paid for out of his allowance.
 
     It is written into the same table a person's avatar comment goes to, with the
@@ -394,13 +381,16 @@ def dash_comment(ticker: str, body: str, at: datetime | None = None) -> dict[str
 
 
 def recent_runners(limit: int = 8, at: datetime | None = None) -> dict[str, Any]:
-
     """Names that entered the board recently, newest first.
 
     The scanner records a row the first time a ticker appears, which is what the
     alert digest posts from. Dash reads the same record so "what just showed up"
-    and what got posted to the channel are the same list.
+    and what got posted to the channel are the same list. When the scanner is
+    off, the note carries the session and the next open instead of an empty
+    list.
     """
+
+    from runner_web.market_clock import market_clock
 
     now = at or datetime.now(UTC)
     since = (now - timedelta(hours=12)).isoformat()
@@ -414,7 +404,8 @@ def recent_runners(limit: int = 8, at: datetime | None = None) -> dict[str, Any]
             """,
             (since, max(1, min(limit, 20))),
         ).fetchall()
-    return {
+    clock = market_clock(now)
+    payload = {
         "window_hours": 12,
         "count": len(rows),
         "entries": [
@@ -427,10 +418,15 @@ def recent_runners(limit: int = 8, at: datetime | None = None) -> dict[str, Any]
             for row in rows
         ],
     }
+    if not rows and not clock["scanner_active"]:
+        payload["note"] = (
+            f"The scanner is not live: {clock['label']}. "
+            f"{clock['next_label']} at {clock['next_at'][11:16]} ET."
+        )
+    return payload
 
 
 def community_now(limit: int = 8) -> dict[str, Any]:
-
     """Where people are actually putting their names, not just where price moved.
 
     Calls and comments are the part of the board that is human rather than
@@ -468,14 +464,12 @@ def community_now(limit: int = 8) -> dict[str, Any]:
             for row in calls
         ],
         "most_discussed": [
-            {"ticker": str(row["ticker"]), "comments": int(row["total"] or 0)}
-            for row in comments
+            {"ticker": str(row["ticker"]), "comments": int(row["total"] or 0)} for row in comments
         ],
     }
 
 
 def session_report(which: str | None = None) -> dict[str, Any]:
-
     """The frozen pre-market or post-market report, as the site shows it.
 
     These are the two moments the product commits to something in writing: the

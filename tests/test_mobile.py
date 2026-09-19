@@ -22,6 +22,7 @@ from runner_web.flash_wallet import claim_daily_flash, wallet_for_user
 from runner_web.ingestion import record_source_batch
 from runner_web.main import (
     APP_ORIGIN,
+    _baseline_summary,
     _chart_annotations,
     _commission_research,
     _evidence_gate,
@@ -49,6 +50,7 @@ from runner_web.main import (
 )
 from runner_web.pseudonyms import COMMENT_AVATAR_ABILITIES
 from runner_web.research_context import evidence_id_for
+from tests.test_kol import _seed_prediction
 
 
 def _test_flash_forecast() -> dict[str, Any]:
@@ -118,69 +120,13 @@ def test_ranker_directional_thesis_uses_the_three_way_contract(
     assert sum(item["probability_pct"] for item in thesis["distribution"]) == 100
 
 
-def test_ticker_model_path_is_compact_explicit_and_separate_from_risk() -> None:
-    root = Path(__file__).parents[1]
-    template = (root / "web/templates/ticker.html").read_text()
-    styles = (root / "web/static/mobile.css").read_text()
-
-    assert 'class="model-path-card model-path-' in template
-    assert "MODEL PATH ·" in template
-    assert "detail.directional_thesis.distribution" in template
-    assert "No barrier” means neither was reached" in template
-    assert template.index('class="model-path-card') < template.index('class="risk-decision')
-    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in styles
-    assert ".model-path-segment.path-down { background: var(--red); }" in styles
-    assert ".model-path-segment.path-up { background: var(--green); }" in styles
-
-
-def test_pulse_and_radar_refresh_affordances_have_separate_jobs() -> None:
-    root = Path(__file__).parents[1]
-    pulse_template = (root / "web/templates/pulse.html").read_text()
-    radar_template = (root / "web/templates/radar.html").read_text()
-
-    assert "1 new ticker" in pulse_template
-    assert "new tickers" in pulse_template
-    assert "Pulse updated" not in pulse_template
-    assert "TickerRow.fingerprint" not in pulse_template
-    assert "New since you looked" not in pulse_template
-    assert "exposureQueue" not in pulse_template
-    assert "body:JSON.stringify({entries})" not in pulse_template
-    assert "1 new event" in radar_template
-    assert "RatiLiveList.mount" in pulse_template
-    assert "RatiLiveList.mount" in radar_template
-    assert "pendingUpdateTickers" not in radar_template
-
-
-def test_pulse_does_not_render_an_empty_scorecard_spacer() -> None:
-    root = Path(__file__).parents[1]
-    pulse_template = (root / "web/templates/pulse.html").read_text()
-    kol_styles = (root / "web/static/mobile.css").read_text()
-
-    assert 'id="kolScoreStrip"' in pulse_template
-    assert "{% if not flash_record %} hidden{% endif %}" in pulse_template
-    assert ".kol-score-strip[hidden] { display: none; }" in kol_styles
-    assert "function renderKolScorecard()" in pulse_template
-    assert "pulse.flash_record = next.flash_record || null;" in pulse_template
-
-
-def test_pulse_refresh_handles_missing_markers_stale_updates_and_page_failures() -> None:
-    pulse_template = (Path(__file__).parents[1] / "web/templates/pulse.html").read_text()
-
-    assert "function tickerKey(row)" in pulse_template
-    assert "flatMap(row => [tickerKey(row), entryKey(row)])" in pulse_template
-    assert "RatiLiveList.mount" in pulse_template
-    assert "pendingPulse" not in pulse_template
-    assert "function scheduleLoadMoreRetry()" in pulse_template
-    assert "catch (_) {\n    scheduleLoadMoreRetry();" in pulse_template
-
-
 def test_large_responses_are_compressed() -> None:
     assert any(middleware.cls is GZipMiddleware for middleware in web_main.app.user_middleware)
 
 
 def test_ticker_has_public_call_and_flash_actions() -> None:
-    template = (Path(__file__).parents[1] / "web/templates/ticker.html").read_text()
-    script = (Path(__file__).parents[1] / "web/static/ticker-detail.js").read_text()
+    template = (Path(__file__).parents[1] / "web/templates/simple_stock_detail.html").read_text()
+    screen = (Path(__file__).parents[1] / "web/templates/market_screen.html").read_text()
     comments = (Path(__file__).parents[1] / "web/templates/_flash_comments.html").read_text()
     comment_script = (Path(__file__).parents[1] / "web/static/flash-comments.js").read_text()
     action = (Path(__file__).parents[1] / "web/templates/_flash_report_action.html").read_text()
@@ -190,20 +136,14 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert "thesisForm" not in template
     assert "flash_report_action(flash_report)" in template
     assert "commissionButton" in action
-    assert "Make Call" in template
-    assert 'class="ticker-action-row"' in template
-    assert template.count('class="ticker-action-slot"') == 2
-    assert "action-card" not in template
+    assert "Make Call" in screen
     assert template.count("<textarea") == 0
-    assert "flash_comments('stock', detail.ticker" in template
     assert 'id="generateComment"' in comments
     assert "Summon avatar" in comments
     assert "Persistent avatars · public across tickers" not in template
     assert "ability guides a short Flash draft" not in template
     assert "Start the read" not in template
     assert "Flash drafted" not in template
-    assert "Flash is drafting" not in script
-    assert "comment_generation_enabled" in template
     assert "window.RatiFlash?.canSpend" in comment_script
     assert "render_comment_avatar(comment.avatar)" in comments
     assert "'Idempotency-Key': pending" in comment_script
@@ -211,23 +151,6 @@ def test_ticker_has_public_call_and_flash_actions() -> None:
     assert "item.dataset.commentId === String(result.comment.id)" in comment_script
     assert "const RECOVERY_DELAYS = [500, 1500, 3000, 5000]" in comment_script
     assert "Still posting. Tap again." in comment_script
-
-
-def test_ticker_layout_puts_subtle_actions_after_the_analysis() -> None:
-    root = Path(__file__).parents[1]
-    template = (root / "web/templates/ticker.html").read_text()
-    desktop_css = (root / "web/static/mobile.css").read_text()
-
-    chart = template.index('class="detail-chart-panel"')
-    actions = template.index('class="detail-actions"')
-    analysis = template.index('class="detail-analysis"')
-
-    assert chart < analysis < actions
-    assert "grid-template-areas:" in desktop_css
-    assert '"chart"\n      "analysis"\n      "actions"' in desktop_css
-    assert "grid-template-columns: repeat(2, minmax(0, 210px))" in desktop_css
-    assert "background: rgba(255, 255, 255, .018)" in desktop_css
-    assert "min-height: 44px" in desktop_css
 
 
 @pytest.mark.parametrize(
@@ -314,14 +237,13 @@ def test_scanner_page_is_removed() -> None:
 def test_desktop_feeds_share_full_info_and_article_panel() -> None:
     root = Path(__file__).parents[1]
     templates_dir = root / "web/templates"
-    pulse = (templates_dir / "pulse.html").read_text()
-    radar = (templates_dir / "radar.html").read_text()
     alpha = (templates_dir / "community.html").read_text()
+    coin_alpha = (templates_dir / "memecoin_alpha.html").read_text()
     panel = (templates_dir / "_desktop_panel.html").read_text()
     workspace = (root / "web/static/desktop-workspace.js").read_text()
     desktop_css = (root / "web/static/mobile.css").read_text()
 
-    for template in (pulse, radar, alpha):
+    for template in (alpha, coin_alpha):
         assert "workspace-app" in template
         assert "data-desktop-workspace" in template
         assert "data-desktop-list" in template
@@ -370,7 +292,6 @@ def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
         (templates_dir / name).read_text()
         for name in ("sports.html", "sports_radar.html", "sports_alpha.html")
     ]
-    game = (templates_dir / "sports_game.html").read_text()
     live_script = (root / "web/static/sports-live.js").read_text()
     product_styles = (root / "web/static/sports-product.css").read_text()
 
@@ -381,15 +302,9 @@ def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
         assert "data-desktop-list" in template
         assert '{% include "_desktop_panel.html" %}' in template
         assert "sports_base.html" not in template
-    assert '{% extends "mobile_base.html" %}' in game
-    assert 'class="detail-nav sports-detail-nav"' in game
-    assert 'class="detail-body sports-detail-body"' in game
-    assert 'class="game-detail-grid game-detail-flow"' in game
-    assert "html:not(.embedded-pane) .game-detail-grid" in product_styles
-    assert ".game-detail-grid.game-detail-flow" in product_styles
     assert "max-width: 1120px" in product_styles
     assert not (templates_dir / "sports_base.html").exists()
-    assert "location.reload" not in "\n".join([*sports_templates, game, live_script])
+    assert "location.reload" not in "\n".join([*sports_templates, live_script])
     assert "RatiLiveList.mount" in live_script
     assert "setInterval(poll" not in live_script
     assert "body.sports-product" in product_styles
@@ -413,16 +328,12 @@ def test_ticker_rows_have_no_reader_attention_state() -> None:
     assert "tradeState !== statusLabel" in row_script
 
 
-def test_pulse_ticker_search_uses_native_validation() -> None:
+def test_ticker_search_uses_native_validation() -> None:
     root = Path(__file__).parents[1]
-    pulse_template = (root / "web/templates/pulse.html").read_text()
     account_strip = (root / "web/templates/_account_strip.html").read_text()
 
     assert 'pattern="[A-Za-z0-9.-]{1,12}"' in account_strip
     assert " required " in account_strip
-    assert 'id="pulseSearch"' not in pulse_template
-    assert '{% include "_market_clock.html" %}' not in pulse_template
-    assert "Movement is only the first clue." not in pulse_template
 
 
 def _call_mark_database(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -1002,6 +913,258 @@ def test_chart_payload_caches_points_and_annotations_together(
     assert calls == 1
 
 
+@pytest.fixture(params=["public", "charts"])
+def payload_cache(request: pytest.FixtureRequest, monkeypatch: MonkeyPatch) -> SimpleNamespace:
+    public = request.param == "public"
+    prefix = "PUBLIC_SCREEN_DATA" if public else "CHART_PAYLOAD"
+    cache: dict[str, tuple[float, dict[str, Any]]] = {}
+    refreshing: set[str] = set()
+    condition = threading.Condition()
+    for suffix, value in (("CACHE", cache), ("REFRESHING", refreshing), ("CONDITION", condition)):
+        monkeypatch.setattr(web_main, f"{prefix}_{suffix}", value)
+    monkeypatch.setattr(web_main, "CHART_PAYLOAD_CACHE_TTL_SECONDS", 37.5)
+    monkeypatch.setattr(
+        web_main, "time", SimpleNamespace(monotonic=lambda: 100.0, perf_counter=lambda: 10.0)
+    )
+    state = SimpleNamespace(
+        cache=cache,
+        refreshing=refreshing,
+        condition=condition,
+        payload={"version": "new"},
+        shared=None,
+        reads=[],
+        writes=[],
+        metrics=[],
+        ttl=23.5 if public else 37.5,
+        limit=64 if public else 32,
+        public=public,
+        failure_message=(
+            "Public screen cache refresh failed" if public else "Chart payload cache refresh failed"
+        ),
+    )
+    state.build = lambda: state.payload
+
+    def shared_get(key: str) -> Any:
+        state.reads.append(key)
+        return state.shared
+
+    monkeypatch.setattr(web_main, "shared_cache_get", shared_get)
+    monkeypatch.setattr(web_main, "shared_cache_set", lambda *args: state.writes.append(args))
+    monkeypatch.setattr(
+        web_main, "record_cache", lambda *args, **kwargs: state.metrics.append((args, kwargs))
+    )
+    if public:
+        state.local_key, state.shared_key = web_main._public_screen_cache_keys("cache-test", "ONE")
+        state.fetch = lambda: web_main._public_screen_data(
+            "cache-test", "ONE", lambda: state.build(), ttl_seconds=state.ttl
+        )
+    else:
+        state.local_key, state.shared_key = web_main._chart_payload_cache_key(["ONE", "TWO"])
+
+        def build_charts(requested: list[str]) -> dict[str, Any]:
+            assert requested == ["ONE", "TWO"]
+            return state.build()
+
+        monkeypatch.setattr(web_main, "_ticker_charts_payload_uncached", build_charts)
+        state.fetch = lambda: ticker_charts_payload(["two", "ONE", "one"])
+    return state
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_payload_cache_stale_refresh(
+    payload_cache: SimpleNamespace, caplog: pytest.LogCaptureFixture, fails: bool
+) -> None:
+    state = payload_cache
+    stale = {"version": "old"}
+    state.cache[state.local_key] = (99.0, stale)
+    started = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def build() -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        started.set()
+        assert release.wait(timeout=5)
+        if fails:
+            raise RuntimeError("refresh unavailable")
+        return state.payload
+
+    state.build = build
+    try:
+        assert state.fetch() is stale
+        assert started.wait(timeout=5)
+        assert state.fetch() is stale
+        assert calls == 1
+        assert state.local_key in state.refreshing
+    finally:
+        release.set()
+        with state.condition:
+            assert state.condition.wait_for(lambda: not state.refreshing, timeout=5)
+    assert state.reads == [state.shared_key, state.shared_key]
+    if fails:
+        assert state.cache[state.local_key] == (99.0, stale)
+        assert state.writes == []
+        assert caplog.records[-1].getMessage() == state.failure_message
+        assert caplog.records[-1].exc_info is not None
+    else:
+        assert state.cache[state.local_key] == (100.0 + state.ttl, state.payload)
+        assert state.writes == [(state.shared_key, state.payload, int(state.ttl))]
+        assert state.fetch() is state.payload
+    if state.public:
+        assert (("cache-test", "stale"), {}) in state.metrics
+        assert (("public-screen-refresh", "build"), {"duration_ms": 0.0}) in state.metrics
+    else:
+        assert state.metrics == []
+
+
+def test_payload_cache_stale_prefers_shared_copy(payload_cache: SimpleNamespace) -> None:
+    """A worker-refreshed shared copy beats rebuilding a stale local entry."""
+
+    state = payload_cache
+    stale = {"version": "old"}
+    shared = {"version": "shared"}
+    state.cache[state.local_key] = (99.0, stale)
+    state.shared = shared
+    state.build = lambda: pytest.fail("a stale shared copy must not rebuild")
+
+    assert state.fetch() is shared
+    assert state.reads == [state.shared_key]
+    assert state.refreshing == set()
+    assert state.cache[state.local_key] == (100.0 + state.ttl, shared)
+
+
+def test_payload_cache_cold_failure_cleanup(payload_cache: SimpleNamespace) -> None:
+    state = payload_cache
+
+    def fail() -> dict[str, Any]:
+        raise RuntimeError("build unavailable")
+
+    state.build = fail
+    with pytest.raises(RuntimeError, match="build unavailable"):
+        state.fetch()
+    assert state.refreshing == set()
+    assert state.cache == {}
+    assert state.writes == []
+    state.build = lambda: state.payload
+    assert state.fetch() is state.payload
+    assert state.refreshing == set()
+    assert state.cache[state.local_key] == (100.0 + state.ttl, state.payload)
+
+
+@pytest.mark.parametrize("shared", [{}, {"version": "shared"}])
+def test_payload_cache_shared_hydration(
+    payload_cache: SimpleNamespace, shared: dict[str, Any]
+) -> None:
+    state = payload_cache
+    state.shared = shared
+
+    def unexpected_build() -> dict[str, Any]:
+        pytest.fail("shared hydration must not build")
+
+    state.build = unexpected_build
+    state.cache.update({f"other-{index}": (50.0, {}) for index in range(state.limit)})
+    assert state.fetch() is shared
+    assert state.fetch() is shared
+    assert state.cache[state.local_key] == (100.0 + state.ttl, shared)
+    assert len(state.cache) == state.limit + 1
+    assert state.reads == [state.shared_key]
+    assert state.writes == []
+    assert state.refreshing == set()
+    assert state.metrics == (
+        [(("cache-test", "shared"), {}), (("cache-test", "hit"), {})] if state.public else []
+    )
+
+
+@pytest.mark.parametrize("first_fails", [False, True])
+def test_payload_cache_coalesces_and_wakes_waiters(
+    payload_cache: SimpleNamespace, monkeypatch: MonkeyPatch, first_fails: bool
+) -> None:
+    state = payload_cache
+    started = threading.Event()
+    waiting = threading.Event()
+    release = threading.Event()
+    wait_for = state.condition.wait_for
+    calls = 0
+
+    def observed_wait(predicate: Any, timeout: float) -> bool:
+        assert timeout == web_main.CACHE_BUILD_WAIT_SECONDS
+        waiting.set()
+        return wait_for(predicate, timeout=timeout)
+
+    def build() -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+            assert release.wait(timeout=5)
+            if first_fails:
+                raise RuntimeError("first build failed")
+        return state.payload
+
+    monkeypatch.setattr(state.condition, "wait_for", observed_wait)
+    state.build = build
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(state.fetch)
+        try:
+            assert started.wait(timeout=5)
+            second = pool.submit(state.fetch)
+            assert waiting.wait(timeout=5)
+        finally:
+            release.set()
+        if first_fails:
+            with pytest.raises(RuntimeError, match="first build failed"):
+                first.result(timeout=5)
+        else:
+            assert first.result(timeout=5) is state.payload
+        assert second.result(timeout=5) is state.payload
+    assert calls == (2 if first_fails else 1)
+    assert state.refreshing == set()
+    assert state.writes == [(state.shared_key, state.payload, int(state.ttl))]
+    if state.public:
+        assert (("cache-test", "wait"), {}) in state.metrics
+    else:
+        assert state.metrics == []
+
+
+def test_payload_cache_cold_build_evicts_oldest(payload_cache: SimpleNamespace) -> None:
+    state = payload_cache
+    state.cache.update({f"other-{index}": (float(index), {}) for index in range(state.limit)})
+    assert state.fetch() is state.payload
+    assert len(state.cache) == state.limit
+    assert "other-0" not in state.cache
+    assert state.cache[state.local_key] == (100.0 + state.ttl, state.payload)
+    assert state.fetch() is state.payload
+    assert state.reads == [state.shared_key]
+    assert state.writes == [(state.shared_key, state.payload, int(state.ttl))]
+
+
+def test_payload_cache_wait_timeout_allows_build(
+    payload_cache: SimpleNamespace, monkeypatch: MonkeyPatch
+) -> None:
+    state = payload_cache
+    state.refreshing.add(state.local_key)
+
+    def timed_out(predicate: Any, timeout: float) -> bool:
+        assert not predicate()
+        assert timeout == web_main.CACHE_BUILD_WAIT_SECONDS
+        return False
+
+    monkeypatch.setattr(state.condition, "wait_for", timed_out)
+    assert state.fetch() is state.payload
+    assert state.refreshing == set()
+
+
+def test_chart_payload_empty_request_skips_caches(monkeypatch: MonkeyPatch) -> None:
+    def unexpected(*args: Any) -> Any:
+        pytest.fail("empty charts must not access caches or build")
+
+    monkeypatch.setattr(web_main, "_chart_payload_cache_key", unexpected)
+    monkeypatch.setattr(web_main, "_ticker_charts_payload_uncached", unexpected)
+    monkeypatch.setattr(web_main, "shared_cache_get", unexpected)
+    assert ticker_charts_payload([]) == {"charts": {}, "freshness": {}, "annotations": {}}
+
+
 def test_list_chart_payload_sends_only_time_and_price(monkeypatch: MonkeyPatch) -> None:
     snapshot = SimpleNamespace(
         data=[
@@ -1224,6 +1387,25 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
         "safety": -0.0,
     }
     assert pulse["custom_score"] == 47.82
+    detail = ticker_detail_data("FLOW")
+    assert detail["current"]["score"] == pulse["score"]
+    assert detail["current"]["score_detail"] == pulse["score_detail"]
+    assert detail["current"]["score_components"] == pulse["score_components"]
+    assert detail["current"]["scanner_score"] == 40
+    assert detail["current"]["score_snapshot_id"] == "external-snapshot"
+    assert detail["current"]["score_as_of"] >= captured_at
+    assert detail["evidence_gate"] == _evidence_gate(
+        {
+            "relative_volume": 3,
+            "recent_relative_volume": 4,
+            "momentum_15m_pct": 4,
+            "breakout_pct": 0.8,
+        },
+        [],
+        detail["trade_pressure"],
+        external_context=detail["external_context"],
+        base_rates=detail["base_rates"],
+    )
     assert pulse["external_social_mentions"] == 4
     assert pulse["news_count"] == 1
     assert radar["pulse_label"] == "Bluesky · 4 cashtag mentions"
@@ -1233,6 +1415,182 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
     assert alpha["external_social_mentions"] == 4
     assert alpha["news_count"] == 1
     assert alpha["pulse_label"] == "Bluesky · 4 cashtag mentions"
+
+
+@pytest.mark.parametrize("model_status", ["active", "shadow"])
+@pytest.mark.parametrize("trade_state", ["EXIT", "AVOID"])
+def test_detail_composite_uses_pulse_ranker_and_penalties(
+    tmp_path: Path, monkeypatch: MonkeyPatch, model_status: str, trade_state: str
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "score-penalties.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    monkeypatch.setattr(web_main, "now", lambda: timestamp)
+    _seed_prediction(
+        "score-run", "score-snapshot", "PEN", timestamp, probability_up=0.9, expected_return_pct=4
+    )
+    insert_filing("strong-risk", "PEN", 1, 80, (timestamp - timedelta(days=2)).isoformat())
+    for index in range(13):
+        insert_filing(
+            f"newer-{index}", "PEN", 1, 10, (timestamp - timedelta(minutes=index)).isoformat()
+        )
+    insert_filing("too-old", "PEN", 1, 100, (timestamp - timedelta(days=4)).isoformat())
+    with connection() as database:
+        database.execute("UPDATE ranker_models SET status=?", (model_status,))
+        database.execute("UPDATE scan_snapshots SET rug_score=40,trade_state=?", (trade_state,))
+        database.execute("UPDATE sec_filings SET sentiment='risk' WHERE accession='strong-risk'")
+    pulse = web_main._pulse_data_uncached()["rows"][0]
+    monkeypatch.setattr(web_main, "_pulse_data_uncached", lambda: pytest.fail("full pulse build"))
+    detail = ticker_detail_data("PEN")
+    current = detail["current"]
+    assert current["score_detail"] == pulse["score_detail"]
+    assert current["score"] == pulse["score"]
+    assert current["score_as_of"] == pulse["score_as_of"] == timestamp.isoformat()
+    assert current["score_components"]["market"] == (90 if model_status == "active" else 70)
+    assert current["score_components"]["sec_event"] == -20
+    assert current["score_components"]["rug"] == -12
+    assert current["score_components"]["state"] == (-25 if trade_state == "EXIT" else -20)
+    assert len(detail["events"]) == 12
+    assert all(event["accession"] != "strong-risk" for event in detail["events"])
+    assert detail["evidence_gate"]["blockers"] == [f"State: {trade_state.title()}"]
+    assert detail["can_publish"] is True
+
+
+def test_detail_score_uses_latest_eligible_run_without_replacing_history(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "score-runs.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    monkeypatch.setattr(web_main, "now", lambda: timestamp)
+    for run_id, age, probability in [("old", 3, 0.5), ("eligible", 2, 0.8), ("empty", 1, 0.1)]:
+        _seed_prediction(
+            run_id,
+            run_id + "-snapshot",
+            "CYPH",
+            timestamp - timedelta(hours=age),
+            probability_up=probability,
+            expected_return_pct=probability,
+        )
+    with connection() as database:
+        database.execute("UPDATE scan_runs SET candidate_rows=0 WHERE id='empty'")
+        database.execute("UPDATE scan_snapshots SET price=42,score=12 WHERE scan_run_id='empty'")
+    pulse = web_main._pulse_data_uncached()["rows"][0]
+    detail = ticker_detail_data("CYPH")
+    current = detail["current"]
+    assert current["score_detail"] == pulse["score_detail"]
+    assert current["score"] == 80
+    assert current["score_snapshot_id"] == "eligible-snapshot"
+    assert current["id"] == "empty-snapshot"
+    assert current["scanner_score"] == 12
+    assert current["baseline_score"] == 70
+    assert current["price"] == 42
+    assert current["quote_time"] == (timestamp - timedelta(hours=1)).isoformat()
+    assert current["captured_at"] == (timestamp - timedelta(hours=1)).isoformat()
+    insert_scan_run("other", timestamp.isoformat(), 1)
+    insert_scored_snapshot("other-snapshot", "other", "OTHER", 20, 1, timestamp.isoformat())
+    fallback = ticker_detail_data("CYPH")["current"]
+    assert fallback["score"] == 12
+    assert fallback["score_detail"]["drivers"][0]["value"] == 12
+    assert fallback["score_as_of"] == current["captured_at"]
+
+
+def test_detail_score_does_not_use_truncated_external_evidence(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "score-external.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    monkeypatch.setattr(web_main, "now", lambda: timestamp)
+    insert_scan_run("external", timestamp.isoformat(), 1)
+    insert_scored_snapshot("external-snapshot", "external", "CYPH", 90, 1, timestamp.isoformat())
+    with connection() as database:
+        database.execute("UPDATE scan_snapshots SET rug_score=10,trade_state='ARMED'")
+    fetch = SourceFetch.success(
+        source="score_test",
+        feed="mixed",
+        locator="https://example.test/discovery",
+        started_at=timestamp,
+        payload={},
+        content_type="application/json",
+    )
+    record_source_batch(
+        SourceBatch(
+            fetch=fetch,
+            market_events=(
+                MarketEvent(
+                    event_id="social",
+                    ticker="CYPH",
+                    event_type="social_spike",
+                    event_at=timestamp - timedelta(hours=1),
+                    status="active",
+                    source_url="https://example.test/event",
+                    payload={"mention_count": 7, "engagement_count": 15},
+                ),
+                MarketEvent(
+                    event_id="halt",
+                    ticker="CYPH",
+                    event_type="trading_halt",
+                    event_at=timestamp - timedelta(hours=2),
+                    status="active",
+                    source_url="https://example.test/event",
+                    payload={},
+                ),
+                *(
+                    MarketEvent(
+                        event_id=f"news-{index}",
+                        ticker="CYPH",
+                        event_type="news_article",
+                        event_at=timestamp - timedelta(minutes=index),
+                        status="published",
+                        source_url="https://example.test/event",
+                        payload={},
+                    )
+                    for index in range(31)
+                ),
+            ),
+        )
+    )
+    _approve_test_source("score_test", "mixed")
+    pulse = web_main._pulse_data_uncached()["rows"][0]
+    detail = ticker_detail_data("CYPH")
+    current = detail["current"]
+    assert current["score_detail"] == pulse["score_detail"]
+    assert current["score"] == pulse["score"] == 29
+    assert current["score_components"]["social_search"] == 5
+    assert current["score_components"]["safety"] == -25
+    assert current["score_components"]["rug"] == -27
+    assert current["score_components"]["state"] == -20
+    assert len(detail["external_events"]) == 30
+    assert detail["external_context"]["social_mentions"] == 0
+    assert detail["external_context"]["active_halt"] is None
+    assert current["rug_score"] == 10
+    assert current["trade_state"] == "ARMED"
+    assert detail["evidence_gate"]["blockers"] == []
+
+
+def test_detail_without_eligible_scan_keeps_historical_and_sec_fallbacks(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "score-fallbacks.db")
+    init_db()
+    timestamp = datetime.now(UTC)
+    monkeypatch.setattr(web_main, "now", lambda: timestamp)
+    captured_at = (timestamp - timedelta(days=7)).isoformat()
+    insert_scan_run("stale", captured_at, 1)
+    insert_scored_snapshot("stale-snapshot", "stale", "OLD", 32, 1, captured_at)
+    insert_filing("sec-only", "FILE", 1, 80, timestamp.isoformat())
+    assert web_main._pulse_data_uncached()["rows"] == []
+    old = ticker_detail_data("OLD")
+    assert old["current"]["score"] == 32
+    assert old["current"]["score_as_of"] == captured_at
+    assert old["can_publish"] is False
+    filing = ticker_detail_data("FILE")["current"]
+    assert filing["source"] == "sec"
+    assert filing["score"] == 80
+    assert filing.get("score_detail") is None
+    assert filing.get("score_as_of") is None
+    assert ticker_detail_data("UNKNOWN") is None
 
 
 def test_negative_social_counts_do_not_break_pulse_or_radar(
@@ -1474,6 +1832,38 @@ def test_evidence_gate_counts_market_calculations_as_one_family() -> None:
     assert gate["count"] == 1
     assert gate["checks"] == ["Market structure"]
     assert len(gate["raw_market_checks"]) == 6
+
+
+def test_deferred_base_rates_do_not_claim_matched_sessions() -> None:
+    deferred = {
+        "mode": "deferred",
+        "matched_sessions": 0,
+        "minimum_samples": 20,
+        "metrics": {},
+        "notable_metrics": [],
+    }
+
+    assert _baseline_summary(deferred) is None
+    assert _baseline_summary({**deferred, "mode": "insufficient_data"}) == (
+        "Baseline learning: 0/20 matched sessions"
+    )
+
+
+def test_stale_worker_detection_uses_progress_keys(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "stale-workers.db")
+    init_db()
+    old = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?)",
+            ("outcomes_last_refresh", old, old),
+        )
+
+    stale = web_main._stale_workers()
+
+    assert [item["worker"] for item in stale] == ["outcomes"]
 
 
 def test_evidence_gate_opens_with_three_independent_families() -> None:
@@ -2491,36 +2881,52 @@ def test_first_daily_flash_report_locks_other_users_for_one_hour(
     assert late_publish["balance"] == 0
 
 
-def test_ticker_and_sports_share_one_flash_report_workflow() -> None:
+def test_both_detail_pages_share_one_flash_report_workflow() -> None:
+    """The stock and game pages run the same macro and the same script.
+
+    The game page lost both when it moved to the simple shell, while its route
+    kept computing flash_report - so the action was built server-side every
+    request and thrown away by a two-line template.
+    """
+
     root = Path(__file__).parents[1]
-    ticker_template = (root / "web/templates/ticker.html").read_text()
-    sports_template = (root / "web/templates/sports_game.html").read_text()
+    ticker_template = (root / "web/templates/simple_stock_detail.html").read_text()
+    sports_template = (root / "web/templates/simple_sports_detail.html").read_text()
     action_template = (root / "web/templates/_flash_report_action.html").read_text()
     report_script = (root / "web/static/flash-report.js").read_text()
-    ticker_script = (root / "web/static/ticker-detail.js").read_text()
 
-    assert "flash_report_action(flash_report)" in ticker_template
-    assert "flash_report_action(flash_report, 'sports')" in sports_template
-    assert "/static/flash-report.js" in ticker_template
-    assert "/static/flash-report.js" in sports_template
+    for template in (ticker_template, sports_template):
+        assert "flash_report_action(flash_report)" in template
+        assert "/static/flash-report.js" in template
     assert "Generate report" in report_script
     assert "Report couldn't be generated" in report_script
     assert "data-start-url" in action_template
-    assert "pollFlash" not in ticker_script + sports_template
-    assert "Sending the report to the queue" not in report_script + sports_template
+    assert "Sending the report to the queue" not in report_script
     assert "OpenRouter" not in action_template + report_script
     assert "X-OpenRouter-Key" not in action_template + report_script
 
 
-def test_flash_model_label_is_shown_on_research_and_pulse() -> None:
+def test_every_page_that_renders_comments_loads_their_scripts() -> None:
+    """flash-comments.js calls window.RatiContentNotices.render, which only
+    content-notices.js defines. market_screen.html does not load it the way
+    mobile_base.html did, so a page that renders comments has to ask for both
+    or posting one throws on the live site."""
+
+    root = Path(__file__).parents[1]
+    for name in ("simple_stock_detail.html", "simple_sports_detail.html"):
+        template = (root / "web/templates" / name).read_text()
+        assert "flash_comments(" in template, name
+        assert "/static/flash-comments.js" in template, name
+        assert "/static/content-notices.js" in template, name
+
+
+def test_flash_model_label_is_shown_on_research() -> None:
     root = Path(__file__).parents[1]
     report = (root / "web/templates/research_report.html").read_text()
-    pulse = (root / "web/templates/pulse.html").read_text()
     ticker_row = (root / "web/static/ticker-row.js").read_text()
 
     assert "{{ report.actor.display_name }}" in report
     assert "{{ report.actor.model }}" in report
-    assert "flash_record.model_label" in pulse
     assert "call.inference_model_label" not in ticker_row
 
 
@@ -2907,6 +3313,36 @@ def test_flash_report_circuit_breaker_stops_promising_failed_reports(
     assert "provider" not in json.dumps(report_action).lower()
 
 
+@pytest.mark.parametrize(
+    ("check_name", "fallback", "message"),
+    [
+        ("_flash_provider_ready", True, "Flash provider readiness check failed"),
+        ("_flash_daily_capacity_available", False, "Flash daily capacity check failed"),
+    ],
+)
+def test_flash_checks_log_database_failures_and_keep_fallbacks(
+    monkeypatch: MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    check_name: str,
+    fallback: bool,
+    message: str,
+) -> None:
+    def fail_connection() -> Any:
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(web_main, "connection", fail_connection)
+    monkeypatch.setattr(web_main, "_openrouter_api_key", lambda: "secret-server-key")
+
+    assert getattr(web_main, check_name)() is fallback
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.getMessage() == message
+    assert record.levelname == "ERROR"
+    assert record.exc_info is not None
+    assert record.exc_info[0] is RuntimeError
+    assert "secret-server-key" not in caplog.text
+
+
 def test_flash_queue_failure_refunds_before_the_response(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
@@ -2991,6 +3427,10 @@ def test_owner_can_publish_report_once_and_earn_flash(
         web_main.research_report_page(report["public_id"], public_request, None)
     assert private_error.value.status_code == 404
 
+    ticker_key, _ = web_main._public_screen_cache_keys("ticker", "ONE")
+    web_main._public_screen_data("ticker", "ONE", lambda: {"found": True})
+    assert ticker_key in web_main.PUBLIC_SCREEN_DATA_CACHE
+
     publish_request = Request(
         {
             "type": "http",
@@ -3013,6 +3453,7 @@ def test_owner_can_publish_report_once_and_earn_flash(
     assert second_publish["published"] is False
     assert second_publish["reward"] == 0
     assert second_publish["balance"] == 50
+    assert ticker_key not in web_main.PUBLIC_SCREEN_DATA_CACHE
     public_page = web_main.research_report_page(report["public_id"], public_request, None)
     assert public_page.status_code == 200
     request = Request({"type": "http", "method": "GET", "path": "/research", "headers": []})

@@ -117,7 +117,6 @@ def test_case_outcome_closes_the_view_at_its_inferred_horizon(
     current = datetime.now(UTC) + timedelta(minutes=70)
     base_at = current - timedelta(minutes=70)
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "case-horizon.db")
-    monkeypatch.setattr(outcomes, "_latest_prices", lambda tickers: {"PEN": 2.2})
     init_db()
     with connection() as database:
         database.execute(
@@ -178,7 +177,6 @@ def test_refresh_outcomes_uses_archived_prices_at_each_due_horizon(
     current = datetime(2026, 8, 26, 20, tzinfo=UTC)
     base_at = current - timedelta(days=2, hours=6)
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "outcomes.db")
-    monkeypatch.setattr(outcomes, "_latest_prices", lambda tickers: {"PEN": 3.0})
     init_db()
     created_at = base_at.isoformat()
     with connection() as database:
@@ -245,7 +243,6 @@ def test_scan_outcomes_use_first_archived_bar_after_horizon(
     current = datetime(2026, 8, 24, 20, tzinfo=UTC)
     base_at = current - timedelta(days=2)
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "scan-outcomes.db")
-    monkeypatch.setattr(outcomes, "_latest_prices", lambda tickers: {"PEN": 9.0})
     init_db()
     with connection() as database:
         database.execute(

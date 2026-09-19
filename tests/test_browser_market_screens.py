@@ -41,27 +41,38 @@ def test_list_layout_and_navigation_are_shared(page: Page, market, width):
     page.set_viewport_size({"width": width, "height": 844})
     open_screen(page, listing(market, [fixtures.sample(market)]))
     expect(page.get_by_role("navigation", name="Market").get_by_role("link")).to_have_count(3)
-    expect(page.get_by_role("navigation", name="View").get_by_role("link")).to_have_count(2)
-    expect(page.get_by_role("heading", name="List", exact=True)).to_be_visible()
+    expect(page.locator(".ticker-list")).to_be_visible()
     expect(page.locator(".ticker")).to_have_count(1)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert page.locator(".ticker").bounding_box()["y"] < 450
     expect(page.get_by_text(fixtures.SENTINEL)).to_have_count(0)
 
 
-@pytest.mark.parametrize("market", ["stocks", "memecoins", "sports"])
-def test_map_items_are_clickable(page: Page, market):
-    screen = listing(market, [fixtures.sample(market)], view="map")
-    open_screen(page, screen)
-    href = screen["rows"][0]["href"]
-    page.route("http://app.test" + href, lambda r: r.fulfill(body="Detail opened"))
-    page.get_by_role("link", name="Open " + screen["rows"][0]["name"], exact=True).click()
-    expect(page).to_have_url("http://app.test" + href)
+def test_tag_filter_chips_hide_and_show_rows(page: Page):
+    items = [fixtures.scored_stock(), {**fixtures.sample("stocks"), "ticker": "SLOW"}]
+    open_screen(page, listing("stocks", items))
+    expect(page.locator(".ticker")).to_have_count(2)
+    page.get_by_role("button", name=re.compile("running")).click()
+    expect(page.locator(".ticker:visible")).to_have_count(1)
+    page.get_by_role("button", name=re.compile("running")).click()
+    expect(page.locator(".ticker:visible")).to_have_count(2)
+
+
+def test_narrow_stock_rows_are_single_line(page: Page):
+    page.set_viewport_size({"width": 390, "height": 844})
+    open_screen(page, listing("stocks", [fixtures.scored_stock()]))
+    row = page.locator(".ticker").first
+    expect(row).to_be_visible()
+    box = row.bounding_box()
+    assert box is not None and box["height"] <= 62
+    selectors = (".tag", ".ticker-name", ".ticker-value", ".ticker-score")
+    children = [row.locator(selector).bounding_box() for selector in selectors]
+    children = [item for item in children if item is not None]
+    assert max(item["y"] for item in children) - min(item["y"] for item in children) <= 4
 
 
 def test_chart_renders_real_points_and_empty_history(page: Page):
     screen = detail("memecoins", {"coin": fixtures.sample("memecoins"), "history": []})
-    screen.pop("quote_url")
     screen.pop("refresh_url")
     screen["series"] = [
         {"time": "2026-09-12T12:00:00Z", "value": 1},
@@ -79,7 +90,6 @@ def test_chart_renders_real_points_and_empty_history(page: Page):
 
 def test_call_requires_confirmation_and_keeps_internal_error_private(page: Page):
     screen = detail("memecoins", {"coin": fixtures.sample("memecoins"), "can_call": True})
-    screen.pop("quote_url")
     screen.pop("refresh_url")
     submitted = []
 
@@ -321,21 +331,6 @@ def test_call_record_keeps_choice_terms_and_reward_readable(page, market, width)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 
-@pytest.mark.parametrize("width", [320, 390, 1280])
-def test_map_gallery_keyboard_navigation_and_detail(page, width):
-    items = [{**fixtures.sample("stocks"), "ticker": f"T{i}"} for i in range(9)]
-    screen = listing("stocks", items, view="map", graph=fixtures.connected_graph(9))
-    page.set_viewport_size({"width": width, "height": 844})
-    open_screen(page, screen)
-    expect(page.locator(".map-subject")).to_have_count(9)
-    target = page.get_by_role("link", name="Open T8", exact=True)
-    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-    page.route("http://app.test/t/T8", lambda r: r.fulfill(body="Detail opened"))
-    target.focus()
-    page.keyboard.press("Enter")
-    expect(page).to_have_url("http://app.test/t/T8")
-
-
 @pytest.mark.parametrize("width", [320, 1280])
 @pytest.mark.parametrize("end,expected", [(100.01, "+0.01%"), (200, "+100%"), (100, "+0%")])
 def test_chart_scopes_magnitude_and_period_separately_from_daily_quote(page, width, end, expected):
@@ -348,11 +343,13 @@ def test_chart_scopes_magnitude_and_period_separately_from_daily_quote(page, wid
     ]
     page.set_viewport_size({"width": width, "height": 844})
     open_screen(page, screen)
-    expect(page.locator("[data-chart-summary]")).to_contain_text(expected)
-    expect(page.locator("[data-chart-summary]")).to_contain_text("$100.00 →")
-    expect(page.locator(".price-chart")).to_have_attribute(
-        "aria-label", re.compile(expected.replace("+", r"\+") + ".*Sep 10.*Sep 12")
-    )
+    label = page.locator(".price-chart").get_attribute("aria-label")
+    assert "$100.00 →" in label
+    assert expected in label
+    assert "Sep 10" in label and "Sep 12" in label
+    expect(page.locator("[data-chart-summary]")).to_have_count(0)
+    expect(page.locator("[data-chart-start]")).to_have_count(0)
+    expect(page.locator("[data-chart-end]")).to_have_count(0)
     expect(page.locator("[data-change]")).to_have_text("+5.4%")
     expect(page.locator(".quote-scope")).to_contain_text("Daily change")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
@@ -364,33 +361,111 @@ def test_single_chart_point_and_empty_refresh_clear_old_period(page):
     screen["series"] = [{"time": "2026-09-12T12:00:00Z", "value": 0.000018}]
     open_screen(page, screen)
     expect(page.locator(".chart-point")).to_be_visible()
-    expect(page.locator("[data-chart-summary]")).to_have_text("One saved price: $0.000018")
-    expect(page.locator("[data-chart-end]")).to_be_empty()
     expect(page.locator(".price-chart")).to_have_attribute(
-        "aria-label", re.compile("One saved price.*Sep 12")
+        "aria-label", re.compile("One saved price: \\$0\\.000018.*Sep 12")
     )
     screen["series"] = []
     page.unroute("http://app.test/")
     open_screen(page, screen)
-    expect(page.locator("[data-chart-start]")).to_be_empty()
-    expect(page.locator("[data-chart-end]")).to_be_empty()
-    expect(page.locator("[data-chart-summary]")).to_be_empty()
+    expect(page.locator(".price-chart")).to_be_hidden()
+    expect(page.locator("[data-chart-status]")).to_have_text("Price history will appear here.")
 
 
-def test_map_missing_cached_portrait_uses_initials(page):
-    graph = fixtures.connected_graph()
-    graph["actors"][0]["portrait_ready"] = True
-    screen = listing(
-        "stocks", [{**fixtures.sample("stocks"), "ticker": "T0"}], view="map", graph=graph
-    )
-    requested = []
+def test_the_chart_is_drawn_in_the_colours_of_the_action_tag(page: Page):
+    """A reader should see where a name turned from watch to setup to running
+    without reading a table, so the line is split into one run per tag."""
 
-    def missing(route):
-        requested.append(route.request.url)
-        route.fulfill(status=404)
-
-    page.route("**/api/market-actors/**", missing)
+    screen = detail("stocks", {"current": fixtures.scored_stock(), "ticker": "AAA"})
+    screen.pop("refresh_url", None)
+    screen.pop("chart_url", None)
+    screen["series"] = [
+        {"time": "2026-09-14T12:00:00Z", "value": 1},
+        {"time": "2026-09-14T13:00:00Z", "value": 2},
+        {"time": "2026-09-15T12:00:00Z", "value": 3},
+        {"time": "2026-09-15T13:00:00Z", "value": 4},
+        {"time": "2026-09-16T12:00:00Z", "value": 5},
+        {"time": "2026-09-16T13:00:00Z", "value": 6},
+    ]
+    screen["states"] = [
+        {"time": "2026-09-14T00:00:00Z", "tone": "watch"},
+        {"time": "2026-09-15T06:00:00Z", "tone": "setup"},
+        {"time": "2026-09-16T06:00:00Z", "tone": "running"},
+    ]
     open_screen(page, screen)
-    expect(page.locator("[data-portrait]")).to_be_hidden()
-    expect(page.locator(".map-subject .ticker-mark")).to_have_text("T0")
-    assert requested == []
+
+    expect(page.locator(".chart-state.state-watch")).to_have_count(1)
+    expect(page.locator(".chart-state.state-setup")).to_have_count(1)
+    expect(page.locator(".chart-state.state-running")).to_have_count(1)
+    legend = page.locator("[data-chart-state-legend] button")
+    expect(legend).to_have_count(3)
+    expect(legend).to_have_text(["Running", "Setup", "Watch"])
+    expect(page.locator(".chart-state-label")).to_have_count(0)
+    # Runs join up rather than leaving a gap at each change.
+    watch_end = page.locator(".chart-state.state-watch").get_attribute("d").split("L")[-1]
+    setup_start = page.locator(".chart-state.state-setup").get_attribute("d")
+    assert setup_start.startswith("M" + watch_end)
+
+
+def test_a_chart_without_state_history_keeps_one_plain_line(page: Page):
+    screen = detail("stocks", {"current": fixtures.scored_stock(), "ticker": "AAA"})
+    screen.pop("refresh_url", None)
+    screen.pop("chart_url", None)
+    screen["series"] = [
+        {"time": "2026-09-16T12:00:00Z", "value": 1},
+        {"time": "2026-09-16T13:00:00Z", "value": 2},
+    ]
+    screen["states"] = []
+    open_screen(page, screen)
+
+    expect(page.locator(".chart-state")).to_have_count(0)
+    expect(page.locator(".chart-state-label")).to_have_count(0)
+    expect(page.locator("[data-chart-state-legend]")).to_be_hidden()
+    assert page.locator(".chart-line").get_attribute("d").startswith("M")
+
+
+def _row(ticker: str, score: float) -> dict:
+    row = {**fixtures.scored_stock(), "ticker": ticker, "score": score}
+    row["score_detail"] = {
+        "score": score,
+        "penalties": [],
+        "drivers": [
+            {"key": "market", "label": "Market scanner", "value": score * 0.6},
+            {"key": "news", "label": "News", "value": score * 0.4},
+        ],
+    }
+    return row
+
+
+def test_the_score_pie_reads_as_three_styles(page: Page):
+    """Large and solid, large and ringed, small and ringed - told apart by size
+    and fill before any number is read."""
+
+    open_screen(page, listing("stocks", [_row("AAA", 88), _row("BBB", 52), _row("CCC", 24)]))
+
+    bands = page.locator(".ticker-score")
+    expect(bands).to_have_count(3)
+    assert [bands.nth(i).get_attribute("data-band") for i in range(3)] == ["3", "2", "1"]
+    sizes = [bands.nth(i).locator(".score-pie").bounding_box()["width"] for i in range(3)]
+    assert sizes[0] == sizes[1] > sizes[2], sizes
+    # The top band fills solid; the others have their middle taken out.
+    masks = [
+        bands.nth(i)
+        .locator(".score-pie")
+        .evaluate("el => getComputedStyle(el).webkitMaskImage || getComputedStyle(el).maskImage")
+        for i in range(3)
+    ]
+    assert "gradient" not in (masks[0] or "none")
+    assert all("gradient" in (mask or "") for mask in masks[1:])
+
+
+def test_the_announced_row_wears_the_new_halo(page: Page):
+    """The halo marks what the channel was most recently told, not what this
+    reader happens not to have seen - one fact, the same for everyone, and it
+    survives a reload."""
+
+    rows = [_row("AAA", 88), _row("BBB", 52)]
+    rows[0]["announced"] = True
+    open_screen(page, listing("stocks", rows))
+
+    expect(page.locator(".ticker.is-new")).to_have_count(1)
+    expect(page.locator(".ticker.is-new")).to_have_attribute("href", "/t/AAA")
