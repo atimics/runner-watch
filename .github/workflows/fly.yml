@@ -42,13 +42,13 @@ jobs:
       - run: docker compose -f compose.local.yml config --quiet
 
   unit:
-    name: Unit tests ${{ matrix.shard }}/3
+    name: Unit tests ${{ matrix.shard }}/5
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
@@ -56,15 +56,28 @@ jobs:
           python-version: "3.13"
           enable-cache: true
       - run: uv sync --locked --extra dev
-      - run: >-
-          uv run pytest -q -n auto --no-cov
-          --splits 3 --group ${{ matrix.shard }}
+      # Coverage is measured on main only (the combine job below gates it), so
+      # pull-request shards skip the tracing that roughly doubles the run.
+      - name: Run the unit tests
+        env:
+          COVERAGE_FILE: coverage-${{ matrix.shard }}
+        run: >-
+          uv run pytest -q -n auto
+          ${{ github.event_name == 'pull_request' && '--no-cov' || '' }}
+          --splits 5 --group ${{ matrix.shard }}
           --junitxml=replay-unit-results-${{ matrix.shard }}.xml
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: replay-unit-results-${{ matrix.shard }}
           path: replay-unit-results-${{ matrix.shard }}.xml
+          if-no-files-found: error
+          retention-days: 3
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: github.event_name != 'pull_request'
+        with:
+          name: coverage-${{ matrix.shard }}
+          path: coverage-${{ matrix.shard }}
           if-no-files-found: error
           retention-days: 3
 
@@ -100,13 +113,15 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  # Coverage stays a hard deploy gate but costs about as much as the whole unit
-  # suite, so it runs on main only. Pull requests get the same tests, unmeasured.
+  # Coverage stays a hard deploy gate. The shards each upload their partial
+  # data, and this job combines them and enforces the threshold. It runs on
+  # main only, so pull requests keep the fast untraced shards.
   coverage:
     name: Coverage gate
+    needs: [unit]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
@@ -114,7 +129,15 @@ jobs:
           python-version: "3.13"
           enable-cache: true
       - run: uv sync --locked --extra dev
-      - run: uv run pytest -q -n auto --cov-fail-under=68
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: "coverage-*"
+          path: coverage-data
+          merge-multiple: true
+      - name: Combine shard coverage and enforce the threshold
+        run: |
+          uv run --no-sync coverage combine coverage-data/coverage-*
+          uv run --no-sync coverage report --fail-under=68
 
   evidence:
     name: Replay evidence
