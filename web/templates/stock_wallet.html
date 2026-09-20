@@ -1,7 +1,23 @@
 {% extends "market_screen.html" %}
+{% block detail_head %}<link rel="stylesheet" href="/static/ticker-map.css?v={{ static_version }}">{% endblock %}
 {% block screen_main %}
 <a class="back" href="/t/{{ wallet_ticker }}">← {{ wallet_ticker }}</a>
-<header class="wallet-heading"><p class="eyebrow">Wallet</p><h1>{{ wallet.name }}</h1></header>
+<header class="wallet-heading"><p class="eyebrow">Entity</p><h1>{{ wallet.name }}</h1></header>
+{% if entity is defined %}
+<section class="entity-worth" aria-label="Tracked worth">
+<p class="eyebrow">Tracked worth</p>
+<strong class="entity-worth-value">{{ '$' ~ '{:,.0f}'.format(entity.value) if entity.value is not none else '—' }}</strong>
+<p class="wallet-scope">{{ entity.basis }} · {{ entity.covered }} of {{ entity.tracked }} stocks valued · Loaded filings</p>
+<svg class="entity-worth-chart" viewBox="0 0 760 180" role="img" aria-label="Reported holdings at latest saved prices over filing dates" hidden></svg>
+<p class="wallet-scope" data-worth-pending hidden>Tracked worth appears as holdings and prices arrive.</p>
+<p class="wallet-scope" data-worth-date></p>
+</section>
+<section class="ticker-map entity-map" aria-label="Entity and associated stocks">
+<div class="map-canvas"><svg data-entity-map viewBox="0 0 760 440" role="group" aria-label="{{ wallet.name }} and associated stocks"></svg></div>
+<div class="map-paging" data-entity-paging hidden><button type="button" data-entity-previous aria-label="Previous stocks">←</button><span data-entity-page></span><button type="button" data-entity-next aria-label="Next stocks">→</button></div>
+</section>
+<script type="application/json" id="entityData" nonce="{{ request.state.csp_nonce }}">{{ {'wallet': wallet, 'entity': entity}|tojson }}</script>
+{% endif %}
 <h2 class="wallet-section-title">Stocks</h2>
 <p class="wallet-scope">Stocks linked by the filings below.</p>
 {{ super() }}
@@ -18,3 +34,5 @@
 {% if wallet_next %}<a class="wallet-older" href="{{ wallet_next }}">Older filings →</a>{% endif %}
 </section>
 {% endblock %}
+
+{% block detail_scripts %}<script src="/static/entity-map.js?v={{ static_version }}" defer></script>{% endblock %}
