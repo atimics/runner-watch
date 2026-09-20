@@ -218,6 +218,15 @@ def test_flash_comment_action_is_one_compact_row_without_explainer_copy(
     assert action.locator("#commentStatus").text_content() == "10 Flash"
     assert action.locator("#generateComment").text_content() == "Summon avatar"
     assert action.bounding_box()["height"] <= 46
+    # The summon control closes the section: reactions first, then the button.
+    assert action.bounding_box()["y"] > discussion.locator("#commentList").bounding_box()["y"]
+    assert action.evaluate("node => node === node.parentElement.lastElementChild")
+    # No bubble and no rounded corners on the control.
+    assert action.evaluate("node => getComputedStyle(node).borderRadius") == "0px"
+    assert action.evaluate("node => getComputedStyle(node).backgroundColor") == "rgba(0, 0, 0, 0)"
+    button = action.locator("#generateComment")
+    assert button.evaluate("node => getComputedStyle(node).borderRadius") == "0px"
+    assert button.evaluate("node => getComputedStyle(node).backgroundColor") == "rgba(0, 0, 0, 0)"
     copy = discussion.inner_text()
     assert "Persistent avatars" not in copy
     assert "ability guides" not in copy

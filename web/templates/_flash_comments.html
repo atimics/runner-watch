@@ -3,13 +3,6 @@
 {% macro flash_comments(subject_kind, subject_key, comments, comment_count, user, enabled, login_url) %}
 <section class="discussion-section" id="discussion" data-flash-comments data-comment-endpoint="/api/comments/{{ subject_kind }}/{{ subject_key }}" data-comment-storage-key="{{ subject_kind }}:{{ subject_key }}:{{ user.id if user else 'anonymous' }}">
   <h2 class="sr-only">Avatar reactions</h2>
-  {% if user %}
-  <div class="comment-form ai-comment-action">
-    <small id="commentStatus" data-comment-status role="status">{{ '10 Flash' if enabled else 'Unavailable' }}</small><button id="generateComment" data-generate-comment type="button" {% if not enabled %}disabled{% endif %}>Summon avatar</button>
-  </div>
-  {% else %}
-  <a class="comment-login" href="{{ login_url }}">Log in to summon your avatar</a>
-  {% endif %}
   <ol class="comment-list" id="commentList" data-comment-list>
     {% for comment in comments %}
     <li data-comment-id="{{ comment.id }}">
@@ -27,5 +20,12 @@
     {% endfor %}
   </ol>
   <p class="comment-empty" id="commentEmpty" data-comment-empty {% if comments %}hidden{% endif %}>Be the first to summon an avatar for this story.</p>
+  {% if user %}
+  <div class="comment-form ai-comment-action">
+    <small id="commentStatus" data-comment-status role="status">{{ '10 Flash' if enabled else 'Unavailable' }}</small><button id="generateComment" data-generate-comment type="button" {% if not enabled %}disabled{% endif %}>Summon avatar</button>
+  </div>
+  {% else %}
+  <a class="comment-login" href="{{ login_url }}">Log in to summon your avatar</a>
+  {% endif %}
 </section>
 {% endmacro %}

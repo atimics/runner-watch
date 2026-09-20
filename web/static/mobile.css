@@ -541,9 +541,9 @@ body {
 .section-heading > b { font-weight: 650; }
 
 .discussion-section { margin-top: 18px; padding: 0 20px 8px; scroll-margin-top: 58px; }
-.comment-form { margin-bottom: 7px; padding: 7px 8px; border: 1px solid #29312d; border-radius: 11px; background: #0f1311; }
+.comment-form { margin: 10px 0 0; justify-content: flex-end; }
 .comment-form small { color: var(--muted); font-size: 8px; }
-.comment-form button, .comment-login { min-height: 30px; padding: 0 12px; border: 1px solid rgba(87, 227, 137, .3); border-radius: 9px; background: rgba(87, 227, 137, .08); color: var(--green); font-size: 9px; font-weight: 760; cursor: pointer; }
+.comment-form button, .comment-login { padding: 0; border: 0; background: none; color: var(--muted); font-size: 9px; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .comment-form button:disabled { opacity: .55; }
 .ai-comment-action { display: flex; align-items: center; justify-content: space-between; }
 .comment-login { min-height: 38px; margin-bottom: 7px; display: grid; place-items: center; }
@@ -618,7 +618,7 @@ body {
 .comment-list strong { font-size: 10px; }
 .comment-owner { color: var(--soft); font-size: 9px; font-weight: 700; }
 .comment-model { color: var(--muted); font-size: 9px; overflow-wrap: anywhere; }
-.comment-ability { padding: 2px 5px; border: 1px solid color-mix(in srgb, var(--green) 26%, var(--line)); border-radius: 8px; color: #91bda1; font-size: 7px; font-weight: 700; letter-spacing: .01em; }
+.comment-ability { padding: 0; border: 0; color: #91bda1; font-size: 7px; font-weight: 700; letter-spacing: .01em; }
 .comment-meta { min-width: 0; overflow: hidden; display: block; margin-top: 2px; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .comment-list p { margin: 4px 0 0; color: #acb6b1; font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
 .comment-empty { margin: 15px 0 5px; color: var(--muted); font-size: 10px; text-align: center; }
@@ -1565,3 +1565,6 @@ html.embedded-pane .research-report {
   font-size: 10px;
   line-height: 1.5;
 }
+
+/* The reactions carry no bubbles or rounded corners. */
+.discussion-section .comment-avatar-portrait, .discussion-section .comment-avatar-ai, .discussion-section .comment-avatar-ai > i, .discussion-section .comment-avatar-ai > i::before, .discussion-section .comment-avatar-ai > i::after { border-radius: 0; }
