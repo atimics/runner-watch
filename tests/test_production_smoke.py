@@ -97,8 +97,7 @@ def test_deploy_health_check_keeps_the_operations_token_inside_fly() -> None:
     assert "OPERATIONS_TOKEN: ${{ secrets.OPERATIONS_TOKEN }}" not in workflow
 
 
-def test_parallel_deploy_gate_requires_both_jobs_to_succeed() -> None:
-    import itertools
+def test_parallel_deploy_gate_requires_every_job_to_succeed() -> None:
     import os
 
     import yaml
@@ -108,20 +107,24 @@ def test_parallel_deploy_gate_requires_both_jobs_to_succeed() -> None:
     )
     jobs = workflow["jobs"]
     gate = jobs["test"]
-    assert set(gate["needs"]) == {"checks", "container"}
+    results = ["lint", "unit", "browser", "evidence", "container"]
+    assert set(gate["needs"]) == set(results)
     assert gate["if"] == "always()"
     assert jobs["deploy"]["needs"] == "test"
-    assert "needs" not in jobs["checks"] and "needs" not in jobs["container"]
+    assert "needs" not in jobs["lint"] and "needs" not in jobs["container"]
+    # Evidence merges the two test reports, so it waits for them but nothing else.
+    assert jobs["evidence"]["needs"] == ["unit", "browser"]
     command = gate["steps"][0]["run"]
-    for checks, container in itertools.product(
-        ["success", "failure", "cancelled", "skipped"], repeat=2
-    ):
-        result = subprocess.run(
-            ["bash", "-e", "-c", command],
-            env={**os.environ, "CHECKS_RESULT": checks, "CONTAINER_RESULT": container},
-            check=False,
-        )
-        assert (result.returncode == 0) == (checks == container == "success")
+    env = {f"{name.upper()}_RESULT": "success" for name in results}
+    def gate_result(values: dict[str, str]) -> int:
+        return subprocess.run(
+            ["bash", "-e", "-c", command], env={**os.environ, **values}, check=False
+        ).returncode
+
+    assert gate_result(env) == 0
+    for name in results:
+        failing = {**env, f"{name.upper()}_RESULT": "failure"}
+        assert gate_result(failing) != 0, name
 
 
 def test_build_identity_is_set_after_reusable_image_layers() -> None:

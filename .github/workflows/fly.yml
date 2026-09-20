@@ -17,10 +17,53 @@ permissions:
   contents: read
 
 jobs:
-  checks:
-    name: Unit, browser and lint
+  # The gate is split into parallel jobs so the run's wall clock is the slowest
+  # job (~2 min) instead of the sum of every check (~4 min).
+  lint:
+    name: Lint, rust and audit
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --locked --extra dev
+      - run: cargo test --locked --manifest-path rust/stonks-ranker/Cargo.toml
+      - run: cargo build --locked --manifest-path rust/stonks-ranker/Cargo.toml
+      - run: uv run ruff check src tests
+      - run: |
+          for script in web/static/*.js cloudflare-router/src/*.js; do
+            node --check "$script"
+          done
+      - run: uv run pip-audit --local --skip-editable --progress-spinner off --timeout 10 --vulnerability-service osv
+      - run: docker compose -f compose.local.yml config --quiet
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --locked --extra dev
+      - run: uv run pytest -q -n auto --cov-fail-under=68 --junitxml=replay-unit-results.xml
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: replay-unit-results
+          path: replay-unit-results.xml
+          if-no-files-found: error
+          retention-days: 3
+
+  browser:
+    name: Browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
@@ -33,19 +76,38 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('uv.lock') }}
       - run: uv run playwright install --with-deps chromium
-      - run: cargo test --locked --manifest-path rust/stonks-ranker/Cargo.toml
-      - run: cargo build --locked --manifest-path rust/stonks-ranker/Cargo.toml
-      - run: uv run ruff check src tests
-      - run: |
-          for script in web/static/*.js cloudflare-router/src/*.js; do
-            node --check "$script"
-          done
-      - run: uv run pip-audit --local --skip-editable --progress-spinner off --timeout 10 --vulnerability-service osv
-      - run: uv run pytest -q -n auto --cov-fail-under=68 --junitxml=replay-unit-results.xml
-      - run: uv run pytest -q -m browser -o addopts= --junitxml=replay-browser-results.xml
-      - name: Record replay quality evidence
+      - run: uv run pytest -q -n auto -m browser -o addopts= --junitxml=replay-browser-results.xml
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
-        run: uv run python scripts/record-replay-quality.py --reports replay-unit-results.xml replay-browser-results.xml --output replay-quality.json
+        with:
+          name: replay-browser-results
+          path: replay-browser-results.xml
+          if-no-files-found: error
+          retention-days: 3
+
+  evidence:
+    name: Replay evidence
+    needs: [unit, browser]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --locked --extra dev
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: replay-unit-results
+          path: reports
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: replay-browser-results
+          path: reports
+      - name: Record replay quality evidence
+        run: uv run python scripts/record-replay-quality.py --reports reports/replay-unit-results.xml reports/replay-browser-results.xml --output replay-quality.json
         env:
           REPLAY_REVIEWED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Save replay quality evidence
@@ -55,9 +117,8 @@ jobs:
           name: memecoin-replay-quality
           path: |
             replay-quality.json
-            replay-unit-results.xml
-            replay-browser-results.xml
-      - run: docker compose -f compose.local.yml config --quiet
+            reports/replay-unit-results.xml
+            reports/replay-browser-results.xml
 
   container:
     name: Container tests
@@ -102,18 +163,22 @@ jobs:
 
   test:
     name: Test and lint
-    needs: [checks, container]
+    needs: [lint, unit, browser, evidence, container]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Require both test jobs
+      - name: Require every test job
         env:
-          CHECKS_RESULT: ${{ needs.checks.result }}
+          LINT_RESULT: ${{ needs.lint.result }}
+          UNIT_RESULT: ${{ needs.unit.result }}
+          BROWSER_RESULT: ${{ needs.browser.result }}
+          EVIDENCE_RESULT: ${{ needs.evidence.result }}
           CONTAINER_RESULT: ${{ needs.container.result }}
         run: |
-          test "$CHECKS_RESULT" = "success"
-          test "$CONTAINER_RESULT" = "success"
+          for result in "$LINT_RESULT" "$UNIT_RESULT" "$BROWSER_RESULT" "$EVIDENCE_RESULT" "$CONTAINER_RESULT"; do
+            test "$result" = "success"
+          done
 
   deploy:
     name: Deploy app
