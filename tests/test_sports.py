@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import urllib.error
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -259,6 +260,82 @@ def test_nba_fetch_discovers_the_next_scheduled_window(
 
     assert fetch_league("nba", current) == nearby
     assert len(calls) == 1
+
+
+def test_league_range_walks_one_day_per_scoreboard_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    urls: list[str] = []
+    recorded: list[Any] = []
+
+    def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
+        urls.append(request.full_url)
+        return io.BytesIO(json.dumps({"events": [sample_event()]}).encode())
+
+    monkeypatch.setattr(sports_module.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(sports_module, "record_source_fetch", recorded.append)
+    start = datetime(2026, 9, 19, tzinfo=UTC).date()
+
+    events = sports_module._fetch_league_range(
+        "mlb", start, start + timedelta(days=2), feed=sports_module.FEED
+    )
+
+    assert urls == [
+        "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
+        f"?dates={day:%Y%m%d}&limit=100"
+        for day in (start, start + timedelta(days=1), start + timedelta(days=2))
+    ]
+    # The same event served on every day is stored once.
+    assert [event["external_id"] for event in events] == ["401000001"]
+    assert len(recorded) == 1
+    assert recorded[0].status == "success"
+
+
+def test_league_range_records_partial_when_some_days_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded: list[Any] = []
+
+    def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
+        if "dates=20260920" in request.full_url:
+            raise urllib.error.HTTPError(
+                request.full_url, 400, "Bad Request", {}, None
+            )
+        return io.BytesIO(json.dumps({"events": []}).encode())
+
+    monkeypatch.setattr(sports_module.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(sports_module, "record_source_fetch", recorded.append)
+    start = datetime(2026, 9, 19, tzinfo=UTC).date()
+
+    events = sports_module._fetch_league_range(
+        "mlb", start, start + timedelta(days=1), feed=sports_module.FEED
+    )
+
+    assert events == []
+    assert recorded[0].status == "partial"
+    assert "2026-09-20" in recorded[0].metadata["day_errors"]
+
+
+def test_league_range_raises_only_when_every_day_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded: list[Any] = []
+
+    def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
+        raise urllib.error.HTTPError(
+                request.full_url, 400, "Bad Request", {}, None
+            )
+
+    monkeypatch.setattr(sports_module.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(sports_module, "record_source_fetch", recorded.append)
+    start = datetime(2026, 9, 19, tzinfo=UTC).date()
+
+    with pytest.raises(RuntimeError):
+        sports_module._fetch_league_range(
+            "mlb", start, start + timedelta(days=1), feed=sports_module.FEED
+        )
+
+    assert recorded[0].status == "error"
 
 
 def test_scoreboard_event_becomes_a_source_bound_prediction() -> None:

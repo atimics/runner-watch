@@ -943,6 +943,10 @@ def _stale_workers(*, at: datetime | None = None) -> list[dict[str, Any]]:
     updated_by_key = {str(row["key"]): str(row["updated_at"] or "") for row in rows}
     stale: list[dict[str, Any]] = []
     for worker, key in WORKER_PROGRESS_KEYS.items():
+        # The scanner is idle by design while the session is closed, so an old
+        # progress key overnight or over a weekend is not a stalled loop.
+        if worker == "scan-collection" and not scan_collection_allowed(observed_at):
+            continue
         updated_at = updated_by_key.get(key)
         if not updated_at:
             continue

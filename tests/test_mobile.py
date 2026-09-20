@@ -1866,6 +1866,25 @@ def test_stale_worker_detection_uses_progress_keys(
     assert [item["worker"] for item in stale] == ["outcomes"]
 
 
+def test_stale_scan_collection_is_ignored_while_the_session_is_closed(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "stale-scan.db")
+    init_db()
+    old = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?)",
+            ("background_scan_last_run", old, old),
+        )
+
+    monkeypatch.setattr(web_main, "scan_collection_allowed", lambda _moment: False)
+    assert web_main._stale_workers() == []
+
+    monkeypatch.setattr(web_main, "scan_collection_allowed", lambda _moment: True)
+    assert [item["worker"] for item in web_main._stale_workers()] == ["scan-collection"]
+
+
 def test_evidence_gate_opens_with_three_independent_families() -> None:
     current = {
         "relative_volume": 3.0,
