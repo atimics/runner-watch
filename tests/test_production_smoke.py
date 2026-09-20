@@ -107,23 +107,34 @@ def test_parallel_deploy_gate_requires_every_job_to_succeed() -> None:
     )
     jobs = workflow["jobs"]
     gate = jobs["test"]
-    results = ["lint", "unit", "browser", "evidence", "container"]
-    assert set(gate["needs"]) == set(results)
+    always_required = ["lint", "unit", "browser", "evidence", "container"]
+    assert set(gate["needs"]) == {*always_required, "coverage"}
     assert gate["if"] == "always()"
     assert jobs["deploy"]["needs"] == "test"
     assert "needs" not in jobs["lint"] and "needs" not in jobs["container"]
-    # Evidence merges the two test reports, so it waits for them but nothing else.
+    # Evidence merges the test reports, so it waits for them but nothing else.
     assert jobs["evidence"]["needs"] == ["unit", "browser"]
+    # Coverage is the expensive gate, so pull requests skip it and main must pass it.
+    assert jobs["coverage"]["if"] == "github.event_name != 'pull_request'"
     command = gate["steps"][0]["run"]
-    env = {f"{name.upper()}_RESULT": "success" for name in results}
+
     def gate_result(values: dict[str, str]) -> int:
         return subprocess.run(
             ["bash", "-e", "-c", command], env={**os.environ, **values}, check=False
         ).returncode
 
-    assert gate_result(env) == 0
-    for name in results:
-        failing = {**env, f"{name.upper()}_RESULT": "failure"}
+    pull_request = {
+        **{f"{name.upper()}_RESULT": "success" for name in always_required},
+        "COVERAGE_RESULT": "skipped",
+        "EVENT_NAME": "pull_request",
+    }
+    assert gate_result(pull_request) == 0
+    main = {**pull_request, "COVERAGE_RESULT": "success", "EVENT_NAME": "push"}
+    assert gate_result(main) == 0
+    # A skipped coverage job must not satisfy the deploy gate on main.
+    assert gate_result({**main, "COVERAGE_RESULT": "skipped"}) != 0
+    for name in always_required:
+        failing = {**main, f"{name.upper()}_RESULT": "failure"}
         assert gate_result(failing) != 0, name
 
 

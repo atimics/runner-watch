@@ -31,6 +31,7 @@ dev = [
   "pytest>=8.0",
   "pytest-cov>=6.0",
   "pytest-playwright>=0.7",
+  "pytest-split>=0.9",
   "pytest-xdist>=3.6",
   "ruff>=0.9",
 ]
