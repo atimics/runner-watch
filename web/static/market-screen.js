@@ -350,3 +350,102 @@
     finally { button.disabled = false; }
   });
 })();
+
+(() => {
+  'use strict';
+  const input = document.getElementById('marketSearch');
+  if (!input) return;
+  const form = input.closest('form'), market = form.dataset.market;
+  const key = `rati:recently-viewed:${market}:v1`;
+  const popup = document.createElement('div');
+  popup.className = 'search-popup'; popup.hidden = true;
+  const heading = document.createElement('div'); heading.className = 'search-popup-heading';
+  const label = document.createElement('span');
+  const clear = document.createElement('button'); clear.type = 'button'; clear.textContent = 'Clear';
+  clear.setAttribute('aria-label', 'Clear recently viewed'); heading.append(label, clear);
+  const list = document.createElement('div'); list.id = 'marketSearchResults'; list.setAttribute('role', 'listbox');
+  list.setAttribute('aria-label', 'Search suggestions');
+  const status = document.createElement('p'); status.setAttribute('role', 'status');
+  popup.append(heading, list, status); form.append(popup);
+  input.setAttribute('role', 'combobox'); input.setAttribute('aria-autocomplete', 'list');
+  input.setAttribute('aria-controls', list.id); input.setAttribute('aria-expanded', 'false');
+  let recent = [], active = -1, timer, controller, version = 0;
+  function safe(item) {
+    if (!item || typeof item.name !== 'string' || typeof item.href !== 'string') return null;
+    try {
+      const url = new URL(item.href, location.origin);
+      const prefix = market === 'stocks' ? '/t/' : market === 'memecoins' ? '/memecoins/coin/' : '/game/';
+      if (url.origin !== location.origin || !url.pathname.startsWith(prefix)) return null;
+      return {name:item.name.slice(0,100), subtitle:String(item.subtitle || '').slice(0,160), href:url.pathname};
+    } catch (_) { return null; }
+  }
+  try { const saved = JSON.parse(localStorage.getItem(key) || '[]'); if (Array.isArray(saved)) recent = saved.map(safe).filter(Boolean).slice(0,10); } catch (_) { /* Keep this visit usable when storage is unavailable. */ }
+  function save() { try { localStorage.setItem(key, JSON.stringify(recent)); } catch (_) { /* Keep history for this page session. */ } }
+  const data = document.getElementById('screenData');
+  if (data) {
+    try {
+      const screen = data.ratiScreenDetail || JSON.parse(data.textContent);
+      const item = screen.kind === 'detail' && screen.market === market ? safe(screen.item) : null;
+      if (item) { recent = [item, ...recent.filter(row => row.href !== item.href)].slice(0,10); save(); }
+    } catch (_) { /* Render search independently of detail data. */ }
+  }
+  function select(index) {
+    const options = [...list.children]; active = index;
+    options.forEach((option, i) => option.setAttribute('aria-selected', String(i === index)));
+    if (options[index]) { input.setAttribute('aria-activedescendant', options[index].id); options[index].scrollIntoView({block:'nearest'}); }
+    else input.removeAttribute('aria-activedescendant');
+  }
+  function close() {
+    clearTimeout(timer); controller?.abort(); version++;
+    popup.hidden = true; input.setAttribute('aria-expanded', 'false'); select(-1);
+  }
+  function render(rows, title, message = '') {
+    list.replaceChildren(); select(-1); label.textContent = title;
+    clear.hidden = title !== 'Recently viewed' || !recent.length;
+    status.textContent = message; status.hidden = !message;
+    rows.forEach((row, i) => {
+      const link = document.createElement('a'); link.href = row.href;
+      link.id = `marketSearchOption${i}`; link.setAttribute('role', 'option'); link.setAttribute('aria-selected', 'false'); link.tabIndex = -1;
+      const name = document.createElement('strong'), subtitle = document.createElement('small');
+      name.textContent = row.name; subtitle.textContent = row.subtitle; link.append(name, subtitle); list.append(link);
+    });
+    popup.hidden = false; input.setAttribute('aria-expanded', 'true');
+  }
+  function update() {
+    clearTimeout(timer); controller?.abort(); const current = ++version;
+    const query = input.value.trim();
+    if (!query) { render(recent, 'Recently viewed', recent.length ? '' : 'Items you view will appear here.'); return; }
+    render([], 'Matches', 'Searching…');
+    timer = setTimeout(async () => {
+      controller = new AbortController();
+      try {
+        const url = new URL(form.action); url.searchParams.set('q', query); url.searchParams.set('view', 'list');
+        const response = await fetch(url, {signal:controller.signal});
+        if (!response.ok || response.redirected) throw new Error('Search unavailable');
+        const html = await response.text();
+        if (current !== version) return;
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const rows = [...doc.querySelectorAll('.ticker-list a.ticker')].map(link => safe({href:link.getAttribute('href'),name:link.querySelector('.ticker-name strong')?.textContent,subtitle:link.querySelector('.ticker-name small')?.textContent})).filter(Boolean);
+        render(rows.slice(0,8), 'Matches', rows.length ? '' : 'Try another name or symbol.');
+      } catch (error) {
+        if (current === version && error.name !== 'AbortError') render([], 'Matches', 'Press Enter to search.');
+      }
+    }, 200);
+  }
+  input.addEventListener('focus', update);
+  input.addEventListener('click', () => { if (popup.hidden) update(); });
+  input.addEventListener('input', update);
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); close(); }
+    if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
+      event.preventDefault(); if (popup.hidden) update();
+      const count = list.children.length;
+      if (count) select((active + (event.key === 'ArrowDown' ? 1 : active < 0 ? 0 : -1) + count) % count);
+    }
+    if (event.key === 'Enter' && !popup.hidden && active >= 0) { event.preventDefault(); list.children[active].click(); }
+  });
+  clear.addEventListener('click', () => { recent = []; save(); input.value = ''; input.focus(); update(); });
+  document.addEventListener('pointerdown', event => { if (!form.contains(event.target)) close(); });
+  form.addEventListener('focusout', event => { if (!form.contains(event.relatedTarget)) close(); });
+  form.addEventListener('submit', close);
+})();
