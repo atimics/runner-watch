@@ -125,6 +125,45 @@ product traffic. Four contracts stay fixed as the system grows:
 - retries remain safe and every terminal state remains visible;
 - model promotion requires replayable data, metrics and an exact artifact ID.
 
+### Target data path
+
+The target shape separates collection, durable evidence, derived views and
+public reads. Each source family can scale without changing the evidence
+contract used by the rest of the service.
+
+```mermaid
+flowchart LR
+    subgraph Ingest[Ingestion]
+        Sources[Market, filing, chain and sports sources]
+        Queue[Partitioned ingestion queue]
+        Workers[Source worker pools]
+        Raw[(Raw document archive)]
+        DB[(Postgres evidence store)]
+        Sources --> Queue --> Workers
+        Workers --> Raw
+        Workers --> DB
+    end
+
+    subgraph Compute[Derived state]
+        Identity[Entity reconciliation]
+        Trainer[Model training and replay]
+        Models[Versioned model artifacts]
+        Views[Materialized read models]
+        DB --> Identity --> Views
+        DB --> Trainer --> Models --> Views
+    end
+
+    subgraph Serve[Serving]
+        Client[Web and desktop clients]
+        Edge[Edge router]
+        Web[Web and API pool]
+        Cache[(Redis cache and leases)]
+        Client --> Edge --> Web
+        Web --> Cache --> Views
+        Web --> DB
+    end
+```
+
 | Area | Current design | Next scale step | Proof before promotion |
 | --- | --- | --- | --- |
 | Ingestion | One worker schedules bounded collectors and records source runs, hashes, counts and errors. | Move each source family to queue-backed consumers. Partition work by source and market. Archive large raw payloads in object storage while keeping their hashes and metadata in Postgres. | Peak queue age stays below one collection interval. Replaying the same source documents produces the same normalized rows. |
@@ -133,6 +172,38 @@ product traffic. Four contracts stay fixed as the system grows:
 | Failure handling | Leases, bounded attempts, explicit retry states, heartbeats and worker supervision recover common failures. | Add per-source circuit breakers, dead-letter queues, replay tools, distributed traces and source-level service objectives. | Kill-and-restart tests lose no receipts, create no duplicate deliveries and recover before the stated deadline. |
 | Model evaluation | Training uses chronological train, calibration and untouched test groups. Predictions keep the model ID and input evidence. Deterministic risk rules retain final veto power. | Add walk-forward replay, champion/challenger shadow runs, cohort-level calibration checks and drift alerts by session and market regime. | A candidate beats the declared baseline on frozen metrics and cohorts. Its data, code, configuration and result hashes reproduce the decision. |
 | Deployment controls | CI runs lint, unit, browser, audit and image checks. Releases migrate first, verify exact builds, smoke-test public screens and roll back on failure. | Add signed images, a software bill of materials, schema compatibility gates and separate canaries for web, worker and trainer roles. Stage provider changes behind environment switches. | Canary health, schema compatibility, worker heartbeats and public receipts pass before wider traffic moves. |
+
+### Recovery path
+
+Every queued operation uses a stable idempotency key and a lease token. A
+worker can stop at any point without losing the original evidence or making a
+second delivery.
+
+```mermaid
+stateDiagram-v2
+    state "Dead letter" as DeadLetter
+    [*] --> Queued
+    Queued --> Leased: worker claims lease
+    Leased --> Completed: commit output and receipt
+    Leased --> Queued: lease expires
+    Leased --> Retry: bounded failure
+    Retry --> Queued: backoff ends
+    Retry --> DeadLetter: attempt limit reached
+    DeadLetter --> Review: operator inspects evidence
+    Review --> Queued: replay approved
+    Completed --> [*]
+```
+
+### Scale sequence
+
+```mermaid
+flowchart LR
+    Observe[1. Observe] --> Isolate[2. Isolate]
+    Isolate --> Store[3. Store]
+    Store --> Serve[4. Serve]
+    Serve --> Evaluate[5. Evaluate]
+    Evaluate --> Distribute[6. Distribute]
+```
 
 The scale sequence is:
 
@@ -153,6 +224,17 @@ The scale sequence is:
 Each scale change should land as a small release with a load receipt, a replay
 receipt and a recovery receipt. Latency, queue growth, storage growth or missed
 recovery targets should trigger the next step.
+
+```mermaid
+flowchart LR
+    Change[Candidate change] --> Load[Load receipt]
+    Load --> Replay[Replay receipt]
+    Replay --> Recovery[Recovery receipt]
+    Recovery --> Canary[Role-specific canary]
+    Canary --> Gate{All gates pass?}
+    Gate -->|Yes| Promote[Promote]
+    Gate -->|No| Rollback[Roll back]
+```
 
 ## Deployment
 
