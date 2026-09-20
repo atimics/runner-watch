@@ -94,9 +94,9 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
 .section-heading h2{margin:0;font-size:19px;font-weight:600}
 .section-heading b{color:var(--muted);font-size:12px;font-weight:600}
 .avatar-story-note{color:var(--muted);font-size:12px}
-.comment-form{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0;padding:8px 10px;border:1px solid var(--line);border-radius:11px;background:var(--panel)}
+.comment-form{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin:12px 0 0}
 .comment-form small{color:var(--muted);font-size:11px}
-.comment-form button,.comment-login{min-height:32px;padding:0 14px;border:1px solid rgba(165,229,185,.3);border-radius:9px;background:rgba(165,229,185,.08);color:var(--green);font-size:12px;font-weight:700}
+.comment-form button,.comment-login{padding:0;border:0;background:none;color:var(--muted);font-size:12px;font-weight:600;text-decoration:underline;text-underline-offset:3px;cursor:pointer}.comment-form button:hover,.comment-login:hover{color:var(--text)}
 .comment-form button:disabled{opacity:.55}
 .comment-list{margin:0;padding:0;list-style:none}
 .comment-list li{display:grid;grid-template-columns:36px minmax(0,1fr);gap:10px;padding:14px 0;border-bottom:1px solid var(--line)}
@@ -114,7 +114,7 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
 .comment-list strong{font-size:13px}
 .comment-owner{color:var(--soft);font-size:11px;font-weight:700}
 .comment-model{color:var(--muted);font-size:11px;overflow-wrap:anywhere}
-.comment-ability{padding:2px 6px;border:1px solid color-mix(in srgb,var(--green) 26%,var(--line));border-radius:8px;color:#91bda1;font-size:10px;font-weight:700}
+.comment-ability{padding:0;border:0;color:#91bda1;font-size:10px;font-weight:700}
 .comment-meta{display:block;margin-top:2px;color:var(--muted);font-size:11px}
 .comment-list p{margin:5px 0 0;color:#c3ccc7;font-size:13.5px;line-height:1.5;overflow-wrap:anywhere}
 .comment-empty{margin:15px 0 5px;color:var(--muted);font-size:12px;text-align:center}
@@ -442,3 +442,6 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
 
 .wallet-heading h1{font-size:28px;overflow-wrap:anywhere}.wallet-section-title{font-size:18px;font-weight:550;margin:28px 0 8px}.wallet-scope{font-size:12px;color:var(--muted);margin:0 0 12px}.wallet-event{--event-color:var(--muted);display:grid;grid-template-columns:var(--event-subject-width,70px) minmax(100px,1fr) minmax(0,1.5fr) auto auto;align-items:center;gap:14px;min-height:46px;padding:10px 6px;border-bottom:1px solid var(--line);font-size:12px;white-space:nowrap}.wallet-event[data-tone=buy]{--event-color:var(--blue)}.wallet-event[data-tone=sell]{--event-color:var(--red)}.wallet-event-ticker{display:flex;align-items:center;gap:7px}.wallet-event-ticker:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--event-color);flex-shrink:0}.wallet-event-action,.wallet-event-detail{min-width:0;overflow:hidden;text-overflow:ellipsis}.wallet-event-action,.wallet-event-value{color:var(--event-color)}.wallet-event-detail,.wallet-filing{color:var(--muted)}.wallet-event-value,.wallet-filing{font-variant-numeric:tabular-nums}.wallet-filing{font-size:11px;text-decoration:underline;text-underline-offset:3px}@media(max-width:650px){.wallet-event{grid-template-columns:var(--event-subject-width,48px) minmax(0,1fr) auto auto;gap:8px;font-size:11px}.wallet-event-detail{display:none}.wallet-filing{font-size:10px}}.wallet-older{display:inline-block;margin:20px 0;color:var(--green)}
 .search-popup{position:absolute;top:calc(100% + 8px);right:0;width:340px;max-width:calc(100vw - 40px);z-index:20;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 30px #0006;overflow:hidden}.search-popup-heading{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;color:var(--muted);font-size:11px}.search-popup .search-popup-heading button{font-size:11px;padding:4px}.search-popup [role=listbox]{max-height:320px;overflow:auto}.search-popup [role=option]{display:flex;flex-direction:column;gap:2px;padding:10px 14px;min-height:48px}.search-popup [role=option]:hover,.search-popup [aria-selected=true]{background:#23372a}.search-popup strong{font-size:13px;font-weight:600}.search-popup small{font-size:11px;color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.search-popup p{font-size:12px;color:var(--muted);padding:0 14px 12px;margin:0}@media(max-width:650px){.search-popup{width:100%;max-width:none}}
+
+/* The reactions carry no bubbles or rounded corners. */
+.discussion-section .comment-avatar-portrait,.discussion-section .comment-avatar-ai,.discussion-section .comment-avatar-ai>i,.discussion-section .comment-avatar-ai>i::before,.discussion-section .comment-avatar-ai>i::after{border-radius:0}
