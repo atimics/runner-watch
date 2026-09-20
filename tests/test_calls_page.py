@@ -102,11 +102,94 @@ def test_calls_page_signed_in_lists_my_calls_and_flash_picks(tmp_path, monkeypat
 
     assert response.status_code == 200
     html = response.text
+    assert "You vs Flash" in html
+    assert "0 graded Calls · all markets" in html
+    assert "Settle a Call to start your side of the comparison." in html
     assert 'id="my-calls-heading"' in html
     assert "$OPK" in html
     assert "Full public record" in html
     assert "No open directional calls" not in html
     assert "88%" in html
+
+
+def test_calls_head_to_head_compares_rates_with_sample_sizes() -> None:
+    comparison = web_main._calls_head_to_head(
+        {"wins": 2, "losses": 2},
+        {
+            "hits": 8,
+            "misses": 9,
+            "headline_rate_visible": True,
+        },
+    )
+
+    assert comparison["you"] == {
+        "wins": 2,
+        "losses": 2,
+        "decisions": 4,
+        "hit_rate": 0.5,
+        "rate_visible": True,
+    }
+    assert comparison["flash"]["decisions"] == 17
+    assert comparison["flash"]["hit_rate"] == 8 / 17
+    assert comparison["leader"] == "you"
+    assert comparison["gap_points"] == 2.9
+
+
+def test_calls_head_to_head_waits_for_flash_headline_sample() -> None:
+    comparison = web_main._calls_head_to_head(
+        {"wins": 1, "losses": 0},
+        {
+            "hits": 1,
+            "misses": 0,
+            "headline_rate_visible": False,
+        },
+    )
+
+    assert comparison["you"]["rate_visible"] is True
+    assert comparison["flash"]["rate_visible"] is False
+    assert comparison["leader"] is None
+    assert comparison["gap_points"] is None
+
+
+def test_calls_page_renders_direct_hit_rate_comparison(tmp_path, monkeypatch) -> None:
+    _database(tmp_path, monkeypatch, "calls-page-comparison.db")
+    monkeypatch.setattr(
+        web_main,
+        "_calls_page_data",
+        lambda _session: {
+            "mine": {
+                "handle": "alice",
+                "calls": [],
+                "stats": {"open": 0, "wins": 2, "losses": 2},
+            },
+            "comparison": web_main._calls_head_to_head(
+                {"wins": 2, "losses": 2},
+                {
+                    "hits": 8,
+                    "misses": 9,
+                    "headline_rate_visible": True,
+                },
+            ),
+            "record": {
+                "hit_rate": 8 / 17,
+                "headline_rate_visible": True,
+            },
+            "stock_picks": [],
+            "sports_picks": [],
+            "memecoin_picks": [],
+        },
+    )
+    client = TestClient(web_main.app, base_url=web_main.RUNNERS_ORIGIN)
+    client.cookies.set(web_main.SESSION_COOKIE, "alice-session")
+
+    html = client.get("/calls").text
+
+    assert "You vs Flash" in html
+    assert ">50%</strong>" in html
+    assert ">47%</strong>" in html
+    assert "4 graded Calls · all markets" in html
+    assert "17 graded stock forecasts" in html
+    assert "You lead</b> by 2.9 percentage points." in html
 
 
 def test_my_calls_redirects_signed_in_users_to_calls(tmp_path, monkeypatch) -> None:
