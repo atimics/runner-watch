@@ -53,6 +53,7 @@ BASE_REQUIRED_WORKER_NAMES = frozenset(
         "memecoin-replays",
         "market-actors",
         "call-settlement",
+        "price-gaps",
     }
 )
 SPORTS_HOST = (
