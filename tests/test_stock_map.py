@@ -33,6 +33,49 @@ def score_current(**changes):
     }
 
 
+@pytest.mark.parametrize("model_score", [None, 0, 72.5])
+def test_component_trace_uses_the_inputs_that_produced_the_score(model_score):
+    snapshot = {
+        "id": "scan",
+        "ticker": "TEST",
+        "score": 60,
+        "rug_score": 10,
+        "trade_state": "WATCH",
+    }
+    inputs = {
+        "score_as_of": "2026-09-19T18:00:00+00:00",
+        "predictions": {"scan": {"score": model_score}},
+        "filings_by_ticker": {"TEST": {"form": "4", "score": 50, "sentiment": "risk"}},
+        "community": {"TEST": {"call_count": 1, "comment_count": 1}},
+        "market_events_by_ticker": {
+            "TEST": [
+                {
+                    "event_type": "trading_halt",
+                    "status": "active",
+                    "event_at": "2026-09-19T17:00:00+00:00",
+                }
+            ]
+        },
+    }
+    scored = main._pulse_snapshot_score(snapshot, inputs, include_trace=True)
+    trace = scored["score_trace"]
+    market = {r["label"]: r["value"] for r in trace["market"]}
+    expected_input = 60 if model_score is None else model_score
+    assert market["Source"] == ("Market scanner" if model_score is None else "Ranker model")
+    assert float(market["Input score"]) == scored["score_components"]["market"] == expected_input
+    assert {r["label"]: r["value"] for r in trace["rug"]}["Rug score"] == "90"
+    assert scored["score_components"]["rug"] == -27
+    assert scored["score_components"]["state"] == -20
+    assert trace["state"][0]["value"] == "AVOID"
+    assert scored["score_components"]["sec_event"] == -12.5
+    assert "25%" in trace["sec_event"][-1]["value"]
+    assert scored["score_components"]["community"] == 4
+    assert [r["value"] for r in trace["community"][:2]] == ["1", "1"]
+    screen = main.simple_market_detail("stocks", {"ticker": "TEST", "current": scored})
+    assert screen["item"]["score_trace"] == trace
+    assert main._pulse_snapshot_score(snapshot, inputs)["score_detail"] == scored["score_detail"]
+
+
 @pytest.mark.parametrize("score", [45, 0, None])
 def test_unified_score_template_keeps_score_and_lists_filings(score):
     current = score_current(score=score)
@@ -52,7 +95,7 @@ def test_unified_score_template_keeps_score_and_lists_filings(score):
     assert 'class="map-score-heading"' not in html
     assert 'class="metrics"' not in html
     assert 'class="breakdown"' not in html
-    assert re.search(r'<div class="map-filings">', html)
+    assert re.search(r'<div class="map-filings" data-map-filings hidden>', html)
     assert "data-map-score-return hidden" in html
     assert 'aria-live="polite" aria-atomic="true"' in html
     for removed in (

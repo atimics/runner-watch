@@ -405,6 +405,8 @@ def detail(
     if market == "memecoins":
         source = {**source, "findings": data.get("findings") or source.get("findings") or []}
     item = row(market, source)
+    if market == "stocks":
+        item["score_trace"] = source.get("score_trace") or {}
     result = {
         "kind": "detail",
         "market": market,

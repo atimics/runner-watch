@@ -19,6 +19,7 @@ def _number(value: Any) -> float | None:
 
 
 def entity_view(events: list[dict], items: list[dict], person_id: str) -> dict:
+    stocks = {item["ticker"]: item for item in items}
     prices = {item["ticker"]: _number(item.get("price")) for item in items}
     groups: dict[str, list[dict]] = defaultdict(list)
     filings: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
@@ -75,7 +76,13 @@ def entity_view(events: list[dict], items: list[dict], person_id: str) -> dict:
     values = [value for value in latest.values() if value is not None]
     return {
         "stocks": [
-            {"ticker": ticker, "events": rows, "value": latest.get(ticker)}
+            {
+                "ticker": ticker,
+                "events": rows,
+                "value": latest.get(ticker),
+                "score": _number(stocks.get(ticker, {}).get("score")),
+                "score_detail": stocks.get(ticker, {}).get("score_detail"),
+            }
             for ticker, rows in sorted(groups.items())
         ],
         "series": list(series.values()),
