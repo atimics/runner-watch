@@ -18,11 +18,9 @@ RUN cargo test --locked && cargo build --locked --release
 
 FROM python:3.13-slim@sha256:7ce4b6dfe35e55397b7cda544f8a13f191b7ae28dc5aad71fe664dbc9bc2623f AS base
 
-ARG APP_BUILD_SHA=dev
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    APP_BUILD_SHA=${APP_BUILD_SHA}
+    PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
@@ -64,4 +62,6 @@ RUN uv run --no-sync pytest -q && uv run --no-sync ruff check src tests ml/sec-q
 CMD ["uv", "run", "--no-sync", "pytest", "-q"]
 
 FROM base AS runtime
+ARG APP_BUILD_SHA=dev
+ENV APP_BUILD_SHA=${APP_BUILD_SHA}
 CMD ["uvicorn", "runner_web.main:app", "--host", "0.0.0.0", "--port", "8080", "--no-proxy-headers", "--no-access-log"]

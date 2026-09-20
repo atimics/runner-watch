@@ -95,3 +95,38 @@ def test_deploy_health_check_keeps_the_operations_token_inside_fly() -> None:
     assert "flyctl ssh console" in workflow
     assert "python -m runner_web.deployment_check" in workflow
     assert "OPERATIONS_TOKEN: ${{ secrets.OPERATIONS_TOKEN }}" not in workflow
+
+
+def test_parallel_deploy_gate_requires_both_jobs_to_succeed() -> None:
+    import itertools
+    import os
+
+    import yaml
+
+    workflow = yaml.safe_load(
+        (Path(__file__).parents[1] / ".github/workflows/fly.yml").read_text()
+    )
+    jobs = workflow["jobs"]
+    gate = jobs["test"]
+    assert set(gate["needs"]) == {"checks", "container"}
+    assert gate["if"] == "always()"
+    assert jobs["deploy"]["needs"] == "test"
+    assert "needs" not in jobs["checks"] and "needs" not in jobs["container"]
+    command = gate["steps"][0]["run"]
+    for checks, container in itertools.product(
+        ["success", "failure", "cancelled", "skipped"], repeat=2
+    ):
+        result = subprocess.run(
+            ["bash", "-e", "-c", command],
+            env={**os.environ, "CHECKS_RESULT": checks, "CONTAINER_RESULT": container},
+            check=False,
+        )
+        assert (result.returncode == 0) == (checks == container == "success")
+
+
+def test_build_identity_is_set_after_reusable_image_layers() -> None:
+    dockerfile = (Path(__file__).parents[1] / "Dockerfile").read_text()
+    base, runtime = dockerfile.split("FROM base AS runtime", 1)
+    assert "APP_BUILD_SHA" not in base
+    assert "ARG APP_BUILD_SHA=dev" in runtime
+    assert "ENV APP_BUILD_SHA=${APP_BUILD_SHA}" in runtime
