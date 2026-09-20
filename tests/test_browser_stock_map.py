@@ -859,7 +859,7 @@ def test_reduced_motion_scrubs_without_animation(page, width):
 
 def _orbit_position(page) -> dict[str, float]:
     return page.evaluate(
-        """() => {
+        r"""() => {
           const node = document.querySelector('[data-person]');
           const [x, y] = node.dataset.orbitAnchor.split(',').map(Number);
           const [dx, dy] = node.getAttribute('transform')
@@ -1067,7 +1067,10 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     events = [
         {**row, "ticker": "USO" if i < 2 else "CDTG",
          "post_shares": 100-i*10 if has_holdings else None,
-         "people": [{"id": "sec:101", "name": "HRT FINANCIAL LP", "role": "Investor"}]}
+         "people": [
+             {"id": "sec:101", "name": "HRT FINANCIAL LP", "role": "Investor"},
+             {"id": "sec:202", "name": "COATUE MANAGEMENT LLC", "role": "Investor"},
+         ]}
         for i, row in enumerate(map_payload()["events"][:3])
     ]
     html = main.templates.TemplateResponse(
@@ -1112,9 +1115,32 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     )
     expect(page.locator(".entity-center")).to_have_attribute("aria-label", "HRT FINANCIAL LP")
     expect(page.locator("[data-entity-stock]")).to_have_count(2)
-    expect(page.locator("[data-entity-stock]").first).to_have_attribute(
-        "transform", re.compile(r"^rotate\(.*\) rotate\(-")
-    )
+    # The wallet map shares the stock map's ring: on desktop nodes travel along
+    # the same ellipse by translation, so labels stay upright and it never swings
+    # off the canvas. Mobile stacks columns and stays still.
+    stock = page.locator("[data-entity-stock]").first
+    if width >= 500:
+        expect(stock).to_have_attribute("transform", re.compile(r"^translate\("))
+        point = page.evaluate(
+            r"""() => {
+              const node = document.querySelector('[data-entity-stock]');
+              const [x, y] = node.dataset.orbitAnchor.split(',').map(Number);
+              const [dx, dy] = node.getAttribute('transform')
+                .match(/translate\(([-\d.]+) ([-\d.]+)\)/).slice(1).map(Number);
+              const graph = document.querySelector('[data-entity-map]');
+              const [cx, cy] = graph.dataset.orbitCenter.split(',').map(Number);
+              const [rx, ry] = graph.dataset.orbitTrack.split(',').map(Number);
+              return {onRing: ((x + dx - cx) / rx) ** 2 + ((y + dy - cy) / ry) ** 2};
+            }"""
+        )
+        assert point["onRing"] == pytest.approx(1.0, abs=0.01)
+    else:
+        expect(stock).not_to_have_attribute("transform", re.compile(r"^translate\("))
+        expect(page.locator("[data-entity-map]")).not_to_have_attribute(
+            "data-orbit-track", re.compile(r"\d")
+        )
+    # Second hop: the other wallets that reported the same stocks.
+    expect(page.locator("[data-entity-interest]")).to_have_count(2)
     wheels = page.locator(".entity-score-ring")
     expect(wheels).to_have_count(0 if score is None else 2)
     if score is not None:
