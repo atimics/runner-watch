@@ -217,6 +217,54 @@ def test_stock_board_reuses_the_prebuilt_public_screen(board_client, monkeypatch
     )
 
 
+def test_search_filters_the_cached_board_instead_of_rebuilding_it(
+    board_client, monkeypatch
+) -> None:
+    """A query used to rebuild the whole pulse board and its stories; now only
+    the first one does, and the rest filter the warm rows in memory."""
+
+    web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
+    web_main.PUBLIC_SCREEN_DATA_REFRESHING.clear()
+    monkeypatch.setattr(web_main, "shared_cache_get", lambda _key: None)
+    monkeypatch.setattr(web_main, "shared_cache_set", lambda *_args: None)
+    feed_calls = 0
+    story_calls = 0
+
+    def feed(*, offset=0, limit=50):
+        nonlocal feed_calls
+        feed_calls += 1
+        return {
+            "rows": [
+                {"ticker": "FAST", "company": "Fast Company", "price": 2.5, "change_pct": 4.0},
+                {"ticker": "SLOW", "company": "Slow Company", "price": 1.5, "change_pct": -1.0},
+            ],
+            "has_more": False,
+            "updated_at": "2026-09-19T12:00:00+00:00",
+        }
+
+    def story_rows(market: str, tickers: list[str]):
+        nonlocal story_calls
+        story_calls += 1
+        return {}
+
+    monkeypatch.setattr(web_main, "_public_pulse_data", feed)
+    monkeypatch.setattr(stories, "stories_by_subject", story_rows)
+
+    first = board_client.get("/?q=fast")
+    second = board_client.get("/?q=slow")
+
+    assert first.status_code == second.status_code == 200
+    assert 'href="/t/FAST"' in first.text and 'href="/t/SLOW"' not in first.text
+    assert 'href="/t/SLOW"' in second.text
+    assert feed_calls == 1
+    assert story_calls == 1
+    assert ("stock-search-base", "public") in web_main.WORKER_OWNED_SCREENS
+    assert any(
+        scope == "stock-search-base" and identity == "public"
+        for scope, identity, _builder, _ttl in web_main._public_screen_refreshers()
+    )
+
+
 @pytest.mark.parametrize(
     ("path", "location"),
     [
