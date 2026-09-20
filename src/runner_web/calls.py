@@ -198,6 +198,33 @@ def call_for_user(user_id: str, public_id: str) -> dict[str, Any] | None:
     return _call(row) if row else None
 
 
+def call_by_public_id(
+    public_id: str,
+    *,
+    current_price: float | None = None,
+) -> dict[str, Any] | None:
+    """Fetch any Call by its public id, regardless of who made it.
+
+    The public Call page and its social card share this lookup, so a pasted
+    link resolves to the same record the caller sees on their own profile.
+    """
+
+    with connection() as db:
+        row = db.execute(
+            """
+            SELECT c.*,ci.handle AS caller_handle,
+                   COALESCE(ft.amount,0) AS flash_reward
+            FROM community_calls c
+            JOIN caller_identities ci ON ci.id=c.caller_identity_id
+            LEFT JOIN flash_transactions ft
+              ON ft.user_id=c.user_id AND ft.kind='runner_call_win' AND ft.reference_id=c.id
+            WHERE c.public_id=?
+            """,
+            (public_id,),
+        ).fetchone()
+    return _call(row, current_price) if row else None
+
+
 def close_call(
     user_id: str,
     public_id: str,

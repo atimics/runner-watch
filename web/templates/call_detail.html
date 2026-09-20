@@ -1,0 +1,44 @@
+{% extends "market_screen.html" %}
+{% block screen_title %}{{ call.caller_handle }}'s ${{ call.ticker }} Call · RATi{% endblock %}
+{% block screen_description %}{{ call_share.summary }}{% endblock %}
+{% block detail_head %}
+<link rel="stylesheet" href="/static/ticker-map.css?v={{ static_version }}">
+<meta property="og:title" content="{{ call_share.title }}">
+<meta property="og:description" content="{{ call_share.summary }}">
+<meta property="og:type" content="article">
+<meta property="og:url" content="{{ app_origin }}{{ call_share.path }}">
+<meta property="og:image" content="{{ app_origin }}{{ call_share.card_path }}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{{ call_share.title }}">
+<meta name="twitter:description" content="{{ call_share.summary }}">
+{% endblock %}
+{% block detail_extra %}
+<section class="ticker-support" aria-label="Call details">
+  <div>
+    <p class="eyebrow">THE CALLER</p>
+    <h2><a href="/u/{{ call.caller_handle }}">{{ call.caller_handle }}</a></h2>
+    <p>This is a public paper Call on {{ detail.company if detail and detail.company else '$' ~ call.ticker }}. Entry {{ call.entry_price }}{% if call.return_pct is not none %} · {{ '%.1f'|format(call.return_pct) }}%{% endif %} · {{ call.status }}.</p>
+  </div>
+  <div>
+    <p class="eyebrow">THE MARKET</p>
+    <h2><a href="/t/{{ call.ticker }}">${{ call.ticker }}</a></h2>
+    <p>Open the ticker to read its evidence, price history and the rest of the public record.</p>
+  </div>
+  <div>
+    <p class="eyebrow">SHARE</p>
+    <button type="button" id="shareCall" class="call-share">Share this Call ↗</button>
+  </div>
+</section>
+{% endblock %}
+{% block detail_scripts %}
+<script nonce="{{ request.state.csp_nonce }}">
+document.getElementById('shareCall')?.addEventListener('click', async event => {
+  const button = event.currentTarget;
+  const share = {title: {{ call_share.title|tojson }}, text: {{ call_share.summary|tojson }}, url: location.href};
+  try {
+    if (navigator.share) await navigator.share(share);
+    else { await navigator.clipboard.writeText(location.href); button.textContent = '✓ Link copied'; }
+  } catch (_) {}
+});
+</script>
+{% endblock %}
