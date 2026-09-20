@@ -313,7 +313,9 @@ def test_stock_detail_orders_chart_unified_score_map_and_comments():
     ticker_map = html.index('class="ticker-map"')
     score = html.index("data-map-selection")
     comments = html.index('class="discussion-section"')
-    assert chart < ticker_map < score < comments
+    support = html.index('class="ticker-support"')
+    # Reactions sit at the bottom, below the company and community sections.
+    assert chart < ticker_map < score < support < comments
     assert 'class="metrics"' not in html
     assert 'class="breakdown"' not in html
     assert "84" in html

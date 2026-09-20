@@ -540,7 +540,7 @@ body {
 .section-heading span, .risk-evidence span { letter-spacing: 0; text-transform: none; }
 .section-heading > b { font-weight: 650; }
 
-.discussion-section { margin-top: 18px; padding: 17px 20px 8px; border-top: 1px solid var(--line); scroll-margin-top: 58px; }
+.discussion-section { margin-top: 18px; padding: 0 20px 8px; scroll-margin-top: 58px; }
 .comment-form { margin-bottom: 7px; padding: 7px 8px; border: 1px solid #29312d; border-radius: 11px; background: #0f1311; }
 .comment-form small { color: var(--muted); font-size: 8px; }
 .comment-form button, .comment-login { min-height: 30px; padding: 0 12px; border: 1px solid rgba(87, 227, 137, .3); border-radius: 9px; background: rgba(87, 227, 137, .08); color: var(--green); font-size: 9px; font-weight: 760; cursor: pointer; }

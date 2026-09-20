@@ -92,7 +92,6 @@
     const generate = thread.querySelector('[data-generate-comment]');
     const status = thread.querySelector('[data-comment-status]');
     const list = thread.querySelector('[data-comment-list]');
-    const count = thread.querySelector('[data-comment-count]');
     const empty = thread.querySelector('[data-comment-empty]');
     const storageKey = `pending-comment:${thread.dataset.commentStorageKey}`;
     let pending = null;
@@ -164,8 +163,6 @@
         );
         if (!shown) list.prepend(renderComment(result.comment));
         status.textContent = 'Reaction added';
-        count.textContent = result.count;
-        count.hidden = Number(result.count) === 0;
         empty.hidden = true;
         window.RatiFlash?.updateBalance?.(result.balance);
         remember(null);
@@ -188,8 +185,6 @@
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(result.detail || 'Could not delete.');
         button.closest('li')?.remove();
-        count.textContent = Math.max(0, Number(count.textContent || 0) - 1);
-        count.hidden = Number(count.textContent) === 0;
         empty.hidden = Boolean(list.children.length);
       } catch (error) {
         status.textContent = error.message || 'Could not delete.';
