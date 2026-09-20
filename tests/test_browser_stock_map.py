@@ -137,7 +137,7 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width, tm
     open_map(page, width)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     expect(page.locator("[data-map-graph]")).to_be_visible()
-    expect(page.locator("[data-person]")).to_have_count(4 if width <= 500 else 8)
+    expect(page.locator("[data-person]")).to_have_count(4 if width <= 500 else 11)
     expect(page.locator(".map-center-score")).to_have_text("45")
     expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
     expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(0)
@@ -165,13 +165,41 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width, tm
         "href", re.compile(r"^https://www\.sec\.gov/Archives/edgar/data/")
     )
     expect(page.locator(".chart-filing-marker")).to_have_count(1)
-    page.get_by_role("button", name="Next wallets").click()
-    expect(page.locator("[data-person]")).to_have_count(4 if width <= 500 else 3)
+    if width <= 500:
+        page.get_by_role("button", name="Next wallets").click()
+        expect(page.locator("[data-person]")).to_have_count(4)
+    else:
+        expect(page.locator("[data-map-page]")).to_have_text("1–11 of 11 wallets")
+        expect(page.locator("[data-map-paging]")).to_be_hidden()
     page.get_by_role("button", name="Next filings").click()
     expect(page.locator("[data-map-filings-page]")).to_have_text("6–10 of 11")
     page.locator("[data-map-events] button").first.click()
     expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
     assert not errors
+
+
+def test_desktop_wallets_fill_one_orbit_before_paging(page, tmp_path):
+    open_map(page, 1280)
+
+    expect(page.locator("[data-person]")).to_have_count(11)
+    expect(page.locator("[data-person].dense")).to_have_count(11)
+    expect(page.locator("[data-map-page]")).to_have_text("1–11 of 11 wallets")
+    expect(page.locator("[data-map-paging]")).to_be_hidden()
+
+    positions = page.locator("[data-person]").evaluate_all(
+        """nodes => nodes.map(node => {
+            const circle = node.querySelector(':scope > circle');
+            return [Number(circle.getAttribute('cx')), Number(circle.getAttribute('cy'))];
+        })"""
+    )
+    assert len(set(map(tuple, positions))) == 11
+    for x, y in positions:
+        assert ((x - 380) / 270) ** 2 + ((y - 218) / 150) ** 2 == pytest.approx(1)
+    assert min(x for x, _ in positions) < 120
+    assert max(x for x, _ in positions) > 640
+    assert min(y for _, y in positions) == pytest.approx(68)
+    assert max(y for _, y in positions) > 360
+    page.locator("[data-map-graph]").screenshot(path=str(tmp_path / "wallet-orbit.png"))
 
 
 def _oldest_filing(page: Page) -> None:
@@ -190,7 +218,7 @@ def test_clicking_a_filing_scrubs_the_map(page):
     geometry = page.locator(".map-score-segment").evaluate_all(
         "segments => segments.map(segment => segment.getAttribute('d'))"
     )
-    expect(page.locator("[data-person]")).to_have_count(8)
+    expect(page.locator("[data-person]")).to_have_count(11)
     _oldest_filing(page)
     expect(page.locator("[data-map-filings-page]")).to_have_text("11–11 of 11")
     oldest = page.locator("[data-map-events] button").last
@@ -384,13 +412,18 @@ def test_risk_hover_and_pin_share_filing_selection(page, width, key, label, brea
     expect(selection.locator("h4")).to_have_text(label)
     page.mouse.click(**ring_point(risk))
     page.mouse.move(0, 0)
-    page.get_by_role("button", name="Next wallets").focus()
+    wallet_paging = page.get_by_role("button", name="Next wallets")
+    if width <= 500:
+        wallet_paging.focus()
+    else:
+        expect(page.locator("[data-map-paging]")).to_be_hidden()
     expect(risk).to_have_attribute("aria-pressed", "true")
     expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
     expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
     expect(page.locator("[data-event-id][aria-pressed=true]")).to_have_count(0)
     expect(page.locator(".chart-filing-marker")).to_have_count(0)
-    page.get_by_role("button", name="Next wallets").click()
+    if width <= 500:
+        wallet_paging.click()
     expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
     page.get_by_role("button", name="Next filings").click()
     expect(page.locator("[data-map-filings-page]")).to_have_text("6–10 of 11")
@@ -611,12 +644,17 @@ def test_polling_preserves_risk_pin_and_clears_missing_risk(page, width, key, re
         expect(page.locator(".map-center-score")).to_have_text(str(score))
 
     page.get_by_role("button", name="Next filings").click()
-    page.get_by_role("button", name="Next wallets").click()
+    wallet_paging = width <= 500
+    if wallet_paging:
+        page.get_by_role("button", name="Next wallets").click()
     people_page = page.locator("[data-map-page]").text_content()
     filings_page = page.locator("[data-map-filings-page]").text_content()
     risk = page.locator(f'[data-score-key="{key}"]')
     risk.press("Space")
-    page.get_by_role("button", name="Previous wallets").focus()
+    focus_target = page.get_by_role(
+        "button", name="Previous wallets" if wallet_paging else "Return to score overview"
+    )
+    focus_target.focus()
     detail = screen["item"]["score_detail"]
     parts = detail["penalties"] if key == "rug" else detail["drivers"]
     part = next(part for part in parts if part["key"] == key)
@@ -628,7 +666,7 @@ def test_polling_preserves_risk_pin_and_clears_missing_risk(page, width, key, re
     breakdown = f"-20 pts · {percent}% of total magnitude"
     expect(risk).to_have_attribute("aria-pressed", "true")
     expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
-    expect(page.get_by_role("button", name="Previous wallets")).to_be_focused()
+    expect(focus_target).to_be_focused()
     lengths = page.locator(".map-score-segment").evaluate_all(
         "segments => segments.map(segment => segment.getTotalLength())"
     )
@@ -686,7 +724,8 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
 
     page.get_by_role("button", name="Load older filings").click()
     page.get_by_role("button", name="Next filings").click()
-    page.get_by_role("button", name="Next wallets").click()
+    if width <= 500:
+        page.get_by_role("button", name="Next wallets").click()
     pagination = page.locator("[data-map-page]").text_content()
     person = page.locator("[data-person]").first
     page.locator(".map-edge").first.dispatch_event("click")
