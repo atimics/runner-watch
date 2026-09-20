@@ -17,8 +17,8 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Test and lint
+  checks:
+    name: Unit, browser and lint
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -54,7 +54,37 @@ jobs:
             replay-unit-results.xml
             replay-browser-results.xml
       - run: docker compose -f compose.local.yml config --quiet
-      - run: docker build --target test --tag runner-watch:test .
+
+  container:
+    name: Container tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+      - name: Build and test the container
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          target: test
+          push: false
+          cache-from: type=gha,scope=runner-watch-test
+          cache-to: type=gha,scope=runner-watch-test,mode=max
+
+  test:
+    name: Test and lint
+    needs: [checks, container]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require both test jobs
+        env:
+          CHECKS_RESULT: ${{ needs.checks.result }}
+          CONTAINER_RESULT: ${{ needs.container.result }}
+        run: |
+          test "$CHECKS_RESULT" = "success"
+          test "$CONTAINER_RESULT" = "success"
 
   deploy:
     name: Deploy app
