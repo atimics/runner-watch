@@ -534,11 +534,11 @@ def validate_sports_ai_forecast(
     }
 
 
-def _scoreboard_url(league: str, start: date, end: date) -> str:
+def _scoreboard_url(league: str, day: date) -> str:
     config = LEAGUES[league]
-    date_range = f"{start:%Y%m%d}-{end:%Y%m%d}"
     return (
-        f"{SOURCE_URL}/{config['sport']}/{config['path']}/scoreboard?dates={date_range}&limit=100"
+        f"{SOURCE_URL}/{config['sport']}/{config['path']}/scoreboard"
+        f"?dates={day:%Y%m%d}&limit=100"
     )
 
 
@@ -549,48 +549,65 @@ def _fetch_league_range(
     *,
     feed: str,
 ) -> list[dict[str, Any]]:
+    """Fetch a span of days, one scoreboard request per day.
+
+    ESPN stopped accepting a multi-day ``dates=YYYYMMDD-YYYYMMDD`` range for the
+    team leagues and answers HTTP 400 for it, so a window is walked a day at a
+    time. The span is recorded as a single fetch: ``partial`` when some days
+    fail but others land, an error only when every day fails.
+    """
+
     if league not in LEAGUES:
         raise ValueError("Unsupported league")
-    locator = _scoreboard_url(league, start, end)
     started = datetime.now(UTC)
-    request = urllib.request.Request(locator)
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            body = response.read()
-        payload = json.loads(body)
-        events = [
-            normalized
-            for raw in payload.get("events", [])
-            if (normalized := normalize_event(league, raw)) is not None
-        ]
-        record_source_fetch(
-            SourceFetch.success(
-                source=SOURCE,
-                feed=feed,
-                locator=locator,
-                started_at=started,
-                payload={
-                    "league": league,
-                    "event_count": len(events),
-                    "event_ids": [event["external_id"] for event in events],
-                },
-                content_type="application/json",
-                metadata={"league": league, "received_count": len(events)},
-            )
-        )
-        return events
-    except Exception as exc:
+    locator = _scoreboard_url(league, start)
+    days = [start + timedelta(days=offset) for offset in range((end - start).days + 1)]
+    events: dict[str, dict[str, Any]] = {}
+    errors: dict[str, str] = {}
+    for day in days:
+        request = urllib.request.Request(_scoreboard_url(league, day))
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                payload = json.loads(response.read())
+        except Exception as exc:
+            errors[day.isoformat()] = str(exc)[:200]
+            continue
+        for raw in payload.get("events", []):
+            normalized = normalize_event(league, raw)
+            if normalized is not None:
+                events[normalized["external_id"]] = normalized
+    ordered = list(events.values())
+    metadata = {"league": league, "days": len(days), "day_errors": errors}
+    if errors and len(errors) == len(days):
+        error = "; ".join(sorted(errors.values()))[:1000]
         record_source_fetch(
             SourceFetch.failure(
                 source=SOURCE,
                 feed=feed,
                 locator=locator,
                 started_at=started,
-                error=exc,
-                metadata={"league": league},
+                error=error,
+                metadata=metadata,
             )
         )
-        raise
+        raise RuntimeError(f"ESPN scoreboard fetch failed for {league}: {error}")
+    record_source_fetch(
+        SourceFetch.success(
+            source=SOURCE,
+            feed=feed,
+            locator=locator,
+            started_at=started,
+            payload={
+                "league": league,
+                "event_count": len(ordered),
+                "event_ids": [event["external_id"] for event in ordered],
+            },
+            content_type="application/json",
+            metadata={"league": league, "received_count": len(ordered), **metadata},
+            partial=bool(errors),
+        )
+    )
+    return ordered
 
 
 def fetch_league(league: str, at: datetime | None = None) -> list[dict[str, Any]]:
