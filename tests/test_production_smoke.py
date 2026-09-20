@@ -114,8 +114,15 @@ def test_parallel_deploy_gate_requires_every_job_to_succeed() -> None:
     assert "needs" not in jobs["lint"] and "needs" not in jobs["container"]
     # Evidence merges the test reports, so it waits for them but nothing else.
     assert jobs["evidence"]["needs"] == ["unit", "browser"]
-    # Coverage is the expensive gate, so pull requests skip it and main must pass it.
+    # Coverage is the expensive gate: the unit shards feed a combine job that
+    # runs on main only, so pull requests skip it and main must pass it.
     assert jobs["coverage"]["if"] == "github.event_name != 'pull_request'"
+    assert jobs["coverage"]["needs"] == ["unit"]
+    shard_command = jobs["unit"]["steps"][3]["run"]
+    assert "--splits 5" in shard_command and "--no-cov" in shard_command
+    combine_command = jobs["coverage"]["steps"][-1]["run"]
+    assert "coverage combine" in combine_command
+    assert "coverage report --fail-under=68" in combine_command
     command = gate["steps"][0]["run"]
 
     def gate_result(values: dict[str, str]) -> int:
