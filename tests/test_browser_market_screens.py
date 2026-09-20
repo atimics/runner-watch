@@ -369,6 +369,52 @@ def test_chart_scopes_magnitude_and_period_separately_from_daily_quote(page, wid
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 
+def test_the_gap_is_drawn_as_an_honest_dashed_stretch(page):
+    """Past the last saved bar the chart keeps going, but as a dashed projection
+    with a band and a label, never as invented candles."""
+
+    screen = detail("stocks", {"ticker": "OPK", "current": fixtures.sample("stocks")})
+    screen.pop("refresh_url")
+    screen.pop("chart_url")
+    screen["series"] = [
+        {"time": "2026-09-12T12:00:00Z", "value": 100},
+        {"time": "2026-09-12T12:05:00Z", "value": 101},
+    ]
+    screen["gap"] = {
+        "anchor_time": "2026-09-12T12:05:00Z",
+        "anchor_price": 101,
+        "state": "stale",
+        "market_open": False,
+        "latency_seconds": 3600,
+        "gap_minutes": 60,
+        "band_pct": 0.4,
+        "label": "Market closed · dashed line is our flat projection (±0.4%)",
+        "path": [
+            {"time": "2026-09-12T12:35:00Z", "price": 101, "low": 100.8, "high": 101.2},
+            {"time": "2026-09-12T13:05:00Z", "price": 101, "low": 100.6, "high": 101.4},
+        ],
+    }
+    open_screen(page, screen)
+    line = page.locator(".chart-gap-line")
+    # A flat projection is a horizontal dashed line, so it has no height of its
+    # own to be "visible" by; assert its geometry and dash pattern instead.
+    expect(line).to_have_count(1)
+    dash = line.evaluate("node => getComputedStyle(node).strokeDasharray")
+    assert dash.replace("px", "").startswith("5"), dash
+    expect(page.locator(".chart-gap-band")).to_be_visible()
+    expect(page.locator(".chart-gap-note")).to_contain_text("Market closed")
+    # The dashed stretch runs from the last bar to the clock, so the axis now
+    # reaches the right edge instead of stopping at the saved data.
+    offsets = [
+        float(value)
+        for value in re.findall(r"[ML]([-\d.]+),", line.get_attribute("d"))
+    ]
+    assert offsets[0] != offsets[-1]
+    assert offsets[-1] == pytest.approx(792, abs=1)
+    label = page.locator(".price-chart").get_attribute("aria-label")
+    assert "projection" in label
+
+
 def test_single_chart_point_and_empty_refresh_clear_old_period(page):
     screen = detail("memecoins", {"coin": fixtures.sample("memecoins")})
     screen.pop("refresh_url")

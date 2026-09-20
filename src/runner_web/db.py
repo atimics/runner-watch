@@ -3504,6 +3504,17 @@ def _migration_075_price_gap_forecasts(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_076_price_gap_market_open(db: DatabaseConnection) -> None:
+    """Record whether a gap happened while the market was open.
+
+    Bars legitimately stop over a weekend, and those long flat stretches are the
+    most useful gap examples. The stored state stays about bar lateness; this
+    column carries the honest \"market closed\" wording.
+    """
+
+    _ensure_column(db, "price_gap_forecasts", "market_open INTEGER NOT NULL DEFAULT 1")
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3584,6 +3595,7 @@ MIGRATIONS = (
     Migration(73, "market_event_time_index", _migration_073_market_event_time_index),
     Migration(74, "telegram_outbox", _migration_074_telegram_outbox),
     Migration(75, "price_gap_forecasts", _migration_075_price_gap_forecasts),
+    Migration(76, "price_gap_market_open", _migration_076_price_gap_market_open),
 )
 
 

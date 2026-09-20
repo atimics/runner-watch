@@ -339,5 +339,6 @@ def test_screen_quote_and_chart_keep_provider_details_private(board_client, monk
     assert chart["points"] == [{"value": 2.5, "time": "2026-09-12T12:00:00Z"}]
     # The state history carries when the action tag changed and nothing else -
     # no trade state, stage or rug level, which are what it is collapsed from.
-    assert set(chart) == {"points", "states"}
+    assert set(chart) == {"points", "states", "gap"}
+    assert chart["gap"] is None  # no bars, so no projection to publish
     assert all(set(change) == {"time", "tone"} for change in chart["states"])
