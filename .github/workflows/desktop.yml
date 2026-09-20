@@ -81,6 +81,11 @@ jobs:
 
   build:
     name: ${{ matrix.name }}
+    # Desktop bundles compile Tauri on Linux, macOS and Windows (8-11 minutes
+    # each). They stay off pull requests so a PR's checks stay quick; main,
+    # tags and workflow_dispatch still build them, so run this workflow on a
+    # branch to validate a desktop change before merging.
+    if: github.event_name != 'pull_request'
     needs: [audit, release-check]
     strategy:
       fail-fast: false
