@@ -83,6 +83,7 @@ from runner_web.caller_ids import (
 )
 from runner_web.calls import (
     active_call_for_user,
+    call_by_public_id,
     call_for_user,
     caller_call_rows,
     caller_summary_for_user,
@@ -3031,17 +3032,204 @@ def ticker_card(ticker: str, request: Request) -> Response:
     detail = _public_ticker_detail_data(normalized)
     if detail is None:
         raise HTTPException(404, "Ticker not found")
+    chart = ticker_chart_detail_payload(normalized)
+    try:
+        from runner_web.stock_map import ticker_map
+
+        map_data = ticker_map(normalized)
+    except Exception:
+        LOG.exception("Ticker card map lookup failed for %s", normalized)
+        map_data = {"events": []}
     return Response(
-        _ticker_card_png(detail),
+        _ticker_card_png(detail, chart, map_data),
         media_type="image/png",
         headers={"Cache-Control": "public, max-age=300"},
     )
 
 
-def _ticker_card_png(detail: dict[str, Any]) -> bytes:
+# Tones shared with the site's charts and tags, so a card reads like the page.
+CARD_TONES = {
+    "running": "#a5e5b9",
+    "setup": "#73ceff",
+    "extended": "#ffad70",
+    "avoid": "#ef99a4",
+    "watch": "#c4a7ef",
+    "paused": "#96a49b",
+    "up": "#a5e5b9",
+    "down": "#ef99a4",
+    "neutral": "#96a49b",
+}
+CARD_DRIVERS = {
+    "market": "#73ceff",
+    "sec_event": "#c4a7ef",
+    "news": "#a5e5b9",
+    "social_search": "#ffad70",
+    "community": "#f5c66b",
+}
+
+
+def _card_chart_rows(chart: dict[str, Any]) -> list[tuple[float, float]]:
+    rows = []
+    for point in chart.get("points") or []:
+        try:
+            stamp = datetime.fromisoformat(str(point.get("time") or "").replace("Z", "+00:00"))
+            value = float(point.get("close"))
+        except (TypeError, ValueError):
+            continue
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=UTC)
+        rows.append((stamp.timestamp(), value))
+    return sorted(rows)
+
+
+def _card_tone_at(states: list[dict[str, Any]], moment: float) -> str:
+    tone = ""
+    for change in states:
+        try:
+            at = datetime.fromisoformat(str(change.get("time") or "").replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=UTC)
+        if at.timestamp() > moment:
+            break
+        tone = str(change.get("tone") or "")
+    return tone
+
+
+def _draw_card_chart(
+    draw: Any,
+    chart: dict[str, Any],
+    box: tuple[int, int, int, int],
+) -> list[str]:
+    x0, y0, x1, y1 = box
+    rows = _card_chart_rows(chart)
+    if len(rows) < 2:
+        draw.text((x0, (y0 + y1) // 2 - 10), "Price history pending", "#65716b", font=font(22))
+        return []
+    values = [value for _, value in rows]
+    low, high = min(values), max(values)
+    span = high - low or 1.0
+    start, end = rows[0][0], rows[-1][0]
+    timeline = end - start or 1.0
+    states = list(chart.get("states") or [])
+
+    def px(moment: float) -> float:
+        return x0 + (moment - start) / timeline * (x1 - x0)
+
+    def py(value: float) -> float:
+        return y1 - (value - low) / span * (y1 - y0)
+
+    coords = [(px(moment), py(value)) for moment, value in rows]
+    draw.polygon([*coords, (x1, y1), (x0, y1)], fill="#17291e")
+
+    tones: list[str] = []
+    run: list[tuple[float, float]] = []
+    run_tone = _card_tone_at(states, rows[0][0])
+    for (moment, _value), point in zip(rows, coords, strict=True):
+        tone = _card_tone_at(states, moment)
+        if tone != run_tone and run:
+            draw.line(run, fill=CARD_TONES.get(run_tone, "#96a49b"), width=3, joint="curve")
+            if run_tone and run_tone not in tones:
+                tones.append(run_tone)
+            run = [run[-1]]
+            run_tone = tone
+        run.append(point)
+    if run:
+        draw.line(run, fill=CARD_TONES.get(run_tone, "#96a49b"), width=3, joint="curve")
+        if run_tone and run_tone not in tones:
+            tones.append(run_tone)
+    return tones
+
+
+def _draw_card_legend(draw: Any, tones: list[str], x: int, y: int) -> None:
+    label_font = font(19, True)
+    cursor = x
+    for tone in tones:
+        draw.ellipse((cursor, y + 4, cursor + 13, y + 17), fill=CARD_TONES.get(tone, "#96a49b"))
+        text = tone.upper()
+        draw.text((cursor + 20, y), text, "#9fb2a8", font=label_font)
+        cursor += 30 + int(draw.textlength(text, font=label_font)) + 26
+
+
+def _draw_card_ring(draw: Any, cx: int, cy: int, radius: int, detail: dict[str, Any]) -> None:
+    current = detail.get("current") or {}
+    score_detail = current.get("score_detail") or {}
+    parts: list[tuple[float, str]] = []
+    for driver in score_detail.get("drivers") or []:
+        value = _number(driver.get("value")) or 0.0
+        if value > 0:
+            parts.append((value, CARD_DRIVERS.get(str(driver.get("key")), "#73ceff")))
+    for penalty in score_detail.get("penalties") or []:
+        value = _number(penalty.get("value")) or 0.0
+        if value:
+            parts.append((abs(value), "#ef99a4"))
+    box = (cx - radius, cy - radius, cx + radius, cy + radius)
+    width = max(10, radius // 4)
+    draw.ellipse(box, outline="#26302c", width=width)
+    total = sum(value for value, _ in parts)
+    if total:
+        angle = -90.0
+        for value, color in parts:
+            sweep = value / total * 360.0
+            draw.arc(box, angle, angle + sweep, fill=color, width=width)
+            angle += sweep
+    inner = radius - width // 2 - 4
+    draw.ellipse(
+        (cx - inner, cy - inner, cx + inner, cy + inner),
+        fill="#253e2d",
+        outline="#668770",
+    )
+    ticker = _card_text(detail.get("ticker") or "")
+    score = current.get("score")
+    draw.text((cx, cy - 12), ticker, "#f4f8f6", font=font(20, True), anchor="mm")
+    if score is not None:
+        draw.text((cx, cy + 14), f"{float(score):.0f}", "#f4f8f6", font=font(22, True), anchor="mm")
+
+
+def _draw_card_map(draw: Any, map_data: dict[str, Any], box: tuple[int, int, int, int]) -> None:
+    x0, y0, x1, y1 = box
+    cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
+    people: dict[str, dict[str, Any]] = {}
+    for event in map_data.get("events") or []:
+        for person in event.get("people") or []:
+            key = str(person.get("id") or person.get("name") or "")
+            if key and key not in people:
+                people[key] = {
+                    "name": str(person.get("name") or "Reporting person"),
+                    "tone": str(event.get("tone") or "neutral"),
+                }
+    chosen = list(people.values())[:4]
+    radius = 20
+    name_font = font(16, True)
+    for index, person in enumerate(chosen):
+        dx = -1 if index % 2 == 0 else 1
+        dy = -1 if index < 2 else 1
+        px = cx + dx * (radius + 118)
+        py = cy + dy * (radius + 58)
+        draw.line((cx, cy, px, py), fill="#42584b", width=2)
+        tone = CARD_TONES.get(person["tone"], "#789681")
+        draw.ellipse(
+            (px - radius, py - radius, px + radius, py + radius),
+            fill="#202e26",
+            outline=tone,
+            width=2,
+        )
+        initials = "".join(part[:1] for part in person["name"].split()[:2]).upper() or "?"
+        draw.text((px, py), initials, "#f4f8f6", font=font(18, True), anchor="mm")
+        name = _card_text(person["name"])
+        if len(name) > 20:
+            name = name[:19].rstrip(" .") + "…"
+        draw.text((px, py + radius + 8), name, "#9fb2a8", font=name_font, anchor="ma")
+
+
+def _ticker_card_png(
+    detail: dict[str, Any],
+    chart: dict[str, Any] | None = None,
+    map_data: dict[str, Any] | None = None,
+) -> bytes:
 
     current = detail.get("current") or {}
-    gate = detail.get("evidence_gate") or {}
     ticker = str(detail.get("ticker") or "")
     change = _number(current.get("change_pct"))
     image = Image.new("RGB", (1200, 630), "#090b0b")
@@ -3049,56 +3237,29 @@ def _ticker_card_png(detail: dict[str, Any]) -> bytes:
     draw.rounded_rectangle(
         (55, 55, 1145, 575), radius=34, fill="#111514", outline="#57e389", width=3
     )
-    draw.text((95, 88), _card_text("RATi RUNNERS · TICKER"), "#87e8a9", font=font(27, True))
-    company = _card_text(detail.get("company") or "")[:44]
+    draw.text((95, 84), _card_text("RATi RUNNERS · TICKER"), "#87e8a9", font=font(26, True))
+    company = _card_text(detail.get("company") or "")[:40]
     if company:
-        draw.text(
-            (1105 - draw.textlength(company, font=font(23)), 92),
-            company,
-            "#7e8b86",
-            font=font(23),
-        )
+        draw.text((1105, 88), company, "#7e8b86", font=font(22), anchor="ra")
 
-    draw.text((95, 152), _card_text(f"${ticker}"), "#f4f8f6", font=font(84, True))
+    draw.text((95, 138), _card_text(f"${ticker}"), "#f4f8f6", font=font(76, True))
+    price = _card_price(current.get("price")) or "No price"
+    draw.text((1105, 138), price, "#f4f8f6", font=font(60, True), anchor="ra")
     move = f"{change:+.1f}%" if change is not None else "—"
     tone = "#87e8a9" if (change or 0) > 0 else "#f2a3ac" if (change or 0) < 0 else "#9fb2a8"
-    move_font = font(58, True)
-    draw.text((1105 - draw.textlength(move, font=move_font), 170), move, tone, font=move_font)
-
-    price = _card_price(current.get("price")) or "No price"
-    draw.text((95, 258), _card_text(price), "#cfe0d7", font=font(34))
+    draw.text((1105, 214), move, tone, font=font(32, True), anchor="ra")
+    stamp = _card_text(str(current.get("quote_time") or current.get("event_at") or "")[:16])
+    draw.text((1105, 256), f"Daily change · {stamp} UTC", "#65716b", font=font(19), anchor="ra")
     _draw_ticker_badge(draw, current)
 
-    lead = _card_text(gate.get("summary") or "Scanner coverage and source evidence.")
-    lines = textwrap.wrap(lead, width=62)[:2]
-    if len(textwrap.wrap(lead, width=62)) > 2:
-        lines[-1] = lines[-1].rstrip(" .") + "…"
-    draw.multiline_text((95, 330), "\n".join(lines), fill="#9fb2a8", font=font(26), spacing=10)
+    draw.line((95, 292, 1105, 292), fill="#26302c", width=2)
 
-    relative_volume = _number(current.get("relative_volume"))
-    rug = _number(current.get("rug_score"))
-    _draw_scorecard(
-        draw,
-        [
-            {"label": "Price", "value": price, "tone": "flat"},
-            {
-                "label": "Change",
-                "value": move,
-                "tone": _tone_word(change),
-            },
-            {
-                "label": "RVOL",
-                "value": f"{relative_volume:.1f}x" if relative_volume is not None else "—",
-                "tone": "flat",
-            },
-            {
-                "label": "Risk",
-                "value": f"{rug:.0f}" if rug is not None else "—",
-                "tone": "down" if rug is not None and rug >= 60 else "flat",
-            },
-        ],
-    )
-    draw.text((95, 543), _card_text("runners.rati.chat · Research only"), "#65716b", font=font(21))
+    tones = _draw_card_chart(draw, chart or {}, (95, 312, 690, 500))
+    _draw_card_legend(draw, tones or ["watch"], 95, 516)
+    _draw_card_map(draw, map_data or {"events": []}, (720, 300, 1105, 520))
+    _draw_card_ring(draw, 912, 410, 46, detail)
+
+    draw.text((95, 548), _card_text("runners.rati.chat · Research only"), "#65716b", font=font(20))
     buffer = io.BytesIO()
     image.save(buffer, format="PNG", optimize=True)
     return buffer.getvalue()
@@ -3245,6 +3406,187 @@ def _draw_scorecard(draw: Any, cards: list[dict[str, Any]]) -> None:
             "#7e8b86",
             font=label_font,
         )
+
+
+def call_share(call: dict[str, Any], detail: dict[str, Any] | None = None) -> dict[str, Any]:
+    """What a shared Call link should say about itself.
+
+    A Call is the product's smallest social object, so a pasted link has to
+    carry the caller, the subject and the result on its own.
+    """
+
+    public_id = str(call.get("public_id") or "")
+    ticker = str(call.get("ticker") or "")
+    handle = str(call.get("caller_handle") or "A caller")
+    entry = _card_price(call.get("entry_price"))
+    return_pct = call.get("return_pct")
+    move = f"{float(return_pct):+.1f}%" if return_pct is not None else None
+    company = str((detail or {}).get("company") or "").strip()
+    if str(call.get("status")) == "closed":
+        title = f"{handle}'s ${ticker} Call closed {move}" if move else f"{handle}'s ${ticker} Call"
+        summary = " · ".join(
+            part
+            for part in (company, f"Entry {entry}" if entry else None, "Paper Call settled")
+            if part
+        )
+    else:
+        title = f"{handle} just called ${ticker}"
+        summary = " · ".join(
+            part
+            for part in (
+                company,
+                f"Entry {entry}" if entry else None,
+                f"{move} so far" if move else "Open paper Call",
+            )
+            if part
+        )
+    version = hashlib.sha256(
+        "|".join(
+            str(value)
+            for value in (
+                call.get("entry_price"),
+                call.get("exit_price"),
+                call.get("status"),
+                call.get("updated_at"),
+            )
+        ).encode()
+    ).hexdigest()[:10]
+    return {
+        "title": title,
+        "summary": (summary or "A public paper Call on RATi Runners.")[:200],
+        "path": f"/c/{public_id}",
+        "card_path": f"/c/{public_id}/card.png?v={version}",
+    }
+
+
+def _public_call_data(public_id: str) -> dict[str, Any]:
+    call = call_by_public_id(public_id)
+    if not call:
+        return {"found": False}
+    detail = _public_ticker_detail_data(str(call["ticker"]))
+    if str(call.get("status")) == "active":
+        price = (detail or {}).get("current", {}).get("price")
+        if price is not None:
+            call = call_by_public_id(public_id, current_price=float(price)) or call
+    data = {
+        "ticker": call["ticker"],
+        "company": (detail or {}).get("company") or call["ticker"],
+        "current": (detail or {}).get("current") or {},
+    }
+    screen = simple_market_detail("stocks", data, active_call=call)
+    screen.pop("refresh_url", None)
+    screen["actions"] = []
+    screen["call_heading"] = "The Call"
+    # The page is already the shared destination, so no self-share link.
+    if isinstance(screen.get("call"), dict):
+        screen["call"]["public_id"] = None
+    return {
+        "found": True,
+        "call": call,
+        "detail": detail,
+        "screen": screen,
+        "share": call_share(call, detail),
+    }
+
+
+def _call_card_png(call: dict[str, Any], detail: dict[str, Any] | None = None) -> bytes:
+    ticker = str(call.get("ticker") or "")
+    handle = _card_text(str(call.get("caller_handle") or "RATi runner"))
+    closed = str(call.get("status")) == "closed"
+    entry = _card_price(call.get("entry_price"))
+    mark = _card_price(call.get("mark_price"))
+    return_pct = call.get("return_pct")
+    move = f"{float(return_pct):+.1f}%" if return_pct is not None else "—"
+    tone = (
+        "#87e8a9"
+        if return_pct is not None and float(return_pct) > 0
+        else "#f2a3ac"
+        if return_pct is not None and float(return_pct) < 0
+        else "#9fb2a8"
+    )
+    image = Image.new("RGB", (1200, 630), "#090b0b")
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle(
+        (55, 55, 1145, 575), radius=34, fill="#111514", outline="#57e389", width=3
+    )
+    draw.text((95, 88), _card_text("RATI RUNNERS · CALL"), "#87e8a9", font=font(27, True))
+    status_label = "SETTLED" if closed else "OPEN"
+    status_ink = "#9fb2a8" if closed else "#87e8a9"
+    badge = font(23, True)
+    width = draw.textlength(status_label, font=badge) + 40
+    draw.rounded_rectangle((1105 - width, 84, 1105, 132), radius=14, fill="#1c2220")
+    draw.text((1105 - width + 20, 96), status_label, status_ink, font=badge)
+
+    draw.text((95, 168), _card_text(f"${ticker}"), "#f4f8f6", font=font(84, True))
+    company = _card_text(str((detail or {}).get("company") or ""))[:42]
+    if company:
+        draw.text((95, 272), company, "#7e8b86", font=font(27))
+
+    verb = "called" if closed else "is calling"
+    draw.text(
+        (95, 348),
+        f"{handle} {verb} ${_card_text(ticker)} up",
+        "#cfe0d7",
+        font=font(40, True),
+    )
+    facts = [
+        ("Entry", entry or "—"),
+        ("Now" if not closed else "Close", mark or "—"),
+        ("Return", move),
+        ("Earned", f"{int(call.get('flash_reward') or 0)} Flash" if closed else "At settlement"),
+    ]
+    left, right, top = 95, 1105, 430
+    step = (right - left) / len(facts)
+    for index, (label, value) in enumerate(facts):
+        x = left + step * index
+        ink = tone if label == "Return" else "#f4f8f6"
+        value_font, label_font = font(34, True), font(19, True)
+        draw.text((x, top + 12), _card_text(value), ink, font=value_font)
+        draw.text((x, top + 62), label.upper(), "#7e8b86", font=label_font)
+
+    draw.text((95, 543), _card_text("runners.rati.chat · Research only"), "#65716b", font=font(21))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG", optimize=True)
+    return buffer.getvalue()
+
+
+@app.get("/c/{public_id}", response_class=HTMLResponse)
+def call_page(
+    public_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    enforce_rate(request, "call-page", limit=180, seconds=60)
+    data = _public_call_data(public_id)
+    if not data.get("found"):
+        raise HTTPException(404, "Call not found")
+    return templates.TemplateResponse(
+        request=request,
+        name="call_detail.html",
+        context=page_context(
+            request,
+            runner_session,
+            screen=data["screen"],
+            call_share=data["share"],
+            call=data["call"],
+            detail=data.get("detail"),
+            active_tab="alpha",
+            nav_product="runners",
+        ),
+    )
+
+
+@app.get("/c/{public_id}/card.png")
+def call_card(public_id: str, request: Request) -> Response:
+    enforce_rate(request, "call-card", limit=60, seconds=60)
+    data = _public_call_data(public_id)
+    if not data.get("found"):
+        raise HTTPException(404, "Call not found")
+    return Response(
+        _call_card_png(data["call"], data.get("detail")),
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
 
 
 @app.get("/community", response_class=HTMLResponse)

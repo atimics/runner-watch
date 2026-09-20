@@ -106,10 +106,11 @@
       </section>
       {% block detail_map %}{% endblock %}
       {% block detail_metrics %}{% endblock %}
-      <section class="call-record" data-call-record{% if not screen.call or screen.call.status == 'none' %} hidden{% endif %} aria-label="Your Call">
-        <h2>Your Call</h2><dl class="facts">
+      <section class="call-record" data-call-record{% if not screen.call or screen.call.status == 'none' %} hidden{% endif %} aria-label="{{ screen.call_heading or 'Your Call' }}">
+        <h2>{{ screen.call_heading or 'Your Call' }}</h2><dl class="facts">
         {% for key,label in [('choice','Choice'),('entry','Entry'),('terms','Settlement'),('outcome','Result'),('reward','Earned Flash')] %}<div><dt>{{ label }}</dt><dd data-call-{{ key }}>{{ screen.call[key] if screen.call else '' }}</dd></div>{% endfor %}
         </dl>
+        {% if screen.call and screen.call.public_id %}<a class="call-share" href="/c/{{ screen.call.public_id }}" data-call-share>Share this Call ↗</a>{% endif %}
       </section>
       <dl class="facts" data-facts{% if not screen.facts %} hidden{% endif %}>{% for fact in screen.facts %}<div><dt>{{ fact.label }}</dt><dd>{{ fact.value }}</dd></div>{% endfor %}</dl>
       <div class="actions" data-screen-actions data-authenticated="{{ 'true' if user else 'false' }}" data-login-url="/login?next={{ request.url.path|urlencode }}">{% for action in screen.actions %}{% if user %}<button type="button" data-action="{{ loop.index0 }}">{{ action.label }}</button>{% else %}<a class="primary" href="/login?next={{ request.url.path|urlencode }}">{{ action.label }}</a>{% endif %}{% endfor %}</div>

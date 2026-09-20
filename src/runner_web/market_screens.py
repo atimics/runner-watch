@@ -371,6 +371,8 @@ def call_record(
         reward = int(saved.get("flash_reward") or 0)
     return {
         "status": "closed" if closed else "active",
+        # Only stock Calls have a public share page at /c/{public_id}.
+        "public_id": saved.get("public_id") if market == "stocks" else None,
         "choice": choice,
         "entry": entry + (f" · {stamp(entered)}" if stamp(entered) else ""),
         "terms": settlement_terms(market, entered),
