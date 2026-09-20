@@ -4,6 +4,7 @@
   if (!data) return;
   const {wallet, entity} = JSON.parse(data.textContent);
   const graph = document.querySelector('[data-entity-map]');
+  graph.addEventListener('click', () => graph.classList.toggle('entity-paused'));
   const small = matchMedia('(max-width:500px)');
   const svg = (tag, attrs, text) => {
     const element = document.createElementNS('http://www.w3.org/2000/svg', tag);
