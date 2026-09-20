@@ -951,7 +951,7 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(page, width
     expect(page.locator(".ticker-score")).to_have_count(2)
     expect(page.locator(".wallet-event")).to_have_count(3)
     expect(page.locator(".wallet-filing").first).to_have_attribute(
-        "href", re.compile(r"https://www.sec.gov/")
+        "href", re.compile(r"^https://www\.sec\.gov/")
     )
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.screenshot(path=str(tmp_path / f"wallet-{width}.png"), full_page=True)
