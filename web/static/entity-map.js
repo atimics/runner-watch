@@ -33,29 +33,57 @@
   }
   let page = 0;
   const initialsOf = name => String(name || '').split(/\s+/).filter(Boolean).slice(0,2).map(word => word[0]).join('').toUpperCase();
-  /* The second hop: the other wallets that reported the same stock. The stock
-     map fans a wallet's other tickers this way, so the wallet map answers with
-     the matching look. */
-  function drawNeighbours(stock, {x, y, radius, cx, cy, orbiting}) {
-    const others = new Map();
-    stock.events.forEach(event => (event.people || []).forEach(person => {
-      if (!person || person.id === wallet.id || others.has(person.id)) return;
-      others.set(person.id, person);
+  /* The second hop: the other wallets that reported the same stock. That list
+     lives on the stock itself, not just in this wallet's own filings, so it is
+     fetched once per ticker and kept for the session: the stock map fans a
+     wallet's other tickers the same way. */
+  const neighbours = new Map();
+  const NEIGHBOUR_TTL_MS = 5*60*1000;
+  const neighbourPeople = payload => {
+    const people = new Map();
+    (payload?.events || []).forEach(event => (event.people || []).forEach(person => {
+      if (!person || person.id === wallet.id || people.has(person.id)) return;
+      people.set(person.id, person);
     }));
-    const people = [...others.values()].slice(0, 4);
-    if (!people.length) return;
+    return [...people.values()];
+  };
+  function loadNeighbours(stock, node) {
+    const cached = neighbours.get(stock.ticker);
+    if (cached) {
+      drawNeighbours(cached.people, stock, node);
+      if (Date.now() - cached.at < NEIGHBOUR_TTL_MS) return;
+    }
+    fetch(`/api/stocks/${encodeURIComponent(stock.ticker)}/map`, {headers:{Accept:'application/json'}})
+      .then(response => response.ok ? response.json() : Promise.reject(new Error('holders')))
+      .then(payload => {
+        const people = neighbourPeople(payload);
+        if (!people.length) { neighbours.delete(stock.ticker); return; }
+        neighbours.set(stock.ticker, {at:Date.now(), people});
+        drawNeighbours(people, stock, node);
+      })
+      .catch(() => {});
+  }
+  function drawNeighbours(people, stock, {x, y, radius, cx, cy, orbiting}) {
+    graph.querySelectorAll(`[data-entity-neighbours="${CSS.escape(stock.ticker)}"]`).forEach(node => node.remove());
+    const shown = people.slice(0, 4);
+    if (!shown.length) return;
     const heading = Math.atan2(y - cy, x - cx) + Math.PI/2;
-    const spread = people.length === 1 ? 0 : 0.85;
-    people.forEach((person, index) => {
-      const angle = people.length === 1 ? heading : heading + (index/(people.length-1) - 0.5)*spread;
-      const orbit = radius + 18;
+    const spread = shown.length === 1 ? 0 : 0.85;
+    shown.forEach((person, index) => {
+      const angle = shown.length === 1 ? heading : heading + (index/(shown.length-1) - 0.5)*spread;
+      const orbit = radius + 20, dot = 4;
+      // Start on the node's rim and stop on the dot's rim: the line never runs
+      // under a label or through a circle.
+      const sx = x + radius*Math.cos(angle), sy = y + radius*Math.sin(angle);
       const hx = x + orbit*Math.cos(angle), hy = y + orbit*Math.sin(angle);
-      const rows = stock.events.filter(event => (event.people || []).some(p => p.id === person.id));
-      const tone = rows.some(e => e.action === 'Sold') ? 'sell' : rows.some(e => e.action === 'Bought' || e.view === 'ownership') ? 'buy' : 'role';
+      const ex = hx - dot*Math.cos(angle), ey = hy - dot*Math.sin(angle);
+      const tone = 'role';
       const label = `${person.name} also reported ${stock.ticker}`;
-      const link = svg('a',{href:`/wallets/stocks/${encodeURIComponent(stock.ticker)}/${encodeURIComponent(person.id)}`,class:`map-interest ${tone}`,tabindex:0,'aria-label':label,'data-entity-interest':person.id,...(orbiting ? {'data-orbit-anchor':`${x},${y}`} : {})});
-      link.append(svg('path',{d:`M ${x} ${y} L ${hx} ${hy}`,class:`map-interest-edge ${tone}`}));
-      link.append(svg('circle',{cx:hx,cy:hy,r:6,class:'map-interest-hit'}),svg('circle',{cx:hx,cy:hy,r:4,class:'map-interest-dot'}),svg('text',{x:hx,y:hy-9,'text-anchor':'middle',class:'map-interest-name'},initialsOf(person.name)),svg('title',{},label));
+      const link = svg('a',{href:`/wallets/stocks/${encodeURIComponent(stock.ticker)}/${encodeURIComponent(person.id)}`,class:`map-interest ${tone}`,tabindex:0,'aria-label':label,'data-entity-interest':person.id,'data-entity-neighbours':stock.ticker,...(orbiting ? {'data-orbit-anchor':`${x},${y}`} : {})});
+      link.append(svg('path',{d:`M ${sx} ${sy} L ${ex} ${ey}`,class:`map-interest-edge ${tone}`}));
+      // The label sits past the dot, clear of the line.
+      const anchor = Math.cos(angle) > 0.3 ? 'start' : Math.cos(angle) < -0.3 ? 'end' : 'middle';
+      link.append(svg('circle',{cx:hx,cy:hy,r:6,class:'map-interest-hit'}),svg('circle',{cx:hx,cy:hy,r:dot,class:'map-interest-dot'}),svg('text',{x:hx + 10*Math.cos(angle),y:hy + 10*Math.sin(angle) + 3,'text-anchor':anchor,class:'map-interest-name'},initialsOf(person.name)),svg('title',{},label));
       graph.append(link);
     });
   }
@@ -93,7 +121,7 @@
       if (scored) link.append(svg('text',{x,y:y+12,'text-anchor':'middle',class:'entity-stock-score'},Math.round(stock.score)));
       link.append(svg('text',{x,y:y+radius+(scored ? 23 : 18),'text-anchor':'middle',class:'map-node-action'},stock.value == null ? `${stock.events.length} events` : money(stock.value)));
       graph.append(link);
-      drawNeighbours(stock, {x, y, radius, cx, cy, orbiting});
+      loadNeighbours(stock, {x, y, radius, cx, cy, orbiting});
     });
     const center = svg('g',{class:'entity-center','aria-label':wallet.name});
     center.append(svg('circle',{cx,cy,r:mobile ? 48 : 62,class:'map-center'}),svg('text',{x:cx,y:cy+7,'text-anchor':'middle','class':'map-center-text'},initialsOf(wallet.name)),svg('title',{},wallet.name)); graph.append(center);

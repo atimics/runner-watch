@@ -564,6 +564,7 @@ WORKER_OWNED_SCREENS = frozenset(
     {
         ("runners-pulse", "public"),
         ("stock-list", "public"),
+        ("stock-search-base", "public"),
         ("runners-radar", "public"),
         ("runners-alpha", "public"),
         ("flash-record", "public"),
@@ -669,6 +670,7 @@ def _invalidate_runners_feeds(*scopes: str) -> None:
         _invalidate_public_screen_data(f"runners-{scope}", "public")
     if "pulse" in scopes:
         _invalidate_public_screen_data("stock-list", "public")
+        _invalidate_public_screen_data("stock-search-base", "public")
 
 
 def _build_cached_payload(
@@ -7942,10 +7944,18 @@ def stock_ticker_map_api(
     from runner_web.stock_map import ticker_map
 
     enforce_rate(request, "stock-ticker-map", limit=120, seconds=60)
+    normalized = _clean_ticker(ticker)
     try:
-        return ticker_map(_clean_ticker(ticker), cursor)
+        # The wallet page asks for the same holder page as the stock map, so keep
+        # it warm in the shared cache and let the browser reuse it too.
+        payload = _public_screen_data(
+            "ticker-map",
+            f"{normalized}:{cursor or 'first'}",
+            lambda: ticker_map(normalized, cursor),
+        )
     except ValueError as exc:
         raise HTTPException(400, "Invalid map cursor") from exc
+    return _conditional_json_response(request, payload)
 
 
 @app.get("/api/stocks/{ticker}/map/connections")
@@ -7958,10 +7968,16 @@ def stock_person_connections_api(
     from runner_web.stock_map import person_connections
 
     enforce_rate(request, "stock-person-connections", limit=120, seconds=60)
+    normalized = _clean_ticker(ticker)
     try:
-        return person_connections(_clean_ticker(ticker), person_id, cursor)
+        payload = _public_screen_data(
+            "person-connections",
+            f"{normalized}:{person_id}:{cursor or 'first'}",
+            lambda: person_connections(normalized, person_id, cursor),
+        )
     except ValueError as exc:
         raise HTTPException(400, "Invalid connection request") from exc
+    return _conditional_json_response(request, payload)
 
 
 @app.get("/wallets/stocks/{ticker}/{person_id}", response_class=HTMLResponse)
@@ -8194,14 +8210,11 @@ def runners_board_response(
             _stock_list_data(),
         )
 
-    from runner_web.stories import stories_by_subject
-
-    rows, updated_at = _all_public_pulse_rows()
+    base = _stock_search_base()
+    rows = list(base.get("rows") or [])
     direct = _direct_ticker_item(query, rows)
     if direct is not None:
         rows.append(direct)
-    tickers = [str(item.get("ticker") or "").upper() for item in rows if item.get("ticker")]
-    stories = stories_by_subject("stocks", tickers)
     return _simple_board(
         request,
         runner_session,
@@ -8209,8 +8222,8 @@ def runners_board_response(
         rows,
         view,
         query,
-        updated_at=updated_at,
-        stories=stories,
+        updated_at=str(base.get("updated_at") or ""),
+        stories=base.get("stories") or {},
     )
 
 
@@ -8235,6 +8248,33 @@ def _stock_list_data_uncached() -> dict[str, Any]:
         rows,
         updated_at=updated_at,
         stories=stories_by_subject("stocks", tickers),
+    )
+
+
+def _stock_search_base_uncached() -> dict[str, Any]:
+    from runner_web.stories import stories_by_subject
+
+    rows, updated_at = _all_public_pulse_rows()
+    tickers = [str(item.get("ticker") or "").upper() for item in rows if item.get("ticker")]
+    return {
+        "rows": rows,
+        "updated_at": updated_at,
+        "stories": stories_by_subject("stocks", tickers),
+    }
+
+
+def _stock_search_base() -> dict[str, Any]:
+    """The rows a search filters over, kept warm so typing a query is cheap.
+
+    Searching used to rebuild the whole pulse board and its stories on every
+    request; the filter itself is in-memory, so only the base needs caching.
+    """
+
+    return _public_screen_data(
+        "stock-search-base",
+        "public",
+        _stock_search_base_uncached,
+        ttl_seconds=PULSE_CACHE_TTL_SECONDS,
     )
 
 
@@ -9792,11 +9832,14 @@ async def screen_stock_chart(ticker: str, request: Request) -> dict[str, Any]:
     if not _ticker_exists(normalized):
         raise HTTPException(404, "Ticker not found")
     payload = await run_in_threadpool(ticker_chart_detail_payload, normalized)
-    return {
-        "points": series(payload.get("points") or []),
-        "states": payload.get("states") or [],
-        "gap": payload.get("gap"),
-    }
+    return _conditional_json_response(
+        request,
+        {
+            "points": series(payload.get("points") or []),
+            "states": payload.get("states") or [],
+            "gap": payload.get("gap"),
+        },
+    )
 
 
 @app.get("/api/screens/stocks/{ticker}/quote")
@@ -9818,7 +9861,9 @@ async def screen_stock_quote(ticker: str, request: Request) -> dict[str, Any]:
             "quote_time": current.get("observed_at") or current.get("quote_time"),
         },
     )
-    return {key: item[key] for key in ("value", "change", "tone", "time")}
+    return _conditional_json_response(
+        request, {key: item[key] for key in ("value", "change", "tone", "time")}
+    )
 
 
 @app.get("/api/screens/memecoins/{coin_id}/quote")
@@ -10238,6 +10283,7 @@ def _public_screen_refreshers() -> list[tuple[str, str, Callable[[], dict[str, A
     return [
         ("runners-pulse", "public", _pulse_data_uncached, PULSE_CACHE_TTL_SECONDS),
         ("stock-list", "public", _stock_list_data_uncached, PULSE_CACHE_TTL_SECONDS),
+        ("stock-search-base", "public", _stock_search_base_uncached, PULSE_CACHE_TTL_SECONDS),
         (
             "runners-radar",
             "public",

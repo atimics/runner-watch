@@ -1096,6 +1096,20 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     page.route("http://app.test/**", lambda route: route.fulfill(
         content_type="text/html", body=html
     ))
+    # The second hop comes from the stock's own holder list, not this wallet's
+    # filings.
+    page.route(
+        "**/api/stocks/*/map",
+        lambda route: route.fulfill(
+            json={
+                "ticker": "USO",
+                "events": [
+                    {"people": [{"id": "sec:202", "name": "COATUE MANAGEMENT LLC"}]}
+                ],
+                "next_cursor": None,
+            }
+        ),
+    )
     page.set_viewport_size({"width": width, "height": 1000})
     page.goto("http://app.test/wallets/stocks/USO/sec:101")
     expect(page.get_by_role("heading", name="HRT FINANCIAL LP")).to_be_visible()
