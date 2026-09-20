@@ -946,6 +946,10 @@ def _stale_workers(*, at: datetime | None = None) -> list[dict[str, Any]]:
     updated_by_key = {str(row["key"]): str(row["updated_at"] or "") for row in rows}
     stale: list[dict[str, Any]] = []
     for worker, key in WORKER_PROGRESS_KEYS.items():
+        # The scanner is idle by design while the session is closed, so an old
+        # progress key overnight or over a weekend is not a stalled loop.
+        if worker == "scan-collection" and not scan_collection_allowed(observed_at):
+            continue
         updated_at = updated_by_key.get(key)
         if not updated_at:
             continue
@@ -3757,6 +3761,51 @@ def _calls_flash_picks() -> dict[str, Any]:
     )
 
 
+def _calls_head_to_head(
+    mine: dict[str, Any], record: dict[str, Any]
+) -> dict[str, Any]:
+    your_wins = int(mine.get("wins") or 0)
+    your_losses = int(mine.get("losses") or 0)
+    your_decisions = your_wins + your_losses
+    flash_wins = int(record.get("hits") or 0)
+    flash_losses = int(record.get("misses") or 0)
+    flash_decisions = flash_wins + flash_losses
+    your_rate = your_wins / your_decisions if your_decisions else None
+    flash_rate = flash_wins / flash_decisions if flash_decisions else None
+    flash_rate_visible = bool(record.get("headline_rate_visible") and flash_rate is not None)
+
+    leader: str | None = None
+    gap_points: float | None = None
+    if your_rate is not None and flash_rate_visible and flash_rate is not None:
+        difference = your_rate - flash_rate
+        gap_points = round(abs(difference) * 100, 1)
+        if difference > 0:
+            leader = "you"
+        elif difference < 0:
+            leader = "flash"
+        else:
+            leader = "even"
+
+    return {
+        "you": {
+            "wins": your_wins,
+            "losses": your_losses,
+            "decisions": your_decisions,
+            "hit_rate": your_rate,
+            "rate_visible": your_rate is not None,
+        },
+        "flash": {
+            "wins": flash_wins,
+            "losses": flash_losses,
+            "decisions": flash_decisions,
+            "hit_rate": flash_rate,
+            "rate_visible": flash_rate_visible,
+        },
+        "leader": leader,
+        "gap_points": gap_points,
+    }
+
+
 def _calls_page_data(runner_session: str | None) -> dict[str, Any]:
     user = current_user(runner_session)
     mine: dict[str, Any] | None = None
@@ -3768,7 +3817,9 @@ def _calls_page_data(runner_session: str | None) -> dict[str, Any]:
             "calls": (unified.get("calls") or [])[:24],
             "stats": dict(unified.get("stats") or {}),
         }
-    return {"mine": mine, **_calls_flash_picks()}
+    flash = _calls_flash_picks()
+    comparison = _calls_head_to_head(mine["stats"], flash["record"]) if mine else None
+    return {"mine": mine, **flash, "comparison": comparison}
 
 
 @app.get("/calls", response_class=HTMLResponse)
