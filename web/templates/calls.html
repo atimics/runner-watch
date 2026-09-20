@@ -21,6 +21,40 @@
 </header>
 
 {% if user and calls_page.mine %}
+{% set comparison = calls_page.comparison %}
+<section class="calls-matchup" aria-labelledby="calls-matchup-heading">
+  <header>
+    <div>
+      <p class="eyebrow">HEAD TO HEAD</p>
+      <h2 id="calls-matchup-heading">You vs Flash</h2>
+    </div>
+    <p>Clear results only. Sample sizes stay visible.</p>
+  </header>
+  <div class="calls-matchup-score">
+    <article{% if comparison.leader == 'you' %} class="is-leading"{% endif %}>
+      <span>You</span>
+      <strong>{% if comparison.you.rate_visible %}{{ '%.0f'|format(comparison.you.hit_rate * 100) }}%{% else %}—{% endif %}</strong>
+      <b>{{ comparison.you.wins }}–{{ comparison.you.losses }}</b>
+      <small>{{ comparison.you.decisions }} graded Calls · all markets</small>
+    </article>
+    <span class="calls-matchup-vs" aria-hidden="true">VS</span>
+    <article{% if comparison.leader == 'flash' %} class="is-leading"{% endif %}>
+      <span>Flash</span>
+      <strong>{% if comparison.flash.rate_visible %}{{ '%.0f'|format(comparison.flash.hit_rate * 100) }}%{% else %}—{% endif %}</strong>
+      <b>{{ comparison.flash.wins }}–{{ comparison.flash.losses }}</b>
+      <small>{{ comparison.flash.decisions }} graded stock forecasts</small>
+    </article>
+  </div>
+  <p class="calls-matchup-result">
+    {% if comparison.leader == 'you' %}<b>You lead</b> by {{ '%.1f'|format(comparison.gap_points) }} percentage points.
+    {% elif comparison.leader == 'flash' %}<b>Flash leads</b> by {{ '%.1f'|format(comparison.gap_points) }} percentage points.
+    {% elif comparison.leader == 'even' %}<b>Even hit rate.</b> The sample sizes show how much history sits behind it.
+    {% elif not comparison.you.rate_visible %}Settle a Call to start your side of the comparison.
+    {% else %}Flash's public rate appears after 20 graded forecasts.
+    {% endif %}
+  </p>
+</section>
+
 <section class="calls-section" aria-labelledby="my-calls-heading">
   <div class="section-heading">
     <h2 id="my-calls-heading">My Calls</h2>
