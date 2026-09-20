@@ -17,8 +17,9 @@ permissions:
   contents: read
 
 jobs:
-  # The gate is split into parallel jobs so the run's wall clock is the slowest
-  # job (~2 min) instead of the sum of every check (~4 min).
+  # The gate runs as parallel jobs so the run's wall clock is the slowest job.
+  # Pull requests skip coverage and shard the suites for fast feedback; main
+  # runs the coverage gate before deploying.
   lint:
     name: Lint, rust and audit
     runs-on: ubuntu-latest
@@ -41,9 +42,13 @@ jobs:
       - run: docker compose -f compose.local.yml config --quiet
 
   unit:
-    name: Unit tests
+    name: Unit tests ${{ matrix.shard }}/5
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
@@ -51,19 +56,39 @@ jobs:
           python-version: "3.13"
           enable-cache: true
       - run: uv sync --locked --extra dev
-      - run: uv run pytest -q -n auto --cov-fail-under=68 --junitxml=replay-unit-results.xml
+      # Coverage is measured on main only (the combine job below gates it), so
+      # pull-request shards skip the tracing that roughly doubles the run.
+      - name: Run the unit tests
+        env:
+          COVERAGE_FILE: coverage-${{ matrix.shard }}
+        run: >-
+          uv run pytest -q -n auto
+          ${{ github.event_name == 'pull_request' && '--no-cov' || '' }}
+          --splits 5 --group ${{ matrix.shard }}
+          --junitxml=replay-unit-results-${{ matrix.shard }}.xml
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: replay-unit-results
-          path: replay-unit-results.xml
+          name: replay-unit-results-${{ matrix.shard }}
+          path: replay-unit-results-${{ matrix.shard }}.xml
+          if-no-files-found: error
+          retention-days: 3
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: github.event_name != 'pull_request'
+        with:
+          name: coverage-${{ matrix.shard }}
+          path: coverage-${{ matrix.shard }}
           if-no-files-found: error
           retention-days: 3
 
   browser:
-    name: Browser tests
+    name: Browser tests ${{ matrix.shard }}/2
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
@@ -76,14 +101,43 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('uv.lock') }}
       - run: uv run playwright install --with-deps chromium
-      - run: uv run pytest -q -n auto -m browser -o addopts= --junitxml=replay-browser-results.xml
+      - run: >-
+          uv run pytest -q -n auto -o addopts= -m browser --no-cov
+          --splits 2 --group ${{ matrix.shard }}
+          --junitxml=replay-browser-results-${{ matrix.shard }}.xml
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: replay-browser-results
-          path: replay-browser-results.xml
+          name: replay-browser-results-${{ matrix.shard }}
+          path: replay-browser-results-${{ matrix.shard }}.xml
           if-no-files-found: error
           retention-days: 3
+
+  # Coverage stays a hard deploy gate. The shards each upload their partial
+  # data, and this job combines them and enforces the threshold. It runs on
+  # main only, so pull requests keep the fast untraced shards.
+  coverage:
+    name: Coverage gate
+    needs: [unit]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --locked --extra dev
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: "coverage-*"
+          path: coverage-data
+          merge-multiple: true
+      - name: Combine shard coverage and enforce the threshold
+        run: |
+          uv run --no-sync coverage combine coverage-data/coverage-*
+          uv run --no-sync coverage report --fail-under=68
 
   evidence:
     name: Replay evidence
@@ -100,14 +154,11 @@ jobs:
       - run: uv sync --locked --extra dev
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: replay-unit-results
+          pattern: "*-results-*"
           path: reports
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: replay-browser-results
-          path: reports
+          merge-multiple: true
       - name: Record replay quality evidence
-        run: uv run python scripts/record-replay-quality.py --reports reports/replay-unit-results.xml reports/replay-browser-results.xml --output replay-quality.json
+        run: uv run python scripts/record-replay-quality.py --reports reports/*.xml --output replay-quality.json
         env:
           REPLAY_REVIEWED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Save replay quality evidence
@@ -117,8 +168,7 @@ jobs:
           name: memecoin-replay-quality
           path: |
             replay-quality.json
-            reports/replay-unit-results.xml
-            reports/replay-browser-results.xml
+            reports/*.xml
 
   container:
     name: Container tests
@@ -163,22 +213,30 @@ jobs:
 
   test:
     name: Test and lint
-    needs: [lint, unit, browser, evidence, container]
+    needs: [lint, unit, browser, evidence, coverage, container]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: Require every test job
         env:
+          EVENT_NAME: ${{ github.event_name }}
           LINT_RESULT: ${{ needs.lint.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
           BROWSER_RESULT: ${{ needs.browser.result }}
           EVIDENCE_RESULT: ${{ needs.evidence.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
           CONTAINER_RESULT: ${{ needs.container.result }}
         run: |
-          for result in "$LINT_RESULT" "$UNIT_RESULT" "$BROWSER_RESULT" "$EVIDENCE_RESULT" "$CONTAINER_RESULT"; do
-            test "$result" = "success"
-          done
+          test "$LINT_RESULT" = "success"
+          test "$UNIT_RESULT" = "success"
+          test "$BROWSER_RESULT" = "success"
+          test "$EVIDENCE_RESULT" = "success"
+          test "$CONTAINER_RESULT" = "success"
+          # Coverage only runs on main; there it must pass before deploying.
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            test "$COVERAGE_RESULT" = "success"
+          fi
 
   deploy:
     name: Deploy app
