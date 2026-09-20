@@ -3515,6 +3515,34 @@ def _migration_076_price_gap_market_open(db: DatabaseConnection) -> None:
     _ensure_column(db, "price_gap_forecasts", "market_open INTEGER NOT NULL DEFAULT 1")
 
 
+def _migration_077_gap_ranker_models(db: DatabaseConnection) -> None:
+    """The tiny next-bar ranker behind the dashed gap line.
+
+    A model is only promoted to active when it beats always guessing the commoner
+    direction on held-out bars; otherwise it is kept as a shadow and the line
+    stays flat.
+    """
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS gap_ranker_models (
+            id TEXT PRIMARY KEY,
+            feature_schema_version TEXT NOT NULL,
+            model_kind TEXT NOT NULL,
+            weights_json TEXT NOT NULL,
+            metrics_json TEXT NOT NULL,
+            training_start TEXT NOT NULL,
+            training_end TEXT NOT NULL,
+            training_rows INTEGER NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('shadow','active','retired')),
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS gap_ranker_models_status
+            ON gap_ranker_models(status,created_at DESC);
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3596,6 +3624,7 @@ MIGRATIONS = (
     Migration(74, "telegram_outbox", _migration_074_telegram_outbox),
     Migration(75, "price_gap_forecasts", _migration_075_price_gap_forecasts),
     Migration(76, "price_gap_market_open", _migration_076_price_gap_market_open),
+    Migration(77, "gap_ranker_models", _migration_077_gap_ranker_models),
 )
 
 

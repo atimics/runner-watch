@@ -20,9 +20,13 @@ UTC_TUESDAY = datetime(2026, 9, 15, 15, 0, tzinfo=UTC)  # Tue 11:00 ET · regula
 
 @pytest.fixture
 def database(tmp_path, monkeypatch):
+    from runner_web import gap_ranker
+
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "price-gap.db")
     monkeypatch.setattr(db, "DATABASE_URL", "")
     monkeypatch.setattr(db, "REQUIRE_DATABASE_URL", False)
+    # No model is cached from another test, so the projection stays flat here.
+    monkeypatch.setattr(gap_ranker, "_ACTIVE_CACHE", None)
     db.init_db()
     with db.connection() as connection:
         yield connection

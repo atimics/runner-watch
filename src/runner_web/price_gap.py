@@ -23,6 +23,7 @@ import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from runner_web import gap_ranker
 from runner_web.database import DatabaseConnection
 from runner_web.db import connection
 from runner_web.market_clock import market_clock
@@ -39,6 +40,8 @@ TRACKED_TICKERS = max(1, int(os.getenv("PRICE_GAP_TICKER_LIMIT", "300")))
 VOLATILITY_FLOOR = max(0.0, float(os.getenv("PRICE_GAP_VOLATILITY_FLOOR", "0.0002")))
 EWMA_LAMBDA = 0.94
 BAND_SIGMA = 1.0
+# How far toward the band edge the centre of a leaned projection may travel.
+LEAN = max(0.0, min(1.0, float(os.getenv("PRICE_GAP_LEAN", "0.6"))))
 
 
 def _utc(value: datetime | None = None) -> datetime:
@@ -85,19 +88,30 @@ def forecast_path(
     *,
     step_minutes: int = STEP_MINUTES,
     sigma: float = BAND_SIGMA,
+    direction: float = 0.0,
+    lean: float = LEAN,
 ) -> list[dict[str, float]]:
-    """Carry the anchor forward, with the band widening by sqrt(steps)."""
+    """Carry the anchor forward inside a band that widens by sqrt(steps).
+
+    A direction in [-1, 1] leans the carried price toward the edge the ranker
+    favours, but never past it: the band stays the uncertainty and the lean only
+    says which way the middle of it sits.
+    """
 
     if anchor_price <= 0:
         return []
     steps = max(1, math.ceil(max(1, horizon_minutes) / step_minutes))
+    lean = max(0.0, min(1.0, lean))
+    direction = max(-1.0, min(1.0, direction))
     path: list[dict[str, float]] = []
     for step in range(1, steps + 1):
         reach = math.exp(sigma * volatility * math.sqrt(step))
+        travel = reach - 1.0 if direction >= 0 else 1.0 - 1.0 / reach
+        price = anchor_price * (1.0 + direction * lean * travel)
         path.append(
             {
                 "step": step,
-                "price": round(anchor_price, 6),
+                "price": round(price, 6),
                 "low": round(anchor_price / reach, 6),
                 "high": round(anchor_price * reach, 6),
             }
@@ -256,7 +270,10 @@ def forecast_gap(
     ]
     volatility = step_volatility(returns)
     horizon_minutes = min(MAX_HORIZON_MINUTES, max(STEP_MINUTES, math.ceil(latency_seconds / 60)))
-    path = forecast_path(anchor["price"], volatility, horizon_minutes)
+    direction, model_id = model_direction(bars, clock)
+    path = forecast_path(
+        anchor["price"], volatility, horizon_minutes, direction=direction
+    )
     if not path:
         return None
     quote = database.execute(
@@ -269,7 +286,10 @@ def forecast_gap(
     ).fetchone()
     return {
         "ticker": ticker,
-        "model_version": MODEL_VERSION,
+        # The recorded model is whichever produced this path, so the dataset can
+        # tell a flat carry from a leaned one later.
+        "model_version": model_id or MODEL_VERSION,
+        "direction": direction,
         "anchor_time": _iso(anchor["time"]),
         "anchor_kind": anchor["kind"],
         "anchor_price": round(anchor["price"], 6),
@@ -335,16 +355,20 @@ def gap_projection(
         if earlier and later and earlier > 0 and later > 0
     ]
     volatility = step_volatility(returns)
+    direction, model_id = model_direction(bars, clock)
     gap_minutes = max(1, math.ceil(latency_seconds / 60))
     step = max(STEP_MINUTES, math.ceil(gap_minutes / max(2, max_points)))
     steps = max(1, math.ceil(gap_minutes / step))
     path: list[dict[str, Any]] = []
     for index in range(1, steps + 1):
         reach = math.exp(BAND_SIGMA * volatility * math.sqrt(index * step / STEP_MINUTES))
+        # The lean peeks toward the band edge the ranker favours, never past it.
+        travel = reach - 1.0 if direction >= 0 else 1.0 - 1.0 / reach
+        price = anchor["price"] * (1.0 + direction * LEAN * travel)
         path.append(
             {
                 "time": _iso(anchor["time"] + timedelta(minutes=index * step)),
-                "price": round(anchor["price"], 6),
+                "price": round(price, 6),
                 "low": round(anchor["price"] / reach, 6),
                 "high": round(anchor["price"] * reach, 6),
             }
@@ -364,7 +388,8 @@ def gap_projection(
         label = f"Market closed · dashed line is our flat projection (±{band_pct}%)"
     return {
         "ticker": ticker,
-        "model_version": MODEL_VERSION,
+        "model_version": model_id or MODEL_VERSION,
+        "direction": round(direction, 4),
         "anchor_time": _iso(anchor["time"]),
         "anchor_kind": anchor["kind"],
         "anchor_price": round(anchor["price"], 6),
@@ -379,6 +404,36 @@ def gap_projection(
         "label": label,
         "path": path,
     }
+
+
+_SESSION_HOURS = {"pre": 5.5, "regular": 6.5, "after": 4.0}
+
+
+def session_position(clock: dict[str, Any]) -> float:
+    """How far through the session we are, 0 at the open and 1 at the close."""
+
+    length = _SESSION_HOURS.get(str(clock.get("session")))
+    if not length:
+        return 0.5
+    remaining = float(clock.get("countdown_seconds") or 0.0)
+    position = 1.0 - remaining / (length * 3600.0)
+    return max(0.0, min(1.0, position))
+
+
+def model_direction(
+    bars: list[dict[str, Any]], clock: dict[str, Any]
+) -> tuple[float, str | None]:
+    """The ranker's lean for the next bar, or nothing when it has no active model."""
+
+    model = gap_ranker.active_model()
+    if not model:
+        return 0.0, None
+    closes = [value for value in (_number(bar["close"]) for bar in bars) if value]
+    volumes = [value or 0.0 for value in (_number(bar["volume"]) for bar in bars)]
+    vector = gap_ranker.feature_vector(closes, volumes, session_position=session_position(clock))
+    if vector is None:
+        return 0.0, None
+    return gap_ranker.direction_for_model(model, vector), str(model["id"])
 
 
 def tracked_tickers(database: DatabaseConnection, *, limit: int = TRACKED_TICKERS) -> list[str]:

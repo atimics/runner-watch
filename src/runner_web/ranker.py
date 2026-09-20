@@ -658,6 +658,26 @@ def _trainer_state(key: str, value: Any) -> None:
         )
 
 
+_GAP_RANKER_LAST_TRAINED = 0.0
+
+
+def _train_gap_ranker_if_due() -> dict[str, Any]:
+    """Train the next-bar ranker on its own slow cadence.
+
+    The dashed gap line only leans when this model has beaten the majority
+    direction on held-out bars, so a quiet failure here leaves it flat.
+    """
+
+    global _GAP_RANKER_LAST_TRAINED
+    from runner_web.gap_ranker import TRAIN_INTERVAL_SECONDS, train_and_store
+
+    moment = datetime.now(UTC).timestamp()
+    if moment - _GAP_RANKER_LAST_TRAINED < TRAIN_INTERVAL_SECONDS:
+        return {"status": "skipped"}
+    _GAP_RANKER_LAST_TRAINED = moment
+    return train_and_store()
+
+
 def trainer_main() -> None:
 
     init_db()
@@ -711,6 +731,7 @@ def trainer_main() -> None:
                 _trainer_state("ranker_historical_backfill_last_result", historical_result)
             result = train_shadow_ranker_if_due()
             _trainer_state("ranker_trainer_last_result", result)
+            _trainer_state("gap_ranker_last_result", _train_gap_ranker_if_due())
             _trainer_state("ranker_trainer_last_error", "")
         except Exception as exc:
             last_error = str(exc)[:1000]
