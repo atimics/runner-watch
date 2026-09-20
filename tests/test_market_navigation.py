@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from jinja2 import Environment, FileSystemLoader
 
-from runner_web import db
+from runner_web import db, stories
 from runner_web import main as web_main
 from runner_web.db import init_db
 
@@ -164,6 +164,57 @@ def test_the_board_renders_every_view_on_one_screen(
 
     assert response.status_code == 200
     assert f"<title>{title}</title>" in response.text
+
+
+def test_stock_board_reuses_the_prebuilt_public_screen(board_client, monkeypatch) -> None:
+    web_main.PUBLIC_SCREEN_DATA_CACHE.clear()
+    web_main.PUBLIC_SCREEN_DATA_REFRESHING.clear()
+    monkeypatch.setattr(web_main, "shared_cache_get", lambda _key: None)
+    monkeypatch.setattr(web_main, "shared_cache_set", lambda *_args: None)
+    feed_calls = 0
+    story_calls = 0
+
+    def feed(*, offset=0, limit=50):
+        nonlocal feed_calls
+        feed_calls += 1
+        assert offset == 0
+        assert limit == 50
+        return {
+            "rows": [
+                {
+                    "ticker": "FAST",
+                    "company": "Fast Company",
+                    "price": 2.5,
+                    "change_pct": 4.0,
+                    "score": 60.0,
+                }
+            ],
+            "has_more": False,
+            "updated_at": "2026-09-19T12:00:00+00:00",
+        }
+
+    def story_rows(market: str, tickers: list[str]):
+        nonlocal story_calls
+        story_calls += 1
+        assert market == "stocks"
+        assert tickers == ["FAST"]
+        return {}
+
+    monkeypatch.setattr(web_main, "_public_pulse_data", feed)
+    monkeypatch.setattr(stories, "stories_by_subject", story_rows)
+
+    first = board_client.get("/")
+    second = board_client.get("/")
+
+    assert first.status_code == second.status_code == 200
+    assert 'href="/t/FAST"' in second.text
+    assert feed_calls == 1
+    assert story_calls == 1
+    assert ("stock-list", "public") in web_main.WORKER_OWNED_SCREENS
+    assert any(
+        scope == "stock-list" and identity == "public"
+        for scope, identity, _builder, _ttl in web_main._public_screen_refreshers()
+    )
 
 
 @pytest.mark.parametrize(

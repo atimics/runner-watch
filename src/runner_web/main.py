@@ -561,6 +561,7 @@ PUBLIC_SCREEN_DATA_REFRESHING: set[str] = set()
 WORKER_OWNED_SCREENS = frozenset(
     {
         ("runners-pulse", "public"),
+        ("stock-list", "public"),
         ("runners-radar", "public"),
         ("runners-alpha", "public"),
         ("flash-record", "public"),
@@ -664,6 +665,8 @@ def _invalidate_public_screen_data(scope: str, identity: str) -> None:
 def _invalidate_runners_feeds(*scopes: str) -> None:
     for scope in scopes:
         _invalidate_public_screen_data(f"runners-{scope}", "public")
+    if "pulse" in scopes:
+        _invalidate_public_screen_data("stock-list", "public")
 
 
 def _build_cached_payload(
@@ -8151,14 +8154,18 @@ def runners_board_response(
     runner_session: str | None,
     view: str,
 ) -> HTMLResponse:
+    query = request.query_params.get("q", "")
+    if not query.strip():
+        return _simple_board_response(
+            request,
+            runner_session,
+            "stocks",
+            _stock_list_data(),
+        )
+
     from runner_web.stories import stories_by_subject
 
-    page = _public_pulse_data(limit=50)
-    rows = list(page["rows"])
-    while page.get("has_more") and page["rows"]:
-        page = _public_pulse_data(offset=len(rows), limit=50)
-        rows.extend(page["rows"])
-    query = request.query_params.get("q", "")
+    rows, updated_at = _all_public_pulse_rows()
     direct = _direct_ticker_item(query, rows)
     if direct is not None:
         rows.append(direct)
@@ -8171,8 +8178,41 @@ def runners_board_response(
         rows,
         view,
         query,
-        updated_at=str(page.get("updated_at") or ""),
+        updated_at=updated_at,
         stories=stories,
+    )
+
+
+def _all_public_pulse_rows() -> tuple[list[dict[str, Any]], str]:
+    page = _public_pulse_data(limit=50)
+    rows = list(page["rows"])
+    updated_at = str(page.get("updated_at") or "")
+    while page.get("has_more") and page["rows"]:
+        page = _public_pulse_data(offset=len(rows), limit=50)
+        rows.extend(page["rows"])
+    return rows, updated_at
+
+
+def _stock_list_data_uncached() -> dict[str, Any]:
+    from runner_web.market_screens import listing
+    from runner_web.stories import stories_by_subject
+
+    rows, updated_at = _all_public_pulse_rows()
+    tickers = [str(item.get("ticker") or "").upper() for item in rows if item.get("ticker")]
+    return listing(
+        "stocks",
+        rows,
+        updated_at=updated_at,
+        stories=stories_by_subject("stocks", tickers),
+    )
+
+
+def _stock_list_data() -> dict[str, Any]:
+    return _public_screen_data(
+        "stock-list",
+        "public",
+        _stock_list_data_uncached,
+        ttl_seconds=PULSE_CACHE_TTL_SECONDS,
     )
 
 
@@ -8189,6 +8229,15 @@ def _simple_board(
     from runner_web.market_screens import listing
 
     screen = listing(market, items, view=view, query=query, updated_at=updated_at, stories=stories)
+    return _simple_board_response(request, session, market, screen)
+
+
+def _simple_board_response(
+    request: Request,
+    session: str | None,
+    market: str,
+    screen: dict[str, Any],
+) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "market_screen.html",
@@ -10142,6 +10191,7 @@ def _public_screen_refreshers() -> list[tuple[str, str, Callable[[], dict[str, A
 
     return [
         ("runners-pulse", "public", _pulse_data_uncached, PULSE_CACHE_TTL_SECONDS),
+        ("stock-list", "public", _stock_list_data_uncached, PULSE_CACHE_TTL_SECONDS),
         (
             "runners-radar",
             "public",
@@ -10221,6 +10271,7 @@ async def request_cache_warmer() -> None:
 
     await asyncio.sleep(1)
     builders: list[Callable[[], Any]] = [
+        _stock_list_data,
         _sports_alpha_data,
         _radar_base_data,
         _pulse_base_data,
