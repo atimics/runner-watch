@@ -26,7 +26,7 @@
   const initial = screenNode?.ratiScreenDetail || JSON.parse(screenNode?.textContent || '{}');
   let item = initial.market === 'stocks' && initial.item?.id === root.dataset.ticker ? initial.item : {};
   let drivers = [], positive = [], penalties = [], contributions = [], total = 0, score = '—';
-  const scoreData = value => JSON.stringify([value.score ?? null, value.score_detail ?? null]);
+  const scoreData = value => JSON.stringify([value.score ?? null, value.score_detail ?? null, value.score_trace ?? null]);
   function readScore() {
     const parts = value => Array.isArray(value) ? value.filter(part => part && Number.isFinite(part.value)) : [];
     drivers = parts(item.score_detail?.drivers);
@@ -60,7 +60,15 @@
     const panel = $('selection'); panel.replaceChildren();
     if (part) {
       panel.append(make('h4', part.label), make('p', `${points(part.value)} · ${percent(part)}`, 'map-score-breakdown'));
-      panel.append(make('p', pinned === part.key ? 'Pinned contribution. Return to score overview to clear.' : 'Click or press Enter to pin this contribution.', 'map-note'));
+      const rows = item.score_trace?.[part.key];
+      if (Array.isArray(rows) && rows.length) {
+        const trace = make('dl', null, 'map-score-trace');
+        trace.setAttribute('aria-label', `${part.label} component trace`);
+        rows.forEach(({label, value}) => {
+          const row = make('div'); row.append(make('dt', label), make('dd', value)); trace.append(row);
+        });
+        panel.append(trace);
+      }
     }
     const badges = make('div', null, 'map-score-badges');
     const legend = make('ul', null, 'map-score-legend');
@@ -325,12 +333,17 @@
     filingsPageNumber = Math.min(filingsPageNumber, pageCount - 1);
     const slice = events.slice(filingsPageNumber * FILINGS_PAGE_SIZE, filingsPageNumber * FILINGS_PAGE_SIZE + FILINGS_PAGE_SIZE);
     slice.forEach(e => {
-      const button = make('button',null,'map-event'); button.type = 'button'; button.dataset.eventId = e.id; button.setAttribute('aria-pressed',String(e.id === selected));
-      const main = make('span'); main.append(make('strong',`${names(e)} · ${e.action}`),make('small',`${e.basis} · Filed ${date(e.filed_at)}${e.amendment ? ' · Amendment' : ''}`));
-      button.append(make('span','●',e.tone),main,make('span',amount(e),'event-money'));
+      const button = make('button',null,'wallet-event map-filing'); button.type = 'button'; button.dataset.eventId = e.id; button.setAttribute('aria-pressed',String(e.id === selected));
+      button.dataset.tone = e.action === 'Sold' ? 'sell' : e.action === 'Bought' || e.view === 'ownership' ? 'buy' : 'other';
+      const description = `${names(e)} · ${e.action} · ${e.security || 'See filing'}${e.shares == null ? '' : ` · ${number(e.shares)} shares`} · ${amount(e)} · ${e.basis} · ${e.form} · Filed ${date(e.filed_at)}${e.amendment ? ' · Amendment' : ''}`;
+      button.title = description; button.setAttribute('aria-label',description);
+      const subject = make('span',null,'wallet-event-ticker'); subject.append(make('strong',names(e)));
+      const detail = make('span',`${e.security || ''}${e.shares == null ? '' : ` · ${number(e.shares)} shares`}`,'wallet-event-detail');
+      const filed = make('time',e.filed_at?.slice(5,10),'wallet-filing'); filed.dateTime = e.filed_at?.slice(0,10) || '';
+      button.append(subject,make('span',e.action,'wallet-event-action'),detail,make('span',amount(e),'wallet-event-value'),filed);
       button.addEventListener('click',() => scrub(e)); list.append(button);
     });
-    if (!events.length) list.append(make('p','Saved filings will appear here.','map-note'));
+    $('filings').hidden = !events.length;
     $('filings-paging').hidden = events.length <= FILINGS_PAGE_SIZE;
     $('filings-page').textContent = events.length ? `${filingsPageNumber * FILINGS_PAGE_SIZE + 1}–${filingsPageNumber * FILINGS_PAGE_SIZE + slice.length} of ${events.length}` : '';
     $('filings-previous').disabled = filingsPageNumber === 0;

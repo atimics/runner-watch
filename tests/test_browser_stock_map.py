@@ -131,7 +131,7 @@ def open_map(
 
 
 @pytest.mark.parametrize("width", [320, 390, 1280])
-def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width):
+def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width, tmp_path):
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     open_map(page, width)
@@ -142,6 +142,15 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width):
     expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
     expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(0)
     expect(page.locator("[data-map-events]")).to_be_visible()
+    for row in page.locator("[data-map-events] .wallet-event").all():
+        assert row.bounding_box()["height"] <= 48
+    expect(
+        page.locator('[data-map-events] [data-tone="buy"] .wallet-event-action').first
+    ).to_have_css("color", "rgb(115, 206, 255)")
+    expect(
+        page.locator('[data-map-events] [data-tone="sell"] .wallet-event-action').first
+    ).to_have_css("color", "rgb(239, 153, 164)")
+    page.locator("[data-map-events]").screenshot(path=str(tmp_path / f"ticker-events-{width}.png"))
     expect(page.locator(".chart-filing-marker")).to_have_count(0)
     expect(page.locator("[data-map-score-return]")).to_be_hidden()
     bubble = page.locator("[data-person]").first
@@ -267,6 +276,49 @@ def ring_point(segment):
     }""")
 
 
+@pytest.mark.parametrize("width", [320, 390, 1280])
+def test_selected_component_trace_switches_and_refreshes(page, width):
+    page.clock.install()
+    current = score_current(
+        score_trace={
+            "market": [
+                {"label": "Source", "value": "Market scanner"},
+                {"label": "Input score", "value": "60"},
+                {"label": "Calculation", "value": "Input score × 1"},
+            ],
+            "rug": [
+                {"label": "Rug score", "value": "90"},
+                {"label": "Calculation", "value": "30% of rug score, subtracted"},
+            ],
+        }
+    )
+    open_map(page, width, current=current)
+    selection = page.locator("[data-map-selection]")
+    expect(selection.locator(".map-score-trace")).to_have_count(0)
+    page.locator('[data-score-key="market"]').press("Enter")
+    trace = selection.locator(".map-score-trace")
+    expect(trace).to_have_attribute("aria-label", "Market scanner component trace")
+    expect(trace.locator("dd")).to_have_text(["Market scanner", "60", "Input score × 1"])
+    expect(selection.locator(".map-note")).to_have_count(0)
+    page.locator('[data-score-key="rug"]').press("Space")
+    expect(trace).to_have_attribute("aria-label", "Rug risk component trace")
+    expect(trace).to_contain_text("30% of rug score, subtracted")
+    page.locator('[data-score-key="market"]').press("Enter")
+    screen = page.locator("#screenData").evaluate("node => JSON.parse(node.textContent)")
+    screen["item"]["score_trace"]["market"][0]["value"] = "Ranker model"
+    page.route("**/api/screens/**", lambda route: route.fulfill(json=screen))
+    with page.expect_response("**/api/screens/**"):
+        page.clock.fast_forward(60000)
+    expect(trace).to_contain_text("Ranker model")
+    expect(page.locator('[data-score-key="market"]')).to_have_attribute("aria-pressed", "true")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    page.get_by_role("button", name="Return to score overview").click()
+    expect(trace).to_have_count(0)
+    page.locator(".map-edge").first.dispatch_event("click")
+    expect(selection.locator("h3")).to_be_visible()
+    expect(trace).to_have_count(0)
+
+
 def test_score_panel_pins_and_summarizes_positive_drivers_and_penalties(page):
     open_map(page)
     selection = page.locator("[data-map-selection]")
@@ -293,7 +345,6 @@ def test_score_panel_pins_and_summarizes_positive_drivers_and_penalties(page):
     first.focus()
     page.mouse.click(**ring_point(first))
     expect(first).to_have_attribute("aria-pressed", "true")
-    expect(selection.locator("p.map-note").first).to_contain_text("Pinned contribution")
     expect(page.locator("[data-map-score-return]")).to_be_visible()
     page.mouse.move(20, 20)
     page.locator("[data-map-score-return]").click()
@@ -336,7 +387,6 @@ def test_risk_hover_and_pin_share_filing_selection(page, width, key, label, brea
     page.get_by_role("button", name="Next wallets").focus()
     expect(risk).to_have_attribute("aria-pressed", "true")
     expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
-    expect(selection).to_contain_text("Pinned contribution")
     expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
     expect(page.locator("[data-event-id][aria-pressed=true]")).to_have_count(0)
     expect(page.locator(".chart-filing-marker")).to_have_count(0)
@@ -380,15 +430,15 @@ def test_pending_empty_and_failed_filings_keep_score_rendered(page, response):
     expect(page.locator(".map-center-score")).to_have_text("45")
     expect(page.locator(".map-score-segment")).to_have_count(5)
     expect(page.locator("[data-person]")).to_have_count(0)
-    expect(page.locator("[data-map-events] .map-note")).to_have_text(
-        "Saved filings will appear here."
-    )
+    expect(page.locator("[data-map-filings]")).to_be_hidden()
+    expect(page.locator("[data-map-events]")).to_be_empty()
     if response == "error":
         page.route("**/api/stocks/TEST/map", lambda route: route.fulfill(json=map_payload()))
         page.get_by_role("button", name="Retry loading filings").click()
         expect(page.locator("[data-map-status]")).to_have_text("")
         expect(page.locator(".map-center-score")).to_have_text("45")
         expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
+        expect(page.locator("[data-map-filings]")).to_be_visible()
     assert not errors
 
 
@@ -486,7 +536,6 @@ def test_touch_pins_ring_and_center_returns_to_score(browser, width, key, breakd
         page.touchscreen.tap(**ring_point(segment))
         expect(segment).to_have_attribute("aria-pressed", "true")
         expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
-        expect(page.locator("[data-map-selection]")).to_contain_text("Pinned contribution")
         page.locator("[data-map-score-center]").tap()
         expect(page.locator(".map-score-segment[aria-pressed=true]")).to_have_count(0)
         expect(page.locator("[data-map-score-return]")).to_be_hidden()
@@ -579,7 +628,6 @@ def test_polling_preserves_risk_pin_and_clears_missing_risk(page, width, key, re
     breakdown = f"-20 pts · {percent}% of total magnitude"
     expect(risk).to_have_attribute("aria-pressed", "true")
     expect(page.locator(".map-score-breakdown")).to_have_text(breakdown)
-    expect(page.locator("[data-map-selection]")).to_contain_text("Pinned contribution")
     expect(page.get_by_role("button", name="Previous wallets")).to_be_focused()
     lengths = page.locator(".map-score-segment").evaluate_all(
         "segments => segments.map(segment => segment.getTotalLength())"
@@ -691,7 +739,6 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
     expect(social).to_be_focused()
     expect(social).to_have_attribute("aria-pressed", "true")
     expect(page.locator(".map-score-breakdown")).to_have_text("+20 pts · 44.4% of total magnitude")
-    expect(page.locator("[data-map-selection]")).to_contain_text("Pinned contribution")
     expect(page.locator(".map-center-score")).to_have_text("35")
     expect(page.locator(".map-score-penalties strong")).to_have_text("-5 pts")
     penalty = page.locator('[data-score-key="rug"]')
@@ -924,14 +971,16 @@ def test_wallet_opens_portfolio_and_repeated_events_share_one_bubble(page):
 
 @pytest.mark.parametrize("width", [390, 1280])
 @pytest.mark.parametrize("has_holdings", [True, False])
+@pytest.mark.parametrize("score", [45, 0, None])
 def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
-    page, width, tmp_path, has_holdings
+    page, width, tmp_path, has_holdings, score
 ):
     from runner_web.entity_view import entity_view
     from runner_web.market_screens import listing
 
     request = _request()
-    rows = [{**score_current(), "ticker": ticker} for ticker in ["USO", "CDTG"]]
+    rows = [{**score_current(score=score), "ticker": ticker} for ticker in ["USO", "CDTG"]]
+    rows[1]["score_detail"] = None
     events = [
         {**row, "ticker": "USO" if i < 2 else "CDTG",
          "post_shares": 100-i*10 if has_holdings else None,
@@ -978,6 +1027,24 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     )
     expect(page.locator(".entity-center")).to_have_attribute("aria-label", "HRT FINANCIAL LP")
     expect(page.locator("[data-entity-stock]")).to_have_count(2)
+    wheels = page.locator(".entity-score-ring")
+    expect(wheels).to_have_count(0 if score is None else 2)
+    if score is not None:
+        expect(wheels.first).to_have_attribute("aria-label", f"Score {score}")
+        wheel = page.locator('[data-entity-stock="USO"] .entity-score-ring')
+        expect(wheel.locator(".entity-score-segment")).to_have_count(5)
+        expect(page.locator('[data-entity-stock="CDTG"] .entity-score-track')).to_have_count(1)
+        expect(page.locator('[data-entity-stock="CDTG"] .entity-score-segment')).to_have_count(0)
+        expect(page.locator(".entity-stock-score")).to_have_text([str(score), str(score)])
+        expect(wheel.locator('[data-score-key="rug"]')).to_have_css(
+            "stroke", "rgb(239, 153, 164)"
+        )
+        lengths = wheel.locator(".entity-score-segment").evaluate_all(
+            "parts => parts.map(part => part.getTotalLength())"
+        )
+        assert [length / sum(lengths) for length in lengths] == pytest.approx(
+            [60 / 155, 30 / 155, 10 / 155, 50 / 155, 5 / 155], abs=0.001
+        )
     expect(page.locator(".entity-edge")).to_have_count(3)
     if has_holdings:
         expect(page.locator(".entity-worth-chart")).to_be_visible()

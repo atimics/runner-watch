@@ -4901,7 +4901,9 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
     }
 
 
-def _pulse_snapshot_score(snapshot: dict[str, Any], inputs: dict[str, Any]) -> dict[str, Any]:
+def _pulse_snapshot_score(
+    snapshot: dict[str, Any], inputs: dict[str, Any], *, include_trace: bool = False
+) -> dict[str, Any]:
     ticker = snapshot["ticker"]
     catalyst = inputs["filings_by_ticker"].get(ticker)
     prediction = inputs["predictions"].get(str(snapshot["id"]))
@@ -4965,6 +4967,62 @@ def _pulse_snapshot_score(snapshot: dict[str, Any], inputs: dict[str, Any]) -> d
     }
     if snapshot.get("rug_score") is not None or snapshot.get("trade_state") is not None:
         score_components.update({"rug": -round(rug_penalty, 2), "state": -state_penalty})
+    score_trace = {}
+    if include_trace:
+
+        def trace(*rows: tuple[str, Any]) -> list[dict[str, str]]:
+            return [{"label": label, "value": str(value)} for label, value in rows]
+
+        model_scored = prediction and prediction.get("score") is not None
+        score_trace = {
+            "market": trace(
+                ("Source", "Ranker model" if model_scored else "Market scanner"),
+                ("Input score", f"{custom_score:g}"),
+                ("Calculation", "Input score × 1"),
+            ),
+            "sec_event": trace(
+                ("Filing", catalyst.get("form") or "SEC filing" if catalyst else "SEC filing"),
+                ("Sentiment", catalyst_sentiment or "Neutral"),
+                ("Filing score", f"{catalyst_score:g}"),
+                (
+                    "Calculation",
+                    "12% of filing score, capped at +12 points"
+                    if catalyst_sentiment == "positive"
+                    else "25% of filing score, capped at 25 points, subtracted"
+                    if catalyst_sentiment == "risk"
+                    else "Neutral filing: 0 points",
+                ),
+            ),
+            "news": trace(
+                ("Articles in 24 hours", external["news_count"]),
+                ("Calculation", "1.5 × √articles, capped at +6 points"),
+            ),
+            "social_search": trace(
+                ("Mentions in 6 hours", external["social_mentions"]),
+                ("Engagements in 6 hours", external["social_engagement"]),
+                (
+                    "Calculation",
+                    "log₂(mentions + 1) + 0.5 × log₂(engagements + 1), capped at +8 points",
+                ),
+            ),
+            "community": trace(
+                ("Callers with active Calls", call_count),
+                ("Public comments", comment_count),
+                ("Calculation", "2 × log₂(callers + 2 × comments + 1), capped at +8 points"),
+            ),
+            "safety": trace(
+                ("Trading halt", "Active" if external.get("active_halt") else "Clear"),
+                ("Calculation", "Active halt subtracts 25 points"),
+            ),
+            "rug": trace(
+                ("Rug score", f"{rug_score:g}" if rug_score is not None else "0"),
+                ("Calculation", "30% of rug score, subtracted"),
+            ),
+            "state": trace(
+                ("Trade state", trade_state),
+                ("Calculation", "EXIT subtracts 25 points; AVOID subtracts 20 points"),
+            ),
+        }
     return {
         "baseline_score": float(snapshot.get("score") or 0),
         "rug_score": rug_score,
@@ -4996,6 +5054,7 @@ def _pulse_snapshot_score(snapshot: dict[str, Any], inputs: dict[str, Any]) -> d
         "external_social_engagement": external["social_engagement"],
         "latest_news": external.get("latest_news"),
         "score_components": score_components,
+        "score_trace": score_trace,
         "score_detail": _public_score_detail(score_components, pulse_score),
         "external_context": external,
     }
@@ -8846,6 +8905,13 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
                     {"market": float(current.get("score") or 0)},
                     float(current.get("score") or 0),
                 ),
+                "score_trace": {
+                    "market": [
+                        {"label": "Source", "value": "Market scanner"},
+                        {"label": "Input score", "value": f"{float(current.get('score') or 0):g}"},
+                        {"label": "Calculation", "value": "Input score × 1"},
+                    ]
+                },
                 "kind": current.get("catalyst_kind") or "No recent SEC catalyst",
                 "sentiment": current.get("catalyst_sentiment") or "gap",
                 "event_at": current["captured_at"],
@@ -8898,7 +8964,7 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
     if snapshot is not None:
         inputs = _pulse_scoring_inputs(ticker=ticker, at=score_time)
         if inputs["market_rows"]:
-            scoring = _pulse_snapshot_score(inputs["market_rows"][0], inputs)
+            scoring = _pulse_snapshot_score(inputs["market_rows"][0], inputs, include_trace=True)
             current["scanner_score"] = current["score"]
             for field in (
                 "score",
@@ -8908,6 +8974,7 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
                 "model_rank",
                 "score_detail",
                 "score_components",
+                "score_trace",
                 "score_as_of",
                 "score_snapshot_id",
             ):

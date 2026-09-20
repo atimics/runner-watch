@@ -12,6 +12,24 @@
     return element;
   };
   const money = value => new Intl.NumberFormat('en-US', {style:'currency',currency:'USD',maximumFractionDigits:0}).format(value);
+  function scoreWheel(stock, x, y, radius) {
+    const wheel = svg('g', {class:'entity-score-ring',role:'img','aria-label':`Score ${Math.round(stock.score)}`});
+    wheel.append(svg('circle',{cx:x,cy:y,r:radius,class:'entity-score-track'}));
+    const valid = rows => Array.isArray(rows) ? rows.filter(p => p && Number.isFinite(p.value) && p.value !== 0) : [];
+    const drivers = valid(stock.score_detail?.drivers);
+    const parts = [...drivers.filter(p => p.value > 0), ...valid(stock.score_detail?.penalties).map(p => ({...p,value:-Math.abs(p.value)})), ...drivers.filter(p => p.value < 0)];
+    const total = parts.reduce((sum,p) => sum+Math.abs(p.value),0);
+    let angle = -Math.PI/2;
+    parts.forEach(part => {
+      const end = angle+Math.abs(part.value)/total*Math.PI*2;
+      const attrs = {class:'entity-score-segment','data-score-key':part.key};
+      const segment = parts.length === 1 ? svg('circle',{...attrs,cx:x,cy:y,r:radius}) : svg('path',{...attrs,d:`M ${x+radius*Math.cos(angle)} ${y+radius*Math.sin(angle)} A ${radius} ${radius} 0 ${end-angle > Math.PI ? 1 : 0} 1 ${x+radius*Math.cos(end)} ${y+radius*Math.sin(end)}`});
+      segment.style.stroke = part.value < 0 ? 'var(--red)' : `var(--score-${part.key},var(--muted))`;
+      segment.append(svg('title',{},`${part.label}: ${part.value > 0 ? '+' : ''}${part.value} pts`));
+      wheel.append(segment); angle = end;
+    });
+    return wheel;
+  }
   let page = 0;
   function draw() {
     graph.replaceChildren();
@@ -24,7 +42,8 @@
     stocks.forEach((stock,index) => {
       const x = mobile ? (index%2 ? 275 : 85) : (index%2 ? 580 : 180);
       const y = mobile ? 64+Math.floor(index/2)*210 : 62+Math.floor(index/2)*103;
-      const radius = stock.value == null ? 20 : Math.sqrt(225+675*(maximum ? stock.value/maximum : 0));
+      const scored = Number.isFinite(stock.score);
+      const radius = Math.max(scored ? 24 : 0, stock.value == null ? 20 : Math.sqrt(225+675*(maximum ? stock.value/maximum : 0)));
       stock.events.forEach((event,i) => {
         const bend = (i-(stock.events.length-1)/2)*Math.min(8,48/Math.max(1,stock.events.length-1));
         const length = Math.hypot(x-cx,y-cy);
@@ -32,8 +51,12 @@
         const line = svg('path',{d:`M ${cx} ${cy} Q ${(cx+x)/2-(y-cy)/length*bend} ${(cy+y)/2+(x-cx)/length*bend} ${x} ${y}`,class:`entity-edge ${tone}`});
         line.append(svg('title',{},`${stock.ticker} · ${event.action} · Filed ${event.filed_at?.slice(0,10) || ''}`)); graph.append(line);
       });
-      const link = svg('a',{href:`/t/${encodeURIComponent(stock.ticker)}`,class:'map-person',tabindex:0,'aria-label':`${stock.ticker}, ${stock.events.length} events`, 'data-entity-stock':stock.ticker});
-      link.append(svg('circle',{cx:x,cy:y,r:radius}),svg('text',{x,y:y+5,'text-anchor':'middle'},stock.ticker),svg('text',{x,y:y+radius+18,'text-anchor':'middle',class:'map-node-action'},stock.value == null ? `${stock.events.length} events` : money(stock.value)));
+      const link = svg('a',{href:`/t/${encodeURIComponent(stock.ticker)}`,class:'map-person',tabindex:0,'aria-label':`${stock.ticker}, ${scored ? `score ${Math.round(stock.score)}, ` : ''}${stock.events.length} events`, 'data-entity-stock':stock.ticker});
+      link.append(svg('circle',{cx:x,cy:y,r:radius}));
+      if (scored) link.append(scoreWheel(stock,x,y,radius+3));
+      link.append(svg('text',{x,y:y+(scored ? -3 : 5),'text-anchor':'middle',class:scored ? 'entity-stock-symbol' : ''},stock.ticker));
+      if (scored) link.append(svg('text',{x,y:y+12,'text-anchor':'middle',class:'entity-stock-score'},Math.round(stock.score)));
+      link.append(svg('text',{x,y:y+radius+(scored ? 23 : 18),'text-anchor':'middle',class:'map-node-action'},stock.value == null ? `${stock.events.length} events` : money(stock.value)));
       graph.append(link);
     });
     const center = svg('g',{class:'entity-center','aria-label':wallet.name});
