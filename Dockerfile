@@ -14,7 +14,7 @@ FROM rust:1.88-slim-bookworm@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce27
 WORKDIR /ranker
 COPY rust/stonks-ranker/Cargo.toml rust/stonks-ranker/Cargo.lock ./
 COPY rust/stonks-ranker/src ./src
-RUN cargo test --locked && cargo build --locked --release
+RUN cargo build --locked --release
 
 FROM python:3.13-slim@sha256:7ce4b6dfe35e55397b7cda544f8a13f191b7ae28dc5aad71fe664dbc9bc2623f AS base
 
@@ -47,19 +47,10 @@ ENV PATH="/app/.venv/bin:$PATH" \
 EXPOSE 8080
 USER runner
 
+# The full test suite and lint run on the host in CI (checks job). This stage
+# only proves that the image assembles and the application imports.
 FROM base AS test
-COPY desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock ./desktop/src-tauri/
-COPY desktop/src-tauri/vendor ./desktop/src-tauri/vendor
-COPY desktop/src-tauri/patches ./desktop/src-tauri/patches
-COPY scripts ./scripts
-COPY tests ./tests
-COPY cloudflare-router ./cloudflare-router
-COPY ml/sec-qwen/src ./ml/sec-qwen/src
-COPY .github/workflows/fly.yml .github/workflows/uptime.yml ./.github/workflows/
-COPY compose.local.yml fly.toml Dockerfile ./
-RUN uv sync --locked --extra dev --no-editable
-RUN uv run --no-sync pytest -q && uv run --no-sync ruff check src tests ml/sec-qwen/src
-CMD ["uv", "run", "--no-sync", "pytest", "-q"]
+RUN uv run --no-sync python -c "from runner_web.main import app; assert app.title == 'RATi'"
 
 FROM base AS runtime
 ARG APP_BUILD_SHA=dev
