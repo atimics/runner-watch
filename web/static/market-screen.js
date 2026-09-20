@@ -179,7 +179,6 @@
      what it is, including when the market is closed. */
   function drawGap(gap, projector) {
     chart.querySelectorAll('.chart-gap').forEach(node => node.remove());
-    document.querySelector('.chart-gap-note')?.remove();
     const tail = (gap?.path || [])
       .map(point => ({...point, t: Date.parse(point.time)}))
       .filter(point => Number.isFinite(point.t));
@@ -199,11 +198,6 @@
     line.setAttribute('d', points.map((point, index) => `${index ? 'L' : 'M'}${x(point.t).toFixed(2)},${y(point.price).toFixed(2)}`).join(''));
     const base = chart.querySelector('.chart-line');
     if (base) { base.before(band); base.after(line); } else { chart.append(band, line); }
-    const note = document.createElement('p');
-    note.className = 'chart-gap-note';
-    note.textContent = gap.label || 'Dashed line is our projection over the price gap.';
-    const filingNote = document.querySelector('.chart-filing-note');
-    (filingNote || chart).after(note);
   }
   function draw(points, gap) {
     if (!chart) return;
