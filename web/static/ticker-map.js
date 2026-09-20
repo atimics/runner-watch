@@ -52,7 +52,7 @@
   let ringDirty = true, scene = [], animation = 0, generation = 0;
   const small = window.matchMedia('(max-width:500px)');
   const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const pageSize = () => small.matches ? 4 : 8;
+  const pageSize = () => small.matches ? 4 : 12;
   const FILINGS_PAGE_SIZE = 5;
   const ANIMATION_MS = 320;
   const subset = () => events.filter(e => (Date.parse(e.filed_at) || 0) <= cutoff);
@@ -183,8 +183,9 @@
     const maxAmount = view => Math.max(0, ...all.map(p => p.events[0]).filter(e => e.view === view).map(e => finiteAmount(magnitude(e)) ? magnitude(e) : 0));
     return shown.map((person, i) => {
       const left = i % 2 === 0;
-      const x = small.matches ? (left ? 85 : 275) : (left ? 180 : 580);
-      const y = small.matches ? 64 + Math.floor(i/2)*210 : 62 + Math.floor(i/2)*103;
+      const angle = -Math.PI / 2 + i * Math.PI * 2 / shown.length;
+      const x = small.matches ? (left ? 85 : 275) : 380 + 270 * Math.cos(angle);
+      const y = small.matches ? 64 + Math.floor(i/2)*210 : 218 + 150 * Math.sin(angle);
       const first = person.events[0];
       const tones = new Set(person.events.map(e => e.tone));
       return {id:person.id, name:person.name, first, events:person.events, eventCount:person.events.length, radius:finiteAmount(magnitude(first)) ? Math.sqrt(144 + 640 * (maxAmount(first.view) ? magnitude(first)/maxAmount(first.view) : 0)) : 16, tone:tones.size === 1 ? first.tone : 'neutral', active:!!event?.people.some(p => p.id === person.id), x, y};
@@ -203,11 +204,12 @@
         line.addEventListener('click', () => choose(event, node.id)); peopleLayer.append(line);
       });
       const href = `/wallets/stocks/${encodeURIComponent(root.dataset.ticker)}/${encodeURIComponent(node.id)}`;
-      const g = svg('a', {href, class:`map-person ${node.tone}`, tabindex:0, 'aria-label':`${node.name}: stocks and events`, 'aria-pressed':String(!!node.active), 'data-person':node.id, opacity});
+      const dense = nodes.length > 8 ? ' dense' : '';
+      const g = svg('a', {href, class:`map-person ${node.tone}${dense}`, tabindex:0, 'aria-label':`${node.name}: stocks and events`, 'aria-pressed':String(!!node.active), 'data-person':node.id, opacity});
       g.append(svg('circle', {cx:node.x, cy:node.y, r:node.radius}));
       const initials = node.name.split(/\s+/).slice(0,2).map(n => n[0]).join('');
       g.append(svg('text', {x:node.x, y:node.y+5, 'text-anchor':'middle'}, initials));
-      const maxName = small.matches ? 21 : 28;
+      const maxName = small.matches ? 21 : nodes.length > 8 ? 22 : 28;
       g.append(svg('text', {x:node.x, y:node.y+42, 'text-anchor':'middle'}, node.name.length > maxName ? node.name.slice(0,maxName-2)+'…' : node.name));
       const action = small.matches ? ({'Exercise or conversion':'Exercise / conversion','Tax or exercise payment':'Tax / exercise payment'}[node.first.action] || node.first.action) : `${node.first.action} · ${amount(node.first)}`;
       g.append(svg('text', {x:node.x, y:node.y+59, 'text-anchor':'middle', class:'map-node-action'}, action));
