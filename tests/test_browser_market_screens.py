@@ -226,13 +226,14 @@ def test_actual_detail_refresh_keeps_call_confirmation_and_focus(
     # The Call record reads as one line: every fact shares a baseline, with the
     # share link trailing them rather than sitting under the list.
     labels = page.locator(".call-record .facts dt")
-    expect(labels).to_have_count(5)
+    expect(labels).to_have_count(2)
     tops = labels.evaluate_all(
         "nodes => nodes.map(node => Math.round(node.getBoundingClientRect().top))"
     )
     assert len(set(tops)) == 1, tops
     record = page.locator(".call-record").bounding_box()
-    assert record["height"] < 60, record
+    # Entry and status share a row; the actions may wrap under them on mobile.
+    assert record["height"] < 120, record
     share = page.locator(".call-record .call-share")
     if share.count():
         expect(share).to_be_visible()
@@ -312,7 +313,7 @@ def test_late_detail_response_is_discarded_after_navigation(
 
 @pytest.mark.parametrize("market", ["stocks", "memecoins", "sports"])
 @pytest.mark.parametrize("width", [390, 1280])
-def test_call_record_keeps_choice_terms_and_reward_readable(page, market, width):
+def test_call_record_shows_only_entry_and_status(page, market, width):
     raw = fixtures.sample(market)
     saved = {
         "status": "closed",
@@ -338,10 +339,38 @@ def test_call_record_keeps_choice_terms_and_reward_readable(page, market, width)
     open_screen(page, screen)
     record = page.get_by_role("region", name="Your Call")
     expect(record).to_be_visible()
-    expect(record.get_by_text(screen["call"]["choice"], exact=True)).to_be_visible()
-    expect(record.get_by_text(screen["call"]["entry"], exact=True)).to_be_visible()
-    expect(record.get_by_text(screen["call"]["terms"], exact=True)).to_be_visible()
-    expect(record.get_by_text(screen["call"]["reward"], exact=True)).to_be_visible()
+    # Entry and status only: the choice, settlement terms and reward were noise.
+    expect(record.locator("dt")).to_have_text(["Entry", "Status"])
+    expect(record.locator("[data-call-entry]")).to_contain_text(screen["call"]["entry"])
+    expect(record.locator("[data-call-outcome]")).to_contain_text(screen["call"]["outcome"])
+    expect(record.locator("[data-call-choice]")).to_have_count(0)
+    expect(record.locator("[data-call-terms]")).to_have_count(0)
+    expect(record.locator("[data-call-reward]")).to_have_count(0)
+    # A settled Call has nothing left to close.
+    expect(record.get_by_role("button", name="Close Call")).to_have_count(0)
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_an_open_call_offers_the_way_out_and_does_not_overflow(page, width):
+    screen = detail(
+        "stocks",
+        {"ticker": "OPK", "current": fixtures.sample("stocks")},
+        active_call={
+            "status": "active",
+            "entry_price": 2.28,
+            "entry_at": "2026-09-11T18:00:00Z",
+            "public_id": "call-1",
+        },
+    )
+    page.set_viewport_size({"width": width, "height": 844})
+    open_screen(page, screen, user={"id": "reader", "username": "reader", "display_name": "Reader"})
+
+    record = page.get_by_role("region", name="Your Call")
+    expect(record).to_be_visible()
+    expect(record.get_by_role("button", name="Close Call")).to_be_visible()
+    # The close control lives with the Call, not duplicated below it.
+    expect(page.locator("[data-screen-actions]").locator("[data-action]")).to_have_count(0)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 

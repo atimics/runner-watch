@@ -263,6 +263,22 @@
       record.hidden = !next.call || next.call.status === 'none';
       ['choice','entry','terms','outcome','reward'].forEach(key => put(`[data-call-${key}]`, next.call?.[key]));
     }
+    // The close control lives with the Call it closes, so keep it in step there
+    // instead of letting it reappear in the action row.
+    const closing = (next.actions || []).findIndex(item => item.label === 'Close Call');
+    let close = record?.querySelector('.call-close');
+    if (record && closing >= 0) {
+      if (!close) {
+        close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'call-close';
+        (record.querySelector('.call-actions') || record).append(close);
+      }
+      close.textContent = next.actions[closing].label;
+      close.dataset.action = String(closing);
+    } else {
+      close?.remove();
+    }
     const facts = document.querySelector('[data-facts]');
     if (facts) {
       facts.replaceChildren(...next.facts.map(fact => {
@@ -278,18 +294,19 @@
     put('[data-game-note]', next.note);
     const actions = document.querySelector('[data-screen-actions]');
     if (actions) {
-      next.actions.forEach((item, index) => {
-        let control = actions.children[index];
+      const shown = (next.actions || []).map((item, index) => ({item, index})).filter(entry => entry.index !== closing);
+      shown.forEach((entry, position) => {
+        let control = actions.children[position];
         if (!control) {
           control = document.createElement(actions.dataset.authenticated === 'true' ? 'button' : 'a');
           if (control.tagName === 'BUTTON') control.type = 'button';
           else { control.href = actions.dataset.loginUrl; control.className = 'primary'; }
           actions.append(control);
         }
-        control.textContent = item.label;
-        if (control.tagName === 'BUTTON') control.dataset.action = String(index);
+        control.textContent = entry.item.label;
+        if (control.tagName === 'BUTTON') control.dataset.action = String(entry.index);
       });
-      while (actions.children.length > next.actions.length) {
+      while (actions.children.length > shown.length) {
         const last = actions.lastElementChild;
         if (last === document.activeElement) {
           const message = document.querySelector('[data-action-status]');
