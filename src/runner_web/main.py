@@ -3265,6 +3265,7 @@ def _draw_card_map(draw: Any, map_data: dict[str, Any], box: tuple[int, int, int
 
 # Card rows, shared by the price block and its badge so they cannot collide.
 CARD_PRICE_Y = 138
+CARD_COMPANY_Y = 232
 CARD_CHANGE_Y = 214
 CARD_DATE_Y = 262
 CARD_BADGE_HEIGHT = 44
@@ -3285,11 +3286,12 @@ def _ticker_card_png(
         (55, 55, 1145, 575), radius=34, fill="#111514", outline="#57e389", width=3
     )
     draw.text((95, 84), _card_text("RATi RUNNERS · TICKER"), "#87e8a9", font=font(26, True))
-    company = _card_text(detail.get("company") or "")[:40]
-    if company:
-        draw.text((1105, 88), company, "#7e8b86", font=font(22), anchor="ra")
 
     draw.text((95, CARD_PRICE_Y), _card_text(f"${ticker}"), "#f4f8f6", font=font(76, True))
+    company = _card_text(detail.get("company") or "")[:40]
+    if company:
+        # The name sits under the symbol it belongs to, not over the price.
+        draw.text((95, CARD_COMPANY_Y), company, "#7e8b86", font=font(24))
     price = _card_price(current.get("price")) or "No price"
     draw.text((1105, CARD_PRICE_Y), price, "#f4f8f6", font=font(60, True), anchor="ra")
     move = f"{change:+.1f}%" if change is not None else "—"
