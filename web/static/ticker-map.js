@@ -26,7 +26,7 @@
   const initial = screenNode?.ratiScreenDetail || JSON.parse(screenNode?.textContent || '{}');
   let item = initial.market === 'stocks' && initial.item?.id === root.dataset.ticker ? initial.item : {};
   let drivers = [], positive = [], penalties = [], contributions = [], total = 0, score = '—';
-  const scoreData = value => JSON.stringify([value.score ?? null, value.score_detail ?? null]);
+  const scoreData = value => JSON.stringify([value.score ?? null, value.score_detail ?? null, value.score_trace ?? null]);
   function readScore() {
     const parts = value => Array.isArray(value) ? value.filter(part => part && Number.isFinite(part.value)) : [];
     drivers = parts(item.score_detail?.drivers);
@@ -60,7 +60,15 @@
     const panel = $('selection'); panel.replaceChildren();
     if (part) {
       panel.append(make('h4', part.label), make('p', `${points(part.value)} · ${percent(part)}`, 'map-score-breakdown'));
-      panel.append(make('p', pinned === part.key ? 'Pinned contribution. Return to score overview to clear.' : 'Click or press Enter to pin this contribution.', 'map-note'));
+      const rows = item.score_trace?.[part.key];
+      if (Array.isArray(rows) && rows.length) {
+        const trace = make('dl', null, 'map-score-trace');
+        trace.setAttribute('aria-label', `${part.label} component trace`);
+        rows.forEach(({label, value}) => {
+          const row = make('div'); row.append(make('dt', label), make('dd', value)); trace.append(row);
+        });
+        panel.append(trace);
+      }
     }
     const badges = make('div', null, 'map-score-badges');
     const legend = make('ul', null, 'map-score-legend');
@@ -330,7 +338,7 @@
       button.append(make('span','●',e.tone),main,make('span',amount(e),'event-money'));
       button.addEventListener('click',() => scrub(e)); list.append(button);
     });
-    if (!events.length) list.append(make('p','Saved filings will appear here.','map-note'));
+    $('filings').hidden = !events.length;
     $('filings-paging').hidden = events.length <= FILINGS_PAGE_SIZE;
     $('filings-page').textContent = events.length ? `${filingsPageNumber * FILINGS_PAGE_SIZE + 1}–${filingsPageNumber * FILINGS_PAGE_SIZE + slice.length} of ${events.length}` : '';
     $('filings-previous').disabled = filingsPageNumber === 0;
