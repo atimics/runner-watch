@@ -265,6 +265,42 @@ def test_search_filters_the_cached_board_instead_of_rebuilding_it(
     )
 
 
+def test_wallet_events_endpoint_renders_the_rows_the_page_uses(board_client, monkeypatch) -> None:
+    """The infinite scroll appends the same markup, rendered by the same partial."""
+
+    from runner_web import stock_map
+
+    monkeypatch.setattr(
+        stock_map,
+        "person_connections",
+        lambda ticker, person_id, cursor: {
+            "events": [
+                {
+                    "ticker": "FAST",
+                    "action": "Bought",
+                    "view": "market",
+                    "security": "Common stock",
+                    "shares": 100,
+                    "value": 250.0,
+                    "percent": None,
+                    "form": "4",
+                    "filed_at": "2026-09-12T18:00:00+00:00",
+                    "source_url": "https://www.sec.gov/Archives/fast",
+                    "people": [{"id": "sec:1", "name": "Wallet One", "role": "Director"}],
+                }
+            ],
+            "next_cursor": "more",
+        },
+    )
+
+    payload = board_client.get("/api/wallets/stocks/FAST/sec%3A1/events?cursor=abc").json()
+
+    assert payload["count"] == 1 and payload["next_cursor"] == "more"
+    assert 'class="wallet-event"' in payload["html"]
+    assert "<strong>FAST</strong>" in payload["html"]
+    assert "Director" in payload["html"]
+    assert "https://www.sec.gov/Archives/fast" in payload["html"]
+
 @pytest.mark.parametrize(
     ("path", "location"),
     [

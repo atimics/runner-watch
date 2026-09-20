@@ -21,21 +21,13 @@
 <h2 class="wallet-section-title">Stocks</h2>
 <p class="wallet-scope">Stocks linked by the filings below.</p>
 {{ super() }}
-<section class="wallet-events" aria-label="Wallet events">
+<section class="wallet-events" aria-label="Wallet events" data-wallet-events>
 <h2 class="wallet-section-title">Events</h2>
-{% for event in wallet_events %}
-{% set tone = 'sell' if event.action == 'Sold' else 'buy' if event.action == 'Bought' or event.view == 'ownership' else 'other' %}
-{% set description %}{{ event.action }} · {{ event.security }}{% if event.get('shares') is not none %} · {{ '{:,}'.format(event.shares) }} shares{% endif %}{% if event.get('value') is not none %} · ${{ '{:,.2f}'.format(event.value) }}{% endif %}{% if event.get('percent') is not none %} · {{ event.percent }}% of class{% endif %}{% for person in event.people if person.id == wallet.id %} · {{ person.role }}{% endfor %} · {{ event.form }} · Filed {{ event.filed_at[:10] }}{% endset %}
-<article class="wallet-event" data-tone="{{ tone }}" title="{{ description }}">
-<a class="wallet-event-ticker" href="/t/{{ event.ticker }}"><strong>{{ event.ticker }}</strong></a>
-<span class="wallet-event-action">{{ event.action }}</span>
-<span class="wallet-event-detail">{{ event.security }}{% if event.get('shares') is not none %} · {{ '{:,}'.format(event.shares) }} shares{% endif %}</span>
-<span class="wallet-event-value">{% if event.get('value') is not none %}${{ '{:,.2f}'.format(event.value) }}{% elif event.get('percent') is not none %}{{ event.percent }}%{% elif event.get('shares') is not none %}{{ '{:,}'.format(event.shares) }} sh{% endif %}</span>
-<a class="wallet-filing" href="{{ event.source_url }}" target="_blank" rel="noopener noreferrer" aria-label="{{ event.ticker }} · {{ description }} · Open SEC filing"><time datetime="{{ event.filed_at[:10] }}">{{ event.filed_at[5:10] }}</time> ↗</a>
-</article>
-{% else %}<p class="wallet-scope">Filings will appear here.</p>{% endfor %}
-{% if wallet_next %}<a class="wallet-older" href="{{ wallet_next }}">Older filings →</a>{% endif %}
+<div class="wallet-event-list" data-wallet-event-list>
+{% for event in wallet_events %}{% include "_wallet_event.html" %}{% else %}<p class="wallet-scope">Filings will appear here.</p>{% endfor %}
+</div>
+{% if wallet_cursor %}<button class="wallet-older" type="button" data-wallet-more data-endpoint="/api/wallets/stocks/{{ wallet_ticker }}/{{ wallet.id|urlencode }}/events" data-cursor="{{ wallet_cursor }}">Load older filings</button>{% endif %}
 </section>
 {% endblock %}
 
-{% block detail_scripts %}<script src="/static/map-orbit.js?v={{ static_version }}" defer></script><script src="/static/entity-map.js?v={{ static_version }}" defer></script>{% endblock %}
+{% block detail_scripts %}<script src="/static/map-orbit.js?v={{ static_version }}" defer></script><script src="/static/entity-map.js?v={{ static_version }}" defer></script><script src="/static/wallet-events.js?v={{ static_version }}" defer></script>{% endblock %}
