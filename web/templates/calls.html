@@ -21,10 +21,46 @@
 </header>
 
 {% if user and calls_page.mine %}
+{% set comparison = calls_page.comparison %}
+<section class="calls-comparison" aria-labelledby="calls-comparison-heading">
+  <header>
+    <div>
+      <span>HEAD TO HEAD</span>
+      <h2 id="calls-comparison-heading">You vs Flash</h2>
+    </div>
+    {% if comparison.leader == 'you' %}
+    <b class="comparison-verdict verdict-you">You lead by {{ comparison.gap_points }} point{{ '' if comparison.gap_points == 1 else 's' }}</b>
+    {% elif comparison.leader == 'flash' %}
+    <b class="comparison-verdict verdict-flash">Flash leads by {{ comparison.gap_points }} point{{ '' if comparison.gap_points == 1 else 's' }}</b>
+    {% elif comparison.leader == 'even' %}
+    <b class="comparison-verdict">Even at {{ comparison.you.hit_rate_pct }}%</b>
+    {% else %}
+    <b class="comparison-verdict">The next result sets the pace</b>
+    {% endif %}
+  </header>
+
+  <div class="comparison-matchup">
+    <article class="comparison-card comparison-you">
+      <header><span>Your Calls</span><small>All markets</small></header>
+      <strong aria-label="Your hit rate">{% if comparison.you.hit_rate_pct is not none %}{{ comparison.you.hit_rate_pct }}%{% else %}—{% endif %}</strong>
+      <p>{{ comparison.you.hits }} hit{{ '' if comparison.you.hits == 1 else 's' }} · {{ comparison.you.misses }} miss{{ '' if comparison.you.misses == 1 else 'es' }}</p>
+      <small>{{ comparison.you.graded }} graded · {{ comparison.you.settled }} settled · {{ comparison.you.open }} open</small>
+    </article>
+    <span class="comparison-vs" aria-hidden="true">VS</span>
+    <article class="comparison-card comparison-flash">
+      <header><span><i aria-hidden="true">⚡</i> Flash</span><small>Next-close stocks</small></header>
+      <strong aria-label="Flash hit rate">{% if comparison.flash.hit_rate_pct is not none %}{{ comparison.flash.hit_rate_pct }}%{% else %}—{% endif %}</strong>
+      <p>{{ comparison.flash.hits }} hit{{ '' if comparison.flash.hits == 1 else 's' }} · {{ comparison.flash.misses }} miss{{ '' if comparison.flash.misses == 1 else 'es' }}</p>
+      <small>{{ comparison.flash.settled }} settled · {{ comparison.flash.pending }} pending</small>
+    </article>
+  </div>
+  <p class="comparison-note">Hit rate counts hits ÷ graded results. Sample sizes and settlement rules stay visible.</p>
+</section>
+
 <section class="calls-section" aria-labelledby="my-calls-heading">
   <div class="section-heading">
     <h2 id="my-calls-heading">My Calls</h2>
-    <b>{{ calls_page.mine.stats.open }} open · {{ calls_page.mine.stats.wins }}–{{ calls_page.mine.stats.losses }} settled</b>
+    <b>{{ calls_page.mine.stats.wins }}–{{ calls_page.mine.stats.losses }} record · {{ calls_page.mine.stats.open }} open</b>
   </div>
   {% if calls_page.mine.calls %}
   <div class="call-list">

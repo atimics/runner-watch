@@ -3754,9 +3754,57 @@ def _calls_flash_picks() -> dict[str, Any]:
     )
 
 
+def _calls_comparison(
+    mine: dict[str, Any], flash_record: dict[str, Any]
+) -> dict[str, Any]:
+    stats = mine.get("stats") or {}
+    your_hits = int(stats.get("wins") or 0)
+    your_misses = int(stats.get("losses") or 0)
+    your_graded = your_hits + your_misses
+    your_rate_pct = round(your_hits / your_graded * 100) if your_graded else None
+
+    flash_rate = flash_record.get("hit_rate")
+    flash_rate_pct = (
+        round(float(flash_rate) * 100)
+        if flash_record.get("headline_rate_visible") and flash_rate is not None
+        else None
+    )
+    leader = None
+    gap_points = None
+    if your_rate_pct is not None and flash_rate_pct is not None:
+        gap_points = abs(your_rate_pct - flash_rate_pct)
+        if your_rate_pct > flash_rate_pct:
+            leader = "you"
+        elif flash_rate_pct > your_rate_pct:
+            leader = "flash"
+        else:
+            leader = "even"
+
+    return {
+        "you": {
+            "hit_rate_pct": your_rate_pct,
+            "hits": your_hits,
+            "misses": your_misses,
+            "graded": your_graded,
+            "settled": int(stats.get("settled") or 0),
+            "open": int(stats.get("open") or 0),
+        },
+        "flash": {
+            "hit_rate_pct": flash_rate_pct,
+            "hits": int(flash_record.get("hits") or 0),
+            "misses": int(flash_record.get("misses") or 0),
+            "settled": int(flash_record.get("settled") or 0),
+            "pending": int(flash_record.get("pending") or 0),
+        },
+        "leader": leader,
+        "gap_points": gap_points,
+    }
+
+
 def _calls_page_data(runner_session: str | None) -> dict[str, Any]:
     user = current_user(runner_session)
     mine: dict[str, Any] | None = None
+    flash = _calls_flash_picks()
     if user:
         identity = ensure_caller_identity(str(user["id"]))
         unified = _unified_caller_page_data(identity["handle"])
@@ -3765,7 +3813,11 @@ def _calls_page_data(runner_session: str | None) -> dict[str, Any]:
             "calls": (unified.get("calls") or [])[:24],
             "stats": dict(unified.get("stats") or {}),
         }
-    return {"mine": mine, **_calls_flash_picks()}
+    return {
+        "mine": mine,
+        "comparison": _calls_comparison(mine, flash.get("record") or {}) if mine else None,
+        **flash,
+    }
 
 
 @app.get("/calls", response_class=HTMLResponse)

@@ -167,6 +167,28 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
 .market-chip.market-stock{color:var(--green);border-color:#33513c}
 .market-chip.market-memecoin{color:var(--blue);border-color:#2c4a57}
 .market-chip.market-sports{color:var(--amber);border-color:#4d4127}
+.calls-comparison{border:1px solid var(--line);border-radius:16px;background:var(--panel);padding:18px;margin:0 0 26px}
+.calls-comparison>header{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:14px}
+.calls-comparison>header span{display:block;color:var(--muted);font-size:10px;font-weight:850;letter-spacing:.08em}
+.calls-comparison>header h2{margin:4px 0 0;font-size:19px;letter-spacing:-.35px}
+.comparison-verdict{color:var(--muted);font-size:12px;text-align:right}
+.comparison-verdict.verdict-you{color:var(--green)}
+.comparison-verdict.verdict-flash{color:var(--amber)}
+.comparison-matchup{display:grid;grid-template-columns:minmax(0,1fr) 42px minmax(0,1fr);align-items:stretch;gap:10px}
+.comparison-card{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"head rate" "record rate" "sample sample";align-items:center;gap:3px 16px;border:1px solid var(--line);border-radius:13px;padding:14px;background:#0e1511;min-width:0}
+.comparison-card.comparison-you{border-color:#33513c}
+.comparison-card.comparison-flash{border-color:#4d4127}
+.comparison-card>header{grid-area:head;min-width:0}
+.comparison-card>header span{display:block;font-size:13px;font-weight:800}
+.comparison-card>header small{display:block;color:var(--muted);font-size:10.5px}
+.comparison-card>strong{grid-area:rate;font-size:32px;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-1px;text-align:right}
+.comparison-you>strong{color:var(--green)}
+.comparison-flash>strong{color:var(--amber)}
+.comparison-card>p{grid-area:record;margin:0;color:var(--soft);font-size:12px}
+.comparison-card>small{grid-area:sample;margin-top:6px;color:var(--muted);font-size:10.5px}
+.comparison-card i{font-style:normal}
+.comparison-vs{display:grid;place-items:center;align-self:center;width:34px;height:34px;border:1px solid var(--line);border-radius:50%;color:var(--muted);font-size:9px;font-weight:900;letter-spacing:.08em}
+.comparison-note{margin:12px 0 0;color:var(--muted);font-size:10.5px}
 .calls-section{border-top:1px solid var(--line);margin-top:26px;padding-top:18px}
 .calls-section:first-of-type{border-top:0}
 .call-list{display:flex;flex-direction:column}
@@ -375,6 +397,13 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
 .flash-record-note{border-top:1px solid var(--line);margin-top:20px;padding-top:12px}
 
 @media(max-width:760px){
+  .calls-comparison{padding:14px}
+  .calls-comparison>header{align-items:flex-start}
+  .comparison-matchup{grid-template-columns:minmax(0,1fr) 28px minmax(0,1fr);gap:6px}
+  .comparison-card{display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:12px}
+  .comparison-card>strong{margin:7px 0 3px;font-size:28px;text-align:left}
+  .comparison-card>small{margin-top:5px}
+  .comparison-vs{width:28px;height:28px}
   .call-row{grid-template-columns:76px minmax(0,1fr) auto;gap:8px}
   .call-entry{display:none}
   .flash-groups{grid-template-columns:1fr;gap:12px}
