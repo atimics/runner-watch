@@ -39,11 +39,18 @@
      wallet's other tickers the same way. */
   const neighbours = new Map();
   const NEIGHBOUR_TTL_MS = 5*60*1000;
+  const toneOf = rows => rows.some(event => event.action === 'Sold')
+    ? 'sell'
+    : rows.some(event => event.action === 'Bought' || event.view === 'ownership') ? 'buy' : 'role';
   const neighbourPeople = payload => {
     const people = new Map();
     (payload?.events || []).forEach(event => (event.people || []).forEach(person => {
-      if (!person || person.id === wallet.id || people.has(person.id)) return;
-      people.set(person.id, person);
+      if (!person || person.id === wallet.id) return;
+      const existing = people.get(person.id);
+      // The dot's colour is the whole label, so keep the strongest signal.
+      const tone = toneOf([event]);
+      if (!existing) { people.set(person.id, {...person, tone}); return; }
+      if (existing.tone === 'role' && tone !== 'role') existing.tone = tone;
     }));
     return [...people.values()];
   };
@@ -77,13 +84,12 @@
       const sx = x + radius*Math.cos(angle), sy = y + radius*Math.sin(angle);
       const hx = x + orbit*Math.cos(angle), hy = y + orbit*Math.sin(angle);
       const ex = hx - dot*Math.cos(angle), ey = hy - dot*Math.sin(angle);
-      const tone = 'role';
+      const tone = person.tone || 'role';
       const label = `${person.name} also reported ${stock.ticker}`;
       const link = svg('a',{href:`/wallets/stocks/${encodeURIComponent(stock.ticker)}/${encodeURIComponent(person.id)}`,class:`map-interest ${tone}`,tabindex:0,'aria-label':label,'data-entity-interest':person.id,'data-entity-neighbours':stock.ticker,...(orbiting ? {'data-orbit-anchor':`${x},${y}`} : {})});
+      // Colour carries the meaning; the name stays in the tooltip and the label.
       link.append(svg('path',{d:`M ${sx} ${sy} L ${ex} ${ey}`,class:`map-interest-edge ${tone}`}));
-      // The label sits past the dot, clear of the line.
-      const anchor = Math.cos(angle) > 0.3 ? 'start' : Math.cos(angle) < -0.3 ? 'end' : 'middle';
-      link.append(svg('circle',{cx:hx,cy:hy,r:6,class:'map-interest-hit'}),svg('circle',{cx:hx,cy:hy,r:dot,class:'map-interest-dot'}),svg('text',{x:hx + 10*Math.cos(angle),y:hy + 10*Math.sin(angle) + 3,'text-anchor':anchor,class:'map-interest-name'},initialsOf(person.name)),svg('title',{},label));
+      link.append(svg('circle',{cx:hx,cy:hy,r:6,class:'map-interest-hit'}),svg('circle',{cx:hx,cy:hy,r:dot,class:'map-interest-dot'}),svg('title',{},label));
       graph.append(link);
     });
   }

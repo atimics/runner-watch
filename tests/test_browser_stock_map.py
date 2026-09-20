@@ -1104,7 +1104,11 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
             json={
                 "ticker": "USO",
                 "events": [
-                    {"people": [{"id": "sec:202", "name": "COATUE MANAGEMENT LLC"}]}
+                    {
+                        "action": "Bought",
+                        "view": "market",
+                        "people": [{"id": "sec:202", "name": "COATUE MANAGEMENT LLC"}],
+                    }
                 ],
                 "next_cursor": None,
             }
@@ -1153,8 +1157,11 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
         expect(page.locator("[data-entity-map]")).not_to_have_attribute(
             "data-orbit-track", re.compile(r"\d")
         )
-    # Second hop: the other wallets that reported the same stocks.
+    # Second hop: the other wallets that reported the same stocks. The dot's
+    # colour carries the signal, so there is no text label to crowd the map.
     expect(page.locator("[data-entity-interest]")).to_have_count(2)
+    expect(page.locator(".map-interest-name")).to_have_count(0)
+    expect(page.locator("[data-entity-interest]").first).to_have_class(re.compile(r"\bbuy\b"))
     wheels = page.locator(".entity-score-ring")
     expect(wheels).to_have_count(0 if score is None else 2)
     if score is not None:
