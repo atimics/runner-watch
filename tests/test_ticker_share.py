@@ -208,6 +208,26 @@ def test_the_state_badge_keeps_off_the_daily_change_line() -> None:
     assert badge_fill in _colors(change_band)
 
 
+def test_the_company_name_sits_under_the_ticker_instead_of_over_the_price() -> None:
+    import io
+
+    from PIL import Image
+
+    detail = _ticker_detail(company="Silvia, Inc.")
+    png = web_main._ticker_card_png(detail)
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    company_ink = (0x7E, 0x8B, 0x86)
+
+    under_ticker = image.crop(
+        (95, web_main.CARD_COMPANY_Y, 700, web_main.CARD_COMPANY_Y + 30)
+    )
+    over_price = image.crop((700, 70, 1105, 120))
+    assert company_ink in _colors(under_ticker)
+    assert company_ink not in _colors(over_price)
+    # It stays below the symbol, clear of the change and date rows.
+    assert web_main.CARD_COMPANY_Y + 30 <= web_main.CARD_DATE_Y
+
+
 def test_the_badge_sits_left_of_the_move_and_inside_the_card() -> None:
     detail = _ticker_detail()
     detail["current"]["trade_state"] = "AVOID"
