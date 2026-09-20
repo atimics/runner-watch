@@ -375,7 +375,7 @@ def test_comment_recovers_from_proxy_timeout_without_another_click(page: Page, m
     assert page.locator("#commentList .comment-model").inner_text() == f"Model {model or 'unknown'}"
     assert page.locator("#commentList script").count() == 0
     assert page.locator("#commentStatus").text_content() == "Reaction added"
-    assert page.locator("#discussionCount").text_content() == "1"
+    assert page.locator("#commentList > li").count() == 1
 
 
 def _comment_with_notices() -> dict[str, Any]:

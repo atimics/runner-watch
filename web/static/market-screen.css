@@ -89,7 +89,7 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
 .part.is-planned .bar i{background:#33413a}
 .formula{margin:0;padding:13px 18px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;line-height:1.7}
 
-.discussion-section{margin-top:26px;border-top:1px solid var(--line);padding-top:20px;scroll-margin-top:70px}
+.discussion-section{margin-top:26px;scroll-margin-top:70px}
 .section-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
 .section-heading h2{margin:0;font-size:19px;font-weight:600}
 .section-heading b{color:var(--muted);font-size:12px;font-weight:600}
