@@ -394,7 +394,35 @@ def test_chart_scopes_magnitude_and_period_separately_from_daily_quote(page, wid
     expect(page.locator("[data-chart-start]")).to_have_count(0)
     expect(page.locator("[data-chart-end]")).to_have_count(0)
     expect(page.locator("[data-change]")).to_have_text("+5.4%")
-    expect(page.locator(".quote-scope")).to_contain_text("Daily change")
+    # The move is already next to the price, so the scope line is just the date.
+    scope = page.locator(".quote-scope")
+    expect(scope).not_to_contain_text("Daily change")
+    expect(scope.locator(".quote-time")).to_contain_text("Sep")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+def test_a_stock_header_reads_ticker_then_company_like_the_quote(page):
+    """The left side mirrors the price block: the ticker leads, the company name
+    sits under it the way the date sits under the price."""
+
+    screen = detail(
+        "stocks",
+        {
+            "ticker": "BRR",
+            "company": "Silvia, Inc.",
+            "current": fixtures.sample("stocks"),
+        },
+    )
+    page.set_viewport_size({"width": 1280, "height": 844})
+    open_screen(page, screen)
+
+    heading = page.locator(".asset-heading")
+    ticker = heading.locator("h1")
+    company = heading.locator(".asset-name")
+    expect(ticker).to_have_text("BRR")
+    expect(company).to_have_text("Silvia, Inc.")
+    assert company.bounding_box()["y"] > ticker.bounding_box()["y"]
+    expect(page.locator(".quote-scope")).not_to_contain_text("Daily change")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 
@@ -431,7 +459,9 @@ def test_the_gap_is_drawn_as_an_honest_dashed_stretch(page):
     dash = line.evaluate("node => getComputedStyle(node).strokeDasharray")
     assert dash.replace("px", "").startswith("5"), dash
     expect(page.locator(".chart-gap-band")).to_be_visible()
-    expect(page.locator(".chart-gap-note")).to_contain_text("Market closed")
+    # The projection explains itself to screen readers instead of carrying a
+    # line of jargon under the chart.
+    expect(page.locator(".chart-gap-note")).to_have_count(0)
     # The dashed stretch runs from the last bar to the clock, so the axis now
     # reaches the right edge instead of stopping at the saved data.
     offsets = [
