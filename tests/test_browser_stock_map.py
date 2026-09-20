@@ -965,6 +965,14 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     expect(page.locator(".ticker-list .ticker")).to_have_count(2)
     expect(page.locator(".ticker-score")).to_have_count(2)
     expect(page.locator(".wallet-event")).to_have_count(3)
+    for row in page.locator(".wallet-event").all():
+        assert row.bounding_box()["height"] <= 48
+    expect(page.locator('[data-tone="buy"] .wallet-event-action')).to_have_css(
+        "color", "rgb(115, 206, 255)"
+    )
+    expect(page.locator('[data-tone="sell"] .wallet-event-action')).to_have_css(
+        "color", "rgb(239, 153, 164)"
+    )
     expect(page.locator(".wallet-filing").first).to_have_attribute(
         "href", re.compile(r"^https://www\.sec\.gov/")
     )
@@ -981,3 +989,4 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     expect(page.locator('[data-entity-stock="USO"]')).to_have_attribute("href", "/t/USO")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.screenshot(path=str(tmp_path / f"wallet-{width}.png"), full_page=True)
+    page.locator(".wallet-events").screenshot(path=str(tmp_path / f"events-{width}.png"))
