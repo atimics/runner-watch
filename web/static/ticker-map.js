@@ -179,7 +179,7 @@
       const y = small.matches ? 64 + Math.floor(i/2)*210 : 62 + Math.floor(i/2)*103;
       const first = person.events[0];
       const tones = new Set(person.events.map(e => e.tone));
-      return {id:person.id, name:person.name, first, eventCount:person.events.length, radius:finiteAmount(magnitude(first)) ? Math.sqrt(144 + 640 * (maxAmount(first.view) ? magnitude(first)/maxAmount(first.view) : 0)) : 16, tone:tones.size === 1 ? first.tone : 'neutral', active:!!event?.people.some(p => p.id === person.id), x, y};
+      return {id:person.id, name:person.name, first, events:person.events, eventCount:person.events.length, radius:finiteAmount(magnitude(first)) ? Math.sqrt(144 + 640 * (maxAmount(first.view) ? magnitude(first)/maxAmount(first.view) : 0)) : 16, tone:tones.size === 1 ? first.tone : 'neutral', active:!!event?.people.some(p => p.id === person.id), x, y};
     });
   }
   function drawScene(nodes) {
@@ -187,9 +187,15 @@
     const {cx, cy} = metrics();
     nodes.forEach(node => {
       const opacity = node.opacity ?? 1;
-      const line = svg('line', {x1:cx, y1:cy, x2:node.x, y2:node.y, class:`map-edge ${node.tone}`, 'stroke-opacity':opacity});
-      line.addEventListener('click', () => choose(node.first, node.id)); peopleLayer.append(line);
-      const g = svg('g', {class:`map-person ${node.tone}`, role:'button', tabindex:0, 'aria-label':`${node.name}: ${node.first.action}`, 'aria-pressed':String(!!node.active), 'data-person':node.id, opacity});
+      node.events.forEach((event, index) => {
+        const bend = (index - (node.events.length-1)/2)*Math.min(8,48/Math.max(1,node.events.length-1));
+        const dx = node.x-cx, dy = node.y-cy, length = Math.hypot(dx,dy) || 1;
+        const line = svg('path', {d:`M ${cx} ${cy} Q ${(cx+node.x)/2-dy/length*bend} ${(cy+node.y)/2+dx/length*bend} ${node.x} ${node.y}`, class:`map-edge ${event.tone}`, fill:'none', 'stroke-opacity':opacity, 'data-edge-event':event.id});
+        line.append(svg('title', {}, `${event.action} · ${amount(event)} · Filed ${date(event.filed_at)}`));
+        line.addEventListener('click', () => choose(event, node.id)); peopleLayer.append(line);
+      });
+      const href = `/wallets/stocks/${encodeURIComponent(root.dataset.ticker)}/${encodeURIComponent(node.id)}`;
+      const g = svg('a', {href, class:`map-person ${node.tone}`, tabindex:0, 'aria-label':`${node.name}: stocks and events`, 'aria-pressed':String(!!node.active), 'data-person':node.id, opacity});
       g.append(svg('circle', {cx:node.x, cy:node.y, r:node.radius}));
       const initials = node.name.split(/\s+/).slice(0,2).map(n => n[0]).join('');
       g.append(svg('text', {x:node.x, y:node.y+5, 'text-anchor':'middle'}, initials));
@@ -198,8 +204,7 @@
       const action = small.matches ? ({'Exercise or conversion':'Exercise / conversion','Tax or exercise payment':'Tax / exercise payment'}[node.first.action] || node.first.action) : `${node.first.action} · ${amount(node.first)}`;
       g.append(svg('text', {x:node.x, y:node.y+59, 'text-anchor':'middle', class:'map-node-action'}, action));
       g.append(svg('title', {}, node.name));
-      const activate = () => {choose(node.first, node.id); peopleLayer.querySelector(`[data-person="${CSS.escape(node.id)}"]`)?.focus({preventScroll:true});};
-      g.addEventListener('click', activate); g.addEventListener('keydown', e => {if (['Enter',' '].includes(e.key)) {e.preventDefault();activate();}}); peopleLayer.append(g);
+      peopleLayer.append(g);
     });
     scene = nodes;
     drawInterests(nodes);
@@ -208,42 +213,44 @@
   const interests = new Map();
   const interestRequests = new Set();
   function interestRows(personId) {
-    const rows = new Map();
-    const sorted = (interests.get(personId)?.events || [])
+    const groups = new Map();
+    (interests.get(personId)?.events || [])
       .filter(e => e.ticker !== root.dataset.ticker && (Date.parse(e.filed_at) || 0) <= cutoff)
-      .sort((a,b) => Date.parse(b.filed_at) - Date.parse(a.filed_at) || (Date.parse(b.occurred_at) || 0) - (Date.parse(a.occurred_at) || 0) || b.id.localeCompare(a.id, 'en', {numeric:true}));
-    sorted.forEach(event => {
-      const person = event.people.find(p => p.id === personId);
-      if (!person) return;
-      const relationship = event.view === 'ownership' ? 'Stake' : ({Bought:'Buy', Sold:'Sell'}[event.action] || event.action);
-      const add = (kind, value, unit) => {
-        const key = JSON.stringify([event.ticker, kind, kind === 'Director' ? '' : event.security || '', kind === 'Director' ? '' : event.security_type || '', kind === 'Director' ? '' : event.ownership || '']);
-        if (!rows.has(key)) rows.set(key, {key, event, relationship:kind, value:finiteAmount(value) ? value : null, unit});
-      };
-      add(relationship, event.view === 'ownership' ? event.percent : event.value, event.view === 'ownership' ? '%' : '$');
-      if (/\bdirector\b/i.test(person.role)) add('Director', null, 'role');
-    });
-    return [...rows.values()];
+      .forEach(event => {
+        if (!event.people.some(person => person.id === personId)) return;
+        if (!groups.has(event.ticker)) groups.set(event.ticker, new Map());
+        groups.get(event.ticker).set(event.id, event);
+      });
+    return [...groups].map(([ticker, events]) => ({ticker, events:[...events.values()]}));
   }
   function drawInterests(nodes) {
-    const active = document.activeElement;
-    const focusedKey = active?.getAttribute('data-interest');
+    const focusedKey = document.activeElement?.getAttribute('data-interest');
     interestsLayer.replaceChildren();
     nodes.forEach(node => {
-      const rows = interestRows(node.id);
+      const stocks = interestRows(node.id);
+      const magnitude = event => event.view === 'ownership' ? event.percent : event.value;
+      const unit = event => event.view === 'ownership' ? '%' : '$';
+      const tone = event => event.action === 'Sold' ? 'sell' : event.view === 'ownership' || event.action === 'Bought' ? 'buy' : 'role';
       const maxima = {'%':0,'$':0};
-      rows.forEach(row => {if (row.value != null && row.unit in maxima) maxima[row.unit] = Math.max(maxima[row.unit],row.value);});
-      rows.forEach((row,i) => {
-        // Dots follow the upper arc so the person's name stays readable.
-        const orbit = node.radius + 13;
-        const angle = rows.length === 1 ? -Math.PI/2 : 5*Math.PI/6 + i*4*Math.PI/3/(rows.length-1);
+      stocks.flatMap(stock => stock.events).forEach(event => {
+        if (finiteAmount(magnitude(event))) maxima[unit(event)] = Math.max(maxima[unit(event)], magnitude(event));
+      });
+      stocks.forEach((stock,i) => {
+        const orbit = node.radius + 17;
+        const angle = stocks.length === 1 ? -Math.PI/2 : 5*Math.PI/6 + i*4*Math.PI/3/(stocks.length-1);
         const x = node.x + orbit*Math.cos(angle), y = node.y + orbit*Math.sin(angle);
-        const radius = row.value == null ? 4 : Math.sqrt(9 + 27*(maxima[row.unit] ? row.value/maxima[row.unit] : 0));
-        const tone = row.relationship === 'Sell' ? 'sell' : ['Buy','Stake'].includes(row.relationship) ? 'buy' : 'role';
-        const amount = row.value == null ? '' : row.unit === '%' ? `${number(row.value)}%` : money(row.value);
-        const label = `${row.event.ticker} · ${row.relationship}${amount ? ' · '+amount : ''} · Filed ${date(row.event.filed_at)}`;
-        const link = svg('a', {href:`/t/${encodeURIComponent(row.event.ticker)}`,class:`map-interest ${tone}`,tabindex:0,'aria-label':label,'data-interest':node.id+':'+row.key});
-        link.append(svg('circle',{cx:x,cy:y,r:Math.max(7,radius),class:'map-interest-hit'}),svg('circle',{cx:x,cy:y,r:radius,class:'map-interest-dot','data-amount':row.value ?? 'unknown'}),svg('title',{},label));
+        const weights = stock.events.filter(e => finiteAmount(magnitude(e))).map(e => maxima[unit(e)] ? magnitude(e)/maxima[unit(e)] : 0);
+        const radius = weights.length ? Math.sqrt(9 + 27*Math.max(...weights)) : 4;
+        const tones = new Set(stock.events.map(tone));
+        const label = `${stock.ticker} · ${stock.events.length} events`;
+        const link = svg('a', {href:`/t/${encodeURIComponent(stock.ticker)}`,class:`map-interest ${tones.size === 1 ? [...tones][0] : 'role'}`,tabindex:0,'aria-label':label,'data-interest':node.id+':'+stock.ticker});
+        stock.events.forEach((event,index) => {
+          const bend = (index-(stock.events.length-1)/2)*Math.min(3,12/Math.max(1,stock.events.length-1));
+          const sx = node.x + node.radius*Math.cos(angle), sy = node.y + node.radius*Math.sin(angle);
+          const line = svg('path', {d:`M ${sx} ${sy} Q ${(sx+x)/2-Math.sin(angle)*bend} ${(sy+y)/2+Math.cos(angle)*bend} ${x} ${y}`,class:`map-interest-edge ${tone(event)}`,'data-interest-event':event.id});
+          line.append(svg('title', {}, `${stock.ticker} · ${event.action} · ${amount(event)} · Filed ${date(event.filed_at)}`)); link.append(line);
+        });
+        link.append(svg('circle',{cx:x,cy:y,r:Math.max(7,radius),class:'map-interest-hit'}),svg('circle',{cx:x,cy:y,r:radius,class:'map-interest-dot'}),svg('title',{},label));
         interestsLayer.append(link);
       });
     });

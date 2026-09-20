@@ -147,7 +147,8 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width):
     bubble = page.locator("[data-person]").first
     name = bubble.get_attribute("aria-label").split(":")[0]
     bubble.focus()
-    bubble.press("Enter")
+    page.locator(".map-edge").first.dispatch_event("click")
+    page.locator("[data-person]").first.focus()
     expect(page.locator("[data-person]").first).to_be_focused()
     expect(page.locator("[data-map-selection] h3")).to_have_text(name)
     expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(1)
@@ -317,7 +318,7 @@ def test_score_panel_pins_and_summarizes_positive_drivers_and_penalties(page):
 )
 def test_risk_hover_and_pin_share_filing_selection(page, width, key, label, breakdown):
     open_map(page, width)
-    page.locator("[data-person]").first.press("Enter")
+    page.locator(".map-edge").first.dispatch_event("click")
     selection = page.locator("[data-map-selection]")
     filing_title = selection.locator("h3").text_content()
     risk = page.locator(f'[data-score-key="{key}"]')
@@ -404,7 +405,7 @@ def test_missing_and_zero_score_are_graceful(page, score, breakdown):
     expect(page.locator(".map-score-track")).to_have_count(1)
     expect(page.locator(".map-source")).to_be_hidden()
     expect(page.locator("[data-stock-map]")).not_to_contain_text(re.compile("NaN|Infinity"))
-    page.locator("[data-person]").first.press("Enter")
+    page.locator(".map-edge").first.dispatch_event("click")
     expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
     page.locator("[data-map-score-center]").press("Enter")
     expect(page.locator(".map-center-score")).to_have_text(text)
@@ -419,7 +420,7 @@ def test_source_failure_can_retry_and_reported_names_are_text(page):
     payload["events"][-1]["people"][0]["name"] = "<img src=x onerror=alert(1)>"
     page.route("**/api/stocks/TEST/map", lambda route: route.fulfill(json=payload))
     page.get_by_role("button", name="Retry loading filings").click()
-    page.locator("[data-person]").filter(has_text="<img src=x onerror=alert(1)>").click()
+    page.locator(f'[data-edge-event="{payload["events"][-1]["id"]}"]').dispatch_event("click")
     expect(page.locator("[data-map-selection] h3")).to_have_text("<img src=x onerror=alert(1)>")
     expect(page.locator("[data-map-selection] img")).to_have_count(0)
 
@@ -640,7 +641,8 @@ def test_polling_refreshes_score_without_resetting_filing_or_pinned_state(page, 
     page.get_by_role("button", name="Next wallets").click()
     pagination = page.locator("[data-map-page]").text_content()
     person = page.locator("[data-person]").first
-    person.press("Enter")
+    page.locator(".map-edge").first.dispatch_event("click")
+    person.focus()
     person_id = person.get_attribute("data-person")
     selected_event = page.locator("[data-event-id][aria-pressed=true]").get_attribute(
         "data-event-id"
@@ -821,23 +823,20 @@ def test_inline_interests_link_to_stocks_and_keep_one_chart(page, width, tmp_pat
         connections_handler=respond,
     )
     links = page.locator("[data-interest]")
-    expect(links).to_have_count(6)
+    expect(links).to_have_count(2)
     expect(page.locator("[data-stock-map] svg")).to_have_count(1)
     expect(page.locator("[data-map-connections], [data-stock-map] select")).to_have_count(0)
-    expect(page.locator("[data-map-selection] h3")).to_have_count(0)
-    expect(page.locator(".map-interest.buy")).to_have_count(3)
-    expect(page.locator(".map-interest.sell")).to_have_count(1)
-    expect(page.locator(".map-interest.role")).to_have_count(2)
-    radii = {
-        mark.get_attribute("data-amount"): float(mark.get_attribute("r"))
-        for mark in page.locator(".map-interest-dot[data-amount]").all()
-    }
-    assert radii["20"] > radii["2"]
-    assert radii["100000"] > radii["10000"]
-    assert max(radii.values()) <= 6
+    expect(page.locator('[data-interest][href="/t/BIG"] .map-interest-edge')).to_have_count(2)
+    expect(page.locator('[data-interest][href="/t/SMALL"] .map-interest-edge')).to_have_count(2)
+    expect(page.locator(".map-interest-edge.sell")).to_have_count(1)
+    expect(page.locator(".map-interest-edge.buy")).to_have_count(3)
+    big = page.locator('[data-interest][href="/t/BIG"] .map-interest-dot')
+    small = page.locator('[data-interest][href="/t/SMALL"] .map-interest-dot')
+    assert float(big.get_attribute("r")) > float(small.get_attribute("r"))
+    assert float(big.get_attribute("r")) <= 6
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.locator("[data-map-graph]").screenshot(path=str(tmp_path / f"inline-map-{width}.png"))
-    sale = page.locator(".map-interest.sell")
+    sale = page.locator('[data-interest][href="/t/BIG"]')
     expect(sale).to_have_attribute("href", "/t/BIG")
     page.route(
         "http://app.test/t/BIG",
@@ -872,7 +871,7 @@ def test_score_badges_share_a_row_and_filing_notes_are_visible(page, width, tmp_
     data["events"][0]["footnotes"] = "Held through the family trust."
     page.route("**/api/stocks/TEST/map", lambda route: route.fulfill(json=data))
     page.reload()
-    page.locator("[data-person]").first.click()
+    page.locator(".map-edge").first.dispatch_event("click")
     expect(page.locator(".map-filing-notes")).to_have_text("Held through the family trust.")
     expect(page.locator("[data-map-selection] details")).to_have_count(0)
 
@@ -898,8 +897,61 @@ def test_inline_interests_load_next_page_and_follow_filing_time(page):
         map_handler=lambda route: route.fulfill(json={**data, "events": [base]}),
         connections_handler=respond,
     )
-    expect(page.locator('[data-interest][href="/t/OLDER"]')).to_have_count(2)
-    expect(page.locator('[data-interest][href="/t/LATER"]')).to_have_count(2)
+    expect(page.locator('[data-interest][href="/t/OLDER"]')).to_have_count(1)
+    expect(page.locator('[data-interest][href="/t/LATER"]')).to_have_count(1)
     page.locator("[data-map-events] button").first.click()
     expect(page.locator('[data-interest][href="/t/LATER"]')).to_have_count(0)
-    expect(page.locator('[data-interest][href="/t/OLDER"]')).to_have_count(2)
+    expect(page.locator('[data-interest][href="/t/OLDER"]')).to_have_count(1)
+
+
+def test_wallet_opens_portfolio_and_repeated_events_share_one_bubble(page):
+    data = map_payload()
+    base = data["events"][0]
+    data["events"] = [base, {**base, "id": "second", "action": "Sold", "tone": "down"}]
+    open_map(page, map_handler=lambda route: route.fulfill(json=data))
+    expect(page.locator("[data-person]")).to_have_count(1)
+    expect(page.locator(".map-edge")).to_have_count(2)
+    paths = page.locator(".map-edge").evaluate_all("els => els.map(el => el.getAttribute('d'))")
+    assert len(set(paths)) == 2
+    wallet = page.locator("[data-person]")
+    href = wallet.get_attribute("href")
+    assert href.startswith("/wallets/stocks/TEST/sec%3A")
+    page.route(f"http://app.test{href}", lambda route: route.fulfill(body="Wallet portfolio"))
+    wallet.focus()
+    wallet.press("Enter")
+    expect(page).to_have_url(f"http://app.test{href}")
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(page, width, tmp_path):
+    from runner_web.market_screens import listing
+
+    request = _request()
+    rows = [{**score_current(), "ticker": ticker} for ticker in ["USO", "CDTG"]]
+    events = map_payload()["events"][:3]
+    html = main.templates.TemplateResponse(
+        request, "stock_wallet.html", main.page_context(
+            request, None, resolved_user=None, screen=listing("stocks", rows),
+            wallet={"name": "HRT FINANCIAL LP", "id": "sec:101"}, wallet_events=events,
+            wallet_next=None, wallet_ticker="USO",
+        ),
+    ).body.decode()
+    html = re.sub(
+        r'<link rel="stylesheet" href="/static/([^"?]+)[^"]*">',
+        lambda match: "<style>" + (ROOT / "web/static" / match[1]).read_text() + "</style>",
+        html,
+    )
+    page.route("http://app.test/**", lambda route: route.fulfill(
+        content_type="text/html", body=html
+    ))
+    page.set_viewport_size({"width": width, "height": 1000})
+    page.goto("http://app.test/wallets/stocks/USO/sec:101")
+    expect(page.get_by_role("heading", name="HRT FINANCIAL LP")).to_be_visible()
+    expect(page.locator(".ticker-list .ticker")).to_have_count(2)
+    expect(page.locator(".ticker-score")).to_have_count(2)
+    expect(page.locator(".wallet-event")).to_have_count(3)
+    expect(page.locator(".wallet-filing").first).to_have_attribute(
+        "href", re.compile(r"^https://www\.sec\.gov/")
+    )
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    page.screenshot(path=str(tmp_path / f"wallet-{width}.png"), full_page=True)

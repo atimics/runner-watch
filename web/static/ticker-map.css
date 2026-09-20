@@ -25,3 +25,5 @@ main:has(.ticker-map),main:has(.token-replay){max-width:1040px}.market-screen:ha
 .map-score-badges{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin:0}.map-score-badges .map-score-legend,.map-score-badges .map-score-penalties{display:contents}.map-score-badges li{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border:1px solid var(--line);border-radius:10px;color:var(--muted);font-size:10.5px}.map-score-badges .map-score-penalties strong{color:var(--red)}
 
 .map-workspace.map-overview{grid-template-columns:minmax(0,1fr)}.map-overview .map-source{background:transparent;border:0;padding:0;align-self:start;max-height:none;overflow:visible}.map-overview .map-source:has([data-map-selection]:empty):has(.map-score-return[hidden]){display:none}.map-overview .map-score-badges{gap:6px 12px}.map-overview .map-score-badges li{padding:0;border:0;border-radius:0}.map-overview .token-contract{margin:8px 0 0}
+
+.map-interest-edge{fill:none;stroke:var(--muted);stroke-width:1;pointer-events:stroke}.map-interest-edge.buy{stroke:var(--blue)}.map-interest-edge.sell{stroke:var(--red)}
