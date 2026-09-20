@@ -857,21 +857,42 @@ def test_reduced_motion_scrubs_without_animation(page, width):
     assert "moving" not in page.evaluate("window.mapPhases")
 
 
-def test_map_orbits_upright_and_pauses_on_click(page):
+def _orbit_position(page) -> dict[str, float]:
+    return page.evaluate(
+        """() => {
+          const node = document.querySelector('[data-person]');
+          const [x, y] = node.dataset.orbitAnchor.split(',').map(Number);
+          const [dx, dy] = node.getAttribute('transform')
+            .match(/translate\(([-\d.]+) ([-\d.]+)\)/).slice(1).map(Number);
+          const graph = document.querySelector('[data-map-graph]');
+          const [cx, cy] = graph.dataset.orbitCenter.split(',').map(Number);
+          const [rx, ry] = graph.dataset.orbitTrack.split(',').map(Number);
+          return {x: x + dx, y: y + dy, cx, cy, rx, ry};
+        }"""
+    )
+
+
+def test_map_travels_along_its_ring_and_pauses_on_click(page):
     open_map(page)
     page.emulate_media(reduced_motion="no-preference")
     node = page.locator("[data-person]").first
-    expect(node).to_have_attribute("transform", re.compile(r"^rotate\("))
-    first = node.get_attribute("transform")
-    match = re.fullmatch(
-        r"rotate\((-?[\d.]+) ([\d.-]+) ([\d.-]+)\) rotate\((-?[\d.]+) ([\d.-]+) ([\d.-]+)\)",
-        first,
-    )
-    assert match, first
-    # The node counter-rotates by exactly the orbit angle, so the label stays upright.
-    assert float(match.group(1)) == pytest.approx(-float(match.group(4)), abs=0.001)
+    # Nodes move by translation alone, so the label can never turn upside down.
+    expect(node).to_have_attribute("transform", re.compile(r"^translate\("))
+    first = _orbit_position(page)
+
+    def on_ring(point: dict[str, float]) -> float:
+        return ((point["x"] - point["cx"]) / point["rx"]) ** 2 + (
+            (point["y"] - point["cy"]) / point["ry"]
+        ) ** 2
+
+    # The node sits on the fixed ellipse track at every step, so the ring never swings.
+    assert on_ring(first) == pytest.approx(1.0, abs=0.01)
+    first_transform = node.get_attribute("transform")
     page.wait_for_timeout(1500)
-    assert node.get_attribute("transform") != first
+    assert node.get_attribute("transform") != first_transform
+    second = _orbit_position(page)
+    assert on_ring(second) == pytest.approx(1.0, abs=0.01)
+    assert (second["x"], second["y"]) != (first["x"], first["y"])
     graph = page.locator("[data-map-graph]")
     graph.dispatch_event("click")
     expect(graph).to_have_class(re.compile(r"\borbit-paused\b"))
