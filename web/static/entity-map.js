@@ -4,7 +4,7 @@
   if (!data) return;
   const {wallet, entity} = JSON.parse(data.textContent);
   const graph = document.querySelector('[data-entity-map]');
-  graph.addEventListener('click', () => graph.classList.toggle('entity-paused'));
+  window.ratiOrbit?.attach(graph);
   const small = matchMedia('(max-width:500px)');
   const svg = (tag, attrs, text) => {
     const element = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -35,6 +35,7 @@
   function draw() {
     graph.replaceChildren();
     const mobile = small.matches, cx = mobile ? 180 : 380, cy = mobile ? 184 : 218;
+    graph.dataset.orbitCenter = `${cx},${cy}`;
     const size = mobile ? 4 : 8;
     page = Math.min(page, Math.max(0, Math.ceil(entity.stocks.length/size)-1));
     const stocks = entity.stocks.slice(page*size,(page+1)*size);
@@ -49,10 +50,10 @@
         const bend = (i-(stock.events.length-1)/2)*Math.min(8,48/Math.max(1,stock.events.length-1));
         const length = Math.hypot(x-cx,y-cy);
         const tone = event.action === 'Sold' ? 'sell' : event.action === 'Bought' || event.view === 'ownership' ? 'buy' : 'role';
-        const line = svg('path',{d:`M ${cx} ${cy} Q ${(cx+x)/2-(y-cy)/length*bend} ${(cy+y)/2+(x-cx)/length*bend} ${x} ${y}`,class:`entity-edge ${tone}`});
+        const line = svg('path',{d:`M ${cx} ${cy} Q ${(cx+x)/2-(y-cy)/length*bend} ${(cy+y)/2+(x-cx)/length*bend} ${x} ${y}`,class:`entity-edge ${tone}`,'data-orbit':''});
         line.append(svg('title',{},`${stock.ticker} · ${event.action} · Filed ${event.filed_at?.slice(0,10) || ''}`)); graph.append(line);
       });
-      const link = svg('a',{href:`/t/${encodeURIComponent(stock.ticker)}`,class:'map-person',tabindex:0,'aria-label':`${stock.ticker}, ${scored ? `score ${Math.round(stock.score)}, ` : ''}${stock.events.length} events`, 'data-entity-stock':stock.ticker});
+      const link = svg('a',{href:`/t/${encodeURIComponent(stock.ticker)}`,class:'map-person',tabindex:0,'aria-label':`${stock.ticker}, ${scored ? `score ${Math.round(stock.score)}, ` : ''}${stock.events.length} events`, 'data-entity-stock':stock.ticker,'data-orbit-anchor':`${x},${y}`});
       link.append(svg('circle',{cx:x,cy:y,r:radius}));
       if (scored) link.append(scoreWheel(stock,x,y,radius+3));
       link.append(svg('text',{x,y:y+(scored ? -3 : 5),'text-anchor':'middle',class:scored ? 'entity-stock-symbol' : ''},stock.ticker));

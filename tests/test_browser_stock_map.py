@@ -857,6 +857,29 @@ def test_reduced_motion_scrubs_without_animation(page, width):
     assert "moving" not in page.evaluate("window.mapPhases")
 
 
+def test_map_orbits_upright_and_pauses_on_click(page):
+    open_map(page)
+    page.emulate_media(reduced_motion="no-preference")
+    node = page.locator("[data-person]").first
+    expect(node).to_have_attribute("transform", re.compile(r"^rotate\("))
+    first = node.get_attribute("transform")
+    match = re.fullmatch(
+        r"rotate\((-?[\d.]+) ([\d.-]+) ([\d.-]+)\) rotate\((-?[\d.]+) ([\d.-]+) ([\d.-]+)\)",
+        first,
+    )
+    assert match, first
+    # The node counter-rotates by exactly the orbit angle, so the label stays upright.
+    assert float(match.group(1)) == pytest.approx(-float(match.group(4)), abs=0.001)
+    page.wait_for_timeout(1500)
+    assert node.get_attribute("transform") != first
+    graph = page.locator("[data-map-graph]")
+    graph.dispatch_event("click")
+    expect(graph).to_have_class(re.compile(r"\borbit-paused\b"))
+    paused = node.get_attribute("transform")
+    page.wait_for_timeout(1200)
+    assert node.get_attribute("transform") == paused
+
+
 def test_state_legend_tabs_filter_the_chart(page):
     """The status legend sits muted below the chart, never on it: its tabs
     carry the chart's status colours and toggle which run the line emphasises."""
@@ -1040,8 +1063,10 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
         html,
     )
     html = re.sub(
-        r'<script src="/static/entity-map.js[^\"]*"[^>]*></script>',
-        lambda _: "<script>" + (ROOT / "web/static/entity-map.js").read_text() + "</script>",
+        r'<script src="/static/(map-orbit|entity-map)\.js[^\"]*"[^>]*></script>',
+        lambda match: (
+            "<script>" + (ROOT / "web/static" / f"{match.group(1)}.js").read_text() + "</script>"
+        ),
         html,
     )
     page.route("http://app.test/**", lambda route: route.fulfill(
@@ -1066,6 +1091,9 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     )
     expect(page.locator(".entity-center")).to_have_attribute("aria-label", "HRT FINANCIAL LP")
     expect(page.locator("[data-entity-stock]")).to_have_count(2)
+    expect(page.locator("[data-entity-stock]").first).to_have_attribute(
+        "transform", re.compile(r"^rotate\(.*\) rotate\(-")
+    )
     wheels = page.locator(".entity-score-ring")
     expect(wheels).to_have_count(0 if score is None else 2)
     if score is not None:
