@@ -3263,6 +3263,13 @@ def _draw_card_map(draw: Any, map_data: dict[str, Any], box: tuple[int, int, int
         draw.text((px, py + radius + 8), name, "#9fb2a8", font=name_font, anchor="ma")
 
 
+# Card rows, shared by the price block and its badge so they cannot collide.
+CARD_PRICE_Y = 138
+CARD_CHANGE_Y = 214
+CARD_DATE_Y = 262
+CARD_BADGE_HEIGHT = 44
+
+
 def _ticker_card_png(
     detail: dict[str, Any],
     chart: dict[str, Any] | None = None,
@@ -3282,15 +3289,21 @@ def _ticker_card_png(
     if company:
         draw.text((1105, 88), company, "#7e8b86", font=font(22), anchor="ra")
 
-    draw.text((95, 138), _card_text(f"${ticker}"), "#f4f8f6", font=font(76, True))
+    draw.text((95, CARD_PRICE_Y), _card_text(f"${ticker}"), "#f4f8f6", font=font(76, True))
     price = _card_price(current.get("price")) or "No price"
-    draw.text((1105, 138), price, "#f4f8f6", font=font(60, True), anchor="ra")
+    draw.text((1105, CARD_PRICE_Y), price, "#f4f8f6", font=font(60, True), anchor="ra")
     move = f"{change:+.1f}%" if change is not None else "—"
     tone = "#87e8a9" if (change or 0) > 0 else "#f2a3ac" if (change or 0) < 0 else "#9fb2a8"
-    draw.text((1105, 214), move, tone, font=font(32, True), anchor="ra")
+    change_font = font(32, True)
+    draw.text((1105, CARD_CHANGE_Y), move, tone, font=change_font, anchor="ra")
     stamp = _card_text(str(current.get("quote_time") or current.get("event_at") or "")[:16])
-    draw.text((1105, 256), f"Daily change · {stamp} UTC", "#65716b", font=font(19), anchor="ra")
-    _draw_ticker_badge(draw, current)
+    draw.text(
+        (1105, CARD_DATE_Y), f"Daily change · {stamp} UTC", "#65716b", font=font(19), anchor="ra"
+    )
+    # The state badge shares the change row, to the left of the move, rather than
+    # landing on the line below it.
+    badge_right = 1105 - int(draw.textlength(move, font=change_font)) - 18
+    _draw_ticker_badge(draw, current, right=badge_right, top=CARD_CHANGE_Y)
 
     draw.line((95, 292, 1105, 292), fill="#26302c", width=2)
 
@@ -3311,7 +3324,11 @@ def _tone_word(value: float | None) -> str:
     return "up" if value > 0 else "down" if value < 0 else "flat"
 
 
-def _draw_ticker_badge(draw: Any, current: dict[str, Any]) -> None:
+def _draw_ticker_badge(
+    draw: Any, current: dict[str, Any], *, right: int, top: int
+) -> tuple[int, int, int, int] | None:
+    """The trade state, drawn clear of the price block's own lines."""
+
     state = str(current.get("trade_state") or "").upper()
     level = str(current.get("rug_level") or "").lower()
     if level in {"high", "critical"}:
@@ -3321,11 +3338,13 @@ def _draw_ticker_badge(draw: Any, current: dict[str, Any]) -> None:
     elif state and state != "UNKNOWN":
         label, fill, ink = state, "#123021", "#87e8a9"
     else:
-        return
-    badge = font(25, True)
-    width = draw.textlength(label, font=badge) + 44
-    draw.rounded_rectangle((1105 - width, 262, 1105, 314), radius=13, fill=fill)
-    draw.text((1105 - width + 22, 273), label, ink, font=badge)
+        return None
+    badge = font(22, True)
+    width = int(draw.textlength(label, font=badge)) + 36
+    box = (right - width, top, right, top + CARD_BADGE_HEIGHT)
+    draw.rounded_rectangle(box, radius=12, fill=fill)
+    draw.text((right - width + 18, top + 10), label, ink, font=badge)
+    return box
 
 
 def _market_report_card_png(report: dict[str, Any]) -> bytes:
