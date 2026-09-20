@@ -457,11 +457,11 @@ def test_sports_list_refresh_preserves_search_and_page(page: Page, monkeypatch) 
     errors = _load(page, _rendered_pulse(monkeypatch, _pulse(old)), [])
     html = _rendered_pulse(monkeypatch, _pulse(new, old))
     page.route("http://app.test/", lambda route: route.fulfill(content_type="text/html", body=html))
-    page.get_by_role("searchbox").fill("a search in progress")
+    page.get_by_role("combobox").fill("a search in progress")
     page.clock.fast_forward(60000)
     expect(page.locator(".ticker")).to_have_count(2)
-    expect(page.get_by_role("searchbox")).to_have_value("a search in progress")
-    expect(page.get_by_role("searchbox")).to_be_focused()
+    expect(page.get_by_role("combobox")).to_have_value("a search in progress")
+    expect(page.get_by_role("combobox")).to_be_focused()
     expect(page).to_have_url("http://app.test/")
     assert errors == []
 
@@ -560,7 +560,7 @@ def test_sports_refresh_keeps_keyboard_focus_on_a_ticker(page: Page, monkeypatch
     )
     page.clock.fast_forward(60000)
     expect(page.locator(".ticker")).to_be_focused()
-    page.get_by_role("searchbox").focus()
+    page.get_by_role("combobox").focus()
     page.clock.fast_forward(60000)
     expect(page.get_by_role("heading", name="A quiet moment")).to_be_visible()
     assert errors == []
