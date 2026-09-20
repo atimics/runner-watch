@@ -26,7 +26,7 @@ main:has(.ticker-map),main:has(.token-replay){max-width:1040px}.market-screen:ha
 
 .map-workspace.map-overview{grid-template-columns:minmax(0,1fr)}.map-overview .map-source{background:transparent;border:0;padding:0;align-self:start;max-height:none;overflow:visible}.map-overview .map-source:has([data-map-selection]:empty):has(.map-score-return[hidden]){display:none}.map-overview .map-score-badges{gap:6px 12px}.map-overview .map-score-badges li{padding:0;border:0;border-radius:0}.map-overview .token-contract{margin:8px 0 0}
 
-.map-interest-edge{fill:none;stroke:var(--muted);stroke-width:1;pointer-events:stroke}.map-interest-edge.buy{stroke:var(--blue)}.map-interest-edge.sell{stroke:var(--red)}
+.map-interest-edge{fill:none;stroke:var(--muted);stroke-width:1;pointer-events:stroke}.map-interest-name{font-size:9px;fill:var(--muted);pointer-events:none}.map-interest-edge.buy{stroke:var(--blue)}.map-interest-edge.sell{stroke:var(--red)}
 
 .entity-worth{margin-top:28px}.entity-worth-value{font-size:36px;font-weight:550}.entity-worth-chart{display:block;width:100%;margin:20px 0 6px}.entity-worth-point{fill:var(--green)}.entity-edge{fill:none;stroke:var(--muted);stroke-width:1.5}.entity-edge.buy{stroke:var(--blue)}.entity-edge.sell{stroke:var(--red)}.entity-center{view-transition-name:entity-focus}.entity-map{margin-top:10px}@view-transition{navigation:auto}@media(prefers-reduced-motion:reduce){::view-transition-group(*){animation-duration:0s}}
 
