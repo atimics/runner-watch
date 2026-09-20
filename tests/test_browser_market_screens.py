@@ -223,6 +223,20 @@ def test_actual_detail_refresh_keeps_call_confirmation_and_focus(
     page.route("**/api/*calls/**/close", commit)
     page.goto("http://app.test" + path)
     expect(page.locator("[data-call-outcome]")).to_contain_text(["+4.0%"])
+    # The Call record reads as one line: every fact shares a baseline, with the
+    # share link trailing them rather than sitting under the list.
+    labels = page.locator(".call-record .facts dt")
+    expect(labels).to_have_count(5)
+    tops = labels.evaluate_all(
+        "nodes => nodes.map(node => Math.round(node.getBoundingClientRect().top))"
+    )
+    assert len(set(tops)) == 1, tops
+    record = page.locator(".call-record").bounding_box()
+    assert record["height"] < 60, record
+    share = page.locator(".call-record .call-share")
+    if share.count():
+        expect(share).to_be_visible()
+        assert share.bounding_box()["y"] < record["y"] + record["height"]
     for price, value in [(3, "+100.0%"), (4.5, "+200.0%")]:
         changing_detail["price"] = price
         page.clock.fast_forward(60000)
