@@ -182,3 +182,59 @@ def test_ticker_card_route_and_meta_are_public() -> None:
     assert "def ticker_share(" in source
     for tag in ("og:title", "og:description", "og:image", "twitter:card"):
         assert tag in template
+
+
+def _colors(image) -> set[tuple[int, int, int]]:
+    return {color for _count, color in image.getcolors(maxcolors=1_000_000)}
+
+
+def test_the_state_badge_keeps_off_the_daily_change_line() -> None:
+    """The badge used to sit on top of the \"Daily change · …\" line."""
+    import io
+
+    from PIL import Image
+
+    detail = _ticker_detail()
+    detail["current"]["trade_state"] = "WATCH"
+    png = web_main._ticker_card_png(detail)
+
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    assert image.size == (1200, 630)
+    date_band = image.crop((640, web_main.CARD_DATE_Y, 1145, web_main.CARD_DATE_Y + 24))
+    badge_fill = (0x12, 0x30, 0x21)
+    assert badge_fill not in _colors(date_band)
+    # It does still render, on the change row beside the move.
+    change_band = image.crop((640, web_main.CARD_CHANGE_Y, 1145, web_main.CARD_CHANGE_Y + 30))
+    assert badge_fill in _colors(change_band)
+
+
+def test_the_badge_sits_left_of_the_move_and_inside_the_card() -> None:
+    detail = _ticker_detail()
+    detail["current"]["trade_state"] = "AVOID"
+    detail["current"]["rug_level"] = "high"
+
+    class Recorder:
+        def __init__(self) -> None:
+            self.boxes: list[tuple[int, int, int, int]] = []
+
+        def textlength(self, *_args, **_kwargs):
+            return 60
+
+        def rounded_rectangle(self, box, **_kwargs):
+            self.boxes.append(box)
+
+        def text(self, *_args, **_kwargs):
+            return None
+
+    recorder = Recorder()
+    box = web_main._draw_ticker_badge(
+        recorder, detail["current"], right=1000, top=web_main.CARD_CHANGE_Y
+    )
+
+    assert box is not None
+    left, top, right, bottom = box
+    assert right == 1000
+    assert left < right
+    assert top == web_main.CARD_CHANGE_Y
+    assert bottom <= web_main.CARD_DATE_Y
+    assert recorder.boxes == [box]
