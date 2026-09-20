@@ -131,7 +131,7 @@ def open_map(
 
 
 @pytest.mark.parametrize("width", [320, 390, 1280])
-def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width):
+def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width, tmp_path):
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     open_map(page, width)
@@ -142,6 +142,15 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width):
     expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
     expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(0)
     expect(page.locator("[data-map-events]")).to_be_visible()
+    for row in page.locator("[data-map-events] .wallet-event").all():
+        assert row.bounding_box()["height"] <= 48
+    expect(
+        page.locator('[data-map-events] [data-tone="buy"] .wallet-event-action').first
+    ).to_have_css("color", "rgb(115, 206, 255)")
+    expect(
+        page.locator('[data-map-events] [data-tone="sell"] .wallet-event-action').first
+    ).to_have_css("color", "rgb(239, 153, 164)")
+    page.locator("[data-map-events]").screenshot(path=str(tmp_path / f"ticker-events-{width}.png"))
     expect(page.locator(".chart-filing-marker")).to_have_count(0)
     expect(page.locator("[data-map-score-return]")).to_be_hidden()
     bubble = page.locator("[data-person]").first
@@ -962,14 +971,16 @@ def test_wallet_opens_portfolio_and_repeated_events_share_one_bubble(page):
 
 @pytest.mark.parametrize("width", [390, 1280])
 @pytest.mark.parametrize("has_holdings", [True, False])
+@pytest.mark.parametrize("score", [45, 0, None])
 def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
-    page, width, tmp_path, has_holdings
+    page, width, tmp_path, has_holdings, score
 ):
     from runner_web.entity_view import entity_view
     from runner_web.market_screens import listing
 
     request = _request()
-    rows = [{**score_current(), "ticker": ticker} for ticker in ["USO", "CDTG"]]
+    rows = [{**score_current(score=score), "ticker": ticker} for ticker in ["USO", "CDTG"]]
+    rows[1]["score_detail"] = None
     events = [
         {**row, "ticker": "USO" if i < 2 else "CDTG",
          "post_shares": 100-i*10 if has_holdings else None,
@@ -1016,6 +1027,24 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     )
     expect(page.locator(".entity-center")).to_have_attribute("aria-label", "HRT FINANCIAL LP")
     expect(page.locator("[data-entity-stock]")).to_have_count(2)
+    wheels = page.locator(".entity-score-ring")
+    expect(wheels).to_have_count(0 if score is None else 2)
+    if score is not None:
+        expect(wheels.first).to_have_attribute("aria-label", f"Score {score}")
+        wheel = page.locator('[data-entity-stock="USO"] .entity-score-ring')
+        expect(wheel.locator(".entity-score-segment")).to_have_count(5)
+        expect(page.locator('[data-entity-stock="CDTG"] .entity-score-track')).to_have_count(1)
+        expect(page.locator('[data-entity-stock="CDTG"] .entity-score-segment')).to_have_count(0)
+        expect(page.locator(".entity-stock-score")).to_have_text([str(score), str(score)])
+        expect(wheel.locator('[data-score-key="rug"]')).to_have_css(
+            "stroke", "rgb(239, 153, 164)"
+        )
+        lengths = wheel.locator(".entity-score-segment").evaluate_all(
+            "parts => parts.map(part => part.getTotalLength())"
+        )
+        assert [length / sum(lengths) for length in lengths] == pytest.approx(
+            [60 / 155, 30 / 155, 10 / 155, 50 / 155, 5 / 155], abs=0.001
+        )
     expect(page.locator(".entity-edge")).to_have_count(3)
     if has_holdings:
         expect(page.locator(".entity-worth-chart")).to_be_visible()

@@ -333,9 +333,14 @@
     filingsPageNumber = Math.min(filingsPageNumber, pageCount - 1);
     const slice = events.slice(filingsPageNumber * FILINGS_PAGE_SIZE, filingsPageNumber * FILINGS_PAGE_SIZE + FILINGS_PAGE_SIZE);
     slice.forEach(e => {
-      const button = make('button',null,'map-event'); button.type = 'button'; button.dataset.eventId = e.id; button.setAttribute('aria-pressed',String(e.id === selected));
-      const main = make('span'); main.append(make('strong',`${names(e)} · ${e.action}`),make('small',`${e.basis} · Filed ${date(e.filed_at)}${e.amendment ? ' · Amendment' : ''}`));
-      button.append(make('span','●',e.tone),main,make('span',amount(e),'event-money'));
+      const button = make('button',null,'wallet-event map-filing'); button.type = 'button'; button.dataset.eventId = e.id; button.setAttribute('aria-pressed',String(e.id === selected));
+      button.dataset.tone = e.action === 'Sold' ? 'sell' : e.action === 'Bought' || e.view === 'ownership' ? 'buy' : 'other';
+      const description = `${names(e)} · ${e.action} · ${e.security || 'See filing'}${e.shares == null ? '' : ` · ${number(e.shares)} shares`} · ${amount(e)} · ${e.basis} · ${e.form} · Filed ${date(e.filed_at)}${e.amendment ? ' · Amendment' : ''}`;
+      button.title = description; button.setAttribute('aria-label',description);
+      const subject = make('span',null,'wallet-event-ticker'); subject.append(make('strong',names(e)));
+      const detail = make('span',`${e.security || ''}${e.shares == null ? '' : ` · ${number(e.shares)} shares`}`,'wallet-event-detail');
+      const filed = make('time',e.filed_at?.slice(5,10),'wallet-filing'); filed.dateTime = e.filed_at?.slice(0,10) || '';
+      button.append(subject,make('span',e.action,'wallet-event-action'),detail,make('span',amount(e),'wallet-event-value'),filed);
       button.addEventListener('click',() => scrub(e)); list.append(button);
     });
     $('filings').hidden = !events.length;
