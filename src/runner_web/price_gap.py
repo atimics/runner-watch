@@ -243,8 +243,10 @@ def forecast_gap(
         session=str(clock.get("session")),
         scanner_active=bool(clock.get("scanner_active")),
     )
-    if state == "closed":
-        return None
+    # A closed market is still a gap worth predicting: bars stop on purpose and
+    # the weekend stretch is exactly where a projection earns its keep. The row
+    # keeps the bar-lateness vocabulary and market_open carries the honest word.
+    market_open = state != "closed"
     bars = recent_bars(database, ticker)
     closes = [value for value in (_number(bar["close"]) for bar in bars) if value]
     returns = [
@@ -272,7 +274,8 @@ def forecast_gap(
         "anchor_kind": anchor["kind"],
         "anchor_price": round(anchor["price"], 6),
         "session": str(clock.get("session")),
-        "state": state,
+        "state": "stale" if not market_open else state,
+        "market_open": market_open,
         "latency_seconds": int(latency_seconds),
         "step_minutes": STEP_MINUTES,
         "horizon_minutes": horizon_minutes,
@@ -289,6 +292,92 @@ def forecast_gap(
             clock=clock,
             quote=dict(quote) if quote else None,
         ),
+    }
+
+
+def _duration(minutes: int) -> str:
+    if minutes < 60:
+        return f"{minutes}m"
+    if minutes < 60 * 24:
+        return f"{minutes // 60}h"
+    return f"{minutes // (60 * 24)}d"
+
+
+def gap_projection(
+    database: DatabaseConnection,
+    ticker: str,
+    *,
+    at: datetime | None = None,
+    max_points: int = 96,
+) -> dict[str, Any] | None:
+    """The dashed stretch the chart draws: anchor to now, honestly labelled.
+
+    Unlike a stored forecast this reaches all the way to the clock, so a weekend
+    gap is drawn as the long flat stretch it is. The band widens with the square
+    root of the gap, which is what makes a three-day projection look uncertain
+    rather than confident.
+    """
+
+    moment = _utc(at)
+    anchor = anchor_for(database, ticker)
+    if anchor is None:
+        return None
+    latency_seconds = (moment - anchor["time"]).total_seconds()
+    if latency_seconds < MIN_GAP_SECONDS:
+        return None
+    clock = market_clock(moment)
+    market_open = bool(clock.get("scanner_active"))
+    bars = recent_bars(database, ticker)
+    closes = [value for value in (_number(bar["close"]) for bar in bars) if value]
+    returns = [
+        math.log(later / earlier)
+        for earlier, later in zip(closes, closes[1:], strict=False)
+        if earlier and later and earlier > 0 and later > 0
+    ]
+    volatility = step_volatility(returns)
+    gap_minutes = max(1, math.ceil(latency_seconds / 60))
+    step = max(STEP_MINUTES, math.ceil(gap_minutes / max(2, max_points)))
+    steps = max(1, math.ceil(gap_minutes / step))
+    path: list[dict[str, Any]] = []
+    for index in range(1, steps + 1):
+        reach = math.exp(BAND_SIGMA * volatility * math.sqrt(index * step / STEP_MINUTES))
+        path.append(
+            {
+                "time": _iso(anchor["time"] + timedelta(minutes=index * step)),
+                "price": round(anchor["price"], 6),
+                "low": round(anchor["price"] / reach, 6),
+                "high": round(anchor["price"] * reach, 6),
+            }
+        )
+    band_pct = round((path[-1]["high"] / anchor["price"] - 1) * 100, 2)
+    state = gap_state(
+        latency_seconds,
+        session=str(clock.get("session")),
+        scanner_active=market_open,
+    )
+    if market_open:
+        label = (
+            f"No bars for {_duration(gap_minutes)} · "
+            f"dashed line is our projection (±{band_pct}%)"
+        )
+    else:
+        label = f"Market closed · dashed line is our flat projection (±{band_pct}%)"
+    return {
+        "ticker": ticker,
+        "model_version": MODEL_VERSION,
+        "anchor_time": _iso(anchor["time"]),
+        "anchor_kind": anchor["kind"],
+        "anchor_price": round(anchor["price"], 6),
+        "latency_seconds": int(latency_seconds),
+        "gap_minutes": gap_minutes,
+        "state": "stale" if not market_open else state,
+        "market_open": market_open,
+        "session": str(clock.get("session")),
+        "session_label": clock.get("label"),
+        "step_minutes": step,
+        "band_pct": band_pct,
+        "label": label,
+        "path": path,
     }
 
 
@@ -327,9 +416,9 @@ def record_forecasts(
             """
             INSERT INTO price_gap_forecasts(
                 ticker,model_version,anchor_time,anchor_kind,anchor_price,session,state,
-                latency_seconds,step_minutes,horizon_minutes,predicted_path_json,band_json,
-                features_json,created_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                market_open,latency_seconds,step_minutes,horizon_minutes,predicted_path_json,
+                band_json,features_json,created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(ticker,model_version,anchor_time) DO NOTHING
             """,
             (
@@ -340,6 +429,7 @@ def record_forecasts(
                 forecast["anchor_price"],
                 forecast["session"],
                 forecast["state"],
+                1 if forecast["market_open"] else 0,
                 forecast["latency_seconds"],
                 forecast["step_minutes"],
                 forecast["horizon_minutes"],
@@ -491,7 +581,6 @@ def refresh_price_gaps(
 
 def _refresh(database: DatabaseConnection, moment: datetime) -> dict[str, Any]:
     resolved = resolve_forecasts(database, at=moment)
-    recorded = 0
-    if market_clock(moment).get("scanner_active"):
-        recorded = record_forecasts(database, at=moment)
+    # Closed markets are recorded too: the weekend gap is a training example.
+    recorded = record_forecasts(database, at=moment)
     return {"recorded": recorded, "resolved": resolved, "summary": gap_summary(database)}

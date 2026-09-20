@@ -222,6 +222,7 @@ from runner_web.outcomes import (
     refresh_scan_outcomes,
 )
 from runner_web.performance import record_cache, record_route
+from runner_web.price_gap import gap_projection
 from runner_web.privacy import (
     _tables as privacy_tables,
 )
@@ -9549,10 +9550,23 @@ def _ticker_state_changes(ticker: str, *, days: int = 7) -> list[dict[str, Any]]
 def _ticker_chart_detail_payload_uncached(ticker: str) -> dict[str, Any]:
     frame, freshness = _stored_chart_frame(ticker)
     structure = analyze_market_structure(frame)
+    with connection() as db:
+        gap = gap_projection(db, ticker)
+    if freshness and gap:
+        # The chart is honest about how old its last point is instead of
+        # implying the last bar is the current price.
+        freshness = {
+            **freshness,
+            "latency_seconds": gap["latency_seconds"],
+            "state": gap["state"],
+            "market_open": gap["market_open"],
+            "stale": gap["state"] == "stale",
+        }
     return {
         "ticker": ticker,
         "points": _serialize_chart_frame(frame, max_points=360),
         "freshness": freshness,
+        "gap": gap,
         "annotations": _chart_annotations([ticker]).get(ticker, []),
         "states": _ticker_state_changes(ticker),
         "levels": list(structure.levels),
@@ -9712,6 +9726,7 @@ def screen_detail_state(
             ),
             "history": chart.get("points") or [],
             "states": chart.get("states") or [],
+            "gap": chart.get("gap"),
         }
         if user_id:
             active = active_call_for_user(
@@ -9780,6 +9795,7 @@ async def screen_stock_chart(ticker: str, request: Request) -> dict[str, Any]:
     return {
         "points": series(payload.get("points") or []),
         "states": payload.get("states") or [],
+        "gap": payload.get("gap"),
     }
 
 

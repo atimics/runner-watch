@@ -489,6 +489,8 @@ def detail(
             "start": result["series"][0]["time"] if result["series"] else None,
             "end": result["series"][-1]["time"] if result["series"] else None,
         }
+        # The honest dashed stretch from the last saved bar to the clock.
+        result["gap"] = data.get("gap")
         result["note"] = "Price history"
         if market == "stocks":
             result["chart_url"] = f"/api/screens/stocks/{identifier}/chart"

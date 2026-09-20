@@ -21,9 +21,33 @@ UTC_TUESDAY = datetime(2026, 9, 15, 15, 0, tzinfo=UTC)  # Tue 11:00 ET · regula
 @pytest.fixture
 def database(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "price-gap.db")
+    monkeypatch.setattr(db, "DATABASE_URL", "")
+    monkeypatch.setattr(db, "REQUIRE_DATABASE_URL", False)
     db.init_db()
     with db.connection() as connection:
         yield connection
+
+
+def test_chart_payload_carries_the_gap_and_honest_freshness(database):
+    """The chart says how old its last point is instead of implying it is now."""
+
+    from runner_web import main as web_main
+
+    anchor = datetime.now(UTC) - timedelta(days=1)
+    add_bars(
+        database,
+        "TEST",
+        [(anchor, 10.0, 100), (anchor + timedelta(minutes=5), 10.2, 120)],
+    )
+    payload = web_main._ticker_chart_detail_payload_uncached("TEST")
+    assert payload["freshness"]["stale"] is True
+    assert payload["freshness"]["as_of"] == (anchor + timedelta(minutes=5)).isoformat()
+    assert payload["freshness"]["latency_seconds"] > 300
+    gap = payload["gap"]
+    assert gap and gap["state"] == "stale"
+    assert gap["anchor_price"] == 10.2
+    assert gap["path"][-1]["time"] > gap["anchor_time"]
+    assert "projection" in gap["label"]
 
 
 def _iso(moment: datetime) -> str:
@@ -205,11 +229,63 @@ def test_forecasts_are_recorded_once_per_anchor(database):
     }
 
 
-def test_closed_market_records_nothing(database):
-    saturday = datetime(2026, 9, 19, 15, 0, tzinfo=UTC)  # weekend
-    add_bars(database, "TEST", [(saturday - timedelta(minutes=5), 10.0, 100)])
-    assert price_gap.record_forecasts(database, tickers=["TEST"], at=saturday) == 0
+def test_closed_market_records_the_weekend_gap(database):
+    """Bars stop on purpose at the weekend; those long flats are the examples
+    worth the most, so they are recorded and labelled as closed, not late."""
+
+    saturday = datetime(2026, 9, 19, 15, 0, tzinfo=UTC)
+    add_bars(database, "TEST", [(saturday - timedelta(days=1), 10.0, 100)])
+    assert price_gap.record_forecasts(database, tickers=["TEST"], at=saturday) == 1
+    with database as conn:
+        row = dict(
+            conn.execute(
+                "SELECT state,market_open,latency_seconds FROM price_gap_forecasts "
+                "WHERE ticker='TEST'"
+            ).fetchone()
+        )
+    assert row == {"state": "stale", "market_open": 0, "latency_seconds": 86_400}
     assert price_gap.refresh_price_gaps(database, at=saturday)["recorded"] == 0
+
+
+def test_gap_projection_is_silent_while_the_bars_are_current(database):
+    add_bars(database, "TEST", [(UTC_TUESDAY, 10.0, 100)])
+    assert price_gap.gap_projection(database, "TEST", at=UTC_TUESDAY + timedelta(seconds=5)) is None
+
+
+def test_gap_projection_reaches_the_clock_with_a_widening_band(database):
+    add_bars(
+        database,
+        "TEST",
+        [
+            (UTC_TUESDAY + timedelta(minutes=5 * index), 10.0 + index * 0.05, 100)
+            for index in range(6)
+        ],
+    )
+    at = UTC_TUESDAY + timedelta(minutes=45)
+    projection = price_gap.gap_projection(database, "TEST", at=at)
+    assert projection["anchor_time"] == (UTC_TUESDAY + timedelta(minutes=25)).isoformat()
+    assert projection["market_open"] is True
+    assert projection["path"][-1]["time"] == at.isoformat()
+    assert all(point["price"] == projection["anchor_price"] for point in projection["path"])
+    assert projection["path"][-1]["high"] > projection["path"][0]["high"]
+    assert projection["path"][-1]["low"] < projection["path"][0]["low"]
+    assert "projection" in projection["label"]
+    # Deterministic, so every instance and repeat draws the same dashed line.
+    assert projection == price_gap.gap_projection(database, "TEST", at=at)
+
+
+def test_gap_projection_says_so_when_the_market_is_closed(database):
+    friday_close = datetime(2026, 9, 19, 1, 0, tzinfo=UTC)  # Fri 21:00 ET
+    add_bars(database, "TEST", [(friday_close, 10.0, 100)])
+    projection = price_gap.gap_projection(
+        database, "TEST", at=friday_close + timedelta(days=2)
+    )
+    assert projection["market_open"] is False
+    assert projection["state"] == "stale"
+    assert projection["gap_minutes"] == 2_880
+    assert projection["label"].startswith("Market closed")
+    assert projection["band_pct"] > 0
+    assert len(projection["path"]) <= 96
 
 
 def test_resolution_scores_the_projection_against_the_bars_that_arrived(database):

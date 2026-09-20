@@ -136,7 +136,7 @@
       button.addEventListener('click', () => {
         toneFilter = toneFilter === tone ? null : tone;
         [...legend.querySelectorAll('button')].forEach(control => control.setAttribute('aria-pressed', String(control === button && toneFilter === tone)));
-        draw(screen?.series || []);
+        draw(screen?.series || [], screen?.gap);
       });
       legend.append(button);
     });
@@ -174,12 +174,45 @@
     });
     flush();
   }
-  function draw(points) {
+  /* The dashed stretch between the last saved bar and the clock. It is drawn
+     flat with a widening band and never pretends to be a candle: the label says
+     what it is, including when the market is closed. */
+  function drawGap(gap, projector) {
+    chart.querySelectorAll('.chart-gap').forEach(node => node.remove());
+    document.querySelector('.chart-gap-note')?.remove();
+    const tail = (gap?.path || [])
+      .map(point => ({...point, t: Date.parse(point.time)}))
+      .filter(point => Number.isFinite(point.t));
+    if (!gap || tail.length < 1) return;
+    const points = [{t: Date.parse(gap.anchor_time), price: gap.anchor_price, low: gap.anchor_price, high: gap.anchor_price}, ...tail]
+      .filter(point => Number.isFinite(point.t));
+    if (points.length < 2) return;
+    const ns = 'http://www.w3.org/2000/svg';
+    const [x, y] = projector;
+    const upper = points.map(point => `${x(point.t).toFixed(2)},${y(point.high).toFixed(2)}`);
+    const lower = [...points].reverse().map(point => `${x(point.t).toFixed(2)},${y(point.low).toFixed(2)}`);
+    const band = document.createElementNS(ns, 'path');
+    band.setAttribute('class', 'chart-gap chart-gap-band');
+    band.setAttribute('d', `M${upper.join('L')}L${lower.join('L')}Z`);
+    const line = document.createElementNS(ns, 'path');
+    line.setAttribute('class', 'chart-gap chart-gap-line');
+    line.setAttribute('d', points.map((point, index) => `${index ? 'L' : 'M'}${x(point.t).toFixed(2)},${y(point.price).toFixed(2)}`).join(''));
+    const base = chart.querySelector('.chart-line');
+    if (base) { base.before(band); base.after(line); } else { chart.append(band, line); }
+    const note = document.createElement('p');
+    note.className = 'chart-gap-note';
+    note.textContent = gap.label || 'Dashed line is our projection over the price gap.';
+    const filingNote = document.querySelector('.chart-filing-note');
+    (filingNote || chart).after(note);
+  }
+  function draw(points, gap) {
     if (!chart) return;
     const ordered = new Map();
     (points || []).forEach(p => { const t = Date.parse(p.time); if (Number.isFinite(t) && Number.isFinite(p.value) && p.value > 0) ordered.set(t,p.value); });
     const data = [...ordered].sort((a,b)=>a[0]-b[0]);
-    chartBounds = data.length ? [data[0][0],data[data.length-1][0]] : null;
+    const gapPoints = (gap?.path || []).map(point => ({...point, t: Date.parse(point.time)})).filter(point => Number.isFinite(point.t));
+    const gapEnd = gapPoints.length ? gapPoints[gapPoints.length - 1].t : null;
+    chartBounds = data.length ? [data[0][0], Math.max(data[data.length-1][0], gapEnd || 0)] : null;
     markFiling();
     const money = value => '$' + value.toLocaleString('en-US', value < 1 ? {maximumSignificantDigits: 6} : {minimumFractionDigits: 2, maximumFractionDigits: 6});
     const label = t => new Date(t).toLocaleString('en-US', {year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'UTC'}) + ' UTC';
@@ -191,23 +224,29 @@
       if (legend) legend.hidden = true;
       return;
     }
-    const low = Math.min(...data.map(p=>p[1])), high = Math.max(...data.map(p=>p[1]));
-    const start = data[0][0], end = data[data.length-1][0];
+    const lows = data.map(p=>p[1]), highs = data.map(p=>p[1]);
+    gapPoints.forEach(point => { lows.push(point.low); highs.push(point.high); });
+    const low = Math.min(...lows), high = Math.max(...highs);
+    const start = data[0][0], end = Math.max(data[data.length-1][0], gapEnd || 0);
     const first = data[0][1], last = data[data.length-1][1];
+    const projectX = value => end === start ? 400 : 8 + (value - start)/(end - start)*784;
+    const projectY = value => high === low ? 140 : 260 - (value - low)/(high - low)*240;
     const move = ((last / first - 1) * 100).toLocaleString('en-US', {signDisplay:'always', maximumFractionDigits:6});
     const summary = data.length === 1 ? `One saved price: ${money(first)}` : `${money(first)} → ${money(last)} · ${move}%`;
-    chart.setAttribute('aria-label', `Price history: ${summary}. ${label(start)}${data.length > 1 ? ' to ' + label(end) : ''}.`);
-    const coords = data.map(p=>[end===start ? 400 : 8 + (p[0]-start)/(end-start)*784, high===low ? 140 : 260-(p[1]-low)/(high-low)*240]);
+    const liveNote = data.length ? `${label(start)}${data.length > 1 ? ' to ' + label(data[data.length-1][0]) : ''}.` : '';
+    chart.setAttribute('aria-label', `Price history: ${summary}. ${liveNote}${gapPoints.length ? ' ' + (gap.label || 'Dashed line is our projection over the price gap.') : ''}`);
+    const coords = data.map(p=>[projectX(p[0]), projectY(p[1])]);
     const line = coords.map((p,i)=>`${i?'L':'M'}${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ');
     chart.querySelector('.chart-line').setAttribute('d',line);
     chart.querySelector('.chart-area').setAttribute('d',data.length === 1 ? '' : `${line} L792,280 L8,280 Z`);
     paintStates(data, coords);
     dot.toggleAttribute('hidden', data.length !== 1); dot.setAttribute('cx', '400'); dot.setAttribute('cy', '140');
+    drawGap(gap, [projectX, projectY]);
     chart.removeAttribute('hidden'); status.hidden = true;
     renderStateLegend();
   }
   chartStates = screen?.states || [];
-  draw(screen?.series);
+  draw(screen?.series, screen?.gap);
   const pageKey = () => location.pathname + location.search;
   let requestNumber = 0;
   let action = null;
@@ -262,7 +301,7 @@
     screen = next;
     if (node) node.ratiScreenDetail = next;
     if (next.states) chartStates = next.states;
-    draw(next.series);
+    draw(next.series, next.gap);
     node?.dispatchEvent(new CustomEvent('rati:screen-detail', {detail:next}));
   }
   async function refreshDetail() {
@@ -303,7 +342,7 @@
     } catch (_) { /* Keep the saved view during connection recovery. */ }
   }
   if (screen?.refresh_url) refreshDetail();
-  else if (screen?.chart_url) fetch(screen.chart_url).then(r=>r.json()).then(p=>{if(p.states)chartStates=p.states;draw(p.points);}).catch(()=>draw(screen.series));
+  else if (screen?.chart_url) fetch(screen.chart_url).then(r=>r.json()).then(p=>{if(p.states)chartStates=p.states;draw(p.points, p.gap);}).catch(()=>draw(screen.series, screen.gap));
   setInterval(refreshSurface, 60000);
   function showTerms(selected) {
     put('[data-confirm-title]', selected.label);
