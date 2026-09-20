@@ -7486,6 +7486,7 @@ def stock_wallet_page(
     cursor: str | None = Query(default=None, max_length=1024),
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
+    from runner_web.entity_view import entity_view
     from runner_web.market_screens import listing
     from runner_web.stock_map import person_connections
 
@@ -7512,6 +7513,7 @@ def stock_wallet_page(
         page_context(
             request, runner_session, nav_product="runners", screen=screen,
             wallet=wallet, wallet_events=events, wallet_next=next_url, wallet_ticker=ticker,
+            entity=entity_view(events, items, person_id),
         ),
     )
 

@@ -204,6 +204,12 @@
       const action = small.matches ? ({'Exercise or conversion':'Exercise / conversion','Tax or exercise payment':'Tax / exercise payment'}[node.first.action] || node.first.action) : `${node.first.action} · ${amount(node.first)}`;
       g.append(svg('text', {x:node.x, y:node.y+59, 'text-anchor':'middle', class:'map-node-action'}, action));
       g.append(svg('title', {}, node.name));
+      const transition = () => {
+        graph.querySelectorAll('[data-person]').forEach(node => node.style.viewTransitionName = 'none');
+        g.style.viewTransitionName = 'entity-focus';
+      };
+      g.addEventListener('pointerdown', transition);
+      g.addEventListener('keydown', event => {if (event.key === 'Enter') transition();});
       peopleLayer.append(g);
     });
     scene = nodes;

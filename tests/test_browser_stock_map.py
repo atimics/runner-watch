@@ -923,22 +923,37 @@ def test_wallet_opens_portfolio_and_repeated_events_share_one_bubble(page):
 
 
 @pytest.mark.parametrize("width", [390, 1280])
-def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(page, width, tmp_path):
+@pytest.mark.parametrize("has_holdings", [True, False])
+def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
+    page, width, tmp_path, has_holdings
+):
+    from runner_web.entity_view import entity_view
     from runner_web.market_screens import listing
 
     request = _request()
     rows = [{**score_current(), "ticker": ticker} for ticker in ["USO", "CDTG"]]
-    events = map_payload()["events"][:3]
+    events = [
+        {**row, "ticker": "USO" if i < 2 else "CDTG",
+         "post_shares": 100-i*10 if has_holdings else None,
+         "people": [{"id": "sec:101", "name": "HRT FINANCIAL LP", "role": "Investor"}]}
+        for i, row in enumerate(map_payload()["events"][:3])
+    ]
     html = main.templates.TemplateResponse(
         request, "stock_wallet.html", main.page_context(
             request, None, resolved_user=None, screen=listing("stocks", rows),
             wallet={"name": "HRT FINANCIAL LP", "id": "sec:101"}, wallet_events=events,
             wallet_next=None, wallet_ticker="USO",
+            entity=entity_view(events, rows, "sec:101"),
         ),
     ).body.decode()
     html = re.sub(
         r'<link rel="stylesheet" href="/static/([^"?]+)[^"]*">',
         lambda match: "<style>" + (ROOT / "web/static" / match[1]).read_text() + "</style>",
+        html,
+    )
+    html = re.sub(
+        r'<script src="/static/entity-map.js[^\"]*"[^>]*></script>',
+        lambda _: "<script>" + (ROOT / "web/static/entity-map.js").read_text() + "</script>",
         html,
     )
     page.route("http://app.test/**", lambda route: route.fulfill(
@@ -953,5 +968,16 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(page, width
     expect(page.locator(".wallet-filing").first).to_have_attribute(
         "href", re.compile(r"^https://www\.sec\.gov/")
     )
+    expect(page.locator(".entity-center")).to_have_attribute("aria-label", "HRT FINANCIAL LP")
+    expect(page.locator("[data-entity-stock]")).to_have_count(2)
+    expect(page.locator(".entity-edge")).to_have_count(3)
+    if has_holdings:
+        expect(page.locator(".entity-worth-chart")).to_be_visible()
+        expect(page.locator(".entity-worth-point")).to_have_count(3)
+    else:
+        expect(page.locator(".entity-worth-chart")).to_be_hidden()
+        expect(page.locator("[data-worth-pending]")).to_be_visible()
+        expect(page.locator(".entity-worth-value")).to_have_text("—")
+    expect(page.locator('[data-entity-stock="USO"]')).to_have_attribute("href", "/t/USO")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.screenshot(path=str(tmp_path / f"wallet-{width}.png"), full_page=True)
