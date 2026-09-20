@@ -538,6 +538,7 @@ OUTCOME_ERROR_RECORD_TIMEOUT_SECONDS = max(
 WORKER_PROGRESS_KEYS = {
     "outcomes": "outcomes_last_refresh",
     "scan-collection": "background_scan_last_run",
+    "price-gaps": "price_gap_last_refresh",
 }
 WORKER_PROGRESS_MAX_AGE_SECONDS = max(
     600, int(os.getenv("WORKER_PROGRESS_MAX_AGE_SECONDS", "7200"))
@@ -890,6 +891,7 @@ def _start_worker_tasks(
         asyncio.create_task(scan_collection_worker(), name="scan-collection"),
         asyncio.create_task(market_report_worker(), name="market-reports"),
         asyncio.create_task(hot_quote_worker(), name="hot-quotes"),
+        asyncio.create_task(price_gap_worker(), name="price-gaps"),
         asyncio.create_task(telegram_chat_worker(), name="telegram-chat"),
         asyncio.create_task(dash_desk_note_worker(), name="dash-desk-notes"),
         asyncio.create_task(telegram_alert_sweep_worker(), name="telegram-alert-sweep"),
@@ -1806,6 +1808,34 @@ def _hot_set() -> list[str]:
             (run["id"], HOT_QUOTE_LIMIT),
         ).fetchall()
     return [str(row["ticker"]) for row in rows]
+
+
+PRICE_GAP_INTERVAL_SECONDS = max(20, int(os.getenv("PRICE_GAP_INTERVAL_SECONDS", "60")))
+
+
+async def price_gap_worker() -> None:
+    """Record the honest projection between bars, then score the ones that landed.
+
+    The chart shows saved bars; this captures what price was likely doing during
+    the minutes they were missing, and once the bars arrive it stores the error.
+    Those pairs are the training signal for a real gap model.
+    """
+
+    from runner_web.price_gap import refresh_price_gaps
+
+    await asyncio.sleep(30)
+    while True:
+        delay = PRICE_GAP_INTERVAL_SECONDS
+        try:
+            result = await run_in_threadpool(refresh_price_gaps)
+            worker_state("price_gap_last_refresh", json.dumps(result, separators=(",", ":")))
+            worker_state("price_gap_last_error", "")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            worker_state("price_gap_last_error", str(exc)[:500])
+            delay = max(delay, 300)
+        await asyncio.sleep(delay)
 
 
 async def hot_quote_worker() -> None:

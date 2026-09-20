@@ -3463,6 +3463,47 @@ def _migration_073_market_event_time_index(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_075_price_gap_forecasts(db: DatabaseConnection) -> None:
+    """The \"fill in this gap\" dataset: projected price between bars, then scored.
+
+    One row per (ticker, model, anchor). The prediction is written once and never
+    rewritten; when the missing bars arrive the row is resolved with the actual
+    path and its error, so the pair can train the gap model later.
+    """
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS price_gap_forecasts (
+            ticker TEXT NOT NULL,
+            model_version TEXT NOT NULL,
+            anchor_time TEXT NOT NULL,
+            anchor_kind TEXT NOT NULL CHECK(anchor_kind IN ('bar','quote')),
+            anchor_price REAL NOT NULL,
+            session TEXT NOT NULL,
+            state TEXT NOT NULL CHECK(state IN ('live','lagging','stale')),
+            latency_seconds INTEGER NOT NULL,
+            step_minutes INTEGER NOT NULL,
+            horizon_minutes INTEGER NOT NULL,
+            predicted_path_json TEXT NOT NULL,
+            band_json TEXT NOT NULL,
+            features_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            resolved_at TEXT,
+            actual_path_json TEXT,
+            abs_error REAL,
+            pct_error REAL,
+            max_pct_error REAL,
+            covered INTEGER,
+            PRIMARY KEY(ticker,model_version,anchor_time)
+        );
+        CREATE INDEX IF NOT EXISTS price_gap_forecasts_open
+            ON price_gap_forecasts(resolved_at,anchor_time);
+        CREATE INDEX IF NOT EXISTS price_gap_forecasts_ticker
+            ON price_gap_forecasts(ticker,anchor_time DESC);
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3542,6 +3583,7 @@ MIGRATIONS = (
     Migration(72, "client_errors", _migration_072_client_errors),
     Migration(73, "market_event_time_index", _migration_073_market_event_time_index),
     Migration(74, "telegram_outbox", _migration_074_telegram_outbox),
+    Migration(75, "price_gap_forecasts", _migration_075_price_gap_forecasts),
 )
 
 
