@@ -45,7 +45,7 @@ def test_version_endpoint_identifies_code_and_assets() -> None:
     dockerfile = (Path(__file__).parents[1] / "Dockerfile").read_text()
     workflow = (Path(__file__).parents[1] / ".github/workflows/fly.yml").read_text()
     assert "ARG APP_BUILD_SHA=dev" in dockerfile
-    assert '--build-arg APP_BUILD_SHA="${{ github.sha }}"' in workflow
+    assert "APP_BUILD_SHA=${{ github.sha }}" in workflow
 
 
 def test_every_response_identifies_its_build() -> None:

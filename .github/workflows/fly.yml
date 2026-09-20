@@ -28,6 +28,10 @@ jobs:
           python-version: "3.13"
           enable-cache: true
       - run: uv sync --locked --extra dev
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('uv.lock') }}
       - run: uv run playwright install --with-deps chromium
       - run: cargo test --locked --manifest-path rust/stonks-ranker/Cargo.toml
       - run: cargo build --locked --manifest-path rust/stonks-ranker/Cargo.toml
@@ -37,7 +41,7 @@ jobs:
             node --check "$script"
           done
       - run: uv run pip-audit --local --skip-editable --progress-spinner off --timeout 10 --vulnerability-service osv
-      - run: uv run pytest -q --cov-fail-under=68 --junitxml=replay-unit-results.xml
+      - run: uv run pytest -q -n auto --cov-fail-under=68 --junitxml=replay-unit-results.xml
       - run: uv run pytest -q -m browser -o addopts= --junitxml=replay-browser-results.xml
       - name: Record replay quality evidence
         if: always()
@@ -67,7 +71,32 @@ jobs:
         with:
           context: .
           target: test
+          platforms: linux/amd64
           push: false
+          cache-from: type=gha,scope=runner-watch-test
+          # Pull-request runs read the warm cache that main exports, but stop
+          # exporting per-PR layer caches so the shared 10 GB budget is not
+          # exhausted and main's cache stays reusable.
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,scope=runner-watch-test,mode=max' || '' }}
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Authenticate to the Fly registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: flyctl auth docker
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      - name: Build and publish the runtime image
+        # Build once here with the warm GitHub cache, then deploy the artifact
+        # instead of rebuilding everything on Fly's remote builder.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          target: runtime
+          platforms: linux/amd64
+          push: true
+          build-args: APP_BUILD_SHA=${{ github.sha }}
+          tags: registry.fly.io/runner-watch-ratimics:build-${{ github.sha }}
           cache-from: type=gha,scope=runner-watch-test
           cache-to: type=gha,scope=runner-watch-test,mode=max
 
@@ -113,8 +142,8 @@ jobs:
       - id: deploy
         continue-on-error: true
         run: >-
-          flyctl deploy --remote-only
-          --build-arg APP_BUILD_SHA="${{ github.sha }}"
+          flyctl deploy
+          --image registry.fly.io/runner-watch-ratimics:build-${{ github.sha }}
           --image-label "${{ github.sha }}"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
