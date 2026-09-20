@@ -8006,17 +8006,48 @@ def stock_wallet_page(
     stocks = sorted({event["ticker"] for event in events})
     items = [_direct_ticker_item(symbol, []) or {"ticker": symbol} for symbol in stocks]
     screen = listing("stocks", items)
-    next_url = None
-    if connections["next_cursor"]:
-        next_url = str(request.url.replace_query_params(cursor=connections["next_cursor"]))
     return templates.TemplateResponse(
         request,
         "stock_wallet.html",
         page_context(
             request, runner_session, nav_product="runners", screen=screen,
-            wallet=wallet, wallet_events=events, wallet_next=next_url, wallet_ticker=ticker,
-            entity=entity_view(events, items, person_id),
+            wallet=wallet, wallet_events=events, wallet_cursor=connections["next_cursor"],
+            wallet_ticker=ticker, entity=entity_view(events, items, person_id),
         ),
+    )
+
+
+@app.get("/api/wallets/stocks/{ticker}/{person_id}/events")
+def wallet_events_api(
+    ticker: str,
+    person_id: str,
+    request: Request,
+    cursor: str | None = Query(default=None, max_length=1024),
+) -> Response:
+    """The next page of a wallet's filings, rendered by the same partial the page
+    uses so the appended rows are identical."""
+
+    from runner_web.stock_map import person_connections
+
+    enforce_rate(request, "stock-wallet-events", limit=120, seconds=60)
+    normalized = _clean_ticker(ticker)
+    try:
+        connections = person_connections(normalized, person_id, cursor)
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid wallet request") from exc
+    events = connections["events"]
+    wallet = next(
+        (person for event in events for person in event["people"] if person["id"] == person_id),
+        {"name": "Wallet", "id": person_id},
+    )
+    partial = templates.get_template("_wallet_event.html")
+    return _conditional_json_response(
+        request,
+        {
+            "html": "".join(partial.render(event=event, wallet=wallet) for event in events),
+            "next_cursor": connections["next_cursor"],
+            "count": len(events),
+        },
     )
 
 

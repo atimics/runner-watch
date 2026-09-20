@@ -1077,7 +1077,7 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
         request, "stock_wallet.html", main.page_context(
             request, None, resolved_user=None, screen=listing("stocks", rows),
             wallet={"name": "HRT FINANCIAL LP", "id": "sec:101"}, wallet_events=events,
-            wallet_next=None, wallet_ticker="USO",
+            wallet_cursor=None, wallet_ticker="USO",
             entity=entity_view(events, rows, "sec:101"),
         ),
     ).body.decode()
@@ -1185,3 +1185,59 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.screenshot(path=str(tmp_path / f"wallet-{width}.png"), full_page=True)
     page.locator(".wallet-events").screenshot(path=str(tmp_path / f"events-{width}.png"))
+
+
+def test_wallet_events_load_more_as_the_tail_comes_into_view(page):
+    """Filings arrive by scrolling, not by hunting for a next page."""
+    from runner_web.entity_view import entity_view
+    from runner_web.market_screens import listing
+
+    request = _request()
+    rows = [{**score_current(score=45), "ticker": "USO"}]
+    holder = [{"id": "sec:101", "name": "HRT FINANCIAL LP", "role": "Investor"}]
+    first = [{**map_payload()["events"][0], "ticker": "USO", "post_shares": 10, "people": holder}]
+    later = [{**map_payload()["events"][1], "ticker": "USO", "post_shares": 5, "people": holder}]
+    html = main.templates.TemplateResponse(
+        request,
+        "stock_wallet.html",
+        main.page_context(
+            request,
+            None,
+            resolved_user=None,
+            screen=listing("stocks", rows),
+            wallet={"name": "HRT FINANCIAL LP", "id": "sec:101"},
+            wallet_events=first,
+            wallet_cursor="page-2",
+            wallet_ticker="USO",
+            entity=entity_view(first, rows, "sec:101"),
+        ),
+    ).body.decode()
+    html = re.sub(
+        r'<link rel="stylesheet" href="/static/([^"?]+)[^"]*">',
+        lambda match: "<style>" + (ROOT / "web/static" / match[1]).read_text() + "</style>",
+        html,
+    )
+    html = re.sub(
+        r'<script src="/static/(map-orbit|entity-map|wallet-events)\.js[^\"]*"[^>]*></script>',
+        lambda match: (
+            "<script>" + (ROOT / "web/static" / f"{match.group(1)}.js").read_text() + "</script>"
+        ),
+        html,
+    )
+    page.route(
+        "http://app.test/**", lambda route: route.fulfill(content_type="text/html", body=html)
+    )
+    partial = main.templates.get_template("_wallet_event.html")
+    rendered = "".join(partial.render(event=event, wallet={"id": "sec:101"}) for event in later)
+    page.route(
+        re.compile(r"/api/wallets/stocks/.*/events"),
+        lambda route: route.fulfill(json={"html": rendered, "next_cursor": None, "count": 1}),
+    )
+    page.set_viewport_size({"width": 1280, "height": 700})
+    page.goto("http://app.test/wallets/stocks/USO/sec:101")
+
+    expect(page.locator(".wallet-event")).to_have_count(1)
+    # Scrolling the tail into view is what loads the next page.
+    page.locator("[data-wallet-more]").scroll_into_view_if_needed()
+    expect(page.locator(".wallet-event")).to_have_count(2)
+    expect(page.locator("[data-wallet-more]")).to_have_count(0)

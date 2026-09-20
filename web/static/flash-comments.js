@@ -165,6 +165,7 @@
         if (!shown) list.prepend(renderComment(result.comment));
         status.textContent = 'Reaction added';
         count.textContent = result.count;
+        count.hidden = Number(result.count) === 0;
         empty.hidden = true;
         window.RatiFlash?.updateBalance?.(result.balance);
         remember(null);
@@ -188,6 +189,7 @@
         if (!response.ok) throw new Error(result.detail || 'Could not delete.');
         button.closest('li')?.remove();
         count.textContent = Math.max(0, Number(count.textContent || 0) - 1);
+        count.hidden = Number(count.textContent) === 0;
         empty.hidden = Boolean(list.children.length);
       } catch (error) {
         status.textContent = error.message || 'Could not delete.';
