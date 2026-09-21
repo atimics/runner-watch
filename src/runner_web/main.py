@@ -4918,18 +4918,42 @@ def _apply_market_marks(rows: list[dict[str, Any]]) -> int:
     return upgraded
 
 
+def _latest_quote_time(market_rows: list[Any]) -> datetime:
+    """The newest quote time among the rows being scored, for the record."""
+
+    newest: datetime | None = None
+    for row in market_rows:
+        moment = _timestamp(_row_field(row, "quote_time") or _row_field(row, "captured_at"))
+        if moment is not None and (newest is None or moment > newest):
+            newest = moment
+    return newest or now()
+
+
+def _row_field(row: Any, key: str) -> Any:
+    """Read a column from a dict or a database row."""
+
+    if hasattr(row, "get"):
+        return row.get(key)
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
 def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[str, Any]:
     event_cutoff = iso(at - timedelta(days=3))
     scan_cutoff = iso(at - timedelta(days=7))
+    known_at = iso(at)
     ticker_params = (ticker,) if ticker is not None else ()
     with connection() as db:
+        # Point in time: nothing observed after `at` may influence the score.
         latest_run = db.execute(
             """
             SELECT id,captured_at FROM scan_runs
-            WHERE captured_at>? AND candidate_rows>0
+            WHERE captured_at>? AND captured_at<=? AND candidate_rows>0
             ORDER BY captured_at DESC LIMIT 1
             """,
-            (scan_cutoff,),
+            (scan_cutoff, known_at),
         ).fetchone()
         market_rows = (
             db.execute(
@@ -4952,11 +4976,11 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
                 SELECT p.*,m.status AS model_status FROM ranker_predictions p
                 JOIN scan_snapshots s ON s.id=p.snapshot_id
                 JOIN ranker_models m ON m.id=p.model_id
-                WHERE s.scan_run_id=? AND m.status='active'
+                WHERE s.scan_run_id=? AND m.status='active' AND m.created_at<=?
                 {"AND s.ticker=?" if ticker is not None else ""}
                 ORDER BY p.created_at DESC
                 """,
-                (latest_run["id"], *ticker_params),
+                (latest_run["id"], known_at, *ticker_params),
             ).fetchall()
             if latest_run
             else []
@@ -4964,28 +4988,28 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
         call_rows = db.execute(
             f"""
             SELECT ticker,COUNT(DISTINCT user_id) AS call_count
-            FROM community_calls WHERE status='active'
+            FROM community_calls WHERE status='active' AND created_at<=?
             {"AND ticker=?" if ticker is not None else ""} GROUP BY ticker
             """,
-            ticker_params,
+            (known_at, *ticker_params),
         ).fetchall()
         comment_rows = db.execute(
             f"""
             SELECT ticker,COUNT(*) AS comment_count
             FROM ticker_comments
-            WHERE subject_kind='stock' AND status='public'
+            WHERE subject_kind='stock' AND status='public' AND created_at<=?
             {"AND ticker=?" if ticker is not None else ""} GROUP BY ticker
             """,
-            ticker_params,
+            (known_at, *ticker_params),
         ).fetchall()
         market_event_rows = db.execute(
             f"""
             SELECT source,ticker,event_type,status,event_at,source_url,payload_json
             FROM public_market_events
-            WHERE event_at>? {"AND ticker=?" if ticker is not None else ""}
+            WHERE event_at>? AND event_at<=? {"AND ticker=?" if ticker is not None else ""}
             ORDER BY event_at DESC,last_collected_at DESC
             """,
-            (event_cutoff, *ticker_params),
+            (event_cutoff, known_at, *ticker_params),
         ).fetchall()
         filing_rows = db.execute(
             f"""
@@ -4996,18 +5020,20 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
                        ) AS ticker_row
                 FROM sec_filings f
                 LEFT JOIN sec_outcomes o ON o.accession=f.accession
-                WHERE f.created_at>? {"AND f.ticker=?" if ticker is not None else ""}
+                WHERE f.created_at>? AND f.filed_at<=?
+                {"AND f.ticker=?" if ticker is not None else ""}
             ) ranked WHERE ticker_row=1
             """,
-            (event_cutoff, *ticker_params),
+            (event_cutoff, known_at, *ticker_params),
         ).fetchall()
         filing_count_rows = db.execute(
             f"""
             SELECT ticker,COUNT(*) AS filing_count FROM sec_filings
-            WHERE created_at>? {"AND ticker=?" if ticker is not None else ""}
+            WHERE created_at>? AND filed_at<=?
+            {"AND ticker=?" if ticker is not None else ""}
             GROUP BY ticker
             """,
-            (event_cutoff, *ticker_params),
+            (event_cutoff, known_at, *ticker_params),
         ).fetchall()
 
     filings_by_ticker: dict[str, dict[str, Any]] = {}
@@ -5044,7 +5070,12 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
         "market_events_by_ticker": market_events_by_ticker,
         "filings_by_ticker": filings_by_ticker,
         "filing_counts": filing_counts,
-        "score_as_of": iso(at),
+        # Three different clocks: when the evidence was true, when the price it
+        # used was observed, and when this was computed.
+        "feature_as_of": known_at,
+        "quote_as_of": iso(_latest_quote_time(market_rows)),
+        "computed_at": known_at,
+        "score_as_of": known_at,
     }
 
 

@@ -537,6 +537,22 @@ def train_shadow_ranker(
             "minimum_per_outcome": minimum_per_class,
         }
 
+    # Purge groups whose outcome window is still open at the split, so training
+    # cannot learn from a label that had not finished when the next group began.
+    from runner_web.replay import purge_boundary_groups
+
+    purged = purge_boundary_groups(groups)
+    groups = purged["groups"]
+    purged_groups = int(purged.get("purged") or 0)
+    if len(groups) < min_groups:
+        return {
+            "trained": False,
+            "reason": "not_enough_groups_after_purge",
+            "groups": len(groups),
+            "purged_groups": purged_groups,
+            "purged_runs": purged.get("purged_runs") or [],
+        }
+
     response = _run_rust(
         {
             "command": "train",
@@ -608,6 +624,9 @@ def train_shadow_ranker(
         "groups": len(groups),
         "rows": row_count,
         "maximum_groups": maximum_groups,
+        # Groups dropped because their outcome window reached into the held-out
+        # part; reported so a smaller training set is explained, not mysterious.
+        "purged_groups": purged_groups,
         "metrics": metrics,
     }
 
