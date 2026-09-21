@@ -1,0 +1,66 @@
+name: Scoring refactor build
+on:
+  push:
+    branches: [codex/runner-watch-scoring-v2-build]
+    paths:
+      - .github/workflows/scoring-refactor-build.yml
+      - .scoring-refactor.patch
+permissions:
+  contents: write
+jobs:
+  build:
+    if: github.ref == 'refs/heads/codex/runner-watch-scoring-v2-build'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/runner-watch-scoring-v2-build
+          fetch-depth: 2
+      - name: Export source for local verification
+        run: git archive --format=tar HEAD | gzip > /tmp/runner-watch-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scoring-source
+          path: /tmp/runner-watch-source.tar.gz
+          retention-days: 1
+      - name: Apply reviewed patch
+        id: patch
+        shell: bash
+        run: |
+          if test -f .scoring-refactor.patch; then
+            git apply --check .scoring-refactor.patch
+            git apply .scoring-refactor.patch
+            git rm .scoring-refactor.patch .github/workflows/scoring-refactor-build.yml
+            echo 'applied=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: astral-sh/setup-uv@v6
+        if: steps.patch.outputs.applied == 'true'
+        with:
+          python-version: '3.12'
+      - name: Install locked development dependencies
+        if: steps.patch.outputs.applied == 'true'
+        run: uv sync --frozen --extra dev
+      - name: Lint scoring refactor
+        if: steps.patch.outputs.applied == 'true'
+        run: uv run ruff check src tests
+      - name: Run regression suite
+        if: steps.patch.outputs.applied == 'true'
+        run: uv run pytest -m 'not browser' --junitxml=/tmp/scoring-tests.xml
+      - name: Commit verified changes to isolated branch only
+        if: steps.patch.outputs.applied == 'true'
+        run: |
+          test "$GITHUB_REF" = refs/heads/codex/runner-watch-scoring-v2-build
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src tests docs rust web
+          git commit -m 'Separate scoring contracts and repair outcome data integrity'
+          git push origin HEAD:refs/heads/codex/runner-watch-scoring-v2-build
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.patch.outputs.applied == 'true'
+        with:
+          name: scoring-test-results
+          path: /tmp/scoring-tests.xml
+          if-no-files-found: ignore
+          retention-days: 3
