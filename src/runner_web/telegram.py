@@ -660,13 +660,13 @@ def format_public_report_post_md(report, *, origin):
     if headline:
         blocks.append(headline)
     # One URL per message, and the report page is the one that carries a card.
-    # The ticker is already named in the header, so a second link to /t/ only
+    # The ticker is already named in the header, so a second link to /stock/ only
     # spent a line the reader could not preview.
     public_id = str(report.get("public_id") or "").strip()
     if public_id:
         blocks.append(markdown_link("Read report", f"{base}/research/{public_id}"))
     elif not sports and token:
-        blocks.append(markdown_link(f"${token}", f"{base}/t/{token}"))
+        blocks.append(markdown_link(f"${token}", f"{base}/stock/{token}"))
     return _join_blocks(blocks)
 
 
@@ -688,7 +688,7 @@ def format_event_post_md(event, *, origin):
         sec_path = " \u00b7 filed via SEC" if is_sec else ""
         blocks.append(f"\u00b7 {age} ago{sec_path}")
     if ticker:
-        blocks.append(markdown_link(f"${ticker_raw}", f"{base}/t/{ticker_raw}"))
+        blocks.append(markdown_link(f"${ticker_raw}", f"{base}/stock/{ticker_raw}"))
     return _join_blocks(blocks)
 
 
@@ -730,7 +730,7 @@ def format_runner_story_md(entry, *, origin):
     metrics = _format_metrics_line(entry)
     if metrics:
         blocks.append(metrics)
-    blocks.append(markdown_link(f"${ticker_raw}", f"{origin.rstrip('/')}/t/{ticker_raw}"))
+    blocks.append(markdown_link(f"${ticker_raw}", f"{origin.rstrip('/')}/stock/{ticker_raw}"))
     return _join_blocks(blocks)
 
 

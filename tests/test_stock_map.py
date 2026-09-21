@@ -440,6 +440,10 @@ def test_wallet_portfolio_uses_shared_stock_rows_and_keeps_event_lines(database,
     monkeypatch.setattr(main, "_direct_ticker_item", lambda ticker, _: {
         **score_current(), "ticker": ticker, "company": f"{ticker} company"
     })
+    # The old stock-scoped wallet path still works: it redirects to the wallet.
+    legacy = TestClient(main.app).get("/wallets/stocks/TEST/sec:101", follow_redirects=False)
+    assert legacy.status_code == 301
+    assert legacy.headers["location"].startswith("/wallet/w_")
     response = TestClient(main.app).get("/wallets/stocks/TEST/sec:101")
     assert response.status_code == 200
     html = response.text
@@ -447,8 +451,9 @@ def test_wallet_portfolio_uses_shared_stock_rows_and_keeps_event_lines(database,
     assert 'class="ticker-list market-stocks"' in html
     assert html.count('class="ticker"') == 2
     assert html.count('class="wallet-event"') == 8
-    assert 'href="/t/USO"' in html
+    assert 'href="/stock/USO"' in html
     assert "Filed 2026-09-05" in html
     assert "% of class" not in html
     assert "sec.gov/Archives" in html
-    assert TestClient(main.app).get("/wallets/stocks/TEST/invalid").status_code == 400
+    # An identity we cannot mint a wallet for is simply not found.
+    assert TestClient(main.app).get("/wallets/stocks/TEST/invalid").status_code == 404

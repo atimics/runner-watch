@@ -1,7 +1,7 @@
 {% extends "market_screen.html" %}
 {% block detail_head %}<link rel="stylesheet" href="/static/ticker-map.css?v={{ static_version }}">{% endblock %}
 {% block screen_main %}
-<a class="back" href="/t/{{ wallet_ticker }}">← {{ wallet_ticker }}</a>
+{% if wallet_ticker %}<a class="back" href="/stock/{{ wallet_ticker }}">← {{ wallet_ticker }}</a>{% endif %}
 <header class="wallet-heading"><p class="eyebrow">Entity</p><h1>{{ wallet.name }}</h1></header>
 {% if entity is defined %}
 <section class="entity-worth" aria-label="Tracked worth">
@@ -26,7 +26,7 @@
 <div class="wallet-event-list" data-wallet-event-list>
 {% for event in wallet_events %}{% include "_wallet_event.html" %}{% else %}<p class="wallet-scope">Filings will appear here.</p>{% endfor %}
 </div>
-{% if wallet_cursor %}<button class="wallet-older" type="button" data-wallet-more data-endpoint="/api/wallets/stocks/{{ wallet_ticker }}/{{ wallet.id|urlencode }}/events" data-cursor="{{ wallet_cursor }}">Load older filings</button>{% endif %}
+{% if wallet_cursor %}<button class="wallet-older" type="button" data-wallet-more data-endpoint="/api/wallets/{{ wallet_id }}/filings" data-cursor="{{ wallet_cursor }}">Load older filings</button>{% endif %}
 </section>
 {% endblock %}
 

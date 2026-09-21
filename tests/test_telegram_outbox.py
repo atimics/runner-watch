@@ -205,7 +205,7 @@ def test_generated_claims_and_links_stay_out_of_stock_announcements(monkeypatch)
         [],
     )
     text = main._announcement_cards(activity)[0]["text"]
-    assert "$AAAA" in text and "/t/AAAA" in text
+    assert "$AAAA" in text and "/stock/AAAA" in text
 
 
 def test_sports_card_uses_game_names_and_destinations():
@@ -271,7 +271,7 @@ def test_new_sec_cards_keep_people_actions_and_amendments():
     assert "Jane Lee" in purchase["text"] and "Lee Family, LLC" in purchase["text"]
     assert "Shared transaction" in purchase["text"] and "Shares / units: 100" in purchase["text"]
     assert "2026-09-01" in purchase["text"] and "2026-09-05" in purchase["text"]
-    assert "https://app.test/t/TEST#ticker-map" in purchase["text"]
+    assert "https://app.test/stock/TEST#ticker-map" in purchase["text"]
     assert "/new/index.htm" in purchase["event"]["source_url"]
     assert {c["event"]["action"] for c in cards} == {
         "Bought",

@@ -424,7 +424,7 @@
     if (!item || typeof item.name !== 'string' || typeof item.href !== 'string') return null;
     try {
       const url = new URL(item.href, location.origin);
-      const prefix = market === 'stocks' ? '/t/' : market === 'memecoins' ? '/memecoins/coin/' : '/game/';
+      const prefix = market === 'stocks' ? '/stock/' : market === 'memecoins' ? '/memecoins/coin/' : '/game/';
       if (url.origin !== location.origin || !url.pathname.startsWith(prefix)) return null;
       return {name:item.name.slice(0,100), subtitle:String(item.subtitle || '').slice(0,160), href:url.pathname};
     } catch (_) { return null; }

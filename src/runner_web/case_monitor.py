@@ -468,7 +468,7 @@ def _materialize_claims(
             summary=summary,
             direction=direction,
             primary_source_type="stored_market_state",
-            primary_source_url=f"/t/{ticker}",
+            primary_source_url=f"/stock/{ticker}",
             occurred_at=str(latest["captured_at"]),
             collected_at=str(latest["captured_at"]),
             payload={
@@ -481,7 +481,7 @@ def _materialize_claims(
             },
             source_key=f"snapshot:{latest['id']}",
             source_type="stored_market_state",
-            source_url=f"/t/{ticker}",
+            source_url=f"/stock/{ticker}",
             source_title=summary,
             source_payload={"snapshot_id": latest["id"]},
         )

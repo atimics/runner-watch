@@ -124,7 +124,7 @@ def open_map(
     )
     if connections_handler:
         page.route("**/map/connections?*", connections_handler)
-    page.goto("http://app.test/t/TEST", wait_until="domcontentloaded")
+    page.goto("http://app.test/stock/TEST", wait_until="domcontentloaded")
     if map_handler is None:
         expect(page.locator("[data-map-status]")).to_have_text("")
     return data
@@ -956,25 +956,25 @@ def test_inline_interests_link_to_stocks_and_keep_one_chart(page, width, tmp_pat
     expect(links).to_have_count(2)
     expect(page.locator("[data-stock-map] svg")).to_have_count(1)
     expect(page.locator("[data-map-connections], [data-stock-map] select")).to_have_count(0)
-    expect(page.locator('[data-interest][href="/t/BIG"] .map-interest-edge')).to_have_count(2)
-    expect(page.locator('[data-interest][href="/t/SMALL"] .map-interest-edge')).to_have_count(2)
+    expect(page.locator('[data-interest][href="/stock/BIG"] .map-interest-edge')).to_have_count(2)
+    expect(page.locator('[data-interest][href="/stock/SMALL"] .map-interest-edge')).to_have_count(2)
     expect(page.locator(".map-interest-edge.sell")).to_have_count(1)
     expect(page.locator(".map-interest-edge.buy")).to_have_count(3)
-    big = page.locator('[data-interest][href="/t/BIG"] .map-interest-dot')
-    small = page.locator('[data-interest][href="/t/SMALL"] .map-interest-dot')
+    big = page.locator('[data-interest][href="/stock/BIG"] .map-interest-dot')
+    small = page.locator('[data-interest][href="/stock/SMALL"] .map-interest-dot')
     assert float(big.get_attribute("r")) > float(small.get_attribute("r"))
     assert float(big.get_attribute("r")) <= 6
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.locator("[data-map-graph]").screenshot(path=str(tmp_path / f"inline-map-{width}.png"))
-    sale = page.locator('[data-interest][href="/t/BIG"]')
-    expect(sale).to_have_attribute("href", "/t/BIG")
+    sale = page.locator('[data-interest][href="/stock/BIG"]')
+    expect(sale).to_have_attribute("href", "/stock/BIG")
     page.route(
-        "http://app.test/t/BIG",
+        "http://app.test/stock/BIG",
         lambda route: route.fulfill(body="<h1>BIG</h1>", content_type="text/html"),
     )
     sale.focus()
     sale.press("Enter")
-    expect(page).to_have_url("http://app.test/t/BIG")
+    expect(page).to_have_url("http://app.test/stock/BIG")
     expect(page.get_by_role("heading", name="BIG")).to_be_visible()
 
 
@@ -1027,11 +1027,11 @@ def test_inline_interests_load_next_page_and_follow_filing_time(page):
         map_handler=lambda route: route.fulfill(json={**data, "events": [base]}),
         connections_handler=respond,
     )
-    expect(page.locator('[data-interest][href="/t/OLDER"]')).to_have_count(1)
-    expect(page.locator('[data-interest][href="/t/LATER"]')).to_have_count(1)
+    expect(page.locator('[data-interest][href="/stock/OLDER"]')).to_have_count(1)
+    expect(page.locator('[data-interest][href="/stock/LATER"]')).to_have_count(1)
     page.locator("[data-map-events] button").first.click()
-    expect(page.locator('[data-interest][href="/t/LATER"]')).to_have_count(0)
-    expect(page.locator('[data-interest][href="/t/OLDER"]')).to_have_count(1)
+    expect(page.locator('[data-interest][href="/stock/LATER"]')).to_have_count(0)
+    expect(page.locator('[data-interest][href="/stock/OLDER"]')).to_have_count(1)
 
 
 def test_wallet_opens_portfolio_and_repeated_events_share_one_bubble(page):
@@ -1045,7 +1045,7 @@ def test_wallet_opens_portfolio_and_repeated_events_share_one_bubble(page):
     assert len(set(paths)) == 2
     wallet = page.locator("[data-person]")
     href = wallet.get_attribute("href")
-    assert href.startswith("/wallets/stocks/TEST/sec%3A")
+    assert href.startswith("/wallet/w_")
     page.route(f"http://app.test{href}", lambda route: route.fulfill(body="Wallet portfolio"))
     wallet.focus()
     wallet.press("Enter")
@@ -1195,7 +1195,7 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
         expect(page.locator(".entity-worth-chart")).to_be_hidden()
         expect(page.locator("[data-worth-pending]")).to_be_visible()
         expect(page.locator(".entity-worth-value")).to_have_text("—")
-    expect(page.locator('[data-entity-stock="USO"]')).to_have_attribute("href", "/t/USO")
+    expect(page.locator('[data-entity-stock="USO"]')).to_have_attribute("href", "/stock/USO")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.screenshot(path=str(tmp_path / f"wallet-{width}.png"), full_page=True)
     page.locator(".wallet-events").screenshot(path=str(tmp_path / f"events-{width}.png"))
@@ -1222,6 +1222,7 @@ def test_wallet_events_load_more_as_the_tail_comes_into_view(page):
             wallet={"name": "HRT FINANCIAL LP", "id": "sec:101"},
             wallet_events=first,
             wallet_cursor="page-2",
+            wallet_id="w_testwallet",
             wallet_ticker="USO",
             entity=entity_view(first, rows, "sec:101"),
         ),
@@ -1244,7 +1245,7 @@ def test_wallet_events_load_more_as_the_tail_comes_into_view(page):
     partial = main.templates.get_template("_wallet_event.html")
     rendered = "".join(partial.render(event=event, wallet={"id": "sec:101"}) for event in later)
     page.route(
-        re.compile(r"/api/wallets/stocks/.*/events"),
+        re.compile(r"/api/wallets/.*/filings"),
         lambda route: route.fulfill(json={"html": rendered, "next_cursor": None, "count": 1}),
     )
     page.set_viewport_size({"width": 1280, "height": 700})
