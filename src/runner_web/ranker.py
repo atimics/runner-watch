@@ -18,6 +18,7 @@ from typing import Any
 
 from runner_web.database import retry_database_operation
 from runner_web.db import connection, init_db
+from runner_web.labels import barrier_contract
 from runner_web.product_policy import RANKER_TRAINING
 from runner_web.ranker_promotion import promotion_status
 
@@ -264,18 +265,21 @@ def sync_training_outcome(
     barrier_label: str,
     outcome_return_pct: Any,
     labeled_at: str,
+    *,
+    barrier_resolution: str = "resolved",
 ) -> None:
 
     database.execute(
         """
         UPDATE ranker_training_examples
-        SET barrier_label=?,outcome_return_bp=?,labeled_at=?
+        SET barrier_label=?,outcome_return_bp=?,labeled_at=?,barrier_resolution=?
         WHERE snapshot_id=?
         """,
         (
             barrier_label,
             int(round(_float(outcome_return_pct) * RETURN_SCALE)),
             labeled_at,
+            barrier_resolution,
             snapshot_id,
         ),
     )
@@ -293,6 +297,7 @@ def _backfill_recent_training_examples(maximum_groups: int) -> int:
                   JOIN scan_snapshots s ON s.id=o.snapshot_id
                   WHERE s.scan_run_id=r.id
                     AND o.barrier_label IN ('down','timeout','up')
+                  AND COALESCE(o.barrier_resolution,'resolved')='resolved'
               )
             ORDER BY r.captured_at DESC,r.id DESC LIMIT ?
             """,
@@ -305,13 +310,15 @@ def _backfill_recent_training_examples(maximum_groups: int) -> int:
         rows = database.execute(
             f"""
             SELECT s.*,r.mode AS scan_mode,r.candidate_rows AS expected_candidates,
-                   o.barrier_label,o.return_60m_pct,o.updated_at AS labeled_at
+                   o.barrier_label,o.barrier_resolution,o.return_60m_pct,
+                   o.updated_at AS labeled_at
             FROM scan_snapshots s
             JOIN scan_runs r ON r.id=s.scan_run_id
             JOIN scan_outcomes o ON o.snapshot_id=s.id
             LEFT JOIN ranker_training_examples compact ON compact.snapshot_id=s.id
             WHERE s.scan_run_id IN ({placeholders})
               AND o.barrier_label IN ('down','timeout','up')
+                  AND COALESCE(o.barrier_resolution,'resolved')='resolved'
               AND s.range_position IS NOT NULL
               AND s.stale_minutes IS NOT NULL
               AND compact.snapshot_id IS NULL
@@ -335,6 +342,7 @@ def _backfill_recent_training_examples(maximum_groups: int) -> int:
                     str(row["barrier_label"]),
                     int(round(_float(row.get("return_60m_pct")) * RETURN_SCALE)),
                     str(row["labeled_at"]),
+                    str(row.get("barrier_resolution") or "resolved"),
                 )
             )
         if compact_rows:
@@ -343,8 +351,9 @@ def _backfill_recent_training_examples(maximum_groups: int) -> int:
                 INSERT INTO ranker_training_examples(
                     snapshot_id,scan_run_id,ticker,feature_schema_version,
                     expected_candidates,captured_at,feature_vector_json,
-                    baseline_score_milli,barrier_label,outcome_return_bp,labeled_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                    baseline_score_milli,barrier_label,outcome_return_bp,labeled_at,
+                    barrier_resolution
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(snapshot_id) DO NOTHING
                 """,
                 compact_rows,
@@ -367,6 +376,7 @@ def _load_groups(
             FROM ranker_training_examples
             WHERE feature_schema_version=?
               AND barrier_label IN ('down','timeout','up')
+              AND COALESCE(barrier_resolution,'resolved')='resolved'
             GROUP BY scan_run_id
             HAVING COUNT(*)=MAX(expected_candidates) AND COUNT(*)>=2
             ORDER BY run_captured_at DESC,scan_run_id DESC LIMIT ?
@@ -383,6 +393,7 @@ def _load_groups(
             WHERE scan_run_id IN ({placeholders})
               AND feature_schema_version=?
               AND barrier_label IN ('down','timeout','up')
+              AND COALESCE(barrier_resolution,'resolved')='resolved'
             ORDER BY captured_at,scan_run_id,ticker
             """,
             (*run_ids, FEATURE_SCHEMA_VERSION),
@@ -625,6 +636,7 @@ def train_shadow_ranker_if_due(
             FROM ranker_training_examples
             WHERE feature_schema_version=?
               AND barrier_label IN ('down','timeout','up')
+              AND COALESCE(barrier_resolution,'resolved')='resolved'
             GROUP BY scan_run_id
             HAVING COUNT(*)=MAX(expected_candidates) AND COUNT(*)>=2
             ORDER BY captured_at DESC LIMIT ?
@@ -882,8 +894,8 @@ def predict_and_store(scan_run_id: str, model: RankerModel | None = None) -> dic
             """
             INSERT INTO ranker_predictions(
                 snapshot_id,model_id,score,rank,created_at,probability_up,
-                probability_down,probability_timeout,expected_return_pct
-            ) VALUES(?,?,?,?,?,?,?,?,?)
+                probability_down,probability_timeout,expected_return_pct,label_contract
+            ) VALUES(?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(snapshot_id,model_id) DO UPDATE SET
                 score=excluded.score,
                 rank=excluded.rank,
@@ -891,7 +903,8 @@ def predict_and_store(scan_run_id: str, model: RankerModel | None = None) -> dic
                 probability_up=excluded.probability_up,
                 probability_down=excluded.probability_down,
                 probability_timeout=excluded.probability_timeout,
-                expected_return_pct=excluded.expected_return_pct
+                expected_return_pct=excluded.expected_return_pct,
+                label_contract=excluded.label_contract
             """,
             [
                 (
@@ -904,6 +917,7 @@ def predict_and_store(scan_run_id: str, model: RankerModel | None = None) -> dic
                     int(prediction["probability_down_ppm"]) / PROBABILITY_SCALE,
                     int(prediction["probability_timeout_ppm"]) / PROBABILITY_SCALE,
                     int(prediction["expected_return_bp"]) / RETURN_SCALE,
+                    json.dumps(barrier_contract(), separators=(",", ":")),
                 )
                 for prediction in predictions
             ],
@@ -942,6 +956,7 @@ def ranker_status() -> dict[str, Any]:
                   SELECT scan_run_id FROM ranker_training_examples
                   WHERE feature_schema_version=?
                     AND barrier_label IN ('down','timeout','up')
+              AND COALESCE(barrier_resolution,'resolved')='resolved'
                   GROUP BY scan_run_id
                   HAVING COUNT(*)=MAX(expected_candidates) AND COUNT(*)>=2
               )) AS complete_groups
@@ -953,6 +968,8 @@ def ranker_status() -> dict[str, Any]:
             SELECT training_origin,COUNT(*) AS rows,COUNT(DISTINCT scan_run_id) AS groups
             FROM ranker_training_examples
             WHERE feature_schema_version=? AND barrier_label IN ('down','timeout','up')
+              AND COALESCE(barrier_resolution,'resolved')='resolved'
+              AND COALESCE(barrier_resolution,'resolved')='resolved'
             GROUP BY training_origin ORDER BY training_origin
             """,
             (FEATURE_SCHEMA_VERSION,),

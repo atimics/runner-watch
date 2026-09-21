@@ -3543,6 +3543,20 @@ def _migration_077_gap_ranker_models(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_078_label_resolution(db: DatabaseConnection) -> None:
+    """Say whether an outcome was resolved or ambiguous, and which contract it used.
+
+    A bar that touches both barriers is labelled conservatively; until now that
+    ambiguity was not carried into training, so a coin flip was learned as a
+    fact. Predictions also record the barrier contract they were made under, so
+    changing the barriers later is a new version rather than a reinterpretation.
+    """
+
+    _ensure_column(db, "scan_outcomes", "barrier_resolution TEXT")
+    _ensure_column(db, "ranker_training_examples", "barrier_resolution TEXT")
+    _ensure_column(db, "ranker_predictions", "label_contract TEXT")
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3625,6 +3639,7 @@ MIGRATIONS = (
     Migration(75, "price_gap_forecasts", _migration_075_price_gap_forecasts),
     Migration(76, "price_gap_market_open", _migration_076_price_gap_market_open),
     Migration(77, "gap_ranker_models", _migration_077_gap_ranker_models),
+    Migration(78, "label_resolution", _migration_078_label_resolution),
 )
 
 

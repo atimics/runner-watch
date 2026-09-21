@@ -65,6 +65,36 @@ def test_barrier_outcome_marks_same_bar_ambiguity_as_down() -> None:
     assert result is not None
     assert result["barrier_label"] == "down"
     assert result["barrier_ambiguous"] == 1
+    # The pessimistic label is a reading, not a fact, and says so.
+    assert result["barrier_resolution"] == "ambiguous"
+    assert outcomes.RESOLVED != result["barrier_resolution"]
+
+
+def test_resolved_outcomes_say_so() -> None:
+    base = datetime(2026, 8, 24, 14, tzinfo=UTC)
+    up = barrier_outcome([(base + timedelta(minutes=5), 109.0, 99.0, 108.0)], base, 100.0)
+    assert up is not None and up["barrier_resolution"] == "resolved"
+    # A timeout only counts once the window actually reaches the horizon.
+    quiet_window = [
+        (base + timedelta(minutes=5 * step), 101.0, 99.0, 100.0) for step in range(1, 13)
+    ]
+    quiet = barrier_outcome(quiet_window, base, 100.0)
+    assert quiet is not None and quiet["barrier_label"] == "timeout"
+    assert quiet["barrier_resolution"] == "resolved"
+    # A window that stops early is censored, not silently labelled.
+    assert barrier_outcome(quiet_window[:3], base, 100.0) is None
+
+
+def test_the_label_contract_is_named_and_versioned() -> None:
+    from runner_web.labels import barrier_contract
+
+    contract = barrier_contract()
+    assert contract == {
+        "policy": "barriers.v1:+8%/-4%/60m",
+        "upper_pct": 8.0,
+        "lower_pct": 4.0,
+        "horizon_minutes": 60,
+    }
 
 
 def test_timeout_requires_bars_covering_the_full_hour() -> None:
