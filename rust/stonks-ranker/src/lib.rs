@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub const ARTIFACT_SCHEMA: &str = "stonks.integer_ranker.v1";
+pub const GAM_ARTIFACT_SCHEMA: &str = "stonks.integer_gam.v1";
 pub const FEATURE_SCALE: i64 = 1_000;
 pub const NORMALIZED_SCALE: i64 = 1_024;
 pub const WEIGHT_SCALE: i64 = 1_048_576;
@@ -35,6 +36,22 @@ pub struct IntegerArtifact {
     pub bias: Vec<i64>,
     pub temperature_milli: i64,
     pub timeout_return_bp: i64,
+}
+
+/// The additive (GAM) artifact: per-feature bin edges and per-bin contributions.
+///
+/// Contributions are integers in the same millionths the Python trainer writes,
+/// so scoring is a binary search, a table lookup and a sum: no float drift, and
+/// the Python integer scorer and this one agree exactly.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GamArtifact {
+    pub schema: String,
+    pub feature_names: Vec<String>,
+    pub classes: Vec<String>,
+    pub scale: i64,
+    pub edges: Vec<Vec<i64>>,
+    pub tables: Vec<Vec<Vec<i64>>>,
+    pub intercept: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -76,6 +93,10 @@ pub enum Request {
         artifact: IntegerArtifact,
         rows: Vec<PredictionRow>,
     },
+    PredictGam {
+        artifact: GamArtifact,
+        rows: Vec<PredictionRow>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +127,10 @@ pub fn execute(request: Request) -> Result<Value, String> {
         } => train(feature_names, groups, epochs),
         Request::Predict { artifact, rows } => {
             let predictions = predict(&artifact, rows)?;
+            Ok(json!({"ok": true, "predictions": predictions}))
+        }
+        Request::PredictGam { artifact, rows } => {
+            let predictions = predict_gam(&artifact, rows)?;
             Ok(json!({"ok": true, "predictions": predictions}))
         }
     }
@@ -684,6 +709,124 @@ pub fn predict(
     Ok(predictions)
 }
 
+/// Which bin a fixed-point feature falls in, by binary search over the edges.
+pub fn gam_bin(value: i64, edges: &[i64]) -> usize {
+    let mut low = 0usize;
+    let mut high = edges.len();
+    while low < high {
+        let middle = (low + high) / 2;
+        if value <= edges[middle] {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    low
+}
+
+/// Integer class scores: the intercept plus one contribution per feature.
+pub fn gam_scores(artifact: &GamArtifact, features: &[i64]) -> Result<Vec<i64>, String> {
+    if artifact.schema != GAM_ARTIFACT_SCHEMA {
+        return Err(format!("unsupported artifact schema: {}", artifact.schema));
+    }
+    if artifact.edges.len() != artifact.feature_names.len()
+        || artifact.tables.len() != artifact.feature_names.len()
+    {
+        return Err("additive artifact tables do not match its features".into());
+    }
+    if features.len() != artifact.feature_names.len() {
+        return Err("row has the wrong feature count".into());
+    }
+    if artifact.scale <= 0 {
+        return Err("additive artifact scale must be positive".into());
+    }
+    let mut totals = artifact.intercept.clone();
+    if totals.is_empty() {
+        return Err("additive artifact has no classes".into());
+    }
+    for (index, value) in features.iter().enumerate() {
+        let edges = &artifact.edges[index];
+        let table = &artifact.tables[index];
+        if table.is_empty() {
+            return Err("additive artifact has an empty table".into());
+        }
+        let position = gam_bin(*value, edges).min(table.len() - 1);
+        let row = &table[position];
+        if row.len() != totals.len() {
+            return Err("additive artifact contribution has the wrong class count".into());
+        }
+        for (class_index, contribution) in row.iter().enumerate() {
+            totals[class_index] += contribution;
+        }
+    }
+    Ok(totals)
+}
+
+fn gam_probabilities(scores: &[i64], scale: i64) -> [i64; 3] {
+    let maximum = *scores.iter().max().unwrap_or(&0);
+    let mut weights = [0_i64; 3];
+    for class in 0..3 {
+        let delta = scores[class] - maximum;
+        // Scores are in model units times `scale`; the fixed-point exp wants
+        // EXP_SCALE units, so convert before clamping to the representable range.
+        let exponent = (i128::from(delta) * i128::from(EXP_SCALE) / i128::from(scale.max(1)))
+            .clamp(i128::from(-16 * EXP_SCALE), 0);
+        weights[class] = exp_negative(exponent as i64);
+    }
+    let denominator: i64 = weights.iter().sum::<i64>().max(1);
+    let mut output = [0_i64; 3];
+    for class in 0..3 {
+        output[class] = (i128::from(weights[class]) * i128::from(PROBABILITY_SCALE)
+            / i128::from(denominator)) as i64;
+    }
+    let assigned: i64 = output.iter().sum();
+    let leading = scores
+        .iter()
+        .take(3)
+        .enumerate()
+        .max_by_key(|(_, value)| *value)
+        .map(|(index, _)| index)
+        .unwrap_or(0);
+    output[leading] += PROBABILITY_SCALE - assigned;
+    output
+}
+
+pub fn predict_gam(
+    artifact: &GamArtifact,
+    rows: Vec<PredictionRow>,
+) -> Result<Vec<Prediction>, String> {
+    let mut predictions: Vec<Prediction> = rows
+        .into_iter()
+        .map(|row| {
+            let scores = gam_scores(artifact, &row.features)?;
+            if scores.len() != 3 {
+                return Err("additive artifact must model three classes".into());
+            }
+            let probability = gam_probabilities(&scores, artifact.scale);
+            Ok(Prediction {
+                id: row.id,
+                ticker: row.ticker,
+                rank: 0,
+                probability_down_ppm: probability[0],
+                probability_timeout_ppm: probability[1],
+                probability_up_ppm: probability[2],
+                expected_return_bp: expected_return_bp(probability, 0),
+            })
+        })
+        .collect::<Result<_, String>>()?;
+    let mut order: Vec<usize> = (0..predictions.len()).collect();
+    order.sort_by(|left, right| {
+        predictions[*right]
+            .probability_up_ppm
+            .cmp(&predictions[*left].probability_up_ppm)
+            .then_with(|| predictions[*left].ticker.cmp(&predictions[*right].ticker))
+    });
+    for (rank, index) in order.into_iter().enumerate() {
+        predictions[index].rank = rank + 1;
+    }
+    Ok(predictions)
+}
+
 fn validate_artifact(artifact: &IntegerArtifact) -> Result<(), String> {
     let count = artifact.feature_names.len();
     if artifact.schema != ARTIFACT_SCHEMA {
@@ -741,6 +884,59 @@ fn integer_sqrt(value: u128) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn gam_artifact() -> GamArtifact {
+        // One feature with two bins: the low bin pushes down, the high bin up.
+        GamArtifact {
+            schema: GAM_ARTIFACT_SCHEMA.into(),
+            feature_names: vec!["x".into()],
+            classes: vec!["down".into(), "timeout".into(), "up".into()],
+            scale: PROBABILITY_SCALE,
+            edges: vec![vec![0]],
+            tables: vec![vec![
+                vec![PROBABILITY_SCALE, 0, -PROBABILITY_SCALE],
+                vec![-PROBABILITY_SCALE, 0, PROBABILITY_SCALE],
+            ]],
+            intercept: vec![0, 0, 0],
+        }
+    }
+
+    #[test]
+    fn additive_bins_look_up_the_right_contribution() {
+        let artifact = gam_artifact();
+        assert_eq!(gam_bin(0, &[0]), 0);
+        assert_eq!(gam_bin(1, &[0]), 1);
+        assert_eq!(gam_scores(&artifact, &[1]).unwrap(), vec![-PROBABILITY_SCALE, 0, PROBABILITY_SCALE]);
+        assert_eq!(gam_scores(&artifact, &[0]).unwrap(), vec![PROBABILITY_SCALE, 0, -PROBABILITY_SCALE]);
+    }
+
+    #[test]
+    fn additive_probabilities_are_integer_and_favour_the_leading_class() {
+        let artifact = gam_artifact();
+        let predictions = predict_gam(
+            &artifact,
+            vec![PredictionRow { id: "one".into(), ticker: "ONE".into(), features: vec![1] }],
+        )
+        .unwrap();
+        let first = &predictions[0];
+        assert_eq!(
+            first.probability_down_ppm + first.probability_timeout_ppm + first.probability_up_ppm,
+            PROBABILITY_SCALE
+        );
+        assert!(first.probability_up_ppm > first.probability_down_ppm);
+        assert_eq!(first.rank, 1);
+    }
+
+    #[test]
+    fn additive_predict_rejects_a_mismatched_artifact() {
+        let mut artifact = gam_artifact();
+        artifact.tables = vec![];
+        assert!(gam_scores(&artifact, &[1]).is_err());
+        let mut wrong_schema = gam_artifact();
+        wrong_schema.schema = ARTIFACT_SCHEMA.into();
+        assert!(gam_scores(&wrong_schema, &[1]).is_err());
+    }
+
 
     #[test]
     fn integer_softmax_sums_exactly() {

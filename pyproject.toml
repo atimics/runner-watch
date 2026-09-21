@@ -56,6 +56,7 @@ stonks-sec-publish-ilxyr = "runner_web.sec_ilxyr:main"
 rati-scanner = "runner_node.app:main"
 stonks-edge = "runner_web.edge_connector:main"
 stonks-gap-ranker = "runner_web.gap_ranker:main"
+stonks-gam-ranker = "runner_web.gam_ranker:main"
 
 [build-system]
 requires = ["setuptools>=69"]
