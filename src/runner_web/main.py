@@ -61,6 +61,7 @@ from runner_watch.models import ScanSettings
 from runner_watch.risk import RiskInput, assess_risk
 from runner_watch.scanner import RunnerScanner
 from runner_watch.universe import penny_runner_universe
+from runner_web import attention
 from runner_web import db as runner_db
 from runner_web.account_routes import (
     AccountDeletePayload,
@@ -5060,18 +5061,15 @@ def _pulse_snapshot_score(
     )
     catalyst_score = float(catalyst.get("score") or 0) if catalyst else 0.0
     catalyst_sentiment = str(catalyst.get("sentiment") or "") if catalyst else ""
-    event_boost = (
-        min(12.0, catalyst_score * 0.12)
-        if catalyst_sentiment == "positive"
-        else -min(25.0, catalyst_score * 0.25)
-        if catalyst_sentiment == "risk"
-        else 0.0
-    )
+    # A filing's size moves attention whatever its direction; whether it is
+    # bearish belongs to the forecast and the block, not to notice.
+    event_boost = attention.event_attention(catalyst_score)
     community_counts = inputs["community"].get(ticker, {"call_count": 0, "comment_count": 0})
     call_count = community_counts["call_count"]
     comment_count = community_counts["comment_count"]
-    engagement_count = call_count + (comment_count * 2)
-    community_boost = min(8.0, math.log2(engagement_count + 1) * 2.0)
+    # Active Callers order the list; comments are logged, never scored.
+    engagement_count = call_count
+    community_boost = attention.community_attention(call_count)
     external = _external_event_context(
         inputs["market_events_by_ticker"].get(ticker, []), at=_timestamp(inputs["score_as_of"])
     )
@@ -5086,33 +5084,36 @@ def _pulse_snapshot_score(
         trade_state = "AVOID"
     rug_penalty = (rug_score or 0.0) * 0.30
     state_penalty = 25.0 if trade_state == "EXIT" else 20.0 if trade_state == "AVOID" else 0.0
-    pulse_score = round(
-        max(
-            0.0,
-            min(
-                100.0,
-                custom_score
-                + event_boost
-                + news_boost
-                + social_search_boost
-                + community_boost
-                - safety_penalty
-                - rug_penalty
-                - state_penalty,
-            ),
-        ),
-        2,
+    # Attention is what deserves a look; the deductions below are policy, and
+    # they are reported through eligibility instead of shrinking the number.
+    pulse_score = attention.attention_score(
+        signal=custom_score,
+        event=event_boost,
+        news=news_boost,
+        social=social_search_boost,
+        community=community_boost,
     )
+    can_act = attention.eligibility(
+        active_halt=bool(external.get("active_halt")),
+        trade_state=trade_state,
+        rug_score=rug_score,
+        rug_level=str(snapshot.get("rug_level") or ""),
+        has_price=snapshot.get("price") is not None,
+    )
+    # Only what moved attention lives here. The deductions are policy, and they
+    # are reported beside the score rather than mixed into it.
     score_components = {
         "market": round(custom_score, 2),
         "sec_event": round(event_boost, 2),
         "news": news_boost,
         "social_search": social_search_boost,
         "community": round(community_boost, 2),
-        "safety": -safety_penalty,
     }
-    if snapshot.get("rug_score") is not None or snapshot.get("trade_state") is not None:
-        score_components.update({"rug": -round(rug_penalty, 2), "state": -state_penalty})
+    policy_components = {
+        "safety": -safety_penalty,
+        "rug": -round(rug_penalty, 2),
+        "state": -state_penalty,
+    }
     score_trace = {}
     if include_trace:
 
@@ -5133,10 +5134,8 @@ def _pulse_snapshot_score(
                 (
                     "Calculation",
                     "12% of filing score, capped at +12 points"
-                    if catalyst_sentiment == "positive"
-                    else "25% of filing score, capped at 25 points, subtracted"
-                    if catalyst_sentiment == "risk"
-                    else "Neutral filing: 0 points",
+                    if catalyst
+                    else "No filing: 0 points",
                 ),
             ),
             "news": trace(
@@ -5158,15 +5157,15 @@ def _pulse_snapshot_score(
             ),
             "safety": trace(
                 ("Trading halt", "Active" if external.get("active_halt") else "Clear"),
-                ("Calculation", "Active halt subtracts 25 points"),
+                ("Calculation", "Reported through eligibility; attention is not reduced"),
             ),
             "rug": trace(
                 ("Rug score", f"{rug_score:g}" if rug_score is not None else "0"),
-                ("Calculation", "30% of rug score, subtracted"),
+                ("Calculation", "Reported through eligibility; attention is not reduced"),
             ),
             "state": trace(
                 ("Trade state", trade_state),
-                ("Calculation", "EXIT subtracts 25 points; AVOID subtracts 20 points"),
+                ("Calculation", "Reported through eligibility; attention is not reduced"),
             ),
         }
     return {
@@ -5177,6 +5176,10 @@ def _pulse_snapshot_score(
         "model_rank": prediction.get("rank") if prediction else None,
         "score": pulse_score,
         "custom_score": pulse_score,
+        "attention_score": pulse_score,
+        "eligibility": can_act,
+        "eligibility_note": attention.risk_note(can_act),
+        "policy_components": policy_components,
         "score_as_of": inputs["score_as_of"],
         "score_snapshot_id": snapshot["id"],
         "runner_probability": prediction.get("probability_up") if prediction else None,
@@ -9296,6 +9299,9 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
                 "model_rank",
                 "score_detail",
                 "score_components",
+                "policy_components",
+                "eligibility",
+                "eligibility_note",
                 "score_trace",
                 "score_as_of",
                 "score_snapshot_id",
