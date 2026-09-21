@@ -3267,8 +3267,10 @@ def _draw_card_map(draw: Any, map_data: dict[str, Any], box: tuple[int, int, int
 CARD_PRICE_Y = 138
 CARD_COMPANY_Y = 232
 CARD_CHANGE_Y = 214
+# The badge must stay above this row so it never reaches the divider at y 292.
 CARD_DATE_Y = 262
 CARD_BADGE_HEIGHT = 44
+CARD_FOOTER_Y = 548
 
 
 def _ticker_card_png(
@@ -3298,10 +3300,7 @@ def _ticker_card_png(
     tone = "#87e8a9" if (change or 0) > 0 else "#f2a3ac" if (change or 0) < 0 else "#9fb2a8"
     change_font = font(32, True)
     draw.text((1105, CARD_CHANGE_Y), move, tone, font=change_font, anchor="ra")
-    stamp = _card_text(str(current.get("quote_time") or current.get("event_at") or "")[:16])
-    draw.text(
-        (1105, CARD_DATE_Y), f"Daily change · {stamp} UTC", "#65716b", font=font(19), anchor="ra"
-    )
+    stamp = _card_time(current.get("quote_time") or current.get("event_at"))
     # The state badge shares the change row, to the left of the move, rather than
     # landing on the line below it.
     badge_right = 1105 - int(draw.textlength(move, font=change_font)) - 18
@@ -3314,7 +3313,15 @@ def _ticker_card_png(
     _draw_card_map(draw, map_data or {"events": []}, (720, 300, 1105, 520))
     _draw_card_ring(draw, 912, 410, 46, detail)
 
-    draw.text((95, 548), _card_text("runners.rati.chat · Research only"), "#65716b", font=font(20))
+    draw.text(
+        (95, CARD_FOOTER_Y),
+        _card_text("runners.rati.chat · Research only"),
+        "#65716b",
+        font=font(20),
+    )
+    if stamp:
+        # When the price is from, right-aligned along the bottom edge.
+        draw.text((1105, CARD_FOOTER_Y), stamp, "#65716b", font=font(20), anchor="ra")
     buffer = io.BytesIO()
     image.save(buffer, format="PNG", optimize=True)
     return buffer.getvalue()
@@ -3407,6 +3414,23 @@ def _pick_line(pick: dict[str, Any], is_post: bool) -> str:
     move = pick.get("session_return_pct")
     tail = f" · {float(move):+.1f}% on the day" if move is not None else ""
     return f"Target {target} · closed {close or 'unsettled'}{tail}"
+
+
+def _card_time(value: Any) -> str:
+    """The quote time in US Eastern, the clock the market actually runs on."""
+
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        moment = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return _card_text(raw[:16])
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    eastern = moment.astimezone(EASTERN)
+    zone = "EDT" if eastern.dst() else "EST"
+    return _card_text(f"{eastern.strftime('%b %d, %Y')} · {eastern.strftime('%H:%M')} {zone}")
 
 
 def _card_price(value: Any) -> str | None:
