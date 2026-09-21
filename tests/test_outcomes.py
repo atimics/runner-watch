@@ -357,3 +357,149 @@ def test_scan_outcomes_use_first_archived_bar_after_horizon(
     assert row["return_1h_pct"] == 25.0
     assert row["return_1d_pct"] == 50.0
     assert row["return_5d_pct"] is None
+
+
+def _seed_scan_snapshot(database, snapshot_id: str, ticker: str, base_at: datetime) -> None:
+    database.execute(
+        """
+        INSERT INTO scan_runs(
+            id,mode,label,feature_schema_version,requested_symbols,liquid_symbols,
+            scanned_symbols,candidate_rows,failed_symbols_json,warnings_json,
+            started_at,finished_at,captured_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            f"run-{snapshot_id}",
+            "penny",
+            "Penny stocks",
+            "stonks.ranker_features.v1",
+            1,
+            1,
+            1,
+            1,
+            "[]",
+            "[]",
+            base_at.isoformat(),
+            base_at.isoformat(),
+            base_at.isoformat(),
+        ),
+    )
+    database.execute(
+        """
+        INSERT INTO scan_snapshots(
+            id,scan_run_id,ticker,score,stage,session,price,change_pct,momentum_5m_pct,
+            momentum_15m_pct,breakout_pct,dollar_volume,quote_time,signals_json,
+            risks_json,captured_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            snapshot_id,
+            f"run-{snapshot_id}",
+            ticker,
+            60.0,
+            "candidate",
+            "regular",
+            2.0,
+            1.0,
+            0.5,
+            0.5,
+            0.0,
+            1_000_000.0,
+            base_at.isoformat(),
+            "[]",
+            "[]",
+            base_at.isoformat(),
+        ),
+    )
+
+
+def test_a_row_without_prices_backs_off_instead_of_holding_the_queue(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """The collector used to re-pick the oldest unresolved row every cycle and
+    skip it, so newer observations waited behind a row that could never resolve."""
+    current = datetime(2026, 8, 24, 20, tzinfo=UTC)
+    base_at = current - timedelta(days=2)
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "starvation.db")
+    init_db()
+    with connection() as database:
+        # An older observation with no bars at all, and a newer one that can resolve.
+        _seed_scan_snapshot(database, "stuck", "NOPRICE", base_at - timedelta(hours=1))
+        _seed_scan_snapshot(database, "fresh", "FRESH", base_at)
+        database.execute(
+            """
+            INSERT INTO market_bars(
+                source,ticker,interval,bar_time,close,first_collected_at,last_collected_at
+            ) VALUES(?,?,?,?,?,?,?)
+            """,
+            (
+                "yahoo",
+                "FRESH",
+                "5m",
+                (base_at + timedelta(hours=1, minutes=5)).isoformat(),
+                2.4,
+                current.isoformat(),
+                current.isoformat(),
+            ),
+        )
+
+    first = outcomes.refresh_scan_outcomes(current)
+    with connection() as database:
+        stuck = dict(
+            database.execute("SELECT * FROM scan_outcomes WHERE ticker='NOPRICE'").fetchone()
+        )
+        fresh = dict(
+            database.execute("SELECT * FROM scan_outcomes WHERE ticker='FRESH'").fetchone()
+        )
+
+    assert first["deferred"] == 1
+    assert stuck["attempts"] == 1
+    assert stuck["next_attempt_at"] is not None
+    assert fresh["return_1h_pct"] == 20.0
+
+    # Next cycle: the stuck row is backed off, so it is not selected again.
+    second = outcomes.refresh_scan_outcomes(current + timedelta(minutes=1))
+    assert second["rows"] == 1  # only the row that is due
+    with connection() as database:
+        still = dict(
+            database.execute("SELECT * FROM scan_outcomes WHERE ticker='NOPRICE'").fetchone()
+        )
+    assert still["attempts"] == 1  # untouched while it waits
+
+
+def test_outcome_coverage_reports_what_can_be_accounted_for(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    current = datetime(2026, 8, 24, 20, tzinfo=UTC)
+    base_at = current - timedelta(days=2)
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "coverage.db")
+    init_db()
+    with connection() as database:
+        _seed_scan_snapshot(database, "one", "ONE", base_at)
+        _seed_scan_snapshot(database, "two", "TWO", base_at)
+        database.execute(
+            "INSERT INTO scan_outcomes(snapshot_id,ticker,base_price,base_at,updated_at) "
+            "VALUES('one','ONE',2.0,?,?)",
+            (base_at.isoformat(), current.isoformat()),
+        )
+        database.execute(
+            "INSERT INTO scan_outcomes(snapshot_id,ticker,base_price,base_at,updated_at) "
+            "VALUES('two','TWO',2.0,?,?)",
+            (base_at.isoformat(), current.isoformat()),
+        )
+        database.execute(
+            "UPDATE scan_outcomes SET barrier_label='up',barrier_resolution='resolved' "
+            "WHERE ticker='ONE'"
+        )
+        database.execute(
+            "UPDATE scan_outcomes SET attempts=6 WHERE ticker='TWO'"
+        )
+
+    coverage = outcomes.outcome_coverage(current)
+
+    assert coverage["total"] == 2
+    assert coverage["labeled"] == 1
+    assert coverage["labeled_pct"] == 50.0
+    assert coverage["retrying"] == 1
+    assert coverage["stuck"] == 1
+    assert coverage["ambiguous"] == 0

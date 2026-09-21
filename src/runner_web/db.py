@@ -3557,6 +3557,32 @@ def _migration_078_label_resolution(db: DatabaseConnection) -> None:
     _ensure_column(db, "ranker_predictions", "label_contract TEXT")
 
 
+def _migration_079_outcome_retries(db: DatabaseConnection) -> None:
+    """Retry bookkeeping, so one unpriceable row cannot hold the whole queue.
+
+    The collector used to re-select the oldest unresolved rows every cycle and
+    skip the ones whose prices were still missing, so those rows kept their place
+    at the head of the batch while newer observations waited behind them.
+    """
+
+    _ensure_column(db, "scan_outcomes", "attempts INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(db, "scan_outcomes", "next_attempt_at TEXT")
+    _ensure_column(db, "scan_outcomes", "last_attempt_at TEXT")
+
+
+def _migration_079_outcome_retries(db: DatabaseConnection) -> None:
+    """Retry bookkeeping, so one unpriceable row cannot hold the whole queue.
+
+    The collector used to re-select the oldest unresolved rows every cycle and
+    skip the ones whose prices were still missing, so those rows kept their place
+    at the head of the batch while newer observations waited behind them.
+    """
+
+    _ensure_column(db, "scan_outcomes", "attempts INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(db, "scan_outcomes", "next_attempt_at TEXT")
+    _ensure_column(db, "scan_outcomes", "last_attempt_at TEXT")
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3640,6 +3666,7 @@ MIGRATIONS = (
     Migration(76, "price_gap_market_open", _migration_076_price_gap_market_open),
     Migration(77, "gap_ranker_models", _migration_077_gap_ranker_models),
     Migration(78, "label_resolution", _migration_078_label_resolution),
+    Migration(79, "outcome_retries", _migration_079_outcome_retries),
 )
 
 
