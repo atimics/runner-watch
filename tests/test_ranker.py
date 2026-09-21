@@ -207,6 +207,67 @@ def test_shadow_ranker_trains_predicts_and_exports_crl(
     assert len(rows) == 1 + 8 * 4
 
 
+def test_ambiguous_outcomes_are_held_out_of_training(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """A bar that touched both barriers is a reading, not a fact, so it trains
+    nothing until the contract can resolve it."""
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "ambiguous-ranker.db")
+    init_db()
+    _seed_ranker_data(group_count=6, candidates=4)
+
+    before = len(_load_groups("60m", maximum_groups=6))
+    with connection() as database:
+        ambiguous = [
+            str(row["snapshot_id"])
+            for row in database.execute(
+                "SELECT snapshot_id FROM ranker_training_examples LIMIT 4"
+            ).fetchall()
+        ]
+        database.executemany(
+            "UPDATE ranker_training_examples SET barrier_resolution='ambiguous' "
+            "WHERE snapshot_id=?",
+            [(snapshot_id,) for snapshot_id in ambiguous],
+        )
+        # And the source outcome, so the compact path cannot quietly re-add them.
+        database.executemany(
+            "UPDATE scan_outcomes SET barrier_resolution='ambiguous' WHERE snapshot_id=?",
+            [(snapshot_id,) for snapshot_id in ambiguous],
+        )
+        database.execute(
+            "DELETE FROM ranker_training_examples WHERE snapshot_id IN "
+            "(SELECT snapshot_id FROM scan_outcomes WHERE barrier_resolution='ambiguous')"
+        )
+        database.commit()
+
+    after = len(_load_groups("60m", maximum_groups=6))
+
+    assert before == 6
+    # Only fully resolved groups train, through both paths.
+    assert after < before
+    with connection() as database:
+        rebuilt = database.execute(
+            "SELECT COUNT(*) FROM ranker_training_examples WHERE barrier_resolution='ambiguous'"
+        ).fetchone()[0]
+    assert rebuilt == 0
+
+
+def test_predictions_record_the_label_contract(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "contract.db")
+    init_db()
+    _seed_ranker_data(group_count=4, candidates=3)
+    train_shadow_ranker(min_groups=1, min_rows=1, epochs=5)
+
+    with connection() as database:
+        row = database.execute(
+            "SELECT label_contract FROM ranker_predictions LIMIT 1"
+        ).fetchone()
+
+    if row is not None:
+        assert row["label_contract"] is not None
+        assert "barriers.v1" in str(row["label_contract"])
+
+
 def test_ranker_compacts_and_bounds_legacy_training_rows(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:

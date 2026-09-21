@@ -10,15 +10,20 @@ from zoneinfo import ZoneInfo
 
 from runner_web.cases import update_case
 from runner_web.db import connection
+from runner_web.labels import (  # noqa: F401  (re-exported for callers)
+    AMBIGUOUS,
+    BAR_TOLERANCE,
+    BARRIER_HORIZON,
+    LOWER_BARRIER_PCT,
+    RESOLVED,
+    UPPER_BARRIER_PCT,
+)
+from runner_web.labels import POLICY_VERSION as BARRIER_POLICY_VERSION  # noqa: F401
 from runner_web.ranker import sync_training_outcome
 
 LOG = logging.getLogger(__name__)
 HORIZONS = {"1h": timedelta(hours=1), "1d": timedelta(days=1), "5d": timedelta(days=5)}
 EASTERN = ZoneInfo("America/New_York")
-UPPER_BARRIER_PCT = 8.0
-LOWER_BARRIER_PCT = 4.0
-BARRIER_HORIZON = timedelta(minutes=60)
-BAR_TOLERANCE = timedelta(minutes=10)
 OUTCOME_REFRESH_TICKER_LIMIT = max(50, int(os.getenv("OUTCOME_REFRESH_TICKER_LIMIT", "200")))
 CASE_OUTCOME_GRACE = timedelta(days=4)
 
@@ -274,10 +279,14 @@ def barrier_outcome(bars: list[Bar], base_at: datetime, base_price: float) -> di
         touched_up = high >= upper
         touched_down = low <= lower
         if touched_up and touched_down:
+            # One bar cannot say which barrier came first. The pessimistic view
+            # still labels it down, but it is marked ambiguous so training can
+            # hold it out instead of learning a coin flip as a fact.
             result.update(
                 barrier_label="down",
                 barrier_hit_at=iso(stamp),
                 barrier_ambiguous=1,
+                barrier_resolution=AMBIGUOUS,
             )
             return result
         if touched_down:
@@ -285,6 +294,7 @@ def barrier_outcome(bars: list[Bar], base_at: datetime, base_price: float) -> di
                 barrier_label="down",
                 barrier_hit_at=iso(stamp),
                 barrier_ambiguous=0,
+                barrier_resolution=RESOLVED,
             )
             return result
         if touched_up:
@@ -292,11 +302,17 @@ def barrier_outcome(bars: list[Bar], base_at: datetime, base_price: float) -> di
                 barrier_label="up",
                 barrier_hit_at=iso(stamp),
                 barrier_ambiguous=0,
+                barrier_resolution=RESOLVED,
             )
             return result
 
     if target - previous <= BAR_TOLERANCE:
-        result.update(barrier_label="timeout", barrier_hit_at=None, barrier_ambiguous=0)
+        result.update(
+            barrier_label="timeout",
+            barrier_hit_at=None,
+            barrier_ambiguous=0,
+            barrier_resolution=RESOLVED,
+        )
         return result
     return None
 
@@ -604,6 +620,7 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
                     str(changes["barrier_label"]),
                     changes.get("return_60m_pct"),
                     timestamp,
+                    barrier_resolution=str(changes.get("barrier_resolution") or RESOLVED),
                 )
         labeled = int(
             db.execute(
