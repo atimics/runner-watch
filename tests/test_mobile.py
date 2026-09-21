@@ -3504,3 +3504,43 @@ def test_owner_can_publish_report_once_and_earn_flash(
     assert "#1 of 4" in html
     assert f"/research/{report['public_id']}/card.png" in html
     assert "sk-or-share-test-key" not in html
+
+
+def test_the_detail_page_names_the_barrier_forecast(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """Three labelled chances with their contract, not one blended number."""
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "chances.db")
+    init_db()
+    captured_at = datetime.now(UTC)
+    monkeypatch.setattr(web_main, "now", lambda: captured_at)
+    insert_scan_run("chance-run", captured_at.isoformat(), 1)
+    insert_scored_snapshot("chance-snapshot", "chance-run", "ONE", 60, 1, captured_at.isoformat())
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO ranker_models(
+                id,feature_schema_version,horizon,model_kind,weights_json,metrics_json,
+                training_start,training_end,training_groups,training_rows,status,created_at
+            ) VALUES('chance-model','stonks.ranker_features.v4','60m','test','{}','{}',?,?,1,1,
+                     'active',?)
+            """,
+            (captured_at.isoformat(), captured_at.isoformat(), captured_at.isoformat()),
+        )
+        database.execute(
+            """
+            INSERT INTO ranker_predictions(
+                snapshot_id,model_id,score,rank,created_at,probability_up,probability_down,
+                probability_timeout,expected_return_pct
+            ) VALUES('chance-snapshot','chance-model',34,1,?,0.34,0.41,0.25,1.2)
+            """,
+            (captured_at.isoformat(),),
+        )
+
+    detail = web_main.ticker_detail_data("ONE")
+    current = detail["current"]
+
+    assert current["runner_probability"] == pytest.approx(0.34)
+    assert current["runner_probability_down"] == pytest.approx(0.41)
+    assert current["runner_probability_timeout"] == pytest.approx(0.25)
+    assert current["probability_contract"] == "+8% before -4% within 60 minutes"

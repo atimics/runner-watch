@@ -25,7 +25,13 @@ from runner_web.database import DatabaseConnection
 from runner_web.db import connection
 from runner_web.gam_ranker import PROMOTION_MARGIN, _incumbent_metrics, _targets, metrics
 from runner_web.labels import barrier_contract
-from runner_web.ranker import CLASS_NAMES, FEATURE_NAMES, FEATURE_SCHEMA_VERSION, _load_groups
+from runner_web.ranker import (
+    CLASS_NAMES,
+    FEATURE_NAMES,
+    FEATURE_SCHEMA_VERSION,
+    _load_groups,
+    register_served_model,
+)
 
 MODEL_KIND = "integer_trees_barrier_v1"
 ARTIFACT_SCHEMA = "stonks.integer_trees.v1"
@@ -243,11 +249,31 @@ def _store(
         database.execute(statement, payload)
         if promoted:
             database.execute(retire, (model_id,))
+            register_served_model(
+                model_id,
+                MODEL_KIND,
+                artifact,
+                {"challenger": challenger, "incumbent": incumbent, "model_kind": MODEL_KIND},
+                training_groups=int(challenger.get("rows") or 0),
+                training_rows=int(challenger.get("rows") or 0),
+                created_at=moment,
+                connection=database,
+            )
         return
     with connection() as db:
         db.execute(statement, payload)
         if promoted:
             db.execute(retire, (model_id,))
+            register_served_model(
+                model_id,
+                MODEL_KIND,
+                artifact,
+                {"challenger": challenger, "incumbent": incumbent, "model_kind": MODEL_KIND},
+                training_groups=int(challenger.get("rows") or 0),
+                training_rows=int(challenger.get("rows") or 0),
+                created_at=moment,
+                connection=db,
+            )
 
 
 _ACTIVE_CACHE: tuple[float, dict[str, Any] | None] | None = None

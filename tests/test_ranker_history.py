@@ -243,7 +243,7 @@ def test_trainer_state_retries_a_temporary_database_outage(
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "trainer-state.db")
     init_db()
-    real_connection = ranker.connection
+    real_connection = ranker.connection_scope
     attempts = 0
 
     @contextmanager
@@ -255,7 +255,7 @@ def test_trainer_state_retries_a_temporary_database_outage(
         with real_connection() as database:
             yield database
 
-    monkeypatch.setattr(ranker, "connection", flaky_connection)
+    monkeypatch.setattr(ranker, "connection_scope", flaky_connection)
     monkeypatch.setattr(database_module, "sleep", lambda _delay: None)
 
     ranker._trainer_state("ranker_test_state", {"status": "ok"})

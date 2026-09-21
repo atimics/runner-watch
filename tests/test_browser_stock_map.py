@@ -1087,9 +1087,9 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
         html,
     )
     html = re.sub(
-        r'<script src="/static/(map-orbit|entity-map)\.js[^\"]*"[^>]*></script>',
+        r'<script src="/static/([^\"?]+)[^"]*"[^>]*></script>',
         lambda match: (
-            "<script>" + (ROOT / "web/static" / f"{match.group(1)}.js").read_text() + "</script>"
+            "<script>" + (ROOT / "web/static" / match.group(1)).read_text() + "</script>"
         ),
         html,
     )
@@ -1114,6 +1114,8 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
             }
         ),
     )
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
     page.set_viewport_size({"width": width, "height": 1000})
     page.goto("http://app.test/wallets/stocks/USO/sec:101")
     expect(page.get_by_role("heading", name="HRT FINANCIAL LP")).to_be_visible()
@@ -1133,6 +1135,8 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     )
     expect(page.locator(".entity-center")).to_have_attribute("aria-label", "HRT FINANCIAL LP")
     expect(page.locator("[data-entity-stock]")).to_have_count(2)
+    # A silent script failure is how an empty map hides; say so instead.
+    assert errors == [], errors
     # The wallet map shares the stock map's ring: on desktop nodes travel along
     # the same ellipse by translation, so labels stay upright and it never swings
     # off the canvas. Mobile stacks columns and stays still.

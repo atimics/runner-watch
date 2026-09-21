@@ -9336,8 +9336,22 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
                 "score_trace",
                 "score_as_of",
                 "score_snapshot_id",
+                # The named probabilities, so a reader sees a contract and not a
+                # single blended number.
+                "runner_probability",
+                "runner_probability_down",
+                "runner_probability_timeout",
+                "expected_return_pct",
+                "directional_thesis",
             ):
                 current[field] = scoring[field]
+            from runner_web.labels import barrier_contract
+
+            contract = barrier_contract()
+            current["probability_contract"] = (
+                f"+{contract['upper_pct']:g}% before -{contract['lower_pct']:g}%"
+                f" within {contract['horizon_minutes']} minutes"
+            )
     return {
         "ticker": ticker,
         "company": company["name"] if company else current.get("company", ticker),

@@ -99,6 +99,15 @@
     <a class="back" href="{{ base }}">← {{ screen.label }}</a>
     <article class="detail" data-live-surface><div class="asset-overview"><header class="asset-heading"><span class="ticker-mark tone-0" aria-hidden="true">{{ screen.item.mark }}</span><div>{% if screen.market == 'stocks' %}<h1>{{ screen.item.name }}</h1>{% if screen.item.subtitle %}<p class="asset-name">{{ screen.item.subtitle }}</p>{% endif %}{% else %}{% if screen.market != "memecoins" or screen.item.subtitle != screen.item.name %}<p class="eyebrow">{{ screen.item.subtitle if screen.market != "memecoins" else screen.item.full_name if screen.item.full_name != screen.item.name and screen.item.full_name != screen.item.contract_address else "" }}</p>{% endif %}<h1>{{ screen.item.name }}</h1>{% endif %}</div></header>
       <div class="asset-quote"><div class="asset-value"><strong data-value>{{ screen.item.value }}</strong><span data-change class="{{ screen.item.tone }}">{{ screen.item.change }}</span></div><p class="quote-scope"><span class="quote-time" data-time>{{ screen.item.time }}</span></p></div></div>
+      {% if screen.market != 'sports' and screen.item.runner_probability is defined and screen.item.runner_probability is not none %}
+      <p class="chance-line" data-chance-line aria-label="Barrier forecast">
+        <span>Barrier forecast</span>
+        <b data-chance-up>{{ '%.0f'|format(screen.item.runner_probability * 100) }}% upper first</b>
+        <b data-chance-down>{{ '%.0f'|format((screen.item.runner_probability_down or 0) * 100) }}% lower first</b>
+        <b data-chance-timeout>{{ '%.0f'|format((screen.item.runner_probability_timeout or 0) * 100) }}% neither</b>
+        <small data-chance-contract>{{ screen.item.probability_contract }}</small>
+      </p>
+      {% endif %}
       {% if screen.market == 'sports' %}{% include "_market_assessment.html" %}{% endif %}
       <section class="visual" aria-label="{{ 'Game' if screen.teams else 'Price history' }}">
       {% if screen.teams %}<div class="teams">{% for team in screen.teams %}<div><span class="team-mark">{{ team.mark }}</span><h2>{{ team.name }}</h2><strong>{{ team.score }}</strong></div>{% endfor %}</div><p class="visual-caption" data-game-note>{{ screen.note }}</p>
