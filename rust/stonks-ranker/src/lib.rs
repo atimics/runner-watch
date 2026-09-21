@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 
 pub const ARTIFACT_SCHEMA: &str = "stonks.integer_ranker.v1";
 pub const GAM_ARTIFACT_SCHEMA: &str = "stonks.integer_gam.v1";
+pub const TREE_ARTIFACT_SCHEMA: &str = "stonks.integer_trees.v1";
 pub const FEATURE_SCALE: i64 = 1_000;
 pub const NORMALIZED_SCALE: i64 = 1_024;
 pub const WEIGHT_SCALE: i64 = 1_048_576;
@@ -54,6 +55,27 @@ pub struct GamArtifact {
     pub intercept: Vec<i64>,
 }
 
+/// One node of an exported tree: a split, or a leaf with per-class values.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TreeNode {
+    pub feature: i64,
+    pub threshold: i64,
+    pub left: i64,
+    pub right: i64,
+    pub leaf: Vec<i64>,
+}
+
+/// A boosted forest flattened to integers: walk each tree, sum its leaf.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TreeArtifact {
+    pub schema: String,
+    pub feature_names: Vec<String>,
+    pub classes: Vec<String>,
+    pub scale: i64,
+    pub intercept: Vec<i64>,
+    pub trees: Vec<Vec<TreeNode>>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct TrainingRow {
     pub ticker: String,
@@ -97,6 +119,10 @@ pub enum Request {
         artifact: GamArtifact,
         rows: Vec<PredictionRow>,
     },
+    PredictTrees {
+        artifact: TreeArtifact,
+        rows: Vec<PredictionRow>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -131,6 +157,10 @@ pub fn execute(request: Request) -> Result<Value, String> {
         }
         Request::PredictGam { artifact, rows } => {
             let predictions = predict_gam(&artifact, rows)?;
+            Ok(json!({"ok": true, "predictions": predictions}))
+        }
+        Request::PredictTrees { artifact, rows } => {
+            let predictions = predict_trees(&artifact, rows)?;
             Ok(json!({"ok": true, "predictions": predictions}))
         }
     }
@@ -827,6 +857,93 @@ pub fn predict_gam(
     Ok(predictions)
 }
 
+/// Integer class scores from the forest: walk each tree, add the leaf it reaches.
+pub fn tree_scores(artifact: &TreeArtifact, features: &[i64]) -> Result<Vec<i64>, String> {
+    if artifact.schema != TREE_ARTIFACT_SCHEMA {
+        return Err(format!("unsupported artifact schema: {}", artifact.schema));
+    }
+    if features.len() != artifact.feature_names.len() {
+        return Err("row has the wrong feature count".into());
+    }
+    if artifact.scale <= 0 {
+        return Err("tree artifact scale must be positive".into());
+    }
+    let mut totals = artifact.intercept.clone();
+    if totals.is_empty() {
+        return Err("tree artifact has no classes".into());
+    }
+    for (tree_index, tree) in artifact.trees.iter().enumerate() {
+        if tree.is_empty() {
+            return Err(format!("tree {tree_index} is empty"));
+        }
+        let mut index = 0usize;
+        // A well-formed tree is acyclic and finite; the cap makes a malformed one
+        // an error instead of a hang.
+        for _ in 0..=tree.len() {
+            let node = &tree[index];
+            if node.feature < 0 {
+                if node.leaf.len() != totals.len() {
+                    return Err(format!("tree {tree_index} leaf has the wrong class count"));
+                }
+                for (class_index, value) in node.leaf.iter().enumerate() {
+                    totals[class_index] += value;
+                }
+                break;
+            }
+            let feature = node.feature as usize;
+            if feature >= features.len() {
+                return Err(format!("tree {tree_index} splits on a missing feature"));
+            }
+            let next = if features[feature] <= node.threshold {
+                node.left
+            } else {
+                node.right
+            };
+            if next < 0 || next as usize >= tree.len() {
+                return Err(format!("tree {tree_index} points outside itself"));
+            }
+            index = next as usize;
+        }
+    }
+    Ok(totals)
+}
+
+pub fn predict_trees(
+    artifact: &TreeArtifact,
+    rows: Vec<PredictionRow>,
+) -> Result<Vec<Prediction>, String> {
+    let mut predictions: Vec<Prediction> = rows
+        .into_iter()
+        .map(|row| {
+            let scores = tree_scores(artifact, &row.features)?;
+            if scores.len() != 3 {
+                return Err("tree artifact must model three classes".into());
+            }
+            let probability = gam_probabilities(&scores, artifact.scale);
+            Ok(Prediction {
+                id: row.id,
+                ticker: row.ticker,
+                rank: 0,
+                probability_down_ppm: probability[0],
+                probability_timeout_ppm: probability[1],
+                probability_up_ppm: probability[2],
+                expected_return_bp: expected_return_bp(probability, 0),
+            })
+        })
+        .collect::<Result<_, String>>()?;
+    let mut order: Vec<usize> = (0..predictions.len()).collect();
+    order.sort_by(|left, right| {
+        predictions[*right]
+            .probability_up_ppm
+            .cmp(&predictions[*left].probability_up_ppm)
+            .then_with(|| predictions[*left].ticker.cmp(&predictions[*right].ticker))
+    });
+    for (rank, index) in order.into_iter().enumerate() {
+        predictions[index].rank = rank + 1;
+    }
+    Ok(predictions)
+}
+
 fn validate_artifact(artifact: &IntegerArtifact) -> Result<(), String> {
     let count = artifact.feature_names.len();
     if artifact.schema != ARTIFACT_SCHEMA {
@@ -884,6 +1001,100 @@ fn integer_sqrt(value: u128) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tree_artifact() -> TreeArtifact {
+        // One split on feature 0 at 0: the left leaf leans down, the right up.
+        TreeArtifact {
+            schema: TREE_ARTIFACT_SCHEMA.into(),
+            feature_names: vec!["x".into()],
+            classes: vec!["down".into(), "timeout".into(), "up".into()],
+            scale: PROBABILITY_SCALE,
+            intercept: vec![0, 0, 0],
+            trees: vec![vec![
+                TreeNode {
+                    feature: 0,
+                    threshold: 0,
+                    left: 1,
+                    right: 2,
+                    leaf: vec![],
+                },
+                TreeNode {
+                    feature: -1,
+                    threshold: 0,
+                    left: -1,
+                    right: -1,
+                    leaf: vec![PROBABILITY_SCALE, 0, -PROBABILITY_SCALE],
+                },
+                TreeNode {
+                    feature: -1,
+                    threshold: 0,
+                    left: -1,
+                    right: -1,
+                    leaf: vec![-PROBABILITY_SCALE, 0, PROBABILITY_SCALE],
+                },
+            ]],
+        }
+    }
+
+    #[test]
+    fn tree_walk_sums_the_leaf_it_reaches() {
+        let artifact = tree_artifact();
+        assert_eq!(
+            tree_scores(&artifact, &[-5]).unwrap(),
+            vec![PROBABILITY_SCALE, 0, -PROBABILITY_SCALE]
+        );
+        assert_eq!(
+            tree_scores(&artifact, &[5]).unwrap(),
+            vec![-PROBABILITY_SCALE, 0, PROBABILITY_SCALE]
+        );
+        // The boundary goes left, matching the trainer's <= comparison.
+        assert_eq!(
+            tree_scores(&artifact, &[0]).unwrap(),
+            vec![PROBABILITY_SCALE, 0, -PROBABILITY_SCALE]
+        );
+    }
+
+    #[test]
+    fn tree_predictions_are_integer_and_ranked() {
+        let artifact = tree_artifact();
+        let predictions = predict_trees(
+            &artifact,
+            vec![
+                PredictionRow { id: "low".into(), ticker: "LOW".into(), features: vec![-5] },
+                PredictionRow { id: "high".into(), ticker: "HIGH".into(), features: vec![5] },
+            ],
+        )
+        .unwrap();
+        // Predictions keep their input order; the rank carries the ordering.
+        let high = predictions.iter().find(|row| row.ticker == "HIGH").unwrap();
+        let low = predictions.iter().find(|row| row.ticker == "LOW").unwrap();
+        assert_eq!(high.rank, 1);
+        assert_eq!(low.rank, 2);
+        assert!(high.probability_up_ppm > low.probability_up_ppm);
+        for prediction in &predictions {
+            assert_eq!(
+                prediction.probability_down_ppm
+                    + prediction.probability_timeout_ppm
+                    + prediction.probability_up_ppm,
+                PROBABILITY_SCALE
+            );
+        }
+    }
+
+    #[test]
+    fn a_malformed_tree_is_an_error_not_a_hang() {
+        let mut artifact = tree_artifact();
+        // A right turn that points outside the tree must be an error.
+        artifact.trees[0][0].right = 99;
+        assert!(tree_scores(&artifact, &[1]).is_err());
+        let mut missing_feature = tree_artifact();
+        missing_feature.trees[0][0].feature = 7;
+        assert!(tree_scores(&missing_feature, &[1]).is_err());
+        let mut wrong_schema = tree_artifact();
+        wrong_schema.schema = GAM_ARTIFACT_SCHEMA.into();
+        assert!(tree_scores(&wrong_schema, &[1]).is_err());
+    }
+
 
     fn gam_artifact() -> GamArtifact {
         // One feature with two bins: the low bin pushes down, the high bin up.

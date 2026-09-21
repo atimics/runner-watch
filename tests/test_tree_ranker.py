@@ -1,0 +1,215 @@
+"""The exported forest has to survive the trip into the runtime intact.
+
+LightGBM trains it, the flattening turns it into integer nodes, and the Rust binary
+walks those nodes. These tests pin the walk, the promotion rule, and the parity
+between the trainer's own scorer and the deployed runtime.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from runner_web import db, tree_ranker
+from runner_web.db import init_db
+
+FEATURE_SCALE = 1024
+ROWS = 2000
+
+requires_lightgbm = pytest.mark.skipif(
+    not tree_ranker.available(), reason="lightgbm is a development dependency"
+)
+
+
+@pytest.fixture
+def database(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "trees.db")
+    monkeypatch.setattr(db, "DATABASE_URL", "")
+    monkeypatch.setattr(db, "REQUIRE_DATABASE_URL", False)
+    monkeypatch.setattr(tree_ranker, "_ACTIVE_CACHE", None)
+    init_db()
+    with db.connection() as handle:
+        yield handle
+
+
+def _dataset(*, seed: int = 7):
+    rng = np.random.default_rng(seed)
+    features = (rng.normal(0, 1, (ROWS, 4)) * FEATURE_SCALE).round()
+    signal = np.sign(features[:, 0] * features[:, 1])
+    targets = np.where(signal > 0, 2, 0)
+    targets = np.where(rng.random(ROWS) < 0.25, 1, targets)
+    return features, targets
+
+
+@requires_lightgbm
+def test_the_exported_forest_keeps_the_boosters_skill():
+    features, targets = _dataset()
+    boundary = int(ROWS * 0.8)
+
+    artifact = tree_ranker.integer_artifact(
+        tree_ranker.train_booster(features[:boundary], targets[:boundary])
+    )
+    scored = np.asarray([tree_ranker.predict(artifact, list(row)) for row in features[boundary:]])
+    report = tree_ranker.metrics(scored, targets[boundary:])
+
+    assert tree_ranker.tree_count(artifact) > 0
+    assert report["log_loss"] < report["base_log_loss"]
+    assert report["accuracy"] > report["base_accuracy"]
+
+
+@requires_lightgbm
+def test_the_export_is_integer_and_carries_the_contract():
+    features, targets = _dataset()
+    artifact = tree_ranker.integer_artifact(
+        tree_ranker.train_booster(features[:1600], targets[:1600])
+    )
+
+    assert artifact["schema"] == tree_ranker.ARTIFACT_SCHEMA
+    assert artifact["scale"] == tree_ranker.SCALE
+    assert artifact["label_contract"]["policy"].startswith("barriers.v1")
+    for tree in artifact["trees"]:
+        for node in tree:
+            assert isinstance(node["feature"], int)
+            assert isinstance(node["threshold"], int)
+            assert all(isinstance(value, int) for value in node["leaf"])
+
+
+@requires_lightgbm
+def test_the_runtime_walks_the_exported_forest_the_same_way():
+    """Parity with the deployed binary, to within the ppm rounding of its softmax."""
+
+    binary = Path(__file__).parents[1] / "rust/stonks-ranker/target/debug/stonks-integer-ranker"
+    if not binary.exists():
+        pytest.skip("integer ranker binary is not built")
+
+    features, targets = _dataset()
+    artifact = tree_ranker.integer_artifact(
+        tree_ranker.train_booster(features[:1600], targets[:1600])
+    )
+    vectors = [[int(value) for value in row] for row in features[1700:1705]]
+
+    response = subprocess.run(
+        [str(binary)],
+        input=json.dumps(
+            {
+                "command": "predict_trees",
+                "artifact": artifact,
+                "rows": [
+                    {"id": f"row-{index}", "ticker": f"R{index}", "features": vector}
+                    for index, vector in enumerate(vectors)
+                ],
+            }
+        ),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    predictions = json.loads(response.stdout)["predictions"]
+    # The runtime's softmax is fixed-point (truncated series, whole-ppm output),
+    # so a few parts per million of rounding is the contract, not drift.
+    tolerance = 5e-6
+    for prediction, vector in zip(predictions, vectors, strict=True):
+        expected = tree_ranker.predict(artifact, vector)
+        assert prediction["probability_down_ppm"] / 1e6 == pytest.approx(
+            expected[0], abs=tolerance
+        )
+        assert prediction["probability_timeout_ppm"] / 1e6 == pytest.approx(
+            expected[1], abs=tolerance
+        )
+        assert prediction["probability_up_ppm"] / 1e6 == pytest.approx(
+            expected[2], abs=tolerance
+        )
+
+
+def _learnable_groups(groups: int = 40, per_group: int = 6) -> list[list[dict[str, object]]]:
+    """Groups whose outcome a model can actually learn, for the promotion rule."""
+
+    rng = np.random.default_rng(3)
+    rows: list[list[dict[str, object]]] = []
+    for group_index in range(groups):
+        group = []
+        for index in range(per_group):
+            first = float(rng.normal(0, 1) * FEATURE_SCALE)
+            second = float(rng.normal(0, 1) * FEATURE_SCALE)
+            outcome = "up" if np.sign(first * second) > 0 else "down"
+            group.append(
+                {
+                    "snapshot_id": f"{group_index}-{index}",
+                    "scan_run_id": f"run-{group_index}",
+                    "ticker": f"T{index}",
+                    "run_captured_at": f"2026-09-{group_index + 1:02}T15:00:00+00:00",
+                    "expected_candidates": per_group,
+                    "feature_vector": (int(first), int(second), 0, 0),
+                    "score": 50.0,
+                    "outcome": outcome,
+                    "outcome_return": 1.0,
+                    "training_origin": "live",
+                }
+            )
+        rows.append(group)
+    return rows
+
+
+@requires_lightgbm
+def test_a_tree_that_beats_the_margin_is_promoted_and_served(database, monkeypatch):
+    monkeypatch.setattr(tree_ranker, "_load_groups", lambda *_a, **_k: _learnable_groups())
+    monkeypatch.setattr(
+        tree_ranker,
+        "_incumbent_metrics",
+        lambda _groups: {"available": True, "log_loss": 5.0, "model_id": "incumbent"},
+    )
+
+    result = tree_ranker.train_and_store(database, maximum_groups=10)
+
+    assert result["status"] == "trained"
+    assert result["promoted"] is True
+    assert result["trees"] > 0
+    database.commit()
+    model = tree_ranker.active_model(refresh=True)
+    assert model is not None
+    assert model["artifact"]["schema"] == tree_ranker.ARTIFACT_SCHEMA
+    assert model["metrics"]["incumbent"]["model_id"] == "incumbent"
+
+
+@requires_lightgbm
+def test_a_tree_that_does_not_beat_the_margin_stays_in_shadow(database, monkeypatch):
+    monkeypatch.setattr(tree_ranker, "_load_groups", lambda *_a, **_k: _learnable_groups())
+    monkeypatch.setattr(
+        tree_ranker,
+        "_incumbent_metrics",
+        lambda _groups: {"available": True, "log_loss": 0.0, "model_id": "incumbent"},
+    )
+
+    result = tree_ranker.train_and_store(database, maximum_groups=10)
+
+    assert result["promoted"] is False
+    assert tree_ranker.active_model(refresh=True) is None
+    with database as conn:
+        status = conn.execute("SELECT status FROM tree_ranker_models").fetchone()["status"]
+    assert status == "shadow"
+
+
+def test_a_missing_library_is_reported_not_guessed(monkeypatch):
+    monkeypatch.setattr(tree_ranker, "available", lambda: False)
+
+    assert tree_ranker.train_and_store() == {
+        "status": "unavailable",
+        "reason": "lightgbm is not installed",
+    }
+
+
+def test_the_walk_handles_a_short_feature_vector():
+    artifact = {
+        "schema": tree_ranker.ARTIFACT_SCHEMA,
+        "classes": ["down", "timeout", "up"],
+        "scale": tree_ranker.SCALE,
+        "intercept": [0, 0, 0],
+        "trees": [[{"feature": 3, "threshold": 0, "left": 1, "right": 1, "leaf": [0, 0, 0]}]],
+    }
+
+    # A row missing the feature it splits on contributes nothing rather than raising.
+    assert tree_ranker.score_integers(artifact, [0]) == [0.0, 0.0, 0.0]

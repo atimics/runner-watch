@@ -59,6 +59,7 @@ stonks-edge = "runner_web.edge_connector:main"
 stonks-gap-ranker = "runner_web.gap_ranker:main"
 stonks-gam-ranker = "runner_web.gam_ranker:main"
 stonks-tree-challenger = "runner_web.tree_challenger:main"
+stonks-tree-ranker = "runner_web.tree_ranker:main"
 
 [build-system]
 requires = ["setuptools>=69"]
