@@ -107,9 +107,7 @@ def test_a_challenger_without_an_incumbent_stays_in_shadow(database, monkeypatch
     assert result["promoted"] is False
     assert result["incumbent"]["available"] is False
     with database as conn:
-        row = dict(
-            conn.execute("SELECT status,training_rows FROM gam_ranker_models").fetchone()
-        )
+        row = dict(conn.execute("SELECT status,training_rows FROM gam_ranker_models").fetchone())
     assert row["status"] == "shadow"
     assert row["training_rows"] > 0
     assert gam_ranker.active_model(refresh=True) is None
@@ -134,7 +132,7 @@ def test_a_challenger_that_does_not_beat_the_margin_is_not_promoted(database, mo
     assert status == "shadow"
 
 
-def test_a_challenger_that_beats_the_margin_is_promoted_and_served(database, monkeypatch):
+def test_retrospective_improvement_is_recorded_without_automatic_promotion(database, monkeypatch):
     _seed_ranker_data(group_count=10, candidates=4)
     monkeypatch.setattr(
         gam_ranker,
@@ -144,13 +142,19 @@ def test_a_challenger_that_beats_the_margin_is_promoted_and_served(database, mon
 
     result = gam_ranker.train_and_store(database, maximum_groups=10)
 
-    assert result["promoted"] is True
-    database.commit()  # the served model is read on its own connection
-    model = gam_ranker.active_model(refresh=True)
-    assert model is not None
-    assert model["artifact"]["schema"] == gam_ranker.ARTIFACT_SCHEMA
-    assert model["artifact"]["label_contract"]["policy"].startswith("barriers.v1")
-    assert model["metrics"]["incumbent"]["model_id"] == "incumbent"
+    assert result["promoted"] is False
+    assert result["candidate_improved"] is True
+    database.commit()
+    assert gam_ranker.active_model(refresh=True) is None
+    row = database.execute(
+        "SELECT status,artifact_json,metrics_json FROM gam_ranker_models"
+    ).fetchone()
+    import json
+
+    assert row["status"] == "shadow"
+    assert json.loads(row["artifact_json"])["schema"] == gam_ranker.ARTIFACT_SCHEMA
+    assert json.loads(row["metrics_json"])["incumbent"]["model_id"] == "incumbent"
+
 
 def test_the_rust_runtime_serves_the_same_integer_tables(tmp_path, monkeypatch):
     """The export is only real if the deployed runtime agrees with it.
@@ -190,9 +194,7 @@ def test_the_rust_runtime_serves_the_same_integer_tables(tmp_path, monkeypatch):
     # Two parts per million: the runtime rounds its softmax to whole ppm.
     tolerance = 2e-6
     assert prediction["probability_down_ppm"] / 1e6 == pytest.approx(python[0], abs=tolerance)
-    assert prediction["probability_timeout_ppm"] / 1e6 == pytest.approx(
-        python[1], abs=tolerance
-    )
+    assert prediction["probability_timeout_ppm"] / 1e6 == pytest.approx(python[1], abs=tolerance)
     assert prediction["probability_up_ppm"] / 1e6 == pytest.approx(python[2], abs=tolerance)
     assert (
         prediction["probability_down_ppm"]

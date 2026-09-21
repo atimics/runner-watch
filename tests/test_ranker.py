@@ -52,7 +52,7 @@ def _seed_ranker_data(group_count: int = 8, candidates: int = 4) -> None:
     start = datetime(2026, 8, 1, 14, tzinfo=UTC)
     with connection() as database:
         for group_index in range(group_count):
-            captured = start + timedelta(hours=group_index)
+            captured = start + timedelta(hours=group_index * 2)
             run_id = f"run-{group_index}"
             database.execute(
                 """
@@ -259,9 +259,7 @@ def test_predictions_record_the_label_contract(tmp_path: Path, monkeypatch: Monk
     train_shadow_ranker(min_groups=1, min_rows=1, epochs=5)
 
     with connection() as database:
-        row = database.execute(
-            "SELECT label_contract FROM ranker_predictions LIMIT 1"
-        ).fetchone()
+        row = database.execute("SELECT label_contract FROM ranker_predictions LIMIT 1").fetchone()
 
     if row is not None:
         assert row["label_contract"] is not None

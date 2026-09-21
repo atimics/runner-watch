@@ -859,9 +859,7 @@ def _public_screen_data(
 ) -> dict[str, Any]:
     local_key, shared_key = _public_screen_cache_keys(scope, identity)
     if allow_refresh is None:
-        allow_refresh = not (
-            PROCESS_ROLE == "web" and (scope, identity) in WORKER_OWNED_SCREENS
-        )
+        allow_refresh = not (PROCESS_ROLE == "web" and (scope, identity) in WORKER_OWNED_SCREENS)
     return _cached_payload(
         local_key,
         shared_key,
@@ -2146,9 +2144,7 @@ DASH_DESK_NOTES_ENABLED = os.getenv("TELEGRAM_DESK_NOTES", "0").strip().lower() 
     "on",
 }
 DASH_DESK_NOTE_SECONDS = max(900, int(os.getenv("DASH_DESK_NOTE_SECONDS", "3600")))
-DASH_DESK_NOTE_MIN_GAP_SECONDS = max(
-    600, int(os.getenv("DASH_DESK_NOTE_MIN_GAP_SECONDS", "3000"))
-)
+DASH_DESK_NOTE_MIN_GAP_SECONDS = max(600, int(os.getenv("DASH_DESK_NOTE_MIN_GAP_SECONDS", "3000")))
 
 
 def _generate_desk_note(world: dict[str, Any]) -> str:
@@ -3854,9 +3850,7 @@ def _calls_flash_picks() -> dict[str, Any]:
     )
 
 
-def _calls_head_to_head(
-    mine: dict[str, Any], record: dict[str, Any]
-) -> dict[str, Any]:
+def _calls_head_to_head(mine: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
     your_wins = int(mine.get("wins") or 0)
     your_losses = int(mine.get("losses") or 0)
     your_decisions = your_wins + your_losses
@@ -4524,10 +4518,15 @@ def _evidence_gate(
         blockers.append("Critical risk")
     if trade_state in {"AVOID", "EXIT"}:
         blockers.append(f"State: {trade_state.title()}")
+    eligibility_state = (current.get("eligibility") or {}).get("state")
+    if eligibility_state == "blocked" and not blockers:
+        blockers.append("Blocked by current eligibility")
     threshold = EVIDENCE_GATE.threshold
     evidence_count = len(confirmed_families)
     if blockers:
         state = "blocked"
+    elif eligibility_state == "unknown":
+        state = "gathering"
     elif (
         market_confirmed
         and evidence_count >= threshold
@@ -4671,7 +4670,7 @@ def _ranker_directional_thesis(prediction: dict[str, Any] | None) -> dict[str, A
     labels = {
         "up": "Upside setup",
         "down": "Downside pressure",
-        "timeout": "No edge",
+        "timeout": "No directional call",
     }
     arrows = {"up": "↑", "down": "↓", "timeout": "↔"}
     model_status = str(prediction.get("model_status") or "shadow").lower()
@@ -4752,13 +4751,26 @@ def _external_event_context(
     checked_at = at or now()
     news: list[dict[str, Any]] = []
     social_by_source: dict[str, dict[str, Any]] = {}
+    news_keys: set[str] = set()
     active_halt: dict[str, Any] | None = None
     for row in rows:
         event = {**row, "payload": _event_payload(row)}
         timestamp = _event_timestamp(event)
+        if timestamp is None or timestamp > checked_at:
+            continue
         if event.get("event_type") == "news_article":
             if timestamp and timestamp >= checked_at - timedelta(hours=24):
-                news.append(event)
+                key = str(
+                    event.get("source_url")
+                    or event["payload"].get("url")
+                    or (
+                        f"{event.get('source')}:{event.get('event_at')}:"
+                        f"{event['payload'].get('title')}"
+                    )
+                )
+                if key not in news_keys:
+                    news_keys.add(key)
+                    news.append(event)
         elif event.get("event_type") == "social_spike":
             if timestamp and timestamp >= checked_at - timedelta(hours=6):
                 source = str(event.get("source") or "unknown")
@@ -4976,11 +4988,11 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
                 SELECT p.*,m.status AS model_status FROM ranker_predictions p
                 JOIN scan_snapshots s ON s.id=p.snapshot_id
                 JOIN ranker_models m ON m.id=p.model_id
-                WHERE s.scan_run_id=? AND m.status='active' AND m.created_at<=?
+                WHERE s.scan_run_id=? AND m.status='active' AND m.created_at<=? AND p.created_at<=?
                 {"AND s.ticker=?" if ticker is not None else ""}
                 ORDER BY p.created_at DESC
                 """,
-                (latest_run["id"], known_at, *ticker_params),
+                (latest_run["id"], known_at, known_at, *ticker_params),
             ).fetchall()
             if latest_run
             else []
@@ -5004,36 +5016,37 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
         ).fetchall()
         market_event_rows = db.execute(
             f"""
-            SELECT source,ticker,event_type,status,event_at,source_url,payload_json
+            SELECT source,ticker,event_type,status,event_at,source_url,payload_json,
+                   first_collected_at,last_collected_at
             FROM public_market_events
-            WHERE event_at>? AND event_at<=? {"AND ticker=?" if ticker is not None else ""}
+            WHERE event_at>? AND event_at<=? AND last_collected_at<=?
+            {"AND ticker=?" if ticker is not None else ""}
             ORDER BY event_at DESC,last_collected_at DESC
             """,
-            (event_cutoff, known_at, *ticker_params),
+            (event_cutoff, known_at, known_at, *ticker_params),
         ).fetchall()
         filing_rows = db.execute(
             f"""
             SELECT * FROM (
-                SELECT f.*,o.return_1h_pct,o.return_1d_pct,o.return_5d_pct,
+                SELECT f.*,
                        ROW_NUMBER() OVER (
                            PARTITION BY f.ticker ORDER BY f.score DESC,f.filed_at DESC
                        ) AS ticker_row
                 FROM sec_filings f
-                LEFT JOIN sec_outcomes o ON o.accession=f.accession
-                WHERE f.created_at>? AND f.filed_at<=?
+                WHERE f.created_at>? AND f.filed_at<=? AND f.created_at<=? AND f.updated_at<=?
                 {"AND f.ticker=?" if ticker is not None else ""}
             ) ranked WHERE ticker_row=1
             """,
-            (event_cutoff, known_at, *ticker_params),
+            (event_cutoff, known_at, known_at, known_at, *ticker_params),
         ).fetchall()
         filing_count_rows = db.execute(
             f"""
             SELECT ticker,COUNT(*) AS filing_count FROM sec_filings
-            WHERE created_at>? AND filed_at<=?
+            WHERE created_at>? AND filed_at<=? AND created_at<=? AND updated_at<=?
             {"AND ticker=?" if ticker is not None else ""}
             GROUP BY ticker
             """,
-            (event_cutoff, known_at, *ticker_params),
+            (event_cutoff, known_at, known_at, known_at, *ticker_params),
         ).fetchall()
 
     filings_by_ticker: dict[str, dict[str, Any]] = {}
@@ -5072,6 +5085,11 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
         "filing_counts": filing_counts,
         # Three different clocks: when the evidence was true, when the price it
         # used was observed, and when this was computed.
+        "replay_status": "bounded_reconstruction_not_revision_complete",
+        "replay_limitations": [
+            "Current model activation and community status are not versioned",
+            "Evidence revised after as-of is excluded, not reconstructed",
+        ],
         "feature_as_of": known_at,
         "quote_as_of": iso(_latest_quote_time(market_rows)),
         "computed_at": known_at,
@@ -5085,12 +5103,17 @@ def _pulse_snapshot_score(
     ticker = snapshot["ticker"]
     catalyst = inputs["filings_by_ticker"].get(ticker)
     prediction = inputs["predictions"].get(str(snapshot["id"]))
-    custom_score = (
-        float(prediction["score"])
-        if prediction and prediction.get("score") is not None
-        else float(snapshot.get("score") or 0)
+    facts = attention.forecast_facts(prediction)
+    computed_at = _timestamp(inputs["score_as_of"])
+    quote_at = _timestamp(snapshot.get("quote_time"))
+    age_minutes = (
+        (computed_at - quote_at).total_seconds() / 60
+        if computed_at is not None and quote_at is not None
+        else None
     )
-    catalyst_score = float(catalyst.get("score") or 0) if catalyst else 0.0
+    activity = attention.market_activity({**snapshot, "stale_minutes": age_minutes})
+    custom_score = float(activity["value"])
+    catalyst_score = (attention.finite_number(catalyst.get("score")) or 0.0) if catalyst else 0.0
     catalyst_sentiment = str(catalyst.get("sentiment") or "") if catalyst else ""
     # A filing's size moves attention whatever its direction; whether it is
     # bearish belongs to the forecast and the block, not to notice.
@@ -5098,7 +5121,7 @@ def _pulse_snapshot_score(
     community_counts = inputs["community"].get(ticker, {"call_count": 0, "comment_count": 0})
     call_count = community_counts["call_count"]
     comment_count = community_counts["comment_count"]
-    # Active Callers order the list; comments are logged, never scored.
+    # Calls and comments remain descriptive; neither rewards the board for exposure.
     engagement_count = call_count
     community_boost = attention.community_attention(call_count)
     external = _external_event_context(
@@ -5108,7 +5131,7 @@ def _pulse_snapshot_score(
     social_search_boost = float(external["social_search_boost"])
     safety_penalty = float(external["safety_penalty"])
     raw_rug_score = snapshot.get("rug_score")
-    rug_score = float(raw_rug_score) if raw_rug_score is not None else None
+    rug_score = attention.finite_number(raw_rug_score)
     trade_state = str(snapshot.get("trade_state") or "UNKNOWN").upper()
     if external.get("active_halt"):
         rug_score = max(rug_score or 0.0, 90.0)
@@ -5129,7 +5152,10 @@ def _pulse_snapshot_score(
         trade_state=trade_state,
         rug_score=rug_score,
         rug_level=str(snapshot.get("rug_level") or ""),
-        has_price=snapshot.get("price") is not None,
+        has_price=(attention.finite_number(snapshot.get("price")) or 0) > 0,
+        hard_veto=bool(snapshot.get("hard_veto")),
+        stale_minutes=age_minutes,
+        require_complete=True,
     )
     # Only what moved attention lives here. The deductions are policy, and they
     # are reported beside the score rather than mixed into it.
@@ -5151,12 +5177,11 @@ def _pulse_snapshot_score(
         def trace(*rows: tuple[str, Any]) -> list[dict[str, str]]:
             return [{"label": label, "value": str(value)} for label, value in rows]
 
-        model_scored = prediction and prediction.get("score") is not None
         score_trace = {
             "market": trace(
-                ("Source", "Ranker model" if model_scored else "Market scanner"),
+                ("Source", "Direction-neutral activity heuristic; not a probability"),
                 ("Input score", f"{custom_score:g}"),
-                ("Calculation", "Input score × 1"),
+                ("Calculation", "Capped volume, absolute momentum and absolute move × freshness"),
             ),
             "sec_event": trace(
                 ("Filing", catalyst.get("form") or "SEC filing" if catalyst else "SEC filing"),
@@ -5184,7 +5209,7 @@ def _pulse_snapshot_score(
             "community": trace(
                 ("Callers with active Calls", call_count),
                 ("Public comments", comment_count),
-                ("Calculation", "2 × log₂(callers + 2 × comments + 1), capped at +8 points"),
+                ("Calculation", "Engagement is descriptive only: 0 attention points"),
             ),
             "safety": trace(
                 ("Trading halt", "Active" if external.get("active_halt") else "Clear"),
@@ -5200,10 +5225,20 @@ def _pulse_snapshot_score(
             ),
         }
     return {
-        "baseline_score": float(snapshot.get("score") or 0),
+        "baseline_score": attention.finite_number(snapshot.get("score")),
         "rug_score": rug_score,
         "trade_state": trade_state,
-        "model_score": custom_score if prediction else None,
+        "model_score": 100 * facts["probability_up"] if facts else None,
+        "score_policy": attention.POLICY_VERSION,
+        "score_unit": "heuristic_points",
+        "attention_basis": "direction_neutral_activity",
+        "attention_urgent": bool(external.get("active_halt")),
+        "attention_urgency_reason": "Active trading halt" if external.get("active_halt") else None,
+        "activity_inputs": activity,
+        "forecast": facts,
+        "feature_as_of": snapshot.get("captured_at"),
+        "quote_as_of": snapshot.get("quote_time"),
+        "computed_at": inputs["score_as_of"],
         "model_rank": prediction.get("rank") if prediction else None,
         "score": pulse_score,
         "custom_score": pulse_score,
@@ -5213,11 +5248,11 @@ def _pulse_snapshot_score(
         "policy_components": policy_components,
         "score_as_of": inputs["score_as_of"],
         "score_snapshot_id": snapshot["id"],
-        "runner_probability": prediction.get("probability_up") if prediction else None,
-        "runner_probability_down": prediction.get("probability_down") if prediction else None,
-        "runner_probability_timeout": prediction.get("probability_timeout") if prediction else None,
-        "directional_thesis": _ranker_directional_thesis(prediction),
-        "expected_return_pct": prediction.get("expected_return_pct") if prediction else None,
+        "runner_probability": facts["probability_up"] if facts else None,
+        "runner_probability_down": facts["probability_down"] if facts else None,
+        "runner_probability_timeout": facts["probability_timeout"] if facts else None,
+        "directional_thesis": _ranker_directional_thesis(prediction) if facts else None,
+        "expected_return_pct": facts["assumed_barrier_payoff_pct"] if facts else None,
         "call_count": call_count,
         "comment_count": comment_count,
         "engagement_count": engagement_count,
@@ -5304,13 +5339,7 @@ def _pulse_data_uncached() -> dict[str, Any]:
         )
         runner_rows.append(runner)
 
-    runner_rows.sort(
-        key=lambda row: (
-            -float(row["custom_score"]),
-            int(row.get("baseline_rank") or 1_000_000),
-            str(row["ticker"]),
-        )
-    )
+    runner_rows.sort(key=attention.attention_order)
     for custom_rank, runner in enumerate(runner_rows, start=1):
         runner["custom_rank"] = custom_rank
     _apply_market_marks(runner_rows)
@@ -5397,6 +5426,19 @@ def pulse_data(
 
 
 PUBLIC_PULSE_ROW_FIELDS = (
+    "score_policy",
+    "score_unit",
+    "attention_basis",
+    "attention_score",
+    "attention_urgent",
+    "attention_urgency_reason",
+    "eligibility",
+    "eligibility_note",
+    "feature_as_of",
+    "quote_as_of",
+    "computed_at",
+    "forecast",
+    "activity_inputs",
     "ticker",
     "custom_rank",
     "score",
@@ -8128,9 +8170,15 @@ def wallet_page(
         request,
         "stock_wallet.html",
         page_context(
-            request, runner_session, nav_product="runners", screen=screen,
-            wallet=person, wallet_events=events, wallet_cursor=connections["next_cursor"],
-            wallet_ticker=scope, wallet_id=wallet_id,
+            request,
+            runner_session,
+            nav_product="runners",
+            screen=screen,
+            wallet=person,
+            wallet_events=events,
+            wallet_cursor=connections["next_cursor"],
+            wallet_ticker=scope,
+            wallet_id=wallet_id,
             entity=entity_view(events, items, person_id),
         ),
     )
@@ -8148,9 +8196,7 @@ def wallet_filings_api(
     person_id = str(resolved.get("person_id") or "") if resolved else ""
     if not resolved or not person_id:
         raise HTTPException(404, "Wallet not found")
-    return _wallet_filings_response(
-        request, str(resolved.get("scope") or ""), person_id, cursor
-    )
+    return _wallet_filings_response(request, str(resolved.get("scope") or ""), person_id, cursor)
 
 
 @app.get("/api/wallets/stocks/{ticker}/{person_id}/events")
@@ -9319,6 +9365,11 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
     )
     if snapshot is not None:
         inputs = _pulse_scoring_inputs(ticker=ticker, at=score_time)
+        if not inputs["market_rows"]:
+            # The latest universe no longer contains this ticker. Score its saved
+            # feature vector under the SAME attention contract; its old quote can
+            # never pass the current-eligibility check just because detail refreshed.
+            inputs["market_rows"] = [dict(snapshot)]
         if inputs["market_rows"]:
             scoring = _pulse_snapshot_score(inputs["market_rows"][0], inputs, include_trace=True)
             current["scanner_score"] = current["score"]
@@ -9336,6 +9387,17 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
                 "score_trace",
                 "score_as_of",
                 "score_snapshot_id",
+                "score_policy",
+                "score_unit",
+                "attention_basis",
+                "attention_score",
+                "attention_urgent",
+                "attention_urgency_reason",
+                "activity_inputs",
+                "forecast",
+                "feature_as_of",
+                "quote_as_of",
+                "computed_at",
                 # The named probabilities, so a reader sees a contract and not a
                 # single blended number.
                 "runner_probability",
@@ -9345,6 +9407,7 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
                 "directional_thesis",
             ):
                 current[field] = scoring[field]
+            directional_thesis = scoring["directional_thesis"]
             from runner_web.labels import barrier_contract
 
             contract = barrier_contract()

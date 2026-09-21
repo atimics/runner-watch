@@ -99,7 +99,9 @@ def test_promotion_checks_evidence_and_replaces_the_active_model(
     assert [row["id"] for row in active] == ["second"]
 
 
-def test_shadow_predictions_keep_public_scores_on_the_baseline(tmp_path: Path, monkeypatch) -> None:
+def test_shadow_predictions_cannot_change_the_public_attention_contract(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "public.db")
     init_db()
     captured_at = datetime.now(UTC)
@@ -118,10 +120,13 @@ def test_shadow_predictions_keep_public_scores_on_the_baseline(tmp_path: Path, m
     assert row["model_score"] is None
     assert row["model_rank"] is None
     assert row["directional_thesis"] is None
-    assert row["score_components"]["market"] == row["baseline_score"]
+    assert row["score_components"]["market"] == 10
+    assert row["baseline_score"] == 70
     assert ticker_detail_data("SAFE")["directional_thesis"] is None
     publish_calls_for_scan("run-one", "model-one", at=captured_at)
     assert calls_for_ticker("SAFE") == []
     with connection() as database:
         database.execute("UPDATE ranker_models SET status='active'")
-    assert _pulse_data_uncached()["rows"][0]["model_score"] is not None
+    active = _pulse_data_uncached()["rows"][0]
+    assert active["model_score"] is not None
+    assert active["score"] == row["score"]

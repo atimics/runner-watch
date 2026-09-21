@@ -207,6 +207,12 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         "score": score,
         "score_detail": score_detail,
         "score_as_of": item.get("score_as_of"),
+        "score_policy": item.get("score_policy"),
+        "eligibility_note": item.get("eligibility_note"),
+        "attention_urgent": bool(item.get("attention_urgent")),
+        "feature_as_of": item.get("feature_as_of"),
+        "quote_as_of": item.get("quote_as_of"),
+        "computed_at": item.get("computed_at"),
         # Carried by the most recent pulse announcement, so the board can show
         # what the channel was just told.
         "announced": bool(item.get("announced")),
@@ -220,6 +226,11 @@ def state_tag(item: dict[str, Any]) -> tuple[str, str, bool]:
     separately so the row can show one small mark without a second badge.
     """
 
+    policy = item.get("eligibility") or {}
+    if policy.get("state") == "blocked" or item.get("hard_veto"):
+        return "AVOID", "avoid", True
+    if policy.get("state") == "unknown":
+        return "PAUSED", "paused", False
     trade = str(item.get("trade_state") or "").upper()
     stage = str(item.get("stage") or "").upper()
     rug = str(item.get("rug_level") or "").lower()
