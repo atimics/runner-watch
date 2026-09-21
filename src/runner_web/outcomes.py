@@ -104,7 +104,14 @@ def refresh_outcomes(at: datetime | None = None) -> dict[str, Any]:
         horizons = due_horizons(row, current)
         if horizons:
             pending.append((row, horizons))
-    pending.sort(key=lambda item: str(item[0].get("base_at") or ""))
+    # Rows that keep failing carry a later next_attempt_at, so the oldest *due*
+    # observation is served first and nothing waits behind a stuck one.
+    pending.sort(
+        key=lambda item: (
+            str(item[0].get("next_attempt_at") or item[0].get("base_at") or ""),
+            str(item[0].get("base_at") or ""),
+        )
+    )
     pending = pending[:OUTCOME_REFRESH_TICKER_LIMIT]
     tickers = [str(row["ticker"]) for row, _ in pending]
     since = _earliest_observation([_parsed_moment(row.get("base_at")) for row, _ in pending])
@@ -163,6 +170,51 @@ def record_outcome_error(exc: Exception) -> None:
 
 
 Bar = tuple[datetime, float, float, float]
+
+
+RETRY_BASE_SECONDS = 300
+RETRY_MAX_SECONDS = 6 * 3600
+
+
+def _retry_delay(attempts: int) -> timedelta:
+    """Exponential backoff, capped, so a stuck row keeps its place in line."""
+
+    seconds = min(RETRY_MAX_SECONDS, RETRY_BASE_SECONDS * (2 ** max(0, attempts - 1)))
+    return timedelta(seconds=seconds)
+
+
+def outcome_coverage(at: datetime | None = None) -> dict[str, Any]:
+    """How much of the outcome window can actually be accounted for."""
+
+    current = at or datetime.now(UTC)
+    with connection() as db:
+        row = db.execute(
+            """
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN barrier_label IS NOT NULL THEN 1 ELSE 0 END)
+                       AS labeled,
+                   SUM(CASE WHEN barrier_resolution='ambiguous' THEN 1 ELSE 0 END)
+                       AS ambiguous,
+                   SUM(CASE WHEN barrier_label IS NULL AND attempts>0 THEN 1 ELSE 0 END)
+                       AS retrying,
+                   SUM(CASE WHEN barrier_label IS NULL AND attempts>=5 THEN 1 ELSE 0 END)
+                       AS stuck
+            FROM scan_outcomes
+            WHERE base_at>=?
+            """,
+            (iso(current - timedelta(days=10)),),
+        ).fetchone()
+    values = dict(row) if row else {}
+    total = int(values.get("total") or 0)
+    labeled = int(values.get("labeled") or 0)
+    return {
+        "total": total,
+        "labeled": labeled,
+        "ambiguous": int(values.get("ambiguous") or 0),
+        "retrying": int(values.get("retrying") or 0),
+        "stuck": int(values.get("stuck") or 0),
+        "labeled_pct": round(labeled / total * 100, 2) if total else None,
+    }
 
 
 def _bar_prices(tickers: list[str], *, since: datetime | None = None) -> dict[str, list[Bar]]:
@@ -547,8 +599,9 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
             """
             SELECT * FROM scan_outcomes
             WHERE base_at>=?
+              AND (next_attempt_at IS NULL OR next_attempt_at<=?)
             """,
-            (cutoff,),
+            (cutoff, timestamp),
         ).fetchall()
 
     pending: list[tuple[dict[str, Any], list[str], bool]] = []
@@ -573,6 +626,7 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
 
     samples_added = 0
     barrier_labels_added = 0
+    deferred = 0
     with connection() as db:
         for row, horizons, barrier_due in pending:
             try:
@@ -607,7 +661,18 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
                 changes[f"observed_{horizon}_at"] = iso(observed_at)
                 samples_added += 1
             if len(changes) == 1:
-                continue
+                # Nothing could be read yet: back this row off so a newer
+                # observation gets the slot next cycle.
+                attempts = int(row.get("attempts") or 0) + 1
+                changes["attempts"] = attempts
+                changes["last_attempt_at"] = timestamp
+                changes["next_attempt_at"] = iso(current + _retry_delay(attempts))
+                deferred += 1
+            else:
+                # Progress was made; the next cycle may look again immediately.
+                changes["attempts"] = 0
+                changes["next_attempt_at"] = None
+                changes["last_attempt_at"] = timestamp
             assignments = ",".join(f"{column}=?" for column in changes)
             db.execute(
                 f"UPDATE scan_outcomes SET {assignments} WHERE snapshot_id=?",
@@ -638,6 +703,7 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
         )
 
     _state("scan_outcomes_last_refresh", timestamp, timestamp)
+    _state("scan_outcomes_deferred_rows", str(deferred), timestamp)
     _state("scan_outcomes_labeled_rows", str(labeled), timestamp)
     _state("scan_outcomes_barrier_labeled_rows", str(barrier_labeled), timestamp)
     _state("scan_outcomes_last_samples_added", str(samples_added), timestamp)
@@ -647,4 +713,5 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
         "barrier_labeled_rows": barrier_labeled,
         "barrier_labels_added": barrier_labels_added,
         "samples_added": samples_added,
+        "deferred": deferred,
     }
