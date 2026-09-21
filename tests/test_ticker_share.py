@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
 from pytest import MonkeyPatch
 from starlette.requests import Request
 from starlette.testclient import TestClient
@@ -206,6 +207,33 @@ def test_the_state_badge_keeps_off_the_daily_change_line() -> None:
     # It does still render, on the change row beside the move.
     change_band = image.crop((640, web_main.CARD_CHANGE_Y, 1145, web_main.CARD_CHANGE_Y + 30))
     assert badge_fill in _colors(change_band)
+
+
+@pytest.mark.parametrize(
+    ("stamp", "expected"),
+    [
+        ("2026-09-12T15:50:00+00:00", "Sep 12, 2026 · 11:50 EDT"),
+        ("2026-01-15T14:30:00Z", "Jan 15, 2026 · 09:30 EST"),
+    ],
+)
+def test_card_times_are_eastern(stamp, expected):
+    assert web_main._card_time(stamp) == expected
+
+
+def test_the_quote_time_moved_to_the_card_footer_without_the_prefix() -> None:
+    import io
+
+    from PIL import Image
+
+    png = web_main._ticker_card_png(_ticker_detail(quote_time="2026-09-12T15:50:00+00:00"))
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    muted = (0x65, 0x71, 0x6B)
+
+    footer = image.crop((700, web_main.CARD_FOOTER_Y, 1145, web_main.CARD_FOOTER_Y + 28))
+    assert muted in _colors(footer)
+    # Nothing is written in the price block any more.
+    price_rows = image.crop((700, web_main.CARD_DATE_Y, 1145, web_main.CARD_DATE_Y + 24))
+    assert muted not in _colors(price_rows)
 
 
 def test_the_company_name_sits_under_the_ticker_instead_of_over_the_price() -> None:
