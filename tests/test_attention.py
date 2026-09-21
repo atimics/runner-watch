@@ -25,13 +25,13 @@ def test_attention_is_clamped_to_the_list_window():
     assert attention.attention_score(signal=0) == 0.0
 
 
-def test_only_active_callers_order_the_list():
+def test_engagement_does_not_order_the_list():
     assert attention.community_attention(0) == 0.0
-    assert attention.community_attention(3) == 4.0
+    assert attention.community_attention(3) == 0.0
     # Eight comments used to reach the cap on their own; comments are logged now,
     # so no number of them moves this.
     assert attention.community_attention(0) == 0.0
-    assert attention.community_attention(7) == 6.0
+    assert attention.community_attention(7) == 0.0
 
 
 def test_eligibility_is_deterministic_policy():
@@ -72,6 +72,12 @@ def test_a_blocked_name_can_still_lead_attention(state):
         "id": "scan",
         "ticker": "RISK",
         "score": 88,
+        "relative_volume": 8,
+        "recent_relative_volume": 8,
+        "momentum_5m_pct": 5,
+        "momentum_15m_pct": 15,
+        "change_pct": 20,
+        "quote_time": "2026-09-21T14:00:00+00:00",
         "price": 4.2,
         "rug_score": 90,
         "rug_level": "CRITICAL",
@@ -96,7 +102,8 @@ def test_a_blocked_name_can_still_lead_attention(state):
     scored = web_main._pulse_snapshot_score(snapshot, inputs)
 
     # The material event and the risk filing raise attention...
-    assert scored["score"] >= 88
+    assert scored["score"] == 79.8
+    assert scored["attention_urgent"] is True
     assert scored["score_components"]["sec_event"] > 0
     # ...while the block is stated plainly, with reasons.
     assert scored["eligibility"]["state"] == "blocked"
@@ -122,6 +129,7 @@ def test_comments_no_longer_move_attention():
         snapshot, {**base, "community": {"QUIET": {"call_count": 3, "comment_count": 0}}}
     )
 
-    assert with_comments["score"] == 50.0
+    assert with_comments["score"] == 0.0
+    assert with_comments["eligibility"]["state"] == "unknown"
     assert with_comments["comment_count"] == 25
-    assert with_callers["score"] == 54.0
+    assert with_callers["score"] == with_comments["score"]

@@ -604,7 +604,7 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
             (cutoff, timestamp),
         ).fetchall()
 
-    pending: list[tuple[dict[str, Any], list[str], bool]] = []
+    pending: list[tuple[dict[str, Any], list[str], bool, bool]] = []
     for raw in rows:
         row = dict(raw)
         horizons = due_horizons(row, current)
@@ -615,20 +615,24 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
             current.astimezone(UTC) - base_at.astimezone(UTC) >= BARRIER_HORIZON
             and row.get("barrier_label") is None
         )
-        if horizons or barrier_due:
-            pending.append((row, horizons, barrier_due))
+        terminal_due = (
+            current.astimezone(UTC) - base_at.astimezone(UTC) >= BARRIER_HORIZON
+            and row.get("return_60m_pct") is None
+        )
+        if horizons or barrier_due or terminal_due:
+            pending.append((row, horizons, barrier_due, terminal_due))
 
     pending.sort(key=lambda item: str(item[0].get("base_at") or ""))
     pending = pending[:OUTCOME_REFRESH_TICKER_LIMIT]
-    tickers = [str(row["ticker"]) for row, _, _ in pending]
-    since = _earliest_observation([_parsed_moment(row.get("base_at")) for row, _, _ in pending])
+    tickers = [str(row["ticker"]) for row, _, _, _ in pending]
+    since = _earliest_observation([_parsed_moment(row.get("base_at")) for row, _, _, _ in pending])
     prices = _bar_prices(tickers, since=since)
 
     samples_added = 0
     barrier_labels_added = 0
     deferred = 0
     with connection() as db:
-        for row, horizons, barrier_due in pending:
+        for row, horizons, barrier_due, terminal_due in pending:
             try:
                 base_at = datetime.fromisoformat(str(row["base_at"]))
             except ValueError:
@@ -641,13 +645,14 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
                 barrier = barrier_outcome(ticker_bars, base_at, float(row["base_price"]))
                 if barrier is not None:
                     changes.update(barrier)
-                    observed_60m = _price_near_target(ticker_bars, base_at + BARRIER_HORIZON)
-                    if observed_60m is not None:
-                        price_60m, observed_60m_at = observed_60m
-                        changes["price_60m"] = price_60m
-                        changes["return_60m_pct"] = return_pct(float(row["base_price"]), price_60m)
-                        changes["observed_60m_at"] = iso(observed_60m_at)
                     barrier_labels_added += 1
+            if terminal_due:
+                observed_60m = _price_near_target(ticker_bars, base_at + BARRIER_HORIZON)
+                if observed_60m is not None:
+                    price_60m, observed_60m_at = observed_60m
+                    changes["price_60m"] = price_60m
+                    changes["return_60m_pct"] = return_pct(float(row["base_price"]), price_60m)
+                    changes["observed_60m_at"] = iso(observed_60m_at)
             for horizon in horizons:
                 observed = _scan_horizon_price(ticker_bars, base_at, horizon)
                 if observed is None:
@@ -678,14 +683,17 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
                 f"UPDATE scan_outcomes SET {assignments} WHERE snapshot_id=?",
                 (*changes.values(), row["snapshot_id"]),
             )
-            if changes.get("barrier_label"):
+            effective = {**row, **changes}
+            if effective.get("barrier_label") and (
+                "barrier_label" in changes or "return_60m_pct" in changes
+            ):
                 sync_training_outcome(
                     db,
                     str(row["snapshot_id"]),
-                    str(changes["barrier_label"]),
-                    changes.get("return_60m_pct"),
+                    str(effective["barrier_label"]),
+                    effective.get("return_60m_pct"),
                     timestamp,
-                    barrier_resolution=str(changes.get("barrier_resolution") or RESOLVED),
+                    barrier_resolution=str(effective.get("barrier_resolution") or RESOLVED),
                 )
         labeled = int(
             db.execute(

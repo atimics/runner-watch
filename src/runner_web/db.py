@@ -3570,19 +3570,6 @@ def _migration_079_outcome_retries(db: DatabaseConnection) -> None:
     _ensure_column(db, "scan_outcomes", "last_attempt_at TEXT")
 
 
-def _migration_079_outcome_retries(db: DatabaseConnection) -> None:
-    """Retry bookkeeping, so one unpriceable row cannot hold the whole queue.
-
-    The collector used to re-select the oldest unresolved rows every cycle and
-    skip the ones whose prices were still missing, so those rows kept their place
-    at the head of the batch while newer observations waited behind them.
-    """
-
-    _ensure_column(db, "scan_outcomes", "attempts INTEGER NOT NULL DEFAULT 0")
-    _ensure_column(db, "scan_outcomes", "next_attempt_at TEXT")
-    _ensure_column(db, "scan_outcomes", "last_attempt_at TEXT")
-
-
 def _migration_080_gam_ranker_models(db: DatabaseConnection) -> None:
     """The additive (GAM) challenger: integer tables, its losses, and its status.
 
@@ -3629,6 +3616,30 @@ def _migration_081_tree_ranker_models(db: DatabaseConnection) -> None:
         );
         CREATE INDEX IF NOT EXISTS tree_ranker_models_status
             ON tree_ranker_models(status,created_at DESC);
+        """
+    )
+
+
+def _migration_082_scoring_integrity(db: DatabaseConnection) -> None:
+    """Repair known legacy ambiguity/zero-fill errors without inventing outcomes."""
+
+    db.executescript(
+        """
+        UPDATE scan_outcomes SET barrier_resolution='ambiguous'
+        WHERE barrier_ambiguous=1;
+        UPDATE ranker_training_examples SET barrier_resolution='ambiguous'
+        WHERE EXISTS (
+            SELECT 1 FROM scan_outcomes o
+            WHERE o.snapshot_id=ranker_training_examples.snapshot_id
+              AND (o.barrier_ambiguous=1 OR o.barrier_resolution='ambiguous')
+        );
+        UPDATE ranker_training_examples SET outcome_return_bp=NULL
+        WHERE EXISTS (
+            SELECT 1 FROM scan_outcomes o
+            WHERE o.snapshot_id=ranker_training_examples.snapshot_id AND o.return_60m_pct IS NULL
+        );
+        UPDATE ranker_training_examples SET barrier_resolution='unverified_legacy'
+        WHERE training_origin='historical_replay' AND barrier_resolution IS NULL;
         """
     )
 
@@ -3719,6 +3730,7 @@ MIGRATIONS = (
     Migration(79, "outcome_retries", _migration_079_outcome_retries),
     Migration(80, "gam_ranker_models", _migration_080_gam_ranker_models),
     Migration(81, "tree_ranker_models", _migration_081_tree_ranker_models),
+    Migration(82, "scoring_integrity", _migration_082_scoring_integrity),
 )
 
 

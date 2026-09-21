@@ -33,8 +33,8 @@
   {%- set _ = ns2.stops.append(tone ~ ' ' ~ start ~ '% ' ~ stop ~ '%') -%}
 {%- endfor -%}
 <span class="ticker-score" data-band="{{ band }}" role="img"
-      aria-label="Score {{ item.score|round|int }}{% if ns.positives %} · led by {{ (ns.positives|sort(attribute='value')|last).label }}{% endif %}"
-      title="Score {{ item.score|round|int }}{% for part in ns.parts %} · {{ part.label }} {{ '+' if part.value >= 0 else '' }}{{ part.value }}{% endfor %}">
+      aria-label="{{ 'Attention index' if item.score_policy else 'Score' }} {{ item.score|round|int }}{% if ns.positives %} · led by {{ (ns.positives|sort(attribute='value')|last).label }}{% endif %}"
+      title="{{ 'Attention index (heuristic points, not a probability)' if item.score_policy else 'Score' }} {{ item.score|round|int }}{% for part in ns.parts %} · {{ part.label }} {{ '+' if part.value >= 0 else '' }}{{ part.value }}{% endfor %}">
   <span class="score-pie"{% if ns2.stops %} style="background: conic-gradient({{ ns2.stops|join(', ') }})"{% endif %}></span>
 </span>
 {%- endif -%}
@@ -84,7 +84,7 @@
   {% if screen.kind != 'detail' %}
     <div data-live-surface>
     {% if screen.rows %}
-      <div class="ticker-list market-{{ screen.market }}" data-tag-list aria-label="{{ 'Events' if screen.market == 'sports' else 'Tokens' if screen.market == 'memecoins' else 'Tickers' }}">{% for item in screen.rows %}<a class="ticker{% if item.announced %} is-new{% endif %}" href="{{ item.href }}" data-tag="{{ item.tag_tone }}">
+      <div class="ticker-list market-{{ screen.market }}" data-tag-list aria-label="{{ 'Events' if screen.market == 'sports' else 'Tokens' if screen.market == 'memecoins' else 'Tickers' }}">{% for item in screen.rows %}<a class="ticker{% if item.announced %} is-new{% endif %}" href="{{ item.href }}" data-tag="{{ item.tag_tone }}"{% if item.eligibility_note %} title="{{ item.eligibility_note }}"{% endif %}>
         {% if item.tag %}<span class="tag tag-{{ item.tag_tone }}{% if item.risk %} has-risk{% endif %}">{% if item.risk %}<i aria-hidden="true">▲</i>{% endif %}{{ item.tag }}</span>
         {% else %}<span class="ticker-mark tone-{{ loop.index0 % 5 }}" aria-hidden="true">{{ item.mark }}</span>{% endif %}
         <span class="ticker-name"><strong>{{ item.name }}</strong><small{% if screen.market == 'memecoins' and item.contract_address %} title="{{ item.contract_address }}"{% endif %}>{{ item.subtitle }}</small></span>

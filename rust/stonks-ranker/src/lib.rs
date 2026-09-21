@@ -110,6 +110,10 @@ pub enum Request {
         feature_names: Vec<String>,
         groups: Vec<Vec<TrainingRow>>,
         epochs: usize,
+        #[serde(default)]
+        train_group_count: Option<usize>,
+        #[serde(default)]
+        validation_group_count: Option<usize>,
     },
     Predict {
         artifact: IntegerArtifact,
@@ -150,7 +154,9 @@ pub fn execute(request: Request) -> Result<Value, String> {
             feature_names,
             groups,
             epochs,
-        } => train(feature_names, groups, epochs),
+            train_group_count,
+            validation_group_count,
+        } => train(feature_names, groups, epochs, train_group_count, validation_group_count),
         Request::Predict { artifact, rows } => {
             let predictions = predict(&artifact, rows)?;
             Ok(json!({"ok": true, "predictions": predictions}))
@@ -170,6 +176,8 @@ fn train(
     feature_names: Vec<String>,
     groups: Vec<Vec<TrainingRow>>,
     epochs: usize,
+    train_group_count: Option<usize>,
+    validation_group_count: Option<usize>,
 ) -> Result<Value, String> {
     if feature_names.is_empty() {
         return Err("feature_names cannot be empty".into());
@@ -179,10 +187,19 @@ fn train(
     }
     validate_training_rows(&feature_names, &groups)?;
 
-    let holdout_count = ((groups.len() + 2) / 5).clamp(2, groups.len() - 1);
-    let validation_count = holdout_count / 2;
-    let train_end = groups.len() - holdout_count;
-    let validation_end = train_end + validation_count;
+    let (train_end, validation_end) = match (train_group_count, validation_group_count) {
+        (Some(training), Some(validation))
+            if training > 0 && validation > 0
+                && training < groups.len() && validation < groups.len() - training => {
+            (training, training + validation)
+        }
+        (None, None) => {
+            let held = ((groups.len() + 2) / 5).clamp(2, groups.len() - 1);
+            let training = groups.len() - held;
+            (training, training + held / 2)
+        }
+        _ => return Err("explicit splits must leave nonempty train, validation and test groups".into()),
+    };
     let train_groups = &groups[..train_end];
     let validation_groups = &groups[train_end..validation_end];
     let test_groups = &groups[validation_end..];
@@ -235,7 +252,8 @@ fn train(
         "training_control": training_control,
         "temperature_milli": artifact.temperature_milli,
         "timeout_return_bp": artifact.timeout_return_bp,
-        "split": "oldest_80_percent_train_next_10_percent_validation_newest_10_percent_test",
+        "split": if train_group_count.is_some() { "explicit_purged_train_validation_test" }
+                 else { "legacy_fractional_split_unpurged" },
     });
     Ok(json!({"ok": true, "artifact": artifact, "metrics": metrics}))
 }
@@ -1174,6 +1192,26 @@ mod tests {
     }
 
     #[test]
+    fn explicit_splits_do_not_repartition_purged_groups() {
+        let groups: Vec<Vec<TrainingRow>> = (0..10)
+            .map(|_| (0..3).map(|candidate| TrainingRow {
+                ticker: format!("T{candidate}"),
+                features: vec![candidate as i64 * FEATURE_SCALE],
+                outcome: candidate,
+                outcome_return_bp: [-400, 0, 800][candidate],
+                baseline_score_milli: candidate as i64 * FEATURE_SCALE,
+            }).collect()).collect();
+        let result = train(vec!["x".into()], groups.clone(), 2, Some(5), Some(2)).unwrap();
+        assert_eq!(result["metrics"]["train"]["groups"], 5);
+        assert_eq!(result["metrics"]["validation"]["groups"], 2);
+        assert_eq!(result["metrics"]["test"]["groups"], 3);
+        assert_eq!(result["metrics"]["split"], "explicit_purged_train_validation_test");
+        assert!(train(vec!["x".into()], groups.clone(), 2, Some(5), None).is_err());
+        assert!(train(vec!["x".into()], groups.clone(), 2, Some(0), Some(2)).is_err());
+        assert!(train(vec!["x".into()], groups, 2, Some(8), Some(2)).is_err());
+    }
+
+    #[test]
     fn training_and_prediction_are_replayable() {
         let groups: Vec<Vec<TrainingRow>> = (0..8)
             .map(|group| {
@@ -1188,8 +1226,8 @@ mod tests {
                     .collect()
             })
             .collect();
-        let first = train(vec!["x".into()], groups.clone(), 80).unwrap();
-        let second = train(vec!["x".into()], groups, 80).unwrap();
+        let first = train(vec!["x".into()], groups.clone(), 80, None, None).unwrap();
+        let second = train(vec!["x".into()], groups, 80, None, None).unwrap();
         assert_eq!(first, second);
         assert_eq!(first["artifact"]["schema"], ARTIFACT_SCHEMA);
         assert_eq!(first["artifact"]["feature_scale"], FEATURE_SCALE);
@@ -1232,7 +1270,7 @@ mod tests {
             })
             .collect();
 
-        let result = train(vec!["x".into()], groups, 500).unwrap();
+        let result = train(vec!["x".into()], groups, 500, None, None).unwrap();
         let control = &result["metrics"]["training_control"];
         let trained_epochs = control["trained_epochs"].as_u64().unwrap();
         let best_epoch = control["best_epoch"].as_u64().unwrap();

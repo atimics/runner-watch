@@ -3,6 +3,7 @@ import io
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -78,8 +79,8 @@ def _approve_test_source(source: str, feed: str) -> None:
     [
         ((0.62, 0.18, 0.20), 2.4, "up", "Upside setup", "↑"),
         ((0.19, 0.58, 0.23), -1.1, "down", "Downside pressure", "↓"),
-        ((0.34, 0.32, 0.34), 1.3, "flat", "No edge", "↔"),
-        ((0.35, 0.31, 0.34), 1.7, "flat", "No edge", "↔"),
+        ((0.34, 0.32, 0.34), 1.3, "flat", "No directional call", "↔"),
+        ((0.35, 0.31, 0.34), 1.7, "flat", "No directional call", "↔"),
         ((0.40, 0.48, 0.12), 1.3, "up", "Upside setup", "↑"),
     ],
 )
@@ -757,9 +758,9 @@ def test_pulse_only_lists_tickers_from_the_latest_scored_scan(
     result = pulse_data()
 
     assert [row["ticker"] for row in result["rows"]] == ["ONE", "TWO"]
-    assert result["rows"][0]["custom_score"] == 51.6
+    assert result["rows"][0]["custom_score"] == 45.6
     assert result["rows"][0]["score_components"] == {
-        "market": 42.0,
+        "market": 36.0,
         "sec_event": 9.6,
         "news": 0.0,
         "social_search": 0.0,
@@ -796,9 +797,9 @@ def test_pulse_and_flash_evidence_preserve_setup_score(
     assert rows[0]["setup_score"] == setup_score
     assert rows[1]["setup_score"] == 90.0
     assert rows[0]["baseline_score"] == 42.0
-    assert rows[0]["score"] == 42.0
+    assert rows[0]["score"] == 36.0
     assert evidence["setup_score"] == setup_score
-    assert evidence["score"] == 42.0
+    assert evidence["score"] == 42.0  # frozen research input retains the scanner scale
 
 
 def test_pulse_freshness_uses_the_market_quote_time(
@@ -1379,14 +1380,14 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
     alpha = alpha_board_data()["rows"][0]
 
     assert pulse["score_components"] == {
-        "market": 40.0,
+        "market": 36.0,
         "sec_event": 0.0,
         "news": 1.5,
         "social_search": 4.32,
-        "community": 2.0,
+        "community": 0.0,
     }
     assert pulse["policy_components"]["safety"] == -0.0
-    assert pulse["custom_score"] == 47.82
+    assert pulse["custom_score"] == 41.82
     detail = ticker_detail_data("FLOW")
     assert detail["current"]["score"] == pulse["score"]
     assert detail["current"]["score_detail"] == pulse["score_detail"]
@@ -1400,6 +1401,7 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
             "recent_relative_volume": 4,
             "momentum_15m_pct": 4,
             "breakout_pct": 0.8,
+            "eligibility": {"state": "unknown"},
         },
         [],
         detail["trade_pressure"],
@@ -1446,7 +1448,9 @@ def test_detail_composite_uses_pulse_ranker_and_penalties(
     assert current["score_detail"] == pulse["score_detail"]
     assert current["score"] == pulse["score"]
     assert current["score_as_of"] == pulse["score_as_of"] == timestamp.isoformat()
-    assert current["score_components"]["market"] == (90 if model_status == "active" else 70)
+    assert current["score_components"]["market"] == 10
+    assert current["score_policy"] == "attention-activity-v2"
+    assert (current["forecast"] is not None) == (model_status == "active")
     # A risk filing is material, so it raises attention whatever its direction.
     assert current["score_components"]["sec_event"] == 9.6
     # The deductions are policy now: reported, never subtracted from attention.
@@ -1454,7 +1458,7 @@ def test_detail_composite_uses_pulse_ranker_and_penalties(
     assert current["policy_components"]["state"] == (-25 if trade_state == "EXIT" else -20)
     assert current["eligibility"]["state"] == "blocked"
     assert current["eligibility"]["blocked"] is True
-    assert current["score"] == (90 if model_status == "active" else 70) + 9.6
+    assert current["score"] == 19.6
     assert len(detail["events"]) == 12
     assert all(event["accession"] != "strong-risk" for event in detail["events"])
     assert detail["evidence_gate"]["blockers"] == [f"State: {trade_state.title()}"]
@@ -1484,7 +1488,9 @@ def test_detail_score_uses_latest_eligible_run_without_replacing_history(
     detail = ticker_detail_data("CYPH")
     current = detail["current"]
     assert current["score_detail"] == pulse["score_detail"]
-    assert current["score"] == 80
+    assert current["score"] == 0  # two-hour-old activity has decayed below displayed precision
+    assert current["model_score"] == 80
+    assert current["eligibility"]["state"] == "unknown"
     assert current["score_snapshot_id"] == "eligible-snapshot"
     assert current["id"] == "empty-snapshot"
     assert current["scanner_score"] == 12
@@ -1495,9 +1501,11 @@ def test_detail_score_uses_latest_eligible_run_without_replacing_history(
     insert_scan_run("other", timestamp.isoformat(), 1)
     insert_scored_snapshot("other-snapshot", "other", "OTHER", 20, 1, timestamp.isoformat())
     fallback = ticker_detail_data("CYPH")["current"]
-    assert fallback["score"] == 12
-    assert fallback["score_detail"]["drivers"][0]["value"] == 12
-    assert fallback["score_as_of"] == current["captured_at"]
+    assert fallback["score"] == 0.26  # same activity index on the one-hour-old saved features
+    assert fallback["score_detail"]["drivers"][0]["value"] == 0.3
+    assert fallback["score_as_of"] == timestamp.isoformat()
+    assert fallback["feature_as_of"] == current["captured_at"]
+    assert fallback["eligibility"]["state"] == "unknown"
 
 
 def test_detail_score_does_not_use_truncated_external_evidence(
@@ -1521,7 +1529,7 @@ def test_detail_score_does_not_use_truncated_external_evidence(
     )
     record_source_batch(
         SourceBatch(
-            fetch=fetch,
+            fetch=replace(fetch, finished_at=timestamp),
             market_events=(
                 MarketEvent(
                     event_id="social",
@@ -1548,7 +1556,7 @@ def test_detail_score_does_not_use_truncated_external_evidence(
                         event_type="news_article",
                         event_at=timestamp - timedelta(minutes=index),
                         status="published",
-                        source_url="https://example.test/event",
+                        source_url=f"https://example.test/event/{index}",
                         payload={},
                     )
                     for index in range(31)
@@ -1562,7 +1570,9 @@ def test_detail_score_does_not_use_truncated_external_evidence(
     current = detail["current"]
     assert current["score_detail"] == pulse["score_detail"]
     # Attention is clamped to 0-100, so a halt no longer pushes it negative.
-    assert current["score"] == pulse["score"] == 100.0
+    assert current["score"] == pulse["score"] == 47.0
+    assert current["attention_urgent"] is True
+    assert current["eligibility"]["blocked"] is True
     assert current["score_components"]["social_search"] == 5
     assert "safety" not in current["score_components"]
     assert current["policy_components"]["safety"] == -25
@@ -1573,7 +1583,7 @@ def test_detail_score_does_not_use_truncated_external_evidence(
     assert detail["external_context"]["active_halt"] is None
     assert current["rug_score"] == 10
     assert current["trade_state"] == "ARMED"
-    assert detail["evidence_gate"]["blockers"] == []
+    assert detail["evidence_gate"]["blockers"] == ["Blocked by current eligibility"]
 
 
 def test_detail_without_eligible_scan_keeps_historical_and_sec_fallbacks(
@@ -1589,8 +1599,11 @@ def test_detail_without_eligible_scan_keeps_historical_and_sec_fallbacks(
     insert_filing("sec-only", "FILE", 1, 80, timestamp.isoformat())
     assert web_main._pulse_data_uncached()["rows"] == []
     old = ticker_detail_data("OLD")
-    assert old["current"]["score"] == 32
-    assert old["current"]["score_as_of"] == captured_at
+    assert old["current"]["score"] == 0
+    assert old["current"]["baseline_score"] == 32
+    assert old["current"]["score_as_of"] == timestamp.isoformat()
+    assert old["current"]["feature_as_of"] == captured_at
+    assert old["current"]["eligibility"]["state"] == "unknown"
     assert old["can_publish"] is False
     filing = ticker_detail_data("FILE")["current"]
     assert filing["source"] == "sec"
@@ -2030,7 +2043,7 @@ def test_critical_rug_risk_blocks_ready_without_hiding_it(
     assert [row["ticker"] for row in rows] == ["RUG", "CLEAN"]
     assert rows[0]["evidence_gate"]["state"] == "blocked"
     assert rows[0]["eligibility"]["state"] == "blocked"
-    assert rows[0]["score"] >= rows[0]["setup_score"]
+    assert rows[0]["score"] == rows[1]["score"] == 36  # identical activity, different risk
 
 
 def test_previous_trade_states_returns_latest_state_with_index(
@@ -2078,8 +2091,8 @@ def test_a_risk_filing_raises_attention_while_the_block_stays_visible(
 
     # Material news moves attention; the downside belongs to the forecast.
     assert row["event_boost"] == 9.6
-    assert row["score"] == 59.6
-    assert row["eligibility"]["state"] == "eligible"
+    assert row["score"] == 45.6
+    assert row["eligibility"]["state"] == "unknown"  # fixture has no risk assessment
 
 
 def test_ticker_detail_prefers_market_state_and_uses_scan_outcome(

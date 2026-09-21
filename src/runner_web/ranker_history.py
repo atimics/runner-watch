@@ -20,7 +20,7 @@ from runner_web.product_policy import RANKER_TRAINING
 from runner_web.ranker import (
     FEATURE_SCALE,
     FEATURE_SCHEMA_VERSION,
-    RETURN_SCALE,
+    _return_bp,
     feature_vector,
 )
 
@@ -387,8 +387,8 @@ def _write_group(
                 snapshot_id,scan_run_id,ticker,feature_schema_version,
                 expected_candidates,captured_at,feature_vector_json,
                 baseline_score_milli,barrier_label,outcome_return_bp,labeled_at,
-                training_origin,provenance_json
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                training_origin,provenance_json,barrier_resolution
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             [
                 (
@@ -401,10 +401,11 @@ def _write_group(
                     json.dumps(feature_vector(row), separators=(",", ":")),
                     int(round(float(row["score"]) * FEATURE_SCALE)),
                     str(row["barrier_label"]),
-                    int(round(float(row.get("outcome_return_pct") or 0) * RETURN_SCALE)),
+                    _return_bp(row.get("outcome_return_pct")),
                     datetime.now(UTC).isoformat(),
                     REPLAY_ORIGIN,
                     provenance,
+                    str(row.get("barrier_resolution") or "unverified"),
                 )
                 for row in rows
             ],
@@ -549,6 +550,7 @@ def backfill_historical_training(
                     "catalyst_sentiment": None,
                     "issuer_risk_json": json.dumps({"issuer_data_available": False}),
                     "barrier_label": outcome["barrier_label"],
+                    "barrier_resolution": outcome["barrier_resolution"],
                     "outcome_return_pct": _return_at_horizon(
                         bars,
                         replay_at,

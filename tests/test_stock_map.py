@@ -60,8 +60,8 @@ def test_component_trace_uses_the_inputs_that_produced_the_score(model_score):
     scored = main._pulse_snapshot_score(snapshot, inputs, include_trace=True)
     trace = scored["score_trace"]
     market = {r["label"]: r["value"] for r in trace["market"]}
-    expected_input = 60 if model_score is None else model_score
-    assert market["Source"] == ("Market scanner" if model_score is None else "Ranker model")
+    expected_input = 0  # no raw activity or quote clock in this fixture
+    assert market["Source"] == "Direction-neutral activity heuristic; not a probability"
     assert float(market["Input score"]) == scored["score_components"]["market"] == expected_input
     assert {r["label"]: r["value"] for r in trace["rug"]}["Rug score"] == "90"
     # Policy deductions are reported, not subtracted from attention.
@@ -74,7 +74,7 @@ def test_component_trace_uses_the_inputs_that_produced_the_score(model_score):
     assert scored["score_components"]["sec_event"] == 6.0
     assert "12%" in trace["sec_event"][-1]["value"]
     assert scored["eligibility"]["state"] == "blocked"
-    assert scored["score_components"]["community"] == 2
+    assert scored["score_components"]["community"] == 0
     assert [r["value"] for r in trace["community"][:2]] == ["1", "1"]
     screen = main.simple_market_detail("stocks", {"ticker": "TEST", "current": scored})
     assert screen["item"]["score_trace"] == trace
@@ -442,9 +442,11 @@ def test_person_connections_candidate_paging_and_invalid_input(database):
 def test_wallet_portfolio_uses_shared_stock_rows_and_keeps_event_lines(database, monkeypatch):
     insert(filing_row("source", evidence_json=json.dumps(evidence())))
     insert(filing_row("other", ticker="USO", evidence_json=json.dumps(evidence())))
-    monkeypatch.setattr(main, "_direct_ticker_item", lambda ticker, _: {
-        **score_current(), "ticker": ticker, "company": f"{ticker} company"
-    })
+    monkeypatch.setattr(
+        main,
+        "_direct_ticker_item",
+        lambda ticker, _: {**score_current(), "ticker": ticker, "company": f"{ticker} company"},
+    )
     # The old stock-scoped wallet path still works: it redirects to the wallet.
     legacy = TestClient(main.app).get("/wallets/stocks/TEST/sec:101", follow_redirects=False)
     assert legacy.status_code == 301

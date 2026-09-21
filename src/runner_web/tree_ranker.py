@@ -180,29 +180,37 @@ def train_and_store(
     horizon: str = "60m",
     maximum_groups: int = 200,
 ) -> dict[str, Any]:
-    """Train, export, compare with the incumbent, and promote only if it wins."""
+    """Train and export a shadow candidate; retrospective improvement is not promotion."""
 
     if not available():
         return {"status": "unavailable", "reason": "lightgbm is not installed"}
     groups = _load_groups(horizon, maximum_groups=maximum_groups)
     if len(groups) < 6:
         return {"status": "insufficient", "groups": len(groups)}
-    split = max(1, int(len(groups) * 0.8))
-    train_groups, test_groups = groups[:split], groups[split:]
-    if not test_groups:
-        return {"status": "insufficient", "groups": len(groups)}
+    from runner_web.replay import purged_chronological_split
+
+    split = purged_chronological_split(groups)
+    train_groups, test_groups = split["train"], split["test"]
+    if not all(split[key] for key in ("train", "validation", "test")):
+        return {"status": "insufficient", "groups": len(groups), "split_receipt": split["receipt"]}
     features, targets = _targets(train_groups)
     test_features, test_targets = _targets(test_groups)
     booster = train_booster(features, targets)
     artifact = integer_artifact(booster)
     scored = np.asarray([predict(artifact, list(row)) for row in test_features])
-    challenger = metrics(scored, test_targets)
+    challenger = metrics(scored, test_targets, prior_targets=targets)
+    challenger["split_receipt"] = split["receipt"]
+    challenger["training_rows"] = len(features)
     incumbent = _incumbent_metrics(test_groups)
-    promoted = bool(
+    candidate_improved = bool(
         incumbent.get("available")
         and challenger["log_loss"] < incumbent["log_loss"] - PROMOTION_MARGIN
         and challenger["log_loss"] < challenger["base_log_loss"]
     )
+    # This is retrospective research, not an untouched prospective promotion gate.
+    promoted = False
+    challenger["candidate_improved"] = candidate_improved
+    challenger["promotion_status"] = "shadow_only_pending_prospective_evaluation"
     moment = datetime.now(UTC).isoformat()
     model_id = f"trees-{moment.replace(':', '').replace('-', '')[:15]}"
     _store(database, model_id, artifact, challenger, incumbent, promoted, moment)
@@ -213,6 +221,8 @@ def train_and_store(
         "rows": int(len(features)),
         "trees": tree_count(artifact),
         "promoted": promoted,
+        "candidate_improved": candidate_improved,
+        "split_receipt": split["receipt"],
         "challenger": challenger,
         "incumbent": incumbent,
     }
@@ -233,7 +243,7 @@ def _store(
         MODEL_KIND,
         json.dumps(artifact, separators=(",", ":")),
         json.dumps({"challenger": challenger, "incumbent": incumbent}, separators=(",", ":")),
-        int(challenger.get("rows") or 0),
+        int(challenger.get("training_rows") or 0),
         "active" if promoted else "shadow",
         moment,
     )
