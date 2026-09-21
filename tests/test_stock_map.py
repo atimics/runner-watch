@@ -64,12 +64,17 @@ def test_component_trace_uses_the_inputs_that_produced_the_score(model_score):
     assert market["Source"] == ("Market scanner" if model_score is None else "Ranker model")
     assert float(market["Input score"]) == scored["score_components"]["market"] == expected_input
     assert {r["label"]: r["value"] for r in trace["rug"]}["Rug score"] == "90"
-    assert scored["score_components"]["rug"] == -27
-    assert scored["score_components"]["state"] == -20
+    # Policy deductions are reported, not subtracted from attention.
+    assert scored["policy_components"]["rug"] == -27
+    assert scored["policy_components"]["state"] == -20
+    assert scored["policy_components"]["safety"] == -25
     assert trace["state"][0]["value"] == "AVOID"
-    assert scored["score_components"]["sec_event"] == -12.5
-    assert "25%" in trace["sec_event"][-1]["value"]
-    assert scored["score_components"]["community"] == 4
+    assert "eligibility" in trace["state"][-1]["value"]
+    # A risk filing of 50 points is material: 12% of it, capped at 12.
+    assert scored["score_components"]["sec_event"] == 6.0
+    assert "12%" in trace["sec_event"][-1]["value"]
+    assert scored["eligibility"]["state"] == "blocked"
+    assert scored["score_components"]["community"] == 2
     assert [r["value"] for r in trace["community"][:2]] == ["1", "1"]
     screen = main.simple_market_detail("stocks", {"ticker": "TEST", "current": scored})
     assert screen["item"]["score_trace"] == trace

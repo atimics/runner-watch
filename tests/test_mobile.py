@@ -764,8 +764,8 @@ def test_pulse_only_lists_tickers_from_the_latest_scored_scan(
         "news": 0.0,
         "social_search": 0.0,
         "community": 0.0,
-        "safety": -0.0,
     }
+    assert result["rows"][0]["policy_components"]["safety"] == -0.0
     assert result["rows"][0]["event_count"] == 1
     assert result["rows"][0]["section"] == "scored"
     assert "EVENT" not in {row["ticker"] for row in result["rows"]}
@@ -1384,8 +1384,8 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
         "news": 1.5,
         "social_search": 4.32,
         "community": 2.0,
-        "safety": -0.0,
     }
+    assert pulse["policy_components"]["safety"] == -0.0
     assert pulse["custom_score"] == 47.82
     detail = ticker_detail_data("FLOW")
     assert detail["current"]["score"] == pulse["score"]
@@ -1447,9 +1447,14 @@ def test_detail_composite_uses_pulse_ranker_and_penalties(
     assert current["score"] == pulse["score"]
     assert current["score_as_of"] == pulse["score_as_of"] == timestamp.isoformat()
     assert current["score_components"]["market"] == (90 if model_status == "active" else 70)
-    assert current["score_components"]["sec_event"] == -20
-    assert current["score_components"]["rug"] == -12
-    assert current["score_components"]["state"] == (-25 if trade_state == "EXIT" else -20)
+    # A risk filing is material, so it raises attention whatever its direction.
+    assert current["score_components"]["sec_event"] == 9.6
+    # The deductions are policy now: reported, never subtracted from attention.
+    assert current["policy_components"]["rug"] == -12
+    assert current["policy_components"]["state"] == (-25 if trade_state == "EXIT" else -20)
+    assert current["eligibility"]["state"] == "blocked"
+    assert current["eligibility"]["blocked"] is True
+    assert current["score"] == (90 if model_status == "active" else 70) + 9.6
     assert len(detail["events"]) == 12
     assert all(event["accession"] != "strong-risk" for event in detail["events"])
     assert detail["evidence_gate"]["blockers"] == [f"State: {trade_state.title()}"]
@@ -1556,11 +1561,13 @@ def test_detail_score_does_not_use_truncated_external_evidence(
     detail = ticker_detail_data("CYPH")
     current = detail["current"]
     assert current["score_detail"] == pulse["score_detail"]
-    assert current["score"] == pulse["score"] == 29
+    # Attention is clamped to 0-100, so a halt no longer pushes it negative.
+    assert current["score"] == pulse["score"] == 100.0
     assert current["score_components"]["social_search"] == 5
-    assert current["score_components"]["safety"] == -25
-    assert current["score_components"]["rug"] == -27
-    assert current["score_components"]["state"] == -20
+    assert "safety" not in current["score_components"]
+    assert current["policy_components"]["safety"] == -25
+    assert current["policy_components"]["rug"] == -27
+    assert current["policy_components"]["state"] == -20
     assert len(detail["external_events"]) == 30
     assert detail["external_context"]["social_mentions"] == 0
     assert detail["external_context"]["active_halt"] is None
@@ -1994,7 +2001,7 @@ def test_market_risk_context_ignores_news_payloads(
     assert context == {"active_halt": False, "reverse_split_count_1y": 1}
 
 
-def test_critical_rug_risk_blocks_ready_and_lowers_pulse_rank(
+def test_critical_rug_risk_blocks_ready_without_hiding_it(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "rug-rank.db")
@@ -2019,9 +2026,11 @@ def test_critical_rug_risk_blocks_ready_and_lowers_pulse_rank(
 
     rows = pulse_data()["rows"]
 
-    assert [row["ticker"] for row in rows] == ["CLEAN", "RUG"]
-    assert rows[1]["evidence_gate"]["state"] == "blocked"
-    assert rows[1]["score"] < rows[1]["setup_score"]
+    # Attention orders the list; the block is stated beside it, not by hiding it.
+    assert [row["ticker"] for row in rows] == ["RUG", "CLEAN"]
+    assert rows[0]["evidence_gate"]["state"] == "blocked"
+    assert rows[0]["eligibility"]["state"] == "blocked"
+    assert rows[0]["score"] >= rows[0]["setup_score"]
 
 
 def test_previous_trade_states_returns_latest_state_with_index(
@@ -2048,7 +2057,7 @@ def test_previous_trade_states_returns_latest_state_with_index(
     assert "ticker,captured_at DESC,trade_state" in index_sql
 
 
-def test_risk_filing_subtracts_attention_instead_of_boosting_it(
+def test_a_risk_filing_raises_attention_while_the_block_stays_visible(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "risk-event.db")
@@ -2067,8 +2076,10 @@ def test_risk_filing_subtracts_attention_instead_of_boosting_it(
 
     row = pulse_data()["rows"][0]
 
-    assert row["event_boost"] == -20.0
-    assert row["score"] == 30.0
+    # Material news moves attention; the downside belongs to the forecast.
+    assert row["event_boost"] == 9.6
+    assert row["score"] == 59.6
+    assert row["eligibility"]["state"] == "eligible"
 
 
 def test_ticker_detail_prefers_market_state_and_uses_scan_outcome(
