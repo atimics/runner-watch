@@ -9,6 +9,7 @@ the root [README](../README.md) for how the service is built and run.
 | Document | Covers |
 | --- | --- |
 | [market-screens/README.md](market-screens/README.md) | The shared List / Detail / Map screen contract for all three markets |
+| [scoring-contracts.md](scoring-contracts.md) | Attention units, forecasts, eligibility, label integrity and purged evaluation |
 | [stock-scanner.md](stock-scanner.md) | Desktop scanner controls and what each filter means |
 | [memecoins.md](memecoins.md) | Solana discovery, Helius budget and collection windows |
 | [memecoin-forensics.md](memecoin-forensics.md) | On-chain forensic evidence methods |

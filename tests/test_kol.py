@@ -116,8 +116,8 @@ def _seed_prediction(
                 rank,
                 captured_at.isoformat(),
                 probability_up,
-                0.2,
-                0.8 - probability_up,
+                min(0.2, 1 - probability_up),
+                max(0.0, 1 - probability_up - min(0.2, 1 - probability_up)),
                 expected_return_pct,
             ),
         )

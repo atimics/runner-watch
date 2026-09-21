@@ -7,6 +7,7 @@ straddle the split. The third test scores the ordering the list actually shows.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -76,7 +77,7 @@ def _insert_event(event_id: str, event_at: datetime) -> None:
     )
     record_source_batch(
         SourceBatch(
-            fetch=fetch,
+            fetch=replace(fetch, finished_at=event_at),
             market_events=(
                 MarketEvent(
                     event_id=event_id,
@@ -127,9 +128,7 @@ def test_a_replay_reads_only_what_was_known_by_then(database):
     # Comments counted then, not now.
     assert inputs["community"]["ONE"]["comment_count"] == 1
     # Events bounded the same way.
-    event_times = [
-        event["event_at"] for event in inputs["market_events_by_ticker"].get("ONE", [])
-    ]
+    event_times = [event["event_at"] for event in inputs["market_events_by_ticker"].get("ONE", [])]
     assert event_times == [(at - timedelta(minutes=30)).isoformat()]
     # The three clocks are named, and none of them is later than the decision.
     assert inputs["feature_as_of"] == at.isoformat()

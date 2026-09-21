@@ -114,9 +114,11 @@ def compare(
 
     additive_artifact = integer_artifact(build_tables(train_x, train_y))
     additive_scores = np.asarray([predict(additive_artifact, list(row)) for row in test_x])
-    additive = metrics(additive_scores, test_y)
+    additive = metrics(additive_scores, test_y, prior_targets=train_y)
 
-    trees = metrics(tree_probabilities(train_trees(train_x, train_y), test_x), test_y)
+    trees = metrics(
+        tree_probabilities(train_trees(train_x, train_y), test_x), test_y, prior_targets=train_y
+    )
 
     verdict = "additive_holds"
     if trees["log_loss"] < additive["log_loss"] - PROMOTION_MARGIN:
@@ -145,8 +147,12 @@ def benchmark(*, horizon: str = "60m", maximum_groups: int = 200) -> dict[str, A
     groups = _load_groups(horizon, maximum_groups=maximum_groups)
     if len(groups) < 6:
         return {"status": "insufficient", "groups": len(groups)}
-    split = max(1, int(len(groups) * 0.8))
-    train_groups, test_groups = groups[:split], groups[split:]
+    from runner_web.replay import purged_chronological_split
+
+    split = purged_chronological_split(groups)
+    train_groups, test_groups = split["train"], split["test"]
+    if not all(split[key] for key in ("train", "validation", "test")):
+        return {"status": "insufficient", "groups": len(groups), "split_receipt": split["receipt"]}
     features, targets = _targets(train_groups)
     test_features, test_targets = _targets(test_groups)
     if not len(test_features):
@@ -160,6 +166,7 @@ def benchmark(*, horizon: str = "60m", maximum_groups: int = 200) -> dict[str, A
         return report
     report["incumbent"] = _incumbent_metrics(test_groups)
     report["groups"] = len(groups)
+    report["split_receipt"] = split["receipt"]
     report["generated_at"] = datetime.now(UTC).isoformat()
     return report
 

@@ -33,8 +33,9 @@ from runner_web.ranker import (
     FEATURE_NAMES,
     FEATURE_SCHEMA_VERSION,
     _load_groups,
+    _predict_command,
     _run_rust,
-    load_latest_model,
+    load_served_model,
     register_served_model,
 )
 
@@ -79,9 +80,7 @@ def bin_index(value: int, edges: list[int]) -> int:
     return low
 
 
-def build_tables(
-    features: np.ndarray, targets: np.ndarray, *, bins: int = BINS
-) -> dict[str, Any]:
+def build_tables(features: np.ndarray, targets: np.ndarray, *, bins: int = BINS) -> dict[str, Any]:
     """Fit the additive tables: one contribution row per feature per bin."""
 
     rows, columns = features.shape
@@ -220,28 +219,72 @@ def _targets(groups: list[list[dict[str, Any]]]) -> tuple[np.ndarray, np.ndarray
     return features, targets
 
 
-def metrics(probabilities: np.ndarray, targets: np.ndarray) -> dict[str, Any]:
+def metrics(
+    probabilities: np.ndarray,
+    targets: np.ndarray,
+    *,
+    prior_targets: np.ndarray | None = None,
+) -> dict[str, Any]:
     """Proper scoring losses, plus the base rate they must beat."""
 
     classes = len(CLASS_NAMES)
+    probabilities = np.asarray(probabilities, dtype=np.float64)
+    targets = np.asarray(targets)
+    if (
+        targets.ndim != 1
+        or not len(targets)
+        or not np.issubdtype(targets.dtype, np.integer)
+        or np.any((targets < 0) | (targets >= classes))
+    ):
+        raise ValueError("Targets must be nonempty integer class labels")
+    if (
+        probabilities.shape != (len(targets), classes)
+        or not np.all(np.isfinite(probabilities))
+        or np.any((probabilities < 0) | (probabilities > 1))
+        or not np.allclose(probabilities.sum(axis=1), 1, atol=1e-6, rtol=0)
+    ):
+        raise ValueError("Probabilities must be finite normalized three-way distributions")
     clipped = np.clip(probabilities, 1e-12, 1.0)
     one_hot = np.eye(classes)[targets]
     log_loss = float(-np.mean(np.log(clipped[np.arange(len(targets)), targets])))
-    brier = float(np.mean(np.sum((clipped - one_hot) ** 2, axis=1)))
-    prior = np.bincount(targets, minlength=classes) / max(1, len(targets))
+    class_brier = np.mean((probabilities - one_hot) ** 2, axis=0)
+    prior_sample = targets if prior_targets is None else np.asarray(prior_targets)
+    if (
+        prior_sample.ndim != 1
+        or not len(prior_sample)
+        or not np.issubdtype(prior_sample.dtype, np.integer)
+        or np.any((prior_sample < 0) | (prior_sample >= classes))
+    ):
+        raise ValueError("Base-rate sample must contain integer class labels")
+    prior = np.bincount(prior_sample, minlength=classes) / len(prior_sample)
     base_loss = float(-np.mean(np.log(np.clip(prior[targets], 1e-12, 1.0))))
-    accuracy = float(np.mean(np.argmax(clipped, axis=1) == targets))
-    confidence = clipped.max(axis=1)
-    correct = (np.argmax(clipped, axis=1) == targets).astype(np.float64)
-    ece = float(np.mean(np.abs(confidence - correct))) if len(targets) else 0.0
+    accuracy = float(np.mean(np.argmax(probabilities, axis=1) == targets))
+    confidence = probabilities.max(axis=1)
+    correct = (np.argmax(probabilities, axis=1) == targets).astype(np.float64)
+
+    def calibration(predicted: np.ndarray, actual: np.ndarray) -> float:
+        bins = np.minimum((predicted * 10).astype(int), 9)
+        return float(
+            sum(abs(np.sum(predicted[bins == i] - actual[bins == i])) for i in range(10))
+            / len(actual)
+        )
+
     return {
         "rows": int(len(targets)),
         "log_loss": round(log_loss, 6),
-        "brier": round(brier, 6),
+        "brier": round(float(class_brier.sum()), 6),
+        "class_brier": {
+            name: round(float(class_brier[i]), 6) for i, name in enumerate(CLASS_NAMES)
+        },
         "base_log_loss": round(base_loss, 6),
+        "base_rate_basis": "evaluation_descriptive_only" if prior_targets is None else "training",
         "accuracy": round(accuracy, 4),
-        "base_accuracy": round(float(np.max(prior)), 4),
-        "calibration_gap": round(ece, 6),
+        "base_accuracy": round(float(np.mean(targets == int(np.argmax(prior)))), 4),
+        "calibration_gap": round(calibration(confidence, correct), 6),
+        "class_calibration_gap": {
+            name: round(calibration(probabilities[:, i], one_hot[:, i]), 6)
+            for i, name in enumerate(CLASS_NAMES)
+        },
     }
 
 
@@ -256,22 +299,30 @@ def train_and_store(
     groups = _load_groups(horizon, maximum_groups=maximum_groups)
     if len(groups) < 6:
         return {"status": "insufficient", "groups": len(groups)}
-    split = max(1, int(len(groups) * 0.8))
-    train_groups, test_groups = groups[:split], groups[split:]
-    if not test_groups:
-        return {"status": "insufficient", "groups": len(groups)}
+    from runner_web.replay import purged_chronological_split
+
+    split = purged_chronological_split(groups)
+    train_groups, test_groups = split["train"], split["test"]
+    if not all(split[key] for key in ("train", "validation", "test")):
+        return {"status": "insufficient", "groups": len(groups), "split_receipt": split["receipt"]}
     features, targets = _targets(train_groups)
     test_features, test_targets = _targets(test_groups)
     model = build_tables(features, targets)
     artifact = integer_artifact(model)
     scored = np.asarray([predict(artifact, list(row)) for row in test_features])
-    challenger = metrics(scored, test_targets)
+    challenger = metrics(scored, test_targets, prior_targets=targets)
+    challenger["split_receipt"] = split["receipt"]
+    challenger["training_rows"] = len(features)
     incumbent = _incumbent_metrics(test_groups)
-    promoted = bool(
+    candidate_improved = bool(
         incumbent.get("available")
         and challenger["log_loss"] < incumbent["log_loss"] - PROMOTION_MARGIN
         and challenger["log_loss"] < challenger["base_log_loss"]
     )
+    # This is retrospective research, not an untouched prospective promotion gate.
+    promoted = False
+    challenger["candidate_improved"] = candidate_improved
+    challenger["promotion_status"] = "shadow_only_pending_prospective_evaluation"
     moment = datetime.now(UTC).isoformat()
     model_id = f"gam-{moment.replace(':', '').replace('-', '')[:15]}"
     _store(database, model_id, artifact, challenger, incumbent, promoted, moment)
@@ -281,6 +332,8 @@ def train_and_store(
         "groups": len(groups),
         "rows": int(len(features)),
         "promoted": promoted,
+        "candidate_improved": candidate_improved,
+        "split_receipt": split["receipt"],
         "challenger": challenger,
         "incumbent": incumbent,
     }
@@ -289,14 +342,14 @@ def train_and_store(
 def _incumbent_metrics(test_groups: list[list[dict[str, Any]]]) -> dict[str, Any]:
     """The active model's losses on the same held-out rows, via the runtime."""
 
-    model = load_latest_model()
+    model = load_served_model()
     if model is None:
         return {"available": False}
     rows = [row for group in test_groups for row in group]
     try:
         response = _run_rust(
             {
-                "command": "predict",
+                "command": _predict_command(model, rows),
                 "artifact": model.artifact,
                 "rows": [
                     {
@@ -310,23 +363,25 @@ def _incumbent_metrics(test_groups: list[list[dict[str, Any]]]) -> dict[str, Any
         )
     except Exception as exc:  # pragma: no cover - runtime unavailable in some environments
         return {"available": False, "reason": str(exc)[:120]}
-    by_id = {str(item.get("id")): item for item in response.get("predictions") or []}
+    predictions = response.get("predictions") or []
+    by_id = {str(item.get("id")): item for item in predictions}
+    if len(by_id) != len(predictions) or set(by_id) != {str(row["snapshot_id"]) for row in rows}:
+        return {"available": False, "reason": "prediction_batch_mismatch"}
     probabilities = []
     targets = []
     for row in rows:
-        item = by_id.get(str(row["snapshot_id"]))
-        if not item:
-            continue
-        probabilities.append(
-            [
-                float(item.get("probability_down") or 0.0),
-                float(item.get("probability_timeout") or 0.0),
-                float(item.get("probability_up") or 0.0),
-            ]
-        )
+        item = by_id[str(row["snapshot_id"])]
+        ppm = [item.get(f"probability_{name}_ppm") for name in CLASS_NAMES]
+        if (
+            any(
+                isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 1_000_000
+                for value in ppm
+            )
+            or sum(ppm) != 1_000_000
+        ):
+            return {"available": False, "reason": "invalid_integer_probability_contract"}
+        probabilities.append([value / 1_000_000 for value in ppm])
         targets.append(CLASS_NAMES.index(str(row["outcome"])))
-    if not probabilities:
-        return {"available": False, "reason": "no_predictions"}
     report = metrics(np.asarray(probabilities), np.asarray(targets))
     report["available"] = True
     report["model_id"] = model.id
@@ -348,7 +403,7 @@ def _store(
         MODEL_KIND,
         json.dumps(artifact, separators=(",", ":")),
         json.dumps({"challenger": challenger, "incumbent": incumbent}, separators=(",", ":")),
-        int(challenger.get("rows") or 0),
+        int(challenger.get("training_rows") or 0),
         "active" if promoted else "shadow",
         moment,
     )

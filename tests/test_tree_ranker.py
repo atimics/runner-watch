@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -114,15 +115,11 @@ def test_the_runtime_walks_the_exported_forest_the_same_way():
     tolerance = 5e-6
     for prediction, vector in zip(predictions, vectors, strict=True):
         expected = tree_ranker.predict(artifact, vector)
-        assert prediction["probability_down_ppm"] / 1e6 == pytest.approx(
-            expected[0], abs=tolerance
-        )
+        assert prediction["probability_down_ppm"] / 1e6 == pytest.approx(expected[0], abs=tolerance)
         assert prediction["probability_timeout_ppm"] / 1e6 == pytest.approx(
             expected[1], abs=tolerance
         )
-        assert prediction["probability_up_ppm"] / 1e6 == pytest.approx(
-            expected[2], abs=tolerance
-        )
+        assert prediction["probability_up_ppm"] / 1e6 == pytest.approx(expected[2], abs=tolerance)
 
 
 def _learnable_groups(groups: int = 40, per_group: int = 6) -> list[list[dict[str, object]]]:
@@ -141,7 +138,9 @@ def _learnable_groups(groups: int = 40, per_group: int = 6) -> list[list[dict[st
                     "snapshot_id": f"{group_index}-{index}",
                     "scan_run_id": f"run-{group_index}",
                     "ticker": f"T{index}",
-                    "run_captured_at": f"2026-09-{group_index + 1:02}T15:00:00+00:00",
+                    "run_captured_at": (
+                        datetime(2026, 9, 1, 15, tzinfo=UTC) + timedelta(days=group_index)
+                    ).isoformat(),
                     "expected_candidates": per_group,
                     "feature_vector": (int(first), int(second), 0, 0),
                     "score": 50.0,
@@ -155,7 +154,7 @@ def _learnable_groups(groups: int = 40, per_group: int = 6) -> list[list[dict[st
 
 
 @requires_lightgbm
-def test_a_tree_that_beats_the_margin_is_promoted_and_served(database, monkeypatch):
+def test_a_tree_that_improves_stays_shadow_pending_prospective_evidence(database, monkeypatch):
     monkeypatch.setattr(tree_ranker, "_load_groups", lambda *_a, **_k: _learnable_groups())
     monkeypatch.setattr(
         tree_ranker,
@@ -166,13 +165,14 @@ def test_a_tree_that_beats_the_margin_is_promoted_and_served(database, monkeypat
     result = tree_ranker.train_and_store(database, maximum_groups=10)
 
     assert result["status"] == "trained"
-    assert result["promoted"] is True
+    assert result["promoted"] is False
+    assert result["candidate_improved"] is True
     assert result["trees"] > 0
     database.commit()
-    model = tree_ranker.active_model(refresh=True)
-    assert model is not None
-    assert model["artifact"]["schema"] == tree_ranker.ARTIFACT_SCHEMA
-    assert model["metrics"]["incumbent"]["model_id"] == "incumbent"
+    assert tree_ranker.active_model(refresh=True) is None
+    row = database.execute("SELECT artifact_json,status FROM tree_ranker_models").fetchone()
+    assert row["status"] == "shadow"
+    assert json.loads(row["artifact_json"])["schema"] == tree_ranker.ARTIFACT_SCHEMA
 
 
 @requires_lightgbm
@@ -214,8 +214,9 @@ def test_the_walk_handles_a_short_feature_vector():
     # A row missing the feature it splits on contributes nothing rather than raising.
     assert tree_ranker.score_integers(artifact, [0]) == [0.0, 0.0, 0.0]
 
+
 @requires_lightgbm
-def test_a_promoted_forest_becomes_the_served_model(database, monkeypatch):
+def test_a_research_forest_cannot_replace_the_served_incumbent(database, monkeypatch):
     """Serving one model at a time is what keeps the score meaning one thing."""
 
     from runner_web.ranker import load_latest_model, load_served_model, register_served_model
@@ -240,21 +241,17 @@ def test_a_promoted_forest_becomes_the_served_model(database, monkeypatch):
     result = tree_ranker.train_and_store(database, maximum_groups=10)
     database.commit()
 
-    assert result["promoted"] is True
+    assert result["promoted"] is False
+    assert result["candidate_improved"] is True
     served = load_served_model()
-    assert served is not None
-    assert served.id == result["model_id"]
-    assert served.kind == tree_ranker.MODEL_KIND
-    assert served.artifact["schema"] == tree_ranker.ARTIFACT_SCHEMA
-    # The logistic-only loader still ignores it, so the incumbent comparison stays honest.
-    assert load_latest_model() is None
-    with database as conn:
-        statuses = dict(
-            (row["id"], row["status"])
-            for row in conn.execute("SELECT id,status FROM ranker_models").fetchall()
-        )
-    assert statuses[result["model_id"]] == "active"
-    assert statuses["incumbent-logistic"] == "retired"
+    assert served is not None and served.id == "incumbent-logistic"
+    assert load_latest_model() is None  # fixture deliberately has no valid logistic artifact
+    statuses = {
+        row["id"]: row["status"]
+        for row in database.execute("SELECT id,status FROM ranker_models").fetchall()
+    }
+    assert result["model_id"] not in statuses
+    assert statuses["incumbent-logistic"] == "active"
 
 
 def test_the_runtime_command_follows_the_served_kind():
@@ -274,6 +271,4 @@ def test_the_runtime_command_follows_the_served_kind():
 
     assert ranker._predict_command(model("integer_trees_barrier_v1"), []) == "predict_trees"
     assert ranker._predict_command(model("integer_additive_barrier_v1"), []) == "predict_gam"
-    assert (
-        ranker._predict_command(model("integer_multiclass_logistic_barrier_v6"), []) == "predict"
-    )
+    assert ranker._predict_command(model("integer_multiclass_logistic_barrier_v6"), []) == "predict"

@@ -261,6 +261,17 @@ def store_training_examples(
     return len(rows)
 
 
+def _return_bp(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    scaled = number * RETURN_SCALE
+    return int(round(scaled)) if math.isfinite(scaled) else None
+
+
 def sync_training_outcome(
     database: Any,
     snapshot_id: str,
@@ -279,7 +290,7 @@ def sync_training_outcome(
         """,
         (
             barrier_label,
-            int(round(_float(outcome_return_pct) * RETURN_SCALE)),
+            _return_bp(outcome_return_pct),
             labeled_at,
             barrier_resolution,
             snapshot_id,
@@ -342,7 +353,7 @@ def _backfill_recent_training_examples(maximum_groups: int) -> int:
                     json.dumps(feature_vector(row), separators=(",", ":")),
                     _scaled(row.get("score")),
                     str(row["barrier_label"]),
-                    int(round(_float(row.get("return_60m_pct")) * RETURN_SCALE)),
+                    _return_bp(row.get("return_60m_pct")),
                     str(row["labeled_at"]),
                     str(row.get("barrier_resolution") or "resolved"),
                 )
@@ -379,6 +390,7 @@ def _load_groups(
             WHERE feature_schema_version=?
               AND barrier_label IN ('down','timeout','up')
               AND COALESCE(barrier_resolution,'resolved')='resolved'
+              AND outcome_return_bp IS NOT NULL
             GROUP BY scan_run_id
             HAVING COUNT(*)=MAX(expected_candidates) AND COUNT(*)>=2
             ORDER BY run_captured_at DESC,scan_run_id DESC LIMIT ?
@@ -396,6 +408,7 @@ def _load_groups(
               AND feature_schema_version=?
               AND barrier_label IN ('down','timeout','up')
               AND COALESCE(barrier_resolution,'resolved')='resolved'
+              AND outcome_return_bp IS NOT NULL
             ORDER BY captured_at,scan_run_id,ticker
             """,
             (*run_ids, FEATURE_SCHEMA_VERSION),
@@ -419,7 +432,7 @@ def _load_groups(
                 "feature_vector": vector,
                 "score": int(row["baseline_score_milli"]) / FEATURE_SCALE,
                 "outcome": str(row["barrier_label"]),
-                "outcome_return": int(row["outcome_return_bp"] or 0) / RETURN_SCALE,
+                "outcome_return": int(row["outcome_return_bp"]) / RETURN_SCALE,
                 "training_origin": str(row.get("training_origin") or "live"),
             }
         )
@@ -485,6 +498,13 @@ def _run_rust(request: dict[str, Any], *, timeout_seconds: int = 300) -> dict[st
     return response
 
 
+def _required_return_bp(value: Any) -> int:
+    result = _return_bp(value)
+    if result is None:
+        raise ValueError("Training payoff evaluation requires an observed terminal return")
+    return result
+
+
 def _training_payload(groups: list[list[dict[str, Any]]]) -> list[list[dict[str, Any]]]:
     return [
         [
@@ -492,7 +512,7 @@ def _training_payload(groups: list[list[dict[str, Any]]]) -> list[list[dict[str,
                 "ticker": str(row["ticker"]),
                 "features": list(feature_vector(row)),
                 "outcome": CLASS_INDEX[str(row["outcome"])],
-                "outcome_return_bp": int(round(_float(row.get("outcome_return")) * RETURN_SCALE)),
+                "outcome_return_bp": _required_return_bp(row.get("outcome_return")),
                 "baseline_score_milli": _scaled(row.get("score")),
             }
             for row in group
@@ -539,20 +559,33 @@ def train_shadow_ranker(
             "minimum_per_outcome": minimum_per_class,
         }
 
-    # Purge groups whose outcome window is still open at the split, so training
-    # cannot learn from a label that had not finished when the next group began.
-    from runner_web.replay import purge_boundary_groups
+    from runner_web.replay import purged_chronological_split
 
-    purged = purge_boundary_groups(groups)
-    groups = purged["groups"]
-    purged_groups = int(purged.get("purged") or 0)
-    if len(groups) < min_groups:
+    split = purged_chronological_split(groups)
+    receipt = split["receipt"]
+    purged_groups = receipt["purged_groups"]
+    groups = split["train"] + split["validation"] + split["test"]
+    row_count = sum(len(group) for group in groups)
+    if (
+        not all(split[key] for key in ("train", "validation", "test"))
+        or len(groups) < min_groups
+        or row_count < min_rows
+    ):
         return {
             "trained": False,
-            "reason": "not_enough_groups_after_purge",
+            "reason": "insufficient_data_after_purge",
             "groups": len(groups),
-            "purged_groups": purged_groups,
-            "purged_runs": purged.get("purged_runs") or [],
+            "rows": row_count,
+            "split_receipt": receipt,
+        }
+
+    training_outcomes = Counter(row["outcome"] for group in split["train"] for row in group)
+    if any(training_outcomes[label] < minimum_per_class for label in CLASS_NAMES):
+        return {
+            "trained": False,
+            "reason": "insufficient_training_classes_after_purge",
+            "outcomes": dict(training_outcomes),
+            "split_receipt": receipt,
         }
 
     response = _run_rust(
@@ -560,12 +593,20 @@ def train_shadow_ranker(
             "command": "train",
             "feature_names": list(FEATURE_NAMES),
             "groups": _training_payload(groups),
+            "train_group_count": len(split["train"]),
+            "validation_group_count": len(split["validation"]),
             "epochs": max(1, epochs),
         },
         timeout_seconds=max(300, epochs * 2),
     )
     artifact = response["artifact"]
     metrics = response["metrics"]
+    if metrics.get("split") != "explicit_purged_train_validation_test" or any(
+        (metrics.get(key) or {}).get("groups") != len(split[key])
+        for key in ("train", "validation", "test")
+    ):
+        raise RuntimeError("Rust trainer did not preserve the explicit purged partitions")
+    metrics["split_receipt"] = receipt
     origin_groups = Counter(
         str(group[0].get("training_origin") or "live") for group in groups if group
     )
@@ -586,14 +627,14 @@ def train_shadow_ranker(
                 "horizon": horizon,
                 "model_kind": MODEL_KIND,
                 "training_end": groups[-1][0]["run_captured_at"],
+                "split_receipt": receipt,
             },
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
     ).hexdigest()[:20]
     model_id = f"ranker-{identity}"
-    holdout_count = min(max(2, (len(groups) + 2) // 5), len(groups) - 1)
-    training_group_count = len(groups) - holdout_count
+    training_group_count = len(split["train"])
     created_at = _iso()
     with connection_scope() as database:
         database.execute(
@@ -658,6 +699,7 @@ def train_shadow_ranker_if_due(
             WHERE feature_schema_version=?
               AND barrier_label IN ('down','timeout','up')
               AND COALESCE(barrier_resolution,'resolved')='resolved'
+              AND outcome_return_bp IS NOT NULL
             GROUP BY scan_run_id
             HAVING COUNT(*)=MAX(expected_candidates) AND COUNT(*)>=2
             ORDER BY captured_at DESC LIMIT ?
@@ -1100,6 +1142,7 @@ def ranker_status() -> dict[str, Any]:
                   WHERE feature_schema_version=?
                     AND barrier_label IN ('down','timeout','up')
               AND COALESCE(barrier_resolution,'resolved')='resolved'
+              AND outcome_return_bp IS NOT NULL
                   GROUP BY scan_run_id
                   HAVING COUNT(*)=MAX(expected_candidates) AND COUNT(*)>=2
               )) AS complete_groups
@@ -1112,7 +1155,7 @@ def ranker_status() -> dict[str, Any]:
             FROM ranker_training_examples
             WHERE feature_schema_version=? AND barrier_label IN ('down','timeout','up')
               AND COALESCE(barrier_resolution,'resolved')='resolved'
-              AND COALESCE(barrier_resolution,'resolved')='resolved'
+              AND outcome_return_bp IS NOT NULL
             GROUP BY training_origin ORDER BY training_origin
             """,
             (FEATURE_SCHEMA_VERSION,),
