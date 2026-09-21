@@ -1176,11 +1176,20 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
         expect(page.locator('[data-entity-stock="CDTG"] .entity-score-segment')).to_have_count(0)
         # The ticker names each node; the ring carries the score and the
         # click-through opens the full detail on the stock page.
-        expect(page.locator("[data-entity-stock] text")).to_have_count(2)
-        symbols = page.locator("[data-entity-stock] > text").evaluate_all(
-            "nodes => nodes.map(node => node.textContent)"
-        )
+        symbols_locator = page.locator("[data-entity-stock] .entity-stock-symbol")
+        expect(symbols_locator).to_have_count(2)
+        symbols = symbols_locator.evaluate_all("nodes => nodes.map(node => node.textContent)")
         assert set(symbols) == {"USO", "CDTG"}
+        # The value or event count is stated under the node, not only on hover.
+        actions = page.locator("[data-entity-stock] .map-node-action")
+        expect(actions).to_have_count(2)
+        values = actions.evaluate_all("nodes => nodes.map(node => node.textContent)")
+        assert all(value.startswith("$") or value.endswith("events") for value in values), values
+        # The symbol is sized to the node, and bigger than it used to be.
+        sizes = symbols_locator.evaluate_all(
+            "nodes => nodes.map(node => parseFloat(getComputedStyle(node).fontSize))"
+        )
+        assert all(size >= 12 for size in sizes), sizes
         titles = page.locator("[data-entity-stock] > title")
         expect(titles).to_have_count(2)
         hover = titles.evaluate_all("nodes => nodes.map(node => node.textContent)")

@@ -124,9 +124,13 @@
       const link = svg('a',{href:`/stock/${encodeURIComponent(stock.ticker)}`,class:'map-person',tabindex:0,'aria-label':`${stock.ticker}, ${scored ? `score ${Math.round(stock.score)}, ` : ''}${stock.events.length} events`, 'data-entity-stock':stock.ticker,...(orbiting ? {'data-orbit-anchor':`${x},${y}`} : {})});
       link.append(svg('circle',{cx:x,cy:y,r:radius}));
       if (scored) link.append(scoreWheel(stock,x,y,radius+3));
-      // The ticker names the node; the ring carries the score and the node
-      // opens the full detail on click. Hovering adds the value.
-      link.append(svg('text',{x,y:y+(scored ? -3 : 5),'text-anchor':'middle',class:scored ? 'entity-stock-symbol' : ''},stock.ticker));
+      // The ticker names the node and scales with it; the ring carries the score,
+      // the line below states the money or the event count, and clicking opens the
+      // full detail. Hovering still names everything.
+      link.append(svg('text',{x,y:y+5,'text-anchor':'middle',class:'entity-stock-symbol',
+        'font-size':Math.max(12,Math.min(15,radius*0.5)).toFixed(1)},stock.ticker));
+      link.append(svg('text',{x,y:y+radius+18,'text-anchor':'middle',class:'map-node-action'},
+        stock.value == null ? `${stock.events.length} events` : money(stock.value)));
       link.append(
         svg('title',{},`${stock.ticker}${scored ? ` · score ${Math.round(stock.score)}` : ''}` +
           `${stock.value == null ? ` · ${stock.events.length} events` : ` · ${money(stock.value)}`}`)
