@@ -11,57 +11,43 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: codex/runner-watch-scoring-v2-build
           fetch-depth: 2
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
         with:
           python-version: '3.13'
       - name: Install locked development dependencies
         run: uv sync --frozen --extra dev
-      - name: Export offline test environment
-        run: |
-          mkdir -p /tmp/scoring-env/bin
-          cp .venv/bin/ruff /tmp/scoring-env/bin/
-          cp -a .venv/lib/python3.13/site-packages /tmp/scoring-env/
-          tar -C /tmp/scoring-env -czf /tmp/scoring-env.tar.gz .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: scoring-env
-          path: /tmp/scoring-env.tar.gz
-          retention-days: 1
       - name: Apply reviewed patch
         id: patch
         shell: bash
         run: |
           if test -f .scoring-refactor.patch; then
-            base64 -d .scoring-refactor.patch | gzip -d > /tmp/scoring.patch
+            cat .scoring-refactor.part-* .scoring-refactor.patch | base64 -d | xz -d > /tmp/scoring.patch
+            echo '4d86a97265d34882aabb0944ec1fb620ac4166a5ce8d70e5135185d030318312  /tmp/scoring.patch' | sha256sum --check
             git apply --check /tmp/scoring.patch
             git apply /tmp/scoring.patch
-            git rm .scoring-refactor.patch .github/workflows/scoring-refactor-build.yml
+            git rm .scoring-refactor.part-* .scoring-refactor.patch .github/workflows/scoring-refactor-build.yml
             echo 'applied=true' >> "$GITHUB_OUTPUT"
           fi
       - name: Lint scoring refactor
         if: steps.patch.outputs.applied == 'true'
-        run: |
-          git ls-files --others --exclude-standard src tests docs rust web | xargs -r git add -N
-          git diff --name-only -- '*.py' | xargs -r uv run ruff check --fix
-          git diff --name-only -- '*.py' | xargs -r uv run ruff format
-          uv run ruff check src tests
+        run: uv run ruff check src tests
       - name: Rust tests and inference parity binary
         run: |
           cargo test --locked --manifest-path rust/stonks-ranker/Cargo.toml
           cargo build --locked --manifest-path rust/stonks-ranker/Cargo.toml
           cp rust/stonks-ranker/target/debug/stonks-integer-ranker /tmp/stonks-integer-ranker
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: scoring-rust-runtime
           path: /tmp/stonks-integer-ranker
           retention-days: 1
-      - name: Run regression suite
+      - name: Run complete non-browser regression suite
         if: steps.patch.outputs.applied == 'true'
-        run: uv run pytest --no-cov -q -n 2 -m 'not browser' --junitxml=/tmp/scoring-tests.xml
+        run: uv run pytest --no-cov -q -n 4 -m 'not browser' --junitxml=/tmp/scoring-tests.xml
       - name: Commit verified changes to isolated branch only
         if: steps.patch.outputs.applied == 'true'
         run: |
@@ -72,7 +58,7 @@ jobs:
           git add src tests docs rust web
           git commit -m 'Separate scoring contracts and repair outcome data integrity'
           git push origin HEAD:refs/heads/codex/runner-watch-scoring-v2-build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always() && steps.patch.outputs.applied == 'true'
         with:
           name: scoring-test-results
