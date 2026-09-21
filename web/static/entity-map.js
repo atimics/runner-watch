@@ -122,13 +122,12 @@
         line.append(svg('title',{},`${stock.ticker} · ${event.action} · Filed ${event.filed_at?.slice(0,10) || ''}`)); graph.append(line);
       });
       const link = svg('a',{href:`/stock/${encodeURIComponent(stock.ticker)}`,class:'map-person',tabindex:0,'aria-label':`${stock.ticker}, ${scored ? `score ${Math.round(stock.score)}, ` : ''}${stock.events.length} events`, 'data-entity-stock':stock.ticker,...(orbiting ? {'data-orbit-anchor':`${x},${y}`} : {})});
+      // No labels on the map itself: the ring carries the score and the node
+      // opens the full detail on click. Hovering still names it.
       link.append(svg('circle',{cx:x,cy:y,r:radius}));
       if (scored) link.append(scoreWheel(stock,x,y,radius+3));
-      // The ticker names the node; the ring carries the score and the node
-      // opens the full detail on click. Hovering adds the value.
-      link.append(svg('text',{x,y:y+(scored ? -3 : 5),'text-anchor':'middle',class:scored ? 'entity-stock-symbol' : ''},stock.ticker));
       link.append(
-        svg('title',{}`${stock.ticker}${scored ? ` · score ${Math.round(stock.score)}` : ''}` +
+        svg('title',{},`${stock.ticker}${scored ? ` · score ${Math.round(stock.score)}` : ''}` +
           `${stock.value == null ? ` · ${stock.events.length} events` : ` · ${money(stock.value)}`}`)
       );
       graph.append(link);
