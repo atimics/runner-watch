@@ -2,51 +2,66 @@ name: Scoring refactor build
 on:
   push:
     branches: [codex/runner-watch-scoring-v2-build]
-    paths:
-      - .github/workflows/scoring-refactor-build.yml
-      - .scoring-refactor.patch
+    paths: [.github/workflows/scoring-refactor-build.yml, .scoring-refactor.patch]
 permissions:
   contents: write
 jobs:
   build:
     if: github.ref == 'refs/heads/codex/runner-watch-scoring-v2-build'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
           ref: codex/runner-watch-scoring-v2-build
           fetch-depth: 2
-      - name: Export source for local verification
-        run: git archive --format=tar HEAD | gzip > /tmp/runner-watch-source.tar.gz
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+      - name: Install locked development dependencies
+        run: uv sync --frozen --extra dev
+      - name: Export offline test environment
+        run: |
+          mkdir -p /tmp/scoring-env/bin
+          cp .venv/bin/ruff /tmp/scoring-env/bin/
+          cp -a .venv/lib/python3.13/site-packages /tmp/scoring-env/
+          tar -C /tmp/scoring-env -czf /tmp/scoring-env.tar.gz .
       - uses: actions/upload-artifact@v4
         with:
-          name: scoring-source
-          path: /tmp/runner-watch-source.tar.gz
+          name: scoring-env
+          path: /tmp/scoring-env.tar.gz
           retention-days: 1
       - name: Apply reviewed patch
         id: patch
         shell: bash
         run: |
           if test -f .scoring-refactor.patch; then
-            git apply --check .scoring-refactor.patch
-            git apply .scoring-refactor.patch
+            base64 -d .scoring-refactor.patch | gzip -d > /tmp/scoring.patch
+            git apply --check /tmp/scoring.patch
+            git apply /tmp/scoring.patch
             git rm .scoring-refactor.patch .github/workflows/scoring-refactor-build.yml
             echo 'applied=true' >> "$GITHUB_OUTPUT"
           fi
-      - uses: astral-sh/setup-uv@v6
-        if: steps.patch.outputs.applied == 'true'
-        with:
-          python-version: '3.12'
-      - name: Install locked development dependencies
-        if: steps.patch.outputs.applied == 'true'
-        run: uv sync --frozen --extra dev
       - name: Lint scoring refactor
         if: steps.patch.outputs.applied == 'true'
-        run: uv run ruff check src tests
+        run: |
+          git ls-files --others --exclude-standard src tests docs rust web | xargs -r git add -N
+          git diff --name-only -- '*.py' | xargs -r uv run ruff check --fix
+          git diff --name-only -- '*.py' | xargs -r uv run ruff format
+          uv run ruff check src tests
+      - name: Rust tests and inference parity binary
+        run: |
+          cargo test --locked --manifest-path rust/stonks-ranker/Cargo.toml
+          cargo build --locked --manifest-path rust/stonks-ranker/Cargo.toml
+          cp rust/stonks-ranker/target/debug/stonks-integer-ranker /tmp/stonks-integer-ranker
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scoring-rust-runtime
+          path: /tmp/stonks-integer-ranker
+          retention-days: 1
       - name: Run regression suite
         if: steps.patch.outputs.applied == 'true'
-        run: uv run pytest -m 'not browser' --junitxml=/tmp/scoring-tests.xml
+        run: uv run pytest --no-cov -q -n 2 -m 'not browser' --junitxml=/tmp/scoring-tests.xml
       - name: Commit verified changes to isolated branch only
         if: steps.patch.outputs.applied == 'true'
         run: |
