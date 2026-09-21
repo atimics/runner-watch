@@ -190,7 +190,7 @@
       : '';
     const comparison = scoredComparison(row);
     return renderShell({
-      href: `/t/${encodeURIComponent(row.ticker)}`,
+      href: `/stock/${encodeURIComponent(row.ticker)}`,
       ariaLabel: label,
       coinTone: row.coin_tone,
       coinLabel: row.coin_label || String(row.ticker).slice(0, 2),

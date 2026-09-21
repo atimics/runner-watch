@@ -61,8 +61,8 @@ def test_ticker_share_names_the_symbol_and_the_move() -> None:
 
     assert share["title"] == "$ONE · $12.5 · +18.4%"
     assert share["summary"] == "One Corp · 3 of 4 checks met"
-    assert share["path"] == "/t/ONE"
-    assert share["card_path"].startswith("/t/ONE/card.png?v=")
+    assert share["path"] == "/stock/ONE"
+    assert share["card_path"].startswith("/stock/ONE/card.png?v=")
 
 
 def test_ticker_share_version_tracks_the_latest_quote() -> None:
@@ -109,8 +109,8 @@ def test_ticker_card_route_serves_a_cached_png(
 
     client = TestClient(web_main.app, base_url=web_main.APP_ORIGIN)
     try:
-        card = client.get("/t/ONE/card.png")
-        missing = client.get("/t/NO-SUCH-TICKER/card.png")
+        card = client.get("/stock/ONE/card.png")
+        missing = client.get("/stock/NO-SUCH-TICKER/card.png")
     finally:
         client.close()
 
@@ -132,12 +132,12 @@ def test_ticker_page_advertises_its_card(
     insert_scan_run("ticker-share-run", captured_at, 1)
     insert_scored_snapshot("ticker-share-snapshot", "ticker-share-run", "ONE", 42, 1, captured_at)
 
-    response = web_main.ticker_page("ONE", _ticker_request("/t/ONE"), None)
+    response = web_main.ticker_page("ONE", _ticker_request("/stock/ONE"), None)
     html = response.body.decode()
 
     assert response.status_code == 200
     assert 'property="og:image"' in html
-    assert "/t/ONE/card.png?v=" in html
+    assert "/stock/ONE/card.png?v=" in html
     assert 'name="twitter:card" content="summary_large_image"' in html
     assert '<meta name="description"' in html
 
@@ -163,7 +163,7 @@ def test_ticker_page_includes_the_robinhood_chain_token(
     }
     monkeypatch.setattr(web_main, "stock_token", lambda ticker: token)
 
-    response = web_main.ticker_page("ONE", _ticker_request("/t/ONE"), None)
+    response = web_main.ticker_page("ONE", _ticker_request("/stock/ONE"), None)
 
     assert response.status_code == 200
     html = response.body.decode()

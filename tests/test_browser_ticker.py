@@ -20,7 +20,7 @@ def _request() -> Request:
         {
             "type": "http",
             "method": "GET",
-            "path": "/t/TEST",
+            "path": "/stock/TEST",
             "headers": [(b"host", b"runners.rati.chat")],
             "scheme": "https",
             "server": ("runners.rati.chat", 443),
@@ -447,7 +447,7 @@ def _open_avatar_action(page: Page) -> None:
         "http://app.test/**", lambda route: route.fulfill(body=html, content_type="text/html")
     )
     page.route("**/api/t/TEST/**", lambda route: route.fulfill(json={"points": []}))
-    page.goto("http://app.test/t/TEST", wait_until="domcontentloaded")
+    page.goto("http://app.test/stock/TEST", wait_until="domcontentloaded")
 
 
 def test_avatar_retry_reuses_request_and_renders_editorial_notices(page: Page) -> None:
@@ -547,7 +547,7 @@ def test_pending_avatar_request_stays_with_its_account(page: Page) -> None:
 
     account = "second-browser-user"
     page.route(
-        "http://app.test/t/TEST",
+        "http://app.test/stock/TEST",
         lambda route: route.fulfill(
             body=_rendered_ticker(signed_in=True, user_id=account, inline_script=True),
             content_type="text/html",

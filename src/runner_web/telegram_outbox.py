@@ -319,7 +319,7 @@ def queue_stock_filings(database, config, *, origin: str, at: datetime) -> int:
             card = stock_event_card(row["ticker"], event)
             card["text"] += "\n\n" + markdown_link(
                 "Open map and SEC filing",
-                f"{origin.rstrip('/')}/t/{quote(row['ticker'], safe='')}#ticker-map",
+                f"{origin.rstrip('/')}/stock/{quote(row['ticker'], safe='')}#ticker-map",
             )
             cards.append(card)
         total += enqueue_cards(database, config.chat_id, cards, at=at)

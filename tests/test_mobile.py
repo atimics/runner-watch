@@ -250,7 +250,7 @@ def test_desktop_feeds_share_full_info_and_article_panel() -> None:
         assert '{% include "_desktop_panel.html" %}' in template
     assert "data-desktop-frame" in panel
     assert "data-desktop-loading" in panel
-    assert "/t/" in workspace
+    assert "/stock/" in workspace
     assert "/research/" in workspace
     assert "frame.addEventListener('load'" in workspace
     assert "frame.hidden = true" in workspace
@@ -264,7 +264,7 @@ def test_desktop_feeds_share_full_info_and_article_panel() -> None:
 
 def test_desktop_panel_security_allows_only_supported_detail_pages() -> None:
     for path in (
-        "/t/WRAP",
+        "/stock/WRAP",
         "/research/report-1",
         "/game/mlb:401816699",
         "/sports/game/mlb:401816699",
@@ -724,7 +724,7 @@ def test_ticker_page_does_not_add_a_guest_research_action(
         {
             "type": "http",
             "method": "GET",
-            "path": "/t/ONE",
+            "path": "/stock/ONE",
             "query_string": b"",
             "headers": [],
             "client": ("127.0.0.1", 4210),
@@ -3324,7 +3324,7 @@ def test_flash_report_circuit_breaker_stops_promising_failed_reports(
         latest_report=None,
         latest_attempt=web_main.latest_commission("circuit-user", "FAIL"),
         start_url="/api/research/FAIL",
-        login_url="/login?next=/t/FAIL",
+        login_url="/login?next=/stock/FAIL",
     )
     assert report_action["state"] == "unavailable"
     assert report_action["label"] == "Report unavailable"

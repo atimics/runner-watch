@@ -399,6 +399,10 @@ from runner_web.telegram_chat import (
     spend_engagement as telegram_spend_engagement,
 )
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
+from runner_web.wallet_registry import WALLET_ID
+from runner_web.wallet_registry import register_people as register_wallet_people
+from runner_web.wallet_registry import register_person as register_wallet_person
+from runner_web.wallet_registry import wallet as resolve_wallet
 from runner_web.worker_supervisor import run_supervised
 
 __all__ = [
@@ -2536,7 +2540,9 @@ async def sports_ingestion_worker() -> None:
 
 
 def _is_panel_path(path: str) -> bool:
-    return path.startswith(("/t/", "/research/", "/game/", "/sports/game/", "/memecoins/coin/"))
+    return path.startswith(
+        ("/stock/", "/t/", "/research/", "/game/", "/sports/game/", "/memecoins/coin/")
+    )
 
 
 @app.middleware("http")
@@ -3060,12 +3066,20 @@ def ticker_share(detail: dict[str, Any]) -> dict[str, Any]:
     return {
         "title": headline,
         "summary": summary[:200],
-        "path": f"/t/{ticker}",
-        "card_path": f"/t/{ticker}/card.png?v={version}",
+        "path": f"/stock/{ticker}",
+        "card_path": f"/stock/{ticker}/card.png?v={version}",
     }
 
 
 @app.get("/t/{ticker}/card.png")
+def ticker_card_legacy(ticker: str, request: Request) -> Response:
+    """The card used to hang off the shorthand; keep old unfurls working."""
+
+    _ = request
+    return _redirect_to_stock(_clean_ticker(ticker), suffix="/card.png")
+
+
+@app.get("/stock/{ticker}/card.png")
 def ticker_card(ticker: str, request: Request) -> Response:
     enforce_rate(request, "ticker-card", limit=60, seconds=60)
     normalized = _clean_ticker(ticker)
@@ -4065,7 +4079,7 @@ def _unified_caller_page_data(caller_handle: str) -> dict[str, Any]:
             "product_label": "Runners",
             "subject": str(call["ticker"]),
             "company": "Stock Call",
-            "href": f"{RUNNERS_ORIGIN}/t/{call['ticker']}",
+            "href": f"{RUNNERS_ORIGIN}/stock/{call['ticker']}",
             "status": str(call["status"]),
             "entry_label": (
                 f"${float(call['entry_price']):.4f}"
@@ -5524,7 +5538,7 @@ def _commission_record(
         report["coin_label"] = summary["coin_label"] if summary else report["ticker"][:2]
         report["coin_tone"] = summary["coin_tone"] if summary else _coin_tone(report["ticker"])
         report["subject_type"] = "ticker"
-        report["asset_href"] = f"/t/{report['ticker']}"
+        report["asset_href"] = f"/stock/{report['ticker']}"
         report["back_href"] = "/?view=calls"
         report["nav_product"] = "runners"
         report["profile_heading"] = "Company"
@@ -8000,6 +8014,7 @@ def stock_ticker_map_api(
         )
     except ValueError as exc:
         raise HTTPException(400, "Invalid map cursor") from exc
+    register_wallet_people(payload.get("events") or [], normalized)
     return _conditional_json_response(request, payload)
 
 
@@ -8022,31 +8037,55 @@ def stock_person_connections_api(
         )
     except ValueError as exc:
         raise HTTPException(400, "Invalid connection request") from exc
+    register_wallet_people(payload.get("events") or [], normalized)
     return _conditional_json_response(request, payload)
 
 
 @app.get("/wallets/stocks/{ticker}/{person_id}", response_class=HTMLResponse)
-def stock_wallet_page(
+def stock_wallet_page_legacy(
     ticker: str,
     person_id: str,
+    request: Request,
+) -> Response:
+    """A wallet used to be addressed through a stock; send it to the wallet path."""
+
+    _ = request
+    wallet_id = register_wallet_person(person_id, _clean_ticker(ticker))
+    # Only a minted wallet id can be a redirect target, so nothing tainted from
+    # the request reaches the Location header.
+    if wallet_id is None or not WALLET_ID.fullmatch(wallet_id):
+        raise HTTPException(404, "Wallet not found")
+    return RedirectResponse(f"/wallet/{wallet_id}", status_code=301)
+
+
+@app.get("/wallet/{wallet_id}", response_class=HTMLResponse)
+def wallet_page(
+    wallet_id: str,
     request: Request,
     cursor: str | None = Query(default=None, max_length=1024),
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
+    """A wallet stands on its own: no stock in the path, whatever it identifies."""
+
     from runner_web.entity_view import entity_view
     from runner_web.market_screens import listing
     from runner_web.stock_map import person_connections
 
     enforce_rate(request, "stock-wallet", limit=60, seconds=60)
-    ticker = _clean_ticker(ticker)
+    resolved = resolve_wallet(wallet_id)
+    person_id = str(resolved.get("person_id") or "") if resolved else ""
+    if not resolved or not person_id:
+        raise HTTPException(404, "Wallet not found")
+    scope = str(resolved.get("scope") or "")
     try:
-        connections = person_connections(ticker, person_id, cursor)
+        connections = person_connections(scope, person_id, cursor)
     except ValueError as exc:
         raise HTTPException(400, "Invalid wallet request") from exc
     events = connections["events"]
-    wallet = next(
-        (person for event in events for person in event["people"] if person["id"] == person_id),
-        {"name": "Wallet"},
+    register_wallet_people(events, scope)
+    person = next(
+        (entry for event in events for entry in event["people"] if entry["id"] == person_id),
+        {"name": "Wallet", "id": person_id},
     )
     stocks = sorted({event["ticker"] for event in events})
     items = [_direct_ticker_item(symbol, []) or {"ticker": symbol} for symbol in stocks]
@@ -8056,9 +8095,27 @@ def stock_wallet_page(
         "stock_wallet.html",
         page_context(
             request, runner_session, nav_product="runners", screen=screen,
-            wallet=wallet, wallet_events=events, wallet_cursor=connections["next_cursor"],
-            wallet_ticker=ticker, entity=entity_view(events, items, person_id),
+            wallet=person, wallet_events=events, wallet_cursor=connections["next_cursor"],
+            wallet_ticker=scope, wallet_id=wallet_id,
+            entity=entity_view(events, items, person_id),
         ),
+    )
+
+
+@app.get("/api/wallets/{wallet_id}/filings")
+def wallet_filings_api(
+    wallet_id: str,
+    request: Request,
+    cursor: str | None = Query(default=None, max_length=1024),
+) -> Response:
+    """The next page of a wallet's filings, rendered by the same partial as the page."""
+
+    resolved = resolve_wallet(wallet_id)
+    person_id = str(resolved.get("person_id") or "") if resolved else ""
+    if not resolved or not person_id:
+        raise HTTPException(404, "Wallet not found")
+    return _wallet_filings_response(
+        request, str(resolved.get("scope") or ""), person_id, cursor
     )
 
 
@@ -8072,24 +8129,29 @@ def wallet_events_api(
     """The next page of a wallet's filings, rendered by the same partial the page
     uses so the appended rows are identical."""
 
+    enforce_rate(request, "stock-wallet-events", limit=120, seconds=60)
+    return _wallet_filings_response(request, _clean_ticker(ticker), person_id, cursor)
+
+
+def _wallet_filings_response(
+    request: Request, ticker: str, person_id: str, cursor: str | None
+) -> Response:
     from runner_web.stock_map import person_connections
 
-    enforce_rate(request, "stock-wallet-events", limit=120, seconds=60)
-    normalized = _clean_ticker(ticker)
     try:
-        connections = person_connections(normalized, person_id, cursor)
+        connections = person_connections(ticker, person_id, cursor)
     except ValueError as exc:
         raise HTTPException(400, "Invalid wallet request") from exc
     events = connections["events"]
-    wallet = next(
-        (person for event in events for person in event["people"] if person["id"] == person_id),
+    person = next(
+        (entry for event in events for entry in event["people"] if entry["id"] == person_id),
         {"name": "Wallet", "id": person_id},
     )
     partial = templates.get_template("_wallet_event.html")
     return _conditional_json_response(
         request,
         {
-            "html": "".join(partial.render(event=event, wallet=wallet) for event in events),
+            "html": "".join(partial.render(event=event, wallet=person) for event in events),
             "next_cursor": connections["next_cursor"],
             "count": len(events),
         },
@@ -9032,6 +9094,19 @@ async def pulse_charts_api(request: Request) -> Response:
     return _conditional_json_response(request, _compact_list_chart_payload(payload))
 
 
+def _redirect_to_stock(ticker: str, *, suffix: str = "") -> RedirectResponse:
+    """Send an old stock URL to its canonical path.
+
+    The ticker is already constrained by ``_clean_ticker`` (a full-match on
+    ``TICKER_RE``); re-checking it here keeps the redirect target provably
+    composed of a validated segment plus a constant prefix and suffix.
+    """
+
+    if not TICKER_RE.fullmatch(ticker):
+        raise HTTPException(404, "Ticker not found")
+    return RedirectResponse(f"/stock/{ticker}{suffix}", status_code=301)
+
+
 def _clean_ticker(ticker: str) -> str:
     normalized = ticker.strip().upper().replace(".", "-")
     if not TICKER_RE.fullmatch(normalized):
@@ -9746,6 +9821,14 @@ def _public_ticker_page_data(ticker: str) -> dict[str, Any]:
 
 
 @app.get("/t/{ticker}", response_class=HTMLResponse)
+def ticker_page_legacy(ticker: str, request: Request) -> Response:
+    """The market shorthand now redirects to the canonical stock path."""
+
+    _ = request
+    return _redirect_to_stock(_clean_ticker(ticker))
+
+
+@app.get("/stock/{ticker}", response_class=HTMLResponse)
 def ticker_page(
     ticker: str,
     request: Request,
@@ -9801,7 +9884,7 @@ def ticker_page(
                 latest_report=latest_report,
                 latest_attempt=latest_attempt,
                 start_url=f"/api/research/stock/{normalized}",
-                login_url=f"/login?next=/t/{normalized}",
+                login_url=f"/login?next=/stock/{normalized}",
             ),
             comment_generation_enabled=_flash_provider_ready(),
             active_tab="pulse",
@@ -12875,7 +12958,7 @@ def _activity_payload(
             "signals": entry.get("signals_json"),
             # Carried so one row can both render a story and key its delivery.
             "entered_at": entry.get("entered_at"),
-            "url": absolute(RUNNERS_ORIGIN, f"/t/{str(entry.get('ticker') or '').upper()}"),
+            "url": absolute(RUNNERS_ORIGIN, f"/stock/{str(entry.get('ticker') or '').upper()}"),
             "at": entry.get("entered_at"),
         }
         for entry in runners

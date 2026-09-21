@@ -207,7 +207,7 @@ def test_stock_board_reuses_the_prebuilt_public_screen(board_client, monkeypatch
     second = board_client.get("/")
 
     assert first.status_code == second.status_code == 200
-    assert 'href="/t/FAST"' in second.text
+    assert 'href="/stock/FAST"' in second.text
     assert feed_calls == 1
     assert story_calls == 1
     assert ("stock-list", "public") in web_main.WORKER_OWNED_SCREENS
@@ -254,8 +254,8 @@ def test_search_filters_the_cached_board_instead_of_rebuilding_it(
     second = board_client.get("/?q=slow")
 
     assert first.status_code == second.status_code == 200
-    assert 'href="/t/FAST"' in first.text and 'href="/t/SLOW"' not in first.text
-    assert 'href="/t/SLOW"' in second.text
+    assert 'href="/stock/FAST"' in first.text and 'href="/stock/SLOW"' not in first.text
+    assert 'href="/stock/SLOW"' in second.text
     assert feed_calls == 1
     assert story_calls == 1
     assert ("stock-search-base", "public") in web_main.WORKER_OWNED_SCREENS
@@ -351,8 +351,8 @@ def test_stock_search_reaches_rows_after_the_first_page(board_client, monkeypatc
     monkeypatch.setattr(web_main, "_public_pulse_data", feed)
     response = board_client.get("/?q=found")
     assert response.status_code == 200
-    assert 'href="/t/FOUND"' in response.text
-    assert 'href="/t/FIRST"' not in response.text
+    assert 'href="/stock/FOUND"' in response.text
+    assert 'href="/stock/FIRST"' not in response.text
     assert pages == [0, 1]
 
 
@@ -384,7 +384,7 @@ def test_stock_search_opens_a_tracked_ticker_outside_the_pulse_board(
     response = board_client.get("/?q=aapl")
 
     assert response.status_code == 200
-    assert 'href="/t/AAPL"' in response.text
+    assert 'href="/stock/AAPL"' in response.text
     assert "Try another search" not in response.text
 
 

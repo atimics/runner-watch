@@ -103,7 +103,7 @@ def test_stock_derivation_creates_a_character_and_a_tie(
     assert board["counts"]["actors"] == 1
     assert board["counts"]["subjects"] == 1
     assert board["subjects"][0]["key"] == "RUNR"
-    assert board["subjects"][0]["url"] == "/t/RUNR"
+    assert board["subjects"][0]["url"] == "/stock/RUNR"
     actor = board["actors"][0]
     assert actor["kind"] == "person"
     assert actor["roles"] == ["officer"]

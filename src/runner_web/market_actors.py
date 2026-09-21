@@ -479,7 +479,7 @@ def _subject_payload(subject_kind: str, subject_key: str, labels: dict[str, str]
             "key": subject_key,
             "label": subject_key,
             "kind": "stock",
-            "url": f"/t/{subject_key}",
+            "url": f"/stock/{subject_key}",
         }
     return {
         "key": subject_key,

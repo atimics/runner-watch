@@ -63,7 +63,7 @@ def public_dynamic_screen_paths(database: Any) -> dict[str, str | None]:
     )
 
     return {
-        "ticker": f"/t/{quote(ticker, safe='.-')}" if ticker else None,
+        "ticker": f"/stock/{quote(ticker, safe='.-')}" if ticker else None,
         "caller": f"/u/{quote(caller, safe='-')}" if caller else None,
         "research": f"/research/{quote(research, safe='')}" if research else None,
         "sports_game": f"/game/{quote(game, safe=':-')}" if game else None,

@@ -1,7 +1,7 @@
 {% set tone = 'sell' if event.action == 'Sold' else 'buy' if event.action == 'Bought' or event.view == 'ownership' else 'other' %}
 {% set description %}{{ event.action }} · {{ event.security }}{% if event.get('shares') is not none %} · {{ '{:,}'.format(event.shares) }} shares{% endif %}{% if event.get('value') is not none %} · ${{ '{:,.2f}'.format(event.value) }}{% endif %}{% if event.get('percent') is not none %} · {{ event.percent }}% of class{% endif %}{% for person in event.people if person.id == wallet.id %} · {{ person.role }}{% endfor %} · {{ event.form }} · Filed {{ event.filed_at[:10] }}{% endset %}
 <article class="wallet-event" data-tone="{{ tone }}" title="{{ description }}">
-<a class="wallet-event-ticker" href="/t/{{ event.ticker }}"><strong>{{ event.ticker }}</strong></a>
+<a class="wallet-event-ticker" href="/stock/{{ event.ticker }}"><strong>{{ event.ticker }}</strong></a>
 <span class="wallet-event-action">{{ event.action }}</span>
 <span class="wallet-event-detail">{{ event.security }}{% if event.get('shares') is not none %} · {{ '{:,}'.format(event.shares) }} shares{% endif %}</span>
 <span class="wallet-event-value">{% if event.get('value') is not none %}${{ '{:,.2f}'.format(event.value) }}{% elif event.get('percent') is not none %}{{ event.percent }}%{% elif event.get('shares') is not none %}{{ '{:,}'.format(event.shares) }} sh{% endif %}</span>

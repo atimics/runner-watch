@@ -101,8 +101,12 @@ def _person(raw: dict[str, Any], ticker: str) -> dict[str, Any]:
             + hashlib.sha256(f"{ticker}:{name.casefold().strip()}".encode()).hexdigest()[:20]
         )
     )
+    from runner_web.wallet_registry import wallet_id_for_person
+
     return {
         "id": identity,
+        # The wallet id is what a link should use; the identity stays for the API.
+        "wallet_id": wallet_id_for_person(identity, ticker),
         "name": name,
         "cik": cik,
         "role": raw.get("role") or "Reporting person",

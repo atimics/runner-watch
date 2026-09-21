@@ -23,7 +23,7 @@
     let loaded = false;
 
     function defaultUrl() {
-      const preferred = list.querySelectorAll('a[data-desktop-default], a[href^="/t/"], a[href^="/research/"], a[href^="/s/"], a[href^="/game/"], a[href^="/sports/game/"], a[href^="/memecoins/coin/"]');
+      const preferred = list.querySelectorAll('a[data-desktop-default], a[href^="/stock/"], a[href^="/research/"], a[href^="/s/"], a[href^="/game/"], a[href^="/sports/game/"], a[href^="/memecoins/coin/"]');
       return Array.from(preferred).map(link => panelUrl(link.href)).find(Boolean) || null;
     }
 

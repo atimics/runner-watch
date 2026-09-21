@@ -190,7 +190,7 @@
       const y = small.matches ? 64 + Math.floor(i/2)*210 : 218 + 150 * Math.sin(angle);
       const first = person.events[0];
       const tones = new Set(person.events.map(e => e.tone));
-      return {id:person.id, name:person.name, first, events:person.events, eventCount:person.events.length, radius:finiteAmount(magnitude(first)) ? Math.sqrt(144 + 640 * (maxAmount(first.view) ? magnitude(first)/maxAmount(first.view) : 0)) : 16, tone:tones.size === 1 ? first.tone : 'neutral', active:!!event?.people.some(p => p.id === person.id), x, y};
+      return {id:person.id, wallet_id:person.wallet_id, name:person.name, first, events:person.events, eventCount:person.events.length, radius:finiteAmount(magnitude(first)) ? Math.sqrt(144 + 640 * (maxAmount(first.view) ? magnitude(first)/maxAmount(first.view) : 0)) : 16, tone:tones.size === 1 ? first.tone : 'neutral', active:!!event?.people.some(p => p.id === person.id), x, y};
     });
   }
   function drawScene(nodes) {
@@ -212,7 +212,7 @@
         line.append(svg('title', {}, `${event.action} · ${amount(event)} · Filed ${date(event.filed_at)}`));
         line.addEventListener('click', () => choose(event, node.id)); peopleLayer.append(line);
       });
-      const href = `/wallets/stocks/${encodeURIComponent(root.dataset.ticker)}/${encodeURIComponent(node.id)}`;
+      const href = node.wallet_id ? `/wallet/${encodeURIComponent(node.wallet_id)}` : `/wallets/stocks/${encodeURIComponent(root.dataset.ticker)}/${encodeURIComponent(node.id)}`;
       const dense = nodes.length > 8 ? ' dense' : '';
       const g = svg('a', {href, class:`map-person ${node.tone}${dense}`, tabindex:0, 'aria-label':`${node.name}: stocks and events`, 'aria-pressed':String(!!node.active), 'data-person':node.id, ...(orbiting ? {'data-orbit-anchor':`${node.x},${node.y}`} : {}), opacity});
       g.append(svg('circle', {cx:node.x, cy:node.y, r:node.radius}));
@@ -268,7 +268,7 @@
         const radius = weights.length ? Math.sqrt(9 + 27*Math.max(...weights)) : 4;
         const tones = new Set(stock.events.map(tone));
         const label = `${stock.ticker} · ${stock.events.length} events`;
-        const link = svg('a', {href:`/t/${encodeURIComponent(stock.ticker)}`,class:`map-interest ${tones.size === 1 ? [...tones][0] : 'role'}`,tabindex:0,'aria-label':label,'data-interest':node.id+':'+stock.ticker, ...(small.matches ? {} : {'data-orbit-anchor':`${node.x},${node.y}`})});
+        const link = svg('a', {href:`/stock/${encodeURIComponent(stock.ticker)}`,class:`map-interest ${tones.size === 1 ? [...tones][0] : 'role'}`,tabindex:0,'aria-label':label,'data-interest':node.id+':'+stock.ticker, ...(small.matches ? {} : {'data-orbit-anchor':`${node.x},${node.y}`})});
         stock.events.forEach((event,index) => {
           const bend = (index-(stock.events.length-1)/2)*Math.min(3,12/Math.max(1,stock.events.length-1));
           const sx = node.x + node.radius*Math.cos(angle), sy = node.y + node.radius*Math.sin(angle);

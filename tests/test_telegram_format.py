@@ -55,10 +55,10 @@ def test_first_url_picks_the_ticker_link_for_preview() -> None:
         "Runners alert\n\n"
         "\u26a1 *SOUN*\n\n"
         "$8.42\n"
-        "https://runners.rati.chat/t/SOUN\n\n"
+        "https://runners.rati.chat/stock/SOUN\n\n"
         "https://runners.rati.chat/research/some-id\n"
     )
-    assert telegram._first_url(message) == "https://runners.rati.chat/t/SOUN"
+    assert telegram._first_url(message) == "https://runners.rati.chat/stock/SOUN"
 
 
 @pytest.fixture
@@ -87,10 +87,10 @@ def _config() -> telegram.TelegramConfig:
 
 def test_send_post_emits_parse_mode_and_preview_options(patch_urlopen) -> None:
     opened, _ = patch_urlopen
-    telegram.send_post(_config(), "*bold* https://runners.rati.chat/t/SOUN")
+    telegram.send_post(_config(), "*bold* https://runners.rati.chat/stock/SOUN")
     payload = _url_payload(opened[0])
     assert payload["parse_mode"] == "MarkdownV2"
-    assert payload["text"].startswith("*bold* https://runners.rati.chat/t/SOUN")
+    assert payload["text"].startswith("*bold* https://runners.rati.chat/stock/SOUN")
     assert payload["disable_notification"] is False
     assert payload["link_preview_options"]["is_disabled"] is False
 
@@ -110,14 +110,14 @@ def test_send_post_anchors_preview_when_url_is_passed(patch_urlopen) -> None:
     telegram.send_post(
         _config(),
         "\U0001f7e2 *1 new on the board*\n\nRunners.",
-        preview_url="https://runners.rati.chat/t/SOUN",
+        preview_url="https://runners.rati.chat/stock/SOUN",
     )
     payload = _url_payload(opened[0])
     # A bare URL is not valid Markdown V2, so the anchor is an inline link.
     assert payload["text"].startswith(
-        "[https://runners\\.rati\\.chat/t/SOUN](https://runners.rati.chat/t/SOUN)\n\n"
+        "[https://runners\\.rati\\.chat/stock/SOUN](https://runners.rati.chat/stock/SOUN)\n\n"
     )
-    assert payload["link_preview_options"]["url"] == "https://runners.rati.chat/t/SOUN"
+    assert payload["link_preview_options"]["url"] == "https://runners.rati.chat/stock/SOUN"
 
 
 def test_send_post_falls_back_to_plain_on_parse_error(
@@ -201,7 +201,7 @@ def test_a_runner_story_leads_with_what_the_name_is_doing() -> None:
     assert "$8\\.42" in message, message
     assert "*\\+18\\.3%" in message and "*3\\.4\u00d7*" in message and "score *88*" in message
     assert message.count("https://runners.rati.chat") == 1
-    assert message.endswith("[$SOUN](https://runners.rati.chat/t/SOUN)"), message
+    assert message.endswith("[$SOUN](https://runners.rati.chat/stock/SOUN)"), message
 
 
 @pytest.mark.parametrize(
@@ -258,7 +258,7 @@ def test_market_report_link_falls_back_to_base_when_day_unknown() -> None:
 
 def test_public_report_links_the_report_page_and_nothing_else() -> None:
     """The report page is the one that carries a card, and the ticker is already
-    named in the header, so a second link to /t/ only spent an unpreviewable
+    named in the header, so a second link to /stock/ only spent an unpreviewable
     line."""
 
     message = telegram.format_public_report_post_md(
@@ -276,7 +276,7 @@ def test_public_report_falls_back_to_the_ticker_page_without_a_public_id() -> No
         origin="http://app.test",
     )
     assert message.count("http://app.test") == 1
-    assert message.endswith("[$CAST](http://app.test/t/CAST)"), message
+    assert message.endswith("[$CAST](http://app.test/stock/CAST)"), message
 
 
 def test_event_post_lists_origin_and_source() -> None:
@@ -286,7 +286,7 @@ def test_event_post_lists_origin_and_source() -> None:
     )
     assert "\U0001f4f0 *Event on $SOUN*" in message
     assert "filed via SEC" in message
-    assert message.endswith("[$SOUN](http://app.test/t/SOUN)"), message
+    assert message.endswith("[$SOUN](http://app.test/stock/SOUN)"), message
 
 
 def test_release_announcement_returns_empty_without_notes() -> None:
@@ -424,7 +424,7 @@ def test_strip_markdown_v2_gives_the_reader_words_not_markup() -> None:
     plain = telegram.strip_markdown_v2(message)
     assert "\\" not in plain and "*" not in plain
     assert "$8.42" in plain and "score 88" in plain
-    assert "$SOUN https://runners.rati.chat/t/SOUN" in plain
+    assert "$SOUN https://runners.rati.chat/stock/SOUN" in plain
 
 
 def test_send_post_fallback_sends_plain_text_rather_than_the_markup_source(

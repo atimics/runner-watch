@@ -5,7 +5,7 @@
 {% block detail_map %}{% include "_stock_map.html" %}{% endblock %}
 {% block detail_comments %}
 {% from "_flash_comments.html" import flash_comments %}
-{{ flash_comments('stock', detail.ticker, comments|default([]), comment_count|default(0), user, comment_generation_enabled|default(false), '/login?next=/t/' ~ detail.ticker ~ '#discussion') }}
+{{ flash_comments('stock', detail.ticker, comments|default([]), comment_count|default(0), user, comment_generation_enabled|default(false), '/login?next=/stock/' ~ detail.ticker ~ '#discussion') }}
 {% endblock %}
 {% block detail_extra %}
 <section class="ticker-support" aria-label="Research and community">

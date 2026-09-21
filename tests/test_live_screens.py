@@ -60,7 +60,7 @@ def test_public_dynamic_screen_paths_uses_latest_safe_public_records() -> None:
         )
 
         assert public_dynamic_screen_paths(database) == {
-            "ticker": "/t/NEW.A",
+            "ticker": "/stock/NEW.A",
             "caller": "/u/steady-ibis",
             "research": "/research/public-report",
             "sports_game": "/game/mlb:next",

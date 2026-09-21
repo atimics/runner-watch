@@ -199,7 +199,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         "time": stamp(
             item.get("observed_at") if coin else item.get("quote_time") or item.get("event_at")
         ),
-        "href": ("/memecoins/coin/" if coin else "/t/") + quote(identifier, safe=""),
+        "href": ("/memecoins/coin/" if coin else "/stock/") + quote(identifier, safe=""),
         "mark": name[:2],
         "tag": tag,
         "tag_tone": tag_tone,

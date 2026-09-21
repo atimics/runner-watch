@@ -238,7 +238,7 @@ def test_shared_caller_counts_and_links_use_market_and_coin_identity(calls_db):
     assert {item["href"] for item in record["calls"]} == {
         f"{web_main.RUNNERS_ORIGIN}/memecoins/coin/first",
         f"{web_main.RUNNERS_ORIGIN}/memecoins/coin/second",
-        f"{web_main.RUNNERS_ORIGIN}/t/DOGE",
+        f"{web_main.RUNNERS_ORIGIN}/stock/DOGE",
     }
 
 
@@ -519,7 +519,7 @@ def test_coin_commit_validates_the_saved_mark(calls_db):
 def test_own_call_record_survives_close_and_reload(calls_db, monkeypatch, market):
     _refresh(calls_db)
     if market == "stocks":
-        subject, page = "RUN", "/t/RUN"
+        subject, page = "RUN", "/stock/RUN"
         create_url = "/api/calls/stock/RUN"
         close_prefix = "/api/calls/stock/"
         current = {"price": 1.5, "quote_time": calls_db["now"].isoformat()}

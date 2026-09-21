@@ -203,7 +203,7 @@ def live_detail_page(page, screen_client, changing_detail):
 @pytest.mark.parametrize(
     "market,subject,path",
     [
-        ("stocks", "OPK", "/t/OPK"),
+        ("stocks", "OPK", "/stock/OPK"),
         ("memecoins", "solana-test", "/memecoins/coin/solana-test"),
     ],
 )
@@ -286,7 +286,7 @@ def test_coin_paused_action_recovers_and_settlement_preserves_dialog(
 @pytest.mark.parametrize(
     "market,subject,path",
     [
-        ("stocks", "OPK", "/t/OPK"),
+        ("stocks", "OPK", "/stock/OPK"),
         ("memecoins", "solana-test", "/memecoins/coin/solana-test"),
     ],
 )
@@ -302,7 +302,7 @@ def test_late_detail_response_is_discarded_after_navigation(
     changing_detail["price"] = 9
     with page.expect_request("http://app.test" + endpoint):
         page.clock.fast_forward(60000)
-    page.evaluate("history.pushState({}, '', '/t/OTHER')")
+    page.evaluate("history.pushState({}, '', '/stock/OTHER')")
     with page.expect_response("http://app.test" + endpoint):
         held[0].fulfill(json=screen_client.get(endpoint).json())
     # Yield through a frame after the fetch continuation.
@@ -587,7 +587,7 @@ def test_the_announced_row_wears_the_new_halo(page: Page):
     open_screen(page, listing("stocks", rows))
 
     expect(page.locator(".ticker.is-new")).to_have_count(1)
-    expect(page.locator(".ticker.is-new")).to_have_attribute("href", "/t/AAA")
+    expect(page.locator(".ticker.is-new")).to_have_attribute("href", "/stock/AAA")
 
 
 @pytest.mark.parametrize("market", ["stocks", "memecoins", "sports"])
@@ -653,9 +653,9 @@ def test_search_handles_storage_and_network_failure(page):
 
 def test_search_ignores_late_matches_and_keeps_history_in_view_order(page):
     page.add_init_script("""localStorage.setItem('rati:recently-viewed:stocks:v1', JSON.stringify([
-      {name:'OLD', subtitle:'Older view', href:'/t/OLD'},
-      {name:'OPK', subtitle:'Previous name', href:'/t/OPK'},
-      {name:'Unsafe', href:'https://other.test/t/BAD'}
+      {name:'OLD', subtitle:'Older view', href:'/stock/OLD'},
+      {name:'OPK', subtitle:'Previous name', href:'/stock/OPK'},
+      {name:'Unsafe', href:'https://other.test/stock/BAD'}
     ]));""")
     open_screen(page, detail("stocks", {"ticker": "OPK", "current": fixtures.sample("stocks")}))
     search = page.get_by_role("combobox")

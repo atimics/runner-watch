@@ -108,7 +108,7 @@
       {% if calls_page.stock_picks %}
       <div class="pick-list">
         {% for pick in calls_page.stock_picks %}
-        <a class="pick-row" href="{{ runners_origin }}/t/{{ pick.ticker }}">
+        <a class="pick-row" href="{{ runners_origin }}/stock/{{ pick.ticker }}">
           <span class="tag tag-{{ 'running' if pick.direction == 'up' else 'avoid' }}">{{ 'UP' if pick.direction == 'up' else 'DOWN' }}</span>
           <span class="call-subject"><strong>${{ pick.ticker }}</strong><small>{{ pick.reason }}</small></span>
           <span class="confidence" title="Direction confidence">

@@ -86,7 +86,8 @@
       const ex = hx - dot*Math.cos(angle), ey = hy - dot*Math.sin(angle);
       const tone = person.tone || 'role';
       const label = `${person.name} also reported ${stock.ticker}`;
-      const link = svg('a',{href:`/wallets/stocks/${encodeURIComponent(stock.ticker)}/${encodeURIComponent(person.id)}`,class:`map-interest ${tone}`,tabindex:0,'aria-label':label,'data-entity-interest':person.id,'data-entity-neighbours':stock.ticker,...(orbiting ? {'data-orbit-anchor':`${x},${y}`} : {})});
+      const href = person.wallet_id ? `/wallet/${encodeURIComponent(person.wallet_id)}` : `/wallets/stocks/${encodeURIComponent(stock.ticker)}/${encodeURIComponent(person.id)}`;
+      const link = svg('a',{href,class:`map-interest ${tone}`,tabindex:0,'aria-label':label,'data-entity-interest':person.id,'data-entity-neighbours':stock.ticker,...(orbiting ? {'data-orbit-anchor':`${x},${y}`} : {})});
       // Colour carries the meaning; the name stays in the tooltip and the label.
       link.append(svg('path',{d:`M ${sx} ${sy} L ${ex} ${ey}`,class:`map-interest-edge ${tone}`}));
       link.append(svg('circle',{cx:hx,cy:hy,r:6,class:'map-interest-hit'}),svg('circle',{cx:hx,cy:hy,r:dot,class:'map-interest-dot'}),svg('title',{},label));
@@ -120,7 +121,7 @@
         const line = svg('path',{d:`M ${cx} ${cy} Q ${(cx+x)/2-(y-cy)/length*bend} ${(cy+y)/2+(x-cx)/length*bend} ${x} ${y}`,class:`entity-edge ${tone}`,'vector-effect':'non-scaling-stroke',...(orbiting ? {'data-orbit':''} : {})});
         line.append(svg('title',{},`${stock.ticker} · ${event.action} · Filed ${event.filed_at?.slice(0,10) || ''}`)); graph.append(line);
       });
-      const link = svg('a',{href:`/t/${encodeURIComponent(stock.ticker)}`,class:'map-person',tabindex:0,'aria-label':`${stock.ticker}, ${scored ? `score ${Math.round(stock.score)}, ` : ''}${stock.events.length} events`, 'data-entity-stock':stock.ticker,...(orbiting ? {'data-orbit-anchor':`${x},${y}`} : {})});
+      const link = svg('a',{href:`/stock/${encodeURIComponent(stock.ticker)}`,class:'map-person',tabindex:0,'aria-label':`${stock.ticker}, ${scored ? `score ${Math.round(stock.score)}, ` : ''}${stock.events.length} events`, 'data-entity-stock':stock.ticker,...(orbiting ? {'data-orbit-anchor':`${x},${y}`} : {})});
       // No labels on the map itself: the ring carries the score and the node
       // opens the full detail on click. Hovering still names it.
       link.append(svg('circle',{cx:x,cy:y,r:radius}));

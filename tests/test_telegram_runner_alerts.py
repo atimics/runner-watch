@@ -842,7 +842,7 @@ def test_halt_events_reach_the_channel_once(
     assert result["events"]["queued"] == 1
     assert len(sent) == 1
     assert "HALT" in sent[0]
-    assert f"{web_main.RUNNERS_ORIGIN}/t/HALT" in sent[0]
+    assert f"{web_main.RUNNERS_ORIGIN}/stock/HALT" in sent[0]
     # Delivered once, not on every sweep.
     assert web_main.dispatch_telegram_posts()["status"] == "empty"
 
@@ -933,7 +933,7 @@ def test_the_announcement_uses_deterministic_markdown(
 
     assert len(sent) == 1
     assert "*$AAAA is worth watching*" in sent[0]
-    assert "/t/AAAA" in sent[0]
+    assert "/stock/AAAA" in sent[0]
     assert "score *80*" in sent[0]
 
 
@@ -954,7 +954,7 @@ def test_the_announcement_includes_the_main_link_when_no_model_call(
 
     assert len(sent) == 1
     assert "AAAA" in sent[0]
-    assert "/t/AAAA" in sent[0]
+    assert "/stock/AAAA" in sent[0]
 
 
 def test_a_new_build_announces_itself_once(alert_environment, monkeypatch: MonkeyPatch) -> None:
