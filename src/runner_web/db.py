@@ -3583,6 +3583,31 @@ def _migration_079_outcome_retries(db: DatabaseConnection) -> None:
     _ensure_column(db, "scan_outcomes", "last_attempt_at TEXT")
 
 
+def _migration_080_gam_ranker_models(db: DatabaseConnection) -> None:
+    """The additive (GAM) challenger: integer tables, its losses, and its status.
+
+    Promoted only when it beats the incumbent logistic model on the same held-out
+    groups, so the artifact and the comparison are stored together.
+    """
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS gam_ranker_models (
+            id TEXT PRIMARY KEY,
+            feature_schema_version TEXT NOT NULL,
+            model_kind TEXT NOT NULL,
+            artifact_json TEXT NOT NULL,
+            metrics_json TEXT NOT NULL,
+            training_rows INTEGER NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('shadow','active','retired')),
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS gam_ranker_models_status
+            ON gam_ranker_models(status,created_at DESC);
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3667,6 +3692,7 @@ MIGRATIONS = (
     Migration(77, "gap_ranker_models", _migration_077_gap_ranker_models),
     Migration(78, "label_resolution", _migration_078_label_resolution),
     Migration(79, "outcome_retries", _migration_079_outcome_retries),
+    Migration(80, "gam_ranker_models", _migration_080_gam_ranker_models),
 )
 
 
