@@ -22,6 +22,8 @@ dependencies = [
   "webauthn>=2.2",
   "yfinance>=0.2.54",
   "exchange-calendars>=4.13,<5",
+  # Training only: serving walks the exported integer trees in the Rust runtime.
+  "lightgbm>=4.5",
 ]
 
 [project.optional-dependencies]
@@ -33,7 +35,6 @@ dev = [
   "pytest-playwright>=0.7",
   "pytest-split>=0.9",
   "pytest-xdist>=3.6",
-  "lightgbm>=4.5",
   "ruff>=0.9",
 ]
 desktop = [

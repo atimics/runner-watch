@@ -1170,9 +1170,13 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
         expect(wheel.locator(".entity-score-segment")).to_have_count(5)
         expect(page.locator('[data-entity-stock="CDTG"] .entity-score-track')).to_have_count(1)
         expect(page.locator('[data-entity-stock="CDTG"] .entity-score-segment')).to_have_count(0)
-        # The map itself carries no labels; the ring and the click-through do
-        # the talking, with the full name on the ticker page.
-        expect(page.locator("[data-entity-stock] text")).to_have_count(0)
+        # The ticker names each node; the ring carries the score and the
+        # click-through opens the full detail on the stock page.
+        expect(page.locator("[data-entity-stock] text")).to_have_count(2)
+        symbols = page.locator("[data-entity-stock] > text").evaluate_all(
+            "nodes => nodes.map(node => node.textContent)"
+        )
+        assert set(symbols) == {"USO", "CDTG"}
         titles = page.locator("[data-entity-stock] > title")
         expect(titles).to_have_count(2)
         hover = titles.evaluate_all("nodes => nodes.map(node => node.textContent)")

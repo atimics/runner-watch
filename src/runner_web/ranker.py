@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from runner_web.database import retry_database_operation
-from runner_web.db import connection, init_db
+from runner_web.db import connection as connection_scope
+from runner_web.db import init_db
 from runner_web.labels import barrier_contract
 from runner_web.product_policy import RANKER_TRAINING
 from runner_web.ranker_promotion import promotion_status
@@ -103,6 +104,7 @@ class RankerModel:
     artifact: dict[str, Any]
     metrics: dict[str, Any]
     status: str = "shadow"
+    kind: str = MODEL_KIND
 
     @property
     def weights(self) -> tuple[tuple[int, ...], ...]:
@@ -287,7 +289,7 @@ def sync_training_outcome(
 
 def _backfill_recent_training_examples(maximum_groups: int) -> int:
 
-    with connection() as database:
+    with connection_scope() as database:
         run_rows = database.execute(
             """
             SELECT r.id FROM scan_runs r
@@ -369,7 +371,7 @@ def _load_groups(
         raise ValueError(f"Unknown ranker horizon: {horizon}")
     maximum_groups = max(2, maximum_groups)
     _backfill_recent_training_examples(maximum_groups)
-    with connection() as database:
+    with connection_scope() as database:
         complete_runs = database.execute(
             """
             SELECT scan_run_id,MIN(captured_at) AS run_captured_at
@@ -593,7 +595,7 @@ def train_shadow_ranker(
     holdout_count = min(max(2, (len(groups) + 2) // 5), len(groups) - 1)
     training_group_count = len(groups) - holdout_count
     created_at = _iso()
-    with connection() as database:
+    with connection_scope() as database:
         database.execute(
             """
             INSERT OR IGNORE INTO ranker_models(
@@ -639,7 +641,7 @@ def train_shadow_ranker_if_due(
 ) -> dict[str, Any]:
 
     _backfill_recent_training_examples(maximum_groups)
-    with connection() as database:
+    with connection_scope() as database:
         latest = database.execute(
             """
             SELECT training_end FROM ranker_models
@@ -679,7 +681,7 @@ def train_shadow_ranker_if_due(
 def _trainer_state(key: str, value: Any) -> None:
     timestamp = _iso()
     encoded = value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))
-    with connection() as database:
+    with connection_scope() as database:
         database.execute(
             """
             INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?)
@@ -706,6 +708,29 @@ def _train_gap_ranker_if_due() -> dict[str, Any]:
     if moment - _GAP_RANKER_LAST_TRAINED < TRAIN_INTERVAL_SECONDS:
         return {"status": "skipped"}
     _GAP_RANKER_LAST_TRAINED = moment
+    return train_and_store()
+
+
+_TREE_RANKER_LAST_TRAINED = 0.0
+
+
+def _train_tree_ranker_if_due() -> dict[str, Any]:
+    """Retrain the tree challenger on its own cadence.
+
+    It only becomes the served model by beating the incumbent on held-out groups,
+    so a failure here leaves whatever is serving in place.
+    """
+
+    global _TREE_RANKER_LAST_TRAINED
+    from runner_web.tree_ranker import available, train_and_store
+
+    interval = max(3600, int(os.getenv("TREE_RANKER_TRAIN_INTERVAL_SECONDS", str(6 * 3600))))
+    moment = datetime.now(UTC).timestamp()
+    if moment - _TREE_RANKER_LAST_TRAINED < interval:
+        return {"status": "skipped"}
+    _TREE_RANKER_LAST_TRAINED = moment
+    if not available():
+        return {"status": "unavailable", "reason": "lightgbm is not installed"}
     return train_and_store()
 
 
@@ -763,6 +788,7 @@ def trainer_main() -> None:
             result = train_shadow_ranker_if_due()
             _trainer_state("ranker_trainer_last_result", result)
             _trainer_state("gap_ranker_last_result", _train_gap_ranker_if_due())
+            _trainer_state("tree_ranker_last_result", _train_tree_ranker_if_due())
             _trainer_state("ranker_trainer_last_error", "")
         except Exception as exc:
             last_error = str(exc)[:1000]
@@ -815,8 +841,43 @@ def _valid_artifact(artifact: Any) -> bool:
     return scalar_integers and vectors_are_integers and weights_are_integers
 
 
+def load_served_model(horizon: str = DEFAULT_HORIZON) -> RankerModel | None:
+    """The model the runtime should use, whatever kind it is.
+
+    ``ranker_models`` holds the served artifact: the logistic incumbent, an
+    additive challenger or an exported forest. Exactly one row is active, and its
+    ``model_kind`` tells the runtime which command to run.
+    """
+
+    with connection_scope() as database:
+        row = database.execute(
+            """
+            SELECT * FROM ranker_models
+            WHERE horizon=? AND feature_schema_version=? AND status='active'
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (horizon, FEATURE_SCHEMA_VERSION),
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        artifact = json.loads(str(row["weights_json"]))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(artifact, dict):
+        return None
+    return RankerModel(
+        id=str(row["id"]),
+        horizon=str(row["horizon"]),
+        artifact=artifact,
+        metrics=json.loads(str(row["metrics_json"] or "{}")),
+        status=str(row["status"]),
+        kind=str(row["model_kind"]),
+    )
+
+
 def load_latest_model(horizon: str = DEFAULT_HORIZON) -> RankerModel | None:
-    with connection() as database:
+    with connection_scope() as database:
         row = database.execute(
             """
             SELECT * FROM ranker_models
@@ -842,7 +903,7 @@ def load_latest_model(horizon: str = DEFAULT_HORIZON) -> RankerModel | None:
 
 
 def promote_ranker(model_id: str) -> dict[str, Any]:
-    with connection() as database:
+    with connection_scope() as database:
         row = database.execute("SELECT * FROM ranker_models WHERE id=?", (model_id,)).fetchone()
         if row is None:
             raise ValueError("Choose an existing ranker model")
@@ -874,11 +935,74 @@ def promote_ranker(model_id: str) -> dict[str, Any]:
     return {"model_id": model_id, "status": "active", "promotion": metrics["promotion"]}
 
 
+def _predict_command(model: RankerModel, rows: list[dict[str, Any]]) -> str:
+    """Which runtime command understands this artifact."""
+
+    kind = str(model.kind or (model.metrics or {}).get("model_kind") or "")
+    if kind.startswith("integer_trees"):
+        return "predict_trees"
+    if kind.startswith("integer_additive"):
+        return "predict_gam"
+    return "predict"
+
+
+def register_served_model(
+    model_id: str,
+    model_kind: str,
+    artifact: dict[str, Any],
+    metrics: dict[str, Any],
+    *,
+    horizon: str = DEFAULT_HORIZON,
+    training_start: str | None = None,
+    training_end: str | None = None,
+    training_groups: int = 0,
+    training_rows: int = 0,
+    created_at: str | None = None,
+    connection: Any = None,
+) -> None:
+    """Make an artifact the served model, retiring whatever served before.
+
+    Serving one model at a time is what makes "the score" mean one thing; the
+    challenger tables keep the history of what was tried.
+    """
+
+    moment = created_at or _iso()
+    payload = (
+        model_id,
+        FEATURE_SCHEMA_VERSION,
+        horizon,
+        model_kind,
+        json.dumps(artifact, separators=(",", ":")),
+        json.dumps(metrics, separators=(",", ":")),
+        training_start or moment,
+        training_end or moment,
+        int(training_groups),
+        int(training_rows),
+        "active",
+        moment,
+    )
+    statement = """
+        INSERT INTO ranker_models(
+            id,feature_schema_version,horizon,model_kind,weights_json,metrics_json,
+            training_start,training_end,training_groups,training_rows,status,created_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET status='active',metrics_json=excluded.metrics_json
+        """
+    retire = "UPDATE ranker_models SET status='retired' WHERE status='active' AND id<>?"
+    if connection is not None:
+        connection.execute(statement, payload)
+        connection.execute(retire, (model_id,))
+        return
+    with connection_scope() as db:
+        db.execute(statement, payload)
+        db.execute(retire, (model_id,))
+
+
 def predict_and_store(scan_run_id: str, model: RankerModel | None = None) -> dict[str, Any]:
-    model = model or load_latest_model()
+    model = model or load_served_model()
     if model is None:
         return {"predicted": False, "reason": "no_shadow_model"}
-    with connection() as database:
+    with connection_scope() as database:
         rows = [
             dict(row)
             for row in database.execute(
@@ -894,7 +1018,7 @@ def predict_and_store(scan_run_id: str, model: RankerModel | None = None) -> dic
         return {"predicted": False, "reason": "empty_scan"}
     response = _run_rust(
         {
-            "command": "predict",
+            "command": _predict_command(model, rows),
             "artifact": model.artifact,
             "rows": [
                 {
@@ -908,7 +1032,7 @@ def predict_and_store(scan_run_id: str, model: RankerModel | None = None) -> dic
     )
     predictions = response["predictions"]
     created_at = _iso()
-    with connection() as database:
+    with connection_scope() as database:
         database.executemany(
             """
             INSERT INTO ranker_predictions(
@@ -952,7 +1076,7 @@ def predict_and_store(scan_run_id: str, model: RankerModel | None = None) -> dic
 
 
 def ranker_status() -> dict[str, Any]:
-    with connection() as database:
+    with connection_scope() as database:
         counts = database.execute(
             """
             SELECT

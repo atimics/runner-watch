@@ -35,6 +35,7 @@ from runner_web.ranker import (
     _load_groups,
     _run_rust,
     load_latest_model,
+    register_served_model,
 )
 
 MODEL_KIND = "integer_additive_barrier_v1"
@@ -365,6 +366,7 @@ def _store(
                 "UPDATE gam_ranker_models SET status='retired' WHERE status='active' AND id<>?",
                 (model_id,),
             )
+            _serve(model_id, artifact, challenger, incumbent, moment, database)
         return
     with connection() as db:
         db.execute(statement, payload)
@@ -373,6 +375,29 @@ def _store(
                 "UPDATE gam_ranker_models SET status='retired' WHERE status='active' AND id<>?",
                 (model_id,),
             )
+            _serve(model_id, artifact, challenger, incumbent, moment, db)
+
+
+def _serve(
+    model_id: str,
+    artifact: dict[str, Any],
+    challenger: dict[str, Any],
+    incumbent: dict[str, Any],
+    moment: str,
+    database: DatabaseConnection,
+) -> None:
+    """A promoted additive model becomes the served one."""
+
+    register_served_model(
+        model_id,
+        MODEL_KIND,
+        artifact,
+        {"challenger": challenger, "incumbent": incumbent, "model_kind": MODEL_KIND},
+        training_groups=int(challenger.get("rows") or 0),
+        training_rows=int(challenger.get("rows") or 0),
+        created_at=moment,
+        connection=database,
+    )
 
 
 _ACTIVE_CACHE: tuple[float, dict[str, Any] | None] | None = None

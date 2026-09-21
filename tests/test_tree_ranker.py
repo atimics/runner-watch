@@ -213,3 +213,67 @@ def test_the_walk_handles_a_short_feature_vector():
 
     # A row missing the feature it splits on contributes nothing rather than raising.
     assert tree_ranker.score_integers(artifact, [0]) == [0.0, 0.0, 0.0]
+
+@requires_lightgbm
+def test_a_promoted_forest_becomes_the_served_model(database, monkeypatch):
+    """Serving one model at a time is what keeps the score meaning one thing."""
+
+    from runner_web.ranker import load_latest_model, load_served_model, register_served_model
+
+    # The incumbent is serving.
+    register_served_model(
+        "incumbent-logistic",
+        "integer_multiclass_logistic_barrier_v6",
+        {"weights": [[0, 0, 0]], "means": [0], "scales": [1], "bias": [0, 0, 0]},
+        {"model_kind": "integer_multiclass_logistic_barrier_v6"},
+        connection=database,
+    )
+    database.commit()
+    assert load_served_model() is not None
+
+    monkeypatch.setattr(tree_ranker, "_load_groups", lambda *_a, **_k: _learnable_groups())
+    monkeypatch.setattr(
+        tree_ranker,
+        "_incumbent_metrics",
+        lambda _groups: {"available": True, "log_loss": 5.0, "model_id": "incumbent-logistic"},
+    )
+    result = tree_ranker.train_and_store(database, maximum_groups=10)
+    database.commit()
+
+    assert result["promoted"] is True
+    served = load_served_model()
+    assert served is not None
+    assert served.id == result["model_id"]
+    assert served.kind == tree_ranker.MODEL_KIND
+    assert served.artifact["schema"] == tree_ranker.ARTIFACT_SCHEMA
+    # The logistic-only loader still ignores it, so the incumbent comparison stays honest.
+    assert load_latest_model() is None
+    with database as conn:
+        statuses = dict(
+            (row["id"], row["status"])
+            for row in conn.execute("SELECT id,status FROM ranker_models").fetchall()
+        )
+    assert statuses[result["model_id"]] == "active"
+    assert statuses["incumbent-logistic"] == "retired"
+
+
+def test_the_runtime_command_follows_the_served_kind():
+    """The prediction path runs the command the served artifact needs."""
+
+    from runner_web import ranker
+
+    def model(kind: str) -> ranker.RankerModel:
+        return ranker.RankerModel(
+            id="model",
+            horizon="60m",
+            artifact={},
+            metrics={},
+            status="active",
+            kind=kind,
+        )
+
+    assert ranker._predict_command(model("integer_trees_barrier_v1"), []) == "predict_trees"
+    assert ranker._predict_command(model("integer_additive_barrier_v1"), []) == "predict_gam"
+    assert (
+        ranker._predict_command(model("integer_multiclass_logistic_barrier_v6"), []) == "predict"
+    )

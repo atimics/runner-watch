@@ -426,6 +426,40 @@ def test_a_stock_header_reads_ticker_then_company_like_the_quote(page):
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 
+def test_the_barrier_forecast_is_three_labelled_chances(page):
+    """A reader gets the contract and the odds, not one blended number."""
+
+    screen = detail("stocks", {"ticker": "OPK", "current": fixtures.sample("stocks")})
+    screen.pop("refresh_url")
+    screen.pop("chart_url")
+    screen["item"]["runner_probability"] = 0.34
+    screen["item"]["runner_probability_down"] = 0.41
+    screen["item"]["runner_probability_timeout"] = 0.25
+    screen["item"]["probability_contract"] = "+8% before -4% within 60 minutes"
+    page.set_viewport_size({"width": 1280, "height": 844})
+    open_screen(page, screen)
+
+    line = page.locator("[data-chance-line]")
+    expect(line).to_be_visible()
+    expect(line.locator("[data-chance-up]")).to_have_text("34% upper first")
+    expect(line.locator("[data-chance-down]")).to_have_text("41% lower first")
+    expect(line.locator("[data-chance-timeout]")).to_have_text("25% neither")
+    expect(line.locator("[data-chance-contract]")).to_have_text(
+        "+8% before -4% within 60 minutes"
+    )
+
+
+def test_a_page_without_probabilities_shows_no_forecast_line(page):
+    screen = detail("stocks", {"ticker": "OPK", "current": fixtures.sample("stocks")})
+    screen.pop("refresh_url")
+    screen.pop("chart_url")
+    screen["item"].pop("runner_probability", None)
+    page.set_viewport_size({"width": 390, "height": 844})
+    open_screen(page, screen)
+
+    expect(page.locator("[data-chance-line]")).to_have_count(0)
+
+
 def test_the_gap_is_drawn_as_an_honest_dashed_stretch(page):
     """Past the last saved bar the chart keeps going, but as a dashed projection
     with a band and a label, never as invented candles."""

@@ -1854,6 +1854,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "jinja2" },
     { name = "keyring" },
+    { name = "lightgbm" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pandas" },
@@ -1874,7 +1875,6 @@ desktop = [
 ]
 dev = [
     { name = "httpx2" },
-    { name = "lightgbm" },
     { name = "pip-audit" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -1893,7 +1893,7 @@ requires-dist = [
     { name = "httpx2", marker = "extra == 'dev'", specifier = ">=2.12" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "keyring", specifier = ">=25.6" },
-    { name = "lightgbm", marker = "extra == 'dev'", specifier = ">=4.5" },
+    { name = "lightgbm", specifier = ">=4.5" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "pillow", specifier = ">=11.0" },
