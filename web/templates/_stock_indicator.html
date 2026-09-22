@@ -1,0 +1,50 @@
+{# Presentation only: run-state chips and trading policy live elsewhere. #}
+{% macro indicator_glyph(item) -%}
+{% set glyph = item.indicator %}
+<span class="ticker-score indicator-glyph" data-band="{{ glyph.band }}"
+      data-sentiment="{{ glyph.sentiment }}" data-risk="{{ glyph.risk }}" data-mix="{{ glyph.mix_state }}"
+      role="img" aria-label="{{ glyph.description }}" title="{{ glyph.description }}">
+  <span class="indicator-glyph__face" aria-hidden="true">
+    <span class="indicator-glyph__sentiment"></span>
+    <span class="score-pie"{% if glyph.gradient %} style="background: {{ glyph.gradient }}"{% endif %}></span>
+    {% if glyph.risk != 'low' %}<span class="indicator-glyph__risk">{{ '?' if glyph.risk == 'unknown' else '' }}</span>{% endif %}
+  </span>
+</span>
+{%- endmacro %}
+
+{% macro verified_check(item) -%}
+<span class="ticker-verification" data-stock-verification{% if not item.verified %} hidden{% endif %}>
+{% if item.verified %}
+<svg class="ticker-verified" viewBox="0 0 20 20" role="img" aria-label="Verified evidence — automated">
+  <title>{{ item.indicator.verification.note }}{% if item.indicator.verification.as_of %} As of {{ item.indicator.verification.as_of }}.{% endif %}</title>
+  <circle cx="10" cy="10" r="9"/>
+  <path d="m6 10 2.5 2.5 5.5-5.5"/>
+</svg>
+{% endif %}
+</span>
+{%- endmacro %}
+
+{% macro indicator_details(item) -%}
+{% set glyph = item.indicator %}
+<section class="stock-indicator-summary" aria-label="Attention, sentiment and risk">
+  {{ indicator_glyph(item) }}
+  <div>
+    <p><strong data-indicator-attention>{{ 'Attention ' ~ glyph.score ~ ' points' if glyph.score is not none else 'Attention unavailable' }}</strong> · <span data-indicator-band>{{ glyph.band_label }} attention</span></p>
+    <p data-indicator-reading>Filing sentiment: {{ glyph.sentiment|title }} · Risk: {{ glyph.risk|title }}</p>
+    <dl class="indicator-components"{% if glyph.mix_state != "available" %} hidden{% endif %}>{% for part in glyph.slices %}<div><dt>{{ part.label }}</dt><dd>{{ '%.1f'|format(part.value) }} pts · {{ '%.1f'|format(part.share * 100) }}% of mix</dd></div>{% endfor %}</dl>
+    <p data-indicator-missing{% if glyph.mix_state == "available" %} hidden{% endif %}>{{ "No attention contributions." if glyph.mix_state == "zero" else "Attention breakdown unavailable." }}</p>
+    <p class="indicator-note">Slices show contribution shares, not outcome probabilities. The outer border shows filing sentiment, not price change.</p>
+    <p class="indicator-note" data-indicator-verification-note{% if not item.verified %} hidden{% endif %}>{{ glyph.verification.note }}{% if glyph.verification.as_of %} As of {{ glyph.verification.as_of }}.{% endif %}</p>
+  </div>
+</section>
+{%- endmacro %}
+
+{% macro indicator_legend() -%}
+<details class="indicator-legend"><summary>Indicator key</summary>
+<p>Small ring: under 40 attention points. Large ring: 40–69.99. Large solid: 70+.</p>
+<p>Blue: market. Purple: filings + news. Cyan: external social. Slices show contribution shares.</p>
+<p>Outer border: green positive filing sentiment, red negative, gray neutral, dashed unknown.</p>
+<p>Center: orange medium risk, red high risk, no dot low risk, ? unknown.</p>
+<p>Check: the existing automated evidence gate is confirmed and eligibility checks pass. Not human review or an endorsement. Open a stock for the text breakdown.</p>
+</details>
+{%- endmacro %}

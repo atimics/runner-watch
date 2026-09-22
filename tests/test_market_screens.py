@@ -149,32 +149,26 @@ def test_list_exposes_score_and_breakdown_without_internal_fields():
     assert SENTINEL not in html
 
 
-def test_score_pie_shares_the_ring_with_red_penalty_slices():
-    """The list pie reads like the detail map ring: positive drivers and
-    penalties divide the circle by total magnitude, penalties in red."""
-
+def test_stock_glyph_uses_attention_contributions_not_penalty_slices():
     screen = listing("stocks", [scored_stock()])
     html = render(screen)
-    assert (
-        "conic-gradient(var(--score-market) 0.0% 83.33%, var(--red) 83.33% 100.0%)"
-        in html
-    )
-    assert "Rug risk -12.0" in html
-
-    penalty_only = listing(
+    assert "conic-gradient(var(--indicator-market) 0.000000% 100.000000%)" in html
+    assert "Rug risk -12.0" not in html
+    assert 'data-risk="low"' in html
+    missing = listing(
         "stocks",
         [
             scored_stock(
-                score=50.0,
+                score=50,
                 score_detail={
-                    "score": 50.0,
-                    "drivers": [{"key": "market", "label": "Market scanner", "value": 0.0}],
-                    "penalties": [{"key": "rug", "label": "Rug risk", "value": -12.0}],
+                    "drivers": [{"key": "market", "value": 0}],
+                    "penalties": [{"key": "rug", "value": -12}],
                 },
             )
         ],
     )
-    assert "conic-gradient(var(--red) 0.0% 100.0%)" in render(penalty_only)
+    assert 'data-mix="unknown"' in render(missing)
+    assert "conic-gradient(" not in render(missing)
 
 
 def test_public_score_detail_uses_short_driver_labels():
