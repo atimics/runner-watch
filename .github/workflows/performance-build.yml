@@ -1,0 +1,47 @@
+name: Performance workspace
+on:
+  push:
+    branches: [codex/performance-build]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 7e44356b8974272c9ee0cdad25bf97e4c4e12e7b
+      - run: git archive --format=tar.gz HEAD > /tmp/performance-source.tar.gz
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: performance-source
+          path: /tmp/performance-source.tar.gz
+          retention-days: 1
+  profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Read-only database size and wait metadata
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import shlex, subprocess
+          code = '''import os,json,psycopg
+          from psycopg.rows import dict_row
+          with psycopg.connect(os.environ['DATABASE_URL'],connect_timeout=10,options='-c default_transaction_read_only=on -c statement_timeout=10000',row_factory=dict_row) as c:
+              print('table_sizes',json.dumps(c.execute("SELECT relname,n_live_tup,n_dead_tup,seq_scan,idx_scan FROM pg_stat_user_tables WHERE relname IN ('market_bars','scan_outcomes','ranker_training_examples','scan_snapshots','sec_filings','public_market_events','ticker_comments','community_calls') ORDER BY relname").fetchall(),default=str))
+              print('active_queries',json.dumps(c.execute("SELECT state,wait_event_type,wait_event,EXTRACT(EPOCH FROM clock_timestamp()-query_start)::int AS age_seconds,CASE WHEN query ILIKE '%scan_outcomes%' THEN 'outcomes' WHEN query ILIKE '%ranker_training_examples%' THEN 'training' WHEN query ILIKE '%market_bars%' THEN 'bars' WHEN query ILIKE '%sec_filings%' THEN 'filings' ELSE 'other' END AS query_family FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND state='active' ORDER BY query_start LIMIT 12").fetchall(),default=str))
+          '''
+          subprocess.run(['flyctl','ssh','console','--app','runner-watch-ratimics','--process-group','web','--command','python -c '+shlex.quote(code),'--quiet'],check=True,timeout=75)
+          PY
+      - name: Public route sample, no mutation
+        run: |
+          for path in /api/version /ready '/api/pulse?limit=5' /radar /reports; do
+            for sample in 1 2 3; do
+              curl --fail --silent --show-error --max-time 20 --output /dev/null --write-out "$path %{http_code} %{time_starttransfer} %{time_total}\n" "https://runners.rati.chat$path"
+            done
+          done
