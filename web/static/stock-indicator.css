@@ -1,6 +1,8 @@
-/* Stock-only summary; intentionally does not style .tag or change status colors. */
-.indicator-glyph{
+/* Stock-only indicator; intentionally does not style .tag or change status colors. */
+.indicator-glyph,[data-stock-map]{
   --indicator-market:#418cf4;--indicator-evidence:#b58af4;--indicator-social:#36d5e6;
+}
+.indicator-glyph{
   --glyph-size:36px;--glyph-sentiment:var(--muted);--risk-size:9px;
   width:40px;height:40px;flex:none;
 }
@@ -26,12 +28,6 @@
 .ticker-verified{width:14px;height:14px;flex:none;fill:var(--green);vertical-align:middle}
 .ticker-verified path{fill:none;stroke:var(--bg,#0b100e);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .asset-heading .ticker-verified{width:18px;height:18px}
-.stock-indicator-summary{display:flex;align-items:flex-start;gap:12px;margin:18px 0;padding:14px;border:1px solid var(--line);border-radius:10px}
-.stock-indicator-summary p{margin:0 0 6px;font-size:13px}
-.stock-indicator-summary .indicator-note{color:var(--muted);font-size:11px;max-width:60em}
-.indicator-components{display:flex;flex-wrap:wrap;gap:8px 20px;margin:10px 0;font-size:12px}
-.indicator-components dt{color:var(--muted)}
-.indicator-components dd{margin:3px 0 0}
 @media(max-width:760px){
   .indicator-glyph{width:30px;height:30px;--glyph-size:30px;--risk-size:8px}
   .indicator-glyph[data-band="1"]{--glyph-size:22px;--risk-size:6px}
@@ -46,7 +42,7 @@
 }
 
 .ticker-verification{display:inline-flex;align-items:center;flex:none}
-.ticker-verification[hidden],.stock-indicator-summary [hidden]{display:none}
+.ticker-verification[hidden]{display:none}
 .indicator-legend{margin-top:16px;color:var(--muted);font-size:11px;max-width:60em}
 .indicator-legend summary{cursor:pointer;width:fit-content;padding:8px 0}
 .indicator-legend summary:focus-visible{outline:2px solid var(--blue);outline-offset:3px}

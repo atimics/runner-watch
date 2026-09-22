@@ -98,6 +98,8 @@ def test_unified_score_template_keeps_score_and_lists_filings(score):
         },
     )
     assert 'class="map-score-heading"' not in html
+    assert 'class="stock-indicator-summary"' not in html
+    assert html.count("Indicator key") == 1
     assert 'class="metrics"' not in html
     assert 'class="breakdown"' not in html
     assert re.search(r'<div class="map-filings" data-map-filings hidden>', html)
