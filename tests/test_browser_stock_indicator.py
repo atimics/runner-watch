@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import re
 from pathlib import Path
 
 import pytest
@@ -108,7 +107,7 @@ def test_glyphs_fit_dense_list_and_status_chips_are_unchanged(page: Page, width)
     assert errors == []
 
 
-def test_detail_explains_colors_and_check_without_hover(page: Page):
+def test_detail_keeps_header_check_without_duplicate_attention_card(page: Page):
     source = fixtures.stock()
     screen = detail(
         "stocks", {"ticker": "GLYPH", "current": source, "evidence_gate": source["evidence_gate"]}
@@ -116,13 +115,7 @@ def test_detail_explains_colors_and_check_without_hover(page: Page):
     screen.pop("refresh_url", None)
     screen.pop("chart_url", None)
     helpers.open_screen(page, screen)
-    expect(page.get_by_role("region", name="Attention, sentiment and risk")).to_be_visible()
-    expect(page.get_by_text("Filing sentiment: Positive · Risk: Low", exact=True)).to_be_visible()
-    expect(
-        page.locator(".stock-indicator-summary").get_by_text(
-            re.compile("Not human review, identity verification")
-        )
-    ).to_be_visible()
+    expect(page.locator(".stock-indicator-summary")).to_have_count(0)
     expect(page.locator("h1 .ticker-verified")).to_be_visible()
 
 
@@ -171,7 +164,7 @@ def test_markup_refresh_revokes_check_without_relabeling_status(page: Page):
     expect(page.locator(".indicator-glyph")).to_have_count(1)
 
 
-def test_detail_refresh_updates_glyph_and_revokes_verification(page: Page):
+def test_detail_refresh_revokes_header_verification_without_summary(page: Page):
     source = fixtures.stock()
     first = detail(
         "stocks", {"ticker": "GLYPH", "current": source, "evidence_gate": source["evidence_gate"]}
@@ -193,8 +186,4 @@ def test_detail_refresh_updates_glyph_and_revokes_verification(page: Page):
     page.route("**/api/screens/stocks/GLYPH/detail", lambda route: route.fulfill(json=second))
     page.clock.fast_forward(61000)
     expect(page.locator("h1 .ticker-verified")).to_have_count(0)
-    expect(page.locator(".indicator-glyph")).to_have_attribute("data-band", "3")
-    expect(page.locator(".indicator-glyph")).to_have_attribute("data-sentiment", "negative")
-    expect(page.locator(".indicator-glyph")).to_have_attribute("data-risk", "high")
-    expect(page.locator("[data-indicator-attention]")).to_have_text("Attention 80 points")
-    expect(page.locator("[data-indicator-verification-note]")).to_be_hidden()
+    expect(page.locator(".stock-indicator-summary")).to_have_count(0)

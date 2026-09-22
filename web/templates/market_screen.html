@@ -1,4 +1,4 @@
-{% from '_stock_indicator.html' import indicator_glyph, verified_check, indicator_details, indicator_legend %}
+{% from '_stock_indicator.html' import indicator_glyph, verified_check, indicator_legend %}
 {% macro score_pie(item) -%}
 {%- if item.indicator is defined -%}
 {{ indicator_glyph(item) }}
@@ -112,7 +112,6 @@
         <small data-chance-contract>{{ screen.item.probability_contract }}</small>
       </p>
       {% endif %}
-      {% if screen.market == "stocks" %}{{ indicator_details(screen.item) }}{% endif %}
       {% if screen.market == 'sports' %}{% include "_market_assessment.html" %}{% endif %}
       <section class="visual" aria-label="{{ 'Game' if screen.teams else 'Price history' }}">
       {% if screen.teams %}<div class="teams">{% for team in screen.teams %}<div><span class="team-mark">{{ team.mark }}</span><h2>{{ team.name }}</h2><strong>{{ team.score }}</strong></div>{% endfor %}</div><p class="visual-caption" data-game-note>{{ screen.note }}</p>
