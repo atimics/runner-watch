@@ -9171,7 +9171,7 @@ def pulse_api(
 @app.get("/api/pulse/charts")
 async def pulse_charts_api(request: Request) -> Response:
     enforce_rate(request, "pulse-charts", limit=20, seconds=60)
-    tickers = [row["ticker"] for row in pulse_data(limit=20)["rows"]]
+    tickers = [row["ticker"] for row in pulse_data(limit=50)["rows"]]
     payload = await run_in_threadpool(ticker_charts_payload, tickers)
     return _conditional_json_response(request, _compact_list_chart_payload(payload))
 
@@ -10538,7 +10538,7 @@ def _warm_list_charts() -> None:
     except Exception:
         LOG.exception("Startup list warm could not read pulse rows")
         return
-    tickers = [str(row.get("ticker") or "") for row in rows if row.get("ticker")][:20]
+    tickers = [str(row.get("ticker") or "") for row in rows if row.get("ticker")][:50]
     if not tickers:
         return
     try:

@@ -26,12 +26,14 @@ def open_screen(page, screen, user=None):
         html,
     )
     html = re.sub(
-        r'<script src="/static/(market-screen|stock-indicator)\.js[^\"]*"[^>]*></script>',
+        r'<script src="/static/(market-screen|stock-indicator|ticker-row)'
+        r'\.js[^\"]*"[^>]*></script>',
         lambda m: "<script>" + (ROOT / "web/static" / (m[1] + ".js")).read_text() + "</script>",
         html,
     )
     page.route("http://app.test/", lambda r: r.fulfill(content_type="text/html", body=html))
     page.route("**/api/screens/**", lambda r: r.fulfill(json={"points": []}))
+    page.route("**/api/pulse/charts", lambda r: r.fulfill(json={"charts": {}}))
     page.goto("http://app.test/")
 
 
@@ -65,7 +67,7 @@ def test_narrow_stock_rows_are_single_line(page: Page):
     expect(row).to_be_visible()
     box = row.bounding_box()
     assert box is not None and box["height"] <= 62
-    selectors = (".tag", ".ticker-name", ".ticker-value", ".ticker-score")
+    selectors = (".ticker-trend", ".ticker-name", ".ticker-value", ".ticker-score")
     children = [row.locator(selector).bounding_box() for selector in selectors]
     children = [item for item in children if item is not None]
     centers = [item["y"] + item["height"] / 2 for item in children]
