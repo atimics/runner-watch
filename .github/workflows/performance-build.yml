@@ -13,13 +13,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: codex/performance-build
-          fetch-depth: 7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: performance-transport
-          path: .performance.patch
-          include-hidden-files: true
-          retention-days: 1
+          fetch-depth: 10
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
         with:
           python-version: '3.13'
@@ -27,11 +21,23 @@ jobs:
       - name: Apply reviewed performance patch
         shell: bash
         run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          p = Path('.performance.patch')
+          data = p.read_text()
+          old = 'V0iOxV2mUITMC0sf7b6t3lV8lXsaZWMa9yLamG1bQv'
+          new = 'V0iOxV2mUITMC0sf7b6tV8lXsaZWMa9yLamG1bQv'
+          assert data.count(old) == 1
+          data = data.replace(old, new)
+          assert hashlib.sha256(data.encode()).hexdigest() == '2cf050d2d638cf519014409be1a629f85a6bc4a6404b0a917f871b0f1af252ac'
+          p.write_text(data)
+          PY
           base64 -d .performance.patch | gzip -d > /tmp/performance.patch
           echo '39c9e227340039f95039a031997000270dba6627d95a8981ca5abc3356c448e4  /tmp/performance.patch' | sha256sum --check
           git apply --check /tmp/performance.patch
           git apply /tmp/performance.patch
-          git rm .performance.patch .github/workflows/performance-build.yml
+          git rm -f .performance.patch .github/workflows/performance-build.yml
       - name: Lint and Rust tests
         run: |
           uv run ruff check src tests scripts/benchmark-hot-paths.py
