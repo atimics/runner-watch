@@ -1,0 +1,63 @@
+name: Stock glyph verification
+on:
+  push:
+    branches: [codex/stock-glyph-build]
+permissions:
+  contents: write
+concurrency:
+  group: stock-glyph-verification
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 10
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
+        with:
+          python-version: '3.13'
+      - name: Verify and apply exact patch
+        shell: bash
+        run: |
+          cat .stock-glyph.part-* | base64 -d | gzip -d > /tmp/stock-glyph.diff
+          echo '3f30e9b8977524237c66cc6d3b90a4042e47c1deeab92a1777573b48010e9f48  /tmp/stock-glyph.diff' | sha256sum --check
+          git apply --check /tmp/stock-glyph.diff
+          git apply /tmp/stock-glyph.diff
+          git rm .stock-glyph.part-* .github/workflows/stock-glyph-build.yml
+      - run: uv sync --locked --extra dev
+      - name: Static and Rust checks
+        run: |
+          uv run ruff check src tests
+          node --check web/static/stock-indicator.js
+          cargo test --locked --manifest-path rust/stonks-ranker/Cargo.toml
+          cargo build --locked --manifest-path rust/stonks-ranker/Cargo.toml
+          git diff --check
+      - name: Non-browser suite
+        run: uv run pytest --no-cov -q -n 4 -m 'not browser' --junitxml=/tmp/glyph-unit.xml
+      - run: uv run playwright install --with-deps chromium
+      - name: Browser suite
+        run: uv run pytest -q -n 4 -o addopts= -m browser --no-cov --screenshot only-on-failure --junitxml=/tmp/glyph-browser.xml
+      - name: Commit verified tree on isolated branch only
+        run: |
+          test "$GITHUB_REF" = refs/heads/codex/stock-glyph-build
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src tests web docs
+          git diff --cached --check
+          git commit -m 'Add proportional stock attention glyph and automated evidence check without changing run statuses'
+          git push origin HEAD:refs/heads/codex/stock-glyph-build
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: stock-glyph-verification
+          path: |
+            /tmp/glyph-unit.xml
+            /tmp/glyph-browser.xml
+            test-results
+            /tmp/stock-glyph.diff
+            .stock-glyph.part-*
+          include-hidden-files: true
+          retention-days: 3
+          if-no-files-found: ignore
