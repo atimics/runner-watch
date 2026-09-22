@@ -3,8 +3,8 @@
 Presentation-only change for the stock list and detail screen. Scoring, model
 probabilities, ordering, policy, and the existing `state_tag()` derivation are
 unchanged. WATCH, SETUP, RUNNING, EXTENDED, AVOID and PAUSED retain their chips,
-colors, risk marks, filters and precedence. Sports, memecoins and map-node
-renderers are not redesigned by this change.
+colors, risk marks, filters and precedence. Sports, memecoins, wallet/entity nodes and run-state derivation remain unchanged.
+The ticker map now uses the shared glyph contract for its central stock node.
 
 ## Visual contract
 
@@ -38,18 +38,35 @@ its own name slot; it never replaces the run-state chip.
 
 The detail view reads its authoritative top-level evidence gate. List refreshes
 replace server-rendered marks; detail refreshes use the existing accepted-response
-event to update all glyph fields, text and check. A missing updated indicator
+event to update the map glyph and separate header check. A missing updated indicator
 clears verification rather than preserving stale clearance. There is no extra
 poller or database query.
 
 ## Accessibility and verification
 
 The glyph and approval mark have accessible names. The list has a keyboard/tap
-accessible indicator key, and following the existing stock link opens a visible
-text breakdown. A tooltip is supplementary, never the sole explanation. Details
-remain server-rendered with JavaScript disabled. Client refresh uses DOM APIs,
+accessible indicator key. On the ticker page, the map itself provides the visible
+text breakdown and key; there is no separate attention card above the price chart. A tooltip is supplementary, never the sole explanation. With JavaScript disabled, a server-rendered description and filing links remain
+available inside the map's noscript fallback. Client refresh uses DOM APIs,
 fixed color keys and textContent, not untrusted HTML. Desktop and mobile list
 layout, risk and sentiment independence, true solid fill, check revocation and
 unchanged status/filter behavior have regression coverage.
 
 No schema migration, dependency, scoring-threshold or production setting changes.
+
+## Ticker-map integration
+
+The map's central node has the same small-ring / large-ring / solid silhouette,
+three contribution groups, full filing-sentiment border and center risk marker.
+The stock symbol and attention points sit below the face, leaving a solid pie
+filled through the center except for its small optional risk badge.
+
+Selecting a slice opens its fine-grained trace in the existing map selection
+area (filings + news includes both traces). The perimeter and risk marker can
+be selected independently; neither becomes an attention slice or deduction.
+Keyboard arrows, Enter/Space, Escape and touch selection remain supported.
+Wallet navigation, filing pagination, filing scrubbing, chart markers and orbit
+behavior remain on their existing paths. Indicator-only updates preserve wallet
+DOM nodes and selected filings, and refreshes include sentiment/risk changes even
+when attention is unchanged. The map can render attention before filings load,
+and missing/failed filing responses do not remove the glyph.

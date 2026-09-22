@@ -25,25 +25,46 @@
   const screenNode = document.getElementById('screenData');
   const initial = screenNode?.ratiScreenDetail || JSON.parse(screenNode?.textContent || '{}');
   let item = initial.market === 'stocks' && initial.item?.id === root.dataset.ticker ? initial.item : {};
-  let drivers = [], positive = [], penalties = [], contributions = [], total = 0, score = '—';
-  const scoreData = value => JSON.stringify([value.score ?? null, value.score_detail ?? null, value.score_trace ?? null]);
+  let contributions = [], controls = [], total = 0, score = '—', glyph = {};
+  const scoreData = value => {
+    const g = value.indicator || {};
+    return JSON.stringify([g.score,g.band,g.slices,g.mix_state,g.sentiment,g.risk,value.score_trace ?? null]);
+  };
+  const allowed = (value, options, fallback) => options.includes(value) ? value : fallback;
+  const finite = value => typeof value === 'number' && Number.isFinite(value);
+  const titleCase = value => value[0].toUpperCase() + value.slice(1);
   function readScore() {
-    const parts = value => Array.isArray(value) ? value.filter(part => part && Number.isFinite(part.value)) : [];
-    drivers = parts(item.score_detail?.drivers);
-    positive = drivers.filter(part => part.value > 0);
-    penalties = [...parts(item.score_detail?.penalties), ...drivers.filter(part => part.value < 0)].filter(part => part.value !== 0).map(part => ({...part, value:-Math.abs(part.value)}));
-    contributions = [...positive, ...penalties];
-    total = contributions.reduce((sum, part) => sum + Math.abs(part.value), 0);
-    score = Number.isFinite(item.score) ? number(Math.round(item.score)) : '—';
+    const value = item.indicator || {};
+    glyph = {
+      band: allowed(value.band, [1,2,3], 1),
+      sentiment: allowed(value.sentiment, ['positive','negative','neutral','unknown'], 'unknown'),
+      risk: allowed(value.risk, ['low','medium','high','unknown'], 'unknown'),
+      mix: allowed(value.mix_state, ['available','zero','unknown'], 'unknown'),
+    };
+    const parts = Array.isArray(value.slices) ? value.slices : [];
+    contributions = ['market','evidence','social'].map((key, index) => {
+      const part = parts.find(part => part?.key === key);
+      return {key, label:['Market','Filings + news','External social'][index], value:finite(part?.value) ? Math.max(0,part.value) : 0};
+    }).filter(part => part.value > 0);
+    total = contributions.reduce((sum, part) => sum + part.value, 0);
+    if (glyph.mix !== 'available' || !Number.isFinite(total) || total <= 0) { contributions = []; total = 0; }
+    contributions.forEach(part => { part.share = part.value / total; });
+    score = finite(value.score) ? number(value.score) : '—';
+    controls = [...contributions, {key:'sentiment',label:'Filing sentiment'}];
+    if (glyph.risk !== 'low') controls.push({key:'risk',label:'Risk'});
   }
   readScore();
   const points = value => `${value > 0 ? '+' : ''}${number(value)} pts`;
-  const percent = part => `${number(Math.round(Math.abs(part.value) / total * 1000) / 10)}% of total magnitude`;
-  const color = part => part.value < 0 ? 'var(--red)' : `var(--score-${part.key}, var(--muted))`;
-  const metrics = () => small.matches ? {cx:180, cy:184, radius:48, width:16} : {cx:380, cy:218, radius:62, width:20};
+  const percent = part => `${number(Math.round(part.share * 1000) / 10)}% of attention contributions`;
+  const color = part => `var(--indicator-${part.key})`;
+  const metrics = () => {
+    const outer = glyph.band === 1 ? (small.matches ? 36 : 46) : (small.matches ? 56 : 72);
+    const width = small.matches ? 16 : 20;
+    return {cx:small.matches ? 180 : 380, cy:small.matches ? 184 : 218, outer, radius:outer-width/2, width};
+  };
   const graph = $('graph');
   const peopleLayer = svg('g', {class:'map-people'});
-  const ringLayer = svg('g', {class:'map-ring'});
+  const ringLayer = svg('g', {class:'map-ring map-glyph'});
   const interestsLayer = svg('g', {class:'map-interests'});
   graph.append(peopleLayer, interestsLayer, ringLayer);
   window.ratiOrbit?.attach(graph);
@@ -59,13 +80,22 @@
   const subset = () => events.filter(e => (Date.parse(e.filed_at) || 0) <= cutoff);
   function scorePanel(part) {
     const panel = $('selection'); panel.replaceChildren();
+    // A compact reading inside the existing map, not another ticker-page card.
+    const reading = `Attention ${score === '—' ? 'unavailable' : score + ' points'} · Filing sentiment: ${titleCase(glyph.sentiment)} · Risk: ${titleCase(glyph.risk)}`;
+    panel.append(make('p', reading, 'map-glyph-reading'));
     if (part) {
-      panel.append(make('h4', part.label), make('p', `${points(part.value)} · ${percent(part)}`, 'map-score-breakdown'));
-      const rows = item.score_trace?.[part.key];
-      if (Array.isArray(rows) && rows.length) {
+      panel.append(make('h4', part.label));
+      if (part.key === 'risk') panel.append(make('p', `${titleCase(glyph.risk)} structural risk. A heuristic assessment, not a probability of loss. Risk does not subtract attention points.`, 'map-risk-reading'));
+      else if (part.key === 'sentiment') panel.append(make('p', `${titleCase(glyph.sentiment)} filing sentiment; not price change or model forecast.`, 'map-sentiment-reading'));
+      else panel.append(make('p', `${points(part.value)} · ${percent(part)}`, 'map-score-breakdown'));
+      const keys = part.key === 'evidence' ? ['sec_event','news'] : part.key === 'social' ? ['social_search'] : part.key === 'risk' ? ['rug'] : [part.key];
+      for (const key of keys) {
+        const rows = item.score_trace?.[key];
+        if (!Array.isArray(rows) || !rows.length) continue;
         const trace = make('dl', null, 'map-score-trace');
-        trace.setAttribute('aria-label', `${part.label} component trace`);
-        rows.forEach(({label, value}) => {
+        const label = key === 'sec_event' ? 'SEC filing' : key === 'news' ? 'News' : part.label;
+        trace.setAttribute('aria-label', `${label} component trace`);
+        rows.filter(row => row && typeof row === 'object').forEach(({label, value}) => {
           const row = make('div'); row.append(make('dt', label), make('dd', value)); trace.append(row);
         });
         panel.append(trace);
@@ -73,18 +103,13 @@
     }
     const badges = make('div', null, 'map-score-badges');
     const legend = make('ul', null, 'map-score-legend');
-    positive.forEach(driver => {
+    contributions.forEach(driver => {
       const row = make('li');
       const swatch = make('span', null, 'map-score-swatch'); swatch.style.background = color(driver); swatch.setAttribute('aria-hidden', 'true');
       row.append(swatch, make('span', driver.label), make('strong', points(driver.value))); legend.append(row);
     });
-    if (legend.children.length) badges.append(legend);
-    if (penalties.length) {
-      const list = make('ul', null, 'map-score-penalties');
-      penalties.forEach(penalty => {const row = make('li'); row.append(make('span', penalty.label), make('strong', points(penalty.value))); list.append(row);});
-      badges.append(list);
-    }
-    if (badges.children.length) panel.append(badges);
+    if (legend.children.length) { badges.append(legend); panel.append(badges); }
+    else panel.append(make('p', glyph.mix === 'zero' ? 'No attention contributions.' : 'Attention breakdown unavailable.', 'map-glyph-empty'));
   }
   function context() {
     source(subset().find(event => event.id === selected));
@@ -94,44 +119,67 @@
     render(false, false);
     graph.querySelector('[data-map-score-center]')?.focus({preventScroll:true});
   }
+  function wireControl(element, part) {
+    element.setAttribute('role','button'); element.setAttribute('tabindex','0');
+    element.dataset.scoreKey = part.key;
+    element.setAttribute('aria-pressed',String(pinned === part.key));
+    element.addEventListener('mouseenter', () => {hovered = part; context();});
+    element.addEventListener('mouseleave', () => {hovered = null; context();});
+    element.addEventListener('focus', () => {focused = part; context();});
+    element.addEventListener('blur', () => {focused = null; context();});
+    const activate = () => {
+      pinned = part.key; selected = null; hovered = null; focused = null; ringDirty = true;
+      render(false, false);
+      ringLayer.querySelector(`[data-score-key="${CSS.escape(part.key)}"]`)?.focus({preventScroll:true});
+    };
+    element.addEventListener('click', activate);
+    element.addEventListener('keydown', event => {
+      if (['Enter',' '].includes(event.key)) {event.preventDefault(); activate();}
+      if (['ArrowRight','ArrowDown','ArrowLeft','ArrowUp','Home','End'].includes(event.key)) {
+        event.preventDefault();
+        const targets = [...ringLayer.querySelectorAll('[data-score-key]')], index = targets.indexOf(element);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? targets.length - 1 : (index + (['ArrowRight','ArrowDown'].includes(event.key) ? 1 : -1) + targets.length) % targets.length;
+        targets[next].focus({preventScroll:true});
+      }
+    });
+  }
   function drawRing() {
     ringLayer.replaceChildren();
-    const {cx, cy, radius, width} = metrics();
+    const {cx, cy, outer, radius, width} = metrics();
+    Object.assign(ringLayer.dataset, {band:String(glyph.band),sentiment:glyph.sentiment,risk:glyph.risk,mix:glyph.mix});
     graph.dataset.orbitCenter = `${cx},${cy}`;
+    ringLayer.style.setProperty("--map-band-stroke", String(width));
     ringLayer.append(svg('circle', {cx, cy, r:radius, class:'map-score-track', 'stroke-width':width}));
     let angle = -Math.PI / 2;
     contributions.forEach(part => {
-      const sweep = Math.abs(part.value) / total * Math.PI * 2, end = angle + sweep;
-      const attrs = {class:'map-score-segment', role:'button', tabindex:0, 'data-score-key':part.key, 'aria-label':`${part.label}: ${points(part.value)}, ${percent(part)}`, 'aria-pressed':String(pinned === part.key), 'stroke-width':width};
-      const segment = contributions.length === 1 ? svg('circle', {...attrs, cx, cy, r:radius}) : svg('path', {...attrs, d:`M ${cx + radius * Math.cos(angle)} ${cy + radius * Math.sin(angle)} A ${radius} ${radius} 0 ${sweep > Math.PI ? 1 : 0} 1 ${cx + radius * Math.cos(end)} ${cy + radius * Math.sin(end)}`});
-      segment.style.stroke = color(part); angle = end;
+      const sweep = part.share * Math.PI * 2, end = angle + sweep;
+      const solid = glyph.band === 3, r = solid ? outer : radius;
+      const arc = `M ${cx + r*Math.cos(angle)} ${cy + r*Math.sin(angle)} A ${r} ${r} 0 ${sweep > Math.PI ? 1 : 0} 1 ${cx + r*Math.cos(end)} ${cy + r*Math.sin(end)}`;
+      const d = solid ? `M ${cx} ${cy} L ${arc.slice(2)} Z` : arc;
+      const attrs = {class:'map-score-segment', 'aria-label':`${part.label}: ${points(part.value)}, ${percent(part)}`, 'stroke-width':solid ? 0 : width};
+      const segment = contributions.length === 1 ? svg('circle', {...attrs,cx,cy,r}) : svg('path', {...attrs,d});
+      segment.style[solid ? 'fill' : 'stroke'] = color(part); angle = end;
       segment.append(svg('title', {}, `${part.label}: ${points(part.value)} · ${percent(part)}`));
-      segment.addEventListener('mouseenter', () => {hovered = part; context();});
-      segment.addEventListener('mouseleave', () => {hovered = null; context();});
-      segment.addEventListener('focus', () => {focused = part; context();});
-      segment.addEventListener('blur', () => {focused = null; context();});
-      const activate = () => {
-        pinned = part.key; selected = null; hovered = null; focused = null; ringDirty = true;
-        render(false, false);
-        ringLayer.querySelector(`[data-score-key="${CSS.escape(part.key)}"]`)?.focus({preventScroll:true});
-      };
-      segment.addEventListener('click', activate);
-      segment.addEventListener('keydown', event => {
-        if (['Enter', ' '].includes(event.key)) {event.preventDefault(); activate();}
-        if (['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
-          event.preventDefault();
-          const segments = [...ringLayer.querySelectorAll('.map-score-segment')], index = segments.indexOf(segment);
-          const next = event.key === 'Home' ? 0 : event.key === 'End' ? segments.length - 1 : (index + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + segments.length) % segments.length;
-          segments[next].focus({preventScroll:true});
-        }
-      });
-      ringLayer.append(segment);
+      wireControl(segment,part); ringLayer.append(segment);
     });
-    const center = svg('g', {role:'button', tabindex:0, class:'map-score-center', 'data-map-score-center':'', 'aria-label':`${root.dataset.ticker}, current score ${score}. Show score overview.`});
-    center.append(svg('circle', {cx, cy, r:radius - width / 2 - 3, class:'map-center'}), svg('text', {x:cx, y:cy - 6, 'text-anchor':'middle', class:'map-center-text'}, root.dataset.ticker), svg('text', {x:cx, y:cy + 16, 'text-anchor':'middle', class:'map-center-score'}, score));
-    center.addEventListener('click', overview);
-    center.addEventListener('keydown', event => {if (['Enter', ' '].includes(event.key)) {event.preventDefault(); overview();}});
+    const sentiment = svg('circle', {cx,cy,r:outer+6,class:'map-glyph-sentiment','aria-label':`Filing sentiment: ${titleCase(glyph.sentiment)}. Show evidence tone.`});
+    wireControl(sentiment,controls.find(part => part.key === 'sentiment')); ringLayer.append(sentiment);
+    const center = svg('g', {role:'button',tabindex:0,class:'map-score-center','data-map-score-center':'','aria-label':`${root.dataset.ticker}, attention ${score === '—' ? 'unavailable' : score + ' points'}. Show attention overview.`});
+    // Keep the decorative hole outside the overview button. Combining it with
+    // the labels creates a disjoint hit target, with an untappable bounding-box
+    // center on small rings. The label rectangle is one contiguous target.
+    // High attention is a real solid pie, not a thick donut.
+    if (glyph.band !== 3 || !total) ringLayer.append(svg('circle', {cx,cy,r:radius-width/2-3,class:'map-glyph-hole','pointer-events':'none'}));
+    center.append(svg('rect', {x:cx-60,y:cy+outer+12,width:120,height:42,fill:'transparent'}), svg('text', {x:cx,y:cy+outer+27,'text-anchor':'middle',class:'map-center-text'},root.dataset.ticker), svg('text', {x:cx,y:cy+outer+48,'text-anchor':'middle',class:'map-center-score'},score));
+    center.addEventListener('click',overview);
+    center.addEventListener('keydown',event => {if (['Enter',' '].includes(event.key)) {event.preventDefault(); overview();}});
     ringLayer.append(center);
+    if (glyph.risk !== 'low') {
+      const risk = svg('g', {class:'map-glyph-risk','aria-label':`Risk: ${titleCase(glyph.risk)}. Show risk assessment.`});
+      risk.append(svg('circle', {cx,cy,r:12,class:'map-risk-target'}),svg('circle', {cx,cy,r:small.matches ? 7 : 9,class:'map-risk-dot'}));
+      if (glyph.risk === 'unknown') risk.append(svg('text', {x:cx,y:cy,'text-anchor':'middle','dominant-baseline':'central',class:'map-risk-unknown'},'?'));
+      wireControl(risk,controls.find(part => part.key === 'risk')); ringLayer.append(risk);
+    }
   }
   function source(event) {
     const preview = hovered || focused;
@@ -139,7 +187,7 @@
     const panel = $('selection');
     $('score-return').hidden = !event && !pinned;
     if (preview || !event) {
-      scorePanel(preview || contributions.find(part => part.key === pinned));
+      scorePanel(preview || controls.find(part => part.key === pinned));
       if (!preview) document.dispatchEvent(new CustomEvent('rati:map-time', {detail:{time:null}})); return;
     }
     panel.replaceChildren();
@@ -426,7 +474,7 @@
     item = next.item;
     hovered = null; focused = null;
     readScore();
-    if (!contributions.some(part => part.key === pinned)) pinned = null;
+    if (!controls.some(part => part.key === pinned)) pinned = null;
     const active = document.activeElement;
     const focusSelector = active?.hasAttribute('data-score-key') ? `[data-score-key="${CSS.escape(active.dataset.scoreKey)}"]` : active?.hasAttribute('data-map-score-center') ? '[data-map-score-center]' : null;
     drawRing(); ringDirty = false;
