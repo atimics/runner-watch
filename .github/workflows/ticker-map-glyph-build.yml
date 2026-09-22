@@ -10,7 +10,9 @@ jobs:
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - run: git archive --format=tar.gz 14582905549c76ee9b0f2caf0cad47ad389d4af0 > /tmp/ticker-map-source.tar.gz
+        with:
+          ref: 14582905549c76ee9b0f2caf0cad47ad389d4af0
+      - run: git archive --format=tar.gz HEAD > /tmp/ticker-map-source.tar.gz
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ticker-map-source
