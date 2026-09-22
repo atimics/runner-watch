@@ -1,0 +1,110 @@
+{
+  "synthetic_benchmark": true,
+  "production_latency_claim": false,
+  "baseline_ref": "7e44356",
+  "repeats": 7,
+  "results": [
+    {
+      "workload": "200 outcomes / 10 tickers / 2500 bars each; includes index build",
+      "parity": true,
+      "legacy_median_ms": 474.494,
+      "optimized_median_ms": 14.329,
+      "speedup": 33.11,
+      "legacy_samples_ms": [
+        474.832,
+        475.739,
+        474.494,
+        474.407,
+        474.575,
+        471.328,
+        472.113
+      ],
+      "optimized_samples_ms": [
+        14.535,
+        14.263,
+        14.325,
+        14.244,
+        14.701,
+        14.528,
+        14.329
+      ]
+    },
+    {
+      "workload": "Cold Pulse loader / 15000 filings / 1500 tickers / 50 candidates",
+      "parity": true,
+      "legacy_median_ms": 110.069,
+      "optimized_median_ms": 8.527,
+      "speedup": 12.91,
+      "legacy_samples_ms": [
+        110.326,
+        108.403,
+        112.672,
+        109.694,
+        108.395,
+        111.308,
+        110.069
+      ],
+      "optimized_samples_ms": [
+        8.512,
+        8.433,
+        9.048,
+        9.016,
+        8.591,
+        8.428,
+        8.527
+      ]
+    },
+    {
+      "workload": "Oldest-due queue selection / synthetic SQLite",
+      "parity": true,
+      "legacy_median_ms": 412.192,
+      "optimized_median_ms": 101.614,
+      "speedup": 4.06,
+      "legacy_samples_ms": [
+        409.884,
+        467.517,
+        412.192,
+        417.8,
+        447.958,
+        408.942,
+        412.047
+      ],
+      "optimized_samples_ms": [
+        101.802,
+        100.685,
+        102.712,
+        99.189,
+        101.614,
+        100.736,
+        102.818
+      ],
+      "legacy_rows_materialized": 50000,
+      "optimized_rows_materialized": 200
+    },
+    {
+      "workload": "3000 PostgreSQL template translations (not database latency)",
+      "parity": true,
+      "legacy_median_ms": 82.887,
+      "optimized_median_ms": 0.151,
+      "speedup": 548.21,
+      "legacy_samples_ms": [
+        83.467,
+        83.047,
+        82.887,
+        82.809,
+        82.77,
+        82.929,
+        82.566
+      ],
+      "optimized_samples_ms": [
+        0.155,
+        0.148,
+        0.167,
+        0.138,
+        0.164,
+        0.138,
+        0.151
+      ]
+    }
+  ]
+}

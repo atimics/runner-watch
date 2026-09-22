@@ -4,6 +4,7 @@ import logging
 import math
 import os
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -19,6 +20,7 @@ from runner_web.labels import (  # noqa: F401  (re-exported for callers)
     UPPER_BARRIER_PCT,
 )
 from runner_web.labels import POLICY_VERSION as BARRIER_POLICY_VERSION  # noqa: F401
+from runner_web.outcome_bars import Bar, IndexedBars
 from runner_web.ranker import sync_training_outcome
 
 LOG = logging.getLogger(__name__)
@@ -169,9 +171,6 @@ def record_outcome_error(exc: Exception) -> None:
     _state("outcomes_last_error", str(exc)[:500], timestamp)
 
 
-Bar = tuple[datetime, float, float, float]
-
-
 RETRY_BASE_SECONDS = 300
 RETRY_MAX_SECONDS = 6 * 3600
 
@@ -217,7 +216,7 @@ def outcome_coverage(at: datetime | None = None) -> dict[str, Any]:
     }
 
 
-def _bar_prices(tickers: list[str], *, since: datetime | None = None) -> dict[str, list[Bar]]:
+def _bar_prices(tickers: list[str], *, since: datetime | None = None) -> dict[str, IndexedBars]:
     if not tickers:
         return {}
     unique = list(dict.fromkeys(tickers))
@@ -227,6 +226,7 @@ def _bar_prices(tickers: list[str], *, since: datetime | None = None) -> dict[st
     if since is not None:
         window = " AND bar_time>=?"
         parameters.append(since.astimezone(UTC).isoformat())
+    output: dict[str, list[Bar]] = {}
     with connection() as db:
         rows = db.execute(
             f"""
@@ -236,33 +236,37 @@ def _bar_prices(tickers: list[str], *, since: datetime | None = None) -> dict[st
             ORDER BY ticker,bar_time
             """,
             parameters,
-        ).fetchall()
-    output: dict[str, list[Bar]] = {}
-    for row in rows:
-        try:
-            stamp = datetime.fromisoformat(str(row["bar_time"]))
-            if stamp.tzinfo is None:
-                stamp = stamp.replace(tzinfo=UTC)
-            close = float(row["close"])
-            high = float(row["high"]) if row["high"] is not None else close
-            low = float(row["low"]) if row["low"] is not None else close
-            output.setdefault(str(row["ticker"]), []).append(
-                (stamp.astimezone(UTC), high, low, close)
-            )
-        except (TypeError, ValueError):
-            continue
-    for bars in output.values():
-        bars.sort(key=lambda item: item[0])
-    return output
+        )
+        for row in rows:
+            try:
+                stamp = datetime.fromisoformat(str(row["bar_time"]))
+                if stamp.tzinfo is None:
+                    stamp = stamp.replace(tzinfo=UTC)
+                close = float(row["close"])
+                high = float(row["high"]) if row["high"] is not None else close
+                low = float(row["low"]) if row["low"] is not None else close
+                output.setdefault(str(row["ticker"]), []).append(
+                    (stamp.astimezone(UTC), high, low, close)
+                )
+            except (TypeError, ValueError):
+                continue
+    return {ticker: IndexedBars(bars) for ticker, bars in output.items()}
 
 
-def _first_price_at_or_after(bars: list[Bar], target: datetime) -> tuple[float, datetime] | None:
+def _first_price_at_or_after(
+    bars: Sequence[Bar], target: datetime
+) -> tuple[float, datetime] | None:
+    if isinstance(bars, IndexedBars):
+        bar = bars.first_at_or_after(target)
+        return (bar[3], bar[0]) if bar is not None else None
     target_utc = target.astimezone(UTC)
     return next(((close, stamp) for stamp, _, _, close in bars if stamp >= target_utc), None)
 
 
-def _price_near_target(bars: list[Bar], target: datetime) -> tuple[float, datetime] | None:
+def _price_near_target(bars: Sequence[Bar], target: datetime) -> tuple[float, datetime] | None:
 
+    if isinstance(bars, IndexedBars):
+        return bars.near(target, BAR_TOLERANCE)
     target_utc = target.astimezone(UTC)
     after = next(
         (
@@ -283,11 +287,13 @@ def _price_near_target(bars: list[Bar], target: datetime) -> tuple[float, dateti
 
 
 def _scan_horizon_price(
-    bars: list[Bar], base_at: datetime, horizon: str
+    bars: Sequence[Bar], base_at: datetime, horizon: str
 ) -> tuple[float, datetime] | None:
     if horizon == "1h":
         return _price_near_target(bars, base_at + timedelta(hours=1))
     base_date = base_at.astimezone(EASTERN).date()
+    if isinstance(bars, IndexedBars):
+        return bars.session_close(base_date, 0 if horizon == "1d" else 4)
     by_date: dict[Any, list[tuple[datetime, float]]] = {}
     for stamp, _, _, close in bars:
         session_date = stamp.astimezone(EASTERN).date()
@@ -301,11 +307,17 @@ def _scan_horizon_price(
     return price, stamp
 
 
-def barrier_outcome(bars: list[Bar], base_at: datetime, base_price: float) -> dict[str, Any] | None:
+def barrier_outcome(
+    bars: Sequence[Bar], base_at: datetime, base_price: float
+) -> dict[str, Any] | None:
 
     base_utc = base_at.astimezone(UTC)
     target = base_utc + BARRIER_HORIZON
-    window = [bar for bar in bars if base_utc < bar[0] <= target]
+    window = (
+        bars.between(base_utc, target)
+        if isinstance(bars, IndexedBars)
+        else [bar for bar in bars if base_utc < bar[0] <= target]
+    )
     if not window or not math.isfinite(base_price) or base_price <= 0:
         return None
 
@@ -370,7 +382,7 @@ def barrier_outcome(bars: list[Bar], base_at: datetime, base_price: float) -> di
 
 
 def case_horizon_outcome(
-    bars: list[Bar],
+    bars: Sequence[Bar],
     base_at: datetime,
     base_price: float,
     horizon_minutes: int,
@@ -383,18 +395,27 @@ def case_horizon_outcome(
     due = base_utc + timedelta(minutes=horizon_minutes)
     if current < due:
         return None
-    observed = next(
-        (
-            (stamp, high, low, close)
-            for stamp, high, low, close in bars
-            if due <= stamp <= min(current, due + CASE_OUTCOME_GRACE)
-        ),
-        None,
-    )
+    if isinstance(bars, IndexedBars):
+        observed = bars.first_at_or_after(due)
+        if observed is not None and observed[0] > min(current, due + CASE_OUTCOME_GRACE):
+            observed = None
+    else:
+        observed = next(
+            (
+                (stamp, high, low, close)
+                for stamp, high, low, close in bars
+                if due <= stamp <= min(current, due + CASE_OUTCOME_GRACE)
+            ),
+            None,
+        )
     if observed is None:
         return None
     observed_at, _, _, end_price = observed
-    window = [bar for bar in bars if base_utc < bar[0] <= observed_at]
+    window = (
+        bars.between(base_utc, observed_at)
+        if isinstance(bars, IndexedBars)
+        else [bar for bar in bars if base_utc < bar[0] <= observed_at]
+    )
     if not window:
         return None
     result = return_pct(base_price, end_price)
@@ -568,6 +589,70 @@ def refresh_case_outcomes(at: datetime | None = None) -> dict[str, Any]:
     return {"pending": len(cases), "due": len(due_cases), "completed": len(completed)}
 
 
+# Tuple order is shared by selection and the collector below.
+PendingScan = tuple[dict[str, Any], list[str], bool, bool]
+
+
+def _pending_scan_outcomes(
+    database: Any, current: datetime, cutoff: str, *, limit: int
+) -> tuple[list[PendingScan], int, int]:
+    """Read only enough keyset pages to fill the existing oldest-due-first budget.
+
+    Maturity remains a Python datetime comparison, including offset timestamps.
+    Pushing it into a lexical TEXT cutoff would subtly change legacy outcomes.
+    The count retains the old `rows` telemetry without materializing those rows.
+    """
+    if limit < 1:
+        raise ValueError("Outcome batch limit must be positive")
+    timestamp = iso(current)
+    window = "base_at>=? AND (next_attempt_at IS NULL OR next_attempt_at<=?)"
+    total = int(
+        database.execute(
+            f"SELECT COUNT(*) FROM scan_outcomes WHERE {window}", (cutoff, timestamp)
+        ).fetchone()[0]
+    )
+    pending: list[PendingScan] = []
+    examined = 0
+    after: tuple[str, str] | None = None
+    while len(pending) < limit:
+        parameters: list[Any] = [cutoff, timestamp]
+        cursor_clause = ""
+        if after is not None:
+            cursor_clause = " AND (base_at,snapshot_id)>(?,?)"
+            parameters.extend(after)
+        parameters.append(limit)
+        rows = database.execute(
+            f"""
+            SELECT * FROM scan_outcomes WHERE {window}
+              AND (barrier_label IS NULL OR return_60m_pct IS NULL
+                   OR return_1h_pct IS NULL OR return_1d_pct IS NULL OR return_5d_pct IS NULL)
+              {cursor_clause}
+            ORDER BY base_at,snapshot_id LIMIT ?
+            """,
+            parameters,
+        ).fetchall()
+        if not rows:
+            break
+        examined += len(rows)
+        for raw in rows:
+            row = dict(raw)
+            horizons = due_horizons(row, current)
+            base_at = _parsed_moment(row["base_at"])
+            barrier_mature = (
+                base_at is not None and current.astimezone(UTC) - base_at >= BARRIER_HORIZON
+            )
+            barrier_due = barrier_mature and row.get("barrier_label") is None
+            terminal_due = barrier_mature and row.get("return_60m_pct") is None
+            if horizons or barrier_due or terminal_due:
+                pending.append((row, horizons, barrier_due, terminal_due))
+                if len(pending) == limit:
+                    break
+        if len(rows) < limit:
+            break
+        after = (str(rows[-1]["base_at"]), str(rows[-1]["snapshot_id"]))
+    return pending, total, examined
+
+
 def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
 
     current = at or datetime.now(UTC)
@@ -593,37 +678,17 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
             )
             WHERE barrier_label IS NULL AND return_1h_pct IS NULL
                   AND return_1d_pct IS NULL AND return_5d_pct IS NULL
+                  AND EXISTS (
+                      SELECT 1 FROM scan_snapshots s
+                      WHERE s.id=scan_outcomes.snapshot_id
+                        AND s.captured_at<>scan_outcomes.base_at
+                  )
             """
         )
-        rows = db.execute(
-            """
-            SELECT * FROM scan_outcomes
-            WHERE base_at>=?
-              AND (next_attempt_at IS NULL OR next_attempt_at<=?)
-            """,
-            (cutoff, timestamp),
-        ).fetchall()
-
-    pending: list[tuple[dict[str, Any], list[str], bool, bool]] = []
-    for raw in rows:
-        row = dict(raw)
-        horizons = due_horizons(row, current)
-        base_at = datetime.fromisoformat(str(row["base_at"]))
-        if base_at.tzinfo is None:
-            base_at = base_at.replace(tzinfo=UTC)
-        barrier_due = (
-            current.astimezone(UTC) - base_at.astimezone(UTC) >= BARRIER_HORIZON
-            and row.get("barrier_label") is None
+        pending, row_count, examined = _pending_scan_outcomes(
+            db, current, cutoff, limit=OUTCOME_REFRESH_TICKER_LIMIT
         )
-        terminal_due = (
-            current.astimezone(UTC) - base_at.astimezone(UTC) >= BARRIER_HORIZON
-            and row.get("return_60m_pct") is None
-        )
-        if horizons or barrier_due or terminal_due:
-            pending.append((row, horizons, barrier_due, terminal_due))
 
-    pending.sort(key=lambda item: str(item[0].get("base_at") or ""))
-    pending = pending[:OUTCOME_REFRESH_TICKER_LIMIT]
     tickers = [str(row["ticker"]) for row, _, _, _ in pending]
     since = _earliest_observation([_parsed_moment(row.get("base_at")) for row, _, _, _ in pending])
     prices = _bar_prices(tickers, since=since)
@@ -716,7 +781,8 @@ def refresh_scan_outcomes(at: datetime | None = None) -> dict[str, Any]:
     _state("scan_outcomes_barrier_labeled_rows", str(barrier_labeled), timestamp)
     _state("scan_outcomes_last_samples_added", str(samples_added), timestamp)
     return {
-        "rows": len(rows),
+        "rows": row_count,
+        "candidate_rows_examined": examined,
         "labeled_rows": labeled,
         "barrier_labeled_rows": barrier_labeled,
         "barrier_labels_added": barrier_labels_added,

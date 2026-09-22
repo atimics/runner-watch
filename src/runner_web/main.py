@@ -4997,22 +4997,33 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
             if latest_run
             else []
         )
+        # A board only consumes evidence for its current candidate universe.
+        # Explicit ticker detail still needs context even outside the latest scan.
+        if ticker is not None:
+            context_scope = "ticker=?"
+            context_params = (ticker,)
+        elif latest_run:
+            context_scope = "ticker IN (SELECT ticker FROM scan_snapshots WHERE scan_run_id=?)"
+            context_params = (latest_run["id"],)
+        else:
+            context_scope = "1=0"
+            context_params = ()
         call_rows = db.execute(
             f"""
             SELECT ticker,COUNT(DISTINCT user_id) AS call_count
             FROM community_calls WHERE status='active' AND created_at<=?
-            {"AND ticker=?" if ticker is not None else ""} GROUP BY ticker
+            AND {context_scope} GROUP BY ticker
             """,
-            (known_at, *ticker_params),
+            (known_at, *context_params),
         ).fetchall()
         comment_rows = db.execute(
             f"""
             SELECT ticker,COUNT(*) AS comment_count
             FROM ticker_comments
             WHERE subject_kind='stock' AND status='public' AND created_at<=?
-            {"AND ticker=?" if ticker is not None else ""} GROUP BY ticker
+            AND {context_scope} GROUP BY ticker
             """,
-            (known_at, *ticker_params),
+            (known_at, *context_params),
         ).fetchall()
         market_event_rows = db.execute(
             f"""
@@ -5020,42 +5031,33 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
                    first_collected_at,last_collected_at
             FROM public_market_events
             WHERE event_at>? AND event_at<=? AND last_collected_at<=?
-            {"AND ticker=?" if ticker is not None else ""}
+            AND {context_scope}
             ORDER BY event_at DESC,last_collected_at DESC
             """,
-            (event_cutoff, known_at, known_at, *ticker_params),
+            (event_cutoff, known_at, known_at, *context_params),
         ).fetchall()
         filing_rows = db.execute(
             f"""
             SELECT * FROM (
-                SELECT f.*,
+                SELECT f.*,COUNT(*) OVER (PARTITION BY f.ticker) AS matching_filing_count,
                        ROW_NUMBER() OVER (
                            PARTITION BY f.ticker ORDER BY f.score DESC,f.filed_at DESC
                        ) AS ticker_row
                 FROM sec_filings f
                 WHERE f.created_at>? AND f.filed_at<=? AND f.created_at<=? AND f.updated_at<=?
-                {"AND f.ticker=?" if ticker is not None else ""}
+                AND {context_scope}
             ) ranked WHERE ticker_row=1
             """,
-            (event_cutoff, known_at, known_at, known_at, *ticker_params),
-        ).fetchall()
-        filing_count_rows = db.execute(
-            f"""
-            SELECT ticker,COUNT(*) AS filing_count FROM sec_filings
-            WHERE created_at>? AND filed_at<=? AND created_at<=? AND updated_at<=?
-            {"AND ticker=?" if ticker is not None else ""}
-            GROUP BY ticker
-            """,
-            (event_cutoff, known_at, known_at, known_at, *ticker_params),
+            (event_cutoff, known_at, known_at, known_at, *context_params),
         ).fetchall()
 
     filings_by_ticker: dict[str, dict[str, Any]] = {}
     filing_counts: dict[str, int] = {}
     for raw in filing_rows:
-        event = _intelligence_evidence(dict(raw))
+        filing = dict(raw)
+        filing_counts[str(filing["ticker"])] = int(filing.pop("matching_filing_count"))
+        event = _intelligence_evidence(filing)
         filings_by_ticker[event["ticker"]] = event
-    for raw in filing_count_rows:
-        filing_counts[str(raw["ticker"])] = int(raw["filing_count"] or 0)
 
     predictions: dict[str, dict[str, Any]] = {}
     for raw in prediction_rows:
