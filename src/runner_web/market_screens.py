@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import quote
 
 from runner_web.market_assessments import assessment
+from runner_web.stock_indicator import stock_indicator
 
 LABELS = {"stocks": "Stocks", "memecoins": "Memecoins", "sports": "Sports"}
 
@@ -173,7 +174,13 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         address = ""
     if address:
         subtitle = address[:6] + "…" + address[-4:]
+    indicator = stock_indicator(item) if market == "stocks" else None
     return {
+        **(
+            {"indicator": indicator, "verified": indicator["verification"]["verified"]}
+            if indicator
+            else {}
+        ),
         "id": identifier,
         "name": name,
         "subtitle": subtitle,
@@ -412,6 +419,7 @@ def detail(
             **source,
             "ticker": data.get("ticker"),
             "company": data.get("company") or data.get("name"),
+            "evidence_gate": data.get("evidence_gate", source.get("evidence_gate")),
         }
     if market == "memecoins":
         source = {**source, "findings": data.get("findings") or source.get("findings") or []}
