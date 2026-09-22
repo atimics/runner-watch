@@ -26,8 +26,8 @@ def open_screen(page, screen, user=None):
         html,
     )
     html = re.sub(
-        r'<script src="/static/market-screen.js[^\"]*"[^>]*></script>',
-        lambda _: "<script>" + (ROOT / "web/static/market-screen.js").read_text() + "</script>",
+        r'<script src="/static/(market-screen|stock-indicator)\.js[^\"]*"[^>]*></script>',
+        lambda m: "<script>" + (ROOT / "web/static" / (m[1] + ".js")).read_text() + "</script>",
         html,
     )
     page.route("http://app.test/", lambda r: r.fulfill(content_type="text/html", body=html))
@@ -68,7 +68,8 @@ def test_narrow_stock_rows_are_single_line(page: Page):
     selectors = (".tag", ".ticker-name", ".ticker-value", ".ticker-score")
     children = [row.locator(selector).bounding_box() for selector in selectors]
     children = [item for item in children if item is not None]
-    assert max(item["y"] for item in children) - min(item["y"] for item in children) <= 4
+    centers = [item["y"] + item["height"] / 2 for item in children]
+    assert max(centers) - min(centers) <= 4
 
 
 def test_chart_renders_real_points_and_empty_history(page: Page):

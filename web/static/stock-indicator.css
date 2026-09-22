@@ -1,0 +1,53 @@
+/* Stock-only summary; intentionally does not style .tag or change status colors. */
+.indicator-glyph{
+  --indicator-market:#418cf4;--indicator-evidence:#b58af4;--indicator-social:#36d5e6;
+  --glyph-size:36px;--glyph-sentiment:var(--muted);--risk-size:9px;
+  width:40px;height:40px;flex:none;
+}
+.indicator-glyph[data-band="1"]{--glyph-size:26px;--risk-size:7px}
+.indicator-glyph__face{position:relative;display:grid;place-items:center;width:var(--glyph-size);height:var(--glyph-size)}
+.indicator-glyph .score-pie{width:calc(var(--glyph-size) - 8px);height:calc(var(--glyph-size) - 8px);background:var(--muted)}
+.indicator-glyph__sentiment{position:absolute;inset:0;border:2px solid var(--glyph-sentiment);border-radius:50%}
+.indicator-glyph[data-sentiment="positive"]{--glyph-sentiment:var(--green)}
+.indicator-glyph[data-sentiment="negative"]{--glyph-sentiment:var(--red)}
+.indicator-glyph[data-sentiment="unknown"] .indicator-glyph__sentiment{border-style:dashed}
+.indicator-glyph[data-mix="unknown"] .score-pie,.indicator-glyph[data-mix="zero"] .score-pie{
+  background:none;border:1px solid var(--muted);-webkit-mask:none;mask:none;
+}
+.indicator-glyph[data-mix="unknown"] .score-pie{border-style:dashed}
+.indicator-glyph__risk{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);box-sizing:content-box;
+  width:var(--risk-size);height:var(--risk-size);border:1px solid var(--bg,#0b100e);border-radius:50%;
+  background:var(--orange,#ff9f43);display:grid;place-items:center;line-height:1;font-size:9px;font-weight:800;
+}
+.indicator-glyph[data-risk="high"] .indicator-glyph__risk{background:var(--red)}
+.indicator-glyph[data-risk="unknown"] .indicator-glyph__risk{background:var(--bg,#0b100e);color:var(--muted);border-color:var(--muted)}
+.ticker-symbol{display:inline-flex;align-items:center;gap:5px;min-width:0;flex-shrink:0}
+.ticker-verified{width:14px;height:14px;flex:none;fill:var(--green);vertical-align:middle}
+.ticker-verified path{fill:none;stroke:var(--bg,#0b100e);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.asset-heading .ticker-verified{width:18px;height:18px}
+.stock-indicator-summary{display:flex;align-items:flex-start;gap:12px;margin:18px 0;padding:14px;border:1px solid var(--line);border-radius:10px}
+.stock-indicator-summary p{margin:0 0 6px;font-size:13px}
+.stock-indicator-summary .indicator-note{color:var(--muted);font-size:11px;max-width:60em}
+.indicator-components{display:flex;flex-wrap:wrap;gap:8px 20px;margin:10px 0;font-size:12px}
+.indicator-components dt{color:var(--muted)}
+.indicator-components dd{margin:3px 0 0}
+@media(max-width:760px){
+  .indicator-glyph{width:30px;height:30px;--glyph-size:30px;--risk-size:8px}
+  .indicator-glyph[data-band="1"]{--glyph-size:22px;--risk-size:6px}
+  .ticker-symbol{gap:3px}
+  .ticker-verified{width:12px;height:12px}
+}
+@media(forced-colors:active){
+  .indicator-glyph__sentiment,.indicator-glyph .score-pie{border:1px solid CanvasText}
+  .indicator-glyph__risk{background:Canvas;color:CanvasText;border-color:CanvasText}
+  .ticker-verified{fill:Highlight}
+  .ticker-verified path{stroke:HighlightText}
+}
+
+.ticker-verification{display:inline-flex;align-items:center;flex:none}
+.ticker-verification[hidden],.stock-indicator-summary [hidden]{display:none}
+.indicator-legend{margin-top:16px;color:var(--muted);font-size:11px;max-width:60em}
+.indicator-legend summary{cursor:pointer;width:fit-content;padding:8px 0}
+.indicator-legend summary:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+.indicator-legend p{line-height:1.5;margin:6px 0}
