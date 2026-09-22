@@ -350,6 +350,12 @@
       }
       refreshTagFilters(next);
       applyTagFilter();
+      // Surface replacement contains fresh SVG shells. Repaint saved histories
+      // immediately, then refresh the same bounded batch (not one call per row).
+      if (content.querySelector('.market-stocks')) {
+        window.TickerRow?.paintCharts();
+        window.TickerRow?.loadCharts('/api/pulse/charts');
+      }
     } catch (_) { /* Keep the saved view during connection recovery. */ }
   }
   if (screen?.refresh_url) refreshDetail();

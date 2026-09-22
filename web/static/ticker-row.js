@@ -212,85 +212,133 @@
     });
   }
 
+  // Reject invalid samples and order by actual time. Missing prices are not zero;
+  // an unavailable series is not a flat price and never gets a decorative zigzag.
   function chartRows(points) {
-    return points
-      .map(point => ({time: new Date(point.time).getTime(), price: number(point.price)}))
-      .filter(point => point.price !== null && Number.isFinite(point.time));
+    const ordered = new Map();
+    (Array.isArray(points) ? points : []).forEach(point => {
+      if (!point || typeof point.price === 'boolean' || !point.time) return;
+      const time = Date.parse(point.time), price = number(point.price);
+      if (Number.isFinite(time) && price !== null && price > 0) ordered.set(time, price);
+    });
+    return [...ordered].sort((a, b) => a[0] - b[0]).map(([time, price]) => ({time, price}));
   }
 
   function sharedChartDomain() {
     let maximum = 0;
     chartCache.forEach(points => {
-      const rows = chartRows(points);
-      const baseline = rows[0]?.price;
+      const rows = chartRows(points), baseline = rows[0]?.price;
       if (!baseline) return;
       rows.forEach(point => {
-        maximum = Math.max(maximum, Math.abs((point.price / baseline - 1) * 100));
+        const move = Math.abs((point.price / baseline - 1) * 100);
+        if (Number.isFinite(move)) maximum = Math.max(maximum, move);
       });
     });
-    return Math.max(2, Math.ceil(maximum / 2) * 2);
+    return Math.max(2, Math.ceil(maximum / 2 - 1e-9) * 2);
+  }
+
+  function chartElement(tag, attributes, text) {
+    const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, value));
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function chartSummary(svg, summary) {
+    const label = `${svg.dataset.ticker || 'Stock'}: ${summary}`;
+    svg.removeAttribute('aria-hidden');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', label);
+    svg.prepend(chartElement('title', {}, label));
+  }
+
+  function unavailableChart(svg) {
+    svg.classList.remove('loaded', 'rising', 'falling', 'flat');
+    svg.classList.add('unavailable');
+    svg.dataset.history = 'unavailable';
+    svg.replaceChildren(chartElement('text', {class:'mini-chart-empty', x:32, y:12, 'text-anchor':'middle'}, '—'));
+    chartSummary(svg, 'price history unavailable');
   }
 
   function drawMiniChart(svg, points, annotations = [], domain = sharedChartDomain()) {
     const rows = chartRows(points);
-    if (rows.length < 2) {
-      svg.classList.add('unavailable');
-      return;
-    }
+    if (!rows.length) { unavailableChart(svg); return; }
     const baseline = rows[0].price;
-    if (!baseline) {
-      svg.classList.add('unavailable');
-      return;
-    }
     const values = rows.map(point => (point.price / baseline - 1) * 100);
-    const path = values.map((value, index) => {
-      const x = 1 + index / (values.length - 1) * 62;
-      const y = 9 - (value / domain) * 7;
-      return `${index ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`;
-    }).join(' ');
-    const rising = values.at(-1) >= 0;
-    const entry = annotations.filter(item => item.type === 'pulse_entry').at(-1);
-    const entryTime = entry ? new Date(entry.time).getTime() : NaN;
-    let marker = '';
-    if (Number.isFinite(entryTime) && Number.isFinite(rows[0].time) && entryTime >= rows[0].time) {
-      let markerIndex = 0;
-      rows.forEach((point, index) => {
-        if (Math.abs(point.time - entryTime) < Math.abs(rows[markerIndex].time - entryTime)) markerIndex = index;
-      });
-      const x = 1 + markerIndex / (rows.length - 1) * 62;
-      const y = 9 - (values[markerIndex] / domain) * 7;
-      marker = `<line class="pulse-entry-line" x1="${x.toFixed(1)}" y1="1" x2="${x.toFixed(1)}" y2="17"/><circle class="pulse-entry-dot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.4"/>`;
+    if (values.some(value => !Number.isFinite(value))) { unavailableChart(svg); return; }
+    const start = rows[0].time, end = rows.at(-1).time;
+    const x = time => start === end ? 32 : 1 + (time - start) / (end - start) * 62;
+    const y = value => 9 - (value / domain) * 7;
+    const delta = values.at(-1);
+    svg.classList.toggle('rising', delta > 0);
+    svg.classList.toggle('falling', delta < 0);
+    svg.classList.toggle('flat', delta === 0);
+    svg.replaceChildren();
+    if (rows.length === 1) {
+      svg.append(chartElement('circle', {class:'mini-chart-point', cx:32, cy:9, r:1.8, fill:'currentColor'}));
+    } else {
+      const path = rows.map((point, index) => `${index ? 'L' : 'M'}${x(point.time).toFixed(2)} ${y(values[index]).toFixed(2)}`).join(' ');
+      svg.append(
+        chartElement('line', {class:'mini-chart-zero', x1:1, y1:9, x2:63, y2:9}),
+        chartElement('path', {class:'mini-chart-line', d:path, fill:'none', stroke:'currentColor', 'stroke-width':1.4, 'vector-effect':'non-scaling-stroke', 'stroke-linecap':'round', 'stroke-linejoin':'round'}),
+      );
     }
-    svg.classList.toggle('rising', rising);
-    svg.classList.toggle('falling', !rising);
-    svg.innerHTML = `<line class="mini-chart-zero" x1="1" y1="9" x2="63" y2="9"/><path d="${path}" fill="none" stroke="currentColor" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/>${marker}`;
+    const entry = (Array.isArray(annotations) ? annotations : []).filter(item => item?.type === 'pulse_entry').at(-1);
+    const entryTime = Date.parse(entry?.time);
+    if (Number.isFinite(entryTime) && entryTime >= start && entryTime <= end) {
+      let index = 0;
+      rows.forEach((point, i) => { if (Math.abs(point.time - entryTime) < Math.abs(rows[index].time - entryTime)) index = i; });
+      svg.append(
+        chartElement('line', {class:'pulse-entry-line', x1:x(rows[index].time), y1:1, x2:x(rows[index].time), y2:17}),
+        chartElement('circle', {class:'pulse-entry-dot', cx:x(rows[index].time), cy:y(values[index]), r:2.4}),
+      );
+    }
     svg.classList.remove('unavailable');
     svg.classList.add('loaded');
+    svg.dataset.history = 'available';
+    const scope = rows.length === 1 ? `one saved price ${money(baseline)} at ${new Date(start).toISOString()}` :
+      `saved price history ${money(baseline)} to ${money(rows.at(-1).price)}, ${percent(delta)} from ${new Date(start).toISOString()} to ${new Date(end).toISOString()}`;
+    chartSummary(svg, scope);
   }
 
+  let chartRequest = null, chartRefreshFailed = false;
   function paintCharts(root = document) {
     const domain = sharedChartDomain();
-    root.querySelectorAll('.mini-chart').forEach(svg => {
-      if (chartCache.has(svg.dataset.ticker)) {
-        drawMiniChart(
-          svg,
-          chartCache.get(svg.dataset.ticker),
-          annotationCache.get(svg.dataset.ticker) || [],
-          domain,
-        );
+    root.querySelectorAll('.mini-chart[data-ticker]').forEach(svg => {
+      drawMiniChart(svg, chartCache.get(svg.dataset.ticker), annotationCache.get(svg.dataset.ticker), domain);
+      if (chartRefreshFailed && svg.classList.contains('loaded')) {
+        svg.dataset.history = 'stale';
+        const label = svg.getAttribute('aria-label') + '. Refresh unavailable; showing saved history.';
+        svg.setAttribute('aria-label', label);
+        svg.querySelector('title').textContent = label;
       }
     });
   }
 
-  async function loadCharts(url) {
-    try {
-      const response = await fetch(url);
-      if (!response.ok) return;
-      const data = await response.json();
-      Object.entries(data.charts || {}).forEach(([ticker, points]) => chartCache.set(ticker, points));
-      Object.entries(data.annotations || {}).forEach(([ticker, annotations]) => annotationCache.set(ticker, annotations));
-      paintCharts();
-    } catch (_) {}
+  // One bounded batch, shared with the existing list refresh. Coalesce requests;
+  // a failed request must not strand the loader or erase a usable saved chart.
+  function loadCharts(url) {
+    if (chartRequest) return chartRequest;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 25000);
+    chartRequest = (async () => {
+      try {
+        const response = await fetch(url, {signal:controller.signal});
+        if (!response.ok || response.redirected) throw new Error('Chart refresh unavailable');
+        const data = await response.json();
+        if (!data || !data.charts || typeof data.charts !== 'object' || Array.isArray(data.charts)) throw new Error('Invalid chart payload');
+        chartCache.clear(); annotationCache.clear();
+        // The endpoint has the same 50-candidate cap as the board. Replace the
+        // snapshot instead of accumulating removed tickers and their old scale.
+        Object.entries(data.charts).slice(0, 50).forEach(([ticker, points]) => chartCache.set(ticker, points));
+        Object.entries(data.annotations || {}).forEach(([ticker, annotations]) => {
+          if (chartCache.has(ticker)) annotationCache.set(ticker, annotations);
+        });
+        chartRefreshFailed = false;
+      } catch (_) { chartRefreshFailed = true; }
+      finally { clearTimeout(timer); chartRequest = null; paintCharts(); }
+    })();
+    return chartRequest;
   }
 
   window.TickerRow = Object.freeze({ago, loadCharts, paintCharts, render, renderShell});

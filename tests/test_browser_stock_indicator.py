@@ -98,7 +98,12 @@ def test_glyphs_fit_dense_list_and_status_chips_are_unchanged(page: Page, width)
     for element in page.locator(".ticker").all():
         bounds = [
             element.locator(s).bounding_box()
-            for s in [".tag", ".ticker-name", ".ticker-value", ".ticker-score"]
+            for s in [
+                ".ticker-trend" if width <= 760 else ".tag",
+                ".ticker-name",
+                ".ticker-value",
+                ".ticker-score",
+            ]
         ]
         assert all(b is not None for b in bounds)
         assert all(
