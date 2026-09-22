@@ -39,3 +39,4 @@ pull request as the source of truth for current status.
 screenshots under `market-screens/` are snapshots captured on 12 September 2026
 from local previews with sample data. They document a point in time and are not
 kept in sync with the code.
+- [Performance hot paths](performance-hot-paths.md): bounded queue reads, indexed history and benchmark receipts.

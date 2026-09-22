@@ -6,7 +6,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
-from functools import wraps
+from functools import lru_cache, wraps
 from pathlib import Path
 from time import sleep
 from typing import Any, ParamSpec, TypeVar
@@ -179,7 +179,10 @@ def _replace_scalar_extrema(statement: str) -> str:
     return statement
 
 
+@lru_cache(maxsize=512)
 def postgres_statement(statement: str) -> str:
+    """Translate reusable SQL templates; bound parameter values are never cached."""
+
     sql = statement.strip()
     sql = _replace_scalar_extrema(sql)
     sql = re.sub(r"\bBLOB\b", "BYTEA", sql, flags=re.IGNORECASE)
