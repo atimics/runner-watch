@@ -23,7 +23,7 @@ def test_pattern_receipts_and_context_survive_refresh(page, width):
     page.set_viewport_size({"width": width, "height": 844})
     page.clock.install()
     open_html(page, render_map(finding), refresh=screen)
-    page.locator("[data-finding-id]").click()
+    page.locator(".map-event[data-finding-id]").click()
     panel = page.locator("[data-replay-selection]")
     expect(panel.locator("p")).to_have_text(finding["explanation"])
     for index, receipt in enumerate(finding["evidence"]):
@@ -46,7 +46,7 @@ def test_pattern_refresh_keeps_keyboard_focus(page, target):
     page.set_viewport_size({"width": 390, "height": 844})
     page.clock.install()
     open_html(page, render_map(finding), refresh=screen)
-    page.locator("[data-finding-id]").click()
+    page.locator(".map-event[data-finding-id]").click()
     panel = page.locator("[data-replay-selection]")
     focused = {
         "receipt": panel.get_by_role("link", name="Swap 1 ↗"),
@@ -63,10 +63,10 @@ def test_removed_finding_moves_focus_to_assessment_heading(page):
     screen, finding = chain_pattern()
     page.clock.install()
     open_html(page, render_map(finding), refresh=screen)
-    page.locator("[data-finding-id]").click()
-    page.get_by_role("link", name="Swap 1 ↗").focus()
+    page.locator(".map-event[data-finding-id]").click()
+    page.locator("[data-replay-selection]").get_by_role("link", name="Swap 1 ↗").focus()
     screen["item"]["assessment"]["drivers"] = []
     with page.expect_response("**/api/screens/**"):
         page.clock.fast_forward(61000)
-    expect(page.locator("[data-finding-id]")).to_have_count(0)
+    expect(page.locator(".map-event[data-finding-id]")).to_have_count(0)
     expect(page.locator(".map-score-center")).to_be_focused()
