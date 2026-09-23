@@ -946,7 +946,10 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
         expect(link.locator('[role="button"], [tabindex]')).to_have_count(0)
         expect(link.locator(".entity-stock-symbol")).to_have_text(ticker)
         value = link.locator(".map-node-action").text_content()
-        assert value.startswith("$") or value.endswith("events")
+        if has_holdings:
+            assert value.startswith("$")
+        else:
+            assert value == ("2 events" if ticker == "USO" else "1 event")
     # The larger holding gets the larger ring, even at a lower attention score.
     radii = wheels.locator(".map-glyph-sentiment").evaluate_all(
         "nodes => nodes.map(node => Number(node.getAttribute('r')))"
