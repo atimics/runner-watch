@@ -106,6 +106,16 @@ def test_the_hot_set_is_the_top_of_the_board(monkeypatch):
     assert web_main._hot_set() == ["AAA", "BBB"]
 
 
+def test_quote_batches_cover_every_scanned_ticker(monkeypatch):
+    _scan([("AAA", 90), ("BBB", 80), ("CCC", 70), ("DDD", 60), ("EEE", 50)])
+    monkeypatch.setattr(web_main, "HOT_QUOTE_LIMIT", 2)
+
+    batches = [web_main._hot_set(offset) for offset in (0, 2, 4)]
+
+    assert batches == [["AAA", "BBB"], ["CCC", "DDD"], ["EEE"]]
+    assert web_main._hot_set(5) == []
+
+
 def test_the_hot_set_is_empty_without_a_scan():
     assert web_main._hot_set() == []
 
@@ -224,6 +234,100 @@ def test_a_fresher_mark_upgrades_a_board_row(monkeypatch):
     assert rows[0]["change_pct"] == 50.0
     assert rows[0]["mark_source"] == "quote"
     assert rows[0]["mark_age_seconds"] == 30
+
+
+def test_a_fresh_quote_restores_eligibility_without_repricing_scan_activity(monkeypatch):
+    scanned_at = NOW - timedelta(minutes=20)
+    _scan([("AAA", 90)], captured_at=scanned_at)
+    monkeypatch.setattr(web_main, "now", lambda: NOW)
+    with connection() as database:
+        database.execute("UPDATE scan_snapshots SET rug_score=0 WHERE ticker='AAA'")
+
+    before = web_main._pulse_data_uncached()["rows"][0]
+    assert before["eligibility"]["state"] == "unknown"
+    assert before["eligibility"]["reasons"][0]["code"] == "stale_quote"
+
+    _store_quote()
+    board = web_main._pulse_data_uncached()
+    after = board["rows"][0]
+
+    assert after["eligibility"]["state"] == "eligible"
+    assert after["eligibility_note"] == ""
+    assert after["quote_as_of"] == after["quote_time"]
+    assert after["activity_quote_as_of"] == scanned_at.isoformat()
+    assert after["feature_as_of"] == scanned_at.isoformat()
+    assert after["score"] == before["score"]
+    assert after["activity_inputs"] == before["activity_inputs"]
+    assert after["price"] == 1.5
+    assert after["change_pct"] == 50.0
+    assert board["market_updated_at"] == after["quote_time"]
+
+
+def test_a_quote_without_a_move_cannot_restore_eligibility(monkeypatch):
+    scanned_at = NOW - timedelta(minutes=20)
+    _scan([("AAA", 90)], captured_at=scanned_at)
+    monkeypatch.setattr(web_main, "now", lambda: NOW)
+    with connection() as database:
+        database.execute("UPDATE scan_snapshots SET rug_score=0 WHERE ticker='AAA'")
+    _store_quote(change_pct=None)
+
+    row = web_main._pulse_data_uncached()["rows"][0]
+
+    assert row["eligibility"]["state"] == "unknown"
+    assert row["quote_as_of"] == scanned_at.isoformat()
+    assert row["quote_time"] == scanned_at.isoformat()
+    assert row["price"] == 1.0
+
+
+def test_a_fresh_quote_cannot_revive_an_old_scan(monkeypatch):
+    scanned_at = NOW - timedelta(hours=2)
+    _scan([("AAA", 90)], captured_at=scanned_at)
+    monkeypatch.setattr(web_main, "now", lambda: NOW)
+    with connection() as database:
+        database.execute("UPDATE scan_snapshots SET rug_score=0 WHERE ticker='AAA'")
+    _store_quote()
+
+    row = web_main._pulse_data_uncached()["rows"][0]
+
+    assert row["quote_as_of"] == row["quote_time"]
+    assert row["eligibility"]["state"] == "unknown"
+    assert "stale_assessment" in [reason["code"] for reason in row["eligibility"]["reasons"]]
+
+
+def test_a_fresh_quote_keeps_a_risk_veto(monkeypatch):
+    _scan([("AAA", 90)], captured_at=NOW - timedelta(minutes=20))
+    monkeypatch.setattr(web_main, "now", lambda: NOW)
+    with connection() as database:
+        database.execute(
+            "UPDATE scan_snapshots SET rug_score=90,trade_state='AVOID' WHERE ticker='AAA'"
+        )
+    _store_quote()
+
+    row = web_main._pulse_data_uncached()["rows"][0]
+
+    assert row["eligibility"]["state"] == "blocked"
+    assert "stale_quote" not in [reason["code"] for reason in row["eligibility"]["reasons"]]
+    assert "state_avoid" in [reason["code"] for reason in row["eligibility"]["reasons"]]
+
+
+def test_a_quote_collected_after_score_time_cannot_enter_a_replay(monkeypatch):
+    scanned_at = NOW - timedelta(minutes=20)
+    _scan([("AAA", 90)], captured_at=scanned_at)
+    monkeypatch.setattr(web_main, "now", lambda: NOW)
+    with connection() as database:
+        database.execute("UPDATE scan_snapshots SET rug_score=0 WHERE ticker='AAA'")
+    _store_quote(observed_at=(NOW - timedelta(minutes=1)).isoformat())
+    with connection() as database:
+        database.execute(
+            "UPDATE ticker_quotes SET collected_at=? WHERE ticker='AAA'",
+            ((NOW + timedelta(minutes=1)).isoformat(),),
+        )
+
+    row = web_main._pulse_data_uncached()["rows"][0]
+
+    assert row["eligibility"]["state"] == "unknown"
+    assert row["quote_as_of"] == scanned_at.isoformat()
+    assert row["quote_time"] == scanned_at.isoformat()
 
 
 def test_a_mark_without_a_move_leaves_the_row_alone(monkeypatch):

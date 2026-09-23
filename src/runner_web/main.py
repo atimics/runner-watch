@@ -1794,8 +1794,8 @@ async def scan_collection_worker() -> None:
 HOT_QUOTE_INTERVAL_SECONDS = max(20, int(os.getenv("HOT_QUOTE_INTERVAL_SECONDS", "45")))
 
 
-def _hot_set() -> list[str]:
-    """The names a reader is most likely to be looking at right now."""
+def _hot_set(offset: int = 0) -> list[str]:
+    """One bounded quote batch from the current scanned universe."""
 
     with connection() as db:
         run = db.execute(
@@ -1809,9 +1809,9 @@ def _hot_set() -> list[str]:
         rows = db.execute(
             """
             SELECT ticker FROM scan_snapshots WHERE scan_run_id=?
-            ORDER BY score DESC,baseline_rank,ticker LIMIT ?
+            ORDER BY score DESC,baseline_rank,ticker LIMIT ? OFFSET ?
             """,
-            (run["id"], HOT_QUOTE_LIMIT),
+            (run["id"], HOT_QUOTE_LIMIT, max(0, offset)),
         ).fetchall()
     return [str(row["ticker"]) for row in rows]
 
@@ -1845,21 +1845,26 @@ async def price_gap_worker() -> None:
 
 
 async def hot_quote_worker() -> None:
-    """Keep the top of the board on the quote lane between scanner sweeps.
+    """Keep the scanned board on the quote lane between scanner sweeps.
 
-    The sweep reads five-minute bars every few minutes across the whole universe. The
-    handful of names actually on screen deserve better than that, and one batched
-    one-minute request covers all of them, so the cost is a request per cycle rather
-    than a request per name.
+    The sweep reads five-minute bars each scan cycle across the whole universe. The
+    quote request covers one bounded page each cycle. Rotating pages covers the
+    board without increasing the request rate or asking for the whole universe
+    in one request.
     """
 
     await asyncio.sleep(40)
+    offset = 0
     while True:
         delay = HOT_QUOTE_INTERVAL_SECONDS
         try:
             if market_clock()["scanner_active"]:
-                tickers = await run_in_threadpool(_hot_set)
+                tickers = await run_in_threadpool(_hot_set, offset)
+                if not tickers and offset:
+                    offset = 0
+                    tickers = await run_in_threadpool(_hot_set, offset)
                 result = await run_in_threadpool(refresh_hot_quotes, tickers)
+                offset = 0 if len(tickers) < HOT_QUOTE_LIMIT else offset + len(tickers)
                 worker_state("hot_quotes_last_refresh", json.dumps(result, separators=(",", ":")))
                 worker_state("hot_quotes_last_error", "")
             else:
@@ -4892,7 +4897,38 @@ def _attach_pulse_entries(rows: list[dict[str, Any]]) -> None:
         row["entered_at"] = str(marker["time"]) if marker else None
 
 
-def _apply_market_marks(rows: list[dict[str, Any]]) -> int:
+def _usable_market_mark(
+    row: dict[str, Any], mark: dict[str, Any] | None, at: datetime
+) -> tuple[float, float, datetime] | None:
+    """Use one observed price and move that were both known by the score time."""
+
+    if not mark or mark.get("status") != "ok":
+        return None
+    price, change = _number(mark.get("price")), _number(mark.get("change_pct"))
+    observed_at = _timestamp(mark.get("observed_at"))
+    collected_at = _timestamp(mark.get("collected_at"))
+    scanned_at = _timestamp(row.get("quote_time"))
+    if (
+        price is None
+        or price <= 0
+        or change is None
+        or observed_at is None
+        or collected_at is None
+        or observed_at > at
+        or collected_at > at
+        or observed_at > collected_at
+        or (scanned_at is not None and observed_at <= scanned_at)
+    ):
+        return None
+    return price, change, observed_at
+
+
+def _apply_market_marks(
+    rows: list[dict[str, Any]],
+    *,
+    marks: dict[str, dict[str, Any]] | None = None,
+    at: datetime | None = None,
+) -> int:
     """Overlay a fresher observed price on board rows, all of a row's fields or none.
 
     The scanner's price and change come from the same five-minute bar, so replacing one
@@ -4903,26 +4939,22 @@ def _apply_market_marks(rows: list[dict[str, Any]]) -> int:
 
     if not rows:
         return 0
-    marks = fresh_quotes([str(row.get("ticker") or "") for row in rows])
+    if marks is None:
+        marks = fresh_quotes([str(row.get("ticker") or "") for row in rows])
     if not marks:
         return 0
-    current = now()
+    current = at or now()
     upgraded = 0
     for row in rows:
         mark = marks.get(str(row.get("ticker") or ""))
-        if not mark:
+        usable = _usable_market_mark(row, mark, current)
+        if usable is None:
             continue
-        price, change = _number(mark.get("price")), _number(mark.get("change_pct"))
-        observed_at = _timestamp(mark.get("observed_at"))
-        if price is None or change is None or observed_at is None or observed_at > current:
-            continue
-        scanned_at = _timestamp(row.get("quote_time"))
-        if scanned_at is not None and observed_at <= scanned_at:
-            continue
+        price, change, observed_at = usable
         row.update(
             price=price,
             change_pct=change,
-            quote_time=mark.get("observed_at"),
+            quote_time=observed_at.isoformat(),
             mark_source="quote",
             mark_age_seconds=max(0, int((current - observed_at).total_seconds())),
         )
@@ -5108,9 +5140,30 @@ def _pulse_snapshot_score(
     facts = attention.forecast_facts(prediction)
     computed_at = _timestamp(inputs["score_as_of"])
     quote_at = _timestamp(snapshot.get("quote_time"))
+    quote_mark = (
+        _usable_market_mark(
+            snapshot,
+            inputs.get("quote_marks", {}).get(ticker),
+            computed_at,
+        )
+        if computed_at is not None
+        else None
+    )
+    eligibility_quote_at = quote_mark[2] if quote_mark else quote_at
     age_minutes = (
         (computed_at - quote_at).total_seconds() / 60
         if computed_at is not None and quote_at is not None
+        else None
+    )
+    eligibility_age_minutes = (
+        (computed_at - eligibility_quote_at).total_seconds() / 60
+        if computed_at is not None and eligibility_quote_at is not None
+        else None
+    )
+    captured_at = _timestamp(snapshot.get("captured_at"))
+    assessment_age_minutes = (
+        (computed_at - captured_at).total_seconds() / 60
+        if computed_at is not None and captured_at is not None
         else None
     )
     activity = attention.market_activity({**snapshot, "stale_minutes": age_minutes})
@@ -5154,9 +5207,12 @@ def _pulse_snapshot_score(
         trade_state=trade_state,
         rug_score=rug_score,
         rug_level=str(snapshot.get("rug_level") or ""),
-        has_price=(attention.finite_number(snapshot.get("price")) or 0) > 0,
+        has_price=(
+            quote_mark[0] if quote_mark else (attention.finite_number(snapshot.get("price")) or 0)
+        ) > 0,
         hard_veto=bool(snapshot.get("hard_veto")),
-        stale_minutes=age_minutes,
+        stale_minutes=eligibility_age_minutes,
+        assessment_age_minutes=assessment_age_minutes,
         require_complete=True,
     )
     # Only what moved attention lives here. The deductions are policy, and they
@@ -5239,7 +5295,8 @@ def _pulse_snapshot_score(
         "activity_inputs": activity,
         "forecast": facts,
         "feature_as_of": snapshot.get("captured_at"),
-        "quote_as_of": snapshot.get("quote_time"),
+        "activity_quote_as_of": snapshot.get("quote_time"),
+        "quote_as_of": eligibility_quote_at.isoformat() if eligibility_quote_at else None,
         "computed_at": inputs["score_as_of"],
         "model_rank": prediction.get("rank") if prediction else None,
         "score": pulse_score,
@@ -5281,6 +5338,7 @@ def _pulse_data_uncached() -> dict[str, Any]:
     inputs = _pulse_scoring_inputs(at=now())
     latest_run = inputs["latest_run"]
     market_rows = inputs["market_rows"]
+    inputs["quote_marks"] = fresh_quotes([str(row["ticker"]) for row in market_rows])
     filings_by_ticker = inputs["filings_by_ticker"]
     filing_counts = inputs["filing_counts"]
     active_kol_calls = calls_for_tickers([str(row["ticker"]) for row in market_rows])
@@ -5344,10 +5402,14 @@ def _pulse_data_uncached() -> dict[str, Any]:
     runner_rows.sort(key=attention.attention_order)
     for custom_rank, runner in enumerate(runner_rows, start=1):
         runner["custom_rank"] = custom_rank
-    _apply_market_marks(runner_rows)
+    _apply_market_marks(
+        runner_rows,
+        marks=inputs["quote_marks"],
+        at=_timestamp(inputs["score_as_of"]),
+    )
     _attach_pulse_entries(runner_rows)
     _attach_announcements(runner_rows)
-    quote_times = [str(row["quote_time"]) for row in market_rows if row["quote_time"]]
+    quote_times = [str(row["quote_time"]) for row in runner_rows if row.get("quote_time")]
     market_updated_at = max(quote_times) if quote_times else None
     if market_updated_at is None and latest_run:
         market_updated_at = str(latest_run["captured_at"])
@@ -9367,6 +9429,8 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
     )
     if snapshot is not None:
         inputs = _pulse_scoring_inputs(ticker=ticker, at=score_time)
+        if inputs["market_rows"]:
+            inputs["quote_marks"] = fresh_quotes([ticker])
         if not inputs["market_rows"]:
             # The latest universe no longer contains this ticker. Score its saved
             # feature vector under the SAME attention contract; its old quote can
@@ -9398,6 +9462,7 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
                 "activity_inputs",
                 "forecast",
                 "feature_as_of",
+                "activity_quote_as_of",
                 "quote_as_of",
                 "computed_at",
                 # The named probabilities, so a reader sees a contract and not a

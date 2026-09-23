@@ -43,6 +43,7 @@ BLOCKING_RUG_LEVELS = {"high", "critical"}
 BLOCKING_RUG_SCORE = 50.0
 POLICY_VERSION = "attention-activity-v2"
 MAX_QUOTE_AGE_MINUTES = 15.0
+MAX_ASSESSMENT_AGE_MINUTES = 60.0
 
 
 def _clamp(value: float, low: float = 0.0, high: float = ATTENTION_MAX) -> float:
@@ -100,6 +101,7 @@ def eligibility(
     has_price: bool = True,
     hard_veto: bool = False,
     stale_minutes: float | None = None,
+    assessment_age_minutes: float | None = None,
     require_complete: bool = False,
 ) -> dict[str, Any]:
     """What the application permits, with reasons a reader can audit."""
@@ -116,6 +118,12 @@ def eligibility(
     elif require_complete and age is None:
         state = UNKNOWN
         reasons.append({"code": "quote_age_unknown", "label": "Quote age is unknown"})
+    assessment_age = finite_number(assessment_age_minutes)
+    if assessment_age is not None and (
+        assessment_age < 0 or assessment_age > MAX_ASSESSMENT_AGE_MINUTES
+    ):
+        state = UNKNOWN
+        reasons.append({"code": "stale_assessment", "label": "Scan assessment is not current"})
     if require_complete and trade_state.strip().upper() not in {
         "WATCH",
         "ARMED",
