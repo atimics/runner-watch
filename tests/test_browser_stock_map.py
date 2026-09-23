@@ -1158,6 +1158,11 @@ def test_patterned_map_preserves_slice_hit_targets_and_high_contrast_readings(
         assert marker != ink
         expect(glyph.locator(".map-center-text")).to_have_css("fill", marker)
         expect(glyph.locator(".map-center-score")).to_have_css("fill", marker)
+        swatch = page.locator('.map-score-swatch[data-pattern="evidence"]')
+        expect(swatch).to_have_css("background-color", marker)
+        assert "gradient" in swatch.evaluate(
+            "el => getComputedStyle(el, '::after').backgroundImage"
+        )
         glyph.screenshot(path=str(tmp_path / f"forced-colors-{width}-{score}.png"))
     else:
         expect(glyph.locator(".map-risk-dot")).to_have_css("fill", "rgb(239, 153, 164)")

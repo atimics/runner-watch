@@ -75,6 +75,7 @@ main:has(.ticker-map),main:has(.token-replay){max-width:1040px}.market-screen:ha
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph-reading,:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph-empty{font-size:12px;margin:4px 0;color:var(--muted)}
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .indicator-legend{margin-top:8px}
 @media(forced-colors:active){
+  .map-score-swatch{forced-color-adjust:none;--glyph-ink:Canvas;--indicator-market:CanvasText;--indicator-evidence:CanvasText;--indicator-social:CanvasText}
   :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph{forced-color-adjust:none;--bg:Canvas;--text:CanvasText;--muted:CanvasText;--glyph-ink:Canvas;--indicator-market:CanvasText;--indicator-evidence:CanvasText;--indicator-social:CanvasText;--green:CanvasText;--red:CanvasText;--orange:CanvasText}
   :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph-sentiment,:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-score-track{stroke:CanvasText}
   :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-sentiment-mix="available"] .map-glyph-sentiment{stroke:transparent}
