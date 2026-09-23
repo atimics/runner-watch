@@ -88,7 +88,8 @@ def test_coin_map_uses_stock_layout_and_ticker_center(page: Page, width: int):
     expect(page.locator("[data-replay-events] button")).to_have_count(
         len({e["event_id"] for e in data["frames"][-1]["edges"]})
     )
-    expect(page.locator(".market-assessment, [data-replay-gif], .replay-controls")).to_have_count(0)
+    expect(page.get_by_role("region", name="Token evidence")).to_be_visible()
+    expect(page.locator("[data-replay-gif], .replay-controls")).to_have_count(0)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert not errors
 
