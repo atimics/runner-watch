@@ -146,13 +146,10 @@ def build_examples(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Supervised rows from saved bars: features now, movement next."""
 
+    # The quote table is the bounded active symbol list. Grouping all saved bars
+    # by ticker makes each training attempt scan the full market history.
     rows = database.execute(
-        """
-        SELECT ticker, MAX(bar_time) AS latest, COUNT(*) AS bars
-        FROM market_bars
-        WHERE source='yahoo' AND interval='5m' AND close IS NOT NULL
-        GROUP BY ticker ORDER BY latest DESC LIMIT ?
-        """,
+        "SELECT ticker FROM ticker_quotes ORDER BY requested_at DESC,ticker LIMIT ?",
         (max(1, max_tickers),),
     ).fetchall()
     features: list[list[float]] = []

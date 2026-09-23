@@ -39,6 +39,11 @@ def add_bars(
 ) -> None:
     volumes = volumes or [1_000.0] * len(prices)
     with connection as conn:
+        conn.execute(
+            "INSERT INTO ticker_quotes(ticker,source,status,requested_at) "
+            "VALUES(?,?,?,?) ON CONFLICT(ticker) DO NOTHING",
+            (ticker, "yahoo", "ok", _iso(UTC_TUESDAY)),
+        )
         conn.executemany(
             """
             INSERT INTO market_bars(
@@ -61,6 +66,22 @@ def add_bars(
                 for index, price in enumerate(prices)
             ],
         )
+
+
+def test_training_reads_only_the_bounded_quote_symbol_list(database):
+    add_bars(database, "OLD", [100 + index for index in range(40)])
+    add_bars(database, "NEW", [200 + index for index in range(40)])
+    with database as conn:
+        conn.execute(
+            "UPDATE ticker_quotes SET requested_at=? WHERE ticker='NEW'",
+            (_iso(UTC_TUESDAY + timedelta(minutes=5)),),
+        )
+        features, targets = gap_ranker.build_examples(conn, max_tickers=1)
+    assert len(features) == len(targets) > 0
+    with database as conn:
+        conn.execute("DELETE FROM ticker_quotes")
+        empty_features, empty_targets = gap_ranker.build_examples(conn)
+    assert len(empty_features) == len(empty_targets) == 0
 
 
 def test_features_are_bounded_and_repeatable():

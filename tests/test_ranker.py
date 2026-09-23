@@ -6,9 +6,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from pytest import MonkeyPatch
 
-from runner_web import db
+from runner_web import db, ranker
 from runner_web import main as web_main
 from runner_web.db import connection, init_db
 from runner_web.ranker import (
@@ -22,6 +23,32 @@ from runner_web.ranker import (
     train_shadow_ranker,
 )
 from tests.fake_market_data import FAKE_SYMBOLS, FakeMarketData
+
+
+def test_trainer_retries_failed_run_before_full_training_interval(monkeypatch):
+    heartbeats = []
+    monkeypatch.setenv("RANKER_TRAIN_INTERVAL_SECONDS", "21600")
+    monkeypatch.setenv("RANKER_TRAIN_RETRY_SECONDS", "120")
+    monkeypatch.setattr(ranker, "init_db", lambda: None)
+    monkeypatch.setattr(
+        ranker, "train_shadow_ranker_if_due", lambda: (_ for _ in ()).throw(RuntimeError("db down"))
+    )
+    monkeypatch.setattr(
+        ranker,
+        "_trainer_state",
+        lambda key, value: heartbeats.append(value)
+        if key == "ranker_trainer_heartbeat"
+        else None,
+    )
+    monkeypatch.setattr(ranker.time, "sleep", lambda _: (_ for _ in ()).throw(StopIteration))
+
+    with pytest.raises(StopIteration):
+        ranker.trainer_main()
+
+    waiting = heartbeats[-1]
+    delay = datetime.fromisoformat(waiting["next_run_at"]) - datetime.now(UTC)
+    assert waiting["status"] == "degraded"
+    assert 110 <= delay.total_seconds() <= 120
 
 
 def test_chart_structure_fields_are_ranker_features() -> None:

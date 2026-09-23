@@ -4,6 +4,7 @@ import argparse
 import csv
 import hashlib
 import json
+import logging
 import math
 import os
 import shutil
@@ -22,6 +23,8 @@ from runner_web.db import init_db
 from runner_web.labels import barrier_contract
 from runner_web.product_policy import RANKER_TRAINING
 from runner_web.ranker_promotion import promotion_status
+
+LOG = logging.getLogger(__name__)
 
 FEATURE_SCHEMA_VERSION = "stonks.ranker_features.v4"
 MODEL_KIND = "integer_multiclass_logistic_barrier_v6"
@@ -783,6 +786,9 @@ def trainer_main() -> None:
         300,
         int(os.getenv("RANKER_TRAIN_INTERVAL_SECONDS", RANKER_TRAINING.interval_seconds)),
     )
+    retry_seconds = max(
+        60, min(interval, int(os.getenv("RANKER_TRAIN_RETRY_SECONDS", "300")))
+    )
     heartbeat_seconds = max(10, int(os.getenv("RANKER_TRAIN_HEARTBEAT_SECONDS", "30")))
     historical_backfill_enabled = os.getenv("RANKER_HISTORICAL_BACKFILL_ENABLED", "0").lower() in {
         "1",
@@ -834,21 +840,30 @@ def trainer_main() -> None:
             _trainer_state("ranker_trainer_last_error", "")
         except Exception as exc:
             last_error = str(exc)[:1000]
-            _trainer_state("ranker_trainer_last_error", last_error)
-        next_run_at = datetime.now(UTC).timestamp() + interval
+            LOG.exception("Ranker training failed")
+            try:
+                _trainer_state("ranker_trainer_last_error", last_error)
+            except Exception:
+                LOG.exception("Could not record ranker training failure")
+        next_run_at = datetime.now(UTC).timestamp() + (
+            retry_seconds if last_error else interval
+        )
         while True:
             remaining = next_run_at - datetime.now(UTC).timestamp()
             if remaining <= 0:
                 break
-            _trainer_state(
-                "ranker_trainer_heartbeat",
-                {
-                    "status": "degraded" if last_error else "ok",
-                    "phase": "waiting",
-                    "next_run_at": datetime.fromtimestamp(next_run_at, UTC).isoformat(),
-                    "last_error": last_error or None,
-                },
-            )
+            try:
+                _trainer_state(
+                    "ranker_trainer_heartbeat",
+                    {
+                        "status": "degraded" if last_error else "ok",
+                        "phase": "waiting",
+                        "next_run_at": datetime.fromtimestamp(next_run_at, UTC).isoformat(),
+                        "last_error": last_error or None,
+                    },
+                )
+            except Exception:
+                LOG.exception("Could not record ranker trainer heartbeat")
             time.sleep(min(heartbeat_seconds, remaining))
 
 
