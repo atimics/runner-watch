@@ -98,6 +98,8 @@ def test_long_market_list_names_fit(page, width, kind):
     open_html(page, screens.render(screen))
     row = page.locator(".ticker")
     expect(row).to_have_count(1)
+    if kind == "coin":
+        expect(row.locator(".row-assessment")).to_contain_text("Market quote")
     expect(row.locator(".ticker-name strong")).to_have_text(screen["rows"][0]["name"])
     no_overlap(row.locator(".ticker-name"), row.locator(".ticker-value"))
     no_overlap(row.locator(".ticker-value strong"), row.locator(".ticker-value small"))
@@ -116,8 +118,11 @@ def test_long_market_details_fit(page, width, kind):
     page.set_viewport_size(dict(width=width, height=844))
     open_html(page, screens.render(screen), screen)
     expect(page.locator(".asset-heading h1")).to_have_text(screen["item"]["name"])
-    if kind != "coin":
-        expect(page.get_by_role("region", name="RATi assessment")).to_be_visible()
+    expect(
+        page.get_by_role(
+            "region", name="Token evidence" if kind == "coin" else "RATi assessment"
+        )
+    ).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     for team in page.locator(".teams > div").all():
         no_overlap(team.locator("h2"), team.locator("strong"))

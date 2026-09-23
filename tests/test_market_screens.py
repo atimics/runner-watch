@@ -84,6 +84,29 @@ def render(screen, user=None):
     ).body.decode()
 
 
+def test_memecoin_screen_shows_quote_and_saved_chain_evidence_without_score():
+    coin = {**sample("memecoins"), "token_address": "token-a"}
+    board = render(listing("memecoins", [coin]))
+    assert ">Market quote</small>" in board
+    assert ">Pending</small>" not in board
+    assert "Action tags require a saved Runner assessment." in board
+
+    finding = {
+        "token_address": "token-a",
+        "kind": "liquidity_withdrawal",
+        "title": "Pool liquidity withdrawal",
+        "source_url": "https://example.test/tx/1",
+        "observed_at": "2026-09-19T12:00:00Z",
+    }
+    coin["findings"] = [finding]
+    board = render(listing("memecoins", [coin]))
+    opened = render(detail("memecoins", {"coin": coin}))
+    assert ">Chain evidence</small>" in board
+    assert 'aria-label="Token evidence"' in opened
+    assert "Pool liquidity withdrawal" in opened
+    assert 'href="https://example.test/tx/1"' in opened
+
+
 @pytest.mark.parametrize("market", ["stocks", "memecoins", "sports"])
 @pytest.mark.parametrize("view", ["list", "map"])
 def test_shared_board_only_renders_business_fields(market, view):

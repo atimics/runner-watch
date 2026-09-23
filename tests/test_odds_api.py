@@ -282,7 +282,7 @@ def test_refresh_schedule_uses_three_progressive_game_windows() -> None:
     pregame = refresh_decision(
         "mlb",
         events,
-        start - timedelta(hours=5),
+        start - timedelta(hours=3),
         state={"slate": "2026-08-26", "completed": ["opening"]},
     )
     assert pregame is not None and pregame.slot == "pregame"
@@ -304,6 +304,28 @@ def test_refresh_schedule_uses_three_progressive_game_windows() -> None:
         )
         is None
     )
+
+
+def test_pregame_refresh_stays_fresh_until_close_slot() -> None:
+    start = datetime(2026, 9, 23, 17, 10, tzinfo=UTC)
+    events = [{"status": "pre", "start_time": start}]
+    state = {"slate": "2026-09-23", "completed": ["opening"]}
+
+    assert refresh_decision("mlb", events, start - timedelta(hours=6), state=state) is None
+    pregame = refresh_decision(
+        "mlb", events, start - timedelta(hours=3, minutes=15), state=state
+    )
+    assert pregame is not None and pregame.slot == "pregame"
+    close = refresh_decision(
+        "mlb",
+        events,
+        start - timedelta(minutes=90),
+        state={"slate": "2026-09-23", "completed": ["opening", "pregame"]},
+    )
+    assert close is not None and close.slot == "close"
+    assert (start - timedelta(minutes=90)) - (
+        start - timedelta(hours=3, minutes=15)
+    ) < odds_api.BOOKMAKER_MAX_AGE
 
 
 def test_paid_request_logs_only_a_sanitized_locator(monkeypatch: pytest.MonkeyPatch) -> None:
