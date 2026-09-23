@@ -235,7 +235,13 @@ def test_visible_sentiment_patterns_and_risk_shapes_in_both_color_modes(
     make = fixtures.stock if market == "stocks" else assessed_coin
     counts_key = "sentiment_counts" if market == "stocks" else "chain_sentiment_counts"
     source = [
-        make(ticker="MED", id="MED", **{counts_key: {"bullish": 3, "bearish": 1}}, rug_score=30),
+        make(
+            ticker="MED",
+            id="MED",
+            **{counts_key: {"bullish": 3, "bearish": 1}},
+            rug_score=30,
+            significant_risk_factor_count=1,
+        ),
         make(ticker="HIGH", id="HIGH", **{counts_key: {"bullish": 0, "bearish": 4}}, rug_score=75),
         make(
             ticker="GAP",
@@ -258,7 +264,7 @@ def test_visible_sentiment_patterns_and_risk_shapes_in_both_color_modes(
     expect(glyphs.nth(2).locator(".indicator-glyph__sentiment")).to_have_css(
         "border-top-style", "dashed"
     )
-    expect(glyphs.nth(0).locator(".indicator-glyph__risk")).to_have_css("border-radius", "0px")
+    expect(glyphs.nth(0).locator(".indicator-glyph__risk")).to_have_css("border-radius", "50%")
     expect(glyphs.nth(1).locator(".indicator-glyph__risk")).to_have_css("border-radius", "0px")
     expect(glyphs.nth(2).locator(".indicator-glyph__risk")).to_have_text("?")
     for pattern in glyphs.nth(0).locator(".score-pie [data-pattern]").all():
@@ -293,6 +299,7 @@ def test_visual_key_opens_by_keyboard_and_keeps_patterns_and_labels(page, market
         "bearish",
         "sentiment",
         "detected",
+        "significant",
         "none",
         "unknown",
         "unavailable",
@@ -309,7 +316,47 @@ def test_visual_key_opens_by_keyboard_and_keeps_patterns_and_labels(page, market
     expect(key.locator('[data-key-icon="detected"] .indicator-key-marker')).to_have_css(
         "border-radius", "0px"
     )
+    expect(key.get_by_text("1+ significant factors", exact=False)).to_be_visible()
+    expect(key.locator('[data-key-icon="significant"] .indicator-key-marker')).to_have_css(
+        "border-radius", "50%"
+    )
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert not re.search(r"\b(low|medium|high|critical) risk\b", key.inner_text(), re.I)
     if forced == "active":
         expect(key.locator('[data-key-icon="evidence"]')).to_have_css("forced-color-adjust", "none")
+
+
+@pytest.mark.parametrize("market", ["stocks", "memecoins"])
+@pytest.mark.parametrize("width", [320, 1280])
+@pytest.mark.parametrize("forced", ["none", "active"])
+def test_significant_factor_circle_keeps_accessible_map_control(page, market, width, forced):
+    from tests.test_browser_memecoin_replay import COIN, open_replay
+    from tests.test_browser_stock_map import open_map
+    from tests.test_memecoin_indicator import assessed_coin
+    from tests.test_stock_map import score_current
+
+    page.emulate_media(forced_colors=forced)
+    if market == "stocks":
+        open_map(page, width, current=score_current(rug_score=0, hard_veto=True))
+    else:
+        open_replay(
+            page,
+            width=width,
+            coin_overrides=assessed_coin(id=COIN["id"], significant_risk_factor_count=1),
+        )
+    glyph = page.locator(".map-glyph")
+    expect(glyph).to_have_attribute("data-risk", "significant")
+    expect(glyph.locator("circle.map-risk-dot")).to_have_attribute("data-risk-shape", "circle")
+    risk = glyph.locator('[data-score-key="risk"]')
+    expect(risk).to_have_attribute(
+        "aria-label", "1+ significant risk factors detected in saved checks. Show risk factors."
+    )
+    risk.press("Enter")
+    expect(risk).to_have_attribute("aria-pressed", "true")
+    expect(page.locator(".map-glyph-reading")).to_contain_text(
+        "1+ significant risk factors detected"
+    )
+    if forced == "active":
+        expect(glyph.locator(".map-risk-dot")).to_have_css("fill", "rgb(0, 0, 0)")
+    else:
+        expect(glyph.locator(".map-risk-dot")).to_have_css("fill", "rgb(255, 173, 112)")

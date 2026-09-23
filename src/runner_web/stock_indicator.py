@@ -18,6 +18,7 @@ TOKEN_GROUPS = (
     ("social", "External social", ("social_search",)),
 )
 RISK_READINGS = {
+    "significant": "1+ significant risk factors detected in saved checks",
     "detected": "Risk factors detected in saved checks",
     "none": "Detected risk factors: 0 in saved checks",
     "unknown": "Risk factor checks unavailable",
@@ -34,12 +35,15 @@ def _mapping(value: Any) -> Mapping:
 
 def _risk(item: Mapping) -> str:
     # Describe detected factors separately from internal policy grades.
-    reasons = item.get("risks")
+    significant = finite_number(item.get("significant_risk_factor_count"))
     if (
         item.get("hard_veto")
         or item.get("attention_urgent")
-        or (isinstance(reasons, list) and any(isinstance(r, str) and r.strip() for r in reasons))
+        or (significant is not None and significant >= 1 and significant.is_integer())
     ):
+        return "significant"
+    reasons = item.get("risks")
+    if isinstance(reasons, list) and any(isinstance(r, str) and r.strip() for r in reasons):
         return "detected"
     level = str(item.get("rug_level") or "").lower()
     if level in {"guarded", "medium", "high", "critical"}:

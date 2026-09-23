@@ -6,7 +6,7 @@
     if (text != null) element.textContent = text;
     return element;
   };
-  const riskReading = value => ({detected:'Risk factors detected in saved checks',none:'Detected risk factors: 0 in saved checks',unknown:'Risk factor checks unavailable'}[value] || 'Risk factor checks unavailable');
+  const riskReading = value => ({significant:'1+ significant risk factors detected in saved checks',detected:'Risk factors detected in saved checks',none:'Detected risk factors: 0 in saved checks',unknown:'Risk factor checks unavailable'}[value] || 'Risk factor checks unavailable');
   const color = part => `var(--indicator-${part.key})`;
   let nextPattern = 0;
   function patterns(layer, scale = 1) {

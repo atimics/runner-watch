@@ -38,7 +38,7 @@
 {%- endmacro %}
 
 {% macro key_icon(kind) -%}
-<span class="indicator-key-icon" data-key-icon="{{ kind }}" aria-hidden="true"><span class="indicator-key-ring">{% if kind in ['evidence', 'bearish', 'sentiment'] %}<span class="indicator-pattern indicator-pattern--evidence" style="--slice-start: {{ '75%' if kind == 'sentiment' else '0%' }}; --slice-end: 100%"></span>{% elif kind == 'social' %}<span class="indicator-pattern indicator-pattern--social" style="--slice-start: 0%; --slice-end: 100%"></span>{% endif %}</span>{% if kind in ['detected', 'unknown'] %}<span class="indicator-key-marker">{{ '?' if kind == 'unknown' else '' }}</span>{% elif kind == 'verified' %}<svg class="indicator-key-check-symbol" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9"/><path d="m6 10 2.5 2.5 5.5-5.5"/></svg>{% endif %}</span>
+<span class="indicator-key-icon" data-key-icon="{{ kind }}" aria-hidden="true"><span class="indicator-key-ring">{% if kind in ['evidence', 'bearish', 'sentiment'] %}<span class="indicator-pattern indicator-pattern--evidence" style="--slice-start: {{ '75%' if kind == 'sentiment' else '0%' }}; --slice-end: 100%"></span>{% elif kind == 'social' %}<span class="indicator-pattern indicator-pattern--social" style="--slice-start: 0%; --slice-end: 100%"></span>{% endif %}</span>{% if kind in ['detected', 'significant', 'unknown'] %}<span class="indicator-key-marker">{{ '?' if kind == 'unknown' else '' }}</span>{% elif kind == 'verified' %}<svg class="indicator-key-check-symbol" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9"/><path d="m6 10 2.5 2.5 5.5-5.5"/></svg>{% endif %}</span>
 {%- endmacro %}
 
 {% macro indicator_legend(market='stocks', size_basis='attention') -%}
@@ -82,6 +82,7 @@
     <h3>Center · risk factors</h3>
     <ul>
       <li>{{ key_icon('detected') }}<span>Risk factors detected<small>Diamond · saved checks</small></span></li>
+      <li>{{ key_icon('significant') }}<span>1+ significant factors<small>Circle · saved checks</small></span></li>
       <li>{{ key_icon('none') }}<span>0 factors detected<small>Empty center · saved checks</small></span></li>
       <li>{{ key_icon('unknown') }}<span>Checks unavailable<small>? · awaiting evidence</small></span></li>
     </ul>

@@ -72,13 +72,14 @@
 .indicator-key-icon[data-key-icon="bearish"]{--key-color:var(--red)}
 .indicator-key-icon[data-key-icon="sentiment"] .indicator-key-ring{background:conic-gradient(var(--green) 0 75%,var(--red) 75% 100%)}
 .indicator-key-icon:is([data-key-icon="bullish"],[data-key-icon="bearish"],[data-key-icon="sentiment"]) .indicator-key-ring{mask:radial-gradient(farthest-side,transparent calc(100% - 3px),#000 calc(100% - 3px))}
-.indicator-key-icon:is([data-key-icon="unavailable"],[data-key-icon="detected"],[data-key-icon="none"],[data-key-icon="unknown"]) .indicator-key-ring{background:none;border:1px solid var(--muted);box-sizing:border-box;mask:none}
+.indicator-key-icon:is([data-key-icon="unavailable"],[data-key-icon="detected"],[data-key-icon="significant"],[data-key-icon="none"],[data-key-icon="unknown"]) .indicator-key-ring{background:none;border:1px solid var(--muted);box-sizing:border-box;mask:none}
 .indicator-key-icon[data-key-icon="unavailable"] .indicator-key-ring{border:2px dashed var(--muted)}
 .indicator-key-marker{position:absolute;width:10px;height:10px;background:var(--red);transform:rotate(45deg)}
+.indicator-key-icon[data-key-icon="significant"] .indicator-key-marker{background:var(--orange,#ff9f43);border-radius:50%;transform:none}
 .indicator-key-icon[data-key-icon="unknown"] .indicator-key-marker{width:14px;height:14px;display:grid;place-items:center;background:var(--bg);border:1px solid var(--muted);border-radius:50%;transform:none;color:var(--muted);font-size:11px;font-weight:700;line-height:1}
 .indicator-key-icon[data-key-icon="verified"] .indicator-key-ring{display:none}
 .indicator-key-check-symbol{width:20px;height:20px;fill:var(--green)}
 .indicator-key-check-symbol path{fill:none;stroke:var(--bg);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 @media(max-width:500px){.indicator-key-grid{grid-template-columns:1fr 1fr;gap:20px 12px}.indicator-key-group li{gap:7px}.indicator-key-group li>span:last-child{min-width:0}.indicator-key-icon{width:34px}}
 @media(max-width:360px){.indicator-key-grid{grid-template-columns:1fr}}
-@media(forced-colors:active){.indicator-key-icon{forced-color-adjust:none;--bg:Canvas;--muted:CanvasText;--glyph-ink:Canvas;--indicator-market:CanvasText;--indicator-evidence:CanvasText;--indicator-social:CanvasText;--green:CanvasText;--red:CanvasText}}
+@media(forced-colors:active){.indicator-key-icon{forced-color-adjust:none;--bg:Canvas;--muted:CanvasText;--glyph-ink:Canvas;--indicator-market:CanvasText;--indicator-evidence:CanvasText;--indicator-social:CanvasText;--green:CanvasText;--red:CanvasText;--orange:CanvasText}}

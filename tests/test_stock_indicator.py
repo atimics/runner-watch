@@ -148,7 +148,7 @@ def test_risk_factors_describe_saved_checks_without_grading_the_asset(score, lev
 )
 def test_explicit_factors_survive_a_zero_score(source):
     glyph = stock_indicator(stock(rug_score=0, **source))
-    assert glyph["risk"] == "detected"
+    assert glyph["risk"] == ("detected" if source.get("risks") else "significant")
     assert glyph["risk_factors"] == source.get("risks", [])
     if source.get("hard_veto"):
         assert not glyph["verification"]["verified"]
@@ -304,3 +304,24 @@ def test_single_saved_direction_and_neutral_only_gap(tone, bullish):
     mix = stock_indicator(stock(sentiment=tone))["sentiment_mix"]
     assert mix["bullish"] == bullish
     assert mix["state"] == ("unknown" if bullish is None else "available")
+
+
+@pytest.mark.parametrize("count", [1, 2, 12])
+def test_explicit_significant_factor_count_takes_precedence(count):
+    from runner_web.stock_indicator import memecoin_indicator
+
+    for indicator in [stock_indicator, memecoin_indicator]:
+        glyph = indicator(stock(rug_score=0, significant_risk_factor_count=count))
+        assert glyph["risk"] == "significant"
+        assert "1+ significant risk factors detected" in glyph["description"]
+
+
+@pytest.mark.parametrize("count", [None, 0, -1, 0.5, 1.5, True, math.nan, math.inf, "bad"])
+def test_invalid_or_empty_significant_count_preserves_saved_check_state(count):
+    assert (
+        stock_indicator(stock(rug_score=0, significant_risk_factor_count=count))["risk"] == "none"
+    )
+    assert (
+        stock_indicator(stock(rug_score=None, significant_risk_factor_count=count))["risk"]
+        == "unknown"
+    )

@@ -1,3 +1,5 @@
+import pytest
+
 from runner_web.entity_view import entity_view
 
 
@@ -63,19 +65,26 @@ def test_stakes_replace_trade_snapshots_and_missing_data_stays_unknown():
     assert entity_view(rows, [], "sec:102")["stocks"] == []
 
 
-def test_entity_glyph_matches_list_and_detail_despite_holding_size():
+@pytest.mark.parametrize("significant", [0, 1])
+def test_entity_glyph_matches_list_and_detail_despite_holding_size(significant):
     import copy
 
     from runner_web.market_screens import detail, row
     from tests.test_stock_indicator import stock
 
-    source = stock(ticker="TEST", score=80, rug_score=68, sentiment="positive")
+    source = stock(
+        ticker="TEST",
+        score=80,
+        rug_score=68,
+        sentiment="positive",
+        significant_risk_factor_count=significant,
+    )
     saved = copy.deepcopy(source)
     for shares in [0, 1, 1000000, None]:
         node = entity_view([event(post_shares=shares)], [source], "sec:101")["stocks"][0]
         assert node["indicator"] == row("stocks", source)["indicator"]
         assert node["indicator"] == detail("stocks", {"current": source})["item"]["indicator"]
-        assert node["indicator"]["risk"] == "detected"
+        assert node["indicator"]["risk"] == ("significant" if significant else "detected")
     assert source == saved
 
 

@@ -24,7 +24,7 @@
       mix:allowed(value.mix_state,['available','zero','unknown'],'unknown'),
       sentimentMix:window.RatiRingGlyph.readSentiment(value.sentiment_mix),
       sentiment:allowed(value.sentiment,['positive','negative','neutral','unknown'],'unknown'),
-      risk:allowed(value.risk,['none','detected','unknown'],'unknown'),
+      risk:allowed(value.risk,['none','detected','significant','unknown'],'unknown'),
     };
     score = finite(value.score) ? number(value.score) : '—';
     const slices = Array.isArray(value.slices) ? value.slices : [];
