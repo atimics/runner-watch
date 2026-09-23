@@ -51,7 +51,12 @@
     graph.addEventListener('pointerdown',event=>{
       if (event.button !== 0 || pointers.size >= 2) return;
       if (!pointers.size) suppressClickUntil = 0;
-      pointers.set(event.pointerId,{x:event.clientX,y:event.clientY,startX:event.clientX,startY:event.clientY});
+      const tap = pointers.size === 0;
+      if (!tap) pointers.forEach(pointer=>{pointer.tap=false;});
+      pointers.set(event.pointerId,{
+        x:event.clientX,y:event.clientY,startX:event.clientX,startY:event.clientY,
+        tap,at:performance.now(),link:event.target.closest('a[href]'),
+      });
       graph.classList.add('orbit-interacting');
     });
     window.addEventListener('pointermove',event=>{
@@ -61,6 +66,7 @@
       const next = {...previous,x:event.clientX,y:event.clientY};
       pointers.set(event.pointerId,next);
       if (pointers.size === 1 && Math.hypot(next.x-next.startX,next.y-next.startY) < 5) return;
+      next.tap = false;
       graph.setPointerCapture(event.pointerId);
       suppressClickUntil = performance.now()+400;
       if (pointers.size === 2) {
@@ -78,9 +84,20 @@
       paint();
     });
     function release(event) {
+      const pointer = pointers.get(event.pointerId);
       pointers.delete(event.pointerId);
       if (!pointers.size) graph.classList.remove('orbit-interacting');
       if (graph.hasPointerCapture(event.pointerId)) graph.releasePointerCapture(event.pointerId);
+      // Some touch browsers withhold a compatibility click after a map gesture.
+      // Activate a short, still touch once; keep the link's native keyboard path.
+      if (event.type === 'pointerup' && event.pointerType === 'touch' && pointer?.tap &&
+          performance.now()-pointer.at < 500 &&
+          Math.hypot(event.clientX-pointer.startX,event.clientY-pointer.startY) < 5 &&
+          pointer.link && graph.contains(pointer.link)) {
+        suppressClickUntil = 0;
+        pointer.link.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));
+        suppressClickUntil = performance.now()+400;
+      }
     }
     window.addEventListener('pointerup',release);
     window.addEventListener('pointercancel',release);

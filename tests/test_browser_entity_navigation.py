@@ -170,6 +170,10 @@ def test_touch_pinch_drag_and_stock_tap(browser):
         )
         client.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
         assert float(graph.get_attribute("data-zoom")) > 1.5
+        page.get_by_role("button", name="Fit map", exact=True).click()
+        page.clock.run_for(32)
+        start = graph.locator('[data-entity-stock="S17"] .entity-glyph-backplate').bounding_box()
+        x, y = start["x"] + start["width"] / 2, start["y"] + start["height"] / 2
         before = graph.get_attribute("viewBox")
         client.send(
             "Input.dispatchTouchEvent",
