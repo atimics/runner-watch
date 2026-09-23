@@ -62,6 +62,15 @@ def test_coin_liquidity_and_price_move_preserve_unknown_assessment():
     assert result["assessment"]["contributions"] == []
 
 
+def test_saved_coin_quote_is_named_without_inventing_a_score():
+    result = row("memecoins", coin(price=0.01, observed_at="2026-09-19T12:00:00Z"))
+    assert result["score"] is None
+    assert result["tag"] == ""
+    assert result["assessment"]["status"] == "quote"
+    assert result["assessment"]["label"] == "Market quote"
+    assert result["assessment"]["value"] is None
+
+
 def test_coin_findings_have_sources_and_keep_token_scope():
     findings = [
         {
@@ -80,6 +89,7 @@ def test_coin_findings_have_sources_and_keep_token_scope():
     assert result["drivers"][0]["source_url"] == "https://example.test/tx/1"
     assert result["event_impacts"][0]["score_impact"] is None
     assert result["status"] == "evidence"
+    assert result["label"] == "Chain evidence"
 
 
 def test_unknown_token_identity_keeps_findings_out_of_coin_assessment():

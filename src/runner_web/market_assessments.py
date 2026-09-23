@@ -187,6 +187,23 @@ def assessment(market: str, item: dict[str, Any]) -> dict[str, Any]:
         result["evidence"] = [str(value) for value in prediction.get("evidence") or []]
         return result
 
+    if result["score"] is None:
+        result.update(
+            label="Token evidence",
+            reason="Saved market quotes and chain findings appear here when available.",
+        )
+        price = _number(item.get("price"))
+        if price is not None and price > 0:
+            result.update(
+                status="quote",
+                label="Market quote",
+                reason=(
+                    "Saved price and volume are market data. "
+                    "A scored Runner assessment has its own saved result."
+                ),
+                as_of=item.get("observed_at"),
+            )
+
     # The chain analyzer produces sourced observations and patterns. Their units
     # stay intact; the display adds no new weights or numeric risk estimate.
     findings = item.get("findings") or []
@@ -216,7 +233,11 @@ def assessment(market: str, item: dict[str, Any]) -> dict[str, Any]:
     if result["drivers"] and result["score"] is None:
         result.update(
             status="evidence",
-            label="Saved chain evidence",
+            label="Chain evidence",
+            reason=(
+                "Saved chain findings describe observed transactions. "
+                "Review their source receipts for context."
+            ),
             as_of=max(str(driver.get("observed_at") or "") for driver in result["drivers"]) or None,
         )
     result["event_impacts"] = [{**driver, "score_impact": None} for driver in result["drivers"]]
