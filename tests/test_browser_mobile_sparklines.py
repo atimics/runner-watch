@@ -142,7 +142,7 @@ def open_list(page, rows=None, payload=None, width=390, page_status=None):
     page.route("http://127.0.0.1/**", serve)
     page.set_viewport_size({"width": width, "height": 844})
     page.goto("http://127.0.0.1/")
-    expect(page.locator('.mini-chart[data-history="pending"]')).to_have_count(0)
+    expect(page.locator(".mini-chart").first).not_to_have_attribute("data-history", "pending")
     state["errors"] = errors
     return state
 
@@ -329,7 +329,7 @@ def test_failed_refresh_keeps_saved_history_and_recovers_without_stale_cache(pag
     assert state["errors"] == []
 
 
-def test_new_row_receives_history_and_removed_ticker_does_not_distort_scale(page):
+def test_new_row_receives_history_without_unlisted_outlier_distorting_scale(page):
     page.clock.install()
     state = open_list(
         page,
@@ -342,9 +342,7 @@ def test_new_row_receives_history_and_removed_ticker_does_not_distort_scale(page
     page.clock.fast_forward(61000)
     expect(page.locator(".mini-chart.loaded")).to_have_count(2)
     expect(page.locator('.mini-chart[data-ticker="NEW"]')).to_have_class(re.compile("falling"))
-    assert (
-        page.locator('.mini-chart[data-ticker="TEST"] .mini-chart-line').get_attribute("d") != old
-    )
+    assert page.locator('.mini-chart[data-ticker="TEST"] .mini-chart-line').get_attribute("d") == old
     assert state["chart_requests"] == 2
 
 
@@ -373,6 +371,11 @@ def test_charts_load_for_rows_after_the_first_fifty(page):
         }
     }
     state = open_list(page, rows, payload)
+    assert state["chart_requests"] == 1
+    expect(page.locator('.mini-chart[data-ticker="STK52"]')).to_have_attribute(
+        "data-history", "pending"
+    )
+    page.locator('.mini-chart[data-ticker="STK52"]').scroll_into_view_if_needed()
     expect(page.locator('.mini-chart[data-history="available"]')).to_have_count(53)
     expect(page.locator('.mini-chart[data-ticker="STK52"]')).to_have_attribute(
         "data-history", "available"
@@ -398,13 +401,14 @@ def test_later_chart_page_failure_keeps_earlier_charts_and_retries(page):
         }
     }
     state = open_list(page, rows, payload, page_status={50: 503})
+    page.locator('.mini-chart[data-ticker="STK52"]').scroll_into_view_if_needed()
     expect(page.locator('.mini-chart[data-history="available"]')).to_have_count(50)
     expect(page.locator('.mini-chart[data-history="unavailable"]')).to_have_count(3)
     state["page_status"][50] = 200
     page.clock.fast_forward(5100)
     expect(page.locator('.mini-chart[data-history="available"]')).to_have_count(53)
     state["page_status"][50] = 503
-    page.evaluate("TickerRow.loadCharts('/api/pulse/charts')")
+    page.evaluate("TickerRow.loadCharts('/api/pulse/charts', 50, true)")
     expect(page.locator('.mini-chart[data-history="available"]')).to_have_count(50)
     expect(page.locator('.mini-chart[data-history="stale"]')).to_have_count(3)
     assert state["errors"] == []
