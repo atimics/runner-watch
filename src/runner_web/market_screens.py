@@ -175,10 +175,26 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
     if address:
         subtitle = address[:6] + "…" + address[-4:]
     indicator = stock_indicator(item) if market == "stocks" else None
+    policy = item.get("eligibility") if market == "stocks" else None
+    assessment_stale = isinstance(policy, dict) and any(
+        isinstance(reason, dict) and reason.get("code") == "stale_quote"
+        for reason in policy.get("reasons") or []
+    )
+    assessment_quote = stamp(item.get("quote_as_of")) if market == "stocks" else ""
     return {
         **(
             {"indicator": indicator, "verified": indicator["verification"]["verified"]}
             if indicator
+            else {}
+        ),
+        **(
+            {
+                "assessment_stale": assessment_stale,
+                "assessment_quote_label": (
+                    f"Assessment used price from {assessment_quote}" if assessment_quote else ""
+                ),
+            }
+            if market == "stocks"
             else {}
         ),
         "id": identifier,
@@ -315,6 +331,9 @@ def listing(
         "query": query,
         "total": len(rows),
         "counts": counts,
+        "stale_assessments": (
+            sum(bool(entry.get("assessment_stale")) for entry in rows) if market == "stocks" else 0
+        ),
         "updated_at": updated_at,
         "updated_label": ago(updated_at) if updated_at else "",
     }

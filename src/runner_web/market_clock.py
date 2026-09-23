@@ -85,8 +85,10 @@ def market_clock(moment: datetime | None = None) -> dict[str, Any]:
         "countdown_seconds": max(0, int((next_at - current).total_seconds())),
         "scanner_active": scanner_active,
         "data_note": (
-            "Scanner collecting delayed extended-hours data"
-            if scanner_active
+            "Scanner collecting regular-hours data; quotes may be delayed"
+            if session == "regular"
+            else "Scanner collecting delayed extended-hours data"
+            if session in {"pre", "after"}
             else "Overnight access is broker-dependent; scanner resumes at 4:00 ET"
         ),
         "hours": [

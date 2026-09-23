@@ -149,6 +149,31 @@ def test_list_exposes_score_and_breakdown_without_internal_fields():
     assert SENTINEL not in html
 
 
+def test_old_assessment_price_is_explained_on_list_and_detail():
+    item = scored_stock(
+        trade_state="WATCH",
+        stage="WATCH",
+        eligibility={
+            "state": "unknown",
+            "reasons": [{"code": "stale_quote", "label": "Quote is not current"}],
+        },
+        eligibility_note="Quote is not current",
+        quote_as_of="2026-09-23T14:15:00Z",
+        quote_time="2026-09-23T14:38:00Z",
+    )
+    board = listing("stocks", [item])
+    assert board["stale_assessments"] == 1
+    assert board["rows"][0]["tag"] == "PAUSED"
+    assert "1 stock assessment uses an older price" in render(board)
+
+    screen = detail("stocks", {"ticker": "OPK", "company": "OPKO Health", "current": item})
+    html = render(screen)
+    assert "PAUSED" in html
+    assert "Quote is not current" in html
+    assert "Assessment used price from Sep 23 · 14:15 UTC" in html
+    assert "Sep 23 · 14:38 UTC" in html
+
+
 def test_stock_glyph_uses_attention_contributions_not_penalty_slices():
     screen = listing("stocks", [scored_stock()])
     html = render(screen)

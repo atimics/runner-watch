@@ -8,12 +8,17 @@ from starlette.requests import Request
 from runner_web import main as web
 
 
-def test_chart_batch_covers_all_fifty_board_candidates_without_per_row_calls(monkeypatch):
+def test_chart_batch_pages_cover_the_whole_board_without_per_row_calls(monkeypatch):
     limits, batches = [], []
 
-    def pulse_data(*, limit):
-        limits.append(limit)
-        return {"rows": [{"ticker": f"STK{i}"} for i in range(limit)]}
+    def pulse_data(*, offset, limit):
+        limits.append((offset, limit))
+        rows = [{"ticker": f"STK{i}"} for i in range(offset, min(offset + limit, 120))]
+        return {
+            "rows": rows,
+            "next_offset": offset + len(rows),
+            "has_more": offset + len(rows) < 120,
+        }
 
     def chart_payload(tickers):
         batches.append(tickers)
@@ -23,10 +28,18 @@ def test_chart_batch_covers_all_fifty_board_candidates_without_per_row_calls(mon
     monkeypatch.setattr(web, "ticker_charts_payload", chart_payload)
     monkeypatch.setattr(web, "enforce_rate", lambda *args, **kwargs: None)
     request = Request({"type": "http", "method": "GET", "path": "/api/pulse/charts", "headers": []})
-    response = asyncio.run(web.pulse_charts_api(request))
-    assert limits == [50]
-    assert len(batches) == 1 and len(batches[0]) == 50
-    assert len(json.loads(response.body)["charts"]) == 50
+    pages = [
+        json.loads(asyncio.run(web.pulse_charts_api(request, offset=offset)).body)
+        for offset in (0, 50, 100)
+    ]
+    assert limits == [(0, 50), (50, 50), (100, 50)]
+    assert [len(batch) for batch in batches] == [50, 50, 20]
+    assert [len(page["charts"]) for page in pages] == [50, 50, 20]
+    assert [(page["next_offset"], page["has_more"]) for page in pages] == [
+        (50, True),
+        (100, True),
+        (120, False),
+    ]
 
 
 def test_warmer_matches_board_chart_batch_and_keeps_five_detail_warms(monkeypatch):

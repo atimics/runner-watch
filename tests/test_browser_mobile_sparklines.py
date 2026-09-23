@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from playwright.sync_api import expect
@@ -125,7 +125,11 @@ def open_list(page, rows=None, payload=None, width=390):
             route.fulfill(content_type="text/html", body=render(listing("stocks", state["rows"])))
         elif path == "/api/pulse/charts":
             state["chart_requests"] += 1
-            route.fulfill(status=state["status"], json=state["payload"])
+            payload = state["payload"]
+            if "pages" in payload:
+                offset = int(parse_qs(urlsplit(route.request.url).query).get("offset", ["0"])[0])
+                payload = payload["pages"].get(offset, {"charts": {}})
+            route.fulfill(status=state["status"], json=payload)
         elif path.startswith("/static/"):
             asset = ROOT / "web/static" / Path(path).name
             content_type = "text/css" if asset.suffix == ".css" else "application/javascript"
@@ -346,6 +350,30 @@ def test_concurrent_chart_refreshes_share_one_request(page):
     state = open_list(page)
     page.evaluate(
         "Promise.all(Array.from({length:8}, () => TickerRow.loadCharts('/api/pulse/charts')))"
+    )
+    assert state["chart_requests"] == 2
+
+
+def test_charts_load_for_rows_after_the_first_fifty(page):
+    rows = [stock(ticker=f"STK{i}") for i in range(53)]
+    payload = {
+        "pages": {
+            0: {
+                "charts": {f"STK{i}": points(10, 11) for i in range(50)},
+                "next_offset": 50,
+                "has_more": True,
+            },
+            50: {
+                "charts": {f"STK{i}": points(10, 11) for i in range(50, 53)},
+                "next_offset": 53,
+                "has_more": False,
+            },
+        }
+    }
+    state = open_list(page, rows, payload)
+    expect(page.locator('.mini-chart[data-history="available"]')).to_have_count(53)
+    expect(page.locator('.mini-chart[data-ticker="STK52"]')).to_have_attribute(
+        "data-history", "available"
     )
     assert state["chart_requests"] == 2
 

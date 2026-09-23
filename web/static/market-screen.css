@@ -450,6 +450,10 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
    the existing state vocabulary and palette, independently of price direction.
    Desktop retains its original chip and chart column. One SVG serves both. */
 .market-stocks .ticker-trend{display:block;width:64px;min-width:0}
+.stock-freshness-note{margin:0 0 16px;padding:10px 12px;border-left:2px solid var(--muted);background:var(--panel);color:var(--text);font-size:12px}
+.stock-assessment-note{display:flex;flex-wrap:wrap;gap:4px 9px;align-items:baseline;margin:8px 0 0;color:var(--text);font-size:12px}
+.stock-assessment-note strong{font-size:11px;letter-spacing:.04em}
+.stock-assessment-note small{width:100%;color:var(--muted);font-size:11px}
 .market-stocks .ticker-run-status{display:none}
 .market-stocks .mini-chart{display:block;color:var(--muted)}
 .market-stocks .mini-chart.rising{color:var(--green)}
