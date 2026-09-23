@@ -265,6 +265,29 @@ def _golf_round(competitor: dict[str, Any]) -> tuple[int | None, str, str]:
     return round_number, round_display, through_display
 
 
+def _golf_round_cards(competitor: dict[str, Any]) -> list[dict[str, Any]]:
+    cards = []
+    for raw in competitor.get("linescores") or []:
+        try:
+            number = int(raw.get("period"))
+        except (TypeError, ValueError):
+            continue
+        if not 1 <= number <= 6:
+            continue
+        holes = len(raw.get("linescores") or [])
+        strokes = _number(raw.get("value"))
+        cards.append(
+            {
+                "number": number,
+                "strokes": int(strokes) if strokes is not None and strokes.is_integer() else None,
+                "to_par": str(raw.get("displayValue") or ""),
+                "holes": holes,
+                "complete": holes >= 18,
+            }
+        )
+    return sorted(cards, key=lambda card: card["number"])
+
+
 def normalize_golf_event(event: dict[str, Any]) -> dict[str, Any] | None:
 
     competitions = event.get("competitions") or []
@@ -274,8 +297,33 @@ def normalize_golf_event(event: dict[str, Any]) -> dict[str, Any] | None:
     external_id = str(event.get("id") or "").strip()
     if not external_id:
         return None
+    raw_competitors = competition.get("competitors") or []
+    team_competitors = [
+        competitor
+        for competitor in raw_competitors
+        if competitor.get("type") == "team" or competitor.get("team")
+    ]
+    scoring_format = "match_play" if team_competitors else "stroke_play"
+    teams = []
+    for competitor in team_competitors:
+        team = competitor.get("team") or {}
+        teams.append(
+            {
+                "name": str(
+                    team.get("shortDisplayName")
+                    or team.get("displayName")
+                    or team.get("name")
+                    or "Team"
+                ),
+                "abbreviation": str(team.get("abbreviation") or ""),
+                "points": _number(competitor.get("score")),
+                "points_display": str(competitor.get("score") or "0"),
+            }
+        )
     leaderboard: list[dict[str, Any]] = []
-    for competitor in competition.get("competitors") or []:
+    for competitor in raw_competitors:
+        if competitor in team_competitors:
+            continue
         athlete = competitor.get("athlete") or {}
         player_id = str(athlete.get("id") or competitor.get("id") or "").strip()
         player_name = str(
@@ -302,6 +350,7 @@ def normalize_golf_event(event: dict[str, Any]) -> dict[str, Any] | None:
                 "through_display": through_display,
                 "round_number": round_number,
                 "round_display": round_display,
+                "rounds": _golf_round_cards(competitor),
             }
         )
     leaderboard.sort(
@@ -311,19 +360,31 @@ def normalize_golf_event(event: dict[str, Any]) -> dict[str, Any] | None:
             item["player_name"],
         )
     )
+    score_positions: dict[float, list[int]] = defaultdict(list)
+    for player in leaderboard:
+        if player["score"] is not None and player["position"] is not None:
+            score_positions[player["score"]].append(player["position"])
+    for player in leaderboard:
+        positions = score_positions.get(player["score"])
+        if positions and len(positions) > 1 and player["position_display"].isdigit():
+            player["position_display"] = f"T{min(positions)}"
     status = (event.get("status") or competition.get("status") or {}).get("type") or {}
     status_state = str(status.get("state") or "pre")
     if status_state not in {"pre", "in", "post"}:
         status_state = "post" if status.get("completed") else "pre"
     venue = competition.get("venue") or event.get("venue") or {}
     address = venue.get("address") or {}
-    start_time = _parse_time(event.get("date") or competition.get("date"))
-    end_time = _parse_time(event.get("endDate") or competition.get("endDate") or event.get("date"))
+    start_time = _parse_time(
+        competition.get("startDate") or competition.get("date") or event.get("date")
+    )
+    end_time = _parse_time(competition.get("endDate") or event.get("endDate") or event.get("date"))
     return {
         "id": f"golf:{external_id}",
         "external_id": external_id,
         "tour": "pga",
         "tour_name": "PGA Tour",
+        "scoring_format": scoring_format,
+        "teams": teams,
         "name": str(event.get("name") or event.get("shortName") or "PGA tournament"),
         "start_time": start_time,
         "end_time": end_time,
@@ -633,7 +694,7 @@ def fetch_golf(at: datetime | None = None) -> list[dict[str, Any]]:
 
     current = (at or datetime.now(UTC)).astimezone(UTC)
     date_range = (
-        f"{current.date() - timedelta(days=4):%Y%m%d}-{current.date() + timedelta(days=14):%Y%m%d}"
+        f"{current.date() - timedelta(days=10):%Y%m%d}-{current.date() + timedelta(days=14):%Y%m%d}"
     )
     locator = f"{GOLF_SOURCE_URL}?dates={date_range}&limit=200"
     started = datetime.now(UTC)
@@ -1299,13 +1360,15 @@ def store_golf_events(
                 """
                 INSERT INTO sports_golf_events(
                     id,provider,external_id,tour,name,start_time,end_time,status,status_detail,
-                    completed,venue,location,source_url,first_collected_at,last_collected_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    completed,venue,location,source_url,first_collected_at,last_collected_at,
+                    scoring_format,teams_json
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
                     name=excluded.name,start_time=excluded.start_time,end_time=excluded.end_time,
                     status=excluded.status,status_detail=excluded.status_detail,
                     completed=excluded.completed,venue=excluded.venue,location=excluded.location,
-                    source_url=excluded.source_url,last_collected_at=excluded.last_collected_at
+                    source_url=excluded.source_url,last_collected_at=excluded.last_collected_at,
+                    scoring_format=excluded.scoring_format,teams_json=excluded.teams_json
                 """,
                 (
                     event["id"],
@@ -1323,10 +1386,12 @@ def store_golf_events(
                     event["source_url"],
                     timestamp,
                     timestamp,
+                    event.get("scoring_format") or "stroke_play",
+                    _json(event.get("teams") or []),
                 ),
             )
             leaderboard = event.get("leaderboard") or []
-            if leaderboard:
+            if leaderboard or event.get("scoring_format") == "match_play":
                 database.execute(
                     "DELETE FROM sports_golf_leaderboard WHERE event_id=?",
                     (event["id"],),
@@ -1336,8 +1401,9 @@ def store_golf_events(
                     """
                     INSERT INTO sports_golf_leaderboard(
                         event_id,player_id,player_name,country,position,position_display,
-                        score,score_display,through_display,round_number,round_display,collected_at
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                        score,score_display,through_display,round_number,round_display,
+                        collected_at,rounds_json
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         event["id"],
@@ -1352,6 +1418,7 @@ def store_golf_events(
                         player["round_number"],
                         player["round_display"],
                         timestamp,
+                        _json(player.get("rounds") or []),
                     ),
                 )
                 entrant_count += 1
@@ -2575,7 +2642,7 @@ def golf_slate(limit: int = 6, leaderboard_limit: int = 10) -> dict[str, Any]:
                      start_time,id LIMIT ?
             """,
             (
-                _iso(current - timedelta(hours=18)),
+                _iso(current - timedelta(days=7)),
                 _iso(current + timedelta(days=28)),
                 max(1, min(limit, 20)),
             ),
@@ -2584,6 +2651,7 @@ def golf_slate(limit: int = 6, leaderboard_limit: int = 10) -> dict[str, Any]:
         entrant_count = 0
         for row in rows:
             event = dict(row)
+            event["teams"] = json.loads(event.pop("teams_json") or "[]")
             count_row = database.execute(
                 "SELECT COUNT(*) AS count FROM sports_golf_leaderboard WHERE event_id=?",
                 (event["id"],),
@@ -2598,7 +2666,11 @@ def golf_slate(limit: int = 6, leaderboard_limit: int = 10) -> dict[str, Any]:
                 """,
                 (event["id"], max(1, min(leaderboard_limit, 25))),
             ).fetchall()
-            event["leaderboard"] = [dict(player) for player in leaders]
+            event["leaderboard"] = []
+            for player in leaders:
+                entry = dict(player)
+                entry["rounds"] = json.loads(entry.pop("rounds_json") or "[]")
+                event["leaderboard"].append(entry)
             event["leader"] = event["leaderboard"][0] if event["leaderboard"] else None
             event["display_status"] = _golf_display_status(event, current)
             events.append(event)
@@ -2619,6 +2691,84 @@ def golf_slate(limit: int = 6, leaderboard_limit: int = 10) -> dict[str, Any]:
         "source_status": str(last_run["status"]) if last_run else "waiting",
         "source_error": str(last_run["error"] or "") if last_run else "",
     }
+
+
+def golf_event(event_id: str) -> dict[str, Any] | None:
+    with connection() as database:
+        row = database.execute(
+            "SELECT * FROM sports_golf_events WHERE id=?", (event_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        event = dict(row)
+        event["teams"] = json.loads(event.pop("teams_json") or "[]")
+        event["leaderboard"] = []
+        for player in database.execute(
+            "SELECT * FROM sports_golf_leaderboard WHERE event_id=? "
+            "ORDER BY CASE WHEN position IS NULL THEN 1 ELSE 0 END, position,player_name",
+            (event_id,),
+        ).fetchall():
+            entry = dict(player)
+            entry["rounds"] = json.loads(entry.pop("rounds_json") or "[]")
+            event["leaderboard"].append(entry)
+    event["leader"] = next(iter(event["leaderboard"]), None)
+    event["display_status"] = _golf_display_status(event, datetime.now(UTC))
+    return event
+
+
+def golf_market_context(event: dict[str, Any]) -> dict[str, Any]:
+    if event.get("scoring_format") == "match_play":
+        return {"format": "match_play", "teams": event.get("teams") or []}
+
+    players = event.get("leaderboard") or []
+    round_numbers = sorted(
+        {
+            card["number"]
+            for player in players
+            for card in player.get("rounds") or []
+            if card.get("complete") and card.get("strokes") is not None
+        }
+    )
+    rounds = []
+    for number in round_numbers:
+        cards = [
+            (player, card)
+            for player in players
+            for card in player.get("rounds") or []
+            if card["number"] == number and card.get("complete") and card.get("strokes") is not None
+        ]
+        low_strokes = min(card["strokes"] for _, card in cards)
+        low_names = [
+            player["player_name"] for player, card in cards if card["strokes"] == low_strokes
+        ]
+        after_round = []
+        for player in players:
+            complete = {
+                card["number"]: card["strokes"]
+                for card in player.get("rounds") or []
+                if card.get("complete") and card.get("strokes") is not None
+            }
+            if all(previous in complete for previous in range(1, number + 1)):
+                total = sum(complete[previous] for previous in range(1, number + 1))
+                after_round.append((player["player_name"], total))
+        best_total = min((total for _, total in after_round), default=None)
+        rounds.append(
+            {
+                "number": number,
+                "low_strokes": low_strokes,
+                "low_names": low_names,
+                "leader_names": [name for name, total in after_round if total == best_total],
+                "leader_strokes": best_total,
+            }
+        )
+
+    leaders = []
+    if event.get("status") != "pre":
+        scores = [player["score"] for player in players if player.get("score") is not None]
+        if scores:
+            best = min(scores)
+            leaders = [player for player in players if player.get("score") == best]
+    return {"format": "stroke_play", "leaders": leaders, "rounds": rounds}
 
 
 def sports_slate(league: str = "all", limit: int = 80) -> dict[str, Any]:

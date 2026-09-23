@@ -76,6 +76,8 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         from runner_web.sports import _golf_display_status
 
         leader = item.get("leader") or next(iter(item.get("leaderboard") or []), {})
+        match_play = item.get("scoring_format") == "match_play"
+        teams = item.get("teams") or []
         event_status = _golf_display_status(item, datetime.now(UTC))
         rating = assessment(market, item)
         saved_tag, saved_tone, saved_risk = state_tag(item)
@@ -84,11 +86,20 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": str(item["id"]),
             "name": str(item.get("name") or "Tournament"),
-            "subtitle": "PGA Tour",
-            "value": str(leader.get("score_display") or leader.get("score") or "—"),
+            "subtitle": (
+                " vs ".join(str(team.get("name") or "Team") for team in teams)
+                if match_play and teams
+                else str(leader.get("player_name") or "PGA Tour")
+            ),
+            "value": (
+                "–".join(str(team.get("points_display") or "0") for team in teams[:2])
+                if match_play and len(teams) >= 2
+                else str(leader.get("score_display") or leader.get("score") or "—")
+            ),
             "change": event_status,
             "event_status": event_status,
             "assessment": rating,
+            "research_label": "Team points" if match_play else "Round scores",
             "tone": "neutral",
             "time": stamp(item.get("start_time")),
             "href": "/game/" + quote(str(item["id"]), safe=":"),
@@ -289,7 +300,13 @@ def _search_text(market: str, source: dict[str, Any], display: dict[str, Any]) -
         )
     else:
         return text
-    return text + " " + " ".join(str(source.get(key) or "") for key in fields)
+    text += " " + " ".join(str(source.get(key) or "") for key in fields)
+    if market == "sports" and str(source.get("id") or "").startswith("golf:"):
+        text += " " + " ".join(
+            str(player.get("player_name") or "") for player in source.get("leaderboard") or []
+        )
+        text += " " + " ".join(str(team.get("name") or "") for team in source.get("teams") or [])
+    return text
 
 
 def listing(
