@@ -1,4 +1,4 @@
-{% from '_stock_indicator.html' import indicator_glyph, verified_check, indicator_legend %}
+{% from '_stock_indicator.html' import indicator_glyph, verified_check, indicator_legend, sentiment_reading %}
 {% macro score_pie(item) -%}
 {%- if item.indicator is defined -%}
 {{ indicator_glyph(item) }}
@@ -93,7 +93,7 @@
       <div class="ticker-list market-{{ screen.market }}" data-tag-list aria-label="{{ 'Events' if screen.market == 'sports' else 'Tokens' if screen.market == 'memecoins' else 'Tickers' }}">{% for item in screen.rows %}<a class="ticker{% if item.announced %} is-new{% endif %}" href="{{ item.href }}" data-tag="{{ item.tag_tone }}"{% if screen.market == 'stocks' %} data-chart-offset="{{ item.chart_offset }}"{% endif %}{% if item.eligibility_note %} title="{{ item.eligibility_note }}"{% endif %}>
         {% if item.tag %}<span class="tag tag-{{ item.tag_tone }}{% if item.risk %} has-risk{% endif %}">{% if item.risk %}<i aria-hidden="true">▲</i>{% endif %}{{ item.tag }}</span>
         {% else %}<span class="ticker-mark tone-{{ loop.index0 % 5 }}" aria-hidden="true">{{ item.mark }}</span>{% endif %}
-        <span class="ticker-name">{% if screen.market == "stocks" %}<span class="ticker-symbol"><strong>{{ item.name }}</strong>{{ verified_check(item) }}</span>{% else %}<strong>{{ item.name }}</strong>{% endif %}<small{% if screen.market == 'memecoins' and item.contract_address %} title="{{ item.contract_address }}"{% endif %}>{{ item.subtitle }}</small></span>
+        <span class="ticker-name">{% if screen.market == "stocks" %}<span class="ticker-symbol"><strong>{{ item.name }}</strong>{{ verified_check(item) }}</span>{% else %}<strong>{{ item.name }}</strong>{% endif %}<small{% if screen.market == 'memecoins' and item.contract_address %} title="{{ item.contract_address }}"{% endif %}>{{ item.subtitle }}</small>{% if item.indicator is defined %}{{ sentiment_reading(item) }}{% endif %}</span>
         <span class="ticker-value"><strong>{{ item.value }}</strong><small class="{{ item.tone }}">{{ item.change }}</small></span>
         {% if screen.market == 'stocks' %}<span class="ticker-trend">
           <svg class="mini-chart" data-ticker="{{ item.name }}" data-history="pending" viewBox="0 0 64 18" preserveAspectRatio="none" role="img" aria-label="{{ item.name }}: price history loading"><text class="mini-chart-empty" x="32" y="12" text-anchor="middle">—</text></svg>

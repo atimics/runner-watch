@@ -273,7 +273,9 @@ def test_map_uses_the_shared_three_slice_contract_and_no_summary_card(page, widt
     expect(page.locator(".map-center-score")).to_have_text("45")
     expect(page.get_by_text("Indicator key", exact=True)).to_have_count(1)
     assert page.locator(".indicator-legend").get_attribute("open") is None
-    expect(page.locator(".map-glyph-reading")).to_contain_text("Filing sentiment: Unknown")
+    expect(page.locator(".map-glyph-reading")).to_contain_text(
+        "Filing sentiment: bullish/bearish split unavailable"
+    )
 
 
 def ring_point(segment):
@@ -334,11 +336,13 @@ def test_components_and_metadata_share_filing_selection_without_mixing_units(pag
     expect(page.locator("[data-event-id][aria-pressed=true]")).to_have_count(0)
     expect(page.locator(".chart-filing-marker")).to_have_count(0)
     if key == "risk":
-        expect(selection.locator(".map-risk-reading")).to_contain_text("High structural risk")
+        expect(selection.locator(".map-risk-reading")).to_contain_text(
+            "Risk factors detected in saved checks"
+        )
         expect(selection.locator(".map-score-breakdown")).to_have_count(0)
     if key == "sentiment":
         expect(selection.locator(".map-sentiment-reading")).to_contain_text(
-            "Positive filing sentiment"
+            "100% bullish, 0% bearish"
         )
         expect(selection.locator(".map-score-breakdown")).to_have_count(0)
     page.get_by_role("button", name="Next filings").click()
@@ -390,7 +394,7 @@ def test_zero_and_missing_attention_remain_distinct_inside_map(page, score, mix)
     expect(page.locator(".map-score-segment")).to_have_count(0)
     expect(page.locator(".map-score-track")).to_have_count(1)
     expect(page.locator(".map-glyph-risk")).to_have_attribute(
-        "aria-label", "Risk: High. Show risk assessment."
+        "aria-label", "Risk factors detected in saved checks. Show risk factors."
     )
     expect(page.locator(".map-glyph-empty")).to_have_text(
         "No attention contributions." if score == 0 else "Attention breakdown unavailable."
@@ -461,7 +465,9 @@ def test_attention_bands_have_two_sizes_and_true_solid_geometry(page, width, tmp
         expect(page.locator(".map-glyph")).to_have_attribute(
             "data-band", "1" if score < 40 else "2" if score < 70 else "3"
         )
-        expect(page.locator(".map-glyph-sentiment")).to_have_css("stroke", "rgb(165, 229, 185)")
+        expect(page.locator('[data-sentiment-side="bullish"]')).to_have_css(
+            "stroke", "rgb(165, 229, 185)"
+        )
         expect(page.locator(".map-risk-dot")).to_have_css("fill", "rgb(239, 153, 164)")
         if score >= 70:
             expect(page.locator(".map-glyph-hole")).to_have_count(0)
@@ -476,12 +482,13 @@ def test_attention_bands_have_two_sizes_and_true_solid_geometry(page, width, tmp
 
 
 @pytest.mark.parametrize(
-    "risk,expected", [(10, "low"), (30, "medium"), (68, "high"), (None, "unknown")]
+    "risk,expected",
+    [(0, "none"), (10, "detected"), (30, "detected"), (68, "detected"), (None, "unknown")],
 )
 def test_map_center_uses_risk_marker_not_a_penalty_slice(page, risk, expected):
     open_map(page, current=score_current(rug_score=risk))
     expect(page.locator(".map-glyph")).to_have_attribute("data-risk", expected)
-    expect(page.locator(".map-risk-dot")).to_have_count(0 if expected == "low" else 1)
+    expect(page.locator(".map-risk-dot")).to_have_count(0 if expected == "none" else 1)
     expect(page.locator(".map-risk-unknown")).to_have_count(int(expected == "unknown"))
     expect(page.locator(".map-score-segment")).to_have_count(2)
 
@@ -535,7 +542,7 @@ def test_live_refresh_preserves_wallets_selection_and_updates_metadata_only(page
     source.update(sentiment="risk", rug_score=68)  # Same attention and mix; metadata must refresh.
     poll()
     expect(page.locator(".map-glyph")).to_have_attribute("data-sentiment", "negative")
-    expect(page.locator(".map-glyph")).to_have_attribute("data-risk", "high")
+    expect(page.locator(".map-glyph")).to_have_attribute("data-risk", "detected")
     expect(page.locator("[data-map-selection] h3")).to_have_text(title)
     assert page.evaluate("window.savedPerson === document.querySelector('[data-person]')")
     risk = page.locator('[data-score-key="risk"]')
@@ -544,7 +551,9 @@ def test_live_refresh_preserves_wallets_selection_and_updates_metadata_only(page
     poll()
     expect(risk).to_be_focused()
     expect(risk).to_have_attribute("aria-pressed", "true")
-    expect(page.locator(".map-risk-reading")).to_contain_text("Medium structural risk")
+    expect(page.locator(".map-risk-reading")).to_contain_text(
+        "Risk factors detected in saved checks"
+    )
     source.update(rug_score=0)
     poll()
     expect(risk).to_have_count(0)
@@ -713,7 +722,7 @@ def test_inline_interests_link_to_stocks_and_keep_one_chart(page, width, tmp_pat
     )
     links = page.locator("[data-interest]")
     expect(links).to_have_count(2)
-    expect(page.locator("[data-stock-map] svg")).to_have_count(1)
+    expect(page.locator("[data-stock-map] svg[data-map-graph]")).to_have_count(1)
     expect(page.locator("[data-map-connections], [data-stock-map] select")).to_have_count(0)
     expect(page.locator('[data-interest][href="/stock/BIG"] .map-interest-edge')).to_have_count(2)
     expect(page.locator('[data-interest][href="/stock/SMALL"] .map-interest-edge')).to_have_count(2)
@@ -752,7 +761,7 @@ def test_attention_badges_exclude_penalties_and_filing_notes_are_visible(page, w
     expect(page.locator(".map-score-legend li")).to_contain_text("Market")
     expect(page.locator(".map-score-legend li")).to_contain_text("+51.9 pts")
     expect(page.locator(".map-score-penalties")).to_have_count(0)
-    expect(page.locator(".map-glyph-reading")).to_contain_text("Risk:")
+    expect(page.locator(".map-glyph-reading")).to_contain_text("Risk factor checks unavailable")
     source = page.locator(".map-source")
     assert source.bounding_box()["height"] < 100
     assert source.evaluate("el => getComputedStyle(el).backgroundColor") == "rgba(0, 0, 0, 0)"
@@ -824,7 +833,9 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
 
     request = _request()
     rows = [{**score_current(score=score), "ticker": ticker} for ticker in ["USO", "CDTG"]]
-    rows[0].update(rug_score=68, sentiment="positive")
+    rows[0].update(
+        rug_score=68, sentiment="positive", sentiment_counts={"bullish": 3, "bearish": 1}
+    )
     rows[1].update(score=80, score_detail=None)
     events = [
         {
@@ -940,7 +951,7 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
         link = page.locator(f'[data-entity-stock="{ticker}"]')
         row_glyph = page.locator(f'.ticker[href="/stock/{ticker}"] .indicator-glyph')
         face = link.locator(".map-glyph")
-        for name in ["band", "sentiment", "risk", "mix"]:
+        for name in ["band", "sentiment", "sentiment-mix", "risk", "mix"]:
             expect(face).to_have_attribute("data-" + name, row_glyph.get_attribute("data-" + name))
         assert row_glyph.get_attribute("aria-label") in link.get_attribute("aria-label")
         expect(link.locator('[role="button"], [tabindex]')).to_have_count(0)
@@ -961,7 +972,17 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
         page.get_by_text("Ring size follows the reported holding value", exact=False)
     ).to_be_visible()
     expect(wheel.locator(".map-risk-dot")).to_have_css("fill", "rgb(239, 153, 164)")
-    expect(wheel.locator(".map-glyph-sentiment")).to_have_css("stroke", "rgb(165, 229, 185)")
+    expect(wheel.locator('[data-sentiment-side="bullish"]')).to_have_css(
+        "stroke", "rgb(165, 229, 185)"
+    )
+    expect(wheel.locator('[data-sentiment-side="bullish"]')).to_have_attribute("data-share", "0.75")
+    expect(wheel.locator('[data-sentiment-side="bearish"]')).to_have_attribute("data-share", "0.25")
+    expect(page.locator('[data-entity-stock="USO"] .map-sentiment-label')).to_have_text(
+        "▲75% / ▼25%"
+    )
+    expect(page.locator('[data-entity-stock="CDTG"] .map-sentiment-label')).to_have_text("▲— / ▼—")
+    expect(wheel.locator(".map-sentiment-pattern")).to_have_count(1)
+    expect(wheel.locator("path.map-risk-dot")).to_have_attribute("data-risk-shape", "diamond")
     expect(wheel.locator('[data-score-key="rug"]')).to_have_count(0)
     unknown = page.locator('[data-entity-stock="CDTG"]')
     expect(unknown.locator(".map-risk-unknown")).to_have_text("?")
@@ -1073,3 +1094,124 @@ def test_source_failure_can_retry_and_reported_names_are_text(page):
     page.locator(f'[data-edge-event="{payload["events"][-1]["id"]}"]').dispatch_event("click")
     expect(page.locator("[data-map-selection] h3")).to_have_text("<img src=x onerror=alert(1)>")
     expect(page.locator("[data-map-selection] img")).to_have_count(0)
+
+
+@pytest.mark.parametrize("width", [320, 390, 1280])
+def test_sentiment_ratio_refresh_preserves_focus_and_clears_to_dashed(page, width):
+    from runner_web.stock_indicator import stock_indicator
+
+    page.clock.install()
+    source = score_current(sentiment="positive", sentiment_counts={"bullish": 3, "bearish": 1})
+    open_map(page, width, current=source)
+    glyph = page.locator(".map-glyph")
+    control = glyph.locator('[data-score-key="sentiment"]')
+    control.press("Enter")
+    screen = page.locator("#screenData").evaluate("node => JSON.parse(node.textContent)")
+    page.route("**/api/screens/**", lambda route: route.fulfill(json=screen))
+    for bullish, bearish in [(3, 1), (1, 3), (0, 0)]:
+        source["sentiment_counts"] = {"bullish": bullish, "bearish": bearish}
+        screen["item"]["indicator"] = stock_indicator(source)
+        with page.expect_response("**/api/screens/**"):
+            page.clock.fast_forward(60000)
+        expect(control).to_be_focused()
+        expect(control).to_have_attribute("aria-pressed", "true")
+        if bullish + bearish:
+            expect(glyph.locator(".map-sentiment-pattern")).to_have_count(1)
+            share = bullish / (bullish + bearish)
+            green = glyph.locator('[data-sentiment-side="bullish"]')
+            red = glyph.locator('[data-sentiment-side="bearish"]')
+            expect(green).to_have_attribute(
+                "stroke-dasharray", f"{share * 100:g} {100 - share * 100:g}"
+            )
+            expect(red).to_have_attribute("stroke-dashoffset", f"{-share * 100:g}")
+            expect(green).to_have_css("stroke", "rgb(165, 229, 185)")
+            expect(red).to_have_css("stroke", "rgb(239, 153, 164)")
+            expect(control).to_have_attribute("aria-label", re.compile(f"{share:.0%} bullish"))
+        else:
+            expect(glyph.locator(".map-sentiment-part")).to_have_count(0)
+            expect(glyph.locator(".map-sentiment-pattern")).to_have_count(0)
+            expect(control).to_have_css("stroke-dasharray", "7px, 6px")
+            expect(page.locator(".map-sentiment-reading")).to_contain_text("split unavailable")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+@pytest.mark.parametrize("forced", ["none", "active"])
+@pytest.mark.parametrize("score", [24, 80])
+def test_patterned_map_preserves_slice_hit_targets_and_high_contrast_readings(
+    page, width, forced, score, tmp_path
+):
+    page.emulate_media(forced_colors=forced)
+    open_map(
+        page,
+        width,
+        current=score_current(
+            score=score,
+            score_components={"market": 40, "sec_event": 35, "social_search": 25},
+            sentiment_counts={"bullish": 3, "bearish": 1},
+            rug_score=75,
+        ),
+    )
+    glyph = page.locator(".map-glyph")
+    expect(glyph.locator(".map-score-pattern")).to_have_count(2)
+    expect(glyph.locator(".map-score-divider")).to_have_count(3)
+    expect(glyph.locator(".map-sentiment-pattern")).to_have_count(1)
+    expect(glyph.locator("path.map-risk-dot")).to_have_attribute("data-risk-shape", "diamond")
+    if forced == "active":
+        marker = glyph.locator(".map-risk-dot").evaluate("el => getComputedStyle(el).fill")
+        ink = glyph.locator(".map-pattern-line").evaluate("el => getComputedStyle(el).stroke")
+        assert marker != ink
+        expect(glyph.locator(".map-center-text")).to_have_css("fill", marker)
+        expect(glyph.locator(".map-center-score")).to_have_css("fill", marker)
+        swatch = page.locator('.map-score-swatch[data-pattern="evidence"]')
+        expect(swatch).to_have_css("background-color", marker)
+        assert "gradient" in swatch.evaluate(
+            "el => getComputedStyle(el, '::after').backgroundImage"
+        )
+        glyph.screenshot(path=str(tmp_path / f"forced-colors-{width}-{score}.png"))
+    else:
+        expect(glyph.locator(".map-risk-dot")).to_have_css("fill", "rgb(239, 153, 164)")
+    for key in ["evidence", "social"]:
+        overlay = glyph.locator(f'.map-score-pattern[data-pattern="{key}"]')
+        expect(overlay).to_have_css("pointer-events", "none")
+        assert overlay.get_attribute("tabindex") is None
+        segment = glyph.locator(f'[data-score-key="{key}"]')
+        segment.scroll_into_view_if_needed()
+        # Read the actual rendered slice and click inside its colored/patterned area.
+        point = segment.evaluate("""(el) => {
+            const g = el.closest('.map-glyph');
+            const ring = g.querySelector('.map-glyph-sentiment');
+            const cx = +ring.getAttribute('cx'), cy = +ring.getAttribute('cy');
+            const r = +ring.getAttribute('r') - 6;
+            const share = el.dataset.scoreKey === 'evidence' ? .575 : .875;
+            const a = share*2*Math.PI-Math.PI/2;
+            const radius = g.dataset.band === '3' ? r*.65 : r - (innerWidth <= 500 ? 8 : 10);
+            const point = new DOMPoint(cx+radius*Math.cos(a),cy+radius*Math.sin(a));
+            const p = point.matrixTransform(el.getScreenCTM());
+            return {x:p.x,y:p.y};
+        }""")
+        page.mouse.click(**point)
+        expect(segment).to_have_attribute("aria-pressed", "true")
+        expect(page.locator(".map-score-breakdown")).to_contain_text(
+            "35%" if key == "evidence" else "25%"
+        )
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+def test_detected_factor_details_refresh_while_selected(page):
+    from runner_web.stock_indicator import stock_indicator
+
+    page.clock.install()
+    source = score_current(rug_score=0, risks=["Wide spread"])
+    open_map(page, current=source)
+    risk = page.locator('[data-score-key="risk"]')
+    risk.press("Enter")
+    expect(page.locator(".map-risk-factors")).to_have_text("Wide spread")
+    screen = page.locator("#screenData").evaluate("node => JSON.parse(node.textContent)")
+    screen["item"]["indicator"] = stock_indicator({**source, "risks": ["Thin trading volume"]})
+    page.route("**/api/screens/**", lambda route: route.fulfill(json=screen))
+    with page.expect_response("**/api/screens/**"):
+        page.clock.fast_forward(60000)
+    expect(page.locator(".map-risk-factors")).to_have_text("Thin trading volume")
+    expect(risk).to_be_focused()
+    expect(risk).to_have_attribute("aria-pressed", "true")

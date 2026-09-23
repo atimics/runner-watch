@@ -138,7 +138,7 @@ def test_token_glyph_shares_stock_shapes_and_opens_each_reading(page: Page, widt
     glyph = page.locator(".map-glyph")
     expect(glyph).to_have_attribute("data-band", band)
     expect(glyph).to_have_attribute("data-sentiment", "negative")
-    expect(glyph).to_have_attribute("data-risk", "medium")
+    expect(glyph).to_have_attribute("data-risk", "detected")
     expect(glyph.locator(".map-score-segment")).to_have_count(3)
     segment = glyph.locator('[data-score-key="evidence"]')
     assert segment.evaluate("el => getComputedStyle(el).fill") == (
@@ -154,17 +154,19 @@ def test_token_glyph_shares_stock_shapes_and_opens_each_reading(page: Page, widt
     risk = glyph.locator('[data-score-key="risk"]')
     expect(risk).to_be_focused()
     risk.press("Space")
-    expect(panel).to_contain_text("Medium risk from the saved assessment.")
+    expect(panel).to_contain_text("Risk factors detected in saved checks.")
     risk.press("ArrowLeft")
     tone = glyph.locator('[data-score-key="sentiment"]')
     expect(tone).to_be_focused()
     tone.press("Enter")
-    expect(panel).to_contain_text("Negative chain evidence tone from the saved assessment.")
+    expect(panel).to_contain_text(
+        "0% bullish, 100% bearish. Saved chain evidence tone assessments."
+    )
     tone.press("Escape")
     expect(page.locator(".map-score-center")).to_be_focused()
     expect(page.locator("[data-replay-score-return]")).to_be_hidden()
     page.get_by_text("Indicator key", exact=True).click()
-    expect(page.get_by_text("Blue: market. Purple: chain evidence.", exact=False)).to_be_visible()
+    expect(page.locator(".indicator-key-group").filter(has_text="Attention")).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert not errors
 
@@ -177,7 +179,7 @@ def test_quote_only_ring_explains_unknown_values(page: Page):
     expect(glyph.locator(".map-risk-unknown")).to_have_text("?")
     glyph.locator('[data-score-key="risk"]').click()
     expect(page.locator("[data-replay-selection]")).to_contain_text(
-        "Risk is awaiting a saved assessment."
+        "Risk factor checks unavailable."
     )
     expect(page.locator("[data-replay-selection]")).to_contain_text("Attention unavailable")
 
@@ -201,7 +203,7 @@ def test_glyph_refresh_preserves_selection_and_clears_removed_assessment(page: P
     expect(risk).to_be_focused()
     expect(risk).to_have_attribute("aria-pressed", "true")
     expect(page.locator(".map-glyph")).to_have_attribute("data-sentiment", "positive")
-    expect(page.locator("[data-replay-selection]")).to_contain_text("High risk")
+    expect(page.locator("[data-replay-selection]")).to_contain_text("Risk factors detected")
     page.route(
         "**/api/screens/**",
         lambda route: route.fulfill(
@@ -212,4 +214,28 @@ def test_glyph_refresh_preserves_selection_and_clears_removed_assessment(page: P
     expect(page.locator(".map-glyph")).to_have_attribute("data-mix", "unknown")
     expect(page.locator(".map-score-segment")).to_have_count(0)
     expect(page.locator("[data-replay-selection]")).to_contain_text("Attention unavailable")
-    expect(page.locator("[data-replay-selection]")).to_contain_text("Risk is awaiting")
+    expect(page.locator("[data-replay-selection]")).to_contain_text(
+        "Risk factor checks unavailable"
+    )
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_token_sentiment_uses_the_shared_proportional_border(page, width):
+    from tests.test_memecoin_indicator import assessed_coin
+
+    open_replay(
+        page,
+        width=width,
+        coin_overrides=assessed_coin(
+            id=COIN["id"], chain_sentiment_counts={"bullish": 1, "bearish": 3}
+        ),
+    )
+    glyph = page.locator(".map-glyph")
+    expect(glyph.locator('[data-sentiment-side="bullish"]')).to_have_attribute(
+        "stroke-dasharray", "25 75"
+    )
+    expect(glyph.locator('[data-sentiment-side="bearish"]')).to_have_attribute(
+        "stroke-dashoffset", "-25"
+    )
+    glyph.locator('[data-score-key="sentiment"]').press("Enter")
+    expect(page.locator("[data-replay-selection]")).to_contain_text("25% bullish, 75% bearish")

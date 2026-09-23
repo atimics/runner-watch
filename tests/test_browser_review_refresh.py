@@ -193,7 +193,7 @@ def test_late_coin_map_uses_latest_score(page):
     page.wait_for_load_state("load")
     expect(page.locator(".map-center-score")).to_have_text("72")
     expect(page.locator(".map-glyph")).to_have_attribute("data-band", "3")
-    expect(page.locator(".map-glyph")).to_have_attribute("data-risk", "medium")
+    expect(page.locator(".map-glyph")).to_have_attribute("data-risk", "detected")
     expect(page.locator(".map-score-segment")).to_have_count(1)
     page.locator(".map-score-segment").first.press("Enter")
     expect(page.locator("[data-replay-selection]")).to_contain_text("80 pts")

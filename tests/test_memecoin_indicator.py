@@ -64,7 +64,7 @@ def test_chain_contribution_has_its_own_saved_basis():
     assert glyph["slices"][1]["label"] == "Chain evidence"
     assert glyph["slices"][1]["share"] == pytest.approx(20 / 58)
     assert glyph["sentiment"] == "negative"
-    assert glyph["risk"] == "medium"
+    assert glyph["risk"] == "detected"
 
 
 def test_saved_driver_fallback_and_known_zero():
@@ -77,9 +77,10 @@ def test_saved_driver_fallback_and_known_zero():
     )
     glyph = memecoin_indicator(coin)
     assert [part["value"] for part in glyph["slices"]] == [0, 58, 0]
-    assert memecoin_indicator(assessed_coin(score=0, score_components={"market": 0}))[
-        "mix_state"
-    ] == "zero"
+    assert (
+        memecoin_indicator(assessed_coin(score=0, score_components={"market": 0}))["mix_state"]
+        == "zero"
+    )
 
 
 def test_list_detail_and_source_are_consistent():
@@ -91,6 +92,22 @@ def test_list_detail_and_source_are_consistent():
     assert coin == original
     html = render(board)
     assert 'class="ticker-score indicator-glyph"' in html
-    assert "Purple: chain evidence" in html
+    assert "Chain evidence" in html and "Purple stripes" in html
     assert "stock-indicator.css" in html
     assert "Verified evidence" not in html
+
+
+def test_chain_sentiment_shares_have_their_own_evidence_basis():
+    coin = assessed_coin(
+        chain_sentiment_counts={"bullish": 1, "bearish": 3},
+        chain_sentiment_basis="Four saved chain assessments",
+        sentiment_counts={"bullish": 100, "bearish": 0},
+    )
+    mix = memecoin_indicator(coin)["sentiment_mix"]
+    assert mix["bullish"] == 0.25
+    assert mix["bearish"] == 0.75
+    assert mix["basis"] == "Four saved chain assessments"
+    assert "25% bullish, 75% bearish" in mix["description"]
+    coin.pop("chain_sentiment_counts")
+    coin.pop("chain_sentiment")
+    assert memecoin_indicator(coin)["sentiment_mix"]["state"] == "unknown"

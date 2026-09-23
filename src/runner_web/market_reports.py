@@ -511,7 +511,7 @@ def _metric_cards(report: dict[str, Any]) -> list[dict[str, Any]]:
             "label": "Median RVOL",
             "value": f"{median_volume:.1f}×" if median_volume is not None else "—",
         },
-        {"label": "High risk", "value": metrics.get("high_risk", 0)},
+        {"label": "Avoid / exit state", "value": metrics.get("high_risk", 0)},
     ]
 
 

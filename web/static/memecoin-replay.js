@@ -14,7 +14,6 @@
   const number = value => value.toLocaleString('en-US', {maximumFractionDigits:2});
   const points = value => `${number(value)} pts`;
   const percent = part => `${number(part.share * 100)}% of attention contributions`;
-  const titleCase = value => value[0].toUpperCase() + value.slice(1);
   const activate = (el, fn) => {el.addEventListener('click',fn); el.addEventListener('keydown',e => {if (['Enter',' '].includes(e.key)) {e.preventDefault();fn();}});};
   function readGlyph() {
     const value = item.indicator || {};
@@ -23,8 +22,9 @@
     glyph = {
       band:allowed(value.band,[1,2,3],1),
       mix:allowed(value.mix_state,['available','zero','unknown'],'unknown'),
+      sentimentMix:window.RatiRingGlyph.readSentiment(value.sentiment_mix),
       sentiment:allowed(value.sentiment,['positive','negative','neutral','unknown'],'unknown'),
-      risk:allowed(value.risk,['low','medium','high','unknown'],'unknown'),
+      risk:allowed(value.risk,['none','detected','significant','unknown'],'unknown'),
     };
     score = finite(value.score) ? number(value.score) : '—';
     const slices = Array.isArray(value.slices) ? value.slices : [];
@@ -36,7 +36,7 @@
     if (glyph.mix !== 'available' || !Number.isFinite(total) || total <= 0) contributions = [];
     contributions.forEach(part => {part.share = part.value / total;});
     controls = [...contributions,{key:'sentiment',label:'Chain evidence tone'}];
-    if (glyph.risk !== 'low') controls.push({key:'risk',label:'Risk'});
+    if (glyph.risk !== 'none') controls.push({key:'risk',label:'Risk factors'});
     if (!controls.some(part => part.key === selectedPart)) selectedPart = null;
   }
   function overview(part) {
@@ -45,15 +45,19 @@
     root.querySelectorAll('[data-replay-event], [data-finding-id]').forEach(b => b.setAttribute('aria-pressed','false'));
     graph.querySelectorAll('[data-score-key]').forEach(b => b.setAttribute('aria-pressed',String(b.dataset.scoreKey === selectedPart)));
     const panel = $('selection'); panel.replaceChildren();
-    panel.append(make('p',`Attention ${score === '—' ? 'unavailable' : score + ' points'} · Chain evidence tone: ${titleCase(glyph.sentiment)} · Risk: ${titleCase(glyph.risk)}`,'map-glyph-reading'));
+    panel.append(make('p',`Attention ${score === '—' ? 'unavailable' : score + ' points'} · Chain evidence tone: ${glyph.sentimentMix.reading} · ${window.RatiRingGlyph.riskReading(glyph.risk)}`,'map-glyph-reading'));
     if (part) {
       panel.append(make('h4',part.label));
-      if (part.key === 'risk') panel.append(make('p',glyph.risk === 'unknown' ? 'Risk is awaiting a saved assessment. The ? marks this gap.' : `${titleCase(glyph.risk)} risk from the saved assessment.`));
-      else if (part.key === 'sentiment') panel.append(make('p',glyph.sentiment === 'unknown' ? 'Chain evidence tone is awaiting a saved assessment. Open the recorded events below to read the receipts.' : `${titleCase(glyph.sentiment)} chain evidence tone from the saved assessment.`));
-      else panel.append(make('p',`${points(part.value)} · ${percent(part)}`,'map-score-breakdown'));
+      if (part.key === 'risk') panel.append(make('p',`${window.RatiRingGlyph.riskReading(glyph.risk)}.`));
+      if (part.key === 'risk' && Array.isArray(item.indicator?.risk_factors) && item.indicator.risk_factors.length) {
+        const factors = make('ul',null,'map-risk-factors');
+        item.indicator.risk_factors.forEach(reason => factors.append(make('li',reason))); panel.append(factors);
+      }
+      if (part.key === 'sentiment') panel.append(make('p',`${glyph.sentimentMix.reading}. ${glyph.sentimentMix.basis}.`));
+      else if (part.key !== 'risk') panel.append(make('p',`${points(part.value)} · ${percent(part)}`,'map-score-breakdown'));
     }
     const list = make('ul',null,'map-score-legend');
-    contributions.forEach(p => {const li = make('li'), dot = make('span',null,'map-score-swatch'); dot.style.background = `var(--indicator-${p.key})`; dot.setAttribute('aria-hidden','true'); li.append(dot,make('span',p.label),make('strong',points(p.value))); list.append(li);});
+    contributions.forEach(p => {const li = make('li'), dot = make('span',null,'map-score-swatch'); dot.style.background = `var(--indicator-${p.key})`; dot.dataset.pattern = p.key; dot.setAttribute('aria-hidden','true'); li.append(dot,make('span',p.label),make('strong',points(p.value))); list.append(li);});
     if (list.children.length) panel.append(list);
     else panel.append(make('p',glyph.mix === 'zero' ? 'Saved attention contributions total zero.' : 'Attention breakdown is awaiting a saved assessment.','map-glyph-empty'));
     if (item.assessment?.reason) panel.append(make('p',item.assessment.reason));
