@@ -197,6 +197,13 @@ def test_old_assessment_price_is_explained_on_list_and_detail():
     assert "Sep 23 · 14:38 UTC" in html
 
 
+def test_stock_search_keeps_the_board_chart_page_offset():
+    items = [{**sample("stocks"), "ticker": f"STK{i}"} for i in range(53)]
+    screen = listing("stocks", items, query="STK52")
+    assert screen["rows"][0]["chart_offset"] == 50
+    assert 'data-chart-offset="50"' in render(screen)
+
+
 def test_stock_glyph_uses_attention_contributions_not_penalty_slices():
     screen = listing("stocks", [scored_stock()])
     html = render(screen)

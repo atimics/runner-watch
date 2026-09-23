@@ -306,6 +306,9 @@ def listing(
 
     _ = view, graph  # Kept so saved links keep working; the map lives on the ticker page now.
     rows = [row(market, item) for item in items]
+    if market == "stocks":
+        for index, entry in enumerate(rows):
+            entry["chart_offset"] = (index // 50) * 50
     query = query.strip()[:80]
     if query:
         rows = [

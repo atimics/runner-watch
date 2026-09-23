@@ -301,12 +301,16 @@
     chartSummary(svg, scope);
   }
 
-  let chartRequest = null, chartRefreshFailed = false;
+  const chartRequests = new Map(), chartLoadedAt = new Map(), chartAttemptedAt = new Map();
+  const chartFailures = new Set(), chartRetries = new Set(), chartRetryTimers = new Map();
+  let chartObserver = null;
   function paintCharts(root = document) {
     const domain = sharedChartDomain();
     root.querySelectorAll('.mini-chart[data-ticker]').forEach(svg => {
+      const ticker = svg.dataset.ticker;
+      if (!chartCache.has(ticker) && svg.dataset.history === 'pending' && !chartFailures.has(ticker)) return;
       drawMiniChart(svg, chartCache.get(svg.dataset.ticker), annotationCache.get(svg.dataset.ticker), domain);
-      if (chartRefreshFailed && svg.classList.contains('loaded')) {
+      if (chartFailures.has(ticker) && svg.classList.contains('loaded')) {
         svg.dataset.history = 'stale';
         const label = svg.getAttribute('aria-label') + '. Refresh unavailable; showing saved history.';
         svg.setAttribute('aria-label', label);
@@ -315,44 +319,87 @@
     });
   }
 
-  // Read the board in bounded pages. Keep saved charts until every page arrives.
-  // Coalesce refreshes so one list update cannot start several chart walks.
-  function loadCharts(url) {
-    if (chartRequest) return chartRequest;
+  function pageTickers(offset) {
+    return [...document.querySelectorAll(`.market-stocks .ticker[data-chart-offset="${offset}"] .mini-chart[data-ticker]`)]
+      .map(svg => svg.dataset.ticker);
+  }
+
+  // Load the first page at once. Fetch later pages only as their rows enter view.
+  function observeCharts(url) {
+    chartObserver?.disconnect();
+    const rows = [...document.querySelectorAll('.market-stocks .ticker[data-chart-offset]')];
+    const visible = new Set(rows.map(row => row.querySelector('.mini-chart')?.dataset.ticker).filter(Boolean));
+    for (const ticker of chartCache.keys()) {
+      if (!visible.has(ticker)) { chartCache.delete(ticker); annotationCache.delete(ticker); chartFailures.delete(ticker); }
+    }
+    if (!('IntersectionObserver' in window)) {
+      [...new Set(rows.map(row => Number(row.dataset.chartOffset)))].filter(offset => offset > 0)
+        .reduce((ready, offset) => ready.then(() => loadCharts(url, offset)), Promise.resolve());
+      return;
+    }
+    chartObserver = new IntersectionObserver(entries => {
+      const offsets = new Set();
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        const offset = Number(entry.target.dataset.chartOffset);
+        if (Number.isInteger(offset) && offset > 0) offsets.add(offset);
+      });
+      offsets.forEach(offset => loadCharts(url, offset));
+    }, {rootMargin:'240px'});
+    rows.forEach(row => chartObserver.observe(row));
+  }
+
+  function loadCharts(url, offset = 0, force = false) {
+    if (offset === 0) observeCharts(url);
+    if (chartRequests.has(offset)) return chartRequests.get(offset);
+    const tickers = pageTickers(offset);
+    if (!tickers.length) return Promise.resolve();
+    const current = Date.now();
+    if (offset > 0 && !force && tickers.every(ticker => chartCache.has(ticker)) &&
+        current - (chartLoadedAt.get(offset) || 0) < 60000) return Promise.resolve();
+    if (offset > 0 && !force && current - (chartAttemptedAt.get(offset) || 0) < 60000) return Promise.resolve();
+    const retryTimer = chartRetryTimers.get(offset);
+    if (retryTimer) { clearTimeout(retryTimer); chartRetryTimers.delete(offset); }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 25000);
-    chartRequest = (async () => {
+    const request = (async () => {
+      chartAttemptedAt.set(offset, current);
       try {
-        const nextCharts = new Map(), nextAnnotations = new Map();
-        let offset = 0, pages = 0, hasMore = false;
-        do {
-          const target = new URL(url, window.location.href);
-          if (offset) target.searchParams.set('offset', String(offset));
-          const response = await fetch(target, {signal:controller.signal});
-          if (!response.ok || response.redirected) throw new Error('Chart refresh unavailable');
-          const data = await response.json();
-          if (!data || !data.charts || typeof data.charts !== 'object' || Array.isArray(data.charts)) throw new Error('Invalid chart payload');
-          Object.entries(data.charts).slice(0, 50).forEach(([ticker, points]) => nextCharts.set(ticker, points));
-          Object.entries(data.annotations || {}).forEach(([ticker, annotations]) => {
-            if (nextCharts.has(ticker)) nextAnnotations.set(ticker, annotations);
-          });
-          hasMore = data.has_more === true;
-          if (hasMore) {
-            const nextOffset = Number(data.next_offset);
-            if (!Number.isInteger(nextOffset) || nextOffset <= offset || ++pages >= 20) {
-              throw new Error('Invalid chart page');
-            }
-            offset = nextOffset;
-          }
-        } while (hasMore);
-        chartCache.clear(); annotationCache.clear();
-        nextCharts.forEach((points, ticker) => chartCache.set(ticker, points));
-        nextAnnotations.forEach((annotations, ticker) => annotationCache.set(ticker, annotations));
-        chartRefreshFailed = false;
-      } catch (_) { chartRefreshFailed = true; }
-      finally { clearTimeout(timer); chartRequest = null; paintCharts(); }
+        const target = new URL(url, window.location.href);
+        if (offset) target.searchParams.set('offset', String(offset));
+        const response = await fetch(target, {signal:controller.signal});
+        if (!response.ok || response.redirected) throw new Error('Chart refresh unavailable');
+        const data = await response.json();
+        if (!data || !data.charts || typeof data.charts !== 'object' || Array.isArray(data.charts)) throw new Error('Invalid chart payload');
+        const returned = new Set();
+        const wanted = new Set(tickers);
+        Object.entries(data.charts).slice(0, 50).forEach(([ticker, points]) => {
+          if (!wanted.has(ticker)) return;
+          returned.add(ticker);
+          chartCache.set(ticker, points);
+          annotationCache.delete(ticker);
+          if (Object.hasOwn(data.annotations || {}, ticker)) annotationCache.set(ticker, data.annotations[ticker]);
+        });
+        tickers.forEach(ticker => {
+          if (!returned.has(ticker)) chartCache.set(ticker, []);
+          chartFailures.delete(ticker);
+        });
+        chartLoadedAt.set(offset, Date.now());
+        chartRetries.delete(offset);
+      } catch (_) {
+        tickers.forEach(ticker => chartFailures.add(ticker));
+        if (offset > 0 && !chartRetries.has(offset) && document.querySelector('.market-stocks')) {
+          chartRetries.add(offset);
+          chartRetryTimers.set(offset, setTimeout(() => {
+            chartRetryTimers.delete(offset);
+            loadCharts(url, offset, true);
+          }, 5000));
+        }
+      }
+      finally { clearTimeout(timer); chartRequests.delete(offset); paintCharts(); }
     })();
-    return chartRequest;
+    chartRequests.set(offset, request);
+    return request;
   }
 
   window.TickerRow = Object.freeze({ago, loadCharts, paintCharts, render, renderShell});
