@@ -102,6 +102,7 @@ def _sentiment_mix(tone: Any, counts: Any, label: str, basis: Any) -> dict[str, 
     total = bullish + bearish if valid else 0
     available = valid and 0 < total < float("inf")
     share = bullish / total if available else None
+    bullish_percent = int(share * 100 + 0.5) if available else None
     description = (
         f"{label}: {int(share * 100 + 0.5)}% bullish, {100 - int(share * 100 + 0.5)}% bearish."
         if available
@@ -111,6 +112,9 @@ def _sentiment_mix(tone: Any, counts: Any, label: str, basis: Any) -> dict[str, 
         "state": "available" if available else "unknown",
         "bullish": share,
         "bearish": 1 - share if available else None,
+        "compact": (
+            f"▲{bullish_percent}% / ▼{100 - bullish_percent}%" if available else "▲— / ▼—"
+        ),
         "description": description,
         "basis": str(basis or f"Saved {label.lower()} assessments"),
         "gradient": (

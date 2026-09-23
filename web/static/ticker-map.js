@@ -102,7 +102,7 @@
     const legend = make('ul', null, 'map-score-legend');
     contributions.forEach(driver => {
       const row = make('li');
-      const swatch = make('span', null, 'map-score-swatch'); swatch.style.background = color(driver); swatch.setAttribute('aria-hidden', 'true');
+      const swatch = make('span', null, 'map-score-swatch'); swatch.style.background = color(driver); swatch.dataset.pattern = driver.key; swatch.setAttribute('aria-hidden', 'true');
       row.append(swatch, make('span', driver.label), make('strong', points(driver.value))); legend.append(row);
     });
     if (legend.children.length) { badges.append(legend); panel.append(badges); }

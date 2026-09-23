@@ -1,6 +1,6 @@
 /* Shared stock and token attention glyph. */
 .indicator-glyph,[data-stock-map],[data-token-replay],[data-entity-map]{
-  --indicator-market:#418cf4;--indicator-evidence:#b58af4;--indicator-social:#36d5e6;
+  --indicator-market:#418cf4;--indicator-evidence:#b58af4;--indicator-social:#36d5e6;--glyph-ink:var(--bg);
 }
 .indicator-glyph{
   --glyph-size:36px;--risk-size:9px;
@@ -8,9 +8,15 @@
 }
 .indicator-glyph[data-band="1"]{--glyph-size:26px;--risk-size:7px}
 .indicator-glyph__face{position:relative;display:grid;place-items:center;width:var(--glyph-size);height:var(--glyph-size)}
-.indicator-glyph .score-pie{width:calc(var(--glyph-size) - 8px);height:calc(var(--glyph-size) - 8px);background:var(--muted)}
+.indicator-glyph .score-pie{position:relative;overflow:hidden;width:calc(var(--glyph-size) - 8px);height:calc(var(--glyph-size) - 8px);background:var(--muted)}
 .indicator-glyph__sentiment{position:absolute;inset:0;border:2px dashed var(--muted);border-radius:50%}
-.indicator-glyph[data-sentiment-mix="available"] .indicator-glyph__sentiment{border:0;-webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 2px),#000 calc(100% - 2px));mask:radial-gradient(farthest-side,transparent calc(100% - 2px),#000 calc(100% - 2px))}
+.indicator-glyph[data-sentiment-mix="available"] .indicator-glyph__sentiment{border:0;-webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 3px),#000 calc(100% - 3px));mask:radial-gradient(farthest-side,transparent calc(100% - 3px),#000 calc(100% - 3px))}
+.indicator-pattern{position:absolute;inset:0;pointer-events:none;mask:conic-gradient(transparent 0 var(--slice-start),#000 var(--slice-start) var(--slice-end),transparent var(--slice-end) 100%)}
+.indicator-pattern--evidence{background:repeating-linear-gradient(45deg,transparent 0 3px,var(--glyph-ink) 3px 4.2px)}
+.indicator-pattern--social{background:radial-gradient(circle,var(--glyph-ink) 0 1px,transparent 1.1px);background-size:4px 4px}
+.indicator-divider{position:absolute;left:calc(50% - .6px);top:0;width:1.2px;height:50%;background:var(--glyph-ink);transform-origin:50% 100%;pointer-events:none}
+.ticker-sentiment{color:var(--text);font-size:11px;font-variant-numeric:tabular-nums;line-height:1.4}
+.market-memecoins .ticker-name{flex-direction:column;align-items:flex-start;gap:2px}
 .indicator-glyph[data-mix="unknown"] .score-pie,.indicator-glyph[data-mix="zero"] .score-pie{
   background:none;border:1px solid var(--muted);-webkit-mask:none;mask:none;
 }
@@ -20,7 +26,7 @@
   width:var(--risk-size);height:var(--risk-size);border:1px solid var(--bg,#0b100e);border-radius:50%;
   background:var(--orange,#ff9f43);display:grid;place-items:center;line-height:1;font-size:9px;font-weight:800;
 }
-.indicator-glyph[data-risk="high"] .indicator-glyph__risk{background:var(--red)}
+.indicator-glyph[data-risk="high"] .indicator-glyph__risk{background:var(--red);border-radius:0;transform:translate(-50%,-50%) rotate(45deg)}
 .indicator-glyph[data-risk="unknown"] .indicator-glyph__risk{background:var(--bg,#0b100e);color:var(--muted);border-color:var(--muted)}
 .ticker-symbol{display:inline-flex;align-items:center;gap:5px;min-width:0;flex-shrink:0}
 .ticker-verified{width:14px;height:14px;flex:none;fill:var(--green);vertical-align:middle}
@@ -31,11 +37,14 @@
   .indicator-glyph[data-band="1"]{--glyph-size:22px;--risk-size:6px}
   .ticker-symbol{gap:3px}
   .ticker-verified{width:12px;height:12px}
+  .market-stocks .ticker-name,.market-memecoins .ticker-name{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;gap:2px 5px}
+  .ticker-name>.ticker-symbol,.market-memecoins .ticker-name>strong{grid-column:1;grid-row:1}
+  .market-stocks .ticker-name>small,.market-memecoins .ticker-name>small{grid-column:2;grid-row:1}
+  .ticker-sentiment{grid-column:1/-1;grid-row:2}
 }
 @media(forced-colors:active){
-  .indicator-glyph__sentiment,.indicator-glyph .score-pie{border:1px solid CanvasText}
-  .indicator-glyph[data-sentiment-mix="available"] .indicator-glyph__sentiment{border:1px solid CanvasText;mask:none;-webkit-mask:none}
-  .indicator-glyph__risk{background:Canvas;color:CanvasText;border-color:CanvasText}
+  .indicator-glyph{forced-color-adjust:none;--bg:Canvas;--text:CanvasText;--muted:CanvasText;--glyph-ink:Canvas;--indicator-market:CanvasText;--indicator-evidence:CanvasText;--indicator-social:CanvasText;--green:CanvasText;--red:CanvasText;--orange:CanvasText}
+  .indicator-glyph__risk{color:CanvasText}
   .ticker-verified{fill:Highlight}
   .ticker-verified path{stroke:HighlightText}
 }

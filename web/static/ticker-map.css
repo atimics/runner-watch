@@ -40,8 +40,21 @@ main:has(.ticker-map),main:has(.token-replay){max-width:1040px}.market-screen:ha
    Wallet/entity rings retain their own styling and semantics. */
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph-sentiment{fill:none;stroke:var(--muted);stroke-width:3;pointer-events:stroke;cursor:pointer;stroke-dasharray:7 6}
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-sentiment-mix="available"] .map-glyph-sentiment{stroke:transparent;stroke-dasharray:none}
-.map-sentiment-part{fill:none;stroke:var(--green);stroke-width:3;stroke-linecap:butt;pointer-events:none}
+.map-sentiment-part{fill:none;stroke:var(--green);stroke-width:4;stroke-linecap:butt;pointer-events:none}
 .map-sentiment-part[data-sentiment-side="bearish"]{stroke:var(--red)}
+.map-sentiment-pattern{fill:none;stroke-width:4;pointer-events:none}
+.map-score-pattern,.map-score-divider{pointer-events:none}
+.map-score-pattern{fill:none}
+.map-pattern-line{fill:none;stroke:var(--glyph-ink)}
+.map-pattern-dot{fill:var(--glyph-ink)}
+.map-score-divider{fill:none;stroke:var(--glyph-ink);stroke-width:2}
+.map-sentiment-label{font-size:14px;fill:var(--text);paint-order:stroke;stroke:var(--bg);stroke-width:3;stroke-linejoin:round;font-variant-numeric:tabular-nums}
+.entity-label-hit{fill:transparent;stroke:none}
+@media(max-width:500px){.map-sentiment-label{font-size:16px}}
+.map-score-legend .map-score-swatch{position:relative;width:12px;height:12px;border-radius:2px}
+.map-score-swatch::after{content:'';position:absolute;inset:0}
+.map-score-swatch[data-pattern="evidence"]::after{background:repeating-linear-gradient(45deg,transparent 0 3px,var(--glyph-ink) 3px 4.2px)}
+.map-score-swatch[data-pattern="social"]::after{background:radial-gradient(circle,var(--glyph-ink) 0 1px,transparent 1.1px);background-size:4px 4px}
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-band="3"] .map-score-segment{pointer-events:fill;stroke:none}
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-mix="zero"] .map-score-track,
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-mix="unknown"] .map-score-track{stroke:var(--muted);stroke-width:1;fill:none}
@@ -52,7 +65,7 @@ main:has(.ticker-map),main:has(.token-replay){max-width:1040px}.market-screen:ha
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-risk-dot{fill:var(--orange,#ff9f43);stroke:var(--bg);stroke-width:2;pointer-events:none}
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-risk="high"] .map-risk-dot{fill:var(--red)}
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-risk="unknown"] .map-risk-dot{fill:var(--bg);stroke:var(--muted);stroke-width:1}
-:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-risk-unknown{fill:var(--muted);font-size:12px;font-weight:700;pointer-events:none}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-risk-unknown{fill:var(--muted);font-size:var(--map-risk-font,12px);font-weight:700;pointer-events:none}
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph [data-score-key]:focus-visible{outline:2px solid var(--text);outline-offset:4px}
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph [data-score-key]:hover,
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph [aria-pressed="true"]{filter:brightness(1.2)}
@@ -62,12 +75,13 @@ main:has(.ticker-map),main:has(.token-replay){max-width:1040px}.market-screen:ha
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph-reading,:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph-empty{font-size:12px;margin:4px 0;color:var(--muted)}
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .indicator-legend{margin-top:8px}
 @media(forced-colors:active){
+  :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph{forced-color-adjust:none;--bg:Canvas;--text:CanvasText;--muted:CanvasText;--glyph-ink:Canvas;--indicator-market:CanvasText;--indicator-evidence:CanvasText;--indicator-social:CanvasText;--green:CanvasText;--red:CanvasText;--orange:CanvasText}
   :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph-sentiment,:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-score-track{stroke:CanvasText}
-  :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-sentiment-mix="available"] .map-glyph-sentiment{stroke:CanvasText}
-  .map-sentiment-part,.map-sentiment-part[data-sentiment-side="bearish"]{stroke:CanvasText}
+  :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-sentiment-mix="available"] .map-glyph-sentiment{stroke:transparent}
   :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph .map-score-segment{stroke:CanvasText}
-  :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-band="3"] .map-score-segment{fill:Canvas;stroke:CanvasText;stroke-width:1}
-  :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-risk-dot{fill:Canvas;stroke:CanvasText}
+  :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-band="3"] .map-score-segment{fill:CanvasText;stroke:CanvasText;stroke-width:1}
+  :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-risk-dot{fill:CanvasText;stroke:Canvas;stroke-width:2}
+  :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-risk="unknown"] .map-risk-dot{fill:Canvas;stroke:CanvasText}
   :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-risk-unknown{fill:CanvasText}
 }
 

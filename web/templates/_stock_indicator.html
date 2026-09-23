@@ -6,11 +6,23 @@
       data-sentiment-mix="{{ glyph.sentiment_mix.state }}"
       role="img" aria-label="{{ glyph.description }}" title="{{ glyph.description }}">
   <span class="indicator-glyph__face" aria-hidden="true">
-    <span class="indicator-glyph__sentiment"{% if glyph.sentiment_mix.gradient %} style="background: {{ glyph.sentiment_mix.gradient }}"{% endif %}></span>
-    <span class="score-pie"{% if glyph.gradient %} style="background: {{ glyph.gradient }}"{% endif %}></span>
+    <span class="indicator-glyph__sentiment"{% if glyph.sentiment_mix.gradient %} style="background: {{ glyph.sentiment_mix.gradient }}"{% endif %}>
+      {% if glyph.sentiment_mix.state == 'available' and glyph.sentiment_mix.bearish > 0 %}<span class="indicator-pattern indicator-pattern--evidence" data-bearish-pattern style="--slice-start: {{ glyph.sentiment_mix.bullish * 100 }}%; --slice-end: 100%"></span>{% endif %}
+    </span>
+    <span class="score-pie"{% if glyph.gradient %} style="background: {{ glyph.gradient }}"{% endif %}>
+      {% set visible = glyph.slices | selectattr('share', 'gt', 0) | list %}
+      {% for part in visible %}
+        {% if part.key != 'market' %}<span class="indicator-pattern indicator-pattern--{{ part.key }}" data-pattern="{{ part.key }}" style="--slice-start: {{ part.start }}%; --slice-end: {{ part.end }}%"></span>{% endif %}
+        {% if visible | length > 1 %}<span class="indicator-divider" style="transform: rotate({{ part.start * 3.6 }}deg)"></span>{% endif %}
+      {% endfor %}
+    </span>
     {% if glyph.risk != 'low' %}<span class="indicator-glyph__risk">{{ '?' if glyph.risk == 'unknown' else '' }}</span>{% endif %}
   </span>
 </span>
+{%- endmacro %}
+
+{% macro sentiment_reading(item) -%}
+<span class="ticker-sentiment" aria-label="{{ item.indicator.sentiment_mix.description }}">{{ item.indicator.sentiment_mix.compact }}</span>
 {%- endmacro %}
 
 {% macro verified_check(item) -%}
@@ -31,9 +43,9 @@
 <p>Ring size follows the reported holding value at saved prices. A minimum size keeps small holdings readable. Stocks awaiting a value use the smallest size and show an event count.</p>
 <p>Solid fill: stock attention of 70+ points. Colored slices show the saved contribution shares.</p>
 {% else %}<p>Small ring: under 40 attention points. Large ring: 40–69.99. Large solid: 70+.</p>{% endif %}
-<p>Blue: market. Purple: {{ 'chain evidence' if market == 'memecoins' else 'filings + news' }}. Cyan: external social. Slices show contribution shares.</p>
-<p>Outer border: green shows the bullish share and red shows the bearish share of {{ 'saved chain assessments' if market == 'memecoins' else 'saved directional filing assessments' }}. A dashed border means the split is unavailable, including neutral-only evidence.</p>
-<p>Center: orange medium risk, red high risk, no dot low risk, ? unknown.</p>
+<p>Blue: market. Purple: {{ 'chain evidence' if market == 'memecoins' else 'filings + news' }}. Cyan: external social. Market is solid, evidence is striped, and social is dotted. Slices show contribution shares.</p>
+<p>Outer border: solid green and ▲ show the bullish share; striped red and ▼ show the bearish share of {{ 'saved chain assessments' if market == 'memecoins' else 'saved directional filing assessments' }}. A fully dashed border and ▲— / ▼— mean the split is unavailable, including neutral-only evidence.</p>
+<p>Center: orange circle for medium risk, red diamond for high risk, empty for low risk, ? for unknown risk.</p>
 {% if market == 'memecoins' %}<p>A dashed empty ring means the attention breakdown is unavailable. ? means risk is unknown. Open a token to explore its saved assessment and receipts.</p>
 {% else %}<p>Check: the existing automated evidence gate is confirmed and eligibility checks pass. Not human review or an endorsement. Open a stock for the text breakdown.</p>{% endif %}
 </details>

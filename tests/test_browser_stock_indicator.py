@@ -216,5 +216,53 @@ def test_sentiment_shares_and_neutral_gap_survive_markup_refresh(page, width):
     )
     page.clock.fast_forward(61000)
     expect(glyph).to_have_attribute("data-sentiment-mix", "unknown")
+    expect(page.locator(".ticker-sentiment")).to_have_text("▲— / ▼—")
+    expect(glyph.locator("[data-bearish-pattern]")).to_have_count(0)
     expect(border).to_have_css("border-top-style", "dashed")
     expect(border).to_have_css("background-image", "none")
+
+
+@pytest.mark.parametrize("market", ["stocks", "memecoins"])
+@pytest.mark.parametrize("width", [320, 390, 1280])
+@pytest.mark.parametrize("forced", ["none", "active"])
+def test_visible_sentiment_patterns_and_risk_shapes_in_both_color_modes(
+    page, market, width, forced
+):
+    from tests.test_memecoin_indicator import assessed_coin
+
+    page.set_viewport_size({"width": width, "height": 844})
+    page.emulate_media(forced_colors=forced)
+    make = fixtures.stock if market == "stocks" else assessed_coin
+    counts_key = "sentiment_counts" if market == "stocks" else "chain_sentiment_counts"
+    source = [
+        make(ticker="MED", id="MED", **{counts_key: {"bullish": 3, "bearish": 1}}, rug_score=30),
+        make(ticker="HIGH", id="HIGH", **{counts_key: {"bullish": 0, "bearish": 4}}, rug_score=75),
+        make(
+            ticker="GAP",
+            id="GAP",
+            **{counts_key: {"bullish": 0, "bearish": 0}},
+            rug_score=None,
+            rug_level="unknown",
+        ),
+    ]
+    helpers.open_screen(page, listing(market, source))
+    readings = page.locator(".ticker-sentiment")
+    expect(readings).to_have_text(["▲75% / ▼25%", "▲0% / ▼100%", "▲— / ▼—"])
+    for reading in readings.all():
+        expect(reading).to_be_visible()
+        assert reading.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+    glyphs = page.locator(".indicator-glyph")
+    expect(glyphs.nth(0).locator("[data-bearish-pattern]")).to_be_visible()
+    expect(glyphs.nth(1).locator("[data-bearish-pattern]")).to_be_visible()
+    expect(glyphs.nth(2).locator("[data-bearish-pattern]")).to_have_count(0)
+    expect(glyphs.nth(2).locator(".indicator-glyph__sentiment")).to_have_css(
+        "border-top-style", "dashed"
+    )
+    expect(glyphs.nth(0).locator(".indicator-glyph__risk")).to_have_css("border-radius", "50%")
+    expect(glyphs.nth(1).locator(".indicator-glyph__risk")).to_have_css("border-radius", "0px")
+    expect(glyphs.nth(2).locator(".indicator-glyph__risk")).to_have_text("?")
+    for pattern in glyphs.nth(0).locator(".score-pie [data-pattern]").all():
+        expect(pattern).to_be_visible()
+        assert "gradient" in pattern.evaluate("el => getComputedStyle(el).backgroundImage")
+        assert "conic-gradient" in pattern.evaluate("el => getComputedStyle(el).maskImage")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

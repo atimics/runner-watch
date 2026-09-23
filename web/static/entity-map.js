@@ -36,7 +36,7 @@
   }
   function scoreWheel({glyph,contributions}, x, y, outer) {
     const width = small.matches ? 16 : 20;
-    const geometry = {cx:0,cy:0,outer:outer*2,radius:outer*2-width/2,width};
+    const geometry = {cx:0,cy:0,outer:outer*2,radius:outer*2-width/2,width,patternScale:1.5,markerScale:1.5};
     const wheel = svg('g', {class:'entity-score-ring map-glyph',transform:`translate(${x} ${y}) scale(0.5)`,'aria-hidden':'true'});
     window.RatiRingGlyph.drawFace({
       ringLayer:wheel,glyph,geometry,small:small.matches,contributions,toneLabel:'Filing sentiment',
@@ -119,7 +119,7 @@
     const rx = mobile ? 150 : 270, ry = 150;
     const spiral = stocks.length > 8;
     const scaleAt = index => spiral ? 1+index/12 : 1;
-    const extent = scaleAt(Math.max(0,stocks.length-1)), margin = 80;
+    const extent = scaleAt(Math.max(0,stocks.length-1)), margin = 96;
     graph.dataset.layout = spiral ? 'spiral' : 'ring';
     graph.dataset.orbitTrack = `${rx},${ry}`;
     navigation.fit({x:cx-rx*extent-margin,y:cy-ry*extent-margin,width:2*(rx*extent+margin),height:2*(ry*extent+margin)});
@@ -153,8 +153,10 @@
       // One stock link contains the face and labels. The face uses the same
       // stock colors and markers as the row; holding value sets its size.
       link.append(svg('circle',{cx:x,cy:y,r:radius,class:'entity-glyph-backplate'}),scoreWheel(indicator,x,y,outer));
+      link.append(svg('rect',{x:x-55,y:y+radius+2,width:110,height:mobile ? 60 : 54,class:'entity-label-hit'}));
       link.append(svg('text',{x,y:y+radius+(mobile ? 22 : 18),'text-anchor':'middle',class:'entity-stock-symbol'},stock.ticker));
       link.append(svg('text',{x,y:y+radius+(mobile ? 38 : 32),'text-anchor':'middle',class:'map-node-action'},valueLabel));
+      link.append(svg('text',{x,y:y+radius+(mobile ? 54 : 48),'text-anchor':'middle',class:'map-sentiment-label'},indicator.glyph.sentimentMix.compact));
       link.append(svg('title',{},description));
       nodes.append(link);
       loadNeighbours(stock, {x, y, radius, cx, cy, orbiting});

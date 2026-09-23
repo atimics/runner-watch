@@ -54,7 +54,7 @@
       else panel.append(make('p',`${points(part.value)} · ${percent(part)}`,'map-score-breakdown'));
     }
     const list = make('ul',null,'map-score-legend');
-    contributions.forEach(p => {const li = make('li'), dot = make('span',null,'map-score-swatch'); dot.style.background = `var(--indicator-${p.key})`; dot.setAttribute('aria-hidden','true'); li.append(dot,make('span',p.label),make('strong',points(p.value))); list.append(li);});
+    contributions.forEach(p => {const li = make('li'), dot = make('span',null,'map-score-swatch'); dot.style.background = `var(--indicator-${p.key})`; dot.dataset.pattern = p.key; dot.setAttribute('aria-hidden','true'); li.append(dot,make('span',p.label),make('strong',points(p.value))); list.append(li);});
     if (list.children.length) panel.append(list);
     else panel.append(make('p',glyph.mix === 'zero' ? 'Saved attention contributions total zero.' : 'Attention breakdown is awaiting a saved assessment.','map-glyph-empty'));
     if (item.assessment?.reason) panel.append(make('p',item.assessment.reason));

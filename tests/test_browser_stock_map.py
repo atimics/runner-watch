@@ -972,6 +972,12 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     )
     expect(wheel.locator('[data-sentiment-side="bullish"]')).to_have_attribute("data-share", "0.75")
     expect(wheel.locator('[data-sentiment-side="bearish"]')).to_have_attribute("data-share", "0.25")
+    expect(page.locator('[data-entity-stock="USO"] .map-sentiment-label')).to_have_text(
+        "▲75% / ▼25%"
+    )
+    expect(page.locator('[data-entity-stock="CDTG"] .map-sentiment-label')).to_have_text("▲— / ▼—")
+    expect(wheel.locator(".map-sentiment-pattern")).to_have_count(1)
+    expect(wheel.locator("path.map-risk-dot")).to_have_attribute("data-risk-shape", "diamond")
     expect(wheel.locator('[data-score-key="rug"]')).to_have_count(0)
     unknown = page.locator('[data-entity-stock="CDTG"]')
     expect(unknown.locator(".map-risk-unknown")).to_have_text("?")
@@ -1105,6 +1111,7 @@ def test_sentiment_ratio_refresh_preserves_focus_and_clears_to_dashed(page, widt
         expect(control).to_be_focused()
         expect(control).to_have_attribute("aria-pressed", "true")
         if bullish + bearish:
+            expect(glyph.locator(".map-sentiment-pattern")).to_have_count(1)
             share = bullish / (bullish + bearish)
             green = glyph.locator('[data-sentiment-side="bullish"]')
             red = glyph.locator('[data-sentiment-side="bearish"]')
@@ -1117,6 +1124,65 @@ def test_sentiment_ratio_refresh_preserves_focus_and_clears_to_dashed(page, widt
             expect(control).to_have_attribute("aria-label", re.compile(f"{share:.0%} bullish"))
         else:
             expect(glyph.locator(".map-sentiment-part")).to_have_count(0)
+            expect(glyph.locator(".map-sentiment-pattern")).to_have_count(0)
             expect(control).to_have_css("stroke-dasharray", "7px, 6px")
             expect(page.locator(".map-sentiment-reading")).to_contain_text("split unavailable")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+@pytest.mark.parametrize("forced", ["none", "active"])
+@pytest.mark.parametrize("score", [24, 80])
+def test_patterned_map_preserves_slice_hit_targets_and_high_contrast_readings(
+    page, width, forced, score, tmp_path
+):
+    page.emulate_media(forced_colors=forced)
+    open_map(
+        page,
+        width,
+        current=score_current(
+            score=score,
+            score_components={"market": 40, "sec_event": 35, "social_search": 25},
+            sentiment_counts={"bullish": 3, "bearish": 1},
+            rug_score=75,
+        ),
+    )
+    glyph = page.locator(".map-glyph")
+    expect(glyph.locator(".map-score-pattern")).to_have_count(2)
+    expect(glyph.locator(".map-score-divider")).to_have_count(3)
+    expect(glyph.locator(".map-sentiment-pattern")).to_have_count(1)
+    expect(glyph.locator("path.map-risk-dot")).to_have_attribute("data-risk-shape", "diamond")
+    if forced == "active":
+        marker = glyph.locator(".map-risk-dot").evaluate("el => getComputedStyle(el).fill")
+        ink = glyph.locator(".map-pattern-line").evaluate("el => getComputedStyle(el).stroke")
+        assert marker != ink
+        expect(glyph.locator(".map-center-text")).to_have_css("fill", marker)
+        expect(glyph.locator(".map-center-score")).to_have_css("fill", marker)
+        glyph.screenshot(path=str(tmp_path / f"forced-colors-{width}-{score}.png"))
+    else:
+        expect(glyph.locator(".map-risk-dot")).to_have_css("fill", "rgb(239, 153, 164)")
+    for key in ["evidence", "social"]:
+        overlay = glyph.locator(f'.map-score-pattern[data-pattern="{key}"]')
+        expect(overlay).to_have_css("pointer-events", "none")
+        assert overlay.get_attribute("tabindex") is None
+        segment = glyph.locator(f'[data-score-key="{key}"]')
+        segment.scroll_into_view_if_needed()
+        # Read the actual rendered slice and click inside its colored/patterned area.
+        point = segment.evaluate("""(el) => {
+            const g = el.closest('.map-glyph');
+            const ring = g.querySelector('.map-glyph-sentiment');
+            const cx = +ring.getAttribute('cx'), cy = +ring.getAttribute('cy');
+            const r = +ring.getAttribute('r') - 6;
+            const share = el.dataset.scoreKey === 'evidence' ? .575 : .875;
+            const a = share*2*Math.PI-Math.PI/2;
+            const radius = g.dataset.band === '3' ? r*.65 : r - (innerWidth <= 500 ? 8 : 10);
+            const point = new DOMPoint(cx+radius*Math.cos(a),cy+radius*Math.sin(a));
+            const p = point.matrixTransform(el.getScreenCTM());
+            return {x:p.x,y:p.y};
+        }""")
+        page.mouse.click(**point)
+        expect(segment).to_have_attribute("aria-pressed", "true")
+        expect(page.locator(".map-score-breakdown")).to_contain_text(
+            "35%" if key == "evidence" else "25%"
+        )
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
