@@ -1,4 +1,4 @@
-"""Presentation-only stock glyph. Never changes scoring, ordering or run status."""
+"""Shared presentation for stock and token attention glyphs."""
 
 from __future__ import annotations
 
@@ -10,6 +10,11 @@ from runner_web.attention import finite_number
 GROUPS = (
     ("market", "Market", ("market",)),
     ("evidence", "Filings + news", ("sec_event", "news")),
+    ("social", "External social", ("social_search",)),
+)
+TOKEN_GROUPS = (
+    ("market", "Market", ("market",)),
+    ("evidence", "Chain evidence", ("chain_event",)),
     ("social", "External social", ("social_search",)),
 )
 RISK_LEVELS = {"low": 0, "guarded": 1, "medium": 1, "high": 2, "critical": 2}
@@ -59,6 +64,20 @@ def _verification(item: Mapping) -> dict[str, Any]:
 
 
 def stock_indicator(item: Mapping[str, Any]) -> dict[str, Any]:
+    glyph = _indicator(
+        item, GROUPS, item.get("sentiment") or item.get("catalyst_sentiment"), "Filing sentiment"
+    )
+    glyph["sentiment_basis"] = "Filing sentiment; not price change or forecast probability"
+    glyph["verification"] = _verification(item)
+    return glyph
+
+
+def memecoin_indicator(item: Mapping[str, Any]) -> dict[str, Any]:
+    """Render saved assessments; quote and receipt counts alone leave values unknown."""
+    return _indicator(item, TOKEN_GROUPS, item.get("chain_sentiment"), "Chain evidence tone")
+
+
+def _indicator(item: Mapping, groups: tuple, tone: Any, tone_label: str) -> dict[str, Any]:
     """One scale for attention; proportional contributions, not mixed score units.
 
     Values come from post-freshness score contributions before the final cap.
@@ -82,7 +101,7 @@ def stock_indicator(item: Mapping[str, Any]) -> dict[str, Any]:
             else {}
         )
     slices = []
-    for key, label, fields in GROUPS:
+    for key, label, fields in groups:
         value = sum(max(0.0, finite_number(components.get(field)) or 0.0) for field in fields)
         slices.append({"key": key, "label": label, "value": value})
     total = sum(part["value"] for part in slices)
@@ -102,7 +121,7 @@ def stock_indicator(item: Mapping[str, Any]) -> dict[str, Any]:
         cursor = end
     supplied = any(
         finite_number(components.get(field)) is not None
-        for _, _, fields in GROUPS
+        for _, _, fields in groups
         for field in fields
     )
     mix_state = "available" if total > 0 else "zero" if supplied and score == 0 else "unknown"
@@ -112,7 +131,7 @@ def stock_indicator(item: Mapping[str, Any]) -> dict[str, Any]:
         "negative": "negative",
         "neutral": "neutral",
         "mixed": "neutral",
-    }.get(str(item.get("sentiment") or item.get("catalyst_sentiment") or "").lower(), "unknown")
+    }.get(str(tone or "").lower(), "unknown")
     risk = _risk(item)
     attention_text = f"Attention {score:g} points" if score is not None else "Attention unavailable"
     mix_text = (
@@ -134,8 +153,7 @@ def stock_indicator(item: Mapping[str, Any]) -> dict[str, Any]:
         "gradient": f"conic-gradient({', '.join(stops)})" if stops else "",
         "mix_state": mix_state,
         "sentiment": sentiment,
-        "sentiment_basis": "Filing sentiment; not price change or forecast probability",
+        "sentiment_basis": f"{tone_label} from the saved assessment",
         "risk": risk,
-        "description": f"{attention_text}. {mix_text}. Filing sentiment {sentiment}. Risk {risk}.",
-        "verification": _verification(item),
+        "description": f"{attention_text}. {mix_text}. {tone_label} {sentiment}. Risk {risk}.",
     }

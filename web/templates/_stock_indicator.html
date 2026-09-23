@@ -24,12 +24,13 @@
 </span>
 {%- endmacro %}
 
-{% macro indicator_legend() -%}
+{% macro indicator_legend(market='stocks') -%}
 <details class="indicator-legend"><summary>Indicator key</summary>
 <p>Small ring: under 40 attention points. Large ring: 40–69.99. Large solid: 70+.</p>
-<p>Blue: market. Purple: filings + news. Cyan: external social. Slices show contribution shares.</p>
-<p>Outer border: green positive filing sentiment, red negative, gray neutral, dashed unknown.</p>
+<p>Blue: market. Purple: {{ 'chain evidence' if market == 'memecoins' else 'filings + news' }}. Cyan: external social. Slices show contribution shares.</p>
+<p>Outer border: green positive {{ 'chain evidence tone' if market == 'memecoins' else 'filing sentiment' }}, red negative, gray neutral, dashed unknown.</p>
 <p>Center: orange medium risk, red high risk, no dot low risk, ? unknown.</p>
-<p>Check: the existing automated evidence gate is confirmed and eligibility checks pass. Not human review or an endorsement. Open a stock for the text breakdown.</p>
+{% if market == 'memecoins' %}<p>A dashed empty ring means the attention breakdown is unavailable. ? means risk is unknown. Open a token to explore its saved assessment and receipts.</p>
+{% else %}<p>Check: the existing automated evidence gate is confirmed and eligibility checks pass. Not human review or an endorsement. Open a stock for the text breakdown.</p>{% endif %}
 </details>
 {%- endmacro %}

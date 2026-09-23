@@ -50,7 +50,7 @@
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/market-screen.css?v={{ static_version }}">
   {% if screen is defined and screen.market in ['memecoins', 'sports'] %}<link rel="stylesheet" href="/static/market-anchor.css?v={{ static_version }}">{% endif %}
-  {% if screen is defined and screen.market == "stocks" %}<link rel="stylesheet" href="/static/stock-indicator.css?v={{ static_version }}">{% endif %}
+  {% if screen is defined and screen.market in ["stocks", "memecoins"] %}<link rel="stylesheet" href="/static/stock-indicator.css?v={{ static_version }}">{% endif %}
   {% block detail_head %}{% endblock %}
   <meta name="description" content="{% block screen_description %}{% if share %}{{ screen.item.subtitle }}{% endif %}{% endblock %}">
   {% if share %}<meta property="og:title" content="{{ share.title }}"><meta property="og:description" content="{{ share.summary }}"><meta property="og:image" content="{{ app_origin }}{{ share.card_path }}"><meta name="twitter:card" content="summary_large_image">{% endif %}
@@ -99,7 +99,7 @@
           <svg class="mini-chart" data-ticker="{{ item.name }}" data-history="pending" viewBox="0 0 64 18" preserveAspectRatio="none" role="img" aria-label="{{ item.name }}: price history loading"><text class="mini-chart-empty" x="32" y="12" text-anchor="middle">—</text></svg>
           {% if item.tag %}<small class="ticker-run-status status-{{ item.tag_tone }}">{% if item.risk %}<i aria-hidden="true">▲</i>{% endif %}{{ item.tag }}</small>{% endif %}
         </span>{% endif %}
-        {% if screen.market == 'stocks' %}{{ score_pie(item) }}{% else %}<span class="row-assessment">{% if item.score is not none %}{{ score_pie(item) }}<small>{{ item.score|round|int }} score</small>{% elif item.assessment is defined and item.assessment.value is not none %}<strong{% if screen.market == 'sports' and item.assessment.selected_team %} aria-label="{{ item.assessment.selected_team }} · {{ item.assessment.value|round|int }}{{ item.assessment.unit }} win chance"{% endif %}>{% if screen.market == 'sports' and item.selected_team_label %}{{ item.selected_team_label }} {% endif %}{{ item.assessment.value|round|int }}{{ item.assessment.unit }}</strong><small>{{ item.assessment.label }}</small>{% else %}<span class="assessment-pending" aria-hidden="true">◌</span><small>{{ 'Price paused' if screen.market == 'memecoins' and item.freshness == 'paused' else item.assessment.label if screen.market == 'memecoins' else item.research_label|default('Pending') }}</small>{% endif %}</span>{% endif %}
+        {% if screen.market == 'stocks' %}{{ score_pie(item) }}{% elif screen.market == 'memecoins' %}<span class="row-assessment">{{ score_pie(item) }}<small>{{ 'Price paused' if item.freshness == 'paused' else item.assessment.label }}</small></span>{% else %}<span class="row-assessment">{% if item.score is not none %}{{ score_pie(item) }}<small>{{ item.score|round|int }} score</small>{% elif item.assessment is defined and item.assessment.value is not none %}<strong{% if screen.market == 'sports' and item.assessment.selected_team %} aria-label="{{ item.assessment.selected_team }} · {{ item.assessment.value|round|int }}{{ item.assessment.unit }} win chance"{% endif %}>{% if screen.market == 'sports' and item.selected_team_label %}{{ item.selected_team_label }} {% endif %}{{ item.assessment.value|round|int }}{{ item.assessment.unit }}</strong><small>{{ item.assessment.label }}</small>{% else %}<span class="assessment-pending" aria-hidden="true">◌</span><small>{{ 'Price paused' if screen.market == 'memecoins' and item.freshness == 'paused' else item.assessment.label if screen.market == 'memecoins' else item.research_label|default('Pending') }}</small>{% endif %}</span>{% endif %}
         <span class="row-arrow" aria-hidden="true">↗</span>
       </a>{% endfor %}</div>
     {% else %}<div class="empty"><span aria-hidden="true">◌</span><h2>{{ 'Try another search' if screen.query else 'A quiet moment' }}</h2><p>{{ 'Search by name or symbol.' if screen.query else 'New activity will appear here.' }}</p></div>{% endif %}
@@ -148,7 +148,7 @@
     {% block detail_comments %}{% endblock %}
   {% endif %}
   {% endblock %}
-  {% if screen is defined and screen.market == "stocks" and screen.kind != "detail" %}{{ indicator_legend() }}{% endif %}
+  {% if screen is defined and screen.market in ["stocks", "memecoins"] and screen.kind != "detail" %}{{ indicator_legend(screen.market) }}{% endif %}
   </main>
 </div>
 {% if user and flash_wallet %}{% include "_flash_release_modal.html" %}{% endif %}
@@ -157,6 +157,7 @@
 <script src="/static/market-screen.js?v={{ static_version }}" defer></script>
 {% if screen is defined and screen.market in ['memecoins', 'sports'] %}<script src="/static/market-anchor.js?v={{ static_version }}" defer></script>{% endif %}
 {% if screen is defined and screen.kind != 'detail' and screen.market == 'stocks' %}<script src="/static/ticker-row.js?v={{ static_version }}" defer></script><script nonce="{{ request.state.csp_nonce }}">window.addEventListener('DOMContentLoaded',()=>{if(window.TickerRow){window.TickerRow.loadCharts('/api/pulse/charts');}});</script>{% endif %}
+{% if screen is defined and screen.kind == "detail" and screen.market in ["stocks", "memecoins"] %}<script src="/static/ring-glyph.js?v={{ static_version }}" defer></script>{% endif %}
 {% block detail_scripts %}{% endblock %}
 </body>
 </html>
