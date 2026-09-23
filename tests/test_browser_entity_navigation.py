@@ -190,9 +190,30 @@ def test_touch_pinch_drag_and_stock_tap(browser):
         expect(page).to_have_url("http://app.test/wallet/example")
         expect(graph).not_to_have_class(re.compile("orbit-interacting"))
         page.get_by_role("button", name="Fit map", exact=True).click()
+        page.clock.run_for(32)
         # Tap the current position of the orbiting stock, as a finger would.
         target = graph.locator('[data-entity-stock="S17"] .entity-glyph-backplate').bounding_box()
-        page.touchscreen.tap(target["x"] + target["width"] / 2, target["y"] + target["height"] / 2)
-        expect(page).to_have_url("http://app.test/stock/S17")
+        tap = {"x": target["x"] + target["width"] / 2, "y": target["y"] + target["height"] / 2}
+        assert (
+            page.evaluate(
+                "p=>document.elementFromPoint(p.x,p.y)?.closest('[data-entity-stock]')?.dataset.entityStock",
+                tap,
+            )
+            == "S17"
+        )
+        page.evaluate("""() => {
+          window.touchTrace = [];
+          for (const type of ['pointerdown','pointerup','pointercancel','click']) {
+            document.addEventListener(type, e => window.touchTrace.push({
+              type, target:e.target.tagName, stock:e.target.closest('[data-entity-stock]')?.dataset.entityStock,
+              x:e.clientX, y:e.clientY, time:performance.now(),
+            }), true);
+          }
+        }""")
+        page.touchscreen.tap(tap["x"], tap["y"])
+        try:
+            expect(page).to_have_url("http://app.test/stock/S17")
+        except AssertionError:
+            pytest.fail(f"Stock tap did not navigate: {page.evaluate('window.touchTrace')}")
     finally:
         context.close()
