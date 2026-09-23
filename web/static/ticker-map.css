@@ -38,11 +38,10 @@ main:has(.ticker-map),main:has(.token-replay){max-width:1040px}.market-screen:ha
 
 /* Stock and token maps render the same three-part contract as the list glyph.
    Wallet/entity rings retain their own styling and semantics. */
-:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph{--map-sentiment:var(--muted)}
-:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-sentiment="positive"]{--map-sentiment:var(--green)}
-:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-sentiment="negative"]{--map-sentiment:var(--red)}
-:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph-sentiment{fill:none;stroke:var(--map-sentiment);stroke-width:3;pointer-events:stroke;cursor:pointer}
-:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-sentiment="unknown"] .map-glyph-sentiment{stroke-dasharray:7 6}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph-sentiment{fill:none;stroke:var(--muted);stroke-width:3;pointer-events:stroke;cursor:pointer;stroke-dasharray:7 6}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-sentiment-mix="available"] .map-glyph-sentiment{stroke:transparent;stroke-dasharray:none}
+.map-sentiment-part{fill:none;stroke:var(--green);stroke-width:3;stroke-linecap:butt;pointer-events:none}
+.map-sentiment-part[data-sentiment-side="bearish"]{stroke:var(--red)}
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-band="3"] .map-score-segment{pointer-events:fill;stroke:none}
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-mix="zero"] .map-score-track,
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-mix="unknown"] .map-score-track{stroke:var(--muted);stroke-width:1;fill:none}
@@ -64,6 +63,8 @@ main:has(.ticker-map),main:has(.token-replay){max-width:1040px}.market-screen:ha
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .indicator-legend{margin-top:8px}
 @media(forced-colors:active){
   :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph-sentiment,:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-score-track{stroke:CanvasText}
+  :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-sentiment-mix="available"] .map-glyph-sentiment{stroke:CanvasText}
+  .map-sentiment-part,.map-sentiment-part[data-sentiment-side="bearish"]{stroke:CanvasText}
   :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph .map-score-segment{stroke:CanvasText}
   :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-band="3"] .map-score-segment{fill:Canvas;stroke:CanvasText;stroke-width:1}
   :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-risk-dot{fill:Canvas;stroke:CanvasText}

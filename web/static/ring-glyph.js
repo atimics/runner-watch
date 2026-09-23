@@ -8,6 +8,15 @@
   };
   const titleCase = value => value[0].toUpperCase() + value.slice(1);
   const color = part => `var(--indicator-${part.key})`;
+  const readSentiment = value => {
+    const mix = value || {};
+    const valid = mix.state === 'available' && [mix.bullish,mix.bearish].every(n => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1) && Math.abs(mix.bullish + mix.bearish - 1) < 0.000001;
+    const bullish = valid ? mix.bullish : null;
+    const percent = valid ? Math.round(bullish * 100) : null;
+    return {state:valid ? 'available' : 'unknown',bullish,bearish:valid ? 1-bullish : null,
+      reading:valid ? `${percent}% bullish, ${100-percent}% bearish` : 'bullish/bearish split unavailable',
+      basis:typeof mix.basis === 'string' ? mix.basis : 'Saved directional assessments'};
+  };
   const metrics = (glyph, small) => {
     const outer = glyph.band === 1 ? (small ? 36 : 46) : (small ? 56 : 72);
     const width = small ? 16 : 20;
@@ -17,7 +26,8 @@
   function drawFace({ringLayer, glyph, geometry, small, contributions, controls = [], toneLabel, points, percent, wireControl}) {
     ringLayer.replaceChildren();
     const {cx, cy, outer, radius, width} = geometry;
-    Object.assign(ringLayer.dataset, {band:String(glyph.band),sentiment:glyph.sentiment,risk:glyph.risk,mix:glyph.mix});
+    const sentimentMix = glyph.sentimentMix;
+    Object.assign(ringLayer.dataset, {band:String(glyph.band),sentiment:glyph.sentiment,sentimentMix:sentimentMix.state,risk:glyph.risk,mix:glyph.mix});
     ringLayer.style.setProperty("--map-band-stroke", String(width));
     ringLayer.append(svg('circle', {cx, cy, r:radius, class:'map-score-track', 'stroke-width':width}));
     let angle = -Math.PI / 2;
@@ -32,7 +42,18 @@
       segment.append(svg('title', {}, `${part.label}: ${points(part.value)} · ${percent(part)}`));
       wireControl?.(segment,part); ringLayer.append(segment);
     });
-    const sentiment = svg('circle', {cx,cy,r:outer+6,class:'map-glyph-sentiment','aria-label':`${toneLabel}: ${titleCase(glyph.sentiment)}. Show evidence tone.`});
+    if (sentimentMix.state === 'available') {
+      ['bullish','bearish'].forEach(side => {
+        const share = sentimentMix[side];
+        if (share <= 0) return;
+        ringLayer.append(svg('circle', {cx,cy,r:outer+6,class:'map-sentiment-part',
+          'data-sentiment-side':side,'data-share':share,'aria-hidden':'true',pathLength:100,
+          'stroke-dasharray':`${share*100} ${100-share*100}`,
+          'stroke-dashoffset':side === 'bullish' ? 0 : -sentimentMix.bullish*100,
+          transform:`rotate(-90 ${cx} ${cy})`}));
+      });
+    }
+    const sentiment = svg('circle', {cx,cy,r:outer+6,class:'map-glyph-sentiment','aria-label':`${toneLabel}: ${sentimentMix.reading}. Show sentiment.`});
     wireControl?.(sentiment,controls.find(part => part.key === 'sentiment')); ringLayer.append(sentiment);
     if (glyph.band !== 3 || !contributions.length) ringLayer.append(svg('circle', {cx,cy,r:radius-width/2-3,class:'map-glyph-hole','pointer-events':'none'}));
     if (glyph.risk !== 'low') {
@@ -57,5 +78,5 @@
     center.addEventListener('keydown',event => {if (['Enter',' '].includes(event.key)) {event.preventDefault(); overview();}});
     ringLayer.append(center);
   }
-  window.RatiRingGlyph = {metrics, draw, drawFace};
+  window.RatiRingGlyph = {metrics, draw, drawFace, readSentiment};
 })();

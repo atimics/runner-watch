@@ -23,6 +23,7 @@
     glyph = {
       band:allowed(value.band,[1,2,3],1),
       mix:allowed(value.mix_state,['available','zero','unknown'],'unknown'),
+      sentimentMix:window.RatiRingGlyph.readSentiment(value.sentiment_mix),
       sentiment:allowed(value.sentiment,['positive','negative','neutral','unknown'],'unknown'),
       risk:allowed(value.risk,['low','medium','high','unknown'],'unknown'),
     };
@@ -45,11 +46,11 @@
     root.querySelectorAll('[data-replay-event], [data-finding-id]').forEach(b => b.setAttribute('aria-pressed','false'));
     graph.querySelectorAll('[data-score-key]').forEach(b => b.setAttribute('aria-pressed',String(b.dataset.scoreKey === selectedPart)));
     const panel = $('selection'); panel.replaceChildren();
-    panel.append(make('p',`Attention ${score === '—' ? 'unavailable' : score + ' points'} · Chain evidence tone: ${titleCase(glyph.sentiment)} · Risk: ${titleCase(glyph.risk)}`,'map-glyph-reading'));
+    panel.append(make('p',`Attention ${score === '—' ? 'unavailable' : score + ' points'} · Chain evidence tone: ${glyph.sentimentMix.reading} · Risk: ${titleCase(glyph.risk)}`,'map-glyph-reading'));
     if (part) {
       panel.append(make('h4',part.label));
       if (part.key === 'risk') panel.append(make('p',glyph.risk === 'unknown' ? 'Risk is awaiting a saved assessment. The ? marks this gap.' : `${titleCase(glyph.risk)} risk from the saved assessment.`));
-      else if (part.key === 'sentiment') panel.append(make('p',glyph.sentiment === 'unknown' ? 'Chain evidence tone is awaiting a saved assessment. Open the recorded events below to read the receipts.' : `${titleCase(glyph.sentiment)} chain evidence tone from the saved assessment.`));
+      else if (part.key === 'sentiment') panel.append(make('p',`${glyph.sentimentMix.reading}. ${glyph.sentimentMix.basis}.`));
       else panel.append(make('p',`${points(part.value)} · ${percent(part)}`,'map-score-breakdown'));
     }
     const list = make('ul',null,'map-score-legend');

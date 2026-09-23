@@ -3,9 +3,10 @@
 {% set glyph = item.indicator %}
 <span class="ticker-score indicator-glyph" data-band="{{ glyph.band }}"
       data-sentiment="{{ glyph.sentiment }}" data-risk="{{ glyph.risk }}" data-mix="{{ glyph.mix_state }}"
+      data-sentiment-mix="{{ glyph.sentiment_mix.state }}"
       role="img" aria-label="{{ glyph.description }}" title="{{ glyph.description }}">
   <span class="indicator-glyph__face" aria-hidden="true">
-    <span class="indicator-glyph__sentiment"></span>
+    <span class="indicator-glyph__sentiment"{% if glyph.sentiment_mix.gradient %} style="background: {{ glyph.sentiment_mix.gradient }}"{% endif %}></span>
     <span class="score-pie"{% if glyph.gradient %} style="background: {{ glyph.gradient }}"{% endif %}></span>
     {% if glyph.risk != 'low' %}<span class="indicator-glyph__risk">{{ '?' if glyph.risk == 'unknown' else '' }}</span>{% endif %}
   </span>
@@ -31,7 +32,7 @@
 <p>Solid fill: stock attention of 70+ points. Colored slices show the saved contribution shares.</p>
 {% else %}<p>Small ring: under 40 attention points. Large ring: 40–69.99. Large solid: 70+.</p>{% endif %}
 <p>Blue: market. Purple: {{ 'chain evidence' if market == 'memecoins' else 'filings + news' }}. Cyan: external social. Slices show contribution shares.</p>
-<p>Outer border: green positive {{ 'chain evidence tone' if market == 'memecoins' else 'filing sentiment' }}, red negative, gray neutral, dashed unknown.</p>
+<p>Outer border: green shows the bullish share and red shows the bearish share of {{ 'saved chain assessments' if market == 'memecoins' else 'saved directional filing assessments' }}. A dashed border means the split is unavailable, including neutral-only evidence.</p>
 <p>Center: orange medium risk, red high risk, no dot low risk, ? unknown.</p>
 {% if market == 'memecoins' %}<p>A dashed empty ring means the attention breakdown is unavailable. ? means risk is unknown. Open a token to explore its saved assessment and receipts.</p>
 {% else %}<p>Check: the existing automated evidence gate is confirmed and eligibility checks pass. Not human review or an endorsement. Open a stock for the text breakdown.</p>{% endif %}

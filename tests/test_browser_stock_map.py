@@ -273,7 +273,9 @@ def test_map_uses_the_shared_three_slice_contract_and_no_summary_card(page, widt
     expect(page.locator(".map-center-score")).to_have_text("45")
     expect(page.get_by_text("Indicator key", exact=True)).to_have_count(1)
     assert page.locator(".indicator-legend").get_attribute("open") is None
-    expect(page.locator(".map-glyph-reading")).to_contain_text("Filing sentiment: Unknown")
+    expect(page.locator(".map-glyph-reading")).to_contain_text(
+        "Filing sentiment: bullish/bearish split unavailable"
+    )
 
 
 def ring_point(segment):
@@ -338,7 +340,7 @@ def test_components_and_metadata_share_filing_selection_without_mixing_units(pag
         expect(selection.locator(".map-score-breakdown")).to_have_count(0)
     if key == "sentiment":
         expect(selection.locator(".map-sentiment-reading")).to_contain_text(
-            "Positive filing sentiment"
+            "100% bullish, 0% bearish"
         )
         expect(selection.locator(".map-score-breakdown")).to_have_count(0)
     page.get_by_role("button", name="Next filings").click()
@@ -461,7 +463,9 @@ def test_attention_bands_have_two_sizes_and_true_solid_geometry(page, width, tmp
         expect(page.locator(".map-glyph")).to_have_attribute(
             "data-band", "1" if score < 40 else "2" if score < 70 else "3"
         )
-        expect(page.locator(".map-glyph-sentiment")).to_have_css("stroke", "rgb(165, 229, 185)")
+        expect(page.locator('[data-sentiment-side="bullish"]')).to_have_css(
+            "stroke", "rgb(165, 229, 185)"
+        )
         expect(page.locator(".map-risk-dot")).to_have_css("fill", "rgb(239, 153, 164)")
         if score >= 70:
             expect(page.locator(".map-glyph-hole")).to_have_count(0)
@@ -824,7 +828,9 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
 
     request = _request()
     rows = [{**score_current(score=score), "ticker": ticker} for ticker in ["USO", "CDTG"]]
-    rows[0].update(rug_score=68, sentiment="positive")
+    rows[0].update(
+        rug_score=68, sentiment="positive", sentiment_counts={"bullish": 3, "bearish": 1}
+    )
     rows[1].update(score=80, score_detail=None)
     events = [
         {
@@ -940,7 +946,7 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
         link = page.locator(f'[data-entity-stock="{ticker}"]')
         row_glyph = page.locator(f'.ticker[href="/stock/{ticker}"] .indicator-glyph')
         face = link.locator(".map-glyph")
-        for name in ["band", "sentiment", "risk", "mix"]:
+        for name in ["band", "sentiment", "sentiment-mix", "risk", "mix"]:
             expect(face).to_have_attribute("data-" + name, row_glyph.get_attribute("data-" + name))
         assert row_glyph.get_attribute("aria-label") in link.get_attribute("aria-label")
         expect(link.locator('[role="button"], [tabindex]')).to_have_count(0)
@@ -961,7 +967,11 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
         page.get_by_text("Ring size follows the reported holding value", exact=False)
     ).to_be_visible()
     expect(wheel.locator(".map-risk-dot")).to_have_css("fill", "rgb(239, 153, 164)")
-    expect(wheel.locator(".map-glyph-sentiment")).to_have_css("stroke", "rgb(165, 229, 185)")
+    expect(wheel.locator('[data-sentiment-side="bullish"]')).to_have_css(
+        "stroke", "rgb(165, 229, 185)"
+    )
+    expect(wheel.locator('[data-sentiment-side="bullish"]')).to_have_attribute("data-share", "0.75")
+    expect(wheel.locator('[data-sentiment-side="bearish"]')).to_have_attribute("data-share", "0.25")
     expect(wheel.locator('[data-score-key="rug"]')).to_have_count(0)
     unknown = page.locator('[data-entity-stock="CDTG"]')
     expect(unknown.locator(".map-risk-unknown")).to_have_text("?")
@@ -1073,3 +1083,40 @@ def test_source_failure_can_retry_and_reported_names_are_text(page):
     page.locator(f'[data-edge-event="{payload["events"][-1]["id"]}"]').dispatch_event("click")
     expect(page.locator("[data-map-selection] h3")).to_have_text("<img src=x onerror=alert(1)>")
     expect(page.locator("[data-map-selection] img")).to_have_count(0)
+
+
+@pytest.mark.parametrize("width", [320, 390, 1280])
+def test_sentiment_ratio_refresh_preserves_focus_and_clears_to_dashed(page, width):
+    from runner_web.stock_indicator import stock_indicator
+
+    page.clock.install()
+    source = score_current(sentiment="positive", sentiment_counts={"bullish": 3, "bearish": 1})
+    open_map(page, width, current=source)
+    glyph = page.locator(".map-glyph")
+    control = glyph.locator('[data-score-key="sentiment"]')
+    control.press("Enter")
+    screen = page.locator("#screenData").evaluate("node => JSON.parse(node.textContent)")
+    page.route("**/api/screens/**", lambda route: route.fulfill(json=screen))
+    for bullish, bearish in [(3, 1), (1, 3), (0, 0)]:
+        source["sentiment_counts"] = {"bullish": bullish, "bearish": bearish}
+        screen["item"]["indicator"] = stock_indicator(source)
+        with page.expect_response("**/api/screens/**"):
+            page.clock.fast_forward(60000)
+        expect(control).to_be_focused()
+        expect(control).to_have_attribute("aria-pressed", "true")
+        if bullish + bearish:
+            share = bullish / (bullish + bearish)
+            green = glyph.locator('[data-sentiment-side="bullish"]')
+            red = glyph.locator('[data-sentiment-side="bearish"]')
+            expect(green).to_have_attribute(
+                "stroke-dasharray", f"{share * 100:g} {100 - share * 100:g}"
+            )
+            expect(red).to_have_attribute("stroke-dashoffset", f"{-share * 100:g}")
+            expect(green).to_have_css("stroke", "rgb(165, 229, 185)")
+            expect(red).to_have_css("stroke", "rgb(239, 153, 164)")
+            expect(control).to_have_attribute("aria-label", re.compile(f"{share:.0%} bullish"))
+        else:
+            expect(glyph.locator(".map-sentiment-part")).to_have_count(0)
+            expect(control).to_have_css("stroke-dasharray", "7px, 6px")
+            expect(page.locator(".map-sentiment-reading")).to_contain_text("split unavailable")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

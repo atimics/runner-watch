@@ -218,11 +218,77 @@ def test_shared_base_without_market_screen_does_not_load_stock_glyph():
     env = Environment(loader=FileSystemLoader("web/templates"), autoescape=True)
     html = env.from_string(
         '{% extends "market_screen.html" %}'
-        '{% block screen_title %}Report{% endblock %}'
-        '{% block topbar %}{% endblock %}'
-        '{% block screen_main %}<p>Saved report</p>{% endblock %}'
+        "{% block screen_title %}Report{% endblock %}"
+        "{% block topbar %}{% endblock %}"
+        "{% block screen_main %}<p>Saved report</p>{% endblock %}"
     ).render(static_version="test")
     assert "Saved report" in html
     assert "stock-indicator.js" not in html
     assert "stock-indicator.css" not in html
     assert "Indicator key" not in html
+
+
+@pytest.mark.parametrize("bullish,bearish", [(3, 1), (0, 4), (4, 0), (1, 1), (1, 7)])
+def test_sentiment_counts_set_directional_shares_independent_of_attention_and_risk(
+    bullish, bearish
+):
+    source = stock(sentiment_counts={"bullish": bullish, "bearish": bearish}, rug_score=75)
+    original = copy.deepcopy(source)
+    glyph = stock_indicator(source)
+    mix = glyph["sentiment_mix"]
+    assert mix["state"] == "available"
+    assert mix["bullish"] == pytest.approx(bullish / (bullish + bearish))
+    assert mix["bullish"] + mix["bearish"] == 1
+    assert "var(--green)" in mix["gradient"] and "var(--red)" in mix["gradient"]
+    assert mix["description"] in glyph["description"]
+    assert glyph["risk"] == "high"
+    assert source == original
+    assert (
+        listing("stocks", [source])["rows"][0]["indicator"]
+        == detail(
+            "stocks",
+            {"ticker": "GLYPH", "current": source, "evidence_gate": source["evidence_gate"]},
+        )["item"]["indicator"]
+    )
+
+
+@pytest.mark.parametrize(
+    "counts",
+    [
+        {},
+        [],
+        {"bullish": 3},
+        {"bullish": 0, "bearish": 0},
+        {"bullish": -1, "bearish": 2},
+        {"bullish": True, "bearish": 1},
+        {"bullish": math.nan, "bearish": 1},
+        {"bullish": math.inf, "bearish": 1},
+        {"bullish": 1e308, "bearish": 1e308},
+    ],
+)
+def test_unusable_counts_keep_a_gap_even_with_a_positive_label(counts):
+    mix = stock_indicator(stock(sentiment_counts=counts))["sentiment_mix"]
+    assert mix["state"] == "unknown"
+    assert mix["bullish"] is mix["bearish"] is None
+    assert mix["gradient"] == ""
+    assert "split unavailable" in mix["description"]
+
+
+@pytest.mark.parametrize(
+    "tone,bullish",
+    [
+        ("positive", 1),
+        ("bullish", 1),
+        ("risk", 0),
+        ("negative", 0),
+        ("bearish", 0),
+        ("neutral", None),
+        ("mixed", None),
+        (None, None),
+        ("gap", None),
+    ],
+)
+def test_single_saved_direction_and_neutral_only_gap(tone, bullish):
+    mix = stock_indicator(stock(sentiment=tone))["sentiment_mix"]
+    assert mix["bullish"] == bullish
+    assert mix["state"] == ("unknown" if bullish is None else "available")

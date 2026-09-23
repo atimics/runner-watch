@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -136,17 +137,14 @@ def test_full_sentiment_border_and_center_are_independent(page: Page):
     glyph = page.locator(".indicator-glyph")
     expect(glyph).to_have_attribute("data-sentiment", "positive")
     expect(glyph).to_have_attribute("data-risk", "high")
-    styles = glyph.locator(".indicator-glyph__sentiment").evaluate(
-        "el => {const s=getComputedStyle(el); return [s.borderTopColor,s.borderRightColor,"
-        "s.borderBottomColor,s.borderLeftColor,s.borderTopStyle];}"
-    )
-    assert len(set(styles[:4])) == 1
-    assert styles[4] == "solid"
-    assert (
-        glyph.locator(".indicator-glyph__risk").evaluate(
-            "el => getComputedStyle(el).backgroundColor"
-        )
-        != styles[0]
+    expect(glyph).to_have_attribute("data-sentiment-mix", "available")
+    border = glyph.locator(".indicator-glyph__sentiment")
+    assert "100%" in border.get_attribute("style")
+    assert "conic-gradient" in border.evaluate("el => getComputedStyle(el).backgroundImage")
+    assert "radial-gradient" in border.evaluate("el => getComputedStyle(el).maskImage")
+    expect(glyph).to_have_attribute("aria-label", re.compile("100% bullish, 0% bearish"))
+    expect(glyph.locator(".indicator-glyph__risk")).to_have_css(
+        "background-color", "rgb(239, 153, 164)"
     )
     expect(page.locator(".ticker-verified")).to_have_count(0)
 
@@ -192,3 +190,31 @@ def test_detail_refresh_revokes_header_verification_without_summary(page: Page):
     page.clock.fast_forward(61000)
     expect(page.locator("h1 .ticker-verified")).to_have_count(0)
     expect(page.locator(".stock-indicator-summary")).to_have_count(0)
+
+
+@pytest.mark.parametrize("width", [320, 1280])
+def test_sentiment_shares_and_neutral_gap_survive_markup_refresh(page, width):
+    page.set_viewport_size({"width": width, "height": 844})
+    page.clock.install()
+    source = fixtures.stock(sentiment_counts={"bullish": 3, "bearish": 1})
+    helpers.open_screen(page, listing("stocks", [source]))
+    glyph = page.locator(".indicator-glyph")
+    border = glyph.locator(".indicator-glyph__sentiment")
+    expect(glyph).to_have_attribute("aria-label", re.compile("75% bullish, 25% bearish"))
+    assert "75.000000%" in border.get_attribute("style")
+    expect(border).to_have_css(
+        "background-image",
+        "conic-gradient(rgb(165, 229, 185) 0%, rgb(165, 229, 185) 75%, "
+        "rgb(239, 153, 164) 75%, rgb(239, 153, 164) 100%)",
+    )
+    next_html = helpers.fixtures.render(
+        listing("stocks", [{**source, "sentiment_counts": {"bullish": 0, "bearish": 0}}])
+    )
+    page.unroute("http://app.test/")
+    page.route(
+        "http://app.test/", lambda route: route.fulfill(content_type="text/html", body=next_html)
+    )
+    page.clock.fast_forward(61000)
+    expect(glyph).to_have_attribute("data-sentiment-mix", "unknown")
+    expect(border).to_have_css("border-top-style", "dashed")
+    expect(border).to_have_css("background-image", "none")

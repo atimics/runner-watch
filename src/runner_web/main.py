@@ -5074,6 +5074,11 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
             f"""
             SELECT * FROM (
                 SELECT f.*,COUNT(*) OVER (PARTITION BY f.ticker) AS matching_filing_count,
+                       SUM(CASE WHEN LOWER(f.sentiment) IN ('positive','bullish') THEN 1 ELSE 0 END)
+                           OVER (PARTITION BY f.ticker) AS bullish_filing_count,
+                       SUM(CASE WHEN LOWER(f.sentiment) IN ('risk','negative','bearish')
+                                THEN 1 ELSE 0 END)
+                           OVER (PARTITION BY f.ticker) AS bearish_filing_count,
                        ROW_NUMBER() OVER (
                            PARTITION BY f.ticker ORDER BY f.score DESC,f.filed_at DESC
                        ) AS ticker_row
@@ -5087,9 +5092,14 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
 
     filings_by_ticker: dict[str, dict[str, Any]] = {}
     filing_counts: dict[str, int] = {}
+    sentiment_counts: dict[str, dict[str, int]] = {}
     for raw in filing_rows:
         filing = dict(raw)
         filing_counts[str(filing["ticker"])] = int(filing.pop("matching_filing_count"))
+        sentiment_counts[str(filing["ticker"])] = {
+            "bullish": int(filing.pop("bullish_filing_count")),
+            "bearish": int(filing.pop("bearish_filing_count")),
+        }
         event = _intelligence_evidence(filing)
         filings_by_ticker[event["ticker"]] = event
 
@@ -5119,6 +5129,7 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
         "market_events_by_ticker": market_events_by_ticker,
         "filings_by_ticker": filings_by_ticker,
         "filing_counts": filing_counts,
+        "sentiment_counts": sentiment_counts,
         # Three different clocks: when the evidence was true, when the price it
         # used was observed, and when this was computed.
         "replay_status": "bounded_reconstruction_not_revision_complete",
@@ -5286,6 +5297,12 @@ def _pulse_snapshot_score(
         }
     return {
         "baseline_score": attention.finite_number(snapshot.get("score")),
+        "sentiment_counts": inputs.get("sentiment_counts", {}).get(
+            ticker, {"bullish": 0, "bearish": 0}
+        ),
+        "sentiment_basis": (
+            "Share of bullish and bearish filing assessments collected in the past 3 days"
+        ),
         "rug_score": rug_score,
         "trade_state": trade_state,
         "model_score": 100 * facts["probability_up"] if facts else None,
@@ -5533,6 +5550,8 @@ PUBLIC_PULSE_ROW_FIELDS = (
     "rug_score",
     "rug_level",
     "sentiment",
+    "sentiment_counts",
+    "sentiment_basis",
     "pulse_label",
     "directional_thesis",
     "has_update",
@@ -9425,8 +9444,14 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
     directional_thesis = _ranker_directional_thesis(
         dict(prediction) if prediction is not None else None
     )
+    inputs = _pulse_scoring_inputs(ticker=ticker, at=score_time)
+    current["sentiment_counts"] = inputs.get("sentiment_counts", {}).get(
+        ticker, {"bullish": 0, "bearish": 0}
+    )
+    current["sentiment_basis"] = (
+        "Share of bullish and bearish filing assessments collected in the past 3 days"
+    )
     if snapshot is not None:
-        inputs = _pulse_scoring_inputs(ticker=ticker, at=score_time)
         if inputs["market_rows"]:
             inputs["quote_marks"] = fresh_quotes([ticker])
         if not inputs["market_rows"]:
@@ -9449,6 +9474,8 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
                 "eligibility",
                 "eligibility_note",
                 "score_trace",
+                "sentiment_counts",
+                "sentiment_basis",
                 "score_as_of",
                 "score_snapshot_id",
                 "score_policy",

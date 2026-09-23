@@ -20,6 +20,7 @@
     const glyph = {
       band:allowed(value.band,[1,2,3],1),
       mix:allowed(value.mix_state,['available','zero','unknown'],'unknown'),
+      sentimentMix:window.RatiRingGlyph.readSentiment(value.sentiment_mix),
       sentiment:allowed(value.sentiment,['positive','negative','neutral','unknown'],'unknown'),
       risk:allowed(value.risk,['low','medium','high','unknown'],'unknown'),
     };

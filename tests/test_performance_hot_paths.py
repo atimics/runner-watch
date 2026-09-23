@@ -292,3 +292,51 @@ def test_empty_board_does_not_materialize_global_filings(isolated_database):
     board = main._pulse_scoring_inputs(at=now)
     assert board["filing_counts"] == board["filings_by_ticker"] == {}
     assert main._pulse_scoring_inputs(at=now, ticker="OTHER")["filing_counts"] == {"OTHER": 1}
+
+
+def test_sentiment_counts_share_the_bounded_filing_window_on_board_and_detail(
+    isolated_database, monkeypatch
+):
+    from runner_web.stock_indicator import stock_indicator
+
+    at = datetime(2026, 9, 21, 15, tzinfo=UTC)
+    monkeypatch.setattr(main, "now", lambda: at)
+    stamp = (at - timedelta(minutes=1)).isoformat()
+    insert_scan_run("board", stamp, 1)
+    insert_scored_snapshot("snapshot", "board", "ONE", 50, 1, stamp)
+    # Neutral, old, future and subsequently revised filings do not add direction.
+    cases = [
+        ("bull", "positive", stamp, stamp),
+        ("bull2", "bullish", stamp, stamp),
+        ("bear", "risk", stamp, stamp),
+        ("neutral", "neutral", stamp, stamp),
+        ("old", "positive", (at - timedelta(days=3)).isoformat(), stamp),
+        ("future", "positive", (at + timedelta(minutes=1)).isoformat(), stamp),
+        ("revised", "positive", stamp, (at + timedelta(minutes=1)).isoformat()),
+    ]
+    for accession, tone, created, updated in cases:
+        insert_filing(accession, "ONE", 2, 50, created)
+        with connection() as handle:
+            handle.execute(
+                "UPDATE sec_filings SET sentiment=?,updated_at=? WHERE accession=?",
+                (tone, updated, accession),
+            )
+    inputs = main._pulse_scoring_inputs(at=at)
+    assert inputs["sentiment_counts"] == {"ONE": {"bullish": 2, "bearish": 1}}
+    scored = main._pulse_snapshot_score(inputs["market_rows"][0], inputs)
+    detail = main.ticker_detail_data("ONE")
+    summary = main._ticker_summary("ONE")
+    monkeypatch.setattr(main, "pulse_data", lambda **kwargs: {"rows": [scored]})
+    public = main._public_pulse_data()["rows"][0]
+    for current in [scored, public, detail["current"], summary]:
+        mix = stock_indicator(current)["sentiment_mix"]
+        assert mix["bullish"] == pytest.approx(2 / 3)
+        assert "past 3 days" in mix["basis"]
+    # Filing-only stocks follow that same window.
+    insert_filing("off-board", "OTHER", 2, 50, stamp)
+    with connection() as handle:
+        handle.execute("UPDATE sec_filings SET sentiment='bearish' WHERE accession='off-board'")
+    assert main.ticker_detail_data("OTHER")["current"]["sentiment_counts"] == {
+        "bullish": 0,
+        "bearish": 1,
+    }
