@@ -197,10 +197,9 @@ def test_status_filters_and_source_data_remain_unchanged(updates, expected):
     assert listing("stocks", [source])["counts"] == {tone: 1}
 
 
-@pytest.mark.parametrize("market", ["memecoins", "sports"])
-def test_other_markets_do_not_get_stock_glyph_or_approval(market):
+def test_sports_keeps_its_own_display():
     display = row(
-        market,
+        "sports",
         {"id": "test", "symbol": "TEST", "verified": True, "start_time": "2026-09-21T18:00:00Z"},
     )
     assert "indicator" not in display

@@ -161,13 +161,20 @@ def test_older_list_response_keeps_latest_rows_and_filters(page):
 def test_late_coin_map_uses_latest_score(page):
     raw = screens.sample("memecoins")
     data = {"coin": raw, "history": []}
-    fresh = detail("memecoins", data)
-    fresh["item"].update(
-        value="$123.00",
-        score=72,
-        score_detail={
-            "drivers": [{"key": "market", "label": "Market", "value": 80}],
-            "penalties": [{"key": "risk", "label": "Risk", "value": -8}],
+    fresh = detail(
+        "memecoins",
+        {
+            "coin": {
+                **raw,
+                "price": 123,
+                "score": 72,
+                "rug_score": 30,
+                "score_detail": {
+                    "drivers": [{"key": "market", "label": "Market", "value": 80}],
+                    "penalties": [{"key": "risk", "label": "Risk", "value": -8}],
+                },
+            },
+            "history": [],
         },
     )
     held = []
@@ -185,9 +192,11 @@ def test_late_coin_map_uses_latest_score(page):
     held[0].fulfill(path=str(ROOT / "web/static/memecoin-replay.js"))
     page.wait_for_load_state("load")
     expect(page.locator(".map-center-score")).to_have_text("72")
-    expect(page.locator(".map-score-segment")).to_have_count(2)
+    expect(page.locator(".map-glyph")).to_have_attribute("data-band", "3")
+    expect(page.locator(".map-glyph")).to_have_attribute("data-risk", "medium")
+    expect(page.locator(".map-score-segment")).to_have_count(1)
     page.locator(".map-score-segment").first.press("Enter")
-    expect(page.locator("[data-replay-selection]")).to_contain_text("+80 pts")
+    expect(page.locator("[data-replay-selection]")).to_contain_text("80 pts")
     page.locator(".map-score-center").press("Enter")
     expect(page.locator(".map-center-score")).to_have_text("72")
     expect(page.locator("[data-replay-selection] h3")).to_have_count(0)

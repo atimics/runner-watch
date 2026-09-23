@@ -722,3 +722,28 @@ def test_search_ignores_late_matches_and_keeps_history_in_view_order(page):
     expect(page.get_by_role("option")).to_contain_text("NEW")
     search.press("Escape")
     expect(page.locator(".search-popup")).to_be_hidden()
+
+
+@pytest.mark.parametrize("width", [320, 390, 1280])
+def test_memecoin_list_uses_shared_glyph_with_readable_unknowns(page: Page, width):
+    from tests.test_memecoin_indicator import assessed_coin
+
+    page.set_viewport_size({"width": width, "height": 844})
+    coins = [
+        assessed_coin(id="low", score=24, rug_score=10),
+        assessed_coin(id="mid", score=58),
+        assessed_coin(id="high", score=80, rug_score=70),
+        fixtures.sample("memecoins"),
+    ]
+    open_screen(page, listing("memecoins", coins))
+    glyphs = page.locator(".indicator-glyph")
+    expect(glyphs).to_have_count(4)
+    sizes = [glyphs.nth(i).locator(".score-pie").bounding_box()["width"] for i in range(3)]
+    assert sizes[0] < sizes[1] == sizes[2]
+    assert glyphs.nth(2).locator(".score-pie").evaluate(
+        "el => getComputedStyle(el).maskImage"
+    ) == "none"
+    expect(glyphs.nth(3)).to_have_attribute("data-mix", "unknown")
+    expect(glyphs.nth(3)).to_have_accessible_name(re.compile("Attention unavailable"))
+    expect(page.get_by_text("Market quote", exact=True)).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

@@ -6,27 +6,78 @@
   const graph = $('graph'), screen = document.getElementById('screenData');
   let item = (screen?.ratiScreenDetail || JSON.parse(screen?.textContent || '{}')).item || {};
   let data = null, page = 0, receiptBase = '/api/memecoins/evidence/', selected = null;
-  let controller, timer;
+  let controller, timer, selectedPart = null;
+  let glyph = {}, contributions = [], controls = [], score = '—';
   const small = matchMedia('(max-width:500px)');
   const make = (tag, text, cls) => {const el = document.createElement(tag); if (text != null) el.textContent = text; if (cls) el.className = cls; return el;};
   const svg = (tag, attrs, text) => {const el = document.createElementNS('http://www.w3.org/2000/svg',tag); Object.entries(attrs).forEach(([k,v]) => el.setAttribute(k,v)); if (text != null) el.textContent = text; return el;};
-  const score = () => Number.isFinite(item.score) ? String(Math.round(item.score)) : '—';
-  const parts = () => [...(item.score_detail?.drivers || []), ...(item.score_detail?.penalties || []).map(p => ({...p,value:-Math.abs(p.value)}))].filter(p => Number.isFinite(p.value) && p.value !== 0);
-  const tone = p => p.value < 0 ? 'var(--red)' : `var(--score-${p.key},var(--muted))`;
+  const number = value => value.toLocaleString('en-US', {maximumFractionDigits:2});
+  const points = value => `${number(value)} pts`;
+  const percent = part => `${number(part.share * 100)}% of attention contributions`;
+  const titleCase = value => value[0].toUpperCase() + value.slice(1);
   const activate = (el, fn) => {el.addEventListener('click',fn); el.addEventListener('keydown',e => {if (['Enter',' '].includes(e.key)) {e.preventDefault();fn();}});};
+  function readGlyph() {
+    const value = item.indicator || {};
+    const allowed = (value, values, fallback) => values.includes(value) ? value : fallback;
+    const finite = value => typeof value === 'number' && Number.isFinite(value);
+    glyph = {
+      band:allowed(value.band,[1,2,3],1),
+      mix:allowed(value.mix_state,['available','zero','unknown'],'unknown'),
+      sentiment:allowed(value.sentiment,['positive','negative','neutral','unknown'],'unknown'),
+      risk:allowed(value.risk,['low','medium','high','unknown'],'unknown'),
+    };
+    score = finite(value.score) ? number(value.score) : '—';
+    const slices = Array.isArray(value.slices) ? value.slices : [];
+    contributions = ['market','evidence','social'].map((key,index) => {
+      const part = slices.find(part => part?.key === key);
+      return {key,label:['Market','Chain evidence','External social'][index],value:finite(part?.value) ? Math.max(0,part.value) : 0};
+    }).filter(part => part.value > 0);
+    const total = contributions.reduce((sum,part) => sum + part.value,0);
+    if (glyph.mix !== 'available' || !Number.isFinite(total) || total <= 0) contributions = [];
+    contributions.forEach(part => {part.share = part.value / total;});
+    controls = [...contributions,{key:'sentiment',label:'Chain evidence tone'}];
+    if (glyph.risk !== 'low') controls.push({key:'risk',label:'Risk'});
+    if (!controls.some(part => part.key === selectedPart)) selectedPart = null;
+  }
   function overview(part) {
     root.querySelector('.map-workspace').classList.add('map-overview');
-    selected = null; $('score-return').hidden = !part;
-    root.querySelectorAll('[data-replay-event]').forEach(b => b.setAttribute('aria-pressed','false'));
+    selected = null; selectedPart = part?.key || null; $('score-return').hidden = !part;
+    root.querySelectorAll('[data-replay-event], [data-finding-id]').forEach(b => b.setAttribute('aria-pressed','false'));
+    graph.querySelectorAll('[data-score-key]').forEach(b => b.setAttribute('aria-pressed',String(b.dataset.scoreKey === selectedPart)));
     const panel = $('selection'); panel.replaceChildren();
-    if (part) panel.append(make('h4',part.label),make('p',`${part.value > 0 ? '+' : ''}${part.value} pts`));
-    const badges = make('div',null,'map-score-badges');
+    panel.append(make('p',`Attention ${score === '—' ? 'unavailable' : score + ' points'} · Chain evidence tone: ${titleCase(glyph.sentiment)} · Risk: ${titleCase(glyph.risk)}`,'map-glyph-reading'));
+    if (part) {
+      panel.append(make('h4',part.label));
+      if (part.key === 'risk') panel.append(make('p',glyph.risk === 'unknown' ? 'Risk is awaiting a saved assessment. The ? marks this gap.' : `${titleCase(glyph.risk)} risk from the saved assessment.`));
+      else if (part.key === 'sentiment') panel.append(make('p',glyph.sentiment === 'unknown' ? 'Chain evidence tone is awaiting a saved assessment. Open the recorded events below to read the receipts.' : `${titleCase(glyph.sentiment)} chain evidence tone from the saved assessment.`));
+      else panel.append(make('p',`${points(part.value)} · ${percent(part)}`,'map-score-breakdown'));
+    }
     const list = make('ul',null,'map-score-legend');
-    parts().forEach(p => {const li = make('li'), dot = make('span',null,'map-score-swatch'); dot.style.background = tone(p); li.append(dot,make('span',p.label),make('strong',`${p.value > 0 ? '+' : ''}${p.value} pts`)); list.append(li);});
-    if (list.children.length) {badges.append(list); panel.append(badges);}
+    contributions.forEach(p => {const li = make('li'), dot = make('span',null,'map-score-swatch'); dot.style.background = `var(--indicator-${p.key})`; dot.setAttribute('aria-hidden','true'); li.append(dot,make('span',p.label),make('strong',points(p.value))); list.append(li);});
+    if (list.children.length) panel.append(list);
+    else panel.append(make('p',glyph.mix === 'zero' ? 'Saved attention contributions total zero.' : 'Attention breakdown is awaiting a saved assessment.','map-glyph-empty'));
+    if (item.assessment?.reason) panel.append(make('p',item.assessment.reason));
     document.dispatchEvent(new CustomEvent('rati:map-time',{detail:{time:null}}));
   }
+  function clearPart() {
+    selectedPart = null;
+    graph.querySelectorAll('[data-score-key]').forEach(b => b.setAttribute('aria-pressed','false'));
+  }
+  function wireControl(element, part) {
+    element.setAttribute('role','button'); element.setAttribute('tabindex','0');
+    element.dataset.scoreKey = part.key;
+    element.setAttribute('aria-pressed',String(selectedPart === part.key));
+    activate(element,()=>overview(part));
+    element.addEventListener('keydown',event => {
+      if (!['ArrowRight','ArrowDown','ArrowLeft','ArrowUp','Home','End'].includes(event.key)) return;
+      event.preventDefault();
+      const targets = [...graph.querySelectorAll('[data-score-key]')], index = targets.indexOf(element);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? targets.length - 1 : (index + (['ArrowRight','ArrowDown'].includes(event.key) ? 1 : -1) + targets.length) % targets.length;
+      targets[next].focus({preventScroll:true});
+    });
+  }
   function details(node, eventId) {
+    clearPart();
     root.querySelector('.map-workspace').classList.remove('map-overview');
     selected = node.id; $('score-return').hidden = false;
     const panel = $('selection'); panel.replaceChildren(make('h3',node.id === 'launch' ? item.name : node.kind === 'wallet' ? 'Wallet' : node.kind));
@@ -44,8 +95,11 @@
     root.querySelectorAll('[data-replay-event]').forEach(b => b.setAttribute('aria-pressed',String(b.dataset.replayEvent === eventId)));
   }
   function draw() {
+    const active = graph.contains(document.activeElement) ? document.activeElement : null;
+    const focusKey = active?.dataset.scoreKey, focusNode = active?.dataset.node;
+    readGlyph();
     graph.replaceChildren(); graph.dataset.phase = 'settled';
-    const cx = small.matches ? 180 : 380, cy = small.matches ? 184 : 218, r = small.matches ? 48 : 62, width = small.matches ? 16 : 20;
+    const {cx,cy} = window.RatiRingGlyph.metrics(glyph,small.matches);
     graph.setAttribute('viewBox',small.matches ? '0 0 360 390' : '0 0 760 440');
     const frame = data?.frames.at(-1), size = small.matches ? 4 : 8;
     const all = (frame?.nodes || []).filter(n => n.id !== 'launch');
@@ -57,15 +111,23 @@
     shown.forEach((n,i) => positions.set(n.id,{x:small.matches ? (i%2 ? 278 : 82) : (i%2 ? 595 : 165),y:small.matches ? 66+Math.floor(i/2)*240 : 50+Math.floor(i/2)*103}));
     (frame?.edges || []).forEach(edge => {const a=positions.get(edge.source),b=positions.get(edge.target); if(a&&b) graph.append(svg('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:`map-edge ${edge.role === 'bought' ? 'up' : edge.role === 'sold' ? 'down' : ''}`}));});
     shown.forEach(n => {const {x,y}=positions.get(n.id), label=n.address === launchWallet ? 'Launch wallet' : n.kind; const g=svg('g',{class:'map-person',role:'button',tabindex:0,'data-node':n.id,'aria-label':`${n.kind}: ${n.address}`}); g.append(svg('circle',{cx:x,cy:y,r:22}),svg('text',{x,y:y+5,'text-anchor':'middle'},n.address.slice(0,4)),svg('text',{x,y:y+42,'text-anchor':'middle'},label),svg('title',{},n.address)); activate(g,()=>details(n)); graph.append(g);});
-    graph.append(svg('circle',{cx,cy,r,class:'map-score-track','stroke-width':width}));
-    const contributions=parts(),total=contributions.reduce((v,p)=>v+Math.abs(p.value),0); let angle=-Math.PI/2;
-    contributions.forEach(p => {const sweep=Math.abs(p.value)/total*Math.PI*2,end=angle+sweep; const attrs={class:'map-score-segment',role:'button',tabindex:0,'stroke-width':width,'aria-label':`${p.label}: ${p.value} pts`}; const segment=contributions.length===1 ? svg('circle',{...attrs,cx,cy,r}) : svg('path',{...attrs,d:`M ${cx+r*Math.cos(angle)} ${cy+r*Math.sin(angle)} A ${r} ${r} 0 ${sweep>Math.PI?1:0} 1 ${cx+r*Math.cos(end)} ${cy+r*Math.sin(end)}`}); segment.style.stroke=tone(p); activate(segment,()=>overview(p)); graph.append(segment); angle=end;});
-    const center=svg('g',{class:'map-score-center',role:'button',tabindex:0,'data-node':'launch','aria-label':`${item.name}, RATi score ${score()}. Show score overview.`});
-    center.append(svg('circle',{cx,cy,r:r-width/2-3,class:'map-center'}),svg('text',{x:cx,y:cy-6,'text-anchor':'middle',class:'map-center-text'},item.name?.length > 10 ? item.name.slice(0,6)+'…' : item.name),svg('text',{x:cx,y:cy+16,'text-anchor':'middle',class:'map-center-score'},score())); activate(center,()=>overview()); graph.append(center);
+    const ringLayer = svg('g',{class:'map-ring map-glyph'});
+    window.RatiRingGlyph.draw({
+      ringLayer, graph, glyph, small:small.matches, contributions, controls, score,
+      name:item.name || 'Token', label:item.name?.length > 10 ? item.name.slice(0,6)+'…' : item.name,
+      toneLabel:'Chain evidence tone', centerAttributes:{'data-node':'launch'},
+      points, percent, wireControl, overview:()=>overview(),
+    });
+    graph.append(ringLayer);
+    if (active) {
+      const target = focusKey ? graph.querySelector(`[data-score-key="${CSS.escape(focusKey)}"]`) : focusNode ? graph.querySelector(`[data-node="${CSS.escape(focusNode)}"]`) : null;
+      (target || graph.querySelector('.map-score-center'))?.focus({preventScroll:true});
+    }
     $('paging').hidden=all.length<=size; $('previous').disabled=page===0; $('next').disabled=(page+1)*size>=all.length; $('page').textContent=`${page*size+1}–${page*size+shown.length} of ${all.length}`;
   }
   const findings = () => (item.assessment?.drivers || []).filter(f => f.evidence?.length);
   function findingDetails(finding) {
+    clearPart();
     root.querySelector('.map-workspace').classList.remove('map-overview');
     selected = 'finding:' + finding.id; $('score-return').hidden = false;
     const panel = $('selection'); panel.replaceChildren(make('h3',finding.label),make('p',finding.explanation));
@@ -97,7 +159,7 @@
   $('previous').addEventListener('click',()=>{page--;draw();});$('next').addEventListener('click',()=>{page++;draw();});$('score-return').addEventListener('click',()=>overview());
   root.addEventListener('keydown',e=>{if(e.key==='Escape'){overview();graph.querySelector('.map-score-center')?.focus();}});
   small.addEventListener('change',()=>{page=0;draw();});
-  screen?.addEventListener('rati:screen-detail',e=>{if(e.detail?.market!=='memecoins'||e.detail.item?.id!==root.dataset.coinId)return;item=e.detail.item;draw();activity();if(selected?.startsWith('finding:') && !findings().some(f=>'finding:'+f.id===selected)){overview();graph.querySelector('.map-score-center')?.focus();}else if(!selected)overview();});
+  screen?.addEventListener('rati:screen-detail',e=>{if(e.detail?.market!=='memecoins'||e.detail.item?.id!==root.dataset.coinId)return;item=e.detail.item;draw();activity();if(selected?.startsWith('finding:') && !findings().some(f=>'finding:'+f.id===selected)){overview();graph.querySelector('.map-score-center')?.focus();}else if(!selected)overview(controls.find(part=>part.key===selectedPart));});
   window.addEventListener('pagehide',()=>{controller?.abort();clearTimeout(timer);});
   draw();overview();activity();load();
 })();

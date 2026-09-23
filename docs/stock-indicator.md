@@ -3,7 +3,7 @@
 Presentation-only change for the stock list and detail screen. Scoring, model
 probabilities, ordering, policy, and the existing `state_tag()` derivation are
 unchanged. WATCH, SETUP, RUNNING, EXTENDED, AVOID and PAUSED retain their chips,
-colors, risk marks, filters and precedence. Sports, memecoins, wallet/entity nodes and run-state derivation remain unchanged.
+colors, risk marks, filters and precedence. Sports and wallet/entity nodes and run-state derivation remain unchanged.
 The ticker map now uses the shared glyph contract for its central stock node.
 
 ## Visual contract
@@ -70,3 +70,28 @@ behavior remain on their existing paths. Indicator-only updates preserve wallet
 DOM nodes and selected filings, and refreshes include sentiment/risk changes even
 when attention is unchanged. The map can render attention before filings load,
 and missing/failed filing responses do not remove the glyph.
+
+## Memecoin glyph
+
+The token list and token wallet map share the stock glyph's CSS, SVG geometry,
+attention bands, color keys and risk marker. Blue is market, purple is chain
+evidence and cyan is external social. The label and score sit below the ring.
+The key explains the token meaning, and each map part opens its text reading.
+Arrow keys move between parts; Enter/Space select; Escape returns to the overview.
+
+The token adapter uses saved `attention_score` or `score`, with positive
+`market`, `chain_event` and `social_search` contributions from `score_components`
+or `score_detail.drivers`. Its perimeter reads explicit `chain_sentiment`.
+Its center uses saved risk fields through the shared risk rules above.
+Stock verification remains scoped to the stock evidence gate.
+
+The current quote and receipt pipeline supplies no numeric attention assessment.
+These tokens therefore have a dashed empty ring, an unavailable attention label,
+an unknown evidence tone and a question mark for unknown risk. Receipt counts,
+price changes, penalties and forecast probabilities never become ring slices.
+A saved assessment can populate the same glyph later. This change is presentation
+only; scoring and collection continue on their existing paths.
+
+Accepted detail refreshes update the glyph and keep a selected part when it is
+still available. Selected receipt links remain usable during a refresh. The
+server also supplies the glyph description for the JavaScript-free fallback.

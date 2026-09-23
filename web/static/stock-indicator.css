@@ -1,5 +1,5 @@
-/* Stock-only indicator; intentionally does not style .tag or change status colors. */
-.indicator-glyph,[data-stock-map]{
+/* Shared stock and token attention glyph. */
+.indicator-glyph,[data-stock-map],[data-token-replay]{
   --indicator-market:#418cf4;--indicator-evidence:#b58af4;--indicator-social:#36d5e6;
 }
 .indicator-glyph{

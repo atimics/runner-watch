@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import quote
 
 from runner_web.market_assessments import assessment
-from runner_web.stock_indicator import stock_indicator
+from runner_web.stock_indicator import memecoin_indicator, stock_indicator
 
 LABELS = {"stocks": "Stocks", "memecoins": "Memecoins", "sports": "Sports"}
 
@@ -185,7 +185,9 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         address = ""
     if address:
         subtitle = address[:6] + "…" + address[-4:]
-    indicator = stock_indicator(item) if market == "stocks" else None
+    indicator = (
+        stock_indicator(item) if market == "stocks" else memecoin_indicator(item) if coin else None
+    )
     policy = item.get("eligibility") if market == "stocks" else None
     assessment_stale = isinstance(policy, dict) and any(
         isinstance(reason, dict) and reason.get("code") == "stale_quote"
@@ -193,11 +195,8 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
     )
     assessment_quote = stamp(item.get("quote_as_of")) if market == "stocks" else ""
     return {
-        **(
-            {"indicator": indicator, "verified": indicator["verification"]["verified"]}
-            if indicator
-            else {}
-        ),
+        **({"indicator": indicator} if indicator else {}),
+        **({"verified": indicator["verification"]["verified"]} if market == "stocks" else {}),
         **(
             {
                 "assessment_stale": assessment_stale,

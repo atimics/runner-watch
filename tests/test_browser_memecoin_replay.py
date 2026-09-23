@@ -15,7 +15,9 @@ pytestmark = pytest.mark.browser
 ROOT = Path(__file__).parents[1]
 
 
-def open_replay(page: Page, *, width: int = 390, launch: bool = True) -> dict:
+def open_replay(
+    page: Page, *, width: int = 390, launch: bool = True, coin_overrides: dict | None = None
+) -> dict:
     page.set_viewport_size({"width": width, "height": 900})
     data = payload()
     if not launch:
@@ -42,7 +44,7 @@ def open_replay(page: Page, *, width: int = 390, launch: bool = True) -> dict:
         }
     )
     request.state.csp_nonce = "browser-test"
-    detail = _detail(coin={**_detail()["coin"], **COIN})
+    detail = _detail(coin={**_detail()["coin"], **COIN, **(coin_overrides or {})})
     html = main.templates.TemplateResponse(
         request,
         "simple_coin_detail.html",
@@ -124,3 +126,90 @@ def test_pending_evidence_keeps_ticker_and_score_visible(page: Page):
     page.reload()
     expect(page.locator("[data-replay-status]")).to_contain_text("Please retry")
     expect(page.locator(".map-score-center")).to_be_visible()
+
+
+@pytest.mark.parametrize("width,score,band", [(320, 24, "1"), (390, 58, "2"), (1440, 80, "3")])
+def test_token_glyph_shares_stock_shapes_and_opens_each_reading(page: Page, width, score, band):
+    from tests.test_memecoin_indicator import assessed_coin
+
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    open_replay(page, width=width, coin_overrides=assessed_coin(id=COIN["id"], score=score))
+    glyph = page.locator(".map-glyph")
+    expect(glyph).to_have_attribute("data-band", band)
+    expect(glyph).to_have_attribute("data-sentiment", "negative")
+    expect(glyph).to_have_attribute("data-risk", "medium")
+    expect(glyph.locator(".map-score-segment")).to_have_count(3)
+    segment = glyph.locator('[data-score-key="evidence"]')
+    assert segment.evaluate("el => getComputedStyle(el).fill") == (
+        "rgb(181, 138, 244)" if band == "3" else "none"
+    )
+    expect(glyph.locator(".map-glyph-hole")).to_have_count(0 if band == "3" else 1)
+    segment.focus()
+    segment.press("Enter")
+    panel = page.locator("[data-replay-selection]")
+    expect(panel.locator("h4")).to_have_text("Chain evidence")
+    expect(panel).to_contain_text("20 pts")
+    segment.press("End")
+    risk = glyph.locator('[data-score-key="risk"]')
+    expect(risk).to_be_focused()
+    risk.press("Space")
+    expect(panel).to_contain_text("Medium risk from the saved assessment.")
+    risk.press("ArrowLeft")
+    tone = glyph.locator('[data-score-key="sentiment"]')
+    expect(tone).to_be_focused()
+    tone.press("Enter")
+    expect(panel).to_contain_text("Negative chain evidence tone from the saved assessment.")
+    tone.press("Escape")
+    expect(page.locator(".map-score-center")).to_be_focused()
+    expect(page.locator("[data-replay-score-return]")).to_be_hidden()
+    page.get_by_text("Indicator key", exact=True).click()
+    expect(page.get_by_text("Blue: market. Purple: chain evidence.", exact=False)).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert not errors
+
+
+def test_quote_only_ring_explains_unknown_values(page: Page):
+    open_replay(page)
+    glyph = page.locator(".map-glyph")
+    expect(glyph).to_have_attribute("data-mix", "unknown")
+    expect(glyph.locator(".map-score-segment")).to_have_count(0)
+    expect(glyph.locator(".map-risk-unknown")).to_have_text("?")
+    glyph.locator('[data-score-key="risk"]').click()
+    expect(page.locator("[data-replay-selection]")).to_contain_text(
+        "Risk is awaiting a saved assessment."
+    )
+    expect(page.locator("[data-replay-selection]")).to_contain_text("Attention unavailable")
+
+
+def test_glyph_refresh_preserves_selection_and_clears_removed_assessment(page: Page):
+    from tests.test_memecoin_indicator import assessed_coin
+
+    page.clock.install()
+    coin = assessed_coin(id=COIN["id"])
+    open_replay(page, coin_overrides=coin)
+    risk = page.locator('[data-score-key="risk"]')
+    risk.click()
+    changed = {**coin, "rug_score": 70, "chain_sentiment": "positive"}
+    page.route(
+        "**/api/screens/**",
+        lambda route: route.fulfill(
+            json=main.simple_market_detail("memecoins", _detail(coin=changed))
+        ),
+    )
+    page.clock.fast_forward(61000)
+    expect(risk).to_be_focused()
+    expect(risk).to_have_attribute("aria-pressed", "true")
+    expect(page.locator(".map-glyph")).to_have_attribute("data-sentiment", "positive")
+    expect(page.locator("[data-replay-selection]")).to_contain_text("High risk")
+    page.route(
+        "**/api/screens/**",
+        lambda route: route.fulfill(
+            json=main.simple_market_detail("memecoins", _detail(coin={**_detail()["coin"], **COIN}))
+        ),
+    )
+    page.clock.fast_forward(61000)
+    expect(page.locator(".map-glyph")).to_have_attribute("data-mix", "unknown")
+    expect(page.locator(".map-score-segment")).to_have_count(0)
+    expect(page.locator("[data-replay-selection]")).to_contain_text("Attention unavailable")
+    expect(page.locator("[data-replay-selection]")).to_contain_text("Risk is awaiting")
