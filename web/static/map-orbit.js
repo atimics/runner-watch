@@ -36,9 +36,10 @@
       if (![x, y].every(Number.isFinite)) return;
       if (ring) {
         // Swing the node along the fixed track instead of around it.
-        const start = Math.atan2((y - cy) / ry, (x - cx) / rx);
-        const targetX = cx + rx * Math.cos(start + radians);
-        const targetY = cy + ry * Math.sin(start + radians);
+        const nx = (x-cx)/rx, ny = (y-cy)/ry;
+        const start = Math.atan2(ny,nx), scale = Math.hypot(nx,ny);
+        const targetX = cx + rx*scale*Math.cos(start+radians);
+        const targetY = cy + ry*scale*Math.sin(start+radians);
         node.setAttribute('transform', `translate(${targetX - x} ${targetY - y})`);
       } else {
         // No track: revolve at a constant radius with an upright label.
@@ -54,7 +55,7 @@
     function step(now) {
       const elapsed = previous ? now - previous : 0;
       previous = now;
-      const idle = !reduce.matches && !svg.classList.contains('orbit-paused') && svg.dataset.phase !== 'moving';
+      const idle = !reduce.matches && !svg.classList.contains('orbit-paused') && !svg.classList.contains('orbit-interacting') && svg.dataset.phase !== 'moving';
       if (idle) {
         angle = (angle + elapsed / REVOLUTION_MS * 360) % 360;
         svg.dataset.orbitAngle = angle;

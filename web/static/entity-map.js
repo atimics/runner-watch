@@ -5,6 +5,7 @@
   const {wallet, entity} = JSON.parse(data.textContent);
   const graph = document.querySelector('[data-entity-map]');
   window.ratiOrbit?.attach(graph);
+  const navigation = window.EntityMapNavigation.attach(graph);
   const small = matchMedia('(max-width:500px)');
   const svg = (tag, attrs, text) => {
     const element = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -13,25 +14,36 @@
     return element;
   };
   const money = value => new Intl.NumberFormat('en-US', {style:'currency',currency:'USD',maximumFractionDigits:0}).format(value);
-  function scoreWheel(stock, x, y, radius) {
-    const wheel = svg('g', {class:'entity-score-ring',role:'img','aria-label':`Score ${Math.round(stock.score)}`});
-    wheel.append(svg('circle',{cx:x,cy:y,r:radius,class:'entity-score-track'}));
-    const valid = rows => Array.isArray(rows) ? rows.filter(p => p && Number.isFinite(p.value) && p.value !== 0) : [];
-    const drivers = valid(stock.score_detail?.drivers);
-    const parts = [...drivers.filter(p => p.value > 0), ...valid(stock.score_detail?.penalties).map(p => ({...p,value:-Math.abs(p.value)})), ...drivers.filter(p => p.value < 0)];
-    const total = parts.reduce((sum,p) => sum+Math.abs(p.value),0);
-    let angle = -Math.PI/2;
-    parts.forEach(part => {
-      const end = angle+Math.abs(part.value)/total*Math.PI*2;
-      const attrs = {class:'entity-score-segment','data-score-key':part.key};
-      const segment = parts.length === 1 ? svg('circle',{...attrs,cx:x,cy:y,r:radius}) : svg('path',{...attrs,d:`M ${x+radius*Math.cos(angle)} ${y+radius*Math.sin(angle)} A ${radius} ${radius} 0 ${end-angle > Math.PI ? 1 : 0} 1 ${x+radius*Math.cos(end)} ${y+radius*Math.sin(end)}`});
-      segment.style.stroke = part.value < 0 ? 'var(--red)' : `var(--score-${part.key},var(--muted))`;
-      segment.append(svg('title',{},`${part.label}: ${part.value > 0 ? '+' : ''}${part.value} pts`));
-      wheel.append(segment); angle = end;
+  function stockGlyph(stock) {
+    const value = stock.indicator || {};
+    const allowed = (value, options, fallback) => options.includes(value) ? value : fallback;
+    const glyph = {
+      band:allowed(value.band,[1,2,3],1),
+      mix:allowed(value.mix_state,['available','zero','unknown'],'unknown'),
+      sentiment:allowed(value.sentiment,['positive','negative','neutral','unknown'],'unknown'),
+      risk:allowed(value.risk,['low','medium','high','unknown'],'unknown'),
+    };
+    const slices = Array.isArray(value.slices) ? value.slices : [];
+    let contributions = ['market','evidence','social'].map((key,index) => {
+      const part = slices.find(part => part?.key === key);
+      return {key,label:['Market','Filings + news','External social'][index],value:Number.isFinite(part?.value) ? Math.max(0,part.value) : 0};
+    }).filter(part => part.value > 0);
+    const total = contributions.reduce((sum,part) => sum + part.value,0);
+    if (glyph.mix !== 'available' || !Number.isFinite(total) || total <= 0) contributions = [];
+    contributions.forEach(part => {part.share = part.value/total;});
+    return {glyph,contributions,description:value.description || 'Attention unavailable. Filing sentiment unknown. Risk unknown.'};
+  }
+  function scoreWheel({glyph,contributions}, x, y, outer) {
+    const width = small.matches ? 16 : 20;
+    const geometry = {cx:0,cy:0,outer:outer*2,radius:outer*2-width/2,width};
+    const wheel = svg('g', {class:'entity-score-ring map-glyph',transform:`translate(${x} ${y}) scale(0.5)`,'aria-hidden':'true'});
+    window.RatiRingGlyph.drawFace({
+      ringLayer:wheel,glyph,geometry,small:small.matches,contributions,toneLabel:'Filing sentiment',
+      points:value=>`${value.toLocaleString('en-US',{maximumFractionDigits:2})} pts`,
+      percent:part=>`${Math.round(part.share*100)}% of attention contributions`,
     });
     return wheel;
   }
-  let page = 0;
   const initialsOf = name => String(name || '').split(/\s+/).filter(Boolean).slice(0,2).map(word => word[0]).join('').toUpperCase();
   /* The second hop: the other wallets that reported the same stock. That list
      lives on the stock itself, not just in this wallet's own filings, so it is
@@ -98,55 +110,57 @@
     graph.replaceChildren();
     const mobile = small.matches, cx = mobile ? 180 : 380, cy = mobile ? 184 : 218;
     graph.dataset.orbitCenter = `${cx},${cy}`;
-    const size = mobile ? 4 : 8;
-    page = Math.min(page, Math.max(0, Math.ceil(entity.stocks.length/size)-1));
-    const stocks = entity.stocks.slice(page*size,(page+1)*size);
-    graph.setAttribute('viewBox', mobile ? '0 0 360 390' : '0 0 760 440');
-    // The same ring the stock map uses: stocks orbit the wallet on one ellipse
-    // and travel along it, so the ring never swings off the canvas.
-    if (mobile) delete graph.dataset.orbitTrack;
-    else graph.dataset.orbitTrack = '270,150';
-    const orbiting = !mobile;
-    const maximum = Math.max(0,...entity.stocks.map(stock => stock.value || 0));
+    const stocks = [...entity.stocks].sort((a,b) => {
+      const left = Number.isFinite(a.value) ? a.value : -1;
+      const right = Number.isFinite(b.value) ? b.value : -1;
+      return right-left || a.ticker.localeCompare(b.ticker);
+    });
+    const rx = mobile ? 150 : 270, ry = 150;
+    const spiral = stocks.length > 8;
+    const scaleAt = index => spiral ? 1+index/12 : 1;
+    const extent = scaleAt(Math.max(0,stocks.length-1)), margin = 80;
+    graph.dataset.layout = spiral ? 'spiral' : 'ring';
+    graph.dataset.orbitTrack = `${rx},${ry}`;
+    navigation.fit({x:cx-rx*extent-margin,y:cy-ry*extent-margin,width:2*(rx*extent+margin),height:2*(ry*extent+margin)});
+    if (spiral) navigation.zoom((rx*extent+margin)/(rx*scaleAt(7)+margin));
+    const orbiting = true;
+    // Use all loaded holdings for one stable size scale.
+    const maximum = Math.max(0,...entity.stocks.map(stock => Number.isFinite(stock.value) ? Math.max(0,stock.value) : 0));
+    const minimumSize = mobile ? 18 : 20, maximumSize = mobile ? 28 : 36;
+    const edges = svg('g', {class:'entity-edges'});
+    const nodes = svg('g', {class:'entity-stocks'});
+    graph.append(edges,nodes);
     stocks.forEach((stock,index) => {
-      const angle = -Math.PI/2 + index*Math.PI*2/Math.max(1,stocks.length);
-      const x = mobile ? (index%2 ? 275 : 85) : cx + 270*Math.cos(angle);
-      const y = mobile ? 64+Math.floor(index/2)*210 : cy + 150*Math.sin(angle);
-      const scored = Number.isFinite(stock.score);
-      const radius = Math.max(scored ? 24 : 0, stock.value == null ? 20 : Math.sqrt(225+675*(maximum ? stock.value/maximum : 0)));
+      const angle = -Math.PI/2 + index*Math.PI*2/(spiral ? 8 : Math.max(1,stocks.length));
+      const scale = scaleAt(index);
+      const x = cx + rx*scale*Math.cos(angle), y = cy + ry*scale*Math.sin(angle);
+      const indicator = stockGlyph(stock);
+      const holding = Number.isFinite(stock.value) && stock.value >= 0 ? stock.value : null;
+      const share = holding !== null && maximum > 0 ? holding/maximum : 0;
+      const outer = Math.sqrt(minimumSize**2 + (maximumSize**2-minimumSize**2)*share);
+      const radius = outer + 3;
+      const valueLabel = holding === null ? `${stock.events.length} ${stock.events.length === 1 ? 'event' : 'events'}` : money(holding);
+      const description = `${stock.ticker}. ${indicator.description} ${holding === null ? valueLabel : "Reported holding value: " + valueLabel}.`;
       stock.events.forEach((event,i) => {
         const bend = (i-(stock.events.length-1)/2)*Math.min(8,48/Math.max(1,stock.events.length-1));
         const length = Math.hypot(x-cx,y-cy) || 1;
         const tone = event.action === 'Sold' ? 'sell' : event.action === 'Bought' || event.view === 'ownership' ? 'buy' : 'role';
         const line = svg('path',{d:`M ${cx} ${cy} Q ${(cx+x)/2-(y-cy)/length*bend} ${(cy+y)/2+(x-cx)/length*bend} ${x} ${y}`,class:`entity-edge ${tone}`,'vector-effect':'non-scaling-stroke',...(orbiting ? {'data-orbit':''} : {})});
-        line.append(svg('title',{},`${stock.ticker} · ${event.action} · Filed ${event.filed_at?.slice(0,10) || ''}`)); graph.append(line);
+        line.append(svg('title',{},`${stock.ticker} · ${event.action} · Filed ${event.filed_at?.slice(0,10) || ''}`)); edges.append(line);
       });
-      const link = svg('a',{href:`/stock/${encodeURIComponent(stock.ticker)}`,class:'map-person',tabindex:0,'aria-label':`${stock.ticker}, ${scored ? `score ${Math.round(stock.score)}, ` : ''}${stock.events.length} events`, 'data-entity-stock':stock.ticker,...(orbiting ? {'data-orbit-anchor':`${x},${y}`} : {})});
-      link.append(svg('circle',{cx:x,cy:y,r:radius}));
-      if (scored) link.append(scoreWheel(stock,x,y,radius+3));
-      // The ticker names the node and scales with it; the ring carries the score,
-      // the line below states the money or the event count, and clicking opens the
-      // full detail. Hovering still names everything.
-      link.append(svg('text',{x,y:y+5,'text-anchor':'middle',class:'entity-stock-symbol',
-        'font-size':Math.max(12,Math.min(15,radius*0.5)).toFixed(1)},stock.ticker));
-      link.append(svg('text',{x,y:y+radius+18,'text-anchor':'middle',class:'map-node-action'},
-        stock.value == null ? `${stock.events.length} events` : money(stock.value)));
-      link.append(
-        svg('title',{},`${stock.ticker}${scored ? ` · score ${Math.round(stock.score)}` : ''}` +
-          `${stock.value == null ? ` · ${stock.events.length} events` : ` · ${money(stock.value)}`}`)
-      );
-      graph.append(link);
+      const link = svg('a',{href:`/stock/${encodeURIComponent(stock.ticker)}`,class:'entity-stock',tabindex:0,'aria-label':description,'data-entity-stock':stock.ticker,...(orbiting ? {'data-orbit-anchor':`${x},${y}`} : {})});
+      // One stock link contains the face and labels. The face uses the same
+      // stock colors and markers as the row; holding value sets its size.
+      link.append(svg('circle',{cx:x,cy:y,r:radius,class:'entity-glyph-backplate'}),scoreWheel(indicator,x,y,outer));
+      link.append(svg('text',{x,y:y+radius+(mobile ? 22 : 18),'text-anchor':'middle',class:'entity-stock-symbol'},stock.ticker));
+      link.append(svg('text',{x,y:y+radius+(mobile ? 38 : 32),'text-anchor':'middle',class:'map-node-action'},valueLabel));
+      link.append(svg('title',{},description));
+      nodes.append(link);
       loadNeighbours(stock, {x, y, radius, cx, cy, orbiting});
     });
     const center = svg('g',{class:'entity-center','aria-label':wallet.name});
     center.append(svg('circle',{cx,cy,r:mobile ? 48 : 62,class:'map-center'}),svg('text',{x:cx,y:cy+7,'text-anchor':'middle','class':'map-center-text'},initialsOf(wallet.name)),svg('title',{},wallet.name)); graph.append(center);
-    document.querySelector('[data-entity-paging]').hidden = entity.stocks.length <= size;
-    document.querySelector('[data-entity-page]').textContent = `${page*size+1}–${page*size+stocks.length} of ${entity.stocks.length} stocks`;
-    document.querySelector('[data-entity-previous]').disabled = page === 0;
-    document.querySelector('[data-entity-next]').disabled = (page+1)*size >= entity.stocks.length;
   }
-  document.querySelector('[data-entity-previous]').addEventListener('click',()=>{page--;draw();});
-  document.querySelector('[data-entity-next]').addEventListener('click',()=>{page++;draw();});
   small.addEventListener('change',draw); draw();
   const chart = document.querySelector('.entity-worth-chart');
   const points = entity.series;

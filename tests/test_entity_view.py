@@ -61,3 +61,27 @@ def test_stakes_replace_trade_snapshots_and_missing_data_stays_unknown():
     assert entity_view(rows, [{"ticker": "TEST", "price": 10}], "sec:101")["value"] == 300
     assert entity_view(rows, [], "sec:101")["value"] is None
     assert entity_view(rows, [], "sec:102")["stocks"] == []
+
+
+def test_entity_glyph_matches_list_and_detail_despite_holding_size():
+    import copy
+
+    from runner_web.market_screens import detail, row
+    from tests.test_stock_indicator import stock
+
+    source = stock(ticker="TEST", score=80, rug_score=68, sentiment="positive")
+    saved = copy.deepcopy(source)
+    for shares in [0, 1, 1000000, None]:
+        node = entity_view([event(post_shares=shares)], [source], "sec:101")["stocks"][0]
+        assert node["indicator"] == row("stocks", source)["indicator"]
+        assert node["indicator"] == detail("stocks", {"current": source})["item"]["indicator"]
+        assert node["indicator"]["risk"] == "high"
+    assert source == saved
+
+
+def test_missing_stock_data_keeps_entity_node_with_unknown_glyph():
+    node = entity_view([event()], [], "sec:101")["stocks"][0]
+    glyph = node["indicator"]
+    assert glyph["score"] is None
+    assert glyph["mix_state"] == glyph["sentiment"] == glyph["risk"] == "unknown"
+    assert "Attention unavailable" in glyph["description"]

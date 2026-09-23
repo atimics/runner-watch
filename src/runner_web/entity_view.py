@@ -7,6 +7,8 @@ import re
 from collections import defaultdict
 from typing import Any
 
+from runner_web.stock_indicator import stock_indicator
+
 
 def _number(value: Any) -> float | None:
     if isinstance(value, bool):
@@ -82,6 +84,7 @@ def entity_view(events: list[dict], items: list[dict], person_id: str) -> dict:
                 "value": latest.get(ticker),
                 "score": _number(stocks.get(ticker, {}).get("score")),
                 "score_detail": stocks.get(ticker, {}).get("score_detail"),
+                "indicator": stock_indicator(stocks.get(ticker, {})),
             }
             for ticker, rows in sorted(groups.items())
         ],

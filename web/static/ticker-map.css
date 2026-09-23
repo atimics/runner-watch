@@ -32,40 +32,58 @@ main:has(.ticker-map),main:has(.token-replay){max-width:1040px}.market-screen:ha
 
 .map-source .map-score-trace{max-width:680px;margin:16px 0 20px;grid-template-columns:1fr;gap:10px}.map-source .map-score-trace>div{display:grid;grid-template-columns:150px minmax(0,1fr);gap:16px}.map-source .map-score-trace dd{text-align:left;max-width:none;color:var(--text)}@media(max-width:500px){.map-source .map-score-trace>div{grid-template-columns:110px minmax(0,1fr);gap:12px}}
 
-.entity-map .entity-score-ring .entity-score-track,.entity-map .entity-score-ring .entity-score-segment{fill:none;stroke-width:6}.entity-score-ring .entity-score-track{stroke:var(--muted)}.entity-map .entity-stock-symbol{font-size:12px;font-weight:650}.entity-map .map-node-action{font-size:12px}
+.entity-map .entity-stock-symbol{font-size:12px;font-weight:650}.entity-map .map-node-action{font-size:12px}
 .map-filing{--event-subject-width:minmax(0,1fr);width:100%;background:transparent;color:var(--text);text-align:left;border-top:0;border-left:0;border-right:0;border-radius:0;cursor:pointer}.map-filing:hover,.map-filing[aria-pressed=true]{background:#203126}.map-filing .wallet-event-ticker,.map-filing .wallet-event-ticker strong{min-width:0;overflow:hidden;text-overflow:ellipsis}.map-filing .wallet-filing{text-decoration:none}[data-stock-map] .map-edge.up,[data-stock-map] .map-person.up circle{stroke:var(--blue)}
 .map-person.dense text{font-size:12px}.map-person.dense .map-node-action{font-size:10px}
 
 /* Stock and token maps render the same three-part contract as the list glyph.
    Wallet/entity rings retain their own styling and semantics. */
-:is([data-stock-map],[data-token-replay]) .map-glyph{--map-sentiment:var(--muted)}
-:is([data-stock-map],[data-token-replay]) .map-glyph[data-sentiment="positive"]{--map-sentiment:var(--green)}
-:is([data-stock-map],[data-token-replay]) .map-glyph[data-sentiment="negative"]{--map-sentiment:var(--red)}
-:is([data-stock-map],[data-token-replay]) .map-glyph-sentiment{fill:none;stroke:var(--map-sentiment);stroke-width:3;pointer-events:stroke;cursor:pointer}
-:is([data-stock-map],[data-token-replay]) .map-glyph[data-sentiment="unknown"] .map-glyph-sentiment{stroke-dasharray:7 6}
-:is([data-stock-map],[data-token-replay]) .map-glyph[data-band="3"] .map-score-segment{pointer-events:fill;stroke:none}
-:is([data-stock-map],[data-token-replay]) .map-glyph[data-mix="zero"] .map-score-track,
-:is([data-stock-map],[data-token-replay]) .map-glyph[data-mix="unknown"] .map-score-track{stroke:var(--muted);stroke-width:1;fill:none}
-:is([data-stock-map],[data-token-replay]) .map-glyph[data-mix="unknown"] .map-score-track{stroke-dasharray:4 4}
-:is([data-stock-map],[data-token-replay]) .map-glyph-hole{fill:var(--bg);stroke:none}
-:is([data-stock-map],[data-token-replay]) .map-glyph-risk{cursor:pointer}
-:is([data-stock-map],[data-token-replay]) .map-risk-target{fill:transparent;stroke:none}
-:is([data-stock-map],[data-token-replay]) .map-risk-dot{fill:var(--orange,#ff9f43);stroke:var(--bg);stroke-width:2;pointer-events:none}
-:is([data-stock-map],[data-token-replay]) .map-glyph[data-risk="high"] .map-risk-dot{fill:var(--red)}
-:is([data-stock-map],[data-token-replay]) .map-glyph[data-risk="unknown"] .map-risk-dot{fill:var(--bg);stroke:var(--muted);stroke-width:1}
-:is([data-stock-map],[data-token-replay]) .map-risk-unknown{fill:var(--muted);font-size:12px;font-weight:700;pointer-events:none}
-:is([data-stock-map],[data-token-replay]) .map-glyph [data-score-key]:focus-visible{outline:2px solid var(--text);outline-offset:4px}
-:is([data-stock-map],[data-token-replay]) .map-glyph [data-score-key]:hover,
-:is([data-stock-map],[data-token-replay]) .map-glyph [aria-pressed="true"]{filter:brightness(1.2)}
-:is([data-stock-map],[data-token-replay]) .map-glyph .map-score-segment:hover,
-:is([data-stock-map],[data-token-replay]) .map-glyph .map-score-segment:focus-visible,
-:is([data-stock-map],[data-token-replay]) .map-glyph .map-score-segment[aria-pressed="true"]{stroke-width:var(--map-band-stroke)}
-:is([data-stock-map],[data-token-replay]) .map-glyph-reading,:is([data-stock-map],[data-token-replay]) .map-glyph-empty{font-size:12px;margin:4px 0;color:var(--muted)}
-:is([data-stock-map],[data-token-replay]) .indicator-legend{margin-top:8px}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph{--map-sentiment:var(--muted)}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-sentiment="positive"]{--map-sentiment:var(--green)}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-sentiment="negative"]{--map-sentiment:var(--red)}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph-sentiment{fill:none;stroke:var(--map-sentiment);stroke-width:3;pointer-events:stroke;cursor:pointer}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-sentiment="unknown"] .map-glyph-sentiment{stroke-dasharray:7 6}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-band="3"] .map-score-segment{pointer-events:fill;stroke:none}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-mix="zero"] .map-score-track,
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-mix="unknown"] .map-score-track{stroke:var(--muted);stroke-width:1;fill:none}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-mix="unknown"] .map-score-track{stroke-dasharray:4 4}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph-hole{fill:var(--bg);stroke:none}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph-risk{cursor:pointer}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-risk-target{fill:transparent;stroke:none}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-risk-dot{fill:var(--orange,#ff9f43);stroke:var(--bg);stroke-width:2;pointer-events:none}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-risk="high"] .map-risk-dot{fill:var(--red)}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-risk="unknown"] .map-risk-dot{fill:var(--bg);stroke:var(--muted);stroke-width:1}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-risk-unknown{fill:var(--muted);font-size:12px;font-weight:700;pointer-events:none}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph [data-score-key]:focus-visible{outline:2px solid var(--text);outline-offset:4px}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph [data-score-key]:hover,
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph [aria-pressed="true"]{filter:brightness(1.2)}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph .map-score-segment:hover,
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph .map-score-segment:focus-visible,
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph .map-score-segment[aria-pressed="true"]{stroke-width:var(--map-band-stroke)}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph-reading,:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph-empty{font-size:12px;margin:4px 0;color:var(--muted)}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .indicator-legend{margin-top:8px}
 @media(forced-colors:active){
-  :is([data-stock-map],[data-token-replay]) .map-glyph-sentiment,:is([data-stock-map],[data-token-replay]) .map-score-track{stroke:CanvasText}
-  :is([data-stock-map],[data-token-replay]) .map-glyph .map-score-segment{stroke:CanvasText}
-  :is([data-stock-map],[data-token-replay]) .map-glyph[data-band="3"] .map-score-segment{fill:Canvas;stroke:CanvasText;stroke-width:1}
-  :is([data-stock-map],[data-token-replay]) .map-risk-dot{fill:Canvas;stroke:CanvasText}
-  :is([data-stock-map],[data-token-replay]) .map-risk-unknown{fill:CanvasText}
+  :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph-sentiment,:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-score-track{stroke:CanvasText}
+  :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph .map-score-segment{stroke:CanvasText}
+  :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-band="3"] .map-score-segment{fill:Canvas;stroke:CanvasText;stroke-width:1}
+  :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-risk-dot{fill:Canvas;stroke:CanvasText}
+  :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-risk-unknown{fill:CanvasText}
 }
+
+.entity-stock{cursor:pointer}.entity-stock:focus-visible{outline:2px solid var(--text);outline-offset:4px}
+.entity-stock text{fill:var(--text)}.entity-stock .map-node-action{fill:var(--muted)}
+.entity-stock :is(.entity-stock-symbol,.map-node-action){paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round}
+.entity-stock .entity-glyph-backplate{fill:var(--bg);stroke:none}
+.entity-stock .entity-score-ring{pointer-events:none}
+/* Entity faces are decorative inside one stock link. Shared detail glyphs
+   give slices their own hit regions; the entity backplate owns those taps. */
+.entity-stock .entity-score-ring *{pointer-events:none!important}
+.entity-stock:hover .map-glyph-sentiment,.entity-stock:focus-visible .map-glyph-sentiment{filter:brightness(1.2)}
+
+[data-entity-map]{touch-action:none;cursor:grab}[data-entity-map].orbit-interacting{cursor:grabbing}
+[data-entity-map]:focus-visible{outline:2px solid var(--text);outline-offset:3px}
+.entity-map-tools{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:12px}
+.entity-map-tools button{min-width:40px;min-height:40px;padding:8px 12px;border:1px solid var(--line);border-radius:20px;background:var(--panel);color:var(--text);font:inherit;font-size:13px;cursor:pointer}
+.entity-map-tools button:disabled{opacity:.4;cursor:default}.entity-map-tools span{min-width:40px;text-align:center;color:var(--muted);font-size:12px}
+
+@media(max-width:500px){.entity-map .entity-stock-symbol{font-size:16px}.entity-map .map-node-action{font-size:14px}}

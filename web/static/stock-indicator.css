@@ -1,5 +1,5 @@
 /* Shared stock and token attention glyph. */
-.indicator-glyph,[data-stock-map],[data-token-replay]{
+.indicator-glyph,[data-stock-map],[data-token-replay],[data-entity-map]{
   --indicator-market:#418cf4;--indicator-evidence:#b58af4;--indicator-social:#36d5e6;
 }
 .indicator-glyph{
