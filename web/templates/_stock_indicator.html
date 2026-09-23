@@ -45,7 +45,17 @@
 <details class="indicator-legend"><summary>{{ 'Entity map key' if size_basis == 'holding' else 'Indicator key' }}</summary>
 <div class="indicator-key-grid">
   <div class="indicator-key-group">
-    <h3>Size &amp; fill</h3>
+    <h3>Risk</h3>
+    <ul>
+      <li>{{ key_icon('detected') }}<span>Risk factors detected<small>Diamond · saved checks</small></span></li>
+      <li>{{ key_icon('significant') }}<span>1+ significant factors<small>Circle · saved checks</small></span></li>
+      <li>{{ key_icon('none') }}<span>0 factors detected<small>Empty center · saved checks</small></span></li>
+      <li>{{ key_icon('unknown') }}<span>Checks unavailable<small>? · awaiting evidence</small></span></li>
+    </ul>
+    <p>Open {{ 'a token' if market == 'memecoins' else 'a stock' }} to read its saved checks.</p>
+  </div>
+  <div class="indicator-key-group indicator-key-attention">
+    <h3>Attention</h3>
     <ul>
     {% if size_basis == 'holding' %}
       <li>{{ key_icon('small') }}<span>Smaller holding</span></li>
@@ -56,20 +66,15 @@
       <li>{{ key_icon('large') }}<span>40–69.99<small>Attention points</small></span></li>
       <li>{{ key_icon('solid') }}<span>70+<small>Attention points · solid fill</small></span></li>
     {% endif %}
-    </ul>
-    {% if size_basis == 'holding' %}<p>Ring size follows the reported holding value at saved prices. Small holdings keep a readable minimum size. Stocks awaiting a value show an event count.</p>{% endif %}
-  </div>
-  <div class="indicator-key-group">
-    <h3>Attention slices</h3>
-    <ul>
       <li>{{ key_icon('market') }}<span>Market<small>Solid blue</small></span></li>
       <li>{{ key_icon('evidence') }}<span>{{ 'Chain evidence' if market == 'memecoins' else 'Filings + news' }}<small>Purple stripes</small></span></li>
       <li>{{ key_icon('social') }}<span>External social<small>Cyan dots</small></span></li>
     </ul>
+    {% if size_basis == 'holding' %}<p>Ring size follows the reported holding value at saved prices. Small holdings keep a readable minimum size. Stocks awaiting a value show an event count.</p>{% endif %}
     <p>Slice size shows its share of attention.</p>
   </div>
   <div class="indicator-key-group">
-    <h3>Outer border · sentiment</h3>
+    <h3>Sentiment</h3>
     <ul>
       <li>{{ key_icon('bullish') }}<span>▲ Bullish<small>Solid green</small></span></li>
       <li>{{ key_icon('bearish') }}<span>▼ Bearish<small>Red stripes</small></span></li>
@@ -77,16 +82,6 @@
       <li>{{ key_icon('unavailable') }}<span>▲— / ▼—<small>Split unavailable</small></span></li>
     </ul>
     <p>Shares of saved {{ 'chain' if market == 'memecoins' else 'directional filing' }} assessments. Neutral-only evidence uses the dashed ring.</p>
-  </div>
-  <div class="indicator-key-group">
-    <h3>Center · risk factors</h3>
-    <ul>
-      <li>{{ key_icon('detected') }}<span>Risk factors detected<small>Diamond · saved checks</small></span></li>
-      <li>{{ key_icon('significant') }}<span>1+ significant factors<small>Circle · saved checks</small></span></li>
-      <li>{{ key_icon('none') }}<span>0 factors detected<small>Empty center · saved checks</small></span></li>
-      <li>{{ key_icon('unknown') }}<span>Checks unavailable<small>? · awaiting evidence</small></span></li>
-    </ul>
-    <p>Open {{ 'a token' if market == 'memecoins' else 'a stock' }} to read its saved checks.</p>
   </div>
 </div>
 {% if market == 'stocks' %}<div class="indicator-key-check">{{ key_icon('verified') }}<span>Automated evidence check<small>Evidence and eligibility checks passed.</small></span></div>{% endif %}

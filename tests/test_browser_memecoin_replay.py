@@ -166,7 +166,7 @@ def test_token_glyph_shares_stock_shapes_and_opens_each_reading(page: Page, widt
     expect(page.locator(".map-score-center")).to_be_focused()
     expect(page.locator("[data-replay-score-return]")).to_be_hidden()
     page.get_by_text("Indicator key", exact=True).click()
-    expect(page.locator(".indicator-key-group").filter(has_text="Attention slices")).to_be_visible()
+    expect(page.locator(".indicator-key-group").filter(has_text="Attention")).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert not errors
 

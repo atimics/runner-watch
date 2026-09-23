@@ -288,6 +288,7 @@ def test_visual_key_opens_by_keyboard_and_keeps_patterns_and_labels(page, market
     key.locator("summary").focus()
     key.locator("summary").press("Enter")
     expect(key).to_have_attribute("open", "")
+    expect(key.locator(".indicator-key-group h3")).to_have_text(["Risk", "Attention", "Sentiment"])
     expect(key.get_by_text("Risk factors detected", exact=False)).to_be_visible()
     expect(key.get_by_text("0 factors detected", exact=False)).to_be_visible()
     expect(key.get_by_text("Checks unavailable", exact=False)).to_be_visible()
