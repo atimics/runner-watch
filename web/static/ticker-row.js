@@ -315,25 +315,39 @@
     });
   }
 
-  // One bounded batch, shared with the existing list refresh. Coalesce requests;
-  // a failed request must not strand the loader or erase a usable saved chart.
+  // Read the board in bounded pages. Keep saved charts until every page arrives.
+  // Coalesce refreshes so one list update cannot start several chart walks.
   function loadCharts(url) {
     if (chartRequest) return chartRequest;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 25000);
     chartRequest = (async () => {
       try {
-        const response = await fetch(url, {signal:controller.signal});
-        if (!response.ok || response.redirected) throw new Error('Chart refresh unavailable');
-        const data = await response.json();
-        if (!data || !data.charts || typeof data.charts !== 'object' || Array.isArray(data.charts)) throw new Error('Invalid chart payload');
+        const nextCharts = new Map(), nextAnnotations = new Map();
+        let offset = 0, pages = 0, hasMore = false;
+        do {
+          const target = new URL(url, window.location.href);
+          if (offset) target.searchParams.set('offset', String(offset));
+          const response = await fetch(target, {signal:controller.signal});
+          if (!response.ok || response.redirected) throw new Error('Chart refresh unavailable');
+          const data = await response.json();
+          if (!data || !data.charts || typeof data.charts !== 'object' || Array.isArray(data.charts)) throw new Error('Invalid chart payload');
+          Object.entries(data.charts).slice(0, 50).forEach(([ticker, points]) => nextCharts.set(ticker, points));
+          Object.entries(data.annotations || {}).forEach(([ticker, annotations]) => {
+            if (nextCharts.has(ticker)) nextAnnotations.set(ticker, annotations);
+          });
+          hasMore = data.has_more === true;
+          if (hasMore) {
+            const nextOffset = Number(data.next_offset);
+            if (!Number.isInteger(nextOffset) || nextOffset <= offset || ++pages >= 20) {
+              throw new Error('Invalid chart page');
+            }
+            offset = nextOffset;
+          }
+        } while (hasMore);
         chartCache.clear(); annotationCache.clear();
-        // The endpoint has the same 50-candidate cap as the board. Replace the
-        // snapshot instead of accumulating removed tickers and their old scale.
-        Object.entries(data.charts).slice(0, 50).forEach(([ticker, points]) => chartCache.set(ticker, points));
-        Object.entries(data.annotations || {}).forEach(([ticker, annotations]) => {
-          if (chartCache.has(ticker)) annotationCache.set(ticker, annotations);
-        });
+        nextCharts.forEach((points, ticker) => chartCache.set(ticker, points));
+        nextAnnotations.forEach((annotations, ticker) => annotationCache.set(ticker, annotations));
         chartRefreshFailed = false;
       } catch (_) { chartRefreshFailed = true; }
       finally { clearTimeout(timer); chartRequest = null; paintCharts(); }

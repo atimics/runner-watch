@@ -23,6 +23,9 @@ def test_market_clock_walks_through_extended_hours() -> None:
     assert pre["scanner_active"] is True
     assert overnight["scanner_active"] is False
     assert overnight["countdown_seconds"] == 7 * 60 * 60
+    assert "regular-hours" in regular["data_note"]
+    assert "extended-hours" in pre["data_note"]
+    assert "extended-hours" in after["data_note"]
 
 
 def test_market_clock_handles_the_weekend_boundary() -> None:
