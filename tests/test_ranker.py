@@ -6,9 +6,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from pytest import MonkeyPatch
 
-from runner_web import db
+from runner_web import db, gap_ranker, ranker
 from runner_web import main as web_main
 from runner_web.db import connection, init_db
 from runner_web.ranker import (
@@ -22,6 +23,50 @@ from runner_web.ranker import (
     train_shadow_ranker,
 )
 from tests.fake_market_data import FAKE_SYMBOLS, FakeMarketData
+
+
+def test_trainer_retries_failed_run_before_full_training_interval(monkeypatch):
+    heartbeats = []
+    monkeypatch.setenv("RANKER_TRAIN_INTERVAL_SECONDS", "21600")
+    monkeypatch.setenv("RANKER_TRAIN_RETRY_SECONDS", "30")
+    monkeypatch.setattr(ranker, "init_db", lambda: None)
+    monkeypatch.setattr(
+        ranker, "train_shadow_ranker_if_due", lambda: (_ for _ in ()).throw(RuntimeError("db down"))
+    )
+    monkeypatch.setattr(
+        ranker,
+        "_trainer_state",
+        lambda key, value: heartbeats.append(value)
+        if key == "ranker_trainer_heartbeat"
+        else None,
+    )
+    monkeypatch.setattr(ranker.time, "sleep", lambda _: (_ for _ in ()).throw(StopIteration))
+
+    with pytest.raises(StopIteration):
+        ranker.trainer_main()
+
+    waiting = heartbeats[-1]
+    delay = datetime.fromisoformat(waiting["next_run_at"]) - datetime.now(UTC)
+    assert waiting["status"] == "degraded"
+    assert 25 <= delay.total_seconds() <= 30
+
+
+def test_gap_ranker_attempt_is_due_again_after_failure(monkeypatch):
+    monkeypatch.setattr(ranker, "_GAP_RANKER_LAST_TRAINED", 0.0)
+    attempts = 0
+
+    def train():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("temporary database failure")
+        return {"status": "trained"}
+
+    monkeypatch.setattr(gap_ranker, "train_and_store", train)
+    with pytest.raises(RuntimeError, match="temporary database failure"):
+        ranker._train_gap_ranker_if_due()
+    assert ranker._train_gap_ranker_if_due() == {"status": "trained"}
+    assert attempts == 2
 
 
 def test_chart_structure_fields_are_ranker_features() -> None:

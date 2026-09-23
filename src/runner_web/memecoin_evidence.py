@@ -211,12 +211,17 @@ def prune_evidence(*, at: datetime) -> None:
             _delete_receipts(database, [row["signature"] for row in expired])
             remaining = PRUNE_BATCH_SIZE - len(expired)
             if remaining:
-                overflow = database.execute(
-                    "SELECT signature FROM memecoin_chain_transactions "
-                    "ORDER BY observed_at DESC,signature DESC LIMIT ? OFFSET ?",
-                    (remaining, MAX_TRANSACTIONS),
-                ).fetchall()
-                _delete_receipts(database, [row["signature"] for row in overflow])
+                total = database.execute(
+                    "SELECT COUNT(*) FROM memecoin_chain_transactions"
+                ).fetchone()[0]
+                overflow_count = min(remaining, max(0, total - MAX_TRANSACTIONS))
+                if overflow_count:
+                    overflow = database.execute(
+                        "SELECT signature FROM memecoin_chain_transactions "
+                        "ORDER BY observed_at,signature LIMIT ?",
+                        (overflow_count,),
+                    ).fetchall()
+                    _delete_receipts(database, [row["signature"] for row in overflow])
     except (LockNotAvailable, QueryCanceled):
         LOG.warning("Coin evidence cleanup deferred after its database time limit")
 

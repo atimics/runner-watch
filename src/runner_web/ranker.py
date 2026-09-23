@@ -4,6 +4,7 @@ import argparse
 import csv
 import hashlib
 import json
+import logging
 import math
 import os
 import shutil
@@ -22,6 +23,8 @@ from runner_web.db import init_db
 from runner_web.labels import barrier_contract
 from runner_web.product_policy import RANKER_TRAINING
 from runner_web.ranker_promotion import promotion_status
+
+LOG = logging.getLogger(__name__)
 
 FEATURE_SCHEMA_VERSION = "stonks.ranker_features.v4"
 MODEL_KIND = "integer_multiclass_logistic_barrier_v6"
@@ -749,8 +752,9 @@ def _train_gap_ranker_if_due() -> dict[str, Any]:
     moment = datetime.now(UTC).timestamp()
     if moment - _GAP_RANKER_LAST_TRAINED < TRAIN_INTERVAL_SECONDS:
         return {"status": "skipped"}
+    result = train_and_store()
     _GAP_RANKER_LAST_TRAINED = moment
-    return train_and_store()
+    return result
 
 
 _TREE_RANKER_LAST_TRAINED = 0.0
@@ -770,10 +774,11 @@ def _train_tree_ranker_if_due() -> dict[str, Any]:
     moment = datetime.now(UTC).timestamp()
     if moment - _TREE_RANKER_LAST_TRAINED < interval:
         return {"status": "skipped"}
-    _TREE_RANKER_LAST_TRAINED = moment
     if not available():
         return {"status": "unavailable", "reason": "lightgbm is not installed"}
-    return train_and_store()
+    result = train_and_store()
+    _TREE_RANKER_LAST_TRAINED = moment
+    return result
 
 
 def trainer_main() -> None:
@@ -783,12 +788,18 @@ def trainer_main() -> None:
         300,
         int(os.getenv("RANKER_TRAIN_INTERVAL_SECONDS", RANKER_TRAINING.interval_seconds)),
     )
+    retry_seconds = max(10, min(interval, int(os.getenv("RANKER_TRAIN_RETRY_SECONDS", "30"))))
+    max_retry_seconds = max(
+        retry_seconds,
+        min(interval, int(os.getenv("RANKER_TRAIN_MAX_RETRY_SECONDS", "300"))),
+    )
     heartbeat_seconds = max(10, int(os.getenv("RANKER_TRAIN_HEARTBEAT_SECONDS", "30")))
     historical_backfill_enabled = os.getenv("RANKER_HISTORICAL_BACKFILL_ENABLED", "0").lower() in {
         "1",
         "true",
         "yes",
     }
+    failures = 0
     while True:
         started_at = datetime.now(UTC)
         last_error = ""
@@ -832,23 +843,37 @@ def trainer_main() -> None:
             _trainer_state("gap_ranker_last_result", _train_gap_ranker_if_due())
             _trainer_state("tree_ranker_last_result", _train_tree_ranker_if_due())
             _trainer_state("ranker_trainer_last_error", "")
+            failures = 0
         except Exception as exc:
+            failures += 1
             last_error = str(exc)[:1000]
-            _trainer_state("ranker_trainer_last_error", last_error)
-        next_run_at = datetime.now(UTC).timestamp() + interval
+            LOG.exception("Ranker training failed")
+            try:
+                _trainer_state("ranker_trainer_last_error", last_error)
+            except Exception:
+                LOG.exception("Could not record ranker training failure")
+        wait_seconds = (
+            min(max_retry_seconds, retry_seconds * 2 ** min(failures - 1, 8))
+            if failures
+            else interval
+        )
+        next_run_at = datetime.now(UTC).timestamp() + wait_seconds
         while True:
             remaining = next_run_at - datetime.now(UTC).timestamp()
             if remaining <= 0:
                 break
-            _trainer_state(
-                "ranker_trainer_heartbeat",
-                {
-                    "status": "degraded" if last_error else "ok",
-                    "phase": "waiting",
-                    "next_run_at": datetime.fromtimestamp(next_run_at, UTC).isoformat(),
-                    "last_error": last_error or None,
-                },
-            )
+            try:
+                _trainer_state(
+                    "ranker_trainer_heartbeat",
+                    {
+                        "status": "degraded" if last_error else "ok",
+                        "phase": "waiting",
+                        "next_run_at": datetime.fromtimestamp(next_run_at, UTC).isoformat(),
+                        "last_error": last_error or None,
+                    },
+                )
+            except Exception:
+                LOG.exception("Could not record ranker trainer heartbeat")
             time.sleep(min(heartbeat_seconds, remaining))
 
 
