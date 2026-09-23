@@ -39,11 +39,14 @@ from runner_web.main import (
     sports_receipts_legacy_page,
     sports_receipts_page,
 )
+from runner_web.market_screens import listing
 from runner_web.sports import (
     collect_stored_player_appearances,
     create_sports_pick,
     fetch_league,
     fetch_league_history_chunk,
+    golf_event,
+    golf_market_context,
     golf_slate,
     implied_probability,
     no_vig_probabilities,
@@ -377,6 +380,117 @@ def test_golf_tournament_becomes_a_ranked_pga_leaderboard(sports_db) -> None:
         "Ryan Gerard",
         "Viktor Hovland",
     ]
+
+
+def test_presidents_cup_shows_team_points_and_match_play_context(sports_db) -> None:
+    current = datetime.now(UTC)
+    raw = {
+        "id": "401824815",
+        "name": "Presidents Cup",
+        "date": (current + timedelta(hours=2)).isoformat(),
+        "endDate": (current + timedelta(days=4)).isoformat(),
+        "status": {"type": {"state": "pre", "completed": False}},
+        "competitions": [
+            {
+                "startDate": (current + timedelta(hours=8)).isoformat(),
+                "endDate": (current + timedelta(days=5)).isoformat(),
+                "competitors": [
+                    {
+                        "id": "1",
+                        "type": "team",
+                        "score": "0",
+                        "team": {"displayName": "USA", "abbreviation": "USA"},
+                    },
+                    {
+                        "id": "3",
+                        "type": "team",
+                        "score": "0",
+                        "team": {"displayName": "International", "abbreviation": "INTL"},
+                    },
+                ],
+            }
+        ],
+    }
+    event = normalize_golf_event(raw)
+    assert event is not None
+    assert event["scoring_format"] == "match_play"
+    assert event["leaderboard"] == []
+    assert event["start_time"] == current + timedelta(hours=8)
+    store_golf_events([event])
+
+    saved = golf_event(event["id"])
+    assert saved is not None
+    assert [team["name"] for team in saved["teams"]] == ["USA", "International"]
+    assert golf_market_context(saved)["format"] == "match_play"
+    response = sports_game_page(event["id"], request(path=f"/game/{event['id']}"), None)
+    assert response.status_code == 200
+    assert b"USA vs International" in response.body
+    assert b"TEAM WINNER" in response.body
+    assert b"END OF SESSION" in response.body
+    assert b"Official matches and scoring" in response.body
+
+
+def test_finished_golf_keeps_round_leaders_and_shipley_score(sports_db) -> None:
+    current = datetime.now(UTC)
+    holes = [{"period": hole, "value": 4} for hole in range(1, 19)]
+
+    def player(name: str, place: int, score: str, strokes: list[int]) -> dict[str, Any]:
+        return {
+            "id": str(place),
+            "order": place,
+            "score": score,
+            "athlete": {"displayName": name},
+            "linescores": [
+                {
+                    "period": number,
+                    "value": value,
+                    "displayValue": str(value - 71),
+                    "linescores": holes,
+                }
+                for number, value in enumerate(strokes, 1)
+            ],
+        }
+
+    raw = {
+        "id": "biltmore-fixture",
+        "name": "Biltmore Championship Asheville",
+        "date": (current - timedelta(days=6)).isoformat(),
+        "endDate": (current - timedelta(days=3)).isoformat(),
+        "status": {"type": {"state": "post", "completed": True}},
+        "competitions": [
+            {
+                "competitors": [
+                    player("Jacob Bridgeman", 1, "-26", [66, 67, 64, 61]),
+                    player("Ricky Castillo", 3, "-23", [69, 62, 65, 65]),
+                    player("Neal Shipley", 4, "-23", [65, 62, 65, 69]),
+                ]
+            }
+        ],
+    }
+    event = normalize_golf_event(raw)
+    assert event is not None
+    store_golf_events([event])
+    saved = golf_event(event["id"])
+    assert saved is not None
+    context = golf_market_context(saved)
+    assert context["leaders"][0]["player_name"] == "Jacob Bridgeman"
+    assert context["rounds"][2]["leader_names"] == ["Neal Shipley"]
+    assert context["rounds"][3]["low_names"] == ["Jacob Bridgeman"]
+    shipley = next(
+        player for player in saved["leaderboard"] if player["player_name"] == "Neal Shipley"
+    )
+    assert shipley["position_display"] == "T3"
+    assert [card["strokes"] for card in shipley["rounds"]] == [65, 62, 65, 69]
+    assert saved["id"] in [entry["id"] for entry in golf_slate()["events"]]
+    assert [
+        row["id"] for row in listing("sports", golf_slate()["events"], query="Shipley")["rows"]
+    ] == [saved["id"]]
+
+    response = sports_game_page(event["id"], request(path=f"/game/{event['id']}"), None)
+    assert b"LEADER AFTER R4" in response.body
+    assert b"Leader after round" in response.body
+    assert b"Neal Shipley" in response.body
+    assert b"69" in response.body
 
 
 def test_sports_ai_forecast_contract_is_a_separate_winner_probability() -> None:
@@ -1960,7 +2074,7 @@ def test_golf_uses_shared_detail_and_canonical_link(sports_db):
     assert b"TOUR Championship" in response.body
     assert b"Ryan Gerard" in response.body
     assert b"Viktor Hovland" in response.body
-    assert b">-10</strong>" in response.body
+    assert b"<td>-10</td>" in response.body
     redirect = sports_game_page(
         event["id"], request(host="runners.rati.chat", path=f"/game/{event['id']}"), None
     )

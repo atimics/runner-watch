@@ -2393,6 +2393,17 @@ def _migration_044_golf_leaderboards(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_083_golf_market_context(db: DatabaseConnection) -> None:
+    db.execute(
+        "ALTER TABLE sports_golf_events "
+        "ADD COLUMN scoring_format TEXT NOT NULL DEFAULT 'stroke_play'"
+    )
+    db.execute("ALTER TABLE sports_golf_events ADD COLUMN teams_json TEXT NOT NULL DEFAULT '[]'")
+    db.execute(
+        "ALTER TABLE sports_golf_leaderboard ADD COLUMN rounds_json TEXT NOT NULL DEFAULT '[]'"
+    )
+
+
 def _migration_045_sports_comments(db: DatabaseConnection) -> None:
 
     db.executescript(
@@ -3731,6 +3742,7 @@ MIGRATIONS = (
     Migration(80, "gam_ranker_models", _migration_080_gam_ranker_models),
     Migration(81, "tree_ranker_models", _migration_081_tree_ranker_models),
     Migration(82, "scoring_integrity", _migration_082_scoring_integrity),
+    Migration(83, "golf_market_context", _migration_083_golf_market_context),
 )
 
 
