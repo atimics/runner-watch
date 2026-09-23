@@ -301,12 +301,14 @@
     chartSummary(svg, scope);
   }
 
-  let chartRequest = null, chartRefreshFailed = false;
+  let chartRequest = null, chartRefreshFailed = false, refreshedTickers = new Set();
+  let retryTimer = null, retryUsed = false;
   function paintCharts(root = document) {
     const domain = sharedChartDomain();
     root.querySelectorAll('.mini-chart[data-ticker]').forEach(svg => {
+      if (!chartCache.has(svg.dataset.ticker) && svg.dataset.history === 'pending' && !chartRefreshFailed) return;
       drawMiniChart(svg, chartCache.get(svg.dataset.ticker), annotationCache.get(svg.dataset.ticker), domain);
-      if (chartRefreshFailed && svg.classList.contains('loaded')) {
+      if (chartRefreshFailed && !refreshedTickers.has(svg.dataset.ticker) && svg.classList.contains('loaded')) {
         svg.dataset.history = 'stale';
         const label = svg.getAttribute('aria-label') + '. Refresh unavailable; showing saved history.';
         svg.setAttribute('aria-label', label);
@@ -315,15 +317,16 @@
     });
   }
 
-  // Read the board in bounded pages. Keep saved charts until every page arrives.
-  // Coalesce refreshes so one list update cannot start several chart walks.
+  // Read the board in bounded pages and paint each page when it arrives.
+  // A slow later page must not hide histories already received.
   function loadCharts(url) {
     if (chartRequest) return chartRequest;
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 25000);
     chartRequest = (async () => {
+      const nextCharts = new Map(), nextAnnotations = new Map(), refreshed = new Set();
       try {
-        const nextCharts = new Map(), nextAnnotations = new Map();
         let offset = 0, pages = 0, hasMore = false;
         do {
           const target = new URL(url, window.location.href);
@@ -332,10 +335,21 @@
           if (!response.ok || response.redirected) throw new Error('Chart refresh unavailable');
           const data = await response.json();
           if (!data || !data.charts || typeof data.charts !== 'object' || Array.isArray(data.charts)) throw new Error('Invalid chart payload');
-          Object.entries(data.charts).slice(0, 50).forEach(([ticker, points]) => nextCharts.set(ticker, points));
-          Object.entries(data.annotations || {}).forEach(([ticker, annotations]) => {
-            if (nextCharts.has(ticker)) nextAnnotations.set(ticker, annotations);
+          Object.entries(data.charts).slice(0, 50).forEach(([ticker, points]) => {
+            nextCharts.set(ticker, points);
+            chartCache.set(ticker, points);
+            refreshed.add(ticker);
+            annotationCache.delete(ticker);
           });
+          Object.entries(data.annotations || {}).forEach(([ticker, annotations]) => {
+            if (nextCharts.has(ticker)) {
+              nextAnnotations.set(ticker, annotations);
+              annotationCache.set(ticker, annotations);
+            }
+          });
+          refreshedTickers = refreshed;
+          chartRefreshFailed = false;
+          paintCharts();
           hasMore = data.has_more === true;
           if (hasMore) {
             const nextOffset = Number(data.next_offset);
@@ -349,7 +363,15 @@
         nextCharts.forEach((points, ticker) => chartCache.set(ticker, points));
         nextAnnotations.forEach((annotations, ticker) => annotationCache.set(ticker, annotations));
         chartRefreshFailed = false;
-      } catch (_) { chartRefreshFailed = true; }
+        retryUsed = false;
+      } catch (_) {
+        chartRefreshFailed = true;
+        refreshedTickers = refreshed;
+        if (nextCharts.size && !retryUsed && document.querySelector('.market-stocks')) {
+          retryUsed = true;
+          retryTimer = setTimeout(() => { retryTimer = null; loadCharts(url); }, 5000);
+        }
+      }
       finally { clearTimeout(timer); chartRequest = null; paintCharts(); }
     })();
     return chartRequest;

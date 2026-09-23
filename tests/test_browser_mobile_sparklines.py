@@ -107,13 +107,14 @@ def chart_examples():
     }
 
 
-def open_list(page, rows=None, payload=None, width=390):
+def open_list(page, rows=None, payload=None, width=390, page_status=None):
     state = {
         "rows": examples() if rows is None else rows,
         "payload": chart_examples() if payload is None else payload,
         "status": 200,
         "chart_requests": 0,
         "page_requests": 0,
+        "page_status": dict(page_status or {}),
     }
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
@@ -126,10 +127,11 @@ def open_list(page, rows=None, payload=None, width=390):
         elif path == "/api/pulse/charts":
             state["chart_requests"] += 1
             payload = state["payload"]
+            offset = 0
             if "pages" in payload:
                 offset = int(parse_qs(urlsplit(route.request.url).query).get("offset", ["0"])[0])
                 payload = payload["pages"].get(offset, {"charts": {}})
-            route.fulfill(status=state["status"], json=payload)
+            route.fulfill(status=state["page_status"].get(offset, state["status"]), json=payload)
         elif path.startswith("/static/"):
             asset = ROOT / "web/static" / Path(path).name
             content_type = "text/css" if asset.suffix == ".css" else "application/javascript"
@@ -376,6 +378,36 @@ def test_charts_load_for_rows_after_the_first_fifty(page):
         "data-history", "available"
     )
     assert state["chart_requests"] == 2
+
+
+def test_later_chart_page_failure_keeps_earlier_charts_and_retries(page):
+    page.clock.install()
+    rows = [stock(ticker=f"STK{i}") for i in range(53)]
+    payload = {
+        "pages": {
+            0: {
+                "charts": {f"STK{i}": points(10, 11) for i in range(50)},
+                "next_offset": 50,
+                "has_more": True,
+            },
+            50: {
+                "charts": {f"STK{i}": points(10, 11) for i in range(50, 53)},
+                "next_offset": 53,
+                "has_more": False,
+            },
+        }
+    }
+    state = open_list(page, rows, payload, page_status={50: 503})
+    expect(page.locator('.mini-chart[data-history="available"]')).to_have_count(50)
+    expect(page.locator('.mini-chart[data-history="unavailable"]')).to_have_count(3)
+    state["page_status"][50] = 200
+    page.clock.fast_forward(5100)
+    expect(page.locator('.mini-chart[data-history="available"]')).to_have_count(53)
+    state["page_status"][50] = 503
+    page.evaluate("TickerRow.loadCharts('/api/pulse/charts')")
+    expect(page.locator('.mini-chart[data-history="available"]')).to_have_count(50)
+    expect(page.locator('.mini-chart[data-history="stale"]')).to_have_count(3)
+    assert state["errors"] == []
 
 
 def test_initial_fetch_failure_never_draws_fake_price_and_retries(page):
