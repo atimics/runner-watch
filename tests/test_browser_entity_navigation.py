@@ -201,6 +201,10 @@ def test_touch_pinch_drag_and_stock_tap(browser):
             )
             == "S17"
         )
+        assert page.evaluate(
+            "p=>document.elementFromPoint(p.x,p.y)?.classList.contains('entity-glyph-backplate')",
+            tap,
+        )
         page.evaluate("""() => {
           window.touchTrace = [];
           for (const type of ['pointerdown','pointerup','pointercancel','click']) {
