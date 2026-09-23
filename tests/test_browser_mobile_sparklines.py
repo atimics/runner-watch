@@ -342,7 +342,9 @@ def test_new_row_receives_history_without_unlisted_outlier_distorting_scale(page
     page.clock.fast_forward(61000)
     expect(page.locator(".mini-chart.loaded")).to_have_count(2)
     expect(page.locator('.mini-chart[data-ticker="NEW"]')).to_have_class(re.compile("falling"))
-    assert page.locator('.mini-chart[data-ticker="TEST"] .mini-chart-line').get_attribute("d") == old
+    assert (
+        page.locator('.mini-chart[data-ticker="TEST"] .mini-chart-line').get_attribute("d") == old
+    )
     assert state["chart_requests"] == 2
 
 
