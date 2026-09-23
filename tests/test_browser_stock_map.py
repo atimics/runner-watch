@@ -907,30 +907,23 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     expect(page.locator("[data-entity-stock]")).to_have_count(2)
     # A silent script failure is how an empty map hides; say so instead.
     assert errors == [], errors
-    # The wallet map shares the stock map's ring: on desktop nodes travel along
-    # the same ellipse by translation, so labels stay upright and it never swings
-    # off the canvas. Mobile stacks columns and stays still.
+    # Both phone and desktop orbit with upright labels.
     stock = page.locator("[data-entity-stock]").first
-    if width >= 500:
-        expect(stock).to_have_attribute("transform", re.compile(r"^translate\("))
-        point = page.evaluate(
-            r"""() => {
-              const node = document.querySelector('[data-entity-stock]');
-              const [x, y] = node.dataset.orbitAnchor.split(',').map(Number);
-              const [dx, dy] = node.getAttribute('transform')
-                .match(/translate\(([-\d.]+) ([-\d.]+)\)/).slice(1).map(Number);
-              const graph = document.querySelector('[data-entity-map]');
-              const [cx, cy] = graph.dataset.orbitCenter.split(',').map(Number);
-              const [rx, ry] = graph.dataset.orbitTrack.split(',').map(Number);
-              return {onRing: ((x + dx - cx) / rx) ** 2 + ((y + dy - cy) / ry) ** 2};
-            }"""
-        )
-        assert point["onRing"] == pytest.approx(1.0, abs=0.01)
-    else:
-        expect(stock).not_to_have_attribute("transform", re.compile(r"^translate\("))
-        expect(page.locator("[data-entity-map]")).not_to_have_attribute(
-            "data-orbit-track", re.compile(r"\d")
-        )
+    expect(stock).to_have_attribute("transform", re.compile(r"^translate\("))
+    point = page.evaluate(
+        r"""() => {
+          const node = document.querySelector('[data-entity-stock]');
+          const [x, y] = node.dataset.orbitAnchor.split(',').map(Number);
+          const [dx, dy] = node.getAttribute('transform')
+            .match(/translate\(([-\d.]+) ([-\d.]+)\)/).slice(1).map(Number);
+          const graph = document.querySelector('[data-entity-map]');
+          const [cx, cy] = graph.dataset.orbitCenter.split(',').map(Number);
+          const [rx, ry] = graph.dataset.orbitTrack.split(',').map(Number);
+          return {onRing: ((x + dx - cx) / rx) ** 2 + ((y + dy - cy) / ry) ** 2};
+        }"""
+    )
+    assert point["onRing"] == pytest.approx(1.0, abs=0.01)
+    expect(page.locator("[data-entity-paging]")).to_have_count(0)
     # Second hop: the other wallets that reported the same stocks. The dot's
     # colour carries the signal, so there is no text label to crowd the map.
     expect(page.locator("[data-entity-interest]")).to_have_count(2)
@@ -958,8 +951,8 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     radii = wheels.locator(".map-glyph-sentiment").evaluate_all(
         "nodes => nodes.map(node => Number(node.getAttribute('r')))"
     )
-    # Entity stocks are alphabetic: CDTG, USO. The USO holding is larger.
-    assert radii[1] > radii[0] if has_holdings else radii[1] == radii[0]
+    # The largest holding is first in the map and in keyboard order.
+    assert radii[0] > radii[1] if has_holdings else radii[0] == radii[1]
     page.get_by_text("Entity map key", exact=True).click()
     expect(
         page.get_by_text("Ring size follows the reported holding value", exact=False)
@@ -1039,7 +1032,8 @@ def test_wallet_events_load_more_as_the_tail_comes_into_view(page):
         html,
     )
     html = re.sub(
-        r'<script src="/static/(map-orbit|ring-glyph|entity-map|wallet-events)'
+        r'<script src="/static/(map-orbit|ring-glyph|entity-map-navigation|'
+        r"entity-map|wallet-events)"
         r'\.js[^\"]*"[^>]*></script>',
         lambda match: (
             "<script>" + (ROOT / "web/static" / f"{match.group(1)}.js").read_text() + "</script>"

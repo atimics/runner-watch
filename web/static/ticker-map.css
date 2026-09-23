@@ -72,6 +72,15 @@ main:has(.ticker-map),main:has(.token-replay){max-width:1040px}.market-screen:ha
 
 .entity-stock{cursor:pointer}.entity-stock:focus-visible{outline:2px solid var(--text);outline-offset:4px}
 .entity-stock text{fill:var(--text)}.entity-stock .map-node-action{fill:var(--muted)}
+.entity-stock :is(.entity-stock-symbol,.map-node-action){paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round}
 .entity-stock .entity-glyph-backplate{fill:var(--bg);stroke:none}
 .entity-stock .entity-score-ring{pointer-events:none}
 .entity-stock:hover .map-glyph-sentiment,.entity-stock:focus-visible .map-glyph-sentiment{filter:brightness(1.2)}
+
+[data-entity-map]{touch-action:none;cursor:grab}[data-entity-map].orbit-interacting{cursor:grabbing}
+[data-entity-map]:focus-visible{outline:2px solid var(--text);outline-offset:3px}
+.entity-map-tools{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:12px}
+.entity-map-tools button{min-width:40px;min-height:40px;padding:8px 12px;border:1px solid var(--line);border-radius:20px;background:var(--panel);color:var(--text);font:inherit;font-size:13px;cursor:pointer}
+.entity-map-tools button:disabled{opacity:.4;cursor:default}.entity-map-tools span{min-width:40px;text-align:center;color:var(--muted);font-size:12px}
+
+@media(max-width:500px){.entity-map .entity-stock-symbol{font-size:16px}.entity-map .map-node-action{font-size:14px}}

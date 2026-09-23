@@ -13,8 +13,11 @@
 <p class="wallet-scope" data-worth-date></p>
 </section>
 <section class="ticker-map entity-map" aria-label="Entity and associated stocks">
-<div class="map-canvas"><svg data-entity-map viewBox="0 0 760 440" role="group" aria-label="{{ wallet.name }} and associated stocks"></svg></div>
-<div class="map-paging" data-entity-paging hidden><button type="button" data-entity-previous aria-label="Previous stocks">←</button><span data-entity-page></span><button type="button" data-entity-next aria-label="Next stocks">→</button></div>
+<div class="map-canvas"><svg data-entity-map viewBox="0 0 760 440" role="group" tabindex="0" aria-label="{{ wallet.name }} and associated stocks" aria-describedby="entity-map-help"></svg></div>
+<div class="entity-map-tools" aria-label="Map zoom">
+<button type="button" data-entity-zoom-out aria-label="Zoom out">−</button><span data-entity-zoom aria-live="polite">1.0×</span><button type="button" data-entity-zoom-in aria-label="Zoom in">+</button><button type="button" data-entity-fit>Fit map</button>
+</div>
+<p class="map-note" id="entity-map-help">Largest holdings appear first. Larger portfolios spiral outward. Drag to move; pinch or use + and − to zoom. Fit map shows all loaded stocks.</p>
 {{ indicator_legend(size_basis='holding') }}
 </section>
 <script type="application/json" id="entityData" nonce="{{ request.state.csp_nonce }}">{{ {'wallet': wallet, 'entity': entity}|tojson }}</script>
@@ -31,4 +34,4 @@
 </section>
 {% endblock %}
 
-{% block detail_scripts %}<script src="/static/map-orbit.js?v={{ static_version }}" defer></script><script src="/static/ring-glyph.js?v={{ static_version }}" defer></script><script src="/static/entity-map.js?v={{ static_version }}" defer></script><script src="/static/wallet-events.js?v={{ static_version }}" defer></script>{% endblock %}
+{% block detail_scripts %}<script src="/static/map-orbit.js?v={{ static_version }}" defer></script><script src="/static/ring-glyph.js?v={{ static_version }}" defer></script><script src="/static/entity-map-navigation.js?v={{ static_version }}" defer></script><script src="/static/entity-map.js?v={{ static_version }}" defer></script><script src="/static/wallet-events.js?v={{ static_version }}" defer></script>{% endblock %}

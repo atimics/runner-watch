@@ -5,6 +5,7 @@
   const {wallet, entity} = JSON.parse(data.textContent);
   const graph = document.querySelector('[data-entity-map]');
   window.ratiOrbit?.attach(graph);
+  const navigation = window.EntityMapNavigation.attach(graph);
   const small = matchMedia('(max-width:500px)');
   const svg = (tag, attrs, text) => {
     const element = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -43,7 +44,6 @@
     });
     return wheel;
   }
-  let page = 0;
   const initialsOf = name => String(name || '').split(/\s+/).filter(Boolean).slice(0,2).map(word => word[0]).join('').toUpperCase();
   /* The second hop: the other wallets that reported the same stock. That list
      lives on the stock itself, not just in this wallet's own filings, so it is
@@ -110,55 +110,57 @@
     graph.replaceChildren();
     const mobile = small.matches, cx = mobile ? 180 : 380, cy = mobile ? 184 : 218;
     graph.dataset.orbitCenter = `${cx},${cy}`;
-    const size = mobile ? 4 : 8;
-    page = Math.min(page, Math.max(0, Math.ceil(entity.stocks.length/size)-1));
-    const stocks = entity.stocks.slice(page*size,(page+1)*size);
-    graph.setAttribute('viewBox', mobile ? '0 0 360 390' : '0 0 760 440');
-    // The same ring the stock map uses: stocks orbit the wallet on one ellipse
-    // and travel along it, so the ring never swings off the canvas.
-    if (mobile) delete graph.dataset.orbitTrack;
-    else graph.dataset.orbitTrack = '270,150';
-    const orbiting = !mobile;
-    // Use the full portfolio so the holding scale stays steady across pages.
+    const stocks = [...entity.stocks].sort((a,b) => {
+      const left = Number.isFinite(a.value) ? a.value : -1;
+      const right = Number.isFinite(b.value) ? b.value : -1;
+      return right-left || a.ticker.localeCompare(b.ticker);
+    });
+    const rx = mobile ? 150 : 270, ry = 150;
+    const spiral = stocks.length > 8;
+    const scaleAt = index => spiral ? 1+index/12 : 1;
+    const extent = scaleAt(Math.max(0,stocks.length-1)), margin = 80;
+    graph.dataset.layout = spiral ? 'spiral' : 'ring';
+    graph.dataset.orbitTrack = `${rx},${ry}`;
+    navigation.fit({x:cx-rx*extent-margin,y:cy-ry*extent-margin,width:2*(rx*extent+margin),height:2*(ry*extent+margin)});
+    if (spiral) navigation.zoom((rx*extent+margin)/(rx*scaleAt(7)+margin));
+    const orbiting = true;
+    // Use all loaded holdings for one stable size scale.
     const maximum = Math.max(0,...entity.stocks.map(stock => Number.isFinite(stock.value) ? Math.max(0,stock.value) : 0));
     const minimumSize = mobile ? 18 : 20, maximumSize = mobile ? 28 : 36;
+    const edges = svg('g', {class:'entity-edges'});
+    const nodes = svg('g', {class:'entity-stocks'});
+    graph.append(edges,nodes);
     stocks.forEach((stock,index) => {
-      const angle = -Math.PI/2 + index*Math.PI*2/Math.max(1,stocks.length);
-      const x = mobile ? (index%2 ? 275 : 85) : cx + 270*Math.cos(angle);
-      const y = mobile ? 64+Math.floor(index/2)*210 : cy + 150*Math.sin(angle);
+      const angle = -Math.PI/2 + index*Math.PI*2/(spiral ? 8 : Math.max(1,stocks.length));
+      const scale = scaleAt(index);
+      const x = cx + rx*scale*Math.cos(angle), y = cy + ry*scale*Math.sin(angle);
       const indicator = stockGlyph(stock);
       const holding = Number.isFinite(stock.value) && stock.value >= 0 ? stock.value : null;
       const share = holding !== null && maximum > 0 ? holding/maximum : 0;
       const outer = Math.sqrt(minimumSize**2 + (maximumSize**2-minimumSize**2)*share);
       const radius = outer + 3;
-      const valueLabel = holding === null ? `${stock.events.length} events` : money(holding);
+      const valueLabel = holding === null ? `${stock.events.length} ${stock.events.length === 1 ? 'event' : 'events'}` : money(holding);
       const description = `${stock.ticker}. ${indicator.description} ${holding === null ? valueLabel : "Reported holding value: " + valueLabel}.`;
       stock.events.forEach((event,i) => {
         const bend = (i-(stock.events.length-1)/2)*Math.min(8,48/Math.max(1,stock.events.length-1));
         const length = Math.hypot(x-cx,y-cy) || 1;
         const tone = event.action === 'Sold' ? 'sell' : event.action === 'Bought' || event.view === 'ownership' ? 'buy' : 'role';
         const line = svg('path',{d:`M ${cx} ${cy} Q ${(cx+x)/2-(y-cy)/length*bend} ${(cy+y)/2+(x-cx)/length*bend} ${x} ${y}`,class:`entity-edge ${tone}`,'vector-effect':'non-scaling-stroke',...(orbiting ? {'data-orbit':''} : {})});
-        line.append(svg('title',{},`${stock.ticker} · ${event.action} · Filed ${event.filed_at?.slice(0,10) || ''}`)); graph.append(line);
+        line.append(svg('title',{},`${stock.ticker} · ${event.action} · Filed ${event.filed_at?.slice(0,10) || ''}`)); edges.append(line);
       });
       const link = svg('a',{href:`/stock/${encodeURIComponent(stock.ticker)}`,class:'entity-stock',tabindex:0,'aria-label':description,'data-entity-stock':stock.ticker,...(orbiting ? {'data-orbit-anchor':`${x},${y}`} : {})});
       // One stock link contains the face and labels. The face uses the same
       // stock colors and markers as the row; holding value sets its size.
       link.append(svg('circle',{cx:x,cy:y,r:radius,class:'entity-glyph-backplate'}),scoreWheel(indicator,x,y,outer));
-      link.append(svg('text',{x,y:y+radius+14,'text-anchor':'middle',class:'entity-stock-symbol'},stock.ticker));
-      link.append(svg('text',{x,y:y+radius+28,'text-anchor':'middle',class:'map-node-action'},valueLabel));
+      link.append(svg('text',{x,y:y+radius+(mobile ? 22 : 18),'text-anchor':'middle',class:'entity-stock-symbol'},stock.ticker));
+      link.append(svg('text',{x,y:y+radius+(mobile ? 38 : 32),'text-anchor':'middle',class:'map-node-action'},valueLabel));
       link.append(svg('title',{},description));
-      graph.append(link);
+      nodes.append(link);
       loadNeighbours(stock, {x, y, radius, cx, cy, orbiting});
     });
     const center = svg('g',{class:'entity-center','aria-label':wallet.name});
     center.append(svg('circle',{cx,cy,r:mobile ? 48 : 62,class:'map-center'}),svg('text',{x:cx,y:cy+7,'text-anchor':'middle','class':'map-center-text'},initialsOf(wallet.name)),svg('title',{},wallet.name)); graph.append(center);
-    document.querySelector('[data-entity-paging]').hidden = entity.stocks.length <= size;
-    document.querySelector('[data-entity-page]').textContent = `${page*size+1}–${page*size+stocks.length} of ${entity.stocks.length} stocks`;
-    document.querySelector('[data-entity-previous]').disabled = page === 0;
-    document.querySelector('[data-entity-next]').disabled = (page+1)*size >= entity.stocks.length;
   }
-  document.querySelector('[data-entity-previous]').addEventListener('click',()=>{page--;draw();});
-  document.querySelector('[data-entity-next]').addEventListener('click',()=>{page++;draw();});
   small.addEventListener('change',draw); draw();
   const chart = document.querySelector('.entity-worth-chart');
   const points = entity.series;

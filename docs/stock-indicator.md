@@ -100,7 +100,7 @@ server also supplies the glyph description for the JavaScript-free fallback.
 
 Entity stock nodes use `stock_indicator()` and the shared SVG face renderer.
 Their area follows the reported holding value, with a minimum readable size.
-The scale uses all loaded stocks so paging keeps it steady. Their labels show the stock symbol and
+The scale uses all loaded stocks. Their labels show the stock symbol and
 reported holding value or event count below the face. The ring uses the same
 market / filings + news / external social groups, evidence-tone border and risk
 marker as the stock row beneath it. Solid fill marks 70+ stock attention points.
@@ -110,4 +110,16 @@ the dashed state.
 
 Each node is one keyboard-accessible link to the stock detail page, where the
 ring parts have individual controls. The entity remains at the center, and the
-map retains its filing links, stock paging and connections to other wallets.
+map retains its filing links and connections to other wallets.
+
+Phone and desktop maps show all loaded stocks, ordered by holding value.
+Up to eight stocks share one orbit. Larger sets spread into an outward spiral,
+with the largest holdings nearest the center. Each node retains its distance as
+it orbits. Larger portfolios open around the largest holdings at a readable
+size. Reduced-motion preferences keep the layout still.
+
+The map supports drag, pinch, wheel and button zoom. Fit map restores the full
+view. With the map focused, +/− zoom, arrows move and Home restores the view.
+Dragging pauses the orbit while the pointer is down and preserves stock links
+for ordinary taps. The holding size and stock glyph meaning stay steady at
+every zoom level.
