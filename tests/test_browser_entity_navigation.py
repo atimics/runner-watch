@@ -190,7 +190,9 @@ def test_touch_pinch_drag_and_stock_tap(browser):
         expect(page).to_have_url("http://app.test/wallet/example")
         expect(graph).not_to_have_class(re.compile("orbit-interacting"))
         page.get_by_role("button", name="Fit map", exact=True).click()
-        graph.locator('[data-entity-stock="S17"] .entity-glyph-backplate').tap()
+        # Tap the current position of the orbiting stock, as a finger would.
+        target = graph.locator('[data-entity-stock="S17"] .entity-glyph-backplate').bounding_box()
+        page.touchscreen.tap(target["x"] + target["width"] / 2, target["y"] + target["height"] / 2)
         expect(page).to_have_url("http://app.test/stock/S17")
     finally:
         context.close()
