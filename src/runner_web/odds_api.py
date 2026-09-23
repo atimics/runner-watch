@@ -26,7 +26,8 @@ SPORT_KEYS = {
 }
 REFRESH_SLOTS = (
     ("opening", timedelta(hours=36)),
-    ("pregame", timedelta(hours=6)),
+    # Space pregame and close requests within the two-hour quote lifetime.
+    ("pregame", timedelta(hours=3, minutes=15)),
     ("close", timedelta(minutes=90)),
 )
 SPORTS_DAY_TIMEZONE = ZoneInfo("America/New_York")
