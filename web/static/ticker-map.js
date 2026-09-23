@@ -28,18 +28,17 @@
   let contributions = [], controls = [], total = 0, score = '—', glyph = {};
   const scoreData = value => {
     const g = value.indicator || {};
-    return JSON.stringify([g.score,g.band,g.slices,g.mix_state,g.sentiment,g.sentiment_mix,g.risk,value.score_trace ?? null]);
+    return JSON.stringify([g.score,g.band,g.slices,g.mix_state,g.sentiment,g.sentiment_mix,g.risk,g.risk_factors,value.score_trace ?? null]);
   };
   const allowed = (value, options, fallback) => options.includes(value) ? value : fallback;
   const finite = value => typeof value === 'number' && Number.isFinite(value);
-  const titleCase = value => value[0].toUpperCase() + value.slice(1);
   function readScore() {
     const value = item.indicator || {};
     glyph = {
       band: allowed(value.band, [1,2,3], 1),
       sentimentMix:window.RatiRingGlyph.readSentiment(value.sentiment_mix),
       sentiment: allowed(value.sentiment, ['positive','negative','neutral','unknown'], 'unknown'),
-      risk: allowed(value.risk, ['low','medium','high','unknown'], 'unknown'),
+      risk: allowed(value.risk, ['none','detected','unknown'], 'unknown'),
       mix: allowed(value.mix_state, ['available','zero','unknown'], 'unknown'),
     };
     const parts = Array.isArray(value.slices) ? value.slices : [];
@@ -52,7 +51,7 @@
     contributions.forEach(part => { part.share = part.value / total; });
     score = finite(value.score) ? number(value.score) : '—';
     controls = [...contributions, {key:'sentiment',label:'Filing sentiment'}];
-    if (glyph.risk !== 'low') controls.push({key:'risk',label:'Risk'});
+    if (glyph.risk !== 'none') controls.push({key:'risk',label:'Risk factors'});
   }
   readScore();
   const points = value => `${value > 0 ? '+' : ''}${number(value)} pts`;
@@ -78,13 +77,17 @@
   function scorePanel(part) {
     const panel = $('selection'); panel.replaceChildren();
     // A compact reading inside the existing map, not another ticker-page card.
-    const reading = `Attention ${score === '—' ? 'unavailable' : score + ' points'} · Filing sentiment: ${glyph.sentimentMix.reading} · Risk: ${titleCase(glyph.risk)}`;
+    const reading = `Attention ${score === '—' ? 'unavailable' : score + ' points'} · Filing sentiment: ${glyph.sentimentMix.reading} · ${window.RatiRingGlyph.riskReading(glyph.risk)}`;
     panel.append(make('p', reading, 'map-glyph-reading'));
     if (part) {
       panel.append(make('h4', part.label));
-      if (part.key === 'risk') panel.append(make('p', `${titleCase(glyph.risk)} structural risk. A heuristic assessment, not a probability of loss. Risk does not subtract attention points.`, 'map-risk-reading'));
-      else if (part.key === 'sentiment') panel.append(make('p', `${glyph.sentimentMix.reading}. ${glyph.sentimentMix.basis}.`, 'map-sentiment-reading'));
-      else panel.append(make('p', `${points(part.value)} · ${percent(part)}`, 'map-score-breakdown'));
+      if (part.key === 'risk') panel.append(make('p', `${window.RatiRingGlyph.riskReading(glyph.risk)}.`, 'map-risk-reading'));
+      if (part.key === 'risk' && Array.isArray(item.indicator?.risk_factors) && item.indicator.risk_factors.length) {
+        const factors = make('ul',null,'map-risk-factors');
+        item.indicator.risk_factors.forEach(reason => factors.append(make('li',reason))); panel.append(factors);
+      }
+      if (part.key === 'sentiment') panel.append(make('p', `${glyph.sentimentMix.reading}. ${glyph.sentimentMix.basis}.`, 'map-sentiment-reading'));
+      else if (part.key !== 'risk') panel.append(make('p', `${points(part.value)} · ${percent(part)}`, 'map-score-breakdown'));
       const keys = part.key === 'evidence' ? ['sec_event','news'] : part.key === 'social' ? ['social_search'] : part.key === 'risk' ? ['rug'] : [part.key];
       for (const key of keys) {
         const rows = item.score_trace?.[key];

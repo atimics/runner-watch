@@ -22,7 +22,7 @@
       mix:allowed(value.mix_state,['available','zero','unknown'],'unknown'),
       sentimentMix:window.RatiRingGlyph.readSentiment(value.sentiment_mix),
       sentiment:allowed(value.sentiment,['positive','negative','neutral','unknown'],'unknown'),
-      risk:allowed(value.risk,['low','medium','high','unknown'],'unknown'),
+      risk:allowed(value.risk,['none','detected','unknown'],'unknown'),
     };
     const slices = Array.isArray(value.slices) ? value.slices : [];
     let contributions = ['market','evidence','social'].map((key,index) => {
@@ -32,7 +32,7 @@
     const total = contributions.reduce((sum,part) => sum + part.value,0);
     if (glyph.mix !== 'available' || !Number.isFinite(total) || total <= 0) contributions = [];
     contributions.forEach(part => {part.share = part.value/total;});
-    return {glyph,contributions,description:value.description || 'Attention unavailable. Filing sentiment unknown. Risk unknown.'};
+    return {glyph,contributions,description:value.description || 'Attention unavailable. Filing sentiment unknown. Risk factor checks unavailable.'};
   }
   function scoreWheel({glyph,contributions}, x, y, outer) {
     const width = small.matches ? 16 : 20;

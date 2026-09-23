@@ -6,7 +6,7 @@
     if (text != null) element.textContent = text;
     return element;
   };
-  const titleCase = value => value[0].toUpperCase() + value.slice(1);
+  const riskReading = value => ({detected:'Risk factors detected in saved checks',none:'Detected risk factors: 0 in saved checks',unknown:'Risk factor checks unavailable'}[value] || 'Risk factor checks unavailable');
   const color = part => `var(--indicator-${part.key})`;
   let nextPattern = 0;
   function patterns(layer, scale = 1) {
@@ -94,10 +94,10 @@
     const sentiment = svg('circle', {cx,cy,r:outer+6,class:'map-glyph-sentiment','aria-label':`${toneLabel}: ${sentimentMix.reading}. Show sentiment.`});
     wireControl?.(sentiment,controls.find(part => part.key === 'sentiment')); ringLayer.append(sentiment);
     if (glyph.band !== 3 || !contributions.length) ringLayer.append(svg('circle', {cx,cy,r:radius-width/2-3,class:'map-glyph-hole','pointer-events':'none'}));
-    if (glyph.risk !== 'low') {
-      const risk = svg('g', {class:'map-glyph-risk','aria-label':`Risk: ${titleCase(glyph.risk)}. Show risk assessment.`});
+    if (glyph.risk !== 'none') {
+      const risk = svg('g', {class:'map-glyph-risk','aria-label':`${riskReading(glyph.risk)}. Show risk factors.`});
       const size = (small ? 7 : 9)*(geometry.markerScale || 1);
-      const marker = glyph.risk === 'high'
+      const marker = glyph.risk === 'detected'
         ? svg('path', {d:`M ${cx} ${cy-size-2} L ${cx+size+2} ${cy} L ${cx} ${cy+size+2} L ${cx-size-2} ${cy} Z`,class:'map-risk-dot','data-risk-shape':'diamond'})
         : svg('circle', {cx,cy,r:size,class:'map-risk-dot','data-risk-shape':glyph.risk === 'unknown' ? 'unknown' : 'circle'});
       risk.append(svg('circle', {cx,cy,r:12,class:'map-risk-target'}),marker);
@@ -120,5 +120,5 @@
     center.addEventListener('keydown',event => {if (['Enter',' '].includes(event.key)) {event.preventDefault(); overview();}});
     ringLayer.append(center);
   }
-  window.RatiRingGlyph = {metrics, draw, drawFace, readSentiment};
+  window.RatiRingGlyph = {metrics, draw, drawFace, readSentiment, riskReading};
 })();

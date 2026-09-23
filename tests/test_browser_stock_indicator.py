@@ -78,9 +78,9 @@ def test_glyphs_fit_dense_list_and_status_chips_are_unchanged(page: Page, width)
     ]
     assert all("gradient" in mask for mask in masks[:2])
     assert masks[2] == "none"
-    expect(glyphs.nth(0).locator(".indicator-glyph__risk")).to_have_count(0)
-    expect(glyphs.nth(1)).to_have_attribute("data-risk", "medium")
-    expect(glyphs.nth(2)).to_have_attribute("data-risk", "high")
+    expect(glyphs.nth(0).locator(".indicator-glyph__risk")).to_have_count(1)
+    expect(glyphs.nth(1)).to_have_attribute("data-risk", "detected")
+    expect(glyphs.nth(2)).to_have_attribute("data-risk", "detected")
     expect(glyphs.nth(3).locator(".indicator-glyph__risk")).to_have_text("?")
     assert (
         glyphs.nth(3)
@@ -136,7 +136,7 @@ def test_full_sentiment_border_and_center_are_independent(page: Page):
     helpers.open_screen(page, listing("stocks", [source]))
     glyph = page.locator(".indicator-glyph")
     expect(glyph).to_have_attribute("data-sentiment", "positive")
-    expect(glyph).to_have_attribute("data-risk", "high")
+    expect(glyph).to_have_attribute("data-risk", "detected")
     expect(glyph).to_have_attribute("data-sentiment-mix", "available")
     border = glyph.locator(".indicator-glyph__sentiment")
     assert "100%" in border.get_attribute("style")
@@ -258,7 +258,7 @@ def test_visible_sentiment_patterns_and_risk_shapes_in_both_color_modes(
     expect(glyphs.nth(2).locator(".indicator-glyph__sentiment")).to_have_css(
         "border-top-style", "dashed"
     )
-    expect(glyphs.nth(0).locator(".indicator-glyph__risk")).to_have_css("border-radius", "50%")
+    expect(glyphs.nth(0).locator(".indicator-glyph__risk")).to_have_css("border-radius", "0px")
     expect(glyphs.nth(1).locator(".indicator-glyph__risk")).to_have_css("border-radius", "0px")
     expect(glyphs.nth(2).locator(".indicator-glyph__risk")).to_have_text("?")
     for pattern in glyphs.nth(0).locator(".score-pie [data-pattern]").all():
@@ -266,3 +266,50 @@ def test_visible_sentiment_patterns_and_risk_shapes_in_both_color_modes(
         assert "gradient" in pattern.evaluate("el => getComputedStyle(el).backgroundImage")
         assert "conic-gradient" in pattern.evaluate("el => getComputedStyle(el).maskImage")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("market", ["stocks", "memecoins"])
+@pytest.mark.parametrize("width", [320, 390, 1280])
+@pytest.mark.parametrize("forced", ["none", "active"])
+def test_visual_key_opens_by_keyboard_and_keeps_patterns_and_labels(page, market, width, forced):
+    from tests.test_memecoin_indicator import assessed_coin
+
+    page.set_viewport_size({"width": width, "height": 1100})
+    page.emulate_media(forced_colors=forced)
+    source = fixtures.stock() if market == "stocks" else assessed_coin()
+    helpers.open_screen(page, listing(market, [source]))
+    key = page.locator(".indicator-legend")
+    key.locator("summary").focus()
+    key.locator("summary").press("Enter")
+    expect(key).to_have_attribute("open", "")
+    expect(key.get_by_text("Risk factors detected", exact=False)).to_be_visible()
+    expect(key.get_by_text("0 factors detected", exact=False)).to_be_visible()
+    expect(key.get_by_text("Checks unavailable", exact=False)).to_be_visible()
+    for kind in [
+        "market",
+        "evidence",
+        "social",
+        "bullish",
+        "bearish",
+        "sentiment",
+        "detected",
+        "none",
+        "unknown",
+        "unavailable",
+    ]:
+        icon = key.locator(f'[data-key-icon="{kind}"]')
+        expect(icon).to_be_visible()
+        assert icon.bounding_box()["width"] >= 24
+    for kind in ["evidence", "social", "bearish"]:
+        pattern = key.locator(f'[data-key-icon="{kind}"] .indicator-pattern')
+        assert "gradient" in pattern.evaluate("el => getComputedStyle(el).backgroundImage")
+    expect(key.locator('[data-key-icon="unavailable"] .indicator-key-ring')).to_have_css(
+        "border-top-style", "dashed"
+    )
+    expect(key.locator('[data-key-icon="detected"] .indicator-key-marker')).to_have_css(
+        "border-radius", "0px"
+    )
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert not re.search(r"\b(low|medium|high|critical) risk\b", key.inner_text(), re.I)
+    if forced == "active":
+        expect(key.locator('[data-key-icon="evidence"]')).to_have_css("forced-color-adjust", "none")

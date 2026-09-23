@@ -118,28 +118,40 @@ def test_sentiment_is_not_inferred_from_price_or_model(sentiment, expected):
 @pytest.mark.parametrize(
     ("score", "level", "expected"),
     [
-        (0, "LOW", "low"),
-        (24.99, "LOW", "low"),
-        (25, "GUARDED", "medium"),
-        (49.99, "GUARDED", "medium"),
-        (50, "HIGH", "high"),
-        (75, "CRITICAL", "high"),
-        (90, "LOW", "high"),
-        (1, "HIGH", "high"),
-        (None, "LOW", "low"),
+        (0, "LOW", "none"),
+        (1, "LOW", "detected"),
+        (24.99, "LOW", "detected"),
+        (25, "GUARDED", "detected"),
+        (49.99, "GUARDED", "detected"),
+        (50, "HIGH", "detected"),
+        (75, "CRITICAL", "detected"),
+        (90, "LOW", "detected"),
+        (0, "HIGH", "detected"),
+        (None, "LOW", "unknown"),
         (None, "UNKNOWN", "unknown"),
         (math.nan, "LOW", "unknown"),
         (150, "LOW", "unknown"),
     ],
 )
-def test_risk_thresholds_and_conservative_conflicts(score, level, expected):
-    assert stock_indicator(stock(rug_score=score, rug_level=level))["risk"] == expected
+def test_risk_factors_describe_saved_checks_without_grading_the_asset(score, level, expected):
+    glyph = stock_indicator(stock(rug_score=score, rug_level=level))
+    assert glyph["risk"] == expected
+    assert glyph["risk_reading"] in glyph["description"]
+    assert all(
+        word not in glyph["description"].lower()
+        for word in ["low risk", "high risk", "medium risk", "risk low", "risk high"]
+    )
 
 
-def test_hard_veto_dominates_low_risk_and_approval():
-    glyph = stock_indicator(stock(hard_veto=True))
-    assert glyph["risk"] == "high"
-    assert not glyph["verification"]["verified"]
+@pytest.mark.parametrize(
+    "source", [{"hard_veto": True}, {"attention_urgent": True}, {"risks": ["Wide spread"]}]
+)
+def test_explicit_factors_survive_a_zero_score(source):
+    glyph = stock_indicator(stock(rug_score=0, **source))
+    assert glyph["risk"] == "detected"
+    assert glyph["risk_factors"] == source.get("risks", [])
+    if source.get("hard_veto"):
+        assert not glyph["verification"]["verified"]
 
 
 @pytest.mark.parametrize(
@@ -241,7 +253,7 @@ def test_sentiment_counts_set_directional_shares_independent_of_attention_and_ri
     assert mix["bullish"] + mix["bearish"] == 1
     assert "var(--green)" in mix["gradient"] and "var(--red)" in mix["gradient"]
     assert mix["description"] in glyph["description"]
-    assert glyph["risk"] == "high"
+    assert glyph["risk"] == "detected"
     assert source == original
     assert (
         listing("stocks", [source])["rows"][0]["indicator"]

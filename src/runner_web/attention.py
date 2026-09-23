@@ -150,7 +150,7 @@ def eligibility(
         reasons.append({"code": f"state_{upper.lower()}", "label": f"Scanner state {upper}"})
     if rug_level.strip().lower() in BLOCKING_RUG_LEVELS:
         state = BLOCKED
-        reasons.append({"code": "rug_risk", "label": "Reported risk level high"})
+        reasons.append({"code": "rug_risk", "label": "Risk factors triggered a block"})
     elif risk_value is not None and risk_value >= BLOCKING_RUG_SCORE:
         state = BLOCKED
         reasons.append({"code": "rug_score", "label": "Reported risk score at veto level"})

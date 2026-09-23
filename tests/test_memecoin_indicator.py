@@ -64,7 +64,7 @@ def test_chain_contribution_has_its_own_saved_basis():
     assert glyph["slices"][1]["label"] == "Chain evidence"
     assert glyph["slices"][1]["share"] == pytest.approx(20 / 58)
     assert glyph["sentiment"] == "negative"
-    assert glyph["risk"] == "medium"
+    assert glyph["risk"] == "detected"
 
 
 def test_saved_driver_fallback_and_known_zero():
@@ -92,7 +92,7 @@ def test_list_detail_and_source_are_consistent():
     assert coin == original
     html = render(board)
     assert 'class="ticker-score indicator-glyph"' in html
-    assert "Purple: chain evidence" in html
+    assert "Chain evidence" in html and "Purple stripes" in html
     assert "stock-indicator.css" in html
     assert "Verified evidence" not in html
 

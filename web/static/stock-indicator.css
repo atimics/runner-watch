@@ -1,5 +1,5 @@
 /* Shared stock and token attention glyph. */
-.indicator-glyph,[data-stock-map],[data-token-replay],[data-entity-map]{
+.indicator-glyph,.indicator-legend,[data-stock-map],[data-token-replay],[data-entity-map]{
   --indicator-market:#418cf4;--indicator-evidence:#b58af4;--indicator-social:#36d5e6;--glyph-ink:var(--bg);
 }
 .indicator-glyph{
@@ -26,7 +26,7 @@
   width:var(--risk-size);height:var(--risk-size);border:1px solid var(--bg,#0b100e);border-radius:50%;
   background:var(--orange,#ff9f43);display:grid;place-items:center;line-height:1;font-size:9px;font-weight:800;
 }
-.indicator-glyph[data-risk="high"] .indicator-glyph__risk{background:var(--red);border-radius:0;transform:translate(-50%,-50%) rotate(45deg)}
+.indicator-glyph[data-risk="detected"] .indicator-glyph__risk{background:var(--red);border-radius:0;transform:translate(-50%,-50%) rotate(45deg)}
 .indicator-glyph[data-risk="unknown"] .indicator-glyph__risk{background:var(--bg,#0b100e);color:var(--muted);border-color:var(--muted)}
 .ticker-symbol{display:inline-flex;align-items:center;gap:5px;min-width:0;flex-shrink:0}
 .ticker-verified{width:14px;height:14px;flex:none;fill:var(--green);vertical-align:middle}
@@ -51,7 +51,34 @@
 
 .ticker-verification{display:inline-flex;align-items:center;flex:none}
 .ticker-verification[hidden]{display:none}
-.indicator-legend{margin-top:16px;color:var(--muted);font-size:11px;max-width:60em}
-.indicator-legend summary{cursor:pointer;width:fit-content;padding:8px 0}
+.indicator-legend{margin-top:16px;color:var(--muted);font-size:12px;max-width:100%}
+.indicator-legend summary{cursor:pointer;width:fit-content;padding:10px 0;color:var(--text)}
 .indicator-legend summary:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
-.indicator-legend p{line-height:1.5;margin:6px 0}
+.indicator-key-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:20px 24px;padding:16px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.indicator-key-group{min-width:0}
+.indicator-key-group h3{font-size:12px;font-weight:600;color:var(--text);margin:0 0 10px}
+.indicator-key-group ul{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.indicator-key-group li,.indicator-key-check{display:flex;align-items:center;gap:10px;min-height:38px;color:var(--text)}
+.indicator-key-group small,.indicator-key-check small{display:block;color:var(--muted);font-size:11px;line-height:1.4;margin-top:2px}
+.indicator-key-group p{line-height:1.5;margin:12px 0 0;font-size:11px}
+.indicator-key-check{margin-top:12px}
+.indicator-key-icon{position:relative;display:grid;place-items:center;width:38px;height:38px;flex:none;--key-color:var(--indicator-market)}
+.indicator-key-ring{position:relative;display:block;width:34px;height:34px;border-radius:50%;overflow:hidden;background:var(--key-color);mask:radial-gradient(farthest-side,transparent 62%,#000 64%)}
+.indicator-key-icon[data-key-icon="small"] .indicator-key-ring{width:24px;height:24px}
+.indicator-key-icon[data-key-icon="solid"] .indicator-key-ring{mask:none}
+.indicator-key-icon[data-key-icon="evidence"]{--key-color:var(--indicator-evidence)}
+.indicator-key-icon[data-key-icon="social"]{--key-color:var(--indicator-social)}
+.indicator-key-icon[data-key-icon="bullish"]{--key-color:var(--green)}
+.indicator-key-icon[data-key-icon="bearish"]{--key-color:var(--red)}
+.indicator-key-icon[data-key-icon="sentiment"] .indicator-key-ring{background:conic-gradient(var(--green) 0 75%,var(--red) 75% 100%)}
+.indicator-key-icon:is([data-key-icon="bullish"],[data-key-icon="bearish"],[data-key-icon="sentiment"]) .indicator-key-ring{mask:radial-gradient(farthest-side,transparent calc(100% - 3px),#000 calc(100% - 3px))}
+.indicator-key-icon:is([data-key-icon="unavailable"],[data-key-icon="detected"],[data-key-icon="none"],[data-key-icon="unknown"]) .indicator-key-ring{background:none;border:1px solid var(--muted);box-sizing:border-box;mask:none}
+.indicator-key-icon[data-key-icon="unavailable"] .indicator-key-ring{border:2px dashed var(--muted)}
+.indicator-key-marker{position:absolute;width:10px;height:10px;background:var(--red);transform:rotate(45deg)}
+.indicator-key-icon[data-key-icon="unknown"] .indicator-key-marker{width:14px;height:14px;display:grid;place-items:center;background:var(--bg);border:1px solid var(--muted);border-radius:50%;transform:none;color:var(--muted);font-size:11px;font-weight:700;line-height:1}
+.indicator-key-icon[data-key-icon="verified"] .indicator-key-ring{display:none}
+.indicator-key-check-symbol{width:20px;height:20px;fill:var(--green)}
+.indicator-key-check-symbol path{fill:none;stroke:var(--bg);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+@media(max-width:500px){.indicator-key-grid{grid-template-columns:1fr 1fr;gap:20px 12px}.indicator-key-group li{gap:7px}.indicator-key-group li>span:last-child{min-width:0}.indicator-key-icon{width:34px}}
+@media(max-width:360px){.indicator-key-grid{grid-template-columns:1fr}}
+@media(forced-colors:active){.indicator-key-icon{forced-color-adjust:none;--bg:Canvas;--muted:CanvasText;--glyph-ink:Canvas;--indicator-market:CanvasText;--indicator-evidence:CanvasText;--indicator-social:CanvasText;--green:CanvasText;--red:CanvasText}}

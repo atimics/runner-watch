@@ -161,9 +161,9 @@
     const tradeState = String(row.trade_state || '').toUpperCase();
     let safety = '';
     if (rugValue !== null && ['high', 'critical'].includes(rugLevel)) {
-      safety = `<span class="rug-count rug-${attr(rugLevel)}">HIGH RISK</span>`;
+      safety = `<span class="rug-count rug-${attr(rugLevel)}">RISK FACTORS DETECTED</span>`;
     } else if (row.section === 'scored' && rugValue === null) {
-      safety = '<span class="rug-count rug-unknown">RISK UNKNOWN</span>';
+      safety = '<span class="rug-count rug-unknown">RISK CHECKS UNAVAILABLE</span>';
     }
     const catalystTone = row.sentiment === 'risk' ? ' risk' : row.sentiment === 'gap' ? ' gap' : '';
     const updated = options.updated ?? row.has_update;
@@ -171,7 +171,7 @@
     const tradeStateLabel = tradeState && tradeState !== 'UNKNOWN' && tradeState !== statusLabel
       ? `, ${tradeState}`
       : '';
-    const marketLabel = `${statusLabel ? `, ${statusLabel}` : ''}${tradeStateLabel}${rugValue !== null ? `, rug risk ${rugValue.toFixed(0)}` : ''}`;
+    const marketLabel = `${statusLabel ? `, ${statusLabel}` : ''}${tradeStateLabel}${rugValue !== null ? `, saved risk check score ${rugValue.toFixed(0)}` : ''}`;
     const scoreLabel = row.section === 'scored'
       ? `, rank ${number(row.custom_rank) ?? 'unknown'}, Pulse score ${number(row.score) ?? 'unknown'}, setup ${number(row.setup_score) ?? 'unknown'}, relative volume ${number(row.relative_volume) ?? 'unknown'}, 15 minute momentum ${percent(row.momentum_15m_pct)}`
       : '';

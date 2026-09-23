@@ -3359,7 +3359,7 @@ def _draw_ticker_badge(
     state = str(current.get("trade_state") or "").upper()
     level = str(current.get("rug_level") or "").lower()
     if level in {"high", "critical"}:
-        label, fill, ink = "HIGH RISK", "#331a1e", "#f2a3ac"
+        label, fill, ink = "RISK FACTORS DETECTED", "#331a1e", "#f2a3ac"
     elif state in {"AVOID", "EXIT"}:
         label, fill, ink = state, "#331a1e", "#f2a3ac"
     elif state and state != "UNKNOWN":
@@ -4522,7 +4522,7 @@ def _evidence_gate(
     if bool(current.get("hard_veto")):
         blockers.append("Blocked by risk rule")
     if rug_score is not None and rug_score >= 75:
-        blockers.append("Critical risk")
+        blockers.append("Risk factors triggered a block")
     if trade_state in {"AVOID", "EXIT"}:
         blockers.append(f"State: {trade_state.title()}")
     eligibility_state = (current.get("eligibility") or {}).get("state")

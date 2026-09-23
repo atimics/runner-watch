@@ -209,7 +209,7 @@ def test_stock_glyph_uses_attention_contributions_not_penalty_slices():
     html = render(screen)
     assert "conic-gradient(var(--indicator-market) 0.000000% 100.000000%)" in html
     assert "Rug risk -12.0" not in html
-    assert 'data-risk="low"' in html
+    assert 'data-risk="unknown"' in html
     missing = listing(
         "stocks",
         [

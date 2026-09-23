@@ -16,7 +16,7 @@
         {% if visible | length > 1 %}<span class="indicator-divider" style="transform: rotate({{ part.start * 3.6 }}deg)"></span>{% endif %}
       {% endfor %}
     </span>
-    {% if glyph.risk != 'low' %}<span class="indicator-glyph__risk">{{ '?' if glyph.risk == 'unknown' else '' }}</span>{% endif %}
+    {% if glyph.risk != 'none' %}<span class="indicator-glyph__risk">{{ '?' if glyph.risk == 'unknown' else '' }}</span>{% endif %}
   </span>
 </span>
 {%- endmacro %}
@@ -37,16 +37,57 @@
 </span>
 {%- endmacro %}
 
+{% macro key_icon(kind) -%}
+<span class="indicator-key-icon" data-key-icon="{{ kind }}" aria-hidden="true"><span class="indicator-key-ring">{% if kind in ['evidence', 'bearish', 'sentiment'] %}<span class="indicator-pattern indicator-pattern--evidence" style="--slice-start: {{ '75%' if kind == 'sentiment' else '0%' }}; --slice-end: 100%"></span>{% elif kind == 'social' %}<span class="indicator-pattern indicator-pattern--social" style="--slice-start: 0%; --slice-end: 100%"></span>{% endif %}</span>{% if kind in ['detected', 'unknown'] %}<span class="indicator-key-marker">{{ '?' if kind == 'unknown' else '' }}</span>{% elif kind == 'verified' %}<svg class="indicator-key-check-symbol" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9"/><path d="m6 10 2.5 2.5 5.5-5.5"/></svg>{% endif %}</span>
+{%- endmacro %}
+
 {% macro indicator_legend(market='stocks', size_basis='attention') -%}
 <details class="indicator-legend"><summary>{{ 'Entity map key' if size_basis == 'holding' else 'Indicator key' }}</summary>
-{% if size_basis == 'holding' %}
-<p>Ring size follows the reported holding value at saved prices. A minimum size keeps small holdings readable. Stocks awaiting a value use the smallest size and show an event count.</p>
-<p>Solid fill: stock attention of 70+ points. Colored slices show the saved contribution shares.</p>
-{% else %}<p>Small ring: under 40 attention points. Large ring: 40–69.99. Large solid: 70+.</p>{% endif %}
-<p>Blue: market. Purple: {{ 'chain evidence' if market == 'memecoins' else 'filings + news' }}. Cyan: external social. Market is solid, evidence is striped, and social is dotted. Slices show contribution shares.</p>
-<p>Outer border: solid green and ▲ show the bullish share; striped red and ▼ show the bearish share of {{ 'saved chain assessments' if market == 'memecoins' else 'saved directional filing assessments' }}. A fully dashed border and ▲— / ▼— mean the split is unavailable, including neutral-only evidence.</p>
-<p>Center: orange circle for medium risk, red diamond for high risk, empty for low risk, ? for unknown risk.</p>
-{% if market == 'memecoins' %}<p>A dashed empty ring means the attention breakdown is unavailable. ? means risk is unknown. Open a token to explore its saved assessment and receipts.</p>
-{% else %}<p>Check: the existing automated evidence gate is confirmed and eligibility checks pass. Not human review or an endorsement. Open a stock for the text breakdown.</p>{% endif %}
+<div class="indicator-key-grid">
+  <div class="indicator-key-group">
+    <h3>Size &amp; fill</h3>
+    <ul>
+    {% if size_basis == 'holding' %}
+      <li>{{ key_icon('small') }}<span>Smaller holding</span></li>
+      <li>{{ key_icon('large') }}<span>Larger holding</span></li>
+      <li>{{ key_icon('solid') }}<span>Solid fill<small>70+ attention points</small></span></li>
+    {% else %}
+      <li>{{ key_icon('small') }}<span>Under 40<small>Attention points</small></span></li>
+      <li>{{ key_icon('large') }}<span>40–69.99<small>Attention points</small></span></li>
+      <li>{{ key_icon('solid') }}<span>70+<small>Attention points · solid fill</small></span></li>
+    {% endif %}
+    </ul>
+    {% if size_basis == 'holding' %}<p>Ring size follows the reported holding value at saved prices. Small holdings keep a readable minimum size. Stocks awaiting a value show an event count.</p>{% endif %}
+  </div>
+  <div class="indicator-key-group">
+    <h3>Attention slices</h3>
+    <ul>
+      <li>{{ key_icon('market') }}<span>Market<small>Solid blue</small></span></li>
+      <li>{{ key_icon('evidence') }}<span>{{ 'Chain evidence' if market == 'memecoins' else 'Filings + news' }}<small>Purple stripes</small></span></li>
+      <li>{{ key_icon('social') }}<span>External social<small>Cyan dots</small></span></li>
+    </ul>
+    <p>Slice size shows its share of attention.</p>
+  </div>
+  <div class="indicator-key-group">
+    <h3>Outer border · sentiment</h3>
+    <ul>
+      <li>{{ key_icon('bullish') }}<span>▲ Bullish<small>Solid green</small></span></li>
+      <li>{{ key_icon('bearish') }}<span>▼ Bearish<small>Red stripes</small></span></li>
+      <li>{{ key_icon('sentiment') }}<span>▲75% / ▼25%<small>Example split</small></span></li>
+      <li>{{ key_icon('unavailable') }}<span>▲— / ▼—<small>Split unavailable</small></span></li>
+    </ul>
+    <p>Shares of saved {{ 'chain' if market == 'memecoins' else 'directional filing' }} assessments. Neutral-only evidence uses the dashed ring.</p>
+  </div>
+  <div class="indicator-key-group">
+    <h3>Center · risk factors</h3>
+    <ul>
+      <li>{{ key_icon('detected') }}<span>Risk factors detected<small>Diamond · saved checks</small></span></li>
+      <li>{{ key_icon('none') }}<span>0 factors detected<small>Empty center · saved checks</small></span></li>
+      <li>{{ key_icon('unknown') }}<span>Checks unavailable<small>? · awaiting evidence</small></span></li>
+    </ul>
+    <p>Open {{ 'a token' if market == 'memecoins' else 'a stock' }} to read its saved checks.</p>
+  </div>
+</div>
+{% if market == 'stocks' %}<div class="indicator-key-check">{{ key_icon('verified') }}<span>Automated evidence check<small>Evidence and eligibility checks passed.</small></span></div>{% endif %}
 </details>
 {%- endmacro %}

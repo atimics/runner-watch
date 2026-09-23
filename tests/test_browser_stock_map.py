@@ -336,7 +336,9 @@ def test_components_and_metadata_share_filing_selection_without_mixing_units(pag
     expect(page.locator("[data-event-id][aria-pressed=true]")).to_have_count(0)
     expect(page.locator(".chart-filing-marker")).to_have_count(0)
     if key == "risk":
-        expect(selection.locator(".map-risk-reading")).to_contain_text("High structural risk")
+        expect(selection.locator(".map-risk-reading")).to_contain_text(
+            "Risk factors detected in saved checks"
+        )
         expect(selection.locator(".map-score-breakdown")).to_have_count(0)
     if key == "sentiment":
         expect(selection.locator(".map-sentiment-reading")).to_contain_text(
@@ -392,7 +394,7 @@ def test_zero_and_missing_attention_remain_distinct_inside_map(page, score, mix)
     expect(page.locator(".map-score-segment")).to_have_count(0)
     expect(page.locator(".map-score-track")).to_have_count(1)
     expect(page.locator(".map-glyph-risk")).to_have_attribute(
-        "aria-label", "Risk: High. Show risk assessment."
+        "aria-label", "Risk factors detected in saved checks. Show risk factors."
     )
     expect(page.locator(".map-glyph-empty")).to_have_text(
         "No attention contributions." if score == 0 else "Attention breakdown unavailable."
@@ -480,12 +482,13 @@ def test_attention_bands_have_two_sizes_and_true_solid_geometry(page, width, tmp
 
 
 @pytest.mark.parametrize(
-    "risk,expected", [(10, "low"), (30, "medium"), (68, "high"), (None, "unknown")]
+    "risk,expected",
+    [(0, "none"), (10, "detected"), (30, "detected"), (68, "detected"), (None, "unknown")],
 )
 def test_map_center_uses_risk_marker_not_a_penalty_slice(page, risk, expected):
     open_map(page, current=score_current(rug_score=risk))
     expect(page.locator(".map-glyph")).to_have_attribute("data-risk", expected)
-    expect(page.locator(".map-risk-dot")).to_have_count(0 if expected == "low" else 1)
+    expect(page.locator(".map-risk-dot")).to_have_count(0 if expected == "none" else 1)
     expect(page.locator(".map-risk-unknown")).to_have_count(int(expected == "unknown"))
     expect(page.locator(".map-score-segment")).to_have_count(2)
 
@@ -539,7 +542,7 @@ def test_live_refresh_preserves_wallets_selection_and_updates_metadata_only(page
     source.update(sentiment="risk", rug_score=68)  # Same attention and mix; metadata must refresh.
     poll()
     expect(page.locator(".map-glyph")).to_have_attribute("data-sentiment", "negative")
-    expect(page.locator(".map-glyph")).to_have_attribute("data-risk", "high")
+    expect(page.locator(".map-glyph")).to_have_attribute("data-risk", "detected")
     expect(page.locator("[data-map-selection] h3")).to_have_text(title)
     assert page.evaluate("window.savedPerson === document.querySelector('[data-person]')")
     risk = page.locator('[data-score-key="risk"]')
@@ -548,7 +551,9 @@ def test_live_refresh_preserves_wallets_selection_and_updates_metadata_only(page
     poll()
     expect(risk).to_be_focused()
     expect(risk).to_have_attribute("aria-pressed", "true")
-    expect(page.locator(".map-risk-reading")).to_contain_text("Medium structural risk")
+    expect(page.locator(".map-risk-reading")).to_contain_text(
+        "Risk factors detected in saved checks"
+    )
     source.update(rug_score=0)
     poll()
     expect(risk).to_have_count(0)
@@ -717,7 +722,7 @@ def test_inline_interests_link_to_stocks_and_keep_one_chart(page, width, tmp_pat
     )
     links = page.locator("[data-interest]")
     expect(links).to_have_count(2)
-    expect(page.locator("[data-stock-map] svg")).to_have_count(1)
+    expect(page.locator("[data-stock-map] svg[data-map-graph]")).to_have_count(1)
     expect(page.locator("[data-map-connections], [data-stock-map] select")).to_have_count(0)
     expect(page.locator('[data-interest][href="/stock/BIG"] .map-interest-edge')).to_have_count(2)
     expect(page.locator('[data-interest][href="/stock/SMALL"] .map-interest-edge')).to_have_count(2)
@@ -756,7 +761,7 @@ def test_attention_badges_exclude_penalties_and_filing_notes_are_visible(page, w
     expect(page.locator(".map-score-legend li")).to_contain_text("Market")
     expect(page.locator(".map-score-legend li")).to_contain_text("+51.9 pts")
     expect(page.locator(".map-score-penalties")).to_have_count(0)
-    expect(page.locator(".map-glyph-reading")).to_contain_text("Risk:")
+    expect(page.locator(".map-glyph-reading")).to_contain_text("Risk factor checks unavailable")
     source = page.locator(".map-source")
     assert source.bounding_box()["height"] < 100
     assert source.evaluate("el => getComputedStyle(el).backgroundColor") == "rgba(0, 0, 0, 0)"
@@ -1191,3 +1196,22 @@ def test_patterned_map_preserves_slice_hit_targets_and_high_contrast_readings(
             "35%" if key == "evidence" else "25%"
         )
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+def test_detected_factor_details_refresh_while_selected(page):
+    from runner_web.stock_indicator import stock_indicator
+
+    page.clock.install()
+    source = score_current(rug_score=0, risks=["Wide spread"])
+    open_map(page, current=source)
+    risk = page.locator('[data-score-key="risk"]')
+    risk.press("Enter")
+    expect(page.locator(".map-risk-factors")).to_have_text("Wide spread")
+    screen = page.locator("#screenData").evaluate("node => JSON.parse(node.textContent)")
+    screen["item"]["indicator"] = stock_indicator({**source, "risks": ["Thin trading volume"]})
+    page.route("**/api/screens/**", lambda route: route.fulfill(json=screen))
+    with page.expect_response("**/api/screens/**"):
+        page.clock.fast_forward(60000)
+    expect(page.locator(".map-risk-factors")).to_have_text("Thin trading volume")
+    expect(risk).to_be_focused()
+    expect(risk).to_have_attribute("aria-pressed", "true")

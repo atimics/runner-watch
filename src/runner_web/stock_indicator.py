@@ -17,7 +17,11 @@ TOKEN_GROUPS = (
     ("evidence", "Chain evidence", ("chain_event",)),
     ("social", "External social", ("social_search",)),
 )
-RISK_LEVELS = {"low": 0, "guarded": 1, "medium": 1, "high": 2, "critical": 2}
+RISK_READINGS = {
+    "detected": "Risk factors detected in saved checks",
+    "none": "Detected risk factors: 0 in saved checks",
+    "unknown": "Risk factor checks unavailable",
+}
 VERIFICATION_NOTE = (
     "Verified evidence — automated: the existing evidence gate is confirmed and "
     "eligibility checks pass. Not human review, identity verification or an investment endorsement."
@@ -29,19 +33,20 @@ def _mapping(value: Any) -> Mapping:
 
 
 def _risk(item: Mapping) -> str:
-    # Explicit adverse evidence must not be hidden by an inconsistent low label.
-    if item.get("hard_veto") or item.get("attention_urgent"):
-        return "high"
-    level = RISK_LEVELS.get(str(item.get("rug_level") or "").lower())
+    # Describe detected factors separately from internal policy grades.
+    reasons = item.get("risks")
+    if (
+        item.get("hard_veto")
+        or item.get("attention_urgent")
+        or (isinstance(reasons, list) and any(isinstance(r, str) and r.strip() for r in reasons))
+    ):
+        return "detected"
+    level = str(item.get("rug_level") or "").lower()
+    if level in {"guarded", "medium", "high", "critical"}:
+        return "detected"
     score = finite_number(item.get("rug_score"))
-    valid = score is not None and 0 <= score <= 100
-    if valid:
-        numeric = 2 if score >= 50 else 1 if score >= 25 else 0
-        return ("low", "medium", "high")[max(numeric, level or 0)]
-    if level in (1, 2):
-        return ("low", "medium", "high")[level]
-    if level == 0 and item.get("rug_score") is None:
-        return "low"
+    if score is not None and 0 <= score <= 100:
+        return "detected" if score > 0 else "none"
     return "unknown"
 
 
@@ -112,9 +117,7 @@ def _sentiment_mix(tone: Any, counts: Any, label: str, basis: Any) -> dict[str, 
         "state": "available" if available else "unknown",
         "bullish": share,
         "bearish": 1 - share if available else None,
-        "compact": (
-            f"▲{bullish_percent}% / ▼{100 - bullish_percent}%" if available else "▲— / ▼—"
-        ),
+        "compact": (f"▲{bullish_percent}% / ▼{100 - bullish_percent}%" if available else "▲— / ▼—"),
         "description": description,
         "basis": str(basis or f"Saved {label.lower()} assessments"),
         "gradient": (
@@ -215,5 +218,15 @@ def _indicator(
         "sentiment_mix": sentiment_mix,
         "sentiment_basis": sentiment_mix["basis"],
         "risk": risk,
-        "description": f"{attention_text}. {mix_text}. {sentiment_mix['description']} Risk {risk}.",
+        "risk_reading": RISK_READINGS[risk],
+        "risk_factors": [
+            reason.strip()
+            for reason in item.get("risks", [])
+            if isinstance(reason, str) and reason.strip()
+        ]
+        if isinstance(item.get("risks"), list)
+        else [],
+        "description": (
+            f"{attention_text}. {mix_text}. {sentiment_mix['description']} {RISK_READINGS[risk]}."
+        ),
     }

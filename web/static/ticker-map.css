@@ -63,7 +63,7 @@ main:has(.ticker-map),main:has(.token-replay){max-width:1040px}.market-screen:ha
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph-risk{cursor:pointer}
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-risk-target{fill:transparent;stroke:none}
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-risk-dot{fill:var(--orange,#ff9f43);stroke:var(--bg);stroke-width:2;pointer-events:none}
-:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-risk="high"] .map-risk-dot{fill:var(--red)}
+:is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-risk="detected"] .map-risk-dot{fill:var(--red)}
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph[data-risk="unknown"] .map-risk-dot{fill:var(--bg);stroke:var(--muted);stroke-width:1}
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-risk-unknown{fill:var(--muted);font-size:var(--map-risk-font,12px);font-weight:700;pointer-events:none}
 :is([data-stock-map],[data-token-replay],[data-entity-map]) .map-glyph [data-score-key]:focus-visible{outline:2px solid var(--text);outline-offset:4px}
