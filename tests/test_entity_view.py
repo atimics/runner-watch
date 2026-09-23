@@ -75,7 +75,7 @@ def test_entity_glyph_matches_list_and_detail_despite_holding_size():
         node = entity_view([event(post_shares=shares)], [source], "sec:101")["stocks"][0]
         assert node["indicator"] == row("stocks", source)["indicator"]
         assert node["indicator"] == detail("stocks", {"current": source})["item"]["indicator"]
-        assert node["indicator"]["risk"] == "high"
+        assert node["indicator"]["risk"] == "detected"
     assert source == saved
 
 
