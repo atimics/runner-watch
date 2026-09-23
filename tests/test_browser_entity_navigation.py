@@ -205,7 +205,8 @@ def test_touch_pinch_drag_and_stock_tap(browser):
           window.touchTrace = [];
           for (const type of ['pointerdown','pointerup','pointercancel','click']) {
             document.addEventListener(type, e => window.touchTrace.push({
-              type, target:e.target.tagName, stock:e.target.closest('[data-entity-stock]')?.dataset.entityStock,
+              type, target:e.target.tagName,
+              stock:e.target.closest('[data-entity-stock]')?.dataset.entityStock,
               x:e.clientX, y:e.clientY, time:performance.now(),
             }), true);
           }
