@@ -3,7 +3,7 @@
 Presentation-only change for the stock list and detail screen. Scoring, model
 probabilities, ordering, policy, and the existing `state_tag()` derivation are
 unchanged. WATCH, SETUP, RUNNING, EXTENDED, AVOID and PAUSED retain their chips,
-colors, risk marks, filters and precedence. Sports and wallet/entity nodes and run-state derivation remain unchanged.
+colors, risk marks, filters and precedence. Sports, wallet nodes and run-state derivation keep their existing presentation.
 The ticker map now uses the shared glyph contract for its central stock node.
 
 ## Visual contract
@@ -95,3 +95,19 @@ only; scoring and collection continue on their existing paths.
 Accepted detail refreshes update the glyph and keep a selected part when it is
 still available. Selected receipt links remain usable during a refresh. The
 server also supplies the glyph description for the JavaScript-free fallback.
+
+## Stocks on entity pages
+
+Entity stock nodes use `stock_indicator()` and the shared SVG face renderer.
+Their area follows the reported holding value, with a minimum readable size.
+The scale uses all loaded stocks so paging keeps it steady. Their labels show the stock symbol and
+reported holding value or event count below the face. The ring uses the same
+market / filings + news / external social groups, evidence-tone border and risk
+marker as the stock row beneath it. Solid fill marks 70+ stock attention points.
+The entity map key explains this holding-based size. Stocks awaiting a holding
+value use the minimum size and show their event count. Missing breakdowns retain
+the dashed state.
+
+Each node is one keyboard-accessible link to the stock detail page, where the
+ring parts have individual controls. The entity remains at the center, and the
+map retains its filing links, stock paging and connections to other wallets.

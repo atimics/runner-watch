@@ -813,9 +813,9 @@ def test_wallet_opens_portfolio_and_repeated_events_share_one_bubble(page):
     expect(page).to_have_url(f"http://app.test{href}")
 
 
-@pytest.mark.parametrize("width", [390, 1280])
+@pytest.mark.parametrize("width", [320, 390, 1280])
 @pytest.mark.parametrize("has_holdings", [True, False])
-@pytest.mark.parametrize("score", [45, 0, None])
+@pytest.mark.parametrize("score", [24, 45, 80, 0, None])
 def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     page, width, tmp_path, has_holdings, score
 ):
@@ -824,7 +824,8 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
 
     request = _request()
     rows = [{**score_current(score=score), "ticker": ticker} for ticker in ["USO", "CDTG"]]
-    rows[1]["score_detail"] = None
+    rows[0].update(rug_score=68, sentiment="positive")
+    rows[1].update(score=80, score_detail=None)
     events = [
         {
             **row,
@@ -936,41 +937,58 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     expect(page.locator(".map-interest-name")).to_have_count(0)
     expect(page.locator("[data-entity-interest]").first).to_have_class(re.compile(r"\bbuy\b"))
     wheels = page.locator(".entity-score-ring")
-    expect(wheels).to_have_count(0 if score is None else 2)
-    if score is not None:
-        expect(wheels.first).to_have_attribute("aria-label", f"Score {score}")
-        wheel = page.locator('[data-entity-stock="USO"] .entity-score-ring')
-        expect(wheel.locator(".entity-score-segment")).to_have_count(5)
-        expect(page.locator('[data-entity-stock="CDTG"] .entity-score-track')).to_have_count(1)
-        expect(page.locator('[data-entity-stock="CDTG"] .entity-score-segment')).to_have_count(0)
-        # The ticker names each node; the ring carries the score and the
-        # click-through opens the full detail on the stock page.
-        symbols_locator = page.locator("[data-entity-stock] .entity-stock-symbol")
-        expect(symbols_locator).to_have_count(2)
-        symbols = symbols_locator.evaluate_all("nodes => nodes.map(node => node.textContent)")
-        assert set(symbols) == {"USO", "CDTG"}
-        # The value or event count is stated under the node, not only on hover.
-        actions = page.locator("[data-entity-stock] .map-node-action")
-        expect(actions).to_have_count(2)
-        values = actions.evaluate_all("nodes => nodes.map(node => node.textContent)")
-        assert all(value.startswith("$") or value.endswith("events") for value in values), values
-        # The symbol is sized to the node, and bigger than it used to be.
-        sizes = symbols_locator.evaluate_all(
-            "nodes => nodes.map(node => parseFloat(getComputedStyle(node).fontSize))"
+    expect(wheels).to_have_count(2)
+    wheel = page.locator('[data-entity-stock="USO"] .entity-score-ring')
+    expect(wheel.locator(".map-score-segment")).to_have_count(2)
+    expect(page.locator('[data-entity-stock="CDTG"] .map-score-track')).to_have_count(1)
+    expect(page.locator('[data-entity-stock="CDTG"] .map-score-segment')).to_have_count(0)
+    # The map and list share stock contributions, fill, tone and risk.
+    for ticker in ["USO", "CDTG"]:
+        link = page.locator(f'[data-entity-stock="{ticker}"]')
+        row_glyph = page.locator(f'.ticker[href="/stock/{ticker}"] .indicator-glyph')
+        face = link.locator(".map-glyph")
+        for name in ["band", "sentiment", "risk", "mix"]:
+            expect(face).to_have_attribute("data-" + name, row_glyph.get_attribute("data-" + name))
+        assert row_glyph.get_attribute("aria-label") in link.get_attribute("aria-label")
+        expect(link.locator('[role="button"], [tabindex]')).to_have_count(0)
+        expect(link.locator(".entity-stock-symbol")).to_have_text(ticker)
+        value = link.locator(".map-node-action").text_content()
+        assert value.startswith("$") or value.endswith("events")
+    # The larger holding gets the larger ring, even at a lower attention score.
+    radii = wheels.locator(".map-glyph-sentiment").evaluate_all(
+        "nodes => nodes.map(node => Number(node.getAttribute('r')))"
+    )
+    # Entity stocks are alphabetic: CDTG, USO. The USO holding is larger.
+    assert radii[1] > radii[0] if has_holdings else radii[1] == radii[0]
+    page.get_by_text("Entity map key", exact=True).click()
+    expect(
+        page.get_by_text("Ring size follows the reported holding value", exact=False)
+    ).to_be_visible()
+    expect(wheel.locator(".map-risk-dot")).to_have_css("fill", "rgb(239, 153, 164)")
+    expect(wheel.locator(".map-glyph-sentiment")).to_have_css("stroke", "rgb(165, 229, 185)")
+    expect(wheel.locator('[data-score-key="rug"]')).to_have_count(0)
+    unknown = page.locator('[data-entity-stock="CDTG"]')
+    expect(unknown.locator(".map-risk-unknown")).to_have_text("?")
+    expect(unknown.locator(".map-score-track")).to_have_css("stroke-dasharray", "4px, 4px")
+    for key, color in [("market", "rgb(65, 140, 244)"), ("evidence", "rgb(181, 138, 244)")]:
+        segment = wheel.locator(f'[data-score-key="{key}"]')
+        expect(segment).to_have_css("fill" if score == 80 else "stroke", color)
+    if score == 80:
+        expect(wheel.locator(".map-glyph-hole")).to_have_count(0)
+        assert all(
+            segment.get_attribute("d").endswith(" Z")
+            for segment in wheel.locator(".map-score-segment").all()
         )
-        assert all(size >= 12 for size in sizes), sizes
-        titles = page.locator("[data-entity-stock] > title")
-        expect(titles).to_have_count(2)
-        hover = titles.evaluate_all("nodes => nodes.map(node => node.textContent)")
-        assert any("USO" in value for value in hover)
-        assert any("CDTG" in value for value in hover)
-        expect(wheel.locator('[data-score-key="rug"]')).to_have_css("stroke", "rgb(239, 153, 164)")
-        lengths = wheel.locator(".entity-score-segment").evaluate_all(
+    else:
+        lengths = wheel.locator(".map-score-segment").evaluate_all(
             "parts => parts.map(part => part.getTotalLength())"
         )
-        assert [length / sum(lengths) for length in lengths] == pytest.approx(
-            [60 / 155, 30 / 155, 10 / 155, 50 / 155, 5 / 155], abs=0.001
-        )
+        assert [length / sum(lengths) for length in lengths] == pytest.approx([0.6, 0.4], abs=0.001)
+    # Labels remain outside the face, including the solid high-attention shape.
+    for link in page.locator("[data-entity-stock]").all():
+        face_box = link.locator(".map-glyph-sentiment").bounding_box()
+        label_box = link.locator(".entity-stock-symbol").bounding_box()
+        assert label_box["y"] >= face_box["y"] + face_box["height"]
     expect(page.locator(".entity-edge")).to_have_count(3)
     if has_holdings:
         expect(page.locator(".entity-worth-chart")).to_be_visible()
@@ -983,6 +1001,10 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.screenshot(path=str(tmp_path / f"wallet-{width}.png"), full_page=True)
     page.locator(".wallet-events").screenshot(path=str(tmp_path / f"events-{width}.png"))
+    link = page.locator('[data-entity-stock="USO"]')
+    link.focus()
+    link.press("Enter")
+    expect(page).to_have_url("http://app.test/stock/USO")
 
 
 def test_wallet_events_load_more_as_the_tail_comes_into_view(page):
@@ -1017,7 +1039,8 @@ def test_wallet_events_load_more_as_the_tail_comes_into_view(page):
         html,
     )
     html = re.sub(
-        r'<script src="/static/(map-orbit|entity-map|wallet-events)\.js[^\"]*"[^>]*></script>',
+        r'<script src="/static/(map-orbit|ring-glyph|entity-map|wallet-events)'
+        r'\.js[^\"]*"[^>]*></script>',
         lambda match: (
             "<script>" + (ROOT / "web/static" / f"{match.group(1)}.js").read_text() + "</script>"
         ),

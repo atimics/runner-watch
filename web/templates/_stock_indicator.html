@@ -24,9 +24,12 @@
 </span>
 {%- endmacro %}
 
-{% macro indicator_legend(market='stocks') -%}
-<details class="indicator-legend"><summary>Indicator key</summary>
-<p>Small ring: under 40 attention points. Large ring: 40–69.99. Large solid: 70+.</p>
+{% macro indicator_legend(market='stocks', size_basis='attention') -%}
+<details class="indicator-legend"><summary>{{ 'Entity map key' if size_basis == 'holding' else 'Indicator key' }}</summary>
+{% if size_basis == 'holding' %}
+<p>Ring size follows the reported holding value at saved prices. A minimum size keeps small holdings readable. Stocks awaiting a value use the smallest size and show an event count.</p>
+<p>Solid fill: stock attention of 70+ points. Colored slices show the saved contribution shares.</p>
+{% else %}<p>Small ring: under 40 attention points. Large ring: 40–69.99. Large solid: 70+.</p>{% endif %}
 <p>Blue: market. Purple: {{ 'chain evidence' if market == 'memecoins' else 'filings + news' }}. Cyan: external social. Slices show contribution shares.</p>
 <p>Outer border: green positive {{ 'chain evidence tone' if market == 'memecoins' else 'filing sentiment' }}, red negative, gray neutral, dashed unknown.</p>
 <p>Center: orange medium risk, red high risk, no dot low risk, ? unknown.</p>
