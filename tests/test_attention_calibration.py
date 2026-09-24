@@ -61,6 +61,14 @@ def test_missing_or_pending_row_blocks_a_day_and_prevents_fit():
     assert calibration.freeze_from_receipts(runs, rows, now=NOW)["state"] == "collecting"
 
 
+def test_outside_window_receipts_do_not_block_regular_sessions():
+    runs, rows = cohort()
+    outside = dict(runs[0], id="outside", status="outside_window",
+                   deadline_at=None, expected_rows=0)
+    result = calibration.freeze_from_receipts(runs + [outside], rows, now=NOW)
+    assert result["state"] == "frozen_candidate"
+
+
 def test_bad_probability_rejected_even_with_ten_complete_sessions():
     runs, rows = cohort()
     rows[0]["probability"] = float("nan")
