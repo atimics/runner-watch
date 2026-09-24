@@ -3655,6 +3655,10 @@ def _migration_082_scoring_integrity(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_084_report_spotlight(db: DatabaseConnection) -> None:
+    _ensure_column(db, "market_session_reports", "spotlight_json TEXT")
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3743,6 +3747,7 @@ MIGRATIONS = (
     Migration(81, "tree_ranker_models", _migration_081_tree_ranker_models),
     Migration(82, "scoring_integrity", _migration_082_scoring_integrity),
     Migration(83, "golf_market_context", _migration_083_golf_market_context),
+    Migration(84, "report_spotlight", _migration_084_report_spotlight),
 )
 
 
