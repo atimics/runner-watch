@@ -10,6 +10,7 @@ import re
 import sys
 from pathlib import Path
 
+from bs4 import BeautifulSoup
 from jinja2 import ChainableUndefined, Environment, FileSystemLoader
 
 from runner_web.market_reports import _metric_cards, _record_cards, _share
@@ -207,7 +208,10 @@ def main() -> None:
             lambda match: "<style>" + (ROOT / "web/static" / match[1]).read_text() + "</style>",
             markup,
         )
-        markup = re.sub(r"<script\b[^>]*>[\s\S]*?</script>", "", markup)
+        document = BeautifulSoup(markup, "html.parser")
+        for script in document.find_all("script"):
+            script.decompose()
+        markup = str(document)
         preview = (
             '<aside id="sample-data" style="padding:10px 20px;text-align:center;'
             'font-size:12px;background:#292318;color:#e5ba7b">'
