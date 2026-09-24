@@ -348,6 +348,38 @@ def _session_results(board: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _watch_summary(watch: list[dict[str, Any]], metrics: dict[str, Any]) -> str:
+    label = "name" if len(watch) == 1 else "names"
+    return (
+        f"Opening watch: {len(watch)} {label}. "
+        f"{metrics['held']} also appeared in the evening scan; "
+        f"{metrics['dropped']} dropped off. {metrics['joined']} other names joined the scan."
+    )
+
+
+def _opening_context(database: Any, report: dict[str, Any]) -> None:
+    if report["report_type"] != "post_market":
+        return
+    metrics = report["metrics"]
+    if all(key in metrics for key in ("held", "dropped", "joined")):
+        report["summary"] = _watch_summary(report["leaders"], metrics)
+    if metrics.get("opening_as_of") or not report.get("comparison_scan_run_id"):
+        return
+    row = database.execute(
+        "SELECT as_of FROM market_session_reports WHERE report_day=? "
+        "AND report_type='pre_market' AND source_scan_run_id=?",
+        (report["report_day"], report["comparison_scan_run_id"]),
+    ).fetchone()
+    if row:
+        metrics["opening_as_of"] = row["as_of"]
+        return
+    row = database.execute(
+        "SELECT captured_at FROM scan_runs WHERE id=?", (report["comparison_scan_run_id"],)
+    ).fetchone()
+    if row:
+        metrics["opening_as_of"] = row["captured_at"]
+
+
 def _post_market_payload(database: Any, day: date, current: datetime) -> dict[str, Any] | None:
     cutoff = min(current, _at(day, POST_MARKET_CUTOFF))
     closing_run = _scan_run(
@@ -397,12 +429,7 @@ def _post_market_payload(database: Any, day: date, current: datetime) -> dict[st
         if best
         else f"{closing[0]['ticker']} finishes on top"
     )
-    summary = (
-        f"{len(watch)} names on the opening watch board. "
-        f"{metrics['held']} appeared in the evening scan, "
-        f"{metrics['dropped']} dropped off, and {metrics['joined']} joined. "
-        f"{metrics['winners']} were above the watch price at that checkpoint."
-    )
+    summary = _watch_summary(watch, metrics)
     spotlight = freeze_spotlight(
         database, closing, str(closing_run["captured_at"]), _iso_utc(current)
     )
@@ -514,6 +541,7 @@ def _decorate(database: Any, reports: list[dict[str, Any]]) -> list[dict[str, An
     attach_market_forecasts(database, reports)
     attach_report_commentary(database, reports)
     for report in reports:
+        _opening_context(database, report)
         _apply_settled_closes(report)
         report["forecast_record"] = forecast_record(report["leaders"])
         report["metric_cards"] = _metric_cards(report)

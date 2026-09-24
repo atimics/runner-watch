@@ -810,3 +810,39 @@ def test_evening_lead_matches_page_share_card_and_message(tmp_path, monkeypatch)
         assert not listing.select(".report-company, .market-report-leaders")
     finally:
         client.close()
+
+
+def test_legacy_evening_archive_labels_opening_counts_from_the_saved_scan(tmp_path, monkeypatch):
+    from runner_web.market_reports import market_report
+
+    client = _share_client(tmp_path, monkeypatch)
+    try:
+        with connection() as database:
+            row = database.execute(
+                "SELECT id,metrics_json FROM market_session_reports WHERE report_type='post_market'"
+            ).fetchone()
+            metrics = json.loads(row["metrics_json"])
+            metrics.pop("closing_breadth")
+            metrics.pop("opening_as_of")
+            metrics["candidates"] = 96
+            database.execute(
+                "UPDATE market_session_reports SET metrics_json=?,spotlight_json=NULL,summary=? "
+                "WHERE id=?",
+                (json.dumps(metrics), "96 names carried over from the watch board.", row["id"]),
+            )
+        report = market_report("2026-08-24", "post_market")
+        assert report["edition"]["metric_label"] == "Opening watch scan"
+        assert report["edition"]["metric_time"] == "4:10 AM ET"
+        assert report["metric_cards"][0]["value"] == 96
+        assert report["summary"].startswith("Opening watch: 2 names.")
+        listing = client.get("/reports")
+        assert "Opening watch scan · 4:10 AM ET" in listing.text
+        assert "96 names carried over" not in listing.text
+        with connection() as database:
+            saved = database.execute(
+                "SELECT metrics_json,summary FROM market_session_reports WHERE id=?", (row["id"],)
+            ).fetchone()
+        assert "opening_as_of" not in json.loads(saved["metrics_json"])
+        assert saved["summary"] == "96 names carried over from the watch board."
+    finally:
+        client.close()

@@ -61,7 +61,13 @@ SCREENS = (
         r"^Stocks$",
         selector='.markets a[aria-current="page"]',
     ),
-    Screen("market_reports", "Runners · Market turns", "runners", "/reports", r"^Market turns$"),
+    Screen(
+        "market_reports",
+        "Runners · The daily editions",
+        "runners",
+        "/reports",
+        r"^The daily editions$",
+    ),
     Screen("calls", "Calls · My Calls and Flash", "runners", "/calls", r"^Calls$"),
     Screen(
         "memecoins",
