@@ -96,6 +96,9 @@ main:has(.ticker-map),main:has(.token-replay){max-width:1040px}.market-screen:ha
    give slices their own hit regions; the entity backplate owns those taps. */
 .entity-stock .entity-score-ring *{pointer-events:none!important}
 .entity-stock:hover .map-glyph-sentiment,.entity-stock:focus-visible .map-glyph-sentiment{filter:brightness(1.2)}
+.entity-stock .map-sentiment-label{opacity:0;pointer-events:none;transition:opacity .15s ease}
+.entity-stock:is(:hover,:focus) .map-sentiment-label{opacity:1}
+@media(prefers-reduced-motion:reduce){.entity-stock .map-sentiment-label{transition:none}}
 
 [data-entity-map]{touch-action:none;cursor:grab}[data-entity-map].orbit-interacting{cursor:grabbing}
 [data-entity-map]:focus-visible{outline:2px solid var(--text);outline-offset:3px}

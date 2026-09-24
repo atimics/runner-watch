@@ -1001,10 +1001,24 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     )
     expect(wheel.locator('[data-sentiment-side="bullish"]')).to_have_attribute("data-share", "0.75")
     expect(wheel.locator('[data-sentiment-side="bearish"]')).to_have_attribute("data-share", "0.25")
-    expect(page.locator('[data-entity-stock="USO"] .map-sentiment-label')).to_have_text(
+    uso_label = page.locator('[data-entity-stock="USO"] .map-sentiment-label')
+    expect(uso_label).to_have_text(
         "▲75% / ▼25%"
     )
     expect(page.locator('[data-entity-stock="CDTG"] .map-sentiment-label')).to_have_text("▲— / ▼—")
+    expect(uso_label).to_have_css("opacity", "0")
+    if score == 24 and has_holdings:
+        uso_link = page.locator('[data-entity-stock="USO"]')
+        if width == 1280:
+            hit = uso_link.locator(".entity-label-hit").bounding_box()
+            page.mouse.move(hit["x"] + hit["width"] / 2, hit["y"] + hit["height"] / 2)
+            expect(uso_label).to_have_css("opacity", "1")
+            page.mouse.move(0, 0)
+            expect(uso_label).to_have_css("opacity", "0")
+        uso_link.focus()
+        expect(uso_label).to_have_css("opacity", "1")
+        uso_link.evaluate("element => element.blur()")
+        expect(uso_label).to_have_css("opacity", "0")
     expect(wheel.locator(".map-sentiment-pattern")).to_have_count(1)
     expect(wheel.locator("path.map-risk-dot")).to_have_attribute("data-risk-shape", "diamond")
     expect(wheel.locator('[data-score-key="rug"]')).to_have_count(0)
