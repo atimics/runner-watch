@@ -64,9 +64,10 @@ def test_tag_filter_chips_hide_and_show_rows(page: Page):
 
 
 @pytest.mark.parametrize("width", [320, 390, 768, 1280])
-def test_sports_leader_is_larger_and_score_stays_on_right(page: Page, width):
+@pytest.mark.parametrize("scores", [(68, 72), (119, 123)])
+def test_sports_leader_is_larger_and_score_stays_on_right(page: Page, width, scores):
     event = fixtures.sample("sports")
-    event.update(away_score=68, home_score=72)
+    event.update(away_score=scores[0], home_score=scores[1])
     event["prediction"] = {
         "home_probability": 0.4,
         "away_probability": 0.6,
@@ -76,12 +77,23 @@ def test_sports_leader_is_larger_and_score_stays_on_right(page: Page, width):
     page.set_viewport_size({"width": width, "height": 844})
     open_screen(page, listing("sports", [event]))
     expect(page.locator(".sports-team.is-highlighted")).to_have_text("NYK")
-    expect(page.locator(".sports-forecast")).to_contain_text("BOS 60%")
-    expect(page.locator(".sports-forecast")).to_contain_text("Pregame model")
-    expect(page.locator(".ticker-value strong")).to_have_text("68 – 72")
+    expect(page.locator(".sports-chance-ring")).to_have_attribute(
+        "aria-label", "Pregame model: Boston Celtics 60% win chance."
+    )
+    expect(page.locator(".sports-forecast")).to_contain_text("Pregame")
+    expect(page.locator(".ticker-value strong")).to_have_text(f"{scores[0]} – {scores[1]}")
     identity = page.locator(".ticker-name").bounding_box()
     score = page.locator(".ticker-value").bounding_box()
     assert score["x"] >= identity["x"] + identity["width"]
+    digits = page.locator(".ticker-value strong").bounding_box()
+    assert digits["x"] >= identity["x"] + identity["width"]
+    forecast = page.locator(".sports-forecast").bounding_box()
+    assert forecast["x"] >= score["x"] + score["width"]
+    league = page.locator(".sports-league").bounding_box()
+    tag = page.locator(".sports-meta .tag").bounding_box()
+    assert tag["x"] >= league["x"] + league["width"]
+    assert abs((tag["y"] + tag["height"] / 2) - (league["y"] + league["height"] / 2)) < 1
+    assert page.locator(".ticker-list > *").count() == 1
     sizes = page.locator(".sports-team").evaluate_all(
         "teams => teams.map(team => parseFloat(getComputedStyle(team).fontSize))"
     )

@@ -97,8 +97,8 @@ def sports_matchup(item: dict[str, Any], state: dict[str, Any]) -> dict[str, Any
         and all(score is not None and score >= 0 for score in scores)
     )
     leader = sides[scores.index(max(scores))] if confirmed and scores[0] != scores[1] else None
-    emphasis = leader if started else favorite
-    emphasis_label = "Winner" if completed else "Leading" if started else "Model favorite"
+    emphasis = leader
+    emphasis_label = "Winner" if completed else "Leading"
     teams = [
         {
             "side": side,
@@ -119,7 +119,7 @@ def sports_matchup(item: dict[str, Any], state: dict[str, Any]) -> dict[str, Any
         team = teams[index]
         percent = round(probabilities[index] * 100, 1)
         forecast = {
-            "team": team["label"],
+            "team": team["label"] if favorite else "Even",
             "percent": percent,
             "label": f"{team['label']} {percent:g}%" if favorite else "Even 50–50",
             "description": (

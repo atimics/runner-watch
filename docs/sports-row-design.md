@@ -8,23 +8,25 @@ numbers. Each number and symbol has a label that fits its sport.
 The left side holds the teams. Their order stays away then home, matching the
 score on the right. During play, the leading team is larger and green. After
 the final score, that treatment marks the winner. A tie gives both teams equal
-weight. Before play, the higher model probability earns the emphasis and the
-caption says **Model favorite**. A started game with pending scores keeps both
-teams equal until a score arrives.
+weight. Pregame teams and games with pending scores also have equal weight.
+The forecast glyph names the model favorite before play.
 
-The league sits above the signal tag in the left column. Team names and the
-score share a top line. Compact spacing keeps the game easy to scan, while
-the forecast and game status sit beneath the main line.
+Each row has three columns: teams on the left, score toward the right, and
+the forecast glyph at the far right. League and signal share one compact line
+under the team names. The game status sits under the score. Every game has
+one row with a simple divider; all its information stays within that row.
 
 The WATCH, LEAN, PASS, and MODEL ONLY tags retain their current meaning and
 palette. The saved value selection can be an underdog. Its team and signal
 appear in the tag's title; the game page contains the full evidence and edge.
 
 The blue ring means **pregame model win chance for the named team**. Its arc
-and percentage use the same probability. The caption names the team and
-always says **Pregame model**, including during play and after the final score.
-The title and accessible name include the saved time when available. An even
-model says **Even 50–50**. A usable saved probability is required to draw a ring.
+and percentage use the same probability. The ring contains the team label and
+percentage, with **Pregame** below it. That label stays through play and after
+the final score. The title and accessible name spell out **Pregame model**, the
+full team name, and the saved time when available. Long team names fit in the
+left column and shorten with an ellipsis inside the glyph. An even model says
+**Even 50%**. A pending model uses a quiet outline and **Pending** caption.
 
 The green team highlight follows the scoreboard during play. The blue forecast
 ring follows the saved pregame estimate. This lets a reader see when a forecast

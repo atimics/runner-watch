@@ -26,12 +26,12 @@ def game(**extra):
     }
 
 
-def test_pregame_highlights_favorite_while_value_side_keeps_its_signal():
+def test_pregame_names_favorite_in_forecast_while_teams_keep_equal_weight():
     result = row("sports", game())
     assert result["selected_team_label"] == "COL"
     assert result["tag"] == "WATCH"
-    assert result["matchup"]["emphasis"] == "away"
-    assert result["matchup"]["emphasis_label"] == "Model favorite"
+    assert result["matchup"]["emphasis"] is None
+    assert result["matchup"]["emphasis_label"] == ""
     assert result["matchup"]["forecast"]["label"] == "ARI 56%"
     assert result["value"] == "vs"
 
@@ -88,6 +88,7 @@ def test_even_model_keeps_equal_teams_and_names_the_even_chance():
     result = row("sports", game(prediction={"home_probability": 0.5}))
     assert result["matchup"]["emphasis"] is None
     assert result["matchup"]["forecast"]["label"] == "Even 50–50"
+    assert result["matchup"]["forecast"]["team"] == "Even"
 
 
 def test_forecast_uses_probability_even_when_a_separate_runner_score_exists():

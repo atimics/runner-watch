@@ -1,11 +1,3 @@
-<span class="sports-status">
-<span class="sports-league">{{ item.subtitle }}</span>
-{% if item.tag %}
-<span class="tag tag-{{ item.tag_tone }}{% if item.risk %} has-risk{% endif %}" title="{{ item.selected_team_label }} · {{ item.tag|lower }} signal">
-  {% if item.risk %}<i aria-hidden="true">▲</i>{% endif %}{{ item.tag }}
-</span>
-{% endif %}
-</span>
 <span class="ticker-name sports-identity">
   <span class="sports-team-pair">
     {% for team in item.matchup.teams %}
@@ -13,19 +5,37 @@
     <strong class="sports-team{% if team.emphasized %} is-highlighted{% endif %}" data-side="{{ team.side }}" title="{{ team.name }}" aria-label="{{ team.name }}{% if team.emphasis_label %} · {{ team.emphasis_label|lower }}{% endif %}">{{ team.label }}</strong>
     {% endfor %}
   </span>
-  {% if item.matchup.emphasis_label == 'Model favorite' %}<small class="sports-context">Model favorite</small>{% elif item.matchup.tied %}<small class="sports-context">Tied</small>{% endif %}
-  {% if item.matchup.forecast %}
-  {% set forecast = item.matchup.forecast %}
-  <span class="sports-forecast" title="{{ forecast.description }}">
-    <svg class="sports-chance-ring" viewBox="0 0 24 24" role="img" aria-label="{{ forecast.description }}">
-      <circle class="chance-track" cx="12" cy="12" r="9"/>
-      <circle class="chance-value" cx="12" cy="12" r="9" pathLength="100" stroke-dasharray="{{ forecast.percent }} 100"/>
-    </svg>
-    <span><b>{{ forecast.label }}</b> · Pregame model</span>
+  <span class="sports-meta">
+    <span class="sports-league">{{ item.subtitle }}</span>
+    {% if item.tag %}
+    <span class="tag tag-{{ item.tag_tone }}{% if item.risk %} has-risk{% endif %}" title="{{ item.selected_team_label }} · {{ item.tag|lower }} signal">
+      {% if item.risk %}<i aria-hidden="true">▲</i>{% endif %}{{ item.tag }}
+    </span>
+    {% endif %}
   </span>
-  {% endif %}
 </span>
 <span class="ticker-value sports-score">
   <strong aria-label="{{ item.matchup.teams[0].name }} then {{ item.matchup.teams[1].name }}: {{ item.value }}">{{ item.value }}</strong>
   <small class="{{ item.tone }}">{{ item.change }}</small>
 </span>
+{% if item.matchup.forecast %}
+{% set forecast = item.matchup.forecast %}
+<span class="sports-forecast" title="{{ forecast.description }}">
+  <span class="sports-chance-glyph">
+    <svg class="sports-chance-ring" viewBox="0 0 48 48" role="img" aria-label="{{ forecast.description }}">
+      <circle class="chance-track" cx="24" cy="24" r="21"/>
+      <circle class="chance-value" cx="24" cy="24" r="21" pathLength="100" stroke-dasharray="{{ forecast.percent }} 100"/>
+    </svg>
+    <span class="sports-chance-reading" aria-hidden="true">
+      <b>{{ forecast.team }}</b>
+      <span>{{ '%g'|format(forecast.percent) }}%</span>
+    </span>
+  </span>
+  <small aria-hidden="true">Pregame</small>
+</span>
+{% else %}
+<span class="sports-forecast is-pending" title="Pregame model pending" role="img" aria-label="Pregame model pending">
+  <span class="sports-chance-glyph" aria-hidden="true">—</span>
+  <small aria-hidden="true">Pending</small>
+</span>
+{% endif %}
