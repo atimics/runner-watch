@@ -520,7 +520,10 @@ def test_sports_list_respects_shared_responsive_breakpoints(
 ) -> None:
     page.set_viewport_size({"width": width, "height": 800})
     errors = _load(page, _rendered_pulse(monkeypatch, _pulse(_event("game-1", "AWY", "HME"))), [])
-    expect(page.get_by_role("navigation", name="Market").get_by_role("link")).to_have_count(3)
+    expect(page.get_by_role("navigation", name="Market").get_by_role("link")).to_have_count(4)
+    expect(
+        page.get_by_role("navigation", name="Market").get_by_role("link", name="Reports")
+    ).to_be_visible()
     expect(page.locator(".ticker")).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert errors == []

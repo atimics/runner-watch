@@ -4,16 +4,15 @@
 {% macro market_report_card(report, featured_id=none, linked=true) %}
     {% set is_post = report.report_type == 'post_market' %}
     <article class="market-report-card report-{{ report.report_type }}"{% if featured_id and report.id == featured_id %} data-featured{% endif %}>
-      <header>
+      {% if linked %}<header>
         <div><span>{{ report.label }}</span><time datetime="{{ report.as_of }}">{{ report.report_day }} · {{ report.as_of_label }}</time></div>
-        {% if featured_id and report.id == featured_id %}<b>Current turn</b>{% endif %}
-      </header>
+        {% if featured_id and report.id == featured_id %}<b>Latest saved edition</b>{% endif %}
+      </header>{% endif %}
       {% if linked %}<a class="market-report-permalink" href="{{ report.permalink }}">Open this turn <span aria-hidden="true">›</span></a>{% endif %}
-      {{ edition_cover(report) }}
+      {{ edition_cover(report, page_title=not linked) }}
       <div class="edition-report-body">
-      {% if is_post and report.spotlight %}{{ company_profile(report) }}{% endif %}
-      <div class="report-section-heading"><span>{{ '02 / THE SESSION SCORECARD' if is_post else '01 / THE SCANNER AT A GLANCE' }}</span></div>
-      <h3 class="edition-session-headline">{{ report.headline }}</h3>
+      <div class="report-section-heading"><span>{{ report.edition.metric_label }} · {{ report.edition.metric_time }}</span></div>
+      <h2 class="edition-session-headline">{{ report.headline }}</h2>
       <p class="edition-session-summary">{{ report.summary }}</p>
 
       <div class="market-report-metrics">
@@ -28,10 +27,56 @@
         <div class="tone-{{ metric.tone }}"><strong>{{ metric.value }}</strong><span>{{ metric.label }}</span></div>
         {% endfor %}
       </div>
+      <p class="report-data-note">Watch returns compare the opening watch price with each saved evening quote, or a settled close where labeled. Up targets hit at or above the target close; down targets hit at or below it. <a href="/calls">See Flash’s record ↗</a></p>
       {% endif %}
 
+      {% if is_post and report.spotlight %}{{ company_profile(report) }}{% endif %}
+
+      <section class="market-report-leaders" id="watch-board">
+        <h2>{{ 'Opening watch → evening checkpoint' if is_post else 'Watch board' }}</h2>
+        <ol>
+          {% for leader in report.leaders %}
+          <li id="watch-{{ leader.ticker }}"{% if leader.board_status %} class="board-{{ leader.board_status }}"{% endif %}>
+            <a href="/stock/{{ leader.ticker }}" class="report-board-symbol">{{ indicator_glyph(leader) }}<b>{{ leader.ticker }}</b><span>{{ 'Opening ' if is_post else '' }}#{{ leader.rank }} · scanner score {{ '%.0f'|format(leader.score) }}</span></a>
+            <div>
+              {% set move = leader.session_return_pct if is_post else leader.change_pct %}
+              {% if move is not none %}<strong class="{{ 'up' if move > 0 else 'down' if move < 0 else 'flat' }}">{{ '%+.1f'|format(move) }}%</strong>{% else %}<strong>—</strong>{% endif %}
+              <small>{{ 'Since watch price' if is_post else leader.quote_time_label }}</small>
+              <small>{% if leader.relative_volume is not none %}{{ 'Opening ' if is_post else '' }}{{ '%.1f'|format(leader.relative_volume) }}× RVOL{% else %}RVOL —{% endif %}</small>
+            </div>
+            {% if is_post %}
+            <p class="market-board-close">
+              {% if leader.board_status == 'held' %}Evening rank #{{ leader.close_rank }}{% if leader.close_price|default(none) is not none %} · ${{ '%.4f'|format(leader.close_price) }}{% endif %}
+              {% else %}Dropped off the board{% if leader.close_price|default(none) is not none %} · settled close ${{ '%.4f'|format(leader.close_price) }}{% endif %}{% endif %}
+              {% if leader.close_price is not none %} · {{ 'Settled close' if leader.close_is_settled else 'Quote ' ~ leader.close_quote_time_label }}{% endif %}
+              {% if leader.close_score is not none %} · evening score {{ '%.0f'|format(leader.close_score) }}{% endif %}
+              {% if leader.close_relative_volume is not none %} · evening {{ '%.1f'|format(leader.close_relative_volume) }}× RVOL{% endif %}
+              {% if leader.session_return_pct is not none %} · <b class="{{ 'up' if leader.session_return_pct > 0 else 'down' if leader.session_return_pct < 0 else 'flat' }}">{{ '%+.1f'|format(leader.session_return_pct) }}% from the watch price</b>{% endif %}
+            </p>
+            {% endif %}
+            {% set forecast = leader.eod_forecast %}
+            <div class="market-eod-forecast">
+              {% if forecast %}
+              <dl>
+                <div><dt>Watch price</dt><dd>{% if forecast.reference_price is not none %}${{ '%.4f'|format(forecast.reference_price) }}{% else %}—{% endif %}</dd></div>
+                <div><dt>Target EOD</dt><dd>{% if forecast.target_price is not none %}${{ '%.4f'|format(forecast.target_price) }} <small>{{ forecast.direction|capitalize }}</small>{% else %}—{% endif %}</dd></div>
+                <div><dt>Actual close</dt><dd>{% if forecast.close_price is not none %}${{ '%.4f'|format(forecast.close_price) }}{% else %}—{% endif %}</dd></div>
+                <div><dt>Result</dt><dd class="eod-result result-{{ forecast.status }}">{{ 'Price review' if forecast.status == 'review' else forecast.status|capitalize }}</dd></div>
+              </dl>
+              <p>{{ forecast.review_reason or forecast.reason }}</p>
+              <p>Saved {{ forecast.forecast_at|default('Time unavailable', true) }} · Target: session close. Up hits at or above target; down hits at or below target.</p>
+              {% if forecast.close_source %}<p>Close source: {{ forecast.close_source|capitalize }} · {{ report.report_day }}</p>{% endif %}
+              {% else %}
+              <p><b>Target EOD</b> · {{ 'Preparing target' if report.forecast_state in ['queued', 'running'] else 'Earlier report' if report.forecast_state == 'legacy' else 'Forecast window passed' if report.forecast_state == 'expired' else 'Forecast needs review' }}</p>
+              {% endif %}
+            </div>
+          </li>
+          {% endfor %}
+        </ol>
+      </section>
+
       <section class="market-report-analysis">
-        <h3>{{ 'Flash reviews the session' if is_post else 'Flash reads the session ahead' }}</h3>
+        <h2>{{ 'Flash reviews the session' if is_post else 'Flash reads the session ahead' }}</h2>
         {% if report.analysis %}
         <strong>{{ report.analysis.headline }}</strong>
         <p>{{ report.analysis.narrative }}</p>
@@ -47,45 +92,6 @@
           {% else %}Flash could not write this {{ 'review' if is_post else 'preview' }}.{% endif %}
         </p>
         {% endif %}
-      </section>
-
-      <section class="market-report-leaders">
-        <h3>{{ 'Watch board at the close' if is_post else 'Watch board' }}</h3>
-        <ol>
-          {% for leader in report.leaders %}
-          <li{% if leader.board_status %} class="board-{{ leader.board_status }}"{% endif %}>
-            <a href="/stock/{{ leader.ticker }}" class="report-board-symbol">{{ indicator_glyph(leader) }}<b>{{ leader.ticker }}</b><span>#{{ leader.rank }} · score {{ '%.0f'|format(leader.score) }}</span></a>
-            <div>
-              {% set move = leader.session_return_pct if is_post else leader.change_pct %}
-              {% if move is not none %}<strong class="{{ 'up' if move > 0 else 'down' if move < 0 else 'flat' }}">{{ '%+.1f'|format(move) }}%</strong>{% else %}<strong>—</strong>{% endif %}
-              <small>{{ 'From watch price' if is_post else 'At pre-market scan' }}</small>
-              <small>{% if leader.relative_volume is not none %}{{ '%.1f'|format(leader.relative_volume) }}× RVOL{% else %}RVOL —{% endif %}</small>
-            </div>
-            {% if is_post %}
-            <p class="market-board-close">
-              {% if leader.board_status == 'held' %}Still on the board at #{{ leader.close_rank }}{% if leader.close_price|default(none) is not none %} · ${{ '%.4f'|format(leader.close_price) }}{% endif %}
-              {% else %}Dropped off the board{% if leader.close_price|default(none) is not none %} · closed ${{ '%.4f'|format(leader.close_price) }}{% endif %}{% endif %}
-              {% if leader.session_return_pct is not none %} · <b class="{{ 'up' if leader.session_return_pct > 0 else 'down' if leader.session_return_pct < 0 else 'flat' }}">{{ '%+.1f'|format(leader.session_return_pct) }}% from the watch price</b>{% endif %}
-            </p>
-            {% endif %}
-            {% set forecast = leader.eod_forecast %}
-            <div class="market-eod-forecast">
-              {% if forecast %}
-              <dl>
-                <div><dt>Pre-market</dt><dd>{% if forecast.reference_price is not none %}${{ '%.4f'|format(forecast.reference_price) }}{% else %}—{% endif %}</dd></div>
-                <div><dt>Target EOD</dt><dd>{% if forecast.target_price is not none %}${{ '%.4f'|format(forecast.target_price) }} <small>{{ forecast.direction|capitalize }}</small>{% else %}—{% endif %}</dd></div>
-                <div><dt>Actual close</dt><dd>{% if forecast.close_price is not none %}${{ '%.4f'|format(forecast.close_price) }}{% else %}—{% endif %}</dd></div>
-                <div><dt>Result</dt><dd class="eod-result result-{{ forecast.status }}">{{ 'Price review' if forecast.status == 'review' else forecast.status|capitalize }}</dd></div>
-              </dl>
-              <p>{{ forecast.review_reason or forecast.reason }}</p>
-              {% if forecast.close_source %}<p>Close source: {{ forecast.close_source|capitalize }} · {{ report.report_day }}</p>{% endif %}
-              {% else %}
-              <p><b>Target EOD</b> · {{ 'Preparing target' if report.forecast_state in ['queued', 'running'] else 'Earlier report' if report.forecast_state == 'legacy' else 'Forecast window passed' if report.forecast_state == 'expired' else 'Forecast needs review' }}</p>
-              {% endif %}
-            </div>
-          </li>
-          {% endfor %}
-        </ol>
       </section>
 
       {% if report.forecast_model %}
@@ -121,7 +127,7 @@
       </section>
       {% endif %}
 
-      {{ indicator_legend() }}
+      <section id="indicator-key" aria-label="Ring key">{{ indicator_legend() }}</section>
       <footer>
         <span>Frozen from scanner checkpoints · Commentary written by Flash · Research only</span>
         {% if not linked %}<button type="button" class="market-report-share" data-share-report>Share this turn ↗</button>{% endif %}

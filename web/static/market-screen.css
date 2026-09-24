@@ -487,3 +487,5 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
   .market-stocks .mini-chart-zero{stroke:GrayText}
   .market-stocks .mini-chart-empty{fill:GrayText}
 }
+
+@media(max-width:360px){.markets{gap:2px}.markets a{padding:7px 6px;min-width:0}}

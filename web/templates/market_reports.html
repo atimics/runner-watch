@@ -23,8 +23,8 @@
 {% endblock %}
 {% block screen_main %}
 <header class="page-head">
-  <p class="eyebrow">RATi / THE DAILY EDITIONS</p>
-  <h1>Market turns</h1>
+  <p class="eyebrow">STOCKS / THE DAILY EDITIONS</p>
+  <h1>The daily editions</h1>
   <p class="head-note">Read the opening signals. Understand the closing story.</p>
 </header>
 
@@ -42,10 +42,15 @@
 
   {% if market_reports.reports %}
   <div class="report-cards">
-    {% if market_reports.featured %}{{ market_report_card(market_reports.featured, market_reports.featured.id) }}{% endif %}
-    <section class="edition-archive" aria-label="Earlier editions"><h2>More editions</h2><div>
-    {% for report in market_reports.reports if not market_reports.featured or report.id != market_reports.featured.id %}{{ edition_preview(report) }}{% endfor %}
+    {% if market_reports.featured %}
+    <section class="edition-latest" aria-label="Latest saved editions"><h2>{{ market_reports.featured.report_day }} · Latest saved editions</h2><div class="edition-pair">
+      {% for report in market_reports.reports if report.report_day == market_reports.featured.report_day %}{{ edition_preview(report) }}{% endfor %}
     </div></section>
+    {% endif %}
+    {% set earlier = market_reports.reports|rejectattr('report_day', 'equalto', market_reports.featured.report_day)|list if market_reports.featured else market_reports.reports %}
+    {% if earlier %}<section class="edition-archive" aria-label="Earlier editions"><h2>Recent editions</h2><div>
+      {% for report in earlier %}{{ edition_preview(report) }}{% endfor %}
+    </div></section>{% endif %}
   </div>
   {% else %}
   <section class="report-empty">
