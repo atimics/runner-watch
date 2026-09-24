@@ -3659,6 +3659,45 @@ def _migration_084_report_spotlight(db: DatabaseConnection) -> None:
     _ensure_column(db, "market_session_reports", "spotlight_json TEXT")
 
 
+def _migration_085_attention_shadow(db: DatabaseConnection) -> None:
+    # Independent receipts survive ordinary scan and market-bar pruning.
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS attention_trial_runs(
+            id TEXT PRIMARY KEY, scan_run_id TEXT NOT NULL UNIQUE,
+            model_id TEXT NOT NULL, model_sha256 TEXT NOT NULL,
+            policy TEXT NOT NULL, contract_json TEXT NOT NULL,
+            evidence_as_of TEXT NOT NULL, saved_at TEXT, day TEXT NOT NULL,
+            entry_at TEXT, end_at TEXT, deadline_at TEXT,
+            status TEXT NOT NULL, expected_rows INTEGER NOT NULL,
+            build_sha TEXT NOT NULL, error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS attention_trial_run_status
+            ON attention_trial_runs(status,day);
+        CREATE TABLE IF NOT EXISTS attention_trial_predictions(
+            run_id TEXT NOT NULL, ticker TEXT NOT NULL, snapshot_id TEXT NOT NULL,
+            inputs_json TEXT NOT NULL, vector_json TEXT NOT NULL, evidence_json TEXT NOT NULL,
+            reason TEXT NOT NULL, probability REAL, baseline_market REAL NOT NULL,
+            candidate_market REAL NOT NULL, baseline_score REAL NOT NULL,
+            candidate_score REAL NOT NULL, baseline_rank INTEGER NOT NULL,
+            candidate_rank INTEGER NOT NULL, baseline_market_rank INTEGER NOT NULL,
+            candidate_market_rank INTEGER NOT NULL, urgent INTEGER NOT NULL,
+            outcome_status TEXT NOT NULL, target INTEGER, outcome_json TEXT,
+            next_attempt_at TEXT, attempts INTEGER NOT NULL DEFAULT 0,
+            last_attempt_at TEXT, last_error TEXT,
+            PRIMARY KEY(run_id,ticker)
+        );
+        CREATE INDEX IF NOT EXISTS attention_trial_pending
+            ON attention_trial_predictions(outcome_status,next_attempt_at,ticker);
+        CREATE TABLE IF NOT EXISTS attention_trial_bars(
+            ticker TEXT NOT NULL, bar_time TEXT NOT NULL, sha256 TEXT NOT NULL,
+            observed_at TEXT NOT NULL, payload_json TEXT NOT NULL,
+            PRIMARY KEY(ticker,bar_time,sha256)
+        );
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3748,6 +3787,7 @@ MIGRATIONS = (
     Migration(82, "scoring_integrity", _migration_082_scoring_integrity),
     Migration(83, "golf_market_context", _migration_083_golf_market_context),
     Migration(84, "report_spotlight", _migration_084_report_spotlight),
+    Migration(85, "attention_shadow", _migration_085_attention_shadow),
 )
 
 

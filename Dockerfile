@@ -51,6 +51,7 @@ USER runner
 # only proves that the image assembles and the application imports.
 FROM base AS test
 RUN uv run --no-sync python -c "from runner_web.main import app; assert app.title == 'RATi'"
+RUN uv run --no-sync python -c "from runner_web.attention_model import probability; assert 0 < probability([None] * 20) < 1"
 
 FROM base AS runtime
 ARG APP_BUILD_SHA=dev

@@ -193,5 +193,7 @@ Record both rankings, the full score contributions, frozen feature vectors,
 quote ages, collection times, and every outcome gap. Measure the same top-ten
 review budget with date-level uncertainty. Check early/late sessions and
 volatility groups separately. Use fresh data for calibration, then reserve later
-dates for the promotion decision. This PR delivers the research tools and frozen
-candidate; production adoption is that next measured decision.
+dates for the promotion decision. The [live trial](attention-shadow-release.md)
+now supplies that recording path. Its first ten complete sessions are reserved
+for calibration. A later calibrated version needs at least twenty fresh sessions
+before the public release decision.

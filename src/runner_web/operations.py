@@ -71,10 +71,12 @@ def _request_product(request: Request) -> str:
 
 
 def required_worker_names(*, sports_ingestion_enabled: bool) -> frozenset[str]:
-
+    required = BASE_REQUIRED_WORKER_NAMES
+    if os.getenv("ATTENTION_SHADOW_ENABLED", "0") == "1":
+        required = required | {"attention-shadow"}
     if sports_ingestion_enabled:
-        return BASE_REQUIRED_WORKER_NAMES | {"sports-ingestion"}
-    return BASE_REQUIRED_WORKER_NAMES
+        required = required | {"sports-ingestion"}
+    return required
 
 
 def require_operations_access(request: Request) -> None:

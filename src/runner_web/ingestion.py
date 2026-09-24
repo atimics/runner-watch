@@ -283,6 +283,10 @@ def _market_projection(database: Any, run_id: str, fetch: SourceFetch, collected
             """,
             rows,
         )
+        from runner_web import attention_trial
+
+        if interval == "5m" and fetch.source == "yahoo" and attention_trial.enabled():
+            attention_trial.archive_bars(database, rows)
     return digest.hexdigest()
 
 

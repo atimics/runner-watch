@@ -30,6 +30,7 @@ pull request as the source of truth for current status.
 | [research/game-pattern-assessment.md](research/game-pattern-assessment.md) | Revised design assessment; governs public presentation |
 | [research/pseudonymous-identity-design.md](research/pseudonymous-identity-design.md) | Planned identity revision; governs `market-actors.md` going forward |
 | [research/market-attention-study.md](research/market-attention-study.md) | Market attention research: ML papers, frozen candidate, chronological results, and replay receipts |
+| [research/attention-shadow-release.md](research/attention-shadow-release.md) | Live attention trial, durable outcomes, operations, and release gates |
 | [playable-ticker-backlog.md](playable-ticker-backlog.md) | Delivery structure for the game work |
 | [backlog/2026-09-12-triage.md](backlog/2026-09-12-triage.md) | Dated triage of the open backlog |
 | [reviews/pr-229-base-design.md](reviews/pr-229-base-design.md) | Read-only adversarial review of PR #229 |
