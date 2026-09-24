@@ -100,7 +100,12 @@ def test_long_market_list_names_fit(page, width, kind):
     expect(row).to_have_count(1)
     if kind == "coin":
         expect(row.locator(".row-assessment")).to_contain_text("Market quote")
-    expect(row.locator(".ticker-name strong")).to_have_text(screen["rows"][0]["name"])
+    if kind == "team":
+        expect(row.locator(".sports-team")).to_have_text(
+            [team["label"] for team in screen["rows"][0]["matchup"]["teams"]]
+        )
+    else:
+        expect(row.locator(".ticker-name strong")).to_have_text(screen["rows"][0]["name"])
     no_overlap(row.locator(".ticker-name"), row.locator(".ticker-value"))
     no_overlap(row.locator(".ticker-value strong"), row.locator(".ticker-value small"))
     if row.locator(".row-assessment").count():
@@ -210,10 +215,10 @@ def test_selected_team_probability_fits_with_full_team_names(page, width):
     screen = listing(market, [raw])
     page.set_viewport_size({"width": width, "height": 844})
     open_html(page, screens.render(screen))
-    rating = page.locator(".row-assessment")
-    expect(rating.locator("strong")).to_have_attribute(
-        "aria-label", f"{raw['home_team_name']} · 60% win chance"
+    rating = page.locator(".sports-chance-ring")
+    expect(rating).to_have_attribute(
+        "aria-label", f"Pregame model: {raw['home_team_name']} 60% win chance."
     )
-    no_overlap(page.locator(".ticker-name"), rating)
+    no_overlap(page.locator(".ticker-name"), page.locator(".ticker-value"))
     no_overlap(page.locator(".ticker-value"), rating)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

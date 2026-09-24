@@ -71,6 +71,77 @@ def sports_state(item: dict[str, Any]) -> dict[str, Any]:
     return item.get("view_state") or _game_view_state(item)
 
 
+def sports_matchup(item: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Keep the scoreboard leader separate from the saved model and value side."""
+    sides = ("away", "home")
+    prediction = item.get("prediction") or {}
+    probabilities = [number(prediction.get(f"{side}_probability")) for side in sides]
+    if all(p is None or 0 <= p <= 1 for p in probabilities):
+        if probabilities[0] is None and probabilities[1] is not None:
+            probabilities[0] = 1 - probabilities[1]
+        elif probabilities[1] is None and probabilities[0] is not None:
+            probabilities[1] = 1 - probabilities[0]
+    valid_model = all(p is not None and 0 <= p <= 1 for p in probabilities)
+    valid_model = valid_model and math.isclose(sum(probabilities), 1, abs_tol=0.001)
+    favorite = (
+        sides[probabilities.index(max(probabilities))]
+        if valid_model and probabilities[0] != probabilities[1]
+        else None
+    )
+    scores = [number(item.get(f"{side}_score")) for side in sides]
+    completed = bool(item.get("completed")) or item.get("status") == "post"
+    started = bool(state.get("started")) or completed or item.get("status") == "in"
+    confirmed = (
+        started
+        and state.get("score_available")
+        and all(score is not None and score >= 0 for score in scores)
+    )
+    leader = sides[scores.index(max(scores))] if confirmed and scores[0] != scores[1] else None
+    emphasis = leader if started else favorite
+    emphasis_label = "Winner" if completed else "Leading" if started else "Model favorite"
+    teams = [
+        {
+            "side": side,
+            "label": str(
+                item.get(f"{side}_abbreviation") or item.get(f"{side}_team_name") or side.title()
+            ),
+            "name": str(
+                item.get(f"{side}_team_name") or item.get(f"{side}_abbreviation") or side.title()
+            ),
+            "emphasized": side == emphasis,
+            "emphasis_label": emphasis_label if side == emphasis else "",
+        }
+        for side in sides
+    ]
+    forecast = None
+    if valid_model:
+        index = sides.index(favorite) if favorite else 0
+        team = teams[index]
+        percent = round(probabilities[index] * 100, 1)
+        forecast = {
+            "team": team["label"],
+            "percent": percent,
+            "label": f"{team['label']} {percent:g}%" if favorite else "Even 50–50",
+            "description": (
+                f"Pregame model: {team['name']} {percent:g}% win chance."
+                if favorite
+                else "Pregame model: both teams have a 50% win chance."
+            )
+            + (
+                f" Saved {stamp(prediction.get('observed_at'))}."
+                if stamp(prediction.get("observed_at"))
+                else ""
+            ),
+        }
+    return {
+        "teams": teams,
+        "forecast": forecast,
+        "emphasis": emphasis,
+        "emphasis_label": emphasis_label if emphasis else "",
+        "tied": bool(confirmed and scores[0] == scores[1]),
+    }
+
+
 def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
     if market == "sports" and str(item.get("id", "")).startswith("golf:"):
         from runner_web.sports import _golf_display_status
@@ -131,6 +202,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": str(item["id"]),
             "name": f"{away} · {home}",
+            "matchup": sports_matchup(item, state),
             "subtitle": str(item.get("league") or "Sports").upper(),
             "selected_team_label": str(
                 item.get(f"{rating.get('selection')}_abbreviation")
