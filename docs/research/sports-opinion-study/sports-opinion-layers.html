@@ -1,0 +1,236 @@
+<div id="ratiSportsStudy" aria-label="Sports row and opinion glyph design study">
+  <div class="rs-shell">
+    <header class="rs-header">
+      <div class="rs-brand"><span class="rs-rati">RATi</span><span class="rs-section">Sports</span></div>
+      <span class="rs-sample">Illustrative games</span>
+    </header>
+    <div class="rs-list-view" data-view="list">
+      <div class="rs-column-head"><span>Games</span><span>Score · opinion</span></div>
+      <div class="rs-games"></div>
+      <div class="rs-foot">The score and saved forecast describe different moments.</div>
+    </div>
+    <div class="rs-detail-view" data-view="detail" hidden>
+      <div class="rs-backline">
+        <button type="button" class="rs-back cursor-interaction" data-action="back">← Games</button>
+        <span class="rs-when">Saved pregame view</span>
+      </div>
+      <div class="rs-detail-game"></div>
+      <div class="rs-opinion">
+        <div class="rs-large-glyph"></div>
+        <div class="rs-opinion-copy"></div>
+      </div>
+      <div class="rs-switches" role="group" aria-label="Opinion detail">
+        <button type="button" class="cursor-interaction" data-action="tab" data-tab="factors">Factors</button>
+        <button type="button" class="cursor-interaction" data-action="tab" data-tab="context">Context</button>
+        <button type="button" class="cursor-interaction" data-action="tab" data-tab="receipt">Saved call</button>
+      </div>
+      <div class="rs-detail-content" aria-live="polite"></div>
+    </div>
+    <span class="rs-announcement" role="status" aria-live="polite"></span>
+  </div>
+</div>
+<style>
+#ratiSportsStudy{color-scheme:light dark;--rs-bg:light-dark(#f8faf8,#101612);--rs-surface:light-dark(#fff,#151e19);--rs-text:light-dark(#132019,#f1f5f0);--rs-muted:light-dark(#536359,#aebcb0);--rs-rule:light-dark(#d7e0d9,#304038);--rs-track:light-dark(#e3eae4,#35423a);--rs-blue:light-dark(#355fc8,#84a6ff);--rs-form:light-dark(#087861,#54d7a1);--rs-venue:light-dark(#955b0a,#eab66a);--rs-lead:light-dark(#087246,#79e1a2);--rs-tag:light-dark(#6b4c89,#d7b5ff);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--rs-text);}
+#ratiSportsStudy *{box-sizing:border-box}
+#ratiSportsStudy .rs-shell{background:var(--rs-bg);border:1px solid var(--rs-rule);border-radius:14px;overflow:hidden}
+#ratiSportsStudy button{font:inherit}
+#ratiSportsStudy .rs-header{background:var(--rs-surface);padding:16px 20px;border-bottom:1px solid var(--rs-rule);display:flex;justify-content:space-between;align-items:center;gap:12px}
+#ratiSportsStudy .rs-brand{display:flex;align-items:baseline;gap:12px}
+#ratiSportsStudy .rs-rati{font-weight:700;letter-spacing:.06em;font-size:15px}
+#ratiSportsStudy .rs-section{font-size:17px;font-weight:600}
+#ratiSportsStudy .rs-sample,#ratiSportsStudy .rs-when{font-size:12px;color:var(--rs-muted)}
+#ratiSportsStudy .rs-column-head{display:flex;justify-content:space-between;padding:14px 20px 8px;color:var(--rs-muted);font-size:12px;font-weight:600}
+#ratiSportsStudy .rs-game{display:grid;grid-template-columns:72px minmax(0,1fr) 108px 48px;gap:8px;align-items:center;padding:0 16px;min-height:70px;border-bottom:1px solid var(--rs-rule);background:var(--rs-surface)}
+#ratiSportsStudy .rs-tag{justify-self:start;padding:6px 8px;border:1px solid var(--rs-tag);border-radius:10px;color:var(--rs-tag);font-size:11px;font-weight:700;letter-spacing:.03em}
+#ratiSportsStudy .rs-teams{min-width:0}
+#ratiSportsStudy .rs-match{display:flex;align-items:baseline;gap:5px;white-space:nowrap;font-size:16px;font-weight:600;line-height:1.15}
+#ratiSportsStudy .rs-match .rs-leader{color:var(--rs-lead);font-size:20px;font-weight:700}
+#ratiSportsStudy .rs-dot{color:var(--rs-muted)}
+#ratiSportsStudy .rs-league{display:block;font-size:12px;color:var(--rs-muted);margin-top:4px}
+#ratiSportsStudy .rs-score-block{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+#ratiSportsStudy .rs-score{font-size:24px;font-weight:700;line-height:1.05}
+#ratiSportsStudy .rs-score-sub{font-size:11px;color:var(--rs-muted);margin-top:4px}
+#ratiSportsStudy .rs-glyph-button{width:44px;height:44px;display:grid;place-items:center;background:transparent;border:0;padding:0;color:var(--rs-text)}
+#ratiSportsStudy .rs-glyph-button svg{width:38px;height:38px;display:block}
+#ratiSportsStudy .rs-foot{padding:12px 20px;color:var(--rs-muted);font-size:12px}
+#ratiSportsStudy .rs-backline{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 20px;border-bottom:1px solid var(--rs-rule)}
+#ratiSportsStudy .rs-back{border:0;background:transparent;color:var(--rs-text);padding:8px 0;font-weight:600}
+#ratiSportsStudy .rs-detail-game{padding:18px 20px 14px;border-bottom:1px solid var(--rs-rule)}
+#ratiSportsStudy .rs-detail-match{display:flex;align-items:baseline;justify-content:space-between;gap:16px;font-size:20px;font-weight:700}
+#ratiSportsStudy .rs-detail-match .rs-leader{color:var(--rs-lead);font-size:25px}
+#ratiSportsStudy .rs-detail-match > span:first-child{display:flex;align-items:baseline;gap:6px}
+#ratiSportsStudy .rs-detail-score{font-size:26px;white-space:nowrap;font-variant-numeric:tabular-nums}
+#ratiSportsStudy .rs-detail-state{margin-top:5px;color:var(--rs-muted);font-size:12px}
+#ratiSportsStudy .rs-opinion{display:flex;align-items:center;gap:20px;padding:22px 20px}
+#ratiSportsStudy .rs-large-glyph{width:112px;height:112px;flex:none}
+#ratiSportsStudy .rs-large-glyph svg{width:100%;height:100%}
+#ratiSportsStudy .rs-opinion-copy{min-width:0}
+#ratiSportsStudy .rs-opinion-kicker{font-size:12px;color:var(--rs-muted);margin-bottom:2px}
+#ratiSportsStudy .rs-opinion-target{font-size:18px;font-weight:650;line-height:1.15}
+#ratiSportsStudy .rs-prob{font-size:34px;font-weight:750;line-height:1.15;font-variant-numeric:tabular-nums}
+#ratiSportsStudy .rs-opinion-sub{font-size:12px;color:var(--rs-muted)}
+#ratiSportsStudy .rs-switches{display:flex;gap:18px;border-bottom:1px solid var(--rs-rule);padding:0 20px}
+#ratiSportsStudy .rs-switches button{border:0;border-bottom:2px solid transparent;padding:10px 0;background:transparent;color:var(--rs-muted);font-size:13px}
+#ratiSportsStudy .rs-switches button[aria-pressed=true]{border-bottom-color:var(--rs-blue);color:var(--rs-text);font-weight:700}
+#ratiSportsStudy .rs-detail-content{padding:18px 20px 20px;min-height:198px}
+#ratiSportsStudy .rs-caption{font-size:12px;color:var(--rs-muted);margin-bottom:12px}
+#ratiSportsStudy .rs-factor-row{display:grid;grid-template-columns:120px minmax(0,1fr) 72px;align-items:center;gap:10px;min-height:35px;font-size:12px}
+#ratiSportsStudy .rs-factor-row strong{font-size:13px;text-align:right;font-variant-numeric:tabular-nums}
+#ratiSportsStudy .rs-factor-track{height:10px;position:relative;background:var(--rs-track);border-radius:99px;overflow:hidden}
+#ratiSportsStudy .rs-factor-fill{position:absolute;top:0;height:100%;background:var(--rs-blue)}
+#ratiSportsStudy .rs-factor-fill.rs-form{background:var(--rs-form)}
+#ratiSportsStudy .rs-factor-fill.rs-venue{background:repeating-linear-gradient(135deg,var(--rs-venue) 0 3px,var(--rs-track) 3px 5px)}
+#ratiSportsStudy .rs-axis{display:flex;justify-content:space-between;margin-left:130px;margin-right:82px;color:var(--rs-muted);font-size:11px}
+#ratiSportsStudy .rs-summary{padding-top:12px;margin-top:12px;border-top:1px solid var(--rs-rule);font-size:13px;line-height:1.45}
+#ratiSportsStudy .rs-summary b{font-weight:700}
+#ratiSportsStudy .rs-context-line{display:flex;justify-content:space-between;gap:14px;padding:8px 0;border-bottom:1px solid var(--rs-rule);font-size:13px}
+#ratiSportsStudy .rs-context-line span:last-child{text-align:right;color:var(--rs-muted)}
+#ratiSportsStudy .rs-announcement{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+@media(max-width:480px){
+#ratiSportsStudy .rs-header{padding:14px 12px}
+#ratiSportsStudy .rs-column-head{padding:12px 12px 6px}
+#ratiSportsStudy .rs-game{grid-template-columns:48px minmax(0,1fr) 70px 44px;gap:5px;padding:0 8px;min-height:66px}
+#ratiSportsStudy .rs-tag{font-size:9px;padding:5px 4px;border-radius:8px}
+#ratiSportsStudy .rs-teams{display:flex;align-items:baseline;gap:5px}
+#ratiSportsStudy .rs-match{font-size:14px;gap:3px}
+#ratiSportsStudy .rs-match .rs-leader{font-size:17px}
+#ratiSportsStudy .rs-league{display:inline;font-size:10px;margin-left:0;white-space:nowrap}
+#ratiSportsStudy .rs-score{font-size:20px}
+#ratiSportsStudy .rs-score-sub{font-size:10px}
+#ratiSportsStudy .rs-glyph-button svg{width:30px;height:30px}
+#ratiSportsStudy .rs-detail-game,#ratiSportsStudy .rs-opinion,#ratiSportsStudy .rs-detail-content{padding-left:14px;padding-right:14px}
+#ratiSportsStudy .rs-backline{padding-left:14px;padding-right:14px}
+#ratiSportsStudy .rs-switches{padding:0 14px}
+#ratiSportsStudy .rs-large-glyph{width:92px;height:92px}
+#ratiSportsStudy .rs-opinion{gap:10px}
+#ratiSportsStudy .rs-prob{font-size:29px}
+#ratiSportsStudy .rs-factor-row{grid-template-columns:90px minmax(0,1fr) 58px;gap:5px}
+#ratiSportsStudy .rs-factor-row strong{font-size:12px}
+#ratiSportsStudy .rs-axis{margin-left:95px;margin-right:63px}
+#ratiSportsStudy .rs-foot{padding-left:12px}
+}
+</style>
+<script>
+(function(){
+  const root=document.getElementById("ratiSportsStudy");
+  const games=[
+    {away:"ARI",home:"COL",awayName:"Arizona",homeName:"Colorado",aw:90,al:60,hw:64,hl:86,awayScore:5,homeScore:3,status:"Top 7th",awayOdds:-115,homeOdds:-105},
+    {away:"NYM",home:"ATL",awayName:"New York",homeName:"Atlanta",aw:90,al:60,hw:64,hl:86,awayScore:2,homeScore:4,status:"Bottom 6th",awayOdds:-115,homeOdds:-105},
+    {away:"LAA",home:"ATH",awayName:"Los Angeles",homeName:"Athletics",aw:64,al:86,hw:90,hl:60,awayScore:3,homeScore:3,status:"Top 5th",awayOdds:145,homeOdds:-175}
+  ];
+  const options={glyph:"layered"};
+  let selected=0,tab="factors",view="list";
+  function implied(odds){return odds>0?100/(odds+100):-odds/(-odds+100)}
+  function enriched(game){
+    const homeRate=(game.hw+8)/(game.hw+game.hl+16);
+    const awayRate=(game.aw+8)/(game.aw+game.al+16);
+    const homeProbability=Math.max(.18,Math.min(.82,.5+.65*(homeRate-awayRate)+.035));
+    const homePick=homeProbability>=.5;
+    const target=homePick?game.home:game.away;
+    const form=(homePick?1:-1)*65*(homeRate-awayRate);
+    const venue=homePick?3.5:-3.5;
+    const probability=(homePick?homeProbability:1-homeProbability)*100;
+    const marketHome=implied(game.homeOdds)/(implied(game.homeOdds)+implied(game.awayOdds));
+    const market=(homePick?marketHome:1-marketHome)*100;
+    const gap=probability-market;
+    const signal=gap>=5?"WATCH":gap>=2?"LEAN":"PASS";
+    const leader=game.awayScore>game.homeScore?game.away:game.homeScore>game.awayScore?game.home:null;
+    return {...game,target,form,venue,probability,market,gap,signal,leader};
+  }
+  const data=games.map(enriched);
+  function round(n,d){return Number(n).toFixed(d)}
+  function signed(n){return (n>=0?"+":"−")+round(Math.abs(n),1)}
+  function glyph(game,large){
+    const amount=round(game.probability,1);
+    const total=Math.abs(game.form)+Math.abs(game.venue);
+    const formShare=total?Math.abs(game.form)/total:0;
+    const formEnd=-90+360*formShare;
+    const id="rsHatch"+(large?"Large":"Small")+data.indexOf(game);
+    const line=options.glyph==="layered"?
+      '<circle cx="50" cy="50" r="29" fill="var(--rs-form)"></circle>'+
+      '<path d="'+wedge(50,50,29,formEnd,270)+'" fill="var(--rs-venue)"></path>'+
+      '<path d="'+wedge(50,50,29,formEnd,270)+'" fill="url(#'+id+')"></path>':
+      '<circle cx="50" cy="50" r="29" fill="var(--rs-track)"></circle>';
+    const center=large?'<circle cx="50" cy="50" r="13" fill="var(--rs-surface)"></circle><text x="50" y="54" text-anchor="middle" fill="var(--rs-text)" font-size="11" font-weight="700">'+game.target+'</text>':'<circle cx="50" cy="50" r="12" fill="var(--rs-surface)"></circle>';
+    return '<svg viewBox="0 0 100 100" role="img" aria-label="'+game.target+' to win: '+amount+' percent pregame; season record '+signed(game.form)+' points, venue '+signed(game.venue)+' points">'+
+      '<defs><pattern id="'+id+'" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><path d="M 0 0 L 0 6" stroke="var(--rs-text)" opacity=".55" stroke-width="2"></path></pattern></defs>'+
+      '<circle cx="50" cy="50" r="43" fill="none" stroke="var(--rs-track)" stroke-width="7"></circle>'+
+      '<circle cx="50" cy="50" r="43" fill="none" stroke="var(--rs-blue)" stroke-width="7" pathLength="100" stroke-dasharray="'+round(game.probability,1)+' 100" transform="rotate(-90 50 50)"></circle>'+
+      line+center+'</svg>';
+  }
+  function wedge(cx,cy,r,a0,a1){
+    function point(a){const v=a*Math.PI/180;return [round(cx+r*Math.cos(v),3),round(cy+r*Math.sin(v),3)]}
+    const p0=point(a0),p1=point(a1);
+    return "M "+cx+" "+cy+" L "+p0[0]+" "+p0[1]+" A "+r+" "+r+" 0 "+(a1-a0>180?1:0)+" 1 "+p1[0]+" "+p1[1]+" Z";
+  }
+  function names(game,detail){
+    const a=game.leader===game.away?' class="rs-leader"':"";
+    const h=game.leader===game.home?' class="rs-leader"':"";
+    return '<span'+a+'>'+game.away+'</span><span class="rs-dot">·</span><span'+h+'>'+game.home+'</span>';
+  }
+  function listHtml(){
+    return data.map((game,i)=>
+      '<div class="rs-game"><span class="rs-tag">'+game.signal+'</span>'+
+      '<div class="rs-teams"><div class="rs-match">'+names(game)+'</div><span class="rs-league">MLB</span></div>'+
+      '<div class="rs-score-block"><div class="rs-score">'+game.awayScore+' – '+game.homeScore+'</div>'+
+      '<div class="rs-score-sub">'+game.target+' '+round(game.probability,0)+'% · pre</div></div>'+
+      '<button class="rs-glyph-button cursor-interaction" type="button" data-action="open" data-index="'+i+'" aria-label="Open saved pregame opinion: '+game.target+' '+round(game.probability,1)+' percent to win">'+glyph(game,false)+'</button></div>'
+    ).join("");
+  }
+  function factorRow(label,start,end,value,style){
+    const lower=Math.min(start,end),upper=Math.max(start,end);
+    return '<div class="rs-factor-row"><span>'+label+'</span><div class="rs-factor-track"><div class="rs-factor-fill '+style+'" style="left:'+lower+'%;width:'+Math.max(upper-lower,.6)+'%"></div></div><strong>'+value+'</strong></div>';
+  }
+  function factors(game){
+    const afterForm=50+game.form;
+    return '<div class="rs-caption">What moved '+game.target+' from a 50% starting point</div>'+
+      factorRow('Starting point',0,50,'50.0%','')+
+      factorRow('Season record',50,afterForm,signed(game.form)+' pp','rs-form')+
+      factorRow('Venue',afterForm,game.probability,signed(game.venue)+' pp','rs-venue')+
+      factorRow('Our forecast',0,game.probability,round(game.probability,1)+'%','')+
+      '<div class="rs-axis"><span>0%</span><span>50%</span><span>100%</span></div>'+
+      '<div class="rs-summary"><b>Inputs:</b> '+game.target+' record '+(game.target===game.away?game.aw:game.hw)+'–'+(game.target===game.away?game.al:game.hl)+'; opponent '+(game.target===game.away?game.hw:game.aw)+'–'+(game.target===game.away?game.hl:game.al)+'. <b>Market:</b> '+round(game.market,1)+'%; gap '+signed(game.gap)+' pp.</div>';
+  }
+  function context(game){
+    return '<div class="rs-caption">Model inputs and linked game context</div>'+
+      '<div class="rs-context-line"><span>In this forecast</span><span>Season records; MLB venue</span></div>'+
+      '<div class="rs-context-line"><span>Game context</span><span>Player appearances; recent results</span></div>'+
+      '<div class="rs-context-line"><span>Lineup state</span><span>Sample state: pending</span></div>'+
+      '<div class="rs-context-line"><span>Next model study</span><span>Starting players; confirmed lineup</span></div>'+
+      '<div class="rs-summary">The colored pieces show terms used by the current record model.</div>';
+  }
+  function receipt(game){
+    return '<div class="rs-caption">A saved forecast for a named outcome</div>'+
+      '<div class="rs-context-line"><span>Subject</span><span>'+game.target+' to win this game</span></div>'+
+      '<div class="rs-context-line"><span>Model</span><span>RATi · team-form-v1</span></div>'+
+      '<div class="rs-context-line"><span>Phase</span><span>Pregame · sample 19:00 UTC</span></div>'+
+      '<div class="rs-context-line"><span>Odds</span><span>Sample two-sided moneyline</span></div>'+
+      '<div class="rs-summary">This study uses illustrative teams, scores, records and odds.</div>';
+  }
+  function render(){
+    root.querySelector(".rs-list-view").hidden=view!=="list";
+    root.querySelector(".rs-detail-view").hidden=view!=="detail";
+    root.querySelector(".rs-games").innerHTML=listHtml();
+    if(view==="detail"){
+      const game=data[selected];
+      root.querySelector(".rs-detail-game").innerHTML='<div class="rs-detail-match"><span>'+names(game,true)+'</span><span class="rs-detail-score">'+game.awayScore+' – '+game.homeScore+'</span></div><div class="rs-detail-state">MLB · '+game.status+' · actual score</div>';
+      root.querySelector(".rs-large-glyph").innerHTML=glyph(game,true);
+      root.querySelector(".rs-opinion-copy").innerHTML='<div class="rs-opinion-kicker">RATi baseline · pregame</div><div class="rs-opinion-target">'+game.target+' to win</div><div class="rs-prob">'+round(game.probability,1)+'%</div><div class="rs-opinion-sub">Saved before first pitch</div>';
+      root.querySelectorAll(".rs-switches button").forEach(button=>button.setAttribute("aria-pressed",button.dataset.tab===tab?"true":"false"));
+      root.querySelector(".rs-detail-content").innerHTML=tab==="factors"?factors(game):tab==="context"?context(game):receipt(game);
+    }
+  }
+  root.addEventListener("click",function(event){
+    const button=event.target.closest("button[data-action]");
+    if(!button||!root.contains(button))return;
+    if(button.dataset.action==="open"){selected=Number(button.dataset.index);tab="factors";view="detail";root.querySelector(".rs-announcement").textContent="Saved opinion for "+data[selected].target;render();root.querySelector(".rs-back").focus()}
+    if(button.dataset.action==="back"){view="list";render();root.querySelector('.rs-glyph-button[data-index="'+selected+'"]').focus()}
+    if(button.dataset.action==="tab"){tab=button.dataset.tab;render();root.querySelector('.rs-switches button[data-tab="'+tab+'"]').focus()}
+  });
+  render();
+  if(globalThis.Tweak){
+    const tweak=new Tweak({container:root,onChange:render});
+    tweak.addSelect(options,"glyph",{label:"Row glyph",options:[{label:"Layered factors",value:"layered"},{label:"Probability ring",value:"ring"}]});
+  }
+})();
+</script>
