@@ -16,8 +16,10 @@
     stripe.append(svg('path', {d:`M 0 0 V ${7*scale}`,class:'map-pattern-line','stroke-width':2.2*scale}));
     const dot = svg('pattern', {id:`${prefix}-dot`,patternUnits:'userSpaceOnUse',width:7*scale,height:7*scale});
     dot.append(svg('circle', {cx:3.5*scale,cy:3.5*scale,r:1.4*scale,class:'map-pattern-dot'}));
-    defs.append(stripe,dot); layer.append(defs);
-    return {evidence:`url(#${prefix}-stripe)`,social:`url(#${prefix}-dot)`};
+    const grid = svg('pattern', {id:`${prefix}-grid`,patternUnits:'userSpaceOnUse',width:8*scale,height:8*scale});
+    grid.append(svg('path', {d:`M 0 0 H ${8*scale} M 0 0 V ${8*scale}`,class:'map-pattern-line','stroke-width':1.6*scale}));
+    defs.append(stripe,dot,grid); layer.append(defs);
+    return {evidence:`url(#${prefix}-stripe)`,social:`url(#${prefix}-dot)`,cluster:`url(#${prefix}-grid)`};
   }
   const readSentiment = value => {
     const mix = value || {};

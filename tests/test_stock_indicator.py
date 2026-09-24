@@ -42,19 +42,21 @@ def test_attention_band_boundaries(score, band):
     assert stock_indicator(stock(score=score))["band"] == band
 
 
-def test_three_angles_use_uncapped_post_freshness_contributions():
+def test_four_angles_use_uncapped_post_freshness_contributions():
     glyph = stock_indicator(stock())
-    assert [s["key"] for s in glyph["slices"]] == ["market", "evidence", "social"]
-    assert [s["value"] for s in glyph["slices"]] == [40, 12.6, 5]
+    assert [s["key"] for s in glyph["slices"]] == ["market", "evidence", "social", "cluster"]
+    assert [s["value"] for s in glyph["slices"]] == [40, 12.6, 5, 0]
     assert sum(s["share"] for s in glyph["slices"]) == pytest.approx(1)
     assert glyph["slices"][0]["end"] == pytest.approx(40 / 57.6 * 100, abs=1e-6)
     capped = stock_indicator(
         stock(
             score=100,
-            score_components={"market": 80, "sec_event": 12, "news": 6, "social_search": 8},
+            score_components={
+                "market": 80, "sec_event": 12, "news": 6, "social_search": 8, "cluster": 8
+            },
         )
     )
-    assert capped["slices"][0]["share"] == pytest.approx(80 / 106)
+    assert capped["slices"][0]["share"] == pytest.approx(80 / 114)
     assert capped["slices"][-1]["end"] == 100
 
 
@@ -90,7 +92,7 @@ def test_driver_fallback_ignores_penalties_and_has_fixed_order():
             },
         )
     )
-    assert [s["value"] for s in glyph["slices"]] == [10, 15, 5]
+    assert [s["value"] for s in glyph["slices"]] == [10, 15, 5, 0]
     assert "--red" not in glyph["gradient"]
 
 

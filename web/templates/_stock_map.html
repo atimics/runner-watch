@@ -1,10 +1,12 @@
 {% from "_stock_indicator.html" import indicator_legend %}
+{% from "_cluster_worth.html" import cluster_worth %}
 <section class="ticker-map" id="ticker-map" data-stock-map data-ticker="{{ detail.ticker }}" aria-label="{{ detail.ticker }} attention, wallets and filings">
   <p class="map-status" role="status" data-map-status>Loading…</p>
   <div class="map-workspace">
     <div class="map-canvas"><svg viewBox="0 0 760 440" data-map-graph data-phase="settled" role="group" aria-label="Current attention, sentiment, risk and wallets linked to {{ detail.ticker }}"></svg><div class="map-paging" data-map-paging><button type="button" data-map-previous aria-label="Previous wallets">←</button><span data-map-page></span><button type="button" data-map-next aria-label="Next wallets">→</button></div></div>
     <aside class="map-source" aria-label="Score or selected filing"><button class="map-score-return" type="button" data-map-score-return hidden>← Return to score overview</button><div data-map-selection aria-live="polite" aria-atomic="true"></div></aside>
   </div>
+  {{ cluster_worth(detail.ticker) }}
   {{ indicator_legend() }}
   <div class="map-filings" data-map-filings hidden>
     <div class="map-event-list" data-map-events aria-label="Reported filings"></div>

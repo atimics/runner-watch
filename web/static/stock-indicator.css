@@ -1,6 +1,6 @@
 /* Shared stock and token attention glyph. */
 .indicator-glyph,.indicator-legend,[data-stock-map],[data-token-replay],[data-entity-map]{
-  --indicator-market:#418cf4;--indicator-evidence:#b58af4;--indicator-social:#36d5e6;--glyph-ink:var(--bg);
+  --indicator-market:#418cf4;--indicator-evidence:#b58af4;--indicator-social:#36d5e6;--indicator-cluster:#d9be77;--glyph-ink:var(--bg);
 }
 .indicator-glyph{
   --glyph-size:36px;--risk-size:9px;
@@ -14,6 +14,7 @@
 .indicator-pattern{position:absolute;inset:0;pointer-events:none;mask:conic-gradient(transparent 0 var(--slice-start),#000 var(--slice-start) var(--slice-end),transparent var(--slice-end) 100%)}
 .indicator-pattern--evidence{background:repeating-linear-gradient(45deg,transparent 0 3px,var(--glyph-ink) 3px 4.2px)}
 .indicator-pattern--social{background:radial-gradient(circle,var(--glyph-ink) 0 1px,transparent 1.1px);background-size:4px 4px}
+.indicator-pattern--cluster{background:linear-gradient(90deg,var(--glyph-ink) 1px,transparent 1px),linear-gradient(var(--glyph-ink) 1px,transparent 1px);background-size:6px 6px}
 .indicator-divider{position:absolute;left:calc(50% - .6px);top:0;width:1.2px;height:50%;background:var(--glyph-ink);transform-origin:50% 100%;pointer-events:none}
 .ticker-sentiment{color:var(--text);font-size:11px;font-variant-numeric:tabular-nums;line-height:1.4}
 .market-memecoins .ticker-name{flex-direction:column;align-items:flex-start;gap:2px}
@@ -43,7 +44,7 @@
   .ticker-sentiment{grid-column:1/-1;grid-row:2}
 }
 @media(forced-colors:active){
-  .indicator-glyph{forced-color-adjust:none;--bg:Canvas;--text:CanvasText;--muted:CanvasText;--glyph-ink:Canvas;--indicator-market:CanvasText;--indicator-evidence:CanvasText;--indicator-social:CanvasText;--green:CanvasText;--red:CanvasText;--orange:CanvasText}
+  .indicator-glyph{forced-color-adjust:none;--bg:Canvas;--text:CanvasText;--muted:CanvasText;--glyph-ink:Canvas;--indicator-market:CanvasText;--indicator-evidence:CanvasText;--indicator-social:CanvasText;--indicator-cluster:CanvasText;--green:CanvasText;--red:CanvasText;--orange:CanvasText}
   .indicator-glyph__risk{color:CanvasText}
   .ticker-verified{fill:Highlight}
   .ticker-verified path{stroke:HighlightText}
@@ -69,6 +70,7 @@
 .indicator-key-icon[data-key-icon="solid"] .indicator-key-ring{mask:none}
 .indicator-key-icon[data-key-icon="evidence"]{--key-color:var(--indicator-evidence)}
 .indicator-key-icon[data-key-icon="social"]{--key-color:var(--indicator-social)}
+.indicator-key-icon[data-key-icon="cluster"]{--key-color:var(--indicator-cluster)}
 .indicator-key-icon[data-key-icon="bullish"]{--key-color:var(--green)}
 .indicator-key-icon[data-key-icon="bearish"]{--key-color:var(--red)}
 .indicator-key-icon[data-key-icon="sentiment"] .indicator-key-ring{background:conic-gradient(var(--green) 0 75%,var(--red) 75% 100%)}
@@ -83,4 +85,4 @@
 .indicator-key-check-symbol path{fill:none;stroke:var(--bg);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 @media(max-width:760px){.indicator-key-group ul{grid-template-columns:repeat(2,minmax(0,1fr))}.indicator-key-group li{gap:7px}.indicator-key-group li>span:last-child{min-width:0}.indicator-key-icon{width:34px}}
 @media(max-width:360px){.indicator-key-group ul{grid-template-columns:1fr}}
-@media(forced-colors:active){.indicator-key-icon{forced-color-adjust:none;--bg:Canvas;--muted:CanvasText;--glyph-ink:Canvas;--indicator-market:CanvasText;--indicator-evidence:CanvasText;--indicator-social:CanvasText;--green:CanvasText;--red:CanvasText;--orange:CanvasText}}
+@media(forced-colors:active){.indicator-key-icon{forced-color-adjust:none;--bg:Canvas;--muted:CanvasText;--glyph-ink:Canvas;--indicator-market:CanvasText;--indicator-evidence:CanvasText;--indicator-social:CanvasText;--indicator-cluster:CanvasText;--green:CanvasText;--red:CanvasText;--orange:CanvasText}}

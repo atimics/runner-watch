@@ -11,6 +11,7 @@ GROUPS = (
     ("market", "Market", ("market",)),
     ("evidence", "Filings + news", ("sec_event", "news")),
     ("social", "External social", ("social_search",)),
+    ("cluster", "Cluster holdings", ("cluster",)),
 )
 TOKEN_GROUPS = (
     ("market", "Market", ("market",)),

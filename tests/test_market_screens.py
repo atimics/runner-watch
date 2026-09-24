@@ -242,8 +242,9 @@ def test_public_score_detail_uses_short_driver_labels():
         "Scan",
         "SEC",
         "News",
-        "Social",
-        "Community",
+            "Social",
+            "Cluster holdings",
+            "Community",
     ]
     assert [part["label"] for part in detail["penalties"]] == ["Rug"]
 
@@ -442,7 +443,7 @@ def screen_client(tmp_path, monkeypatch):
     db.init_db()
     monkeypatch.setattr(web, "enforce_rate", lambda *a, **kw: None)
     monkeypatch.setattr(web, "current_user", lambda *a: None)
-    monkeypatch.setattr(web, "_public_screen_data", lambda kind, key, build: build())
+    monkeypatch.setattr(web, "_public_screen_data", lambda kind, key, build, **options: build())
     client = TestClient(web.app)
     yield client
     client.close()

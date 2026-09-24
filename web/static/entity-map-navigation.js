@@ -1,20 +1,13 @@
 (() => {
   'use strict';
   function attach(graph) {
-    const root = graph.closest('.entity-map');
-    const plus = root.querySelector('[data-entity-zoom-in]');
-    const minus = root.querySelector('[data-entity-zoom-out]');
-    const reset = root.querySelector('[data-entity-fit]');
-    const label = root.querySelector('[data-entity-zoom]');
     let home, view, suppressClickUntil = 0;
     const pointers = new Map();
     const world = (x,y) => new DOMPoint(x,y).matrixTransform(graph.getScreenCTM().inverse());
     function paint() {
       graph.setAttribute('viewBox', `${view.x} ${view.y} ${view.width} ${view.height}`);
       const zoom = home.width/view.width;
-      label.textContent = `${zoom.toFixed(1)}×`;
       graph.dataset.zoom = String(zoom);
-      minus.disabled = zoom <= 1.001; plus.disabled = zoom >= 11.999;
     }
     function fit(bounds) {
       if (bounds) home = {...bounds};
@@ -26,9 +19,6 @@
       view = {x:anchor.x-(anchor.x-view.x)*ratio,y:anchor.y-(anchor.y-view.y)*ratio,width,height:view.height*ratio};
       paint();
     }
-    plus.addEventListener('click',()=>zoom(1.4));
-    minus.addEventListener('click',()=>zoom(1/1.4));
-    reset.addEventListener('click',()=>fit());
     graph.addEventListener('wheel',event=>{
       event.preventDefault();
       zoom(Math.exp(-Math.max(-100,Math.min(100,event.deltaY))*0.005),world(event.clientX,event.clientY));

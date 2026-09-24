@@ -517,6 +517,30 @@ def test_single_slice_uses_full_circle_and_cap_does_not_distort_mix(page, score)
 
 
 @pytest.mark.parametrize("width", [390, 1280])
+def test_cluster_slice_has_distinct_pattern_and_opens_its_breakdown(page, width):
+    open_map(
+        page,
+        width,
+        current=score_current(
+            score=48,
+            score_components={"market": 40, "cluster": 8},
+            score_trace={
+                "cluster": [{"label": "Tracked cluster holdings", "value": "$10,000,000"}]
+            },
+        ),
+    )
+    segment = page.locator('[data-score-key="cluster"]')
+    expect(segment).to_have_attribute("aria-label", re.compile("Cluster holdings: \\+8 pts"))
+    expect(page.locator('.map-score-pattern[data-pattern="cluster"]')).to_have_count(1)
+    segment.focus()
+    page.keyboard.press("Enter")
+    expect(page.locator(".map-score-breakdown")).to_contain_text("16.7%")
+    trace = page.locator('.map-score-trace[aria-label="Cluster holdings component trace"]')
+    expect(trace).to_contain_text("$10,000,000")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("width", [390, 1280])
 def test_live_refresh_preserves_wallets_selection_and_updates_metadata_only(page, width):
     from runner_web.stock_indicator import stock_indicator
 
@@ -967,7 +991,7 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     )
     # The largest holding is first in the map and in keyboard order.
     assert radii[0] > radii[1] if has_holdings else radii[0] == radii[1]
-    page.get_by_text("Entity map key", exact=True).click()
+    page.get_by_text("Legend", exact=True).click()
     expect(
         page.get_by_text("Ring size follows the reported holding value", exact=False)
     ).to_be_visible()
@@ -1159,7 +1183,9 @@ def test_patterned_map_preserves_slice_hit_targets_and_high_contrast_readings(
     expect(glyph.locator("path.map-risk-dot")).to_have_attribute("data-risk-shape", "diamond")
     if forced == "active":
         marker = glyph.locator(".map-risk-dot").evaluate("el => getComputedStyle(el).fill")
-        ink = glyph.locator(".map-pattern-line").evaluate("el => getComputedStyle(el).stroke")
+        ink = glyph.locator(".map-pattern-line").first.evaluate(
+            "el => getComputedStyle(el).stroke"
+        )
         assert marker != ink
         expect(glyph.locator(".map-center-text")).to_have_css("fill", marker)
         expect(glyph.locator(".map-center-score")).to_have_css("fill", marker)
