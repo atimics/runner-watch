@@ -1,0 +1,40 @@
+{% from '_sports_opinion_glyph.html' import sports_opinion_glyph %}
+{% set forecast = screen.item.matchup.forecast %}
+{% if forecast %}
+<section class="sports-opinion" aria-label="Saved pregame opinion">
+  <header>
+    <div>
+      <p class="eyebrow">RATi BASELINE · PREGAME</p>
+      <h2>{{ 'Even chance' if forecast.team == 'Even' else forecast.team ~ ' to win' }}</h2>
+      <small>{% if forecast.saved_label %}Saved {{ forecast.saved_label }}{% else %}Saved before the game{% endif %}{% if forecast.model_version %} · {{ forecast.model_version }}{% endif %}</small>
+    </div>
+    <div class="sports-opinion-result">{{ sports_opinion_glyph(forecast, 'detail-opinion') }}<strong>{{ forecast.percent }}%</strong></div>
+  </header>
+  {% if forecast.factors %}
+  <div class="sports-opinion-steps">
+    <p>Starting point <strong>50.0%</strong></p>
+    <ol>
+      {% for factor in forecast.factors if factor.value|abs >= 0.000001 %}
+      <li>
+        <span>{{ factor.label }}</span>
+        <span class="sports-opinion-track" aria-hidden="true"><i class="sports-opinion-bar sports-opinion-bar-{{ factor.key }}{% if factor.negative %} is-negative{% endif %}" style="left:{{ factor.bar_start }}%;width:{{ factor.bar_width }}%"></i></span>
+        <strong>{{ '%+.1f'|format(factor.value) }} pp</strong>
+      </li>
+      {% endfor %}
+    </ol>
+    <p>Saved forecast <strong>{{ forecast.percent }}%</strong></p>
+  </div>
+  <div class="sports-opinion-context">
+    {% for team in screen.item.matchup.teams %}
+      {% set record = forecast.records[team.side] %}
+      {% if record %}<span>{{ team.label }} season record {{ record.wins }}–{{ record.losses }}</span>{% endif %}
+    {% endfor %}
+    {% if forecast.market_percent is defined %}<span>Market chance {{ forecast.market_percent }}% · gap {{ '%+.1f'|format(forecast.market_gap_pp) }} pp</span>{% endif %}
+    {% if forecast.value_side and forecast.value_side != forecast.team %}<span>Market value side {{ forecast.value_side }}</span>{% endif %}
+    {% if forecast.source_url %}<a href="{{ forecast.source_url }}" target="_blank" rel="noopener noreferrer">Game source ↗</a>{% endif %}
+  </div>
+  {% else %}
+  <p class="sports-opinion-legacy">This earlier saved call has a win chance. Factor details appear with new model snapshots.</p>
+  {% endif %}
+</section>
+{% endif %}

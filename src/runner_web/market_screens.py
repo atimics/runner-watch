@@ -71,6 +71,137 @@ def sports_state(item: dict[str, Any]) -> dict[str, Any]:
     return item.get("view_state") or _game_view_state(item)
 
 
+def sports_matchup(item: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Keep the scoreboard leader separate from the saved model and value side."""
+    sides = ("away", "home")
+    prediction = item.get("prediction") or {}
+    probabilities = [number(prediction.get(f"{side}_probability")) for side in sides]
+    if all(p is None or 0 <= p <= 1 for p in probabilities):
+        if prediction.get("away_probability") is None and probabilities[1] is not None:
+            probabilities[0] = 1 - probabilities[1]
+        elif prediction.get("home_probability") is None and probabilities[0] is not None:
+            probabilities[1] = 1 - probabilities[0]
+    valid_model = all(p is not None and 0 <= p <= 1 for p in probabilities)
+    valid_model = valid_model and math.isclose(sum(probabilities), 1, abs_tol=0.001)
+    favorite = (
+        sides[probabilities.index(max(probabilities))]
+        if valid_model and probabilities[0] != probabilities[1]
+        else None
+    )
+    scores = [number(item.get(f"{side}_score")) for side in sides]
+    completed = bool(item.get("completed")) or item.get("status") == "post"
+    started = bool(state.get("started")) or completed or item.get("status") == "in"
+    confirmed = (
+        started
+        and state.get("score_available")
+        and all(score is not None and score >= 0 for score in scores)
+    )
+    leader = sides[scores.index(max(scores))] if confirmed and scores[0] != scores[1] else None
+    emphasis = leader
+    emphasis_label = "Winner" if completed else "Leading"
+    teams = [
+        {
+            "side": side,
+            "label": str(
+                item.get(f"{side}_abbreviation") or item.get(f"{side}_team_name") or side.title()
+            ),
+            "name": str(
+                item.get(f"{side}_team_name") or item.get(f"{side}_abbreviation") or side.title()
+            ),
+            "emphasized": side == emphasis,
+            "emphasis_label": emphasis_label if side == emphasis else "",
+        }
+        for side in sides
+    ]
+    forecast = None
+    if valid_model:
+        index = sides.index(favorite) if favorite else 0
+        team = teams[index]
+        percent = round(probabilities[index] * 100, 1)
+        forecast = {
+            "team": team["label"] if favorite else "Even",
+            "percent": percent,
+            "label": f"{team['label']} {percent:g}%" if favorite else "Even 50–50",
+            "description": (
+                f"Pregame model: {team['name']} {percent:g}% win chance."
+                if favorite
+                else "Pregame model: both teams have a 50% win chance."
+            )
+            + (
+                f" Saved {stamp(prediction.get('observed_at'))}."
+                if stamp(prediction.get("observed_at"))
+                else ""
+            ),
+            "observed_at": prediction.get("observed_at"),
+            "saved_label": stamp(prediction.get("observed_at")),
+            "model_version": prediction.get("model_version"),
+        }
+        trace = prediction.get("factors") or {}
+        traced_home = number(trace.get("home_probability_pct")) if isinstance(trace, dict) else None
+        if (
+            favorite
+            and traced_home is not None
+            and abs(traced_home - probabilities[1] * 100) < 0.001
+        ):
+            orientation = 1 if favorite == "home" else -1
+            parts = [
+                ("Season record", "record", "home_record_delta_pp"),
+                ("Venue", "venue", "home_venue_delta_pp"),
+                ("Clamp", "clamp", "home_clamp_delta_pp"),
+            ]
+            factors = [
+                {
+                    "label": label,
+                    "key": key,
+                    "value": round(orientation * (number(trace.get(field)) or 0), 6),
+                }
+                for label, key, field in parts
+            ]
+            adjustment = sum(part["value"] for part in factors)
+            if abs(50 + adjustment - probabilities[index] * 100) < 0.001:
+                total = sum(abs(part["value"]) for part in factors)
+                offset = 0.0
+                running = 50.0
+                for part in factors:
+                    part["share"] = abs(part["value"]) / total * 100 if total else 0.0
+                    part["offset"] = offset
+                    part["negative"] = part["value"] < 0
+                    part["bar_start"] = max(0.0, min(100.0, min(running, running + part["value"])))
+                    part["bar_width"] = max(
+                        0.0,
+                        min(100.0, max(running, running + part["value"]))
+                        - part["bar_start"],
+                    )
+                    running += part["value"]
+                    offset += part["share"]
+                forecast["factors"] = factors
+                forecast["records"] = {
+                    side: trace.get(f"{side}_record") for side in sides
+                }
+                forecast["source_url"] = trace.get("source_url")
+                forecast["description"] += " " + "; ".join(
+                    f"{part['label']} {part['value']:+.1f} points"
+                    for part in factors
+                    if abs(part["value"]) >= 0.05
+                ) + "."
+        market_chance = (
+            number(prediction.get(f"{favorite}_market_probability")) if favorite else None
+        )
+        if market_chance is not None:
+            forecast["market_percent"] = round(market_chance * 100, 1)
+            forecast["market_gap_pp"] = round(percent - market_chance * 100, 1)
+        selection = prediction.get("selection")
+        if selection in sides:
+            forecast["value_side"] = teams[sides.index(selection)]["label"]
+    return {
+        "teams": teams,
+        "forecast": forecast,
+        "emphasis": emphasis,
+        "emphasis_label": emphasis_label if emphasis else "",
+        "tied": bool(confirmed and scores[0] == scores[1]),
+    }
+
+
 def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
     if market == "sports" and str(item.get("id", "")).startswith("golf:"):
         from runner_web.sports import _golf_display_status
@@ -131,6 +262,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": str(item["id"]),
             "name": f"{away} · {home}",
+            "matchup": sports_matchup(item, state),
             "subtitle": str(item.get("league") or "Sports").upper(),
             "selected_team_label": str(
                 item.get(f"{rating.get('selection')}_abbreviation")
@@ -505,6 +637,19 @@ def detail(
                 "score": str(int(number(data.get(f"{s}_score")) or 0))
                 if state.get("score_available")
                 else "—",
+                "href": (
+                    "/team/"
+                    + "/".join(
+                        quote(str(value), safe="")
+                        for value in (
+                            data["provider"],
+                            data["league"],
+                            data[f"{s}_team_id"],
+                        )
+                    )
+                    if data.get("provider") and data.get("league") and data.get(f"{s}_team_id")
+                    else None
+                ),
             }
             for s in ("away", "home")
         ]

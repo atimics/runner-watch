@@ -105,30 +105,34 @@ def test_sports_route_searches_full_names(board_context, monkeypatch, query):
     response = main.sports_board_response(request(query), None, "list")
     html = BeautifulSoup(response.body, "html.parser")
     assert len(html.select("a.ticker")) == 1
-    assert html.select_one(".ticker-name strong").get_text() == "LAL · BOS"
+    assert [team.get_text() for team in html.select(".sports-team")] == ["LAL", "BOS"]
 
 
 @pytest.mark.parametrize(
-    "side, abbreviation, full_name, probability",
+    "side, abbreviation",
     [
-        ("home", "BOS", "Boston Celtics", 63),
-        ("away", "LAL", "Los Angeles Lakers", 37),
+        ("home", "BOS"),
+        ("away", "LAL"),
     ],
 )
-def test_sports_probability_names_its_selected_team(
-    board_context, side, abbreviation, full_name, probability
+def test_sports_forecast_names_the_favorite_and_tag_names_the_value_side(
+    board_context, side, abbreviation
 ):
     response = main._simple_board(request(""), None, "sports", [game(side)], "list")
     html = BeautifulSoup(response.body, "html.parser")
-    value = html.select_one(".row-assessment strong")
-    assert value.get_text() == f"{abbreviation} {probability}%"
-    assert value["aria-label"] == f"{full_name} · {probability}% win chance"
+    assert html.select_one(".sports-chance-ring")["aria-label"] == (
+        "Pregame model: Boston Celtics 63% win chance."
+    )
+    assert html.select_one(".tag")["title"] == f"{abbreviation} · lean signal"
 
 
 def test_selected_team_falls_back_to_full_name(board_context):
     response = main._simple_board(request(""), None, "sports", [game(home_abbreviation="")], "list")
     html = BeautifulSoup(response.body, "html.parser")
-    assert html.select_one(".row-assessment strong").get_text() == "Boston Celtics 63%"
+    assert html.select_one(".sports-chance-ring")["aria-label"] == (
+        "Pregame model: Boston Celtics 63% win chance."
+    )
+    assert [team.get_text() for team in html.select(".sports-team")] == ["LAL", "Boston Celtics"]
 
 
 def test_stock_search_keeps_its_existing_fields():

@@ -50,6 +50,7 @@
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/market-screen.css?v={{ static_version }}">
   {% if screen is defined and screen.market in ['memecoins', 'sports'] %}<link rel="stylesheet" href="/static/market-anchor.css?v={{ static_version }}">{% endif %}
+  {% if screen is defined and screen.market == 'sports' %}<link rel="stylesheet" href="/static/sports-row.css?v={{ static_version }}">{% endif %}
   {% if screen is defined and screen.market in ["stocks", "memecoins"] %}<link rel="stylesheet" href="/static/stock-indicator.css?v={{ static_version }}">{% endif %}
   {% block detail_head %}{% endblock %}
   <meta name="description" content="{% block screen_description %}{% if share %}{{ screen.item.subtitle }}{% endif %}{% endblock %}">
@@ -90,7 +91,10 @@
     {% if screen.market == 'stocks' and screen.stale_assessments %}<p class="stock-freshness-note" role="status">{{ screen.stale_assessments }} stock assessment{{ '' if screen.stale_assessments == 1 else 's' }} {{ 'uses an older price' if screen.stale_assessments == 1 else 'use older prices' }}. The prices shown may be newer than those checks.</p>{% endif %}
     {% if screen.rows %}
       {% if screen.market == 'memecoins' %}<p class="board-scope">Prices and observed chain findings appear here. Action tags require a saved Runner assessment.</p>{% endif %}
-      <div class="ticker-list market-{{ screen.market }}" data-tag-list aria-label="{{ 'Events' if screen.market == 'sports' else 'Tokens' if screen.market == 'memecoins' else 'Tickers' }}">{% for item in screen.rows %}<a class="ticker{% if item.announced %} is-new{% endif %}" href="{{ item.href }}" data-tag="{{ item.tag_tone }}"{% if screen.market == 'stocks' %} data-chart-offset="{{ item.chart_offset }}"{% endif %}{% if item.eligibility_note %} title="{{ item.eligibility_note }}"{% endif %}>
+      <div class="ticker-list market-{{ screen.market }}" data-tag-list aria-label="{{ 'Events' if screen.market == 'sports' else 'Tokens' if screen.market == 'memecoins' else 'Tickers' }}">{% for item in screen.rows %}<a class="ticker{% if item.matchup is defined %} sports-matchup{% endif %}{% if item.announced %} is-new{% endif %}" href="{{ item.href }}" data-tag="{{ item.tag_tone }}"{% if screen.market == 'stocks' %} data-chart-offset="{{ item.chart_offset }}"{% endif %}{% if item.eligibility_note %} title="{{ item.eligibility_note }}"{% endif %}>
+        {% if item.matchup is defined %}
+        {% include '_sports_matchup_row.html' %}
+        {% else %}
         {% if item.tag %}<span class="tag tag-{{ item.tag_tone }}{% if item.risk %} has-risk{% endif %}">{% if item.risk %}<i aria-hidden="true">▲</i>{% endif %}{{ item.tag }}</span>
         {% else %}<span class="ticker-mark tone-{{ loop.index0 % 5 }}" aria-hidden="true">{{ item.mark }}</span>{% endif %}
         <span class="ticker-name">{% if screen.market == "stocks" %}<span class="ticker-symbol"><strong>{{ item.name }}</strong>{{ verified_check(item) }}</span>{% else %}<strong>{{ item.name }}</strong>{% endif %}<small{% if screen.market == 'memecoins' and item.contract_address %} title="{{ item.contract_address }}"{% endif %}>{{ item.subtitle }}</small>{% if item.indicator is defined %}{{ sentiment_reading(item) }}{% endif %}</span>
@@ -100,6 +104,7 @@
           {% if item.tag %}<small class="ticker-run-status status-{{ item.tag_tone }}">{% if item.risk %}<i aria-hidden="true">▲</i>{% endif %}{{ item.tag }}</small>{% endif %}
         </span>{% endif %}
         {% if screen.market == 'stocks' %}{{ score_pie(item) }}{% elif screen.market == 'memecoins' %}<span class="row-assessment">{{ score_pie(item) }}<small>{{ 'Price paused' if item.freshness == 'paused' else item.assessment.label }}</small></span>{% else %}<span class="row-assessment">{% if item.score is not none %}{{ score_pie(item) }}<small>{{ item.score|round|int }} score</small>{% elif item.assessment is defined and item.assessment.value is not none %}<strong{% if screen.market == 'sports' and item.assessment.selected_team %} aria-label="{{ item.assessment.selected_team }} · {{ item.assessment.value|round|int }}{{ item.assessment.unit }} win chance"{% endif %}>{% if screen.market == 'sports' and item.selected_team_label %}{{ item.selected_team_label }} {% endif %}{{ item.assessment.value|round|int }}{{ item.assessment.unit }}</strong><small>{{ item.assessment.label }}</small>{% else %}<span class="assessment-pending" aria-hidden="true">◌</span><small>{{ 'Price paused' if screen.market == 'memecoins' and item.freshness == 'paused' else item.assessment.label if screen.market == 'memecoins' else item.research_label|default('Pending') }}</small>{% endif %}</span>{% endif %}
+        {% endif %}
         <span class="row-arrow" aria-hidden="true">↗</span>
       </a>{% endfor %}</div>
     {% else %}<div class="empty"><span aria-hidden="true">◌</span><h2>{{ 'Try another search' if screen.query else 'A quiet moment' }}</h2><p>{{ 'Search by name or symbol.' if screen.query else 'New activity will appear here.' }}</p></div>{% endif %}
@@ -118,9 +123,10 @@
         <small data-chance-contract>{{ screen.item.probability_contract }}</small>
       </p>
       {% endif %}
+      {% if screen.market == 'sports' and screen.item.matchup is defined %}{% include '_sports_opinion.html' %}{% endif %}
       {% if screen.market in ['sports', 'memecoins'] %}{% include "_market_assessment.html" %}{% endif %}
       <section class="visual" aria-label="{{ 'Game' if screen.teams else 'Price history' }}">
-      {% if screen.teams %}<div class="teams">{% for team in screen.teams %}<div><span class="team-mark">{{ team.mark }}</span><h2>{{ team.name }}</h2><strong>{{ team.score }}</strong></div>{% endfor %}</div><p class="visual-caption" data-game-note>{{ screen.note }}</p>
+      {% if screen.teams %}<div class="teams">{% for team in screen.teams %}<div><span class="team-mark">{{ team.mark }}</span><h2>{% if team.href %}<a href="{{ team.href }}">{{ team.name }}</a>{% else %}{{ team.name }}{% endif %}</h2><strong>{{ team.score }}</strong></div>{% endfor %}</div><p class="visual-caption" data-game-note>{{ screen.note }}</p>
       {% else %}<svg class="price-chart" viewBox="0 0 800 280" role="img" aria-label="Price history" hidden><path class="chart-area"/><path class="chart-line"/><circle class="chart-point" r="4" hidden/></svg><p class="chart-status" data-chart-status>Price history is loading.</p><div class="chart-state-legend" data-chart-state-legend aria-label="Status legend" hidden></div>{% endif %}
       </section>
       {% block detail_map %}{% endblock %}

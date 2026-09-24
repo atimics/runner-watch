@@ -3698,6 +3698,10 @@ def _migration_085_attention_shadow(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_086_sports_opinion_factors(db: DatabaseConnection) -> None:
+    _ensure_column(db, "sports_predictions", "factors_json TEXT NOT NULL DEFAULT '{}'")
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3788,6 +3792,7 @@ MIGRATIONS = (
     Migration(83, "golf_market_context", _migration_083_golf_market_context),
     Migration(84, "report_spotlight", _migration_084_report_spotlight),
     Migration(85, "attention_shadow", _migration_085_attention_shadow),
+    Migration(86, "sports_opinion_factors", _migration_086_sports_opinion_factors),
 )
 
 

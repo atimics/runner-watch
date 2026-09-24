@@ -63,6 +63,113 @@ def test_tag_filter_chips_hide_and_show_rows(page: Page):
     expect(page.locator(".ticker:visible")).to_have_count(2)
 
 
+@pytest.mark.parametrize("width", [320, 390, 768, 1280])
+@pytest.mark.parametrize("scores", [(68, 72), (119, 123)])
+def test_sports_leader_is_larger_and_score_stays_on_right(page: Page, width, scores):
+    event = fixtures.sample("sports")
+    event.update(away_score=scores[0], home_score=scores[1])
+    event["prediction"] = {
+        "home_probability": 0.4,
+        "away_probability": 0.6,
+        "selection": "home",
+        "signal": "watch",
+    }
+    page.set_viewport_size({"width": width, "height": 844})
+    open_screen(page, listing("sports", [event]))
+    expect(page.locator(".sports-team.is-highlighted")).to_have_text("NYK")
+    expect(page.locator(".sports-chance-ring")).to_have_attribute(
+        "aria-label", "Pregame model: Boston Celtics 60% win chance."
+    )
+    expect(page.locator(".ticker-value strong")).to_have_text(f"{scores[0]} – {scores[1]}")
+    identity = page.locator(".ticker-name").bounding_box()
+    score = page.locator(".ticker-value").bounding_box()
+    assert score["x"] >= identity["x"] + identity["width"]
+    digits = page.locator(".ticker-value strong").bounding_box()
+    assert digits["x"] >= identity["x"] + identity["width"]
+    forecast = page.locator(".sports-forecast").bounding_box()
+    assert forecast["x"] >= score["x"] + score["width"]
+    tag = page.locator(".sports-matchup > .tag").bounding_box()
+    assert tag["x"] + tag["width"] <= identity["x"]
+    expect(page.locator(".sports-identity > .sports-league")).to_have_text("NBA")
+    assert page.locator(".ticker-list > *").count() == 1
+    sizes = page.locator(".sports-team").evaluate_all(
+        "teams => teams.map(team => parseFloat(getComputedStyle(team).fontSize))"
+    )
+    assert sizes[1] > sizes[0]
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    page.locator(".sports-matchup").focus()
+    assert page.locator(".sports-matchup").evaluate("el => el === document.activeElement")
+
+
+@pytest.mark.parametrize("width", [320, 390, 768, 1280])
+def test_sports_row_uses_stock_spacing_and_glyph_size(page: Page, width):
+    page.set_viewport_size({"width": width, "height": 844})
+    measure = """row => {
+        const style = getComputedStyle(row);
+        const glyph = row.querySelector('.ticker-score').getBoundingClientRect();
+        return [style.minHeight, style.padding, style.columnGap, glyph.width, glyph.height];
+    }"""
+    open_screen(page, listing("stocks", [fixtures.scored_stock()]))
+    stock_layout = page.locator(".ticker").evaluate(measure)
+    page.unroute("http://app.test/")
+    event = fixtures.sample("sports")
+    event.update(away_score=5, home_score=3, league="mlb")
+    open_screen(page, listing("sports", [event]))
+    assert page.locator(".ticker").evaluate(measure) == stock_layout
+    if width <= 760:
+        assert page.locator(".ticker").bounding_box()["height"] <= 62
+    assert page.locator(".ticker-list > *").count() == 1
+
+
+@pytest.mark.parametrize("width", [320, 390, 1280])
+def test_saved_sports_factors_appear_in_row_glyph_and_game_detail(page: Page, width):
+    event = fixtures.sample("sports")
+    event.update(
+        league="mlb",
+        away_abbreviation="ARI",
+        away_team_name="Arizona",
+        home_abbreviation="COL",
+        home_team_name="Colorado",
+        status="in",
+        away_score=2,
+        home_score=4,
+        prediction={
+            "model_version": "team-form-v1",
+            "observed_at": "2026-09-23T19:00:00+00:00",
+            "home_probability": 0.433193,
+            "away_probability": 0.566807,
+            "home_market_probability": 0.489166,
+            "away_market_probability": 0.510834,
+            "selection": "away",
+            "signal": "watch",
+            "factors": {
+                "baseline_pct": 50,
+                "home_record_delta_pp": -10.180723,
+                "home_venue_delta_pp": 3.5,
+                "home_clamp_delta_pp": 0,
+                "home_probability_pct": 43.319277,
+                "home_record": {"wins": 64, "losses": 86},
+                "away_record": {"wins": 90, "losses": 60},
+            },
+        },
+    )
+    page.set_viewport_size({"width": width, "height": 844})
+    open_screen(page, listing("sports", [event]))
+    expect(page.locator(".sports-team.is-highlighted")).to_have_text("COL")
+    expect(page.locator(".sports-chance-ring .sports-factor")).to_have_count(2)
+    expect(page.locator(".sports-chance-ring")).to_have_attribute(
+        "aria-label", re.compile(r"Season record \+10.2 points; Venue -3.5 points")
+    )
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+    open_screen(page, detail("sports", event))
+    expect(page.get_by_role("region", name="Saved pregame opinion")).to_be_visible()
+    expect(page.locator(".sports-opinion-steps li")).to_have_count(2)
+    expect(page.get_by_text("ARI season record 90–60")).to_be_visible()
+    expect(page.get_by_text("Market chance 51.1% · gap +5.6 pp")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
 def test_narrow_stock_rows_are_single_line(page: Page):
     page.set_viewport_size({"width": 390, "height": 844})
     open_screen(page, listing("stocks", [fixtures.scored_stock()]))
