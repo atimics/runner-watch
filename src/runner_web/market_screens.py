@@ -77,9 +77,9 @@ def sports_matchup(item: dict[str, Any], state: dict[str, Any]) -> dict[str, Any
     prediction = item.get("prediction") or {}
     probabilities = [number(prediction.get(f"{side}_probability")) for side in sides]
     if all(p is None or 0 <= p <= 1 for p in probabilities):
-        if probabilities[0] is None and probabilities[1] is not None:
+        if prediction.get("away_probability") is None and probabilities[1] is not None:
             probabilities[0] = 1 - probabilities[1]
-        elif probabilities[1] is None and probabilities[0] is not None:
+        elif prediction.get("home_probability") is None and probabilities[0] is not None:
             probabilities[1] = 1 - probabilities[0]
     valid_model = all(p is not None and 0 <= p <= 1 for p in probabilities)
     valid_model = valid_model and math.isclose(sum(probabilities), 1, abs_tol=0.001)

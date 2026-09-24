@@ -70,6 +70,8 @@ def test_late_pregame_feed_waits_for_scores_before_highlighting_a_leader():
     [
         {},
         {"home_probability": True},
+        {"home_probability": True, "away_probability": 0.6},
+        {"home_probability": 0.4, "away_probability": "invalid"},
         {"home_probability": float("nan")},
         {"home_probability": 1.1},
         {"home_probability": -0.1},
