@@ -42,7 +42,7 @@
 {%- endmacro %}
 
 {% macro indicator_legend(market='stocks', size_basis='attention') -%}
-<details class="indicator-legend"><summary>{{ 'Entity map key' if size_basis == 'holding' else 'Indicator key' }}</summary>
+<details class="indicator-legend"><summary>{{ 'Legend' if size_basis == 'holding' else 'Indicator key' }}</summary>
 <div class="indicator-key-grid">
   <div class="indicator-key-group">
     <h3>Risk</h3>

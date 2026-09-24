@@ -967,7 +967,7 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     )
     # The largest holding is first in the map and in keyboard order.
     assert radii[0] > radii[1] if has_holdings else radii[0] == radii[1]
-    page.get_by_text("Entity map key", exact=True).click()
+    page.get_by_text("Legend", exact=True).click()
     expect(
         page.get_by_text("Ring size follows the reported holding value", exact=False)
     ).to_be_visible()

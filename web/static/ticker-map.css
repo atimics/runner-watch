@@ -28,7 +28,7 @@ main:has(.ticker-map),main:has(.token-replay){max-width:1040px}.market-screen:ha
 
 .map-interest-edge{fill:none;stroke:var(--muted);stroke-width:1;pointer-events:stroke}.map-interest-edge.buy{stroke:var(--blue)}.map-interest-edge.sell{stroke:var(--red)}
 
-.entity-worth{margin-top:28px}.entity-worth-value{font-size:36px;font-weight:550}.entity-worth-chart{display:block;width:100%;margin:20px 0 6px}.entity-worth-point{fill:var(--green)}.entity-edge{fill:none;stroke:var(--muted);stroke-width:1.5}.entity-edge.buy{stroke:var(--blue)}.entity-edge.sell{stroke:var(--red)}.entity-center{view-transition-name:entity-focus}.entity-map{margin-top:10px}@view-transition{navigation:auto}@media(prefers-reduced-motion:reduce){::view-transition-group(*){animation-duration:0s}}
+.entity-worth{margin-top:28px}.entity-worth [data-worth-date]{text-align:right}.entity-worth-value{font-size:36px;font-weight:550}.entity-worth-chart{display:block;width:100%;margin:20px 0 6px}.entity-worth-point{fill:var(--green)}.entity-edge{fill:none;stroke:var(--muted);stroke-width:1.5}.entity-edge.buy{stroke:var(--blue)}.entity-edge.sell{stroke:var(--red)}.entity-center{view-transition-name:entity-focus}.entity-map{margin-top:10px}@view-transition{navigation:auto}@media(prefers-reduced-motion:reduce){::view-transition-group(*){animation-duration:0s}}
 
 .map-source .map-score-trace{max-width:680px;margin:16px 0 20px;grid-template-columns:1fr;gap:10px}.map-source .map-score-trace>div{display:grid;grid-template-columns:150px minmax(0,1fr);gap:16px}.map-source .map-score-trace dd{text-align:left;max-width:none;color:var(--text)}@media(max-width:500px){.map-source .map-score-trace>div{grid-template-columns:110px minmax(0,1fr);gap:12px}}
 
@@ -98,8 +98,14 @@ main:has(.ticker-map),main:has(.token-replay){max-width:1040px}.market-screen:ha
 
 [data-entity-map]{touch-action:none;cursor:grab}[data-entity-map].orbit-interacting{cursor:grabbing}
 [data-entity-map]:focus-visible{outline:2px solid var(--text);outline-offset:3px}
-.entity-map-tools{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:12px}
-.entity-map-tools button{min-width:40px;min-height:40px;padding:8px 12px;border:1px solid var(--line);border-radius:20px;background:var(--panel);color:var(--text);font:inherit;font-size:13px;cursor:pointer}
-.entity-map-tools button:disabled{opacity:.4;cursor:default}.entity-map-tools span{min-width:40px;text-align:center;color:var(--muted);font-size:12px}
-
 @media(max-width:500px){.entity-map .entity-stock-symbol{font-size:16px}.entity-map .map-node-action{font-size:14px}}
+
+.cluster-worth{margin:28px 0;padding:24px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.cluster-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}.cluster-heading h2{margin:0;font-size:20px;font-weight:550;letter-spacing:-.3px}
+.cluster-heading label{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px}.cluster-heading select{min-height:40px;max-width:120px;padding:8px 12px;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:8px;font:inherit}
+.cluster-symbol{font-weight:600}.cluster-definition,.cluster-basis,.cluster-coverage,.cluster-dates,.cluster-status{color:var(--muted);font-size:13px;line-height:1.6;margin:8px 0}.cluster-definition{margin:12px 0 20px}
+.cluster-total{display:block;font-size:36px;font-weight:550;letter-spacing:-1px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.cluster-coverage{color:var(--text)}
+.cluster-breakdown{margin-top:18px;font-size:13px}.cluster-breakdown summary{cursor:pointer;min-height:24px}.cluster-breakdown ul{list-style:none;padding:0;margin:8px 0;max-height:320px;overflow:auto}.cluster-breakdown li{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:12px 0;border-top:1px solid var(--line)}
+.cluster-breakdown li>div{min-width:0}.cluster-breakdown a{color:var(--text);text-decoration:underline;text-underline-offset:3px;overflow-wrap:anywhere}.cluster-breakdown small{display:block;color:var(--muted);margin-top:5px}.cluster-breakdown strong{font-weight:500;white-space:nowrap;font-variant-numeric:tabular-nums}
+.cluster-worth button{min-height:40px;padding:8px 14px;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:20px;font:inherit}.cluster-worth :is(select,button,summary,a):focus-visible{outline:2px solid var(--text);outline-offset:4px}
+@media(max-width:500px){.cluster-heading h2{font-size:18px}.cluster-total{font-size:32px}.cluster-heading{gap:8px}.cluster-heading select{max-width:96px}}

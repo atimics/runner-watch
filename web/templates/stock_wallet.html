@@ -1,4 +1,5 @@
 {% extends "market_screen.html" %}
+{% from "_cluster_worth.html" import cluster_worth %}
 {% block detail_head %}<link rel="stylesheet" href="/static/ticker-map.css?v={{ static_version }}">{% endblock %}
 {% block screen_main %}
 {% if wallet_ticker %}<a class="back" href="/stock/{{ wallet_ticker }}">← {{ wallet_ticker }}</a>{% endif %}
@@ -13,17 +14,13 @@
 <p class="wallet-scope" data-worth-date></p>
 </section>
 <section class="ticker-map entity-map" aria-label="Entity and associated stocks">
-<div class="map-canvas"><svg data-entity-map viewBox="0 0 760 440" role="group" tabindex="0" aria-label="{{ wallet.name }} and associated stocks" aria-describedby="entity-map-help"></svg></div>
-<div class="entity-map-tools" aria-label="Map zoom">
-<button type="button" data-entity-zoom-out aria-label="Zoom out">−</button><span data-entity-zoom aria-live="polite">1.0×</span><button type="button" data-entity-zoom-in aria-label="Zoom in">+</button><button type="button" data-entity-fit>Fit map</button>
-</div>
-<p class="map-note" id="entity-map-help">Largest holdings appear first. Larger portfolios spiral outward. Drag to move; pinch or use + and − to zoom. Fit map shows all loaded stocks.</p>
+<div class="map-canvas"><svg data-entity-map viewBox="0 0 760 440" role="group" tabindex="0" aria-label="{{ wallet.name }} and associated stocks"></svg></div>
 {{ indicator_legend(size_basis='holding') }}
 </section>
+{% if entity.stocks %}{{ cluster_worth(stocks=entity.stocks) }}{% endif %}
 <script type="application/json" id="entityData" nonce="{{ request.state.csp_nonce }}">{{ {'wallet': wallet, 'entity': entity}|tojson }}</script>
 {% endif %}
-<h2 class="wallet-section-title">Stocks</h2>
-<p class="wallet-scope">Stocks linked by the filings below.</p>
+<h2 class="wallet-section-title">Holdings</h2>
 {{ super() }}
 <section class="wallet-events" aria-label="Wallet events" data-wallet-events>
 <h2 class="wallet-section-title">Events</h2>
@@ -34,4 +31,4 @@
 </section>
 {% endblock %}
 
-{% block detail_scripts %}<script src="/static/map-orbit.js?v={{ static_version }}" defer></script><script src="/static/ring-glyph.js?v={{ static_version }}" defer></script><script src="/static/entity-map-navigation.js?v={{ static_version }}" defer></script><script src="/static/entity-map.js?v={{ static_version }}" defer></script><script src="/static/wallet-events.js?v={{ static_version }}" defer></script>{% endblock %}
+{% block detail_scripts %}<script src="/static/cluster-worth.js?v={{ static_version }}" defer></script><script src="/static/map-orbit.js?v={{ static_version }}" defer></script><script src="/static/ring-glyph.js?v={{ static_version }}" defer></script><script src="/static/entity-map-navigation.js?v={{ static_version }}" defer></script><script src="/static/entity-map.js?v={{ static_version }}" defer></script><script src="/static/wallet-events.js?v={{ static_version }}" defer></script>{% endblock %}

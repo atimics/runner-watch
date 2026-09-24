@@ -1,0 +1,13 @@
+{% macro cluster_worth(ticker='', stocks=[]) -%}
+<section class="cluster-worth" data-cluster-worth data-ticker="{{ ticker }}" aria-label="Cluster net worth">
+  <div class="cluster-heading">
+    <h2>Cluster net worth</h2>
+    {% if stocks %}<label>Stock <select data-cluster-stock aria-label="Stock cluster">{% for stock in stocks %}<option value="{{ stock.ticker }}" data-holding="{{ stock.value if stock.value is not none else -1 }}">{{ stock.ticker }}</option>{% endfor %}</select></label>{% else %}<span class="cluster-symbol">{{ ticker }}</span>{% endif %}
+  </div>
+  <p class="cluster-definition">All tracked stocks held by entities linked to <span data-cluster-symbol>{{ ticker }}</span>.</p>
+  <div data-cluster-result aria-live="polite" aria-atomic="true">
+    <p class="cluster-status" role="status">Loading saved holdings…</p>
+  </div>
+  <button type="button" data-cluster-retry hidden>Try again</button>
+</section>
+{%- endmacro %}

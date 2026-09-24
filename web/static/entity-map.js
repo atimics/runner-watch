@@ -184,5 +184,5 @@
     dot.append(svg('title',{},`${point.time.slice(0,10)} · ${money(point.value)} · ${point.covered} stocks valued`)); chart.append(dot);
     previous = point;
   });
-  document.querySelector('[data-worth-date]').textContent = `${points[0].time.slice(0,10)} — ${points.at(-1).time.slice(0,10)} · Filing dates`;
+  document.querySelector('[data-worth-date]').textContent = `${points[0].time.slice(0,10)} — ${points.at(-1).time.slice(0,10)}`;
 })();

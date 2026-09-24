@@ -8179,6 +8179,18 @@ def stock_ticker_map_api(
     return _conditional_json_response(request, payload)
 
 
+@app.get("/api/stocks/{ticker}/cluster-worth")
+def stock_cluster_worth_api(ticker: str, request: Request) -> Response:
+    from runner_web.cluster_worth import cluster_worth
+
+    enforce_rate(request, "stock-cluster-worth", limit=60, seconds=60)
+    normalized = _clean_ticker(ticker)
+    payload = _public_screen_data(
+        "cluster-worth", normalized, lambda: cluster_worth(normalized), ttl_seconds=300
+    )
+    return _conditional_json_response(request, payload)
+
+
 @app.get("/api/stocks/{ticker}/map/connections")
 def stock_person_connections_api(
     ticker: str,

@@ -14,4 +14,4 @@
   {% if flash_report and (flash_report.href or user) %}<div class="ticker-research"><h3>Research</h3>{{ flash_report_action(flash_report) }}</div>{% endif %}</div>
 </section>
 {% endblock %}
-{% block detail_scripts %}<script src="/static/content-notices.js?v={{ static_version }}" defer></script><script src="/static/map-orbit.js?v={{ static_version }}" defer></script><script src="/static/ticker-map.js?v={{ static_version }}" defer></script><script src="/static/flash-report.js?v={{ static_version }}" defer></script><script src="/static/flash-comments.js?v={{ static_version }}" defer></script>{% endblock %}
+{% block detail_scripts %}<script src="/static/cluster-worth.js?v={{ static_version }}" defer></script><script src="/static/content-notices.js?v={{ static_version }}" defer></script><script src="/static/map-orbit.js?v={{ static_version }}" defer></script><script src="/static/ticker-map.js?v={{ static_version }}" defer></script><script src="/static/flash-report.js?v={{ static_version }}" defer></script><script src="/static/flash-comments.js?v={{ static_version }}" defer></script>{% endblock %}

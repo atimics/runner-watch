@@ -7,6 +7,7 @@ import pytest
 from playwright.sync_api import expect
 
 from runner_web import main
+from runner_web.cluster_worth import cluster_summary
 from runner_web.entity_view import entity_view
 from runner_web.market_screens import listing
 from tests.test_browser_stock_map import map_payload
@@ -70,8 +71,71 @@ def open_entity(page, width=390, count=18, reduced_motion=False):
         "http://app.test/**", lambda route: route.fulfill(body=html, content_type="text/html")
     )
     page.route("**/api/stocks/*/map", lambda route: route.fulfill(json={"events": []}))
+    page.route(
+        "**/api/stocks/*/cluster-worth",
+        lambda route: route.fulfill(
+            json=cluster_summary(
+                route.request.url.split("/")[-2],
+                [{"id": "sec:101", "name": "Example Fund"}],
+                events,
+                rows,
+            )
+        ),
+    )
     page.goto("http://app.test/wallet/example")
     return page.locator("[data-entity-map]")
+
+
+@pytest.mark.parametrize("width", [320, 390, 1280])
+def test_cluster_totals_switch_stock_and_show_members_and_holdings(page, width, tmp_path):
+    open_entity(page, width, count=8)
+    cluster = page.get_by_role("region", name="Cluster net worth", exact=True)
+    expect(cluster.locator(".cluster-total")).to_have_text("$35,000")
+    expect(cluster.locator(".cluster-coverage")).to_have_text(
+        "1 linked entity · 8 stocks · 7 of 8 holdings valued"
+    )
+    expect(cluster.get_by_role("combobox", name="Stock cluster")).to_have_value("S07")
+    cluster.get_by_role("combobox", name="Stock cluster").select_option("S00")
+    expect(cluster.locator(".cluster-definition")).to_have_text(
+        "All tracked stocks held by entities linked to S00."
+    )
+    expect(cluster.locator(".cluster-total")).to_have_text("$35,000")
+    cluster.get_by_text("Entities in this cluster", exact=True).click()
+    expect(cluster.get_by_role("link", name="Example Fund", exact=True)).to_have_attribute(
+        "href", "/wallets/stocks/S00/sec%3A101"
+    )
+    cluster.get_by_text("Stocks in this cluster", exact=True).click()
+    expect(cluster.get_by_role("link", name="S07", exact=True)).to_have_attribute(
+        "href", "/stock/S07"
+    )
+    expect(page.get_by_role("heading", name="Holdings", exact=True)).to_be_visible()
+    expect(page.locator("[data-worth-date]")).to_have_css("text-align", "right")
+    assert "Filing dates" not in page.locator("[data-worth-date]").inner_text()
+    expect(page.get_by_text("Legend", exact=True)).to_be_visible()
+    expect(page.locator(".entity-map-tools, #entity-map-help")).to_have_count(0)
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    cluster.screenshot(path=tmp_path / f"cluster-{width}.png")
+
+
+def test_cluster_loading_failure_retries_and_zero_is_a_value(page):
+    open_entity(page, count=1)
+    page.route("**/cluster-worth", lambda route: route.fulfill(status=503))
+    page.reload()
+    cluster = page.get_by_role("region", name="Cluster net worth", exact=True)
+    expect(cluster.get_by_text("Saved holdings are taking longer to load.")).to_be_visible()
+    payload = cluster_summary(
+        "S00",
+        [{"id": "sec:101", "name": "<img src=x onerror=alert(1)>"}],
+        [],
+        [],
+    )
+    payload["value"] = 0
+    page.route("**/cluster-worth", lambda route: route.fulfill(json=payload))
+    cluster.get_by_role("button", name="Try again").click()
+    expect(cluster.locator(".cluster-total")).to_have_text("$0")
+    cluster.get_by_text("Entities in this cluster", exact=True).click()
+    expect(cluster.get_by_role("link")).to_have_text("<img src=x onerror=alert(1)>")
+    expect(cluster.locator("img")).to_have_count(0)
 
 
 @pytest.mark.parametrize("width", [320, 390, 1280])
@@ -116,16 +180,18 @@ def test_all_holdings_orbit_in_size_order_and_keep_their_distance(page, width, c
         assert box["x"] + box["width"] <= canvas["x"] + canvas["width"] + 1
         assert box["y"] + box["height"] <= canvas["y"] + canvas["height"] + 1
     graph.screenshot(path=tmp_path / f"entity-{count}-{width}.png")
-    page.get_by_role("button", name="Fit map", exact=True).click()
+    graph.focus()
+    graph.press("Home")
     home = graph.get_attribute("viewBox")
-    page.get_by_role("button", name="Zoom in", exact=True).click()
+    graph.focus()
+    graph.press("+")
     assert float(graph.get_attribute("data-zoom")) > 1
     graph.focus()
     graph.press("ArrowRight")
     assert graph.get_attribute("viewBox") != home
     graph.press("Home")
     assert graph.get_attribute("viewBox") == home
-    expect(page.get_by_role("button", name="Zoom out", exact=True)).to_be_disabled()
+    expect(graph).to_have_attribute("data-zoom", "1")
     expect(links).to_have_count(count)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert errors == []
@@ -138,9 +204,11 @@ def test_reduced_motion_keeps_all_stocks_and_zoom_available(page):
     expect(graph.locator("[data-entity-stock]").first).not_to_have_attribute(
         "transform", re.compile("translate")
     )
-    page.get_by_role("button", name="Zoom in", exact=True).click()
+    graph.focus()
+    graph.press("+")
     assert float(graph.get_attribute("data-zoom")) > 1
-    page.get_by_role("button", name="Fit map", exact=True).click()
+    graph.focus()
+    graph.press("Home")
     expect(graph).to_have_attribute("data-zoom", "1")
 
 
@@ -170,7 +238,8 @@ def test_touch_pinch_drag_and_stock_tap(browser):
         )
         client.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
         assert float(graph.get_attribute("data-zoom")) > 1.5
-        page.get_by_role("button", name="Fit map", exact=True).click()
+        graph.focus()
+        graph.press("Home")
         page.clock.run_for(32)
         start = graph.locator('[data-entity-stock="S17"] .entity-glyph-backplate').bounding_box()
         x, y = start["x"] + start["width"] / 2, start["y"] + start["height"] / 2
@@ -193,7 +262,8 @@ def test_touch_pinch_drag_and_stock_tap(browser):
         assert graph.get_attribute("viewBox") != before
         expect(page).to_have_url("http://app.test/wallet/example")
         expect(graph).not_to_have_class(re.compile("orbit-interacting"))
-        page.get_by_role("button", name="Fit map", exact=True).click()
+        graph.focus()
+        graph.press("Home")
         page.clock.run_for(32)
         # Tap the current position of the orbiting stock, as a finger would.
         target = graph.locator('[data-entity-stock="S17"] .entity-glyph-backplate').bounding_box()
