@@ -49,6 +49,8 @@ revisions while a window is pending. Identical completed observations share a
 hash. An unchanged bar seen after its close still gets its completed receipt.
 Labels use the first completed observation of each bar. The outcome receipt
 records all chosen hashes. Later revisions remain available for an audit.
+An archive failure gets an ingestion error receipt. A separate database savepoint
+preserves normal market collection through such a failure.
 
 ## Outcome worker and operations
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import logging
 import math
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -22,6 +23,7 @@ from runner_watch.source_catalog import SourcePolicy
 from runner_web.db import connection
 
 TERMINAL_ITEM_STATUSES = {"processed", "ignored", "rejected"}
+LOG = logging.getLogger(__name__)
 
 
 def _iso(value: datetime | None = None) -> str:
@@ -286,7 +288,19 @@ def _market_projection(database: Any, run_id: str, fetch: SourceFetch, collected
         from runner_web import attention_trial
 
         if interval == "5m" and fetch.source == "yahoo" and attention_trial.enabled():
-            attention_trial.archive_bars(database, rows)
+            database.execute("SAVEPOINT attention_archive")
+            try:
+                attention_trial.archive_bars(database, rows)
+                database.execute("RELEASE SAVEPOINT attention_archive")
+            except Exception as exc:
+                database.execute("ROLLBACK TO SAVEPOINT attention_archive")
+                database.execute("RELEASE SAVEPOINT attention_archive")
+                database.execute(
+                    """INSERT INTO ingestion_items(run_id,item_key,status,payload_json,error)
+                    VALUES(?,?,?,?,?)""",
+                    (run_id, "__attention_shadow__", "error", "{}", type(exc).__name__),
+                )
+                LOG.exception("Attention bar archive failed; market bars saved")
     return digest.hexdigest()
 
 

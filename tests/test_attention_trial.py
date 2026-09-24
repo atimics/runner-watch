@@ -415,3 +415,36 @@ def test_pending_session_waits_for_close_and_outcome_allowance(database, monkeyp
     assert trial.release_report()["completed_sessions"] == 0
     monkeypatch.setattr(trial, "utcnow", lambda: AT + timedelta(days=1))
     assert trial.release_report()["completed_sessions"] == 1
+
+
+def test_archive_failure_preserves_market_collection_and_error_receipt(database, monkeypatch):
+    from runner_watch.ingestion import SourceFetch
+    from runner_web.ingestion import record_source_fetch
+
+    frame = pd.DataFrame(
+        {"Open": [10], "High": [11], "Low": [9], "Close": [10], "Volume": [100]},
+        index=pd.DatetimeIndex([AT]),
+    )
+
+    def fail_archive(conn, rows):
+        # Force a database error: PostgreSQL needs the savepoint rollback too.
+        conn.execute("INSERT INTO absent_trial_table VALUES(1)")
+
+    monkeypatch.setattr(trial, "archive_bars", fail_archive)
+    run_id = record_source_fetch(
+        SourceFetch.success(
+            source="yahoo",
+            feed="market_bars",
+            locator="test",
+            started_at=AT,
+            payload={"TEST": frame},
+            metadata={"interval": "5m"},
+        )
+    )
+    with connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM market_bars").fetchone()[0] == 1
+        error = conn.execute(
+            "SELECT error FROM ingestion_items WHERE run_id=? AND item_key='__attention_shadow__'",
+            (run_id,),
+        ).fetchone()[0]
+    assert error == "OperationalError"
