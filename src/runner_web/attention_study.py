@@ -9,8 +9,10 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
+import importlib.metadata
 import json
 import math
+import platform
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
@@ -417,27 +419,33 @@ def benchmark(rows: list[dict[str, Any]], output: Path) -> dict[str, Any]:
     output.mkdir(parents=True, exist_ok=True)
     model_path = output / "attention-candidate.txt"
     models[chosen].save_model(str(model_path))
-    with gzip.open(output / "scored-rows.jsonl.gz", "wt") as stream:
+    scored_path = output / "scored-rows.jsonl.gz"
+    with (
+        scored_path.open("wb") as raw,
+        gzip.GzipFile(fileobj=raw, filename="", mode="wb", mtime=0) as stream,
+    ):
         for part, indices in split.items():
             for i in indices:
                 r = rows[i]
                 stream.write(
-                    json.dumps(
-                        {
-                            "snapshot_id": r["snapshot_id"],
-                            "scan_run_id": r["scan_run_id"],
-                            "ticker": r["ticker"],
-                            "day": r["day"],
-                            "partition": part,
-                            "target": r["target"],
-                            "target_status": r["status"],
-                            "entry_at": r["entry_at"],
-                            "label_end_at": r["label_end_at"],
-                            "baseline": float(scores["current_market_activity"][i]),
-                            "candidate": float(scores[chosen][i]),
-                        }
-                    )
-                    + "\n"
+                    (
+                        json.dumps(
+                            {
+                                "snapshot_id": r["snapshot_id"],
+                                "scan_run_id": r["scan_run_id"],
+                                "ticker": r["ticker"],
+                                "day": r["day"],
+                                "partition": part,
+                                "target": r["target"],
+                                "target_status": r["status"],
+                                "entry_at": r["entry_at"],
+                                "label_end_at": r["label_end_at"],
+                                "baseline": float(scores["current_market_activity"][i]),
+                                "candidate": float(scores[chosen][i]),
+                            }
+                        )
+                        + "\n"
+                    ).encode()
                 )
     return {
         "schema": "attention-study.v1",
@@ -477,6 +485,12 @@ def benchmark(rows: list[dict[str, Any]], output: Path) -> dict[str, Any]:
             )
         ),
         "model_sha256": hashlib.sha256(model_path.read_bytes()).hexdigest(),
+        "scored_rows_sha256": hashlib.sha256(scored_path.read_bytes()).hexdigest(),
+        "runtime": {
+            "python": platform.python_version(),
+            "numpy": np.__version__,
+            "lightgbm": importlib.metadata.version("lightgbm"),
+        },
         "assessment": "retrospective_candidate" if interval["ci95"][0] > 0 else "inconclusive",
         "limitations": [
             "Archived bars use their latest revision; original revision history is unavailable.",

@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from runner_web.attention_study import (
+    benchmark,
     features,
     future_activity,
     index_bars,
@@ -191,3 +192,39 @@ def test_missing_outcome_bounds_cancel_shared_selections():
 def test_peer_context_rejects_future_decisions_in_the_same_scan():
     with pytest.raises(ValueError, match="single decision time"):
         features([snapshot(), snapshot(captured_at="2026-09-21T14:10:00+00:00")], context=True)
+
+
+def test_benchmark_exports_a_replayable_candidate(tmp_path):
+    import gzip
+    import json
+
+    import lightgbm as lgb
+
+    rows = []
+    for day in range(10):
+        at = datetime(2026, 9, 1, 14, tzinfo=UTC) + timedelta(days=day)
+        for ticker in range(100):
+            rows.append(
+                snapshot(
+                    snapshot_id=f"s{day}-{ticker}",
+                    scan_run_id=f"run{day}",
+                    ticker=f"T{ticker:03}",
+                    captured_at=at.isoformat(),
+                    day=at.date().isoformat(),
+                    entry_at=at.isoformat(),
+                    label_end_at=(at + timedelta(hours=1)).isoformat(),
+                    target=int(ticker % 3 == 0),
+                    status="resolved",
+                    intraday_volatility_pct=float(ticker % 3 + 1),
+                )
+            )
+    result = benchmark(rows, tmp_path)
+    assert result["split"]["test"]["rows"] == 200
+    assert result["test"][result["chosen"]]["selected"] == 20
+    model = lgb.Booster(model_file=str(tmp_path / "attention-candidate.txt"))
+    scores = model.predict(
+        features(rows, context=result["chosen"] == "context_trees"), num_threads=1
+    )
+    with gzip.open(tmp_path / "scored-rows.jsonl.gz", "rt") as stream:
+        saved = [json.loads(line) for line in stream]
+    np.testing.assert_allclose(scores, [row["candidate"] for row in saved], rtol=1e-12)
