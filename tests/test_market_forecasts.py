@@ -517,7 +517,7 @@ def test_report_page_shows_saved_targets_results_and_escaped_reasons(monkeypatch
     _bar("DOWN", 1.0)
     settle_market_forecasts(CLOSE, fetch_market_data=False)
     overview = market_reports_overview(CLOSE)
-    monkeypatch.setattr(web_main, "market_reports_overview", lambda **_kwargs: overview)
+    monkeypatch.setattr(web_main, "market_report", lambda *_args: overview["featured"])
     request = Request(
         {
             "type": "http",
@@ -531,7 +531,9 @@ def test_report_page_shows_saved_targets_results_and_escaped_reasons(monkeypatch
         }
     )
     request.state.csp_nonce = "preview"
-    html = web_main.market_reports_page(request, None).body.decode()
+    html = web_main.market_report_page(
+        overview["featured"]["report_day"], overview["featured"]["slug"], request, None
+    ).body.decode()
     for text in (
         "Target EOD",
         "Actual close",

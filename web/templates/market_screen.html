@@ -63,7 +63,7 @@
   <header class="topbar">
     <a class="brand" href="{{ runners_origin }}/" aria-label="RATi home">RATi<span>●</span></a>
     <nav aria-label="Market" class="markets">
-      {% for key,label,url in [('stocks','Stocks',runners_origin ~ '/'),('memecoins','Memecoins',runners_origin ~ '/memecoins'),('sports','Sports',sports_origin ~ '/')] %}<a href="{{ url }}"{% if screen.market == key %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
+      {% for key,label,url in [('stocks','Stocks',runners_origin ~ '/'),('memecoins','Memecoins',runners_origin ~ '/memecoins'),('sports','Sports',sports_origin ~ '/'),('reports','Reports',runners_origin ~ '/reports')] %}<a href="{{ url }}"{% if screen.market == key %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
     </nav>
     {% if market_clock and screen.market == 'stocks' %}
     <span class="clock" title="{{ market_clock.label }} · {{ market_clock.data_note }}"><i class="{{ 'live' if market_clock.scanner_active else 'idle' }}"></i><b>{{ {'pre':'PRE','regular':'REG','after':'AH','overnight':'OVN'}.get(market_clock.session, 'CLOSED') }}</b><span>{{ market_clock.eastern_now[11:16] }} ET</span></span>

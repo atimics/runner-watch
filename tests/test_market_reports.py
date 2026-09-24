@@ -247,17 +247,19 @@ def test_post_market_report_mirrors_the_watch_board_with_results(
 
     assert [item["status"] for item in result["results"]] == ["created", "created"]
     assert report["report_type"] == "post_market"
-    assert report["headline"] == "TWO led the watch board at +50.0%"
+    assert report["headline"] == "TWO is the company in focus"
+    assert report["watch_headline"] == "TWO led the watch board at +50.0%"
     assert report["comparison_scan_run_id"] == "pre"
     assert report["source_scan_run_id"] == "close"
     assert weekend_overview["featured"]["report_type"] == "post_market"
     assert [row["ticker"] for row in report["leaders"]] == ["ONE", "TWO"]
-    assert report["metric_cards"] == pre_report["metric_cards"]
+    assert report["metric_cards"][1]["value"] == 2
+    assert pre_report["metric_cards"][1]["value"] == 1
     assert report["record_cards"] == [
-        {"label": "Flash record", "value": "0–0", "tone": "flat"},
-        {"label": "Hit rate", "value": "—", "tone": "flat"},
-        {"label": "Board W–L", "value": "1–0", "tone": "up"},
-        {"label": "Avg move", "value": "+50.0%", "tone": "up"},
+        {"label": "Targets hit / missed", "value": "0–0", "tone": "flat"},
+        {"label": "Target hit rate", "value": "—", "tone": "flat"},
+        {"label": "Above / below watch", "value": "1–0", "tone": "up"},
+        {"label": "Avg since watch", "value": "+50.0%", "tone": "up"},
     ]
     assert pre_report["record_cards"] == []
     assert {key: report["metrics"][key] for key in ("held", "joined", "dropped")} == {
@@ -305,7 +307,7 @@ def test_post_market_report_mirrors_the_watch_board_with_results(
     ]
 
 
-def test_post_market_report_keeps_the_pre_market_counts_on_a_wide_board(
+def test_post_market_report_labels_evening_counts_and_preserves_opening_history(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -351,7 +353,10 @@ def test_post_market_report_keeps_the_pre_market_counts_on_a_wide_board(
     assert [row["ticker"] for row in post_report["leaders"]] == [
         row["ticker"] for row in pre_report["leaders"]
     ]
-    assert post_report["metric_cards"] == pre_report["metric_cards"]
+    assert post_report["metric_cards"][0]["value"] == 1
+    assert pre_report["metric_cards"][0]["value"] == 10
+    assert post_report["edition"]["metric_label"] == "Evening scan"
+    assert post_report["edition"]["metric_time"] == "4:10 PM ET"
     assert post_report["metrics"]["dropped"] == 7
 
 
@@ -553,9 +558,11 @@ def test_share_metadata_names_the_top_pick_and_the_record(
     assert pre_share["title"] == "$ONE · Flash targets $1.2 by the close"
     assert pre_share["top_pick"]["ticker"] == "ONE"
     assert post_share["path"] == "/reports/2026-08-24/post"
-    assert post_share["title"] == "$ONE target hit · Flash 1–0 on the day"
-    assert post_share["summary"].startswith("2026-08-24 · Flash 1–0 on targets, board 1–0")
-    assert post_share["top_pick"]["status"] == "hit"
+    assert post_share["title"] == "$ONE · Company in focus · The closing story"
+    assert post_share["summary"].startswith(
+        "2026-08-24 · ONE in focus · Flash 1–0 on targets, watch 1–0"
+    )
+    assert post_share["top_pick"]["status"] == "focus"
     assert post_share["card_path"] != pre_share["card_path"]
     assert len(post_share["summary"]) <= 200
 
@@ -647,7 +654,8 @@ def test_legacy_post_market_report_without_close_fields_still_renders(
         client.close()
 
     assert listing.status_code == 200
-    assert "Dropped off the board" in listing.text
+    assert "Latest saved editions" in listing.text
+    assert "Dropped off the board" in detail.text
     assert detail.status_code == 200
 
 
@@ -760,3 +768,45 @@ def test_a_scan_that_overruns_the_interval_still_gets_a_gap(
         asyncio.run(web_main.scan_collection_worker())
 
     assert delays[-1] == web_main.SCAN_MIN_GAP_SECONDS
+
+
+def test_evening_lead_matches_page_share_card_and_message(tmp_path, monkeypatch):
+    from bs4 import BeautifulSoup
+
+    from runner_web.main import _market_report_card_png, _pick_line
+    from runner_web.market_reports import market_report
+    from runner_web.telegram import format_market_report_post_md
+
+    client = _share_client(tmp_path, monkeypatch)
+    try:
+        report = market_report("2026-08-24", "post_market")
+        # The opening leader is ONE; TWO earns the closing research slot.
+        assert report["leaders"][0]["ticker"] == "ONE"
+        assert report["spotlight"]["ticker"] == report["share"]["top_pick"]["ticker"] == "TWO"
+        assert "TWO" in report["share"]["title"]
+        assert "Saved scan research" in _pick_line(report["share"]["top_pick"], True)
+        assert _market_report_card_png(report).startswith(b"\x89PNG")
+        from runner_web.main import _activity_payload, _pending_market_report_rows, _render_segment
+
+        with connection() as database:
+            pending = _pending_market_report_rows(database, limit=5)
+        post = next(row for row in pending if row["report_type"] == "post_market")
+        activity = _activity_payload([], [post], [])
+        dispatched = _render_segment("market_report", activity["reports"][0])
+        assert "*TWO* company in focus" in dispatched
+        assert "TWO is the company in focus" in dispatched
+        message = format_market_report_post_md(report, origin="https://app.test")
+        assert "*TWO* company in focus" in message
+        assert "*ONE* leads the pack" not in message
+        page = BeautifulSoup(client.get("/reports/2026-08-24/post").text, "html.parser")
+        assert len(page.select("h1")) == 1
+        assert page.select_one(".edition-lead a").text.strip().startswith("TWO")
+        assert "TWO" in page.select_one('meta[property="og:title"]')["content"]
+        assert "Quote 4:10 PM ET" in page.get_text()
+        assert "Opening #1" in page.get_text()
+        assert "evening score 90" in page.get_text()
+        listing = BeautifulSoup(client.get("/reports").text, "html.parser")
+        assert len(listing.select(".edition-preview")) == 2
+        assert not listing.select(".report-company, .market-report-leaders")
+    finally:
+        client.close()

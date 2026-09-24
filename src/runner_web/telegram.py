@@ -627,10 +627,11 @@ def format_market_report_post_md(report, *, origin):
     # One story, not a roster. A list of three tickers reads like a table and
     # none of them can be previewed anyway, so the briefing names who is out
     # front and sends the reader to the report for the rest.
-    leader = _lead_entry(report.get("leaders"))
+    feature = report.get("spotlight") if raw_type == "post_market" else None
+    leader = feature.get("snapshot") if feature else _lead_entry(report.get("leaders"))
     if leader is not None:
         ticker = escape_markdown_v2(str(leader.get("ticker") or "").strip().upper())
-        lead_line = f"*{ticker}* leads the pack"
+        lead_line = f"*{ticker}* company in focus" if feature else f"*{ticker}* leads the pack"
         metrics = _format_metrics_line(leader)
         blocks.append(lead_line + ("\n" + metrics if metrics else ""))
     base = origin.rstrip("/")
