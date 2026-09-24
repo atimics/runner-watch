@@ -1,6 +1,6 @@
 /* Teams, result, then forecast follow the market rows' reading order. */
 .anchor-sports .ticker.sports-matchup {
-  grid-template-columns: minmax(0, 1fr) 132px 54px;
+  grid-template-columns: minmax(0, 1fr) minmax(132px, max-content) 54px;
   grid-template-areas: 'name value forecast';
   gap: 28px;
   align-items: center;
@@ -44,7 +44,7 @@
   min-width: 0;
 }
 .anchor-sports .sports-score strong { font-size: 24px; line-height: 1.2; font-weight: 650; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.anchor-sports .sports-score small { font-size: 10px; line-height: 1.4; white-space: normal; }
+.anchor-sports .sports-score small { max-width: 132px; font-size: 10px; line-height: 1.4; white-space: normal; }
 .sports-forecast { grid-area: forecast; display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; color: var(--muted); }
 .sports-chance-glyph { position: relative; display: grid; place-items: center; width: 46px; height: 46px; }
 .sports-chance-ring { width: 100%; height: 100%; fill: none; stroke-width: 2.5; }
@@ -57,20 +57,22 @@
 .sports-forecast.is-pending .sports-chance-glyph { border: 1px dashed var(--line); border-radius: 50%; color: var(--muted); }
 @media (max-width: 760px) {
   .anchor-sports .ticker.sports-matchup {
-    grid-template-columns: minmax(0, 1fr) 104px 48px;
+    grid-template-columns: minmax(0, 1fr) minmax(82px, max-content) 48px;
     gap: 14px;
     min-height: 88px;
     padding: 12px 0;
   }
   .anchor-sports .sports-team-pair .is-highlighted { font-size: 24px; }
   .anchor-sports .sports-score strong { font-size: 22px; }
+  .anchor-sports .sports-score small { max-width: 104px; }
 }
 @media (max-width: 360px) {
-  .anchor-sports .ticker.sports-matchup { grid-template-columns: minmax(0, 1fr) 96px 44px; gap: 10px; }
+  .anchor-sports .ticker.sports-matchup { grid-template-columns: minmax(0, 1fr) minmax(76px, max-content) 44px; gap: 10px; }
   .sports-team-pair { gap: 5px; }
   .anchor-sports .sports-team-pair .sports-team { font-size: 16px; }
   .anchor-sports .sports-team-pair .is-highlighted { font-size: 23px; }
   .anchor-sports .sports-score strong { font-size: 20px; }
+  .anchor-sports .sports-score small { max-width: 90px; }
   .sports-chance-glyph { width: 42px; height: 42px; }
   .sports-chance-reading b { max-width: 30px; font-size: 7px; }
   .sports-chance-reading > span { font-size: 10px; }
