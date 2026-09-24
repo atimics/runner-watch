@@ -1,7 +1,7 @@
 {% set assessment = screen.item.assessment|default({}) %}
 <section class="market-assessment" data-market-assessment aria-label="{{ 'Token evidence' if screen.market == 'memecoins' else 'RATi assessment' }}">
   <header>
-    <div><p class="eyebrow">{{ 'TOKEN EVIDENCE' if screen.market == 'memecoins' else 'RATi ASSESSMENT' }}</p><h2 data-assessment-label>{{ assessment.label|default('Assessment pending') }}</h2></div>
+    <div><p class="eyebrow">{{ 'TOKEN EVIDENCE' if screen.market == 'memecoins' else 'MARKET COMPARISON' if screen.market == 'sports' else 'RATi ASSESSMENT' }}</p><h2 data-assessment-label>{{ assessment.selected_team ~ ' vs market' if screen.market == 'sports' and assessment.selected_team else assessment.label|default('Assessment pending') }}</h2></div>
     <div class="assessment-verdict"><strong data-assessment-value>{% if assessment.value is defined and assessment.value is not none %}{{ assessment.value|round(1) }}{{ assessment.unit }}{% else %}—{% endif %}</strong><span class="tag tag-{{ assessment.tag_tone|default('watch') }}" data-assessment-tag{% if not assessment.tag %} hidden{% endif %}>{{ assessment.tag }}</span></div>
   </header>
   <p class="assessment-reason" data-assessment-reason>{{ assessment.reason|default('Collecting evidence for this assessment.') }}</p>

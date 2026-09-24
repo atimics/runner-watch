@@ -121,6 +121,55 @@ def test_sports_row_uses_stock_spacing_and_glyph_size(page: Page, width):
     assert page.locator(".ticker-list > *").count() == 1
 
 
+@pytest.mark.parametrize("width", [320, 390, 1280])
+def test_saved_sports_factors_appear_in_row_glyph_and_game_detail(page: Page, width):
+    event = fixtures.sample("sports")
+    event.update(
+        league="mlb",
+        away_abbreviation="ARI",
+        away_team_name="Arizona",
+        home_abbreviation="COL",
+        home_team_name="Colorado",
+        status="in",
+        away_score=2,
+        home_score=4,
+        prediction={
+            "model_version": "team-form-v1",
+            "observed_at": "2026-09-23T19:00:00+00:00",
+            "home_probability": 0.433193,
+            "away_probability": 0.566807,
+            "home_market_probability": 0.489166,
+            "away_market_probability": 0.510834,
+            "selection": "away",
+            "signal": "watch",
+            "factors": {
+                "baseline_pct": 50,
+                "home_record_delta_pp": -10.180723,
+                "home_venue_delta_pp": 3.5,
+                "home_clamp_delta_pp": 0,
+                "home_probability_pct": 43.319277,
+                "home_record": {"wins": 64, "losses": 86},
+                "away_record": {"wins": 90, "losses": 60},
+            },
+        },
+    )
+    page.set_viewport_size({"width": width, "height": 844})
+    open_screen(page, listing("sports", [event]))
+    expect(page.locator(".sports-team.is-highlighted")).to_have_text("COL")
+    expect(page.locator(".sports-chance-ring .sports-factor")).to_have_count(2)
+    expect(page.locator(".sports-chance-ring")).to_have_attribute(
+        "aria-label", re.compile(r"Season record \+10.2 points; Venue -3.5 points")
+    )
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+    open_screen(page, detail("sports", event))
+    expect(page.get_by_role("region", name="Saved pregame opinion")).to_be_visible()
+    expect(page.locator(".sports-opinion-steps li")).to_have_count(2)
+    expect(page.get_by_text("ARI season record 90–60")).to_be_visible()
+    expect(page.get_by_text("Market chance 51.1% · gap +5.6 pp")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
 def test_narrow_stock_rows_are_single_line(page: Page):
     page.set_viewport_size({"width": 390, "height": 844})
     open_screen(page, listing("stocks", [fixtures.scored_stock()]))

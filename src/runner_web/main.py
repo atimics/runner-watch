@@ -308,9 +308,11 @@ from runner_web.sports import (
     sports_flash_evidence,
     sports_pick_for_user,
     sports_pick_stats,
+    sports_player_profile,
     sports_pulse,
     sports_radar,
     sports_slate,
+    sports_team_profile,
     validate_sports_ai_forecast,
 )
 from runner_web.swarm_runtime import maintain_swarm_runtime, open_swarm_runtime
@@ -9154,6 +9156,58 @@ def _sports_game_location(event_id: str) -> str:
         raise HTTPException(404, "Game not found")
     canonical_id = quote(str(event["id"]), safe=":")
     return f"{SPORTS_ORIGIN}/game/{canonical_id}"
+
+
+@app.get("/team/{provider}/{league}/{team_id}", response_class=HTMLResponse)
+def sports_team_page(
+    provider: str,
+    league: str,
+    team_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> Response:
+    profile = sports_team_profile(provider, league, team_id)
+    if profile is None:
+        raise HTTPException(404, "Team not found")
+    if product_for_request(request) != "sports" and SPORTS_ORIGIN != APP_ORIGIN:
+        return RedirectResponse(f"{SPORTS_ORIGIN}{request.url.path}", status_code=307)
+    return templates.TemplateResponse(
+        request,
+        "sports_entity.html",
+        page_context(
+            request,
+            runner_session,
+            nav_product="sports",
+            screen={"market": "sports", "kind": "profile", "query": ""},
+            profile=profile,
+        ),
+    )
+
+
+@app.get("/player/{provider}/{league}/{player_id}", response_class=HTMLResponse)
+def sports_player_page(
+    provider: str,
+    league: str,
+    player_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> Response:
+    profile = sports_player_profile(provider, league, player_id)
+    if profile is None:
+        raise HTTPException(404, "Player not found")
+    if product_for_request(request) != "sports" and SPORTS_ORIGIN != APP_ORIGIN:
+        return RedirectResponse(f"{SPORTS_ORIGIN}{request.url.path}", status_code=307)
+    return templates.TemplateResponse(
+        request,
+        "sports_entity.html",
+        page_context(
+            request,
+            runner_session,
+            nav_product="sports",
+            screen={"market": "sports", "kind": "profile", "query": ""},
+            profile=profile,
+        ),
+    )
 
 
 @app.get("/game/{event_id}", response_class=HTMLResponse)

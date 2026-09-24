@@ -132,7 +132,67 @@ def sports_matchup(item: dict[str, Any], state: dict[str, Any]) -> dict[str, Any
                 if stamp(prediction.get("observed_at"))
                 else ""
             ),
+            "observed_at": prediction.get("observed_at"),
+            "saved_label": stamp(prediction.get("observed_at")),
+            "model_version": prediction.get("model_version"),
         }
+        trace = prediction.get("factors") or {}
+        traced_home = number(trace.get("home_probability_pct")) if isinstance(trace, dict) else None
+        if (
+            favorite
+            and traced_home is not None
+            and abs(traced_home - probabilities[1] * 100) < 0.001
+        ):
+            orientation = 1 if favorite == "home" else -1
+            parts = [
+                ("Season record", "record", "home_record_delta_pp"),
+                ("Venue", "venue", "home_venue_delta_pp"),
+                ("Clamp", "clamp", "home_clamp_delta_pp"),
+            ]
+            factors = [
+                {
+                    "label": label,
+                    "key": key,
+                    "value": round(orientation * (number(trace.get(field)) or 0), 6),
+                }
+                for label, key, field in parts
+            ]
+            adjustment = sum(part["value"] for part in factors)
+            if abs(50 + adjustment - probabilities[index] * 100) < 0.001:
+                total = sum(abs(part["value"]) for part in factors)
+                offset = 0.0
+                running = 50.0
+                for part in factors:
+                    part["share"] = abs(part["value"]) / total * 100 if total else 0.0
+                    part["offset"] = offset
+                    part["negative"] = part["value"] < 0
+                    part["bar_start"] = max(0.0, min(100.0, min(running, running + part["value"])))
+                    part["bar_width"] = max(
+                        0.0,
+                        min(100.0, max(running, running + part["value"]))
+                        - part["bar_start"],
+                    )
+                    running += part["value"]
+                    offset += part["share"]
+                forecast["factors"] = factors
+                forecast["records"] = {
+                    side: trace.get(f"{side}_record") for side in sides
+                }
+                forecast["source_url"] = trace.get("source_url")
+                forecast["description"] += " " + "; ".join(
+                    f"{part['label']} {part['value']:+.1f} points"
+                    for part in factors
+                    if abs(part["value"]) >= 0.05
+                ) + "."
+        market_chance = (
+            number(prediction.get(f"{favorite}_market_probability")) if favorite else None
+        )
+        if market_chance is not None:
+            forecast["market_percent"] = round(market_chance * 100, 1)
+            forecast["market_gap_pp"] = round(percent - market_chance * 100, 1)
+        selection = prediction.get("selection")
+        if selection in sides:
+            forecast["value_side"] = teams[sides.index(selection)]["label"]
     return {
         "teams": teams,
         "forecast": forecast,
@@ -577,6 +637,19 @@ def detail(
                 "score": str(int(number(data.get(f"{s}_score")) or 0))
                 if state.get("score_available")
                 else "—",
+                "href": (
+                    "/team/"
+                    + "/".join(
+                        quote(str(value), safe="")
+                        for value in (
+                            data["provider"],
+                            data["league"],
+                            data[f"{s}_team_id"],
+                        )
+                    )
+                    if data.get("provider") and data.get("league") and data.get(f"{s}_team_id")
+                    else None
+                ),
             }
             for s in ("away", "home")
         ]

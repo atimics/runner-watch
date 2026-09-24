@@ -95,3 +95,29 @@ def test_forecast_uses_probability_even_when_a_separate_runner_score_exists():
     result = row("sports", game(score=82))
     assert result["score"] == 82
     assert result["matchup"]["forecast"]["percent"] == 56
+
+
+def test_saved_factors_follow_the_named_favorite_and_keep_market_separate():
+    prediction = {
+        "model_version": "team-form-v1",
+        "home_probability": 0.433193,
+        "away_probability": 0.566807,
+        "home_market_probability": 0.489166,
+        "away_market_probability": 0.510834,
+        "factors": {
+            "baseline_pct": 50,
+            "home_record_delta_pp": -10.180723,
+            "home_venue_delta_pp": 3.5,
+            "home_clamp_delta_pp": 0,
+            "home_probability_pct": 43.319277,
+            "away_record": {"wins": 90, "losses": 60},
+            "home_record": {"wins": 64, "losses": 86},
+        },
+    }
+    forecast = row("sports", game(prediction=prediction))["matchup"]["forecast"]
+    assert forecast["team"] == "ARI"
+    assert [round(part["value"], 1) for part in forecast["factors"]] == [10.2, -3.5, 0]
+    assert sum(part["share"] for part in forecast["factors"]) == pytest.approx(100)
+    assert forecast["market_percent"] == 51.1
+    assert forecast["market_gap_pp"] == 5.6
+    assert "Venue -3.5 points" in forecast["description"]

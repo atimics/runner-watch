@@ -62,7 +62,7 @@
     <p>Overall score is relative to par. R1–R4 show strokes and each round’s score to par.</p>
     {% if golf.leaderboard %}
     {% macro score_row(player) -%}
-    <tr><td>{{ player.position_display }}</td><th scope="row">{{ player.player_name }}</th><td>{{ player.score_display }}</td>
+    <tr><td>{{ player.position_display }}</td><th scope="row"><a href="/player/{{ golf.provider|urlencode }}/golf/{{ player.player_id|urlencode }}">{{ player.player_name }}</a></th><td>{{ player.score_display }}</td>
       {% for number in range(1, 5) %}
       {% set card = player.rounds|selectattr('number', 'equalto', number)|first %}
       <td>{% if card is defined and card.strokes is not none %}{{ card.strokes }}<small>{{ card.to_par }}{% if not card.complete and card.holes %} · {{ card.holes }} holes{% endif %}</small>{% else %}—{% endif %}</td>

@@ -1851,6 +1851,25 @@ def test_finished_game_seals_the_last_pregame_prediction_and_market(sports_db) -
     detail = sports_event(str(final_event["id"]))
     assert detail is not None
     assert detail["prediction"]["observed_at"] == pregame_at.isoformat()
+    with connection() as database:
+        event_rows = database.execute(
+            "SELECT * FROM sports_events WHERE id=?", (final_event["id"],)
+        ).fetchall()
+        listed = sports_module._event_rows(database, event_rows)[0]
+    assert listed["prediction"]["id"] == detail["prediction"]["id"]
+    factors = detail["prediction"]["factors"]
+    reconstructed_home = sum(
+        (
+            factors["baseline_pct"],
+            factors["home_record_delta_pp"],
+            factors["home_venue_delta_pp"],
+            factors["home_clamp_delta_pp"],
+        )
+    )
+    assert reconstructed_home == pytest.approx(
+        detail["prediction"]["home_probability"] * 100, abs=0.001
+    )
+    assert factors["home_record"] == {"wins": 60, "losses": 40}
     assert detail["receipt"]["sealed"] is True
     assert detail["receipt"]["input_hash"] == pregame_prediction["input_hash"]
     assert detail["receipt"]["outcome"]["final_score"] == "AWY 3 – HOM 5"
@@ -1868,6 +1887,76 @@ def test_finished_game_seals_the_last_pregame_prediction_and_market(sports_db) -
     assert b'aria-label="Market"' in response.body
     assert b"source_error" not in response.body
     assert b"The Odds API" not in response.body
+
+
+def test_team_and_player_profiles_link_saved_games_and_appearances(sports_db) -> None:
+    event = normalize_event("mlb", sample_event(completed=True))
+    assert event is not None
+    store_events([event])
+    appearances = normalize_player_appearances(
+        event,
+        {
+            "boxscore": {
+                "players": [
+                    {
+                        "team": {"id": "1"},
+                        "statistics": [
+                            {
+                                "labels": ["H"],
+                                "athletes": [
+                                    {
+                                        "athlete": {
+                                            "id": "sample-player",
+                                            "displayName": "Sample Hitter",
+                                        },
+                                        "position": {"abbreviation": "OF"},
+                                        "stats": ["2"],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            }
+        },
+    )
+    store_player_appearances(appearances)
+
+    team = sports_module.sports_team_profile("espn", "mlb", "1")
+    player = sports_module.sports_player_profile("espn", "mlb", "sample-player")
+    assert team is not None and player is not None
+    assert team["name"] == "Home Club"
+    assert team["games"][0]["href"] == f"/game/{event['id']}"
+    assert team["players"][0]["href"] == "/player/espn/mlb/sample-player"
+    assert player["teams"][0]["href"] == "/team/espn/mlb/1"
+    assert player["games"][0]["opponent"] == "Away Club"
+    assert player["games"][0]["score"] == "H 2"
+    assert sports_module.sports_team_profile("espn", "mlb", "unknown") is None
+
+    game_response = sports_game_page(str(event["id"]), request(path=f"/game/{event['id']}"), None)
+    assert b"/team/espn/mlb/1" in game_response.body
+    team_response = web_main.sports_team_page(
+        "espn", "mlb", "1", request(path="/team/espn/mlb/1"), None
+    )
+    assert b"Sample Hitter" in team_response.body
+    player_response = web_main.sports_player_page(
+        "espn", "mlb", "sample-player", request(path="/player/espn/mlb/sample-player"), None
+    )
+    assert b"Home Club" in player_response.body
+
+
+def test_golf_player_profile_links_a_saved_tournament(sports_db) -> None:
+    event = normalize_golf_event(sample_golf_event())
+    assert event is not None
+    store_golf_events([event])
+    player = sports_module.sports_player_profile("espn", "golf", "5076021")
+    assert player is not None
+    assert player["name"] == "Ryan Gerard"
+    assert player["games"][0]["href"] == f"/game/{event['id']}"
+    response = web_main.sports_player_page(
+        "espn", "golf", "5076021", request(path="/player/espn/golf/5076021"), None
+    )
+    assert b"TOUR Championship" in response.body
 
 
 def test_sports_alpha_fetches_history_only_for_ranked_players(sports_db) -> None:

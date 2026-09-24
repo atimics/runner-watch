@@ -12,6 +12,7 @@ from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
 from statistics import median
 from typing import Any
+from urllib.parse import quote
 
 from runner_node.runtime import NODE_SERVICE
 from runner_watch.ingestion import SourceFetch
@@ -432,10 +433,12 @@ def predict_event(event: dict[str, Any]) -> dict[str, Any]:
         )
     if not eligible_season:
         risks.append("Exhibition and preseason records are not used to promote an edge.")
+    home_record_delta = 0.0
     if home_record and away_record:
         home_rate = (home_record[0] + 8) / (sum(home_record) + 16)
         away_rate = (away_record[0] + 8) / (sum(away_record) + 16)
-        probability = 0.5 + (home_rate - away_rate) * 0.65
+        home_record_delta = (home_rate - away_rate) * 0.65
+        probability = 0.5 + home_record_delta
         evidence.append(
             f"Overall season records: {away['name']} {away['record']}, "
             f"{home['name']} {home['record']}."
@@ -445,9 +448,24 @@ def predict_event(event: dict[str, Any]) -> dict[str, Any]:
         probability = 0.5
         risks.append("One or both season records are missing.")
         quality = "thin"
-    probability += float(LEAGUES[event["league"]]["home_edge"])
+    home_venue_delta = float(LEAGUES[event["league"]]["home_edge"])
+    probability += home_venue_delta
     home_probability = max(0.18, min(0.82, probability))
     away_probability = 1 - home_probability
+    factors = {
+        "baseline_pct": 50.0,
+        "home_record_delta_pp": round(home_record_delta * 100, 6),
+        "home_venue_delta_pp": round(home_venue_delta * 100, 6),
+        "home_clamp_delta_pp": round((home_probability - probability) * 100, 6),
+        "home_probability_pct": round(home_probability * 100, 6),
+        "home_record": {"wins": home_record[0], "losses": home_record[1]}
+        if home_record
+        else None,
+        "away_record": {"wins": away_record[0], "losses": away_record[1]}
+        if away_record
+        else None,
+        "source_url": str(event.get("source_url") or ""),
+    }
     home_market, away_market = no_vig_probabilities(event["home_odds"], event["away_odds"])
     market_book_count = int(event.get("market_book_count") or 0)
     market_is_consensus = bool(event.get("market_is_consensus"))
@@ -511,6 +529,7 @@ def predict_event(event: dict[str, Any]) -> dict[str, Any]:
         "edge_pct": round(edge * 100, 1) if edge is not None else None,
         "signal": signal,
         "quality": quality,
+        "factors": factors,
         "evidence": evidence,
         "risks": risks,
     }
@@ -1578,7 +1597,7 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
             input_state_hash = _input_hash(event, prediction)
             previous_prediction = database.execute(
                 """
-                SELECT id,input_state_hash,input_hash FROM sports_predictions
+                SELECT id,input_state_hash,input_hash,factors_json FROM sports_predictions
                 WHERE event_id=? AND model_version=?
                 ORDER BY observed_at DESC,id DESC LIMIT 1
                 """,
@@ -1589,7 +1608,12 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                 if previous_prediction
                 else None
             )
-            if previous_input_state != input_state_hash:
+            needs_pregame_factors = bool(
+                previous_prediction
+                and previous_prediction["factors_json"] in (None, "{}")
+                and _parse_time(timestamp) <= _parse_time(event["start_time"])
+            )
+            if previous_input_state != input_state_hash or needs_pregame_factors:
                 input_hash = hashlib.sha256(
                     _json(
                         {
@@ -1607,8 +1631,8 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                         id,event_id,model_version,input_hash,input_state_hash,
                         selection,home_probability,away_probability,
                         home_market_probability,away_market_probability,
-                        edge,signal,quality,evidence_json,risks_json,observed_at
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING
+                        edge,signal,quality,evidence_json,risks_json,factors_json,observed_at
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING
                     """,
                     (
                         str(uuid.uuid4()),
@@ -1626,6 +1650,7 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                         prediction["quality"],
                         _json(prediction["evidence"]),
                         _json(prediction["risks"]),
+                        _json(prediction["factors"]),
                         timestamp,
                     ),
                 )
@@ -2111,6 +2136,7 @@ def _prediction_item(row: Any) -> dict[str, Any] | None:
     item.pop("latest_rank", None)
     item["evidence"] = json.loads(item.pop("evidence_json") or "[]")
     item["risks"] = json.loads(item.pop("risks_json") or "[]")
+    item["factors"] = json.loads(item.pop("factors_json") or "{}")
     item["edge_pct"] = round(float(item["edge"]) * 100, 1) if item.get("edge") is not None else None
     return item
 
@@ -2512,20 +2538,23 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
 
     prediction_rows = database.execute(
         f"""
-        WITH latest_models AS (
+        WITH eligible_models AS (
+            SELECT p.* FROM sports_predictions p
+            JOIN sports_events e ON e.id=p.event_id
+            WHERE p.event_id IN ({placeholders}) AND p.observed_at<=e.start_time
+        ), latest_models AS (
             SELECT event_id,model_version FROM (
                 SELECT event_id,model_version,ROW_NUMBER() OVER(
                     PARTITION BY event_id ORDER BY observed_at DESC,id DESC
                 ) AS latest_rank
-                FROM sports_predictions
-                WHERE event_id IN ({placeholders})
+                FROM eligible_models
             ) latest
             WHERE latest_rank=1
         ), ranked AS (
             SELECT p.*,ROW_NUMBER() OVER(
                 PARTITION BY p.event_id ORDER BY p.observed_at DESC,p.id DESC
             ) AS history_rank
-            FROM sports_predictions p
+            FROM eligible_models p
             JOIN latest_models latest
               ON latest.event_id=p.event_id AND latest.model_version=p.model_version
         )
@@ -3980,6 +4009,179 @@ def sports_event(event_id: str) -> dict[str, Any] | None:
         event["view_state"] = _game_view_state(event)
     event["model_record"] = _model_alpha(str(event["league"]))
     return event
+
+
+def sports_team_profile(provider: str, league: str, team_id: str) -> dict[str, Any] | None:
+    if league not in LEAGUES:
+        return None
+    with connection() as database:
+        rows = database.execute(
+            """
+            SELECT * FROM sports_events
+            WHERE provider=? AND league=? AND (home_team_id=? OR away_team_id=?)
+            ORDER BY start_time DESC,id DESC LIMIT 40
+            """,
+            (provider, league, team_id, team_id),
+        ).fetchall()
+        if not rows:
+            return None
+        latest = dict(rows[0])
+        side = "home" if str(latest["home_team_id"]) == team_id else "away"
+        appearances = database.execute(
+            """
+            SELECT a.player_id,a.player_name,a.position,e.start_time
+            FROM sports_player_appearances a
+            JOIN sports_events e ON e.id=a.event_id
+            WHERE e.provider=? AND a.league=? AND a.team_id=?
+            ORDER BY e.start_time DESC,a.player_name LIMIT 120
+            """,
+            (provider, league, team_id),
+        ).fetchall()
+    games = []
+    for raw in rows:
+        event = dict(raw)
+        own_side = "home" if str(event["home_team_id"]) == team_id else "away"
+        other_side = "away" if own_side == "home" else "home"
+        own_score = _number(event.get(f"{own_side}_score"))
+        other_score = _number(event.get(f"{other_side}_score"))
+        scored = (
+            event["status"] in {"in", "post"}
+            and own_score is not None
+            and other_score is not None
+        )
+        result = (
+            "Final" if event["status"] == "post" else "Live" if scored else "Upcoming"
+        )
+        games.append(
+            {
+                "id": event["id"],
+                "href": "/game/" + quote(str(event["id"]), safe=":"),
+                "opponent": event[f"{other_side}_team_name"],
+                "side": "Home" if own_side == "home" else "Away",
+                "score": f"{int(own_score)} – {int(other_score)}" if scored else "vs",
+                "status": result,
+                "start_time": event["start_time"],
+            }
+        )
+    players = []
+    seen = set()
+    for row in appearances:
+        player_id = str(row["player_id"])
+        if player_id in seen:
+            continue
+        seen.add(player_id)
+        players.append(
+            {
+                "name": row["player_name"],
+                "position": row["position"],
+                "last_seen": row["start_time"],
+                "href": "/player/"
+                + "/".join(quote(str(value), safe="") for value in (provider, league, player_id)),
+            }
+        )
+        if len(players) == 24:
+            break
+    return {
+        "kind": "team",
+        "name": latest[f"{side}_team_name"],
+        "abbreviation": latest[f"{side}_abbreviation"],
+        "league": league.upper(),
+        "record": latest.get(f"{side}_record") or "Record pending",
+        "games": games,
+        "players": players,
+    }
+
+
+def sports_player_profile(provider: str, league: str, player_id: str) -> dict[str, Any] | None:
+    if league == "golf":
+        with connection() as database:
+            rows = database.execute(
+                """
+                SELECT g.player_name,g.country,g.score_display,g.position_display,
+                       e.id AS event_id,e.name AS event_name,e.start_time
+                FROM sports_golf_leaderboard g
+                JOIN sports_golf_events e ON e.id=g.event_id
+                WHERE e.provider=? AND g.player_id=?
+                ORDER BY e.start_time DESC,e.id DESC LIMIT 40
+                """,
+                (provider, player_id),
+            ).fetchall()
+        if not rows:
+            return None
+        return {
+            "kind": "player",
+            "name": rows[0]["player_name"],
+            "league": "Golf",
+            "position": rows[0]["country"],
+            "games": [
+                {
+                    "href": "/game/" + quote(str(row["event_id"]), safe=":"),
+                    "opponent": row["event_name"],
+                    "score": row["score_display"],
+                    "status": row["position_display"],
+                    "start_time": row["start_time"],
+                }
+                for row in rows
+            ],
+            "teams": [],
+        }
+    if league not in LEAGUES:
+        return None
+    with connection() as database:
+        rows = database.execute(
+            """
+            SELECT a.player_name,a.position,a.team_id,a.team_name,a.team_abbreviation,
+                   a.stats_json,e.id AS event_id,e.start_time,e.provider,
+                   e.home_team_id,e.home_team_name,e.away_team_name
+            FROM sports_player_appearances a
+            JOIN sports_events e ON e.id=a.event_id
+            WHERE e.provider=? AND a.league=? AND a.player_id=?
+            ORDER BY e.start_time DESC,e.id DESC LIMIT 40
+            """,
+            (provider, league, player_id),
+        ).fetchall()
+    if not rows:
+        return None
+    teams = []
+    seen = set()
+    games = []
+    for row in rows:
+        team_id = str(row["team_id"])
+        if team_id not in seen:
+            seen.add(team_id)
+            teams.append(
+                {
+                    "name": row["team_name"],
+                    "last_seen": row["start_time"],
+                    "href": "/team/"
+                    + "/".join(
+                        quote(str(value), safe="") for value in (provider, league, team_id)
+                    ),
+                }
+            )
+        _, stats_label = _player_stats(row["stats_json"])
+        opponent = (
+            row["away_team_name"]
+            if team_id == str(row["home_team_id"])
+            else row["home_team_name"]
+        )
+        games.append(
+            {
+                "href": "/game/" + quote(str(row["event_id"]), safe=":"),
+                "opponent": opponent,
+                "score": stats_label or "Appearance saved",
+                "status": row["team_abbreviation"],
+                "start_time": row["start_time"],
+            }
+        )
+    return {
+        "kind": "player",
+        "name": rows[0]["player_name"],
+        "league": league.upper(),
+        "position": rows[0]["position"],
+        "games": games,
+        "teams": teams,
+    }
 
 
 def sports_flash_evidence(event_id: str) -> tuple[str, dict[str, Any]]:

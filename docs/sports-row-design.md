@@ -9,7 +9,7 @@ The left side holds the teams. Their order stays away then home, matching the
 score on the right. During play, the leading team is larger and green. After
 the final score, that treatment marks the winner. A tie gives both teams equal
 weight. Pregame teams and games with pending scores also have equal weight.
-The forecast glyph names the model favorite before play.
+The forecast glyph names the saved pregame model favorite.
 
 The stock page is the layout reference. Sports uses the same 66-pixel minimum
 row height on desktop and 62-pixel height on phones, padding, gaps, score type,
@@ -23,12 +23,19 @@ The WATCH, LEAN, PASS, and MODEL ONLY tags retain their current meaning and
 palette. The saved value selection can be an underdog. Its team and signal
 appear in the tag's title; the game page contains the full evidence and edge.
 
-The blue ring means **pregame model win chance for the named team**. Its arc
-and accessible percentage use the same probability. The quiet ring uses the
-stock glyph's footprint. Its title and accessible name say **Pregame model**,
-the full team name, the percentage, and the saved time when available. The game
-page has the full forecast. An even model gives each team a 50% chance. A pending
-model uses a dashed outline with an accessible **Pregame model pending** label.
+The blue outer ring means **pregame model win chance for the named team**. Its arc
+and accessible percentage use the same probability. The inner pieces show the
+saved model's season-record and venue adjustments, plus a clamp piece when it
+changes the output. Their sizes show shares of the absolute adjustment. Hatching
+marks a piece that lowers the named team's chance. The title and accessible
+name include the team, percentage, saved time, and signed factors. Earlier saved
+calls retain the outer ring and identify their factor breakdown as pending.
+An even model gives each team a 50% chance. A pending model uses a dashed
+outline with an accessible **Pregame model pending** label.
+
+The game page shows the saved starting point, signed adjustments, input records,
+model version, and a market comparison. The list and game page select the same
+last pregame model snapshot. Later feed updates remain in history.
 
 The green team highlight follows the scoreboard during play. The blue forecast
 ring follows the saved pregame estimate. This lets a reader see when a forecast
@@ -58,10 +65,11 @@ provider so repeated names remain distinct. Team membership has start and end
 dates, allowing transfers to preserve history. Forecasts belong to a game and
 name their target participant, model, capture time, inputs, and outcome.
 
-The next navigation step is **Games · Teams · Athletes**. Games remains the
-landing view for scores. Team and athlete views support longer-term research
-and following. This PR delivers the game row; profile pages and follow actions
-are the next product step.
+Games remains the landing view for scores. The game page links to team profiles;
+team profiles link to players seen in saved games; golf tournament rows link to
+golfer profiles. These pages use stored provider IDs and show saved appearances
+as history. A **Games · Teams · Athletes** navigation and follow actions are
+later product steps.
 
 ## Other useful signals
 
