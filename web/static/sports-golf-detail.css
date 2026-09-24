@@ -35,7 +35,7 @@
 main:has(.golf-match-detail) { max-width: 1040px; padding-top: 26px; }
 main:has(.golf-match-detail) > .back { margin-bottom: 26px; }
 .golf-match-detail { --cup-gold: #e1c27d; max-width: none; margin-bottom: 0; }
-.golf-match-detail a:focus-visible, .cup-formats summary:focus-visible { outline: 2px solid var(--cup-gold); outline-offset: 5px; border-radius: 4px; }
+.golf-match-detail a:focus-visible { outline: 2px solid var(--cup-gold); outline-offset: 5px; border-radius: 4px; }
 .cup-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 30px; }
 .cup-eyebrow { margin: 0; color: var(--cup-gold); font-size: 10px; font-weight: 750; letter-spacing: .16em; }
 .cup-eyebrow > span { margin: 0 9px; color: #6d796f; }
@@ -72,59 +72,80 @@ main:has(.golf-match-detail) > .back { margin-bottom: 26px; }
 .cup-scoreboard-foot b { color: #d1dbd3; margin-left: 5px; font-weight: 500; }
 .cup-scoreboard-foot i { margin: 0 12px; font-style: normal; }
 .cup-awaiting { padding: 40px 24px; text-align: center; color: var(--muted); }
-.cup-scoring-link { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 23px 0 30px; }
-.cup-scoring-link > div { display: flex; align-items: center; gap: 13px; }
-.cup-link-icon { display: grid; place-items: center; flex-shrink: 0; width: 34px; height: 34px; border: 1px solid #354338; border-radius: 50%; color: var(--cup-gold); font-size: 18px; }
-.cup-scoring-link p { display: flex; flex-direction: column; gap: 3px; margin: 0; }
-.cup-scoring-link strong { font-size: 13px; font-weight: 600; }
-.cup-scoring-link p > span { color: var(--muted); font-size: 11px; }
-.cup-scoring-link > a { display: inline-flex; justify-content: center; align-items: center; gap: 18px; flex-shrink: 0; padding: 12px 16px; border: 1px solid #dac388; border-radius: 7px; background: #e3cb94; color: #182119; font-size: 11px; font-weight: 750; }
-.cup-scoring-link > a:hover { background: #f0dcae; }
-.cup-weekend { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: 42px; margin: 4px 0 34px; }
 .cup-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
-.cup-section-heading h2, .cup-guide h2 { margin: 7px 0 0; font-size: 21px; font-weight: 600; letter-spacing: -.04em; line-height: 1.3; }
+.cup-section-heading h2 { margin: 7px 0 0; font-size: 21px; font-weight: 600; letter-spacing: -.04em; line-height: 1.3; }
 .cup-section-heading > span { flex-shrink: 0; padding-bottom: 2px; color: var(--muted); font-size: 10px; }
-.cup-session-list { padding: 0; margin: 0 0 12px; list-style: none; border-top: 1px solid var(--line); }
-.cup-session-list li { display: grid; grid-template-columns: 37px minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 13px 0; border-bottom: 1px solid var(--line); }
-.cup-session-list time { display: flex; flex-direction: column; align-items: center; line-height: 1.3; }
-.cup-session-list time > span { color: var(--muted); font-size: 8px; letter-spacing: .06em; }
-.cup-session-list time > strong { color: #d6dfd8; font-size: 22px; font-weight: 500; font-variant-numeric: tabular-nums; }
-.cup-session-list li > div { border-left: 1px solid #334137; padding-left: 18px; }
-.cup-session-list small { color: var(--muted); font-size: 8px; letter-spacing: .1em; }
-.cup-session-list h3 { margin: 2px 0 0; font-size: 13px; font-weight: 550; }
-.cup-match-count { color: var(--muted); font-size: 10px; }
-.cup-match-count strong { color: #d7dfd8; margin-right: 3px; font-size: 13px; font-weight: 550; }
-.cup-text-link { display: inline-flex; align-items: center; gap: 16px; min-height: 36px; color: var(--cup-gold); font-size: 11px; font-weight: 600; }
-.cup-text-link:hover, .cup-rosters:hover strong { text-decoration: underline; text-underline-offset: 4px; }
-.cup-guide { align-self: start; padding: 23px; border: 1px solid #2c3b30; border-radius: 12px; background: #111a14; }
-.cup-guide > p:not(.cup-eyebrow) { margin: 13px 0 20px; color: #a7b5ab; font-size: 12px; line-height: 1.7; }
-.cup-rules { margin: 0; }
-.cup-rules > div { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 12px 0; border-top: 1px solid var(--line); }
-.cup-rules dt { font-size: 12px; color: #b4c0b7; }
-.cup-rules dd { margin: 0; color: var(--cup-gold); font-size: 22px; font-weight: 500; }
-.cup-rules dd > span { font-size: 10px; color: var(--muted); font-weight: 400; }
-.cup-formats { border-top: 1px solid var(--line); }
-.cup-formats summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 0; list-style: none; cursor: pointer; color: #d1dcd3; font-size: 11px; }
-.cup-formats summary::-webkit-details-marker { display: none; }
-.cup-formats summary > span { color: var(--cup-gold); font-size: 18px; line-height: 1; }
-.cup-formats[open] summary > span { transform: rotate(45deg); }
-.cup-formats p { margin: 0 0 12px; color: #a7b5ab; font-size: 12px; line-height: 1.65; }
-.cup-formats strong { color: #d1dcd3; font-weight: 550; }
-.cup-formats .cup-text-link { margin-bottom: 12px; }
-.cup-rosters { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-top: 4px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--cup-gold); }
-.cup-rosters small, .cup-rosters strong { display: block; }
-.cup-rosters small { margin-bottom: 4px; font-size: 8px; letter-spacing: .12em; color: var(--muted); }
-.cup-rosters strong { font-size: 12px; font-weight: 550; }
 .golf-match-detail .golf-detail-source a { color: var(--cup-gold); font-size: 11px; font-weight: 550; }
+.cup-prediction { padding: 25px 30px; border: 1px solid #40523b; border-radius: 14px; background: radial-gradient(ellipse at 10% 0, #283d2e, #16221b 70%); }
+.cup-prediction > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px; }
+.cup-prediction > header > span { color: #acbbb0; font-size: 10px; }
+.cup-prediction-main { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 25px 0; }
+.cup-prediction-main > div:first-child { min-width: 0; }
+.cup-prediction-main p { margin: 0 0 3px; color: #b3c2b6; font-size: 12px; }
+.cup-prediction h2 { margin: 0 0 12px; font-size: 44px; line-height: 1.15; font-weight: 600; letter-spacing: -.04em; }
+.cup-prediction-main > div > span { color: #acbbb0; font-size: 11px; }
+.cup-prediction-main span > strong { display: block; margin-top: 4px; color: #e2e9e3; font-size: 14px; font-weight: 550; }
+.cup-prediction-main i { margin: 0 5px; font-style: normal; color: #92a196; }
+.cup-win-chance { display: flex; flex-direction: column; align-items: flex-end; flex-shrink: 0; }
+.cup-win-chance > strong { color: var(--cup-gold); font-size: 76px; font-weight: 500; letter-spacing: -.06em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.cup-win-chance small { font-size: 30px; margin-left: 4px; }
+.cup-win-chance > span { margin-top: 7px; }
+.cup-probability-bar { display: block; width: 100%; height: 7px; border-radius: 3px; overflow: hidden; }
+.cup-probability-labels { display: flex; justify-content: space-between; gap: 12px; margin-top: 10px; font-size: 11px; color: #bdc9c0; }
+.cup-probability-labels b { margin-left: 5px; color: #e4eae5; font-weight: 550; font-variant-numeric: tabular-nums; }
+.cup-prediction-basis, .cup-analysis-time { margin: 16px 0 0; color: #aab9ae; font-size: 11px; line-height: 1.6; }
+.cup-analysis-time { margin-top: 5px; font-size: 10px; }
+.cup-data-note { margin: 16px 0 0; color: var(--cup-gold); font-size: 12px; line-height: 1.6; }
+.cup-current-score { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px; margin: 16px 0 34px; padding: 17px 22px; border: 1px solid var(--line); border-radius: 9px; }
+.cup-current-score > div { display: flex; flex-direction: column; gap: 2px; }
+.cup-current-score > div > span { font-size: 9px; letter-spacing: .1em; color: #b7c4bb; }
+.cup-current-score small { color: var(--muted); font-size: 10px; }
+.cup-current-score p { display: flex; align-items: center; gap: 12px; margin: 0; font-size: 12px; }
+.cup-current-score strong { font-size: 25px; color: #a7c9f6; font-weight: 550; font-variant-numeric: tabular-nums; }
+.cup-current-score p:nth-of-type(2) strong { color: var(--cup-gold); }
+.cup-pairings { margin-bottom: 34px; }
+.cup-session-pairings > h3 { margin: 0; padding: 12px 0; border-top: 1px solid var(--line); font-size: 12px; font-weight: 500; color: #abbcb0; }
+.cup-pairing { padding: 15px 20px; margin-bottom: 9px; border: 1px solid #2b3a30; border-radius: 9px; background: #111a15; }
+.cup-pairing > header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-bottom: 12px; color: #95a69b; font-size: 10px; }
+.cup-pairing-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.cup-pairing-sides > div { min-width: 0; }
+.cup-pairing-sides small { display: block; margin-bottom: 4px; color: #a7c9f6; font-size: 9px; letter-spacing: .06em; text-transform: uppercase; }
+.cup-pairing-sides > div:nth-child(2) small { color: var(--cup-gold); }
+.cup-pairing-sides strong { display: block; font-size: 14px; line-height: 1.5; font-weight: 550; overflow-wrap: anywhere; }
+.cup-match-score { display: block; margin-top: 4px; font-size: 12px; color: #acbbb0; }
+.cup-match-forecast { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 18px; margin: 13px 0 0; padding-top: 10px; border-top: 1px solid #ffffff0c; color: #9eafa3; font-size: 10px; }
+.cup-match-forecast > span:first-child { margin-right: auto; }
+.cup-match-forecast b { color: #cbd7ce; font-weight: 500; }
+.cup-roster-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 30px; }
+.cup-roster-grid > section > header { display: flex; justify-content: space-between; align-items: center; gap: 12px; border-top: 1px solid var(--line); padding-top: 15px; }
+.cup-roster-grid h3 { margin: 0; color: #a7c9f6; font-size: 17px; font-weight: 600; }
+.cup-roster-grid > section:nth-child(2) h3 { color: var(--cup-gold); }
+.cup-roster-grid header > span { color: var(--muted); font-size: 10px; }
+.cup-team-stats { display: flex; gap: 30px; padding: 18px 0; }
+.cup-team-stats p { display: flex; flex-direction: column; gap: 4px; margin: 0; }
+.cup-team-stats strong { font-size: 24px; font-weight: 500; }
+.cup-team-stats span { color: var(--muted); font-size: 10px; }
+.cup-roster-grid table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.cup-roster-grid th, .cup-roster-grid td { padding: 8px 0; border-bottom: 1px solid var(--line); text-align: right; font-size: 12px; font-weight: 400; }
+.cup-roster-grid thead th { color: var(--muted); font-size: 9px; }
+.cup-roster-grid th:first-child { text-align: left; }
+.cup-team-strength { margin-bottom: 28px; }
+.cup-method { border-top: 1px solid var(--line); }
+.cup-method > summary { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 50px; list-style: none; cursor: pointer; font-size: 12px; }
+.cup-method > summary::-webkit-details-marker { display: none; }
+.cup-method > summary > span { color: var(--cup-gold); font-size: 20px; }
+.cup-method[open] > summary > span { transform: rotate(45deg); }
+.cup-method > summary:focus-visible { outline: 2px solid var(--cup-gold); outline-offset: 3px; }
+.cup-method p { margin: 0 0 16px; max-width: 800px; color: #a7b5ab; font-size: 12px; line-height: 1.7; }
+.cup-method a { color: var(--cup-gold); }
+.cup-method time { display: block; font-size: 10px; }
 @media (max-width: 720px) {
   .golf-market-guide { grid-template-columns: 1fr; gap: 8px; }
   .golf-round-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cup-heading { align-items: flex-start; flex-direction: column; gap: 14px; margin-bottom: 22px; }
   .cup-status { max-width: 100%; }
-  .cup-scoring-link { align-items: stretch; flex-direction: column; padding: 20px 0 26px; }
-  .cup-scoring-link > a { min-height: 44px; }
-  .cup-weekend { grid-template-columns: 1fr; gap: 26px; }
-  .cup-guide { padding: 22px; }
+  .cup-roster-grid { grid-template-columns: 1fr; gap: 24px; }
+  .cup-team-strength .cup-section-heading { align-items: start; flex-direction: column; gap: 6px; }
 }
 @media (max-width: 480px) {
   main:has(.golf-match-detail) { padding-top: 18px; }
@@ -147,6 +168,23 @@ main:has(.golf-match-detail) > .back { margin-bottom: 26px; }
   .cup-scoreboard-foot { justify-content: center; padding: 14px 12px; font-size: 10px; }
   .cup-scoreboard-foot > span { text-align: center; }
   .cup-section-heading h2 { font-size: 19px; }
-  .cup-session-list li { gap: 12px; }
-  .cup-session-list li > div { padding-left: 12px; }
+  .cup-prediction { padding: 20px 17px; }
+  .cup-prediction h2 { font-size: 32px; }
+  .cup-prediction-main { align-items: start; gap: 12px; margin: 21px 0; }
+  .cup-prediction-main > div > span { font-size: 10px; }
+  .cup-prediction-main span > strong { font-size: 11px; }
+  .cup-win-chance > strong { font-size: 54px; }
+  .cup-win-chance small { font-size: 20px; }
+  .cup-win-chance > span { max-width: 75px; text-align: right; font-size: 10px; }
+  .cup-probability-labels { gap: 8px; font-size: 9px; }
+  .cup-probability-labels b { display: block; margin: 2px 0 0; font-size: 11px; }
+  .cup-probability-labels > span:last-child { text-align: right; }
+  .cup-current-score { padding: 14px; gap: 10px 12px; }
+  .cup-current-score > div { width: 100%; flex-direction: row; justify-content: space-between; }
+  .cup-current-score > small { width: 100%; }
+  .cup-pairing { padding: 14px; }
+  .cup-pairing-sides { gap: 17px; }
+  .cup-pairing-sides strong { font-size: 12px; }
+  .cup-match-forecast { gap: 5px 12px; }
+  .cup-match-forecast > span:first-child { width: 100%; }
 }

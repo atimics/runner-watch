@@ -1852,7 +1852,15 @@ def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
             except Exception as exc:
                 news_errors[league] = str(exc)[:240]
     try:
-        golf_counts = store_golf_events(fetch_golf(at), observed_at=current)
+        golf_events = fetch_golf(at)
+        golf_counts = store_golf_events(golf_events, observed_at=current)
+        from runner_web.golf_cup import EVENT_ID, refresh_cup_analysis
+
+        if any(
+            event["id"] == EVENT_ID and current <= event["end_time"] + timedelta(days=1)
+            for event in golf_events
+        ):
+            golf_counts["cup"] = refresh_cup_analysis(current)
     except Exception as exc:
         golf_error = str(exc)[:240]
     settled = settle_picks()
@@ -2713,12 +2721,19 @@ def golf_event(event_id: str) -> dict[str, Any] | None:
             event["leaderboard"].append(entry)
     event["leader"] = next(iter(event["leaderboard"]), None)
     event["display_status"] = _golf_display_status(event, datetime.now(UTC))
+    if event["id"] == "golf:401824815":
+        from runner_web.golf_cup import saved_cup_analysis
+
+        event["analysis"] = saved_cup_analysis()
     return event
 
 
 def golf_market_context(event: dict[str, Any]) -> dict[str, Any]:
     if event.get("scoring_format") == "match_play":
-        return {"format": "match_play", "teams": event.get("teams") or []}
+        return {
+            "format": "match_play", "teams": event.get("teams") or [],
+            "analysis": event.get("analysis"),
+        }
 
     players = event.get("leaderboard") or []
     round_numbers = sorted(

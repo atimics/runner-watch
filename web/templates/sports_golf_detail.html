@@ -2,7 +2,7 @@
 {% block detail_head %}<link rel="stylesheet" href="/static/sports-golf-detail.css?v={{ static_version }}">{% endblock %}
 {% block screen_main %}
 <a class="back" href="/?league=golf">← Golf</a>
-<article class="golf-detail{% if golf_context.format == 'match_play' %} golf-match-detail{% endif %}">
+<article class="golf-detail{% if golf_context.format == 'match_play' %} golf-match-detail{% endif %}"{% if golf.external_id == '401824815' %} data-live-surface{% endif %}>
   {% if golf_context.format == 'match_play' %}
   {% include "_golf_match_play.html" %}
   {% else %}

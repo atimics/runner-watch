@@ -426,8 +426,8 @@ def test_presidents_cup_shows_team_points_and_match_play_context(sports_db) -> N
     assert response.status_code == 200
     assert b"USA vs International" in response.body
     assert b"TEAM POINTS" in response.body
-    assert b"Four days. Five sessions." in response.body
-    assert b"Official matches and scoring" in response.body
+    assert b"Preparing the Cup forecast" in response.body
+    assert b"Pairings &amp; predictions" in response.body
 
 
 def test_finished_golf_keeps_round_leaders_and_shipley_score(sports_db) -> None:

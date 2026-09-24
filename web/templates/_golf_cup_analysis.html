@@ -1,0 +1,70 @@
+{% set prediction = analysis.prediction %}
+<section class="cup-prediction" aria-labelledby="cupPredictionTitle">
+  <header><p class="cup-eyebrow">RATi PREDICTION</p><span>{{ 'Result confirmed' if prediction and prediction.settled else 'Ranking model · experimental' }}</span></header>
+  {% if prediction %}
+  <div class="cup-prediction-main">
+    <div><p>{{ 'Cup result' if prediction.settled else 'Predicted winner' }}</p><h2 id="cupPredictionTitle">{{ prediction.winner }}</h2><span>{{ 'Final points' if prediction.remaining == 0 else 'Projected final points' }} <strong>USA {{ '%.1f'|format(prediction.expected_usa) }} <i>–</i> {{ '%.1f'|format(prediction.expected_international) }} INTL</strong></span></div>
+    <div class="cup-win-chance"><strong>{{ '%.0f'|format(prediction.winner_probability * 100) }}<small>%</small></strong><span>{{ 'result confirmed' if prediction.settled else 'outright win estimate' }}</span></div>
+  </div>
+  <svg class="cup-probability-bar" viewBox="0 0 100 2" preserveAspectRatio="none" role="img" aria-label="USA {{ '%.1f'|format(prediction.usa * 100) }} percent, tied Cup {{ '%.1f'|format(prediction.tie * 100) }} percent, International {{ '%.1f'|format(prediction.international * 100) }} percent">
+    <rect width="{{ prediction.usa * 100 }}" height="2" fill="#a7c9f6"/><rect x="{{ prediction.usa * 100 }}" width="{{ prediction.tie * 100 }}" height="2" fill="#89968e"/><rect x="{{ (prediction.usa + prediction.tie) * 100 }}" width="{{ prediction.international * 100 }}" height="2" fill="#e1c27d"/>
+  </svg>
+  <div class="cup-probability-labels"><span>USA <b>{{ '%.1f'|format(prediction.usa * 100) }}%</b></span><span>Tied Cup <b>{{ '%.1f'|format(prediction.tie * 100) }}%</b></span><span>International <b>{{ '%.1f'|format(prediction.international * 100) }}%</b></span></div>
+  <p class="cup-prediction-basis">24 ranked players · {{ prediction.announced_remaining }} announced matches remaining · {{ prediction.roster_average_matches }} matches use team averages</p>
+  {% else %}
+  <h2 id="cupPredictionTitle">Preparing the Cup forecast</h2><p class="cup-prediction-basis">The forecast combines both full rosters, world ranking points, and the announced pairings. Each source appears below as it arrives.</p>
+  {% endif %}
+  {% if analysis.stale or analysis.refresh_pending %}<p class="cup-data-note">Saved analysis · a source refresh is pending. Scores and estimates below use the saved times shown here.</p>{% endif %}
+  {% if analysis.match_time %}<p class="cup-analysis-time">Match data saved <time datetime="{{ analysis.match_time }}">{{ analysis.match_time[:16]|replace('T', ' ') }} UTC</time></p>{% endif %}
+</section>
+
+<section class="cup-current-score" aria-label="Current team points">
+  <div><span>TEAM POINTS</span><small>{{ {'pre': 'Scheduled', 'in': 'In progress', 'post': 'Final'}.get(analysis.state, golf.display_status) }}</small></div>
+  {% for team_id, name in [('1', 'USA'), ('3', 'International')] %}<p>{{ name }} <strong>{% if analysis.points and team_id in analysis.points %}{{ '%g'|format(analysis.points[team_id]) }}{% else %}{% set team = golf_context.teams|selectattr('name', 'equalto', name)|first %}{{ team.points_display if team is defined else '—' }}{% endif %}</strong></p>{% endfor %}
+  <small>15½ points to win</small>
+</section>
+
+<section class="cup-pairings" aria-labelledby="cupPairingsTitle">
+  <header class="cup-section-heading"><div><p class="cup-eyebrow">MATCH BY MATCH</p><h2 id="cupPairingsTitle">Pairings &amp; predictions</h2></div><span>{{ analysis.matches|length if analysis.matches else 0 }} matches posted</span></header>
+  {% for session, matches in (analysis.matches or [])|groupby('session') %}
+  <section class="cup-session-pairings" aria-label="{{ session }}"><h3>{{ session }}</h3>
+    {% for match in matches %}
+    <article class="cup-pairing">
+      <header><span>{{ match.status if match.state != 'pre' else 'Scheduled' }}</span><time datetime="{{ match.start_time }}">{{ match.start_time[5:10] }} · {{ match.start_time[11:16] }} UTC</time></header>
+      <div class="cup-pairing-sides">
+        {% for team in match.teams %}
+        <div><small>{{ team.name }}</small><strong>{{ team.players|join(' / ') }}</strong>{% if match.state != 'pre' %}<span class="cup-match-score">{{ team.score }}{% if team.winner %} · Won{% endif %}</span>{% endif %}</div>
+        {% endfor %}
+      </div>
+      {% if match.forecast and not match.completed %}<p class="cup-match-forecast"><span>{{ 'Ranking estimate' if match.state == 'in' else 'Win estimate' }}</span><b>USA {{ '%.0f'|format(match.forecast.usa * 100) }}%</b><span>Tie {{ '%.0f'|format(match.forecast.tie * 100) }}%</span><b>INTL {{ '%.0f'|format(match.forecast.international * 100) }}%</b></p>{% endif %}
+    </article>
+    {% endfor %}
+  </section>
+  {% else %}<p class="cup-data-note">The announced pairings will appear after the next score refresh.</p>{% endfor %}
+</section>
+
+{% if analysis.teams %}
+<section class="cup-team-strength" aria-labelledby="cupStrengthTitle">
+  <header class="cup-section-heading"><div><p class="cup-eyebrow">THE PLAYERS BEHIND THE PICK</p><h2 id="cupStrengthTitle">Team strength</h2></div><span>World rankings · {{ analysis.ranking_date }}</span></header>
+  <div class="cup-roster-grid">
+    {% for team in analysis.teams %}
+    <section><header><h3>{{ team.name }}</h3><span>{{ team.covered }}/12 ranked</span></header>
+      <div class="cup-team-stats"><p><strong>{{ '%.2f'|format(team.average_points) if team.average_points is not none else '—' }}</strong><span>Avg. ranking points</span></p><p><strong>{{ team.top_twenty }}</strong><span>Players in world top 20</span></p></div>
+      <table><caption class="sr-only">{{ team.name }} roster and world rankings</caption><thead><tr><th scope="col">Player</th><th scope="col">Rank</th><th scope="col">Avg. pts</th></tr></thead><tbody>
+      {% for player in team.players %}<tr><th scope="row">{{ player.name }}</th><td>{{ player.rank or '—' }}</td><td>{{ '%.2f'|format(player.average_points) if player.average_points is not none else '—' }}</td></tr>{% endfor %}
+      </tbody></table>
+    </section>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<details class="cup-method" data-connection="cup-method"><summary>How the prediction is made <span aria-hidden="true">+</span></summary>
+  <p>The estimate compares world ranking points for all 24 players. Each player’s strength is the square root of their average ranking points. Each pair uses the mean strength of its players. A side’s share of the combined strength sets its chance of winning a decided match.</p>
+  <p>The model assumes a 12% tie chance per match. Announced pairings get their own estimates. Future pairings use each full roster’s average strength. Completed team points are fixed; the remaining matches are combined to estimate the final Cup result, including a 15–15 tie.</p>
+  <p>Matches in progress use the ranking estimate until the result enters the team totals. This early model assumes independent matches and equal player use in future pairings. Its probabilities need validation against results. Pair chemistry, course fit, weather, and hole-by-hole leads remain areas for model development.</p>
+  <p>Model: {{ analysis.model_version or 'cup-ranking-v1' }}. Each data refresh saves the inputs and prediction for later review.</p>
+</details>
+<details class="cup-method cup-analysis-sources" data-connection="cup-sources"><summary>Sources &amp; saved times <span aria-hidden="true">+</span></summary>
+  {% for source in analysis.sources or [] %}<p><a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">{{ {'matches': 'ESPN pairings and match scores', 'rosters': 'Official Cup rosters', 'rankings': 'World golf rankings via ESPN'}[source.key] }} ↗</a><time datetime="{{ source.captured_at }}">Saved {{ source.captured_at[:16]|replace('T', ' ') }} UTC</time></p>{% else %}<p>The first saved sources will appear after collection.</p>{% endfor %}
+</details>

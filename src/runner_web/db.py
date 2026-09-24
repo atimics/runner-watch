@@ -2404,6 +2404,22 @@ def _migration_083_golf_market_context(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_086_golf_cup_analysis(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS sports_golf_analysis (
+            event_id TEXT NOT NULL REFERENCES sports_golf_events(id) ON DELETE CASCADE,
+            input_hash TEXT NOT NULL,
+            captured_at TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            PRIMARY KEY(event_id,input_hash)
+        );
+        CREATE INDEX IF NOT EXISTS sports_golf_analysis_time
+            ON sports_golf_analysis(event_id,captured_at DESC);
+        """
+    )
+
+
 def _migration_045_sports_comments(db: DatabaseConnection) -> None:
 
     db.executescript(
@@ -3788,6 +3804,7 @@ MIGRATIONS = (
     Migration(83, "golf_market_context", _migration_083_golf_market_context),
     Migration(84, "report_spotlight", _migration_084_report_spotlight),
     Migration(85, "attention_shadow", _migration_085_attention_shadow),
+    Migration(86, "golf_cup_analysis", _migration_086_golf_cup_analysis),
 )
 
 
