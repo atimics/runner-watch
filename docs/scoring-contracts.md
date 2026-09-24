@@ -9,7 +9,7 @@ candidates, not automatic production replacements.
 
 | Output | Contract |
 | --- | --- |
-| `score`, `attention_score`, `custom_score` | Aliases of `attention-activity-v2`, in **heuristic points**, not percent or probability. The same definition applies with and without an active model. |
+| `score`, `attention_score`, `custom_score` | Aliases of `attention-activity-v3`, in **heuristic points**, not percent or probability. The same definition applies with and without an active model. |
 | `forecast` | A validated three-way distribution for the recorded +8%/-4%/60-minute barrier contract. Probabilities are never modified by engagement, news boosts, or policy deductions. |
 | `forecast.assumed_barrier_payoff_pct` | The model's assumed barrier-exit payoff before costs. It is neither executable profit nor a forecast of the terminal 60-minute return. |
 | `rug_score`, `rug_level`, `hard_veto` | Existing heuristic structural-risk assessment and independent veto. These are **not** calibrated probabilities of fraud or loss. |
@@ -37,7 +37,9 @@ momentum = min(30, max(6 * abs(momentum_5m_pct), 2 * abs(momentum_15m_pct)))
 move     = min(15, abs(change_pct))
 freshness = exp(-max(0, quote_age_minutes - 5) / 15)
 market   = (volume + momentum + move) * freshness
-attention = clip(market + filing + news + external_social, 0, 100)
+cluster_scale = min(8, 2 * log10(1 + tracked_cluster_value / 10000))
+cluster = cluster_scale * sqrt(min(1, stock_holding_value / tracked_cluster_value))
+attention = clip(market + filing + news + external_social + cluster, 0, 100)
 ```
 
 Missing numeric inputs contribute no points and are reported in
@@ -46,7 +48,12 @@ contribution and cannot be presented as fresh evidence. The returned availabilit
 state distinguishes missing, partial and available activity.
 
 Filing contribution is at most 12 points regardless of direction; news at most 6
-and external social activity at most 8. Identical news URLs are deduplicated.
+and external social activity at most 8. The cluster contribution is at most 8
+points. It uses saved prices for all tracked stocks held by entities directly
+linked to the stock. The stock's share of that cluster value reduces the boost
+for small positions. Missing prices or a zero stock holding give zero points.
+The score does not claim that these holdings predict a return. Identical news
+URLs are deduplicated.
 These constants are declared heuristic policy, not learned parameters. News-event
 clustering across syndication and independent-source validation remain future work.
 

@@ -8,6 +8,8 @@ also pushed it down the list.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from runner_web import attention
@@ -23,6 +25,42 @@ def test_attention_reads_evidence_not_direction():
 def test_attention_is_clamped_to_the_list_window():
     assert attention.attention_score(signal=95, event=12, news=6, social=8, community=8) == 100.0
     assert attention.attention_score(signal=0) == 0.0
+
+
+def test_cluster_holdings_have_a_small_capped_weight_and_exposure_matters():
+    assert attention.cluster_attention(None, 100) == 0
+    assert attention.cluster_attention(100_000, None) == 0
+    assert attention.cluster_attention(float("nan"), 100) == 0
+    assert attention.cluster_attention(10_000, 10_000) == pytest.approx(2 * math.log10(2))
+    full = attention.cluster_attention(100_000_000, 100_000_000)
+    small = attention.cluster_attention(100_000_000, 100_000)
+    assert full == attention.CLUSTER_MAX
+    assert small == pytest.approx(full * math.sqrt(0.001))
+    assert attention.attention_score(signal=40, cluster=full) == 48
+    assert attention.attention_score(signal=40, cluster=99) == 48
+
+
+def test_cluster_contribution_reaches_public_breakdown_and_trace():
+    snapshot = {"id": "scan", "ticker": "USO", "price": 10}
+    inputs = {
+        "score_as_of": "2026-09-21T14:00:00+00:00",
+        "predictions": {},
+        "filings_by_ticker": {},
+        "community": {},
+        "market_events_by_ticker": {},
+        "cluster_summaries": {
+            "USO": {
+                "value": 10_000_000,
+                "stocks": [{"ticker": "USO", "value": 9_000_000}],
+            }
+        },
+    }
+    scored = web_main._pulse_snapshot_score(snapshot, inputs, include_trace=True)
+    boost = attention.cluster_attention(10_000_000, 9_000_000)
+    assert scored["score"] == round(boost, 2)
+    assert scored["score_components"]["cluster"] == round(boost, 2)
+    assert scored["score_detail"]["drivers"][-2]["key"] == "cluster"
+    assert "8 points" in scored["score_trace"]["cluster"][-1]["value"]
 
 
 def test_engagement_does_not_order_the_list():

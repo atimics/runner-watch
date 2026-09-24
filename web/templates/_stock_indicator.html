@@ -38,7 +38,7 @@
 {%- endmacro %}
 
 {% macro key_icon(kind) -%}
-<span class="indicator-key-icon" data-key-icon="{{ kind }}" aria-hidden="true"><span class="indicator-key-ring">{% if kind in ['evidence', 'bearish', 'sentiment'] %}<span class="indicator-pattern indicator-pattern--evidence" style="--slice-start: {{ '75%' if kind == 'sentiment' else '0%' }}; --slice-end: 100%"></span>{% elif kind == 'social' %}<span class="indicator-pattern indicator-pattern--social" style="--slice-start: 0%; --slice-end: 100%"></span>{% endif %}</span>{% if kind in ['detected', 'significant', 'unknown'] %}<span class="indicator-key-marker">{{ '?' if kind == 'unknown' else '' }}</span>{% elif kind == 'verified' %}<svg class="indicator-key-check-symbol" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9"/><path d="m6 10 2.5 2.5 5.5-5.5"/></svg>{% endif %}</span>
+<span class="indicator-key-icon" data-key-icon="{{ kind }}" aria-hidden="true"><span class="indicator-key-ring">{% if kind in ['evidence', 'bearish', 'sentiment'] %}<span class="indicator-pattern indicator-pattern--evidence" style="--slice-start: {{ '75%' if kind == 'sentiment' else '0%' }}; --slice-end: 100%"></span>{% elif kind in ['social', 'cluster'] %}<span class="indicator-pattern indicator-pattern--{{ kind }}" style="--slice-start: 0%; --slice-end: 100%"></span>{% endif %}</span>{% if kind in ['detected', 'significant', 'unknown'] %}<span class="indicator-key-marker">{{ '?' if kind == 'unknown' else '' }}</span>{% elif kind == 'verified' %}<svg class="indicator-key-check-symbol" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9"/><path d="m6 10 2.5 2.5 5.5-5.5"/></svg>{% endif %}</span>
 {%- endmacro %}
 
 {% macro indicator_legend(market='stocks', size_basis='attention') -%}
@@ -69,6 +69,7 @@
       <li>{{ key_icon('market') }}<span>Market<small>Solid blue</small></span></li>
       <li>{{ key_icon('evidence') }}<span>{{ 'Chain evidence' if market == 'memecoins' else 'Filings + news' }}<small>Purple stripes</small></span></li>
       <li>{{ key_icon('social') }}<span>External social<small>Cyan dots</small></span></li>
+      {% if market == 'stocks' %}<li>{{ key_icon('cluster') }}<span>Cluster holdings<small>Gold grid · up to 8 points</small></span></li>{% endif %}
     </ul>
     {% if size_basis == 'holding' %}<p>Ring size follows the reported holding value at saved prices. Small holdings keep a readable minimum size. Stocks awaiting a value show an event count.</p>{% endif %}
     <p>Slice size shows its share of attention.</p>

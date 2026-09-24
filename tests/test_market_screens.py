@@ -242,8 +242,9 @@ def test_public_score_detail_uses_short_driver_labels():
         "Scan",
         "SEC",
         "News",
-        "Social",
-        "Community",
+            "Social",
+            "Cluster holdings",
+            "Community",
     ]
     assert [part["label"] for part in detail["penalties"]] == ["Rug"]
 

@@ -42,9 +42,9 @@
       mix: allowed(value.mix_state, ['available','zero','unknown'], 'unknown'),
     };
     const parts = Array.isArray(value.slices) ? value.slices : [];
-    contributions = ['market','evidence','social'].map((key, index) => {
+    contributions = ['market','evidence','social','cluster'].map((key, index) => {
       const part = parts.find(part => part?.key === key);
-      return {key, label:['Market','Filings + news','External social'][index], value:finite(part?.value) ? Math.max(0,part.value) : 0};
+      return {key, label:['Market','Filings + news','External social','Cluster holdings'][index], value:finite(part?.value) ? Math.max(0,part.value) : 0};
     }).filter(part => part.value > 0);
     total = contributions.reduce((sum, part) => sum + part.value, 0);
     if (glyph.mix !== 'available' || !Number.isFinite(total) || total <= 0) { contributions = []; total = 0; }

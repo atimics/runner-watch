@@ -25,9 +25,9 @@
       risk:allowed(value.risk,['none','detected','significant','unknown'],'unknown'),
     };
     const slices = Array.isArray(value.slices) ? value.slices : [];
-    let contributions = ['market','evidence','social'].map((key,index) => {
+    let contributions = ['market','evidence','social','cluster'].map((key,index) => {
       const part = slices.find(part => part?.key === key);
-      return {key,label:['Market','Filings + news','External social'][index],value:Number.isFinite(part?.value) ? Math.max(0,part.value) : 0};
+      return {key,label:['Market','Filings + news','External social','Cluster holdings'][index],value:Number.isFinite(part?.value) ? Math.max(0,part.value) : 0};
     }).filter(part => part.value > 0);
     const total = contributions.reduce((sum,part) => sum + part.value,0);
     if (glyph.mix !== 'available' || !Number.isFinite(total) || total <= 0) contributions = [];

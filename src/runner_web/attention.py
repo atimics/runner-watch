@@ -32,6 +32,7 @@ ATTENTION_MAX = 100.0
 EVENT_MAX = 12.0
 NEWS_MAX = 6.0
 SOCIAL_MAX = 8.0
+CLUSTER_MAX = 8.0
 COMMUNITY_MAX = 8.0
 
 ELIGIBLE = "eligible"
@@ -41,7 +42,7 @@ UNKNOWN = "unknown"
 BLOCKING_STATES = {"EXIT", "AVOID"}
 BLOCKING_RUG_LEVELS = {"high", "critical"}
 BLOCKING_RUG_SCORE = 50.0
-POLICY_VERSION = "attention-activity-v2"
+POLICY_VERSION = "attention-activity-v3"
 MAX_QUOTE_AGE_MINUTES = 15.0
 MAX_ASSESSMENT_AGE_MINUTES = 60.0
 
@@ -71,12 +72,23 @@ def community_attention(call_count: int) -> float:
     return 0.0
 
 
+def cluster_attention(cluster_value: Any, stock_value: Any) -> float:
+    """Capped portfolio-scale signal, reduced for a small holding in its cluster."""
+    total = finite_number(cluster_value)
+    holding = finite_number(stock_value)
+    if total is None or holding is None or total <= 0 or holding <= 0:
+        return 0.0
+    scale = min(CLUSTER_MAX, 2.0 * math.log10(1.0 + total / 10_000.0))
+    return min(CLUSTER_MAX, scale * math.sqrt(min(1.0, holding / total)))
+
+
 def attention_score(
     *,
     signal: float,
     event: float = 0.0,
     news: float = 0.0,
     social: float = 0.0,
+    cluster: float = 0.0,
     community: float = 0.0,
 ) -> float:
     """The ordering number: what deserves investigation now."""
@@ -87,6 +99,7 @@ def attention_score(
             + _clamp(event, high=EVENT_MAX)
             + _clamp(news, high=NEWS_MAX)
             + _clamp(social, high=SOCIAL_MAX)
+            + _clamp(cluster, high=CLUSTER_MAX)
         ),
         2,
     )

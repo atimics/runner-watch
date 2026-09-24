@@ -198,7 +198,7 @@ def test_public_projection_does_not_drop_scoring_contract(monkeypatch):
     row = {
         "ticker": "A",
         "score": 80,
-        "score_policy": "attention-activity-v2",
+        "score_policy": "attention-activity-v3",
         "score_unit": "heuristic_points",
         "feature_as_of": "then",
         "quote_as_of": "then",

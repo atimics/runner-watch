@@ -764,6 +764,7 @@ def test_pulse_only_lists_tickers_from_the_latest_scored_scan(
         "sec_event": 9.6,
         "news": 0.0,
         "social_search": 0.0,
+        "cluster": 0.0,
         "community": 0.0,
     }
     assert result["rows"][0]["policy_components"]["safety"] == -0.0
@@ -1384,6 +1385,7 @@ def test_news_and_social_flow_into_pulse_radar_and_alpha(
         "sec_event": 0.0,
         "news": 1.5,
         "social_search": 4.32,
+        "cluster": 0.0,
         "community": 0.0,
     }
     assert pulse["policy_components"]["safety"] == -0.0
@@ -1449,7 +1451,7 @@ def test_detail_composite_uses_pulse_ranker_and_penalties(
     assert current["score"] == pulse["score"]
     assert current["score_as_of"] == pulse["score_as_of"] == timestamp.isoformat()
     assert current["score_components"]["market"] == 10
-    assert current["score_policy"] == "attention-activity-v2"
+    assert current["score_policy"] == "attention-activity-v3"
     assert (current["forecast"] is not None) == (model_status == "active")
     # A risk filing is material, so it raises attention whatever its direction.
     assert current["score_components"]["sec_event"] == 9.6

@@ -4987,6 +4987,8 @@ def _row_field(row: Any, key: str) -> Any:
 
 
 def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[str, Any]:
+    from runner_web.cluster_worth import cluster_worths
+
     event_cutoff = iso(at - timedelta(days=3))
     scan_cutoff = iso(at - timedelta(days=7))
     known_at = iso(at)
@@ -5121,6 +5123,9 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
     market_events_by_ticker: dict[str, list[dict[str, Any]]] = {}
     for raw in market_event_rows:
         market_events_by_ticker.setdefault(str(raw["ticker"]), []).append(dict(raw))
+    cluster_symbols = (
+        [ticker] if ticker is not None else [str(row["ticker"]) for row in market_rows]
+    )
     return {
         "latest_run": dict(latest_run) if latest_run else None,
         "market_rows": [dict(row) for row in market_rows],
@@ -5130,6 +5135,7 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
         "filings_by_ticker": filings_by_ticker,
         "filing_counts": filing_counts,
         "sentiment_counts": sentiment_counts,
+        "cluster_summaries": cluster_worths(cluster_symbols, at=at),
         # Three different clocks: when the evidence was true, when the price it
         # used was observed, and when this was computed.
         "replay_status": "bounded_reconstruction_not_revision_complete",
@@ -5197,6 +5203,17 @@ def _pulse_snapshot_score(
     )
     news_boost = float(external["news_boost"])
     social_search_boost = float(external["social_search_boost"])
+    cluster_summary = inputs.get("cluster_summaries", {}).get(ticker) or {}
+    cluster_value = cluster_summary.get("value")
+    stock_holding = next(
+        (
+            stock.get("value")
+            for stock in cluster_summary.get("stocks", [])
+            if stock["ticker"] == ticker
+        ),
+        None,
+    )
+    cluster_boost = attention.cluster_attention(cluster_value, stock_holding)
     safety_penalty = float(external["safety_penalty"])
     raw_rug_score = snapshot.get("rug_score")
     rug_score = attention.finite_number(raw_rug_score)
@@ -5213,6 +5230,7 @@ def _pulse_snapshot_score(
         event=event_boost,
         news=news_boost,
         social=social_search_boost,
+        cluster=cluster_boost,
         community=community_boost,
     )
     can_act = attention.eligibility(
@@ -5235,6 +5253,7 @@ def _pulse_snapshot_score(
         "sec_event": round(event_boost, 2),
         "news": news_boost,
         "social_search": social_search_boost,
+        "cluster": round(cluster_boost, 2),
         "community": round(community_boost, 2),
     }
     policy_components = {
@@ -5275,6 +5294,21 @@ def _pulse_snapshot_score(
                 (
                     "Calculation",
                     "log₂(mentions + 1) + 0.5 × log₂(engagements + 1), capped at +8 points",
+                ),
+            ),
+            "cluster": trace(
+                (
+                    "Tracked cluster holdings",
+                    f"${cluster_value:,.0f}" if cluster_value is not None else "Unavailable",
+                ),
+                (
+                    "Holding in this stock",
+                    f"${stock_holding:,.0f}" if stock_holding is not None else "Unavailable",
+                ),
+                (
+                    "Calculation",
+                    "2 × log₁₀(1 + cluster holdings / $10,000) × √(stock share), "
+                    "capped at +8 points",
                 ),
             ),
             "community": trace(
@@ -5337,6 +5371,7 @@ def _pulse_snapshot_score(
         "event_boost": round(event_boost, 2),
         "news_boost": news_boost,
         "social_search_boost": social_search_boost,
+        "cluster_boost": round(cluster_boost, 2),
         "community_boost": round(community_boost, 2),
         "safety_penalty": safety_penalty,
         "rug_penalty": round(rug_penalty, 2),
@@ -5454,6 +5489,7 @@ PUBLIC_SCORE_DRIVERS = (
     ("sec_event", "SEC"),
     ("news", "News"),
     ("social_search", "Social"),
+    ("cluster", "Cluster holdings"),
     ("community", "Community"),
 )
 PUBLIC_SCORE_PENALTIES = (

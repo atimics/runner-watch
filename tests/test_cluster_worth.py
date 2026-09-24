@@ -1,10 +1,11 @@
 import json
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
 
 from runner_web import db, main
-from runner_web.cluster_worth import _saved_prices, cluster_summary, cluster_worth
+from runner_web.cluster_worth import _saved_prices, cluster_summary, cluster_worth, cluster_worths
 from tests.test_entity_view import event
 from tests.test_stock_map import filing_row, insert
 
@@ -83,6 +84,33 @@ def test_no_prices_and_empty_cluster_remain_unknown():
     assert result["value"] is None
     assert result["covered"] == 0
     assert result["tracked"] == 1
+
+
+def test_batch_values_each_stock_from_its_direct_entities(database):
+    insert(holding("uso-root", "USO", cik=101, shares=100))
+    insert(holding("other-root", "OTHER", cik=102, shares=20))
+    insert(holding("uso-linked", "THIRD", cik=101, shares=50))
+    insert(holding("other-linked", "FOURTH", cik=102, shares=30))
+    for symbol in ["USO", "OTHER", "THIRD", "FOURTH"]:
+        quote(symbol, 10)
+    summaries = cluster_worths(["USO", "OTHER"])
+    assert summaries["USO"]["value"] == 1500
+    assert summaries["OTHER"]["value"] == 500
+    assert {stock["ticker"] for stock in summaries["USO"]["stocks"]} == {"USO", "THIRD"}
+    assert {stock["ticker"] for stock in summaries["OTHER"]["stocks"]} == {
+        "OTHER", "FOURTH"
+    }
+
+
+def test_batch_respects_as_of_filing_and_price_clocks(database):
+    insert(holding("root", "USO", shares=100))
+    insert(holding("future", "FUTURE", shares=50, filed_at="2026-09-20"))
+    quote("USO", 10)
+    quote("FUTURE", 10, "2026-09-20T18:00:00+00:00")
+    early = cluster_worths(["USO"], at=datetime(2026, 9, 10, tzinfo=UTC))["USO"]
+    late = cluster_worths(["USO"], at=datetime(2026, 9, 22, tzinfo=UTC))["USO"]
+    assert early["value"] == 1000
+    assert late["value"] == 1500
 
 
 def test_cluster_reads_full_portfolios_beyond_map_pages_and_matches_exact_ids(database):
