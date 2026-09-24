@@ -1,8 +1,11 @@
 {% extends "market_screen.html" %}
 {% from "_market_report_card.html" import market_report_card %}
 {% from "_market_report_meta.html" import market_report_meta %}
+{% from "_report_edition.html" import edition_preview %}
 {% block screen_title %}Market turns · RATi{% endblock %}
 {% block detail_head %}
+<link rel="stylesheet" href="/static/stock-indicator.css?v={{ static_version }}">
+<link rel="stylesheet" href="/static/report-editions.css?v={{ static_version }}">
 {% if market_reports.featured %}{{ market_report_meta(market_reports.featured, app_origin) }}{% endif %}
 {% endblock %}
 {% block topbar %}
@@ -20,15 +23,15 @@
 {% endblock %}
 {% block screen_main %}
 <header class="page-head">
-  <p class="eyebrow">RATi RUNNERS</p>
+  <p class="eyebrow">RATi / THE DAILY EDITIONS</p>
   <h1>Market turns</h1>
-  <p class="head-note">The board frozen twice a day, with Flash's targets, the win–loss and desk commentary.</p>
+  <p class="head-note">Read the opening signals. Understand the closing story.</p>
 </header>
 
 <section class="report-cycle" aria-label="Report schedule">
-  <div><span>Pre-market</span><strong>4:20 a.m. ET</strong><small>Watch board, Flash EOD targets and desk commentary</small></div>
+  <div><span>Pre-market</span><strong>4:20 a.m. ET</strong><small>The opening watch · Signals and Flash targets</small></div>
   <i aria-hidden="true">→</i>
-  <div><span>After the bell</span><strong>4:20 p.m. ET</strong><small>The same board with the win–loss and Flash's review</small></div>
+  <div><span>After the bell</span><strong>4:20 p.m. ET</strong><small>The closing story · Results and a company in focus</small></div>
 </section>
 
 <div class="report-feed">
@@ -39,9 +42,10 @@
 
   {% if market_reports.reports %}
   <div class="report-cards">
-    {% for report in market_reports.reports %}
-    {{ market_report_card(report, market_reports.featured.id if market_reports.featured else none) }}
-    {% endfor %}
+    {% if market_reports.featured %}{{ market_report_card(market_reports.featured, market_reports.featured.id) }}{% endif %}
+    <section class="edition-archive" aria-label="Earlier editions"><h2>More editions</h2><div>
+    {% for report in market_reports.reports if not market_reports.featured or report.id != market_reports.featured.id %}{{ edition_preview(report) }}{% endfor %}
+    </div></section>
   </div>
   {% else %}
   <section class="report-empty">

@@ -15,6 +15,7 @@ from runner_web.market_forecasts import (
     forecast_record,
     queue_market_forecasts,
 )
+from runner_web.report_spotlight import decorate_edition, freeze_spotlight
 
 EASTERN = ZoneInfo("America/New_York")
 PRE_MARKET_START = time(4, 0)
@@ -378,7 +379,12 @@ def _post_market_payload(database: Any, day: date, current: datetime) -> dict[st
     watch = briefing["leaders"]
     membership, turns = _post_market_turns(watch, closing)
     board = _closing_board(watch, closing)
-    metrics = {**briefing["metrics"], **membership, **_session_results(board)}
+    metrics = {
+        **briefing["metrics"],
+        **membership,
+        **_session_results(board),
+        "closing_breadth": _market_breadth(closing),
+    }
     ranked = [row for row in board if row.get("session_return_pct") is not None]
     best = max(ranked, key=lambda row: float(row["session_return_pct"])) if ranked else None
     headline = (
@@ -401,6 +407,9 @@ def _post_market_payload(database: Any, day: date, current: datetime) -> dict[st
         "metrics": metrics,
         "leaders": board,
         "turns": turns,
+        "spotlight": freeze_spotlight(
+            database, closing, str(closing_run["captured_at"]), _iso_utc(current)
+        ),
     }
 
 
@@ -459,6 +468,11 @@ def _report_record(row: Any) -> dict[str, Any] | None:
     except (TypeError, ValueError):
         analysis = None
     report["analysis"] = analysis if isinstance(analysis, dict) else None
+    try:
+        spotlight = json.loads(str(report.pop("spotlight_json", None) or "null"))
+    except (TypeError, ValueError):
+        spotlight = None
+    report["spotlight"] = spotlight if isinstance(spotlight, dict) else None
     report["label"] = REPORT_LABELS.get(report["report_type"], str(report["report_type"]))
     try:
         local_as_of = _as_eastern(datetime.fromisoformat(str(report["as_of"])))
@@ -498,6 +512,7 @@ def _decorate(database: Any, reports: list[dict[str, Any]]) -> list[dict[str, An
         report["share"] = _share(report)
         report["slug"] = report["share"]["slug"]
         report["permalink"] = report["share"]["path"]
+        decorate_edition(report)
     return reports
 
 
@@ -683,8 +698,8 @@ def _create_report(
             INSERT INTO market_session_reports(
                 id,report_day,report_type,source_scan_run_id,comparison_scan_run_id,
                 as_of,headline,summary,metrics_json,leaders_json,turns_json,
-                created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                created_at,updated_at,spotlight_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(report_day,report_type) DO NOTHING
             """,
             (
@@ -701,6 +716,7 @@ def _create_report(
                 json.dumps(payload["turns"], separators=(",", ":")),
                 timestamp,
                 timestamp,
+                json.dumps(payload.get("spotlight"), separators=(",", ":")),
             ),
         ).rowcount
         if inserted:

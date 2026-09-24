@@ -489,6 +489,33 @@ def test_each_report_has_a_shareable_permalink_and_card(
     assert 'href="/reports/2026-08-24/pre"' in listing.text
 
 
+def test_company_spotlight_is_frozen_and_renders_in_the_evening_edition(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    from runner_web.market_reports import market_report
+
+    client = _share_client(tmp_path, monkeypatch)
+    try:
+        before = market_report("2026-08-24", "post_market")
+        assert before["spotlight"]["ticker"] == "TWO"
+        with connection() as database:
+            database.execute("UPDATE scan_snapshots SET price=99,change_pct=999")
+        after = market_report("2026-08-24", "post_market")
+        assert before["spotlight"] == after["spotlight"]
+        page = client.get("/reports/2026-08-24/post")
+        pre = client.get("/reports/2026-08-24/pre")
+        assert page.status_code == pre.status_code == 200
+        assert 'id="company-profile"' in page.text
+        assert "The closing story" in page.text
+        assert "How this story was selected" in page.text
+        assert "Company in numbers" in page.text
+        assert "The opening watch" in pre.text
+        assert 'id="company-profile"' not in pre.text
+    finally:
+        client.close()
+
+
 def test_share_metadata_names_the_top_pick_and_the_record(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

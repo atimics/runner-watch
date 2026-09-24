@@ -1,0 +1,82 @@
+{% from "_stock_indicator.html" import indicator_glyph, indicator_legend %}
+{% macro edition_cover(report) %}
+{% set edition = report.edition %}
+{% set hero = edition.hero %}
+{% set post = report.report_type == 'post_market' %}
+<section class="edition-cover" aria-label="{{ edition.title }}">
+  <div class="edition-cover-copy">
+    <p class="edition-kicker">{{ '02 / AFTER THE BELL' if post else '01 / BEFORE THE BELL' }}</p>
+    <h2>{{ edition.title }}</h2>
+    <p class="edition-date">{{ edition.date_label }} <span>· {{ report.as_of_label }}</span></p>
+    <p class="edition-deck">{{ 'The day in focus. The company behind the move.' if post else 'The signals, the targets, the opening questions.' }}</p>
+    {% if hero %}
+    <div class="edition-lead">
+      <span>{{ edition.scope }}</span>
+      <a href="{{ '#company-profile' if post and report.spotlight else '/stock/' ~ hero.ticker }}">{{ hero.ticker }} <small>↗</small></a>
+      {% if post and report.spotlight %}<p>{{ report.spotlight.company.name }}</p>{% else %}<p>{{ hero.signals|first or 'Leading the saved watch board' }}</p>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+  {% if hero %}
+  <figure class="edition-orbit">
+    <div class="edition-orbit-face">{{ indicator_glyph(hero) }}</div>
+    <figcaption>
+      <span>Saved scanner score</span><strong>{{ '%.0f'|format(hero.score) }}</strong>
+      <small>{{ hero.trade_state|replace('_', ' ')|title }} · {{ 'Snapshot ring' if hero.indicator.mix_state == 'unknown' else 'Attention mix' }}</small>
+    </figcaption>
+  </figure>
+  {% endif %}
+</section>
+{% if edition.breadth %}
+<section class="edition-breadth" aria-label="{{ edition.breadth_label }} breadth">
+  <div class="edition-breadth-heading"><span>{{ edition.breadth_label }}</span><small>Names in this scanner</small></div>
+  <div class="edition-breadth-track" aria-hidden="true">{% for part in edition.breadth %}<i class="tone-{{ part.tone }}" style="width:{{ part.percent }}%"></i>{% endfor %}</div>
+  <div class="edition-breadth-key">{% for part in edition.breadth %}<span class="tone-{{ part.tone }}"><i></i><b>{{ part.count }}</b> {{ part.label }}</span>{% endfor %}</div>
+</section>
+{% endif %}
+{% endmacro %}
+
+{% macro company_profile(report) %}
+{% set feature = report.spotlight %}
+{% if feature %}
+<section class="report-company" id="company-profile" aria-labelledby="company-profile-title">
+  <header class="report-section-heading"><span>01 / THE COMPANY BEHIND THE MOVE</span><a href="/stock/{{ feature.ticker }}">Open company page ↗</a></header>
+  <div class="report-company-intro">
+    <div><p class="edition-kicker">Stock of the day · {{ feature.ticker }}</p><h3 id="company-profile-title">{{ feature.company.name }}</h3>
+    <p>{{ feature.company.industry or 'Business classification awaiting source data' }}{% if feature.company.exchange %} · {{ feature.company.exchange }}{% endif %}</p>
+    {% if feature.company.source_url %}<a class="report-source" href="{{ feature.company.source_url }}" target="_blank" rel="noopener noreferrer">SEC company record ↗</a>{% endif %}</div>
+    <div class="report-company-move"><strong class="{{ 'up' if (feature.snapshot.change_pct or 0) > 0 else 'down' if (feature.snapshot.change_pct or 0) < 0 else 'flat' }}">{% if feature.snapshot.change_pct is not none %}{{ '%+.1f'|format(feature.snapshot.change_pct) }}%{% else %}—{% endif %}</strong><span>Change at {{ report.as_of_label }}</span><small>${{ '%.4f'|format(feature.snapshot.price) }}</small></div>
+  </div>
+  <div class="report-selection"><strong>Why this company today</strong><p>{{ feature.reason }}</p>
+    <details><summary>How this story was selected</summary><p>Selected from {{ feature.universe }} names in the closing scan. The editorial score adds price movement in either direction (40 points), volume above normal (25), saved signals (20), and risk context (15). Ties use ticker order. This score measures interest for research.</p>
+      <div class="report-interest">{% for part in feature.selection_parts %}<div><span>{{ part.label }}</span><meter min="0" max="{{ part.max }}" value="{{ part.points }}">{{ '%.0f'|format(part.points) }}/{{ part.max }}</meter><b>{{ '%.0f'|format(part.points) }}/{{ part.max }}</b></div>{% endfor %}</div>
+      <p>Price reaches its cap at a 25% move; volume at 6× normal; signals at four; risk flags at three. Missing fields contribute zero. The selection uses the saved scanner coverage.</p>
+    </details>
+  </div>
+  <div class="report-company-columns">
+    <section><h4>Company in numbers</h4>
+      {% if feature.facts %}<dl class="report-company-facts">{% for fact in feature.facts %}<div><dt>{{ fact.label }}</dt><dd>{{ fact.display }}</dd><small>{% if fact.period_start %}{{ fact.period_start }} → {% endif %}{{ fact.period_end }}</small><a class="report-source" href="{{ fact.source_url }}" target="_blank" rel="noopener noreferrer">Filed {{ fact.filed_at[:10] }} ↗</a></div>{% endfor %}</dl>
+      {% else %}<p class="report-data-note">Financial facts await a saved filing. The company page holds the latest research.</p>{% endif %}
+    </section>
+    <section><h4>Evidence trail</h4>
+      {% if feature.filings %}<ol class="report-filing-trail">{% for filing in feature.filings %}<li><span>{{ filing.form }}</span><div>{% if filing.filing_url %}<a href="{{ filing.filing_url }}" target="_blank" rel="noopener noreferrer">{{ filing.title }} ↗</a>{% else %}<strong>{{ filing.title }}</strong>{% endif %}<time>{{ filing.filed_at[:10] }}</time></div></li>{% endfor %}</ol>
+      {% else %}<p class="report-data-note">Filing links await saved evidence.</p>{% endif %}
+    </section>
+  </div>
+  <div class="report-company-columns report-company-checks">
+    <section><h4>What drew attention</h4><ul>{% for signal in feature.snapshot.signals %}<li>{{ signal }}</li>{% else %}<li>Price and volume supplied the available context.</li>{% endfor %}</ul></section>
+    <section><h4>Risks to carry forward</h4><ul>{% for risk in feature.snapshot.risks %}<li>{{ risk }}</li>{% else %}<li>Read the company's saved risk checks before the next session.</li>{% endfor %}</ul></section>
+  </div>
+  <p class="report-data-note">Profile saved with this edition · Market checkpoint {{ report.as_of_label }} · Financial periods and filing dates appear with each fact.</p>
+</section>
+{% endif %}
+{% endmacro %}
+
+{% macro edition_preview(report) %}
+{% set hero = report.edition.hero %}
+<a class="edition-preview report-{{ report.report_type }}" href="{{ report.permalink }}">
+  <div><span class="edition-kicker">{{ report.label }}</span><time>{{ report.report_day }}</time></div>
+  <div class="edition-preview-story">{% if hero %}{{ indicator_glyph(hero) }}{% endif %}<h3>{{ report.spotlight.company.name if report.spotlight else report.headline }}</h3><span aria-hidden="true">↗</span></div>
+  <p>{{ report.spotlight.reason if report.spotlight else report.summary }}</p>
+</a>
+{% endmacro %}

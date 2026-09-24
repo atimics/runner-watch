@@ -3,6 +3,8 @@
 {% from "_market_report_meta.html" import market_report_meta %}
 {% block screen_title %}{{ report.label }} · {{ report.report_day }} · RATi{% endblock %}
 {% block detail_head %}
+<link rel="stylesheet" href="/static/stock-indicator.css?v={{ static_version }}">
+<link rel="stylesheet" href="/static/report-editions.css?v={{ static_version }}">
 {{ market_report_meta(report, app_origin) }}
 {% endblock %}
 {% block topbar %}

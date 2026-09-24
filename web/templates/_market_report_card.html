@@ -1,4 +1,6 @@
 {% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
+{% from "_report_edition.html" import edition_cover, company_profile %}
+{% from "_stock_indicator.html" import indicator_glyph, indicator_legend %}
 {% macro market_report_card(report, featured_id=none, linked=true) %}
     {% set is_post = report.report_type == 'post_market' %}
     <article class="market-report-card report-{{ report.report_type }}"{% if featured_id and report.id == featured_id %} data-featured{% endif %}>
@@ -7,8 +9,12 @@
         {% if featured_id and report.id == featured_id %}<b>Current turn</b>{% endif %}
       </header>
       {% if linked %}<a class="market-report-permalink" href="{{ report.permalink }}">Open this turn <span aria-hidden="true">›</span></a>{% endif %}
-      <h2>{{ report.headline }}</h2>
-      <p>{{ report.summary }}</p>
+      {{ edition_cover(report) }}
+      <div class="edition-report-body">
+      {% if is_post and report.spotlight %}{{ company_profile(report) }}{% endif %}
+      <div class="report-section-heading"><span>{{ '02 / THE SESSION SCORECARD' if is_post else '01 / THE SCANNER AT A GLANCE' }}</span></div>
+      <h3 class="edition-session-headline">{{ report.headline }}</h3>
+      <p class="edition-session-summary">{{ report.summary }}</p>
 
       <div class="market-report-metrics">
         {% for metric in report.metric_cards %}
@@ -48,9 +54,11 @@
         <ol>
           {% for leader in report.leaders %}
           <li{% if leader.board_status %} class="board-{{ leader.board_status }}"{% endif %}>
-            <a href="/stock/{{ leader.ticker }}"><b>{{ leader.ticker }}</b><span>#{{ leader.rank }} · score {{ '%.0f'|format(leader.score) }}</span></a>
+            <a href="/stock/{{ leader.ticker }}" class="report-board-symbol">{{ indicator_glyph(leader) }}<b>{{ leader.ticker }}</b><span>#{{ leader.rank }} · score {{ '%.0f'|format(leader.score) }}</span></a>
             <div>
-              {% if leader.change_pct is not none %}<strong class="{{ 'up' if leader.change_pct > 0 else 'down' if leader.change_pct < 0 else 'flat' }}">{{ '%+.1f'|format(leader.change_pct) }}%</strong>{% endif %}
+              {% set move = leader.session_return_pct if is_post else leader.change_pct %}
+              {% if move is not none %}<strong class="{{ 'up' if move > 0 else 'down' if move < 0 else 'flat' }}">{{ '%+.1f'|format(move) }}%</strong>{% else %}<strong>—</strong>{% endif %}
+              <small>{{ 'From watch price' if is_post else 'At pre-market scan' }}</small>
               <small>{% if leader.relative_volume is not none %}{{ '%.1f'|format(leader.relative_volume) }}× RVOL{% else %}RVOL —{% endif %}</small>
             </div>
             {% if is_post %}
@@ -113,9 +121,11 @@
       </section>
       {% endif %}
 
+      {{ indicator_legend() }}
       <footer>
         <span>Frozen from scanner checkpoints · Commentary written by Flash · Research only</span>
         {% if not linked %}<button type="button" class="market-report-share" data-share-report>Share this turn ↗</button>{% endif %}
       </footer>
+      </div>
     </article>
 {% endmacro %}
