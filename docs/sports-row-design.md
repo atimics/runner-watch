@@ -12,6 +12,10 @@ weight. Before play, the higher model probability earns the emphasis and the
 caption says **Model favorite**. A started game with pending scores keeps both
 teams equal until a score arrives.
 
+The league sits above the signal tag in the left column. Team names and the
+score share a top line. Compact spacing keeps the game easy to scan, while
+the forecast and game status sit beneath the main line.
+
 The WATCH, LEAN, PASS, and MODEL ONLY tags retain their current meaning and
 palette. The saved value selection can be an underdog. Its team and signal
 appear in the tag's title; the game page contains the full evidence and edge.
