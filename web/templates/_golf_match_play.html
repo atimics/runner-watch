@@ -1,0 +1,87 @@
+{% set is_presidents_cup = golf.external_id == '401824815' %}
+<header class="cup-heading">
+  <div>
+    <p class="cup-eyebrow">PGA TOUR <span aria-hidden="true">/</span> MATCH PLAY{% if is_presidents_cup %} <span aria-hidden="true">/</span> 2026{% endif %}</p>
+    <h1>{{ golf.name }}</h1>
+    <p class="cup-location">{% if is_presidents_cup %}Medinah Country Club <span aria-hidden="true">·</span> September 24–27{% else %}{{ golf.venue }}{% if golf.location %} · {{ golf.location }}{% endif %}{% endif %}</p>
+  </div>
+  <span class="cup-status{% if golf.status == 'in' %} is-playing{% endif %}"><i aria-hidden="true"></i>{{ golf.display_status }}</span>
+</header>
+
+<section class="cup-scoreboard" aria-labelledby="golfWinnerTitle">
+  <header class="cup-scoreboard-head">
+    <h2 id="golfWinnerTitle">{{ golf_context.teams|map(attribute='name')|join(' vs ') if golf_context.teams else 'Teams pending' }}</h2>
+    <span>TEAM POINTS</span>
+  </header>
+  {% if golf_context.teams %}
+  <div class="cup-teams" aria-label="Current team points">
+    {% for team in golf_context.teams %}
+    <div class="cup-team{% if team.abbreviation == 'USA' %} cup-team-usa{% elif team.abbreviation in ['INT', 'INTL'] %} cup-team-intl{% endif %}">
+      <span class="cup-team-mark" aria-hidden="true">{{ team.abbreviation or team.name[:3]|upper }}</span>
+      <h3>{{ team.name }}</h3>
+      <div class="cup-points"><strong>{{ team.points_display }}</strong><span>points</span></div>
+      {% if is_presidents_cup and team.points is not none %}
+      <meter min="0" max="15.5" value="{{ [team.points, 15.5]|min }}" aria-label="{{ team.name }} progress to 15.5 points">Target: 15.5 points</meter>
+      {% endif %}
+    </div>
+    {% if loop.first and golf_context.teams|length == 2 %}
+    <div class="cup-center" aria-hidden="true">
+      <svg viewBox="0 0 64 80" fill="none"><path d="M19 10h26v20c0 13-6 20-13 20s-13-7-13-20V10Z"/><path d="M19 16H9v10c0 9 5 14 13 14m23-24h10v10c0 9-5 14-13 14M32 50v15m-10 0h20l4 8H18l4-8ZM15 9h34"/><path class="cup-trophy-shine" d="M25 17v13c0 6 2 10 4 12"/></svg>
+      <span>{{ 'THE CUP' if is_presidents_cup else 'MATCH PLAY' }}</span>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="cup-awaiting">Team points will appear when the field is published.</p>
+  {% endif %}
+  <footer class="cup-scoreboard-foot">
+    <p>{% if is_presidents_cup %}<strong>15½ points</strong> to win the Cup{% else %}Each match adds to the team total{% endif %}</p>
+    <span>Match win <b>1 pt</b><i aria-hidden="true">·</i> Tie <b>½ pt</b></span>
+  </footer>
+</section>
+
+{% if is_presidents_cup %}
+<div class="cup-scoring-link">
+  <div><span class="cup-link-icon" aria-hidden="true">↗</span><p><strong>Follow every pairing</strong><span>Match results and hole-by-hole scores on the official Cup page.</span></p></div>
+  <a href="https://www.presidentscup.com/scoring" target="_blank" rel="noopener noreferrer">Official matches and scoring <span aria-hidden="true">↗</span></a>
+</div>
+
+<div class="cup-weekend">
+  <section class="cup-sessions" aria-labelledby="cupSessionsTitle">
+    <header class="cup-section-heading"><div><p class="cup-eyebrow">THE SCHEDULE</p><h2 id="cupSessionsTitle">Four days. Five sessions.</h2></div><span>30 matches</span></header>
+    <ol class="cup-session-list">
+      {% for day, date, session, matches in [('THU', '24', 'Opening session', 5), ('FRI', '25', 'Second session', 5), ('SAT', '26', 'Morning session', 4), ('SAT', '26', 'Afternoon session', 4), ('SUN', '27', 'Singles', 12)] %}
+      <li>
+        <time datetime="2026-09-{{ date }}"><span>{{ day }}</span><strong>{{ date }}</strong></time>
+        <div><small>SESSION {{ loop.index }}</small><h3>{{ session }}</h3></div>
+        <span class="cup-match-count"><strong>{{ matches }}</strong> matches</span>
+      </li>
+      {% endfor %}
+    </ol>
+    <a class="cup-text-link" href="https://www.presidentscup.com/plan-your-visit/schedule-of-events" target="_blank" rel="noopener noreferrer">Full schedule and tee times <span aria-hidden="true">↗</span></a>
+  </section>
+
+  <aside class="cup-guide" aria-labelledby="cupGuideTitle">
+    <p class="cup-eyebrow">THE FORMAT</p>
+    <h2 id="cupGuideTitle">Every match counts.</h2>
+    <p>Two teams. Twelve players each. Points from all five sessions decide the Cup.</p>
+    <dl class="cup-rules"><div><dt>Match won</dt><dd>1 <span>point</span></dd></div><div><dt>Match tied</dt><dd>½ <span>point each</span></dd></div></dl>
+    <details class="cup-formats">
+      <summary>How match play works <span aria-hidden="true">+</span></summary>
+      <p>Win a hole by taking fewer strokes than your opponent. Win the match by leading by more holes than remain.</p>
+      <p><strong>Four-ball:</strong> Each player plays a ball. The lower score for each pair counts.</p>
+      <p><strong>Foursomes:</strong> Partners take turns playing one ball.</p>
+      <p><strong>Singles:</strong> One player faces one opponent.</p>
+      <a class="cup-text-link" href="https://www.presidentscup.com/faq" target="_blank" rel="noopener noreferrer">Official format guide ↗</a>
+    </details>
+    <a class="cup-rosters" href="https://www.presidentscup.com/teams" target="_blank" rel="noopener noreferrer"><span><small>MEET THE TEAMS</small><strong>2026 team rosters</strong></span><span aria-hidden="true">↗</span></a>
+  </aside>
+</div>
+{% else %}
+<section class="golf-market-guide" aria-label="Match play results to follow">
+  <div><small>TEAM WINNER</small><strong>Team result</strong><p>Compare the team point totals as matches finish.</p></div>
+  <div><small>END OF SESSION</small><strong>Team points</strong><p>Each completed match adds to the team total.</p></div>
+  <div><small>INDIVIDUAL MATCH</small><strong>Pairing result</strong><p>Follow each pairing on the event’s scoring page.</p></div>
+</section>
+{% endif %}

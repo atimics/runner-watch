@@ -425,8 +425,8 @@ def test_presidents_cup_shows_team_points_and_match_play_context(sports_db) -> N
     response = sports_game_page(event["id"], request(path=f"/game/{event['id']}"), None)
     assert response.status_code == 200
     assert b"USA vs International" in response.body
-    assert b"TEAM WINNER" in response.body
-    assert b"END OF SESSION" in response.body
+    assert b"TEAM POINTS" in response.body
+    assert b"Four days. Five sessions." in response.body
     assert b"Official matches and scoring" in response.body
 
 
