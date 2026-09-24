@@ -62,7 +62,9 @@ def freeze_from_receipts(runs: list[dict], predictions: list[dict], *, now: date
         run_rows[row["run_id"]].append(row)
     by_day: dict[str, list[dict]] = defaultdict(list)
     for run in runs:
-        if run["model_sha256"] == model["sha256"] and run["policy"] == attention.POLICY_VERSION:
+        if (run["model_sha256"] == model["sha256"] and
+                run["policy"] == attention.POLICY_VERSION and
+                run["status"] != "outside_window"):
             by_day[run["day"]].append(run)
     completed = []
     blockers = []
