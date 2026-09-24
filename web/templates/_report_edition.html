@@ -99,6 +99,7 @@
   <div><span class="edition-kicker">{{ report.edition.title }}</span><time>{{ report.report_day }} · {{ report.as_of_label }}</time></div>
   <div class="edition-preview-story">{% if hero %}{{ indicator_glyph(hero) }}{% endif %}<h3>{{ report.spotlight.company.name if report.spotlight else report.headline }}</h3><span aria-hidden="true">↗</span></div>
   <p>{{ report.spotlight.reason if report.spotlight else report.summary }}</p>
+  <p class="edition-preview-snapshot">{{ report.edition.metric_label }} · {{ report.edition.metric_time }}</p>
   <div class="edition-preview-facts">{% for metric in report.metric_cards[:2] %}<span><b>{{ metric.value }}</b> {{ metric.label }}</span>{% endfor %}{% if report.spotlight %}<span><b>{{ report.spotlight.snapshot.risks|length }}</b> risk flags</span>{% endif %}</div>
 </a>
 {% endmacro %}
