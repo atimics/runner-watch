@@ -12,6 +12,7 @@ def candidate(ticker="TEST", **changes):
         "score": 20,
         "change_pct": 1,
         "relative_volume": 1,
+        "quote_time": "2026-09-23T20:10:00+00:00",
         "signals": [],
         "risks": [],
         **changes,
@@ -67,9 +68,13 @@ def test_profile_uses_only_known_company_facts_and_filings():
     """)
     try:
         saved = freeze_spotlight(
-            database, [candidate()], "2026-09-23T20:10:00+00:00", "2026-09-23T20:20:00+00:00"
+            database,
+            [candidate(), candidate("OLD", change_pct=100, quote_time="2026-09-22")],
+            "2026-09-23T20:10:00+00:00",
+            "2026-09-23T20:20:00+00:00",
         )
         assert saved["company"]["name"] == "Test Energy"
+        assert saved["eligible"] == 1
         assert [row["title"] for row in saved["filings"]] == ["Saved event"]
         assert [row["value"] for row in saved["facts"]] == [1200000]
         assert saved["facts"][0]["source_url"].endswith("0000000123-26-000001-index.html")

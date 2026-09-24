@@ -50,7 +50,7 @@
   <div class="report-selection"><strong>Why this company today</strong><p>{{ feature.reason }}</p>
     <details><summary>How this story was selected</summary><p>Selected from {{ feature.universe }} names in the closing scan. The editorial score adds price movement in either direction (40 points), volume above normal (25), saved signals (20), and risk context (15). Ties use ticker order. This score measures interest for research.</p>
       <div class="report-interest">{% for part in feature.selection_parts %}<div><span>{{ part.label }}</span><meter min="0" max="{{ part.max }}" value="{{ part.points }}">{{ '%.0f'|format(part.points) }}/{{ part.max }}</meter><b>{{ '%.0f'|format(part.points) }}/{{ part.max }}</b></div>{% endfor %}</div>
-      <p>Price reaches its cap at a 25% move; volume at 6× normal; signals at four; risk flags at three. Missing fields contribute zero. The selection uses the saved scanner coverage.</p>
+      <p>Price reaches its cap at a 25% move; volume at 6× normal; signals at four; risk flags at three. Missing fields contribute zero. Candidates need a positive price dated to this session.</p>
     </details>
   </div>
   <div class="report-company-columns">

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 from runner_web.stock_indicator import stock_indicator
 
@@ -54,7 +55,18 @@ def select_spotlight(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
 def freeze_spotlight(
     database: Any, rows: list[dict[str, Any]], as_of: str, captured_at: str
 ) -> dict[str, Any] | None:
-    selected = select_spotlight(rows)
+    def session_day(value: Any) -> Any:
+        try:
+            moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        return moment.astimezone(ZoneInfo("America/New_York")).date()
+
+    day = session_day(as_of)
+    eligible = [row for row in rows if day and session_day(row.get("quote_time")) == day]
+    selected = select_spotlight(eligible)
     if selected is None:
         return None
     ticker = str(selected["ticker"])
@@ -124,6 +136,7 @@ def freeze_spotlight(
         "as_of": as_of,
         "captured_at": captured_at,
         "universe": len(rows),
+        "eligible": len(eligible),
         "selection_parts": parts,
         "reason": " · ".join(reasons) or "The leading eligible name in this saved scan.",
         "company": {
@@ -143,7 +156,8 @@ def _compact(value: Any, unit: str) -> str:
     amount = number(value)
     if amount is None:
         return "Awaiting data"
-    prefix = "$" if unit == "USD" else ""
+    prefix = ("-" if amount < 0 else "") + ("$" if unit == "USD" else "")
+    amount = abs(amount)
     for divisor, suffix in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
         if abs(amount) >= divisor:
             return f"{prefix}{amount / divisor:,.1f}{suffix}"

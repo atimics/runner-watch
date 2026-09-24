@@ -27,6 +27,7 @@ def sample_report(post: bool) -> dict:
             ("SAMPLE", 31, -3.2, 1.8, 2.15),
         ]
     ):
+        close = round(price * (1.06 if index < 2 else 0.988), 4)
         leaders.append(
             {
                 "ticker": ticker,
@@ -41,14 +42,14 @@ def sample_report(post: bool) -> dict:
                 "rug_score": 30,
                 "board_status": "held" if post else None,
                 "close_rank": index + 2,
-                "close_price": round(price * 1.06, 4) if post else None,
-                "session_return_pct": 6 if post else None,
+                "close_price": close if post else None,
+                "session_return_pct": (6 if index < 2 else -1.2) if post else None,
                 "eod_forecast": {
                     "reference_price": price,
                     "target_price": round(price * 1.04, 2),
                     "direction": "up",
-                    "close_price": round(price * 1.06, 4) if post else None,
-                    "status": "hit" if post else "pending",
+                    "close_price": close if post else None,
+                    "status": ("hit" if index < 2 else "miss") if post else "pending",
                     "close_source": "Sample data" if post else None,
                     "reason": "Watch whether the opening volume supports the move.",
                     "review_reason": None,
@@ -70,7 +71,7 @@ def sample_report(post: bool) -> dict:
         metrics["closing_breadth"] = {"candidates": 164, "green": 92, "red": 59}
         snapshot = copy.deepcopy(leaders[0])
         snapshot.update(
-            price=4.98,
+            price=4.505,
             change_pct=18.6,
             relative_volume=5.8,
             signals=["Volume acceleration", "Break above prior high", "Near session high"],
