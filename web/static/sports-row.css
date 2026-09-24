@@ -1,79 +1,46 @@
-/* Teams, result, then forecast follow the market rows' reading order. */
+/* Use the stock row's status, identity, result and small right-hand glyph. */
 .anchor-sports .ticker.sports-matchup {
-  grid-template-columns: minmax(0, 1fr) minmax(132px, max-content) 54px;
-  grid-template-areas: 'name value forecast';
-  gap: 28px;
+  grid-template-columns: 96px minmax(0, 1fr) minmax(116px, max-content) 74px 20px;
+  grid-template-areas: 'mark name value forecast arrow';
   align-items: center;
-  min-height: 92px;
-  padding: 14px 6px;
+  gap: 18px;
+  min-height: 66px;
+  padding: 10px 6px;
 }
-.sports-matchup > .row-arrow { display: none; }
-.anchor-sports .sports-identity {
-  grid-area: name;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  min-width: 0;
-}
-.sports-team-pair { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
-.anchor-sports .sports-team-pair .sports-team {
-  color: var(--soft);
-  font-size: 18px;
-  line-height: 1.2;
-  font-weight: 550;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-.anchor-sports .sports-team-pair .is-highlighted {
-  color: var(--green);
-  font-size: 26px;
-  font-weight: 750;
-}
-.sports-versus { color: var(--muted); font-size: 13px; }
-.sports-meta { display: flex; align-items: center; gap: 8px; }
-.sports-league { color: var(--muted); font-size: 11px; font-weight: 550; letter-spacing: .04em; }
-.anchor-sports .sports-meta > .tag { width: auto; min-width: 0; padding: 2px 5px; border-radius: 4px; font-size: 9px; line-height: 1.25; letter-spacing: .03em; }
-.anchor-sports .sports-score {
-  grid-area: value;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  align-self: center;
-  gap: 5px;
-  min-width: 0;
-}
-.anchor-sports .sports-score strong { font-size: 24px; line-height: 1.2; font-weight: 650; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.anchor-sports .sports-score small { max-width: 132px; font-size: 10px; line-height: 1.4; white-space: normal; }
-.sports-forecast { grid-area: forecast; display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; color: var(--muted); }
-.sports-chance-glyph { position: relative; display: grid; place-items: center; width: 46px; height: 46px; }
-.sports-chance-ring { width: 100%; height: 100%; fill: none; stroke-width: 2.5; }
+.sports-matchup > .tag,.sports-signal-space { grid-area: mark; }
+.sports-matchup > .row-arrow { grid-area: arrow; }
+.anchor-sports .sports-identity { grid-area: name; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }
+.sports-team-pair { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.anchor-sports .sports-team-pair .sports-team { color: var(--soft); font-size: 15px; line-height: 1.25; font-weight: 550; white-space: normal; overflow-wrap: anywhere; }
+.anchor-sports .sports-team-pair .is-highlighted { color: var(--green); font-size: 20px; font-weight: 750; }
+.sports-versus { color: var(--muted); font-size: 11px; }
+.anchor-sports .sports-identity > .sports-league { font-size: 12px; }
+.anchor-sports .sports-score { grid-area: value; display: flex; flex-direction: column; align-items: flex-end; align-self: center; gap: 5px; min-width: 0; }
+.anchor-sports .sports-score strong { font-size: 17px; line-height: 1.5; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.anchor-sports .sports-score small { max-width: 116px; font-size: 12px; line-height: 1.5; white-space: normal; }
+.anchor-sports .sports-forecast { grid-area: forecast; display: grid; place-items: center; width: 40px; height: 40px; }
+.sports-chance-ring { width: 100%; height: 100%; fill: none; stroke-width: 3; }
 .chance-track { stroke: var(--line); }
-.chance-value { stroke: var(--blue); transform: rotate(-90deg); transform-origin: center; stroke-linecap: round; }
-.sports-chance-reading { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 1px; font-variant-numeric: tabular-nums; }
-.sports-chance-reading b { max-width: 34px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 8px; line-height: 1.2; font-weight: 550; }
-.sports-chance-reading > span { color: var(--blue); font-size: 11px; line-height: 1.2; font-weight: 650; }
-.sports-forecast > small { font-size: 9px; line-height: 1.3; }
-.sports-forecast.is-pending .sports-chance-glyph { border: 1px dashed var(--line); border-radius: 50%; color: var(--muted); }
+.chance-value { stroke: var(--blue); transform: rotate(-90deg); transform-origin: center; }
+.sports-pending-ring { width: 26px; height: 26px; border: 1px dashed var(--muted); border-radius: 50%; }
 @media (max-width: 760px) {
   .anchor-sports .ticker.sports-matchup {
-    grid-template-columns: minmax(0, 1fr) minmax(82px, max-content) 48px;
-    gap: 14px;
-    min-height: 88px;
-    padding: 12px 0;
+    grid-template-columns: 64px minmax(0, 1fr) auto 30px;
+    grid-template-areas: 'mark name value forecast';
+    min-height: 62px;
+    gap: 8px;
+    padding: 8px 0;
   }
-  .anchor-sports .sports-team-pair .is-highlighted { font-size: 24px; }
-  .anchor-sports .sports-score strong { font-size: 22px; }
-  .anchor-sports .sports-score small { max-width: 104px; }
-}
-@media (max-width: 360px) {
-  .anchor-sports .ticker.sports-matchup { grid-template-columns: minmax(0, 1fr) minmax(76px, max-content) 44px; gap: 10px; }
-  .sports-team-pair { gap: 5px; }
-  .anchor-sports .sports-team-pair .sports-team { font-size: 16px; }
-  .anchor-sports .sports-team-pair .is-highlighted { font-size: 23px; }
-  .anchor-sports .sports-score strong { font-size: 20px; }
-  .anchor-sports .sports-score small { max-width: 90px; }
-  .sports-chance-glyph { width: 42px; height: 42px; }
-  .sports-chance-reading b { max-width: 30px; font-size: 7px; }
-  .sports-chance-reading > span { font-size: 10px; }
+  .anchor-sports .sports-matchup > .tag { width: 64px; min-width: 0; padding: 4px 2px; font-size: 9px; }
+  .anchor-sports .sports-identity { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 5px; }
+  .sports-team-pair { gap: 4px; }
+  .anchor-sports .sports-team-pair .sports-team { font-size: 13px; }
+  .anchor-sports .sports-team-pair .is-highlighted { font-size: 17px; }
+  .anchor-sports .sports-identity > .sports-league { font-size: 10px; }
+  .anchor-sports .sports-score { gap: 2px; }
+  .anchor-sports .sports-score strong { font-size: 14px; }
+  .anchor-sports .sports-score small { max-width: 82px; font-size: 11px; }
+  .anchor-sports .sports-forecast { width: 30px; height: 30px; }
+  .sports-pending-ring { width: 20px; height: 20px; }
+  .sports-matchup > .row-arrow { display: none; }
 }

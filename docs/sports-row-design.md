@@ -11,22 +11,24 @@ the final score, that treatment marks the winner. A tie gives both teams equal
 weight. Pregame teams and games with pending scores also have equal weight.
 The forecast glyph names the model favorite before play.
 
-Each row has three columns: teams on the left, score toward the right, and
-the forecast glyph at the far right. League and signal share one compact line
-under the team names. The game status sits under the score. Every game has
-one row with a simple divider; all its information stays within that row.
+The stock page is the layout reference. Sports uses the same 66-pixel minimum
+row height on desktop and 62-pixel height on phones, padding, gaps, score type,
+and 40/30-pixel glyph footprint. A separate signal column sits on the left.
+Teams occupy the identity column, followed by the score and glyph on the right.
+MLB sits beside the teams on phones and below the names on desktop. Narrow
+screens allow the league to wrap within the identity column. Each game is one
+continuous row with a divider.
 
 The WATCH, LEAN, PASS, and MODEL ONLY tags retain their current meaning and
 palette. The saved value selection can be an underdog. Its team and signal
 appear in the tag's title; the game page contains the full evidence and edge.
 
 The blue ring means **pregame model win chance for the named team**. Its arc
-and percentage use the same probability. The ring contains the team label and
-percentage, with **Pregame** below it. That label stays through play and after
-the final score. The title and accessible name spell out **Pregame model**, the
-full team name, and the saved time when available. Long team names fit in the
-left column and shorten with an ellipsis inside the glyph. An even model says
-**Even 50%**. A pending model uses a quiet outline and **Pending** caption.
+and accessible percentage use the same probability. The quiet ring uses the
+stock glyph's footprint. Its title and accessible name say **Pregame model**,
+the full team name, the percentage, and the saved time when available. The game
+page has the full forecast. An even model gives each team a 50% chance. A pending
+model uses a dashed outline with an accessible **Pregame model pending** label.
 
 The green team highlight follows the scoreboard during play. The blue forecast
 ring follows the saved pregame estimate. This lets a reader see when a forecast

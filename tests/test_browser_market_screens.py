@@ -80,7 +80,6 @@ def test_sports_leader_is_larger_and_score_stays_on_right(page: Page, width, sco
     expect(page.locator(".sports-chance-ring")).to_have_attribute(
         "aria-label", "Pregame model: Boston Celtics 60% win chance."
     )
-    expect(page.locator(".sports-forecast")).to_contain_text("Pregame")
     expect(page.locator(".ticker-value strong")).to_have_text(f"{scores[0]} – {scores[1]}")
     identity = page.locator(".ticker-name").bounding_box()
     score = page.locator(".ticker-value").bounding_box()
@@ -89,10 +88,9 @@ def test_sports_leader_is_larger_and_score_stays_on_right(page: Page, width, sco
     assert digits["x"] >= identity["x"] + identity["width"]
     forecast = page.locator(".sports-forecast").bounding_box()
     assert forecast["x"] >= score["x"] + score["width"]
-    league = page.locator(".sports-league").bounding_box()
-    tag = page.locator(".sports-meta .tag").bounding_box()
-    assert tag["x"] >= league["x"] + league["width"]
-    assert abs((tag["y"] + tag["height"] / 2) - (league["y"] + league["height"] / 2)) < 1
+    tag = page.locator(".sports-matchup > .tag").bounding_box()
+    assert tag["x"] + tag["width"] <= identity["x"]
+    expect(page.locator(".sports-identity > .sports-league")).to_have_text("NBA")
     assert page.locator(".ticker-list > *").count() == 1
     sizes = page.locator(".sports-team").evaluate_all(
         "teams => teams.map(team => parseFloat(getComputedStyle(team).fontSize))"
@@ -101,6 +99,26 @@ def test_sports_leader_is_larger_and_score_stays_on_right(page: Page, width, sco
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.locator(".sports-matchup").focus()
     assert page.locator(".sports-matchup").evaluate("el => el === document.activeElement")
+
+
+@pytest.mark.parametrize("width", [320, 390, 768, 1280])
+def test_sports_row_uses_stock_spacing_and_glyph_size(page: Page, width):
+    page.set_viewport_size({"width": width, "height": 844})
+    measure = """row => {
+        const style = getComputedStyle(row);
+        const glyph = row.querySelector('.ticker-score').getBoundingClientRect();
+        return [style.minHeight, style.padding, style.columnGap, glyph.width, glyph.height];
+    }"""
+    open_screen(page, listing("stocks", [fixtures.scored_stock()]))
+    stock_layout = page.locator(".ticker").evaluate(measure)
+    page.unroute("http://app.test/")
+    event = fixtures.sample("sports")
+    event.update(away_score=5, home_score=3, league="mlb")
+    open_screen(page, listing("sports", [event]))
+    assert page.locator(".ticker").evaluate(measure) == stock_layout
+    if width <= 760:
+        assert page.locator(".ticker").bounding_box()["height"] <= 62
+    assert page.locator(".ticker-list > *").count() == 1
 
 
 def test_narrow_stock_rows_are_single_line(page: Page):

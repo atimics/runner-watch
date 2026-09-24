@@ -1,3 +1,10 @@
+{% if item.tag %}
+<span class="tag tag-{{ item.tag_tone }}{% if item.risk %} has-risk{% endif %}" title="{{ item.selected_team_label }} · {{ item.tag|lower }} signal">
+  {% if item.risk %}<i aria-hidden="true">▲</i>{% endif %}{{ item.tag }}
+</span>
+{% else %}
+<span class="sports-signal-space" aria-hidden="true"></span>
+{% endif %}
 <span class="ticker-name sports-identity">
   <span class="sports-team-pair">
     {% for team in item.matchup.teams %}
@@ -5,14 +12,7 @@
     <strong class="sports-team{% if team.emphasized %} is-highlighted{% endif %}" data-side="{{ team.side }}" title="{{ team.name }}" aria-label="{{ team.name }}{% if team.emphasis_label %} · {{ team.emphasis_label|lower }}{% endif %}">{{ team.label }}</strong>
     {% endfor %}
   </span>
-  <span class="sports-meta">
-    <span class="sports-league">{{ item.subtitle }}</span>
-    {% if item.tag %}
-    <span class="tag tag-{{ item.tag_tone }}{% if item.risk %} has-risk{% endif %}" title="{{ item.selected_team_label }} · {{ item.tag|lower }} signal">
-      {% if item.risk %}<i aria-hidden="true">▲</i>{% endif %}{{ item.tag }}
-    </span>
-    {% endif %}
-  </span>
+  <small class="sports-league">{{ item.subtitle }}</small>
 </span>
 <span class="ticker-value sports-score">
   <strong aria-label="{{ item.matchup.teams[0].name }} then {{ item.matchup.teams[1].name }}: {{ item.value }}">{{ item.value }}</strong>
@@ -20,22 +20,12 @@
 </span>
 {% if item.matchup.forecast %}
 {% set forecast = item.matchup.forecast %}
-<span class="sports-forecast" title="{{ forecast.description }}">
-  <span class="sports-chance-glyph">
-    <svg class="sports-chance-ring" viewBox="0 0 48 48" role="img" aria-label="{{ forecast.description }}">
-      <circle class="chance-track" cx="24" cy="24" r="21"/>
-      <circle class="chance-value" cx="24" cy="24" r="21" pathLength="100" stroke-dasharray="{{ forecast.percent }} 100"/>
-    </svg>
-    <span class="sports-chance-reading" aria-hidden="true">
-      <b>{{ forecast.team }}</b>
-      <span>{{ '%g'|format(forecast.percent) }}%</span>
-    </span>
-  </span>
-  <small aria-hidden="true">Pregame</small>
+<span class="ticker-score sports-forecast" title="{{ forecast.description }}">
+  <svg class="sports-chance-ring" viewBox="0 0 40 40" role="img" aria-label="{{ forecast.description }}">
+    <circle class="chance-track" cx="20" cy="20" r="16"/>
+    <circle class="chance-value" cx="20" cy="20" r="16" pathLength="100" stroke-dasharray="{{ forecast.percent }} 100"/>
+  </svg>
 </span>
 {% else %}
-<span class="sports-forecast is-pending" title="Pregame model pending" role="img" aria-label="Pregame model pending">
-  <span class="sports-chance-glyph" aria-hidden="true">—</span>
-  <small aria-hidden="true">Pending</small>
-</span>
+<span class="ticker-score sports-forecast is-pending" title="Pregame model pending" role="img" aria-label="Pregame model pending"><span class="sports-pending-ring" aria-hidden="true"></span></span>
 {% endif %}
