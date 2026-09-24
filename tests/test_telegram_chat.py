@@ -579,6 +579,12 @@ def test_the_turn_hands_the_model_what_was_prefetched(monkeypatch):
 
     assert decision == {"action": "reply", "text": "MSGM is moving."}
     assert len(calls) == 1
+    request = json.loads(json.dumps(calls[0]))
+    system_message = request["messages"][0]
+    assert system_message["role"] == "system"
+    assert isinstance(system_message["content"], str)
+    assert "world state" in system_message["content"]
+    assert "plain text" in system_message["content"]
     assert "already_looked_up" in calls[0]["messages"][1]["content"]
 
 
