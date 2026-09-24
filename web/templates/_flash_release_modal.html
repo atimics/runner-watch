@@ -2,7 +2,7 @@
 <dialog
   class="flash-release-dialog"
   id="flashReleaseDialog"
-  data-release-id="{{ release_announcement_id }}"
+  data-release-id="{{ release_announcement_id }}-telegram-replies"
   data-balance="{{ flash_wallet.balance }}"
   data-can-claim="{{ 'true' if flash_wallet.can_claim else 'false' }}"
   data-claim-day="{{ flash_wallet.claim_day }}"
@@ -20,6 +20,7 @@
       <p id="flashReleaseIntro">Follow the move, read the evidence, and track the result.</p>
     </header>
     <ul class="flash-release-features">
+      <li><strong>Telegram replies</strong><small>Dash can answer group mentions and replies again.</small></li>
       <li><strong>Flash targets</strong><small>Pre-market targets with closing prices and results.</small></li>
       <li><strong>Sports Calls</strong><small>Paper picks with saved odds and settled returns.</small></li>
       <li><strong>Memecoins</strong><small>Browse prices, volume, and source times.</small></li>
