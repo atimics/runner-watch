@@ -442,7 +442,7 @@ def screen_client(tmp_path, monkeypatch):
     db.init_db()
     monkeypatch.setattr(web, "enforce_rate", lambda *a, **kw: None)
     monkeypatch.setattr(web, "current_user", lambda *a: None)
-    monkeypatch.setattr(web, "_public_screen_data", lambda kind, key, build: build())
+    monkeypatch.setattr(web, "_public_screen_data", lambda kind, key, build, **options: build())
     client = TestClient(web.app)
     yield client
     client.close()
