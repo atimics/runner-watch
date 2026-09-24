@@ -915,6 +915,10 @@ def _start_worker_tasks(
     ]
     if SPORTS_INGESTION_ENABLED:
         workers.append(asyncio.create_task(sports_ingestion_worker(), name="sports-ingestion"))
+    from runner_web import attention_trial
+
+    if attention_trial.enabled():
+        workers.append(asyncio.create_task(attention_trial.worker(), name="attention-shadow"))
     heartbeat_task = asyncio.create_task(
         worker_process_heartbeat(workers, heartbeat),
         name="worker-heartbeat",
@@ -4986,7 +4990,9 @@ def _row_field(row: Any, key: str) -> Any:
         return None
 
 
-def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[str, Any]:
+def _pulse_scoring_inputs(
+    *, ticker: str | None = None, at: datetime, scan_run_id: str | None = None,
+) -> dict[str, Any]:
     from runner_web.cluster_worth import cluster_worths
 
     event_cutoff = iso(at - timedelta(days=3))
@@ -4996,12 +5002,13 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
     with connection() as db:
         # Point in time: nothing observed after `at` may influence the score.
         latest_run = db.execute(
-            """
-            SELECT id,captured_at FROM scan_runs
+            f"""
+            SELECT id,captured_at,candidate_rows FROM scan_runs
             WHERE captured_at>? AND captured_at<=? AND candidate_rows>0
+            {"AND id=?" if scan_run_id is not None else ""}
             ORDER BY captured_at DESC LIMIT 1
             """,
-            (scan_cutoff, known_at),
+            (scan_cutoff, known_at, *((scan_run_id,) if scan_run_id is not None else ())),
         ).fetchone()
         market_rows = (
             db.execute(
@@ -13856,6 +13863,13 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
             expected_candidates=len(all_rows),
         )
         _record_pulse_entries_for_run(db, scan_run_id, captured_at)
+    from runner_web import attention_trial
+
+    if attention_trial.enabled():
+        try:
+            attention_trial.capture_scan(scan_run_id)
+        except Exception:
+            LOG.exception("Attention trial unavailable for scan %s", scan_run_id)
     _spawn_runner_alert_dispatch(scan_run_id)
 
     prediction = predict_and_store(scan_run_id)
