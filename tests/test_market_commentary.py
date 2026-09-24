@@ -287,7 +287,7 @@ def test_report_page_shows_the_analysis_and_desk_comments(monkeypatch):
     _report("pre", "pre_market")
     generate_report_commentary(_generate, PRE)
     overview = market_reports_overview(PRE)
-    monkeypatch.setattr(web_main, "market_reports_overview", lambda **_kwargs: overview)
+    monkeypatch.setattr(web_main, "market_report", lambda *_args: overview["featured"])
     request = Request(
         {
             "type": "http",
@@ -302,7 +302,9 @@ def test_report_page_shows_the_analysis_and_desk_comments(monkeypatch):
     )
     request.state.csp_nonce = "preview"
 
-    html = web_main.market_reports_page(request, None).body.decode()
+    html = web_main.market_report_page(
+        overview["featured"]["report_day"], overview["featured"]["slug"], request, None
+    ).body.decode()
 
     assert "Flash reads the session ahead" in html
     assert "The board is thin but awake." in html

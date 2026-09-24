@@ -37,6 +37,11 @@ def sample_report(post: bool) -> dict:
                 "change_pct": move,
                 "relative_volume": volume,
                 "price": price,
+                "quote_time": "2026-09-23T08:16:00+00:00",
+                "close_quote_time": "2026-09-23T20:10:00+00:00",
+                "close_score": score - 10,
+                "close_relative_volume": volume - 0.5,
+                "close_is_settled": False,
                 "trade_state": "WATCH",
                 "signals": ["Volume acceleration", "Near session high"],
                 "risks": ["Thin liquidity"],
@@ -47,6 +52,7 @@ def sample_report(post: bool) -> dict:
                 "session_return_pct": (6 if index < 2 else -1.2) if post else None,
                 "eod_forecast": {
                     "reference_price": price,
+                    "forecast_at": "2026-09-23T08:18:00+00:00",
                     "target_price": round(price * 1.04, 2),
                     "direction": "up",
                     "close_price": close if post else None,
@@ -73,6 +79,7 @@ def sample_report(post: bool) -> dict:
         snapshot = copy.deepcopy(leaders[0])
         snapshot.update(
             price=4.505,
+            quote_time="2026-09-23T20:08:00+00:00",
             change_pct=18.6,
             relative_volume=5.8,
             signals=["Volume acceleration", "Break above prior high", "Near session high"],
@@ -82,6 +89,9 @@ def sample_report(post: bool) -> dict:
             "ticker": "DEMO",
             "snapshot": snapshot,
             "universe": 164,
+            "eligible": 153,
+            "quote_max_age_seconds": 1200,
+            "as_of": "2026-09-23T20:10:00+00:00",
             "reason": (
                 "+18.6% at the saved checkpoint · 5.8× relative volume · "
                 "3 saved signals · 2 risk flags"
@@ -98,6 +108,39 @@ def sample_report(post: bool) -> dict:
                 "exchange": "NASDAQ",
                 "source_url": None,
             },
+            "business": {
+                "text": (
+                    "Sample business description: We build battery systems for industrial sites. "
+                    "Our customers use these systems to store power and manage demand "
+                    "during busy periods."
+                ),
+                "form": "Sample 10-K",
+                "filed_at": "2026-03-10",
+                "source_url": "#sample-data",
+            },
+            "session_events": [
+                {"form": "Sample 8-K", "title": "Manufacturing update", "filing_url": None}
+            ],
+            "price_trace": [
+                {
+                    "id": f"sample-{i}",
+                    "price": price,
+                    "quote_time": f"2026-09-23T{hour}:00:00+00:00",
+                    "captured_at": f"2026-09-23T{hour}:01:00+00:00",
+                    "time_label": label,
+                }
+                for i, (hour, price, label) in enumerate(
+                    [
+                        ("14", 4.10, "10:00 AM ET"),
+                        ("15", 4.28, "11:00 AM ET"),
+                        ("16", 4.19, "12:00 PM ET"),
+                        ("17", 4.48, "1:00 PM ET"),
+                        ("18", 4.39, "2:00 PM ET"),
+                        ("19", 4.51, "3:00 PM ET"),
+                        ("20", 4.505, "4:00 PM ET"),
+                    ]
+                )
+            ],
             "facts": [
                 {
                     "label": label,
@@ -137,9 +180,7 @@ def sample_report(post: bool) -> dict:
         "report_day": "2026-09-23",
         "as_of": "2026-09-23T20:10:00+00:00" if post else "2026-09-23T08:16:00+00:00",
         "as_of_label": "4:10 PM ET" if post else "4:16 AM ET",
-        "headline": "An active close, with two watch names ahead"
-        if post
-        else "DEMO leads the pre-market board",
+        "headline": "DEMO is the company in focus" if post else "DEMO leads the pre-market board",
         "summary": (
             "The watch board carried three names into the session. "
             "Two finished above the watch price."
@@ -193,15 +234,27 @@ def main() -> None:
         undefined=ChainableUndefined,
     )
     reports = [sample_report(True), sample_report(False)]
-    for report in reports:
-        markup = env.get_template("market_report_detail.html").render(
+    for report in [*reports, None]:
+        template = "market_report_detail.html" if report else "market_reports.html"
+        markup = env.get_template(template).render(
+            market_reports={
+                "featured": reports[0],
+                "reports": reports,
+                "schedule": {
+                    "next_label": "Pre-market briefing",
+                    "schedule_note": "Weekdays · 4:20 a.m. and 4:20 p.m. ET",
+                },
+            },
             report=report,
             app_origin="",
             runners_origin="",
             sports_origin="",
             static_version="preview",
             user=None,
-            request={"state": {"csp_nonce": "preview"}, "url": {"path": report["permalink"]}},
+            request={
+                "state": {"csp_nonce": "preview"},
+                "url": {"path": report["permalink"] if report else "/reports"},
+            },
         )
         markup = re.sub(
             r'<link rel="stylesheet" href="/static/([^?]+)\?[^\"]*">',
@@ -211,15 +264,20 @@ def main() -> None:
         document = BeautifulSoup(markup, "html.parser")
         for script in document.find_all("script"):
             script.decompose()
+        for link in document.find_all("a", href=True):
+            for sample in reports:
+                if link["href"] == sample["permalink"]:
+                    link["href"] = f"{sample['id']}.html"
         markup = str(document)
         preview = (
             '<aside id="sample-data" style="padding:10px 20px;text-align:center;'
             'font-size:12px;background:#292318;color:#e5ba7b">'
             "Design preview · Illustrative company and market data · "
-            '<a href="pre.html">Pre-market</a> / <a href="post.html">Post-market</a></aside>'
+            '<a href="index.html">Editions</a> / <a href="pre.html">Pre-market</a> / '
+            '<a href="post.html">Post-market</a></aside>'
         )
         markup = markup.replace("<body>", "<body>" + preview)
-        (destination / f"{report['id']}.html").write_text(markup)
+        (destination / f"{report['id'] if report else 'index'}.html").write_text(markup)
     print(destination.resolve())
 
 

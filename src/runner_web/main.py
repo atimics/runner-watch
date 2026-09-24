@@ -915,6 +915,10 @@ def _start_worker_tasks(
     ]
     if SPORTS_INGESTION_ENABLED:
         workers.append(asyncio.create_task(sports_ingestion_worker(), name="sports-ingestion"))
+    from runner_web import attention_trial
+
+    if attention_trial.enabled():
+        workers.append(asyncio.create_task(attention_trial.worker(), name="attention-shadow"))
     heartbeat_task = asyncio.create_task(
         worker_process_heartbeat(workers, heartbeat),
         name="worker-heartbeat",
@@ -3378,15 +3382,14 @@ def _market_report_card_png(report: dict[str, Any]) -> bytes:
 
     is_post = report["report_type"] == "post_market"
     pick = (report.get("share") or {}).get("top_pick")
+    accent = "#e5ba7b" if is_post else "#87b6f7"
     image = Image.new("RGB", (1200, 630), "#090b0b")
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle(
-        (55, 55, 1145, 575), radius=34, fill="#111514", outline="#57e389", width=3
-    )
+    draw.rounded_rectangle((55, 55, 1145, 575), radius=34, fill="#111514", outline=accent, width=3)
     draw.text(
         (95, 88),
         _card_text(f"RATi RUNNERS · {str(report['label']).upper()}"),
-        "#87e8a9",
+        accent,
         font=font(27, True),
     )
     day_label = _card_text(f"{report['report_day']} · {report['as_of_label']}")
@@ -3397,7 +3400,8 @@ def _market_report_card_png(report: dict[str, Any]) -> bytes:
         font=font(23),
     )
 
-    draw.text((95, 152), "TOP PICK" if pick else "MARKET TURN", "#7e8b86", font=font(21, True))
+    pick_label = "COMPANY IN FOCUS" if pick and pick.get("editorial") else "WATCH LEADER"
+    draw.text((95, 152), pick_label if pick else "MARKET TURN", "#9fb2a8", font=font(21, True))
     if pick:
         draw.text((95, 182), f"${pick['ticker']}", "#f4f8f6", font=font(76, True))
         _draw_pick_verdict(draw, pick, is_post)
@@ -3406,7 +3410,11 @@ def _market_report_card_png(report: dict[str, Any]) -> bytes:
         draw.text((95, 182), _card_text(report["headline"])[:28], "#f4f8f6", font=font(58, True))
 
     analysis = report.get("analysis") or {}
-    lead = _card_text(analysis.get("headline") or report["summary"])
+    lead = _card_text(
+        pick["reason"]
+        if pick and pick.get("editorial")
+        else analysis.get("headline") or report["summary"]
+    )
     lines = textwrap.wrap(lead, width=62)[:2]
     if len(textwrap.wrap(lead, width=62)) > 2:
         lines[-1] = lines[-1].rstrip(" .") + "…"
@@ -3421,6 +3429,11 @@ def _market_report_card_png(report: dict[str, Any]) -> bytes:
 
 
 def _pick_line(pick: dict[str, Any], is_post: bool) -> str:
+    if pick.get("editorial"):
+        price = _card_price(pick.get("price")) or "Price unavailable"
+        move = pick.get("change_pct")
+        move_label = f"{float(move):+.1f}%" if move is not None else "Move unavailable"
+        return f"{price} · {move_label} · Saved scan research"
     reference = _card_price(pick.get("reference_price"))
     target = _card_price(pick.get("target_price"))
     if not target:
@@ -3497,6 +3510,10 @@ def _draw_scorecard(draw: Any, cards: list[dict[str, Any]]) -> None:
         value = _card_text(card["value"])
         label = _card_text(card["label"]).upper()
         value_font, label_font = font(38, True), font(19, True)
+        for label_size in range(18, 12, -1):
+            if draw.textlength(label, font=label_font) <= width - 24:
+                break
+            label_font = font(label_size, True)
         draw.text(
             (x + (width - draw.textlength(value, font=value_font)) / 2, top + 16),
             value,
@@ -4986,7 +5003,9 @@ def _row_field(row: Any, key: str) -> Any:
         return None
 
 
-def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[str, Any]:
+def _pulse_scoring_inputs(
+    *, ticker: str | None = None, at: datetime, scan_run_id: str | None = None,
+) -> dict[str, Any]:
     from runner_web.cluster_worth import cluster_worths
 
     event_cutoff = iso(at - timedelta(days=3))
@@ -4996,12 +5015,13 @@ def _pulse_scoring_inputs(*, ticker: str | None = None, at: datetime) -> dict[st
     with connection() as db:
         # Point in time: nothing observed after `at` may influence the score.
         latest_run = db.execute(
-            """
-            SELECT id,captured_at FROM scan_runs
+            f"""
+            SELECT id,captured_at,candidate_rows FROM scan_runs
             WHERE captured_at>? AND captured_at<=? AND candidate_rows>0
+            {"AND id=?" if scan_run_id is not None else ""}
             ORDER BY captured_at DESC LIMIT 1
             """,
-            (scan_cutoff, known_at),
+            (scan_cutoff, known_at, *((scan_run_id,) if scan_run_id is not None else ())),
         ).fetchone()
         market_rows = (
             db.execute(
@@ -5240,7 +5260,8 @@ def _pulse_snapshot_score(
         rug_level=str(snapshot.get("rug_level") or ""),
         has_price=(
             quote_mark[0] if quote_mark else (attention.finite_number(snapshot.get("price")) or 0)
-        ) > 0,
+        )
+        > 0,
         hard_veto=bool(snapshot.get("hard_veto")),
         stale_minutes=eligibility_age_minutes,
         assessment_age_minutes=assessment_age_minutes,
@@ -13054,7 +13075,8 @@ def _record_channel_post(
 def _pending_market_report_rows(database: Any, *, limit: int) -> list[dict[str, Any]]:
     rows = database.execute(
         """
-        SELECT r.id,r.report_day,r.report_type,r.headline,r.summary,r.leaders_json,r.created_at
+        SELECT r.id,r.report_day,r.report_type,r.headline,r.summary,r.leaders_json,
+               r.spotlight_json,r.created_at
         FROM market_session_reports r
         LEFT JOIN telegram_channel_posts p
           ON p.kind='market_report' AND p.subject=r.id
@@ -13075,6 +13097,13 @@ def _pending_market_report_rows(database: Any, *, limit: int) -> list[dict[str, 
         except (TypeError, ValueError):
             leaders = []
         item["leaders"] = leaders if isinstance(leaders, list) else []
+        try:
+            spotlight = json.loads(str(item.pop("spotlight_json", None) or "null"))
+        except (TypeError, ValueError):
+            spotlight = None
+        item["spotlight"] = spotlight if isinstance(spotlight, dict) else None
+        if item["spotlight"] and report_type == "post_market":
+            item["headline"] = f"{item['spotlight']['ticker']} is the company in focus"
         item["label"] = REPORT_LABELS.get(report_type, report_type.replace("_", " "))
         slug = REPORT_TYPE_SLUGS.get(report_type)
         day = str(item.get("report_day") or "")
@@ -13235,6 +13264,8 @@ def _activity_payload(
                 "report_day": str(report.get("report_day") or ""),
                 "report_type": str(report.get("report_type") or ""),
                 "leaders": list(report.get("leaders") or []),
+                "spotlight": report.get("spotlight"),
+                "summary": report.get("summary"),
             }
         )
     from runner_web.telegram_outbox import label
@@ -13856,6 +13887,13 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
             expected_candidates=len(all_rows),
         )
         _record_pulse_entries_for_run(db, scan_run_id, captured_at)
+    from runner_web import attention_trial
+
+    if attention_trial.enabled():
+        try:
+            attention_trial.capture_scan(scan_run_id)
+        except Exception:
+            LOG.exception("Attention trial unavailable for scan %s", scan_run_id)
     _spawn_runner_alert_dispatch(scan_run_id)
 
     prediction = predict_and_store(scan_run_id)

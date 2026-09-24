@@ -8,7 +8,7 @@ import sys
 from contextlib import closing
 from pathlib import Path
 
-from pytest import MonkeyPatch
+from pytest import MonkeyPatch, mark
 from starlette.requests import Request
 
 from runner_web import db
@@ -125,15 +125,19 @@ def test_live_screen_sweep_defaults_to_one_worker_with_a_retry_and_hard_limit(
     assert args.workers == 1
 
 
-def test_privacy_screen_heading_matches_the_template() -> None:
+@mark.parametrize(
+    "screen_key,template_name",
+    [("privacy", "privacy.html"), ("market_reports", "market_reports.html")],
+)
+def test_live_screen_heading_matches_the_template(screen_key: str, template_name: str) -> None:
     root = Path(__file__).resolve().parents[1]
     namespace = runpy.run_path(str(root / "scripts" / "test-live-screens"))
-    privacy_screen = next(screen for screen in namespace["SCREENS"] if screen.key == "privacy")
-    privacy_template = (root / "web" / "templates" / "privacy.html").read_text()
-    heading = re.search(r"<h1>([^<]+)</h1>", privacy_template)
+    screen = next(screen for screen in namespace["SCREENS"] if screen.key == screen_key)
+    template = (root / "web" / "templates" / template_name).read_text()
+    heading = re.search(r"<h1(?:\s[^>]*)?>([^<]+)</h1>", template)
 
     assert heading is not None
-    assert re.fullmatch(privacy_screen.heading, heading.group(1))
+    assert re.fullmatch(screen.heading, heading.group(1))
 
 
 def test_public_screen_data_reuses_warmed_payload(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

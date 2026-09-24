@@ -42,7 +42,10 @@ def open_screen(page, screen, user=None):
 def test_list_layout_and_navigation_are_shared(page: Page, market, width):
     page.set_viewport_size({"width": width, "height": 844})
     open_screen(page, listing(market, [fixtures.sample(market)]))
-    expect(page.get_by_role("navigation", name="Market").get_by_role("link")).to_have_count(3)
+    expect(page.get_by_role("navigation", name="Market").get_by_role("link")).to_have_count(4)
+    expect(
+        page.get_by_role("navigation", name="Market").get_by_role("link", name="Reports")
+    ).to_be_visible()
     expect(page.locator(".ticker-list")).to_be_visible()
     expect(page.locator(".ticker")).to_have_count(1)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
