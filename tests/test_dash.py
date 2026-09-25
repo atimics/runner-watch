@@ -868,3 +868,126 @@ def test_the_desk_note_speaks_only_when_something_changed(monkeypatch):
     monkeypatch.setattr(web_main, "dash_world", lambda *a, **k: {"changes": {"any": False}})
     assert web_main.post_dash_desk_note(at=NOW + timedelta(hours=2))["status"] == "quiet"
     assert sent == []
+
+
+def _halt_item(ticker: str, halt: str, reason: str, resume: str = "") -> str:
+    resume_tags = (
+        f"<ndaq:ResumptionDate>09/11/2026</ndaq:ResumptionDate>"
+        f"<ndaq:ResumptionQuoteTime>{resume}</ndaq:ResumptionQuoteTime>"
+        f"<ndaq:ResumptionTradeTime>{resume}</ndaq:ResumptionTradeTime>"
+        if resume
+        else ""
+    )
+    return (
+        f"<item><title>{ticker} Corp</title>"
+        f"<ndaq:HaltDate>09/11/2026</ndaq:HaltDate><ndaq:HaltTime>{halt}</ndaq:HaltTime>"
+        f"<ndaq:IssueSymbol>{ticker}</ndaq:IssueSymbol>"
+        f"<ndaq:IssueName>{ticker} Corp Common Stock</ndaq:IssueName>"
+        f"<ndaq:Market>NASDAQ</ndaq:Market><ndaq:ReasonCode>{reason}</ndaq:ReasonCode>"
+        f"{resume_tags}</item>"
+    )
+
+
+def _seed_halts(*items: str) -> None:
+    from runner_web.nasdaq_halts import refresh_trade_halts
+
+    body = (
+        '<?xml version="1.0"?><rss version="2.0" xmlns:ndaq="http://www.nasdaqtrader.com/">'
+        f"<channel>{''.join(items)}</channel></rss>"
+    ).encode()
+    with connection() as database:
+        database.execute(
+            "UPDATE source_registry SET enabled=1 "
+            "WHERE source='nasdaq_trader' AND feed='trade_halts'"
+        )
+    refresh_trade_halts(download=lambda _url, _timeout: (body, "application/rss+xml"))
+
+
+def _seed_bar(ticker: str, minute: str, open_: float, high: float, low: float, close: float):
+    with connection() as database:
+        database.execute(
+            "INSERT INTO market_bars(source,ticker,interval,bar_time,open,high,low,close,"
+            "volume,first_collected_at,last_collected_at) "
+            "VALUES('yahoo',?,'5m',?,?,?,?,?,1000,?,?)",
+            (
+                ticker,
+                f"2026-09-11T{minute}:00+00:00",
+                open_,
+                high,
+                low,
+                close,
+                NOW.isoformat(),
+                NOW.isoformat(),
+            ),
+        )
+
+
+def test_dash_sees_why_a_halt_happened_when_it_reopens_and_what_followed():
+    # NOW is 11:00 ET. WZRD paused twice on volatility; TDIC is waiting on news.
+    _seed_halts(
+        _halt_item("WZRD", "10:00:00", "LUDP", "10:05:00"),
+        _halt_item("WZRD", "10:20:00", "LUDP", "10:25:00"),
+        _halt_item("TDIC", "10:50:00", "T1"),
+    )
+    _seed_bar("WZRD", "13:55", 1.9, 2.0, 1.9, 2.0)
+    _seed_bar("WZRD", "14:05", 2.4, 2.6, 2.3, 2.5)
+    _seed_bar("WZRD", "14:10", 2.5, 2.5, 2.1, 2.2)
+    _seed_bar("WZRD", "14:25", 2.0, 2.1, 1.8, 1.9)
+
+    halts = {entry["ticker"]: entry for entry in dash.recent_halts(at=NOW)}
+
+    wzrd = halts["WZRD"]
+    assert wzrd["halts_today"] == 2
+    assert wzrd["span_minutes"] == 20
+    second, first = wzrd["halts"]
+    assert first["reason"] == "volatility pause (limit up / limit down)"
+    assert first["state"] == "reopened"
+    assert (first["halted_at"], first["resumes_at"]) == ("10:00 ET", "10:05 ET")
+    assert first["minutes_halted"] == 5
+    assert first["after_reopen"]["before_halt"] == 2.0
+    assert first["after_reopen"]["reopen"] == 2.4
+    assert first["after_reopen"]["reopen_vs_before_pct"] == 20.0
+    assert first["after_reopen"]["high"] == 2.6
+    assert first["after_reopen"]["last"] == 1.9
+    assert second["after_reopen"]["before_halt"] == 2.2
+    assert second["after_reopen"]["reopen"] == 2.0
+
+    tdic = halts["TDIC"]["halts"][0]
+    assert tdic["reason"] == "news pending"
+    assert tdic["state"] == "halted, no resume time yet"
+    assert tdic["resumes_at"] is None
+    assert tdic["minutes_halted"] == 10
+    assert tdic["after_reopen"] is None
+
+
+def test_a_scheduled_resume_is_not_read_as_a_reopen():
+    _seed_halts(_halt_item("FGL", "10:55:00", "T12", "11:10:00"))
+
+    (entry,) = dash.recent_halts(at=NOW)
+
+    halt = entry["halts"][0]
+    assert halt["reason"] == "Nasdaq asked the company for more information"
+    assert halt["state"] == "resume scheduled"
+    assert halt["resumes_at"] == "11:10 ET"
+    assert halt["after_reopen"] is None
+
+
+def test_an_unknown_halt_code_is_passed_through_rather_than_guessed():
+    assert dash.halt_reason("ZZ9") == "ZZ9"
+    assert dash.halt_reason("") is None
+
+
+def test_recent_events_read_the_stored_payload():
+    _seed_halts(_halt_item("TDIC", "10:50:00", "T1"))
+
+    (event,) = dash.recent_events(at=NOW)
+
+    assert event["headline"] == "TDIC Corp Common Stock"
+    assert event["kind"] == "Trading halt · halted · news pending"
+
+
+def test_the_world_and_expand_include_halts():
+    _seed_halts(_halt_item("TDIC", "10:50:00", "T1"))
+
+    assert dash.dash_world(at=NOW)["halts"][0]["ticker"] == "TDIC"
+    assert isinstance(dash.dash_expand("halts"), list)
