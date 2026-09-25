@@ -14,10 +14,12 @@ same places, rather than living in a parallel set of tables nobody audits.
 
 from __future__ import annotations
 
+import json
 import os
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from runner_web.db import connection
 from runner_web.flash_wallet import claim_daily_flash
@@ -536,6 +538,7 @@ WORLD_NODES = (
     "board",
     "runners",
     "events",
+    "halts",
     "community",
     "sector:<name>",
     "report:pre",
@@ -564,15 +567,14 @@ def recent_events(limit: int = 6, at: datetime | None = None) -> list[dict[str, 
         ).fetchall()
     events = []
     for row in rows:
-        try:
-            payload = row["payload_json"]
-            payload = payload if isinstance(payload, dict) else {}
-        except (KeyError, TypeError):
-            payload = {}
+        payload = _payload(row["payload_json"])
         event_type = str(row["event_type"] or "event")
         ticker = str(row["ticker"] or "").upper()
         if event_type == "trading_halt":
             kind = f"Trading halt · {row['status']}" if row["status"] else "Trading halt"
+            reason = halt_reason(payload.get("reason_code"))
+            if reason:
+                kind = f"{kind} · {reason}"
             headline = str(payload.get("issue_name") or f"${ticker} halted")
         elif event_type == "news_article":
             kind = "News"
@@ -591,6 +593,225 @@ def recent_events(limit: int = 6, at: datetime | None = None) -> list[dict[str, 
             }
         )
     return events
+
+
+EASTERN = ZoneInfo("America/New_York")
+
+# Nasdaq's halt reason codes, in the words a person would use. An unknown code is
+# passed through as-is rather than guessed at.
+HALT_REASONS = {
+    "T1": "news pending",
+    "T2": "news released",
+    "T3": "news and resumption times",
+    "T5": "single-stock trading pause",
+    "T6": "extraordinary market activity",
+    "T8": "ETF halt",
+    "T12": "Nasdaq asked the company for more information",
+    "H4": "not in compliance with listing rules",
+    "H9": "not current in its filings",
+    "H10": "SEC trading suspension",
+    "H11": "regulatory concern",
+    "O1": "operations halt",
+    "IPO1": "IPO not yet trading",
+    "M": "volatility pause",
+    "M1": "corporate action",
+    "M2": "quotation not available",
+    "LUDP": "volatility pause (limit up / limit down)",
+    "LUDS": "volatility pause (straddle)",
+    "MWC1": "market-wide circuit breaker, level 1",
+    "MWC2": "market-wide circuit breaker, level 2",
+    "MWC3": "market-wide circuit breaker, level 3",
+    "MWC0": "market-wide circuit breaker carried over",
+    "D": "security deleted",
+}
+
+
+def _payload(value: Any) -> dict[str, Any]:
+    """market_events stores its payload as JSON text."""
+
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(value or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _when(value: Any) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value or ""))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _eastern(value: datetime | None) -> str | None:
+    return value.astimezone(EASTERN).strftime("%H:%M ET") if value else None
+
+
+def halt_reason(code: Any) -> str | None:
+    key = str(code or "").strip().upper()
+    if not key:
+        return None
+    return HALT_REASONS.get(key, key)
+
+
+def _pct(value: float | None, base: float | None) -> float | None:
+    if value is None or not base:
+        return None
+    return round((value / base - 1) * 100, 2)
+
+
+def _after_reopen(
+    bars: list[dict[str, Any]], halted_at: datetime, resumed_at: datetime | None
+) -> dict[str, Any] | None:
+    """How the stock traded once it reopened, from the saved 5 minute bars.
+
+    The reference is the last close before the halt. Nothing is returned when
+    the stock has not reopened or no bar has landed since, so Dash says he has
+    not seen it rather than inventing a move.
+    """
+
+    if resumed_at is None:
+        return None
+    before = [bar for bar in bars if bar["at"] < halted_at]
+    after = [bar for bar in bars if bar["at"] >= resumed_at]
+    if not after:
+        return None
+    reference = before[-1]["close"] if before else None
+    first = after[0]["open"] if after[0]["open"] is not None else after[0]["close"]
+    highs = [bar["high"] for bar in after if bar["high"] is not None]
+    lows = [bar["low"] for bar in after if bar["low"] is not None]
+    last = after[-1]["close"]
+    return {
+        "before_halt": reference,
+        "reopen": first,
+        "high": max(highs) if highs else None,
+        "low": min(lows) if lows else None,
+        "last": last,
+        "reopen_vs_before_pct": _pct(first, reference),
+        "last_vs_before_pct": _pct(last, reference),
+        "last_vs_reopen_pct": _pct(last, first),
+        "bars": len(after),
+        "as_of": _eastern(after[-1]["at"]),
+    }
+
+
+def recent_halts(limit: int = 8, at: datetime | None = None) -> list[dict[str, Any]]:
+    """Today's halts, one entry per ticker, newest first.
+
+    Each entry carries why it stopped, when it reopens or reopened, and how it
+    traded after. A halt whose resume is announced stays in view here: that is
+    when it gets interesting. Tickers halted more than once today show every
+    halt, so four halts in forty minutes read as four, not as one.
+    """
+
+    current = at or datetime.now(UTC)
+    day_start = (
+        current.astimezone(EASTERN)
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .astimezone(UTC)
+    )
+    with connection() as database:
+        rows = database.execute(
+            """
+            SELECT ticker,status,event_at,payload_json
+            FROM public_market_events
+            WHERE event_type='trading_halt' AND event_at>=? AND event_at<=?
+            ORDER BY event_at DESC LIMIT 200
+            """,
+            (day_start.isoformat(), current.isoformat()),
+        ).fetchall()
+        by_ticker: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            ticker = str(row["ticker"] or "").upper()
+            halted_at = _when(row["event_at"])
+            if not ticker or halted_at is None:
+                continue
+            if ticker not in by_ticker and len(by_ticker) >= max(1, min(int(limit), 20)):
+                continue
+            payload = _payload(row["payload_json"])
+            by_ticker.setdefault(ticker, []).append(
+                {
+                    "halted_at": halted_at,
+                    "resumed_at": _when(payload.get("trade_resume_at")),
+                    "reason_code": str(payload.get("reason_code") or "") or None,
+                    "issue_name": payload.get("issue_name"),
+                    "pause_price": payload.get("pause_threshold_price"),
+                }
+            )
+        if not by_ticker:
+            return []
+        tickers = list(by_ticker)
+        earliest = min(halt["halted_at"] for halts in by_ticker.values() for halt in halts)
+        placeholders = ",".join("?" for _ in tickers)
+        bar_rows = database.execute(
+            f"""
+            SELECT ticker,bar_time,open,high,low,close FROM market_bars
+            WHERE source='yahoo' AND interval='5m' AND ticker IN ({placeholders})
+              AND bar_time>=? AND bar_time<=? AND close IS NOT NULL
+            ORDER BY ticker,bar_time
+            """,
+            (*tickers, (earliest - timedelta(minutes=30)).isoformat(), current.isoformat()),
+        ).fetchall()
+    bars: dict[str, list[dict[str, Any]]] = {}
+    for row in bar_rows:
+        moment = _when(row["bar_time"])
+        if moment is None:
+            continue
+        bars.setdefault(str(row["ticker"]).upper(), []).append(
+            {
+                "at": moment,
+                "open": row["open"],
+                "high": row["high"],
+                "low": row["low"],
+                "close": row["close"],
+            }
+        )
+
+    entries = []
+    for ticker, halts in by_ticker.items():
+        described = []
+        for halt in halts:
+            resumed_at = halt["resumed_at"]
+            if resumed_at is None:
+                state = "halted, no resume time yet"
+            elif resumed_at > current:
+                state = "resume scheduled"
+            else:
+                state = "reopened"
+            described.append(
+                {
+                    "halted_at": _eastern(halt["halted_at"]),
+                    "reason": halt_reason(halt["reason_code"]),
+                    "reason_code": halt["reason_code"],
+                    "state": state,
+                    "resumes_at": _eastern(resumed_at),
+                    "minutes_halted": round(
+                        (min(resumed_at or current, current) - halt["halted_at"]).total_seconds()
+                        / 60
+                    ),
+                    "pause_price": halt["pause_price"],
+                    "after_reopen": _after_reopen(
+                        bars.get(ticker, []),
+                        halt["halted_at"],
+                        resumed_at if state == "reopened" else None,
+                    ),
+                }
+            )
+        first = halts[-1]["halted_at"]
+        latest = halts[0]["halted_at"]
+        entries.append(
+            {
+                "ticker": ticker,
+                "name": halts[0]["issue_name"],
+                "halts_today": len(halts),
+                "span_minutes": round((latest - first).total_seconds() / 60),
+                "halts": described,
+            }
+        )
+    return entries
 
 
 def recent_changes(hours: int = 1, at: datetime | None = None) -> dict[str, Any]:
@@ -692,6 +913,7 @@ def dash_world(at: datetime | None = None) -> dict[str, Any]:
         "board": market_now(current),
         "runners": recent_runners(limit=6, at=current),
         "events": recent_events(limit=6, at=current),
+        "halts": recent_halts(limit=6, at=current),
         "community": community_now(limit=6),
         "self": dash_self(current),
         "changes": recent_changes(at=current),
@@ -715,6 +937,8 @@ def dash_expand(node: str | None) -> dict[str, Any]:
         return community_now()
     if key in {"events", "news"}:
         return recent_events(limit=20)
+    if key in {"halts", "halt"}:
+        return recent_halts(limit=20)
     if key.startswith("report"):
         which = key.split(":", 1)[1].strip() if ":" in key else None
         return session_report(which or None)
@@ -726,4 +950,3 @@ def dash_expand(node: str | None) -> dict[str, Any]:
 
         return look_up_ticker(symbol)
     return {"error": "unknown node", "nodes": list(WORLD_NODES)}
-
