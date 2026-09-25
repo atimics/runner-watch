@@ -11,24 +11,40 @@
 
   {% if golf_context.format == 'match_play' %}
   <section class="golf-context" aria-labelledby="golfWinnerTitle">
-    <p class="eyebrow">CUP WINNER</p>
+    <p class="eyebrow">{{ 'FINAL TEAM SCORE' if golf.completed else 'TEAM SCORE' }}</p>
     <h2 id="golfWinnerTitle">{{ golf_context.teams|map(attribute='name')|join(' vs ') if golf_context.teams else 'Teams pending' }}</h2>
-    <p>Team points decide the Cup. Each match earns one point for a win or half a point for a tie.</p>
+    <p>Each match earns one point for a win or half a point for a tie.{% if golf.external_id == '401824815' %} The first team to 15.5 points wins.{% endif %}</p>
     {% if golf_context.teams %}
-    <div class="golf-team-points" aria-label="Current team points">
+    <div class="golf-team-points" aria-label="{{ 'Final' if golf.completed else 'Current' }} team points">
       {% for team in golf_context.teams %}
       <div><span>{{ team.name }}</span><strong>{{ team.points_display }}</strong><small>points</small></div>
       {% endfor %}
     </div>
     {% endif %}
   </section>
-  <section class="golf-market-guide" aria-label="Presidents Cup results to follow">
-    <div><small>TEAM WINNER</small><strong>Cup result</strong><p>Compare the team point totals as matches finish.</p></div>
-    <div><small>END OF SESSION</small><strong>Team points</strong><p>Thursday and Friday have five matches each. Saturday has two four-match sessions. Sunday has twelve singles matches.</p></div>
-    <div><small>INDIVIDUAL MATCH</small><strong>Pairing result</strong><p>The official scoring page shows each pairing and its hole-by-hole result.</p></div>
+  <section class="golf-match-sessions" aria-labelledby="golfMatchesTitle">
+    <h2 id="golfMatchesTitle">Match results and schedule</h2>
+    <p class="golf-small-note">A result like 3 &amp; 2 means the winner led by three holes with two left to play.</p>
+    {% if golf_context.sessions %}
+      {% for session in golf_context.sessions %}
+      <div class="golf-match-session">
+        <h3>{{ session.label }} <small>{{ session.matches|length }} matches</small></h3>
+        <ol>
+          {% for match in session.matches %}
+          <li>
+            <span class="golf-match-number">Match {{ loop.index }}</span>
+            <span class="golf-match-teams">{% for side in match.sides %}<span><b>{{ side.team }}</b>{% if side.players %}{{ side.players|join(' / ') }}{% elif side.player %}{{ side.player }}{% endif %}</span>{% endfor %}</span>
+            <strong>{{ match.result }}</strong>
+            <small>{% if match.state == 'pre' %}{{ match.time_label }}{% elif match.state == 'in' and match.holes %}Through {{ match.holes }} holes{% elif match.completed %}Final{% else %}{{ match.state|title }}{% endif %}</small>
+          </li>
+          {% endfor %}
+        </ol>
+      </div>
+      {% endfor %}
+    {% else %}<p class="golf-small-note">Match results will appear when the scoring feed publishes them.</p>{% endif %}
   </section>
   {% if golf.external_id == '401824815' %}
-  <p class="golf-format-note">Presidents Cup uses match play. Team points and match results are the relevant scores here. Stroke play events use player round scores.</p>
+  <p class="golf-format-note">Open the official scoring page for hole-by-hole cards.</p>
   <nav class="golf-source-links" aria-label="Presidents Cup sources">
     <a href="https://www.presidentscup.com/scoring" target="_blank" rel="noopener noreferrer">Official matches and scoring ↗</a>
     <a href="https://www.presidentscup.com/teams" target="_blank" rel="noopener noreferrer">2026 team rosters ↗</a>
