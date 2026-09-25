@@ -124,24 +124,38 @@ def test_ingestion_resumes_same_window_and_keeps_cursor_on_provider_failure():
     assert state["backlog_seconds"] == 660
 
 
-def test_pump_launch_ignores_metadata_values():
+def test_pump_launch_identity_ignores_metadata_and_keeps_it_as_a_marked_claim():
     tx = transaction()
     ix = tx["transaction"]["message"]["instructions"][0]
     ix["programId"] = PUMP
     ix["accounts"] = [MINT, POOL, POOL, POOL, POOL, CREATOR]
 
-    def data(name):
+    def data(name, symbol=b"SYM"):
         raw = PUMP_CREATE_V2
-        for value in (name, b"SYM", b"https://marketing.invalid"):
+        for value in (name, symbol, b"https://marketing.invalid"):
             raw += len(value).to_bytes(4, "little") + value
         return helius._encode(raw + helius._decode(CREATOR) + bytes(2))
 
+    claims = ("claimed_name", "claimed_symbol")
     ix["data"] = data(b"promoted")
     original = parse_events(tx)
     ix["data"] = data(b"")
-    assert parse_events(tx) == original
+    changed = parse_events(tx)
+    assert [{k: v for k, v in row.items() if k not in claims} for row in changed] == [
+        {k: v for k, v in row.items() if k not in claims} for row in original
+    ]
     assert original[0]["kind"] == "token_launch"
+    assert original[0]["token_address"] == MINT
     assert original[0]["declared_creator"] == CREATOR
+    assert original[0]["claimed_name"] == "promoted"
+    assert changed[0]["claimed_name"] == ""
+
+    # Bidi overrides, zero-width joiners and control characters cannot ride along.
+    spoof = "Bo\u200bnk\u202e \x00Official\u2028v2".encode()
+    ix["data"] = data(spoof, ("B" * 40).encode())
+    row = parse_events(tx)[0]
+    assert row["claimed_name"] == "Bonk Official v2"
+    assert row["claimed_symbol"] == "B" * 16
 
 
 def test_raydium_pool_identity_comes_from_instruction_accounts():

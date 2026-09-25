@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import quote
 
 from runner_web.market_assessments import assessment
+from runner_web.memecoin_chain_parser import short_address
 from runner_web.prediction_tickers import ticker as prediction_ticker
 from runner_web.stock_indicator import memecoin_indicator, stock_indicator
 
@@ -456,7 +457,10 @@ def row(
     if not re.fullmatch(r"(?:[1-9A-HJ-NP-Za-km-z]{32,44}|0x[a-fA-F0-9]{40})", address):
         address = ""
     if address:
-        subtitle = address[:6] + "…" + address[-4:]
+        # The address is the headline; the launch's own name is secondary and marked.
+        name = short_address(address)
+        claimed = str(item.get("claimed_symbol") or item.get("claimed_name") or "")
+        subtitle = f"Creator-set: {claimed}" if claimed else "No launch name recorded"
     indicator = (
         stock_indicator(item) if market == "stocks" else memecoin_indicator(item) if coin else None
     )
@@ -557,7 +561,7 @@ def _search_text(market: str, source: dict[str, Any], display: dict[str, Any]) -
     """Search original identities without adding raw fields to public view models."""
     text = display["name"] + " " + display["subtitle"]
     if market == "memecoins":
-        fields = ("id", "symbol", "name", "token_address")
+        fields = ("id", "symbol", "name", "token_address", "claimed_symbol", "claimed_name")
     elif market == "sports":
         fields = (
             "id",
@@ -605,6 +609,12 @@ def listing(
             for source, display in pairs
             if query.casefold() in _search_text(market, source, display).casefold()
         ]
+        if market == "memecoins":
+            # Anyone can launch under a copied name; the coin whose address was typed leads.
+            typed = query.casefold()
+            pairs.sort(
+                key=lambda pair: typed not in str(pair[0].get("token_address") or "").casefold()
+            )
     now = datetime.now(UTC)
     target_day = ""
     calls_by_ticker: dict[str, dict[str, Any]] = {}
@@ -990,6 +1000,17 @@ def detail(
         result["note"] = "Price history"
         if market == "stocks":
             result["chart_url"] = f"/api/screens/stocks/{identifier}/chart"
+        if market == "memecoins" and item.get("contract_address"):
+            result["facts"].append({"label": "Contract", "value": item["contract_address"]})
+            claimed = " · ".join(
+                str(source[key]) for key in ("claimed_symbol", "claimed_name") if source.get(key)
+            )
+            result["facts"].append(
+                {
+                    "label": "Creator-set name (unverified)",
+                    "value": claimed or "None recorded",
+                }
+            )
         volume = source.get("volume_label") if market == "memecoins" else None
         if volume:
             result["facts"].append({"label": "24h volume", "value": volume})

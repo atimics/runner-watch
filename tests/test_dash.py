@@ -1127,11 +1127,36 @@ def test_a_disabled_memecoin_feed_says_so(monkeypatch):
     assert coins["most_traded"] == []
 
 
-def test_expand_finds_a_coin_by_symbol_and_admits_an_unknown_one(monkeypatch):
-    monkeypatch.setenv("MEMECOINS_ENABLED", "true")
-    _seed_coins(("pepe", 31.5, 500.0))
+def test_expand_finds_a_coin_by_address_and_never_by_its_creator_set_name(monkeypatch):
+    import json
 
-    assert dash.dash_expand("coin:$PEPE")["id"] == "pepe"
+    monkeypatch.setenv("MEMECOINS_ENABLED", "true")
+    _seed_coins(("pepe", 31.5, 500.0), ("copycat", 2.0, 100.0))
+    real = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+    copy = "DezXAZuKq8vGmRQCZ3tYkLpWbNe5Hs7Dr2FjAoPcpump"
+    with connection() as database:
+        saved = database.execute(
+            "SELECT value FROM worker_state WHERE key='memecoins_snapshot'"
+        ).fetchone()
+        snapshot = json.loads(saved["value"])
+        for row, address in zip(snapshot["rows"], (real, copy), strict=True):
+            row.update(token_address=address, claimed_symbol="BONK", claimed_name="Bonk")
+        database.execute(
+            "UPDATE worker_state SET value=? WHERE key='memecoins_snapshot'",
+            (json.dumps(snapshot),),
+        )
+
+    found = dash.dash_expand("coin:" + real)
+    assert found["id"] == "pepe"
+    assert found["contract_address"] == real
+    assert found["symbol"] == real[:6] + "…" + real[-6:]
+    assert found["creator_set_name_unverified"] == "BONK"
+
+    by_name = dash.dash_expand("coin:$BONK")
+    assert by_name["known"] is False
+    assert [row["contract_address"] for row in by_name["same_name_candidates"]] == [real, copy]
+    assert "contract address" in by_name["note"]
+    assert dash.dash_expand("coin:" + real.lower())["known"] is False
     assert dash.dash_expand("coin:nope")["known"] is False
     assert set(dash.dash_expand("sports")) >= {"live", "up_next", "finals"}
     assert "sports" in dash.dash_world(at=NOW) and "memecoins" in dash.dash_world(at=NOW)

@@ -186,7 +186,8 @@ def test_finding_source_urls_are_safe(url):
 def test_coin_identity_is_compact():
     address = "A" * 44
     result = row("memecoins", coin(token_address=address, name="solana · " + address))
-    assert result["subtitle"] == "AAAAAA…AAAA"
+    assert result["name"] == "AAAAAA…AAAAAA"
+    assert result["subtitle"] == "No launch name recorded"
 
 
 def test_coin_assessment_limits_findings_to_latest_three():

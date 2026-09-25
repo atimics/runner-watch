@@ -489,3 +489,4 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
 }
 
 @media(max-width:360px){.markets{gap:2px}.markets a{padding:7px 6px;min-width:0}}
+.facts>div{min-width:0;max-width:100%}.facts dd{overflow-wrap:anywhere}

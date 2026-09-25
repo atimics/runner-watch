@@ -50,8 +50,10 @@ def test_memecoin_route_keeps_matches_through_both_filters(board_context, monkey
     now = datetime.now(UTC).isoformat()
     coin = {
         "id": "wif-token",
-        "symbol": "WIF",
-        "name": "dogwifhat",
+        "symbol": "So1111",
+        "name": ADDRESS,
+        "claimed_symbol": "WIF",
+        "claimed_name": "dogwifhat",
         "token_address": ADDRESS,
         "price": 1.23,
         "change_24h": 2,
@@ -72,7 +74,8 @@ def test_memecoin_route_keeps_matches_through_both_filters(board_context, monkey
     rows = html.select("a.ticker")
     assert len(rows) == 1
     assert rows[0]["href"] == "/memecoins/coin/wif-token"
-    assert rows[0].select_one(".ticker-name small").get_text() == "So1111…1112"
+    assert rows[0].select_one(".ticker-name strong").get_text() == "So1111…111112"
+    assert rows[0].select_one(".ticker-name small").get_text() == "Creator-set: WIF"
     assert rows[0].select_one(".ticker-name small")["title"] == ADDRESS
 
 

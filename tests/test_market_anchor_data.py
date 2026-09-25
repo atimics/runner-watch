@@ -83,7 +83,7 @@ def test_paused_quote_keeps_saved_risk_state_visible():
     assert item["change"] == "Price paused"
 
 
-def test_token_subtitle_uses_its_contract_address():
+def test_token_heading_is_its_contract_address_and_the_launch_name_is_marked():
     address = "DezXAZ8z7PnrnRJjz3wXBoRgixCaDqdGX2FNBFpPB263"
     item = listing(
         "memecoins",
@@ -92,9 +92,11 @@ def test_token_subtitle_uses_its_contract_address():
                 "id": "bonk",
                 "symbol": "BONK",
                 "name": "Saved assessment example",
+                "claimed_symbol": "BONK",
                 "token_address": address,
             }
         ],
     )["rows"][0]
-    assert item["subtitle"] == "DezXAZ…B263"
+    assert item["name"] == address[:6] + "…" + address[-6:]
+    assert item["subtitle"] == "Creator-set: BONK"
     assert item["contract_address"] == address

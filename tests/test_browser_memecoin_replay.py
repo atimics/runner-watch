@@ -85,7 +85,9 @@ def test_coin_map_uses_stock_layout_and_ticker_center(page: Page, width: int):
     page.on("pageerror", lambda error: errors.append(str(error)))
     data = open_replay(page, width=width)
     expect(page.locator("[data-replay-graph]")).to_have_attribute("data-phase", "settled")
-    expect(page.locator(".map-score-center")).to_contain_text(COIN["symbol"])
+    # The center names the coin by its address head and tail, never its launch symbol.
+    address = COIN["token_address"]
+    expect(page.locator(".map-score-center")).to_contain_text(address[:6] + "…" + address[-6:])
     expect(page.locator(".map-canvas")).to_be_visible()
     expect(page.locator("[data-replay-events] button")).to_have_count(
         len({e["event_id"] for e in data["frames"][-1]["edges"]})
