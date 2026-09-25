@@ -461,36 +461,98 @@ def test_presidents_cup_shows_team_points_and_match_play_context(sports_db) -> N
 
 def test_golf_pairings_use_named_players_from_matching_leaderboard() -> None:
     leaderboard = {
-        "page": {
-            "content": {
-                "leaderboard": {
-                    "id": "401824815",
-                    "mtch": {
-                        "grps": [
-                            {
-                                "competitions": [
-                                    {
-                                        "id": "match-1",
-                                        "competitors": [
-                                            {"teamId": "1", "displayName": "Scottie Scheffler"},
-                                            {"teamId": "1", "displayName": "Sam Burns"},
-                                            {"teamId": "3", "displayName": "Sungjae Im"},
-                                            {"teamId": "3", "displayName": "Min Woo Lee"},
-                                        ],
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                }
-            }
-        }
+        "events": [
+            {"id": "other-event", "competitions": [[{"id": "other-match"}]]},
+            {
+                "id": "401824815",
+                "competitions": [
+                    [
+                        {
+                            "id": "match-1",
+                            "competitors": [
+                                {
+                                    "team": {"id": "1"},
+                                    "roster": [
+                                        {"athlete": {"displayName": "Scottie Scheffler"}},
+                                        {"athlete": {"displayName": "Sam Burns"}},
+                                    ],
+                                },
+                                {
+                                    "team": {"id": "3"},
+                                    "roster": [
+                                        {"athlete": {"displayName": "Sungjae Im"}},
+                                        {"athlete": {"displayName": "Min Woo Lee"}},
+                                    ],
+                                },
+                            ],
+                        }
+                    ]
+                ],
+            },
+        ]
     }
-    html = f"<script>window['__espnfitt__']={json.dumps(leaderboard)};</script>".encode()
-    pairings = sports_module._golf_pairings_from_html(html, "401824815")
+    pairings = sports_module._golf_pairings_from_leaderboard(leaderboard, "401824815")
     assert pairings["match-1"]["1"] == ["Scottie Scheffler", "Sam Burns"]
     assert pairings["match-1"]["3"] == ["Sungjae Im", "Min Woo Lee"]
-    assert sports_module._golf_pairings_from_html(html, "another-event") == {}
+    assert sports_module._golf_pairings_from_leaderboard(leaderboard, "another-event") == {}
+
+
+def test_fetch_golf_uses_structured_leaderboard_for_match_players(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event = {
+        "external_id": "401824815",
+        "scoring_format": "match_play",
+        "leaderboard": [],
+        "matches": [
+            {
+                "id": "12094",
+                "sides": [{"team_id": "1", "players": []}, {"team_id": "3", "players": []}],
+            }
+        ],
+    }
+    leaderboard = {
+        "events": [
+            {
+                "id": "401824815",
+                "competitions": [
+                    [
+                        {
+                            "id": "12094",
+                            "competitors": [
+                                {
+                                    "team": {"id": "1"},
+                                    "roster": [{"athlete": {"displayName": "Scottie Scheffler"}}],
+                                },
+                                {
+                                    "team": {"id": "3"},
+                                    "roster": [{"athlete": {"displayName": "Sungjae Im"}}],
+                                },
+                            ],
+                        }
+                    ]
+                ],
+            }
+        ]
+    }
+    urls: list[str] = []
+
+    def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
+        urls.append(request.full_url)
+        payload = {"events": [{"id": "401824815"}]} if len(urls) == 1 else leaderboard
+        return io.BytesIO(json.dumps(payload).encode())
+
+    monkeypatch.setattr(sports_module.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(sports_module, "normalize_golf_event", lambda _raw: event)
+    monkeypatch.setattr(sports_module, "record_source_fetch", lambda _receipt: None)
+
+    assert sports_module.fetch_golf() == [event]
+    assert urls[1] == (
+        "https://site.web.api.espn.com/apis/site/v2/sports/golf/leaderboard"
+        "?league=pga&event=401824815"
+    )
+    assert event["matches"][0]["sides"][0]["players"] == ["Scottie Scheffler"]
+    assert event["matches"][0]["sides"][1]["players"] == ["Sungjae Im"]
 
 
 def test_golf_tied_match_does_not_name_a_winner() -> None:
