@@ -86,6 +86,12 @@ market comparison also measures the model and market on the same games and at
 the same forecast time. This change adds that paired Brier comparison to the
 scorecard and the event's method disclosure.
 
+After deployment, the paired MLB check covered 125 games: RATi Brier error was
+0.2475 and the sportsbook error was 0.2406. Lower is better, so the market was more
+accurate on that shared sample. The later full ledger had 313 games and a −8.6%
+paper return across 252 value calls. This supports the experimental label and
+the priority on probability calibration before treating large gaps as useful calls.
+
 Public records: [MLB](https://sports.rati.chat/api/sports/stats?league=mlb),
 [NFL](https://sports.rati.chat/api/sports/stats?league=nfl),
 [NBA](https://sports.rati.chat/api/sports/stats?league=nba),
