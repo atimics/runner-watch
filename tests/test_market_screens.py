@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html as html_lib
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -12,8 +13,10 @@ from runner_web.market_screens import detail, listing, series
 SENTINEL = "operator-only-secret"
 
 
-@pytest.mark.parametrize("market_chance,tag", [(0.7, "BELOW"), (0.5, "ABOVE"), (0.6, "LEVEL")])
-def test_sports_row_tag_follows_the_same_outcome_as_the_glyph(market_chance, tag):
+@pytest.mark.parametrize(
+    "market_chance,tag,side", [(0.7, "ABOVE", "NYK"), (0.5, "ABOVE", "BOS"), (0.6, "LEVEL", "BOS")]
+)
+def test_sports_row_tag_follows_the_same_outcome_as_the_glyph(market_chance, tag, side):
     now = datetime.now(UTC)
     event = sample("sports")
     event.update(status="pre", start_time=(now + timedelta(days=1)).isoformat())
@@ -36,12 +39,57 @@ def test_sports_row_tag_follows_the_same_outcome_as_the_glyph(market_chance, tag
     ]
     board = listing("sports", [event])
     displayed = board["rows"][0]
-    assert displayed["ticker"]["selected"]["label"] == "BOS"
+    assert displayed["ticker"]["selected"]["label"] == side
     assert displayed["tag"] == tag
-    assert displayed["tag_title"].startswith(f"BOS: RATi {tag.lower()} Kalshi")
+    assert displayed["tag_title"].startswith(f"{side}: RATi {tag.lower()} Kalshi")
     assert board["counts"] == {tag.lower(): 1}
     event["prediction_markets"][0]["quality"] = "wide spread"
     assert listing("sports", [event])["rows"][0]["tag"] == "MODEL"
+
+
+def test_value_row_pins_tb_comparison_through_navigation_and_refresh():
+    from urllib.parse import parse_qsl, urlsplit
+
+    now = datetime.now(UTC)
+    event = sample("sports")
+    event.update(
+        id="mlb:401817078",
+        league="mlb",
+        away_abbreviation="TB",
+        home_abbreviation="PHI",
+        start_time=(now + timedelta(hours=1)).isoformat(),
+        prediction={
+            "model_version": "team-form-v1",
+            "observed_at": now.isoformat(),
+            "away_probability": 0.498,
+            "home_probability": 0.502,
+        },
+        prediction_markets=[
+            {
+                "source": "kalshi",
+                "observed_at": now.isoformat(),
+                "away_probability": 0.391,
+                "home_probability": 0.609,
+            }
+        ],
+    )
+    board = listing("sports", [event])
+    item = board["rows"][0]
+    assert item["href"] == "/game/mlb:401817078?contract=winner&outcome=away"
+    assert "TB · +10.7 points vs market" in render(board)
+    selected = dict(parse_qsl(urlsplit(item["href"]).query))
+    screen = detail("sports", event, **selected)
+    assert screen["ticker"]["selected"]["label"] == "TB"
+    assert screen["ticker"]["indicator"]["sentiment"] == "positive"
+    assert "TB · RATi − market" in render(screen)
+    refresh = dict(parse_qsl(urlsplit(screen["refresh_url"]).query))
+    # A price move changes the gap while the reader stays on the chosen team.
+    event["prediction_markets"][0].update(away_probability=0.55, home_probability=0.45)
+    assert detail("sports", event)["ticker"]["selected"]["label"] == "PHI"
+    refreshed = detail("sports", event, **refresh)
+    assert refreshed["ticker"]["selected"]["label"] == "TB"
+    assert refreshed["item"]["tag"] == "BELOW"
+    assert refreshed["item"]["ticker"]["indicator"]["sentiment"] == "negative"
 
 
 def sample(market):
@@ -151,7 +199,7 @@ def test_shared_board_only_renders_business_fields(market, view):
     assert 'class="ticker-list market-' in html
     assert "screenData" not in html
     assert "desktop-workspace" not in html
-    assert screen["rows"][0]["href"] in html
+    assert html_lib.escape(screen["rows"][0]["href"]) in html
 
 
 def scored_stock(**extra):
