@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import math
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
+
+from runner_web.sports_indicator import sports_indicator
 
 SOURCES = {
     "rati": "RATi",
@@ -144,6 +147,10 @@ def _team_contract(event: dict[str, Any]) -> dict[str, Any]:
                 at = _time(quote.get("observed_at"))
                 if at is None or (start and at >= start):
                     continue
+                try:
+                    metadata = json.loads(quote.get("metadata_json") or "{}").get(side) or {}
+                except (ValueError, TypeError, AttributeError):
+                    metadata = {}
                 point = _point(
                     source,
                     quote.get(f"{side}_probability"),
@@ -151,6 +158,10 @@ def _team_contract(event: dict[str, Any]) -> dict[str, Any]:
                     basis=quote.get("price_basis"),
                     url=quote.get("source_url"),
                     quality=quote.get("quality", "quoted"),
+                    **{
+                        key: metadata.get(key)
+                        for key in ("volume_24h", "volume_unit", "volume_scope", "spread")
+                    },
                 )
                 if point:
                     points.append(point)
@@ -237,7 +248,12 @@ def _cup_contracts(event: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def ticker(
-    event: dict[str, Any], *, outcome: str = "", contract: str = "", now: datetime | None = None
+    event: dict[str, Any],
+    *,
+    outcome: str = "",
+    contract: str = "",
+    now: datetime | None = None,
+    history: bool = True,
 ) -> dict[str, Any]:
     """Build the same outcome view for team games and multi-outcome events."""
     current = now or datetime.now(UTC)
@@ -276,6 +292,7 @@ def ticker(
             f"{event['projected_home_score_display']} {event.get('home_abbreviation')}",
         }
     if selected_contract is None:
+        result["indicator"] = sports_indicator(event, result, current, current)
         return result
     reference = min(current, _time(event.get("start_time")) or current) if not cup else current
     for c in contracts:
@@ -285,7 +302,9 @@ def ticker(
             valid = [
                 p
                 for p in o["points"]
-                if _time(p.get("observed_at")) and _number(p.get("probability")) is not None
+                if (at := _time(p.get("observed_at"))) is not None
+                and at <= reference
+                and _number(p.get("probability")) is not None
             ]
             o["points"] = valid
             latest = {}
@@ -302,6 +321,7 @@ def ticker(
                 model_stale = (
                     c.get("stale")
                     or model_at is None
+                    or model_at > reference
                     or reference - model_at > timedelta(minutes=30)
                 )
                 quality = quote.get("quality", "quoted")
@@ -341,7 +361,7 @@ def ticker(
             )
             o["percent"] = round(o["model"] * 100, 1) if o["model"] is not None else None
             o["model_label"] = _stamp(o.get("model_at"))
-            o["chart"] = _chart(valid)
+            o["chart"] = _chart(valid) if history else None
             o["gap"] = o["benchmark"]["gap"] if o["benchmark"] else None
     outcomes = selected_contract["outcomes"]
     favorite = max(outcomes, key=lambda o: o["model"] if o["model"] is not None else -1)
@@ -357,4 +377,9 @@ def ticker(
         result["description"] += f", {benchmark['label']} {benchmark['percent']}%"
     if selected["gap"] is not None:
         result["description"] += f", gap {selected['gap']:+.1f} percentage points"
+    result["indicator"] = sports_indicator(event, result, reference, current)
+    if not history:
+        for c in contracts:
+            for o in c["outcomes"]:
+                o.pop("points", None)
     return result

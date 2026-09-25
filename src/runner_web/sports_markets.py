@@ -103,6 +103,7 @@ def _reading(
     at: datetime,
     price_basis: str,
     quality: str = "quoted",
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     digest = hashlib.sha256(
         json.dumps(
@@ -123,6 +124,7 @@ def _reading(
         "observed_at": at.isoformat(),
         "quote_hash": digest,
         "quality": quality,
+        "metadata_json": json.dumps(metadata or {}, sort_keys=True),
     }
 
 
@@ -192,6 +194,16 @@ def normalize_kalshi(
                 source_url=f"{KALSHI_ROOT}/events/{ticker}",
                 at=at,
                 price_basis="Yes bid/ask midpoint, normalized across the two game winners",
+                metadata={
+                    side: {
+                        "volume_24h": _number(market.get("volume_24h_fp")),
+                        "volume_unit": "contracts",
+                        "volume_scope": "outcome market",
+                        "spread": float(market["yes_ask_dollars"])
+                        - float(market["yes_bid_dollars"]),
+                    }
+                    for side, (market, _) in zip(("away", "home"), prices, strict=True)
+                },
             )
         )
     return readings
@@ -282,6 +294,15 @@ def normalize_polymarket(
                 source_url=f"https://polymarket.com/event/{slug}",
                 at=at,
                 price_basis="Listed moneyline outcome prices, normalized across both teams",
+                metadata={
+                    side: {
+                        "volume_24h": _number(market.get("volume24hr")),
+                        "volume_unit": "USD",
+                        "volume_scope": "whole game market",
+                        "spread": spread,
+                    }
+                    for side in ("away", "home")
+                },
                 quality=(
                     "quoted"
                     if spread is not None and 0 <= spread <= 0.2
@@ -353,8 +374,8 @@ def store_readings(readings: list[dict[str, Any]]) -> int:
                 """INSERT INTO sports_prediction_market_snapshots(
                     id,event_id,source,source_event_id,source_market_id,away_probability,
                     home_probability,source_updated_at,source_url,price_basis,observed_at,quote_hash,
-                    quality
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    quality,metadata_json
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(event_id,source,quote_hash) DO NOTHING""",
                 (
                     str(uuid.uuid4()),
@@ -370,6 +391,7 @@ def store_readings(readings: list[dict[str, Any]]) -> int:
                     row["observed_at"],
                     row["quote_hash"],
                     row.get("quality", "legacy"),
+                    row.get("metadata_json", "{}"),
                 ),
             )
             inserted += max(0, cursor.rowcount)

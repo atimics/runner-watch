@@ -10275,10 +10275,11 @@ def screen_detail_state(
                 iter(memecoin_calls(user_id=user_id, coin_id=subject, limit=1)), None
             )
     elif market == "sports":
-        data = sports_event(subject)
+        golf = subject.startswith("golf:")
+        data = golf_event(subject) if golf else sports_event(subject)
         if data is None:
             raise HTTPException(404, "Game not found")
-        pick = sports_pick_for_user(user_id, subject) if user_id else None
+        pick = sports_pick_for_user(user_id, subject) if user_id and not golf else None
         screen = simple_market_detail(
             market,
             data,

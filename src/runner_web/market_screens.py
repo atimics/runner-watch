@@ -319,7 +319,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         saved_tag, saved_tone, saved_risk = state_tag(item)
         if saved_tag:
             rating.update(tag=saved_tag, tag_tone=saved_tone)
-        ticker = prediction_ticker(item)
+        ticker = prediction_ticker(item, history=False)
         golf_matchup = None
         if match_play and len(teams) == 2:
             scores = [number(team.get("points")) for team in teams]
@@ -382,7 +382,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         saved_tag, saved_tone, saved_risk = state_tag(item)
         if saved_tag:
             rating.update(tag=saved_tag, tag_tone=saved_tone)
-        ticker = prediction_ticker(item)
+        ticker = prediction_ticker(item, history=False)
         started = state.get("started") or item.get("status") in {"in", "post"}
         scores = [item.get(f"{side}_score") for side in ("away", "home")]
         value = (

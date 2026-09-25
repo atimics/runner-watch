@@ -53,6 +53,11 @@ def _quote(
         "basis": "Yes bid/ask midpoint" if source == "kalshi" else "Listed outcome price",
         "liquidity": _number(market.get("liquidityNum")),
         "volume": _number(market.get("volume_fp") or market.get("volumeNum")),
+        "volume_24h": _number(
+            market.get("volume_24h_fp") if source == "kalshi" else market.get("volume24hr")
+        ),
+        "volume_unit": "contracts" if source == "kalshi" else "USD",
+        "volume_scope": "outcome market" if source == "kalshi" else "whole Cup market",
     }
 
 

@@ -78,7 +78,10 @@ def test_sports_leader_is_larger_and_score_stays_on_right(page: Page, width, sco
     page.set_viewport_size({"width": width, "height": 844})
     open_screen(page, listing("sports", [event]))
     expect(page.locator(".sports-team.is-highlighted")).to_have_text("NYK")
-    expect(page.locator(".prediction-glyph")).to_have_attribute("aria-label", "BOS: RATi 60.0%")
+    expect(page.locator(".prediction-glyph [role=img]")).to_have_attribute(
+        "aria-label",
+        re.compile(r"BOS: sentiment pending a fresh model and comparable market price"),
+    )
     expect(page.locator(".ticker-value strong")).to_have_text(f"{scores[0]} – {scores[1]}")
     identity = page.locator(".ticker-name").bounding_box()
     score = page.locator(".ticker-value").bounding_box()
@@ -172,7 +175,14 @@ def test_sports_detail_uses_one_outcome_and_market_gap(page: Page, width):
     chart = opinion.get_by_role("region", name="GB probability history")
     expect(chart.get_by_role("img")).to_be_visible()
     expect(chart.locator("path")).to_have_count(2)
-    opinion.locator(".prediction-method summary").click()
+    glyph = opinion.locator(".indicator-glyph")
+    expect(glyph).to_have_attribute("data-sentiment", "negative")
+    expect(glyph).to_have_attribute("aria-label", re.compile("GB: RATi 9.3 pp below Sportsbook"))
+    opinion.get_by_text("Sentiment, attention, and risk", exact=True).click()
+    reading = opinion.locator("[data-sports-indicator-reading]")
+    expect(reading).to_contain_text("GB: RATi 9.3 pp below Sportsbook")
+    expect(reading).to_contain_text("Model and market limits apply")
+    opinion.get_by_text("Model, data, and settlement", exact=True).click()
     expect(opinion.locator(".prediction-factors")).to_contain_text("Season record")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
@@ -186,12 +196,16 @@ def test_sports_detail_uses_one_outcome_and_market_gap(page: Page, width):
     opinion.get_by_role("link", name=re.compile(r"ATL 40.9%")).click()
     expect(page.locator(".prediction-quote")).to_contain_text("40.9%")
     expect(page.locator(".prediction-gap")).to_contain_text("+9.3 pp")
+    expect(page.locator(".prediction-glyph .indicator-glyph")).to_have_attribute(
+        "data-sentiment", "positive"
+    )
     expect(page.get_by_role("region", name="ATL probability history")).to_be_visible()
 
 
 def test_sports_detail_poll_refreshes_selected_outcome_and_chart(page: Page):
     page.clock.install()
     event = game_with_forecasts()
+    event["prediction"]["observed_at"] = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
     event["prediction_history"] = [event["prediction"]]
     open_screen(page, detail("sports", event, outcome="away"))
     expect(page.locator(".prediction-history")).to_contain_text("1 saved time")
@@ -199,7 +213,7 @@ def test_sports_detail_poll_refreshes_selected_outcome_and_chart(page: Page):
         **event,
         "prediction": {
             **event["prediction"],
-            "observed_at": (datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
+            "observed_at": datetime.now(UTC).isoformat(),
             "away_market_probability": 0.32,
             "home_market_probability": 0.68,
         },

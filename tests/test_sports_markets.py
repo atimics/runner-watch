@@ -226,3 +226,48 @@ def test_polymarket_quote_quality_keeps_wide_prices_out_of_gap_signals():
     del raw["markets"][0]["spread"]
     quote = sports_markets.normalize_polymarket([game()], [raw], AT)[0]
     assert quote["quality"] == "spread pending"
+
+
+def test_activity_metadata_survives_storage_and_list_detail_agree(tmp_path, monkeypatch):
+    import json
+    from datetime import timedelta
+
+    from runner_web.prediction_tickers import ticker
+    from runner_web.sports import sports_event
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "activity.db")
+    db.init_db()
+    event = game(start=(AT + timedelta(minutes=10)).isoformat())
+    # Kalshi's date is local Eastern time.
+    raw = kalshi_event()
+    raw["markets"][0]["volume_24h_fp"] = "9999"
+    raw["markets"][1]["volume_24h_fp"] = "99"
+    store_events([event], observed_at=AT)
+    readings = sports_markets.normalize_kalshi([event], [raw], AT)
+    assert len(readings) == 1
+    assert sports_markets.store_readings(readings) == 1
+    latest, _ = sports_markets.event_readings(event["id"], event["start_time"].isoformat())
+    meta = json.loads(latest[0]["metadata_json"])
+    assert meta["home"]["volume_24h"] == 9999
+    assert meta["away"]["volume_24h"] == 99
+    assert meta["home"]["spread"] == pytest.approx(0.02)
+    detail = sports_event(event["id"])
+    # Read the same batch path used by the board, with a fixed date.
+    from runner_web.sports import _event_rows
+
+    with db.connection() as database:
+        rows = database.execute("SELECT * FROM sports_events WHERE id=?", (event["id"],)).fetchall()
+        listed = _event_rows(database, rows)[0]
+    a = ticker(detail, outcome="home", now=AT)["indicator"]
+    b = ticker(listed, outcome="home", now=AT)["indicator"]
+    assert a == b
+    assert a["score"] == 40
+    poly = polymarket_event()
+    poly["markets"][0].update(volume24hr=123, spread=0.02)
+    readings = sports_markets.normalize_polymarket([game()], [poly], AT)
+    assert json.loads(readings[0]["metadata_json"])["home"] == {
+        "volume_24h": 123,
+        "volume_unit": "USD",
+        "volume_scope": "whole game market",
+        "spread": 0.02,
+    }
