@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -100,7 +101,12 @@ def test_long_market_list_names_fit(page, width, kind):
     expect(row).to_have_count(1)
     if kind == "coin":
         expect(row.locator(".row-assessment")).to_contain_text("Market quote")
-    expect(row.locator(".ticker-name strong")).to_have_text(screen["rows"][0]["name"])
+    if kind == "team":
+        expect(row.locator(".sports-team")).to_have_text(
+            [team["label"] for team in screen["rows"][0]["matchup"]["teams"]]
+        )
+    else:
+        expect(row.locator(".ticker-name strong")).to_have_text(screen["rows"][0]["name"])
     no_overlap(row.locator(".ticker-name"), row.locator(".ticker-value"))
     no_overlap(row.locator(".ticker-value strong"), row.locator(".ticker-value small"))
     if row.locator(".row-assessment").count():
@@ -119,9 +125,7 @@ def test_long_market_details_fit(page, width, kind):
     open_html(page, screens.render(screen), screen)
     expect(page.locator(".asset-heading h1")).to_have_text(screen["item"]["name"])
     expect(
-        page.get_by_role(
-            "region", name="Token evidence" if kind == "coin" else "RATi assessment"
-        )
+        page.get_by_role("region", name="Token evidence" if kind == "coin" else "Outcome market")
     ).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     for team in page.locator(".teams > div").all():
@@ -149,8 +153,8 @@ def test_saved_report_expands_full_text_and_sources(page, width, subject_type):
 
 
 def test_detail_api_refresh_updates_assessment_evidence(page):
-    market, raw = long_sample("team")
-    screen = detail(market, raw)
+    market, raw = long_sample("coin")
+    screen = detail(market, {"coin": raw})
     refreshed = copy.deepcopy(screen)
     refreshed["item"]["assessment"].update(
         label="Updated saved assessment",
@@ -210,10 +214,10 @@ def test_selected_team_probability_fits_with_full_team_names(page, width):
     screen = listing(market, [raw])
     page.set_viewport_size({"width": width, "height": 844})
     open_html(page, screens.render(screen))
-    rating = page.locator(".row-assessment")
-    expect(rating.locator("strong")).to_have_attribute(
-        "aria-label", f"{raw['home_team_name']} · 60% win chance"
+    rating = page.locator(".prediction-glyph [role=img]")
+    expect(rating).to_have_attribute(
+        "aria-label", re.compile(re.escape(raw["home_team_name"]) + r": sentiment pending")
     )
-    no_overlap(page.locator(".ticker-name"), rating)
+    no_overlap(page.locator(".ticker-name"), page.locator(".ticker-value"))
     no_overlap(page.locator(".ticker-value"), rating)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

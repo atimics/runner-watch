@@ -92,6 +92,19 @@ Compare quote-age and fallback counts before interpreting a ranking gain.
    hashes, cutoff, reliability results, and policy version in a new artifact.
    Freeze the map before collecting evaluation predictions. This is the next
    implementation milestone after live data arrives.
+
+   Run `python -m runner_web.attention_calibration` against the trial database
+   to inspect receipt readiness. Once ten complete sessions exist, pass
+   `--out path/to/calibration.json` to save a candidate map. It fixes five raw
+   probability intervals, applies one success and one failure of smoothing
+   per populated interval, and pools adjacent intervals until mapped values
+   are monotone. The artifact binds the model, baseline policy, contract, ten
+   calibration dates, cutoff and digest of the selected run/prediction receipts.
+   Unknown outcomes and fallback predictions remain counted; only resolved
+   learned predictions fit the map. No map is emitted before ten complete
+   sessions. This fitting command does not activate the map on the public
+   board. Examine reliability by date and declared subgroups, then freeze a
+   separate evaluation policy before applying the map to later sessions.
 3. Collect at least twenty later sessions with the calibrated version. Evaluate
    the full board and its market contribution separately. Require at least 10%
    date-weighted top-ten observed-hit lift, a positive lower bound on the 95%

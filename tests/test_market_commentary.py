@@ -120,6 +120,31 @@ def test_report_voices_are_stable_and_distinct():
     assert all(voice["avatar"]["name"] == voice["name"] for voice in first)
 
 
+def test_commentary_preserves_paragraphs_and_keeps_story_metadata_local():
+    _report("pre", "pre_market")
+    with connection() as database:
+        database.execute(
+            "UPDATE market_session_reports SET metrics_json=? WHERE id='pre'",
+            (json.dumps({"candidates": 3, "story_board": [{"company_name": "Local name"}]}),),
+        )
+
+    def generate(request):
+        assert request["report"]["metrics"] == {"candidates": 3}
+        response = _generate(request)
+        response["analysis"]["narrative"] = (
+            "The lead story.\n\n  A second company.\n\nThe next test."
+        )
+        return response
+
+    assert generate_report_commentary(generate, PRE)["completed"] == 1
+    saved = market_report(DAY, "pre_market")
+    assert saved["analysis"]["narrative"].split("\n\n") == [
+        "The lead story.",
+        "A second company.",
+        "The next test.",
+    ]
+
+
 def test_pre_market_commentary_is_generated_and_attached():
     _report("pre", "pre_market")
 

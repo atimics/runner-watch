@@ -301,9 +301,7 @@ def test_league_range_records_partial_when_some_days_fail(
 
     def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
         if "dates=20260920" in request.full_url:
-            raise urllib.error.HTTPError(
-                request.full_url, 400, "Bad Request", {}, None
-            )
+            raise urllib.error.HTTPError(request.full_url, 400, "Bad Request", {}, None)
         return io.BytesIO(json.dumps({"events": []}).encode())
 
     monkeypatch.setattr(sports_module.urllib.request, "urlopen", fake_urlopen)
@@ -325,9 +323,7 @@ def test_league_range_raises_only_when_every_day_fails(
     recorded: list[Any] = []
 
     def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
-        raise urllib.error.HTTPError(
-                request.full_url, 400, "Bad Request", {}, None
-            )
+        raise urllib.error.HTTPError(request.full_url, 400, "Bad Request", {}, None)
 
     monkeypatch.setattr(sports_module.urllib.request, "urlopen", fake_urlopen)
     monkeypatch.setattr(sports_module, "record_source_fetch", recorded.append)
@@ -408,7 +404,36 @@ def test_presidents_cup_shows_team_points_and_match_play_context(sports_db) -> N
                         "team": {"displayName": "International", "abbreviation": "INTL"},
                     },
                 ],
-            }
+            },
+            {
+                "id": "match-1",
+                "type": {"id": "4"},
+                "startDate": (current - timedelta(hours=2)).isoformat(),
+                "status": {"type": {"state": "post", "completed": True}},
+                "competitors": [
+                    {
+                        "type": "pair",
+                        "team": {"shortDisplayName": "USA"},
+                        "score": "1 Up",
+                        "winner": True,
+                    },
+                    {
+                        "type": "pair",
+                        "team": {"shortDisplayName": "International"},
+                        "winner": False,
+                    },
+                ],
+            },
+            {
+                "id": "match-2",
+                "type": {"id": "5"},
+                "startDate": (current + timedelta(days=1)).isoformat(),
+                "status": {"type": {"state": "pre", "completed": False}},
+                "competitors": [
+                    {"type": "pair", "team": {"shortDisplayName": "USA"}},
+                    {"type": "pair", "team": {"shortDisplayName": "International"}},
+                ],
+            },
         ],
     }
     event = normalize_golf_event(raw)
@@ -421,13 +446,131 @@ def test_presidents_cup_shows_team_points_and_match_play_context(sports_db) -> N
     saved = golf_event(event["id"])
     assert saved is not None
     assert [team["name"] for team in saved["teams"]] == ["USA", "International"]
-    assert golf_market_context(saved)["format"] == "match_play"
+    context = golf_market_context(saved)
+    assert context["format"] == "match_play"
+    assert [match["result"] for match in saved["matches"]] == ["USA · 1 Up", "Scheduled"]
+    assert len(context["sessions"]) == 2
     response = sports_game_page(event["id"], request(path=f"/game/{event['id']}"), None)
     assert response.status_code == 200
     assert b"USA vs International" in response.body
-    assert b"TEAM WINNER" in response.body
-    assert b"END OF SESSION" in response.body
+    assert b"Match results and schedule" in response.body
+    assert b"Win ranking pending" in response.body
+    assert b"USA \xc2\xb7 1 Up" in response.body
+    assert b"Scheduled" in response.body
     assert b"Official matches and scoring" in response.body
+
+
+def test_golf_pairings_use_named_players_from_matching_leaderboard() -> None:
+    leaderboard = {
+        "events": [
+            {"id": "other-event", "competitions": [[{"id": "other-match"}]]},
+            {
+                "id": "401824815",
+                "competitions": [
+                    [
+                        {
+                            "id": "match-1",
+                            "competitors": [
+                                {
+                                    "team": {"id": "1"},
+                                    "roster": [
+                                        {"athlete": {"displayName": "Scottie Scheffler"}},
+                                        {"athlete": {"displayName": "Sam Burns"}},
+                                    ],
+                                },
+                                {
+                                    "team": {"id": "3"},
+                                    "roster": [
+                                        {"athlete": {"displayName": "Sungjae Im"}},
+                                        {"athlete": {"displayName": "Min Woo Lee"}},
+                                    ],
+                                },
+                            ],
+                        }
+                    ]
+                ],
+            },
+        ]
+    }
+    pairings = sports_module._golf_pairings_from_leaderboard(leaderboard, "401824815")
+    assert pairings["match-1"]["1"] == ["Scottie Scheffler", "Sam Burns"]
+    assert pairings["match-1"]["3"] == ["Sungjae Im", "Min Woo Lee"]
+    assert sports_module._golf_pairings_from_leaderboard(leaderboard, "another-event") == {}
+
+
+def test_fetch_golf_uses_structured_leaderboard_for_match_players(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event = {
+        "external_id": "401824815",
+        "scoring_format": "match_play",
+        "leaderboard": [],
+        "matches": [
+            {
+                "id": "12094",
+                "sides": [{"team_id": "1", "players": []}, {"team_id": "3", "players": []}],
+            }
+        ],
+    }
+    leaderboard = {
+        "events": [
+            {
+                "id": "401824815",
+                "competitions": [
+                    [
+                        {
+                            "id": "12094",
+                            "competitors": [
+                                {
+                                    "team": {"id": "1"},
+                                    "roster": [{"athlete": {"displayName": "Scottie Scheffler"}}],
+                                },
+                                {
+                                    "team": {"id": "3"},
+                                    "roster": [{"athlete": {"displayName": "Sungjae Im"}}],
+                                },
+                            ],
+                        }
+                    ]
+                ],
+            }
+        ]
+    }
+    urls: list[str] = []
+
+    def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
+        urls.append(request.full_url)
+        payload = {"events": [{"id": "401824815"}]} if len(urls) == 1 else leaderboard
+        return io.BytesIO(json.dumps(payload).encode())
+
+    monkeypatch.setattr(sports_module.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(sports_module, "normalize_golf_event", lambda _raw: event)
+    monkeypatch.setattr(sports_module, "record_source_fetch", lambda _receipt: None)
+
+    assert sports_module.fetch_golf() == [event]
+    assert urls[1] == (
+        "https://site.web.api.espn.com/apis/site/v2/sports/golf/leaderboard"
+        "?league=pga&event=401824815"
+    )
+    assert event["matches"][0]["sides"][0]["players"] == ["Scottie Scheffler"]
+    assert event["matches"][0]["sides"][1]["players"] == ["Sungjae Im"]
+
+
+def test_golf_tied_match_does_not_name_a_winner() -> None:
+    matches = sports_module._golf_matches(
+        [
+            {
+                "id": "tie",
+                "startDate": datetime.now(UTC).isoformat(),
+                "status": {"type": {"state": "post", "completed": True}},
+                "competitors": [
+                    {"type": "pair", "team": {"shortDisplayName": "USA"}, "score": "AS"},
+                    {"type": "pair", "team": {"shortDisplayName": "International"}, "score": "AS"},
+                ],
+            }
+        ]
+    )
+    assert matches[0]["result"] == "Halved"
 
 
 def test_finished_golf_keeps_round_leaders_and_shipley_score(sports_db) -> None:
@@ -1158,7 +1301,7 @@ def test_bovada_odds_show_feed_attribution_and_freeze_on_paper_pick(sports_db) -
     assert b"market-screen.css" in response.body
     assert b'aria-label="Market"' in response.body
     assert b"source_error" not in response.body
-    assert b"The Odds API" not in response.body
+    assert b"Source: Bovada via The Odds API" in response.body
 
 
 def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
@@ -1307,6 +1450,7 @@ def test_slate_builds_fixed_side_edge_history(sports_db) -> None:
     assert history["side"] == "home"
     assert history["team"] == "HOM"
     assert [point["edge_pct"] for point in history["points"]] == [5.4, 2.2]
+    assert all("model_pct" in point and "market_pct" in point for point in history["points"])
     assert history["change_pct"] == -3.2
     assert len(history["plot_points"].split()) == 2
     assert "fell 3.2 points" in history["label"]
@@ -1342,7 +1486,7 @@ def test_slate_database_query_count_does_not_grow_per_event(
     monkeypatch.setattr(sports_module, "connection", counted_connection)
 
     assert len(sports_slate("mlb")["events"]) >= len(events)
-    assert len(statements) == 7
+    assert len(statements) == 8  # Includes one batched prediction-market query.
 
 
 def test_sports_pulse_hides_passes_and_radar_keeps_real_moves(sports_db) -> None:
@@ -1851,6 +1995,25 @@ def test_finished_game_seals_the_last_pregame_prediction_and_market(sports_db) -
     detail = sports_event(str(final_event["id"]))
     assert detail is not None
     assert detail["prediction"]["observed_at"] == pregame_at.isoformat()
+    with connection() as database:
+        event_rows = database.execute(
+            "SELECT * FROM sports_events WHERE id=?", (final_event["id"],)
+        ).fetchall()
+        listed = sports_module._event_rows(database, event_rows)[0]
+    assert listed["prediction"]["id"] == detail["prediction"]["id"]
+    factors = detail["prediction"]["factors"]
+    reconstructed_home = sum(
+        (
+            factors["baseline_pct"],
+            factors["home_record_delta_pp"],
+            factors["home_venue_delta_pp"],
+            factors["home_clamp_delta_pp"],
+        )
+    )
+    assert reconstructed_home == pytest.approx(
+        detail["prediction"]["home_probability"] * 100, abs=0.001
+    )
+    assert factors["home_record"] == {"wins": 60, "losses": 40}
     assert detail["receipt"]["sealed"] is True
     assert detail["receipt"]["input_hash"] == pregame_prediction["input_hash"]
     assert detail["receipt"]["outcome"]["final_score"] == "AWY 3 – HOM 5"
@@ -1868,6 +2031,76 @@ def test_finished_game_seals_the_last_pregame_prediction_and_market(sports_db) -
     assert b'aria-label="Market"' in response.body
     assert b"source_error" not in response.body
     assert b"The Odds API" not in response.body
+
+
+def test_team_and_player_profiles_link_saved_games_and_appearances(sports_db) -> None:
+    event = normalize_event("mlb", sample_event(completed=True))
+    assert event is not None
+    store_events([event])
+    appearances = normalize_player_appearances(
+        event,
+        {
+            "boxscore": {
+                "players": [
+                    {
+                        "team": {"id": "1"},
+                        "statistics": [
+                            {
+                                "labels": ["H"],
+                                "athletes": [
+                                    {
+                                        "athlete": {
+                                            "id": "sample-player",
+                                            "displayName": "Sample Hitter",
+                                        },
+                                        "position": {"abbreviation": "OF"},
+                                        "stats": ["2"],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            }
+        },
+    )
+    store_player_appearances(appearances)
+
+    team = sports_module.sports_team_profile("espn", "mlb", "1")
+    player = sports_module.sports_player_profile("espn", "mlb", "sample-player")
+    assert team is not None and player is not None
+    assert team["name"] == "Home Club"
+    assert team["games"][0]["href"] == f"/game/{event['id']}"
+    assert team["players"][0]["href"] == "/player/espn/mlb/sample-player"
+    assert player["teams"][0]["href"] == "/team/espn/mlb/1"
+    assert player["games"][0]["opponent"] == "Away Club"
+    assert player["games"][0]["score"] == "H 2"
+    assert sports_module.sports_team_profile("espn", "mlb", "unknown") is None
+
+    game_response = sports_game_page(str(event["id"]), request(path=f"/game/{event['id']}"), None)
+    assert b"/team/espn/mlb/1" in game_response.body
+    team_response = web_main.sports_team_page(
+        "espn", "mlb", "1", request(path="/team/espn/mlb/1"), None
+    )
+    assert b"Sample Hitter" in team_response.body
+    player_response = web_main.sports_player_page(
+        "espn", "mlb", "sample-player", request(path="/player/espn/mlb/sample-player"), None
+    )
+    assert b"Home Club" in player_response.body
+
+
+def test_golf_player_profile_links_a_saved_tournament(sports_db) -> None:
+    event = normalize_golf_event(sample_golf_event())
+    assert event is not None
+    store_golf_events([event])
+    player = sports_module.sports_player_profile("espn", "golf", "5076021")
+    assert player is not None
+    assert player["name"] == "Ryan Gerard"
+    assert player["games"][0]["href"] == f"/game/{event['id']}"
+    response = web_main.sports_player_page(
+        "espn", "golf", "5076021", request(path="/player/espn/golf/5076021"), None
+    )
+    assert b"TOUR Championship" in response.body
 
 
 def test_sports_alpha_fetches_history_only_for_ranked_players(sports_db) -> None:
@@ -2131,3 +2364,25 @@ def test_sports_call_preview_line_and_saved_result_on_actual_routes(sports_db, m
         assert settle_picks() == 0
     finally:
         client.close()
+
+
+def test_scoreboard_team_stats_are_saved_on_game_detail(sports_db) -> None:
+    raw = sample_event(completed=True)
+    for competitor in raw["competitions"][0]["competitors"]:
+        side = competitor["homeAway"]
+        competitor["statistics"] = [
+            {"name": "hits", "displayValue": "9" if side == "home" else "7"},
+            {"name": "errors", "displayValue": "0" if side == "home" else "1"},
+        ]
+    event = normalize_event("mlb", raw)
+    assert event is not None
+    store_events([event])
+    detail = sports_event(event["id"])
+    assert detail is not None
+    assert detail["team_stats"] == {
+        "away": {"hits": "7", "errors": "1"},
+        "home": {"hits": "9", "errors": "0"},
+    }
+    response = sports_game_page(event["id"], request(path=f"/game/{event['id']}"), None)
+    assert b"Game statistics" in response.body
+    assert b"Hits" in response.body

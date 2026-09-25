@@ -16,6 +16,7 @@ from runner_web.market_forecasts import (
     queue_market_forecasts,
 )
 from runner_web.report_company import freeze_company_context
+from runner_web.report_narrative import freeze_story_board
 from runner_web.report_spotlight import decorate_edition, freeze_spotlight
 
 EASTERN = ZoneInfo("America/New_York")
@@ -196,6 +197,9 @@ def _pre_market_payload(database: Any, day: date, current: datetime) -> dict[str
     if not rows:
         return None
     metrics = _market_breadth(rows)
+    metrics["story_board"] = freeze_story_board(
+        database, rows, str(run["captured_at"]), _iso_utc(current)
+    )
     leader = rows[0]
     captured_at = _as_eastern(datetime.fromisoformat(str(run["captured_at"])))
     summary = (
@@ -421,6 +425,9 @@ def _post_market_payload(database: Any, day: date, current: datetime) -> dict[st
         **_session_results(board),
         "closing_breadth": _market_breadth(closing),
         "opening_as_of": briefing["as_of"],
+        "story_board": freeze_story_board(
+            database, closing, str(closing_run["captured_at"]), _iso_utc(current)
+        ),
     }
     ranked = [row for row in board if row.get("session_return_pct") is not None]
     best = max(ranked, key=lambda row: float(row["session_return_pct"])) if ranked else None
@@ -551,10 +558,10 @@ def _decorate(database: Any, reports: list[dict[str, Any]]) -> list[dict[str, An
         if report.get("spotlight"):
             report["watch_headline"] = report["metrics"].get("watch_headline", report["headline"])
             report["headline"] = f"{report['spotlight']['ticker']} is the company in focus"
+        decorate_edition(report)
         report["share"] = _share(report)
         report["slug"] = report["share"]["slug"]
         report["permalink"] = report["share"]["path"]
-        decorate_edition(report)
     return reports
 
 
@@ -657,6 +664,9 @@ def _top_pick(report: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _share_title(report: dict[str, Any], pick: dict[str, Any] | None) -> str:
+    narrative = report.get("narrative") or {}
+    if narrative.get("stories"):
+        return f"{report['label']} · {narrative['headline']}"
     if report["report_type"] == "pre_market":
         target = _price_label(pick["target_price"]) if pick else None
         if pick and target:
@@ -673,6 +683,10 @@ def _share_title(report: dict[str, Any], pick: dict[str, Any] | None) -> str:
 
 
 def _share_summary(report: dict[str, Any]) -> str:
+    narrative = report.get("narrative") or {}
+    if narrative.get("stories"):
+        text = f"{report['report_day']} · {narrative['intro']}"
+        return text if len(text) <= SHARE_SUMMARY_MAX_CHARS else text[:199].rstrip() + "…"
     analysis = report.get("analysis") or {}
     if report.get("spotlight"):
         analysis = {"headline": report["spotlight"]["reason"]}
@@ -702,7 +716,7 @@ def _share(report: dict[str, Any]) -> dict[str, Any]:
     stamp = "|".join(
         str(value)
         for value in (
-            "edition-v2",
+            "edition-v3",
             report.get("updated_at"),
             pick["ticker"] if pick else "",
             (report.get("forecast_record") or {}).get("label"),

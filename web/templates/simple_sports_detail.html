@@ -1,6 +1,6 @@
 {% extends "market_screen.html" %}
 {% from "_flash_report_action.html" import flash_report_action %}
-{% set screen = simple_market_detail('sports', event, my_pick=my_pick) %}
+{% set screen = simple_market_detail('sports', event, my_pick=my_pick, outcome=request.query_params.get('outcome', ''), contract=request.query_params.get('contract', '')) %}
 {% block detail_comments %}
 {% from "_flash_comments.html" import flash_comments %}
 {{ flash_comments('game', event.id, comments|default([]), comment_count|default(0), user, comment_generation_enabled|default(false), '/login?next=' ~ (sports_path_prefix|default('')) ~ '/game/' ~ event.id ~ '#discussion') }}

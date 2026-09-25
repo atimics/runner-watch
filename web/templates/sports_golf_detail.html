@@ -2,33 +2,59 @@
 {% block detail_head %}<link rel="stylesheet" href="/static/sports-golf-detail.css?v={{ static_version }}">{% endblock %}
 {% block screen_main %}
 <a class="back" href="/?league=golf">← Golf</a>
-<article class="golf-detail">
+<article class="golf-detail" data-live-surface>
   <header class="golf-detail-head">
-    <p class="eyebrow">PGA TOUR · {{ 'MATCH PLAY' if golf_context.format == 'match_play' else 'STROKE PLAY' }}</p>
-    <h1>{{ golf.name }}</h1>
-    <p>{{ golf.display_status }}{% if golf.venue %} · {{ golf.venue }}{% endif %}{% if golf.location %} · {{ golf.location }}{% endif %}</p>
+    <div><p class="eyebrow">PGA TOUR · {{ 'MATCH PLAY' if golf_context.format == 'match_play' else 'STROKE PLAY' }}</p>
+    <h1>{{ golf.name }}</h1><p>{{ golf.display_status }}{% if golf.venue %} · {{ golf.venue }}{% endif %}</p></div>
+    {% if golf_context.format == 'match_play' and golf_context.teams %}<div class="golf-current-score"><small>{{ golf_context.teams|map(attribute='name')|join(' · ') }}</small><strong>{{ golf_context.teams|map(attribute='points_display')|join(' – ') }}</strong><small>{{ 'Final points' if golf.completed else 'Current points' }}</small></div>{% elif golf_context.leaders %}<div class="golf-current-score"><small>{{ golf_context.leaders[0].player_name }}</small><strong>{{ golf_context.leaders[0].score_display }}</strong><small>{{ 'Final score' if golf.completed else 'Leader to par' }}</small></div>{% endif %}
   </header>
+  <p class="golf-ranking-status">Win ranking pending · saved forecast and market price needed.</p>
+
+  {% include '_sports_opinion.html' %}
+
+  {% if golf.analysis and golf.analysis.teams %}
+  <details class="prediction-method cup-rosters"><summary>Player form · {{ golf.analysis.teams|map(attribute='covered')|sum }} ranked players</summary>
+    <p>World ranking points · {{ golf.analysis.ranking_date }}. The model uses the square root of each player’s average points as match strength.</p>
+    <div class="cup-roster-grid">{% for team in golf.analysis.teams %}<div><h3>{{ team.name }}</h3><table><thead><tr><th>Player</th><th>Rank</th><th>Avg points</th></tr></thead><tbody>{% for player in team.players %}<tr><th>{% if player.id %}<a href="/player/espn/golf/{{ player.id }}">{{ player.name }}</a>{% else %}{{ player.name }}{% endif %}</th><td>{{ player.rank or '—' }}</td><td>{{ '%.2f'|format(player.average_points) if player.average_points is not none else '—' }}</td></tr>{% endfor %}</tbody></table></div>{% endfor %}</div>
+  </details>
+  {% endif %}
 
   {% if golf_context.format == 'match_play' %}
   <section class="golf-context" aria-labelledby="golfWinnerTitle">
-    <p class="eyebrow">CUP WINNER</p>
+    <p class="eyebrow">{{ 'FINAL TEAM SCORE' if golf.completed else 'TEAM SCORE' }}</p>
     <h2 id="golfWinnerTitle">{{ golf_context.teams|map(attribute='name')|join(' vs ') if golf_context.teams else 'Teams pending' }}</h2>
-    <p>Team points decide the Cup. Each match earns one point for a win or half a point for a tie.</p>
+    <p>Each match earns one point for a win or half a point for a tie.{% if golf.external_id == '401824815' %} The first team to 15.5 points wins.{% endif %}</p>
     {% if golf_context.teams %}
-    <div class="golf-team-points" aria-label="Current team points">
+    <div class="golf-team-points" aria-label="{{ 'Final' if golf.completed else 'Current' }} team points">
       {% for team in golf_context.teams %}
       <div><span>{{ team.name }}</span><strong>{{ team.points_display }}</strong><small>points</small></div>
       {% endfor %}
     </div>
     {% endif %}
   </section>
-  <section class="golf-market-guide" aria-label="Presidents Cup results to follow">
-    <div><small>TEAM WINNER</small><strong>Cup result</strong><p>Compare the team point totals as matches finish.</p></div>
-    <div><small>END OF SESSION</small><strong>Team points</strong><p>Thursday and Friday have five matches each. Saturday has two four-match sessions. Sunday has twelve singles matches.</p></div>
-    <div><small>INDIVIDUAL MATCH</small><strong>Pairing result</strong><p>The official scoring page shows each pairing and its hole-by-hole result.</p></div>
+  <section class="golf-match-sessions" aria-labelledby="golfMatchesTitle">
+    <h2 id="golfMatchesTitle">Match results and schedule</h2>
+    <p class="golf-small-note">A result like 3 &amp; 2 means the winner led by three holes with two left to play.</p>
+    {% if golf_context.sessions %}
+      {% for session in golf_context.sessions %}
+      <div class="golf-match-session">
+        <h3>{{ session.label }} <small>{{ session.matches|length }} matches</small></h3>
+        <ol>
+          {% for match in session.matches %}
+          <li>
+            <span class="golf-match-number">Match {{ loop.index }}</span>
+            <span class="golf-match-teams">{% for side in match.sides %}<span><b>{{ side.team }}</b>{% if side.players %}{{ side.players|join(' / ') }}{% elif side.player %}{{ side.player }}{% endif %}</span>{% endfor %}</span>
+            <strong>{{ match.result }}</strong>
+            <small>{% if match.state == 'pre' %}{{ match.time_label }}{% elif match.state == 'in' and match.holes %}Through {{ match.holes }} holes{% elif match.completed %}Final{% else %}{{ match.state|title }}{% endif %}</small>
+          </li>
+          {% endfor %}
+        </ol>
+      </div>
+      {% endfor %}
+    {% else %}<p class="golf-small-note">Match results will appear when the scoring feed publishes them.</p>{% endif %}
   </section>
   {% if golf.external_id == '401824815' %}
-  <p class="golf-format-note">Presidents Cup uses match play. Team points and match results are the relevant scores here. Stroke play events use player round scores.</p>
+  <p class="golf-format-note">Open the official scoring page for hole-by-hole cards.</p>
   <nav class="golf-source-links" aria-label="Presidents Cup sources">
     <a href="https://www.presidentscup.com/scoring" target="_blank" rel="noopener noreferrer">Official matches and scoring ↗</a>
     <a href="https://www.presidentscup.com/teams" target="_blank" rel="noopener noreferrer">2026 team rosters ↗</a>
@@ -62,7 +88,7 @@
     <p>Overall score is relative to par. R1–R4 show strokes and each round’s score to par.</p>
     {% if golf.leaderboard %}
     {% macro score_row(player) -%}
-    <tr><td>{{ player.position_display }}</td><th scope="row">{{ player.player_name }}</th><td>{{ player.score_display }}</td>
+    <tr><td>{{ player.position_display }}</td><th scope="row"><a href="/player/{{ golf.provider|urlencode }}/golf/{{ player.player_id|urlencode }}">{{ player.player_name }}</a></th><td>{{ player.score_display }}</td>
       {% for number in range(1, 5) %}
       {% set card = player.rounds|selectattr('number', 'equalto', number)|first %}
       <td>{% if card is defined and card.strokes is not none %}{{ card.strokes }}<small>{{ card.to_par }}{% if not card.complete and card.holes %} · {{ card.holes }} holes{% endif %}</small>{% else %}—{% endif %}</td>

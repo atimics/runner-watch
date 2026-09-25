@@ -1,0 +1,40 @@
+{% extends 'market_screen.html' %}
+{% block detail_head %}<link rel="stylesheet" href="/static/sports-entity.css?v={{ static_version }}">{% endblock %}
+{% block screen_main %}
+<a class="back" href="/">← Sports</a>
+<article class="sports-entity">
+  <header>
+    <p class="eyebrow">{{ profile.league }} · {{ 'TEAM' if profile.kind == 'team' else 'PLAYER' }}</p>
+    <h1>{{ profile.name }}</h1>
+    <p>{% if profile.kind == 'team' %}{{ profile.record }} · {{ profile.abbreviation }}{% elif profile.position %}{{ profile.position }}{% endif %}</p>
+  </header>
+  {% if profile.kind == 'player' and profile.teams %}
+  <section aria-label="Teams seen in saved games">
+    <h2>Teams in saved games</h2>
+    <div class="sports-entity-links">
+      {% for team in profile.teams %}<a href="{{ team.href }}">{{ team.name }} <small>Last seen {{ team.last_seen[:10] }}</small></a>{% endfor %}
+    </div>
+  </section>
+  {% endif %}
+  <section aria-label="{{ 'Team games' if profile.kind == 'team' else 'Player events' }}">
+    <h2>{{ 'Games' if profile.kind == 'team' else 'Saved appearances' if profile.league != 'Golf' else 'Tournaments' }}</h2>
+    <p class="sports-entity-note">{{ 'Scores and results come from saved games.' if profile.kind == 'team' else 'These entries show recorded participation and results.' }}</p>
+    <div class="sports-entity-events">
+      {% for game in profile.games %}
+      <a href="{{ game.href }}">
+        <span><strong>{{ game.opponent }}</strong><small>{{ game.start_time[:16]|replace('T', ' ') }} UTC{% if game.side %} · {{ game.side }}{% endif %}</small></span>
+        <span><strong>{{ game.score }}</strong><small>{{ game.status }}</small></span>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% if profile.kind == 'team' %}
+  <section aria-label="Players seen in saved games">
+    <h2>Players seen in saved games</h2>
+    {% if profile.players %}<div class="sports-entity-links">
+      {% for player in profile.players %}<a href="{{ player.href }}">{{ player.name }} <small>{{ player.position }} · Last seen {{ player.last_seen[:10] }}</small></a>{% endfor %}
+    </div>{% else %}<p class="sports-entity-note">Player appearances will appear after a saved box score arrives.</p>{% endif %}
+  </section>
+  {% endif %}
+</article>
+{% endblock %}

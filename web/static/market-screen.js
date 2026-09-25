@@ -247,9 +247,20 @@
   const actionKey = a => a ? a.endpoint + ':' + (a.body?.selection || '') : '';
   const sameSubject = next => next?.market === screen?.market && next?.item?.id === screen?.item?.id;
   function renderDetail(next) {
+    if (next.market === 'sports' && typeof next.opinion_html === 'string') {
+      const current = document.querySelector('.sports-opinion');
+      const incoming = new DOMParser().parseFromString(next.opinion_html, 'text/html').querySelector('.sports-opinion');
+      if (current && incoming && current.outerHTML !== incoming.outerHTML) {
+        const openDetails = [...current.querySelectorAll('details[open]')].map(detail => detail.className);
+        incoming.querySelectorAll('details').forEach(detail => { detail.open = openDetails.includes(detail.className); });
+        if (!current.contains(document.activeElement)) current.replaceWith(incoming);
+      }
+    }
     put('[data-value]', next.item.value);
     put('[data-change]', next.item.change);
     put('[data-time]', next.item.time);
+    const quoteScope = document.querySelector('.asset-quote .quote-scope');
+    if (quoteScope && next.market === 'sports') quoteScope.hidden = next.item.time === next.item.change;
     const assessment = document.querySelector('[data-assessment-state]');
     if (assessment) {
       put('[data-assessment-tag]', next.item.tag);
@@ -342,7 +353,7 @@
     if (!surface || surface.contains(document.activeElement) || document.querySelector('dialog[open]')) return;
     const key = pageKey(), version = ++surfaceRequestNumber;
     try {
-      const response = await fetch(location.href);
+      const response = await fetch(screen?.surface_url || location.href);
       if (!response.ok || response.redirected) return;
       const html = await response.text();
       if (pageKey() !== key || version !== surfaceRequestNumber) return;
@@ -439,7 +450,15 @@
       const url = new URL(item.href, location.origin);
       const prefix = market === 'stocks' ? '/stock/' : market === 'memecoins' ? '/memecoins/coin/' : '/game/';
       if (url.origin !== location.origin || !url.pathname.startsWith(prefix)) return null;
-      return {name:item.name.slice(0,100), subtitle:String(item.subtitle || '').slice(0,160), href:url.pathname};
+      const selection = new URLSearchParams();
+      if (market === 'sports') {
+        for (const key of ['contract', 'outcome']) {
+          const value = url.searchParams.get(key);
+          if (value && /^[a-z0-9-]{1,64}$/.test(value)) selection.set(key, value);
+        }
+      }
+      const href = url.pathname + (selection.size ? `?${selection}` : '');
+      return {name:item.name.slice(0,100), subtitle:String(item.subtitle || '').slice(0,160), href};
     } catch (_) { return null; }
   }
   try { const saved = JSON.parse(localStorage.getItem(key) || '[]'); if (Array.isArray(saved)) recent = saved.map(safe).filter(Boolean).slice(0,10); } catch (_) { /* Keep this visit usable when storage is unavailable. */ }

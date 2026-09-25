@@ -88,17 +88,31 @@ def stock_indicator(item: Mapping[str, Any]) -> dict[str, Any]:
 
 def memecoin_indicator(item: Mapping[str, Any]) -> dict[str, Any]:
     """Render saved assessments; quote and receipt counts alone leave values unknown."""
-    return _indicator(
+    model = _mapping(item.get("memecoin_assessment"))
+    sampled = model.get("version") == "memecoin-sar-v1"
+    glyph = _indicator(
         item,
         TOKEN_GROUPS,
         item.get("chain_sentiment"),
-        "Chain evidence tone",
+        "Observed swap balance" if sampled else "Chain evidence tone",
         item.get("chain_sentiment_counts"),
         item.get("chain_sentiment_basis"),
+        ("net buying wallets", "net selling wallets") if sampled else ("bullish", "bearish"),
     )
+    if sampled:
+        note = str(_mapping(model.get("coverage")).get("note") or "")
+        glyph["risk_reading"] += ". " + note
+        glyph["description"] += " " + str(item.get("chain_sentiment_basis") or "") + " " + note
+    return glyph
 
 
-def _sentiment_mix(tone: Any, counts: Any, label: str, basis: Any) -> dict[str, Any]:
+def _sentiment_mix(
+    tone: Any,
+    counts: Any,
+    label: str,
+    basis: Any,
+    directions: tuple[str, str] = ("bullish", "bearish"),
+) -> dict[str, Any]:
     """Share of saved directional readings. Neutral-only evidence keeps a gap."""
     if counts is None:
         direction = str(tone or "").lower()
@@ -114,9 +128,9 @@ def _sentiment_mix(tone: Any, counts: Any, label: str, basis: Any) -> dict[str, 
     share = bullish / total if available else None
     bullish_percent = int(share * 100 + 0.5) if available else None
     description = (
-        f"{label}: {int(share * 100 + 0.5)}% bullish, {100 - int(share * 100 + 0.5)}% bearish."
+        f"{label}: {bullish_percent}% {directions[0]}, {100 - bullish_percent}% {directions[1]}."
         if available
-        else f"{label}: bullish/bearish split unavailable."
+        else f"{label}: {directions[0]}/{directions[1]} split unavailable."
     )
     return {
         "state": "available" if available else "unknown",
@@ -141,6 +155,7 @@ def _indicator(
     tone_label: str,
     sentiment_counts: Any = None,
     sentiment_basis: Any = None,
+    directions: tuple[str, str] = ("bullish", "bearish"),
 ) -> dict[str, Any]:
     """One scale for attention; proportional contributions, not mixed score units.
 
@@ -198,7 +213,7 @@ def _indicator(
         "neutral": "neutral",
         "mixed": "neutral",
     }.get(str(tone or "").lower(), "unknown")
-    sentiment_mix = _sentiment_mix(tone, sentiment_counts, tone_label, sentiment_basis)
+    sentiment_mix = _sentiment_mix(tone, sentiment_counts, tone_label, sentiment_basis, directions)
     risk = _risk(item)
     attention_text = f"Attention {score:g} points" if score is not None else "Attention unavailable"
     mix_text = (

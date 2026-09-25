@@ -40,6 +40,7 @@ def sample_report(post: bool) -> dict:
                 "quote_time": "2026-09-23T08:16:00+00:00",
                 "close_quote_time": "2026-09-23T20:10:00+00:00",
                 "close_score": score - 10,
+                "close_change_pct": move + (3 if index < 2 else -2),
                 "close_relative_volume": volume - 0.5,
                 "close_is_settled": False,
                 "trade_state": "WATCH",
@@ -217,11 +218,35 @@ def sample_report(post: bool) -> dict:
             ],
         },
     }
+    names = {
+        "DEMO": "Demo Energy Systems",
+        "EXMP": "Example Devices",
+        "SAMPLE": "Sample Therapeutics",
+    }
+    metrics["story_board"] = [
+        {
+            **leader,
+            "company_name": names[leader["ticker"]],
+            **(
+                {
+                    "price": leader["close_price"],
+                    "quote_time": leader["close_quote_time"],
+                    "change_pct": leader["close_change_pct"],
+                    "relative_volume": leader["close_relative_volume"],
+                }
+                if post
+                else {}
+            ),
+        }
+        for leader in leaders
+    ]
+    if feature:
+        metrics["story_board"][0] = {**feature["snapshot"], "company_name": names["DEMO"]}
     report["metric_cards"] = _metric_cards(report)
     report["record_cards"] = _record_cards(report) if post else []
+    decorate_edition(report)
     report["share"] = _share(report)
     report["permalink"] = report["share"]["path"]
-    decorate_edition(report)
     return report
 
 

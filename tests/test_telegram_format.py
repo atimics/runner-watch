@@ -473,3 +473,23 @@ def test_a_long_story_drops_whole_blocks_instead_of_splitting_one() -> None:
     )
     assert len(message) <= telegram.MAX_MESSAGE_CHARS
     _assert_parses(message)
+
+
+def test_market_report_summary_carries_three_escaped_company_stories():
+    narrative = {
+        "headline": "AAA rises 18.0% as BBB slides 6.0%",
+        "intro": "Three companies shaped the session.",
+        "stories": [
+            {"headline": f"{ticker} moves 2.0%", "body": "Volume reached 3.0 times normal. " * 30}
+            for ticker in ["AAA", "BBB", "CCC", "DDD", "EEE"]
+        ],
+    }
+    message = telegram.format_market_report_post_md(
+        {"report_type": "post_market", "report_day": "2026-09-23", "narrative": narrative},
+        origin="https://app.test",
+    )
+    _assert_parses(message)
+    assert all(ticker in message for ticker in ["AAA", "BBB", "CCC"])
+    assert "DDD" not in message
+    assert len(message) < 4096
+    assert message.endswith("[Open report](https://app.test/reports/2026-09-23/post)")

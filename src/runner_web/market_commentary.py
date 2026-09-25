@@ -16,7 +16,7 @@ from runner_web.market_forecasts import attach_market_forecasts, forecast_record
 from runner_web.pseudonyms import comment_avatar_ability, comment_avatar_profile
 
 EASTERN = ZoneInfo("America/New_York")
-CONTRACT_VERSION = "market-report-desk-v1"
+CONTRACT_VERSION = "market-report-desk-v2"
 MAX_ATTEMPTS = 3
 VOICES_PER_REPORT = 3
 COMMENT_MAX_CHARS = 240
@@ -208,7 +208,9 @@ def _commentary_request(
             "headline": report["headline"],
             "summary": report["summary"],
             "as_of": report["as_of"],
-            "metrics": report["metrics"],
+            "metrics": {
+                key: value for key, value in report["metrics"].items() if key != "story_board"
+            },
             "target_record": report["record"],
             "leaders": [_publishable_leader(leader) for leader in report["leaders"]],
             "turns": report["turns"][:12],
@@ -237,7 +239,11 @@ def _validated_commentary(
     # A take with no substance would render as a blank card, so an empty
     # headline or narrative is a rejected response, not a published one.
     headline = _text(analysis.get("headline"), HEADLINE_MAX_CHARS)
-    narrative = _text(analysis.get("narrative"), NARRATIVE_MAX_CHARS)
+    raw_narrative = analysis.get("narrative")
+    _text(raw_narrative, NARRATIVE_MAX_CHARS)
+    narrative = "\n\n".join(
+        " ".join(paragraph.split()) for paragraph in raw_narrative.split("\n") if paragraph.strip()
+    )[:NARRATIVE_MAX_CHARS]
     if not headline:
         raise ValueError("The analysis needs a headline.")
     if not narrative:

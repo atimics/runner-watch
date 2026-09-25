@@ -1,0 +1,4 @@
+{% from '_stock_indicator.html' import indicator_glyph %}
+{% macro prediction_glyph(ticker) -%}
+<span class="prediction-glyph">{{ indicator_glyph({'indicator': ticker.indicator}) }}</span>
+{%- endmacro %}

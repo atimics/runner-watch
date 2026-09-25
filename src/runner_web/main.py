@@ -308,9 +308,11 @@ from runner_web.sports import (
     sports_flash_evidence,
     sports_pick_for_user,
     sports_pick_stats,
+    sports_player_profile,
     sports_pulse,
     sports_radar,
     sports_slate,
+    sports_team_profile,
     validate_sports_ai_forecast,
 )
 from runner_web.swarm_runtime import maintain_swarm_runtime, open_swarm_runtime
@@ -2388,7 +2390,14 @@ def _generate_market_report_commentary(request: dict[str, Any]) -> dict[str, Any
             else "The session is finished: review how the watch board and the saved Flash "
             "targets actually scored. Name the hits, the misses, and what the day taught."
         )
-        + " Then write one short comment for each supplied voice, in that voice's focus. "
+        + " Write an engaging market column with a concrete headline and three short paragraphs. "
+        "Connect three to five supplied companies when available: lead with the biggest story, "
+        "bring in a contrasting move or volume story, and end with the next question to watch. "
+        "Use blank lines between paragraphs. Describe price and volume as observations. "
+        "Use supplied evidence for each claim and reserve dramatic words such as blockbuster "
+        "for moves of at least 15 percent with relative volume of at least 3. "
+        "Keep company events and causes tied to explicit supplied evidence. "
+        "Then write one short comment for each supplied voice, in that voice's focus. "
         "Return one JSON object with an analysis object (headline, narrative, points) and a "
         "comments array. Each comment entry needs voice_id and comment. Keep the narrative "
         "under 900 characters and every comment under 240 characters. Give at most four "
@@ -3401,8 +3410,15 @@ def _market_report_card_png(report: dict[str, Any]) -> bytes:
     )
 
     pick_label = "COMPANY IN FOCUS" if pick and pick.get("editorial") else "WATCH LEADER"
-    draw.text((95, 152), pick_label if pick else "MARKET TURN", "#9fb2a8", font=font(21, True))
-    if pick:
+    narrative = report.get("narrative") or {}
+    if narrative.get("stories"):
+        draw.text((95, 152), "THE SESSION STORY", "#9fb2a8", font=font(21, True))
+        headline_lines = textwrap.wrap(_card_text(narrative["headline"]), width=38)[:3]
+        draw.multiline_text(
+            (95, 187), "\n".join(headline_lines), fill="#f4f8f6", font=font(46, True), spacing=6
+        )
+    elif pick:
+        draw.text((95, 152), pick_label, "#9fb2a8", font=font(21, True))
         draw.text((95, 182), f"${pick['ticker']}", "#f4f8f6", font=font(76, True))
         _draw_pick_verdict(draw, pick, is_post)
         draw.text((95, 282), _card_text(_pick_line(pick, is_post)), "#cfe0d7", font=font(28))
@@ -3411,7 +3427,9 @@ def _market_report_card_png(report: dict[str, Any]) -> bytes:
 
     analysis = report.get("analysis") or {}
     lead = _card_text(
-        pick["reason"]
+        narrative["intro"]
+        if narrative.get("stories")
+        else pick["reason"]
         if pick and pick.get("editorial")
         else analysis.get("headline") or report["summary"]
     )
@@ -3779,28 +3797,25 @@ def _flash_stock_picks(*, limit: int = 6) -> list[dict[str, Any]]:
 
 
 def _flash_sports_picks(*, limit: int = 4) -> list[dict[str, Any]]:
-    slate = sports_slate("all", 24)
-    events = [
-        _compact_sports_event(event, radar=False)
-        for event in slate.get("events") or []
-        if isinstance(event, dict) and event.get("model_winner_abbreviation")
-    ]
-    events.sort(
-        key=lambda event: (
-            -float(event.get("model_probability_pct") or 0),
-            str(event.get("start_time") or ""),
-        )
-    )
+    from runner_web.market_screens import listing
+
+    events = list(sports_pulse("all", limit=100).get("events") or [])
+    board = listing("sports", events)
+    events_by_id = {event["id"]: event for event in events}
     picks: list[dict[str, Any]] = []
-    for event in events[:limit]:
-        prediction = event.get("prediction") if isinstance(event.get("prediction"), dict) else {}
+    for row in board["rows"]:
+        if not row.get("rank_detail") or len(picks) >= limit:
+            break
+        event = events_by_id[row["id"]]
+        prediction = event["prediction"]
+        side = prediction["selection"]
         picks.append(
             {
                 "label": (f"{event.get('away_abbreviation')} @ {event.get('home_abbreviation')}"),
                 "league": str(event.get("league") or "").upper(),
                 "kickoff": screen_stamp(event.get("start_time")) or "",
-                "pick": str(event.get("model_winner_abbreviation")),
-                "confidence_pct": int(round(float(event.get("model_probability_pct") or 0))),
+                "pick": str(event.get(f"{side}_abbreviation") or ""),
+                "confidence_pct": int(round(float(prediction[f"{side}_probability"]) * 100)),
                 "edge_pct": prediction.get("edge_pct"),
                 "href": f"{SPORTS_ORIGIN}/game/{event.get('id')}",
             }
@@ -5004,7 +5019,10 @@ def _row_field(row: Any, key: str) -> Any:
 
 
 def _pulse_scoring_inputs(
-    *, ticker: str | None = None, at: datetime, scan_run_id: str | None = None,
+    *,
+    ticker: str | None = None,
+    at: datetime,
+    scan_run_id: str | None = None,
 ) -> dict[str, Any]:
     from runner_web.cluster_worth import cluster_worths
 
@@ -8620,6 +8638,7 @@ def _stock_list_data_uncached() -> dict[str, Any]:
         rows,
         updated_at=updated_at,
         stories=stories_by_subject("stocks", tickers),
+        stock_calls=flash_open_calls(limit=500)["calls"],
     )
 
 
@@ -8671,7 +8690,15 @@ def _simple_board(
 ) -> HTMLResponse:
     from runner_web.market_screens import listing
 
-    screen = listing(market, items, view=view, query=query, updated_at=updated_at, stories=stories)
+    screen = listing(
+        market,
+        items,
+        view=view,
+        query=query,
+        updated_at=updated_at,
+        stories=stories,
+        stock_calls=flash_open_calls(limit=500)["calls"] if market == "stocks" else None,
+    )
     return _simple_board_response(request, session, market, screen)
 
 
@@ -9156,6 +9183,58 @@ def _sports_game_location(event_id: str) -> str:
     return f"{SPORTS_ORIGIN}/game/{canonical_id}"
 
 
+@app.get("/team/{provider}/{league}/{team_id}", response_class=HTMLResponse)
+def sports_team_page(
+    provider: str,
+    league: str,
+    team_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> Response:
+    profile = sports_team_profile(provider, league, team_id)
+    if profile is None:
+        raise HTTPException(404, "Team not found")
+    if product_for_request(request) != "sports" and SPORTS_ORIGIN != APP_ORIGIN:
+        return RedirectResponse(f"{SPORTS_ORIGIN}{request.url.path}", status_code=307)
+    return templates.TemplateResponse(
+        request,
+        "sports_entity.html",
+        page_context(
+            request,
+            runner_session,
+            nav_product="sports",
+            screen={"market": "sports", "kind": "profile", "query": ""},
+            profile=profile,
+        ),
+    )
+
+
+@app.get("/player/{provider}/{league}/{player_id}", response_class=HTMLResponse)
+def sports_player_page(
+    provider: str,
+    league: str,
+    player_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> Response:
+    profile = sports_player_profile(provider, league, player_id)
+    if profile is None:
+        raise HTTPException(404, "Player not found")
+    if product_for_request(request) != "sports" and SPORTS_ORIGIN != APP_ORIGIN:
+        return RedirectResponse(f"{SPORTS_ORIGIN}{request.url.path}", status_code=307)
+    return templates.TemplateResponse(
+        request,
+        "sports_entity.html",
+        page_context(
+            request,
+            runner_session,
+            nav_product="sports",
+            screen={"market": "sports", "kind": "profile", "query": ""},
+            profile=profile,
+        ),
+    )
+
+
 @app.get("/game/{event_id}", response_class=HTMLResponse)
 def sports_game_page(
     event_id: str,
@@ -9175,7 +9254,12 @@ def sports_game_page(
                 request,
                 runner_session,
                 nav_product="sports",
-                screen=simple_market_detail("sports", golf),
+                screen=simple_market_detail(
+                    "sports",
+                    golf,
+                    outcome=request.query_params.get("outcome", ""),
+                    contract=request.query_params.get("contract", ""),
+                ),
                 golf=golf,
                 golf_context=golf_market_context(golf),
             ),
@@ -10213,11 +10297,18 @@ def screen_detail_state(
                 iter(memecoin_calls(user_id=user_id, coin_id=subject, limit=1)), None
             )
     elif market == "sports":
-        data = sports_event(subject)
+        golf = subject.startswith("golf:")
+        data = golf_event(subject) if golf else sports_event(subject)
         if data is None:
             raise HTTPException(404, "Game not found")
-        pick = sports_pick_for_user(user_id, subject) if user_id else None
-        screen = simple_market_detail(market, data, my_pick=pick)
+        pick = sports_pick_for_user(user_id, subject) if user_id and not golf else None
+        screen = simple_market_detail(
+            market,
+            data,
+            my_pick=pick,
+            outcome=request.query_params.get("outcome", ""),
+            contract=request.query_params.get("contract", ""),
+        )
     else:
         raise HTTPException(404, "Market not found")
     if market != "sports":
@@ -10230,6 +10321,10 @@ def screen_detail_state(
         story = None
     if story:
         screen["story"] = story
+    if market == "sports":
+        screen["opinion_html"] = templates.env.get_template("_sports_opinion.html").render(
+            screen=screen
+        )
     return JSONResponse(screen, headers={"Cache-Control": "private, no-store"})
 
 
@@ -13073,10 +13168,12 @@ def _record_channel_post(
 
 
 def _pending_market_report_rows(database: Any, *, limit: int) -> list[dict[str, Any]]:
+    from runner_web.report_narrative import build_narrative
+
     rows = database.execute(
         """
         SELECT r.id,r.report_day,r.report_type,r.headline,r.summary,r.leaders_json,
-               r.spotlight_json,r.created_at
+               r.spotlight_json,r.metrics_json,r.as_of,r.created_at
         FROM market_session_reports r
         LEFT JOIN telegram_channel_posts p
           ON p.kind='market_report' AND p.subject=r.id
@@ -13102,6 +13199,12 @@ def _pending_market_report_rows(database: Any, *, limit: int) -> list[dict[str, 
         except (TypeError, ValueError):
             spotlight = None
         item["spotlight"] = spotlight if isinstance(spotlight, dict) else None
+        try:
+            metrics = json.loads(str(item.pop("metrics_json", None) or "{}"))
+        except (TypeError, ValueError):
+            metrics = {}
+        item["metrics"] = metrics if isinstance(metrics, dict) else {}
+        item["narrative"] = build_narrative(item)
         if item["spotlight"] and report_type == "post_market":
             item["headline"] = f"{item['spotlight']['ticker']} is the company in focus"
         item["label"] = REPORT_LABELS.get(report_type, report_type.replace("_", " "))
@@ -13265,6 +13368,7 @@ def _activity_payload(
                 "report_type": str(report.get("report_type") or ""),
                 "leaders": list(report.get("leaders") or []),
                 "spotlight": report.get("spotlight"),
+                "narrative": report.get("narrative"),
                 "summary": report.get("summary"),
             }
         )

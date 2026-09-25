@@ -75,14 +75,14 @@
     <p>Slice size shows its share of attention.</p>
   </div>
   <div class="indicator-key-group">
-    <h3>Sentiment</h3>
+    <h3>{{ 'Observed swap balance' if market == 'memecoins' else 'Sentiment' }}</h3>
     <ul>
-      <li>{{ key_icon('bullish') }}<span>▲ Bullish<small>Solid green</small></span></li>
-      <li>{{ key_icon('bearish') }}<span>▼ Bearish<small>Red stripes</small></span></li>
+      <li>{{ key_icon('bullish') }}<span>▲ {{ 'Net buying wallets' if market == 'memecoins' else 'Bullish' }}<small>Solid green</small></span></li>
+      <li>{{ key_icon('bearish') }}<span>▼ {{ 'Net selling wallets' if market == 'memecoins' else 'Bearish' }}<small>Red stripes</small></span></li>
       <li>{{ key_icon('sentiment') }}<span>▲75% / ▼25%<small>Example split</small></span></li>
       <li>{{ key_icon('unavailable') }}<span>▲— / ▼—<small>Split unavailable</small></span></li>
     </ul>
-    <p>Shares of saved {{ 'chain' if market == 'memecoins' else 'directional filing' }} assessments. Neutral-only evidence uses the dashed ring.</p>
+    <p>{% if market == 'memecoins' %}Saved token readings include sampled swap balance: green shows net buying wallets and red shows net selling wallets. Open a token for its time window and coverage.{% else %}Shares of saved directional filing assessments. Neutral-only evidence uses the dashed ring.{% endif %}</p>
   </div>
 </div>
 {% if market == 'stocks' %}<div class="indicator-key-check">{{ key_icon('verified') }}<span>Automated evidence check<small>Evidence and eligibility checks passed.</small></span></div>{% endif %}

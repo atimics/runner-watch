@@ -142,9 +142,22 @@ def assessment(market: str, item: dict[str, Any]) -> dict[str, Any]:
         }.get(signal, ("", ""))
         observed = prediction.get("observed_at")
         team = str(item.get(f"{side}_team_name") or item.get(f"{side}_abbreviation") or "")
+        team_label = str(item.get(f"{side}_abbreviation") or team)
+        market_probability = (
+            _probability(prediction.get(f"{side}_market_probability"))
+            if side in {"home", "away"}
+            else None
+        )
+        edge = _number(prediction.get("edge"))
         result.update(
             status="saved",
             selected_team=team,
+            selected_team_label=team_label,
+            selected_model_percent=round(probability * 100, 1) if probability is not None else None,
+            selected_market_percent=(
+                round(market_probability * 100, 1) if market_probability is not None else None
+            ),
+            edge_pp=round(edge * 100, 1) if edge is not None else None,
             reason=_prediction_reason(team, observed),
             tag=tag,
             tag_tone=tone,
@@ -162,16 +175,14 @@ def assessment(market: str, item: dict[str, Any]) -> dict[str, Any]:
             )
         # Model and market probabilities are separate measures, not additive score slices.
         for key, label, value, unit in (
-            ("model_probability", "Model win chance", probability, "%"),
+            ("model_probability", f"{team_label} model win chance", probability, "%"),
             (
                 "market_probability",
-                "Market win chance",
-                _probability(prediction.get(f"{side}_market_probability"))
-                if side in {"home", "away"}
-                else None,
+                f"{team_label} market win chance",
+                market_probability,
                 "%",
             ),
-            ("edge", "Model edge", _number(prediction.get("edge")), "pp"),
+            ("edge", f"{team_label} model edge", edge, "pp"),
         ):
             if value is not None:
                 result["drivers"].append(
@@ -241,5 +252,29 @@ def assessment(market: str, item: dict[str, Any]) -> dict[str, Any]:
             as_of=max(str(driver.get("observed_at") or "") for driver in result["drivers"]) or None,
         )
     result["event_impacts"] = [{**driver, "score_impact": None} for driver in result["drivers"]]
+    model = item.get("memecoin_assessment") or {}
+    if isinstance(model, dict) and model.get("version") == "memecoin-sar-v1":
+        value = _number(item.get("attention_score"))
+        result.update(
+            status=model.get("state", "partial"),
+            label="Attention",
+            value=value,
+            unit="pts" if value is not None else "",
+            as_of=model.get("as_of"),
+            reason=(
+                "Activity points from price movement, reported volume and sampled chain events. "
+                + str(item.get("chain_sentiment_basis") or "")
+            )
+            if model.get("state") != "stale"
+            else "Refresh the quote and chain evidence for a current reading.",
+            risks=[str(risk) for risk in item.get("risks") or []],
+            coverage_note=(model.get("coverage") or {}).get("note"),
+            missing_checks=(model.get("risk") or {}).get("missing_checks") or [],
+            contributions=[
+                {"key": key, "label": label, "value": value}
+                for key, label in (("market", "Market activity"), ("chain_event", "Chain activity"))
+                if (value := _number((item.get("score_components") or {}).get(key))) is not None
+            ],
+        )
     result["freshness"] = "paused" if item.get("stale") else "current"
     return result
