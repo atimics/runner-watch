@@ -123,53 +123,44 @@ def test_finished_matches_wait_for_consistent_team_totals(sources):
     assert golf_cup.build_analysis(sources)["prediction"]["remaining"] == 29
 
 
-def test_pairing_parser_preserves_names_times_and_partial_scores(sources):
-    match = sources["matches"]["data"]["matches"][0]
-    players = [
-        {"teamId": side, "displayName": name, "score": "1 UP" if side == "1" else "1 DN"}
-        for side in ["1", "3"]
-        for name in match["sides"][side]["players"]
-    ]
-    payload = {
-        "page": {
-            "content": {
-                "leaderboard": {
-                    "mtch": {
-                        "hdr": {
-                            "uid": "s:1100~l:1106~e:401824815~c:12093",
-                            "competitors": [
-                                {"teamId": "1", "score": "0.5"},
-                                {"teamId": "3", "score": "0.5"},
-                            ],
-                        },
-                        "grps": [
-                            {
-                                "name": "Thursday Four-Balls",
-                                "competitions": [
-                                    {
-                                        "id": "12094",
-                                        "date": match["start_time"],
-                                        "competitors": players,
-                                        "status": {"state": "in", "detail": "Through 4"},
-                                    }
-                                ],
-                            }
-                        ],
-                    }
-                }
-            }
-        }
-    }
-    html = "<script>window['__espnfitt__']=" + json.dumps(payload) + ";</script>"
-    result = golf_cup.parse_matches(html)
-    assert result["points"] == {"1": 0.5, "3": 0.5}
-    assert result["matches"][0]["sides"]["1"]["players"] == ["Scottie Scheffler", "Sam Burns"]
-    assert result["matches"][0]["sides"]["1"]["score"] == "1 UP"
-    assert result["matches"][0]["status"] == "Through 4"
+def test_match_feed_preserves_live_points_pairings_and_session_status(sources):
+    text = (FIXTURE.parent / "golf_cup_api_2026.json").read_text()
+    result = golf_cup.parse_matches(text)
+    assert result["points"] == {"1": 3, "3": 2}
+    assert result["state"] == "in"
+    assert result["completed"] is False
+    assert len(result["matches"]) == 10
+    assert sum(match["completed"] for match in result["matches"]) == 5
+    first = result["matches"][0]
+    assert first["sides"]["1"]["players"] == ["Scottie Scheffler", "Sam Burns"]
+    assert first["sides"]["1"]["score"] == "1 Up"
+    assert first["sides"]["1"]["winner"] is True
+    assert first["session"] == "Thursday Four-Balls"
+    assert first["start_time"] == "2026-09-24T16:35Z"
+    sources["matches"]["data"] = result
+    prediction = golf_cup.build_analysis(sources)["prediction"]
+    assert prediction["remaining"] == 25
+    assert prediction["expected_usa"] == pytest.approx(17.592518565312243)
+    assert prediction["usa"] == pytest.approx(0.8442995429869301)
     with pytest.raises(ValueError, match="Unexpected Cup event"):
-        golf_cup.parse_matches(html.replace("e:401824815", "e:123"))
+        golf_cup.parse_matches(text.replace('"401824815"', '"123"'))
     with pytest.raises(ValueError, match="points are incomplete"):
-        golf_cup.parse_matches(html.replace('"score": "0.5"', '"score": "—"'))
+        golf_cup.parse_matches(text.replace('"value": 3.0', '"value": "—"'))
+
+
+def test_match_feed_handles_singles_and_halved_results():
+    payload = json.loads((FIXTURE.parent / "golf_cup_api_2026.json").read_text())
+    match = payload["events"][0]["competitions"][1][0]
+    for side in match["competitors"]:
+        side["athlete"] = side.pop("roster")[0]["athlete"]
+        side["score"].update(winner=False, draw=True, displayValue="Tied")
+    result = golf_cup.parse_matches(json.dumps(payload))["matches"][0]
+    assert result["completed"] is True
+    assert result["sides"]["1"]["players"] == ["Scottie Scheffler"]
+    assert all(not side["winner"] for side in result["sides"].values())
+    match["competitors"][0].pop("athlete")
+    with pytest.raises(ValueError, match="pairing names are incomplete"):
+        golf_cup.parse_matches(json.dumps(payload))
 
 
 def test_official_roster_parser_joins_split_names_and_checks_columns(sources):

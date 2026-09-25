@@ -19,6 +19,8 @@ on the right, a small glyph at the far right, and uninterrupted rows. On the eve
 page, the chart is a history of the selected contract. The actual score remains
 visible as game context. A price difference is called a **gap**, measured in
 percentage points. Its sign describes RATi's opinion relative to the named venue.
+Row labels say Above, Below, or Level for that same outcome and venue. Model means
+a saved forecast is available while a fresh, comparable market price is pending.
 
 The glyph has two rings. The outside ring is RATi's value; the inside ring is the
 market's value. The accessible label names the outcome and source. The method and
@@ -84,6 +86,12 @@ market comparison also measures the model and market on the same games and at
 the same forecast time. This change adds that paired Brier comparison to the
 scorecard and the event's method disclosure.
 
+After deployment, the paired MLB check covered 125 games: RATi Brier error was
+0.2475 and the sportsbook error was 0.2406. Lower is better, so the market was more
+accurate on that shared sample. The later full ledger had 313 games and a −8.6%
+paper return across 252 value calls. This supports the experimental label and
+the priority on probability calibration before treating large gaps as useful calls.
+
 Public records: [MLB](https://sports.rati.chat/api/sports/stats?league=mlb),
 [NFL](https://sports.rati.chat/api/sports/stats?league=nfl),
 [NBA](https://sports.rati.chat/api/sports/stats?league=nba),
@@ -100,6 +108,11 @@ points. Each player's strength is the square root of those points. A pairing's
 strength is its player average. Its share of the two sides' strength is the win
 chance conditional on a decisive match. A fixed 12% tie assumption leaves 88%
 for the two wins. A win adds one point and a tie adds half a point.
+
+Match input comes from ESPN's structured leaderboard feed, which supplies team
+points, player pairings, and completed results in one response. Production checks
+found a different page format in ESPN's HTML response, so the forecast uses the
+same data feed as the scoring view.
 
 An exact probability calculation combines the remaining matches with the earned
 team points. Announced matches use their named players. Future pairings use the

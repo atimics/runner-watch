@@ -29,7 +29,8 @@ def game(**extra):
 def test_pregame_names_favorite_in_forecast_while_teams_keep_equal_weight():
     result = row("sports", game())
     assert result["selected_team_label"] == "COL"
-    assert result["tag"] == "WATCH"
+    assert result["tag"] == "MODEL"
+    assert result["tag_title"].startswith("ARI: saved model")
     assert result["matchup"]["emphasis"] is None
     assert result["matchup"]["emphasis_label"] == ""
     assert result["matchup"]["forecast"]["label"] == "ARI 56%"

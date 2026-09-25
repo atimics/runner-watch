@@ -1,4 +1,10 @@
 /* An event is the ticker; each named outcome has its own price history. */
+.tag-above,.chip-above { color:var(--green); }
+.tag-below,.chip-below { color:var(--amber); }
+.tag-level,.chip-level { color:var(--blue); }
+.tag-model,.chip-model,.tag-pending,.chip-pending { color:var(--muted); }
+.tag-above,.tag-below,.tag-level,.tag-model,.tag-pending { background:transparent; border-color:currentColor; }
+.chip-above i,.chip-below i,.chip-level i,.chip-model i,.chip-pending i { background:currentColor; }
 .prediction-glyph { display:inline-flex; width:40px; height:40px; flex:none; }
 .prediction-glyph svg { width:100%; height:100%; }
 .prediction-glyph circle { fill:none; stroke-width:3; transform:rotate(-90deg); transform-origin:20px 20px; }
