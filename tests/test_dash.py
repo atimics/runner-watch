@@ -1135,3 +1135,24 @@ def test_expand_finds_a_coin_by_symbol_and_admits_an_unknown_one(monkeypatch):
     assert dash.dash_expand("coin:nope")["known"] is False
     assert set(dash.dash_expand("sports")) >= {"live", "up_next", "finals"}
     assert "sports" in dash.dash_world(at=NOW) and "memecoins" in dash.dash_world(at=NOW)
+
+
+def test_a_reopen_wakes_dash_even_when_the_halt_itself_is_old_news():
+    # Halted at 09:00 ET, reopened at 10:30 ET. NOW is 11:00 ET, so only the
+    # reopen falls in the last hour.
+    _seed_halts(_halt_item("WZRD", "09:00:00", "T1", "10:30:00"))
+
+    changes = dash.recent_changes(at=NOW)
+
+    assert changes["events"] == 0
+    assert changes["reopened_halts"] == 1
+    assert changes["any"] is True
+
+
+def test_a_scheduled_reopen_does_not_wake_dash_early():
+    _seed_halts(_halt_item("WZRD", "09:00:00", "T1", "11:30:00"))
+
+    changes = dash.recent_changes(at=NOW)
+
+    assert changes["reopened_halts"] == 0
+    assert changes["any"] is False
