@@ -113,6 +113,7 @@ _CAPABILITY_BY_FEED = {
     "sports_golf_scoreboard_preview": "sports_scores",
     "sports_boxscore_preview": "sports_scores",
     "sports_moneyline_odds": "sports_odds",
+    "sports_game_winner_prices": "sports_odds",
     "sports_news_preview": "sports_news",
     "decision_search": "legal_risk",
     "party_search": "legal_risk",
