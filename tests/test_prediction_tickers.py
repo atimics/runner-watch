@@ -430,3 +430,31 @@ def test_list_keeps_same_glyph_with_compact_history_payload():
     assert "points" not in compact["selected"]
     assert compact["selected"]["chart"] is None
     assert full["selected"]["chart"]
+
+
+def test_cup_refresh_route_keeps_selected_outcome_and_updates_glyph(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from runner_web import main, stories
+
+    now = datetime.now(UTC)
+    event = cup_event()
+    event.update(name="Presidents Cup", status="in", league="pga", leaderboard=[])
+    event["analysis"]["captured_at"] = now.isoformat()
+    event["contract_quotes"] = [quote(at=now, outcome="international", probability=0.2)]
+    monkeypatch.setattr(main, "golf_event", lambda subject: event)
+    monkeypatch.setattr(main, "current_user", lambda session: None)
+    monkeypatch.setattr(main, "enforce_rate", lambda *a, **kw: None)
+    monkeypatch.setattr(stories, "public_story", lambda *a: None)
+    client = TestClient(main.app)
+    url = f"/api/screens/sports/{event['id']}/detail?contract=winner&outcome=international"
+    first = client.get(url)
+    assert first.status_code == 200
+    data = first.json()
+    assert data["ticker"]["selected"]["key"] == "international"
+    assert data["ticker"]["indicator"]["sentiment"] == "negative"
+    assert "Sentiment, attention, and risk" in data["opinion_html"]
+    event["contract_quotes"][0]["probability"] = 0.01
+    refreshed = client.get(url).json()
+    assert refreshed["ticker"]["selected"]["key"] == "international"
+    assert refreshed["ticker"]["indicator"]["sentiment"] == "positive"
