@@ -541,6 +541,10 @@ WORLD_NODES = (
     "halts",
     "community",
     "sector:<name>",
+    "sports",
+    "sports:<league>",
+    "memecoins",
+    "coin:<id or symbol>",
     "report:pre",
     "report:post",
     "ticker:<SYM>",
@@ -814,6 +818,191 @@ def recent_halts(limit: int = 8, at: datetime | None = None) -> list[dict[str, A
     return entries
 
 
+def _eastern_time(value: Any) -> str | None:
+    moment = _when(value)
+    return moment.astimezone(EASTERN).strftime("%a %H:%M ET") if moment else None
+
+
+def _game(row: dict[str, Any], prediction: dict[str, Any] | None) -> dict[str, Any]:
+    away = str(row["away_abbreviation"] or row["away_team_name"])
+    home = str(row["home_abbreviation"] or row["home_team_name"])
+    game: dict[str, Any] = {
+        "id": row["id"],
+        "league": str(row["league"]).upper(),
+        "matchup": f"{away} at {home}",
+        "away": {"name": row["away_team_name"], "record": row["away_record"]},
+        "home": {"name": row["home_team_name"], "record": row["home_record"]},
+        "starts_at": _eastern_time(row["start_time"]),
+        "status": row["status_detail"],
+    }
+    if row["status"] != "pre" and row["away_score"] is not None and row["home_score"] is not None:
+        game["score"] = f"{away} {row['away_score']:g}, {home} {row['home_score']:g}"
+    if prediction:
+        side = str(prediction["selection"])
+        model = {
+            "home_win_pct": round(float(prediction["home_probability"]) * 100, 1),
+            "signal": prediction["signal"],
+            "lean": row[f"{side}_team_name"] if side in {"home", "away"} else "pass",
+        }
+        if prediction["home_market_probability"] is not None:
+            model["market_home_win_pct"] = round(
+                float(prediction["home_market_probability"]) * 100, 1
+            )
+        if prediction["edge"] is not None:
+            model["edge_pct"] = round(float(prediction["edge"]) * 100, 1)
+        game["model"] = model
+    return game
+
+
+def sports_now(
+    limit: int = 6, league: str | None = None, at: datetime | None = None
+) -> dict[str, Any]:
+    """Live games, what starts next with the model's pregame read, and recent finals.
+
+    The model read is the last one taken before the start, the same rule the
+    Sports board uses, so a lean is never rewritten after the game begins.
+    """
+
+    from runner_web.sports import LEAGUES, sports_pick_stats
+
+    current = at or datetime.now(UTC)
+    cap = max(1, min(int(limit), 20))
+    parameters: list[Any] = [
+        (current - timedelta(hours=12)).isoformat(),
+        (current + timedelta(hours=24)).isoformat(),
+    ]
+    league_filter = ""
+    if league:
+        key = league.strip().lower()
+        if key not in LEAGUES:
+            return {"error": "unknown league", "leagues": sorted(LEAGUES)}
+        league_filter = " AND league=?"
+        parameters.append(key)
+    with connection() as database:
+        rows = [
+            dict(row)
+            for row in database.execute(
+                f"""
+                SELECT id,league,start_time,status,status_detail,
+                       home_team_name,home_abbreviation,home_record,home_score,
+                       away_team_name,away_abbreviation,away_record,away_score
+                FROM sports_events
+                WHERE start_time>=? AND start_time<=?{league_filter}
+                ORDER BY start_time,id LIMIT 200
+                """,
+                tuple(parameters),
+            ).fetchall()
+        ]
+        live = [row for row in rows if row["status"] == "in"][:cap]
+        upcoming = [row for row in rows if row["status"] == "pre"][:cap]
+        finals = [row for row in reversed(rows) if row["status"] == "post"][:cap]
+        predictions: dict[str, dict[str, Any]] = {}
+        ids = [row["id"] for row in (*live, *upcoming, *finals)]
+        if ids:
+            placeholders = ",".join("?" for _ in ids)
+            for row in database.execute(
+                f"""
+                SELECT * FROM (
+                    SELECT p.event_id,p.selection,p.home_probability,
+                           p.home_market_probability,p.edge,p.signal,
+                           ROW_NUMBER() OVER(
+                               PARTITION BY p.event_id ORDER BY p.observed_at DESC,p.id DESC
+                           ) AS latest_rank
+                    FROM sports_predictions p JOIN sports_events e ON e.id=p.event_id
+                    WHERE p.event_id IN ({placeholders}) AND p.observed_at<=e.start_time
+                ) latest WHERE latest_rank=1
+                """,
+                tuple(ids),
+            ).fetchall():
+                predictions[str(row["event_id"])] = dict(row)
+    return {
+        "live": [_game(row, predictions.get(row["id"])) for row in live],
+        "up_next": [_game(row, predictions.get(row["id"])) for row in upcoming],
+        "finals": [_game(row, predictions.get(row["id"])) for row in finals],
+        "model_record": sports_pick_stats(),
+    }
+
+
+def _coin(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "symbol": row["symbol"],
+        "name": row["name"],
+        "price": row.get("price_label") or row.get("price"),
+        "change_24h_pct": (
+            round(float(row["change_24h"]), 2) if row.get("change_24h") is not None else None
+        ),
+        "volume_24h": row.get("volume_label"),
+        "market_cap": row.get("market_cap_label"),
+        "flags": [finding.get("title") for finding in row.get("findings") or []][:3],
+    }
+
+
+def memecoins_now(limit: int = 6, at: datetime | None = None) -> dict[str, Any]:
+    """The memecoin board: most traded, biggest moves, on-chain flags and open Calls."""
+
+    from runner_web.memecoin_calls import memecoin_calls
+    from runner_web.memecoins import memecoin_market
+
+    current = at or datetime.now(UTC)
+    cap = max(1, min(int(limit), 20))
+    market = memecoin_market(sort="volume", at=current)
+    rows = [row for row in market["rows"] if not row["stale"]]
+    moving = [row for row in rows if row.get("change_24h") is not None]
+    moving.sort(key=lambda row: float(row["change_24h"]))
+    calls = [
+        {
+            "symbol": call["symbol"],
+            "caller": call["caller_handle"],
+            "status": call["status"],
+            "return_pct": call["return_pct"],
+        }
+        for call in memecoin_calls(limit=cap)
+    ]
+    return {
+        "status": market["status"],
+        "as_of": _eastern_time(market.get("collected_at")),
+        "coins_tracked": market["total"],
+        "most_traded": [_coin(row) for row in rows[:cap]],
+        "top_gainers": [_coin(row) for row in reversed(moving[-3:]) if row["change_24h"] > 0],
+        "top_losers": [_coin(row) for row in moving[:3] if row["change_24h"] < 0],
+        "flagged": [_coin(row) for row in rows if row.get("findings")][:cap],
+        "calls": calls,
+    }
+
+
+def coin_detail(query: str) -> dict[str, Any]:
+    """One coin by CoinGecko id or ticker symbol, with a short price trail."""
+
+    from runner_web.memecoins import memecoin_detail, memecoin_market
+
+    wanted = query.strip().lstrip("$").lower()
+    detail = memecoin_detail(wanted) if wanted else None
+    if detail is None:
+        match = next(
+            (
+                row
+                for row in memecoin_market(sort="volume")["rows"]
+                if str(row["symbol"]).lower() == wanted
+            ),
+            None,
+        )
+        detail = memecoin_detail(str(match["id"])) if match else None
+    if detail is None:
+        return {"known": False, "query": query}
+    coin = detail["coin"]
+    trail = detail.get("history") or []
+    return {
+        "known": True,
+        **_coin(coin),
+        "status": detail["status"],
+        "high_24h": coin.get("high_24h"),
+        "low_24h": coin.get("low_24h"),
+        "findings": coin.get("findings") or [],
+        "price_trail": trail[-24:],
+    }
+
+
 def recent_changes(hours: int = 1, at: datetime | None = None) -> dict[str, Any]:
     """What landed since the last look, so Dash can decide whether to speak.
 
@@ -914,6 +1103,8 @@ def dash_world(at: datetime | None = None) -> dict[str, Any]:
         "runners": recent_runners(limit=6, at=current),
         "events": recent_events(limit=6, at=current),
         "halts": recent_halts(limit=6, at=current),
+        "sports": sports_now(limit=4, at=current),
+        "memecoins": memecoins_now(limit=5, at=current),
         "community": community_now(limit=6),
         "self": dash_self(current),
         "changes": recent_changes(at=current),
@@ -939,6 +1130,13 @@ def dash_expand(node: str | None) -> dict[str, Any]:
         return recent_events(limit=20)
     if key in {"halts", "halt"}:
         return recent_halts(limit=20)
+    if key.startswith("sports"):
+        asked = key.split(":", 1)[1].strip() if ":" in key else None
+        return sports_now(limit=12, league=asked or None)
+    if key in {"memecoins", "coins", "crypto"}:
+        return memecoins_now(limit=20)
+    if key.startswith("coin:"):
+        return coin_detail(key.split(":", 1)[1])
     if key.startswith("report"):
         which = key.split(":", 1)[1].strip() if ":" in key else None
         return session_report(which or None)

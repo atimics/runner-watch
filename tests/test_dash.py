@@ -991,3 +991,147 @@ def test_the_world_and_expand_include_halts():
 
     assert dash.dash_world(at=NOW)["halts"][0]["ticker"] == "TDIC"
     assert isinstance(dash.dash_expand("halts"), list)
+
+
+def _seed_game(event_id, status, start, away_score=None, home_score=None, detail="Scheduled"):
+    with connection() as database:
+        database.execute(
+            "INSERT INTO sports_events(id,provider,external_id,league,name,start_time,status,"
+            "status_detail,home_team_id,home_team_name,home_abbreviation,home_record,home_score,"
+            "away_team_id,away_team_name,away_abbreviation,away_record,away_score,source_url,"
+            "first_collected_at,last_collected_at) "
+            "VALUES(?,'espn',?,'mlb','Cubs at Mets',?,?,?,'nym','New York Mets','NYM','80-70',?,"
+            "'chc','Chicago Cubs','CHC','75-75',?,'https://espn.com',?,?)",
+            (
+                event_id,
+                event_id,
+                start.isoformat(),
+                status,
+                detail,
+                home_score,
+                away_score,
+                NOW.isoformat(),
+                NOW.isoformat(),
+            ),
+        )
+
+
+def _seed_prediction(event_id, observed, home_probability, selection="home", edge=0.04):
+    with connection() as database:
+        database.execute(
+            "INSERT INTO sports_predictions(id,event_id,model_version,input_hash,selection,"
+            "home_probability,away_probability,home_market_probability,"
+            "away_market_probability,edge,signal,quality,observed_at) "
+            "VALUES(?,?,'m1',?,?,?,?,0.55,0.45,?,'lean','ok',?)",
+            (
+                f"{event_id}:{observed.isoformat()}",
+                event_id,
+                observed.isoformat(),
+                selection,
+                home_probability,
+                1 - home_probability,
+                edge,
+                observed.isoformat(),
+            ),
+        )
+
+
+def test_dash_sees_live_games_whats_next_with_the_pregame_lean_and_finals():
+    _seed_game("mlb:live", "in", NOW - timedelta(hours=1), 2, 3, "Top 6th")
+    _seed_game("mlb:next", "pre", NOW + timedelta(hours=3))
+    _seed_game("mlb:done", "post", NOW - timedelta(hours=8), 7, 1, "Final")
+    _seed_prediction("mlb:next", NOW - timedelta(hours=2), 0.52)
+    _seed_prediction("mlb:next", NOW - timedelta(minutes=5), 0.59)
+    # A read taken after the start must never replace the pregame lean.
+    _seed_prediction("mlb:live", NOW - timedelta(hours=2), 0.6)
+    _seed_prediction("mlb:live", NOW, 0.2, selection="away")
+
+    sports = dash.sports_now(at=NOW)
+
+    (live,) = sports["live"]
+    assert live["score"] == "CHC 2, NYM 3"
+    assert live["status"] == "Top 6th"
+    assert live["model"]["lean"] == "New York Mets"
+    (upcoming,) = sports["up_next"]
+    assert upcoming["matchup"] == "CHC at NYM"
+    assert "score" not in upcoming
+    assert upcoming["model"] == {
+        "home_win_pct": 59.0,
+        "signal": "lean",
+        "lean": "New York Mets",
+        "market_home_win_pct": 55.0,
+        "edge_pct": 4.0,
+    }
+    assert sports["finals"][0]["score"] == "CHC 7, NYM 1"
+    assert sports["model_record"]["settled"] == 0
+
+
+def test_an_unknown_league_is_named_rather_than_empty():
+    assert "error" in dash.sports_now(league="cricket", at=NOW)
+
+
+def _seed_coins(*coins):
+    import json
+
+    from runner_web.memecoins import normalize_memecoins
+
+    rows = normalize_memecoins(
+        [
+            {
+                "id": coin_id,
+                "symbol": coin_id[:4],
+                "name": coin_id.title(),
+                "current_price": 0.01,
+                "price_change_percentage_24h": change,
+                "total_volume": volume,
+                "market_cap": volume * 10,
+                "last_updated": NOW.isoformat(),
+            }
+            for coin_id, change, volume in coins
+        ]
+    )
+    rows[0]["token_address"] = "So1anaMint"
+    snapshot = {"rows": rows, "collected_at": NOW.isoformat(), "run_id": "run-1"}
+    forensics = {
+        "analyzed_events": 1,
+        "findings": [{"kind": "bundle", "title": "Bundled launch", "token_address": "So1anaMint"}],
+    }
+    with connection() as database:
+        for key, value in (("memecoins_snapshot", snapshot), ("memecoin_forensics", forensics)):
+            database.execute(
+                "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?)",
+                (key, json.dumps(value), NOW.isoformat()),
+            )
+
+
+def test_dash_sees_the_memecoin_board_movers_and_flags(monkeypatch):
+    monkeypatch.setenv("MEMECOINS_ENABLED", "true")
+    _seed_coins(("dogecoin", -4.0, 900.0), ("pepe", 31.5, 500.0), ("bonk", 2.0, 100.0))
+
+    coins = dash.memecoins_now(at=NOW)
+
+    assert coins["status"] == "ok"
+    assert [coin["id"] for coin in coins["most_traded"]] == ["dogecoin", "pepe", "bonk"]
+    assert [coin["id"] for coin in coins["top_gainers"]] == ["pepe", "bonk"]
+    assert [coin["id"] for coin in coins["top_losers"]] == ["dogecoin"]
+    assert coins["flagged"][0]["flags"] == ["Bundled launch"]
+    assert coins["calls"] == []
+
+
+def test_a_disabled_memecoin_feed_says_so(monkeypatch):
+    monkeypatch.setenv("MEMECOINS_ENABLED", "false")
+
+    coins = dash.memecoins_now(at=NOW)
+
+    assert coins["status"] == "disabled"
+    assert coins["most_traded"] == []
+
+
+def test_expand_finds_a_coin_by_symbol_and_admits_an_unknown_one(monkeypatch):
+    monkeypatch.setenv("MEMECOINS_ENABLED", "true")
+    _seed_coins(("pepe", 31.5, 500.0))
+
+    assert dash.dash_expand("coin:$PEPE")["id"] == "pepe"
+    assert dash.dash_expand("coin:nope")["known"] is False
+    assert set(dash.dash_expand("sports")) >= {"live", "up_next", "finals"}
+    assert "sports" in dash.dash_world(at=NOW) and "memecoins" in dash.dash_world(at=NOW)
