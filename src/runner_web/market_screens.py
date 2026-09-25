@@ -285,6 +285,28 @@ def sports_matchup(item: dict[str, Any], state: dict[str, Any]) -> dict[str, Any
     }
 
 
+def _outcome_tag(ticker: dict[str, Any]) -> dict[str, str]:
+    selected = ticker.get("selected") or {}
+    gap = selected.get("gap")
+    label = selected.get("label", "Outcome")
+    if gap is not None:
+        direction = "above" if gap > 0 else "below" if gap < 0 else "level"
+        venue = selected["benchmark"]["label"]
+        return {
+            "tag": direction.upper(),
+            "tag_tone": direction,
+            "tag_title": f"{label}: RATi {direction} {venue} · {gap:+.1f} percentage points",
+        }
+    available = selected.get("percent") is not None
+    return {
+        "tag": "MODEL" if available else "PENDING",
+        "tag_tone": "model" if available else "pending",
+        "tag_title": f"{label}: saved model; comparable fresh prices pending"
+        if available
+        else ticker["pending"],
+    }
+
+
 def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
     if market == "sports" and str(item.get("id", "")).startswith("golf:"):
         from runner_web.sports import _golf_display_status
@@ -297,6 +319,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         saved_tag, saved_tone, saved_risk = state_tag(item)
         if saved_tag:
             rating.update(tag=saved_tag, tag_tone=saved_tone)
+        ticker = prediction_ticker(item)
         golf_matchup = None
         if match_play and len(teams) == 2:
             scores = [number(team.get("points")) for team in teams]
@@ -324,7 +347,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
             }
         return {
             "id": str(item["id"]),
-            "ticker": prediction_ticker(item),
+            "ticker": ticker,
             **({"matchup": golf_matchup} if golf_matchup else {}),
             "name": str(item.get("name") or "Tournament"),
             "subtitle": (
@@ -345,8 +368,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
             "time": stamp(item.get("start_time")),
             "href": "/game/" + quote(str(item["id"]), safe=":"),
             "mark": "PG",
-            "tag": rating["tag"],
-            "tag_tone": rating["tag_tone"],
+            **_outcome_tag(ticker),
             "risk": saved_risk,
             "score": rating["score"],
             "score_detail": rating["score_detail"],
@@ -360,6 +382,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         saved_tag, saved_tone, saved_risk = state_tag(item)
         if saved_tag:
             rating.update(tag=saved_tag, tag_tone=saved_tone)
+        ticker = prediction_ticker(item)
         started = state.get("started") or item.get("status") in {"in", "post"}
         scores = [item.get(f"{side}_score") for side in ("away", "home")]
         value = (
@@ -371,7 +394,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         )
         return {
             "id": str(item["id"]),
-            "ticker": prediction_ticker(item),
+            "ticker": ticker,
             "name": f"{away} · {home}",
             "matchup": sports_matchup(item, state),
             "subtitle": str(item.get("league") or "Sports").upper(),
@@ -395,8 +418,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
             "mark": away[:2],
             "event_status": state.get("label") or item.get("status_detail") or "Upcoming",
             "assessment": rating,
-            "tag": rating["tag"],
-            "tag_tone": rating["tag_tone"],
+            **_outcome_tag(ticker),
             "risk": saved_risk,
             "score": rating["score"],
             "score_detail": rating["score_detail"],

@@ -19,6 +19,8 @@ on the right, a small glyph at the far right, and uninterrupted rows. On the eve
 page, the chart is a history of the selected contract. The actual score remains
 visible as game context. A price difference is called a **gap**, measured in
 percentage points. Its sign describes RATi's opinion relative to the named venue.
+Row labels say Above, Below, or Level for that same outcome and venue. Model means
+a saved forecast is available while a fresh, comparable market price is pending.
 
 The glyph has two rings. The outside ring is RATi's value; the inside ring is the
 market's value. The accessible label names the outcome and source. The method and

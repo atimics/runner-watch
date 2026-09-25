@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from starlette.requests import Request
@@ -10,6 +10,38 @@ from runner_web import main as web
 from runner_web.market_screens import detail, listing, series
 
 SENTINEL = "operator-only-secret"
+
+
+@pytest.mark.parametrize("market_chance,tag", [(0.7, "BELOW"), (0.5, "ABOVE"), (0.6, "LEVEL")])
+def test_sports_row_tag_follows_the_same_outcome_as_the_glyph(market_chance, tag):
+    now = datetime.now(UTC)
+    event = sample("sports")
+    event.update(status="pre", start_time=(now + timedelta(days=1)).isoformat())
+    event["prediction"] = {
+        "home_probability": 0.4,
+        "away_probability": 0.6,
+        "selection": "home",
+        "signal": "watch",
+        "model_version": "team-form-v1",
+        "observed_at": now.isoformat(),
+    }
+    event["prediction_markets"] = [
+        {
+            "source": "kalshi",
+            "away_probability": market_chance,
+            "home_probability": 1 - market_chance,
+            "observed_at": now.isoformat(),
+            "quality": "quoted",
+        }
+    ]
+    board = listing("sports", [event])
+    displayed = board["rows"][0]
+    assert displayed["ticker"]["selected"]["label"] == "BOS"
+    assert displayed["tag"] == tag
+    assert displayed["tag_title"].startswith(f"BOS: RATi {tag.lower()} Kalshi")
+    assert board["counts"] == {tag.lower(): 1}
+    event["prediction_markets"][0]["quality"] = "wide spread"
+    assert listing("sports", [event])["rows"][0]["tag"] == "MODEL"
 
 
 def sample(market):
@@ -242,9 +274,9 @@ def test_public_score_detail_uses_short_driver_labels():
         "Scan",
         "SEC",
         "News",
-            "Social",
-            "Cluster holdings",
-            "Community",
+        "Social",
+        "Cluster holdings",
+        "Community",
     ]
     assert [part["label"] for part in detail["penalties"]] == ["Rug"]
 
