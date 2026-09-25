@@ -167,6 +167,29 @@ def test_sort_search_and_stale_times(market_db):
     assert memecoins.memecoin_market(sort="bad", at=AT)["sort"] == "volume"
 
 
+def test_search_puts_the_typed_address_ahead_of_coins_that_copy_its_name(market_db):
+    real = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+    copy = "DezXAZuKq8vGmRQCZ3tYkLpWbNe5Hs7Dr2FjAoPcpump"
+    rows = memecoins.normalize_memecoins(
+        [coin("real", total_volume=1), coin("copy", total_volume=1_000)]
+    )
+    for row, address in zip(rows, (real, copy), strict=True):
+        row.update(token_address=address, claimed_symbol="BONK", claimed_name="Bonk")
+    # The copy names itself after the real coin's address tail.
+    rows[1]["claimed_name"] = "Bonk " + real[-6:]
+    with patch.object(memecoins, "_collect_helius", side_effect=lambda **_: (rows, {})):
+        memecoins.refresh_memecoins(download=lambda *_: b"", at=AT)
+
+    by_name = memecoins.memecoin_market(query="bonk", at=AT)["rows"]
+    assert [row["id"] for row in by_name] == ["copy", "real"]
+    by_address = memecoins.memecoin_market(query=real, at=AT)["rows"]
+    assert [row["id"] for row in by_address] == ["real"]
+    tail = memecoins.memecoin_market(query=real[-6:], at=AT)["rows"]
+    assert [row["id"] for row in tail] == ["real", "copy"]
+    assert by_address[0]["symbol"] == real[:6] + "…" + real[-6:]
+    assert by_address[0]["name"] == real
+
+
 def test_pending_disabled_and_failure_before_first_snapshot(market_db, monkeypatch):
     assert memecoins.memecoin_market(at=AT)["status"] == "pending"
     seed([])

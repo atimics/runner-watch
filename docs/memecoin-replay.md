@@ -10,9 +10,12 @@ Production enables this delivery path with `TELEGRAM_MEMECOIN_ALERTS=1` in
 `TELEGRAM_BOT_TOKEN`) and `TELEGRAM_CHAT_ID`. The configured chat is captured when
 a new token enters the saved market. Existing tokens form a quiet baseline.
 
-One `sendAnimation` request contains the stored GIF and a plain caption with the
-symbol, contract address, launch evidence status, saved event count, and link to
-the exact replay revision on the details page. A delivery record holds the
+One `sendAnimation` request contains the stored GIF and a caption led by the full
+contract address, then the launch evidence status, saved event count, and link to
+the exact replay revision on the details page. The caption leaves out the
+launch's name and symbol: the creator chose them, and a launch can copy a famous
+coin's name. Pages show that text only as a marked, unverified claim beneath
+the address. A delivery record holds the
 replay ID, GIF hash, destination, attempt count, and returned message ID. Tests
 exercise this request through an injected receiver.
 

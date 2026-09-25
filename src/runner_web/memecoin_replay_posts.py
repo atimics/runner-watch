@@ -15,20 +15,18 @@ from runner_web.telegram import (
     memecoin_alerts_enabled,
     send_animation,
 )
-from runner_web.telegram_outbox import label as bounded_label
 from runner_web.telegram_outbox import lock_channel, reserve_channel_slot
 
 
 def caption(payload: dict, *, origin: str) -> str:
     """One tight Markdown V2 card under the replay GIF.
 
-    The coin page URL carries the identity, so the raw token address stays on
-    the page instead of in the chat.
+    The contract address is the coin's identity and leads the card. Creator-set
+    names stay off the channel: a launch can copy a famous coin's name.
     """
 
-    label = escape_markdown_v2(
-        bounded_label(payload["symbol"] or payload["token_address"][:8], 80).upper()
-    )
+    # Base58 has no backtick or backslash, the only characters code spans reserve.
+    address = f"`{payload['token_address']}`"
     launch = escape_markdown_v2(
         "Launch recorded on chain" if payload["launch"] else "Launch evidence pending"
     )
@@ -40,7 +38,7 @@ def caption(payload: dict, *, origin: str) -> str:
     # The URL is an inline link, not a bare line: every dot and hyphen in a
     # bare URL is reserved in Markdown V2, and a caption that fails to parse
     # takes the GIF down with it — sendAnimation has no plain-text retry.
-    card = f"\U0001fa99 *{label}* — new coin detected\n\n{launch} · {events}"
+    card = f"\U0001fa99 *New coin detected*\n{address}\n\n{launch} · {events}"
     return card + "\n\n" + markdown_link("Open the coin page", link)
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -24,6 +25,33 @@ SELL = bytes([51, 230, 133, 164, 1, 127, 131, 173])
 WITHDRAW = bytes([183, 18, 70, 156, 148, 109, 161, 34])
 SWAP_IN = bytes([143, 190, 90, 218, 196, 30, 51, 222])
 SWAP_OUT = bytes([55, 217, 98, 86, 163, 74, 180, 173])
+
+
+def short_address(address: str) -> str:
+    """Head and tail of a contract address.
+
+    Pump mints share a ground "pump" suffix and prefixes are cheap to grind, so
+    six characters on each side keep look-alike mints apart in a list.
+    """
+
+    return address if len(address) <= 13 else address[:6] + "…" + address[-6:]
+
+
+def claim_text(raw: bytes, limit: int) -> str:
+    """Creator-chosen launch text, reduced to plain visible characters.
+
+    Drops control, format (bidi overrides, zero-width) and unassigned code
+    points so the text cannot reorder or hide itself next to an address.
+    """
+
+    kept = []
+    for char in raw.decode("utf-8", errors="replace"):
+        category = unicodedata.category(char)
+        if category.startswith("Z"):
+            kept.append(" ")
+        elif not category.startswith("C") and char != "�":
+            kept.append(char)
+    return " ".join("".join(kept).split())[:limit]
 
 
 def balance_change(meta: dict[str, Any], wallet: str, mint: str) -> Decimal | None:
@@ -128,12 +156,14 @@ def parse_events(entry: dict[str, Any]) -> list[dict[str, Any]]:
                         }
                     )
                 elif program == PUMP and discriminator in (PUMP_CREATE, PUMP_CREATE_V2):
-                    # Skip the three Borsh strings: discovery never uses their values.
+                    # Name, symbol and URI are Borsh strings the creator chose.
                     offset = 8
+                    claims = []
                     for _ in range(3):
                         size = int.from_bytes(data[offset : offset + 4], "little")
                         if offset + 4 + size > len(data):
                             raise ValueError("Invalid launch instruction")
+                        claims.append(data[offset + 4 : offset + 4 + size])
                         offset += 4 + size
                     if offset + 32 > len(data):
                         continue
@@ -144,6 +174,8 @@ def parse_events(entry: dict[str, Any]) -> list[dict[str, Any]]:
                             "wallet": _address(accounts[7 if discriminator == PUMP_CREATE else 5]),
                             "declared_creator": _encode(data[offset : offset + 32]),
                             "bonding_curve": _address(accounts[2]),
+                            "claimed_name": claim_text(claims[0], 64),
+                            "claimed_symbol": claim_text(claims[1], 16),
                         }
                     )
                 elif program == RAYDIUM and discriminator in (INITIALIZE, INITIALIZE_PERMISSION):

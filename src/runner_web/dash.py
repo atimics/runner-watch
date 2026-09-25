@@ -544,7 +544,7 @@ WORLD_NODES = (
     "sports",
     "sports:<league>",
     "memecoins",
-    "coin:<id or symbol>",
+    "coin:<contract address or id>",
     "report:pre",
     "report:post",
     "ticker:<SYM>",
@@ -924,10 +924,13 @@ def sports_now(
 
 
 def _coin(row: dict[str, Any]) -> dict[str, Any]:
+    claimed = row.get("claimed_symbol") or row.get("claimed_name")
     return {
         "id": row["id"],
+        "contract_address": row.get("token_address"),
         "symbol": row["symbol"],
-        "name": row["name"],
+        # Launch text is the creator's own claim and can copy a famous coin.
+        "creator_set_name_unverified": claimed,
         "price": row.get("price_label") or row.get("price"),
         "change_24h_pct": (
             round(float(row["change_24h"]), 2) if row.get("change_24h") is not None else None
@@ -972,24 +975,47 @@ def memecoins_now(limit: int = 6, at: datetime | None = None) -> dict[str, Any]:
 
 
 def coin_detail(query: str) -> dict[str, Any]:
-    """One coin by CoinGecko id or ticker symbol, with a short price trail."""
+    """One coin by contract address or coin id, with a short price trail.
+
+    A symbol or name never resolves to a coin: any launch can copy one. It
+    returns the matching contract addresses so the reader picks by address.
+    """
 
     from runner_web.memecoins import memecoin_detail, memecoin_market
 
-    wanted = query.strip().lstrip("$").lower()
-    detail = memecoin_detail(wanted) if wanted else None
+    wanted = query.strip()
+    rows = memecoin_market(sort="volume")["rows"]
+    # Solana addresses are case sensitive, so they match exactly as given.
+    by_address = next((row for row in rows if row.get("token_address") == wanted), None)
+    detail = memecoin_detail(str(by_address["id"] if by_address else wanted.lower()))
     if detail is None:
-        match = next(
-            (
-                row
-                for row in memecoin_market(sort="volume")["rows"]
-                if str(row["symbol"]).lower() == wanted
+        name = wanted.lstrip("$").casefold()
+        candidates = [
+            {
+                "contract_address": row.get("token_address"),
+                "creator_set_name_unverified": row.get("claimed_symbol") or row.get("claimed_name"),
+                "volume_24h": row.get("volume_label"),
+            }
+            for row in rows
+            if name
+            and name
+            in {
+                str(row.get("claimed_symbol") or "").casefold(),
+                str(row.get("claimed_name") or "").casefold(),
+            }
+        ][:10]
+        return {
+            "known": False,
+            "query": query,
+            **(
+                {
+                    "same_name_candidates": candidates,
+                    "note": "Names are creator-set and can be copied. Ask by contract address.",
+                }
+                if candidates
+                else {}
             ),
-            None,
-        )
-        detail = memecoin_detail(str(match["id"])) if match else None
-    if detail is None:
-        return {"known": False, "query": query}
+        }
     coin = detail["coin"]
     trail = detail.get("history") or []
     return {
@@ -1154,7 +1180,8 @@ def dash_expand(node: str | None) -> dict[str, Any]:
     if key in {"memecoins", "coins", "crypto"}:
         return memecoins_now(limit=20)
     if key.startswith("coin:"):
-        return coin_detail(key.split(":", 1)[1])
+        # Solana addresses are case sensitive, so read them from the original text.
+        return coin_detail(str(node).strip().split(":", 1)[1])
     if key.startswith("report"):
         which = key.split(":", 1)[1].strip() if ":" in key else None
         return session_report(which or None)

@@ -118,7 +118,7 @@
     const ringLayer = svg('g',{class:'map-ring map-glyph'});
     window.RatiRingGlyph.draw({
       ringLayer, graph, glyph, small:small.matches, contributions, controls, score,
-      name:item.name || 'Token', label:item.name?.length > 10 ? item.name.slice(0,6)+'…' : item.name,
+      name:item.name || 'Token', label:item.name?.length > 13 ? item.name.slice(0,6)+'…'+item.name.slice(-6) : item.name,
       toneLabel:'Chain evidence tone', centerAttributes:{'data-node':'launch'},
       points, percent, wireControl, overview:()=>overview(),
     });
