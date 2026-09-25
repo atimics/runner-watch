@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -213,8 +214,10 @@ def test_selected_team_probability_fits_with_full_team_names(page, width):
     screen = listing(market, [raw])
     page.set_viewport_size({"width": width, "height": 844})
     open_html(page, screens.render(screen))
-    rating = page.locator(".prediction-glyph")
-    expect(rating).to_have_attribute("aria-label", f"{raw['home_team_name']}: RATi 60.0%")
+    rating = page.locator(".prediction-glyph [role=img]")
+    expect(rating).to_have_attribute(
+        "aria-label", re.compile(re.escape(raw["home_team_name"]) + r": sentiment pending")
+    )
     no_overlap(page.locator(".ticker-name"), page.locator(".ticker-value"))
     no_overlap(page.locator(".ticker-value"), rating)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
